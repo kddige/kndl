@@ -10,3 +10,5 @@ dist/
 # Laid by Claude Code beside a mod each time it loads one
 .claude-plugin/types/
 prototype/mod/tsconfig.json
+.claude/settings.local.json
+.claude/worktrees/
