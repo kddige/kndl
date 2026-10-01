@@ -1,0 +1,132 @@
+import { Schema } from "effect"
+import { ClaudeSessionId, RunnerId, SessionId } from "./Ids.ts"
+import { BranchName, RepoName, RunnerLogin } from "./Session.ts"
+import {
+  RequestTerminalSnapshot,
+  TerminalFrame,
+  TerminalInput,
+  TerminalResize,
+} from "./Terminal.ts"
+import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
+
+// The Runner ↔ Hub channel. The Runner connects with its own token (issue #7), sends a
+// RunnerHello, and waits for a RunnerWelcome or a HandshakeRejected before anything else.
+
+// ── Runner to Hub ──────────────────────────────────────────────────────────
+
+/** The Runner's first message on every connection. */
+export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
+  protocolVersion: CurrentProtocolVersion,
+  /** The Runner's name, such as its short hostname. */
+  name: Schema.NonEmptyString,
+  login: RunnerLogin,
+  /** Sessions whose Claude Code is still running here, re-adopted after a Runner restart. */
+  sessions: Schema.Array(SessionId),
+})
+export type RunnerHello = typeof RunnerHello.Type
+
+/** Claude Code is running for the Session, with the mod loaded. */
+export const SessionStarted = Schema.TaggedStruct("SessionStarted", {
+  sessionId: SessionId,
+})
+export type SessionStarted = typeof SessionStarted.Type
+
+/** A {@link StartSession} failed; nothing is left running for the Session. */
+export const SessionStartFailed = Schema.TaggedStruct("SessionStartFailed", {
+  sessionId: SessionId,
+  message: Schema.String,
+})
+export type SessionStartFailed = typeof SessionStartFailed.Type
+
+/**
+ * The Session's Claude Code is no longer running: `Requested` after a {@link StopSession},
+ * `Exited` when the process ended on its own.
+ */
+export const SessionStopped = Schema.TaggedStruct("SessionStopped", {
+  sessionId: SessionId,
+  reason: Schema.Literals(["Requested", "Exited"]),
+  exitCode: Schema.optionalKey(Schema.Int),
+})
+export type SessionStopped = typeof SessionStopped.Type
+
+/** Where a Session's Sandbox is: `Destroyed` once it is gone for good, as on archive. */
+export const SandboxState = Schema.Literals([
+  "Starting",
+  "Running",
+  "Stopping",
+  "Stopped",
+  "Destroyed",
+  "Failed",
+])
+export type SandboxState = typeof SandboxState.Type
+
+/** The Session's Sandbox changed state. */
+export const SandboxStateReport = Schema.TaggedStruct("SandboxStateReport", {
+  sessionId: SessionId,
+  state: SandboxState,
+  /** What went wrong, for `Failed`. */
+  message: Schema.optionalKey(Schema.String),
+})
+export type SandboxStateReport = typeof SandboxStateReport.Type
+
+/** Every message a Runner sends the Hub. */
+export const RunnerToHub = Schema.Union([
+  RunnerHello,
+  SessionStarted,
+  SessionStartFailed,
+  SessionStopped,
+  SandboxStateReport,
+  TerminalFrame,
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type RunnerToHub = typeof RunnerToHub.Type
+
+// ── Hub to Runner ──────────────────────────────────────────────────────────
+
+/** The Hub accepted the Runner's hello. */
+export const RunnerWelcome = Schema.TaggedStruct("RunnerWelcome", {
+  protocolVersion: CurrentProtocolVersion,
+  /** The id the Hub knows this Runner by, from its token. */
+  runnerId: RunnerId,
+})
+export type RunnerWelcome = typeof RunnerWelcome.Type
+
+/**
+ * Start Claude Code for a Session: for a new Session, after cloning its Repo onto its Work
+ * branch; to wake an Asleep one, with `resume` and the Workspace already in place.
+ */
+export const StartSession = Schema.TaggedStruct("StartSession", {
+  sessionId: SessionId,
+  repo: RepoName,
+  baseBranch: BranchName,
+  workBranch: BranchName,
+  /** Claude Code's session id to resume, when waking an Asleep Session. */
+  resume: Schema.optionalKey(ClaudeSessionId),
+  /**
+   * The token the Session's mod authenticates to the Hub with, scoped to this Session (issue #7).
+   * Passed to Claude Code's environment on the host; never into the Sandbox (ADR 0004).
+   */
+  modToken: Schema.NonEmptyString,
+})
+export type StartSession = typeof StartSession.Type
+
+/**
+ * Stop a Session's Claude Code and its Sandbox: `Sleep` keeps the Sandbox's volumes to wake on,
+ * `Archive` destroys the Sandbox (ADR 0003, 0006).
+ */
+export const StopSession = Schema.TaggedStruct("StopSession", {
+  sessionId: SessionId,
+  reason: Schema.Literals(["Sleep", "Archive"]),
+})
+export type StopSession = typeof StopSession.Type
+
+/** Every message the Hub sends a Runner. */
+export const HubToRunner = Schema.Union([
+  RunnerWelcome,
+  HandshakeRejected,
+  StartSession,
+  StopSession,
+  TerminalInput,
+  TerminalResize,
+  RequestTerminalSnapshot,
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type HubToRunner = typeof HubToRunner.Type
