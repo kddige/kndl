@@ -1,0 +1,5 @@
+hub/hub.db*
+node_modules/
+.claude-plugin/types/
+mod/.claude-plugin/types/
+mod/tsconfig.json

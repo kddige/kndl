@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-hub</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --line: #e4e1d8; --text: #1f1e1b; --dim: #77736a;
+    --accent: #c4613a; --accent-soft: #f6e3d9; --ok: #3f8f5a; --busy: #c48a1d; --bad: #b6453b;
+    --code: #f1efe8; --term-bg: #1c1b19; --term-fg: #e8e4da;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --panel: #1f1e1b; --line: #33312c; --text: #ece9e1; --dim: #9a958a;
+      --accent: #e07a52; --accent-soft: #3a261d; --code: #262521; --term-bg: #0f0f0e;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 14px/1.5 var(--sans); background: var(--bg); color: var(--text); display: grid; grid-template-rows: auto 1fr; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 10px; }
+  button:hover { border-color: var(--dim); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  input, select, textarea { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 6px 8px; width: 100%; }
+
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header .brand { font-weight: 650; letter-spacing: -0.01em; }
+  header .brand span { color: var(--accent); }
+  header .grow { flex: 1; }
+  header .me { display: flex; align-items: center; gap: 6px; color: var(--dim); }
+  header .me input { width: 120px; padding: 3px 6px; }
+  .conn { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .conn.on { background: var(--ok); }
+
+  .layout { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+  aside { border-right: 1px solid var(--line); overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 16px; }
+  aside h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin: 0 0 6px; }
+  .new { display: grid; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .new .row { display: flex; gap: 6px; }
+  .hint { color: var(--dim); font-size: 12px; }
+
+  .sessions { display: flex; flex-direction: column; gap: 4px; }
+  .machine { font-size: 12px; color: var(--dim); margin: 8px 0 2px; font-family: var(--mono); }
+  .sess { text-align: left; display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: center; padding: 7px 9px; border-radius: 7px; border: 1px solid transparent; background: transparent; width: 100%; }
+  .sess:hover { background: var(--panel); border-color: var(--line); }
+  .sess.active { background: var(--accent-soft); border-color: var(--accent); }
+  .sess .title { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sess .sub { font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.idle { background: var(--ok); } .dot.busy { background: var(--busy); animation: pulse 1s infinite; }
+  .dot.starting { background: var(--busy); } .dot.offline, .dot.ended { background: transparent; border: 1px solid var(--dim); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .faces { display: flex; }
+  .face { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #fff; margin-left: -5px; border: 2px solid var(--bg); }
+
+  main { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 0; min-width: 0; }
+  .empty { display: grid; place-items: center; color: var(--dim); height: 100%; text-align: center; padding: 24px; }
+  .bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  .bar .where { font-family: var(--mono); font-size: 13px; }
+  .bar .meta { color: var(--dim); font-size: 12px; }
+  .tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; color: var(--dim); }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+
+  .feed { overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .ev { max-width: 860px; width: 100%; margin: 0 auto; }
+  .ev.prompt { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 12px; white-space: pre-wrap; }
+  .ev.prompt .who { font-size: 12px; font-weight: 650; color: var(--accent); }
+  .ev.text { white-space: pre-wrap; padding: 2px 4px; }
+  .ev.thinking, .ev.sys { color: var(--dim); font-size: 12px; font-style: italic; padding: 0 4px; }
+  .ev.queued { color: var(--dim); font-size: 12px; padding: 0 4px; }
+  .ev.chat { display: flex; gap: 8px; font-size: 13px; padding: 4px 10px; border-radius: 8px; background: var(--code); }
+  .ev.chat b { color: var(--accent); }
+  .ev.error { color: var(--bad); font-size: 13px; }
+  details.tool { border: 1px solid var(--line); border-radius: 7px; background: var(--panel); font-size: 13px; }
+  details.tool summary { padding: 5px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; align-items: center; list-style: none; }
+  details.tool summary::-webkit-details-marker { display: none; }
+  details.tool summary .name { font-weight: 650; }
+  details.tool summary .arg { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  details.tool .st { font-size: 11px; }
+  details.tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); background: var(--code); font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; }
+  details.tool.sub { margin-left: 24px; }
+  .ev.turn { font-size: 11px; color: var(--dim); text-align: right; border-top: 1px dashed var(--line); padding-top: 4px; }
+
+  .term { padding: 12px 16px; overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+  .term pre { margin: 0; background: var(--term-bg); color: var(--term-fg); padding: 12px; border-radius: 8px; font: 12px/1.35 var(--mono); overflow-x: auto; min-height: 200px; }
+  .keys { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .keys input { width: 240px; }
+
+  .composer { border-top: 1px solid var(--line); padding: 10px 16px; background: var(--panel); display: grid; gap: 6px; }
+  .composer .modes { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); }
+  .composer .modes label { display: flex; gap: 4px; align-items: center; cursor: pointer; }
+  .composer .modes input { width: auto; }
+  .composer .row { display: flex; gap: 8px; }
+  .composer textarea { resize: none; min-height: 44px; max-height: 200px; }
+  .toast { position: fixed; bottom: 16px; right: 16px; background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; }
+
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    aside { border-right: none; border-bottom: 1px solid var(--line); max-height: 40vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">claude<span>·</span>hub</div>
+  <span class="conn" id="conn" title="connection to hub"></span>
+  <div class="grow"></div>
+  <div class="faces" id="online"></div>
+  <div class="me">you are <input id="name" maxlength="40" spellcheck="false"></div>
+</header>
+
+<div class="layout">
+  <aside>
+    <section>
+      <h3>New session</h3>
+      <div class="new">
+        <select id="machine"></select>
+        <input id="cwd" list="roots" placeholder="folder, e.g. ~/code/app" spellcheck="false">
+        <datalist id="roots"></datalist>
+        <div class="row">
+          <select id="mode" title="permission mode">
+            <option value="default">ask permissions</option>
+            <option value="acceptEdits">accept edits</option>
+            <option value="plan">plan mode</option>
+            <option value="auto">auto mode</option>
+          </select>
+          <button class="primary" id="spawn">Start</button>
+        </div>
+        <div class="hint" id="spawnHint">Start a runner on a machine to launch sessions from here.</div>
+      </div>
+    </section>
+    <section>
+      <h3>Sessions</h3>
+      <div class="sessions" id="sessions"></div>
+    </section>
+  </aside>
+
+  <main id="main">
+    <div class="empty" id="empty">
+      <div>
+        <p><b>No session selected.</b></p>
+        <p class="hint">Pick a session on the left, or start one.<br>Sessions launched by hand with <code>claude --plugin-dir ~/Development/github/kddige/claude-hub/mod</code> show up here too.</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<template id="sessionView">
+  <div class="bar">
+    <span class="dot" data-k="dot"></span>
+    <span class="where" data-k="where"></span>
+    <span class="meta" data-k="meta"></span>
+    <div style="flex:1"></div>
+    <div class="faces" data-k="viewers"></div>
+    <button data-k="stop" class="danger" title="interrupt the running turn">Stop turn</button>
+    <button data-k="kill" class="danger" title="end the claude process">End session</button>
+  </div>
+  <div class="tabs">
+    <button data-tab="feed" class="on">Conversation</button>
+    <button data-tab="term">Terminal</button>
+  </div>
+  <div class="feed" data-k="feed"></div>
+  <div class="composer">
+    <div class="modes">
+      <label><input type="radio" name="mode" value="prompt" checked> Prompt Claude</label>
+      <label><input type="radio" name="mode" value="chat"> Chat with people (Claude won't see it)</label>
+    </div>
+    <div class="row">
+      <textarea data-k="input" rows="2" placeholder="Message Claude… (Enter to send, Shift+Enter for a new line)"></textarea>
+      <button class="primary" data-k="send">Send</button>
+    </div>
+  </div>
+</template>
+
+<script>
+const $ = s => document.querySelector(s)
+const params = new URLSearchParams(location.search)
+const token = params.get('token') || ''
+const COLORS = ['#c4613a', '#3f7fbf', '#3f8f5a', '#8a59c2', '#c48a1d', '#b6453b', '#2d8a8a', '#7a6b4f']
+const colorOf = name => COLORS[[...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORS.length]
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const short = p => (p || '?').replace(/^\/Users\/[^/]+/, '~')
+const ago = ts => { const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h` }
+
+let ws, state = { sessions: [], machines: [], online: [] }
+let current = null      // watched session id
+let view = null         // DOM of the session view
+let tab = 'feed'
+let name = localStorage.getItem('hub.name') || `guest-${Math.random().toString(36).slice(2, 6)}`
+$('#name').value = name
+
+function faces(names) {
+  return names.map(n => `<span class="face" style="background:${colorOf(n)}" title="${esc(n)}">${esc(n.slice(0, 2).toUpperCase())}</span>`).join('')
+}
+function toast(text) {
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = text
+  document.body.append(t); setTimeout(() => t.remove(), 3500)
+}
+function sendMsg(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)) }
+
+// ── connection ────────────────────────────────────────────────────────────
+function connect() {
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`)
+  ws.onopen = () => {
+    $('#conn').classList.add('on')
+    sendMsg({ type: 'hello', name })
+    if (current) sendMsg({ type: 'watch', session: current })
+  }
+  ws.onclose = () => { $('#conn').classList.remove('on'); setTimeout(connect, 1500) }
+  ws.onmessage = ev => {
+    const msg = JSON.parse(ev.data)
+    if (msg.type === 'state') { state = msg; renderSidebar(); renderBar() }
+    else if (msg.type === 'history' && msg.session === current) { resetFeed(); msg.events.forEach(addEvent) }
+    else if (msg.type === 'event' && msg.session === current) addEvent(msg.event)
+    else if (msg.type === 'screen' && msg.session === current) renderScreen(msg.text)
+    else if (msg.type === 'spawned') select(msg.session)
+    else if (msg.type === 'error') toast(msg.text)
+  }
+}
+
+$('#name').addEventListener('change', e => {
+  name = e.target.value.trim() || name
+  e.target.value = name
+  localStorage.setItem('hub.name', name)
+  sendMsg({ type: 'hello', name })
+})
+
+// ── sidebar ───────────────────────────────────────────────────────────────
+function renderSidebar() {
+  $('#online').innerHTML = faces(state.online)
+
+  const sel = $('#machine'), prev = sel.value
+  sel.innerHTML = state.machines.map(m => `<option>${esc(m.machine)}</option>`).join('') || '<option value="">no runners online</option>'
+  if (state.machines.some(m => m.machine === prev)) sel.value = prev
+  const m = state.machines.find(m => m.machine === sel.value)
+  $('#roots').innerHTML = (m?.roots || []).map(r => `<option value="${esc(short(r))}">`).join('')
+  $('#spawn').disabled = !state.machines.length
+  $('#spawnHint').textContent = state.machines.length
+    ? `Runs claude in tmux on ${sel.value}, inside ${(m?.roots || []).map(short).join(', ')}.`
+    : 'Start a runner on a machine to launch sessions from here.'
+
+  const groups = {}
+  for (const s of state.sessions) (groups[s.machine] ??= []).push(s)
+  $('#sessions').innerHTML = Object.entries(groups).map(([machine, list]) =>
+    `<div class="machine">${esc(machine)}</div>` + list.map(s => `
+      <button class="sess ${s.id === current ? 'active' : ''}" data-id="${esc(s.id)}">
+        <span class="dot ${s.status}"></span>
+        <span style="min-width:0">
+          <div class="title">${esc(short(s.cwd).split('/').pop() || s.cwd)}</div>
+          <div class="sub">${esc(s.status)} · ${ago(s.lastSeen)} ago${s.costUsd != null ? ` · $${s.costUsd.toFixed(2)}` : ''}</div>
+        </span>
+        <span class="faces">${faces(s.viewers)}</span>
+      </button>`).join('')
+  ).join('') || '<div class="hint">No sessions yet.</div>'
+}
+$('#sessions').addEventListener('click', e => { const b = e.target.closest('.sess'); if (b) select(b.dataset.id) })
+$('#machine').addEventListener('change', renderSidebar)
+$('#spawn').addEventListener('click', () => {
+  const cwd = $('#cwd').value.trim()
+  if (!cwd) return toast('Pick a folder first')
+  sendMsg({ type: 'spawn', machine: $('#machine').value, cwd, permissionMode: $('#mode').value })
+})
+
+// ── session view ──────────────────────────────────────────────────────────
+function select(id) {
+  current = id
+  sendMsg({ type: 'watch', session: id })
+  const main = $('#main')
+  main.innerHTML = ''
+  main.append($('#sessionView').content.cloneNode(true))
+  view = Object.fromEntries([...main.querySelectorAll('[data-k]')].map(el => [el.dataset.k, el]))
+  view.term = null
+  setTab('feed')
+  main.querySelectorAll('.tabs button').forEach(b => b.onclick = () => setTab(b.dataset.tab))
+  view.stop.onclick = () => sendMsg({ type: 'abort', session: current })
+  view.kill.onclick = () => {
+    if (view.kill.dataset.armed) return sendMsg({ type: 'kill', session: current })
+    view.kill.dataset.armed = '1'; view.kill.textContent = 'Click again to end'
+    setTimeout(() => { delete view.kill.dataset.armed; view.kill.textContent = 'End session' }, 3000)
+  }
+  view.send.onclick = submit
+  view.input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } })
+  view.input.addEventListener('input', () => { view.input.style.height = 'auto'; view.input.style.height = `${view.input.scrollHeight}px` })
+  main.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
+    view.input.placeholder = r.value === 'chat' ? 'Message the people here…' : 'Message Claude… (Enter to send, Shift+Enter for a new line)'
+  })
+  renderSidebar(); renderBar(); resetFeed()
+  view.input.focus()
+}
+
+function submit() {
+  const text = view.input.value.trim()
+  if (!text) return
+  const mode = $('#main input[name=mode]:checked').value
+  sendMsg({ type: mode, session: current, text })
+  view.input.value = ''; view.input.style.height = 'auto'
+}
+
+function renderBar() {
+  if (!view) return
+  const s = state.sessions.find(s => s.id === current)
+  if (!s) return
+  view.dot.className = `dot ${s.status}`
+  view.where.textContent = `${s.machine}:${short(s.cwd)}`
+  view.meta.textContent = [s.status, s.model, s.contextPercent != null && `context ${Math.round(s.contextPercent)}%`, s.costUsd != null && `$${s.costUsd.toFixed(2)}`].filter(Boolean).join(' · ')
+  view.viewers.innerHTML = faces(s.viewers)
+  view.stop.disabled = s.status !== 'busy'
+  view.kill.hidden = !s.managed || s.status === 'ended'
+  view.tabs ??= document.querySelector('.tabs')
+  view.tabs.querySelector('[data-tab=term]').hidden = !s.managed
+}
+
+function setTab(t) {
+  tab = t
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t))
+  view.feed.hidden = t !== 'feed'
+  if (t === 'term' && !view.term) {
+    const wrap = document.createElement('div'); wrap.className = 'term'
+    wrap.innerHTML = `<pre>Waiting for the screen…</pre>
+      <div class="keys">
+        ${['Enter', 'Escape', 'Up', 'Down', 'Tab', 'BTab', 'C-c'].map(k => `<button data-key="${k}">${{ Escape: 'Esc', BTab: '⇧Tab', 'C-c': 'Ctrl-C', Up: '↑', Down: '↓' }[k] || k}</button>`).join('')}
+        ${['1', '2', '3'].map(k => `<button data-text="${k}">${k}</button>`).join('')}
+        <input placeholder="type into the terminal, Enter sends it" spellcheck="false">
+      </div>
+      <div class="hint">This is the real terminal. Use it for trust dialogs and permission prompts; the input sends keystrokes as-is.</div>`
+    view.feed.after(wrap)
+    view.term = wrap
+    wrap.querySelector('.keys').addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return
+      sendMsg({ type: 'keys', session: current, keys: [b.dataset.key ? { key: b.dataset.key } : { text: b.dataset.text }] })
+    })
+    const input = wrap.querySelector('input')
+    input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return
+      sendMsg({ type: 'keys', session: current, keys: [{ text: input.value }, { key: 'Enter' }] })
+      input.value = ''
+    })
+    if (view.lastScreen != null) renderScreen(view.lastScreen)
+  }
+  if (view.term) view.term.hidden = t !== 'term'
+}
+
+// ── terminal mirror (ANSI → HTML) ─────────────────────────────────────────
+const ANSI16 = ['#1c1b19', '#d0574b', '#5fa86f', '#d9a43c', '#5b8fd6', '#b07ad6', '#4fb3b3', '#d8d4ca',
+                '#6b6862', '#ef7a6e', '#7fcf8f', '#f2c35e', '#7fb0f2', '#cf9cf0', '#6fd6d6', '#ffffff']
+function xterm256(n) {
+  if (n < 16) return ANSI16[n]
+  if (n >= 232) { const v = 8 + (n - 232) * 10; return `rgb(${v},${v},${v})` }
+  n -= 16; const c = v => (v ? v * 40 + 55 : 0)
+  return `rgb(${c(Math.floor(n / 36))},${c(Math.floor(n / 6) % 6)},${c(n % 6)})`
+}
+function ansiToHtml(text) {
+  let out = '', st = {}
+  const open = () => {
+    const css = []
+    if (st.fg) css.push(`color:${st.fg}`)
+    if (st.bg) css.push(`background:${st.bg}`)
+    if (st.bold) css.push('font-weight:700')
+    if (st.dim) css.push('opacity:.6')
+    if (st.italic) css.push('font-style:italic')
+    if (st.underline) css.push('text-decoration:underline')
+    if (st.inverse) css.push(`color:${st.bg || 'var(--term-bg)'};background:${st.fg || 'var(--term-fg)'}`)
+    return css.length ? `<span style="${css.join(';')}">` : '<span>'
+  }
+  text = text.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '') // OSC: titles, hyperlinks
+  const parts = text.split(/\x1b\[([0-9;:]*)m/)
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0) { if (parts[i]) out += open() + esc(parts[i].replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x1b[^\[]/g, '')) + '</span>'; continue }
+    const codes = parts[i].split(/[;:]/).map(Number)
+    for (let j = 0; j < codes.length; j++) {
+      const c = codes[j] || 0
+      if (c === 0) st = {}
+      else if (c === 1) st.bold = true
+      else if (c === 2) st.dim = true
+      else if (c === 3) st.italic = true
+      else if (c === 4) st.underline = true
+      else if (c === 7) st.inverse = true
+      else if (c === 22) st.bold = st.dim = false
+      else if (c === 23) st.italic = false
+      else if (c === 24) st.underline = false
+      else if (c === 27) st.inverse = false
+      else if (c >= 30 && c <= 37) st.fg = ANSI16[c - 30]
+      else if (c >= 90 && c <= 97) st.fg = ANSI16[c - 82]
+      else if (c === 39) st.fg = null
+      else if (c >= 40 && c <= 47) st.bg = ANSI16[c - 40]
+      else if (c >= 100 && c <= 107) st.bg = ANSI16[c - 92]
+      else if (c === 49) st.bg = null
+      else if ((c === 38 || c === 48) && codes[j + 1] === 5) { st[c === 38 ? 'fg' : 'bg'] = xterm256(codes[j + 2]); j += 2 }
+      else if ((c === 38 || c === 48) && codes[j + 1] === 2) { st[c === 38 ? 'fg' : 'bg'] = `rgb(${codes[j + 2]},${codes[j + 3]},${codes[j + 4]})`; j += 4 }
+    }
+  }
+  return out
+}
+function renderScreen(text) {
+  if (!view) return
+  view.lastScreen = text
+  if (!view.term) return
+  view.term.querySelector('pre').innerHTML = text == null ? 'The session has ended.' : ansiToHtml(text.replace(/\n+$/, ''))
+}
+
+// ── conversation feed ─────────────────────────────────────────────────────
+let tools = {}, lastText = null
+function resetFeed() { if (view) view.feed.innerHTML = ''; tools = {}; lastText = null }
+
+function stick(fn) {
+  const f = view.feed
+  const atBottom = f.scrollHeight - f.scrollTop - f.clientHeight < 80
+  fn()
+  if (atBottom) f.scrollTop = f.scrollHeight
+}
+
+function node(cls, html) { const d = document.createElement('div'); d.className = `ev ${cls}`; d.innerHTML = html; view.feed.append(d); return d }
+
+function promptHtml(text, origin) {
+  const m = /^\[([^\]]{1,40})\] ([\s\S]*)$/.exec(text)
+  const who = m ? m[1] : origin === 'composer' ? 'terminal' : origin
+  return `<div class="who" style="color:${colorOf(who)}">${esc(who)}</div>${esc(m ? m[2] : text)}`
+}
+
+function toolArg(tool, raw) {
+  try {
+    const input = JSON.parse(raw)
+    return input.command ?? input.file_path ?? input.pattern ?? input.url ?? input.description ?? input.prompt ?? raw
+  } catch { return raw }
+}
+
+function addEvent(ev) {
+  if (!view) return
+  stick(() => {
+    if (ev.type !== 'text') lastText = null
+    switch (ev.type) {
+      case 'prompt': node('prompt', promptHtml(ev.text, ev.origin)); break
+      case 'queued': node('queued', `<b style="color:${colorOf(ev.author)}">${esc(ev.author)}</b> queued a prompt`); break
+      case 'chat': node('chat', `<b style="color:${colorOf(ev.author)}">${esc(ev.author)}</b><span>${esc(ev.text)}</span>`); break
+      case 'text': {
+        if (lastText && lastText.turnId === ev.turnId && lastText.agentId === ev.agentId) lastText.el.textContent += ev.text
+        else { const el = node('text', ''); el.textContent = ev.text; if (ev.agentId) el.style.marginLeft = '24px'; lastText = { el, turnId: ev.turnId, agentId: ev.agentId } }
+        break
+      }
+      case 'thinking': node('thinking', 'thinking…'); break
+      case 'tool_start': {
+        const d = document.createElement('details')
+        d.className = `tool ev ${ev.agentId ? 'sub' : ''}`
+        d.innerHTML = `<summary><span class="st">⏳</span><span class="name">${esc(ev.tool)}</span><span class="arg">${esc(toolArg(ev.tool, ev.input))}</span></summary><pre>${esc(ev.input)}</pre>`
+        view.feed.append(d)
+        if (ev.id) tools[ev.id] = d
+        break
+      }
+      case 'tool_end': {
+        const d = tools[ev.id]
+        if (!d) break
+        d.querySelector('.st').textContent = ev.deny ? '⛔' : ev.isError ? '✗' : '✓'
+        const pre = document.createElement('pre'); pre.textContent = ev.deny || ev.text || '(no output)'
+        d.append(pre)
+        break
+      }
+      case 'turn_end': {
+        if (ev.agentId) break
+        const bits = [ev.reason !== 'answer' && ev.reason, `${(ev.durationMs / 1000).toFixed(1)}s`,
+          ev.usage && `${((ev.usage.input_tokens || 0) + (ev.usage.cache_read_input_tokens || 0) + (ev.usage.cache_creation_input_tokens || 0)).toLocaleString()} in / ${(ev.usage.output_tokens || 0).toLocaleString()} out`]
+        node('turn', esc(bits.filter(Boolean).join(' · ')))
+        break
+      }
+      case 'hello': node('sys', `session linked from ${esc(ev.machine)} · ${esc(ev.model)}`); break
+      case 'spawned': node('sys', `${esc(ev.author)} started a session in ${esc(short(ev.cwd))}`); break
+      case 'started': node('sys', `running in tmux as <code>${esc(ev.tmux)}</code> on ${esc(ev.machine)} · attach with <code>tmux attach -t ${esc(ev.tmux)}</code>`); break
+      case 'abort_requested': node('sys', `${esc(ev.author)} stopped the turn`); break
+      case 'bye': node('sys', `session ended (${esc(ev.reason)})`); break
+      case 'error': node('error', esc(ev.text)); break
+    }
+  })
+}
+
+connect()
+</script>
+</body>
+</html>
