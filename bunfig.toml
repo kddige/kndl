@@ -1,0 +1,4 @@
+[test]
+# The mod's tests run in Claude Code's own runtime (`claude plugin test`), not Bun's;
+# the prototype is reference material.
+pathIgnorePatterns = ["packages/mod/**", "prototype/**"]

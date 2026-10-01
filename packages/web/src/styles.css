@@ -1,0 +1,32 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  /* Base UI: lets backdrops cover the visual viewport on iOS Safari. */
+  position: relative;
+}
+
+#root {
+  /* Base UI: keeps portaled popups above the page. */
+  isolation: isolate;
+}
+
+.app {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.about-trigger {
+  font: inherit;
+  padding: 0.25rem 0.75rem;
+  cursor: pointer;
+}
+
+.about-panel[hidden]:not([hidden="until-found"]) {
+  display: none;
+}

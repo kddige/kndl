@@ -1,0 +1,9 @@
+{
+  "name": "@claude-hub/mod",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "claude plugin validate . && claude plugin test .",
+    "typecheck": "bash scripts/typecheck.sh"
+  }
+}
