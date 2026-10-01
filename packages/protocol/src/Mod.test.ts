@@ -1,6 +1,5 @@
 import { describe, test } from "bun:test"
 import { HubToMod, ModToHub } from "./Mod.ts"
-import { MaxToolSummaryLength } from "./Turn.ts"
 import {
   alice,
   bob,
@@ -9,6 +8,7 @@ import {
   expectRoundTrips,
   turnEvents,
 } from "./testSupport.ts"
+import { MaxToolSummaryLength } from "./Turn.ts"
 import { ProtocolVersion } from "./Version.ts"
 
 const modToHub = [

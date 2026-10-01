@@ -18,6 +18,7 @@
     "eslint/no-var": "error",
     "eslint/prefer-const": "error",
     "eslint/no-useless-rename": "error",
+    "eslint/no-underscore-dangle": ["warn", { "allow": ["_tag"] }],
     "eslint/no-new": "warn",
     "eslint/no-extend-native": "error",
     "eslint/no-unneeded-ternary": "warn",
