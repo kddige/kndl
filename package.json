@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "typecheck": "bun run --filter '*' typecheck",
-    "lint": "oxlint",
+    "lint": "oxlint --deny-warnings",
     "format": "oxfmt --write",
     "format:check": "oxfmt --check",
     "hub": "bun run --filter @claude-hub/hub start",
