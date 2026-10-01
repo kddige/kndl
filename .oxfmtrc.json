@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": false,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "arrowParens": "always",
+  "bracketSpacing": true,
+  "sortImports": {
+    "newlinesBetween": false
+  },
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "prototype/",
+    ".agents/",
+    ".claude/",
+    "skills-lock.json",
+    "bun.lock",
+    "*.md",
+    "packages/mod/.claude-plugin/types/"
+  ]
+}

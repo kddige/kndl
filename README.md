@@ -35,7 +35,8 @@ All run from the repo root:
 |---|---|
 | `bun test` | Bun's test runner over every package but the mod. |
 | `bun run typecheck` | `tsc --noEmit` in every package (TypeScript 7). The mod's first loads it into a throwaway Claude Code print session (`claude -p /cost`, no model call), which lays the plugin API's types in `packages/mod/.claude-plugin/types/`. |
-| `bun run lint` | Biome: lint, format and import-order check. `bun run format` applies the fixes. |
+| `bun run lint` | [oxlint](https://oxc.rs/docs/guide/usage/linter): ESLint-style rules for TypeScript, React, imports and unicorn. Configured in `.oxlintrc.json`. |
+| `bun run format:check` | [oxfmt](https://oxc.rs/docs/guide/usage/formatter): checks formatting and import order. `bun run format` applies it. Configured in `.oxfmtrc.json`. |
 | `bun run mod:check` | `claude plugin validate` and `claude plugin test` on the mod. |
 
 ## Run
