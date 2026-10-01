@@ -1,63 +1,50 @@
 # claude-hub
 
-Multiplayer Claude Code: run sessions on any number of machines, watch and drive them from a web UI, together.
+Multiplayer Claude Code: a self-hosted Hub where a team runs Claude Code Sessions in Sandboxes on any number of Runners, and watches and drives them together from the web.
 
-```
- machine A: runner ── tmux ── claude + hub-link mod ─┐
- machine B: runner ── tmux ── claude + hub-link mod ─┼──▶ hub ◀──▶ browsers (emil, alex, …)
- any terminal: claude --plugin-dir <repo>/mod ───────┘
-```
+The words used here (Hub, Runner, Session, Sandbox, Participant, ...) are defined in [`GLOSSARY.md`](GLOSSARY.md). The design decisions are recorded in [`docs/adr/`](docs/adr/), starting with [0001: Claude on the host, tools in the Sandbox](docs/adr/0001-claude-on-host-tools-in-sandbox.md) and [0008: the stack](docs/adr/0008-stack.md).
 
-| Piece | What it does |
+This is v1's scaffold: each package starts and does almost nothing yet.
+
+## Layout
+
+One Bun workspace in TypeScript.
+
+| Package | What it is |
 |---|---|
-| `mod/` | Claude Code mod (`hub-link`). Streams prompts, text, tool calls and turn ends to the hub; long-polls the hub for prompts and stops; tells Claude the session is shared; shows `● hub · 👥 viewers` above the prompt. |
-| `hub/` | Bun server + SQLite. Keeps every session's event log (late joiners get a replay), a prompt queue per session, presence, and serves the UI at `/`. |
-| `runner/` | One per machine. Starts sessions in tmux when the UI asks, mirrors the terminal screen to the UI and types keys into it (trust dialogs, permission prompts), reports exits. |
+| [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as [Effect](https://effect.website) Schemas. Imported from source by the other packages. |
+| [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Serves `GET /health`. |
+| [`packages/runner`](packages/runner) | A Runner: an Effect program that will start Sessions and their Sandboxes on its host. Logs its configuration and waits. |
+| [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod a Runner loads into each Session. Notes in the debug log that it loaded. Runs in Claude Code's own mod runtime, so it is plain TypeScript without Effect for now. |
+| [`packages/web`](packages/web) | The web UI: React on Vite, built from [Base UI](https://base-ui.com) primitives. |
+| [`prototype/`](prototype) | The first prototype (hub, runner, mod, `start.sh`). Reference material only: not part of the workspace, typecheck or lint. |
 
-## Run it
+## Setup
 
-```sh
-brew install tmux          # the runner needs it
-./start.sh                 # hub on http://127.0.0.1:7777 + a runner for this machine
-open http://127.0.0.1:7777
-```
-
-Join a session you start by hand (no runner needed):
+Needs [Bun](https://bun.sh) 1.4 or newer, and Claude Code (`claude`) on `PATH` for the mod's checks.
 
 ```sh
-claude --plugin-dir ~/Development/github/kddige/claude-hub/mod
+bun install
 ```
 
-### More machines
+## Checks
 
-```sh
-# on the hub machine
-HOST=0.0.0.0 HUB_TOKEN=some-long-secret bun hub/server.ts
-# on every other machine
-HUB_URL=http://<hub-ip>:7777 HUB_TOKEN=some-long-secret bun runner/runner.ts
-# browsers
-http://<hub-ip>:7777/?token=some-long-secret
-```
+All run from the repo root:
 
-## Config
+| Command | What it does |
+|---|---|
+| `bun test` | Bun's test runner over every package but the mod. |
+| `bun run typecheck` | `tsc --noEmit` in every package (TypeScript 7). The mod's first loads it into a throwaway Claude Code print session (`claude -p /cost`, no model call), which lays the plugin API's types in `packages/mod/.claude-plugin/types/`. |
+| `bun run lint` | Biome: lint, format and import-order check. `bun run format` applies the fixes. |
+| `bun run mod:check` | `claude plugin validate` and `claude plugin test` on the mod. |
 
-| Env | Used by | Default |
+## Run
+
+| Command | What it starts | Env (default) |
 |---|---|---|
-| `PORT`, `HOST` | hub | `7777`, `127.0.0.1` |
-| `HUB_TOKEN` | all | none (required by everyone when set) |
-| `HUB_URL` | runner, mod | `http://127.0.0.1:7777` |
-| `HUB_ROOTS` | runner | `$HOME` (comma-separated folders sessions may start in) |
-| `HUB_MACHINE` | runner, mod | short hostname |
+| `bun run hub` | The Hub on <http://127.0.0.1:7777>; try `/health`. | `HOST` (`127.0.0.1`), `PORT` (`7777`), `HUB_DATABASE` (`hub.db` in `packages/hub`) |
+| `bun run runner` | A Runner for this machine. | `HUB_URL` (`http://127.0.0.1:7777`), `RUNNER_NAME` (short hostname) |
+| `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. | |
+| `claude --plugin-dir packages/mod` | Claude Code with the `hub-link` mod loaded. | |
 
-## Security, honestly
-
-Anyone who can send a prompt can run code on that machine. The token is a single shared secret, there are no
-roles yet, and traffic is plain HTTP. Keep it on localhost or a private network (Tailscale works well) until
-auth and roles land.
-
-## Next
-
-- Permission prompts as first-class UI (approve/deny buttons) instead of terminal keys
-- Accounts, invites, roles per session (viewer / prompter / approver)
-- Visible, reorderable prompt queue; typing indicators
-- Resume past sessions from the UI; Markdown rendering in the feed
+Each package's own scripts (`start`, `dev`, `build`, `typecheck`) also run from inside it with `bun run <script>`.

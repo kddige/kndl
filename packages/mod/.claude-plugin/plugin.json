@@ -1,0 +1,6 @@
+{
+  "name": "hub-link",
+  "version": "0.1.0",
+  "description": "Links a Claude Code Session to its Claude Hub. Not linked yet: it only reports that it loaded.",
+  "author": { "name": "kddige" }
+}

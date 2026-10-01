@@ -1,0 +1,13 @@
+{
+  "name": "@claude-hub/runner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.0",
+    "effect": "4.0.0"
+  }
+}
