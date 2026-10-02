@@ -1,0 +1,137 @@
+import { Tabs as BaseTabs } from "@base-ui/react/tabs"
+import * as stylex from "@stylexjs/stylex"
+import type { ReactNode } from "react"
+import { focus } from "./shared.ts"
+import { color, control, motion, radius, space, text, weight } from "./tokens.stylex.ts"
+
+export interface TabsProps {
+  /** A TabList, then one TabPanel per Tab. */
+  children: ReactNode
+  /** The open tab, when the parent tracks it (e.g. in the URL). */
+  value?: string
+  /** The tab open at first, when Tabs tracks it itself. Defaults to the first tab. */
+  defaultValue?: string
+  onValueChange?: (value: string) => void
+  sx?: stylex.StyleXStyles
+}
+
+const styles = stylex.create({
+  list: {
+    position: "relative",
+    display: "flex",
+    gap: space.s1,
+    borderBottomWidth: "1px",
+    borderBottomStyle: "solid",
+    borderBottomColor: color.border,
+  },
+  tab: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1_5,
+    height: control.md,
+    paddingInline: space.s2,
+    // Room for the indicator, so the label doesn't sit on it.
+    marginBottom: "1px",
+    borderWidth: 0,
+    borderRadius: radius.md,
+    backgroundColor: { default: "transparent", ":hover:not([data-disabled])": color.surfaceHover },
+    color: {
+      default: color.textMuted,
+      ":hover:not([data-disabled])": color.text,
+      "[data-active]": color.text,
+      "[data-disabled]": color.textSubtle,
+    },
+    fontFamily: "inherit",
+    fontSize: text.base,
+    fontWeight: weight.medium,
+    whiteSpace: "nowrap",
+    cursor: { default: "pointer", "[data-disabled]": "not-allowed" },
+    userSelect: "none",
+    transitionProperty: "background-color, color",
+    transitionDuration: motion.durationFast,
+    transitionTimingFunction: motion.easeStandard,
+  },
+  indicator: {
+    position: "absolute",
+    left: 0,
+    bottom: "-1px",
+    height: "2px",
+    width: "var(--active-tab-width)",
+    transform: "translateX(var(--active-tab-left))",
+    borderRadius: radius.full,
+    backgroundColor: color.text,
+    transitionProperty: "transform, width",
+    transitionDuration: motion.durationNormal,
+    transitionTimingFunction: motion.easeStandard,
+  },
+  panel: {
+    borderRadius: radius.sm,
+  },
+})
+
+/** Switches between views of one thing. Arrow keys move between tabs. */
+export function Tabs({ children, value, defaultValue, onValueChange, sx }: TabsProps) {
+  return (
+    <BaseTabs.Root
+      {...(value !== undefined && { value })}
+      {...(defaultValue !== undefined && { defaultValue })}
+      {...(onValueChange && {
+        onValueChange: (next: unknown) => {
+          if (typeof next === "string") onValueChange(next)
+        },
+      })}
+      {...stylex.props(sx)}
+    >
+      {children}
+    </BaseTabs.Root>
+  )
+}
+
+export interface TabListProps {
+  /** Names the set of tabs for screen readers, e.g. "Session views". */
+  label: string
+  children: ReactNode
+}
+
+export function TabList({ label, children }: TabListProps) {
+  return (
+    <BaseTabs.List aria-label={label} {...stylex.props(styles.list)}>
+      {children}
+      <BaseTabs.Indicator {...stylex.props(styles.indicator)} />
+    </BaseTabs.List>
+  )
+}
+
+export interface TabProps {
+  value: string
+  children: ReactNode
+  disabled?: boolean
+}
+
+export function Tab({ value, children, disabled = false }: TabProps) {
+  return (
+    <BaseTabs.Tab value={value} disabled={disabled} {...stylex.props(styles.tab, focus.ring)}>
+      {children}
+    </BaseTabs.Tab>
+  )
+}
+
+export interface TabPanelProps {
+  value: string
+  children: ReactNode
+  /** Keep the panel mounted while hidden, e.g. so a terminal keeps its scrollback. */
+  keepMounted?: boolean
+  sx?: stylex.StyleXStyles
+}
+
+export function TabPanel({ value, children, keepMounted = false, sx }: TabPanelProps) {
+  return (
+    <BaseTabs.Panel
+      value={value}
+      keepMounted={keepMounted}
+      {...stylex.props(styles.panel, focus.ring, sx)}
+    >
+      {children}
+    </BaseTabs.Panel>
+  )
+}

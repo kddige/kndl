@@ -1,5 +1,15 @@
-import { describe, test } from "bun:test"
-import { HubToMod, ModToHub } from "./Mod.ts"
+import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
+import {
+  HubToMod,
+  ModCommand,
+  ModCommands,
+  ModCommandsQuery,
+  ModEvent,
+  ModEvents,
+  ModHelloReply,
+  ModToHub,
+} from "./Mod.ts"
 import {
   alice,
   bob,
@@ -79,5 +89,51 @@ describe("HubToMod", () => {
     expectRejected(HubToMod, { _tag: "StopTurn" })
     expectRejected(HubToMod, { _tag: "PresenceChanged", sessionId: "s-1", participants: [{}] })
     expectRejected(HubToMod, { _tag: "SendPrompt", sessionId: "s-1", text: "web-only message" })
+  })
+})
+
+describe("the HTTP bodies", () => {
+  const events = modToHub.slice(1)
+  const commands = hubToMod.slice(2)
+
+  test("ModEvents round-trips a batch of every event, and an empty one", () => {
+    expectEveryTag(ModEvent, events as Array<{ _tag: string }>)
+    expectRoundTrips(ModEvents, [{ messages: events }, { messages: [] }])
+  })
+
+  test("ModEvents refuses a hello", () => {
+    expectRejected(ModEvents, { messages: [modToHub[0]] })
+    expectRejected(ModEvents, events)
+  })
+
+  test("ModHelloReply round-trips a welcome and a rejection", () => {
+    expectEveryTag(ModHelloReply, hubToMod.slice(0, 2))
+    expectRoundTrips(ModHelloReply, hubToMod.slice(0, 2))
+    expectRejected(ModHelloReply, hubToMod[3])
+  })
+
+  test("ModCommands round-trips numbered commands, and none", () => {
+    expectEveryTag(ModCommand, commands)
+    expectRoundTrips(ModCommands, [
+      { messages: commands.map((message, i) => ({ seq: i + 1, message })) },
+      { messages: [] },
+    ])
+  })
+
+  test("ModCommands refuses a welcome, and a seq that isn't a whole number", () => {
+    expectRejected(ModCommands, { messages: [{ seq: 1, message: hubToMod[0] }] })
+    expectRejected(ModCommands, { messages: [{ seq: -1, message: hubToMod[3] }] })
+    expectRejected(ModCommands, { messages: [{ seq: 1.5, message: hubToMod[3] }] })
+  })
+
+  test("ModCommandsQuery reads numbers from the query string", () => {
+    expectRoundTrips(ModCommandsQuery, [{ after: "3", waitMs: "25000" }, {}])
+    expect(Schema.decodeUnknownSync(ModCommandsQuery)({ after: "3", waitMs: "100" })).toEqual({
+      after: 3,
+      waitMs: 100,
+    } as typeof ModCommandsQuery.Type)
+    expectRejected(ModCommandsQuery, { after: "-1" })
+    expectRejected(ModCommandsQuery, { after: "x" })
+    expectRejected(ModCommandsQuery, { waitMs: "1.5" })
   })
 })

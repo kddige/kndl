@@ -9,6 +9,7 @@
   "dependencies": {
     "@claude-hub/protocol": "workspace:*",
     "@effect/platform-bun": "4.0.0",
-    "effect": "4.0.0"
+    "effect": "4.0.0",
+    "microsandbox": "0.7.6"
   }
 }
