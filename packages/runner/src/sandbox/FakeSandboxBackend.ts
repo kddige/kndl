@@ -194,7 +194,10 @@ export const makeFake = (options: FakeOptions = {}) => {
       const kills = killers.get(sessionId) ?? new Set()
       killers.set(sessionId, kills.add(kill))
       yield* Effect.addFinalizer(() =>
-        Effect.andThen(Fiber.interrupt(fiber), Effect.sync(() => kills.delete(kill))),
+        Effect.andThen(
+          Fiber.interrupt(fiber),
+          Effect.sync(() => kills.delete(kill)),
+        ),
       )
       return {
         events: Stream.fromQueue(output),

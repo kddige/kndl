@@ -82,6 +82,7 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
       success: {
         claude: join(sessionsRoot, "w-1", "claude"),
         workspace: join(sessionsRoot, "w-1", "workspace"),
+        toolsSocket: join(sessionsRoot, "w-1", "tools.sock"),
       },
     })
     expect(existsSync(join(sessionsRoot, "w-1", "claude"))).toBe(true)

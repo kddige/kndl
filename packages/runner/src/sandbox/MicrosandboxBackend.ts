@@ -423,8 +423,10 @@ export const make = Effect.gen(function* () {
           }),
         ),
         // Interrupted before the command finished: don't leave it running.
-        (running) =>
-          status.exited ? Effect.void : Effect.promise(() => running.kill().catch(() => undefined)),
+        (execution) =>
+          status.exited
+            ? Effect.void
+            : Effect.promise(() => execution.kill().catch(() => undefined)),
       )
       const events = Stream.fromAsyncIterable(running, toError("exec", sessionId)).pipe(
         Stream.flatMap((event): Stream.Stream<ExecEvent> => {

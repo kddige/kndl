@@ -15,7 +15,15 @@ import { Schema } from "effect"
 export const ToolsSocketVariable = "CLAUDE_HUB_TOOLS_SOCKET"
 
 /** The tools the bridge runs in the Sandbox: Claude Code's file and command tools (ADR 0001). */
-export const SandboxTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"] as const
+export const SandboxTools = [
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "NotebookEdit",
+  "Glob",
+  "Grep",
+] as const
 export type SandboxTool = (typeof SandboxTools)[number]
 
 /** One tool call, with the tool's own arguments as Claude Code passed them. */
