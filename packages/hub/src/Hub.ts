@@ -2,6 +2,7 @@ import { MaxCommandWaitMs } from "@claude-hub/protocol"
 import { Layer } from "effect"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"
+import { CoAuthors } from "./CoAuthors.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
 import { ModOutbox } from "./ModOutbox.ts"
@@ -10,6 +11,7 @@ import { ModTokens } from "./ModTokens.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { Runners } from "./Runners.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
+import { SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
@@ -20,11 +22,13 @@ export const HubRoutes = Layer.mergeAll(HealthRoute, AuthRoutes, ChannelRoutes, 
 
 /**
  * The credential stores, the mod outbox, the Session relay and the shutdown signal the routes use,
- * given a database.
+ * given a database and the GitHub App (GitHubApp.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
+  Layer.provideMerge(SessionGit.layer),
   Layer.provideMerge(
     Layer.mergeAll(
+      CoAuthors.layer,
       SignIns.layer,
       RunnerTokens.layer,
       ModTokens.layer,

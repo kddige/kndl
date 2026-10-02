@@ -1,11 +1,27 @@
-import { Config, Context, Duration, Effect, Layer, Option, Schema } from "effect"
-import type { Redacted } from "effect"
+import { createPrivateKey } from "node:crypto"
+import { readFile } from "node:fs/promises"
+import { Config, Context, Duration, Effect, Layer, Option, Redacted, Schema } from "effect"
 
 /** The GitHub App's user sign-in credentials (issue #1). */
 export interface GitHubOAuthConfig {
   readonly clientId: string
   readonly clientSecret: Redacted.Redacted<string>
 }
+
+/**
+ * The GitHub App's own credentials, which mint installation tokens for the git tools (issue #13,
+ * ADR 0005). Only the Hub holds them.
+ */
+export interface GitHubAppConfig {
+  readonly appId: string
+  /** The App's private key, PEM. */
+  readonly privateKey: Redacted.Redacted<string>
+  /** GitHub's REST API: https://api.github.com, or a stand-in in tests. */
+  readonly apiUrl: URL
+}
+
+/** GitHub's REST API. */
+export const GitHubApiUrl = new URL("https://api.github.com")
 
 /** What the Hub is configured with, as read from the environment. */
 export interface HubConfigInput {
@@ -19,6 +35,11 @@ export interface HubConfigInput {
   readonly publicUrl: URL
   readonly githubClientId: Option.Option<string>
   readonly githubClientSecret: Option.Option<Redacted.Redacted<string>>
+  readonly githubAppId: Option.Option<string>
+  /** The App's private key itself, PEM; the environment gives the path to it. */
+  readonly githubAppPrivateKey: Option.Option<Redacted.Redacted<string>>
+  /** GitHub's REST API, for the App: GitHubApiUrl unless a test points it elsewhere. */
+  readonly githubApiUrl?: URL
   readonly devLogin: boolean
   /** Who dev login signs in as when the form names no one. */
   readonly devLoginName: string
@@ -57,6 +78,11 @@ export class HubConfig extends Context.Service<
     readonly publicUrl: URL
     /** GitHub sign-in, or none while the GitHub App isn't configured: sign-in is then off. */
     readonly github: Option.Option<GitHubOAuthConfig>
+    /**
+     * The GitHub App's credentials for the git tools, or none (dev mode): git then uses the
+     * Runner host's own credentials, and pull requests are unavailable.
+     */
+    readonly githubApp: Option.Option<GitHubAppConfig>
     /** Dev login: sign in as a local Participant without GitHub. Loopback only. */
     readonly devLogin: Option.Option<{ readonly defaultName: string }>
     /** Cookies get `Secure` unless browsers reach the Hub on a loopback address over HTTP. */
@@ -92,6 +118,25 @@ export class HubConfig extends Context.Service<
           "GitHub sign-in needs both GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET; only one is set.",
       })
     }
+    if (Option.isSome(input.githubAppId) !== Option.isSome(input.githubAppPrivateKey)) {
+      return yield* new HubConfigError({
+        message:
+          "The git tools need both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH; only one is set.",
+      })
+    }
+    if (Option.isSome(input.githubAppPrivateKey)) {
+      const key = input.githubAppPrivateKey.value
+      const parsed = yield* Effect.try({
+        try: () => createPrivateKey(Redacted.value(key)),
+        catch: () =>
+          new HubConfigError({ message: "The GitHub App's private key is not a PEM key." }),
+      })
+      if (parsed.asymmetricKeyType !== "rsa") {
+        return yield* new HubConfigError({
+          message: "The GitHub App's private key is not an RSA key.",
+        })
+      }
+    }
     return HubConfig.of({
       host,
       port: input.port,
@@ -100,6 +145,11 @@ export class HubConfig extends Context.Service<
         input.githubClientId,
         input.githubClientSecret,
         (clientId, clientSecret) => ({ clientId, clientSecret }),
+      ),
+      githubApp: Option.zipWith(
+        input.githubAppId,
+        input.githubAppPrivateKey,
+        (appId, privateKey) => ({ appId, privateKey, apiUrl: input.githubApiUrl ?? GitHubApiUrl }),
       ),
       devLogin: input.devLogin ? Option.some({ defaultName: input.devLoginName }) : Option.none(),
       secureCookies: publicUrl.protocol === "https:" || !isLoopback(publicUrl.hostname),
@@ -110,12 +160,23 @@ export class HubConfig extends Context.Service<
   /**
    * From the environment: `HOST` (127.0.0.1), `PORT` (7777), `HUB_PUBLIC_URL`
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
-   * off), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`) and `HUB_SLEEP_AFTER_MS`
+   * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the git tools use the Runner
+   * host's credentials, and pull requests are off), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`) and `HUB_SLEEP_AFTER_MS`
    * (15 minutes).
    */
   static readonly layer = Layer.effect(
     HubConfig,
     Effect.gen(function* () {
+      const keyPath = yield* Config.option(Config.NonEmptyString("GITHUB_APP_PRIVATE_KEY_PATH"))
+      const githubAppPrivateKey = Option.isNone(keyPath)
+        ? Option.none<Redacted.Redacted<string>>()
+        : yield* Effect.tryPromise({
+            try: () => readFile(keyPath.value, "utf8"),
+            catch: () =>
+              new HubConfigError({
+                message: `Could not read the GitHub App's private key at ${keyPath.value} (GITHUB_APP_PRIVATE_KEY_PATH).`,
+              }),
+          }).pipe(Effect.map((pem) => Option.some(Redacted.make(pem))))
       const input = yield* Config.all({
         host: Config.String("HOST").pipe(Config.withDefault("127.0.0.1")),
         port: Config.Port("PORT").pipe(Config.withDefault(7777)),
@@ -124,6 +185,7 @@ export class HubConfig extends Context.Service<
         ),
         githubClientId: Config.option(Config.NonEmptyString("GITHUB_CLIENT_ID")),
         githubClientSecret: Config.option(Config.Redacted("GITHUB_CLIENT_SECRET")),
+        githubAppId: Config.option(Config.NonEmptyString("GITHUB_APP_ID")),
         devLogin: Config.Boolean("CLAUDE_HUB_DEV_LOGIN").pipe(Config.withDefault(false)),
         devLoginName: Config.String("CLAUDE_HUB_DEV_USER").pipe(
           Config.orElse(() => Config.String("USER")),
@@ -133,7 +195,7 @@ export class HubConfig extends Context.Service<
           Config.withDefault(Duration.toMillis(DefaultSleepAfter)),
         ),
       })
-      return yield* HubConfig.make(input)
+      return yield* HubConfig.make({ ...input, githubAppPrivateKey })
     }),
   )
 

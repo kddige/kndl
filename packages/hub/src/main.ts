@@ -10,6 +10,7 @@ import { Console, Effect, Layer, Option } from "effect"
 import { HttpRouter } from "effect/http"
 import { DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
+import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
@@ -29,6 +30,11 @@ const announceSignIn = Layer.effectDiscard(
         "GitHub sign-in is off: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are not set.",
       )
     }
+    if (Option.isNone(config.githubApp)) {
+      yield* Effect.logWarning(
+        "The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, and the pull request tools are off.",
+      )
+    }
     if (Option.isSome(config.devLogin)) {
       yield* Effect.logWarning(
         `Dev login is on (CLAUDE_HUB_DEV_LOGIN): anyone reaching ${config.publicUrl.origin} can sign in without GitHub.`,
@@ -42,6 +48,7 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(ServerLive),
   Layer.provide(GitHub.layer),
   Layer.provide(HubServices),
+  Layer.provide(GitHubApp.layer),
   Layer.provide(DatabaseLive),
   Layer.provide(HubConfig.layer),
 )

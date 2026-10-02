@@ -24,6 +24,9 @@
 //     Active if its Claude Code is still running in tmux, otherwise Asleep, and woken if prompts
 //     are waiting.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
+// - Git (#13): the sender of each prompt that starts a Turn is recorded as a co-author until the
+//   Runner reports a commit. The Runner's GitRequests are answered by SessionGit, off the lock,
+//   since they may wait on GitHub. When a Turn ends the Runner is told, to push the WIP ref.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -33,6 +36,7 @@
 import {
   CommandFailed,
   DeliverPrompt,
+  GitReply,
   type HubToRunner,
   HubToWeb,
   type ModEvent,
@@ -55,20 +59,24 @@ import {
   type SessionState,
   SessionStateChanged,
   type SessionSummary,
+  SessionTurnEnded,
   StartSession,
   StopSession,
   StopTurn,
   TurnStopRequested,
   type WebToHub,
+  WipNotPushed,
 } from "@claude-hub/protocol"
 import { Clock, Context, Duration, Effect, Layer, Option, type Scope, Semaphore } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
+import { CoAuthors } from "./CoAuthors.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
+import { SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { Sessions } from "./Sessions.ts"
 import { randomId } from "./Tokens.ts"
@@ -141,6 +149,8 @@ export class SessionRelay extends Context.Service<
       const modTokens = yield* ModTokens
       const outbox = yield* ModOutbox
       const config = yield* HubConfig
+      const sessionGit = yield* SessionGit
+      const coAuthors = yield* CoAuthors
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
@@ -725,6 +735,27 @@ export class SessionRelay extends Context.Service<
               return yield* Effect.logDebug(`Sandbox of ${message.sessionId}: ${message.state}`)
             case "TerminalFrame":
               return toWeb(message, (client) => client.terminals.has(message.sessionId))
+            case "GitRequest":
+              // Answered off the lock: it may wait on GitHub.
+              yield* sessionGit.answer(session.value, message.ask).pipe(
+                Effect.flatMap((answer) =>
+                  Effect.sync(() =>
+                    runner.peer.send(GitReply.make({ requestId: message.requestId, answer })),
+                  ),
+                ),
+                Effect.forkIn(layerScope),
+              )
+              return
+            case "CoAuthorsCommitted":
+              return yield* coAuthors.committed(message.sessionId, message.through)
+            case "WipPushFailed":
+              yield* Effect.logWarning(
+                `Runner ${runner.name} could not push the WIP ref of ${message.sessionId}: ${message.message}`,
+              )
+              return yield* logEvent(
+                message.sessionId,
+                WipNotPushed.make({ message: message.message }),
+              )
           }
         })
 
@@ -836,13 +867,24 @@ export class SessionRelay extends Context.Service<
           if (event.promptId !== undefined) {
             if (inFlight.get(sessionId) === event.promptId) inFlight.delete(sessionId)
             const started = yield* prompts.remove(sessionId, event.promptId)
-            if (Option.isSome(started)) yield* queueChanged(sessionId)
+            if (Option.isSome(started)) {
+              yield* coAuthors.record(sessionId, started.value.sender)
+              yield* queueChanged(sessionId)
+            }
           }
           yield* sessionUpdated(sessionId)
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {
           yield* sessions.setCurrentTurn(sessionId, null)
           yield* sessionUpdated(sessionId)
+          yield* turnEnded(sessionId)
         }
+      })
+
+      /** Tells the Session's Runner its Turn ended, so it pushes the WIP ref if anything changed. */
+      const turnEnded = Effect.fn("SessionRelay.turnEnded")(function* (sessionId: SessionId) {
+        const session = yield* sessions.get(sessionId)
+        if (Option.isNone(session)) return
+        onlineRunners.get(session.value.runnerId)?.peer.send(SessionTurnEnded.make({ sessionId }))
       })
 
       const modEvents = Effect.fn("SessionRelay.modEvents")(function* (

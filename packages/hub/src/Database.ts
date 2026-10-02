@@ -90,6 +90,20 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE participants ADD COLUMN avatar_url TEXT`
   }),
+
+  // Who prompted each Session since its last commit, for Co-authored-by trailers (issue #13).
+  "0004_session_prompters": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE session_prompters (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        participant_id TEXT NOT NULL REFERENCES participants (id),
+        at INTEGER NOT NULL
+      )
+    `
+    yield* sql`CREATE INDEX session_prompters_session ON session_prompters (session_id, seq)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
