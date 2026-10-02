@@ -1,0 +1,643 @@
+import * as stylex from "@stylexjs/stylex"
+import { getRouteApi } from "@tanstack/react-router"
+import { type ReactNode, useEffect, useState } from "react"
+import {
+  Avatar,
+  AvatarStack,
+  Badge,
+  Button,
+  Dialog,
+  DialogClose,
+  EmptyState,
+  Field,
+  IconButton,
+  InboxIcon,
+  InfoIcon,
+  Input,
+  Menu,
+  MenuGroup,
+  MenuItem,
+  MenuSeparator,
+  MoreIcon,
+  PlusIcon,
+  Popover,
+  Select,
+  SessionStatus,
+  setTheme,
+  Spinner,
+  StopIcon,
+  Tab,
+  TabList,
+  TabPanel,
+  Tabs,
+  Textarea,
+  toast,
+  Tooltip,
+  TrashIcon,
+} from "../ui/index.ts"
+import { color, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+
+const route = getRouteApi("/kit")
+
+const styles = stylex.create({
+  page: {
+    maxWidth: "64rem",
+    marginInline: "auto",
+    paddingBlock: space.s8,
+    paddingInline: space.s6,
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s10,
+  },
+  header: {
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: space.s4,
+  },
+  title: {
+    fontSize: text.xl,
+    fontWeight: weight.semibold,
+    letterSpacing: tracking.tight,
+    lineHeight: leading.tight,
+  },
+  lede: { color: color.textMuted, marginTop: space.s1 },
+  section: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s3,
+  },
+  sectionTitle: {
+    fontSize: text.md,
+    fontWeight: weight.semibold,
+    lineHeight: leading.tight,
+  },
+  sectionNote: { color: color.textMuted, fontSize: text.sm },
+  card: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s4,
+    padding: space.s5,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    borderRadius: radius.lg,
+    backgroundColor: color.surface,
+  },
+  row: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: space.s2,
+  },
+  rowLabel: {
+    width: "6rem",
+    flexShrink: 0,
+    color: color.textSubtle,
+    fontSize: text.sm,
+  },
+  grid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(15rem, 1fr))",
+    gap: space.s4,
+  },
+  swatches: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(8.5rem, 1fr))",
+    gap: space.s2,
+  },
+  swatch: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.s2,
+    fontSize: text.sm,
+    color: color.textMuted,
+  },
+  chip: {
+    width: "1.5rem",
+    height: "1.5rem",
+    flexShrink: 0,
+    borderRadius: radius.sm,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+  },
+  chipColor: (value: string) => ({ backgroundColor: value }),
+  panel: { paddingTop: space.s3, color: color.textMuted },
+  popoverList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s2,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  },
+  popoverPerson: { display: "flex", alignItems: "center", gap: space.s2 },
+  composer: { maxHeight: "12rem" },
+  themeSelect: { minWidth: "7rem" },
+})
+
+const SWATCHES = [
+  ["bg", color.bg],
+  ["surface", color.surface],
+  ["surfaceMuted", color.surfaceMuted],
+  ["border", color.border],
+  ["text", color.text],
+  ["textMuted", color.textMuted],
+  ["accent", color.accent],
+  ["danger", color.danger],
+  ["warning", color.warning],
+  ["success", color.success],
+  ["sessionActive", color.sessionActive],
+  ["sessionAsleep", color.sessionAsleep],
+  ["sessionFrozen", color.sessionFrozen],
+  ["sessionArchived", color.sessionArchived],
+] as const
+
+const PEOPLE = [
+  { id: "1", name: "Ada Lovelace" },
+  { id: "2", name: "Grace Hopper" },
+  { id: "3", name: "Linus" },
+  { id: "4", name: "Margaret Hamilton" },
+  { id: "5", name: "Ken Thompson" },
+  { id: "6", name: "Barbara Liskov" },
+  { id: "7", name: "Dennis Ritchie" },
+]
+
+// An inline picture, so the kit needs no network to show a loaded avatar.
+const PICTURE = `data:image/svg+xml;utf8,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="#c7d2fe"/><circle cx="16" cy="13" r="6" fill="#4f46e5"/><rect x="6" y="22" width="20" height="12" rx="6" fill="#4f46e5"/></svg>',
+)}`
+
+const BRANCHES = [
+  { value: "main", label: "main" },
+  { value: "develop", label: "develop" },
+  { value: "release/1.0", label: "release/1.0" },
+  { value: "legacy", label: "legacy (protected)", disabled: true },
+] as const
+
+function Section({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
+  return (
+    <section {...stylex.props(styles.section)}>
+      <div>
+        <h2 {...stylex.props(styles.sectionTitle)}>{title}</h2>
+        {note && <p {...stylex.props(styles.sectionNote)}>{note}</p>}
+      </div>
+      <div {...stylex.props(styles.card)}>{children}</div>
+    </section>
+  )
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div {...stylex.props(styles.row)}>
+      <span {...stylex.props(styles.rowLabel)}>{label}</span>
+      {children}
+    </div>
+  )
+}
+
+function ThemeSwitch() {
+  const { theme } = route.useSearch()
+  const navigate = route.useNavigate()
+
+  useEffect(() => {
+    setTheme(theme ?? "system")
+    return () => setTheme("system")
+  }, [theme])
+
+  return (
+    <Select
+      aria-label="Theme"
+      size="sm"
+      sx={styles.themeSelect}
+      value={theme ?? "system"}
+      onValueChange={(next) => {
+        void navigate({ search: next === "system" ? {} : { theme: next } })
+      }}
+      options={[
+        { value: "system", label: "System" },
+        { value: "light", label: "Light" },
+        { value: "dark", label: "Dark" },
+      ]}
+    />
+  )
+}
+
+function Buttons() {
+  const [saving, setSaving] = useState(false)
+  return (
+    <Section
+      title="Button"
+      note="intent says what the action is; size fits the density. Loading keeps focus and width."
+    >
+      {(["primary", "secondary", "ghost", "danger"] as const).map((intent) => (
+        <Row key={intent} label={intent}>
+          <Button intent={intent} size="sm">
+            Small
+          </Button>
+          <Button intent={intent}>Medium</Button>
+          <Button intent={intent} size="lg">
+            Large
+          </Button>
+          <Button intent={intent} icon={<PlusIcon />}>
+            With icon
+          </Button>
+          <Button intent={intent} loading>
+            Loading
+          </Button>
+          <Button intent={intent} disabled>
+            Disabled
+          </Button>
+        </Row>
+      ))}
+      <Row label="icon only">
+        <IconButton label="New Session" size="sm">
+          <PlusIcon />
+        </IconButton>
+        <IconButton label="New Session">
+          <PlusIcon />
+        </IconButton>
+        <IconButton label="Stop" intent="secondary">
+          <StopIcon />
+        </IconButton>
+        <IconButton label="Delete" intent="danger">
+          <TrashIcon />
+        </IconButton>
+      </Row>
+      <Row label="try it">
+        <Button
+          intent="primary"
+          loading={saving}
+          onClick={() => {
+            setSaving(true)
+            setTimeout(() => setSaving(false), 1500)
+          }}
+        >
+          Save changes
+        </Button>
+      </Row>
+    </Section>
+  )
+}
+
+function Fields() {
+  const [prompt, setPrompt] = useState("")
+  return (
+    <Section title="Field, Input, Textarea" note="Every control has a visible label.">
+      <div {...stylex.props(styles.grid)}>
+        <Field label="Session name">
+          <Input placeholder="e.g. Fix flaky login test" />
+        </Field>
+        <Field label="Repo" description="owner/name of a GitHub repository.">
+          <Input defaultValue="kddige/claude-hub" />
+        </Field>
+        <Field label="Secret name" invalid error="Use letters, digits and underscores only.">
+          <Input defaultValue="API-KEY" />
+        </Field>
+        <Field label="Runner" disabled description="Chosen automatically.">
+          <Input defaultValue="runner-eu-1" />
+        </Field>
+        <Field label="Small input">
+          <Input size="sm" placeholder="Filter…" />
+        </Field>
+        <Field label="Required" description="Submit the form empty to see the browser's message.">
+          <Input required />
+        </Field>
+      </div>
+      <div {...stylex.props(styles.grid)}>
+        <Field label="Secret value" description="Stored encrypted; never shown again.">
+          <Textarea rows={3} placeholder="Paste the value" />
+        </Field>
+        <Field label="Prompt" description="Grows as you type.">
+          <Textarea
+            autoResize
+            rows={1}
+            value={prompt}
+            onValueChange={setPrompt}
+            placeholder="Ask Claude…"
+            sx={styles.composer}
+          />
+        </Field>
+      </div>
+    </Section>
+  )
+}
+
+function Selects() {
+  const [branch, setBranch] = useState<string>("main")
+  return (
+    <Section title="Select">
+      <div {...stylex.props(styles.grid)}>
+        <Field label="Base branch">
+          <Select options={BRANCHES} value={branch} onValueChange={setBranch} />
+        </Field>
+        <Field label="Runner">
+          <Select
+            placeholder="Choose a Runner"
+            options={[
+              { value: "eu", label: "runner-eu-1" },
+              { value: "us", label: "runner-us-1" },
+            ]}
+          />
+        </Field>
+        <Field label="Disabled" disabled>
+          <Select options={BRANCHES} defaultValue="main" disabled />
+        </Field>
+      </div>
+      <Row label="small">
+        <Select
+          size="sm"
+          aria-label="Sort"
+          defaultValue="recent"
+          options={[
+            { value: "recent", label: "Most recent" },
+            { value: "name", label: "Name" },
+          ]}
+        />
+      </Row>
+    </Section>
+  )
+}
+
+function Overlays() {
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  return (
+    <Section title="Tooltip, Menu, Popover, Dialog">
+      <Row label="tooltip">
+        <Tooltip content="Starts a Session on the chosen Repo">
+          <Button>Hover or focus me</Button>
+        </Tooltip>
+        <Tooltip content="Shown below" side="bottom">
+          <Button intent="ghost">Below</Button>
+        </Tooltip>
+      </Row>
+      <Row label="menu">
+        <Menu
+          trigger={
+            <IconButton label="Session actions" intent="secondary">
+              <MoreIcon />
+            </IconButton>
+          }
+        >
+          <MenuItem icon={<PlusIcon />} onClick={() => toast.show({ title: "Renamed" })}>
+            Rename
+          </MenuItem>
+          <MenuItem icon={<StopIcon />} disabled>
+            Stop Turn
+          </MenuItem>
+          <MenuSeparator />
+          <MenuGroup label="Danger zone">
+            <MenuItem intent="danger" icon={<TrashIcon />} onClick={() => setConfirmOpen(true)}>
+              Delete Session…
+            </MenuItem>
+          </MenuGroup>
+        </Menu>
+        <Menu trigger={<Button>Open menu</Button>} align="end">
+          <MenuItem>Copy link</MenuItem>
+          <MenuItem>Open in new tab</MenuItem>
+        </Menu>
+      </Row>
+      <Row label="popover">
+        <Popover
+          trigger={<Button icon={<InfoIcon />}>Participants</Button>}
+          title="4 Participants"
+          description="Everyone here can prompt, stop and delete this Session."
+        >
+          <ul {...stylex.props(styles.popoverList)}>
+            {PEOPLE.slice(0, 4).map((person) => (
+              <li key={person.id} {...stylex.props(styles.popoverPerson)}>
+                <Avatar name={person.name} size="sm" />
+                {person.name}
+              </li>
+            ))}
+          </ul>
+        </Popover>
+      </Row>
+      <Row label="dialog">
+        <Dialog
+          trigger={<Button>New Session</Button>}
+          title="New Session"
+          description="Claude starts on its own Work branch, created from the base branch."
+          footer={
+            <>
+              <DialogClose>Cancel</DialogClose>
+              <Button intent="primary">Start Session</Button>
+            </>
+          }
+        >
+          <Field label="Repo">
+            <Input defaultValue="kddige/claude-hub" />
+          </Field>
+        </Dialog>
+        <Button intent="danger" onClick={() => setConfirmOpen(true)}>
+          Delete Session…
+        </Button>
+        <Dialog
+          open={confirmOpen}
+          onOpenChange={setConfirmOpen}
+          size="sm"
+          title="Delete this Session?"
+          description="It is Archived for 30 days and can be restored until then."
+          footer={
+            <>
+              <DialogClose>Cancel</DialogClose>
+              <Button
+                intent="danger"
+                onClick={() => {
+                  setConfirmOpen(false)
+                  toast.show({
+                    title: "Session archived",
+                    description: "Fix flaky login test",
+                    action: { label: "Undo", onAction: () => toast.show({ title: "Restored" }) },
+                  })
+                }}
+              >
+                Delete
+              </Button>
+            </>
+          }
+        />
+      </Row>
+    </Section>
+  )
+}
+
+function Toasts() {
+  return (
+    <Section title="Toast" note="F6 moves focus to the toasts. Hover or focus pauses them.">
+      <Row label="intents">
+        <Button onClick={() => toast.show({ title: "Link copied" })}>Neutral</Button>
+        <Button
+          onClick={() =>
+            toast.show({
+              title: "Runner connected",
+              description: "runner-eu-1 is back online.",
+              intent: "success",
+            })
+          }
+        >
+          Success
+        </Button>
+        <Button
+          onClick={() =>
+            toast.show({
+              title: "Session is Frozen",
+              description: "Its Runner went offline. It stays readable.",
+              intent: "warning",
+            })
+          }
+        >
+          Warning
+        </Button>
+        <Button
+          onClick={() =>
+            toast.show({
+              title: "Couldn't push the WIP ref",
+              description: "The remote rejected it. Retrying in 30s.",
+              intent: "danger",
+            })
+          }
+        >
+          Danger
+        </Button>
+      </Row>
+      <Row label="with action">
+        <Button
+          onClick={() =>
+            toast.show({
+              title: "Session archived",
+              description: "Restore it within 30 days.",
+              action: { label: "Undo", onAction: () => toast.show({ title: "Session restored" }) },
+            })
+          }
+        >
+          Archive with Undo
+        </Button>
+      </Row>
+    </Section>
+  )
+}
+
+export function KitPage() {
+  return (
+    <main {...stylex.props(styles.page)}>
+      <header {...stylex.props(styles.header)}>
+        <div>
+          <h1 {...stylex.props(styles.title)}>UI kit</h1>
+          <p {...stylex.props(styles.lede)}>
+            Every component in its states. Switch the theme to check both palettes.
+          </p>
+        </div>
+        <ThemeSwitch />
+      </header>
+
+      <Section title="Colour tokens" note="Semantic roles; the values change with the theme.">
+        <div {...stylex.props(styles.swatches)}>
+          {SWATCHES.map(([name, value]) => (
+            <div key={name} {...stylex.props(styles.swatch)}>
+              <span {...stylex.props(styles.chip, styles.chipColor(value))} />
+              {name}
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Buttons />
+
+      <Section title="Badge, SessionStatus">
+        <Row label="badge">
+          <Badge>12</Badge>
+          <Badge intent="accent">New</Badge>
+          <Badge intent="success">Merged</Badge>
+          <Badge intent="warning">Behind main</Badge>
+          <Badge intent="danger">Failed</Badge>
+        </Row>
+        <Row label="session">
+          <SessionStatus state="active" />
+          <SessionStatus state="asleep" />
+          <SessionStatus state="frozen" />
+          <SessionStatus state="archived" />
+        </Row>
+        <Row label="dot only">
+          <SessionStatus state="active" variant="dot" />
+          <SessionStatus state="asleep" variant="dot" />
+          <SessionStatus state="frozen" variant="dot" />
+          <SessionStatus state="archived" variant="dot" />
+        </Row>
+      </Section>
+
+      <Section title="Avatar, AvatarStack">
+        <Row label="sizes">
+          <Avatar name="Ada Lovelace" size="sm" />
+          <Avatar name="Ada Lovelace" />
+          <Avatar name="Ada Lovelace" size="lg" />
+          <Avatar name="Picture" src={PICTURE} size="lg" />
+        </Row>
+        <Row label="hues">
+          {PEOPLE.map((person) => (
+            <Avatar key={person.id} name={person.name} />
+          ))}
+        </Row>
+        <Row label="stack">
+          <AvatarStack label="Participants" people={PEOPLE.slice(0, 3)} />
+          <AvatarStack label="Participants" people={PEOPLE} />
+          <AvatarStack label="Participants" people={PEOPLE} size="sm" max={3} />
+        </Row>
+      </Section>
+
+      <Fields />
+      <Selects />
+
+      <Section title="Tabs">
+        <Tabs defaultValue="chat">
+          <TabList label="Session views">
+            <Tab value="chat">Chat</Tab>
+            <Tab value="terminal">Terminal</Tab>
+            <Tab value="previews">
+              Previews <Badge>2</Badge>
+            </Tab>
+            <Tab value="settings" disabled>
+              Settings
+            </Tab>
+          </TabList>
+          <TabPanel value="chat" sx={styles.panel}>
+            The conversation, Turn by Turn.
+          </TabPanel>
+          <TabPanel value="terminal" sx={styles.panel}>
+            A read-only mirror of the Sandbox terminal.
+          </TabPanel>
+          <TabPanel value="previews" sx={styles.panel}>
+            Ports served from the Sandbox.
+          </TabPanel>
+        </Tabs>
+      </Section>
+
+      <Overlays />
+      <Toasts />
+
+      <Section title="EmptyState, Spinner">
+        <EmptyState
+          icon={<InboxIcon />}
+          title="No Sessions yet"
+          description="Start one on any Repo you can access. Everyone with access can join it."
+          action={
+            <Button intent="primary" icon={<PlusIcon />}>
+              New Session
+            </Button>
+          }
+        />
+        <EmptyState
+          title="No Archived Sessions"
+          description="Deleted Sessions stay here for 30 days."
+        />
+        <Row label="spinner">
+          <Spinner size="sm" />
+          <Spinner />
+          <Spinner size="lg" label="Loading Sessions" />
+        </Row>
+      </Section>
+    </main>
+  )
+}

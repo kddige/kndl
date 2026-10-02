@@ -1,3 +1,4 @@
+import stylex from "@stylexjs/unplugin/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
@@ -6,7 +7,9 @@ import { defineConfig } from "vite"
 const hub = process.env.HUB_URL ?? "http://127.0.0.1:7777"
 
 export default defineConfig({
-  plugins: [react()],
+  // StyleX compiles stylex.create() calls away and collects their CSS into the bundle; in dev it
+  // injects that CSS into index.html and hot-reloads it.
+  plugins: [stylex(), react()],
   server: {
     proxy: {
       "/auth": hub,
