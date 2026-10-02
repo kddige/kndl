@@ -1,10 +1,10 @@
 // The WebSocket channels to Runners and web clients. Each authenticates before the upgrade
 // (a request without a valid credential gets 401 and no socket), then opens with the peer's
-// hello, answered by a welcome or a HandshakeRejected.
+// hello, answered by a welcome or a HandshakeRejected. After the welcome, the SessionRelay
+// handles every message, and sends the peer what it needs to know.
 //
-// What flows after the welcome is for the Session relay (issue #8) and the Runner (issue #10);
-// for now the Hub reads and drops it until the peer hangs up. The mod, which can't open a
-// WebSocket, talks to the Hub over plain HTTP instead: see ModRoutes.ts.
+// The mod, which can't open a WebSocket, talks to the Hub over plain HTTP instead: see
+// ModRoutes.ts.
 
 import {
   checkHandshake,
@@ -13,12 +13,15 @@ import {
   HubToWeb,
   ProtocolVersion,
   RunnerHello,
+  RunnerToHub,
   WebHello,
+  WebToHub,
 } from "@claude-hub/protocol"
-import { Duration, Effect, Schema } from "effect"
+import { Duration, Effect, Queue, Schema, type Scope } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"
 import { authenticateParticipant, authenticateRunner, requireSameOrigin } from "./Auth.ts"
+import { type Peer, type Receive, SessionRelay } from "./SessionRelay.ts"
 
 /** How long a peer has to send its hello once the socket is open. */
 const helloTimeout = Duration.seconds(10)
@@ -31,12 +34,21 @@ export const CloseCode = {
 
 /**
  * Upgrades the request and runs the handshake: reads the hello, checks its protocol version,
- * decodes it with `hello`, and sends what `welcome` makes of it.
+ * decodes it with `hello`, and sends what `welcome` makes of it. Then `connect` gets the peer
+ * and returns what to do with each message after the hello; its scope closes with the socket.
+ *
+ * Messages to the peer are queued and written by a fiber of their own, so sending never waits
+ * on the peer.
  */
-const serveChannel = <Hello, Out, R>(options: {
+const serveChannel = <Hello, In, Out>(options: {
   readonly hello: Schema.Codec<Hello, unknown>
+  readonly incoming: Schema.Codec<In, unknown>
   readonly outgoing: Schema.Codec<Out, unknown>
-  readonly welcome: (hello: Hello) => Effect.Effect<Out, never, R>
+  readonly welcome: (hello: Hello) => Out
+  readonly connect: (
+    hello: Hello,
+    peer: Peer<Out>,
+  ) => Effect.Effect<Receive<In>, never, Scope.Scope>
 }) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
@@ -45,14 +57,12 @@ const serveChannel = <Hello, Out, R>(options: {
       Effect.gen(function* () {
         const writer = yield* socket.writer
         const pull = yield* Socket.readerString(socket)
-        const send = (message: Out) =>
-          writer.write(JSON.stringify(Schema.encodeSync(options.outgoing)(message)))
         const reject = (rejection: HandshakeRejected) =>
           writer
             .write(JSON.stringify(Schema.encodeSync(HandshakeRejected)(rejection)))
             .pipe(Effect.andThen(writer.write(new Socket.CloseEvent(1008, rejection.reason))))
 
-        const first = yield* pull.pipe(
+        const [first, ...rest] = yield* pull.pipe(
           Effect.timeoutOrElse({
             duration: helloTimeout,
             orElse: () =>
@@ -61,7 +71,7 @@ const serveChannel = <Hello, Out, R>(options: {
                 .pipe(Effect.andThen(Effect.interrupt)),
           }),
         )
-        const message = parseJson(first[0])
+        const message = parseJson(first)
         const mismatch = checkHandshake(message)
         if (mismatch !== undefined) return yield* reject(mismatch)
         const hello = Schema.decodeUnknownExit(options.hello)(message)
@@ -74,8 +84,33 @@ const serveChannel = <Hello, Out, R>(options: {
             }),
           )
         }
-        yield* send(yield* options.welcome(hello.value))
-        yield* Effect.forever(pull)
+
+        const outbox = yield* Queue.unbounded<string | Socket.CloseEvent>()
+        yield* Effect.forkScoped(
+          Effect.forever(Effect.flatMap(Queue.take(outbox), (chunk) => writer.write(chunk))),
+        )
+        const encode = Schema.encodeSync(options.outgoing)
+        const peer: Peer<Out> = {
+          send: (out) => void Queue.offerUnsafe(outbox, JSON.stringify(encode(out))),
+          close: (code, reason) =>
+            void Queue.offerUnsafe(outbox, new Socket.CloseEvent(code, reason)),
+        }
+        peer.send(options.welcome(hello.value))
+        const receive = yield* options.connect(hello.value, peer)
+
+        const decode = Schema.decodeUnknownExit(options.incoming)
+        const receiveAll = Effect.fnUntraced(function* (texts: ReadonlyArray<string>) {
+          for (const text of texts) {
+            const decoded = decode(parseJson(text))
+            if (decoded._tag === "Failure") {
+              yield* Effect.logWarning("Dropped a message the channel doesn't accept", text)
+            } else {
+              yield* receive(decoded.value)
+            }
+          }
+        })
+        yield* receiveAll(rest)
+        yield* Effect.forever(Effect.flatMap(pull, receiveAll))
       }).pipe(
         Effect.catchTag("SocketError", () => Effect.void),
         Effect.catchCause(Effect.logDebug),
@@ -94,6 +129,8 @@ function parseJson(text: string | undefined): unknown {
 
 export const ChannelRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
+    const relay = yield* SessionRelay
+
     // A Runner, by its Runner token. Its RunnerId comes from the token, not the hello.
     yield* router.add(
       "GET",
@@ -102,14 +139,14 @@ export const ChannelRoutes = HttpRouter.use(
         const runner = yield* authenticateRunner
         return yield* serveChannel({
           hello: RunnerHello,
+          incoming: RunnerToHub,
           outgoing: HubToRunner,
           welcome: () =>
-            Effect.succeed(
-              HubToRunner.cases.RunnerWelcome.make({
-                protocolVersion: ProtocolVersion,
-                runnerId: runner.runnerId,
-              }),
-            ),
+            HubToRunner.cases.RunnerWelcome.make({
+              protocolVersion: ProtocolVersion,
+              runnerId: runner.runnerId,
+            }),
+          connect: (hello, peer) => relay.connectRunner(runner, hello, peer),
         })
       }),
     )
@@ -123,11 +160,10 @@ export const ChannelRoutes = HttpRouter.use(
         const you = yield* authenticateParticipant
         return yield* serveChannel({
           hello: WebHello,
+          incoming: WebToHub,
           outgoing: HubToWeb,
-          welcome: () =>
-            Effect.succeed(
-              HubToWeb.cases.WebWelcome.make({ protocolVersion: ProtocolVersion, you }),
-            ),
+          welcome: () => HubToWeb.cases.WebWelcome.make({ protocolVersion: ProtocolVersion, you }),
+          connect: (_hello, peer) => relay.connectWeb(you, peer),
         })
       }),
     )
