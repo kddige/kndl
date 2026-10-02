@@ -3,7 +3,8 @@
 // MicrosandboxBackend.ts; an in-memory fake for tests is in FakeSandboxBackend.ts.
 //
 // A Sandbox is addressed by its Session's id: a Session has at most one Sandbox at a time, and
-// every Sandbox and volume a backend makes is named after its Session (see Naming.ts).
+// every Sandbox and volume a backend makes is named after its Session (see Naming.ts). A backend
+// works for one Runner, and marks what it makes as that Runner's.
 
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
 import { Context, Data, Effect, Stream } from "effect"
@@ -120,6 +121,11 @@ export interface ExecResult {
 /** A Session's Sandbox and volumes as the backend finds them. */
 export interface SandboxListing {
   readonly sessionId: SessionId
+  /**
+   * The mark of the Runner that made them (Naming.ts), or undefined for ones made before
+   * Sandboxes carried a mark, which belong to no Runner.
+   */
+  readonly runner: string | undefined
   /** `Destroyed` when only the Session's volumes are left. */
   readonly state: SandboxState
   /** The backend's names for the Session's volumes. */
@@ -187,6 +193,8 @@ export type SandboxError =
 // ── The service ────────────────────────────────────────────────────────────
 
 export interface SandboxBackendShape {
+  /** The mark of the Runner this backend works for, put on everything it makes. */
+  readonly runner: string
   /**
    * Creates the Session's volumes where missing and boots a new Sandbox on them. Existing
    * volumes are reused as they are, which is how a fresh Sandbox wakes on old data.
@@ -209,7 +217,10 @@ export interface SandboxBackendShape {
   ) => Effect.Effect<void, SandboxError>
   /** Where the Session's Sandbox is: `Destroyed` when it has none. */
   readonly state: (sessionId: SessionId) => Effect.Effect<SandboxState, SandboxError>
-  /** Every Sandbox and volume this backend made, for any Session, grouped by Session. */
+  /**
+   * Every Sandbox and volume named as a Session's on this host, grouped by Session: this Runner's,
+   * other Runners' and unmarked ones alike.
+   */
   readonly list: Effect.Effect<ReadonlyArray<SandboxListing>, SandboxError>
   /**
    * Runs a command in the running Sandbox, streaming its output as it comes. Interrupting the

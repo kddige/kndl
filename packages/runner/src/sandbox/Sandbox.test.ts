@@ -1,10 +1,17 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionId } from "@claude-hub/protocol"
 import { Effect, Option, Stream } from "effect"
-import { FakeSandboxBackend, killedExitCode } from "./FakeSandboxBackend.ts"
-import { parseSandboxName, parseVolumeName, sandboxName, volumeName } from "./Naming.ts"
+import { FakeSandboxBackend, killedExitCode, makeFake, makeFakeWorld } from "./FakeSandboxBackend.ts"
+import {
+  parseSandboxName,
+  parseVolumeName,
+  runnerMark,
+  sandboxName,
+  volumeName,
+} from "./Naming.ts"
 import { reconcileSandboxes } from "./Reconcile.ts"
 import { SandboxBackend, shell } from "./SandboxBackend.ts"
+import type { SandboxBackendShape } from "./SandboxBackend.ts"
 import { dependencyVolumeKey, sessionSandboxSpec } from "./SessionLayout.ts"
 import { checkSpec } from "./Spec.ts"
 
@@ -36,6 +43,14 @@ describe("naming", () => {
     expect(volumeName(s1, "deps-node-modules")).toBe("claude-hub-s-1.deps-node-modules")
     expect(parseSandboxName("claude-hub-s-1")).toBe(s1)
     expect(parseVolumeName("claude-hub-s-1.cache")).toEqual({ sessionId: s1, key: "cache" })
+  })
+
+  test("a Runner's mark is fixed by its tmux socket and sessions root", () => {
+    const runner = { tmuxSocket: "claude-hub", sessionsRoot: "/Users/a/.claude-hub/sessions" }
+    expect(runnerMark(runner)).toMatch(/^[0-9a-f]{16}$/)
+    expect(runnerMark({ ...runner })).toBe(runnerMark(runner))
+    expect(runnerMark({ ...runner, tmuxSocket: "claude-hub-test" })).not.toBe(runnerMark(runner))
+    expect(runnerMark({ ...runner, sessionsRoot: "/tmp/sessions" })).not.toBe(runnerMark(runner))
   })
 
   test("names without the prefix are never ours", () => {
@@ -263,6 +278,60 @@ describe("reconciling", () => {
         expect(yield* backend.state(s1)).toBe("Running")
         expect(yield* backend.state(s2)).toBe("Stopped")
         expect((yield* backend.list).length).toBe(3)
+      }),
+    ))
+
+  test("two Runners sharing one backend don't touch each other's Sandboxes (#38)", async () => {
+    const world = makeFakeWorld()
+    const a = makeFake({ world, runner: "runner-a" }).backend
+    const b = makeFake({ world, runner: "runner-b" }).backend
+    const s3 = "s-3" as SessionId
+    const reconcileOn = (backend: SandboxBackendShape, known: Array<SessionId>) =>
+      Effect.runPromise(
+        reconcileSandboxes(known).pipe(Effect.provideService(SandboxBackend, backend)),
+      )
+    await Effect.runPromise(
+      Effect.all([a.create(layout(s1)), a.create(layout(s2)), b.create(layout(s3))]),
+    )
+
+    // Runner b knows none of its Sessions any more: only its own Sandbox stops.
+    const fromB = await reconcileOn(b, [])
+    expect(fromB.unknown.map((u) => [u.sessionId, u.runner, u.stopped])).toEqual([
+      [s3, "runner-b", true],
+    ])
+    expect(fromB.others.map((o) => [o.sessionId, o.runner, o.state])).toEqual([
+      [s1, "runner-a", "Running"],
+      [s2, "runner-a", "Running"],
+    ])
+    // And a Runner a that runs s-1 stops its own s-2, leaving b's s-3 as b left it.
+    const fromA = await reconcileOn(a, [s1])
+    expect(fromA.unknown.map((u) => u.sessionId)).toEqual([s2])
+    expect([...world.sandboxes].map(([id, sandbox]) => [id, sandbox.state])).toEqual([
+      [s1, "Running"],
+      [s2, "Stopped"],
+      [s3, "Stopped"],
+    ])
+  })
+
+  test("leaves Sandboxes from before Runner marks alone, and only reports them", () =>
+    run(
+      Effect.gen(function* () {
+        const backend = yield* SandboxBackend
+        const world = yield* FakeSandboxBackend
+        // As an older Runner made it: a running Sandbox and volumes with no Runner mark.
+        yield* backend.create(layout(s2))
+        const legacy = world.sandboxes.get(s2)
+        if (legacy === undefined) throw new Error("no Sandbox")
+        world.sandboxes.set(s2, { ...legacy, runner: undefined })
+        for (const name of world.volumeRunners.keys()) world.volumeRunners.set(name, undefined)
+
+        const report = yield* reconcileSandboxes([])
+
+        expect(report.unknown).toEqual([])
+        expect(report.others.map((o) => [o.sessionId, o.runner, o.state])).toEqual([
+          [s2, undefined, "Running"],
+        ])
+        expect(yield* backend.state(s2)).toBe("Running")
       }),
     ))
 })

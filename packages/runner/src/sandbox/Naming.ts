@@ -1,15 +1,42 @@
-// How Sandboxes and volumes are named. Everything a backend makes starts with `claude-hub-` and
-// carries its Session's id, so the Runner can find what it made after a crash (Reconcile.ts) and
-// never mistakes anything else on the host for its own.
+// How Sandboxes and volumes are named and labelled. Everything a backend makes starts with
+// `claude-hub-` and carries its Session's id, so the Runner can find what it made after a crash
+// (Reconcile.ts) and never mistakes anything else on the host for its own.
 //
 //   Sandbox: claude-hub-<sessionId>
 //   Volume:  claude-hub-<sessionId>.<key>
+//
+// Several Runners can share one host, and so one microsandbox (#38). Each labels what it makes
+// with its Runner mark (`claude-hub.runner`), and reconciles only what carries its own mark.
+// Sandboxes made before the mark have none: they belong to no Runner, and are only reported.
 
+import { createHash } from "node:crypto"
 import type { SessionId } from "@claude-hub/protocol"
 import { Effect } from "effect"
 import { InvalidSandboxSpec } from "./SandboxBackend.ts"
 
 export const prefix = "claude-hub-"
+
+/** The label naming a Sandbox's or volume's Session. */
+export const sessionLabel = "claude-hub.session"
+/** The label naming a volume's key within its Session. */
+export const volumeLabel = "claude-hub.volume"
+/** The label carrying the mark of the Runner that made a Sandbox or volume. */
+export const runnerLabel = "claude-hub.runner"
+
+/**
+ * This Runner's mark: a digest of its tmux socket name and sessions root. Both are fixed by its
+ * configuration, so the mark survives restarts and is known before the Hub's welcome. They are
+ * also exactly what decides which Sessions the Runner re-adopts: two Runners sharing both would
+ * share their tmux sessions and directories too, so can't be told apart anyway, while Runners
+ * that differ in either never adopt each other's Sessions. The Hub's RunnerId would do as well
+ * once welcomed, but reconciling happens before connecting, and a Runner keeps its Sessions
+ * across a new token.
+ */
+export const runnerMark = (runner: { readonly tmuxSocket: string; readonly sessionsRoot: string }) =>
+  createHash("sha256")
+    .update(`${runner.tmuxSocket}\0${runner.sessionsRoot}`)
+    .digest("hex")
+    .slice(0, 16)
 
 // The backend's names are limited to 128 bytes; keep room for the prefix and a volume key.
 const sessionIdPattern = /^[A-Za-z0-9_-]{1,80}$/

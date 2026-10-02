@@ -49,12 +49,15 @@ test.skipIf(!enabled)(
       cacheSizeMib: 1024,
       dockerSizeMib: 4096,
     })
-    // Someone else's Sandbox on this machine; we must leave it exactly as it was.
-    const foreignBefore = await Sandbox.list().then((page) =>
-      page.sandboxes
-        .filter((s) => !s.name.startsWith("claude-hub-"))
-        .map((s) => [s.name, s.status]),
-    )
+    // Every other Sandbox on this machine, other Runners' included; we must leave them exactly
+    // as they were.
+    const others = () =>
+      Sandbox.list().then((page) =>
+        page.sandboxes
+          .filter((s) => s.name !== `claude-hub-${sessionId}`)
+          .map((s) => [s.name, s.status]),
+      )
+    const othersBefore = await others()
 
     const program = Effect.gen(function* () {
       const backend = yield* SandboxBackend
@@ -173,14 +176,12 @@ test.skipIf(!enabled)(
       )
       expect((yield* sh("docker ps -a --format '{{.Names}}'")).stdout).toBe("keep\n")
 
-      // Reconciling, with every other claude-hub Sandbox counted as known: ours gets stopped.
-      const others = (yield* backend.list)
-        .map((listing) => listing.sessionId)
-        .filter((id) => id !== sessionId)
-      const report = yield* timed("reconcile", reconcileSandboxes(others))
-      expect(report.unknown.map((u) => [u.sessionId, u.state, u.stopped])).toEqual([
-        [sessionId, "Stopped", true],
+      // Reconciling with no Session known: only this Runner's Sandbox gets stopped.
+      const report = yield* timed("reconcile", reconcileSandboxes([]))
+      expect(report.unknown.map((u) => [u.sessionId, u.runner, u.state, u.stopped])).toEqual([
+        [sessionId, `it-${sessionId}`, "Stopped", true],
       ])
+      expect(report.others.map((o) => o.sessionId)).not.toContain(sessionId)
       expect(report.unknown[0]?.volumes.length).toBe(3)
       expect(yield* backend.state(sessionId)).toBe("Stopped")
     })
@@ -197,7 +198,7 @@ test.skipIf(!enabled)(
         program.pipe(
           Effect.ensuring(cleanup.pipe(Effect.orDie)),
           Effect.scoped,
-          Effect.provide(MicrosandboxBackend.layer),
+          Effect.provide(MicrosandboxBackend.layerFor(`it-${sessionId}`)),
         ),
       )
     } finally {
@@ -208,12 +209,7 @@ test.skipIf(!enabled)(
           .join("\n"),
       )
     }
-    const foreignAfter = await Sandbox.list().then((page) =>
-      page.sandboxes
-        .filter((s) => !s.name.startsWith("claude-hub-"))
-        .map((s) => [s.name, s.status]),
-    )
-    expect(foreignAfter).toEqual(foreignBefore)
+    expect(await others()).toEqual(othersBefore)
   },
   600_000,
 )
