@@ -589,66 +589,6 @@ describe("GitHub sign-in", () => {
     expect(await me.json()).toEqual({ id: "github:42", login: "octocat", name: "octocat" })
   })
 
-  describe("avatar", () => {
-    const avatarUrl = "https://avatars.githubusercontent.com/u/583231?v=4"
-
-    const githubWith = (avatar_url: string | undefined) =>
-      GitHub.layerTest({
-        code: "good-code",
-        user: { id: 42, login: "octocat", name: "The Octocat", avatar_url },
-      })
-
-    /** Signs in through the stand-in GitHub; returns what `/auth/me` then says. */
-    async function signInAndAskMe(hub: TestHub) {
-      const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
-      const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
-      const callback = await fetch(
-        `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-        { redirect: "manual", headers: { cookie: `claude_hub_oauth_state=${state}` } },
-      )
-      const me = await fetch(`${hub.url}/auth/me`, { headers: { cookie: cookieFrom(callback) } })
-      return me.json()
-    }
-
-    test("is stored at sign-in and answered by /auth/me", async () => {
-      const hub = await startHub({ github: githubWith(avatarUrl) })
-
-      expect(await signInAndAskMe(hub)).toEqual({
-        id: "github:42",
-        login: "octocat",
-        name: "The Octocat",
-        avatarUrl,
-      })
-    })
-
-    test("is dropped unless it is on GitHub's avatar host over HTTPS", async () => {
-      for (const url of [
-        "https://evil.example/avatar.png",
-        "http://avatars.githubusercontent.com/u/1",
-        "https://avatars.githubusercontent.com.evil.example/u/1",
-        "https://avatars.githubusercontent.com@evil.example/u/1",
-        "https://avatars.githubusercontent.com\\@evil.example/u/1",
-        "javascript:alert(1)",
-        "",
-      ]) {
-        const hub = await startHub({ github: githubWith(url) })
-
-        expect(await signInAndAskMe(hub), url).toEqual({
-          id: "github:42",
-          login: "octocat",
-          name: "The Octocat",
-        })
-      }
-    })
-
-    test("is absent when GitHub sends none, and for dev login", async () => {
-      const hub = await startHub({ github: githubWith(undefined), config: { devLogin: true } })
-
-      expect(await signInAndAskMe(hub)).not.toHaveProperty("avatarUrl")
-      expect(await (await devSignIn(hub)).json()).not.toHaveProperty("avatarUrl")
-    })
-  })
-
   test("refuses a callback whose state doesn't match the browser's", async () => {
     const hub = await startHub({ github })
     const callback = await fetch(`${hub.url}/auth/github/callback?code=good-code&state=forged`, {
@@ -674,5 +614,65 @@ describe("GitHub sign-in", () => {
 
     expect(start.headers.get("set-cookie")).toContain("Secure")
     expect(callback.headers.get("set-cookie")).toContain("Secure")
+  })
+})
+
+const githubWith = (avatar_url: string | undefined) =>
+  GitHub.layerTest({
+    code: "good-code",
+    user: { id: 42, login: "octocat", name: "The Octocat", avatar_url },
+  })
+
+/** Signs in through the stand-in GitHub; returns what `/auth/me` then says. */
+async function signInAndAskMe(hub: TestHub) {
+  const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
+  const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
+  const callback = await fetch(
+    `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
+    { redirect: "manual", headers: { cookie: `claude_hub_oauth_state=${state}` } },
+  )
+  const me = await fetch(`${hub.url}/auth/me`, { headers: { cookie: cookieFrom(callback) } })
+  return me.json()
+}
+
+describe("avatar from the sign-in", () => {
+  const avatarUrl = "https://avatars.githubusercontent.com/u/583231?v=4"
+
+  test("is stored at sign-in and answered by /auth/me", async () => {
+    const hub = await startHub({ github: githubWith(avatarUrl) })
+
+    expect(await signInAndAskMe(hub)).toEqual({
+      id: "github:42",
+      login: "octocat",
+      name: "The Octocat",
+      avatarUrl,
+    })
+  })
+
+  test("is dropped unless it is on GitHub's avatar host over HTTPS", async () => {
+    for (const url of [
+      "https://evil.example/avatar.png",
+      "http://avatars.githubusercontent.com/u/1",
+      "https://avatars.githubusercontent.com.evil.example/u/1",
+      "https://avatars.githubusercontent.com@evil.example/u/1",
+      "https://avatars.githubusercontent.com\\@evil.example/u/1",
+      "javascript:alert(1)",
+      "",
+    ]) {
+      const hub = await startHub({ github: githubWith(url) })
+
+      expect(await signInAndAskMe(hub), url).toEqual({
+        id: "github:42",
+        login: "octocat",
+        name: "The Octocat",
+      })
+    }
+  })
+
+  test("is absent when GitHub sends none, and for dev login", async () => {
+    const hub = await startHub({ github: githubWith(undefined), config: { devLogin: true } })
+
+    expect(await signInAndAskMe(hub)).not.toHaveProperty("avatarUrl")
+    expect(await (await devSignIn(hub)).json()).not.toHaveProperty("avatarUrl")
   })
 })
