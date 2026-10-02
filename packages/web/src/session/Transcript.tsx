@@ -1,4 +1,9 @@
-import type { Participant, SessionStateChanged, TurnEnded } from "@claude-hub/protocol"
+import type {
+  Participant,
+  SessionStateChanged,
+  TurnEnded,
+  WipNotPushed,
+} from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { memo } from "react"
 import { clock, count, duration, statusOf } from "../app/format.ts"
@@ -247,15 +252,21 @@ const stateWords: Record<SessionStateChanged["state"], string> = {
   Archived: "The Session was archived",
 }
 
-function Notice({ at, event }: { at: number; event: SessionStateChanged }) {
+function Notice({ at, event }: { at: number; event: SessionStateChanged | WipNotPushed }) {
   return (
     <p role="note" {...stylex.props(styles.notice)}>
-      <SessionStatus state={statusOf(event.state)} variant="dot" />
-      <span>
-        {stateWords[event.state]}
-        {event.by ? ` by ${event.by.name}` : ""}
-        {event.message ? `: ${event.message}` : ""}
-      </span>
+      {event._tag === "SessionStateChanged" ? (
+        <>
+          <SessionStatus state={statusOf(event.state)} variant="dot" />
+          <span>
+            {stateWords[event.state]}
+            {event.by ? ` by ${event.by.name}` : ""}
+            {event.message ? `: ${event.message}` : ""}
+          </span>
+        </>
+      ) : (
+        <span>The WIP ref could not be pushed: {event.message}</span>
+      )}
       <time {...stylex.props(styles.time)} dateTime={new Date(at).toISOString()}>
         {clock(at)}
       </time>
