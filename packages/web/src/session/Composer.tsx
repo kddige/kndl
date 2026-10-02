@@ -87,9 +87,11 @@ export function Composer({ onSend, onStop, running, disabledReason, hint }: Comp
       <div {...stylex.props(styles.bar)}>
         <span {...stylex.props(styles.hint)}>
           {hint ??
-            (running
-              ? "Prompts wait in the queue until the Turn ends."
-              : "Enter to send, Shift+Enter for a new line.")}
+            (disabled
+              ? null
+              : running
+                ? "Prompts wait in the queue until the Turn ends."
+                : "Enter to send, Shift+Enter for a new line.")}
         </span>
         {running && (
           <Button size="sm" intent="secondary" icon={<StopIcon />} onClick={onStop}>
