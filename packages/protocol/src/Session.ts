@@ -32,6 +32,8 @@ export const Participant = Schema.Struct({
   login: Schema.NonEmptyString,
   /** Display name; the login when GitHub has none. */
   name: Schema.NonEmptyString,
+  /** The person's GitHub avatar, an `https://avatars.githubusercontent.com/` URL; absent for dev login. */
+  avatarUrl: Schema.optionalKey(Schema.NonEmptyString),
 })
 export type Participant = typeof Participant.Type
 
