@@ -20,6 +20,7 @@ const sessionEvents = [
   { _tag: "SessionStateChanged", state: "Frozen", message: "Runner studio is offline" },
   { _tag: "SessionStateChanged", state: "Archived", by: bob },
   { _tag: "TurnStopRequested", by: alice },
+  { _tag: "WipNotPushed", message: "git push exited with 128: could not read from remote" },
 ]
 
 const webToHub = [

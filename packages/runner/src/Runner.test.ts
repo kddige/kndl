@@ -6,13 +6,21 @@ import { join } from "node:path"
 import { ClaudeSessionId, ProtocolVersion } from "@claude-hub/protocol"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
-import { Effect, Exit, Fiber, Layer, Redacted, References } from "effect"
+import { Context, Effect, Exit, Fiber, Layer, Redacted, References } from "effect"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
+import { HubGit, HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig, type RunnerSettings } from "./RunnerConfig.ts"
 import { SessionsLive } from "./Sessions.ts"
-import { eventually, FakeSandboxes, FakeTmux, FakeWorkspaces, sessionId } from "./testSupport.ts"
+import {
+  eventually,
+  FakeSandboxes,
+  FakeTmux,
+  FakeWorkspaceGit,
+  FakeWorkspaces,
+  sessionId,
+} from "./testSupport.ts"
 
 const token = "chr_test.secret"
 
@@ -84,6 +92,9 @@ interface Harness {
   readonly tmux: FakeTmux
   readonly workspaces: FakeWorkspaces
   readonly sandboxes: FakeSandboxes
+  readonly git: FakeWorkspaceGit
+  /** The Runner's HubGit, once its layer is built. */
+  readonly hubGit: () => HubGit["Service"]
   readonly runner: Fiber.Fiber<never, unknown>
   readonly settings: RunnerSettings
   /** Claude Code's config file, which the Runner trusts its sessions root in. */
@@ -115,6 +126,8 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
   setup({ hub, tmux })
   const workspaces = new FakeWorkspaces(sessionsRoot)
   const sandboxes = new FakeSandboxes()
+  // One record of Sandbox and git calls, in the order they ran.
+  const git = new FakeWorkspaceGit(sandboxes.calls)
   const settings: RunnerSettings = {
     hubUrl: hub.url,
     name: "mac",
@@ -126,10 +139,16 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
     tmuxSocket: "unused",
     repoUrlTemplate: "unused",
   }
+  let hubGit: HubGit["Service"] | undefined
   const layer = SessionsLive.pipe(
+    Layer.provideMerge(
+      HubGitLive.pipe(
+        Layer.tap((context) => Effect.sync(() => void (hubGit = Context.get(context, HubGit)))),
+      ),
+    ),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
-    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer]),
+    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, git.layer]),
     Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
     Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
   )
@@ -140,7 +159,20 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
     }).pipe(Effect.provide(layer), Effect.provideService(References.MinimumLogLevel, "None")),
   )
   running.push({ hub, runner })
-  return { hub, tmux, workspaces, sandboxes, runner, settings, claudeConfig }
+  return {
+    hub,
+    tmux,
+    workspaces,
+    sandboxes,
+    git,
+    hubGit: () => {
+      if (hubGit === undefined) throw new Error("the Runner's layer isn't built yet")
+      return hubGit
+    },
+    runner,
+    settings,
+    claudeConfig,
+  }
 }
 
 const startSession = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -407,7 +439,8 @@ describe("Sessions", () => {
       { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested", exitCode: 143 },
     ])
     expect(h.tmux.panes.size).toBe(0)
-    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Archive"])
+    // The Workspace's WIP ref is pushed before the Sandbox goes: the archive hook.
+    expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Archive", "stop s-1 Archive"])
   })
 
   test("puts a Session to sleep, keeping its Workspace and Sandbox, and wakes it resuming", async () => {
@@ -424,12 +457,18 @@ describe("Sessions", () => {
       { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested", exitCode: 143 },
     ])
     expect(h.tmux.panes.size).toBe(0)
-    // Stopped, not destroyed: its volumes stay for the wake.
-    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+    // The WIP ref is pushed first; then the Sandbox is stopped, not destroyed: its volumes stay
+    // for the wake.
+    expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Sleep", "stop s-1 Sleep"])
 
     h.hub.send(startSession("s-1", { modToken: "chm_woken.secret", resume: "3c1f6f0e-claude" }))
     await eventually(() => h.hub.all("SessionStarted").length === 2)
-    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep", "start s-1"])
+    expect(h.sandboxes.calls).toEqual([
+      "start s-1",
+      "pushWip s-1 Sleep",
+      "stop s-1 Sleep",
+      "start s-1",
+    ])
     expect(h.workspaces.prepared.map((start) => start.resume)).toEqual([
       undefined,
       ClaudeSessionId.make("3c1f6f0e-claude"),
@@ -470,6 +509,54 @@ describe("Sessions", () => {
       exitCode: 1,
     })
     expect(h.tmux.panes.size).toBe(0)
-    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+    expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Sleep", "stop s-1 Sleep"])
+  })
+
+  test("pushes a running Session's WIP ref when the Hub says its Turn ended", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    h.hub.send({ _tag: "SessionTurnEnded", sessionId: "s-1" })
+    h.hub.send({ _tag: "SessionTurnEnded", sessionId: "s-unknown" })
+    await eventually(() => h.git.calls.includes("pushWip s-1 TurnEnded"))
+
+    expect(h.git.calls).toEqual(["start s-1", "pushWip s-1 TurnEnded"])
+  })
+
+  test("asks the Hub git questions and matches its replies", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    const asked = Effect.runPromise(h.hubGit().ask(sessionId("s-1"), { _tag: "CoAuthors" }))
+    await eventually(() => h.hub.all("GitRequest").length === 1)
+    const requestId = String(h.hub.all("GitRequest")[0]?.["requestId"])
+    expect(h.hub.all("GitRequest")[0]).toMatchObject({
+      sessionId: "s-1",
+      ask: { _tag: "CoAuthors" },
+    })
+    h.hub.send({
+      _tag: "GitReply",
+      requestId: "someone-else",
+      answer: { _tag: "GitFailed", message: "x" },
+    })
+    h.hub.send({
+      _tag: "GitReply",
+      requestId,
+      answer: {
+        _tag: "CoAuthors",
+        coAuthors: [{ name: "alice", email: "1+alice@users.noreply.github.com" }],
+        through: 2,
+      },
+    })
+
+    expect(await asked).toEqual({
+      _tag: "CoAuthors",
+      coAuthors: [{ name: "alice", email: "1+alice@users.noreply.github.com" }],
+      through: 2,
+    })
   })
 })

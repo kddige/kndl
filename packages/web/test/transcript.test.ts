@@ -173,6 +173,13 @@ describe("buildTranscript", () => {
     })
   })
 
+  test("a WIP ref that could not be pushed becomes a notice", () => {
+    const items = buildTranscript(entries([{ _tag: "WipNotPushed", message: "remote rejected" }]))
+    expect(items).toMatchObject([
+      { kind: "notice", event: { _tag: "WipNotPushed", message: "remote rejected" } },
+    ])
+  })
+
   test("events for a Turn whose start is missing get an unattributed Turn", () => {
     const [turn] = turns(
       buildTranscript(

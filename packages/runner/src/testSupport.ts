@@ -1,11 +1,21 @@
 // Helpers for the Runner's tests. Not used by the Runner itself.
-import { SessionId, type StartSession, type TerminalSize } from "@claude-hub/protocol"
+import {
+  GitAnswer,
+  type GitAsk,
+  GitCredentials,
+  type GitIdentity,
+  SessionId,
+  type StartSession,
+  type TerminalSize,
+} from "@claude-hub/protocol"
 import { type Cause, Effect, Layer, Queue, Schema, Stream } from "effect"
+import { HubGit } from "./HubGit.ts"
 import { Sandboxes } from "./Sandbox.ts"
 import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { type LaunchSpec, type PaneEvent, Tmux, TmuxError } from "./Tmux.ts"
 import { WorkspaceError, Workspaces } from "./Workspace.ts"
+import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 export const sessionId = (id: string) => Schema.decodeSync(SessionId)(id)
 
@@ -212,3 +222,99 @@ export const echoTools: ToolHandler = (name, args) =>
       ? { content: [{ type: "text", text: "Exit code 2" }], isError: true }
       : mcpRecord({ tool: name, args }),
   )
+
+/**
+ * The Hub's side of the git conversation, in memory: Repo access with the credentials a test
+ * sets (a fake token, or the host's), the co-authors it sets, and a record of what was asked and
+ * reported. `answer` overrides any answer.
+ */
+export class FakeHubGit {
+  readonly asked: Array<{ readonly sessionId: SessionId; readonly ask: GitAsk }> = []
+  readonly committed: Array<{ readonly sessionId: SessionId; readonly through: number }> = []
+  readonly wipFailures: Array<{ readonly sessionId: SessionId; readonly message: string }> = []
+  credentials: GitCredentials = GitCredentials.cases.HostCredentials.make({})
+  coAuthors: Array<GitIdentity> = []
+  through = 0
+  answer: ((sessionId: SessionId, ask: GitAsk) => GitAnswer | undefined) | undefined
+
+  constructor(
+    readonly repo: {
+      readonly repo: string
+      readonly baseBranch: string
+      readonly workBranch: string
+    },
+  ) {}
+
+  /** Hands out `token` as the App's installation token, with `author` as its bot. */
+  useToken(token: string, author: GitIdentity, expiresAt = Date.now() + 3_600_000) {
+    this.credentials = Schema.decodeUnknownSync(GitCredentials)({
+      _tag: "AppToken",
+      token,
+      expiresAt,
+      author,
+    })
+  }
+
+  private reply(session: SessionId, ask: GitAsk): GitAnswer {
+    const given = this.answer?.(session, ask)
+    if (given !== undefined) return given
+    switch (ask._tag) {
+      case "GitAccess":
+        return Schema.decodeUnknownSync(GitAnswer)({
+          _tag: "GitAccess",
+          ...this.repo,
+          credentials: Schema.encodeSync(GitCredentials)(this.credentials),
+        })
+      case "CoAuthors":
+        return GitAnswer.cases.CoAuthors.make({ coAuthors: this.coAuthors, through: this.through })
+      case "OpenPullRequest":
+        return GitAnswer.cases.PullRequest.make({
+          number: 7,
+          url: `https://github.com/${this.repo.repo}/pull/7`,
+          existing: false,
+        })
+      case "ReviewPullRequest":
+        return GitAnswer.cases.ReviewPosted.make({
+          url: `https://github.com/${this.repo.repo}/pull/${ask.number}#review`,
+        })
+    }
+  }
+
+  readonly layer = Layer.sync(HubGit, () =>
+    HubGit.of({
+      ask: (session, ask) =>
+        Effect.sync(() => {
+          this.asked.push({ sessionId: session, ask })
+          return this.reply(session, ask)
+        }),
+      receive: () => Effect.void,
+      committed: (session, through) =>
+        Effect.sync(() => {
+          this.committed.push({ sessionId: session, through })
+          this.coAuthors = []
+        }),
+      wipPushFailed: (session, message) =>
+        Effect.sync(() => void this.wipFailures.push({ sessionId: session, message })),
+    }),
+  )
+}
+
+/**
+ * Git that only records calls, `pushWip <id> <reason>` and `<tool> <id>`, into `calls`: pass
+ * another fake's record to see the order they ran in.
+ */
+export class FakeWorkspaceGit {
+  constructor(readonly calls: Array<string> = []) {}
+
+  readonly layer = Layer.sync(WorkspaceGit, () =>
+    WorkspaceGit.of({
+      call: (session, _directories, request) =>
+        Effect.sync(() => {
+          this.calls.push(`${request.tool} ${session}`)
+          return { _tag: "ToolRan" as const, result: `${request.tool} ran` }
+        }),
+      pushWip: (session, _directories, reason) =>
+        Effect.sync(() => void this.calls.push(`pushWip ${session} ${reason}`)),
+    }),
+  )
+}

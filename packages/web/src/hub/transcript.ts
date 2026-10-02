@@ -1,6 +1,7 @@
 // Folds a Session's event log into what the chat shows: Turns with their prompt and sender, the
 // streamed text merged into blocks, each tool call's start and end joined, and a subagent's events
-// grouped under its agentId. State changes between Turns become notices.
+// grouped under its agentId. State changes between Turns, and a WIP
+// ref the Runner could not push, become notices.
 
 import type {
   AgentId,
@@ -14,6 +15,7 @@ import type {
   ToolCallOutcome,
   TurnEnded,
   TurnId,
+  WipNotPushed,
 } from "@claude-hub/protocol"
 
 export interface ToolCallView {
@@ -64,7 +66,7 @@ export type TranscriptItem =
       readonly kind: "notice"
       readonly key: string
       readonly at: number
-      readonly event: SessionStateChanged
+      readonly event: SessionStateChanged | WipNotPushed
     }
 
 interface MutableAgent {
@@ -197,6 +199,7 @@ export function buildTranscript(
         if (latest && latest.end === null) latest.stopRequests.push(event.by)
         break
       case "SessionStateChanged":
+      case "WipNotPushed":
         items.push({ kind: "notice", key: `notice-${entry.seq}`, at: entry.at, event })
         break
     }

@@ -4,6 +4,7 @@
 // (spike #4).
 
 export type { ModCommand, Participant, ToolCallOutcome } from "@claude-hub/protocol"
+export { gitToolSpecs, runGitTool } from "./GitTools.ts"
 export { HubLink } from "./HubLink.ts"
 export type { LinkStatus } from "./HubLink.ts"
 export {

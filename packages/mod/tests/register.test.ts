@@ -31,6 +31,16 @@ const fakeFetch = (
   return requests
 }
 
+/** Answers `$.tool.register` as Claude Code does, noting each tool registered. */
+const fakeToolRegister = (on: On) => {
+  const registered: Array<{ name: string; description: string; inputSchema: unknown }> = []
+  on("tool.register", (_, e) => {
+    registered.push({ name: e.name, description: e.description, inputSchema: e.inputSchema })
+    return { value: { tool: `mcp__hub-link__${e.name}` } }
+  })
+  return registered
+}
+
 /**
  * Raises `prompt.edit` as the prompt box does. The test engine raises it, but its typed `$` leaves
  * it out, so it is reached through this one cast.
@@ -142,6 +152,62 @@ describe("tools", () => {
     }
   })
 
+  test("runs a git tool on the Runner, through the tool bridge's git endpoint", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    const requests = fakeFetch(on, () => ran("Committed abc1234 on claude/s1: Fix it"))
+    let reachedCore = false
+    on("tool.call", () => {
+      reachedCore = true
+      return { deny: "core ran it" }
+    })
+
+    const answer = await $.tool.call({
+      tool: "mcp__hub-link__git_commit",
+      message: "Fix it",
+      all: true,
+    } as never)
+
+    expect(reachedCore).toBe(false)
+    expect(answer.isError).toBeFalsy()
+    expect(answer.result).toBe("Committed abc1234 on claude/s1: Fix it")
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      url: "http://tool-bridge/git/call",
+      method: "POST",
+      socketPath: socket,
+    })
+    expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
+      tool: "git_commit",
+      input: { message: "Fix it", all: true },
+    })
+  })
+
+  test("answers a git tool's failure as an error the model reads", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    fakeFetch(on, () => ({
+      status: 200,
+      text: JSON.stringify({ _tag: "ToolFailed", message: "open_pr needs the GitHub App" }),
+    }))
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    const answer = await $.tool.call({ tool: "mcp__hub-link__open_pr", title: "x" } as never)
+
+    expect(answer.deny).toBe("open_pr needs the GitHub App")
+  })
+
+  test("refuses git commit and git push in Bash, pointing to the git tools", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    const requests = fakeFetch(on, () => ran({}))
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    const commit = await $.tool.call({ tool: "Bash", command: "cd /workspace && git commit -am x" })
+    const push = await $.tool.call({ tool: "Bash", command: "git -C /workspace push" })
+
+    expect(requests).toHaveLength(0)
+    expect(commit.deny).toContain("mcp__hub-link__git_commit")
+    expect(push.deny).toContain("mcp__hub-link__git_push")
+  })
+
   test("refuses a background command", async ($, on) => {
     mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
     const requests = fakeFetch(on, () => ran({}))
@@ -190,9 +256,28 @@ describe("the ! shell shortcut", () => {
   })
 })
 
+describe("the git tools", () => {
+  test("are registered when the session starts", async ($, on) => {
+    mock.env(on, {})
+    const registered = fakeToolRegister(on)
+    on("session.start", (_, e) => ({ cwd: e.cwd }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: false })
+
+    expect(registered.map((tool) => tool.name)).toEqual([
+      "git_commit",
+      "git_push",
+      "open_pr",
+      "review_pr",
+    ])
+    expect(registered[0]?.inputSchema).toMatchObject({ type: "object", required: ["message"] })
+  })
+})
+
 describe("the Hub link", () => {
   test("is off when no Runner started the session", async ($, on) => {
     mock.env(on, {})
+    fakeToolRegister(on)
     const lines: Array<string> = []
     on("ui.log", (_, e) => {
       lines.push(e.text)

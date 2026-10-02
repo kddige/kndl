@@ -1,8 +1,10 @@
 // hub-link: the mod a Runner loads into each Session's Claude Code (ADR 0001).
 //
 // - Tools: the file and command tools run in the Session's Sandbox through the Runner's tool
-//   bridge; every other tool is denied. Nothing is ever passed on to Claude Code to run, so a
-//   tool can't reach the host even when the bridge is down: the call is refused instead.
+//   bridge; the mod's own git tools (git_commit, git_push, open_pr, review_pr) run on the Runner,
+//   through the same socket; every other tool is denied, as are `git commit` and `git push` in
+//   Bash. Nothing is ever passed on to Claude Code to run, so a tool can't reach the host even
+//   when the bridge is down: the call is refused instead.
 // - The Hub: says hello, reports the Turn's events, and takes prompts, stops and presence from
 //   the Hub (see HubLink.ts).
 // - The person at the terminal: a band above the prompt shows the Participants, and the `!`
@@ -18,10 +20,12 @@ import type { HubLinkBand } from "../types"
 import {
   clip,
   decideTool,
+  gitToolSpecs,
   HubLink,
   promptFromParticipant,
   ReadBeforeEdit,
   resultSummary,
+  runGitTool,
   runInSandbox,
   sharedSessionNote,
   startsShellMode,
@@ -143,9 +147,22 @@ const answerToolCall = async (
 ): Promise<ToolAnswer> => {
   const decision = decideTool(tool, input)
   if (decision._tag === "Deny") return { _tag: "Refused", message: decision.reason }
+  state.toolsSocket ??= (await $.env.get("CLAUDE_HUB_TOOLS_SOCKET")) || undefined
+  if (decision._tag === "RunOnHost")
+    return runGitTool(
+      (socketPath, body) =>
+        $.http.fetch("http://tool-bridge/git/call", {
+          method: "POST",
+          socketPath,
+          headers: { "content-type": "application/json" },
+          body,
+        }),
+      state.toolsSocket,
+      decision.tool,
+      input,
+    )
   const unread = state.readBeforeEdit.check(decision.tool, input)
   if (unread !== undefined) return { _tag: "Failed", message: unread }
-  state.toolsSocket ??= (await $.env.get("CLAUDE_HUB_TOOLS_SOCKET")) || undefined
   const answer = await runInSandbox(
     (socketPath, body) =>
       $.http.fetch("http://tool-bridge/tools/call", {
@@ -171,6 +188,11 @@ const outcomes: Record<ToolAnswer["_tag"], ToolCallOutcome> = {
 export function register(on: On) {
   on("session.start", async ($, e, next) => {
     const started = await next(e)
+    // Registered on every start (spike #4); the model lists them as `mcp__hub-link__<name>`.
+    for (const spec of gitToolSpecs)
+      await $.tool
+        .register({ ...spec, inputSchema: { ...spec.inputSchema } })
+        .catch((error) => $.ui.log(`hub-link: ${spec.name}: ${error}`, { to: "debug" }))
     await startLink($).catch((error) => $.ui.log(`hub-link: ${error}`, { to: "debug" }))
     return started
   })

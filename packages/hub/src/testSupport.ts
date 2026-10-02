@@ -8,6 +8,7 @@ import type { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { DatabaseTest } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
+import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import { DefaultSleepAfter, HubConfig, type HubConfigInput } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
@@ -20,6 +21,8 @@ export const baseConfig: HubConfigInput = {
   publicUrl: new URL(webOrigin),
   githubClientId: Option.none(),
   githubClientSecret: Option.none(),
+  githubAppId: Option.none(),
+  githubAppPrivateKey: Option.none(),
   devLogin: false,
   devLoginName: "dev",
   sleepAfterMs: Duration.toMillis(DefaultSleepAfter),
@@ -50,6 +53,8 @@ export async function startHub(
   options: {
     readonly config?: Partial<HubConfigInput>
     readonly github?: Layer.Layer<GitHub>
+    /** The GitHub App; by default from the config, which has none. */
+    readonly githubApp?: Layer.Layer<GitHubApp, unknown, HubConfig>
     /** The database; a fresh in-memory one by default. */
     readonly database?: Layer.Layer<SqlClient.SqlClient, unknown>
   } = {},
@@ -62,6 +67,7 @@ export async function startHub(
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
+    Layer.provideMerge(options.githubApp ?? GitHubApp.layer),
     Layer.provideMerge(options.database ?? DatabaseTest),
     Layer.provideMerge(HubConfig.layerFrom({ ...baseConfig, ...options.config })),
   )

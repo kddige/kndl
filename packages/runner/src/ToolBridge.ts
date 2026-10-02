@@ -3,14 +3,15 @@
 //
 // Per Session, the Runner keeps one `claude mcp serve` running inside the Sandbox, restarting it
 // whenever it exits, and serves `POST /tools/call` (see the protocol's ToolBridge.ts) on a Unix
-// socket in the Session's directory that only the Runner's user can open.
+// socket in the Session's directory that only the Runner's user can open. The same socket serves
+// `POST /git/call` for the mod's git tools, which run on the host (the protocol's Git.ts).
 //
 // The server in the Sandbox runs with no Claude credentials and no host configuration: it gets
 // the Sandbox's own environment and the few variables below, nothing of the Runner's.
 
 import { chmod, rm } from "node:fs/promises"
 import type { SessionId } from "@claude-hub/protocol"
-import { ToolBridgeCall, ToolBridgeReply } from "@claude-hub/protocol"
+import { GitToolCall, ToolBridgeCall, ToolBridgeReply } from "@claude-hub/protocol"
 import { Data, Deferred, Duration, Effect, Exit, Schema } from "effect"
 import type { Scope } from "effect"
 import { connectMcp } from "./McpClient.ts"
@@ -208,17 +209,37 @@ const json = (reply: ToolBridgeReply, status: number) =>
   Response.json(Schema.encodeSync(ToolBridgeReply)(reply), { status })
 
 const decodeCall = Schema.decodeUnknownExit(ToolBridgeCall)
+const decodeGitCall = Schema.decodeUnknownExit(GitToolCall)
+
+/** Answers the mod's git tools on the host (WorkspaceGit.ts). Never fails. */
+export type GitToolHandler = (call: GitToolCall) => Effect.Effect<ToolBridgeReply>
+
+const noGit: GitToolHandler = (call) =>
+  Effect.succeed(unavailable(`${call.tool} is not available on this Runner`))
 
 /** Answers one HTTP request to the bridge. */
-export const handleBridgeRequest = async (engine: ToolEngine, request: Request) => {
+export const handleBridgeRequest = async (
+  engine: ToolEngine,
+  request: Request,
+  git: GitToolHandler = noGit,
+) => {
   const url = new URL(request.url)
-  if (url.pathname !== "/tools/call" || request.method !== "POST")
-    return new Response("not found", { status: 404 })
-  const body: unknown = await request.json().catch(() => undefined)
-  const decoded = decodeCall(body)
-  if (Exit.isFailure(decoded)) return json(unavailable("the tool call did not decode"), 400)
-  const reply = await Effect.runPromise(engine.call(decoded.value))
-  return json(reply, reply._tag === "BridgeUnavailable" ? 503 : 200)
+  if (request.method !== "POST") return new Response("not found", { status: 404 })
+  if (url.pathname === "/tools/call") {
+    const body: unknown = await request.json().catch(() => undefined)
+    const decoded = decodeCall(body)
+    if (Exit.isFailure(decoded)) return json(unavailable("the tool call did not decode"), 400)
+    const reply = await Effect.runPromise(engine.call(decoded.value))
+    return json(reply, reply._tag === "BridgeUnavailable" ? 503 : 200)
+  }
+  if (url.pathname === "/git/call") {
+    const body: unknown = await request.json().catch(() => undefined)
+    const decoded = decodeGitCall(body)
+    if (Exit.isFailure(decoded)) return json(unavailable("the git tool call did not decode"), 400)
+    const reply = await Effect.runPromise(git(decoded.value))
+    return json(reply, reply._tag === "BridgeUnavailable" ? 503 : 200)
+  }
+  return new Response("not found", { status: 404 })
 }
 
 /**
@@ -228,6 +249,7 @@ export const handleBridgeRequest = async (engine: ToolEngine, request: Request) 
 export const serveToolBridge = (
   socketPath: string,
   engine: ToolEngine,
+  git?: GitToolHandler,
 ): Effect.Effect<void, ToolBridgeError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.tryPromise({
@@ -238,7 +260,7 @@ export const serveToolBridge = (
           fetch: (request, self) => {
             // A Bash call may run for up to 10 minutes; never drop the connection while it does.
             self.timeout(request, 0)
-            return handleBridgeRequest(engine, request)
+            return handleBridgeRequest(engine, request, git)
           },
         })
         try {

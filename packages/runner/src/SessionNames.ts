@@ -37,6 +37,12 @@ export interface SessionDirectories {
    * `CLAUDE_HUB_TOOLS_SOCKET`. A socket path must stay under 104 bytes on macOS.
    */
   readonly toolsSocket: string
+  /**
+   * The Runner's own git directory for the Workspace, never mounted into the Sandbox. Host git
+   * runs with it as `GIT_DIR`, so it reads the Runner's config and hooks, not the Workspace's
+   * `.git/config` and `.git/hooks`, which the Sandbox can write (HostGit.ts).
+   */
+  readonly hostGit: string
 }
 
 export function sessionDirectories(sessionsRoot: string, id: SessionId): SessionDirectories {
@@ -46,5 +52,6 @@ export function sessionDirectories(sessionsRoot: string, id: SessionId): Session
     claude: join(session, "claude"),
     workspace: join(session, "workspace"),
     toolsSocket: join(session, "tools.sock"),
+    hostGit: join(session, "host-git"),
   }
 }

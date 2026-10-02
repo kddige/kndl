@@ -21,6 +21,7 @@ import { SandboxBackend, shell } from "./sandbox/SandboxBackend.ts"
 import { ensureSandboxClaude, hostClaudeVersion } from "./sandbox/SandboxClaude.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
+import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
 
@@ -45,6 +46,19 @@ const call = (socket: string, tool: string, input: Record<string, unknown>) =>
     return (await response.json()) as ToolBridgeReply
   })
 
+const callGit = (socket: string, tool: string, input: Record<string, unknown>) =>
+  Effect.promise(async () => {
+    const response = await fetch("http://bridge/git/call", {
+      method: "POST",
+      unix: socket,
+      body: JSON.stringify({ tool, input }),
+    })
+    return (await response.json()) as ToolBridgeReply
+  })
+
+/** Stands in for a git tool's token: it must never show up inside the VM. */
+const hostOnly = "ghs_host-only-marker"
+
 const resultOf = (reply: ToolBridgeReply) => {
   if (reply._tag !== "ToolRan") throw new Error(`expected ToolRan, got ${JSON.stringify(reply)}`)
   return JSON.stringify(reply.result)
@@ -62,6 +76,8 @@ test.skipIf(!enabled)(
     const cacheDir =
       process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(homedir(), ".claude-hub", "claude-code")
     const sent: Array<RunnerToHub> = []
+    const gitCalls: Array<string> = []
+    process.env.CLAUDE_HUB_IT_HOST_ONLY = hostOnly
 
     const foreignBefore = await Sandbox.list().then((page) =>
       page.sandboxes
@@ -108,6 +124,13 @@ test.skipIf(!enabled)(
       expect(
         yield* Effect.promise(() => readFile(join(directories.workspace, "from-vm.txt"), "utf8")),
       ).toBe("written in the VM\n")
+
+      // The git tools are served on the same socket, and answered on the host.
+      const pushed = yield* callGit(socket, "git_push", {})
+      expect(pushed).toEqual({ _tag: "ToolRan", result: "pushed on the host" })
+      expect(gitCalls).toEqual(["git_push"])
+      const vmEnv = yield* call(socket, "Bash", { command: "env; cat /proc/1/environ || true" })
+      expect(resultOf(vmEnv)).not.toContain(hostOnly)
 
       const failed = yield* call(socket, "Bash", { command: "exit 3" })
       expect(failed._tag).toBe("ToolFailed")
@@ -159,6 +182,14 @@ test.skipIf(!enabled)(
     const sandboxes = Layer.effect(
       Sandboxes,
       makeSessionSandboxes({
+        git: WorkspaceGit.of({
+          call: (_sessionId, _directories, request) =>
+            Effect.sync(() => {
+              gitCalls.push(request.tool)
+              return { _tag: "ToolRan", result: "pushed on the host" } as const
+            }),
+          pushWip: () => Effect.void,
+        }),
         image: "docker:dind",
         claudeCacheDir: cacheDir,
         sandboxClaude: timed(
@@ -194,6 +225,7 @@ test.skipIf(!enabled)(
         ),
       )
     } finally {
+      delete process.env.CLAUDE_HUB_IT_HOST_ONLY
       await rm(root, { recursive: true, force: true })
       console.log(
         timings

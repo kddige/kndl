@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { BunServices } from "@effect/platform-bun"
 import { Effect, Layer, Redacted } from "effect"
 import { RunnerConfig } from "./RunnerConfig.ts"
-import { sessionId } from "./testSupport.ts"
+import { FakeHubGit, sessionId } from "./testSupport.ts"
 import { Workspaces, WorkspacesGitClone } from "./Workspace.ts"
 
 function git(cwd: string, ...args: Array<string>): string {
@@ -29,7 +29,7 @@ const start = (id: string, extra: Record<string, unknown> = {}) =>
     w.prepare({
       _tag: "StartSession",
       sessionId: sessionId(id),
-      repo: "origin" as never,
+      repo: "acme/origin" as never,
       baseBranch: "main" as never,
       workBranch: "claude/w-1" as never,
       modToken: "m",
@@ -39,8 +39,14 @@ const start = (id: string, extra: Record<string, unknown> = {}) =>
 
 describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
   const dir = mkdtempSync(join(tmpdir(), "claude-hub-workspace-"))
-  const origin = join(dir, "origin")
+  const origin = join(dir, "acme", "origin")
   const sessionsRoot = join(dir, "sessions")
+  // Without the GitHub App: the clone uses the host's own git credentials.
+  const hubGit = new FakeHubGit({
+    repo: "acme/origin",
+    baseBranch: "main",
+    workBranch: "claude/w-1",
+  })
   beforeAll(() => {
     git(dir, "init", "--quiet", "--initial-branch=main", origin)
     git(origin, "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "first")
@@ -70,6 +76,7 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
               ),
             ),
             Layer.provide(BunServices.layer),
+            Layer.provide(hubGit.layer),
           ),
         ),
       ),
@@ -94,7 +101,7 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
   })
 
   test("fails, leaving no Workspace behind, when the clone fails", async () => {
-    const result = await run(start("w-2", { repo: "missing" }))
+    const result = await run(start("w-2", { repo: "acme/missing" }))
 
     expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "WorkspaceError" } })
     expect(existsSync(join(sessionsRoot, "w-2", "workspace"))).toBe(false)
