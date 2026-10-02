@@ -70,7 +70,7 @@ export function PromptQueue({
         {queue.map((prompt, index) => (
           <li key={prompt.id} {...stylex.props(styles.item)}>
             <span {...stylex.props(styles.position)}>{index + 1}</span>
-            <Avatar name={prompt.sender.name} size="sm" />
+            <Avatar name={prompt.sender.name} src={prompt.sender.avatarUrl} size="sm" />
             <span {...stylex.props(styles.text)} title={prompt.text}>
               {prompt.text}
             </span>

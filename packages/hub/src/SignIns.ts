@@ -16,7 +16,7 @@ export interface NewSignIn {
 
 /**
  * People signed in to the Hub. A sign-in is the token in a browser's cookie; the Hub keeps only
- * its hash. Signing in records the person as a Participant, or updates their login and name.
+ * its hash. Signing in records the person as a Participant, or updates their login, name and avatar.
  */
 export class SignIns extends Context.Service<
   SignIns,
@@ -39,10 +39,14 @@ export class SignIns extends Context.Service<
         yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`
-              INSERT INTO participants (id, login, name, created_at, updated_at)
-              VALUES (${participant.id}, ${participant.login}, ${participant.name}, ${now}, ${now})
+              INSERT INTO participants (id, login, name, avatar_url, created_at, updated_at)
+              VALUES (
+                ${participant.id}, ${participant.login}, ${participant.name},
+                ${participant.avatarUrl ?? null}, ${now}, ${now}
+              )
               ON CONFLICT (id) DO UPDATE SET
-                login = excluded.login, name = excluded.name, updated_at = excluded.updated_at
+                login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url,
+                updated_at = excluded.updated_at
             `
             yield* sql`DELETE FROM sign_ins WHERE expires_at <= ${now}`
             yield* sql`
@@ -64,8 +68,10 @@ export class SignIns extends Context.Service<
           readonly id: string
           readonly login: string
           readonly name: string
+          readonly avatarUrl: string | null
         }>`
-          SELECT s.secret_hash AS secretHash, s.expires_at AS expiresAt, p.id, p.login, p.name
+          SELECT s.secret_hash AS secretHash, s.expires_at AS expiresAt, p.id, p.login, p.name,
+            p.avatar_url AS avatarUrl
           FROM sign_ins s JOIN participants p ON p.id = s.participant_id
           WHERE s.id = ${parsed.id}
         `
@@ -78,7 +84,12 @@ export class SignIns extends Context.Service<
           return Option.none<Participant>()
         }
         return Option.some(
-          Participant.make({ id: ParticipantId.make(row.id), login: row.login, name: row.name }),
+          Participant.make({
+            id: ParticipantId.make(row.id),
+            login: row.login,
+            name: row.name,
+            ...(row.avatarUrl !== null && { avatarUrl: row.avatarUrl }),
+          }),
         )
       })
 
