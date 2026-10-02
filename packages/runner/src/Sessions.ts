@@ -127,12 +127,15 @@ export const SessionsLive = Layer.effect(
               }),
             )
           }),
-          Effect.ensuring(
+          Effect.onExit((exit) =>
             Effect.gen(function* () {
               running.delete(sessionId)
               yield* Scope.close(paneScope, Exit.void)
               yield* Deferred.succeed(exited, exitCode)
-              if (!session.stopping) yield* background(exitedOnItsOwn(sessionId, exitCode))
+              // Interrupted means the Runner is shutting down: Claude Code keeps running in tmux,
+              // to be re-adopted when the Runner comes back.
+              if (Exit.hasInterrupts(exit) || session.stopping) return
+              yield* background(exitedOnItsOwn(sessionId, exitCode))
             }),
           ),
           Effect.forkIn(layerScope),

@@ -370,6 +370,20 @@ describe("Sessions", () => {
     expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Archive"])
   })
 
+  test("leaves Sessions running in tmux when the Runner stops", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    await Effect.runPromise(Fiber.interrupt(h.runner))
+
+    expect([...h.tmux.panes.keys()]).toEqual([sessionId("s-1")])
+    // Only the clean-up of leftovers before launching.
+    expect(h.tmux.killed).toEqual([sessionId("s-1")])
+    expect(h.sandboxes.calls).toEqual(["start s-1"])
+  })
+
   test("reports a Session whose Claude Code exited on its own", async () => {
     const h = startRunner()
     await connected(h)
