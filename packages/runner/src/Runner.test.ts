@@ -1,12 +1,13 @@
 // The Runner against a fake Hub WebSocket server, with tmux, the Workspace and the Sandbox faked.
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ProtocolVersion } from "@claude-hub/protocol"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
 import { Effect, Exit, Fiber, Layer, Redacted, References } from "effect"
+import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig, type RunnerSettings } from "./RunnerConfig.ts"
@@ -85,6 +86,8 @@ interface Harness {
   readonly sandboxes: FakeSandboxes
   readonly runner: Fiber.Fiber<never, unknown>
   readonly settings: RunnerSettings
+  /** Claude Code's config file, which the Runner trusts its sessions root in. */
+  readonly claudeConfig: string
 }
 
 const running: Array<{ hub: FakeHub; runner: Fiber.Fiber<never, unknown> }> = []
@@ -104,7 +107,7 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
     claudeConfig,
     JSON.stringify({
       oauthAccount: { emailAddress: "alice@example.com" },
-      projects: { [dir]: { hasTrustDialogAccepted: true } },
+      projects: { "/elsewhere": { allowedTools: [] } },
     }),
   )
   const hub = new FakeHub()
@@ -125,6 +128,7 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
   }
   const layer = SessionsLive.pipe(
     Layer.provideMerge(HubLinkLive),
+    Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer]),
     Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
     Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
@@ -136,7 +140,7 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
     }).pipe(Effect.provide(layer), Effect.provideService(References.MinimumLogLevel, "None")),
   )
   running.push({ hub, runner })
-  return { hub, tmux, workspaces, sandboxes, runner, settings }
+  return { hub, tmux, workspaces, sandboxes, runner, settings, claudeConfig }
 }
 
 const startSession = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -246,6 +250,37 @@ describe("connecting", () => {
       sessionId: "s-1",
       reason: "Exited",
       exitCode: 0,
+    })
+  })
+})
+
+const projects = (h: Harness) =>
+  (JSON.parse(readFileSync(h.claudeConfig, "utf8")) as { projects: Record<string, unknown> })
+    .projects
+
+describe("trust", () => {
+  test("trusts the sessions root, by its real path, at startup", async () => {
+    const h = startRunner()
+    await connected(h)
+
+    expect(projects(h)).toEqual({
+      "/elsewhere": { allowedTools: [] },
+      [realpathSync(h.settings.sessionsRoot)]: { hasTrustDialogAccepted: true },
+    })
+  })
+
+  test("trusts it again before launching Claude Code if the flag was dropped", async () => {
+    const h = startRunner()
+    await connected(h)
+    writeFileSync(
+      h.claudeConfig,
+      JSON.stringify({ oauthAccount: { emailAddress: "alice@example.com" }, projects: {} }),
+    )
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    expect(projects(h)).toEqual({
+      [realpathSync(h.settings.sessionsRoot)]: { hasTrustDialogAccepted: true },
     })
   })
 })

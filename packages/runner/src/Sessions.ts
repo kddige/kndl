@@ -20,6 +20,7 @@ import {
   Stream,
 } from "effect"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
+import { ClaudeTrust } from "./ClaudeTrust.ts"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes } from "./Sandbox.ts"
@@ -72,6 +73,7 @@ export const SessionsLive = Layer.effect(
     const workspaces = yield* Workspaces
     const sandboxes = yield* Sandboxes
     const hub = yield* HubLink
+    const trust = yield* ClaudeTrust
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
@@ -184,6 +186,8 @@ export const SessionsLive = Layer.effect(
                   ? { _tag: "New", id: randomUUID() }
                   : { _tag: "Resume", id: request.resume },
             })
+            // Its trust may have been dropped since startup, and the dialog would stop the mod.
+            yield* trust.ensure
             yield* tmux.launch({
               sessionId,
               cwd: directories.claude,
