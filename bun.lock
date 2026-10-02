@@ -32,6 +32,7 @@
     "packages/runner": {
       "name": "@claude-hub/runner",
       "dependencies": {
+        "@claude-hub/protocol": "workspace:*",
         "@effect/platform-bun": "4.0.0",
         "effect": "4.0.0",
       },
