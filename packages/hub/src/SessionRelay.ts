@@ -7,7 +7,8 @@
 // - Presence: the Participants with a web connection that has joined the Session, sent in full to
 //   those connections and to the Session's mod whenever it changes.
 // - The Prompt queue (PromptQueue.ts): prompts wait in order, and the head is delivered to the
-//   mod when the Session is idle, one at a time.
+//   mod when the Session is idle, one at a time. A prompt the mod reports as PromptFailed is
+//   dropped, and its sender gets a CommandFailed, rather than put back to fail again.
 // - Minimal Session plumbing for creating a Session on a Runner, and for following its Runner
 //   going offline and coming back. The full lifecycle (sleep, wake, archive) is #12 and #18.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
@@ -256,6 +257,8 @@ export class SessionRelay extends Context.Service<
         message: string,
       ) {
         inFlight.delete(session.id)
+        // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
+        yield* outbox.clear(session.id)
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
         if (session.state === "Archived") return
         if (session.state === "Asleep") return yield* sessionUpdated(session.id)
