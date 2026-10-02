@@ -14,14 +14,14 @@ One Bun workspace in TypeScript.
 |---|---|
 | [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as [Effect](https://effect.website) Schemas. Imported from source by the other packages. |
 | [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Signs people in, issues Runner and mod tokens, accepts the Runner and web WebSocket channels, and serves the mod's HTTP endpoints (handshake only, for now). |
-| [`packages/runner`](packages/runner) | A Runner: an Effect program that connects to the Hub and runs each Session's Claude Code in its own tmux session on its host, streaming the terminal. The Sandbox backend is in `src/sandbox` (#9), not yet wired into Session start. |
-| [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod a Runner loads into each Session. Notes in the debug log that it loaded. Runs in Claude Code's own mod runtime, so it is plain TypeScript without Effect for now. |
+| [`packages/runner`](packages/runner) | A Runner: an Effect program that connects to the Hub and runs each Session's Claude Code in its own tmux session on its host, streaming the terminal, and each Session's tools in its own [microsandbox](https://github.com/microsandbox/microsandbox) Sandbox through a tool bridge. |
+| [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod a Runner loads into each Session. Sends the Session's turns to the Hub, delivers prompts from the web UI, shows the Participants above the prompt, and runs the file and command tools in the Sandbox, denying every other tool. Its logic is bundled with Effect and the protocol into one ES module (`bun run mod:build`). |
 | [`packages/web`](packages/web) | The web UI: React on Vite, built from [Base UI](https://base-ui.com) primitives and styled with StyleX. The Session list and the Session view, on a typed client for the web channel (`src/hub`). The UI kit is at `/kit`. |
 | [`prototype/`](prototype) | The first prototype (hub, runner, mod, `start.sh`). Reference material only: not part of the workspace, typecheck or lint. |
 
 ## Setup
 
-Needs [Bun](https://bun.sh) 1.4 or newer, and Claude Code (`claude`) on `PATH` for the mod's checks. A Runner also needs `tmux` and `git`.
+Needs [Bun](https://bun.sh) 1.4 or newer, and Claude Code (`claude`) on `PATH` for the mod's checks. A Runner also needs `tmux`, `git` and [microsandbox](https://github.com/microsandbox/microsandbox) with its server running.
 
 ```sh
 bun install
@@ -33,11 +33,12 @@ All run from the repo root:
 
 | Command | What it does |
 |---|---|
-| `bun test` | Bun's test runner over every package but the mod. |
+| `bun test` | Bun's test runner over every package, including the mod's pure modules (`packages/mod/src/*.spec.ts`). `CLAUDE_HUB_SANDBOX_IT=1` adds the tests that boot real microsandbox Sandboxes. |
 | `bun run typecheck` | `tsc --noEmit` in every package (TypeScript 7). The mod's first loads it into a throwaway Claude Code print session (`claude -p /cost`, no model call), which lays the plugin API's types in `packages/mod/.claude-plugin/types/`. |
 | `bun run lint` | [oxlint](https://oxc.rs/docs/guide/usage/linter): ESLint-style rules for TypeScript, React, imports and unicorn. Configured in `.oxlintrc.json`. |
 | `bun run format:check` | [oxfmt](https://oxc.rs/docs/guide/usage/formatter): checks formatting and import order. `bun run format` applies it. Configured in `.oxfmtrc.json`. |
-| `bun run mod:check` | `claude plugin validate` and `claude plugin test` on the mod. |
+| `bun run mod:build` | Bundles the mod's logic into `packages/mod/hooks/hub-link-lib.js` (git-ignored). |
+| `bun run mod:check` | Builds the mod, then runs `claude plugin validate` and `claude plugin test` on it. |
 
 ## Run
 
@@ -47,7 +48,7 @@ All run from the repo root:
 | `bun run runner-token <name>` | Issues a token for the Runner called `<name>` and prints it. | `HUB_DATABASE`, as for the Hub |
 | `bun run runner` | A Runner for this machine; see [Running a Runner](#running-a-runner). | `HUB_URL` (`http://127.0.0.1:7777`), `RUNNER_TOKEN` (required), `RUNNER_NAME` (short hostname) |
 | `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. It passes `/auth`, `/health` and `/ws` through to the Hub, so the web UI and the Hub share one origin. | `HUB_URL` (`http://127.0.0.1:7777`); `VITE_FAKE_HUB=1` runs it against an in-process fake Hub that plays a scripted Session instead, and `VITE_FAKE_HUB=signed-out` starts that signed out |
-| `claude --plugin-dir packages/mod` | Claude Code with the `hub-link` mod loaded. | |
+| `claude --plugin-dir packages/mod` | Claude Code with the `hub-link` mod loaded. Build it first with `bun run mod:build`. | |
 
 Each package's own scripts (`start`, `dev`, `build`, `typecheck`) also run from inside it with `bun run <script>`.
 
@@ -107,6 +108,9 @@ A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty 
 | `CLAUDE_BIN` | `claude` | The Claude Code executable. |
 | `RUNNER_TMUX_SOCKET` | `claude-hub` | The tmux server's socket name. |
 | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` | Where Repos are cloned from; `{repo}` is `owner/name`. |
+| `RUNNER_SANDBOX_IMAGE` | `docker:dind` | The Sandbox image. |
+| `RUNNER_SANDBOX_CLAUDE_VERSION` | the host's `claude --version` | The Claude Code version Sandboxes run `claude mcp serve` from. |
+| `RUNNER_SANDBOX_CLAUDE_CACHE` | `~/.claude-hub/claude-code` | Where the Runner keeps Linux builds of Claude Code for Sandboxes. |
 
 Claude Code starts with the hardened flags of [ADR 0001](docs/adr/0001-claude-on-host-tools-in-sandbox.md) (`--setting-sources ""`, `--strict-mcp-config`, a fixed `--tools` list), with `--session-id` for a new Session or `--resume` to wake one, and with these variables, which the mod uses to talk HTTP to the Hub:
 
@@ -115,3 +119,14 @@ Claude Code starts with the hardened flags of [ADR 0001](docs/adr/0001-claude-on
 | `CLAUDE_HUB_URL` | The Hub's URL: the Runner's `HUB_URL`. |
 | `CLAUDE_HUB_MOD_TOKEN` | The Session's mod token, from the Hub's `StartSession`. |
 | `CLAUDE_HUB_SESSION_ID` | The Session's id. |
+| `CLAUDE_HUB_TOOLS_SOCKET` | The Session's tool bridge: `<sessions root>/<session id>/tools.sock`. |
+
+It also sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, because a background command's output would stay in the Sandbox.
+
+### Sandboxes and the tool bridge
+
+Claude Code runs on the host, with the host's credentials. Its tools run in the Session's Sandbox, which never sees those credentials ([ADR 0001](docs/adr/0001-claude-on-host-tools-in-sandbox.md)). When a Session starts, the Runner creates or restarts its Sandbox, a microsandbox VM named `claude-hub-<session id>` with the Workspace mounted at `/workspace`, and reports the Sandbox's state to the Hub.
+
+The Runner then keeps one `claude mcp serve` running inside the Sandbox, restarting it when it exits, and serves it as HTTP on the Session's Unix socket: `tools.sock` in the Session's directory, which only the Runner's user can enter, with the socket itself at mode 0600. The mod answers Bash, Read, Write, Edit, NotebookEdit, Glob and Grep by posting them there (`POST /tools/call`, see `packages/protocol/src/ToolBridge.ts`). Claude Code's working directory, `<session>/claude`, is linked to `/workspace` inside the Sandbox, so paths need no rewriting. If the bridge fails or can't be reached, the mod refuses the call, so a tool never falls back to the host. Every other tool is denied, and so is the `!` shell shortcut in the prompt box, which would run on the host.
+
+**How the Sandbox gets `claude`.** `claude mcp serve` needs a Claude Code binary in the Sandbox. The Runner downloads the Linux musl build of the host's own Claude Code version from the npm registry (`@anthropic-ai/claude-code-linux-<arm64|x64>-musl`) once, checks it against the registry's integrity hash, keeps it in `RUNNER_SANDBOX_CLAUDE_CACHE/<version>/`, and mounts that directory read-only into every Sandbox at `/opt/claude-hub/claude-code`. The musl build is self-contained, so it runs on the default Alpine image (`docker:dind`) and on glibc images alike. Matching the host's version keeps tool results in the shapes the host's Claude Code expects. Claude Code's Bash tool needs `bash`, which `docker:dind` lacks, so the bridge installs it with `apk` when the Sandbox first starts (about half a second). The Sandbox gets no Claude credentials: `mcp serve` makes no model call and needs none.

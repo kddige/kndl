@@ -1,9 +1,12 @@
 import type { ClaudeSessionId, SessionId } from "@claude-hub/protocol"
+import { ToolsSocketVariable } from "@claude-hub/protocol"
 
 /**
- * The tools Claude Code keeps (ADR 0001): the file and command tools, which the mod will answer
- * from the Sandbox (#11). Leaving ToolSearch out also turns tool search off, so the mod's own
- * tools are listed directly (spike #4). Never pass an empty list: that breaks `$.tool.register`.
+ * The tools Claude Code keeps (ADR 0001): the file and command tools, which the mod answers from
+ * the Sandbox through the tool bridge (#11). Claude Code 2.1.287 has no Glob or Grep tool (its
+ * search runs through Bash), so those two only matter to builds that still have them. Leaving
+ * ToolSearch out also turns tool search off, so the mod's own tools are listed directly
+ * (spike #4). Never pass an empty list: that breaks `$.tool.register`.
  */
 export const ClaudeTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"]
 
@@ -15,6 +18,8 @@ export const ModEnvironment = {
   hubUrl: "CLAUDE_HUB_URL",
   sessionId: "CLAUDE_HUB_SESSION_ID",
   modToken: "CLAUDE_HUB_MOD_TOKEN",
+  /** The Unix socket of the Session's tool bridge, which answers the routed tools. */
+  toolsSocket: ToolsSocketVariable,
 } as const
 
 export interface ClaudeLaunchOptions {
@@ -23,6 +28,8 @@ export interface ClaudeLaunchOptions {
   readonly hubUrl: URL
   readonly sessionId: SessionId
   readonly modToken: string
+  /** The Session's tool bridge socket. */
+  readonly toolsSocket: string
   /** Start a new conversation with this id, or resume an existing one (waking an Asleep Session). */
   readonly conversation:
     | { readonly _tag: "New"; readonly id: string }
@@ -63,9 +70,13 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
     ],
     env: {
       CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1",
+      // Background Bash would leave its output in the Sandbox, where Claude Code can't read it
+      // back (spike #2). This drops `run_in_background` and Ctrl+B; the mod refuses it as well.
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
       [ModEnvironment.hubUrl]: options.hubUrl.href,
       [ModEnvironment.sessionId]: options.sessionId,
       [ModEnvironment.modToken]: options.modToken,
+      [ModEnvironment.toolsSocket]: options.toolsSocket,
     },
   }
 }

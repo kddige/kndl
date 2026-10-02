@@ -220,6 +220,9 @@ describe("connecting", () => {
       data: "screen of s-old",
       size: { cols: 80, rows: 24 },
     })
+    // Its Sandbox and tool bridge come back, and Sandboxes of no running Session are reconciled.
+    expect(h.sandboxes.calls).toEqual(["start s-old"])
+    expect(h.sandboxes.reconciled).toEqual([[sessionId("s-old")]])
   })
 
   test("after a reconnect, lists running Sessions, snapshots them and sends what waited", async () => {
@@ -272,9 +275,11 @@ describe("Sessions", () => {
     ])
     expect(spec?.env).toEqual({
       CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1",
+      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
       CLAUDE_HUB_URL: h.hub.url.href,
       CLAUDE_HUB_SESSION_ID: "s-1",
       CLAUDE_HUB_MOD_TOKEN: "chm_mod.secret",
+      CLAUDE_HUB_TOOLS_SOCKET: join(h.settings.sessionsRoot, "s-1", "tools.sock"),
     })
     expect(h.workspaces.prepared).toMatchObject([{ sessionId: "s-1", workBranch: "claude/s-1" }])
     expect(h.sandboxes.calls).toEqual(["start s-1"])

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { join, resolve } from "node:path"
 import { Config, Context, Effect, Layer, type Redacted } from "effect"
@@ -71,14 +72,27 @@ export const RunnerConfigLive = Layer.effect(
         Config.withDefault("https://github.com/{repo}.git"),
       ),
     })
+    const modDir = resolve(settings.modDir)
+    // A mod that doesn't load answers no tool call, and Claude Code would run its tools on the
+    // host: refuse to run without the built bundle.
+    if (!existsSync(join(modDir, ModBundle))) {
+      return yield* Effect.die(
+        new Error(
+          `The hub-link mod isn't built: ${join(modDir, ModBundle)} is missing. Run \`bun run mod:build\`.`,
+        ),
+      )
+    }
     return RunnerConfig.of({
       ...settings,
       login: settings.login._tag === "Some" ? settings.login.value : undefined,
       sessionsRoot: resolve(settings.sessionsRoot),
-      modDir: resolve(settings.modDir),
+      modDir,
     })
   }),
 )
+
+/** The hub-link mod's bundle, which `bun run mod:build` writes; the mod doesn't load without it. */
+export const ModBundle = "hooks/hub-link-lib.js"
 
 /** The Hub's WebSocket endpoint for Runners: `/ws/runner`, over `ws:` or `wss:`. */
 export function runnerSocketUrl(hubUrl: URL): string {

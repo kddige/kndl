@@ -74,6 +74,7 @@
     "prototype/**",
     "**/dist/**",
     "**/.claude-plugin/types/**",
+    "packages/mod/hooks/hub-link-lib.js",
     ".agents/**",
     ".claude/**"
   ]

@@ -1,14 +1,17 @@
 // An in-memory SandboxBackend for tests: no VMs, no disk. Sandboxes, volumes and host mounts are
 // maps of files, kept or lost the way the real backend keeps or loses them, so tests can check
 // that data survives stop, start and a destroy that keeps volumes. Commands don't run: each exec
-// is recorded and answered by a handler the test provides.
+// is recorded and answered by a handler the test provides, and each spawned command is a fiber
+// running a handler that reads its stdin and writes its output. Stopping or destroying a Sandbox
+// kills the commands spawned in it.
 //
 //   const layer = FakeSandboxBackend.layer({ onExec: ({ request }) => Effect.succeed({ stdout: "ok" }) })
 //   program.pipe(Effect.provide(layer))  // provides SandboxBackend and FakeSandboxBackend
 
 import { posix } from "node:path"
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
-import { Context, Effect, Layer, Option, Stream } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Queue, Stream } from "effect"
+import type { Cause, Scope } from "effect"
 import { parseVolumeName, volumeName } from "./Naming.ts"
 import {
   SandboxAlreadyExists,
@@ -24,6 +27,7 @@ import type {
   SandboxBackendShape,
   SandboxError,
   SandboxSpec,
+  SpawnedCommand,
 } from "./SandboxBackend.ts"
 import { checkSpec, specVolumes } from "./Spec.ts"
 
@@ -36,6 +40,14 @@ export interface FakeExecReply {
   readonly exitCode?: number
   readonly stdout?: string | Uint8Array
   readonly stderr?: string | Uint8Array
+}
+
+/** A spawned command's side of its pipes, for an `onSpawn` handler. */
+export interface FakeProcessIO {
+  /** What the Runner writes to the command's stdin, ending when it closes stdin. */
+  readonly stdin: Stream.Stream<Uint8Array>
+  readonly stdout: (data: string | Uint8Array) => Effect.Effect<void>
+  readonly stderr: (data: string | Uint8Array) => Effect.Effect<void>
 }
 
 export interface FakeSandbox {
@@ -54,12 +66,21 @@ export interface FakeSandboxWorld {
   readonly hostFiles: Map<string, Uint8Array>
   readonly snapshots: Map<string, Map<string, Uint8Array>>
   readonly execCalls: Array<FakeExecCall>
+  readonly spawnCalls: Array<FakeExecCall>
 }
 
 export interface FakeOptions {
   /** Answers every exec. By default a command succeeds with no output. */
   readonly onExec?: (call: FakeExecCall) => Effect.Effect<FakeExecReply>
+  /**
+   * Plays every spawned command, returning its exit code when it exits. By default a command
+   * reads stdin to the end and exits 0.
+   */
+  readonly onSpawn?: (call: FakeExecCall, io: FakeProcessIO) => Effect.Effect<number>
 }
+
+/** The exit code a spawned command reports when its Sandbox stops under it. */
+export const killedExitCode = 137
 
 const encode = (data: string | Uint8Array) =>
   typeof data === "string" ? new TextEncoder().encode(data) : data
@@ -74,8 +95,19 @@ export const makeFake = (options: FakeOptions = {}) => {
     hostFiles: new Map(),
     snapshots: new Map(),
     execCalls: [],
+    spawnCalls: [],
   }
   const onExec: NonNullable<FakeOptions["onExec"]> = options.onExec ?? (() => Effect.succeed({}))
+  const onSpawn: NonNullable<FakeOptions["onSpawn"]> =
+    options.onSpawn ?? ((_call, io) => Effect.as(Stream.runDrain(io.stdin), 0))
+  /** How to kill each Sandbox's running spawned commands. */
+  const killers = new Map<SessionId, Set<Effect.Effect<void>>>()
+  const killAll = (sessionId: SessionId) =>
+    Effect.suspend(() => {
+      const kills = [...(killers.get(sessionId) ?? [])]
+      killers.delete(sessionId)
+      return Effect.all(kills, { discard: true })
+    })
 
   const find = (sessionId: SessionId) => {
     const sandbox = world.sandboxes.get(sessionId)
@@ -134,6 +166,51 @@ export const makeFake = (options: FakeOptions = {}) => {
       }),
     )
 
+  const spawn = (
+    sessionId: SessionId,
+    request: ExecRequest,
+  ): Effect.Effect<SpawnedCommand, SandboxError, Scope.Scope> =>
+    Effect.gen(function* () {
+      yield* running(sessionId)
+      const call = { sessionId, request }
+      world.spawnCalls.push(call)
+      const stdin = yield* Queue.unbounded<Uint8Array, Cause.Done>()
+      const output = yield* Queue.unbounded<ExecEvent, Cause.Done>()
+      const status = { exited: false }
+      const exit = (exitCode: number) =>
+        Effect.suspend(() => {
+          if (status.exited) return Effect.void
+          status.exited = true
+          return Effect.andThen(Queue.offer(output, { _tag: "Exit", exitCode }), Queue.end(output))
+        })
+      const emit = (_tag: "Stdout" | "Stderr") => (data: string | Uint8Array) =>
+        Effect.asVoid(Queue.offer(output, { _tag, data: encode(data) }))
+      const fiber = yield* onSpawn(call, {
+        stdin: Stream.fromQueue(stdin),
+        stdout: emit("Stdout"),
+        stderr: emit("Stderr"),
+      }).pipe(Effect.flatMap(exit), Effect.forkScoped)
+      const kill = Effect.andThen(Fiber.interrupt(fiber), exit(killedExitCode))
+      const kills = killers.get(sessionId) ?? new Set()
+      killers.set(sessionId, kills.add(kill))
+      yield* Effect.addFinalizer(() =>
+        Effect.andThen(
+          Fiber.interrupt(fiber),
+          Effect.sync(() => kills.delete(kill)),
+        ),
+      )
+      return {
+        events: Stream.fromQueue(output),
+        write: (data) =>
+          status.exited
+            ? Effect.fail(
+                new SandboxBackendError({ operation: "write stdin", message: "command exited" }),
+              )
+            : Effect.asVoid(Queue.offer(stdin, encode(data))),
+        closeStdin: Effect.asVoid(Queue.end(stdin)),
+      }
+    })
+
   const backend: SandboxBackendShape = {
     create: (spec) =>
       Effect.gen(function* () {
@@ -147,17 +224,21 @@ export const makeFake = (options: FakeOptions = {}) => {
         sandbox.state = "Running"
       }),
     stop: (sessionId) =>
-      Effect.map(find(sessionId), (sandbox) => {
+      Effect.flatMap(find(sessionId), (sandbox) => {
         sandbox.state = "Stopped"
+        return killAll(sessionId)
       }),
     destroy: (sessionId, destroyOptions) =>
-      Effect.sync(() => {
-        world.sandboxes.delete(sessionId)
-        if (destroyOptions?.keepVolumes === true) return
-        // Deleting the entry being visited is safe for a Map.
-        for (const name of world.volumes.keys())
-          if (parseVolumeName(name)?.sessionId === sessionId) world.volumes.delete(name)
-      }),
+      Effect.andThen(
+        killAll(sessionId),
+        Effect.sync(() => {
+          world.sandboxes.delete(sessionId)
+          if (destroyOptions?.keepVolumes === true) return
+          // Deleting the entry being visited is safe for a Map.
+          for (const name of world.volumes.keys())
+            if (parseVolumeName(name)?.sessionId === sessionId) world.volumes.delete(name)
+        }),
+      ),
     state: (sessionId) =>
       Effect.succeed(world.sandboxes.get(sessionId)?.state ?? ("Destroyed" as const)),
     list: Effect.sync(() => {
@@ -175,6 +256,7 @@ export const makeFake = (options: FakeOptions = {}) => {
       }))
     }),
     execStream,
+    spawn,
     exec: (sessionId, request) => collectExec(execStream(sessionId, request)),
     readFile: (sessionId, path) =>
       Effect.flatMap(running(sessionId), (sandbox): Effect.Effect<Uint8Array, SandboxError> => {

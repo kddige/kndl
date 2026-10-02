@@ -10,8 +10,9 @@ export class SandboxError extends Data.TaggedError("SandboxError")<{
  * The seam for a Session's Sandbox (#9): created and started around its Workspace before Claude
  * Code launches, and stopped after Claude Code stops.
  *
- * A backend reports its state to the Hub with `SandboxStateReport`, and the mod (#11) routes
- * Claude Code's file and command tools into it.
+ * The live one (SessionSandboxes.ts) reports its state to the Hub with `SandboxStateReport`,
+ * and serves the Session's tool bridge, through which the mod routes Claude Code's file and
+ * command tools into the Sandbox (#11).
  */
 export class Sandboxes extends Context.Service<
   Sandboxes,
@@ -23,11 +24,16 @@ export class Sandboxes extends Context.Service<
     ) => Effect.Effect<void, SandboxError>
     /** `Sleep` stops the Sandbox and keeps its volumes; `Archive` destroys it (ADR 0006). */
     readonly stop: (sessionId: SessionId, reason: StopSession["reason"]) => Effect.Effect<void>
+    /**
+     * Stops any Sandbox left running for a Session not among `running`, as after a crash, and
+     * logs the Sandboxes it doesn't know. Destroys nothing.
+     */
+    readonly reconcile: (running: Iterable<SessionId>) => Effect.Effect<void>
   }
 >()("@claude-hub/runner/Sandboxes") {}
 
-/** No Sandbox yet: Sessions run with nothing around them until #9 lands. */
+/** No Sandbox: Sessions run with nothing around them, and the mod refuses every routed tool. */
 export const NoSandboxes = Layer.succeed(
   Sandboxes,
-  Sandboxes.of({ start: () => Effect.void, stop: () => Effect.void }),
+  Sandboxes.of({ start: () => Effect.void, stop: () => Effect.void, reconcile: () => Effect.void }),
 )

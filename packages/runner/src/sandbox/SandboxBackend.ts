@@ -7,7 +7,7 @@
 
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
 import { Context, Data, Effect, Stream } from "effect"
-import type { Option } from "effect"
+import type { Option, Scope } from "effect"
 
 // ── What a Sandbox is made of ──────────────────────────────────────────────
 
@@ -94,6 +94,19 @@ export type ExecEvent =
   | { readonly _tag: "Stdout"; readonly data: Uint8Array }
   | { readonly _tag: "Stderr"; readonly data: Uint8Array }
   | { readonly _tag: "Exit"; readonly exitCode: number }
+
+/**
+ * A command started with its stdin left open, for a long-lived server the Runner talks to, such
+ * as `claude mcp serve` (the tool bridge).
+ */
+export interface SpawnedCommand {
+  /** The command's output as it comes, ending with `Exit`. Run it once. */
+  readonly events: Stream.Stream<ExecEvent, SandboxError>
+  /** Writes to the command's stdin. */
+  readonly write: (data: string | Uint8Array) => Effect.Effect<void, SandboxError>
+  /** Closes the command's stdin, so it sees end of input. Does nothing the second time. */
+  readonly closeStdin: Effect.Effect<void>
+}
 
 /** A finished command's output, decoded as UTF-8. */
 export interface ExecResult {
@@ -206,6 +219,14 @@ export interface SandboxBackendShape {
     sessionId: SessionId,
     request: ExecRequest,
   ) => Stream.Stream<ExecEvent, SandboxError>
+  /**
+   * Starts a command in the running Sandbox with its stdin open for writing. Closing the scope
+   * kills the command if it is still running. `request.stdin` is ignored: write instead.
+   */
+  readonly spawn: (
+    sessionId: SessionId,
+    request: ExecRequest,
+  ) => Effect.Effect<SpawnedCommand, SandboxError, Scope.Scope>
   /** Runs a command to completion and returns its output. */
   readonly exec: (
     sessionId: SessionId,

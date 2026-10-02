@@ -32,9 +32,19 @@ export interface SessionDirectories {
   readonly claude: string
   /** The Workspace: the Repo's checkout on the Work branch, mounted into the Sandbox. */
   readonly workspace: string
+  /**
+   * The Unix socket the Session's tool bridge listens on, which the mod finds through
+   * `CLAUDE_HUB_TOOLS_SOCKET`. A socket path must stay under 104 bytes on macOS.
+   */
+  readonly toolsSocket: string
 }
 
 export function sessionDirectories(sessionsRoot: string, id: SessionId): SessionDirectories {
   const session = join(sessionsRoot, id)
-  return { session, claude: join(session, "claude"), workspace: join(session, "workspace") }
+  return {
+    session,
+    claude: join(session, "claude"),
+    workspace: join(session, "workspace"),
+    toolsSocket: join(session, "tools.sock"),
+  }
 }

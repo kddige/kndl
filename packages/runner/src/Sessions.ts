@@ -23,7 +23,7 @@ import { claudeLaunch } from "./ClaudeLaunch.ts"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes } from "./Sandbox.ts"
-import { isSafeSessionId } from "./SessionNames.ts"
+import { isSafeSessionId, sessionDirectories } from "./SessionNames.ts"
 import { type Pane, Tmux } from "./Tmux.ts"
 import { Workspaces } from "./Workspace.ts"
 
@@ -178,6 +178,7 @@ export const SessionsLive = Layer.effect(
               hubUrl: config.hubUrl,
               sessionId,
               modToken: request.modToken,
+              toolsSocket: directories.toolsSocket,
               conversation:
                 request.resume === undefined
                   ? { _tag: "New", id: randomUUID() }
@@ -240,13 +241,26 @@ export const SessionsLive = Layer.effect(
       )
       for (const sessionId of found) {
         if (running.has(sessionId)) continue
-        yield* watch(sessionId).pipe(
+        const adopted = yield* watch(sessionId).pipe(
           Effect.tap(() => Effect.logInfo(`Re-adopted Session ${sessionId}`)),
+          Effect.as(true),
           Effect.catchCause((cause) =>
-            Effect.logWarning(`Could not re-adopt Session ${sessionId}`, cause),
+            Effect.logWarning(`Could not re-adopt Session ${sessionId}`, cause).pipe(
+              Effect.as(false),
+            ),
           ),
         )
+        // Its Sandbox may have kept running or not; either way its tool bridge must come back.
+        if (adopted)
+          yield* sandboxes
+            .start(sessionId, sessionDirectories(config.sessionsRoot, sessionId))
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(`Session ${sessionId}: its Sandbox did not come back`, cause),
+              ),
+            )
       }
+      yield* sandboxes.reconcile(running.keys())
     })
 
     const handle = (incoming: HubToRunner): Effect.Effect<void> => {

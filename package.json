@@ -12,8 +12,9 @@
     "format:check": "oxfmt --check",
     "hub": "bun run --filter @claude-hub/hub start",
     "runner-token": "bun packages/hub/src/main.ts runner-token",
-    "runner": "bun run --filter @claude-hub/runner start",
+    "runner": "bun run mod:build && bun run --filter @claude-hub/runner start",
     "web": "bun run --filter @claude-hub/web dev",
+    "mod:build": "bun run --filter @claude-hub/mod build",
     "mod:check": "bun run --filter @claude-hub/mod check"
   },
   "devDependencies": {

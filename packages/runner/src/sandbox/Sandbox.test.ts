@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionId } from "@claude-hub/protocol"
 import { Effect, Option, Stream } from "effect"
-import { FakeSandboxBackend } from "./FakeSandboxBackend.ts"
+import { FakeSandboxBackend, killedExitCode } from "./FakeSandboxBackend.ts"
 import { parseSandboxName, parseVolumeName, sandboxName, volumeName } from "./Naming.ts"
 import { reconcileSandboxes } from "./Reconcile.ts"
 import { SandboxBackend, shell } from "./SandboxBackend.ts"
@@ -179,6 +179,50 @@ describe("fake backend", () => {
         })
       }),
       { onExec: () => Effect.succeed({ exitCode: 1, stdout: "out", stderr: "err" }) },
+    ))
+
+  test("spawns a command that reads what is written to its stdin", () =>
+    run(
+      Effect.gen(function* () {
+        const backend = yield* SandboxBackend
+        const world = yield* FakeSandboxBackend
+        yield* backend.create(layout(s1))
+        const command = yield* backend.spawn(s1, { command: "cat" })
+        yield* command.write("one\n")
+        yield* command.write("two\n")
+        yield* command.closeStdin
+        const events = yield* Stream.runCollect(command.events)
+        expect(events.map((e) => (e._tag === "Exit" ? e.exitCode : text(e.data)))).toEqual([
+          "one\n",
+          "two\n",
+          0,
+        ])
+        expect(world.spawnCalls).toEqual([{ sessionId: s1, request: { command: "cat" } }])
+        expect((yield* Effect.flip(command.write("late"))).message).toBe("command exited")
+      }).pipe(Effect.scoped),
+      {
+        onSpawn: (_call, io) =>
+          Effect.as(
+            Stream.runForEach(io.stdin, (data) => io.stdout(data)),
+            0,
+          ),
+      },
+    ))
+
+  test("kills spawned commands when their Sandbox stops, and refuses to spawn in a stopped one", () =>
+    run(
+      Effect.gen(function* () {
+        const backend = yield* SandboxBackend
+        yield* backend.create(layout(s1))
+        const command = yield* backend.spawn(s1, { command: "sleep" })
+        yield* backend.stop(s1)
+        const events = yield* Stream.runCollect(command.events)
+        expect(events).toEqual([{ _tag: "Exit", exitCode: killedExitCode }])
+        expect((yield* Effect.flip(backend.spawn(s1, { command: "sleep" })))._tag).toBe(
+          "SandboxNotRunning",
+        )
+      }).pipe(Effect.scoped),
+      { onSpawn: () => Effect.never },
     ))
 
   test("snapshots a stopped Sandbox's rootfs and restores it stopped", () =>
