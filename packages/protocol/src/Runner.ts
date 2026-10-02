@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { CoAuthorsCommitted, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
 import { ClaudeSessionId, RunnerId, SessionId } from "./Ids.ts"
 import { BranchName, RepoName, RunnerLogin } from "./Session.ts"
 import {
@@ -77,6 +78,9 @@ export const RunnerToHub = Schema.Union([
   SessionStopped,
   SandboxStateReport,
   TerminalFrame,
+  GitRequest,
+  CoAuthorsCommitted,
+  WipPushFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type RunnerToHub = typeof RunnerToHub.Type
 
@@ -128,5 +132,7 @@ export const HubToRunner = Schema.Union([
   TerminalInput,
   TerminalResize,
   RequestTerminalSnapshot,
+  GitReply,
+  SessionTurnEnded,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToRunner = typeof HubToRunner.Type

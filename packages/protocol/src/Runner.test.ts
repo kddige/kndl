@@ -1,4 +1,5 @@
-import { describe, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
 import { HubToRunner, RunnerToHub } from "./Runner.ts"
 import { expectEveryTag, expectRejected, expectRoundTrips, runnerLogin } from "./testSupport.ts"
 import { ProtocolVersion } from "./Version.ts"
@@ -27,6 +28,22 @@ const runnerToHub = [
     size,
   },
   { _tag: "TerminalFrame", sessionId: "s-1", kind: "Output", data: "x", size },
+  { _tag: "GitRequest", requestId: "g-1", sessionId: "s-1", ask: { _tag: "GitAccess" } },
+  { _tag: "GitRequest", requestId: "g-2", sessionId: "s-1", ask: { _tag: "CoAuthors" } },
+  {
+    _tag: "GitRequest",
+    requestId: "g-3",
+    sessionId: "s-1",
+    ask: { _tag: "OpenPullRequest", title: "Add a health check", body: "", draft: true },
+  },
+  {
+    _tag: "GitRequest",
+    requestId: "g-4",
+    sessionId: "s-1",
+    ask: { _tag: "ReviewPullRequest", number: 7, body: "Looks good", event: "COMMENT" },
+  },
+  { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: 12 },
+  { _tag: "WipPushFailed", sessionId: "s-1", message: "git push exited with 128" },
 ]
 
 const hubToRunner = [
@@ -59,6 +76,66 @@ const hubToRunner = [
   { _tag: "TerminalInput", sessionId: "s-1", data: "\r" },
   { _tag: "TerminalResize", sessionId: "s-1", size },
   { _tag: "RequestTerminalSnapshot", sessionId: "s-1" },
+  {
+    _tag: "GitReply",
+    requestId: "g-1",
+    answer: {
+      _tag: "GitAccess",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+      workBranch: "claude/s-1",
+      credentials: {
+        _tag: "AppToken",
+        token: "ghs_installation",
+        expiresAt: 1_790_000_000_000,
+        author: {
+          name: "claude-hub[bot]",
+          email: "41898282+claude-hub[bot]@users.noreply.github.com",
+        },
+      },
+    },
+  },
+  {
+    _tag: "GitReply",
+    requestId: "g-1",
+    answer: {
+      _tag: "GitAccess",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+      workBranch: "claude/s-1",
+      credentials: { _tag: "HostCredentials" },
+    },
+  },
+  {
+    _tag: "GitReply",
+    requestId: "g-2",
+    answer: {
+      _tag: "CoAuthors",
+      coAuthors: [{ name: "Alice", email: "583231+alice@users.noreply.github.com" }],
+      through: 12,
+    },
+  },
+  {
+    _tag: "GitReply",
+    requestId: "g-3",
+    answer: {
+      _tag: "PullRequest",
+      number: 7,
+      url: "https://github.com/kddige/claude-hub/pull/7",
+      existing: false,
+    },
+  },
+  {
+    _tag: "GitReply",
+    requestId: "g-4",
+    answer: { _tag: "ReviewPosted", url: "https://github.com/kddige/claude-hub/pull/7#r1" },
+  },
+  {
+    _tag: "GitReply",
+    requestId: "g-3",
+    answer: { _tag: "GitFailed", message: "Pull requests need the GitHub App" },
+  },
+  { _tag: "SessionTurnEnded", sessionId: "s-1" },
 ]
 
 describe("RunnerToHub", () => {
@@ -82,6 +159,25 @@ describe("RunnerToHub", () => {
     })
     expectRejected(RunnerToHub, { ...runnerToHub[7], size: { cols: 0, rows: 48 } })
     expectRejected(RunnerToHub, { ...runnerToHub[7], kind: "Delta" })
+    expectRejected(RunnerToHub, {
+      _tag: "GitRequest",
+      requestId: "",
+      sessionId: "s-1",
+      ask: { _tag: "CoAuthors" },
+    })
+    expectRejected(RunnerToHub, {
+      _tag: "GitRequest",
+      requestId: "g",
+      sessionId: "s-1",
+      ask: { _tag: "Push" },
+    })
+    expectRejected(RunnerToHub, {
+      _tag: "GitRequest",
+      requestId: "g",
+      sessionId: "s-1",
+      ask: { _tag: "ReviewPullRequest", number: 0, body: "x", event: "COMMENT" },
+    })
+    expectRejected(RunnerToHub, { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: -1 })
   })
 })
 
@@ -98,5 +194,27 @@ describe("HubToRunner", () => {
     expectRejected(HubToRunner, { _tag: "StopSession", sessionId: "s-1", reason: "Delete" })
     expectRejected(HubToRunner, { _tag: "TerminalInput", sessionId: "s-1", data: "" })
     expectRejected(HubToRunner, { _tag: "TerminalResize", sessionId: "s-1", size: { cols: 80 } })
+    expectRejected(HubToRunner, {
+      _tag: "GitReply",
+      requestId: "g-1",
+      answer: {
+        _tag: "GitAccess",
+        repo: "kddige/claude-hub",
+        baseBranch: "main",
+        workBranch: "w",
+        credentials: {
+          _tag: "AppToken",
+          token: "",
+          expiresAt: 1,
+          author: { name: "b", email: "e" },
+        },
+      },
+    })
+    expectRejected(HubToRunner, { _tag: "GitReply", requestId: "g-1", answer: { _tag: "Token" } })
+  })
+
+  test("keeps an installation token redacted once decoded", () => {
+    const reply = Schema.decodeUnknownSync(HubToRunner)(hubToRunner[9])
+    expect(String(JSON.stringify(reply))).not.toContain("ghs_installation")
   })
 })

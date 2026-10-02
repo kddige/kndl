@@ -39,12 +39,24 @@ export const TurnStopRequested = Schema.TaggedStruct("TurnStopRequested", {
 export type TurnStopRequested = typeof TurnStopRequested.Type
 
 /**
+ * The Runner could not push the Session's WIP ref (GLOSSARY.md), the snapshot of its Workspace
+ * on origin. Nothing waits for it: the Session went on, or to sleep, regardless.
+ */
+export const WipNotPushed = Schema.TaggedStruct("WipNotPushed", {
+  message: Schema.String,
+})
+export type WipNotPushed = typeof WipNotPushed.Type
+
+/**
  * Everything a Session's history records: Turn events from the mod, and what the Hub saw
  * happen. New kinds of event are added here as members.
  */
-export const SessionEvent = Schema.Union([TurnEvent, SessionStateChanged, TurnStopRequested]).pipe(
-  Schema.toTaggedUnion("_tag"),
-)
+export const SessionEvent = Schema.Union([
+  TurnEvent,
+  SessionStateChanged,
+  TurnStopRequested,
+  WipNotPushed,
+]).pipe(Schema.toTaggedUnion("_tag"))
 export type SessionEvent = typeof SessionEvent.Type
 
 /** One entry of a Session's event log, numbered in the order the Hub appended it. */
