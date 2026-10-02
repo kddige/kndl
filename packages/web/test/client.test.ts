@@ -237,14 +237,18 @@ describe("a joined Session", () => {
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
     await eventually(() => {
       const joins = hub.received.filter((message) => message._tag === "JoinSession")
-      expect(joins.at(-1)).toEqual({ _tag: "JoinSession", sessionId: demo, afterSeq: before - 1 })
+      expect<unknown>(joins.at(-1)).toEqual({
+        _tag: "JoinSession",
+        sessionId: demo,
+        afterSeq: before - 1,
+      })
     })
     client.sendPrompt(demo, "After the drop")
     await eventually(() =>
       expect(client.getState().joined[demo]?.log.at(-1)?.event._tag).toBe("TurnEnded"),
     )
     const seqs = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.seq)
-    expect(seqs).toEqual(seqs.map((_, index) => index))
+    expect<unknown>(seqs).toEqual(seqs.map((_, index) => index))
   })
 
   test("leaving stops the Session's updates", async () => {

@@ -1,3 +1,4 @@
+// oxlint-disable react/no-array-index-key -- a parsed Markdown tree has no identity but position, and it is re-parsed whole on every change
 import * as stylex from "@stylexjs/stylex"
 import { Fragment, memo, type ReactNode } from "react"
 import { type Block, type Inline, parseMarkdown } from "./markdown.ts"

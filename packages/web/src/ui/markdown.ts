@@ -229,7 +229,10 @@ export function parseInline(source: string): ReadonlyArray<Inline> {
       if (close !== -1) {
         flush()
         const code = source.slice(index + ticks.length, close)
-        out.push({ type: "code", text: code.length > 2 && /^ .* $/.test(code) ? code.slice(1, -1) : code })
+        out.push({
+          type: "code",
+          text: code.length > 2 && /^ .* $/.test(code) ? code.slice(1, -1) : code,
+        })
         index = close + ticks.length
         continue
       }

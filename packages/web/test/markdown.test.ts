@@ -5,14 +5,14 @@ const text = (value: string) => ({ type: "text", text: value })
 
 describe("blocks", () => {
   test("paragraphs split on blank lines; single newlines stay in the paragraph", () => {
-    expect(parseMarkdown("One\nstill one\n\nTwo")).toEqual([
+    expect<unknown>(parseMarkdown("One\nstill one\n\nTwo")).toEqual([
       { type: "paragraph", children: [text("One\nstill one")] },
       { type: "paragraph", children: [text("Two")] },
     ])
   })
 
   test("headings, rules and quotes", () => {
-    expect(parseMarkdown("## Plan ##\n---\n> quoted\n> more")).toEqual([
+    expect<unknown>(parseMarkdown("## Plan ##\n---\n> quoted\n> more")).toEqual([
       { type: "heading", level: 2, children: [text("Plan")] },
       { type: "rule" },
       { type: "quote", children: [{ type: "paragraph", children: [text("quoted\nmore")] }] },
@@ -20,21 +20,23 @@ describe("blocks", () => {
   })
 
   test("a fenced code block keeps its text as is, with its language", () => {
-    expect(parseMarkdown("```ts\nconst a = **1**\n\n  indented\n```\nafter")).toEqual([
+    expect<unknown>(parseMarkdown("```ts\nconst a = **1**\n\n  indented\n```\nafter")).toEqual([
       { type: "code", lang: "ts", text: "const a = **1**\n\n  indented" },
       { type: "paragraph", children: [text("after")] },
     ])
   })
 
   test("an unclosed fence, as while streaming, runs to the end", () => {
-    expect(parseMarkdown("Look:\n```\nline one\nline")).toEqual([
+    expect<unknown>(parseMarkdown("Look:\n```\nline one\nline")).toEqual([
       { type: "paragraph", children: [text("Look:")] },
       { type: "code", lang: "", text: "line one\nline" },
     ])
   })
 
   test("bullet and numbered lists, with nested content and lazy lines", () => {
-    expect(parseMarkdown("- one\n- two\n  - nested\n\n3. three\n4. four\ncontinued")).toEqual([
+    expect<unknown>(
+      parseMarkdown("- one\n- two\n  - nested\n\n3. three\n4. four\ncontinued"),
+    ).toEqual([
       {
         type: "list",
         ordered: false,
@@ -70,7 +72,9 @@ describe("blocks", () => {
   })
 
   test("a table with alignment", () => {
-    expect(parseMarkdown("| Tool | Calls |\n|:--|--:|\n| Bash | 3 |\n| `Read` | 1 |")).toEqual([
+    expect<unknown>(
+      parseMarkdown("| Tool | Calls |\n|:--|--:|\n| Bash | 3 |\n| `Read` | 1 |"),
+    ).toEqual([
       {
         type: "table",
         align: ["left", "right"],
@@ -86,48 +90,52 @@ describe("blocks", () => {
 
 describe("inline", () => {
   test("code, strong, emphasis and strikethrough", () => {
-    expect(parseInline("Run `bun test`, **now** and *carefully*, not ~~later~~.")).toEqual([
-      text("Run "),
-      { type: "code", text: "bun test" },
-      text(", "),
-      { type: "strong", children: [text("now")] },
-      text(" and "),
-      { type: "em", children: [text("carefully")] },
-      text(", not "),
-      { type: "del", children: [text("later")] },
-      text("."),
-    ])
+    expect<unknown>(parseInline("Run `bun test`, **now** and *carefully*, not ~~later~~.")).toEqual(
+      [
+        text("Run "),
+        { type: "code", text: "bun test" },
+        text(", "),
+        { type: "strong", children: [text("now")] },
+        text(" and "),
+        { type: "em", children: [text("carefully")] },
+        text(", not "),
+        { type: "del", children: [text("later")] },
+        text("."),
+      ],
+    )
   })
 
   test("marks nest", () => {
-    expect(parseInline("**a *b* c**")).toEqual([
+    expect<unknown>(parseInline("**a *b* c**")).toEqual([
       { type: "strong", children: [text("a "), { type: "em", children: [text("b")] }, text(" c")] },
     ])
   })
 
   test("underscores inside words and unclosed marks stay literal", () => {
-    expect(parseInline("snake_case_name and 2 * 3 and **open")).toEqual([
+    expect<unknown>(parseInline("snake_case_name and 2 * 3 and **open")).toEqual([
       text("snake_case_name and 2 * 3 and **open"),
     ])
   })
 
   test("marks in code spans aren't marks", () => {
-    expect(parseInline("`a *b* c`")).toEqual([{ type: "code", text: "a *b* c" }])
+    expect<unknown>(parseInline("`a *b* c`")).toEqual([{ type: "code", text: "a *b* c" }])
   })
 
   test("links keep only safe targets", () => {
-    expect(parseInline("[docs](https://example.com) and [x](javascript:alert(1))")).toEqual([
+    expect<unknown>(
+      parseInline("[docs](https://example.com) and [x](javascript:alert(1))"),
+    ).toEqual([
       { type: "link", href: "https://example.com", children: [text("docs")] },
       text(" and "),
       text("x"),
       text(")"),
     ])
-    expect(parseInline("<https://example.com/a>")).toEqual([
+    expect<unknown>(parseInline("<https://example.com/a>")).toEqual([
       { type: "link", href: "https://example.com/a", children: [text("https://example.com/a")] },
     ])
   })
 
   test("a backslash escapes a mark", () => {
-    expect(parseInline("\\*not em\\*")).toEqual([text("*not em*")])
+    expect<unknown>(parseInline("\\*not em\\*")).toEqual([text("*not em*")])
   })
 })
