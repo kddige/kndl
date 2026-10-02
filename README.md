@@ -99,17 +99,17 @@ Store the credentials on the Hub's host:
 | What | Where |
 |---|---|
 | The private key | `~/.claude-hub/github-app.pem`, with `chmod 600` |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | `.env.local` in the repo root, which git ignores (as it does `.env*` and `*.pem`) |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | `packages/hub/.env.local`, which git ignores (as it does `.env*` and `*.pem` anywhere) |
 
 ```sh
-# .env.local
+# packages/hub/.env.local
 GITHUB_CLIENT_ID=Iv1.…
 GITHUB_CLIENT_SECRET=…
 GITHUB_APP_ID=…
 GITHUB_APP_PRIVATE_KEY_PATH=/Users/you/.claude-hub/github-app.pem
 ```
 
-`bun run hub` and `bun run runner-token` read `.env.local` when it exists (Bun loads it from the repo root, where those scripts run), so no flag is needed. Values already in the environment win.
+`bun run hub` and `bun run runner-token` read `packages/hub/.env.local` when it exists (both run in `packages/hub`, where Bun looks for it), so no flag is needed. Values already in the environment win.
 
 Only the Hub's host needs these. Sign-in uses the client id and secret; the git tools use `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH`. Only the Hub holds the App's credentials: Runners never see the private key, and get short-lived installation tokens from the Hub when they need one ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)).
 
