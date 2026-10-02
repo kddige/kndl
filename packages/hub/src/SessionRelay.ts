@@ -9,8 +9,20 @@
 // - The Prompt queue (PromptQueue.ts): prompts wait in order, and the head is delivered to the
 //   mod when the Session is idle, one at a time. A prompt the mod reports as PromptFailed is
 //   dropped, and its sender gets a CommandFailed, rather than put back to fail again.
-// - Minimal Session plumbing for creating a Session on a Runner, and for following its Runner
-//   going offline and coming back. The full lifecycle (sleep, wake, archive) is #12 and #18.
+// - The Session lifecycle (#12; archiving is #18):
+//   - CreateSession starts a Session on a Runner, Active.
+//   - Sleep: an Active Session with no Turn running, no prompt queued and no Participant present
+//     for `HubConfig.sleepAfter` (or put to sleep by hand with SleepSession) is stopped: the Hub
+//     sends StopSession `Sleep`, and records it Asleep when the Runner reports SessionStopped.
+//   - Wake: a prompt to an Asleep Session (or WakeSession) wakes it. The Hub records it Active and
+//     sends StartSession with `resume`, the Claude Code session id from the mod's last hello. The
+//     prompt waits in the queue until the new mod says hello.
+//   - A start that fails, or a Claude Code that exits on its own, leaves the Session Asleep, with
+//     the reason in the logged SessionStateChanged. Prompts queued stay queued and are not retried
+//     on their own: the next prompt or WakeSession tries again.
+//   - Frozen: while its Runner is offline. Prompts queue up. When the Runner is back the Session is
+//     Active if its Claude Code is still running in tmux, otherwise Asleep, and woken if prompts
+//     are waiting.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
@@ -44,12 +56,14 @@ import {
   SessionStateChanged,
   type SessionSummary,
   StartSession,
+  StopSession,
   StopTurn,
   TurnStopRequested,
   type WebToHub,
 } from "@claude-hub/protocol"
-import { Clock, Context, Effect, Layer, Option, type Scope, Semaphore } from "effect"
+import { Clock, Context, Duration, Effect, Layer, Option, type Scope, Semaphore } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
+import { HubConfig } from "./HubConfig.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { PromptQueue } from "./PromptQueue.ts"
@@ -74,6 +88,16 @@ export const RelayCloseCode = {
   /** The Runner connected again, and its newer connection replaces this one. */
   Replaced: 4409,
 } as const
+
+/** Who or what moved a Session to another state, as its SessionStateChanged records. */
+interface Why {
+  readonly by?: Participant
+  readonly message?: string
+}
+
+/** How often the Hub looks for idle Sessions to put to sleep: a tenth of the wait, 10 ms to 30 s. */
+export const idleCheckInterval = (sleepAfter: Duration.Duration) =>
+  Duration.millis(Math.min(Math.max(Duration.toMillis(sleepAfter) / 10, 10), 30_000))
 
 /** The work branch a new Session commits to. */
 export const workBranchFor = (sessionId: SessionId) => `claude/${sessionId}`
@@ -116,6 +140,8 @@ export class SessionRelay extends Context.Service<
       const runners = yield* Runners
       const modTokens = yield* ModTokens
       const outbox = yield* ModOutbox
+      const config = yield* HubConfig
+      const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
 
@@ -142,6 +168,18 @@ export class SessionRelay extends Context.Service<
        * README.md).
        */
       const inFlight = new Map<SessionId, PromptId>()
+      /**
+       * Sessions whose Claude Code was started or woken and whose new mod hasn't said hello yet.
+       * Prompts wait for that hello.
+       */
+      const starting = new Set<SessionId>()
+      /** Sessions the Hub asked their Runner to stop for sleep, with why, until SessionStopped. */
+      const stopping = new Map<SessionId, Why>()
+      /** When each Session was last seen busy: an event logged, its queue or presence changing. */
+      const lastBusy = new Map<SessionId, number>()
+
+      const markBusy = (sessionId: SessionId) =>
+        Effect.map(Clock.currentTimeMillis, (now) => void lastBusy.set(sessionId, now))
 
       // ── Sending ──────────────────────────────────────────────────────────
 
@@ -170,13 +208,14 @@ export class SessionRelay extends Context.Service<
       ) {
         const entry = yield* log.append(sessionId, event)
         toJoined(sessionId, SessionEventLogged.make({ sessionId, entry }))
+        yield* markBusy(sessionId)
       })
 
       /** Moves the Session to `state`, if it isn't there, logging why. */
       const changeState = Effect.fn("SessionRelay.changeState")(function* (
         session: SessionSummary,
         state: SessionState,
-        why: { readonly by?: Participant; readonly message?: string },
+        why: Why,
       ) {
         if (session.state === state) return
         yield* sessions.setState(session.id, state)
@@ -187,6 +226,7 @@ export class SessionRelay extends Context.Service<
       const queueChanged = Effect.fn("SessionRelay.queueChanged")(function* (sessionId: SessionId) {
         const queue = yield* prompts.list(sessionId)
         toJoined(sessionId, PromptQueueChanged.make({ sessionId, queue }))
+        yield* markBusy(sessionId)
       })
 
       /** The Participants who have joined the Session, each once, in the order they connected. */
@@ -221,6 +261,7 @@ export class SessionRelay extends Context.Service<
         const same = before.length === after.length && before.every((p, i) => p.id === after[i]?.id)
         if (same) return false
         toJoined(sessionId, PresenceChanged.make({ sessionId, participants: after }))
+        yield* markBusy(sessionId)
         yield* presenceToMod(sessionId)
         return true
       })
@@ -229,13 +270,13 @@ export class SessionRelay extends Context.Service<
 
       /**
        * Sends the head of the Session's Prompt queue to its mod, if the Session is Active and
-       * idle and no other prompt is out for delivery.
+       * idle, its mod has said hello, it isn't going to sleep, and no other prompt is out for
+       * delivery. An Asleep Session is woken instead (see `wake`).
        */
       const deliverNext = Effect.fn("SessionRelay.deliverNext")(function* (sessionId: SessionId) {
-        if (inFlight.has(sessionId)) return
+        if (inFlight.has(sessionId) || starting.has(sessionId) || stopping.has(sessionId)) return
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
-        // TODO(#12): an Asleep Session wakes on its next prompt instead.
         if (session.value.state !== "Active" || session.value.currentTurn !== null) return
         const [head] = yield* prompts.list(sessionId)
         if (head === undefined) return
@@ -251,21 +292,106 @@ export class SessionRelay extends Context.Service<
         )
       })
 
-      /** The Session's Claude Code is no longer running: no Turn is, and nothing is in flight. */
+      /**
+       * The Session's Claude Code is no longer running: no Turn is, and nothing is in flight. It
+       * is Asleep, whether it was put to sleep, exited on its own or failed to start.
+       */
       const claudeGone = Effect.fn("SessionRelay.claudeGone")(function* (
         session: SessionSummary,
-        message: string,
+        why: Why,
       ) {
         inFlight.delete(session.id)
+        starting.delete(session.id)
+        stopping.delete(session.id)
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
         if (session.state === "Archived") return
         if (session.state === "Asleep") return yield* sessionUpdated(session.id)
-        // TODO(#12): Asleep is the closest state for a Session whose Claude Code is not running
-        // on an online Runner; #12 decides what a stop or a failed start leaves it in.
-        yield* changeState(session, "Asleep", { message })
+        yield* changeState(session, "Asleep", why)
       })
+
+      /**
+       * Wakes an Asleep Session on its online Runner: records it Active and starts its Claude
+       * Code again, resuming the conversation its mod last said hello from, on the same
+       * Workspace and Sandbox volumes. Queued prompts are delivered once the new mod says hello.
+       */
+      const wake = Effect.fn("SessionRelay.wake")(function* (session: SessionSummary, why: Why) {
+        const runner = onlineRunners.get(session.runnerId)
+        if (runner === undefined || session.state !== "Asleep") return
+        const resume = yield* sessions.claudeSessionId(session.id)
+        const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
+        starting.add(session.id)
+        yield* changeState(session, "Active", {
+          ...why,
+          message: Option.isSome(resume)
+            ? `Woken on ${runner.name}`
+            : `Woken on ${runner.name}, with a new conversation: Claude Code's last one is unknown`,
+        })
+        runner.peer.send(
+          StartSession.make({
+            sessionId: session.id,
+            repo: session.repo,
+            baseBranch: session.baseBranch,
+            workBranch: session.workBranch,
+            modToken,
+            ...(Option.isSome(resume) ? { resume: resume.value } : {}),
+          }),
+        )
+      })
+
+      /** Wakes the Session if it is Asleep with prompts waiting, as ones queued while Frozen. */
+      const wakeIfWaiting = Effect.fn("SessionRelay.wakeIfWaiting")(function* (
+        sessionId: SessionId,
+      ) {
+        const session = yield* sessions.get(sessionId)
+        if (Option.isNone(session) || session.value.state !== "Asleep") return
+        if ((yield* prompts.list(sessionId)).length === 0) return
+        yield* wake(session.value, { message: "Woken for the prompts waiting in its queue" })
+      })
+
+      /**
+       * Asks the Session's Runner to stop its Claude Code and Sandbox, keeping the Workspace and
+       * the Sandbox's volumes. It stays Active, taking no deliveries, until SessionStopped.
+       */
+      const putToSleep = Effect.fn("SessionRelay.putToSleep")(function* (
+        session: SessionSummary,
+        why: Why,
+      ) {
+        const runner = onlineRunners.get(session.runnerId)
+        if (runner === undefined || stopping.has(session.id)) return
+        stopping.set(session.id, why)
+        yield* Effect.logInfo(`Putting Session ${session.id} to sleep: ${why.message ?? ""}`)
+        runner.peer.send(StopSession.make({ sessionId: session.id, reason: "Sleep" }))
+      })
+
+      /** Whether the Session is Active with nothing going on and no one there. */
+      const isIdle = Effect.fn("SessionRelay.isIdle")(function* (session: SessionSummary) {
+        if (session.state !== "Active" || session.currentTurn !== null) return false
+        if (!onlineRunners.has(session.runnerId)) return false
+        if (stopping.has(session.id) || inFlight.has(session.id)) return false
+        if (presenceOf(session.id).length > 0) return false
+        return (yield* prompts.list(session.id)).length === 0
+      })
+
+      /** Puts to sleep every Session that has been idle for `sleepAfter`. */
+      const sleepIdle = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        const sleepAfter = Duration.toMillis(config.sleepAfter)
+        for (const session of yield* sessions.list) {
+          if (!(yield* isIdle(session))) {
+            lastBusy.set(session.id, now)
+            continue
+          }
+          const since = lastBusy.get(session.id)
+          if (since === undefined) lastBusy.set(session.id, now)
+          else if (now - since >= sleepAfter) {
+            yield* putToSleep(session, {
+              message: `Idle for ${Duration.format(config.sleepAfter)}`,
+            })
+          }
+        }
+      }).pipe(Effect.withSpan("SessionRelay.sleepIdle"))
 
       // ── The web channel ──────────────────────────────────────────────────
 
@@ -332,6 +458,7 @@ export class SessionRelay extends Context.Service<
                 createdAt: yield* Clock.currentTimeMillis,
               })
               const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
+              starting.add(id)
               yield* logEvent(
                 id,
                 SessionStateChanged.make({
@@ -382,13 +509,7 @@ export class SessionRelay extends Context.Service<
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              if (session.value.state === "Frozen") {
-                return refuse(
-                  message,
-                  "The Session is Frozen: its Runner is offline, so it can't take prompts until the Runner returns.",
-                  { sessionId },
-                )
-              }
+              // A Frozen Session's prompts wait in the queue for its Runner to return.
               if (session.value.state === "Archived") {
                 return refuse(message, "The Session is archived.", { sessionId })
               }
@@ -402,7 +523,62 @@ export class SessionRelay extends Context.Service<
                 }),
               )
               yield* queueChanged(sessionId)
-              yield* deliverNext(sessionId)
+              if (session.value.state === "Asleep") {
+                yield* wake(session.value, { by: you })
+              } else {
+                yield* deliverNext(sessionId)
+              }
+              return
+            }
+
+            case "SleepSession": {
+              const { sessionId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              if (stopping.has(sessionId)) return
+              if (session.value.state !== "Active") {
+                return refuse(
+                  message,
+                  `Only an Active Session can be put to sleep; this one is ${session.value.state}.`,
+                  { sessionId },
+                )
+              }
+              if (session.value.currentTurn !== null) {
+                return refuse(message, "A Turn is running: stop it first.", { sessionId })
+              }
+              if (inFlight.has(sessionId) || (yield* prompts.list(sessionId)).length > 0) {
+                return refuse(message, "Prompts are waiting in the Session's queue.", {
+                  sessionId,
+                })
+              }
+              return yield* putToSleep(session.value, { by: you, message: "Put to sleep" })
+            }
+
+            case "WakeSession": {
+              const { sessionId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              switch (session.value.state) {
+                case "Asleep":
+                  return yield* wake(session.value, { by: you })
+                case "Active":
+                  if (stopping.has(sessionId)) {
+                    return refuse(
+                      message,
+                      "The Session is still going to sleep; wake it once it is Asleep.",
+                      { sessionId },
+                    )
+                  }
+                  return
+                case "Frozen":
+                  return refuse(
+                    message,
+                    "The Session is Frozen: its Runner is offline. It wakes when the Runner returns, if prompts are waiting.",
+                    { sessionId },
+                  )
+                case "Archived":
+                  return refuse(message, "The Session is archived.", { sessionId })
+              }
               return
             }
 
@@ -519,25 +695,33 @@ export class SessionRelay extends Context.Service<
               yield* deliverNext(message.sessionId)
               return
             case "SessionStartFailed":
-              return yield* claudeGone(
+              // Asleep, with why in its history; queued prompts wait for the next wake.
+              return yield* claudeGone(session.value, {
+                message: `Claude Code could not start on ${runner.name}: ${message.message}`,
+              })
+            case "SessionStopped": {
+              const asked = stopping.get(message.sessionId)
+              yield* claudeGone(
                 session.value,
-                `Claude Code could not start on ${runner.name}: ${message.message}`,
+                asked ?? {
+                  message:
+                    message.reason === "Requested"
+                      ? "Claude Code stopped"
+                      : `Claude Code exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
+                },
               )
-            case "SessionStopped":
-              return yield* claudeGone(
-                session.value,
-                message.reason === "Requested"
-                  ? "Claude Code stopped"
-                  : `Claude Code exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
-              )
+              // A prompt sent while it was going to sleep wakes it again.
+              if (asked !== undefined) yield* wakeIfWaiting(message.sessionId)
+              return
+            }
             case "SandboxStateReport":
               if (message.state === "Failed") {
-                return yield* claudeGone(
-                  session.value,
-                  `The Sandbox failed${message.message === undefined ? "" : `: ${message.message}`}`,
-                )
+                return yield* claudeGone(session.value, {
+                  message: `The Sandbox failed${message.message === undefined ? "" : `: ${message.message}`}`,
+                })
               }
-              // TODO(#12): Stopped and Destroyed matter once Sessions sleep and are archived.
+              // The Hub follows Claude Code, which stops before its Sandbox and starts after it:
+              // the other Sandbox states are for the Runner's log.
               return yield* Effect.logDebug(`Sandbox of ${message.sessionId}: ${message.state}`)
             case "TerminalFrame":
               return toWeb(message, (client) => client.terminals.has(message.sessionId))
@@ -578,9 +762,14 @@ export class SessionRelay extends Context.Service<
                 if (running.has(session.id)) {
                   yield* changeState(session, "Active", { message: `${runner.name} is back` })
                   yield* deliverNext(session.id)
-                } else if (session.state !== "Asleep") {
-                  // TODO(#12): wake it on its next prompt, resuming Claude Code's session.
-                  yield* claudeGone(session, `Claude Code is no longer running on ${runner.name}`)
+                } else {
+                  if (session.state !== "Asleep") {
+                    yield* claudeGone(session, {
+                      message: `${runner.name} is back; Claude Code is not running there`,
+                    })
+                  }
+                  // Prompts queued while it was Frozen wake it.
+                  yield* wakeIfWaiting(session.id)
                 }
               }
             }),
@@ -591,6 +780,8 @@ export class SessionRelay extends Context.Service<
                 if (onlineRunners.get(runner.id) !== runner) return
                 onlineRunners.delete(runner.id)
                 for (const session of yield* sessions.listByRunner(runner.id)) {
+                  // A stop it was asked for is settled by what it says when it is back.
+                  stopping.delete(session.id)
                   if (session.state === "Active" || session.state === "Asleep") {
                     yield* changeState(session, "Frozen", {
                       message: `${runner.name} went offline`,
@@ -613,6 +804,7 @@ export class SessionRelay extends Context.Service<
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         yield* sessions.setClaudeSessionId(sessionId, hello.claudeSessionId)
+        starting.delete(sessionId)
         yield* presenceToMod(sessionId)
         yield* deliverNext(sessionId)
       }, serialized)
@@ -676,6 +868,13 @@ export class SessionRelay extends Context.Service<
           })
         }
       }
+
+      yield* Effect.sleep(idleCheckInterval(config.sleepAfter)).pipe(
+        Effect.andThen(serialized(sleepIdle)),
+        Effect.catchCause((cause) => Effect.logError("Could not check for idle Sessions", cause)),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
 
       return SessionRelay.of({ connectWeb, connectRunner, modHello, modEvents })
     }),
