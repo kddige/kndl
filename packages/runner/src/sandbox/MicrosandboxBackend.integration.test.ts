@@ -10,7 +10,7 @@ import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { SessionId } from "@claude-hub/protocol"
-import { Duration, Effect, Option, Schedule, Stream } from "effect"
+import { Deferred, Duration, Effect, Fiber, Option, Schedule, Stream } from "effect"
 import { Sandbox } from "microsandbox"
 import * as MicrosandboxBackend from "./MicrosandboxBackend.ts"
 import { reconcileSandboxes } from "./Reconcile.ts"
@@ -78,6 +78,32 @@ test.skipIf(!enabled)(
           .pipe(Stream.take(1), Stream.runCollect),
       )
       expect(first.map((e) => e._tag)).toEqual(["Stdout"])
+
+      // Spawning: a command answers what is written to its stdin while it keeps running.
+      const echoed = yield* timed(
+        "spawn: write and read back over stdin",
+        Effect.scoped(
+          Effect.gen(function* () {
+            const command = yield* backend.spawn(sessionId, { command: "cat" })
+            const firstChunk = yield* Deferred.make<string>()
+            const collecting = yield* command.events.pipe(
+              Stream.tap((e) =>
+                e._tag === "Stdout" ? Deferred.succeed(firstChunk, text(e.data)) : Effect.void,
+              ),
+              Stream.runCollect,
+              Effect.forkChild,
+            )
+            yield* command.write("ping\n")
+            expect(yield* Deferred.await(firstChunk)).toBe("ping\n")
+            yield* command.write("pong\n")
+            yield* command.closeStdin
+            return yield* Fiber.join(collecting)
+          }),
+        ),
+      )
+      expect(
+        echoed.map((e) => (e._tag === "Exit" ? `exit ${e.exitCode}` : text(e.data))).join(""),
+      ).toBe("ping\npong\nexit 0")
 
       // Files: the rootfs, the Workspace, a dependency volume, the cache volume.
       yield* backend.writeFile(sessionId, "/root/marker", "rootfs")

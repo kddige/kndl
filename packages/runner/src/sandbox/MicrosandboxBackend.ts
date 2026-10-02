@@ -402,43 +402,69 @@ export const make = Effect.gen(function* () {
     return [...listings].map(([sessionId, found]): SandboxListing => ({ sessionId, ...found }))
   })
 
-  const execStream: SandboxBackendShape["execStream"] = (sessionId, request: ExecRequest) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        let exited = false
-        const exec = yield* Effect.acquireRelease(
-          withSandbox(sessionId, "exec", (sandbox) =>
-            sandbox.execStreamWith(request.command, (b) => {
-              let options = b.args([...(request.args ?? [])])
-              if (request.cwd !== undefined) options = options.cwd(request.cwd)
-              if (request.user !== undefined) options = options.user(request.user)
-              if (request.env !== undefined) options = options.envs({ ...request.env })
-              return request.stdin === undefined
-                ? options.stdinNull()
-                : options.stdinBytes(Buffer.from(request.stdin))
-            }),
-          ),
-          // Interrupted before the command finished: don't leave it running.
-          (running) =>
-            exited ? Effect.void : Effect.promise(() => running.kill().catch(() => undefined)),
-        )
-        return Stream.fromAsyncIterable(exec, toError("exec", sessionId)).pipe(
-          Stream.flatMap((event): Stream.Stream<ExecEvent> => {
-            switch (event.kind) {
-              case "stdout":
-                return Stream.succeed({ _tag: "Stdout", data: event.data })
-              case "stderr":
-                return Stream.succeed({ _tag: "Stderr", data: event.data })
-              case "exited":
-                exited = true
-                return Stream.succeed({ _tag: "Exit", exitCode: event.code })
-              case "started":
-                return Stream.empty
-            }
+  /**
+   * Starts a command, killed when the scope closes unless it has exited. Its stdin is a pipe left
+   * open for writing, or `request.stdin` (if any) followed by end of input.
+   */
+  const startExec = (sessionId: SessionId, request: ExecRequest, stdin: "Pipe" | "Request") =>
+    Effect.gen(function* () {
+      const status = { exited: false }
+      const running = yield* Effect.acquireRelease(
+        withSandbox(sessionId, "exec", (sandbox) =>
+          sandbox.execStreamWith(request.command, (b) => {
+            let options = b.args([...(request.args ?? [])])
+            if (request.cwd !== undefined) options = options.cwd(request.cwd)
+            if (request.user !== undefined) options = options.user(request.user)
+            if (request.env !== undefined) options = options.envs({ ...request.env })
+            if (stdin === "Pipe") return options.stdinPipe()
+            return request.stdin === undefined
+              ? options.stdinNull()
+              : options.stdinBytes(Buffer.from(request.stdin))
           }),
-        )
-      }),
-    )
+        ),
+        // Interrupted before the command finished: don't leave it running.
+        (running) =>
+          status.exited ? Effect.void : Effect.promise(() => running.kill().catch(() => undefined)),
+      )
+      const events = Stream.fromAsyncIterable(running, toError("exec", sessionId)).pipe(
+        Stream.flatMap((event): Stream.Stream<ExecEvent> => {
+          switch (event.kind) {
+            case "stdout":
+              return Stream.succeed({ _tag: "Stdout", data: event.data })
+            case "stderr":
+              return Stream.succeed({ _tag: "Stderr", data: event.data })
+            case "exited":
+              status.exited = true
+              return Stream.succeed({ _tag: "Exit", exitCode: event.code })
+            case "started":
+              return Stream.empty
+          }
+        }),
+      )
+      return { running, events }
+    })
+
+  const execStream: SandboxBackendShape["execStream"] = (sessionId, request) =>
+    Stream.unwrap(Effect.map(startExec(sessionId, request, "Request"), (started) => started.events))
+
+  const spawn: SandboxBackendShape["spawn"] = (sessionId, request) =>
+    Effect.gen(function* () {
+      const { running, events } = yield* startExec(sessionId, request, "Pipe")
+      const sink = yield* call("open stdin", sessionId, () => running.takeStdin())
+      if (sink === null)
+        return yield* new SandboxBackendError({ operation: "open stdin", message: "stdin taken" })
+      let isClosed = false
+      return {
+        events,
+        write: (data: string | Uint8Array) =>
+          call("write stdin", sessionId, () => sink.write(data)),
+        closeStdin: Effect.suspend(() => {
+          if (isClosed) return Effect.void
+          isClosed = true
+          return Effect.promise(() => sink.close().catch(() => undefined))
+        }),
+      }
+    })
 
   const backend: SandboxBackendShape = {
     create,
@@ -448,6 +474,7 @@ export const make = Effect.gen(function* () {
     state,
     list,
     execStream,
+    spawn,
     exec: (sessionId, request) => collectExec(execStream(sessionId, request)),
     readFile: (sessionId, path) =>
       withSandbox(sessionId, "read file", (sandbox) => sandbox.fs().read(path)),
