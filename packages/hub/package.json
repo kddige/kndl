@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "bun src/main.ts",
+    "runner-token": "bun src/main.ts runner-token",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
