@@ -1,6 +1,6 @@
 // Clones a local Repo with real git. Skipped when git isn't installed.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BunServices } from "@effect/platform-bun"
@@ -98,6 +98,16 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
 
     expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "WorkspaceError" } })
     expect(existsSync(join(sessionsRoot, "w-2", "workspace"))).toBe(false)
+  })
+
+  test("wakes a Session on its Workspace as it was left, uncommitted work included", async () => {
+    expect(await run(start("w-4"))).toMatchObject({ _tag: "Success" })
+    const workspace = join(sessionsRoot, "w-4", "workspace")
+    writeFileSync(join(workspace, "notes.txt"), "half done")
+
+    expect(await run(start("w-4", { resume: "c-4" }))).toMatchObject({ _tag: "Success" })
+    expect(readFileSync(join(workspace, "notes.txt"), "utf8")).toBe("half done")
+    expect(git(workspace, "branch", "--show-current")).toBe("claude/w-1")
   })
 
   test("won't wake a Session whose Workspace is gone", async () => {

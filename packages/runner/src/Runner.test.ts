@@ -410,6 +410,36 @@ describe("Sessions", () => {
     expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Archive"])
   })
 
+  test("puts a Session to sleep, keeping its Workspace and Sandbox, and wakes it resuming", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    const pane = h.tmux.pane("s-1")
+
+    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Sleep" })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+    expect(pane.terminated).toBe(true)
+    expect(h.hub.all("SessionStopped")).toEqual([
+      { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested", exitCode: 143 },
+    ])
+    expect(h.tmux.panes.size).toBe(0)
+    // Stopped, not destroyed: its volumes stay for the wake.
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+
+    h.hub.send(startSession("s-1", { modToken: "chm_woken.secret", resume: "3c1f6f0e-claude" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep", "start s-1"])
+    expect(h.workspaces.prepared.map((start) => start.resume)).toEqual([
+      undefined,
+      "3c1f6f0e-claude",
+    ])
+    const woken = h.tmux.launched[1]
+    expect(woken?.cwd).toBe(join(h.settings.sessionsRoot, "s-1", "claude"))
+    expect(woken?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+    expect(woken?.env["CLAUDE_HUB_MOD_TOKEN"]).toBe("chm_woken.secret")
+  })
+
   test("leaves Sessions running in tmux when the Runner stops", async () => {
     const h = startRunner()
     await connected(h)
