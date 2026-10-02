@@ -1,0 +1,308 @@
+// hub-link: the mod a Runner loads into each Session's Claude Code (ADR 0001).
+//
+// - Tools: the file and command tools run in the Session's Sandbox through the Runner's tool
+//   bridge; every other tool is denied. Nothing is ever passed on to Claude Code to run, so a
+//   tool can't reach the host even when the bridge is down: the call is refused instead.
+// - The Hub: says hello, reports the Turn's events, and takes prompts, stops and presence from
+//   the Hub (see HubLink.ts).
+// - The person at the terminal: a band above the prompt shows the Participants, and the `!`
+//   shell shortcut, which would run a command on the host, is refused.
+//
+// The rest of the mod, with Effect and the protocol, is bundled from src/ into
+// hooks/hub-link-lib.js (`bun run build`): Claude Code's mod runtime loads no package but its
+// own (spike #4).
+
+import { atom, read, update } from "claude-code"
+import type { EngineInterface, On } from "claude-code"
+import type { HubLinkBand } from "../types"
+import {
+  clip,
+  decideTool,
+  HubLink,
+  promptFromParticipant,
+  ReadBeforeEdit,
+  resultSummary,
+  runInSandbox,
+  sharedSessionNote,
+  startsShellMode,
+  toolArguments,
+  turnEndReason,
+  turnUsage,
+} from "./hub-link-lib.js"
+import type {
+  LinkStatus,
+  ModCommand,
+  Participant,
+  ToolAnswer,
+  ToolCallOutcome,
+} from "./hub-link-lib.js"
+
+const plugin = "hub-link"
+
+// The environment variables the Runner sets (the Runner's ClaudeLaunch.ts) are read by literal
+// name: the loader lists a module's variables from its `$.env.get` calls. The tools socket's name
+// is the protocol's ToolsSocketVariable (src/HubMessages.spec.ts checks they match).
+
+const band = atom(
+  { plugin: "hub-link", key: "band" } as const,
+  {
+    status: "Unlinked",
+    detail: "",
+    participants: [],
+  } as HubLinkBand,
+)
+
+/** The module's own state; a reload starts it over, and fires `session.start` again. */
+const state = {
+  link: undefined as HubLink | undefined,
+  toolsSocket: undefined as string | undefined,
+  /** The Turn running on the main loop. */
+  mainTurn: undefined as string | undefined,
+  /** The Turn each subagent's loop is in, from its steps; tool calls carry only the agent. */
+  agentTurns: new Map<string, string>(),
+  /** The prompt delivered from the Hub that the next Turn starts with. */
+  delivered: undefined as { readonly promptId: string; readonly sender: Participant } | undefined,
+  readBeforeEdit: new ReadBeforeEdit(),
+  minted: 0,
+}
+
+const report = (event: Record<string, unknown>) => state.link?.report(event)
+
+const setBand = ($: EngineInterface, change: Partial<HubLinkBand>) =>
+  update($, band, (value) => ({ ...value, ...change })).catch(() => undefined)
+
+const bandStatus = (status: LinkStatus): Partial<HubLinkBand> =>
+  status._tag === "Rejected"
+    ? { status: "Rejected", detail: status.reason }
+    : { status: status._tag, detail: "" }
+
+const deliverPrompt = async (
+  $: EngineInterface,
+  command: Extract<ModCommand, { _tag: "DeliverPrompt" }>,
+) => {
+  const failed = (message: string) => {
+    if (state.delivered?.promptId === command.promptId) state.delivered = undefined
+    report({ _tag: "PromptFailed", promptId: command.promptId, message })
+  }
+  state.delivered = { promptId: command.promptId, sender: command.sender }
+  try {
+    const entered = await $.prompt.submit({
+      text: promptFromParticipant(command.sender, command.text),
+      asUser: true,
+    })
+    if (entered.drop !== undefined) failed(`a hook dropped the prompt: ${entered.drop}`)
+  } catch (error) {
+    failed(String(error))
+  }
+}
+
+const runCommand = async ($: EngineInterface, command: ModCommand) => {
+  switch (command._tag) {
+    case "DeliverPrompt":
+      // Not awaited: the prompt waits for the session to be idle, and the poll goes on.
+      void deliverPrompt($, command)
+      return
+    case "StopTurn":
+      if (state.mainTurn !== undefined) await $.turn.abort({ turnId: state.mainTurn })
+      return
+    case "PresenceChanged":
+      await setBand($, { participants: command.participants.map((person) => person.name) })
+      return
+  }
+}
+
+const startLink = async ($: EngineInterface) => {
+  const [hubUrl, sessionId, modToken] = await Promise.all([
+    $.env.get("CLAUDE_HUB_URL"),
+    $.env.get("CLAUDE_HUB_SESSION_ID"),
+    $.env.get("CLAUDE_HUB_MOD_TOKEN"),
+  ])
+  if (!hubUrl || !sessionId || !modToken) {
+    $.ui.log("hub-link: not started by a Runner, so not linked to a Hub", { to: "debug" })
+    return
+  }
+  state.link?.stop()
+  state.link = new HubLink({
+    hubUrl,
+    modToken,
+    hello: { sessionId, claudeSessionId: await $.session.id(), model: await $.session.model() },
+    fetch: (url, init) => $.http.fetch(url, init),
+    sleep: (ms) => $.clock.sleep(ms),
+    onCommand: (command) => runCommand($, command),
+    onStatus: (status) => void setBand($, bandStatus(status)),
+    log: (text) => $.ui.log(text, { to: "debug" }),
+  })
+  state.link.start()
+}
+
+/** Answers a tool call: from the Sandbox, or with a refusal. */
+const answerToolCall = async (
+  $: EngineInterface,
+  tool: string,
+  input: Record<string, unknown>,
+): Promise<ToolAnswer> => {
+  const decision = decideTool(tool, input)
+  if (decision._tag === "Deny") return { _tag: "Refused", message: decision.reason }
+  const unread = state.readBeforeEdit.check(decision.tool, input)
+  if (unread !== undefined) return { _tag: "Failed", message: unread }
+  state.toolsSocket ??= (await $.env.get("CLAUDE_HUB_TOOLS_SOCKET")) || undefined
+  const answer = await runInSandbox(
+    (socketPath, body) =>
+      $.http.fetch("http://tool-bridge/tools/call", {
+        method: "POST",
+        socketPath,
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+    state.toolsSocket,
+    decision.tool,
+    input,
+  )
+  if (answer._tag === "Ran") state.readBeforeEdit.record(decision.tool, input, answer.result)
+  return answer
+}
+
+const outcomes: Record<ToolAnswer["_tag"], ToolCallOutcome> = {
+  Ran: "Succeeded",
+  Failed: "Failed",
+  Refused: "Denied",
+}
+
+export function register(on: On) {
+  on("session.start", async ($, e, next) => {
+    const started = await next(e)
+    await startLink($).catch((error) => $.ui.log(`hub-link: ${error}`, { to: "debug" }))
+    return started
+  })
+
+  on("session.end", async ($, e, next) => {
+    const ended = await next(e)
+    await state.link?.flushNow()
+    return ended
+  })
+
+  // Every tool call is answered here and never passed on: from the Sandbox, or refused.
+  on("tool.call", async ($, e, _next) => {
+    const tool = String(e.tool)
+    const input = toolArguments(e as unknown as Record<string, unknown>)
+    const agentId = e.agentId
+    const turnId = agentId === undefined ? state.mainTurn : state.agentTurns.get(agentId)
+    const toolCallId = e.tool_use_id || `hub-link-${++state.minted}`
+    const loop = agentId === undefined ? {} : { agentId }
+    if (turnId !== undefined)
+      report({
+        _tag: "ToolCallStarted",
+        turnId,
+        ...loop,
+        toolCallId,
+        tool,
+        input: clip(JSON.stringify(input)),
+      })
+    const answer = await answerToolCall($, tool, input)
+    if (turnId !== undefined)
+      report({
+        _tag: "ToolCallEnded",
+        turnId,
+        ...loop,
+        toolCallId,
+        tool,
+        outcome: outcomes[answer._tag],
+        output: answer._tag === "Ran" ? resultSummary(tool, answer.result) : clip(answer.message),
+      })
+    // A hook's `{ isError, result }` fails Claude Code's output check (spike #2), so a tool that
+    // reported an error is answered as a deny: the model reads the same text as an error result.
+    return answer._tag === "Ran" ? ({ result: answer.result } as never) : { deny: answer.message }
+  }).catch((_$, e) => ({
+    // A hook that throws or overruns would let Claude Code run the tool on the host.
+    deny: `${String(e.tool)} was refused: hub-link failed while answering it. It never runs on the host.`,
+  }))
+
+  on("turn.start", async ($, e, next) => {
+    state.mainTurn = e.turnId
+    // The Hub delivers one prompt at a time, only while the Session is idle, so the next Turn
+    // with a prompt is the delivered one.
+    const delivered = e.text === "" ? undefined : state.delivered
+    if (delivered !== undefined) state.delivered = undefined
+    report({
+      _tag: "TurnStarted",
+      turnId: e.turnId,
+      text: e.text,
+      sender:
+        delivered === undefined
+          ? { _tag: "FromTerminal" }
+          : { _tag: "FromParticipant", participant: delivered.sender },
+      ...(delivered === undefined ? {} : { promptId: delivered.promptId }),
+    })
+    return next(e)
+  })
+
+  on("turn.step", async function* ($, e, next) {
+    if (e.agentId !== undefined) state.agentTurns.set(e.agentId, e.turnId)
+    const loop = e.agentId === undefined ? {} : { agentId: e.agentId }
+    const stream = next(e)
+    while (true) {
+      const piece = await stream.next()
+      if (piece.done) return piece.value
+      if (piece.value.kind === "text" && piece.value.text !== "")
+        report({ _tag: "TextDelta", turnId: e.turnId, ...loop, text: piece.value.text })
+      yield piece.value
+    }
+  })
+
+  on("turn.complete", async ($, e, next) => {
+    const completed = await next(e)
+    report({
+      _tag: "TurnEnded",
+      turnId: e.turnId,
+      ...(e.agentId === undefined ? {} : { agentId: e.agentId }),
+      reason: turnEndReason(e.reason),
+      durationMs: Math.max(0, Math.round(e.durationMs)),
+      ...(e.usage === undefined ? {} : { usage: turnUsage(e.usage) }),
+    })
+    if (e.agentId === undefined) state.mainTurn = undefined
+    else state.agentTurns.delete(e.agentId)
+    return completed
+  })
+
+  on("prompt.compose", async ($, e, next) => {
+    const composed = await next(e)
+    return {
+      sections: [
+        ...composed.sections,
+        { id: `${plugin}:shared-session`, text: sharedSessionNote, scope: "session" },
+      ],
+    }
+  })
+
+  // `!` runs a shell command on the host, outside every tool hook (spike #2): refuse the key.
+  on("prompt.edit", async ($, e, next) => {
+    if (!startsShellMode(e)) return next(e)
+    $.ui.toast("Shell commands (!) are off in a Claude Hub Session: ask Claude to run them.")
+    return { text: e.text, cursor: e.cursor }
+  })
+
+  on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const value = await read($, band)
+    if (value.status === "Unlinked") return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const isLinked = value.status === "Linked"
+    const label =
+      value.status === "Rejected"
+        ? `Hub refused the link: ${value.detail}`
+        : value.status === "Linking"
+          ? "linking to the Hub"
+          : value.status === "Offline"
+            ? "Hub offline"
+            : "Hub"
+    const people =
+      value.participants.length === 0 ? " · nobody watching" : ` · ${value.participants.join(", ")}`
+    return Box({
+      flexDirection: "row",
+      children: [
+        Text({ color: isLinked ? "green" : "red", children: isLinked ? "● " : "○ " }),
+        Text({ dimColor: true, children: isLinked ? `${label}${people}` : label }),
+      ],
+    })
+  })
+}

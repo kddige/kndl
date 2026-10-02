@@ -1,14 +1,360 @@
-import { expect, test } from "claude-code/testing"
+// hub-link in Claude Code's own mod runtime (`claude plugin test`): the hooks module, loading the
+// bundle (`bun run build` first), with the world beneath it faked.
 
-test("notes in the debug log that it loaded when a Session starts", async ($, on) => {
-  const lines: Array<{ text: string; to: string }> = []
-  on("ui.log", (_, e) => {
-    lines.push({ text: e.text, to: e.to })
-    return { value: undefined }
+import type { On, PromptEditInput, PromptEditResult } from "claude-code"
+import { describe, expect, mock, test } from "claude-code/testing"
+
+const socket = "/sessions/s1/tools.sock"
+const hubUrl = "http://hub.test"
+
+type Fetched = { url: string; method: string; socketPath?: string; body?: string }
+
+/** Answers `$.http.fetch` with `answer`, noting each request. */
+const fakeFetch = (
+  on: On,
+  answer: (
+    request: Fetched,
+  ) => { status: number; text: string } | Promise<{ status: number; text: string }>,
+) => {
+  const requests: Array<Fetched> = []
+  on("http.fetch", async (_, e) => {
+    const request: Fetched = {
+      url: e.url,
+      method: e.init?.method ?? "GET",
+      ...(e.init?.socketPath === undefined ? {} : { socketPath: e.init.socketPath }),
+      ...(typeof e.init?.body === "string" ? { body: e.init.body } : {}),
+    }
+    requests.push(request)
+    const { status, text } = await answer(request)
+    return { value: { status, ok: status >= 200 && status < 300, headers: {}, text } }
   })
-  on("session.start", (_, e) => ({ cwd: e.cwd }))
+  return requests
+}
 
-  await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: false })
+/**
+ * Raises `prompt.edit` as the prompt box does. The test engine raises it, but its typed `$` leaves
+ * it out, so it is reached through this one cast.
+ */
+const editPrompt = ($: unknown, e: PromptEditInput) =>
+  ($ as { prompt: { edit: (e: PromptEditInput) => Promise<PromptEditResult> } }).prompt.edit(e)
 
-  expect(lines).toEqual([{ text: "hub-link loaded; not linked to a Hub yet", to: "debug" }])
+const ran = (result: unknown) => ({
+  status: 200,
+  text: JSON.stringify({ _tag: "ToolRan", result }),
+})
+
+describe("tools", () => {
+  test("runs Bash in the Sandbox through the tool bridge", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    const requests = fakeFetch(on, () =>
+      ran({ stdout: "hello from the vm", stderr: "", interrupted: false }),
+    )
+    let reachedCore = false
+    on("tool.call", () => {
+      reachedCore = true
+      return { deny: "core ran it" }
+    })
+
+    const answer = await $.tool.call({ tool: "Bash", command: "echo hello", description: "say hi" })
+
+    expect(reachedCore).toBe(false)
+    expect(answer.isError).toBeFalsy()
+    expect(answer.result).toMatchObject({ stdout: "hello from the vm" })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      url: "http://tool-bridge/tools/call",
+      method: "POST",
+      socketPath: socket,
+    })
+    expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
+      tool: "Bash",
+      input: { command: "echo hello", description: "say hi" },
+    })
+  })
+
+  test("refuses a call when the bridge is unreachable, and never runs it on the host", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    fakeFetch(on, () => {
+      throw new Error("connect ENOENT")
+    })
+    let reachedCore = false
+    on("tool.call", () => {
+      reachedCore = true
+      return { deny: "core ran it" }
+    })
+
+    const answer = await $.tool.call({ tool: "Read", file_path: "/workspace/a.txt" })
+
+    expect(reachedCore).toBe(false)
+    expect(answer.deny).toBeDefined()
+    expect(answer.deny).toContain("never runs on the host")
+  })
+
+  test("refuses a call when the bridge answers BridgeUnavailable", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    fakeFetch(on, () => ({
+      status: 503,
+      text: JSON.stringify({ _tag: "BridgeUnavailable", message: "the Sandbox is down" }),
+    }))
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    const answer = await $.tool.call({ tool: "Bash", command: "ls" })
+
+    expect(answer.deny).toBeDefined()
+    expect(answer.deny).toContain("the Sandbox is down")
+  })
+
+  test("refuses every call when no Runner gave it a bridge", async ($, on) => {
+    mock.env(on, {})
+    const requests = fakeFetch(on, () => ran({}))
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    const answer = await $.tool.call({ tool: "Bash", command: "ls" })
+
+    expect(requests).toHaveLength(0)
+    expect(answer.deny).toBeDefined()
+    expect(answer.deny).toContain("no tool bridge")
+  })
+
+  test("denies tools that would run on the host", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    const requests = fakeFetch(on, () => ran({}))
+    let reachedCore = 0
+    on("tool.call", () => {
+      reachedCore++
+      return { deny: "core ran it" }
+    })
+
+    const fetched = await $.tool.call({ tool: "WebFetch", url: "https://example.com", prompt: "x" })
+    const agent = await $.tool.call({
+      tool: "Agent",
+      description: "x",
+      prompt: "x",
+      subagent_type: "general-purpose",
+    } as never)
+    const mcp = await $.tool.call({ tool: "mcp__github__create_issue", title: "x" } as never)
+
+    expect(reachedCore).toBe(0)
+    expect(requests).toHaveLength(0)
+    for (const answer of [fetched, agent, mcp]) {
+      expect(answer.deny).toBeDefined()
+      expect(answer.deny).toContain("not available in this Claude Hub Session")
+    }
+  })
+
+  test("refuses a background command", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    const requests = fakeFetch(on, () => ran({}))
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    const answer = await $.tool.call({ tool: "Bash", command: "sleep 60", run_in_background: true })
+
+    expect(requests).toHaveLength(0)
+    expect(answer.deny).toBeDefined()
+  })
+})
+
+describe("the ! shell shortcut", () => {
+  test("is refused at the start of the prompt", async ($, on) => {
+    on("prompt.edit", (_, e) => ({ text: e.text, cursor: e.cursor }))
+    on("ui.toast", () => ({ value: undefined }))
+
+    const edited = await editPrompt($, {
+      origin: { kind: "composer" },
+      text: "",
+      cursor: 0,
+      start: 0,
+      end: 0,
+      inputText: "!",
+    })
+
+    expect(edited.text).toBe("")
+  })
+
+  test("leaves a ! elsewhere alone", async ($, on) => {
+    on("prompt.edit", (_, e) => ({
+      text: e.text.slice(0, e.start) + e.inputText + e.text.slice(e.end),
+      cursor: e.start + e.inputText.length,
+    }))
+
+    const edited = await editPrompt($, {
+      origin: { kind: "composer" },
+      text: "hi",
+      cursor: 2,
+      start: 2,
+      end: 2,
+      inputText: "!",
+    })
+
+    expect(edited.text).toBe("hi!")
+  })
+})
+
+describe("the Hub link", () => {
+  test("is off when no Runner started the session", async ($, on) => {
+    mock.env(on, {})
+    const lines: Array<string> = []
+    on("ui.log", (_, e) => {
+      lines.push(e.text)
+      return { value: undefined }
+    })
+    on("session.start", (_, e) => ({ cwd: e.cwd }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: false })
+
+    expect(lines).toEqual(["hub-link: not started by a Runner, so not linked to a Hub"])
+  })
+
+  test("says hello with the mod token, then polls for commands", async ($, on) => {
+    mock.env(on, {
+      CLAUDE_HUB_URL: hubUrl,
+      CLAUDE_HUB_SESSION_ID: "s1",
+      CLAUDE_HUB_MOD_TOKEN: "secret",
+    })
+    const clock = mock.clock(on)
+    on("session.id", () => ({ value: "claude-1" }))
+    on("session.model", () => ({ value: "claude-test" }))
+    on("ui.log", () => ({ value: undefined }))
+    let polled = 0
+    const requests = fakeFetch(on, (request) => {
+      if (request.url.endsWith("/mod/hello"))
+        return { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 1 }) }
+      polled++
+      // Hold later polls, as the Hub's long poll does.
+      return polled === 1
+        ? { status: 200, text: JSON.stringify({ messages: [] }) }
+        : new Promise(() => undefined)
+    })
+    on("session.start", (_, e) => ({ cwd: e.cwd }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+
+    expect(requests[0]?.url).toBe(`${hubUrl}/mod/hello`)
+    expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
+      _tag: "ModHello",
+      protocolVersion: 1,
+      sessionId: "s1",
+      claudeSessionId: "claude-1",
+      model: "claude-test",
+    })
+    expect(requests[1]?.url).toBe(`${hubUrl}/mod/commands?after=0&waitMs=25000`)
+  })
+
+  test("shows the Participants the Hub reports in the band above the prompt", async ($, on) => {
+    mock.env(on, {
+      CLAUDE_HUB_URL: hubUrl,
+      CLAUDE_HUB_SESSION_ID: "s1",
+      CLAUDE_HUB_MOD_TOKEN: "secret",
+    })
+    const clock = mock.clock(on)
+    on("session.id", () => ({ value: "claude-1" }))
+    on("session.model", () => ({ value: "claude-test" }))
+    on("ui.log", () => ({ value: undefined }))
+    let polled = 0
+    fakeFetch(on, (request) => {
+      if (request.url.endsWith("/mod/hello"))
+        return { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 1 }) }
+      polled++
+      if (polled > 1) return new Promise(() => undefined)
+      const participants = [
+        { id: "p1", login: "ada", name: "Ada Lovelace" },
+        { id: "p2", login: "alan", name: "Alan Turing" },
+      ]
+      return {
+        status: 200,
+        text: JSON.stringify({
+          messages: [
+            { seq: 1, message: { _tag: "PresenceChanged", sessionId: "s1", participants } },
+          ],
+        }),
+      }
+    })
+    on("session.start", (_, e) => ({ cwd: e.cwd }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    const band = await $.ui.mount({
+      plugin: "hub-link",
+      surface: "terminal",
+      component: "AbovePrompt",
+      props: {
+        hasSurvey: false,
+        isWorking: false,
+        maxRows: 3,
+        bodyColumns: 80,
+        scroll: { offset: 0, bodyRows: 3 },
+        view: {},
+      },
+    })
+
+    expect(await band.find({ text: /Ada Lovelace, Alan Turing/ })).toBeDefined()
+  })
+
+  test("posts a Turn's events in one batch", async ($, on) => {
+    mock.env(on, {
+      CLAUDE_HUB_URL: hubUrl,
+      CLAUDE_HUB_SESSION_ID: "s1",
+      CLAUDE_HUB_MOD_TOKEN: "secret",
+      CLAUDE_HUB_TOOLS_SOCKET: socket,
+    })
+    const clock = mock.clock(on)
+    on("session.id", () => ({ value: "claude-1" }))
+    on("session.model", () => ({ value: "claude-test" }))
+    on("ui.log", () => ({ value: undefined }))
+    const requests = fakeFetch(on, (request) => {
+      if (request.url.endsWith("/mod/hello"))
+        return { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 1 }) }
+      if (request.url.endsWith("/mod/events")) return { status: 204, text: "" }
+      if (request.socketPath === socket)
+        return ran({ stdout: "a.txt", stderr: "", interrupted: false })
+      return new Promise(() => undefined)
+    })
+    on("session.start", (_, e) => ({ cwd: e.cwd }))
+    on("turn.start", () => ({ turnId: "t1" }))
+    on("turn.complete", () => ({ text: "done" }))
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "list the files" } as never)
+    await $.tool.call({ tool: "Bash", command: "ls", tool_use_id: "toolu_1" } as never)
+    await $.turn.complete({
+      turnId: "t1",
+      answer: "done",
+      durationMs: 1200,
+      isAborted: false,
+      reason: "answer",
+    } as never)
+    await clock.advance(200)
+
+    const posts = requests.filter((request) => request.url === `${hubUrl}/mod/events`)
+    expect(posts).toHaveLength(1)
+    expect(JSON.parse(posts[0]?.body ?? "")).toEqual({
+      messages: [
+        {
+          _tag: "TurnStarted",
+          turnId: "t1",
+          text: "list the files",
+          sender: { _tag: "FromTerminal" },
+        },
+        {
+          _tag: "ToolCallStarted",
+          turnId: "t1",
+          toolCallId: expect.any(String),
+          tool: "Bash",
+          input: '{"command":"ls"}',
+        },
+        {
+          _tag: "ToolCallEnded",
+          turnId: "t1",
+          toolCallId: expect.any(String),
+          tool: "Bash",
+          outcome: "Succeeded",
+          output: "a.txt",
+        },
+        { _tag: "TurnEnded", turnId: "t1", reason: "Answered", durationMs: 1200 },
+      ],
+    })
+  })
 })

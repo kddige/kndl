@@ -12,5 +12,8 @@ if ! command -v claude >/dev/null; then
   exit 1
 fi
 
+bun run build >/dev/null
 claude --plugin-dir . --strict-mcp-config -p /cost >/dev/null
+# The mod itself, against the mod runtime only; then its Bun unit tests, against Bun.
 tsc --noEmit -p .
+tsc --noEmit -p tsconfig.spec.json

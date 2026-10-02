@@ -19,6 +19,7 @@
     "skills-lock.json",
     "bun.lock",
     "*.md",
-    "packages/mod/.claude-plugin/types/"
+    "packages/mod/.claude-plugin/types/",
+    "packages/mod/hooks/hub-link-lib.js"
   ]
 }
