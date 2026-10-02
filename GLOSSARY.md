@@ -80,7 +80,7 @@ A Session whose Sandbox was stopped after being idle; it wakes on the next promp
 _Avoid_: paused, suspended, stopped
 
 **Frozen**:
-A Session whose Runner is offline. It stays readable but cannot take prompts until the Runner returns.
+A Session whose Runner is offline. It stays readable, and prompts sent to it wait in its queue until the Runner returns.
 _Avoid_: orphaned, dead, offline
 
 **Archived**:

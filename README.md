@@ -64,7 +64,7 @@ Every Hub route but `GET /health` and the sign-in routes needs a credential, bec
 
 The Hub keeps only SHA-256 hashes of these tokens.
 
-The Hub reads its sign-in settings from the environment:
+The Hub reads its sign-in and lifecycle settings from the environment:
 
 | Env | Default | What it does |
 |---|---|---|
@@ -72,6 +72,7 @@ The Hub reads its sign-in settings from the environment:
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret (issue #1). Unset, GitHub sign-in is off. Set the App's callback URL to `<HUB_PUBLIC_URL>/auth/github/callback`. |
 | `CLAUDE_HUB_DEV_LOGIN` | off | `1` turns on dev login: `POST /auth/dev` signs you in as a local Participant without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers. |
 | `CLAUDE_HUB_DEV_USER` | `$USER` | Who dev login signs you in as, when the request names no `login`. |
+| `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. See [The Session lifecycle](#the-session-lifecycle). |
 
 ### Trying it on one machine, before the GitHub App exists
 
@@ -130,3 +131,12 @@ Claude Code runs on the host, with the host's credentials. Its tools run in the 
 The Runner then keeps one `claude mcp serve` running inside the Sandbox, restarting it when it exits, and serves it as HTTP on the Session's Unix socket: `tools.sock` in the Session's directory, which only the Runner's user can enter, with the socket itself at mode 0600. The mod answers Bash, Read, Write, Edit, NotebookEdit, Glob and Grep by posting them there (`POST /tools/call`, see `packages/protocol/src/ToolBridge.ts`). Claude Code's working directory, `<session>/claude`, is linked to `/workspace` inside the Sandbox, so paths need no rewriting. If the bridge fails or can't be reached, the mod refuses the call, so a tool never falls back to the host. Every other tool is denied, and so is the `!` shell shortcut in the prompt box, which would run on the host.
 
 **How the Sandbox gets `claude`.** `claude mcp serve` needs a Claude Code binary in the Sandbox. The Runner downloads the Linux musl build of the host's own Claude Code version from the npm registry (`@anthropic-ai/claude-code-linux-<arm64|x64>-musl`) once, checks it against the registry's integrity hash, keeps it in `RUNNER_SANDBOX_CLAUDE_CACHE/<version>/`, and mounts that directory read-only into every Sandbox at `/opt/claude-hub/claude-code`. The musl build is self-contained, so it runs on the default Alpine image (`docker:dind`) and on glibc images alike. Matching the host's version keeps tool results in the shapes the host's Claude Code expects. Claude Code's Bash tool needs `bash`, which `docker:dind` lacks, so the bridge installs it with `apk` when the Sandbox first starts (about half a second). The Sandbox gets no Claude credentials: `mcp serve` makes no model call and needs none.
+
+### The Session lifecycle
+
+A Session is Active, Asleep, Frozen or Archived (see [GLOSSARY.md](GLOSSARY.md)). The Hub decides which; the Runner does what it asks.
+
+- **Going to sleep.** An Active Session with no Turn running, no prompt queued and no Participant present for `HUB_SLEEP_AFTER_MS` (15 minutes) is put to sleep; so is one where someone presses **Sleep now**. The Hub sends `StopSession` `Sleep`, and the Runner stops Claude Code, runs `docker stop` on the Sandbox's containers, stops the Sandbox keeping its volumes, keeps the Workspace, and reports `SessionStopped`. Only then does the Hub record the Session Asleep. Prompts sent meanwhile wait, and wake it once it is.
+- **Waking.** A prompt to an Asleep Session wakes it, as does **Wake now** on its banner. The Hub records it Active and sends `StartSession` with `resume`, the Claude Code session id from the mod's last hello. The Runner restarts the Sandbox on the same volumes, so `node_modules`, the package cache and Docker's data are as they were, and starts Claude Code with `--resume`, which keeps the conversation. Prompts are delivered once the new mod has said hello.
+- **A failed start.** If Claude Code can't start, whether for a new Session or a wake, the Session is Asleep, with the Runner's reason in its history as the `SessionStateChanged` message. Its queued prompts stay queued and nothing retries on its own: the next prompt or **Wake now** tries again. A Claude Code that exits on its own leaves the Session Asleep too.
+- **Frozen.** While its Runner is offline a Session is Frozen. Prompts sent to it wait in its queue. When the Runner is back, the Session is Active if its Claude Code is still running in tmux, and otherwise Asleep, and woken at once if prompts are waiting.
