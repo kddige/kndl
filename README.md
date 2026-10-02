@@ -95,7 +95,7 @@ A Runner connects to the Hub's `/ws/runner` WebSocket with its Runner token as `
 
 Each Session's Claude Code runs in a tmux session named `hub-<session id>`, on the Runner's own tmux server (`tmux -L claude-hub`), so Sessions keep running when the Runner restarts, and the Runner re-adopts them when it comes back. To look at one by hand: `tmux -L claude-hub attach -t hub-<session id>`.
 
-A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty directory Claude Code runs in, and `workspace/`, the Repo cloned onto the Session's Work branch with the host's own git credentials. Claude Code inherits workspace trust from parent directories, so trust the sessions root once: run `claude` in it and accept the trust prompt. Until you do, the Runner warns at startup.
+A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty directory Claude Code runs in, and `workspace/`, the Repo cloned onto the Session's Work branch with the host's own git credentials. Claude Code inherits workspace trust from parent directories, so the Runner trusts the sessions root itself, at startup and before each launch: it sets `projects[<sessions root>].hasTrustDialogAccepted` in Claude Code's config file (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`), keyed by the root's real path. That is one entry for the root, never one per Session. It never creates the file: if Claude Code has never run on the host, the Runner warns and each Session asks.
 
 | Env | Default | What it is |
 |---|---|---|
