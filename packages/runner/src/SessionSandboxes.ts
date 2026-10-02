@@ -26,6 +26,7 @@ import type { SessionLayoutOptions } from "./sandbox/SessionLayout.ts"
 import type { SessionDirectories } from "./SessionNames.ts"
 import { makeToolEngine, serveToolBridge } from "./ToolBridge.ts"
 import type { ToolEngineOptions } from "./ToolBridge.ts"
+import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 export interface SessionSandboxesOptions {
   /** The OCI image every Sandbox boots. */
@@ -42,6 +43,11 @@ export interface SessionSandboxesOptions {
     Omit<SessionLayoutOptions, "sessionId" | "image" | "workspaceHostPath" | "env">
   >
   readonly bridge?: Pick<ToolEngineOptions, "readyTimeout" | "restartDelay">
+  /**
+   * Answers the mod's git tools, which the tool bridge serves beside the Sandbox's tools but runs
+   * on the host. Without it they are refused.
+   */
+  readonly git?: WorkspaceGit["Service"]
 }
 
 /** The most a Sandbox may write to the read-only Claude Code mount: nothing, but it needs a quota. */
@@ -107,7 +113,12 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
             workspaceAlias: directories.claude,
             ...options.bridge,
           })
-          yield* serveToolBridge(directories.toolsSocket, engine)
+          const git = options.git
+          yield* serveToolBridge(
+            directories.toolsSocket,
+            engine,
+            git === undefined ? undefined : (call) => git.call(sessionId, directories, call),
+          )
         }).pipe(
           Effect.provideService(SandboxBackend, backend),
           Scope.provide(scope),
@@ -209,6 +220,7 @@ export const SessionSandboxesLive = Layer.effect(
   Sandboxes,
   Effect.gen(function* () {
     const config = yield* RunnerConfig
+    const git = yield* WorkspaceGit
     const settings = yield* Config.all({
       image: Config.String("RUNNER_SANDBOX_IMAGE").pipe(Config.withDefault("docker:dind")),
       version: Config.option(Config.NonEmptyString("RUNNER_SANDBOX_CLAUDE_VERSION")),
@@ -221,6 +233,7 @@ export const SessionSandboxesLive = Layer.effect(
       onSome: Effect.succeed,
     })
     return yield* makeSessionSandboxes({
+      git,
       image: settings.image,
       claudeCacheDir: settings.cacheDir,
       sandboxClaude: version.pipe(

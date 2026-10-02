@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test"
+import { readFileSync, writeFileSync } from "node:fs"
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { RunnerToHub, SandboxStateReport } from "@claude-hub/protocol"
-import { Effect, Layer } from "effect"
+import { wipRef } from "@claude-hub/protocol"
+import { BunServices } from "@effect/platform-bun"
+import { Effect, Layer, Redacted, References } from "effect"
+import { authorizationHeader } from "./HostGit.ts"
 import { HubLink } from "./HubLink.ts"
+import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes } from "./Sandbox.ts"
 import { FakeSandboxBackend } from "./sandbox/FakeSandboxBackend.ts"
 import type { FakeOptions } from "./sandbox/FakeSandboxBackend.ts"
@@ -12,7 +17,9 @@ import { SandboxClaudeError, sandboxClaudeGuestDir } from "./sandbox/SandboxClau
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
-import { echoTools, fakeMcpServer, sessionId } from "./testSupport.ts"
+import { echoTools, FakeHubGit, fakeMcpServer, sessionId } from "./testSupport.ts"
+import { Workspaces, WorkspacesGitClone } from "./Workspace.ts"
+import { WorkspaceGit, WorkspaceGitLive } from "./WorkspaceGit.ts"
 
 const s1 = sessionId("s-1")
 
@@ -71,6 +78,32 @@ const directoriesIn = (root: string) =>
 const callTool = (socket: string, body: unknown) =>
   Effect.promise(async () => {
     const response = await fetch("http://bridge/tools/call", {
+      method: "POST",
+      unix: socket,
+      body: JSON.stringify(body),
+    })
+    return (await response.json()) as unknown
+  })
+
+/** Real git in `cwd`, as a test user. */
+function gitIn(cwd: string, ...args: Array<string>) {
+  const result = Bun.spawnSync(["git", "-c", "commit.gpgsign=false", ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    },
+  })
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+  return result.stdout.toString().trim()
+}
+
+const callGit = (socket: string, body: unknown) =>
+  Effect.promise(async () => {
+    const response = await fetch("http://bridge/git/call", {
       method: "POST",
       unix: socket,
       body: JSON.stringify(body),
@@ -194,4 +227,135 @@ describe("SessionSandboxes", () => {
         expect(world.sandboxes.get(s1)?.state).toBe("Stopped")
       }),
     ))
+
+  test.skipIf(Bun.which("git") === null)(
+    "serves the git tools on the host, and their token never reaches the Sandbox",
+    async () => {
+      const token = "ghs_NEVERinTHEsandbox0123456789"
+      const root = await mkdtemp(join(tmpdir(), "claude-hub-sandbox-git-"))
+      const origin = join(root, "acme", "origin")
+      await mkdir(origin, { recursive: true })
+      gitIn(origin, "init", "--quiet", "--bare", "--initial-branch=main")
+      gitIn(root, "clone", "--quiet", origin, join(root, "seed"))
+      writeFileSync(join(root, "seed", "README.md"), "hello\n")
+      gitIn(join(root, "seed"), "add", ".")
+      gitIn(join(root, "seed"), "commit", "--quiet", "-m", "first")
+      gitIn(join(root, "seed"), "push", "--quiet", "origin", "HEAD:main")
+
+      const hubGit = new FakeHubGit({
+        repo: "acme/origin",
+        baseBranch: "main",
+        workBranch: "claude/s-1",
+      })
+      hubGit.useToken(token, { name: "app[bot]", email: "9+app[bot]@users.noreply.github.com" })
+      const config = Layer.succeed(
+        RunnerConfig,
+        RunnerConfig.of({
+          hubUrl: new URL("http://hub.test"),
+          name: "test",
+          token: Redacted.make("runner-token"),
+          login: undefined,
+          sessionsRoot: join(root, "sessions"),
+          modDir: root,
+          claudeBin: "claude",
+          tmuxSocket: "unused",
+          repoUrlTemplate: `${root}/{repo}`,
+        }),
+      )
+      const git = Layer.mergeAll(WorkspaceGitLive, WorkspacesGitClone).pipe(
+        Layer.provide(hubGit.layer),
+        Layer.provide(config),
+        Layer.provide(BunServices.layer),
+      )
+      const hub = Layer.succeed(
+        HubLink,
+        HubLink.of({
+          send: () => Effect.void,
+          connect: () => Effect.void,
+          disconnect: Effect.void,
+        }),
+      )
+      try {
+        await Effect.gen(function* () {
+          const workspaceGit = yield* WorkspaceGit
+          const world = yield* FakeSandboxBackend
+          const directories = yield* (yield* Workspaces).prepare({
+            _tag: "StartSession",
+            sessionId: s1,
+            repo: "acme/origin" as never,
+            baseBranch: "main" as never,
+            workBranch: "claude/s-1" as never,
+            modToken: "m",
+          })
+          const sandboxes = yield* makeSessionSandboxes({
+            image: "docker:dind",
+            claudeCacheDir: "/host/claude-code",
+            sandboxClaude: Effect.succeed("2.1.287"),
+            bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
+            git: workspaceGit,
+          })
+          yield* sandboxes.start(s1, directories)
+
+          writeFileSync(join(directories.workspace, "a.txt"), "a\n")
+          expect(
+            yield* callGit(directories.toolsSocket, {
+              tool: "git_commit",
+              input: { message: "Add a", all: true },
+            }),
+          ).toMatchObject({ _tag: "ToolRan" })
+          expect(
+            yield* callGit(directories.toolsSocket, { tool: "git_push", input: {} }),
+          ).toMatchObject({ _tag: "ToolRan" })
+          expect(
+            yield* callGit(directories.toolsSocket, { tool: "rm_rf", input: {} }),
+          ).toMatchObject({
+            _tag: "BridgeUnavailable",
+          })
+          expect(
+            yield* callTool(directories.toolsSocket, {
+              tool: "Bash",
+              input: { command: "git log" },
+            }),
+          ).toMatchObject({ _tag: "ToolRan" })
+          writeFileSync(join(directories.workspace, "b.txt"), "b\n")
+          yield* workspaceGit.pushWip(s1, directories, "Sleep")
+          yield* sandboxes.stop(s1, "Sleep")
+
+          // The commit and both pushes happened, on the host.
+          expect(gitIn(origin, "rev-parse", "claude/s-1")).toBe(
+            gitIn(directories.workspace, "rev-parse", "HEAD"),
+          )
+          expect(gitIn(origin, "rev-parse", "--verify", wipRef(s1))).not.toBe("")
+          // The Sandbox saw neither the token nor the header carrying it: not in its spec (env,
+          // mounts), not in any command it ran or the environment it ran it with.
+          const header = authorizationHeader(Redacted.make(token))
+          const seen = JSON.stringify({
+            specs: [...world.sandboxes.values()].map((sandbox) => sandbox.spec),
+            exec: world.execCalls,
+            spawn: world.spawnCalls,
+          })
+          expect(seen).toContain("mcp")
+          expect(seen).not.toContain(token)
+          expect(seen).not.toContain(header.slice("Authorization: Basic ".length))
+          expect(readFileSync(join(directories.workspace, ".git", "config"), "utf8")).not.toContain(
+            token,
+          )
+          expect(readFileSync(join(directories.hostGit, "config"), "utf8")).not.toContain(token)
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              FakeSandboxBackend.layer({ onSpawn: (_call, io) => fakeMcpServer(echoTools)(io) }),
+              git,
+              hub,
+            ),
+          ),
+          Effect.scoped,
+          Effect.provideService(References.MinimumLogLevel, "None"),
+          Effect.runPromise,
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
 })

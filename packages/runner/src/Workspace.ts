@@ -1,9 +1,11 @@
 import type { StartSession } from "@claude-hub/protocol"
 import { Context, Data, Effect, FileSystem, Layer } from "effect"
 import { ChildProcessSpawner } from "effect/process"
-import { runCommand } from "./Process.ts"
+import { cloneWorkspace } from "./HostGit.ts"
+import { HubGit } from "./HubGit.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { type SessionDirectories, sessionDirectories } from "./SessionNames.ts"
+import { askAccess } from "./WorkspaceGit.ts"
 
 export class WorkspaceError extends Data.TaggedError("WorkspaceError")<{
   readonly message: string
@@ -13,8 +15,8 @@ export class WorkspaceError extends Data.TaggedError("WorkspaceError")<{
  * Lays out a Session's directories on the host before its Claude Code starts: the empty
  * directory Claude Code runs in, and the Workspace.
  *
- * This is the seam the Session lifecycle (#12) and the host git tools (#13) take over: cloning
- * with a GitHub App token, restoring from the WIP ref, and cleaning up on archive.
+ * Still to come here: restoring a Workspace from its WIP ref when the Runner lost it, and
+ * cleaning up on archive.
  */
 export class Workspaces extends Context.Service<
   Workspaces,
@@ -31,8 +33,9 @@ const fileError = (error: { readonly message: string }) =>
   new WorkspaceError({ message: error.message })
 
 /**
- * Dev mode: `git clone` the Repo with the host's own git credentials (ADR 0005 puts git on the
- * host), then create the Work branch from the base branch.
+ * `git clone` the Repo on the host (ADR 0005), with the GitHub App token the Hub mints, or the
+ * host's own git credentials when the Hub has no App (dev mode). Then create the Work branch from
+ * the base branch. The token is passed to git for these commands only, never stored.
  */
 export const WorkspacesGitClone = Layer.effect(
   Workspaces,
@@ -40,19 +43,21 @@ export const WorkspacesGitClone = Layer.effect(
     const config = yield* RunnerConfig
     const fs = yield* FileSystem.FileSystem
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-
-    const git = (args: ReadonlyArray<string>) =>
-      runCommand("git", args).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.mapError((error) => new WorkspaceError({ message: error.message })),
-      )
+    const hubGit = yield* HubGit
 
     const clone = (start: StartSession, workspace: string) =>
       Effect.gen(function* () {
-        const url = config.repoUrlTemplate.replaceAll("{repo}", start.repo)
-        yield* git(["clone", "--branch", start.baseBranch, "--", url, workspace])
-        yield* git(["-C", workspace, "switch", "--create", start.workBranch])
+        const access = yield* askAccess(hubGit, config.repoUrlTemplate, start.sessionId)
+        yield* cloneWorkspace({
+          url: config.repoUrlTemplate.replaceAll("{repo}", start.repo),
+          auth: access.auth,
+          workspace,
+          baseBranch: start.baseBranch,
+          workBranch: start.workBranch,
+        })
       }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.mapError((error) => new WorkspaceError({ message: error.message })),
         Effect.onError(() =>
           fs.remove(workspace, { recursive: true, force: true }).pipe(Effect.ignore),
         ),

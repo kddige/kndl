@@ -9,6 +9,7 @@ import { join } from "node:path"
 import type { RunnerToHub, SandboxStateReport, SessionId } from "@claude-hub/protocol"
 import { Effect, Layer, Redacted, References } from "effect"
 import { NoClaudeTrust } from "./ClaudeTrust.ts"
+import { HubGitLive } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes } from "./Sandbox.ts"
@@ -18,7 +19,14 @@ import { runnerMark } from "./sandbox/Naming.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { Sessions, SessionsLive } from "./Sessions.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
-import { echoTools, FakeTmux, FakeWorkspaces, fakeMcpServer, sessionId } from "./testSupport.ts"
+import {
+  echoTools,
+  FakeTmux,
+  FakeWorkspaceGit,
+  FakeWorkspaces,
+  fakeMcpServer,
+  sessionId,
+} from "./testSupport.ts"
 
 const dirs: Array<string> = []
 
@@ -92,7 +100,13 @@ const runProcess = <A>(
   ).pipe(Layer.provide(backend))
   const layer = SessionsLive.pipe(
     Layer.provideMerge(sandboxes),
-    Layer.provide([host.tmux.layer, new FakeWorkspaces(host.sessionsRoot).layer, NoClaudeTrust]),
+    Layer.provide([
+      host.tmux.layer,
+      new FakeWorkspaces(host.sessionsRoot).layer,
+      NoClaudeTrust,
+      new FakeWorkspaceGit().layer,
+      HubGitLive,
+    ]),
     Layer.provide([hub, config]),
   )
   return body.pipe(

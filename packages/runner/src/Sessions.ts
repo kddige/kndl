@@ -21,12 +21,14 @@ import {
 } from "effect"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
 import { ClaudeTrust } from "./ClaudeTrust.ts"
+import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes } from "./Sandbox.ts"
 import { isSafeSessionId, sessionDirectories } from "./SessionNames.ts"
 import { type Pane, Tmux } from "./Tmux.ts"
 import { Workspaces } from "./Workspace.ts"
+import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 /** The terminal size a Session starts with, until a viewer resizes it. */
 export const InitialTerminalSize: TerminalSize = { cols: 120, rows: 40 }
@@ -74,6 +76,8 @@ export const SessionsLive = Layer.effect(
     const sandboxes = yield* Sandboxes
     const hub = yield* HubLink
     const trust = yield* ClaudeTrust
+    const git = yield* WorkspaceGit
+    const hubGit = yield* HubGit
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
@@ -150,6 +154,7 @@ export const SessionsLive = Layer.effect(
         Effect.gen(function* () {
           yield* Effect.logInfo(`Session ${sessionId} exited with ${exitCode ?? "unknown status"}`)
           yield* tmux.kill(sessionId)
+          yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
           yield* sandboxes.stop(sessionId, "Sleep")
           yield* hub.send(
             RunnerToHub.cases.SessionStopped.make({
@@ -225,6 +230,14 @@ export const SessionsLive = Layer.effect(
             if (exited._tag === "Some") exitCode = exited.value
           }
           yield* tmux.kill(sessionId)
+          // The Workspace's last state goes to its WIP ref before the Session sleeps, and before
+          // it is archived: the archive hook. Archiving destroys only the Sandbox for now; when it
+          // also removes the Workspace (Workspace.ts), that must stay after this push.
+          yield* git.pushWip(
+            sessionId,
+            sessionDirectories(config.sessionsRoot, sessionId),
+            request.reason === "Archive" ? "Archive" : "Sleep",
+          )
           yield* sandboxes.stop(sessionId, request.reason)
           yield* Effect.logInfo(`Session ${sessionId} stopped (${request.reason})`)
           yield* hub.send(
@@ -287,6 +300,18 @@ export const SessionsLive = Layer.effect(
           return running.get(incoming.sessionId)?.pane.resize(incoming.size) ?? Effect.void
         case "RequestTerminalSnapshot":
           return running.get(incoming.sessionId)?.pane.snapshot ?? Effect.void
+        case "GitReply":
+          return hubGit.receive(incoming)
+        case "SessionTurnEnded":
+          return running.has(incoming.sessionId)
+            ? background(
+                git.pushWip(
+                  incoming.sessionId,
+                  sessionDirectories(config.sessionsRoot, incoming.sessionId),
+                  "TurnEnded",
+                ),
+              )
+            : Effect.void
         case "RunnerWelcome":
         case "HandshakeRejected":
           return Effect.logWarning(`Ignored a ${incoming._tag} after the handshake`)
