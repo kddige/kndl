@@ -1,0 +1,186 @@
+// What the web UI knows about the Hub, built only from what the Hub sends: the Runners, the
+// Sessions, and for each joined Session its event log, presence and Prompt queue.
+//
+// `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
+// events, and React reads the result.
+
+import type {
+  EventSeq,
+  HubToWeb,
+  Participant,
+  QueuedPrompt,
+  RunnerSummary,
+  SessionId,
+  SessionLogEntry,
+  SessionSummary,
+} from "@claude-hub/protocol"
+import type { SignInOptions } from "./config.ts"
+
+/** Where the connection to the Hub is. */
+export type Connection =
+  /** Opening the socket, or waiting for the welcome. `attempt` counts tries since the last welcome. */
+  | { readonly status: "connecting"; readonly attempt: number }
+  /** Welcomed: messages flow. */
+  | { readonly status: "online" }
+  /** Lost, and trying again after a pause. */
+  | { readonly status: "reconnecting"; readonly attempt: number }
+  /** The Hub turned the socket away because no one is signed in. */
+  | { readonly status: "signedOut"; readonly options: SignInOptions }
+  /** The Hub refused the hello (a protocol mismatch): reloading is the only way on. */
+  | { readonly status: "rejected"; readonly message: string }
+
+/** A Session the client has joined: its log so far, who's in it and what's queued. */
+export interface JoinedSession {
+  /** Whether the first SessionHistory has arrived since joining. */
+  readonly historyLoaded: boolean
+  /** The event log, in `seq` order, without gaps the Hub didn't leave. */
+  readonly log: ReadonlyArray<SessionLogEntry>
+  readonly presence: ReadonlyArray<Participant>
+  readonly queue: ReadonlyArray<QueuedPrompt>
+}
+
+export interface HubState {
+  readonly connection: Connection
+  /** The signed-in person, from the welcome. */
+  readonly you: Participant | null
+  /** Null until the first RunnerList. */
+  readonly runners: ReadonlyArray<RunnerSummary> | null
+  /** Null until the first SessionList. */
+  readonly sessions: ReadonlyArray<SessionSummary> | null
+  readonly joined: Readonly<Record<SessionId, JoinedSession>>
+}
+
+/** Events the client adds to the Hub's messages. */
+export type ClientEvent =
+  | { readonly _tag: "ConnectionChanged"; readonly connection: Connection }
+  /** The client sent JoinSession: start tracking the Session (keeping what's already known). */
+  | { readonly _tag: "Joined"; readonly sessionId: SessionId }
+  /** The client sent LeaveSession: forget the Session's log, presence and queue. */
+  | { readonly _tag: "Left"; readonly sessionId: SessionId }
+
+export type HubAction = HubToWeb | ClientEvent
+
+export const initialState: HubState = {
+  connection: { status: "connecting", attempt: 0 },
+  you: null,
+  runners: null,
+  sessions: null,
+  joined: {},
+}
+
+const emptyJoined: JoinedSession = { historyLoaded: false, log: [], presence: [], queue: [] }
+
+export function reduce(state: HubState, action: HubAction): HubState {
+  switch (action._tag) {
+    case "ConnectionChanged":
+      return { ...state, connection: action.connection }
+    case "Joined":
+      if (state.joined[action.sessionId]) return state
+      return { ...state, joined: { ...state.joined, [action.sessionId]: emptyJoined } }
+    case "Left": {
+      if (!state.joined[action.sessionId]) return state
+      const { [action.sessionId]: _, ...joined } = state.joined
+      return { ...state, joined }
+    }
+    case "WebWelcome":
+      return { ...state, you: action.you, connection: { status: "online" } }
+    case "HandshakeRejected":
+      return { ...state, connection: { status: "rejected", message: action.message } }
+    case "RunnerList":
+      return { ...state, runners: action.runners }
+    case "SessionList":
+      return { ...state, sessions: action.sessions }
+    case "SessionUpdated":
+    case "SessionCreated":
+      return { ...state, sessions: upsert(state.sessions ?? [], action.session) }
+    case "SessionHistory":
+      return updateJoined(state, action.sessionId, (session) => ({
+        ...session,
+        historyLoaded: true,
+        log: appendEntries(session.log, action.entries),
+      }))
+    case "SessionEventLogged": {
+      const next = updateJoined(state, action.sessionId, (session) => ({
+        ...session,
+        log: appendEntries(session.log, [action.entry]),
+      }))
+      // A live state change moves the Session at once, ahead of the SessionUpdated that follows.
+      const event = action.entry.event
+      if (next === state || event._tag !== "SessionStateChanged") return next
+      const summary = next.sessions?.find((session) => session.id === action.sessionId)
+      if (!summary || summary.state === event.state) return next
+      return { ...next, sessions: upsert(next.sessions ?? [], { ...summary, state: event.state }) }
+    }
+    case "PresenceChanged":
+      return updateJoined(state, action.sessionId, (session) => ({
+        ...session,
+        presence: action.participants,
+      }))
+    case "PromptQueueChanged":
+      return updateJoined(state, action.sessionId, (session) => ({
+        ...session,
+        queue: action.queue,
+      }))
+    case "TerminalFrame":
+    case "CommandFailed":
+      // The terminal is another view's (issue #17); refusals are the client's to report.
+      return state
+  }
+}
+
+function upsert(
+  sessions: ReadonlyArray<SessionSummary>,
+  session: SessionSummary,
+): ReadonlyArray<SessionSummary> {
+  const index = sessions.findIndex((existing) => existing.id === session.id)
+  if (index === -1) return [...sessions, session]
+  return sessions.with(index, session)
+}
+
+/** Updates a joined Session; messages for a Session the client hasn't joined are dropped. */
+function updateJoined(
+  state: HubState,
+  sessionId: SessionId,
+  update: (session: JoinedSession) => JoinedSession,
+): HubState {
+  const session = state.joined[sessionId]
+  if (!session) return state
+  return { ...state, joined: { ...state.joined, [sessionId]: update(session) } }
+}
+
+/**
+ * Adds entries to a log, by `seq`. The log is append-only on the Hub, so an entry already held is
+ * the same entry: a replay after reconnecting, or history that overlaps live events, adds nothing
+ * twice.
+ */
+export function appendEntries(
+  log: ReadonlyArray<SessionLogEntry>,
+  entries: ReadonlyArray<SessionLogEntry>,
+): ReadonlyArray<SessionLogEntry> {
+  if (entries.length === 0) return log
+  // The usual case: everything is new and in order.
+  let previous: number = lastSeq(log) ?? -1
+  let inOrder = true
+  for (const entry of entries) {
+    if (entry.seq <= previous) {
+      inOrder = false
+      break
+    }
+    previous = entry.seq
+  }
+  if (inOrder) return log.length === 0 ? entries : [...log, ...entries]
+  const bySeq = new Map<number, SessionLogEntry>()
+  for (const entry of log) bySeq.set(entry.seq, entry)
+  for (const entry of entries) if (!bySeq.has(entry.seq)) bySeq.set(entry.seq, entry)
+  return [...bySeq.values()].toSorted((a, b) => a.seq - b.seq)
+}
+
+/** The last `seq` in a log, which JoinSession's `afterSeq` asks to continue from. */
+export function lastSeq(log: ReadonlyArray<SessionLogEntry>): EventSeq | undefined {
+  return log.at(-1)?.seq
+}
+
+/** The Session with this id, if the Hub has listed it. */
+export function findSession(state: HubState, sessionId: string): SessionSummary | undefined {
+  return state.sessions?.find((session) => session.id === sessionId)
+}

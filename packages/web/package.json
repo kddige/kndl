@@ -10,8 +10,10 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
+    "@claude-hub/protocol": "workspace:*",
     "@stylexjs/stylex": "0.19.1",
     "@tanstack/react-router": "1.170.41",
+    "effect": "4.0.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

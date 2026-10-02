@@ -16,7 +16,7 @@ One Bun workspace in TypeScript.
 | [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Signs people in, issues Runner and mod tokens, accepts the Runner and web WebSocket channels, and serves the mod's HTTP endpoints (handshake only, for now). |
 | [`packages/runner`](packages/runner) | A Runner: an Effect program that connects to the Hub and runs each Session's Claude Code in its own tmux session on its host, streaming the terminal. The Sandbox backend is in `src/sandbox` (#9), not yet wired into Session start. |
 | [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod a Runner loads into each Session. Notes in the debug log that it loaded. Runs in Claude Code's own mod runtime, so it is plain TypeScript without Effect for now. |
-| [`packages/web`](packages/web) | The web UI: React on Vite, built from [Base UI](https://base-ui.com) primitives. |
+| [`packages/web`](packages/web) | The web UI: React on Vite, built from [Base UI](https://base-ui.com) primitives and styled with StyleX. The Session list and the Session view, on a typed client for the web channel (`src/hub`). The UI kit is at `/kit`. |
 | [`prototype/`](prototype) | The first prototype (hub, runner, mod, `start.sh`). Reference material only: not part of the workspace, typecheck or lint. |
 
 ## Setup
@@ -46,7 +46,7 @@ All run from the repo root:
 | `bun run hub` | The Hub on <http://127.0.0.1:7777>; try `/health`. | `HOST` (`127.0.0.1`), `PORT` (`7777`), `HUB_DATABASE` (`hub.db` in `packages/hub`), and the sign-in settings below |
 | `bun run runner-token <name>` | Issues a token for the Runner called `<name>` and prints it. | `HUB_DATABASE`, as for the Hub |
 | `bun run runner` | A Runner for this machine; see [Running a Runner](#running-a-runner). | `HUB_URL` (`http://127.0.0.1:7777`), `RUNNER_TOKEN` (required), `RUNNER_NAME` (short hostname) |
-| `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. It passes `/auth`, `/health` and `/ws` through to the Hub, so the web UI and the Hub share one origin. | `HUB_URL` (`http://127.0.0.1:7777`) |
+| `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. It passes `/auth`, `/health` and `/ws` through to the Hub, so the web UI and the Hub share one origin. | `HUB_URL` (`http://127.0.0.1:7777`); `VITE_FAKE_HUB=1` runs it against an in-process fake Hub that plays a scripted Session instead, and `VITE_FAKE_HUB=signed-out` starts that signed out |
 | `claude --plugin-dir packages/mod` | Claude Code with the `hub-link` mod loaded. | |
 
 Each package's own scripts (`start`, `dev`, `build`, `typecheck`) also run from inside it with `bun run <script>`.
@@ -80,11 +80,7 @@ bun run runner-token "$(hostname -s)"   # prints this machine's Runner token, on
 bun run web                             # the web UI on http://localhost:5173
 ```
 
-Sign in from the web UI's origin, for example in the browser console at <http://localhost:5173>:
-
-```js
-await fetch("/auth/dev", { method: "POST", body: JSON.stringify({ login: "alice" }) })
-```
+Open <http://localhost:5173> and sign in with dev login.
 
 Running `runner-token` again for the same name keeps the RunnerId and replaces the token, so the old one stops working. Pass it to the Runner as `RUNNER_TOKEN`:
 

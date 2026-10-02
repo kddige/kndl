@@ -47,6 +47,8 @@ const styles = stylex.create({
     fontFamily: "inherit",
     fontWeight: weight.medium,
     lineHeight: 1,
+    // A Button rendered as a link looks like the rest.
+    textDecoration: "none",
     whiteSpace: "nowrap",
     cursor: { default: "pointer", "[data-disabled]": "not-allowed", "[data-loading]": "progress" },
     opacity: { default: 1, "[data-disabled]:not([data-loading])": 0.5 },
