@@ -20,7 +20,7 @@
 import { mkdir, realpath, stat } from "node:fs/promises"
 import { join, posix } from "node:path"
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
-import { Effect, Layer, Option, Stream } from "effect"
+import { Cause, Effect, Layer, Option, Queue, Stream } from "effect"
 import { MicrosandboxError, NetworkPolicy, Sandbox, Volume } from "microsandbox"
 import type { SandboxStatus, Sandbox as MsbSandbox } from "microsandbox"
 import { prefix, parseSandboxName, parseVolumeName, sandboxName, volumeName } from "./Naming.ts"
@@ -428,21 +428,32 @@ export const make = Effect.gen(function* () {
             ? Effect.void
             : Effect.promise(() => execution.kill().catch(() => undefined)),
       )
-      const events = Stream.fromAsyncIterable(running, toError("exec", sessionId)).pipe(
-        Stream.flatMap((event): Stream.Stream<ExecEvent> => {
-          switch (event.kind) {
-            case "stdout":
-              return Stream.succeed({ _tag: "Stdout", data: event.data })
-            case "stderr":
-              return Stream.succeed({ _tag: "Stderr", data: event.data })
-            case "exited":
-              status.exited = true
-              return Stream.succeed({ _tag: "Exit", exitCode: event.code })
-            case "started":
-              return Stream.empty
+      // The SDK's iterator is read by a loop of its own, into a queue: a fiber waiting on the
+      // iterator directly can't be interrupted until the command prints or exits, which would
+      // keep a scope from closing (and so from killing the command) for as long as it runs.
+      const output = yield* Queue.unbounded<ExecEvent, SandboxError | Cause.Done>()
+      void (async () => {
+        try {
+          for await (const event of running) {
+            switch (event.kind) {
+              case "stdout":
+                Queue.offerUnsafe(output, { _tag: "Stdout", data: event.data })
+                break
+              case "stderr":
+                Queue.offerUnsafe(output, { _tag: "Stderr", data: event.data })
+                break
+              case "exited":
+                status.exited = true
+                Queue.offerUnsafe(output, { _tag: "Exit", exitCode: event.code })
+                break
+            }
           }
-        }),
-      )
+          Queue.endUnsafe(output)
+        } catch (error) {
+          Queue.failCauseUnsafe(output, Cause.fail(toError("exec", sessionId)(error)))
+        }
+      })()
+      const events: Stream.Stream<ExecEvent, SandboxError> = Stream.fromQueue(output)
       return { running, events }
     })
 
