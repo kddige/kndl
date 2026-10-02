@@ -8,8 +8,9 @@ import {
 import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
-import { NoSandboxes } from "./Sandbox.ts"
+import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { Sessions, SessionsLive } from "./Sessions.ts"
+import { SessionSandboxesLive } from "./SessionSandboxes.ts"
 import { TmuxLive } from "./Tmux.ts"
 import { WorkspacesGitClone } from "./Workspace.ts"
 
@@ -42,10 +43,14 @@ export const runRunner = (
   })
 
 /**
- * Sessions on this host: Claude Code in tmux, Workspaces cloned with the host's git, and no
- * Sandbox yet (#9).
+ * Sessions on this host: Claude Code in tmux, Workspaces cloned with the host's git, and each
+ * Session's tools run in its own microsandbox VM.
  */
 export const SessionsHost = SessionsLive.pipe(
+  Layer.provide([
+    TmuxLive,
+    WorkspacesGitClone,
+    SessionSandboxesLive.pipe(Layer.provide(MicrosandboxBackend.layer)),
+  ]),
   Layer.provideMerge(HubLinkLive),
-  Layer.provide([TmuxLive, WorkspacesGitClone, NoSandboxes]),
 )

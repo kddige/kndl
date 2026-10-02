@@ -2,6 +2,7 @@
 import { SessionId, type StartSession, type TerminalSize } from "@claude-hub/protocol"
 import { type Cause, Effect, Layer, Queue, Schema, Stream } from "effect"
 import { Sandboxes } from "./Sandbox.ts"
+import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { type LaunchSpec, type PaneEvent, Tmux, TmuxError } from "./Tmux.ts"
 import { WorkspaceError, Workspaces } from "./Workspace.ts"
@@ -156,11 +157,58 @@ export class FakeWorkspaces {
 /** Sandboxes that only record calls. */
 export class FakeSandboxes {
   readonly calls: Array<string> = []
+  /** The running Sessions each `reconcile` was given. */
+  readonly reconciled: Array<Array<SessionId>> = []
 
   readonly layer = Layer.sync(Sandboxes, () =>
     Sandboxes.of({
       start: (id) => Effect.sync(() => void this.calls.push(`start ${id}`)),
       stop: (id, reason) => Effect.sync(() => void this.calls.push(`stop ${id} ${reason}`)),
+      reconcile: (running) => Effect.sync(() => void this.reconciled.push([...running])),
     }),
   )
 }
+
+interface Rpc {
+  readonly id?: number
+  readonly method: string
+  readonly params?: { readonly name?: string; readonly arguments?: Record<string, unknown> }
+}
+
+export type ToolHandler = (name: string, args: Record<string, unknown>) => Effect.Effect<unknown>
+
+/** Plays `claude mcp serve`: answers the handshake, and each tools/call with `onTool`. */
+export const fakeMcpServer =
+  (onTool: ToolHandler) =>
+  (io: FakeProcessIO): Effect.Effect<number> =>
+    io.stdin.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.mapEffect(
+        (line) => {
+          const rpc = JSON.parse(line) as Rpc
+          if (rpc.id === undefined) return Effect.void
+          const answer = (result: unknown) =>
+            io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result })}\n`)
+          if (rpc.method === "initialize")
+            return answer({ serverInfo: { name: "claude/tengu", version: "2.1.287" } })
+          return onTool(rpc.params?.name ?? "", rpc.params?.arguments ?? {}).pipe(
+            Effect.flatMap(answer),
+          )
+        },
+        { concurrency: "unbounded" },
+      ),
+      Stream.runDrain,
+      Effect.as(0),
+    )
+
+export const mcpRecord = (value: unknown) => ({
+  content: [{ type: "text", text: JSON.stringify(value) }],
+})
+
+export const echoTools: ToolHandler = (name, args) =>
+  Effect.succeed(
+    name === "Bash" && args["command"] === "exit 2"
+      ? { content: [{ type: "text", text: "Exit code 2" }], isError: true }
+      : mcpRecord({ tool: name, args }),
+  )
