@@ -14,14 +14,14 @@ One Bun workspace in TypeScript.
 |---|---|
 | [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as [Effect](https://effect.website) Schemas. Imported from source by the other packages. |
 | [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Signs people in, issues Runner and mod tokens, accepts the Runner and web WebSocket channels, and serves the mod's HTTP endpoints (handshake only, for now). |
-| [`packages/runner`](packages/runner) | A Runner: an Effect program that will start Sessions and their Sandboxes on its host. Logs its configuration and waits. |
+| [`packages/runner`](packages/runner) | A Runner: an Effect program that connects to the Hub and runs each Session's Claude Code in its own tmux session on its host, streaming the terminal. The Sandbox backend is in `src/sandbox` (#9), not yet wired into Session start. |
 | [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod a Runner loads into each Session. Notes in the debug log that it loaded. Runs in Claude Code's own mod runtime, so it is plain TypeScript without Effect for now. |
 | [`packages/web`](packages/web) | The web UI: React on Vite, built from [Base UI](https://base-ui.com) primitives. |
 | [`prototype/`](prototype) | The first prototype (hub, runner, mod, `start.sh`). Reference material only: not part of the workspace, typecheck or lint. |
 
 ## Setup
 
-Needs [Bun](https://bun.sh) 1.4 or newer, and Claude Code (`claude`) on `PATH` for the mod's checks.
+Needs [Bun](https://bun.sh) 1.4 or newer, and Claude Code (`claude`) on `PATH` for the mod's checks. A Runner also needs `tmux` and `git`.
 
 ```sh
 bun install
@@ -45,7 +45,7 @@ All run from the repo root:
 |---|---|---|
 | `bun run hub` | The Hub on <http://127.0.0.1:7777>; try `/health`. | `HOST` (`127.0.0.1`), `PORT` (`7777`), `HUB_DATABASE` (`hub.db` in `packages/hub`), and the sign-in settings below |
 | `bun run runner-token <name>` | Issues a token for the Runner called `<name>` and prints it. | `HUB_DATABASE`, as for the Hub |
-| `bun run runner` | A Runner for this machine. | `HUB_URL` (`http://127.0.0.1:7777`), `RUNNER_NAME` (short hostname) |
+| `bun run runner` | A Runner for this machine; see [Running a Runner](#running-a-runner). | `HUB_URL` (`http://127.0.0.1:7777`), `RUNNER_TOKEN` (required), `RUNNER_NAME` (short hostname) |
 | `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. It passes `/auth`, `/health` and `/ws` through to the Hub, so the web UI and the Hub share one origin. | `HUB_URL` (`http://127.0.0.1:7777`) |
 | `claude --plugin-dir packages/mod` | Claude Code with the `hub-link` mod loaded. | |
 
@@ -86,4 +86,36 @@ Sign in from the web UI's origin, for example in the browser console at <http://
 await fetch("/auth/dev", { method: "POST", body: JSON.stringify({ login: "alice" }) })
 ```
 
-Running `runner-token` again for the same name keeps the RunnerId and replaces the token, so the old one stops working. The Runner will connect with its token as `RUNNER_TOKEN` once it talks to the Hub (issue #10).
+Running `runner-token` again for the same name keeps the RunnerId and replaces the token, so the old one stops working. Pass it to the Runner as `RUNNER_TOKEN`:
+
+```sh
+RUNNER_TOKEN=chr_… bun run runner
+```
+
+### Running a Runner
+
+A Runner connects to the Hub's `/ws/runner` WebSocket with its Runner token as `Authorization: Bearer <RUNNER_TOKEN>`, says hello, and then starts and stops Sessions as the Hub asks. Get a token from the Hub with `bun run runner-token <name>`. If the Hub goes away, the Runner reconnects with backoff (0.5 s, doubling up to 30 s).
+
+Each Session's Claude Code runs in a tmux session named `hub-<session id>`, on the Runner's own tmux server (`tmux -L claude-hub`), so Sessions keep running when the Runner restarts, and the Runner re-adopts them when it comes back. To look at one by hand: `tmux -L claude-hub attach -t hub-<session id>`.
+
+A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty directory Claude Code runs in, and `workspace/`, the Repo cloned onto the Session's Work branch with the host's own git credentials. Claude Code inherits workspace trust from parent directories, so trust the sessions root once: run `claude` in it and accept the trust prompt. Until you do, the Runner warns at startup.
+
+| Env | Default | What it is |
+|---|---|---|
+| `HUB_URL` | `http://127.0.0.1:7777` | The Hub. |
+| `RUNNER_TOKEN` | required | The Runner token. Kept out of tmux and Claude Code's environment. |
+| `RUNNER_NAME` | the short hostname | The name the UI shows. |
+| `RUNNER_LOGIN` | the account Claude Code is signed in with (`oauthAccount.emailAddress` in `~/.claude.json`) | The Runner login, as the UI shows it. |
+| `RUNNER_SESSIONS_ROOT` | `~/.claude-hub/sessions` | Where Sessions' directories go. |
+| `RUNNER_MOD_DIR` | `packages/mod` in this checkout | The `hub-link` mod, loaded with `--plugin-dir`. |
+| `CLAUDE_BIN` | `claude` | The Claude Code executable. |
+| `RUNNER_TMUX_SOCKET` | `claude-hub` | The tmux server's socket name. |
+| `RUNNER_REPO_URL` | `https://github.com/{repo}.git` | Where Repos are cloned from; `{repo}` is `owner/name`. |
+
+Claude Code starts with the hardened flags of [ADR 0001](docs/adr/0001-claude-on-host-tools-in-sandbox.md) (`--setting-sources ""`, `--strict-mcp-config`, a fixed `--tools` list), with `--session-id` for a new Session or `--resume` to wake one, and with these variables, which the mod uses to talk HTTP to the Hub:
+
+| Env | What it is |
+|---|---|
+| `CLAUDE_HUB_URL` | The Hub's URL: the Runner's `HUB_URL`. |
+| `CLAUDE_HUB_MOD_TOKEN` | The Session's mod token, from the Hub's `StartSession`. |
+| `CLAUDE_HUB_SESSION_ID` | The Session's id. |
