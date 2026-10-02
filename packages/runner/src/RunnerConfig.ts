@@ -4,7 +4,7 @@ import { Config, Context, Effect, Layer, type Redacted } from "effect"
 
 /** What a Runner is configured with. Read from the environment by {@link RunnerConfigLive}. */
 export interface RunnerSettings {
-  /** The Hub's base URL; the Runner connects to `/runner` on it over WebSocket. */
+  /** The Hub's base URL; the Runner connects to `/ws/runner` on it over WebSocket. */
   readonly hubUrl: URL
   /** This Runner's name, as the UI shows it. */
   readonly name: string
@@ -80,9 +80,9 @@ export const RunnerConfigLive = Layer.effect(
   }),
 )
 
-/** The Hub's WebSocket endpoint for Runners: `/runner`, over `ws:` or `wss:`. */
+/** The Hub's WebSocket endpoint for Runners: `/ws/runner`, over `ws:` or `wss:`. */
 export function runnerSocketUrl(hubUrl: URL): string {
-  const url = new URL("/runner", hubUrl)
+  const url = new URL("/ws/runner", hubUrl)
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
   return url.href
 }
