@@ -1,0 +1,405 @@
+// The Runner against a fake Hub WebSocket server, with tmux, the Workspace and the Sandbox faked.
+import { afterEach, describe, expect, test } from "bun:test"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { ProtocolVersion } from "@claude-hub/protocol"
+import { BunServices, BunSocket } from "@effect/platform-bun"
+import type { ServerWebSocket } from "bun"
+import { Effect, Exit, Fiber, Layer, Redacted, References } from "effect"
+import { HubLinkLive } from "./HubLink.ts"
+import { runRunner } from "./Runner.ts"
+import { RunnerConfig, type RunnerSettings } from "./RunnerConfig.ts"
+import { SessionsLive } from "./Sessions.ts"
+import { eventually, FakeSandboxes, FakeTmux, FakeWorkspaces, sessionId } from "./testSupport.ts"
+
+const token = "chr_test.secret"
+
+/** A message the fake Hub received. */
+interface Received {
+  readonly _tag: string
+  readonly [key: string]: unknown
+}
+
+/** A Hub that welcomes any Runner with the right token, and records what each connection got. */
+class FakeHub {
+  readonly connections: Array<{ socket: ServerWebSocket; received: Array<Received> }> = []
+  readonly authorizations: Array<string | null> = []
+  /** Answers the next upgrades with 401, as for a bad token. */
+  refuseNext = 0
+  /** What the Hub answers a hello with. */
+  answer: (hello: Received) => unknown = () => ({
+    _tag: "RunnerWelcome",
+    protocolVersion: ProtocolVersion,
+    runnerId: "runner-1",
+  })
+
+  readonly server = Bun.serve({
+    port: 0,
+    fetch: (request, server) => {
+      this.authorizations.push(request.headers.get("authorization"))
+      const authorized = request.headers.get("authorization") === `Bearer ${token}`
+      if (this.refuseNext > 0 || !authorized || new URL(request.url).pathname !== "/ws/runner") {
+        this.refuseNext = Math.max(0, this.refuseNext - 1)
+        return new Response("Unauthorized", { status: 401 })
+      }
+      return server.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 })
+    },
+    websocket: {
+      open: (socket) => {
+        this.connections.push({ socket, received: [] })
+      },
+      message: (socket, data) => {
+        const connection = this.connections.find((c) => c.socket === socket)
+        const message = JSON.parse(String(data)) as Received
+        connection?.received.push(message)
+        if (message._tag === "RunnerHello") socket.send(JSON.stringify(this.answer(message)))
+      },
+    },
+  })
+
+  get url() {
+    return new URL(`http://127.0.0.1:${this.server.port}`)
+  }
+
+  get current() {
+    const connection = this.connections.at(-1)
+    if (connection === undefined) throw new Error("no connection yet")
+    return connection
+  }
+
+  /** Every message of `tag` on any connection. */
+  all(tag: string): Array<Received> {
+    return this.connections.flatMap((c) => c.received.filter((m) => m._tag === tag))
+  }
+
+  send(message: unknown): void {
+    this.current.socket.send(JSON.stringify(message))
+  }
+}
+
+interface Harness {
+  readonly hub: FakeHub
+  readonly tmux: FakeTmux
+  readonly workspaces: FakeWorkspaces
+  readonly sandboxes: FakeSandboxes
+  readonly runner: Fiber.Fiber<never, unknown>
+  readonly settings: RunnerSettings
+}
+
+const running: Array<{ hub: FakeHub; runner: Fiber.Fiber<never, unknown> }> = []
+
+afterEach(async () => {
+  for (const { hub, runner } of running.splice(0)) {
+    await Effect.runPromise(Fiber.interrupt(runner))
+    hub.server.stop(true)
+  }
+})
+
+function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () => {}): Harness {
+  const dir = mkdtempSync(join(tmpdir(), "claude-hub-runner-"))
+  const sessionsRoot = join(dir, "sessions")
+  const claudeConfig = join(dir, ".claude.json")
+  writeFileSync(
+    claudeConfig,
+    JSON.stringify({
+      oauthAccount: { emailAddress: "alice@example.com" },
+      projects: { [dir]: { hasTrustDialogAccepted: true } },
+    }),
+  )
+  const hub = new FakeHub()
+  const tmux = new FakeTmux()
+  setup({ hub, tmux })
+  const workspaces = new FakeWorkspaces(sessionsRoot)
+  const sandboxes = new FakeSandboxes()
+  const settings: RunnerSettings = {
+    hubUrl: hub.url,
+    name: "mac",
+    token: Redacted.make(token),
+    login: undefined,
+    sessionsRoot,
+    modDir: "/opt/claude-hub/packages/mod",
+    claudeBin: "/usr/local/bin/claude",
+    tmuxSocket: "unused",
+    repoUrlTemplate: "unused",
+  }
+  const layer = SessionsLive.pipe(
+    Layer.provideMerge(HubLinkLive),
+    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer]),
+    Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
+    Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
+  )
+  const runner = Effect.runFork(
+    runRunner({
+      claudeConfigPath: claudeConfig,
+      backoff: { initial: "20 millis", max: "100 millis" },
+    }).pipe(Effect.provide(layer), Effect.provideService(References.MinimumLogLevel, "None")),
+  )
+  running.push({ hub, runner })
+  return { hub, tmux, workspaces, sandboxes, runner, settings }
+}
+
+const startSession = (id: string, extra: Record<string, unknown> = {}) => ({
+  _tag: "StartSession",
+  sessionId: id,
+  repo: "acme/app",
+  baseBranch: "main",
+  workBranch: "claude/s-1",
+  modToken: "chm_mod.secret",
+  ...extra,
+})
+
+/** Waits for the welcome, so the Hub can send. */
+const connected = (h: Harness) =>
+  eventually(() => h.hub.connections.length > 0 && h.hub.current.received.length > 0)
+
+describe("connecting", () => {
+  test("says hello with the Runner token, its name and the login from Claude Code's config", async () => {
+    const h = startRunner()
+    await connected(h)
+
+    expect(h.hub.authorizations).toEqual([`Bearer ${token}`])
+    expect(h.hub.current.received[0]).toEqual({
+      _tag: "RunnerHello",
+      protocolVersion: ProtocolVersion,
+      name: "mac",
+      login: { account: "alice@example.com" },
+      sessions: [],
+    })
+  })
+
+  test("retries with backoff while the Hub refuses the token", async () => {
+    const h = startRunner(({ hub }) => {
+      hub.refuseNext = 2
+    })
+    await connected(h)
+
+    expect(h.hub.authorizations).toHaveLength(3)
+  })
+
+  test("stops for good when the Hub rejects the handshake", async () => {
+    const h = startRunner(({ hub }) => {
+      hub.answer = () => ({
+        _tag: "HandshakeRejected",
+        reason: "ProtocolVersionMismatch",
+        protocolVersion: ProtocolVersion + 1,
+        message: "Update the Runner.",
+      })
+    })
+    const exit = await Effect.runPromise(Fiber.await(h.runner))
+
+    expect(Exit.isFailure(exit)).toBe(true)
+    expect(String(Exit.isFailure(exit) && exit.cause)).toContain("Update the Runner.")
+    expect(h.hub.connections).toHaveLength(1)
+  })
+
+  test("refuses a welcome from another protocol version", async () => {
+    const h = startRunner(({ hub }) => {
+      hub.answer = () => ({
+        _tag: "RunnerWelcome",
+        protocolVersion: ProtocolVersion + 1,
+        runnerId: "r",
+      })
+    })
+    const exit = await Effect.runPromise(Fiber.await(h.runner))
+
+    expect(String(Exit.isFailure(exit) && exit.cause)).toContain("Protocol version mismatch")
+  })
+
+  test("re-adopts Sessions left running in tmux and snapshots them once welcomed", async () => {
+    const h = startRunner(({ tmux }) => {
+      tmux.leaveRunning(sessionId("s-old"))
+    })
+    await eventually(() => h.hub.all("TerminalFrame").length > 0)
+
+    expect(h.hub.current.received[0]).toMatchObject({ sessions: ["s-old"] })
+    expect(h.hub.all("TerminalFrame")[0]).toEqual({
+      _tag: "TerminalFrame",
+      sessionId: "s-old",
+      kind: "Snapshot",
+      data: "screen of s-old",
+      size: { cols: 80, rows: 24 },
+    })
+  })
+
+  test("after a reconnect, lists running Sessions, snapshots them and sends what waited", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    // The Session exits while the Runner is between connections.
+    h.hub.current.socket.close(1001, "Hub restarting")
+    h.tmux.pane("s-1").output("lost while disconnected")
+    h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 0 })
+    await eventually(() => h.hub.connections.length === 2 && h.hub.current.received.length > 0)
+    await eventually(() => h.hub.current.received.some((m) => m._tag === "SessionStopped"))
+
+    const second = h.hub.current.received
+    expect(second[0]).toMatchObject({ _tag: "RunnerHello" })
+    expect(second.filter((m) => m._tag === "TerminalFrame")).toEqual([])
+    expect(second.find((m) => m._tag === "SessionStopped")).toEqual({
+      _tag: "SessionStopped",
+      sessionId: "s-1",
+      reason: "Exited",
+      exitCode: 0,
+    })
+  })
+})
+
+describe("Sessions", () => {
+  test("starts Claude Code in tmux with the hardened flags and the mod, then streams it", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    const [spec] = h.tmux.launched
+    expect(spec?.cwd).toBe(join(h.settings.sessionsRoot, "s-1", "claude"))
+    expect(spec?.argv).toEqual([
+      "/usr/local/bin/claude",
+      "--session-id",
+      expect.stringMatching(/^[0-9a-f-]{36}$/),
+      "--plugin-dir",
+      "/opt/claude-hub/packages/mod",
+      "--tools",
+      "Bash,Read,Write,Edit,NotebookEdit,Glob,Grep",
+      "--strict-mcp-config",
+      "--setting-sources",
+      "",
+      "--settings",
+      '{"disableSkillShellExecution":true}',
+    ])
+    expect(spec?.env).toEqual({
+      CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1",
+      CLAUDE_HUB_URL: h.hub.url.href,
+      CLAUDE_HUB_SESSION_ID: "s-1",
+      CLAUDE_HUB_MOD_TOKEN: "chm_mod.secret",
+    })
+    expect(h.workspaces.prepared).toMatchObject([{ sessionId: "s-1", workBranch: "claude/s-1" }])
+    expect(h.sandboxes.calls).toEqual(["start s-1"])
+
+    // A snapshot first, then output as it comes.
+    h.tmux.pane("s-1").output("hello")
+    await eventually(() => h.hub.all("TerminalFrame").length === 2)
+    expect(h.hub.all("TerminalFrame").map((f) => [f.kind, f.data])).toEqual([
+      ["Snapshot", "screen of s-1"],
+      ["Output", "hello"],
+    ])
+  })
+
+  test("resumes Claude Code's conversation when waking a Session", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1", { resume: "3c1f6f0e-claude" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+  })
+
+  test("reports a start that failed and leaves nothing running", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1", { repo: "broken/repo" }))
+    await eventually(() => h.hub.all("SessionStartFailed").length === 1)
+
+    expect(h.hub.all("SessionStartFailed")[0]).toEqual({
+      _tag: "SessionStartFailed",
+      sessionId: "s-1",
+      message: "could not clone broken/repo",
+    })
+    expect(h.tmux.launched).toEqual([])
+    expect(h.sandboxes.calls).toEqual(["stop s-1 Sleep"])
+  })
+
+  test("refuses a Session id it can't name a directory after", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("../escape"))
+    await eventually(() => h.hub.all("SessionStartFailed").length === 1)
+
+    expect(h.workspaces.prepared).toEqual([])
+  })
+
+  test("starting a running Session again only says it started", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    expect(h.tmux.launched).toHaveLength(1)
+  })
+
+  test("applies terminal input, resizes and snapshot requests", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    h.hub.send({ _tag: "TerminalInput", sessionId: "s-1", data: "hi\r" })
+    h.hub.send({ _tag: "TerminalResize", sessionId: "s-1", size: { cols: 100, rows: 30 } })
+    h.hub.send({ _tag: "RequestTerminalSnapshot", sessionId: "s-1" })
+    h.hub.send({ _tag: "TerminalInput", sessionId: "s-unknown", data: "ignored" })
+    await eventually(() => h.hub.all("TerminalFrame").length === 2)
+
+    const pane = h.tmux.pane("s-1")
+    expect(pane.inputs).toEqual(["hi\r"])
+    expect(pane.resizes).toEqual([{ cols: 100, rows: 30 }])
+    expect(h.hub.all("TerminalFrame")[1]).toMatchObject({
+      kind: "Snapshot",
+      size: { cols: 100, rows: 30 },
+    })
+  })
+
+  test("stops a Session when asked, and its Sandbox the way asked", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    const pane = h.tmux.pane("s-1")
+
+    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Archive" })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+
+    expect(pane.terminated).toBe(true)
+    expect(h.hub.all("SessionStopped")).toEqual([
+      { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested", exitCode: 143 },
+    ])
+    expect(h.tmux.panes.size).toBe(0)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Archive"])
+  })
+
+  test("leaves Sessions running in tmux when the Runner stops", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    await Effect.runPromise(Fiber.interrupt(h.runner))
+
+    expect([...h.tmux.panes.keys()]).toEqual([sessionId("s-1")])
+    // Only the clean-up of leftovers before launching.
+    expect(h.tmux.killed).toEqual([sessionId("s-1")])
+    expect(h.sandboxes.calls).toEqual(["start s-1"])
+  })
+
+  test("reports a Session whose Claude Code exited on its own", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 1 })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+
+    expect(h.hub.all("SessionStopped")[0]).toEqual({
+      _tag: "SessionStopped",
+      sessionId: "s-1",
+      reason: "Exited",
+      exitCode: 1,
+    })
+    expect(h.tmux.panes.size).toBe(0)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+  })
+})

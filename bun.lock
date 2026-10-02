@@ -32,8 +32,10 @@
     "packages/runner": {
       "name": "@claude-hub/runner",
       "dependencies": {
+        "@claude-hub/protocol": "workspace:*",
         "@effect/platform-bun": "4.0.0",
         "effect": "4.0.0",
+        "microsandbox": "0.7.6",
       },
     },
     "packages/web": {
@@ -139,6 +141,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.6.0", "", {}, "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@microsandbox/types": ["@microsandbox/types@0.7.6", "", {}, "sha512-c37qErKf6FuPRGOM9CElrEcmg5kGOWghLnDVxZyQwTYEwXGm+ySA1nw7ShSPaUWXWw+/wvCxagGJrw/TK/+f+g=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.152.0", "", {}, "sha512-oM/5rLBm2tPkg0iBgkH/FOeR3PCDpY19GTgAZjMFM8h9WI9VW7cLgzp6nwtarYKmovavIQZ+Fe/RKX/8C8O/Rw=="],
 
@@ -257,6 +261,16 @@
     "@stylexjs/stylex": ["@stylexjs/stylex@0.19.1", "", { "dependencies": { "css-mediaquery": "^0.1.2", "invariant": "^2.2.4", "styleq": "0.2.1" } }, "sha512-JwNFm0MOYPqi+M4Ax5Un4ZxfZp4HEAX2sAWetZ88KALFcv1eEiHNJs75oO3V3U7RVWnzfkiM8i9eBowC3hqgUw=="],
 
     "@stylexjs/unplugin": ["@stylexjs/unplugin@0.19.1", "", { "dependencies": { "@babel/core": "^7.26.8", "@babel/plugin-syntax-flow": "^7.26.0", "@babel/plugin-syntax-jsx": "^7.25.9", "@babel/plugin-syntax-typescript": "^7.25.9", "@stylexjs/babel-plugin": "0.19.1", "browserslist": "^4.24.0", "lightningcss": "^1.29.1" }, "peerDependencies": { "unplugin": "^2.3.11" } }, "sha512-MJz/IPrFe3hSHbZtjbxaYd3kLgS718/NFBEY/Mf+njteJKLdY7bHHfVka3051LCYy9fKfyZapGCmUpibraHqmQ=="],
+
+    "@superradcompany/microsandbox-darwin-arm64": ["@superradcompany/microsandbox-darwin-arm64@0.7.6", "", { "os": "darwin", "cpu": "arm64" }, "sha512-gTboiANChdpsdPzfZ40Co9ls1UIhKGol5reMBApcCNCvp7z1C65vPK3i9QnWp4yFeClQ0k+gQezApiTSRsevGw=="],
+
+    "@superradcompany/microsandbox-linux-arm64-gnu": ["@superradcompany/microsandbox-linux-arm64-gnu@0.7.6", "", { "os": "linux", "cpu": "arm64" }, "sha512-089OfW/yHu3wkiMqtNG0jcTWCwjZeNC+x5piXFipQKS2MuYWa/U9tQxGfSQnn6ZU7eA3cKJUjVA8EGIa0RvUYg=="],
+
+    "@superradcompany/microsandbox-linux-x64-gnu": ["@superradcompany/microsandbox-linux-x64-gnu@0.7.6", "", { "os": "linux", "cpu": "x64" }, "sha512-1wwZjgki/JuHeo/GI4BVREIrtsSim7Ei8S5xohkz3R6CGyf+xNgoodrKtJXB/NwxmxHDCscc88/qGUbTsljhsw=="],
+
+    "@superradcompany/microsandbox-win32-arm64-msvc": ["@superradcompany/microsandbox-win32-arm64-msvc@0.7.6", "", { "os": "win32", "cpu": "arm64" }, "sha512-KAsVOqBDJp8Pg4C7/Tq1xiVA/P7OiETmYA+/w9W/2dDxo+/MgiWV6D63vqisn5J2ug0tcOmGXn9D9qaZMoZywg=="],
+
+    "@superradcompany/microsandbox-win32-x64-msvc": ["@superradcompany/microsandbox-win32-x64-msvc@0.7.6", "", { "os": "win32", "cpu": "x64" }, "sha512-JkMe0sJZVXwnpBrcrH34InRZSMYY12vAmRwpMNm9DQUkVBA91utfkY1SKL+cI7ux9LZZq7GDVe8IypA8sdAu/Q=="],
 
     "@tanstack/history": ["@tanstack/history@1.162.4", "", {}, "sha512-utTS5L2OkeYUzXGohL1Z8sefu1GLNOJcxe8Hd6iIdc/Xo1K1nDB2JEp4iSFhvYh33xKC9V91TxrS8qfrpoKobQ=="],
 
@@ -397,6 +411,8 @@
     "loose-envify": ["loose-envify@1.4.0", "", { "dependencies": { "js-tokens": "^3.0.0 || ^4.0.0" }, "bin": { "loose-envify": "cli.js" } }, "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q=="],
 
     "lru-cache": ["lru-cache@5.1.1", "", { "dependencies": { "yallist": "^3.0.2" } }, "sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w=="],
+
+    "microsandbox": ["microsandbox@0.7.6", "", { "dependencies": { "@microsandbox/types": "0.7.6" }, "optionalDependencies": { "@superradcompany/microsandbox-darwin-arm64": "0.7.6", "@superradcompany/microsandbox-linux-arm64-gnu": "0.7.6", "@superradcompany/microsandbox-linux-x64-gnu": "0.7.6", "@superradcompany/microsandbox-win32-arm64-msvc": "0.7.6", "@superradcompany/microsandbox-win32-x64-msvc": "0.7.6" }, "bin": { "msb": "bin/microsandbox.cjs", "microsandbox": "bin/microsandbox.cjs" } }, "sha512-66lq0qH5xiFPm4nOb4euqsTd7AuDCGEg+ibdWtBu1nlzGGVEbCYBOjCy8Aihrinnu/kpEtx+d99x1nUMCpb8XQ=="],
 
     "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
 
