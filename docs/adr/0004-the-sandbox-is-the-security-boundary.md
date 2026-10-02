@@ -8,6 +8,6 @@ Sessions never ask for tool approval. Everything inside the Sandbox is allowed, 
 
 ## Consequences
 
-- Code running in a Sandbox can reach the Hub and the Runner. Every Hub and Runner endpoint therefore requires authentication: GitHub sign-in for people, per-Runner tokens for Runners and the mod. Those tokens never enter a Sandbox.
+- Code running in a Sandbox can reach the Hub and the Runner. Every Hub and Runner endpoint therefore requires authentication: GitHub sign-in for people, per-Runner tokens for Runners, and per-Session tokens for the mod (amended in #7: each Session's mod gets its own token, scoped to that Session). Those tokens never enter a Sandbox.
 - No GitHub or Claude credentials are placed in a Sandbox (see ADR 0005). Repo secrets are the deliberate exception.
 - Tightening the network to "no LAN/host" or to an allowlist is a later, additive change.

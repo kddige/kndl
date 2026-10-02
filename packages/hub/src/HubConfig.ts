@@ -1,0 +1,123 @@
+import { Config, Context, Effect, Layer, Option, Schema } from "effect"
+import type { Redacted } from "effect"
+
+/** The GitHub App's user sign-in credentials (issue #1). */
+export interface GitHubOAuthConfig {
+  readonly clientId: string
+  readonly clientSecret: Redacted.Redacted<string>
+}
+
+/** What the Hub is configured with, as read from the environment. */
+export interface HubConfigInput {
+  /** The address the Hub listens on. */
+  readonly host: string
+  readonly port: number
+  /**
+   * Where browsers reach the Hub: the web UI's origin, which serves the Hub's routes on the same
+   * origin (the Vite dev server proxies them in development). GitHub redirects back here.
+   */
+  readonly publicUrl: URL
+  readonly githubClientId: Option.Option<string>
+  readonly githubClientSecret: Option.Option<Redacted.Redacted<string>>
+  readonly devLogin: boolean
+  /** Who dev login signs in as when the form names no one. */
+  readonly devLoginName: string
+}
+
+// oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
+export class HubConfigError extends Schema.TaggedError<HubConfigError>()("HubConfigError", {
+  message: Schema.String,
+}) {}
+
+/** True for `localhost` and loopback IP addresses (127.0.0.0/8, ::1, and 127.x mapped to IPv6). */
+export function isLoopback(host: string): boolean {
+  const bare = host
+    .replace(/^\[(.*)\]$/, "$1")
+    .toLowerCase()
+    .replace(/^::ffff:(?=127\.)/, "")
+  return (
+    bare === "localhost" ||
+    bare === "::1" ||
+    bare === "0:0:0:0:0:0:0:1" ||
+    /^127(?:\.\d{1,3}){3}$/.test(bare)
+  )
+}
+
+/** The Hub's configuration, checked. */
+export class HubConfig extends Context.Service<
+  HubConfig,
+  {
+    readonly host: string
+    readonly port: number
+    readonly publicUrl: URL
+    /** GitHub sign-in, or none while the GitHub App isn't configured: sign-in is then off. */
+    readonly github: Option.Option<GitHubOAuthConfig>
+    /** Dev login: sign in as a local Participant without GitHub. Loopback only. */
+    readonly devLogin: Option.Option<{ readonly defaultName: string }>
+    /** Cookies get `Secure` unless browsers reach the Hub on a loopback address over HTTP. */
+    readonly secureCookies: boolean
+  }
+>()("@claude-hub/hub/HubConfig") {
+  /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
+  static readonly make = Effect.fnUntraced(function* (input: HubConfigInput) {
+    const { host, publicUrl } = input
+    if (input.devLogin && !isLoopback(host)) {
+      return yield* new HubConfigError({
+        message: `Dev login (CLAUDE_HUB_DEV_LOGIN) is refused: the Hub is bound to ${host}, not a loopback address. Unset CLAUDE_HUB_DEV_LOGIN, or set HOST=127.0.0.1.`,
+      })
+    }
+    if (input.devLogin && !isLoopback(publicUrl.hostname)) {
+      return yield* new HubConfigError({
+        message: `Dev login (CLAUDE_HUB_DEV_LOGIN) is refused: browsers reach the Hub at ${publicUrl.origin}, not a loopback address. Unset CLAUDE_HUB_DEV_LOGIN, or set HUB_PUBLIC_URL to a localhost URL.`,
+      })
+    }
+    if (Option.isSome(input.githubClientId) !== Option.isSome(input.githubClientSecret)) {
+      return yield* new HubConfigError({
+        message:
+          "GitHub sign-in needs both GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET; only one is set.",
+      })
+    }
+    return HubConfig.of({
+      host,
+      port: input.port,
+      publicUrl,
+      github: Option.zipWith(
+        input.githubClientId,
+        input.githubClientSecret,
+        (clientId, clientSecret) => ({ clientId, clientSecret }),
+      ),
+      devLogin: input.devLogin ? Option.some({ defaultName: input.devLoginName }) : Option.none(),
+      secureCookies: publicUrl.protocol === "https:" || !isLoopback(publicUrl.hostname),
+    })
+  })
+
+  /**
+   * From the environment: `HOST` (127.0.0.1), `PORT` (7777), `HUB_PUBLIC_URL`
+   * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
+   * off), `CLAUDE_HUB_DEV_LOGIN` (off) and `CLAUDE_HUB_DEV_USER` (`$USER`).
+   */
+  static readonly layer = Layer.effect(
+    HubConfig,
+    Effect.gen(function* () {
+      const input = yield* Config.all({
+        host: Config.String("HOST").pipe(Config.withDefault("127.0.0.1")),
+        port: Config.Port("PORT").pipe(Config.withDefault(7777)),
+        publicUrl: Config.URL("HUB_PUBLIC_URL").pipe(
+          Config.withDefault(new URL("http://localhost:5173")),
+        ),
+        githubClientId: Config.option(Config.NonEmptyString("GITHUB_CLIENT_ID")),
+        githubClientSecret: Config.option(Config.Redacted("GITHUB_CLIENT_SECRET")),
+        devLogin: Config.Boolean("CLAUDE_HUB_DEV_LOGIN").pipe(Config.withDefault(false)),
+        devLoginName: Config.String("CLAUDE_HUB_DEV_USER").pipe(
+          Config.orElse(() => Config.String("USER")),
+          Config.withDefault("dev"),
+        ),
+      })
+      return yield* HubConfig.make(input)
+    }),
+  )
+
+  /** A checked configuration, for tests. */
+  static readonly layerFrom = (input: HubConfigInput) =>
+    Layer.effect(HubConfig, HubConfig.make(input))
+}

@@ -13,7 +13,7 @@ One Bun workspace in TypeScript.
 | Package | What it is |
 |---|---|
 | [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as [Effect](https://effect.website) Schemas. Imported from source by the other packages. |
-| [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Serves `GET /health`. |
+| [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Signs people in, issues Runner and mod tokens, accepts the Runner and web WebSocket channels, and serves the mod's HTTP endpoints (handshake only, for now). |
 | [`packages/runner`](packages/runner) | A Runner: an Effect program that will start Sessions and their Sandboxes on its host. Logs its configuration and waits. |
 | [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod a Runner loads into each Session. Notes in the debug log that it loaded. Runs in Claude Code's own mod runtime, so it is plain TypeScript without Effect for now. |
 | [`packages/web`](packages/web) | The web UI: React on Vite, built from [Base UI](https://base-ui.com) primitives. |
@@ -43,9 +43,47 @@ All run from the repo root:
 
 | Command | What it starts | Env (default) |
 |---|---|---|
-| `bun run hub` | The Hub on <http://127.0.0.1:7777>; try `/health`. | `HOST` (`127.0.0.1`), `PORT` (`7777`), `HUB_DATABASE` (`hub.db` in `packages/hub`) |
+| `bun run hub` | The Hub on <http://127.0.0.1:7777>; try `/health`. | `HOST` (`127.0.0.1`), `PORT` (`7777`), `HUB_DATABASE` (`hub.db` in `packages/hub`), and the sign-in settings below |
+| `bun run runner-token <name>` | Issues a token for the Runner called `<name>` and prints it. | `HUB_DATABASE`, as for the Hub |
 | `bun run runner` | A Runner for this machine. | `HUB_URL` (`http://127.0.0.1:7777`), `RUNNER_NAME` (short hostname) |
-| `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. | |
+| `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. It passes `/auth`, `/health` and `/ws` through to the Hub, so the web UI and the Hub share one origin. | `HUB_URL` (`http://127.0.0.1:7777`) |
 | `claude --plugin-dir packages/mod` | Claude Code with the `hub-link` mod loaded. | |
 
 Each package's own scripts (`start`, `dev`, `build`, `typecheck`) also run from inside it with `bun run <script>`.
+
+## Signing in
+
+Every Hub route but `GET /health` and the sign-in routes needs a credential, because code in a Sandbox can reach the Hub ([ADR 0004](docs/adr/0004-the-sandbox-is-the-security-boundary.md)):
+
+| Who | Credential | Routes |
+|---|---|---|
+| People | A sign-in cookie, set by GitHub sign-in or dev login. HttpOnly, SameSite=Lax, host-only, and Secure unless the web UI is on `localhost` over HTTP. Requests that use it must come from the web UI's origin (`HUB_PUBLIC_URL`). | `GET /auth/me`, `POST /auth/sign-out`, `/ws/web` |
+| Runners | A Runner token, `Authorization: Bearer chr_…`. It names the Runner's RunnerId. | `/ws/runner` |
+| A Session's mod | A mod token, `Authorization: Bearer chm_…`, scoped to one Session. The Hub issues it in `StartSession.modToken`; the Runner hands it to Claude Code on the host, never to the Sandbox. | `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands` |
+
+The Hub keeps only SHA-256 hashes of these tokens.
+
+The Hub reads its sign-in settings from the environment:
+
+| Env | Default | What it does |
+|---|---|---|
+| `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the web UI and, through it, the Hub. GitHub sends people back here, and cookie-authenticated requests must come from this origin. |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret (issue #1). Unset, GitHub sign-in is off. Set the App's callback URL to `<HUB_PUBLIC_URL>/auth/github/callback`. |
+| `CLAUDE_HUB_DEV_LOGIN` | off | `1` turns on dev login: `POST /auth/dev` signs you in as a local Participant without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers. |
+| `CLAUDE_HUB_DEV_USER` | `$USER` | Who dev login signs you in as, when the request names no `login`. |
+
+### Trying it on one machine, before the GitHub App exists
+
+```sh
+CLAUDE_HUB_DEV_LOGIN=1 bun run hub      # the Hub, with dev login
+bun run runner-token "$(hostname -s)"   # prints this machine's Runner token, once
+bun run web                             # the web UI on http://localhost:5173
+```
+
+Sign in from the web UI's origin, for example in the browser console at <http://localhost:5173>:
+
+```js
+await fetch("/auth/dev", { method: "POST", body: JSON.stringify({ login: "alice" }) })
+```
+
+Running `runner-token` again for the same name keeps the RunnerId and replaces the token, so the old one stops working. The Runner will connect with its token as `RUNNER_TOKEN` once it talks to the Hub (issue #10).

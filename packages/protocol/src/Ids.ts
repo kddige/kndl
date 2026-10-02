@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 
 // Branded ids, so a SessionId can't be passed where a RunnerId is expected. On the wire each is
-// a plain string (EventSeq a number); the brand exists only in the decoded type.
+// a plain string (EventSeq and ModCommandSeq numbers); the brand exists only in the decoded type.
 
 /** A Session, minted by the Hub. */
 export const SessionId = Schema.NonEmptyString.pipe(Schema.brand("SessionId"))
@@ -42,3 +42,7 @@ export type RequestId = typeof RequestId.Type
 /** The position of an entry in a Session's event log: 0, 1, 2, ... in append order. */
 export const EventSeq = Schema.Natural.pipe(Schema.brand("EventSeq"))
 export type EventSeq = typeof EventSeq.Type
+
+/** The position of a command in a Session's mod outbox: 1, 2, ... in the order it was queued. */
+export const ModCommandSeq = Schema.Natural.pipe(Schema.brand("ModCommandSeq"))
+export type ModCommandSeq = typeof ModCommandSeq.Type
