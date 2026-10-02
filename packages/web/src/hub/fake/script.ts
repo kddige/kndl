@@ -204,7 +204,7 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
     tool: "Grep",
     input: { pattern: "ToolCall", path: "packages/web/src" },
     output:
-      "packages/web/src/session/ToolCall.tsx\npackages/web/src/hub/transcript.ts\npackages/web/src/session/Chat.tsx",
+      "packages/web/src/session/ToolCall.tsx\npackages/web/src/hub/transcript.ts\npackages/web/src/session/Transcript.tsx",
   },
   {
     kind: "tool",
@@ -282,7 +282,7 @@ export function replyTo(text: string): ReadonlyArray<ReplyStep> {
       kind: "tool",
       tool: "Bash",
       input: { command: "git status --short", description: "Show what's changed" },
-      output: " M packages/web/src/session/Chat.tsx",
+      output: " M packages/web/src/session/Transcript.tsx",
       steps: 3,
     },
     {
