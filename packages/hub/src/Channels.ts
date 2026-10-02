@@ -21,6 +21,7 @@ import { Duration, Effect, Queue, Schema, type Scope } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"
 import { authenticateParticipant, authenticateRunner, requireSameOrigin } from "./Auth.ts"
+import { HubShutdown } from "./HubShutdown.ts"
 import { type Peer, type Receive, SessionRelay } from "./SessionRelay.ts"
 
 /** How long a peer has to send its hello once the socket is open. */
@@ -30,6 +31,8 @@ const helloTimeout = Duration.seconds(10)
 export const CloseCode = {
   /** No hello in time. */
   HelloTimeout: 4408,
+  /** The Hub is shutting down. */
+  GoingAway: 1001,
 } as const
 
 /**
@@ -51,6 +54,7 @@ const serveChannel = <Hello, In, Out>(options: {
   ) => Effect.Effect<Receive<In>, never, Scope.Scope>
 }) =>
   Effect.gen(function* () {
+    const shutdown = yield* HubShutdown
     const request = yield* HttpServerRequest.HttpServerRequest
     const socket = yield* request.upgrade
     yield* Effect.scoped(
@@ -112,6 +116,15 @@ const serveChannel = <Hello, In, Out>(options: {
         yield* receiveAll(rest)
         yield* Effect.forever(Effect.flatMap(pull, receiveAll))
       }).pipe(
+        // A shutting-down Hub closes the socket, or the server would wait for the peer to.
+        Effect.raceFirst(
+          Effect.andThen(
+            shutdown.started,
+            Effect.flatMap(socket.writer, (writer) =>
+              writer.write(new Socket.CloseEvent(CloseCode.GoingAway, "The Hub is shutting down")),
+            ),
+          ),
+        ),
         Effect.catchTag("SocketError", () => Effect.void),
         Effect.catchCause(Effect.logDebug),
       ),

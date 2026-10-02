@@ -9,6 +9,7 @@ import { signInCookie } from "./Auth.ts"
 import { DatabaseTest } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
+import { drainFirst } from "./HubShutdown.ts"
 import { DefaultSleepAfter, HubConfig, type HubConfigInput } from "./HubConfig.ts"
 
 export const webOrigin = "http://localhost:5173"
@@ -53,7 +54,9 @@ export async function startHub(
     readonly database?: Layer.Layer<SqlClient.SqlClient, unknown>
   } = {},
 ): Promise<TestHub> {
-  const layer = HttpRouter.serve(HubRoutes, { disableLogger: true, disableListenLog: true }).pipe(
+  const layer = drainFirst(
+    HttpRouter.serve(HubRoutes, { disableLogger: true, disableListenLog: true }),
+  ).pipe(
     Layer.provideMerge(
       BunHttpServer.layer({ hostname: "127.0.0.1", port: 0, idleTimeout: idleTimeoutSeconds }),
     ),
