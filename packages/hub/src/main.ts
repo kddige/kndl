@@ -10,12 +10,14 @@ import { Console, Effect, Layer, Option } from "effect"
 import { HttpRouter } from "effect/http"
 import { DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
-import { HubRoutes, HubServices } from "./Hub.ts"
+import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 
 const ServerLive = Layer.unwrap(
-  Effect.map(HubConfig, ({ host, port }) => BunHttpServer.layer({ hostname: host, port })),
+  Effect.map(HubConfig, ({ host, port }) =>
+    BunHttpServer.layer({ hostname: host, port, idleTimeout: idleTimeoutSeconds }),
+  ),
 )
 
 const announceSignIn = Layer.effectDiscard(

@@ -1,17 +1,18 @@
 // The Hub's routes, served by a real Bun server on 127.0.0.1 with an in-memory database: the
-// WebSocket channels need a real upgrade, and dev login checks the caller's address.
+// WebSocket channels need a real upgrade, dev login checks the caller's address, and the mod's
+// long poll needs a real connection held open.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { ProtocolVersion, SessionId } from "@claude-hub/protocol"
+import { ModCommand, ProtocolVersion, SessionId } from "@claude-hub/protocol"
 import { BunHttpServer } from "@effect/platform-bun"
 import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
 import { signInCookie } from "./Auth.ts"
-import { CloseCode } from "./Channels.ts"
 import { DatabaseTest } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
-import { HubRoutes, HubServices } from "./Hub.ts"
+import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
+import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 import type { SignIns } from "./SignIns.ts"
@@ -28,12 +29,12 @@ const baseConfig: HubConfigInput = {
   devLoginName: "dev",
 }
 
-type Credentials = RunnerTokens | ModTokens | SignIns
+type Credentials = RunnerTokens | ModTokens | SignIns | ModOutbox
 
 interface TestHub {
   /** The Hub's address, such as `http://127.0.0.1:54321`. */
   readonly url: string
-  /** Runs an effect against the Hub's credential stores. */
+  /** Runs an effect against the Hub's credential stores and mod outbox. */
   readonly run: <A, E>(effect: Effect.Effect<A, E, Credentials>) => Promise<A>
 }
 
@@ -51,7 +52,9 @@ async function startHub(
   } = {},
 ): Promise<TestHub> {
   const layer = HttpRouter.serve(HubRoutes, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provideMerge(BunHttpServer.layer({ hostname: "127.0.0.1", port: 0 })),
+    Layer.provideMerge(
+      BunHttpServer.layer({ hostname: "127.0.0.1", port: 0, idleTimeout: idleTimeoutSeconds }),
+    ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
     Layer.provideMerge(DatabaseTest),
@@ -140,18 +143,64 @@ const devSignIn = (hub: TestHub, login = "alice") =>
     body: JSON.stringify({ login }),
   })
 
-/** A Runner token, and a mod token for Session `s-a` on that Runner. */
+/** A Runner token, and mod tokens for Sessions `s-a` and `s-b` on that Runner. */
 const issueTokens = (hub: TestHub) =>
   hub.run(
     Effect.gen(function* () {
       const runner = yield* (yield* RunnerTokens).issue("mac")
-      const modToken = yield* (yield* ModTokens).issue({
+      const modTokens = yield* ModTokens
+      const modToken = yield* modTokens.issue({
         sessionId: SessionId.make("s-a"),
         runnerId: runner.runnerId,
       })
-      return { runnerToken: runner.token, modToken }
+      const otherModToken = yield* modTokens.issue({
+        sessionId: SessionId.make("s-b"),
+        runnerId: runner.runnerId,
+      })
+      return { runnerToken: runner.token, modToken, otherModToken }
     }),
   )
+
+const sayHello = (hub: TestHub, token: string, hello: unknown = modHello("s-a")) =>
+  fetch(`${hub.url}/mod/hello`, {
+    method: "POST",
+    headers: { ...bearer(token), "content-type": "application/json" },
+    body: JSON.stringify(hello),
+  })
+
+const postEvents = (hub: TestHub, token: string, messages: ReadonlyArray<unknown> = []) =>
+  fetch(`${hub.url}/mod/events`, {
+    method: "POST",
+    headers: { ...bearer(token), "content-type": "application/json" },
+    body: JSON.stringify({ messages }),
+  })
+
+const pollCommands = (hub: TestHub, token: string, query = "") =>
+  fetch(`${hub.url}/mod/commands${query}`, { headers: bearer(token) })
+
+/** Queues a StopTurn for a Session's mod, as the Session relay will. */
+const enqueueStop = (hub: TestHub, session: string) => {
+  const sessionId = SessionId.make(session)
+  return hub.run(
+    Effect.flatMap(ModOutbox, (outbox) =>
+      outbox.enqueue(sessionId, ModCommand.cases.StopTurn.make({ sessionId })),
+    ),
+  )
+}
+
+/** The seqs of the commands a poll answers with. */
+const polledSeqs = async (response: Response) => {
+  const body = (await response.json()) as { messages: Array<{ seq: number }> }
+  return body.messages.map((command) => command.seq)
+}
+
+const turnStarted = {
+  _tag: "TurnStarted",
+  turnId: "t-1",
+  promptId: "p-1",
+  text: "add tests",
+  sender: { _tag: "FromParticipant", participant: { id: "u-1", login: "alice", name: "Alice" } },
+}
 
 describe("without a credential", () => {
   // Every route the Hub serves but /health and the sign-in flow itself.
@@ -159,8 +208,10 @@ describe("without a credential", () => {
     ["GET", "/auth/me"],
     ["POST", "/auth/sign-out"],
     ["GET", "/ws/runner"],
-    ["GET", "/ws/mod"],
     ["GET", "/ws/web"],
+    ["POST", "/mod/hello"],
+    ["POST", "/mod/events"],
+    ["GET", "/mod/commands"],
   ] as const
 
   test.each(protectedRoutes)("%s %s is rejected", async (method, path) => {
@@ -173,7 +224,7 @@ describe("without a credential", () => {
     expect(response.status).toBe(401)
   })
 
-  test.each(["/ws/runner", "/ws/mod", "/ws/web"])("no WebSocket opens on %s", async (path) => {
+  test.each(["/ws/runner", "/ws/web"])("no WebSocket opens on %s", async (path) => {
     const hub = await startHub()
     const outcome = await openSocket(hub, path, {
       headers: { origin: webOrigin },
@@ -251,40 +302,180 @@ describe("Runner channel", () => {
 })
 
 describe("mod channel", () => {
-  test("welcomes the mod of the Session its token is for", async () => {
-    const hub = await startHub()
-    const { modToken } = await issueTokens(hub)
-    const outcome = await openSocket(hub, "/ws/mod", {
-      headers: bearer(modToken),
-      hello: modHello("s-a"),
+  const modRoutes = [
+    ["POST", "/mod/hello"],
+    ["POST", "/mod/events"],
+    ["GET", "/mod/commands"],
+  ] as const
+
+  test.each(modRoutes)(
+    "%s %s refuses a Runner token and a sign-in cookie",
+    async (method, path) => {
+      const hub = await startHub({ config: { devLogin: true } })
+      const { runnerToken } = await issueTokens(hub)
+      const cookie = cookieFrom(await devSignIn(hub))
+
+      for (const headers of [bearer(runnerToken), { cookie, origin: webOrigin }]) {
+        const response = await fetch(`${hub.url}${path}`, {
+          method,
+          headers: { ...headers, "content-type": "application/json" },
+          ...(method === "POST" ? { body: JSON.stringify(modHello("s-a")) } : {}),
+        })
+        expect(response.status).toBe(401)
+      }
+    },
+  )
+
+  describe("POST /mod/hello", () => {
+    test("welcomes the mod of the Session its token is for", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      const response = await sayHello(hub, modToken)
+
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({
+        _tag: "ModWelcome",
+        protocolVersion: ProtocolVersion,
+      })
     })
 
-    expect(outcome.messages).toEqual([{ _tag: "ModWelcome", protocolVersion: ProtocolVersion }])
+    test("refuses a hello for another Session with 403", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      const response = await sayHello(hub, modToken, modHello("s-b"))
+
+      expect(response.status).toBe(403)
+      expect((await postEvents(hub, modToken)).status).toBe(409)
+    })
+
+    test("rejects a hello from another protocol version", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      const response = await sayHello(hub, modToken, {
+        ...modHello("s-a"),
+        protocolVersion: ProtocolVersion + 1,
+      })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        _tag: "HandshakeRejected",
+        reason: "ProtocolVersionMismatch",
+      })
+    })
+
+    test("rejects a malformed hello", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      const response = await sayHello(hub, modToken, { ...modHello("s-a"), model: "" })
+
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({
+        _tag: "HandshakeRejected",
+        reason: "MalformedHandshake",
+      })
+    })
   })
 
-  test("refuses a mod token for another Session", async () => {
-    const hub = await startHub()
-    const { modToken } = await issueTokens(hub)
-    const outcome = await openSocket(hub, "/ws/mod", {
-      headers: bearer(modToken),
-      hello: modHello("s-b"),
+  describe("POST /mod/events", () => {
+    test("answers 409 until the mod says hello, then takes a batch", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+
+      expect((await postEvents(hub, modToken, [turnStarted])).status).toBe(409)
+      await sayHello(hub, modToken)
+      expect((await postEvents(hub, modToken, [turnStarted])).status).toBe(204)
     })
 
-    expect(outcome.opened).toBe(true)
-    expect(outcome.messages).toEqual([])
-    expect(outcome.code).toBe(CloseCode.Forbidden)
+    test("needs this Session's hello, not another's", async () => {
+      const hub = await startHub()
+      const { modToken, otherModToken } = await issueTokens(hub)
+      await sayHello(hub, modToken)
+
+      expect((await postEvents(hub, otherModToken)).status).toBe(409)
+    })
+
+    test("rejects a batch that isn't Turn events and failed deliveries", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      await sayHello(hub, modToken)
+
+      expect((await postEvents(hub, modToken, [modHello("s-a")])).status).toBe(400)
+      expect((await postEvents(hub, modToken, [{ ...turnStarted, text: 7 }])).status).toBe(400)
+    })
   })
 
-  test("refuses a Runner token", async () => {
-    const hub = await startHub()
-    const { runnerToken } = await issueTokens(hub)
-    const outcome = await openSocket(hub, "/ws/mod", {
-      headers: bearer(runnerToken),
-      hello: modHello("s-a"),
+  describe("GET /mod/commands", () => {
+    test("answers 409 until the mod says hello", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+
+      expect((await pollCommands(hub, modToken)).status).toBe(409)
     })
 
-    expect(outcome.opened).toBe(false)
-    expect((await fetch(`${hub.url}/ws/mod`, { headers: bearer(runnerToken) })).status).toBe(401)
+    test("answers as soon as a command is queued", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      await sayHello(hub, modToken)
+      const started = performance.now()
+      const poll = pollCommands(hub, modToken, "?after=0&waitMs=10000")
+      await Bun.sleep(100)
+      await enqueueStop(hub, "s-a")
+      const response = await poll
+
+      expect(performance.now() - started).toBeLessThan(5000)
+      expect(await response.json()).toEqual({
+        messages: [{ seq: 1, message: { _tag: "StopTurn", sessionId: "s-a" } }],
+      })
+    })
+
+    test("answers with no commands once waitMs has passed", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      await sayHello(hub, modToken)
+      const started = performance.now()
+      const response = await pollCommands(hub, modToken, "?waitMs=300")
+
+      expect(performance.now() - started).toBeGreaterThanOrEqual(250)
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ messages: [] })
+    })
+
+    test("answers only with commands after the one the mod last handled", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      await sayHello(hub, modToken)
+      await enqueueStop(hub, "s-a")
+      await enqueueStop(hub, "s-a")
+      await enqueueStop(hub, "s-a")
+
+      expect(await polledSeqs(await pollCommands(hub, modToken, "?after=0"))).toEqual([1, 2, 3])
+      expect(await polledSeqs(await pollCommands(hub, modToken, "?after=1"))).toEqual([2, 3])
+      // A poll whose answer was lost asks again from the same place, and gets the same commands.
+      expect(await polledSeqs(await pollCommands(hub, modToken, "?after=1"))).toEqual([2, 3])
+      expect(await polledSeqs(await pollCommands(hub, modToken, "?after=3&waitMs=50"))).toEqual([])
+      await enqueueStop(hub, "s-a")
+      expect(await polledSeqs(await pollCommands(hub, modToken, "?after=3"))).toEqual([4])
+    })
+
+    test("only reads the commands of its own Session", async () => {
+      const hub = await startHub()
+      const { modToken, otherModToken } = await issueTokens(hub)
+      await sayHello(hub, modToken)
+      await sayHello(hub, otherModToken, modHello("s-b"))
+      await enqueueStop(hub, "s-a")
+
+      expect(await polledSeqs(await pollCommands(hub, otherModToken, "?waitMs=50"))).toEqual([])
+      expect(await polledSeqs(await pollCommands(hub, modToken))).toEqual([1])
+    })
+
+    test("rejects a query that isn't whole numbers", async () => {
+      const hub = await startHub()
+      const { modToken } = await issueTokens(hub)
+      await sayHello(hub, modToken)
+
+      expect((await pollCommands(hub, modToken, "?after=-1")).status).toBe(400)
+      expect((await pollCommands(hub, modToken, "?waitMs=soon")).status).toBe(400)
+    })
   })
 })
 
