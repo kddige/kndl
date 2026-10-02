@@ -1,31 +1,158 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { BunServices } from "@effect/platform-bun"
 import { Effect } from "effect"
 import {
   claudeConfigPath,
-  isTrusted,
   loginFromClaudeConfig,
   resolveRunnerLogin,
+  trustDirectory,
 } from "./ClaudeConfig.ts"
 
-describe("isTrusted", () => {
-  const config = { projects: { "/home/a/.claude-hub": { hasTrustDialogAccepted: true } } }
+const tempDir = () => realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-config-")))
 
-  test("inherits trust from a parent directory", () => {
-    expect(isTrusted(config, "/home/a/.claude-hub/sessions/s-1/claude")).toBe(true)
-    expect(isTrusted(config, "/home/a/.claude-hub")).toBe(true)
+const trust = (configPath: string, directory: string) =>
+  Effect.runPromise(trustDirectory(configPath, directory))
+
+const readJson = (path: string) => JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+
+/** A config file shaped like Claude Code's, and a sessions root to trust. */
+const setup = (config: (sessionsRoot: string) => Record<string, unknown>) => {
+  const dir = tempDir()
+  const path = join(dir, ".claude.json")
+  const root = join(dir, "sessions")
+  mkdirSync(root)
+  writeFileSync(path, `${JSON.stringify(config(root), null, 2)}\n`, { mode: 0o600 })
+  chmodSync(path, 0o600)
+  return { dir, path, root }
+}
+
+describe("trusting a directory", () => {
+  test("adds the flag, keeping other projects, top-level keys, the mode and the format", async () => {
+    const { dir, path, root } = setup((sessionsRoot) => ({
+      numStartups: 107,
+      oauthAccount: { emailAddress: "a@example.com" },
+      projects: {
+        "/home/a/app": { allowedTools: ["Bash"], hasTrustDialogAccepted: true },
+        [sessionsRoot]: { allowedTools: [], lastCost: 1.5 },
+      },
+    }))
+
+    expect(await trust(path, root)).toEqual({ _tag: "Trusted", directory: root })
+    expect(readJson(path)).toEqual({
+      numStartups: 107,
+      oauthAccount: { emailAddress: "a@example.com" },
+      projects: {
+        "/home/a/app": { allowedTools: ["Bash"], hasTrustDialogAccepted: true },
+        [root]: { allowedTools: [], lastCost: 1.5, hasTrustDialogAccepted: true },
+      },
+    })
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+    expect(readFileSync(path, "utf8")).toStartWith('{\n  "numStartups": 107,')
+    expect(readFileSync(path, "utf8")).toEndWith("}\n")
+    // The temp file is gone.
+    expect(readdirSync(dir).toSorted()).toEqual([".claude.json", "sessions"])
   })
 
-  test("is false elsewhere, and for a missing or odd config", () => {
-    expect(isTrusted(config, "/home/a")).toBe(false)
-    expect(isTrusted(config, "/home/a/.claude-hubby")).toBe(false)
-    expect(isTrusted(undefined, "/home/a/.claude-hub")).toBe(false)
+  test("adds a projects map when there is none", async () => {
+    const { path, root } = setup(() => ({ numStartups: 1 }))
+
+    await trust(path, root)
+
+    expect(readJson(path)).toEqual({
+      numStartups: 1,
+      projects: { [root]: { hasTrustDialogAccepted: true } },
+    })
+  })
+
+  test("does nothing when the flag is already set", async () => {
+    const { path, root } = setup((sessionsRoot) => ({
+      projects: { [sessionsRoot]: { hasTrustDialogAccepted: true } },
+    }))
+    // Written compactly, so any rewrite would show.
+    writeFileSync(path, JSON.stringify(readJson(path)))
+    const before = readFileSync(path, "utf8")
+
+    expect(await trust(path, root)).toEqual({ _tag: "AlreadyTrusted", directory: root })
+    expect(readFileSync(path, "utf8")).toBe(before)
+  })
+
+  test("never creates a missing config file", async () => {
+    const dir = tempDir()
+    const path = join(dir, ".claude.json")
+
+    expect(await trust(path, dir)).toEqual({ _tag: "NoConfigFile" })
+    expect(existsSync(path)).toBe(false)
+  })
+
+  test("trusts the real path of a symlinked root", async () => {
+    const { dir, path, root } = setup(() => ({ projects: {} }))
+    const link = join(dir, "link-to-sessions")
+    symlinkSync(root, link)
+
+    expect(await trust(path, link)).toEqual({ _tag: "Trusted", directory: root })
+    expect(readJson(path)).toEqual({ projects: { [root]: { hasTrustDialogAccepted: true } } })
+  })
+
+  test("writes through a symlinked config file, keeping the link", async () => {
+    const { dir, path, root } = setup(() => ({ projects: {} }))
+    const link = join(dir, "linked.json")
+    symlinkSync(path, link)
+
+    await trust(link, root)
+
+    expect(realpathSync(link)).toBe(path)
+    expect(readJson(path)).toEqual({ projects: { [root]: { hasTrustDialogAccepted: true } } })
+  })
+
+  test("refuses a config file that isn't a JSON object, leaving it alone", async () => {
+    const { path, root } = setup(() => ({}))
+    writeFileSync(path, "[1, 2")
+
+    const result = await Effect.runPromise(Effect.result(trustDirectory(path, root)))
+
+    expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "ClaudeConfigError" } })
+    expect(readFileSync(path, "utf8")).toBe("[1, 2")
+  })
+})
+
+const none = () => false
+const legacyOnly = (path: string) => path.endsWith("/.config.json")
+
+describe("Claude Code's config file", () => {
+  test("is ~/.claude.json by default", () => {
+    expect(claudeConfigPath({}, none)).toBe(join(homedir(), ".claude.json"))
+  })
+
+  test("is in CLAUDE_CONFIG_DIR when set, as Claude Code reads it", () => {
+    expect(claudeConfigPath({ CLAUDE_CONFIG_DIR: "/cfg" }, none)).toBe("/cfg/.claude.json")
+  })
+
+  test("is a legacy .config.json in the config directory when one exists", () => {
+    expect(claudeConfigPath({ CLAUDE_CONFIG_DIR: "/cfg" }, legacyOnly)).toBe("/cfg/.config.json")
+    expect(claudeConfigPath({}, legacyOnly)).toBe(join(homedir(), ".claude", ".config.json"))
+  })
+
+  test("has a suffix under a custom OAuth URL", () => {
     expect(
-      isTrusted({ projects: { "/": { hasTrustDialogAccepted: false } } }, "/home/a/.claude-hub"),
-    ).toBe(false)
+      claudeConfigPath(
+        { CLAUDE_CONFIG_DIR: "/cfg", CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://x" },
+        none,
+      ),
+    ).toBe("/cfg/.claude-custom-oauth.json")
   })
 })
 
@@ -38,7 +165,7 @@ describe("Runner login", () => {
   })
 
   test("comes from RUNNER_LOGIN when set, else the config file, else fails", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-config-"))
+    const dir = tempDir()
     const path = join(dir, ".claude.json")
     const resolve = (configured: string | undefined) =>
       Effect.runPromise(
@@ -49,9 +176,5 @@ describe("Runner login", () => {
     writeFileSync(path, JSON.stringify({ oauthAccount: { emailAddress: "b@example.com" } }))
     expect(await resolve(undefined)).toMatchObject({ success: { account: "b@example.com" } })
     expect(await resolve("c@example.com")).toMatchObject({ success: { account: "c@example.com" } })
-  })
-
-  test("reads Claude Code's config from CLAUDE_CONFIG_DIR when set", () => {
-    expect(claudeConfigPath({ CLAUDE_CONFIG_DIR: "/cfg" })).toBe("/cfg/.claude.json")
   })
 })
