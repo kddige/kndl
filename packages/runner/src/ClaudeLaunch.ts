@@ -4,8 +4,9 @@ import { ToolsSocketVariable } from "@claude-hub/protocol"
 /**
  * The tools Claude Code keeps (ADR 0001): the file and command tools, which the mod answers from
  * the Sandbox through the tool bridge (#11). Claude Code 2.1.287 has no Glob or Grep tool (its
- * search runs through Bash), so those two only matter to builds that still have them. Leaving ToolSearch out also turns tool search off, so the mod's own
- * tools are listed directly (spike #4). Never pass an empty list: that breaks `$.tool.register`.
+ * search runs through Bash), so those two only matter to builds that still have them. Leaving
+ * ToolSearch out also turns tool search off, so the mod's own tools are listed directly
+ * (spike #4). Never pass an empty list: that breaks `$.tool.register`.
  */
 export const ClaudeTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"]
 
