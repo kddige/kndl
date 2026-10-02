@@ -85,6 +85,29 @@ describe.skipIf(Bun.which("tmux") === null)("TmuxLive", () => {
 
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
   }, 15_000)
+
+  test("reports the exit of a process that ended before anything attached", async () => {
+    const id = sessionId("tmux-2")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      yield* tmux.launch({
+        sessionId: id,
+        cwd: tmpdir(),
+        argv: ["sh", "-c", "exit 3"],
+        env: {},
+        size: { cols: 40, rows: 5 },
+      })
+      yield* Effect.sleep("300 millis")
+      // The dead pane is kept, so a restarted Runner still finds the Session and its exit status.
+      expect(yield* tmux.list).toContain(id)
+      const pane = yield* tmux.attach(id)
+      const events = yield* pane.events.pipe(Stream.runCollect)
+      expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 3 })
+      yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
 })
 
 function snapshots(events: ReadonlyArray<PaneEvent>): Array<string> {
