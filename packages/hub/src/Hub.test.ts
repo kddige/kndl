@@ -4,72 +4,25 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 import { ModCommand, ProtocolVersion, SessionId } from "@claude-hub/protocol"
-import { BunHttpServer } from "@effect/platform-bun"
-import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
-import { HttpRouter, HttpServer } from "effect/http"
+import { Effect, Exit, Option } from "effect"
 import { signInCookie } from "./Auth.ts"
-import { DatabaseTest } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
-import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
-import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
+import { HubConfig } from "./HubConfig.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
-import type { SignIns } from "./SignIns.ts"
+import {
+  baseConfig,
+  bearer,
+  cookieFrom,
+  devSignIn,
+  startHub,
+  stopHubs,
+  type TestHub,
+  webOrigin,
+} from "./testSupport.ts"
 
-const webOrigin = "http://localhost:5173"
-
-const baseConfig: HubConfigInput = {
-  host: "127.0.0.1",
-  port: 0,
-  publicUrl: new URL(webOrigin),
-  githubClientId: Option.none(),
-  githubClientSecret: Option.none(),
-  devLogin: false,
-  devLoginName: "dev",
-}
-
-type Credentials = RunnerTokens | ModTokens | SignIns | ModOutbox
-
-interface TestHub {
-  /** The Hub's address, such as `http://127.0.0.1:54321`. */
-  readonly url: string
-  /** Runs an effect against the Hub's credential stores and mod outbox. */
-  readonly run: <A, E>(effect: Effect.Effect<A, E, Credentials>) => Promise<A>
-}
-
-const openHubs: Array<Scope.Closeable> = []
-afterEach(async () => {
-  await Promise.all(
-    openHubs.splice(0).map((scope) => Effect.runPromise(Scope.close(scope, Exit.void))),
-  )
-})
-
-async function startHub(
-  options: {
-    readonly config?: Partial<HubConfigInput>
-    readonly github?: Layer.Layer<GitHub>
-  } = {},
-): Promise<TestHub> {
-  const layer = HttpRouter.serve(HubRoutes, { disableLogger: true, disableListenLog: true }).pipe(
-    Layer.provideMerge(
-      BunHttpServer.layer({ hostname: "127.0.0.1", port: 0, idleTimeout: idleTimeoutSeconds }),
-    ),
-    Layer.provideMerge(options.github ?? GitHub.layer),
-    Layer.provideMerge(HubServices),
-    Layer.provideMerge(DatabaseTest),
-    Layer.provideMerge(HubConfig.layerFrom({ ...baseConfig, ...options.config })),
-  )
-  const scope = Scope.makeUnsafe()
-  openHubs.push(scope)
-  const context = await Effect.runPromise(Layer.buildWithScope(layer, scope))
-  const address = Context.get(context, HttpServer.HttpServer).address
-  if (!("port" in address)) throw new Error("expected a TCP address")
-  return {
-    url: `http://127.0.0.1:${address.port}`,
-    run: (effect) => Effect.runPromise(Effect.provideContext(effect, context)),
-  }
-}
+afterEach(stopHubs)
 
 const runnerHello = {
   _tag: "RunnerHello",
@@ -124,24 +77,6 @@ function openSocket(
     )
   })
 }
-
-const bearer = (token: string) => ({ authorization: `Bearer ${token}` })
-
-/** The sign-in cookie to send back, from a response that set it. */
-function cookieFrom(response: Response): string {
-  const value = new RegExp(`${signInCookie}=([^;]+)`).exec(
-    response.headers.get("set-cookie") ?? "",
-  )?.[1]
-  if (value === undefined) throw new Error("no sign-in cookie was set")
-  return `${signInCookie}=${value}`
-}
-
-const devSignIn = (hub: TestHub, login = "alice") =>
-  fetch(`${hub.url}/auth/dev`, {
-    method: "POST",
-    headers: { origin: webOrigin, "content-type": "application/json" },
-    body: JSON.stringify({ login }),
-  })
 
 /** A Runner token, and mod tokens for Sessions `s-a` and `s-b` on that Runner. */
 const issueTokens = (hub: TestHub) =>
