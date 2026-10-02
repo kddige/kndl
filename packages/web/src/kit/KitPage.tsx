@@ -5,15 +5,19 @@ import {
   Avatar,
   AvatarStack,
   Badge,
+  Banner,
+  BranchIcon,
   Button,
   Dialog,
   DialogClose,
+  Disclosure,
   EmptyState,
   Field,
   IconButton,
   InboxIcon,
   InfoIcon,
   Input,
+  Markdown,
   Menu,
   MenuGroup,
   MenuItem,
@@ -34,8 +38,9 @@ import {
   toast,
   Tooltip,
   TrashIcon,
+  WarningIcon,
 } from "../ui/index.ts"
-import { color, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, font, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
 
 const route = getRouteApi("/kit")
 
@@ -125,6 +130,9 @@ const styles = stylex.create({
   },
   chipColor: (value: string) => ({ backgroundColor: value }),
   panel: { paddingTop: space.s3, color: color.textMuted },
+  detail: { padding: space.s3, color: color.textMuted },
+  mono: { fontFamily: font.mono, fontSize: text.sm, color: color.textMuted },
+  pre: { margin: 0, padding: space.s3, fontFamily: font.mono, fontSize: text.sm },
   popoverList: {
     display: "flex",
     flexDirection: "column",
@@ -520,6 +528,74 @@ function Toasts() {
   )
 }
 
+const MARKDOWN = `## Plan
+
+The flaky test is **\`waitFor\` racing the debounce**. Two changes:
+
+1. Fake the timers in \`search.test.ts\`, so the debounce fires at once.
+2. Drop the \`retry: 3\` that hid it. See [the docs](https://example.com).
+
+> Partial answers render too, while they stream.
+
+\`\`\`ts
+vi.useFakeTimers()
+await user.type(input, "hub")
+vi.runAllTimers()
+\`\`\`
+
+| File | Change |
+| --- | ---: |
+| search.test.ts | +4 |
+| vitest.config.ts | -1 |
+`
+
+function Disclosures() {
+  return (
+    <Section title="Disclosure" note="Closed by default: tool calls and subagents in the chat.">
+      <Disclosure
+        summary={
+          <>
+            <Badge>Bash</Badge>
+            <span {...stylex.props(styles.mono)}>bun test search</span>
+          </>
+        }
+      >
+        <pre {...stylex.props(styles.pre)}>3 pass, 0 fail</pre>
+      </Disclosure>
+      <Disclosure defaultOpen summary="Open at first">
+        <p {...stylex.props(styles.detail)}>The detail under the summary.</p>
+      </Disclosure>
+      <Disclosure variant="plain" summary="Plain, inside something framed">
+        <p {...stylex.props(styles.detail)}>No border of its own.</p>
+      </Disclosure>
+    </Section>
+  )
+}
+
+function Banners() {
+  return (
+    <Section title="Banner" note="A strip across a view saying what state it's in.">
+      <Banner
+        intent="frozen"
+        icon={<InfoIcon />}
+        title="This Session is Frozen"
+        action={<Button size="sm">Unfreeze</Button>}
+      >
+        Its Sandbox is stopped, so it can't run. Unfreeze it to carry on.
+      </Banner>
+      <Banner intent="asleep" icon={<InfoIcon />} title="This Session is Asleep">
+        Sending a prompt wakes it.
+      </Banner>
+      <Banner intent="warning" icon={<WarningIcon />} title="Reconnecting to the Hub" />
+      <Banner intent="danger" icon={<WarningIcon />} title="The Runner went offline">
+        The Session carries on when it's back.
+      </Banner>
+      <Banner intent="accent" icon={<BranchIcon />} title="On claude/fix-flaky-search" />
+      <Banner title="Neutral, with nothing else" />
+    </Section>
+  )
+}
+
 export function KitPage() {
   return (
     <main {...stylex.props(styles.page)}>
@@ -616,6 +692,14 @@ export function KitPage() {
 
       <Overlays />
       <Toasts />
+      <Banners />
+      <Disclosures />
+
+      <Section title="Markdown" note="Claude's answers. A small, safe subset: no raw HTML.">
+        <div {...stylex.props(styles.panel)}>
+          <Markdown text={MARKDOWN} />
+        </div>
+      </Section>
 
       <Section title="EmptyState, Spinner">
         <EmptyState

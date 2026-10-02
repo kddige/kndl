@@ -108,3 +108,46 @@ export function InboxIcon(props: IconProps) {
     </Icon>
   )
 }
+
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m6.5 4.5 3.5 3.5-3.5 3.5" />
+    </Icon>
+  )
+}
+
+export function ArrowLeftIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12.5 8h-9m4-4-4 4 4 4" />
+    </Icon>
+  )
+}
+
+export function ArrowUpIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 12.5v-9m-4 4 4-4 4 4" />
+    </Icon>
+  )
+}
+
+export function WarningIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 2.75 1.75 13.25h12.5zM8 6.5v3M8 11.5v.01" />
+    </Icon>
+  )
+}
+
+export function BranchIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="4.5" cy="3.5" r="1.25" />
+      <circle cx="4.5" cy="12.5" r="1.25" />
+      <circle cx="11.5" cy="5" r="1.25" />
+      <path d="M4.5 4.75v6.5M11.5 6.25c0 3-7 2-7 5" />
+    </Icon>
+  )
+}
