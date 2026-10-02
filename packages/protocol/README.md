@@ -12,7 +12,7 @@ Every peer talks to the Hub; peers never talk to each other. The Runner and web 
 |---|---|---|---|
 | Runner ↔ Hub ([`Runner.ts`](src/Runner.ts)) | `RunnerToHub`: hello with its Runner login and re-adopted Sessions, Session started/failed/stopped, Sandbox state, terminal frames | `HubToRunner`: start a Session (new, or waking with `resume`), stop it (`Sleep` or `Archive`), terminal keystrokes, resize, snapshot request | its Runner token |
 | mod ↔ Hub ([`Mod.ts`](src/Mod.ts)) | `ModToHub`: hello with Claude Code's session id, Turn events, failed prompt deliveries | `HubToMod`: the next prompt from the Prompt queue, stop the Turn, presence | the Session's mod token |
-| web ↔ Hub ([`Web.ts`](src/Web.ts)) | `WebToHub`: create, join and leave Sessions, send and cancel prompts, stop the Turn, open the terminal, keystrokes, resize | `HubToWeb`: Runner and Session lists and updates, history replay then live events, presence, the Prompt queue, terminal frames, refused commands | the sign-in cookie |
+| web ↔ Hub ([`Web.ts`](src/Web.ts)) | `WebToHub`: create, join and leave Sessions, send and cancel prompts, stop the Turn, put a Session to sleep or wake it, open the terminal, keystrokes, resize | `HubToWeb`: Runner and Session lists and updates, history replay then live events, presence, the Prompt queue, terminal frames, refused commands | the sign-in cookie |
 
 Authentication itself is the transport's job (issue #7), so no message carries a token, except `StartSession`, which hands the Runner the Session's mod token to pass to Claude Code. Tokens go in `Authorization: Bearer`; the web UI uses its sign-in cookie.
 
