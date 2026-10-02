@@ -480,7 +480,7 @@ describe("mod channel", () => {
 })
 
 describe("web channel", () => {
-  test("welcomes the signed-in person from the web UI's origin", async () => {
+  test("welcomes the signed-in person from the web UI's origin, then lists Runners and Sessions", async () => {
     const hub = await startHub({ config: { devLogin: true } })
     const cookie = cookieFrom(await devSignIn(hub))
     const outcome = await openSocket(hub, "/ws/web", {
@@ -494,6 +494,8 @@ describe("web channel", () => {
         protocolVersion: ProtocolVersion,
         you: { id: "dev:alice", login: "alice", name: "alice" },
       },
+      { _tag: "RunnerList", runners: [] },
+      { _tag: "SessionList", sessions: [] },
     ])
   })
 
