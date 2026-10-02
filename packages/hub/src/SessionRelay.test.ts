@@ -642,7 +642,12 @@ describe("the Session lifecycle", () => {
     const hub = await hubSleepingAfter(150)
     const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
     const web = await openWeb(hub, "alice")
-    web.send({ _tag: "CreateSession", requestId: "r", repo: "kddige/claude-hub", baseBranch: "main" })
+    web.send({
+      _tag: "CreateSession",
+      requestId: "r",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+    })
     const start = await runner.take("StartSession")
     const sessionId = start.sessionId
     joinSession(web, sessionId)
