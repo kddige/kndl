@@ -42,6 +42,48 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+
+  // Sessions, their event logs and Prompt queues (issue #8).
+  "0002_sessions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    // The Runner login a Runner last said hello with; null until it first connects.
+    yield* sql`ALTER TABLE runners ADD COLUMN login_account TEXT`
+    yield* sql`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL,
+        base_branch TEXT NOT NULL,
+        work_branch TEXT NOT NULL,
+        state TEXT NOT NULL,
+        runner_id TEXT NOT NULL REFERENCES runners (id),
+        runner_login_account TEXT NOT NULL,
+        creator_id TEXT NOT NULL REFERENCES participants (id),
+        created_at INTEGER NOT NULL,
+        current_turn TEXT,
+        claude_session_id TEXT
+      )
+    `
+    yield* sql`
+      CREATE TABLE session_events (
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        at INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        PRIMARY KEY (session_id, seq)
+      )
+    `
+    yield* sql`
+      CREATE TABLE queued_prompts (
+        position INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        sender_id TEXT NOT NULL REFERENCES participants (id),
+        queued_at INTEGER NOT NULL
+      )
+    `
+    yield* sql`CREATE INDEX queued_prompts_session ON queued_prompts (session_id, position)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
@@ -67,5 +109,8 @@ export const DatabaseLive = migrated(
   }),
 )
 
+/** The database in a file, migrated, as tests that restart the Hub use. */
+export const databaseAt = (filename: string) => migrated(SqliteClient.layer({ filename }))
+
 /** A fresh in-memory database, migrated, for tests. */
-export const DatabaseTest = migrated(SqliteClient.layer({ filename: ":memory:" }))
+export const DatabaseTest = databaseAt(":memory:")

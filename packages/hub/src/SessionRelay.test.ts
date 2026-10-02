@@ -1,0 +1,691 @@
+// The Session relay, end to end: a real Hub, a fake Runner and web clients over WebSockets, and
+// a fake mod over HTTP, as the real ones will talk to it.
+
+import { afterEach, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import {
+  type HubToRunner,
+  type HubToWeb,
+  type ModCommandsEncoded,
+  type ModEventsEncoded,
+  ProtocolVersion,
+} from "@claude-hub/protocol"
+import { Effect } from "effect"
+import { databaseAt } from "./Database.ts"
+import { RunnerTokens } from "./RunnerTokens.ts"
+import {
+  bearer,
+  cookieFrom,
+  devSignIn,
+  startHub,
+  stopHubs,
+  type TestHub,
+  webOrigin,
+} from "./testSupport.ts"
+
+/** Shuts down every Hub, after closing the WebSockets to it, which its shutdown waits for. */
+async function stopAll() {
+  await Promise.all([...Connection.live].map((connection) => connection.close()))
+  await stopHubs()
+}
+
+afterEach(stopAll)
+
+type Tagged = { readonly _tag: string }
+type Web = typeof HubToWeb.Encoded
+type ToRunner = typeof HubToRunner.Encoded
+type Command = ModCommandsEncoded["messages"][number]["message"]
+type ModEvent = ModEventsEncoded["messages"][number]
+
+/**
+ * A WebSocket to the Hub that keeps what it receives, so a test can take the messages it
+ * expects, in any order, and check that others never came.
+ */
+class Connection<In extends Tagged> {
+  /** Every connection not closed yet. */
+  static readonly live = new Set<Connection<Tagged>>()
+  private readonly received: Array<In> = []
+  private wake: Array<() => void> = []
+  readonly closed: Promise<void>
+
+  private constructor(private readonly socket: WebSocket) {
+    socket.addEventListener("message", (event) => {
+      this.received.push(JSON.parse(String(event.data)) as In)
+      for (const wake of this.wake.splice(0)) wake()
+    })
+    this.closed = new Promise((resolve) =>
+      socket.addEventListener("close", () => {
+        Connection.live.delete(this as Connection<Tagged>)
+        resolve()
+      }),
+    )
+    Connection.live.add(this as Connection<Tagged>)
+  }
+
+  static open<In extends Tagged>(
+    hub: TestHub,
+    path: string,
+    headers: Record<string, string>,
+    hello: unknown,
+  ): Promise<Connection<In>> {
+    const socket = new WebSocket(`${hub.url.replace(/^http/, "ws")}${path}`, { headers })
+    const connection = new Connection<In>(socket)
+    return new Promise((resolve, reject) => {
+      socket.addEventListener("open", () => {
+        socket.send(JSON.stringify(hello))
+        resolve(connection)
+      })
+      socket.addEventListener("error", () => reject(new Error(`could not open ${path}`)))
+    })
+  }
+
+  send(message: Tagged & Record<string, unknown>) {
+    this.socket.send(JSON.stringify(message))
+  }
+
+  /** The first message of this kind, and matching `where`, that hasn't been taken yet. */
+  async take<Tag extends In["_tag"]>(
+    tag: Tag,
+    where: (message: Extract<In, { _tag: Tag }>) => boolean = () => true,
+  ): Promise<Extract<In, { _tag: Tag }>> {
+    const deadline = Date.now() + 2_000
+    for (;;) {
+      const index = this.received.findIndex(
+        (message) => message._tag === tag && where(message as Extract<In, { _tag: Tag }>),
+      )
+      if (index >= 0) return this.received.splice(index, 1)[0] as Extract<In, { _tag: Tag }>
+      const left = deadline - Date.now()
+      if (left <= 0) {
+        throw new Error(
+          `No matching ${tag} came; got ${JSON.stringify(this.received, undefined, 2)}`,
+        )
+      }
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, left)
+        this.wake.push(() => {
+          clearTimeout(timer)
+          resolve()
+        })
+      })
+    }
+  }
+
+  /** The messages of this kind not taken yet, after waiting a moment for stragglers. */
+  async untaken<Tag extends In["_tag"]>(tag: Tag): Promise<Array<Extract<In, { _tag: Tag }>>> {
+    await Bun.sleep(150)
+    return this.received.filter((message) => message._tag === tag) as Array<
+      Extract<In, { _tag: Tag }>
+    >
+  }
+
+  async close() {
+    if (this.socket.readyState === WebSocket.CLOSED) return
+    this.socket.close(1000)
+    await this.closed
+  }
+}
+
+const alice = { id: "dev:alice", login: "alice", name: "alice" }
+const bob = { id: "dev:bob", login: "bob", name: "bob" }
+const runnerLogin = { account: "alice@example.com" }
+
+/** A web client signed in as `login`, welcomed and handed the lists. */
+async function openWeb(hub: TestHub, login: string, cookie?: string) {
+  const signIn = cookie ?? cookieFrom(await devSignIn(hub, login))
+  const web = await Connection.open<Web>(
+    hub,
+    "/ws/web",
+    { cookie: signIn, origin: webOrigin },
+    { _tag: "WebHello", protocolVersion: ProtocolVersion },
+  )
+  await web.take("WebWelcome")
+  const runners = await web.take("RunnerList")
+  const sessions = await web.take("SessionList")
+  return Object.assign(web, { cookie: signIn, runners, sessions })
+}
+
+const issueRunnerToken = (hub: TestHub, name = "mac") =>
+  hub.run(Effect.flatMap(RunnerTokens, (runners) => runners.issue(name)))
+
+/** The fake Runner, welcomed, saying it runs `sessions`. */
+async function openRunner(hub: TestHub, token: string, sessions: ReadonlyArray<string> = []) {
+  const runner = await Connection.open<ToRunner>(hub, "/ws/runner", bearer(token), {
+    _tag: "RunnerHello",
+    protocolVersion: ProtocolVersion,
+    name: "mac",
+    login: runnerLogin,
+    sessions,
+  })
+  await runner.take("RunnerWelcome")
+  return runner
+}
+
+/** The fake mod of a Session, speaking HTTP with the token from StartSession. */
+class Mod {
+  private after = 0
+
+  constructor(
+    private readonly hub: TestHub,
+    readonly sessionId: string,
+    readonly token: string,
+  ) {}
+
+  private request(path: string, body?: unknown) {
+    return fetch(`${this.hub.url}${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { ...bearer(this.token), "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+  }
+
+  async hello() {
+    const response = await this.request("/mod/hello", {
+      _tag: "ModHello",
+      protocolVersion: ProtocolVersion,
+      sessionId: this.sessionId,
+      claudeSessionId: "claude-1",
+      model: "claude-opus",
+    })
+    this.after = 0
+    return response
+  }
+
+  async post(...messages: ReadonlyArray<ModEvent>) {
+    const response = await this.request("/mod/events", { messages })
+    expect(response.status).toBe(204)
+  }
+
+  /** The commands queued since the last poll, waiting up to `waitMs` for one. */
+  async poll(waitMs = 0): Promise<Array<Command>> {
+    const response = await this.request(`/mod/commands?after=${this.after}&waitMs=${waitMs}`)
+    const body = (await response.json()) as ModCommandsEncoded
+    this.after = body.messages.at(-1)?.seq ?? this.after
+    return body.messages.map((command) => command.message)
+  }
+
+  /** The prompts delivered since the last poll. */
+  async deliveries(waitMs = 0) {
+    return (await this.poll(waitMs)).filter((command) => command._tag === "DeliverPrompt")
+  }
+}
+
+/** A Hub with an online Runner and alice signed in on the web, who creates a Session. */
+async function sessionScene(hub?: TestHub) {
+  const theHub = hub ?? (await startHub({ config: { devLogin: true } }))
+  const runnerToken = (await issueRunnerToken(theHub)).token
+  const runner = await openRunner(theHub, runnerToken)
+  const web = await openWeb(theHub, "alice")
+  web.send({
+    _tag: "CreateSession",
+    requestId: "req-1",
+    repo: "kddige/claude-hub",
+    baseBranch: "main",
+  })
+  const start = await runner.take("StartSession")
+  const created = await web.take("SessionCreated")
+  const sessionId = created.session.id
+  const mod = new Mod(theHub, sessionId, start.modToken)
+  expect((await mod.hello()).status).toBe(200)
+  return { hub: theHub, runner, runnerToken, web, start, created, sessionId, mod }
+}
+
+const joinSession = (web: Connection<Web>, sessionId: string, afterSeq?: number) =>
+  web.send({ _tag: "JoinSession", sessionId, ...(afterSeq === undefined ? {} : { afterSeq }) })
+
+type Sender = Extract<ModEvent, { _tag: "TurnStarted" }>["sender"]
+
+const turnStarted = (
+  turnId: string,
+  promptId?: string,
+  sender: Sender = { _tag: "FromTerminal" },
+): ModEvent => ({
+  _tag: "TurnStarted",
+  turnId,
+  text: "",
+  sender,
+  ...(promptId === undefined ? {} : { promptId }),
+})
+
+/** The value, failing the test when it is missing. */
+function defined<T>(value: T | undefined): T {
+  expect(value).toBeDefined()
+  return value as T
+}
+
+const turnEnded = (turnId: string, agentId?: string): ModEvent => ({
+  _tag: "TurnEnded",
+  turnId,
+  reason: "Answered",
+  durationMs: 10,
+  ...(agentId === undefined ? {} : { agentId }),
+})
+
+type QueueChanged = Extract<Web, { _tag: "PromptQueueChanged" }>
+
+const queueTexts = (message: QueueChanged) => message.queue.map((prompt) => prompt.text)
+
+/** Matches the PromptQueueChanged that shows the queue holding these prompts, in this order. */
+const queueIs =
+  (...texts: ReadonlyArray<string>) =>
+  (message: QueueChanged) =>
+    queueTexts(message).join("\n") === texts.join("\n")
+
+describe("CreateSession", () => {
+  test("starts the Session on an online Runner, with a mod token for that Session", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const bobWeb = await openWeb(hub, "bob")
+    const { start, created, sessionId, web } = await sessionScene(hub)
+
+    expect(start).toEqual({
+      _tag: "StartSession",
+      sessionId,
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+      workBranch: `claude/${sessionId}`,
+      modToken: start.modToken,
+    })
+    expect(start.modToken).toStartWith("chm_")
+    expect(created).toMatchObject({
+      requestId: "req-1",
+      session: {
+        id: sessionId,
+        repo: "kddige/claude-hub",
+        baseBranch: "main",
+        workBranch: `claude/${sessionId}`,
+        state: "Active",
+        runnerLogin,
+        creator: alice,
+        currentTurn: null,
+      },
+    })
+    // Everyone's Session list learns of it.
+    expect((await bobWeb.take("SessionUpdated")).session).toEqual(created.session)
+    expect((await web.take("SessionUpdated")).session).toEqual(created.session)
+
+    // The token is this Session's, and no other's.
+    const other = new Mod(hub, "another-session", start.modToken)
+    expect((await other.hello()).status).toBe(403)
+  })
+
+  test("is refused when no Runner is online", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const web = await openWeb(hub, "alice")
+    web.send({
+      _tag: "CreateSession",
+      requestId: "req-1",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+    })
+
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "CreateSession",
+      requestId: "req-1",
+      message: "No Runner is online.",
+    })
+  })
+
+  test("lists the Runner and the Session to web clients that connect later", async () => {
+    const { hub, created } = await sessionScene()
+    const bobWeb = await openWeb(hub, "bob")
+
+    expect(bobWeb.runners.runners).toMatchObject([
+      { name: "mac", login: runnerLogin, isOnline: true },
+    ])
+    expect(bobWeb.sessions.sessions).toEqual([created.session])
+  })
+})
+
+describe("the event log", () => {
+  test("a late joiner gets the whole history, and afterSeq only what came after", async () => {
+    const { hub, web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    const first = await web.take("SessionHistory")
+    expect(first.entries).toMatchObject([
+      { seq: 0, event: { _tag: "SessionStateChanged", state: "Active", by: alice } },
+    ])
+
+    await mod.post(
+      turnStarted("t-1"),
+      { _tag: "TextDelta", turnId: "t-1", text: "Hello" },
+      turnEnded("t-1"),
+    )
+    const live = [
+      await web.take("SessionEventLogged"),
+      await web.take("SessionEventLogged"),
+      await web.take("SessionEventLogged"),
+    ]
+    expect(live.map((logged) => [logged.entry.seq, logged.entry.event._tag])).toEqual([
+      [1, "TurnStarted"],
+      [2, "TextDelta"],
+      [3, "TurnEnded"],
+    ])
+
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(bobWeb, sessionId)
+    const history = await bobWeb.take("SessionHistory")
+    expect(history.entries).toEqual([
+      defined(first.entries[0]),
+      ...live.map((logged) => logged.entry),
+    ])
+
+    joinSession(bobWeb, sessionId, 1)
+    const since = await bobWeb.take("SessionHistory")
+    expect(since.entries.map((entry) => entry.seq)).toEqual([2, 3])
+  })
+
+  test("refuses to join a Session that doesn't exist", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const web = await openWeb(hub, "alice")
+    joinSession(web, "no-such-session")
+
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "JoinSession",
+      sessionId: "no-such-session",
+    })
+  })
+})
+
+describe("presence", () => {
+  test("two web clients see each other, and so does the mod", async () => {
+    const { hub, web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    expect((await web.take("PresenceChanged")).participants).toEqual([alice])
+
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(bobWeb, sessionId)
+    expect((await bobWeb.take("PresenceChanged")).participants).toEqual([alice, bob])
+    expect((await web.take("PresenceChanged")).participants).toEqual([alice, bob])
+    const presence = (await mod.poll()).filter((command) => command._tag === "PresenceChanged")
+    expect(presence.at(-1)).toEqual({
+      _tag: "PresenceChanged",
+      sessionId,
+      participants: [alice, bob],
+    })
+
+    bobWeb.send({ _tag: "LeaveSession", sessionId })
+    expect((await web.take("PresenceChanged")).participants).toEqual([alice])
+
+    joinSession(bobWeb, sessionId)
+    expect((await web.take("PresenceChanged")).participants).toEqual([alice, bob])
+    await bobWeb.close()
+    expect((await web.take("PresenceChanged")).participants).toEqual([alice])
+    expect(await mod.poll()).toContainEqual({
+      _tag: "PresenceChanged",
+      sessionId,
+      participants: [alice],
+    })
+  })
+
+  test("a second tab of the same person changes nothing", async () => {
+    const { hub, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("PresenceChanged")
+    const secondTab = await openWeb(hub, "alice", web.cookie)
+    joinSession(secondTab, sessionId)
+
+    expect((await secondTab.take("PresenceChanged")).participants).toEqual([alice])
+    expect(await web.untaken("PresenceChanged")).toEqual([])
+  })
+})
+
+describe("the Prompt queue", () => {
+  test("keeps prompts in order with their senders, for every joined client, and cancels them", async () => {
+    const { hub, web, sessionId, mod } = await sessionScene()
+    // A Turn typed at the terminal is running, so the queue waits.
+    await mod.post(turnStarted("t-0"))
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(web, sessionId)
+    joinSession(bobWeb, sessionId)
+
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    await bobWeb.take("PromptQueueChanged", queueIs("one"))
+    bobWeb.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    await web.take("PromptQueueChanged", queueIs("one", "two"))
+    web.send({ _tag: "SendPrompt", sessionId, text: "three" })
+    const queued = await bobWeb.take("PromptQueueChanged", queueIs("one", "two", "three"))
+
+    expect(queued.queue.map((prompt) => [prompt.text, prompt.sender])).toEqual([
+      ["one", alice],
+      ["two", bob],
+      ["three", alice],
+    ])
+
+    // Any Participant may cancel any prompt.
+    bobWeb.send({ _tag: "CancelPrompt", sessionId, promptId: queued.queue[0]?.id ?? "" })
+    await web.take("PromptQueueChanged", queueIs("two", "three"))
+    await bobWeb.take("PromptQueueChanged", queueIs("two", "three"))
+
+    web.send({ _tag: "CancelPrompt", sessionId, promptId: queued.queue[0]?.id ?? "" })
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "CancelPrompt", sessionId })
+    expect(await mod.deliveries()).toEqual([])
+  })
+
+  test("delivers one prompt at a time, the next once the Turn has ended", async () => {
+    const { web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    const queued = await web.take("PromptQueueChanged", queueIs("one", "two"))
+    const [one, two] = queued.queue
+
+    expect(await mod.deliveries(500)).toEqual([
+      { _tag: "DeliverPrompt", sessionId, promptId: defined(one).id, text: "one", sender: alice },
+    ])
+
+    // Delivered, it can't be cancelled.
+    web.send({ _tag: "CancelPrompt", sessionId, promptId: one?.id ?? "" })
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "CancelPrompt" })
+
+    // Its Turn starts: it leaves the queue, but the next waits for the Turn to end.
+    await mod.post(turnStarted("t-1", one?.id, { _tag: "FromParticipant", participant: alice }))
+    await web.take("PromptQueueChanged", queueIs("two"))
+    expect(
+      (await web.take("SessionUpdated", (m) => m.session.currentTurn === "t-1")).session,
+    ).toMatchObject({ currentTurn: "t-1" })
+    await mod.post(turnEnded("t-1", "subagent-1"))
+    expect(await mod.deliveries(200)).toEqual([])
+
+    await mod.post(turnEnded("t-1"))
+    expect(await mod.deliveries(500)).toEqual([
+      { _tag: "DeliverPrompt", sessionId, promptId: defined(two).id, text: "two", sender: alice },
+    ])
+    expect(await mod.deliveries(200)).toEqual([])
+  })
+
+  test("drops a prompt the mod couldn't deliver, tells its sender, and delivers the next", async () => {
+    const { hub, web, sessionId, mod } = await sessionScene()
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(web, sessionId)
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    const [one, two] = (await web.take("PromptQueueChanged", queueIs("one", "two"))).queue
+    expect((await mod.deliveries(500)).map((command) => command.promptId)).toEqual([
+      defined(one).id,
+    ])
+
+    await mod.post({ _tag: "PromptFailed", promptId: one?.id ?? "", message: "no input box" })
+
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "SendPrompt", sessionId })
+    await web.take("PromptQueueChanged", queueIs("two"))
+    expect((await mod.deliveries(500)).map((command) => command.promptId)).toEqual([
+      defined(two).id,
+    ])
+    expect(await bobWeb.untaken("CommandFailed")).toEqual([])
+  })
+})
+
+describe("StopTurn", () => {
+  test("is logged with who asked, and forwarded to the mod", async () => {
+    const { hub, web, sessionId, mod } = await sessionScene()
+    await mod.post(turnStarted("t-1"))
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(bobWeb, sessionId)
+    await bobWeb.take("SessionHistory")
+    web.send({ _tag: "StopTurn", sessionId })
+
+    expect((await bobWeb.take("SessionEventLogged")).entry.event).toEqual({
+      _tag: "TurnStopRequested",
+      by: alice,
+    })
+    expect(await mod.poll(500)).toContainEqual({ _tag: "StopTurn", sessionId })
+  })
+})
+
+describe("a Runner going offline", () => {
+  test("freezes its Sessions, which refuse prompts until it says hello with them again", async () => {
+    const { hub, runner, runnerToken, web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await runner.close()
+
+    expect((await web.take("SessionUpdated", (m) => m.session.state === "Frozen")).session.id).toBe(
+      sessionId,
+    )
+    expect(
+      (await web.take("RunnerList", (m) => m.runners[0]?.isOnline === false)).runners,
+    ).toHaveLength(1)
+    expect((await web.take("SessionEventLogged")).entry.event).toMatchObject({
+      _tag: "SessionStateChanged",
+      state: "Frozen",
+    })
+    web.send({ _tag: "SendPrompt", sessionId, text: "anyone there?" })
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "SendPrompt", sessionId })
+
+    await openRunner(hub, runnerToken, [sessionId])
+    expect((await web.take("SessionUpdated", (m) => m.session.state === "Active")).session.id).toBe(
+      sessionId,
+    )
+    await web.take("RunnerList", (m) => m.runners[0]?.isOnline === true)
+    web.send({ _tag: "SendPrompt", sessionId, text: "welcome back" })
+    await web.take("PromptQueueChanged", queueIs("welcome back"))
+    expect((await mod.deliveries(500)).map((command) => command.text)).toEqual(["welcome back"])
+  })
+
+  test("leaves Sessions it no longer runs Asleep when it comes back", async () => {
+    const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    await openRunner(hub, runnerToken, [])
+
+    expect((await web.take("SessionUpdated", (m) => m.session.state === "Asleep")).session.id).toBe(
+      sessionId,
+    )
+  })
+})
+
+describe("Runner reports", () => {
+  test("a Session whose Claude Code exits goes Asleep, and logs why", async () => {
+    const { runner, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+
+    expect((await web.take("SessionEventLogged")).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      message: "Claude Code exited with code 1",
+    })
+    runner.send({ _tag: "SessionStarted", sessionId })
+    expect((await web.take("SessionUpdated", (m) => m.session.state === "Active")).session.id).toBe(
+      sessionId,
+    )
+  })
+
+  test("a Runner can't report on another Runner's Session", async () => {
+    const { hub, web, sessionId } = await sessionScene()
+    const other = await openRunner(hub, (await issueRunnerToken(hub, "linux")).token)
+    other.send({ _tag: "SessionStopped", sessionId, reason: "Exited" })
+
+    expect(await web.untaken("SessionUpdated")).toEqual([
+      expect.objectContaining({ session: expect.objectContaining({ state: "Active" }) }),
+    ])
+  })
+})
+
+describe("the terminal relay", () => {
+  test("relays frames to the clients that opened the terminal, and keystrokes to the Runner", async () => {
+    const { hub, runner, web, sessionId } = await sessionScene()
+    const bobWeb = await openWeb(hub, "bob")
+    web.send({ _tag: "OpenTerminal", sessionId })
+    expect(await runner.take("RequestTerminalSnapshot")).toEqual({
+      _tag: "RequestTerminalSnapshot",
+      sessionId,
+    })
+
+    const frame = {
+      _tag: "TerminalFrame",
+      sessionId,
+      kind: "Snapshot",
+      data: "$ ",
+      size: { cols: 80, rows: 24 },
+    } as const
+    runner.send(frame)
+    expect(await web.take("TerminalFrame")).toEqual(frame)
+    expect(await bobWeb.untaken("TerminalFrame")).toEqual([])
+
+    web.send({ _tag: "TerminalInput", sessionId, data: "ls\r" })
+    web.send({ _tag: "TerminalResize", sessionId, size: { cols: 100, rows: 30 } })
+    expect(await runner.take("TerminalInput")).toEqual({
+      _tag: "TerminalInput",
+      sessionId,
+      data: "ls\r",
+    })
+    expect(await runner.take("TerminalResize")).toEqual({
+      _tag: "TerminalResize",
+      sessionId,
+      size: { cols: 100, rows: 30 },
+    })
+
+    web.send({ _tag: "CloseTerminal", sessionId })
+    runner.send({ ...frame, kind: "Output", data: "README.md" })
+    expect(await web.untaken("TerminalFrame")).toEqual([])
+  })
+})
+
+describe("a Hub restart", () => {
+  test("keeps Sessions, their history and Prompt queues", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const first = await startHub({ config: { devLogin: true }, database })
+      const { runner, runnerToken, web, sessionId, mod, created } = await sessionScene(first)
+      await mod.post(turnStarted("t-1"))
+      joinSession(web, sessionId)
+      web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+      web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+      await web.take("PromptQueueChanged", queueIs("one", "two"))
+      const before = await web.take("SessionHistory")
+      await web.close()
+      await runner.close()
+      await first.stop()
+
+      const second = await startHub({ config: { devLogin: true }, database })
+      const back = await openWeb(second, "alice", web.cookie)
+      expect(back.sessions.sessions).toEqual([
+        { ...created.session, state: "Frozen", currentTurn: "t-1" },
+      ])
+
+      await openRunner(second, runnerToken, [sessionId])
+      await back.take("SessionUpdated", (m) => m.session.state === "Active")
+      joinSession(back, sessionId)
+      const history = await back.take("SessionHistory")
+      expect(history.entries.slice(0, before.entries.length)).toEqual([...before.entries])
+      expect(history.entries.slice(-2).map((entry) => entry.event)).toMatchObject([
+        { _tag: "SessionStateChanged", state: "Frozen" },
+        { _tag: "SessionStateChanged", state: "Active" },
+      ])
+      expect(queueTexts(await back.take("PromptQueueChanged"))).toEqual(["one", "two"])
+
+      // The restarted Hub's mod says hello again; once the Turn ends, the queue moves on.
+      const modAgain = new Mod(second, sessionId, mod.token)
+      expect((await modAgain.hello()).status).toBe(200)
+      await modAgain.post(turnEnded("t-1"))
+      expect((await modAgain.deliveries(500)).map((command) => command.text)).toEqual(["one"])
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

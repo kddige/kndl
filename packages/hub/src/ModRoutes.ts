@@ -1,10 +1,7 @@
 // The mod channel, over plain HTTP: Claude Code's mod runtime can `fetch`, with headers, but has
 // no WebSockets and no streaming. Every route authenticates with the Session's mod token as
 // `Authorization: Bearer` and acts only for that Session. See the protocol's Mod.ts for the
-// contract.
-//
-// What the mod reports is for the Session relay (issue #8), which also fills the outbox; for now
-// the Hub reads and drops it.
+// contract. What the mod reports goes to the SessionRelay, which also fills the outbox.
 
 import {
   checkHandshake,
@@ -28,6 +25,7 @@ import {
 } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
 import { ModOutbox } from "./ModOutbox.ts"
+import { SessionRelay } from "./SessionRelay.ts"
 
 const errorResponse = (status: number, error: string) =>
   HttpServerResponse.jsonUnsafe({ error }, { status })
@@ -53,6 +51,7 @@ const replyToHello = HttpServerResponse.schemaJson(ModHelloReply)
 export const ModRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const outbox = yield* ModOutbox
+    const relay = yield* SessionRelay
     /** The Sessions whose mod has said hello since the Hub started. */
     const greeted = new Set<SessionId>()
 
@@ -83,6 +82,7 @@ export const ModRoutes = HttpRouter.use(
           return errorResponse(403, "This mod token is for another Session")
         }
         greeted.add(grant.sessionId)
+        yield* relay.modHello(grant.sessionId, hello.value).pipe(Effect.orDie)
         return yield* replyToHello(
           ModHelloReply.cases.ModWelcome.make({ protocolVersion: ProtocolVersion }),
         )
@@ -95,7 +95,8 @@ export const ModRoutes = HttpRouter.use(
       Effect.gen(function* () {
         const grant = yield* authenticateMod
         yield* requireHello(grant.sessionId)
-        yield* HttpServerRequest.schemaBodyJson(ModEvents)
+        const events = yield* HttpServerRequest.schemaBodyJson(ModEvents)
+        yield* relay.modEvents(grant.sessionId, events.messages).pipe(Effect.orDie)
         return HttpServerResponse.empty({ status: 204 })
       }).pipe(badRequest),
     )
