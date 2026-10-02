@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionId } from "@claude-hub/protocol"
 import { Effect, Option, Stream } from "effect"
-import { FakeSandboxBackend, killedExitCode, makeFake, makeFakeWorld } from "./FakeSandboxBackend.ts"
 import {
-  parseSandboxName,
-  parseVolumeName,
-  runnerMark,
-  sandboxName,
-  volumeName,
-} from "./Naming.ts"
+  FakeSandboxBackend,
+  killedExitCode,
+  makeFake,
+  makeFakeWorld,
+} from "./FakeSandboxBackend.ts"
+import { parseSandboxName, parseVolumeName, runnerMark, sandboxName, volumeName } from "./Naming.ts"
 import { reconcileSandboxes } from "./Reconcile.ts"
 import { SandboxBackend, shell } from "./SandboxBackend.ts"
 import type { SandboxBackendShape } from "./SandboxBackend.ts"
@@ -36,6 +35,10 @@ const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 /** The error a spec patched with `patch` is refused with. */
 const bad = async (patch: Partial<ReturnType<typeof layout>>) =>
   (await Effect.runPromise(Effect.flip(checkSpec({ ...layout(s1), ...patch }))))._tag
+
+/** Reconciles as the Runner that `backend` works for. */
+const reconcileOn = (backend: SandboxBackendShape, known: Array<SessionId>) =>
+  Effect.runPromise(reconcileSandboxes(known).pipe(Effect.provideService(SandboxBackend, backend)))
 
 describe("naming", () => {
   test("names carry the prefix and the Session id, and parse back", () => {
@@ -286,10 +289,6 @@ describe("reconciling", () => {
     const a = makeFake({ world, runner: "runner-a" }).backend
     const b = makeFake({ world, runner: "runner-b" }).backend
     const s3 = "s-3" as SessionId
-    const reconcileOn = (backend: SandboxBackendShape, known: Array<SessionId>) =>
-      Effect.runPromise(
-        reconcileSandboxes(known).pipe(Effect.provideService(SandboxBackend, backend)),
-      )
     await Effect.runPromise(
       Effect.all([a.create(layout(s1)), a.create(layout(s2)), b.create(layout(s3))]),
     )

@@ -121,6 +121,8 @@ bun run runner-token "$(hostname -s)"   # prints this machine's Runner token, on
 bun run web                             # the web UI on http://localhost:5173
 ```
 
+On SIGTERM or SIGINT the Hub answers any waiting mod long poll with no commands, closes the Runner and web WebSockets with 1001 (going away), and exits within a second. Runners reconnect when it comes back.
+
 Open <http://localhost:5173> and sign in with dev login. (With the GitHub App set up, drop `CLAUDE_HUB_DEV_LOGIN=1` and sign in with GitHub.)
 
 Running `runner-token` again for the same name keeps the RunnerId and replaces the token, so the old one stops working. Pass it to the Runner as `RUNNER_TOKEN`:
@@ -133,7 +135,7 @@ RUNNER_TOKEN=chr_… bun run runner
 
 A Runner connects to the Hub's `/ws/runner` WebSocket with its Runner token as `Authorization: Bearer <RUNNER_TOKEN>`, says hello, and then starts and stops Sessions as the Hub asks. Get a token from the Hub with `bun run runner-token <name>`. If the Hub goes away, the Runner reconnects with backoff (0.5 s, doubling up to 30 s).
 
-Each Session's Claude Code runs in a tmux session named `hub-<session id>`, on the Runner's own tmux server (`tmux -L claude-hub`), so Sessions keep running when the Runner restarts, and the Runner re-adopts them when it comes back. To look at one by hand: `tmux -L claude-hub attach -t hub-<session id>`.
+Each Session's Claude Code runs in a tmux session named `hub-<session id>`, on the Runner's own tmux server (`tmux -L claude-hub`), so Sessions keep running when the Runner restarts, and the Runner re-adopts them when it comes back, restarting each one's Sandbox if it stopped and bringing its tool bridge back up. On SIGTERM or SIGINT the Runner exits at once and leaves those tmux sessions running. To look at one by hand: `tmux -L claude-hub attach -t hub-<session id>`.
 
 A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty directory Claude Code runs in, and `workspace/`, the Repo cloned onto the Session's Work branch with the host's own git credentials. Claude Code inherits workspace trust from parent directories, so the Runner trusts the sessions root itself, at startup and before each launch: it sets `projects[<sessions root>].hasTrustDialogAccepted` in Claude Code's config file (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`), keyed by the root's real path. That is one entry for the root, never one per Session. It never creates the file: if Claude Code has never run on the host, the Runner warns and each Session asks.
 
@@ -166,6 +168,8 @@ It also sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, because a background comm
 ### Sandboxes and the tool bridge
 
 Claude Code runs on the host, with the host's credentials. Its tools run in the Session's Sandbox, which never sees those credentials ([ADR 0001](docs/adr/0001-claude-on-host-tools-in-sandbox.md)). When a Session starts, the Runner creates or restarts its Sandbox, a microsandbox VM named `claude-hub-<session id>` with the Workspace mounted at `/workspace`, and reports the Sandbox's state to the Hub.
+
+Several Runners can share one host, and so one microsandbox. Each labels the Sandboxes and volumes it makes with `claude-hub.runner=<Runner mark>`, where the mark is a digest of its tmux socket name (`RUNNER_TMUX_SOCKET`) and sessions root (`RUNNER_SESSIONS_ROOT`). Both are fixed by its configuration, so the mark survives restarts and is known before the Runner reaches the Hub. They are also what decides which Sessions it re-adopts. At startup the Runner reconciles only its own Sandboxes: one for a Session it isn't running is stopped (never destroyed) and logged. Other Runners' Sandboxes, and unlabelled ones made before Runners labelled theirs, are left alone and only logged. Changing either setting gives the Runner a new mark, so it no longer reconciles the Sandboxes it made before.
 
 The Runner then keeps one `claude mcp serve` running inside the Sandbox, restarting it when it exits, and serves it as HTTP on the Session's Unix socket: `tools.sock` in the Session's directory, which only the Runner's user can enter, with the socket itself at mode 0600. The mod answers Bash, Read, Write, Edit, NotebookEdit, Glob and Grep by posting them there (`POST /tools/call`, see `packages/protocol/src/ToolBridge.ts`). Claude Code's working directory, `<session>/claude`, is linked to `/workspace` inside the Sandbox, so paths need no rewriting. If the bridge fails or can't be reached, the mod refuses the call, so a tool never falls back to the host. Every other tool is denied, and so is the `!` shell shortcut in the prompt box, which would run on the host.
 

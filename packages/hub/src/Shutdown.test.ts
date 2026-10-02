@@ -29,7 +29,9 @@ const freePort = () =>
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
       server.close(() =>
-        typeof address === "object" && address ? resolve(address.port) : reject(new Error("no port")),
+        typeof address === "object" && address
+          ? resolve(address.port)
+          : reject(new Error("no port")),
       )
     })
   })

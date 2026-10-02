@@ -16,8 +16,8 @@ import { FakeSandboxBackend, makeFakeWorld } from "./sandbox/FakeSandboxBackend.
 import type { FakeSandboxWorld } from "./sandbox/FakeSandboxBackend.ts"
 import { runnerMark } from "./sandbox/Naming.ts"
 import { sessionDirectories } from "./SessionNames.ts"
-import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { Sessions, SessionsLive } from "./Sessions.ts"
+import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { echoTools, FakeTmux, FakeWorkspaces, fakeMcpServer, sessionId } from "./testSupport.ts"
 
 const dirs: Array<string> = []
@@ -138,7 +138,11 @@ test("a re-adopted Session whose Sandbox was stopped gets it started again, and 
 
   // The Runner started the Session's Sandbox, then went away leaving Claude Code in tmux; since
   // then the Sandbox was stopped, as another Runner's reconcile did before #38.
-  await runProcess(world, host, withSandboxes((s) => s.start(s1, dirs1)))
+  await runProcess(
+    world,
+    host,
+    withSandboxes((s) => s.start(s1, dirs1)),
+  )
   host.tmux.leaveRunning(s1)
   const stopped = world.sandboxes.get(s1)
   if (stopped === undefined) throw new Error("no Sandbox")
@@ -173,13 +177,15 @@ test("Runners restarting side by side on one host each keep to their own Sandbox
 
   // Runner a runs s-a. Runner b runs s-b, and had s-asleep running when it crashed, though its
   // Claude Code has since gone.
-  await runProcess(world, a, withSandboxes((s) => s.start(sa, dirsA)))
+  await runProcess(
+    world,
+    a,
+    withSandboxes((s) => s.start(sa, dirsA)),
+  )
   await runProcess(
     world,
     b,
-    withSandboxes((s) =>
-      Effect.andThen(s.start(sb, dirsB), s.start(asleep, dirsAsleep)),
-    ),
+    withSandboxes((s) => Effect.andThen(s.start(sb, dirsB), s.start(asleep, dirsAsleep))),
   )
   a.tmux.leaveRunning(sa)
   b.tmux.leaveRunning(sb)

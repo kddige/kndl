@@ -204,8 +204,7 @@ const boot = (spec: SandboxSpec, runner: string) => {
 }
 
 /** The microsandbox backend, working for the Runner of this mark (Naming.ts). */
-export const make = Effect.fnUntraced(function* (options: { readonly runner: string }) {
-  const { runner } = options
+export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: string }) {
   // Connections to running Sandboxes, so each command doesn't reconnect.
   const connections = new Map<SessionId, MsbSandbox>()
 

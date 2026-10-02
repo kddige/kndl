@@ -9,8 +9,8 @@ import { signInCookie } from "./Auth.ts"
 import { DatabaseTest } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
-import { drainFirst } from "./HubShutdown.ts"
 import { DefaultSleepAfter, HubConfig, type HubConfigInput } from "./HubConfig.ts"
+import { drainFirst } from "./HubShutdown.ts"
 
 export const webOrigin = "http://localhost:5173"
 

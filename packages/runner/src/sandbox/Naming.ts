@@ -32,7 +32,10 @@ export const runnerLabel = "claude-hub.runner"
  * once welcomed, but reconciling happens before connecting, and a Runner keeps its Sessions
  * across a new token.
  */
-export const runnerMark = (runner: { readonly tmuxSocket: string; readonly sessionsRoot: string }) =>
+export const runnerMark = (runner: {
+  readonly tmuxSocket: string
+  readonly sessionsRoot: string
+}) =>
   createHash("sha256")
     .update(`${runner.tmuxSocket}\0${runner.sessionsRoot}`)
     .digest("hex")
