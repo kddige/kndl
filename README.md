@@ -70,7 +70,7 @@ The Hub reads its sign-in and lifecycle settings from the environment:
 |---|---|---|
 | `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the web UI and, through it, the Hub. GitHub sends people back here, and cookie-authenticated requests must come from this origin. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret (issue #1). Unset, GitHub sign-in is off. Set the App's callback URL to `<HUB_PUBLIC_URL>/auth/github/callback`. |
-| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The App's id and the path to its private key, for the git tools (#13), which make short-lived installation tokens from them ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)). Nothing reads them yet. |
+| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The App's id and the path to its private key. The Hub mints short-lived installation tokens from them for the Runners' clones and pushes and for pull requests ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)). Unset, Runners use their host's own git credentials and the pull request tools are off: see [Git from Sessions](#git-from-sessions). |
 | `CLAUDE_HUB_DEV_LOGIN` | off | `1` turns on dev login: `POST /auth/dev` signs you in as a local Participant without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers. |
 | `CLAUDE_HUB_DEV_USER` | `$USER` | Who dev login signs you in as, when the request names no `login`. |
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. See [The Session lifecycle](#the-session-lifecycle). |
@@ -111,7 +111,7 @@ GITHUB_APP_PRIVATE_KEY_PATH=/Users/you/.claude-hub/github-app.pem
 
 `bun run hub` and `bun run runner-token` read `.env.local` when it exists (Bun loads it from the repo root, where those scripts run), so no flag is needed. Values already in the environment win.
 
-Only the Hub's host needs these. Runners never hold App credentials: per [ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md) they get short-lived tokens from the Hub. Sign-in uses only the client id and secret; the git tools (#13) will read `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH`, and until then those two are unused.
+Only the Hub's host needs these. Sign-in uses the client id and secret; the git tools use `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH`. Only the Hub holds the App's credentials: Runners never see the private key, and get short-lived installation tokens from the Hub when they need one ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)).
 
 ### Trying it on one machine, without GitHub
 
@@ -137,7 +137,7 @@ A Runner connects to the Hub's `/ws/runner` WebSocket with its Runner token as `
 
 Each Session's Claude Code runs in a tmux session named `hub-<session id>`, on the Runner's own tmux server (`tmux -L claude-hub`), so Sessions keep running when the Runner restarts, and the Runner re-adopts them when it comes back, restarting each one's Sandbox if it stopped and bringing its tool bridge back up. On SIGTERM or SIGINT the Runner exits at once and leaves those tmux sessions running. To look at one by hand: `tmux -L claude-hub attach -t hub-<session id>`.
 
-A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty directory Claude Code runs in, and `workspace/`, the Repo cloned onto the Session's Work branch with the host's own git credentials. Claude Code inherits workspace trust from parent directories, so the Runner trusts the sessions root itself, at startup and before each launch: it sets `projects[<sessions root>].hasTrustDialogAccepted` in Claude Code's config file (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`), keyed by the root's real path. That is one entry for the root, never one per Session. It never creates the file: if Claude Code has never run on the host, the Runner warns and each Session asks.
+A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty directory Claude Code runs in, and `workspace/`, the Repo cloned onto the Session's Work branch, with an installation token from the Hub when it has the GitHub App, and otherwise with the host's own git credentials. Claude Code inherits workspace trust from parent directories, so the Runner trusts the sessions root itself, at startup and before each launch: it sets `projects[<sessions root>].hasTrustDialogAccepted` in Claude Code's config file (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`), keyed by the root's real path. That is one entry for the root, never one per Session. It never creates the file: if Claude Code has never run on the host, the Runner warns and each Session asks.
 
 | Env | Default | What it is |
 |---|---|---|
@@ -183,3 +183,34 @@ A Session is Active, Asleep, Frozen or Archived (see [GLOSSARY.md](GLOSSARY.md))
 - **Waking.** A prompt to an Asleep Session wakes it, as does **Wake now** on its banner. The Hub records it Active and sends `StartSession` with `resume`, the Claude Code session id from the mod's last hello. The Runner restarts the Sandbox on the same volumes, so `node_modules`, the package cache and Docker's data are as they were, and starts Claude Code with `--resume`, which keeps the conversation. Prompts are delivered once the new mod has said hello.
 - **A failed start.** If Claude Code can't start, whether for a new Session or a wake, the Session is Asleep, with the Runner's reason in its history as the `SessionStateChanged` message. Its queued prompts stay queued and nothing retries on its own: the next prompt or **Wake now** tries again. A Claude Code that exits on its own leaves the Session Asleep too.
 - **Frozen.** While its Runner is offline a Session is Frozen. Prompts sent to it wait in its queue. When the Runner is back, the Session is Active if its Claude Code is still running in tmux, and otherwise Asleep, and woken at once if prompts are waiting.
+
+### Git from Sessions
+
+Claude commits, pushes and opens pull requests with host tools, never from the Sandbox ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)). The `hub-link` mod registers four tools, which Claude sees as `mcp__hub-link__<name>` and which run without a permission prompt:
+
+| Tool | What it does |
+|---|---|
+| `git_commit` | Stages `paths`, or everything with `all` (untracked files included), and commits what is staged to the Work branch, with `message` and the Co-authored-by trailers below. With the GitHub App the author is the App's bot, `<slug>[bot] <id+slug[bot]@users.noreply.github.com>`; without it, the Runner host's git identity. |
+| `git_push` | Pushes the Work branch to the same branch on origin. Never a force push, and never to any other branch. |
+| `open_pr` | Opens a pull request (`title`, `body`, `draft`) from the Work branch into the Session's base branch, or returns the one already open. The body ends with a link back to the Session, `<HUB_PUBLIC_URL>/sessions/<id>`. |
+| `review_pr` | Posts a review on pull request `number`, with `body` and an `event` (`COMMENT` by default, or `APPROVE` or `REQUEST_CHANGES`). |
+
+The mod posts each call to the Runner on the Session's tool bridge socket (`POST /git/call`), so it never sees a token. The Runner runs `git_commit` and `git_push` against the Workspace on its host, and asks the Hub over its WebSocket for what it needs: an installation token for the push, the commit's author, and the co-authors. The Hub makes the pull request calls itself. Every other tool stays denied.
+
+**Tokens.** Only the Hub holds the GitHub App's private key. It signs an App JWT (RS256), finds the Repo's installation, and mints an installation token scoped to that one Repo with `contents:write` and `pull_requests:write`, which it caches until five minutes before it expires. A Runner gets the token for one command at a time, for its clones, commits, pushes and WIP pushes. The token reaches git only in that command's environment, as an `http.extraHeader` passed through `GIT_CONFIG_COUNT`. It is never written to disk, to a remote URL or to `.git/config`, and never logged.
+
+**Without the GitHub App** (dev mode), the Runner clones, commits and pushes with its host's own git credentials and identity, as before. `open_pr` and `review_pr` then fail with a message saying they need the GitHub App.
+
+**Co-authored-by trailers.** The Hub records the sender of every prompt that starts a Turn, in SQLite, so the list survives a restart. At commit time it hands the Runner everyone who prompted since the last commit, each once, as `Co-authored-by: <name> <<github id>+<login>@users.noreply.github.com>`, the noreply address GitHub links to the account. When the commit succeeds it forgets those prompts, and keeps any sent during the commit. The GitHub user id comes from the Participant id (`github:<id>`), which sign-in already stores. Dev-login Participants have no GitHub account, so they get no trailer. Neither do prompts typed into the tmux terminal, which have no Participant.
+
+**Bash in the Sandbox.** The mod refuses Bash commands that run `git commit` or `git push`, including forms like `git -C dir push`, `cd dir && git commit`, `env X=1 git push`, and commands chained with `;`, `&&`, `||` or `|`. The refusal points Claude to the git tools. This is guidance, not the security boundary: a determined command can get past a pattern match. The boundary is that no token ever enters the Sandbox, so a push from there has nothing to authenticate with.
+
+**Host git and the shared `.git`.** The Workspace, `.git` included, is mounted read-write into the Sandbox, so `.git/config` and `.git/hooks` may hold whatever the Sandbox put there. Host git must never run any of it with a token in its environment. So the Runner runs its git commands with a git directory of its own for the Session (`<sessions root>/<session id>/host-git`), which the Sandbox can't reach, reading the Workspace's objects, index and files as data. Hooks and fsmonitor are off, and it pushes to the URL it builds from `RUNNER_REPO_URL`, never to `remote.origin.url`.
+
+**The WIP ref.** The Runner pushes the Workspace's whole state, uncommitted and untracked files included (ignored ones aren't), to `refs/claude-hub/wip/<session id>` on origin. It force-pushes that one ref only. It builds the commit in a temporary index file (`add -A`, `write-tree`, then `commit-tree` with HEAD as parent), so the Workspace's own index and the Work branch are untouched. It pushes:
+
+- after a Turn ends, when the Hub tells it, if the Workspace changed since the last WIP push;
+- before the Session goes to sleep;
+- before the Session is archived. Archiving is #18, and today the Runner pushes when the Hub stops a Session with reason `Archive`.
+
+A failed WIP push is logged, and recorded in the Session's history, where the web UI shows it as a notice. It never holds up sleep or anything else. To recover a Session's work: `git fetch origin refs/claude-hub/wip/<session id>`.
