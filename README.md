@@ -70,11 +70,50 @@ The Hub reads its sign-in and lifecycle settings from the environment:
 |---|---|---|
 | `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the web UI and, through it, the Hub. GitHub sends people back here, and cookie-authenticated requests must come from this origin. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret (issue #1). Unset, GitHub sign-in is off. Set the App's callback URL to `<HUB_PUBLIC_URL>/auth/github/callback`. |
+| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The App's id and the path to its private key, for the git tools (#13), which make short-lived installation tokens from them ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)). Nothing reads them yet. |
 | `CLAUDE_HUB_DEV_LOGIN` | off | `1` turns on dev login: `POST /auth/dev` signs you in as a local Participant without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers. |
 | `CLAUDE_HUB_DEV_USER` | `$USER` | Who dev login signs you in as, when the request names no `login`. |
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. See [The Session lifecycle](#the-session-lifecycle). |
 
-### Trying it on one machine, before the GitHub App exists
+### Setting up the GitHub App
+
+Create the App once, at <https://github.com/settings/apps/new>:
+
+| Setting | Value |
+|---|---|
+| Callback URLs | `<HUB_PUBLIC_URL>/auth/github/callback`: add one per URL the Hub is reached at, such as `http://localhost:5173/auth/github/callback` and `https://hub.dige.dev/auth/github/callback` |
+| Request user authorization (OAuth) during installation | unticked |
+| Expire user authorization tokens | ticked |
+| Webhook, Active | unticked |
+| Repository permissions | Contents: read and write. Pull requests: read and write. Metadata: read-only, which GitHub adds on its own. |
+| Where can this GitHub App be installed? | Only on this account |
+
+After creating it:
+
+1. Note the **App ID** and the **Client ID**.
+2. Generate a **client secret** and a **private key**; GitHub downloads the key as a `.pem` file.
+3. Install the App on your account, choosing only the repos you want Sessions to work on.
+
+Store the credentials on the Hub's host:
+
+| What | Where |
+|---|---|
+| The private key | `~/.claude-hub/github-app.pem`, with `chmod 600` |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | `.env.local` in the repo root, which git ignores (as it does `.env*` and `*.pem`) |
+
+```sh
+# .env.local
+GITHUB_CLIENT_ID=Iv1.…
+GITHUB_CLIENT_SECRET=…
+GITHUB_APP_ID=…
+GITHUB_APP_PRIVATE_KEY_PATH=/Users/you/.claude-hub/github-app.pem
+```
+
+`bun run hub` and `bun run runner-token` read `.env.local` when it exists (Bun loads it from the repo root, where those scripts run), so no flag is needed. Values already in the environment win.
+
+Only the Hub's host needs these. Runners never hold App credentials: per [ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md) they get short-lived tokens from the Hub. Sign-in uses only the client id and secret; the git tools (#13) will read `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH`, and until then those two are unused.
+
+### Trying it on one machine, without GitHub
 
 ```sh
 CLAUDE_HUB_DEV_LOGIN=1 bun run hub      # the Hub, with dev login
@@ -82,7 +121,7 @@ bun run runner-token "$(hostname -s)"   # prints this machine's Runner token, on
 bun run web                             # the web UI on http://localhost:5173
 ```
 
-Open <http://localhost:5173> and sign in with dev login.
+Open <http://localhost:5173> and sign in with dev login. (With the GitHub App set up, drop `CLAUDE_HUB_DEV_LOGIN=1` and sign in with GitHub.)
 
 Running `runner-token` again for the same name keeps the RunnerId and replaces the token, so the old one stops working. Pass it to the Runner as `RUNNER_TOKEN`:
 

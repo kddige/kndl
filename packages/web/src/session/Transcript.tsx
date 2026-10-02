@@ -133,7 +133,7 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
     <article {...stylex.props(styles.turn)} data-turn={turn.turnId}>
       <div {...stylex.props(styles.speaker)}>
         {sender._tag === "FromParticipant" ? (
-          <Avatar name={sender.participant.name} />
+          <Avatar name={sender.participant.name} src={sender.participant.avatarUrl} />
         ) : (
           <span aria-hidden="true" {...stylex.props(styles.terminalMark)}>
             &gt;_

@@ -47,9 +47,11 @@ export class PromptQueue extends Context.Service<
           readonly senderId: string
           readonly senderLogin: string
           readonly senderName: string
+          readonly senderAvatarUrl: string | null
         }>`
           SELECT q.id, q.text, q.queued_at AS queuedAt,
-            p.id AS senderId, p.login AS senderLogin, p.name AS senderName
+            p.id AS senderId, p.login AS senderLogin, p.name AS senderName,
+            p.avatar_url AS senderAvatarUrl
           FROM queued_prompts q JOIN participants p ON p.id = q.sender_id
           WHERE q.session_id = ${sessionId}
           ORDER BY q.position
@@ -62,6 +64,7 @@ export class PromptQueue extends Context.Service<
               id: ParticipantId.make(row.senderId),
               login: row.senderLogin,
               name: row.senderName,
+              ...(row.senderAvatarUrl !== null && { avatarUrl: row.senderAvatarUrl }),
             },
             queuedAt: row.queuedAt,
           }),

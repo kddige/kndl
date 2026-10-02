@@ -37,6 +37,7 @@ interface SessionRow {
   readonly creatorId: string
   readonly creatorLogin: string
   readonly creatorName: string
+  readonly creatorAvatarUrl: string | null
   readonly createdAt: number
   readonly currentTurn: string | null
 }
@@ -56,6 +57,7 @@ const toSummary = (row: SessionRow): SessionSummary =>
       id: ParticipantId.make(row.creatorId),
       login: row.creatorLogin,
       name: row.creatorName,
+      ...(row.creatorAvatarUrl !== null && { avatarUrl: row.creatorAvatarUrl }),
     },
     createdAt: row.createdAt,
     currentTurn: row.currentTurn === null ? null : TurnId.make(row.currentTurn),
@@ -98,6 +100,7 @@ export class Sessions extends Context.Service<
         SELECT s.id, s.repo, s.base_branch AS baseBranch, s.work_branch AS workBranch, s.state,
           s.runner_id AS runnerId, s.runner_login_account AS runnerLoginAccount,
           s.creator_id AS creatorId, p.login AS creatorLogin, p.name AS creatorName,
+          p.avatar_url AS creatorAvatarUrl,
           s.created_at AS createdAt, s.current_turn AS currentTurn
         FROM sessions s JOIN participants p ON p.id = s.creator_id
         ${where}

@@ -124,7 +124,7 @@ export function HubShell() {
               aria-label={`Signed in as ${you.name}`}
               {...stylex.props(styles.you, focus.ring)}
             >
-              <Avatar name={you.name} size="md" />
+              <Avatar name={you.name} src={you.avatarUrl} size="md" />
             </button>
           }
         >

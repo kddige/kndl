@@ -218,7 +218,11 @@ function LoadedSession({
             Sleep now
           </Button>
         )}
-        <AvatarStack label="Here now" people={presence} size="sm" />
+        <AvatarStack
+          label="Here now"
+          people={presence.map((p) => ({ id: p.id, name: p.name, src: p.avatarUrl }))}
+          size="sm"
+        />
       </header>
 
       <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>

@@ -199,7 +199,7 @@ function SessionRow({
           </span>
         )}
         <span>{timeAgo(session.createdAt)}</span>
-        <Avatar name={session.creator.name} size="sm" />
+        <Avatar name={session.creator.name} src={session.creator.avatarUrl} size="sm" />
       </div>
     </Link>
   )

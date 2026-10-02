@@ -8,7 +8,7 @@ export interface AvatarPerson {
   /** Shown as initials until (or instead of) the picture, and read out. */
   name: string
   /** A picture, e.g. the GitHub avatar URL. */
-  src?: string
+  src?: string | undefined
 }
 
 export interface AvatarProps extends AvatarPerson {
@@ -127,11 +127,7 @@ export function AvatarStack({ people, max = 4, size = "md", label, sx }: AvatarS
           aria-hidden="true"
           {...stylex.props(styles.slot, styles.stacked, index === 0 && styles.first)}
         >
-          <Avatar
-            name={person.name}
-            {...(person.src !== undefined && { src: person.src })}
-            size={size}
-          />
+          <Avatar name={person.name} src={person.src} size={size} />
         </span>
       ))}
       {hidden.length > 0 && (

@@ -84,6 +84,12 @@ const migrations = SqliteMigrator.fromRecord({
     `
     yield* sql`CREATE INDEX queued_prompts_session ON queued_prompts (session_id, position)`
   }),
+
+  // The GitHub avatar a person signed in with; null for dev login.
+  "0003_participant_avatar": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE participants ADD COLUMN avatar_url TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
