@@ -10,7 +10,7 @@
     "lint": "oxlint --deny-warnings",
     "format": "oxfmt --write",
     "format:check": "oxfmt --check",
-    "hub": "bun run --filter @claude-hub/hub start",
+    "hub": "bun packages/hub/src/main.ts",
     "runner-token": "bun packages/hub/src/main.ts runner-token",
     "runner": "bun run mod:build && bun run --filter @claude-hub/runner start",
     "web": "bun run --filter @claude-hub/web dev",
