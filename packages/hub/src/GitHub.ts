@@ -13,8 +13,23 @@ export const GitHubUser = Schema.Struct({
   id: Schema.Int,
   login: Schema.NonEmptyString,
   name: Schema.NullOr(Schema.String),
+  /** As GitHub sent it; `githubAvatarUrl` decides whether to trust it. */
+  avatar_url: Schema.optional(Schema.String),
 })
 export type GitHubUser = typeof GitHubUser.Type
+
+const avatarOrigin = "https://avatars.githubusercontent.com"
+
+/** The avatar URL if it is on GitHub's avatar host over HTTPS, else nothing: it ends up in `<img src>`. */
+export const githubAvatarUrl = (url: string | undefined): string | undefined => {
+  if (url === undefined || !url.startsWith(`${avatarOrigin}/`)) return undefined
+  try {
+    // Parsing catches what a prefix check can't, such as a backslash or userinfo trick.
+    return new URL(url).origin === avatarOrigin ? url : undefined
+  } catch {
+    return undefined
+  }
+}
 
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
 export class GitHubError extends Schema.TaggedError<GitHubError>()("GitHubError", {

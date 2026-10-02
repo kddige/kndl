@@ -10,7 +10,7 @@ import {
   setSignInCookie,
   signInCookie,
 } from "./Auth.ts"
-import { GitHub } from "./GitHub.ts"
+import { GitHub, githubAvatarUrl } from "./GitHub.ts"
 import { HubConfig, isLoopback } from "./HubConfig.ts"
 import { SignIns } from "./SignIns.ts"
 import { constantTimeEqual, hashSecret, randomSecret } from "./Tokens.ts"
@@ -109,11 +109,13 @@ export const AuthRoutes = HttpRouter.use(
           return errorPage(400, "the sign-in expired or came from elsewhere. Try again.")
         }
         const user = yield* github.user({ code, redirectUri })
+        const avatarUrl = githubAvatarUrl(user.avatar_url)
         const signIn = yield* signIns.signIn(
           Participant.make({
             id: ParticipantId.make(`github:${user.id}`),
             login: user.login,
             name: user.name || user.login,
+            ...(avatarUrl !== undefined && { avatarUrl }),
           }),
         )
         const response = yield* setSignInCookie(
