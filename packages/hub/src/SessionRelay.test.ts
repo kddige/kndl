@@ -593,24 +593,24 @@ describe("a Runner going offline", () => {
   })
 })
 
+/** A Hub whose Sessions go Asleep after `sleepAfterMs` idle. */
+const hubSleepingAfter = (sleepAfterMs: number) =>
+  startHub({ config: { devLogin: true, sleepAfterMs } })
+
+/** Puts the Session to sleep by hand, playing the Runner's part. */
+async function asleep(scene: Awaited<ReturnType<typeof sessionScene>>) {
+  const { runner, web, sessionId } = scene
+  web.send({ _tag: "SleepSession", sessionId })
+  expect(await runner.take("StopSession")).toEqual({
+    _tag: "StopSession",
+    sessionId,
+    reason: "Sleep",
+  })
+  runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+  await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+}
+
 describe("the Session lifecycle", () => {
-  /** A Hub whose Sessions go Asleep after `sleepAfterMs` idle. */
-  const hubSleepingAfter = (sleepAfterMs: number) =>
-    startHub({ config: { devLogin: true, sleepAfterMs } })
-
-  /** Puts the Session to sleep by hand, playing the Runner's part. */
-  async function asleep(scene: Awaited<ReturnType<typeof sessionScene>>) {
-    const { runner, web, sessionId } = scene
-    web.send({ _tag: "SleepSession", sessionId })
-    expect(await runner.take("StopSession")).toEqual({
-      _tag: "StopSession",
-      sessionId,
-      reason: "Sleep",
-    })
-    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
-    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
-  }
-
   test("an idle Session is stopped, and recorded Asleep once its Runner says it stopped", async () => {
     const scene = await sessionScene(await hubSleepingAfter(200))
     const { hub, runner, sessionId } = scene

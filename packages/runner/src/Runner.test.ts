@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ProtocolVersion } from "@claude-hub/protocol"
+import { ClaudeSessionId, ProtocolVersion } from "@claude-hub/protocol"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
 import { Effect, Exit, Fiber, Layer, Redacted, References } from "effect"
@@ -432,7 +432,7 @@ describe("Sessions", () => {
     expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep", "start s-1"])
     expect(h.workspaces.prepared.map((start) => start.resume)).toEqual([
       undefined,
-      "3c1f6f0e-claude",
+      ClaudeSessionId.make("3c1f6f0e-claude"),
     ])
     const woken = h.tmux.launched[1]
     expect(woken?.cwd).toBe(join(h.settings.sessionsRoot, "s-1", "claude"))

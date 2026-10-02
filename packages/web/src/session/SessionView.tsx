@@ -178,11 +178,6 @@ function LoadedSession({
         ? "Frozen: prompts wait in the queue until its Runner is back."
         : undefined
 
-  /** Runs a command, saying so when there's no connection to send it on. */
-  const command = (sent: boolean) => {
-    if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
-    return sent
-  }
   const send = (prompt: string) => command(hub.sendPrompt(summary.id, prompt))
 
   return (
@@ -263,6 +258,12 @@ function LoadedSession({
       </div>
     </div>
   )
+}
+
+/** Says so when a command couldn't be sent for want of a connection to the Hub. */
+function command(sent: boolean): boolean {
+  if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
+  return sent
 }
 
 /** Shown while the Session is Frozen, Asleep or Archived, with why from its latest state change. */
