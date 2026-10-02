@@ -3,7 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "claude plugin validate . && claude plugin test .",
+    "build": "bun build src/lib.ts --target browser --format esm --minify --outfile hooks/hub-link-lib.js",
+    "check": "bun run build && claude plugin validate . && claude plugin test .",
     "typecheck": "bash scripts/typecheck.sh"
+  },
+  "devDependencies": {
+    "@claude-hub/hub": "workspace:*"
+  },
+  "dependencies": {
+    "@claude-hub/protocol": "workspace:*",
+    "effect": "4.0.0"
   }
 }
