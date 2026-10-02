@@ -12,6 +12,7 @@ import { DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import { HubConfig } from "./HubConfig.ts"
+import { drainFirst } from "./HubShutdown.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 
 const ServerLive = Layer.unwrap(
@@ -36,7 +37,7 @@ const announceSignIn = Layer.effectDiscard(
   }),
 )
 
-const HubLive = HttpRouter.serve(HubRoutes).pipe(
+const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(announceSignIn),
   Layer.provide(ServerLive),
   Layer.provide(GitHub.layer),

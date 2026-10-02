@@ -3,6 +3,7 @@ import { Layer } from "effect"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"
 import { HealthRoute } from "./Health.ts"
+import { HubShutdown } from "./HubShutdown.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModRoutes } from "./ModRoutes.ts"
 import { ModTokens } from "./ModTokens.ts"
@@ -17,7 +18,10 @@ import { SignIns } from "./SignIns.ts"
 /** Every route the Hub serves. */
 export const HubRoutes = Layer.mergeAll(HealthRoute, AuthRoutes, ChannelRoutes, ModRoutes)
 
-/** The credential stores, the mod outbox and the Session relay the routes use, given a database. */
+/**
+ * The credential stores, the mod outbox, the Session relay and the shutdown signal the routes use,
+ * given a database.
+ */
 export const HubServices = SessionRelay.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -29,6 +33,7 @@ export const HubServices = SessionRelay.layer.pipe(
       SessionLog.layer,
       PromptQueue.layer,
       Runners.layer,
+      HubShutdown.layer,
     ),
   ),
 )

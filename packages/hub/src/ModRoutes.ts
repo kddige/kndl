@@ -24,6 +24,7 @@ import {
   HttpServerResponse,
 } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
+import { HubShutdown } from "./HubShutdown.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 
@@ -52,6 +53,7 @@ export const ModRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const outbox = yield* ModOutbox
     const relay = yield* SessionRelay
+    const shutdown = yield* HubShutdown
     /** The Sessions whose mod has said hello since the Hub started. */
     const greeted = new Set<SessionId>()
 
@@ -108,10 +110,16 @@ export const ModRoutes = HttpRouter.use(
         const grant = yield* authenticateMod
         yield* requireHello(grant.sessionId)
         const query = yield* HttpServerRequest.schemaSearchParams(ModCommandsQuery)
-        const messages = yield* outbox.take(grant.sessionId, {
-          after: query.after ?? ModCommandSeq.make(0),
-          wait: Duration.millis(Math.min(query.waitMs ?? 0, MaxCommandWaitMs)),
-        })
+        const messages = yield* outbox
+          .take(grant.sessionId, {
+            after: query.after ?? ModCommandSeq.make(0),
+            wait: Duration.millis(Math.min(query.waitMs ?? 0, MaxCommandWaitMs)),
+          })
+          .pipe(
+            // A shutting-down Hub answers at once, or the server would wait out the poll. The mod
+            // polls again and finds the Hub gone, as after any restart.
+            Effect.raceFirst(Effect.as(shutdown.started, [])),
+          )
         return yield* HttpServerResponse.schemaJson(ModCommands)({ messages })
       }).pipe(badRequest),
     )

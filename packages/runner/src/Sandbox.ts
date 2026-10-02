@@ -25,8 +25,9 @@ export class Sandboxes extends Context.Service<
     /** `Sleep` stops the Sandbox and keeps its volumes; `Archive` destroys it (ADR 0006). */
     readonly stop: (sessionId: SessionId, reason: StopSession["reason"]) => Effect.Effect<void>
     /**
-     * Stops any Sandbox left running for a Session not among `running`, as after a crash, and
-     * logs the Sandboxes it doesn't know. Destroys nothing.
+     * Stops any of this Runner's Sandboxes left running for a Session not among `running`, as
+     * after a crash, and logs the Sandboxes it doesn't know. Other Runners' Sandboxes, and ones
+     * from before Sandboxes carried their Runner's mark, are left alone. Destroys nothing.
      */
     readonly reconcile: (running: Iterable<SessionId>) => Effect.Effect<void>
   }

@@ -7,6 +7,9 @@
 //
 //   const layer = FakeSandboxBackend.layer({ onExec: ({ request }) => Effect.succeed({ stdout: "ok" }) })
 //   program.pipe(Effect.provide(layer))  // provides SandboxBackend and FakeSandboxBackend
+//
+// Each fake works for one Runner, by its mark. Two fakes given the same `world` are two Runners
+// on one host, sharing one microsandbox.
 
 import { posix } from "node:path"
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
@@ -52,6 +55,8 @@ export interface FakeProcessIO {
 
 export interface FakeSandbox {
   readonly spec: SandboxSpec
+  /** The mark of the Runner that made it; undefined for one from before marks. */
+  readonly runner: string | undefined
   state: SandboxState
   /** The root filesystem: every path not under a mount. Kept across stop and start. */
   readonly rootfs: Map<string, Uint8Array>
@@ -62,6 +67,8 @@ export interface FakeSandboxWorld {
   readonly sandboxes: Map<SessionId, FakeSandbox>
   /** Files on each Session volume, by the volume's name. */
   readonly volumes: Map<string, Map<string, Uint8Array>>
+  /** The mark of the Runner that made each volume, by the volume's name. */
+  readonly volumeRunners: Map<string, string | undefined>
   /** Files on the host, by absolute path: what host mounts read and write. */
   readonly hostFiles: Map<string, Uint8Array>
   readonly snapshots: Map<string, Map<string, Uint8Array>>
@@ -70,6 +77,10 @@ export interface FakeSandboxWorld {
 }
 
 export interface FakeOptions {
+  /** The mark of the Runner this fake works for. Defaults to {@link fakeRunner}. */
+  readonly runner?: string
+  /** The host's Sandboxes and volumes, to share with another fake. A new one by default. */
+  readonly world?: FakeSandboxWorld
   /** Answers every exec. By default a command succeeds with no output. */
   readonly onExec?: (call: FakeExecCall) => Effect.Effect<FakeExecReply>
   /**
@@ -78,6 +89,20 @@ export interface FakeOptions {
    */
   readonly onSpawn?: (call: FakeExecCall, io: FakeProcessIO) => Effect.Effect<number>
 }
+
+/** The mark of a fake's Runner, unless the test names one. */
+export const fakeRunner = "fake-runner"
+
+/** An empty host. */
+export const makeFakeWorld = (): FakeSandboxWorld => ({
+  sandboxes: new Map(),
+  volumes: new Map(),
+  volumeRunners: new Map(),
+  hostFiles: new Map(),
+  snapshots: new Map(),
+  execCalls: [],
+  spawnCalls: [],
+})
 
 /** The exit code a spawned command reports when its Sandbox stops under it. */
 export const killedExitCode = 137
@@ -89,14 +114,8 @@ const within = (guestPath: string, path: string) =>
   path === guestPath || path.startsWith(`${guestPath}/`)
 
 export const makeFake = (options: FakeOptions = {}) => {
-  const world: FakeSandboxWorld = {
-    sandboxes: new Map(),
-    volumes: new Map(),
-    hostFiles: new Map(),
-    snapshots: new Map(),
-    execCalls: [],
-    spawnCalls: [],
-  }
+  const world = options.world ?? makeFakeWorld()
+  const runner = options.runner ?? fakeRunner
   const onExec: NonNullable<FakeOptions["onExec"]> = options.onExec ?? (() => Effect.succeed({}))
   const onSpawn: NonNullable<FakeOptions["onSpawn"]> =
     options.onSpawn ?? ((_call, io) => Effect.as(Stream.runDrain(io.stdin), 0))
@@ -146,9 +165,11 @@ export const makeFake = (options: FakeOptions = {}) => {
   const boot = (spec: SandboxSpec, rootfs: Map<string, Uint8Array>, state: SandboxState) => {
     for (const volume of specVolumes(spec)) {
       const name = volumeName(spec.sessionId, volume.key)
-      if (!world.volumes.has(name)) world.volumes.set(name, new Map())
+      if (world.volumes.has(name)) continue
+      world.volumes.set(name, new Map())
+      world.volumeRunners.set(name, runner)
     }
-    world.sandboxes.set(spec.sessionId, { spec, state, rootfs })
+    world.sandboxes.set(spec.sessionId, { spec, runner, state, rootfs })
   }
 
   const execStream: SandboxBackendShape["execStream"] = (sessionId, request) =>
@@ -212,6 +233,7 @@ export const makeFake = (options: FakeOptions = {}) => {
     })
 
   const backend: SandboxBackendShape = {
+    runner,
     create: (spec) =>
       Effect.gen(function* () {
         yield* checkSpec(spec)
@@ -236,7 +258,10 @@ export const makeFake = (options: FakeOptions = {}) => {
           if (destroyOptions?.keepVolumes === true) return
           // Deleting the entry being visited is safe for a Map.
           for (const name of world.volumes.keys())
-            if (parseVolumeName(name)?.sessionId === sessionId) world.volumes.delete(name)
+            if (parseVolumeName(name)?.sessionId === sessionId) {
+              world.volumes.delete(name)
+              world.volumeRunners.delete(name)
+            }
         }),
       ),
     state: (sessionId) =>
@@ -247,13 +272,21 @@ export const makeFake = (options: FakeOptions = {}) => {
         const parsed = parseVolumeName(name)
         if (parsed !== undefined) ids.add(parsed.sessionId)
       }
-      return [...ids].map((sessionId) => ({
-        sessionId,
-        state: world.sandboxes.get(sessionId)?.state ?? ("Destroyed" as const),
-        volumes: [...world.volumes.keys()].filter(
+      return [...ids].map((sessionId) => {
+        const sandbox = world.sandboxes.get(sessionId)
+        const volumes = [...world.volumes.keys()].filter(
           (name) => parseVolumeName(name)?.sessionId === sessionId,
-        ),
-      }))
+        )
+        return {
+          sessionId,
+          runner:
+            sandbox === undefined
+              ? volumes.map((name) => world.volumeRunners.get(name)).find((r) => r !== undefined)
+              : sandbox.runner,
+          state: sandbox?.state ?? ("Destroyed" as const),
+          volumes,
+        }
+      })
     }),
     execStream,
     spawn,

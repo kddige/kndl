@@ -189,7 +189,7 @@ test.skipIf(!enabled)(
           }),
           Effect.ensuring(cleanup.pipe(Effect.orDie)),
           Effect.provide(sandboxes),
-          Effect.provide(Layer.mergeAll(MicrosandboxBackend.layer, hub)),
+          Effect.provide(Layer.mergeAll(MicrosandboxBackend.layerFor(`it-${sessionId}`), hub)),
           Effect.scoped,
         ),
       )

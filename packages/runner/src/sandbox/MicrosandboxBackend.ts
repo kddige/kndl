@@ -13,6 +13,8 @@
 // - metrics() throws for about 2 s after boot; that reads as "no metrics yet".
 // - Sandboxes are detached, so they outlive the Runner process: Claude Code keeps running in tmux
 //   across a Runner restart, and Reconcile.ts finds any the Runner no longer knows.
+// - Sandboxes and volumes carry labels: their Session, and the mark of the Runner that made them
+//   (Naming.ts). A Sandbox's labels are read back from its config.
 //
 // Snapshots are not offered (ADR 0006 defers them). In 0.7.6 disk snapshots work, but a restored
 // Sandbox loses its env and labels, and a snapshot group's head can't be removed without --force.
@@ -20,10 +22,21 @@
 import { mkdir, realpath, stat } from "node:fs/promises"
 import { join, posix } from "node:path"
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
-import { Cause, Effect, Layer, Option, Queue, Stream } from "effect"
+import { Cause, Effect, Layer, Option, Queue, Schema, Stream } from "effect"
 import { MicrosandboxError, NetworkPolicy, Sandbox, Volume } from "microsandbox"
 import type { SandboxStatus, Sandbox as MsbSandbox } from "microsandbox"
-import { prefix, parseSandboxName, parseVolumeName, sandboxName, volumeName } from "./Naming.ts"
+import { RunnerConfig } from "../RunnerConfig.ts"
+import {
+  parseSandboxName,
+  parseVolumeName,
+  prefix,
+  runnerLabel,
+  runnerMark,
+  sandboxName,
+  sessionLabel,
+  volumeLabel,
+  volumeName,
+} from "./Naming.ts"
 import {
   InvalidSandboxSpec,
   SandboxAlreadyExists,
@@ -153,8 +166,18 @@ const state: SandboxBackendShape["state"] = (sessionId) =>
     Effect.catchTag("SandboxNotFound", () => Effect.succeed("Destroyed" as const)),
   )
 
+/** The labels in a Sandbox's config, as `Sandbox.list` returns it. */
+const SandboxConfigLabels = Schema.fromJsonString(
+  Schema.Struct({ labels: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+)
+const decodeConfigLabels = Schema.decodeUnknownOption(SandboxConfigLabels)
+
+/** The Runner mark on a listed Sandbox, if it has one. */
+const sandboxRunner = (sandbox: { readonly configJson: string }) =>
+  Option.getOrUndefined(decodeConfigLabels(sandbox.configJson))?.labels?.[runnerLabel]
+
 /** Builds and boots the VM. Host paths must already be resolved. */
-const boot = (spec: SandboxSpec) => {
+const boot = (spec: SandboxSpec, runner: string) => {
   // Parents before the mounts nested in them.
   const mounts = [...spec.mounts.filter((m) => m._tag === "Host"), ...specVolumes(spec)].toSorted(
     (a, b) => a.guestPath.length - b.guestPath.length,
@@ -164,7 +187,8 @@ const boot = (spec: SandboxSpec) => {
     .cpus(spec.cpus)
     .memory(spec.memoryMib)
     .network((n) => n.policy(NetworkPolicy.allowAll()))
-    .label("claude-hub.session", spec.sessionId)
+    .label(sessionLabel, spec.sessionId)
+    .label(runnerLabel, runner)
     .envs({ ...spec.env })
     .detached(true)
   if (spec.rootDiskMib !== undefined) builder = builder.rootDisk(spec.rootDiskMib)
@@ -179,7 +203,8 @@ const boot = (spec: SandboxSpec) => {
   return builder.create()
 }
 
-export const make = Effect.gen(function* () {
+/** The microsandbox backend, working for the Runner of this mark (Naming.ts). */
+export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: string }) {
   // Connections to running Sandboxes, so each command doesn't reconnect.
   const connections = new Map<SessionId, MsbSandbox>()
 
@@ -256,8 +281,9 @@ export const make = Effect.gen(function* () {
         Volume.builder(name)
           .disk()
           .size(volume.sizeMib)
-          .label("claude-hub.session", spec.sessionId)
-          .label("claude-hub.volume", volume.key)
+          .label(sessionLabel, spec.sessionId)
+          .label(volumeLabel, volume.key)
+          .label(runnerLabel, runner)
           .create(),
       ).pipe(
         // An existing volume holds the Session's data from before: keep it as it is.
@@ -308,7 +334,7 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existing)) return yield* new SandboxAlreadyExists({ sessionId })
     const resolved = yield* prepareHost(spec)
     yield* ensureVolumes(spec)
-    const sandbox = yield* call("create Sandbox", sessionId, () => boot(resolved)).pipe(
+    const sandbox = yield* call("create Sandbox", sessionId, () => boot(resolved, runner)).pipe(
       // A VM that fails to boot is still recorded; remove it so create can be retried. In 0.7.6
       // the SDK records it again as crashed when this process exits, which the next Runner's
       // reconcile then reports; Spec.ts refuses the one cause of this we know of.
@@ -374,11 +400,18 @@ export const make = Effect.gen(function* () {
   })
 
   const list: SandboxBackendShape["list"] = Effect.gen(function* () {
-    const listings = new Map<SessionId, { state: SandboxState; volumes: Array<string> }>()
+    const listings = new Map<
+      SessionId,
+      { state: SandboxState; runner: string | undefined; volumes: Array<string> }
+    >()
     const entry = (sessionId: SessionId) => {
       const existing = listings.get(sessionId)
       if (existing !== undefined) return existing
-      const created = { state: "Destroyed" as SandboxState, volumes: [] as Array<string> }
+      const created = {
+        state: "Destroyed" as SandboxState,
+        runner: undefined as string | undefined,
+        volumes: [] as Array<string>,
+      }
       listings.set(sessionId, created)
       return created
     }
@@ -389,7 +422,10 @@ export const make = Effect.gen(function* () {
       )
       for (const sandbox of page.sandboxes) {
         const sessionId = parseSandboxName(sandbox.name)
-        if (sessionId !== undefined) entry(sessionId).state = stateOf(sandbox.status)
+        if (sessionId === undefined) continue
+        const found = entry(sessionId)
+        found.state = stateOf(sandbox.status)
+        found.runner = sandboxRunner(sandbox)
       }
       cursor = page.nextCursor
     } while (cursor !== undefined)
@@ -397,7 +433,12 @@ export const make = Effect.gen(function* () {
     for (const volume of volumes) {
       if (!volume.name.startsWith(prefix)) continue
       const parsed = parseVolumeName(volume.name)
-      if (parsed !== undefined) entry(parsed.sessionId).volumes.push(volume.name)
+      if (parsed === undefined) continue
+      const found = entry(parsed.sessionId)
+      found.volumes.push(volume.name)
+      // A Sandbox's own mark wins; a destroyed one's volumes still say whose they were.
+      if (found.state === "Destroyed" && found.runner === undefined)
+        found.runner = volume.labels.find(([key]) => key === runnerLabel)?.[1]
     }
     return [...listings].map(([sessionId, found]): SandboxListing => ({ sessionId, ...found }))
   })
@@ -480,6 +521,7 @@ export const make = Effect.gen(function* () {
     })
 
   const backend: SandboxBackendShape = {
+    runner,
     create,
     start,
     stop,
@@ -522,5 +564,14 @@ export const make = Effect.gen(function* () {
   return backend
 })
 
-/** The microsandbox backend. Needs `msb` installed for the user running the Runner. */
-export const layer = Layer.effect(SandboxBackend, make)
+/** The microsandbox backend for the Runner of this mark. */
+export const layerFor = (runner: string) => Layer.effect(SandboxBackend, make({ runner }))
+
+/**
+ * The microsandbox backend for the configured Runner, marked by its tmux socket and sessions
+ * root. Needs `msb` installed for the user running the Runner.
+ */
+export const layer = Layer.effect(
+  SandboxBackend,
+  Effect.flatMap(RunnerConfig, (config) => make({ runner: runnerMark(config) })),
+)
