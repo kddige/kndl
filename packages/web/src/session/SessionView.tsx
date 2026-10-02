@@ -170,18 +170,20 @@ function LoadedSession({
   const scroller = useStickToBottom(items)
 
   const state = summary.state
-  const disabledReason =
-    state === "Frozen"
-      ? "Frozen: prompts can't be sent until its Runner is back"
-      : state === "Archived"
-        ? "Archived: restore it to send prompts"
+  const disabledReason = state === "Archived" ? "Archived: restore it to send prompts" : undefined
+  const hint =
+    state === "Asleep"
+      ? "Asleep: sending a prompt wakes it."
+      : state === "Frozen"
+        ? "Frozen: prompts wait in the queue until its Runner is back."
         : undefined
 
-  const send = (prompt: string) => {
-    const sent = hub.sendPrompt(summary.id, prompt)
+  /** Runs a command, saying so when there's no connection to send it on. */
+  const command = (sent: boolean) => {
     if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
     return sent
   }
+  const send = (prompt: string) => command(hub.sendPrompt(summary.id, prompt))
 
   return (
     <div {...stylex.props(styles.view)}>
@@ -210,12 +212,27 @@ function LoadedSession({
             <span>on {summary.runnerLogin.account}</span>
           </div>
         </div>
+        {state === "Active" && (
+          <Button
+            size="sm"
+            intent="secondary"
+            // The Hub only puts a Session to sleep with nothing running or waiting.
+            disabled={running || queue.length > 0}
+            onClick={() => command(hub.sleepSession(summary.id))}
+          >
+            Sleep now
+          </Button>
+        )}
         <AvatarStack label="Here now" people={presence} size="sm" />
       </header>
 
       <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.column, styles.transcript)}>
-          <StateBanner summary={summary} change={lastChange} />
+          <StateBanner
+            summary={summary}
+            change={lastChange}
+            onWake={() => command(hub.wakeSession(summary.id))}
+          />
           {items.length === 0 ? (
             <EmptyState
               title="Nothing here yet"
@@ -241,7 +258,7 @@ function LoadedSession({
           onStop={() => hub.stopTurn(summary.id)}
           running={running}
           disabledReason={disabledReason}
-          hint={state === "Asleep" ? "Asleep: sending a prompt wakes it." : undefined}
+          hint={hint}
         />
       </div>
     </div>
@@ -252,9 +269,11 @@ function LoadedSession({
 function StateBanner({
   summary,
   change,
+  onWake,
 }: {
   summary: SessionSummary
   change: SessionStateChanged | undefined
+  onWake: () => void
 }) {
   const why = change?.state === summary.state ? change.message : undefined
   switch (summary.state) {
@@ -263,15 +282,25 @@ function StateBanner({
     case "Frozen":
       return (
         <Banner intent="frozen" icon={<InfoIcon />} title="This Session is Frozen">
-          {why ? `${why} ` : "Its Runner is offline. "}
-          You can read it, but it can't take prompts until the Runner is back.
+          {why ? sentence(why) : "Its Runner is offline. "}
+          Prompts sent now wait in the queue until the Runner is back.
         </Banner>
       )
     case "Asleep":
       return (
-        <Banner intent="asleep" icon={<InfoIcon />} title="This Session is Asleep">
-          {why ? `${why} ` : ""}
-          Its Sandbox is stopped; sending a prompt wakes it, with its Workspace as it was.
+        <Banner
+          intent="asleep"
+          icon={<InfoIcon />}
+          title="This Session is Asleep"
+          action={
+            <Button size="sm" onClick={onWake}>
+              Wake now
+            </Button>
+          }
+        >
+          {why ? sentence(why) : ""}
+          Its Sandbox is stopped. Sending a prompt wakes it, with its Workspace and conversation as
+          they were.
         </Banner>
       )
     case "Archived":
@@ -282,6 +311,9 @@ function StateBanner({
       )
   }
 }
+
+/** The reason as a sentence, with a space after it for the one that follows. */
+const sentence = (reason: string) => (/[.!?]$/.test(reason) ? `${reason} ` : `${reason}. `)
 
 function latestStateChange(log: ReadonlyArray<SessionLogEntry>): SessionStateChanged | undefined {
   for (let index = log.length - 1; index >= 0; index--) {

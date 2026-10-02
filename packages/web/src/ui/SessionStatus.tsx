@@ -45,7 +45,7 @@ const styles = stylex.create({
     height: "0.5rem",
     verticalAlign: "middle",
   },
-  // Frozen and Archived Sessions can't take prompts: a hollow dot says "not live" without colour.
+  // Frozen and Archived Sessions aren't running anywhere: a hollow dot says "not live" without colour.
   hollow: {
     backgroundColor: "transparent",
     borderWidth: "1.5px",
