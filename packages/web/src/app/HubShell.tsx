@@ -80,7 +80,7 @@ export function HubShell() {
   const you = useHubState((state) => state.you)
 
   useEffect(() => hub.start(), [hub])
-  // Refusals with no request to answer, such as a prompt to a Frozen Session.
+  // Refusals with no request to answer, such as putting a busy Session to sleep.
   useEffect(
     () =>
       hub.onCommandFailed((failure) =>

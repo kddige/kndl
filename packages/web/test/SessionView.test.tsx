@@ -108,3 +108,73 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   await step(() => (agent as HTMLElement).click())
   await eventually(() => expect(conversation()).toContain("Disclosure is the one"))
 })
+
+/** The whole app on one of the fake Hub's seeded Sessions, its script not playing. */
+async function openSession(sessionId: string) {
+  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+  const client = new HubClient(hub, { retryDelay: () => 1 })
+  const router = createAppRouter(
+    createMemoryHistory({ initialEntries: [`/sessions/${sessionId}`] }),
+  )
+  const view = await render(
+    <HubProvider client={client}>
+      <RouterProvider router={router} />
+    </HubProvider>,
+  )
+  cleanup = async () => {
+    await view.unmount()
+    client.stop()
+    hub.dispose()
+  }
+  const page = view.container
+  /** The state banner's text, or "" without one. */
+  const banner = () =>
+    [...page.querySelectorAll('[role="status"]')]
+      .map((el) => el.textContent ?? "")
+      .find((content) => content.startsWith("This Session is")) ?? ""
+  await eventually(() => expect(banner()).not.toBe(""))
+  return {
+    hub,
+    page,
+    banner,
+    header: () => page.querySelector("h1")?.closest("header")?.textContent ?? "",
+    sent: () => hub.received.map((message) => message._tag),
+  }
+}
+
+test("an Asleep Session wakes from its banner, and an idle Active one sleeps on request", async () => {
+  const { page, banner, header, sent } = await openSession("s-readme")
+  expect(banner()).toContain("This Session is Asleep")
+  expect(banner()).toContain("Idle for 15m.")
+
+  await step(() => button("Wake now", page).click())
+  expect(sent()).toContain("WakeSession")
+  await eventually(() => expect(header()).toContain("Active"))
+  expect(banner()).toBe("")
+
+  await step(() => button("Sleep now", page).click())
+  expect(sent()).toContain("SleepSession")
+  await eventually(() => expect(banner()).toContain("Put to sleep."))
+  expect([...page.querySelectorAll("button")].some((b) => b.textContent === "Sleep now")).toBe(
+    false,
+  )
+})
+
+test("a Frozen Session takes prompts, which wait in its queue", async () => {
+  const { page, banner, sent } = await openSession("s-dotfiles")
+  expect(banner()).toContain("ci-box went offline. Prompts sent now wait in the queue")
+
+  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
+  if (!prompt) throw new Error("no prompt field")
+  expect(prompt.disabled).toBe(false)
+  await step(() => typeInto(prompt, "Also show the exit code"))
+  await step(() => button("Send prompt", page).click())
+
+  expect(sent()).toContain("SendPrompt")
+  await eventually(() =>
+    expect(page.querySelector('[aria-label="Prompt queue"]')?.textContent ?? "").toContain(
+      "Also show the exit code",
+    ),
+  )
+  expect(page.textContent).not.toContain("The Hub refused that")
+})

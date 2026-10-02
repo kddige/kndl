@@ -17,9 +17,10 @@ export type BranchName = typeof BranchName.Type
 
 /**
  * Where a Session is in its lifecycle (see GLOSSARY.md):
- * - `Active`: its Sandbox is running.
- * - `Asleep`: its Sandbox was stopped after being idle; the next prompt wakes it.
- * - `Frozen`: its Runner is offline; readable, but it refuses prompts.
+ * - `Active`: its Sandbox is running, or starting.
+ * - `Asleep`: its Claude Code and Sandbox were stopped after being idle, or by hand; the next
+ *   prompt, or a WakeSession, wakes it.
+ * - `Frozen`: its Runner is offline; readable, and prompts queue until the Runner returns.
  * - `Archived`: deleted, restorable for 30 days.
  */
 export const SessionState = Schema.Literals(["Active", "Asleep", "Frozen", "Archived"])

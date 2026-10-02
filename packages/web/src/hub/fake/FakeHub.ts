@@ -250,13 +250,8 @@ export class FakeHub implements HubTransport {
       case "SendPrompt": {
         const session = this.sessions.get(message.sessionId)
         if (!session) break
-        if (session.summary.state === "Frozen" || session.summary.state === "Archived") {
-          this.#fail(
-            socket,
-            "SendPrompt",
-            `This Session is ${session.summary.state}: it can't take prompts.`,
-            message.sessionId,
-          )
+        if (session.summary.state === "Archived") {
+          this.#fail(socket, "SendPrompt", "The Session is archived.", message.sessionId)
           break
         }
         this.#prompt(session, this.#you, message.text, replyTo(message.text))
@@ -274,6 +269,37 @@ export class FakeHub implements HubTransport {
         if (!session?.stopTurn) break
         this.#append(session, { _tag: "TurnStopRequested", by: this.#you })
         session.stopTurn()
+        break
+      }
+      case "SleepSession": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        if (session.summary.state !== "Active" || session.stopTurn || session.queue.length > 0) {
+          this.#fail(
+            socket,
+            "SleepSession",
+            "Only an idle Active Session can be put to sleep.",
+            message.sessionId,
+          )
+          break
+        }
+        this.#setState(session, "Asleep", "Put to sleep", this.#you)
+        break
+      }
+      case "WakeSession": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        if (session.summary.state === "Asleep") {
+          this.#setState(session, "Active", "Woken on studio", this.#you)
+          this.#next(session)
+        } else if (session.summary.state !== "Active") {
+          this.#fail(
+            socket,
+            "WakeSession",
+            `The Session is ${session.summary.state}.`,
+            message.sessionId,
+          )
+        }
         break
       }
       case "OpenTerminal":
@@ -348,7 +374,8 @@ export class FakeHub implements HubTransport {
     this.#replies.set(prompt.id, reply)
     session.queue.push(prompt)
     this.#queueChanged(session)
-    if (session.stopTurn === null) this.#next(session)
+    // A Frozen Session's prompts wait for its Runner.
+    if (session.stopTurn === null && session.summary.state !== "Frozen") this.#next(session)
   }
 
   /** Delivers the next queued prompt, waking the Session first if it's Asleep. */
@@ -357,7 +384,7 @@ export class FakeHub implements HubTransport {
     if (!prompt) return
     this.#queueChanged(session)
     if (session.summary.state === "Asleep") {
-      this.#setState(session, "Active", "Woken by a prompt.")
+      this.#setState(session, "Active", "Woken by a prompt")
     }
     this.#runTurn(session, prompt, this.#replies.get(prompt.id) ?? replyTo(prompt.text))
     this.#replies.delete(prompt.id)
@@ -507,11 +534,17 @@ export class FakeHub implements HubTransport {
     schedule(1, () => end("Answered"))
   }
 
-  #setState(session: FakeSession, state: SessionSummaryWire["state"], message?: string): void {
+  #setState(
+    session: FakeSession,
+    state: SessionSummaryWire["state"],
+    message?: string,
+    by?: ParticipantWire,
+  ): void {
     session.summary = { ...session.summary, state }
     this.#append(session, {
       _tag: "SessionStateChanged",
       state,
+      ...(by !== undefined && { by }),
       ...(message !== undefined && { message }),
     })
     this.#summaryChanged(session)

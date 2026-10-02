@@ -1,4 +1,4 @@
-import { Config, Context, Effect, Layer, Option, Schema } from "effect"
+import { Config, Context, Duration, Effect, Layer, Option, Schema } from "effect"
 import type { Redacted } from "effect"
 
 /** The GitHub App's user sign-in credentials (issue #1). */
@@ -22,7 +22,12 @@ export interface HubConfigInput {
   readonly devLogin: boolean
   /** Who dev login signs in as when the form names no one. */
   readonly devLoginName: string
+  /** How long an Active Session may sit idle before it goes Asleep, in milliseconds. */
+  readonly sleepAfterMs: number
 }
+
+/** How long an idle Session stays Active by default (GLOSSARY.md: Asleep). */
+export const DefaultSleepAfter = Duration.minutes(15)
 
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
 export class HubConfigError extends Schema.TaggedError<HubConfigError>()("HubConfigError", {
@@ -56,6 +61,11 @@ export class HubConfig extends Context.Service<
     readonly devLogin: Option.Option<{ readonly defaultName: string }>
     /** Cookies get `Secure` unless browsers reach the Hub on a loopback address over HTTP. */
     readonly secureCookies: boolean
+    /**
+     * How long an Active Session goes with no Turn running, no prompt queued and no
+     * Participant present before it is put to sleep.
+     */
+    readonly sleepAfter: Duration.Duration
   }
 >()("@claude-hub/hub/HubConfig") {
   /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
@@ -69,6 +79,11 @@ export class HubConfig extends Context.Service<
     if (input.devLogin && !isLoopback(publicUrl.hostname)) {
       return yield* new HubConfigError({
         message: `Dev login (CLAUDE_HUB_DEV_LOGIN) is refused: browsers reach the Hub at ${publicUrl.origin}, not a loopback address. Unset CLAUDE_HUB_DEV_LOGIN, or set HUB_PUBLIC_URL to a localhost URL.`,
+      })
+    }
+    if (!Number.isSafeInteger(input.sleepAfterMs) || input.sleepAfterMs <= 0) {
+      return yield* new HubConfigError({
+        message: `HUB_SLEEP_AFTER_MS must be a whole number of milliseconds above 0, not ${input.sleepAfterMs}.`,
       })
     }
     if (Option.isSome(input.githubClientId) !== Option.isSome(input.githubClientSecret)) {
@@ -88,13 +103,15 @@ export class HubConfig extends Context.Service<
       ),
       devLogin: input.devLogin ? Option.some({ defaultName: input.devLoginName }) : Option.none(),
       secureCookies: publicUrl.protocol === "https:" || !isLoopback(publicUrl.hostname),
+      sleepAfter: Duration.millis(input.sleepAfterMs),
     })
   })
 
   /**
    * From the environment: `HOST` (127.0.0.1), `PORT` (7777), `HUB_PUBLIC_URL`
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
-   * off), `CLAUDE_HUB_DEV_LOGIN` (off) and `CLAUDE_HUB_DEV_USER` (`$USER`).
+   * off), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`) and `HUB_SLEEP_AFTER_MS`
+   * (15 minutes).
    */
   static readonly layer = Layer.effect(
     HubConfig,
@@ -111,6 +128,9 @@ export class HubConfig extends Context.Service<
         devLoginName: Config.String("CLAUDE_HUB_DEV_USER").pipe(
           Config.orElse(() => Config.String("USER")),
           Config.withDefault("dev"),
+        ),
+        sleepAfterMs: Config.Int("HUB_SLEEP_AFTER_MS").pipe(
+          Config.withDefault(Duration.toMillis(DefaultSleepAfter)),
         ),
       })
       return yield* HubConfig.make(input)

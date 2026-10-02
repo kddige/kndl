@@ -319,15 +319,33 @@ describe("commands", () => {
     )
   })
 
-  test("a refused prompt is reported to onCommandFailed", async () => {
+  test("a refused command is reported to onCommandFailed", async () => {
     const { client } = setUp()
     const failures: Array<CommandFailed> = []
     client.onCommandFailed((failure) => failures.push(failure))
     client.start()
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
-    client.sendPrompt(SessionId.make("s-dotfiles"), "hello")
+    // A Frozen Session can't be put to sleep: its Runner is offline.
+    client.sleepSession(SessionId.make("s-dotfiles"))
     await eventually(() => expect(failures).toHaveLength(1))
-    expect(failures[0]).toMatchObject({ command: "SendPrompt", sessionId: "s-dotfiles" })
+    expect(failures[0]).toMatchObject({ command: "SleepSession", sessionId: "s-dotfiles" })
+  })
+
+  test("a prompt to a Frozen Session waits in its queue", async () => {
+    const { client } = setUp()
+    const dotfiles = SessionId.make("s-dotfiles")
+    const failures: Array<CommandFailed> = []
+    client.onCommandFailed((failure) => failures.push(failure))
+    client.start()
+    client.join(dotfiles)
+    await eventually(() => expect(client.getState().joined[dotfiles]?.historyLoaded).toBe(true))
+    client.sendPrompt(dotfiles, "hello")
+    await eventually(() =>
+      expect(client.getState().joined[dotfiles]?.queue.map((prompt) => prompt.text)).toEqual([
+        "hello",
+      ]),
+    )
+    expect(failures).toEqual([])
   })
 
   test("a prompt to an Asleep Session wakes it", async () => {

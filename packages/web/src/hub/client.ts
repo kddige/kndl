@@ -133,6 +133,16 @@ export class HubClient {
     return this.#send({ _tag: "StopTurn", sessionId })
   }
 
+  /** Puts an Active Session to sleep now, rather than when it has been idle long enough. */
+  sleepSession(sessionId: SessionId): boolean {
+    return this.#send({ _tag: "SleepSession", sessionId })
+  }
+
+  /** Wakes an Asleep Session without sending it a prompt. */
+  wakeSession(sessionId: SessionId): boolean {
+    return this.#send({ _tag: "WakeSession", sessionId })
+  }
+
   /** Creates a Session; resolves with it once the Hub has, or rejects with the Hub's reason. */
   createSession(input: NewSession): Promise<SessionSummary> {
     const requestId = RequestId.make(`req-${Date.now().toString(36)}-${++this.#requestCount}`)

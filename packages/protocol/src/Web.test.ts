@@ -38,6 +38,8 @@ const webToHub = [
   { _tag: "SendPrompt", sessionId: "s-1", text: "add a health check" },
   { _tag: "CancelPrompt", sessionId: "s-1", promptId: "p-2" },
   { _tag: "StopTurn", sessionId: "s-1" },
+  { _tag: "SleepSession", sessionId: "s-1" },
+  { _tag: "WakeSession", sessionId: "s-1" },
   { _tag: "OpenTerminal", sessionId: "s-1" },
   { _tag: "CloseTerminal", sessionId: "s-1" },
   { _tag: "TerminalInput", sessionId: "s-1", data: "\u001b[A" },
@@ -116,6 +118,8 @@ describe("WebToHub", () => {
   test("rejects malformed messages", () => {
     expectRejected(WebToHub, { _tag: "SendPrompt", sessionId: "s-1", text: "" })
     expectRejected(WebToHub, { _tag: "SendPrompt", text: "hi" })
+    expectRejected(WebToHub, { _tag: "SleepSession" })
+    expectRejected(WebToHub, { _tag: "WakeSession", sessionId: 7 })
     expectRejected(WebToHub, {
       _tag: "CreateSession",
       repo: "kddige/claude-hub",

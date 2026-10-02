@@ -12,10 +12,12 @@ import {
   type ModEventsEncoded,
   ProtocolVersion,
 } from "@claude-hub/protocol"
-import { Effect } from "effect"
+import { Effect, Exit } from "effect"
 import { databaseAt } from "./Database.ts"
+import { HubConfig } from "./HubConfig.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 import {
+  baseConfig,
   bearer,
   cookieFrom,
   devSignIn,
@@ -534,7 +536,7 @@ describe("StopTurn", () => {
 })
 
 describe("a Runner going offline", () => {
-  test("freezes its Sessions, which refuse prompts until it says hello with them again", async () => {
+  test("freezes its Sessions, whose prompts wait until it says hello with them again", async () => {
     const { hub, runner, runnerToken, web, sessionId, mod } = await sessionScene()
     joinSession(web, sessionId)
     await web.take("SessionHistory")
@@ -551,16 +553,32 @@ describe("a Runner going offline", () => {
       state: "Frozen",
     })
     web.send({ _tag: "SendPrompt", sessionId, text: "anyone there?" })
-    expect(await web.take("CommandFailed")).toMatchObject({ command: "SendPrompt", sessionId })
+    await web.take("PromptQueueChanged", queueIs("anyone there?"))
+    expect(await web.untaken("CommandFailed")).toEqual([])
+    expect(await mod.deliveries(200)).toEqual([])
 
+    // Claude Code kept running in tmux, so the Session is Active again, and the prompt goes out.
     await openRunner(hub, runnerToken, [sessionId])
     expect((await web.take("SessionUpdated", (m) => m.session.state === "Active")).session.id).toBe(
       sessionId,
     )
     await web.take("RunnerList", (m) => m.runners[0]?.isOnline === true)
-    web.send({ _tag: "SendPrompt", sessionId, text: "welcome back" })
-    await web.take("PromptQueueChanged", queueIs("welcome back"))
-    expect((await mod.deliveries(500)).map((command) => command.text)).toEqual(["welcome back"])
+    expect((await mod.deliveries(500)).map((command) => command.text)).toEqual(["anyone there?"])
+  })
+
+  test("wakes a Session whose Claude Code stopped while it was away, if prompts wait", async () => {
+    const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    web.send({ _tag: "SendPrompt", sessionId, text: "still there?" })
+    await web.take("PromptQueueChanged", queueIs("still there?"))
+
+    const back = await openRunner(hub, runnerToken, [])
+    expect(await back.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
   })
 
   test("leaves Sessions it no longer runs Asleep when it comes back", async () => {
@@ -572,6 +590,211 @@ describe("a Runner going offline", () => {
     expect((await web.take("SessionUpdated", (m) => m.session.state === "Asleep")).session.id).toBe(
       sessionId,
     )
+  })
+})
+
+/** A Hub whose Sessions go Asleep after `sleepAfterMs` idle. */
+const hubSleepingAfter = (sleepAfterMs: number) =>
+  startHub({ config: { devLogin: true, sleepAfterMs } })
+
+/** Puts the Session to sleep by hand, playing the Runner's part. */
+async function asleep(scene: Awaited<ReturnType<typeof sessionScene>>) {
+  const { runner, web, sessionId } = scene
+  web.send({ _tag: "SleepSession", sessionId })
+  expect(await runner.take("StopSession")).toEqual({
+    _tag: "StopSession",
+    sessionId,
+    reason: "Sleep",
+  })
+  runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+  await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+}
+
+describe("the Session lifecycle", () => {
+  test("an idle Session is stopped, and recorded Asleep once its Runner says it stopped", async () => {
+    const scene = await sessionScene(await hubSleepingAfter(200))
+    const { hub, runner, sessionId } = scene
+
+    expect(await runner.take("StopSession")).toEqual({
+      _tag: "StopSession",
+      sessionId,
+      reason: "Sleep",
+    })
+    // Still Active until the Runner has stopped it.
+    const watcher = await openWeb(hub, "bob")
+    expect(watcher.sessions.sessions[0]?.state).toBe("Active")
+
+    runner.send({ _tag: "SandboxStateReport", sessionId, state: "Stopping" })
+    runner.send({ _tag: "SandboxStateReport", sessionId, state: "Stopped" })
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    await watcher.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    joinSession(watcher, sessionId)
+    expect((await watcher.take("SessionHistory")).entries.at(-1)?.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      message: "Idle for 200ms",
+    })
+    // Asked once.
+    expect(await runner.untaken("StopSession")).toEqual([])
+  })
+
+  test("a Participant present, a Turn running or a prompt waiting keeps it awake", async () => {
+    const hub = await hubSleepingAfter(150)
+    const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
+    const web = await openWeb(hub, "alice")
+    web.send({
+      _tag: "CreateSession",
+      requestId: "r",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+    })
+    const start = await runner.take("StartSession")
+    const sessionId = start.sessionId
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    // The mod hasn't said hello, so the prompt waits in the queue.
+    web.send({ _tag: "SendPrompt", sessionId, text: "hold on" })
+    await web.take("PromptQueueChanged", queueIs("hold on"))
+    web.send({ _tag: "LeaveSession", sessionId })
+    await Bun.sleep(400)
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    const mod = new Mod(hub, sessionId, start.modToken)
+    await mod.hello()
+    const [delivered] = await mod.deliveries(500)
+    await mod.post(turnStarted("t-1", delivered?.promptId))
+    await Bun.sleep(400)
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    joinSession(web, sessionId)
+    await mod.post(turnEnded("t-1"))
+    await Bun.sleep(400)
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    web.send({ _tag: "LeaveSession", sessionId })
+    expect(await runner.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+  })
+
+  test("a prompt wakes an Asleep Session, resuming its conversation, and waits for the new mod", async () => {
+    const scene = await sessionScene()
+    const { hub, runner, web, sessionId, mod, start } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await asleep(scene)
+    expect((await web.take("SessionEventLogged")).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      by: alice,
+      message: "Put to sleep",
+    })
+
+    web.send({ _tag: "SendPrompt", sessionId, text: "wake up" })
+    const wake = await runner.take("StartSession")
+    expect(wake).toEqual({
+      _tag: "StartSession",
+      sessionId,
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+      workBranch: `claude/${sessionId}`,
+      modToken: wake.modToken,
+      resume: "claude-1",
+    })
+    expect(wake.modToken).not.toBe(start.modToken)
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    expect(
+      (await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SessionStateChanged"))
+        .entry.event,
+    ).toEqual({ _tag: "SessionStateChanged", state: "Active", by: alice, message: "Woken on mac" })
+
+    // The old mod's token is gone; the new mod gets the prompt once it has said hello.
+    expect((await mod.hello()).status).toBe(401)
+    runner.send({ _tag: "SessionStarted", sessionId })
+    const woken = new Mod(hub, sessionId, wake.modToken)
+    expect(await woken.deliveries(200)).toEqual([])
+    expect((await woken.hello()).status).toBe(200)
+    expect((await woken.deliveries(500)).map((command) => command.text)).toEqual(["wake up"])
+  })
+
+  test("a failed wake leaves the Session Asleep, says why, and keeps its prompts", async () => {
+    const scene = await sessionScene()
+    const { runner, web, sessionId } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await asleep(scene)
+
+    web.send({ _tag: "SendPrompt", sessionId, text: "are you there?" })
+    await runner.take("StartSession")
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    runner.send({ _tag: "SessionStartFailed", sessionId, message: "the Sandbox did not start" })
+
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(
+      (
+        await web.take(
+          "SessionEventLogged",
+          (m) =>
+            m.entry.event._tag === "SessionStateChanged" &&
+            m.entry.event.state === "Asleep" &&
+            m.entry.event.by === undefined,
+        )
+      ).entry.event,
+    ).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      message: "Claude Code could not start on mac: the Sandbox did not start",
+    })
+    // Not retried on its own, but the prompt stays queued for the next wake.
+    expect(await runner.untaken("StartSession")).toEqual([])
+    web.send({ _tag: "WakeSession", sessionId })
+    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    // Joining again sends the queue afresh: the prompt is still there.
+    const bobWeb = await openWeb(scene.hub, "bob")
+    joinSession(bobWeb, sessionId)
+    expect(queueTexts(await bobWeb.take("PromptQueueChanged"))).toEqual(["are you there?"])
+  })
+
+  test("a prompt sent while the Session goes to sleep wakes it right after", async () => {
+    const { runner, web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    web.send({ _tag: "SleepSession", sessionId })
+    await runner.take("StopSession")
+    web.send({ _tag: "SendPrompt", sessionId, text: "one more thing" })
+    await web.take("PromptQueueChanged", queueIs("one more thing"))
+    expect(await mod.deliveries(200)).toEqual([])
+
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested" })
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+  })
+
+  test("Sleep now is refused while a Turn runs or prompts wait, and for a Session not Active", async () => {
+    const scene = await sessionScene()
+    const { runner, web, sessionId, mod } = scene
+    await mod.post(turnStarted("t-1"))
+    web.send({ _tag: "SleepSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "SleepSession",
+      sessionId,
+      message: "A Turn is running: stop it first.",
+    })
+    web.send({ _tag: "SendPrompt", sessionId, text: "next" })
+    await mod.post(turnEnded("t-1"))
+    web.send({ _tag: "SleepSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "SleepSession" })
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    web.send({ _tag: "SleepSession", sessionId })
+    expect((await web.take("CommandFailed")).message).toContain("this one is Frozen")
+    web.send({ _tag: "WakeSession", sessionId })
+    expect((await web.take("CommandFailed")).message).toContain("Runner is offline")
+  })
+
+  test("HUB_SLEEP_AFTER_MS must be above 0", async () => {
+    const result = await Effect.runPromiseExit(HubConfig.make({ ...baseConfig, sleepAfterMs: 0 }))
+    expect(Exit.isFailure(result)).toBe(true)
   })
 })
 

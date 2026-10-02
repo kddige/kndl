@@ -2,14 +2,14 @@
 // it. Not part of the Hub.
 
 import { BunHttpServer } from "@effect/platform-bun"
-import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
+import { Context, Duration, Effect, Exit, Layer, Option, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
 import type { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { DatabaseTest } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
-import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
+import { DefaultSleepAfter, HubConfig, type HubConfigInput } from "./HubConfig.ts"
 
 export const webOrigin = "http://localhost:5173"
 
@@ -21,6 +21,7 @@ export const baseConfig: HubConfigInput = {
   githubClientSecret: Option.none(),
   devLogin: false,
   devLoginName: "dev",
+  sleepAfterMs: Duration.toMillis(DefaultSleepAfter),
 }
 
 /** The Hub's stores and services, which tests can reach into. */

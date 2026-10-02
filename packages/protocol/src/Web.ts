@@ -102,6 +102,21 @@ export const CancelPrompt = Schema.TaggedStruct("CancelPrompt", {
 })
 export type CancelPrompt = typeof CancelPrompt.Type
 
+/**
+ * Put an Active Session to sleep now, rather than after it has been idle a while: its Claude
+ * Code and Sandbox stop, and its next prompt wakes it. Refused while a Turn runs or prompts wait.
+ */
+export const SleepSession = Schema.TaggedStruct("SleepSession", {
+  sessionId: SessionId,
+})
+export type SleepSession = typeof SleepSession.Type
+
+/** Wake an Asleep Session without sending it a prompt. */
+export const WakeSession = Schema.TaggedStruct("WakeSession", {
+  sessionId: SessionId,
+})
+export type WakeSession = typeof WakeSession.Type
+
 /** Start receiving the Session's terminal frames, beginning with a snapshot. */
 export const OpenTerminal = Schema.TaggedStruct("OpenTerminal", {
   sessionId: SessionId,
@@ -122,6 +137,8 @@ export const WebToHub = Schema.Union([
   SendPrompt,
   CancelPrompt,
   StopTurn,
+  SleepSession,
+  WakeSession,
   OpenTerminal,
   CloseTerminal,
   TerminalInput,

@@ -21,3 +21,7 @@ Settings and limits found along the way:
 - Before a Sandbox stops, the Runner runs `docker stop` on its containers. Stopping the VM alone kills them uncleanly, and databases have to crash-recover on the next boot.
 - microsandbox 0.7.6 can't boot a disk volume whose guest path contains a `.`, so the package cache lives at `/var/cache/claude-hub` rather than `~/.cache`, with `XDG_CACHE_HOME`, `BUN_INSTALL_CACHE_DIR` and `npm_config_cache` pointed there. The backend refuses dotted volume paths before creating anything.
 - The host mount uses `hostPermissions("mirror")` so executable bits survive, and an explicit quota, since the default silently caps guest writes at 4 GiB.
+
+## Amendment: waking restarts the stopped Sandbox (#12)
+
+Going to sleep stops the Sandbox's VM rather than destroying it, and waking starts that same VM again. Its root filesystem survives too, so what the Runner installed into it on the first start (`bash`, for Claude Code's Bash tool) need not be installed again, and a wake took about a second in the opt-in microsandbox test. A Sandbox that is gone anyway, such as one destroyed by hand, is created afresh on the Session's volumes, as above. Nothing a Session needs lives only in the root filesystem, so both paths keep its work.

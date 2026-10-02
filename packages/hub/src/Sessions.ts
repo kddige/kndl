@@ -1,5 +1,5 @@
 import {
-  type ClaudeSessionId,
+  ClaudeSessionId,
   ParticipantId,
   RunnerId,
   SessionId,
@@ -85,6 +85,10 @@ export class Sessions extends Context.Service<
       id: SessionId,
       claudeSessionId: ClaudeSessionId,
     ) => Effect.Effect<void, SqlError>
+    /** The Claude Code session id last recorded, or none if its mod never said hello. */
+    readonly claudeSessionId: (
+      id: SessionId,
+    ) => Effect.Effect<Option.Option<ClaudeSessionId>, SqlError>
   }
 >()("@claude-hub/hub/Sessions") {
   static readonly layer = Layer.effect(
@@ -152,6 +156,15 @@ export class Sessions extends Context.Service<
         yield* sql`UPDATE sessions SET claude_session_id = ${claudeSessionId} WHERE id = ${id}`
       })
 
+      const claudeSessionId = Effect.fn("Sessions.claudeSessionId")(function* (id: SessionId) {
+        const rows = yield* sql<{ readonly claudeSessionId: string | null }>`
+          SELECT claude_session_id AS claudeSessionId FROM sessions WHERE id = ${id}
+        `
+        return Option.map(Option.fromNullishOr(rows[0]?.claudeSessionId), (value) =>
+          ClaudeSessionId.make(value),
+        )
+      })
+
       return Sessions.of({
         create,
         get,
@@ -160,6 +173,7 @@ export class Sessions extends Context.Service<
         setState,
         setCurrentTurn,
         setClaudeSessionId,
+        claudeSessionId,
       })
     }),
   )

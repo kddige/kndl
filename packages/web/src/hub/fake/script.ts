@@ -108,7 +108,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
             text: "Added a **Run** row to the README: `VITE_FAKE_HUB=1 bun run web`.",
           },
         ]),
-        { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 30 minutes." },
+        { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 15m" },
       ],
     },
     {
@@ -129,7 +129,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         ...turn("t-seed-3", you, "Make the zsh prompt show the git branch", [
           { _tag: "TextDelta", text: "Done: the prompt now ends with the branch in brackets." },
         ]),
-        { _tag: "SessionStateChanged", state: "Frozen", message: "Runner ci-box went offline." },
+        { _tag: "SessionStateChanged", state: "Frozen", message: "ci-box went offline" },
       ],
     },
   ]
