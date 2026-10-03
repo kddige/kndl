@@ -17,8 +17,8 @@ The Claude account signed in on a Runner. Every Session on that Runner uses it, 
 _Avoid_: owner's subscription, credentials
 
 **Sandbox**:
-The isolated, disposable virtual machine in which all of a Session's file and command work happens.
-_Avoid_: container, VM, environment
+The isolated, disposable virtual machine in which all of a Session's file and command work happens. It is booted from a Build of its Repo's Environment.
+_Avoid_: container, VM
 
 **Preview**:
 A port served from inside a Sandbox, made reachable in the browser for Participants.
@@ -66,9 +66,43 @@ _Avoid_: backup, stash, snapshot
 A GitHub repository the platform is installed on. Access to a Repo decides who can see and join its Sessions.
 _Avoid_: project, codebase
 
-**Repo secret**:
-A named secret value scoped to a Repo and given to every Session of that Repo.
-_Avoid_: env var, credential, key
+## Environments
+
+**Environment**:
+The recipe a Repo's Sandboxes are built from: an image, a Bootstrap script, an optional Start script, Docker on or off, CPU and memory, dependency folders and Variables. Each Repo has exactly one.
+_Avoid_: image, template, config, devcontainer
+
+**Environment version**:
+One applied state of an Environment, recording who applied it and when. A Session runs on one version and moves to a newer one when it wakes or restarts.
+_Avoid_: revision, release
+
+**Build**:
+An Environment version made ready on one Runner: the image after the Bootstrap script ran, which Sandboxes boot from. Each Runner builds a version the first time it needs it.
+_Avoid_: image, snapshot, template
+
+**Test build**:
+A Build of an unapplied Environment change on a chosen Runner, which also runs the Start script against a fresh clone. A change that affects the Build can only be applied once its Test build passes.
+_Avoid_: dry run, preview build
+
+**Bootstrap script**:
+The Environment's script that installs tools into a Build, with no Workspace present.
+_Avoid_: setup script, install script, Dockerfile
+
+**Start script**:
+The Environment's optional script that runs in each new Sandbox with the Workspace present.
+_Avoid_: init script, entrypoint, setup script
+
+**Variable**:
+A named value an Environment passes to the processes in its Sandboxes. It is Plain, or Sensitive: write-only once saved, encrypted on the Hub and redacted from everything it stores or shows.
+_Avoid_: Repo secret, secret, env var, credential
+
+**Shared variable**:
+A Hub-wide Variable that Environments can use through a Link.
+_Avoid_: global secret, org secret
+
+**Link**:
+A Shared variable placed into one Environment under a name chosen there.
+_Avoid_: reference, import, binding
 
 ## Session lifecycle
 
