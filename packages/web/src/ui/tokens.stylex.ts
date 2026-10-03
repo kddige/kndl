@@ -401,10 +401,14 @@ export const motion = stylex.defineVars({
   enterDistance: { default: "4px", [REDUCED_MOTION]: "0px" },
 })
 
-/** Stacking order for the portaled layers. */
+/**
+ * Stacking order for the portaled layers. Popovers (menus, selects, popovers) sit above dialogs:
+ * a popover is anchored to something already on screen, often inside a dialog, so it must never
+ * open underneath it.
+ */
 export const layer = stylex.defineVars({
-  popover: "50",
   dialog: "100",
+  popover: "150",
   toast: "200",
   tooltip: "300",
 })
