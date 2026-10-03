@@ -682,7 +682,7 @@ export function KitPage() {
             The conversation, Turn by Turn.
           </TabPanel>
           <TabPanel value="terminal" sx={styles.panel}>
-            A read-only mirror of the Sandbox terminal.
+            Claude Code's terminal, live, to watch and type into.
           </TabPanel>
           <TabPanel value="previews" sx={styles.panel}>
             Ports served from the Sandbox.

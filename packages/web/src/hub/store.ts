@@ -1,5 +1,7 @@
 // What the web UI knows about the Hub, built only from what the Hub sends: the Runners, the
-// Sessions, and for each joined Session its event log, presence and Prompt queue.
+// Sessions, for each joined Session its event log, presence and Prompt queue, and for each open
+// terminal whether it is live and its size. The terminal's output itself goes straight to the
+// view that draws it (HubClient.openTerminal), not through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
 // events, and React reads the result.
@@ -13,6 +15,8 @@ import type {
   SessionId,
   SessionLogEntry,
   SessionSummary,
+  TerminalFrame,
+  TerminalSize,
 } from "@claude-hub/protocol"
 import type { SignInOptions } from "./config.ts"
 
@@ -39,6 +43,18 @@ export interface JoinedSession {
   readonly queue: ReadonlyArray<QueuedPrompt>
 }
 
+/**
+ * A terminal the client has open. It is `waiting` until a Snapshot arrives, after opening and
+ * after every reconnect, and drops Output until then: Output only makes sense on top of the
+ * screen it follows, so starting from the Snapshot is what keeps a reconnect from showing
+ * anything twice.
+ */
+export interface OpenTerminal {
+  readonly status: "waiting" | "live"
+  /** The terminal's size, from its last frame; null before the first. */
+  readonly size: TerminalSize | null
+}
+
 export interface HubState {
   readonly connection: Connection
   /** The signed-in person, from the welcome. */
@@ -48,6 +64,7 @@ export interface HubState {
   /** Null until the first SessionList. */
   readonly sessions: ReadonlyArray<SessionSummary> | null
   readonly joined: Readonly<Record<SessionId, JoinedSession>>
+  readonly terminals: Readonly<Record<SessionId, OpenTerminal>>
 }
 
 /** Events the client adds to the Hub's messages. */
@@ -57,6 +74,9 @@ export type ClientEvent =
   | { readonly _tag: "Joined"; readonly sessionId: SessionId }
   /** The client sent LeaveSession: forget the Session's log, presence and queue. */
   | { readonly _tag: "Left"; readonly sessionId: SessionId }
+  /** The client sent OpenTerminal, first or again after reconnecting: wait for a Snapshot. */
+  | { readonly _tag: "TerminalOpened"; readonly sessionId: SessionId }
+  | { readonly _tag: "TerminalClosed"; readonly sessionId: SessionId }
 
 export type HubAction = HubToWeb | ClientEvent
 
@@ -66,6 +86,7 @@ export const initialState: HubState = {
   runners: null,
   sessions: null,
   joined: {},
+  terminals: {},
 }
 
 const emptyJoined: JoinedSession = { historyLoaded: false, log: [], presence: [], queue: [] }
@@ -73,7 +94,13 @@ const emptyJoined: JoinedSession = { historyLoaded: false, log: [], presence: []
 export function reduce(state: HubState, action: HubAction): HubState {
   switch (action._tag) {
     case "ConnectionChanged":
-      return { ...state, connection: action.connection }
+      // Frames sent while the connection was down are lost: every terminal waits for a Snapshot.
+      return {
+        ...state,
+        connection: action.connection,
+        terminals:
+          action.connection.status === "online" ? state.terminals : waitAll(state.terminals),
+      }
     case "Joined":
       if (state.joined[action.sessionId]) return state
       return { ...state, joined: { ...state.joined, [action.sessionId]: emptyJoined } }
@@ -121,11 +148,53 @@ export function reduce(state: HubState, action: HubAction): HubState {
         ...session,
         queue: action.queue,
       }))
-    case "TerminalFrame":
+    case "TerminalOpened": {
+      const size = state.terminals[action.sessionId]?.size ?? null
+      return {
+        ...state,
+        terminals: { ...state.terminals, [action.sessionId]: { status: "waiting", size } },
+      }
+    }
+    case "TerminalClosed": {
+      if (!state.terminals[action.sessionId]) return state
+      const { [action.sessionId]: _, ...terminals } = state.terminals
+      return { ...state, terminals }
+    }
+    case "TerminalFrame": {
+      const terminal = state.terminals[action.sessionId]
+      if (!terminal || !acceptsFrame(terminal, action)) return state
+      if (terminal.status === "live" && sameSize(terminal.size, action.size)) return state
+      return {
+        ...state,
+        terminals: {
+          ...state.terminals,
+          [action.sessionId]: { status: "live", size: action.size },
+        },
+      }
+    }
     case "CommandFailed":
-      // The terminal is another view's (issue #17); refusals are the client's to report.
+      // Refusals are the client's to report.
       return state
   }
+}
+
+/** Whether an open terminal draws a frame: a Snapshot always, Output only once live. */
+export function acceptsFrame(terminal: OpenTerminal, frame: TerminalFrame): boolean {
+  return frame.kind === "Snapshot" || terminal.status === "live"
+}
+
+function sameSize(a: TerminalSize | null, b: TerminalSize): boolean {
+  return a !== null && a.cols === b.cols && a.rows === b.rows
+}
+
+function waitAll(
+  terminals: Readonly<Record<SessionId, OpenTerminal>>,
+): Readonly<Record<SessionId, OpenTerminal>> {
+  const entries = Object.entries(terminals) as Array<[SessionId, OpenTerminal]>
+  if (entries.every(([, terminal]) => terminal.status === "waiting")) return terminals
+  return Object.fromEntries(
+    entries.map(([id, terminal]) => [id, { ...terminal, status: "waiting" as const }]),
+  ) as Record<SessionId, OpenTerminal>
 }
 
 function upsert(

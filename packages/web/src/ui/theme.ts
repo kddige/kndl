@@ -3,10 +3,12 @@ import {
   color,
   darkColorTheme,
   darkShadowTheme,
+  darkTerminalTheme,
   font,
   leading,
   lightColorTheme,
   lightShadowTheme,
+  lightTerminalTheme,
   text,
 } from "./tokens.stylex.ts"
 
@@ -18,8 +20,8 @@ export type ThemeMode = "system" | "light" | "dark"
  * Popups portal to <body>, so they follow the page's theme, not the subtree's.
  */
 export const themes = {
-  light: [lightColorTheme, lightShadowTheme],
-  dark: [darkColorTheme, darkShadowTheme],
+  light: [lightColorTheme, lightShadowTheme, lightTerminalTheme],
+  dark: [darkColorTheme, darkShadowTheme, darkTerminalTheme],
 } as const
 
 const styles = stylex.create({

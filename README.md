@@ -184,6 +184,14 @@ A Session is Active, Asleep, Frozen or Archived (see [GLOSSARY.md](GLOSSARY.md))
 - **A failed start.** If Claude Code can't start, whether for a new Session or a wake, the Session is Asleep, with the Runner's reason in its history as the `SessionStateChanged` message. Its queued prompts stay queued and nothing retries on its own: the next prompt or **Wake now** tries again. A Claude Code that exits on its own leaves the Session Asleep too.
 - **Frozen.** While its Runner is offline a Session is Frozen. Prompts sent to it wait in its queue. When the Runner is back, the Session is Active if its Claude Code is still running in tmux, and otherwise Asleep, and woken at once if prompts are waiting.
 
+### The terminal mirror
+
+The Session view's **Terminal** tab shows the Session's Claude Code terminal, live, in [xterm.js](https://xtermjs.org). Everyone watching sees the same screen and can type into it. It is the escape hatch for anything the chat doesn't handle: answering Claude Code's dialogs, Esc, Ctrl-C, arrow keys.
+
+- **Frames.** Opening the tab sends `OpenTerminal`. The Hub asks the Runner for a `Snapshot` of the tmux pane, which is the whole screen with its colours and cursor, and then relays the pane's `Output` to everyone watching. The web client draws `Output` only after a `Snapshot`, and each `Snapshot` redraws from scratch, so nothing is drawn twice. After a dropped socket or a Hub restart the client opens the terminal again and waits for a fresh `Snapshot`. A Runner that reconnects sends one too.
+- **Size.** A terminal has one size, the tmux pane's. Whoever last typed into it or pressed **Fit to my window** sets that size, fitted to their panel. While the size is still theirs, resizing their window refits it. Everyone else draws the terminal at that size, scaled down when it is bigger than their panel. After every resize the Runner sends everyone a new `Snapshot`, because tmux re-wraps its screen in its own way, which a viewer resizing locally wouldn't match. A resize to the current size does nothing.
+- **Who can type.** The Hub relays `TerminalInput` and `TerminalResize` only from a connection that has opened that Session's terminal, and only while the Session is Active. A Session that is Asleep, Frozen or Archived has no running terminal, so keystrokes are refused, and the tab says why. Otherwise typing follows the same rule as sending a prompt: whoever can see the Session can type into it, and today that is every signed-in Participant. Output is only ever written to xterm, which draws it as text, never as HTML.
+
 ### Git from Sessions
 
 Claude commits, pushes and opens pull requests with host tools, never from the Sandbox ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)). The `hub-link` mod registers four tools, which Claude sees as `mcp__hub-link__<name>` and which run without a permission prompt:

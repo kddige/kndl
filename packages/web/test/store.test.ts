@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId, TerminalFrame } from "@claude-hub/protocol"
 import {
+  acceptsFrame,
   appendEntries,
   findSession,
   type HubAction,
@@ -266,20 +267,69 @@ describe("presence and the Prompt queue", () => {
   })
 })
 
-test("terminal frames and refused commands leave the state alone", () => {
+function frame(kind: "Snapshot" | "Output", cols = 80, sessionId = "s-1") {
+  return hub({ _tag: "TerminalFrame", sessionId, kind, data: "x", size: { cols, rows: 24 } })
+}
+
+describe("terminals", () => {
+  const opened: HubAction = { _tag: "TerminalOpened", sessionId: s1 }
+
+  test("an opened terminal waits for a Snapshot, then is live at its size", () => {
+    expect(run(opened).terminals[s1]).toEqual({ status: "waiting", size: null })
+    expect(run(opened, frame("Snapshot")).terminals[s1]).toEqual({
+      status: "live",
+      size: { cols: 80, rows: 24 },
+    })
+  })
+
+  test("Output before the Snapshot is dropped, and acceptsFrame says so", () => {
+    const waiting = run(opened)
+    expect(reduce(waiting, frame("Output"))).toBe(waiting)
+    const terminal = waiting.terminals[s1]
+    if (!terminal) throw new Error("not open")
+    expect(acceptsFrame(terminal, frame("Output") as TerminalFrame)).toBe(false)
+    expect(acceptsFrame(terminal, frame("Snapshot") as TerminalFrame)).toBe(true)
+  })
+
+  test("Output at the same size changes nothing; a new size is kept", () => {
+    const live = run(opened, frame("Snapshot"))
+    expect(reduce(live, frame("Output"))).toBe(live)
+    expect(reduce(live, frame("Output", 100)).terminals[s1]?.size).toEqual({ cols: 100, rows: 24 })
+  })
+
+  test("frames for a terminal not open are dropped", () => {
+    const state = run(listed, joined)
+    expect(reduce(state, frame("Snapshot"))).toBe(state)
+    expect(reduce(state, frame("Output"))).toBe(state)
+  })
+
+  test("losing the connection sends every terminal back to waiting, keeping its size", () => {
+    const state = run(opened, { _tag: "TerminalOpened", sessionId: s2 }, frame("Snapshot"), {
+      _tag: "ConnectionChanged",
+      connection: { status: "reconnecting", attempt: 1 },
+    })
+    expect(state.terminals).toEqual({
+      [s1]: { status: "waiting", size: { cols: 80, rows: 24 } },
+      [s2]: { status: "waiting", size: null },
+    })
+    // So the Output of the old connection is dropped, until the new Snapshot.
+    expect(reduce(state, frame("Output"))).toBe(state)
+    expect(reduce(state, frame("Snapshot", 90)).terminals[s1]?.status).toBe("live")
+  })
+
+  test("opening again waits for a new Snapshot; closing forgets the terminal", () => {
+    const live = run(opened, frame("Snapshot"))
+    expect(reduce(live, opened).terminals[s1]).toEqual({
+      status: "waiting",
+      size: { cols: 80, rows: 24 },
+    })
+    expect(reduce(live, { _tag: "TerminalClosed", sessionId: s1 }).terminals).toEqual({})
+    expect(reduce(live, { _tag: "TerminalClosed", sessionId: s2 })).toBe(live)
+  })
+})
+
+test("refused commands leave the state alone", () => {
   const state = run(listed, joined)
-  expect(
-    reduce(
-      state,
-      hub({
-        _tag: "TerminalFrame",
-        sessionId: "s-1",
-        kind: "Output",
-        data: "x",
-        size: { cols: 80, rows: 24 },
-      }),
-    ),
-  ).toBe(state)
   expect(reduce(state, hub({ _tag: "CommandFailed", command: "SendPrompt", message: "no" }))).toBe(
     state,
   )

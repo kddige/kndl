@@ -178,3 +178,54 @@ test("a Frozen Session takes prompts, which wait in its queue", async () => {
   )
   expect(page.textContent).not.toContain("The Hub refused that")
 })
+
+test("the Terminal tab mirrors the Session's terminal, and takes keystrokes", async () => {
+  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+  const client = new HubClient(hub, { retryDelay: () => 1 })
+  const router = createAppRouter(
+    createMemoryHistory({ initialEntries: [`/sessions/${demoSessionId}`] }),
+  )
+  const view = await render(
+    <HubProvider client={client}>
+      <RouterProvider router={router} />
+    </HubProvider>,
+  )
+  let mounted = true
+  cleanup = async () => {
+    if (mounted) await view.unmount()
+    client.stop()
+    hub.dispose()
+  }
+  const page = view.container
+  const screen = () => page.querySelector(".xterm-rows")?.textContent ?? ""
+  const terminalTab = () =>
+    [...page.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "Terminal")
+
+  // The terminal opens only once its tab is shown, and the URL says so.
+  await eventually(() => expect(terminalTab() === undefined).toBe(false))
+  expect(hub.received.map((message) => message._tag)).not.toContain("OpenTerminal")
+  await step(() => (terminalTab() as HTMLElement).click())
+  await eventually(() => expect(router.state.location.search).toEqual({ tab: "terminal" }))
+  await eventually(() => expect(screen()).toContain("Do you want to proceed?"))
+  expect(page.querySelector('[aria-label="Terminal size"]')?.textContent).toBe("120×40")
+
+  // Keys typed into xterm reach the Session: Esc dismisses Claude Code's dialog.
+  const input = page.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
+  if (!input) throw new Error("no xterm input")
+  await step(() =>
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }),
+    ),
+  )
+  await eventually(() => expect(screen()).toContain("User rejected the command"))
+  expect<unknown>(hub.received).toContainEqual({
+    _tag: "TerminalInput",
+    sessionId: demoSessionId,
+    data: "\x1b",
+  })
+
+  // Leaving the view closes the terminal.
+  await view.unmount()
+  mounted = false
+  await eventually(() => expect(hub.received.at(-1)?._tag).toBe("CloseTerminal"))
+})
