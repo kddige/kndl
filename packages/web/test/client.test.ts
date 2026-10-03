@@ -50,10 +50,13 @@ describe("connecting", () => {
     expect(client.getState().connection).toEqual({ status: "connecting", attempt: 0 })
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
     expect(hub.received[0]).toEqual({ _tag: "WebHello", protocolVersion: ProtocolVersion })
-    const state = client.getState()
-    expect(state.you?.login).toBe("alice")
-    expect(state.runners?.map((runner) => runner.name)).toEqual(["studio", "ci-box"])
-    expect(state.sessions?.map((session) => session.id)).toContain(demo)
+    expect(client.getState().you?.login).toBe("alice")
+    // The Runners and Sessions come after the welcome, each list a message of its own.
+    await eventually(() => {
+      const state = client.getState()
+      expect(state.runners?.map((runner) => runner.name)).toEqual(["studio", "ci-box"])
+      expect(state.sessions?.map((session) => session.id)).toContain(demo)
+    })
   })
 
   test("signed out: shows the sign-in options the Hub offers, then connects after dev login", async () => {
@@ -191,8 +194,11 @@ describe("a joined Session", () => {
       expect(started?.event).toMatchObject({ text: "[Alice Kim] Rename the store" })
       expect(log.at(-1)?.event._tag).toBe("TurnEnded")
     })
-    const session = client.getState().sessions?.find((candidate) => candidate.id === demo)
-    expect(session?.currentTurn).toBeNull()
+    // Idle comes in the SessionUpdated after the TurnEnded, a message of its own.
+    await eventually(() => {
+      const session = client.getState().sessions?.find((candidate) => candidate.id === demo)
+      expect(session?.currentTurn).toBeNull()
+    })
   })
 
   test("a prompt sent while a Turn runs waits in the queue, and can be cancelled", async () => {
@@ -542,17 +548,19 @@ describe("archiving", () => {
     client.join(readme)
     await eventually(() => expect(client.getState().joined[readme]?.historyLoaded).toBe(true))
 
+    // The state moves with the logged SessionStateChanged; who archived it, and when, come in the
+    // SessionUpdated that follows it as a message of its own. So wait for those, not the state.
     expect(client.archiveSession(readme)).toBe(true)
-    await eventually(() => expect(find(client, readme)?.state).toBe("Archived"))
+    await eventually(() => expect(find(client, readme)?.archived?.by.login).toBe("alice"))
+    expect(find(client, readme)?.state).toBe("Archived")
     const archived = find(client, readme)?.archived
-    expect(archived?.by.login).toBe("alice")
     expect(archived && archived.purgeAt - archived.at).toBe(30 * 24 * 3_600_000)
     const log = () => client.getState().joined[readme]?.log.map((entry) => entry.event) ?? []
     expect(log().at(-1)).toMatchObject({ _tag: "SessionStateChanged", state: "Archived" })
 
     expect(client.restoreSession(readme)).toBe(true)
-    await eventually(() => expect(find(client, readme)?.state).toBe("Asleep"))
-    expect(find(client, readme)?.archived).toBeUndefined()
+    await eventually(() => expect(find(client, readme)?.archived).toBeUndefined())
+    expect(find(client, readme)?.state).toBe("Asleep")
     expect(log().at(-1)).toMatchObject({
       _tag: "SessionStateChanged",
       state: "Asleep",
