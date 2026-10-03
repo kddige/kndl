@@ -35,6 +35,7 @@ export interface Pane {
   readonly events: Stream.Stream<PaneEvent>
   /** Types `data` into the terminal, byte for byte. */
   readonly input: (data: string) => Effect.Effect<void>
+  /** Resizes the terminal, then sends a `Snapshot` at the new size. A no-op at the same size. */
   readonly resize: (size: TerminalSize) => Effect.Effect<void>
   /** Asks for a `Snapshot` event, which arrives in order with the output. */
   readonly snapshot: Effect.Effect<void>
@@ -190,10 +191,15 @@ class ControlPane {
   private readonly parser = new ControlModeParser()
   private readonly decoder = new TextDecoder()
 
+  /** The size last asked for, which tmux may not have applied yet. */
+  private target: TerminalSize
+
   constructor(
     private readonly commands: Queue.Queue<string>,
     private size: TerminalSize,
-  ) {}
+  ) {
+    this.target = size
+  }
 
   /** Sends a command; `handler` gets its reply, in the order the commands were sent. */
   issue(command: string, handler: ReplyHandler = () => undefined): Effect.Effect<void> {
@@ -224,10 +230,16 @@ class ControlPane {
         return Effect.forEach(commands, (command) => this.issue(command), { discard: true })
       })
 
+    // After a resize every viewer redraws from a snapshot: tmux crops and wraps its screen its
+    // own way, which a viewer's terminal resizing itself would not match.
     const resize = (size: TerminalSize) =>
-      this.issue(`resize-window -x ${size.cols} -y ${size.rows}`)
+      Effect.suspend(() => {
+        if (size.cols === this.target.cols && size.rows === this.target.rows) return Effect.void
+        this.target = size
+        return Effect.andThen(this.issue(`resize-window -x ${size.cols} -y ${size.rows}`), snapshot)
+      })
 
-    const snapshot = Effect.suspend(() => {
+    const snapshot: Effect.Effect<void> = Effect.suspend(() => {
       let cursor: CursorState | undefined
       return Effect.andThen(
         this.issue(`display-message -p '${cursorStateFormat}'`, (reply) => {
@@ -269,6 +281,7 @@ class ControlPane {
       }
       case "LayoutChange":
         this.size = event.size
+        this.target = event.size
         return []
       case "SubscriptionChanged": {
         if (event.name !== ExitSubscription) return []

@@ -1,6 +1,7 @@
 // The web channel's client: opens the socket, says hello, decodes what the Hub sends into the
 // store, and reconnects. On reconnect it joins each joined Session again with `afterSeq`, so the
-// Hub sends only the entries it missed.
+// Hub sends only the entries it missed, and opens each open terminal again, which redraws it from
+// a fresh Snapshot.
 
 import {
   checkHandshake,
@@ -12,10 +13,19 @@ import {
   type PromptId,
   type SessionId,
   type SessionSummary,
+  type TerminalFrame,
+  type TerminalSize,
   WebToHub,
 } from "@claude-hub/protocol"
 import { Schema } from "effect"
-import { type HubAction, type HubState, initialState, lastSeq, reduce } from "./store.ts"
+import {
+  acceptsFrame,
+  type HubAction,
+  type HubState,
+  initialState,
+  lastSeq,
+  reduce,
+} from "./store.ts"
 import type { HubSocket, HubTransport } from "./transport.ts"
 
 export interface HubClientOptions {
@@ -43,6 +53,9 @@ function defaultRetryDelay(attempt: number): number {
 const decodeHubToWeb = Schema.decodeUnknownSync(HubToWeb)
 const encodeWebToHub = Schema.encodeSync(WebToHub)
 
+/** Draws a terminal's frames: a Snapshot resets it and draws the screen; Output writes on. */
+export type TerminalWriter = (frame: TerminalFrame) => void
+
 interface PendingRequest {
   resolve(session: SessionSummary): void
   reject(error: CommandError): void
@@ -55,6 +68,7 @@ export class HubClient {
   readonly #failureListeners = new Set<(failure: CommandFailed) => void>()
   readonly #retryDelay: (attempt: number) => number
   readonly #requests = new Map<string, PendingRequest>()
+  readonly #terminals = new Map<SessionId, Set<TerminalWriter>>()
   #socket: HubSocket | null = null
   /** Whether the current socket was welcomed. */
   #welcomed = false
@@ -116,6 +130,40 @@ export class HubClient {
     if (!this.#state.joined[sessionId]) return
     this.#dispatch({ _tag: "Left", sessionId })
     if (this.#welcomed) this.#send({ _tag: "LeaveSession", sessionId })
+  }
+
+  /**
+   * Shows a Session's terminal: `write` gets its frames, starting with a Snapshot, now and again
+   * after every reconnect, and never Output that doesn't follow the screen it was given. Returns
+   * the close.
+   */
+  openTerminal(sessionId: SessionId, write: TerminalWriter): () => void {
+    let writers = this.#terminals.get(sessionId)
+    if (!writers) {
+      writers = new Set()
+      this.#terminals.set(sessionId, writers)
+    }
+    writers.add(write)
+    // Even when it's already open: the new view needs a screen to start from.
+    this.#sendOpenTerminal(sessionId)
+    return () => {
+      const open = this.#terminals.get(sessionId)
+      if (!open?.delete(write) || open.size > 0) return
+      this.#terminals.delete(sessionId)
+      this.#dispatch({ _tag: "TerminalClosed", sessionId })
+      this.#send({ _tag: "CloseTerminal", sessionId })
+    }
+  }
+
+  /** Types into a Session's terminal, as the terminal sends keystrokes. */
+  sendTerminalInput(sessionId: SessionId, data: string): boolean {
+    if (data === "") return false
+    return this.#send({ _tag: "TerminalInput", sessionId, data })
+  }
+
+  /** Resizes a Session's terminal for everyone watching it. */
+  resizeTerminal(sessionId: SessionId, size: TerminalSize): boolean {
+    return this.#send({ _tag: "TerminalResize", sessionId, size })
   }
 
   /** Queues a prompt. False if it couldn't be sent because the Hub isn't connected. */
@@ -213,6 +261,10 @@ export class HubClient {
       console.warn("Ignored a message from the Hub that didn't decode", error)
       return
     }
+    if (message._tag === "TerminalFrame") {
+      this.#receiveFrame(message)
+      return
+    }
     this.#dispatch(message)
     switch (message._tag) {
       case "WebWelcome":
@@ -220,6 +272,7 @@ export class HubClient {
         for (const sessionId of Object.keys(this.#state.joined) as Array<SessionId>) {
           this.#sendJoin(sessionId)
         }
+        for (const sessionId of this.#terminals.keys()) this.#sendOpenTerminal(sessionId)
         break
       case "HandshakeRejected":
         this.#reject(socket, message.message)
@@ -284,6 +337,20 @@ export class HubClient {
     this.#dispatch({ _tag: "ConnectionChanged", connection: { status: "reconnecting", attempt } })
     clearTimeout(this.#retryTimer)
     this.#retryTimer = setTimeout(() => this.#connect(attempt), this.#retryDelay(attempt))
+  }
+
+  #receiveFrame(frame: TerminalFrame): void {
+    const terminal = this.#state.terminals[frame.sessionId]
+    const writers = this.#terminals.get(frame.sessionId)
+    if (!terminal || !writers || !acceptsFrame(terminal, frame)) return
+    this.#dispatch(frame)
+    for (const write of writers) write(frame)
+  }
+
+  /** Asks for the terminal's frames, from a Snapshot on: anything until then would be partial. */
+  #sendOpenTerminal(sessionId: SessionId): void {
+    this.#dispatch({ _tag: "TerminalOpened", sessionId })
+    this.#send({ _tag: "OpenTerminal", sessionId })
   }
 
   #sendJoin(sessionId: SessionId): void {

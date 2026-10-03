@@ -422,17 +422,6 @@ export class SessionRelay extends Context.Service<
           return session
         })
 
-        /** The online Runner a Session runs on, or none, having refused the command. */
-        const runnerFor = Effect.fn(function* (message: WebToHub & { sessionId: SessionId }) {
-          const session = yield* sessionFor(message)
-          if (Option.isNone(session)) return Option.none<OnlineRunner>()
-          const runner = Option.fromNullishOr(onlineRunners.get(session.value.runnerId))
-          if (Option.isNone(runner)) {
-            refuse(message, "The Session's Runner is offline.", { sessionId: message.sessionId })
-          }
-          return runner
-        })
-
         const handle = Effect.fn("SessionRelay.receiveWeb")(function* (message: WebToHub) {
           switch (message._tag) {
             case "WebHello":
@@ -617,10 +606,16 @@ export class SessionRelay extends Context.Service<
             }
 
             case "OpenTerminal": {
-              const runner = yield* runnerFor(message)
-              if (Option.isNone(runner)) return
+              // Watching needs no running terminal: frames come once there is one, starting
+              // with the snapshot the Runner sends when it attaches to a started Session, or
+              // re-attaches after it reconnects.
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
               client.terminals.add(message.sessionId)
-              runner.value.peer.send(RequestTerminalSnapshot.make({ sessionId: message.sessionId }))
+              const runner = onlineRunners.get(session.value.runnerId)
+              if (session.value.state === "Active" && runner !== undefined) {
+                runner.peer.send(RequestTerminalSnapshot.make({ sessionId: message.sessionId }))
+              }
               return
             }
 
@@ -630,8 +625,22 @@ export class SessionRelay extends Context.Service<
 
             case "TerminalInput":
             case "TerminalResize": {
-              const runner = yield* runnerFor(message)
-              if (Option.isSome(runner)) runner.value.peer.send(message)
+              // Keystrokes reach only a running Claude Code, from someone watching its terminal.
+              const { sessionId } = message
+              if (!client.terminals.has(sessionId)) {
+                return refuse(message, "Open the Session's terminal first.", { sessionId })
+              }
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              const runner = onlineRunners.get(session.value.runnerId)
+              if (session.value.state !== "Active" || runner === undefined) {
+                return refuse(
+                  message,
+                  `The Session is ${session.value.state}: its terminal isn't running.`,
+                  { sessionId },
+                )
+              }
+              runner.peer.send(message)
               return
             }
           }

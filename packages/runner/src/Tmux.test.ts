@@ -71,7 +71,24 @@ describe.skipIf(Bun.which("tmux") === null)("TmuxLive", () => {
       expect(snapshot).toMatchObject({ size: { cols: 60, rows: 10 } })
       expect(snapshot?._tag === "Snapshot" && snapshot.data).toContain("ready hello [][e;]")
 
+      // A resize redraws every viewer from a snapshot at the new size; the same size again is
+      // a no-op.
       yield* pane.resize({ cols: 70, rows: 12 })
+      yield* pane.resize({ cols: 70, rows: 12 })
+      yield* waitFor(
+        Effect.sync(() =>
+          events.some((event) => event._tag === "Snapshot" && event.size.cols === 70),
+        ),
+      )
+      yield* Effect.sleep("100 millis")
+      expect(events.filter((event) => event._tag === "Snapshot" && event.size.cols === 70)).toEqual(
+        [
+          expect.objectContaining({
+            size: { cols: 70, rows: 12 },
+            data: expect.stringContaining("ready"),
+          }),
+        ],
+      )
       yield* pane.input("hé\r")
       yield* waitFor(Effect.sync(() => output(events).includes("got:hé")))
       expect(events.at(-1)).toMatchObject({ _tag: "Output", size: { cols: 70, rows: 12 } })

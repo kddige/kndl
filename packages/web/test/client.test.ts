@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { type CommandFailed, ProtocolVersion, RunnerId, SessionId } from "@claude-hub/protocol"
+import {
+  type CommandFailed,
+  ProtocolVersion,
+  RunnerId,
+  SessionId,
+  type TerminalFrame,
+} from "@claude-hub/protocol"
 import { HubClient } from "../src/hub/client.ts"
 import { FakeHub } from "../src/hub/fake/FakeHub.ts"
 import { demoSessionId } from "../src/hub/fake/script.ts"
 import type { HubTransport, SocketHandlers } from "../src/hub/transport.ts"
+import { alice } from "./fixtures.ts"
 
 const demo = SessionId.make(demoSessionId)
 const cleanups: Array<() => void> = []
@@ -363,5 +370,159 @@ describe("commands", () => {
     expect(events.findLast((event) => event._tag === "SessionStateChanged")).toMatchObject({
       state: "Active",
     })
+  })
+})
+
+describe("the terminal", () => {
+  type Frame = TerminalFrame
+  const kinds = (frames: ReadonlyArray<Frame>) => frames.map((frame) => frame.kind)
+
+  test("opening it draws a Snapshot, and typing comes back as Output", async () => {
+    const { hub, client } = setUp({ autoplay: false })
+    const frames: Array<Frame> = []
+    client.start()
+    client.openTerminal(demo, (frame) => frames.push(frame))
+    await eventually(() => expect(kinds(frames)).toEqual(["Snapshot"]))
+    expect(frames[0]?.size).toEqual({ cols: 120, rows: 40 })
+    expect(frames[0]?.data).toContain("Do you want to proceed?")
+    expect(client.getState().terminals[demo]).toEqual({
+      status: "live",
+      size: { cols: 120, rows: 40 },
+    })
+    // Esc dismisses Claude Code's dialog.
+    expect(client.sendTerminalInput(demo, "\x1b")).toBe(true)
+    await eventually(() => expect(frames.at(-1)?.data).toContain("User rejected the command"))
+    expect(frames.at(-1)?.kind).toBe("Output")
+    expect(hub.received.filter((message) => message._tag.includes("Terminal"))).toEqual([
+      { _tag: "OpenTerminal", sessionId: demo },
+      { _tag: "TerminalInput", sessionId: demo, data: "\x1b" },
+    ])
+  })
+
+  test("a resize redraws everyone watching from a Snapshot at the new size", async () => {
+    const { hub, client } = setUp({ autoplay: false })
+    const other = new HubClient(hub, { retryDelay: () => 1 })
+    cleanups.push(() => other.stop())
+    const mine: Array<Frame> = []
+    const theirs: Array<Frame> = []
+    client.start()
+    other.start()
+    client.openTerminal(demo, (frame) => mine.push(frame))
+    other.openTerminal(demo, (frame) => theirs.push(frame))
+    await eventually(() => expect(kinds(theirs)).toEqual(["Snapshot"]))
+    await eventually(() => expect(kinds(mine)).toEqual(["Snapshot"]))
+    client.resizeTerminal(demo, { cols: 90, rows: 30 })
+    await eventually(() => expect(theirs.at(-1)?.size).toEqual({ cols: 90, rows: 30 }))
+    expect(theirs.at(-1)?.kind).toBe("Snapshot")
+    await eventually(() => expect(mine.at(-1)?.size).toEqual({ cols: 90, rows: 30 }))
+    expect(other.getState().terminals[demo]?.size).toEqual({ cols: 90, rows: 30 })
+  })
+
+  test("after a dropped connection it opens the terminal again and redraws from a new Snapshot", async () => {
+    const { hub, client } = setUp({ autoplay: false })
+    const frames: Array<Frame> = []
+    client.start()
+    client.openTerminal(demo, (frame) => frames.push(frame))
+    await eventually(() => expect(kinds(frames)).toEqual(["Snapshot"]))
+    hub.dropConnections()
+    await eventually(() => expect(client.getState().terminals[demo]?.status).toBe("waiting"))
+    await eventually(() => expect(kinds(frames)).toEqual(["Snapshot", "Snapshot"]))
+    expect(hub.received.filter((message) => message._tag === "OpenTerminal")).toHaveLength(2)
+    expect(client.getState().terminals[demo]?.status).toBe("live")
+    client.sendTerminalInput(demo, "1")
+    await eventually(() => expect(kinds(frames)).toContain("Output"))
+  })
+
+  test("Output that doesn't follow a Snapshot is never drawn", async () => {
+    const sent: Array<unknown> = []
+    let toClient: ((message: object) => void) | undefined
+    const transport: HubTransport = {
+      open(handlers) {
+        toClient = (message) => handlers.onMessage(JSON.stringify(message))
+        setTimeout(() => handlers.onOpen(), 0)
+        return {
+          send: (text) => {
+            const message = JSON.parse(text) as { _tag: string }
+            sent.push(message)
+            if (message._tag === "WebHello") {
+              toClient?.({ _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice })
+            }
+          },
+          close: () => setTimeout(() => handlers.onClose(), 0),
+        }
+      },
+      signInStatus: async () => ({ signedIn: true }),
+      devSignIn: async () => {},
+      signOut: async () => {},
+    }
+    const client = new HubClient(transport, { retryDelay: () => 1 })
+    cleanups.push(() => client.stop())
+    const frames: Array<Frame> = []
+    client.start()
+    const close = client.openTerminal(demo, (frame) => frames.push(frame))
+    await eventually(() => expect(sent.at(-1)).toEqual({ _tag: "OpenTerminal", sessionId: demo }))
+    const frame = (kind: string, data: string) => ({
+      _tag: "TerminalFrame",
+      sessionId: demo,
+      kind,
+      data,
+      size: { cols: 80, rows: 24 },
+    })
+    toClient?.(frame("Output", "before"))
+    toClient?.(frame("Snapshot", "screen"))
+    toClient?.(frame("Output", "after"))
+    toClient?.({ ...frame("Snapshot", "elsewhere"), sessionId: "s-other" })
+    expect(frames.map((f) => f.data)).toEqual(["screen", "after"])
+    close()
+    expect(sent.at(-1)).toEqual({ _tag: "CloseTerminal", sessionId: demo })
+    toClient?.(frame("Snapshot", "closed"))
+    expect(frames.map((f) => f.data)).toEqual(["screen", "after"])
+    expect(client.getState().terminals).toEqual({})
+  })
+
+  test("two views of one terminal both draw it; it stays open until both close", async () => {
+    const { hub, client } = setUp({ autoplay: false })
+    const first: Array<Frame> = []
+    const second: Array<Frame> = []
+    client.start()
+    const closeFirst = client.openTerminal(demo, (frame) => first.push(frame))
+    await eventually(() => expect(kinds(first)).toEqual(["Snapshot"]))
+    const closeSecond = client.openTerminal(demo, (frame) => second.push(frame))
+    await eventually(() => expect(kinds(second)).toEqual(["Snapshot"]))
+    closeFirst()
+    expect(hub.received.some((message) => message._tag === "CloseTerminal")).toBe(false)
+    client.sendTerminalInput(demo, "\x1b[B")
+    await eventually(() => expect(kinds(second)).toContain("Output"))
+    expect(kinds(first)).not.toContain("Output")
+    closeSecond()
+    await eventually(() =>
+      expect(hub.received.at(-1)).toEqual({ _tag: "CloseTerminal", sessionId: demo }),
+    )
+  })
+
+  test("an Asleep Session's terminal waits, refuses keystrokes, and draws once woken", async () => {
+    const { client } = setUp({ autoplay: false })
+    const readme = SessionId.make("s-readme")
+    const failures: Array<CommandFailed> = []
+    const frames: Array<Frame> = []
+    client.onCommandFailed((failure) => failures.push(failure))
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    client.openTerminal(readme, (frame) => frames.push(frame))
+    client.sendTerminalInput(readme, "x")
+    await eventually(() => expect(failures).toHaveLength(1))
+    expect(failures[0]).toMatchObject({ command: "TerminalInput", sessionId: readme })
+    expect(frames).toEqual([])
+    expect(client.getState().terminals[readme]?.status).toBe("waiting")
+    client.wakeSession(readme)
+    await eventually(() => expect(kinds(frames)).toEqual(["Snapshot"]))
+    expect(frames[0]?.data).toContain("Welcome to")
+  })
+
+  test("keystrokes and resizes while offline aren't sent", () => {
+    const { client } = setUp()
+    expect(client.sendTerminalInput(demo, "x")).toBe(false)
+    expect(client.sendTerminalInput(demo, "")).toBe(false)
+    expect(client.resizeTerminal(demo, { cols: 80, rows: 24 })).toBe(false)
   })
 })

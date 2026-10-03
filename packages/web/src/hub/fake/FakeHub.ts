@@ -1,7 +1,8 @@
 // An in-process stand-in for the Hub's web channel, until the real one (issues #7 and #8) is
 // done. It speaks the protocol over a fake socket, so the HubClient can't tell the difference,
 // and plays a scripted Session: streamed text, tool calls, a subagent, a second Participant
-// joining and queueing a prompt. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
+// joining and queueing a prompt, and a terminal to watch and type into. `VITE_FAKE_HUB=1` runs
+// the UI against it; tests use it too.
 //
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too.
@@ -20,6 +21,7 @@ import {
   seedSessions,
   you as defaultYou,
 } from "./script.ts"
+import { FakeTerminal } from "./terminal.ts"
 import type {
   HubMessage,
   LogEntryWire,
@@ -49,11 +51,15 @@ interface FakeSession {
   guests: Array<ParticipantWire>
   /** Cancels the running Turn's remaining steps. */
   stopTurn: (() => void) | null
+  /** Its Claude Code terminal, made when first opened. */
+  terminal: FakeTerminal | null
 }
 
 class FakeSocket implements HubSocket {
   welcomed = false
   readonly joined = new Set<string>()
+  /** The Sessions whose terminal this connection watches. */
+  readonly terminals = new Set<string>()
   closed = false
 
   constructor(
@@ -115,6 +121,7 @@ export class FakeHub implements HubTransport {
         queue: [],
         guests: [],
         stopTurn: null,
+        terminal: null,
       })
     }
   }
@@ -302,12 +309,37 @@ export class FakeHub implements HubTransport {
         }
         break
       }
-      case "OpenTerminal":
-      case "CloseTerminal":
-      case "TerminalInput":
-      case "TerminalResize":
-        // The terminal is issue #17's.
+      // The terminal, as the real Hub relays it: watching needs no running terminal, but
+      // keystrokes and resizes reach only an Active Session, from someone watching it.
+      case "OpenTerminal": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        socket.terminals.add(message.sessionId)
+        if (session.summary.state === "Active") this.#snapshot(session, [socket])
         break
+      }
+      case "CloseTerminal":
+        socket.terminals.delete(message.sessionId)
+        break
+      case "TerminalInput":
+      case "TerminalResize": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        if (!socket.terminals.has(message.sessionId)) {
+          this.#fail(socket, message._tag, "Open the Session's terminal first.", message.sessionId)
+          break
+        }
+        if (session.summary.state !== "Active") {
+          const reason = `The Session is ${session.summary.state}: its terminal isn't running.`
+          this.#fail(socket, message._tag, reason, message.sessionId)
+          break
+        }
+        const terminal = this.#terminal(session)
+        if (message._tag === "TerminalInput") terminal.type(message.data)
+        // Like the Runner, a resize redraws everyone from a snapshot at the new size.
+        else if (terminal.resize(message.size)) this.#snapshot(session)
+        break
+      }
     }
   }
 
@@ -350,7 +382,14 @@ export class FakeHub implements HubTransport {
       createdAt: Date.now(),
       currentTurn: null,
     }
-    this.sessions.set(id, { summary, log: [], queue: [], guests: [], stopTurn: null })
+    this.sessions.set(id, {
+      summary,
+      log: [],
+      queue: [],
+      guests: [],
+      stopTurn: null,
+      terminal: null,
+    })
     socket.deliver({ _tag: "SessionCreated", requestId, session: summary })
     for (const other of this.#sockets) {
       if (other !== socket && other.welcomed)
@@ -534,12 +573,63 @@ export class FakeHub implements HubTransport {
     schedule(1, () => end("Answered"))
   }
 
+  #terminal(session: FakeSession): FakeTerminal {
+    if (session.terminal) return session.terminal
+    const terminal = new FakeTerminal(
+      {
+        after: (steps, fn) => void this.#after(steps, fn),
+        changed: () => this.#terminalOutput(session),
+      },
+      {
+        cwd: `/workspace/${session.summary.repo.split("/").at(-1) ?? "repo"}`,
+        demo: session.summary.id === demoSessionId,
+      },
+    )
+    session.terminal = terminal
+    return terminal
+  }
+
+  /** Sends the whole screen to `sockets`, or to everyone watching. */
+  #snapshot(session: FakeSession, sockets = this.#watching(session)): void {
+    const terminal = this.#terminal(session)
+    for (const socket of sockets) {
+      socket.deliver({
+        _tag: "TerminalFrame",
+        sessionId: session.summary.id,
+        kind: "Snapshot",
+        data: terminal.snapshot(),
+        size: terminal.size,
+      })
+    }
+  }
+
+  #terminalOutput(session: FakeSession): void {
+    if (session.summary.state !== "Active") return
+    const terminal = this.#terminal(session)
+    for (const socket of this.#watching(session)) {
+      socket.deliver({
+        _tag: "TerminalFrame",
+        sessionId: session.summary.id,
+        kind: "Output",
+        data: terminal.redraw(),
+        size: terminal.size,
+      })
+    }
+  }
+
+  #watching(session: FakeSession): Array<FakeSocket> {
+    return [...this.#sockets].filter(
+      (socket) => socket.welcomed && socket.terminals.has(session.summary.id),
+    )
+  }
+
   #setState(
     session: FakeSession,
     state: SessionSummaryWire["state"],
     message?: string,
     by?: ParticipantWire,
   ): void {
+    const wasActive = session.summary.state === "Active"
     session.summary = { ...session.summary, state }
     this.#append(session, {
       _tag: "SessionStateChanged",
@@ -548,6 +638,9 @@ export class FakeHub implements HubTransport {
       ...(message !== undefined && { message }),
     })
     this.#summaryChanged(session)
+    // Claude Code starts again with the Session, and its Runner sends a snapshot to everyone
+    // watching.
+    if (state === "Active" && !wasActive) this.#snapshot(session)
   }
 
   #append(session: FakeSession, event: SessionEventWire): void {

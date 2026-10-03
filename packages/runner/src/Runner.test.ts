@@ -413,15 +413,16 @@ describe("Sessions", () => {
     h.hub.send({ _tag: "TerminalResize", sessionId: "s-1", size: { cols: 100, rows: 30 } })
     h.hub.send({ _tag: "RequestTerminalSnapshot", sessionId: "s-1" })
     h.hub.send({ _tag: "TerminalInput", sessionId: "s-unknown", data: "ignored" })
-    await eventually(() => h.hub.all("TerminalFrame").length === 2)
+    // The first snapshot is from attaching, the second from the resize, the third was asked for.
+    await eventually(() => h.hub.all("TerminalFrame").length === 3)
 
     const pane = h.tmux.pane("s-1")
     expect(pane.inputs).toEqual(["hi\r"])
     expect(pane.resizes).toEqual([{ cols: 100, rows: 30 }])
-    expect(h.hub.all("TerminalFrame")[1]).toMatchObject({
-      kind: "Snapshot",
-      size: { cols: 100, rows: 30 },
-    })
+    expect(h.hub.all("TerminalFrame").slice(1)).toMatchObject([
+      { kind: "Snapshot", size: { cols: 100, rows: 30 } },
+      { kind: "Snapshot", size: { cols: 100, rows: 30 } },
+    ])
   })
 
   test("stops a Session when asked, and its Sandbox the way asked", async () => {

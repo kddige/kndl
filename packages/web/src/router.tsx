@@ -8,7 +8,7 @@ import {
   type RouterHistory,
 } from "@tanstack/react-router"
 import { HubShell } from "./app/HubShell.tsx"
-import { SessionView } from "./session/SessionView.tsx"
+import { type SessionTab, SessionView } from "./session/SessionView.tsx"
 import { SessionList } from "./sessions/SessionList.tsx"
 import type { ThemeMode } from "./ui/theme.ts"
 import { UIProvider } from "./ui/UIProvider.tsx"
@@ -37,10 +37,24 @@ const sessionsRoute = createRoute({
 const sessionRoute = createRoute({
   getParentRoute: () => hubRoute,
   path: "/sessions/$sessionId",
+  // ?tab=terminal opens the terminal, so it can be linked to and stays open on reload.
+  validateSearch: (search: Record<string, unknown>): { tab?: SessionTab } =>
+    search["tab"] === "terminal" ? { tab: "terminal" } : {},
   component: function SessionRoute() {
     const { sessionId } = sessionRoute.useParams()
+    const { tab } = sessionRoute.useSearch()
+    const navigate = sessionRoute.useNavigate()
     // Remount per Session, so the composer's draft and the scroll position don't carry over.
-    return <SessionView key={sessionId} sessionId={sessionId as SessionId} />
+    return (
+      <SessionView
+        key={sessionId}
+        sessionId={sessionId as SessionId}
+        tab={tab ?? "chat"}
+        onTabChange={(next) =>
+          void navigate({ search: next === "terminal" ? { tab: next } : {}, replace: true })
+        }
+      />
+    )
   },
 })
 

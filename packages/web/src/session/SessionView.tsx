@@ -6,7 +6,7 @@ import type {
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react"
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { statusOf } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
@@ -21,6 +21,10 @@ import {
   InfoIcon,
   SessionStatus,
   Spinner,
+  Tab,
+  TabList,
+  TabPanel,
+  Tabs,
   toast,
 } from "../ui/index.ts"
 import { color, font, leading, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
@@ -105,10 +109,40 @@ const styles = stylex.create({
     paddingTop: space.s2,
   },
   centered: { display: "grid", placeItems: "center", flex: 1, padding: space.s4 },
+  tabs: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
+  tabList: {
+    paddingInline: space.s4,
+    backgroundColor: color.surface,
+  },
+  tabPanel: {
+    display: { default: "flex", ":is([hidden])": "none" },
+    flexDirection: "column",
+    flex: 1,
+    minHeight: 0,
+  },
 })
 
-/** One Session: its conversation, who's here, the Prompt queue and the composer. */
-export function SessionView({ sessionId }: { sessionId: SessionId }) {
+// xterm.js is most of the terminal's weight: it loads when the terminal is first shown.
+const TerminalPanel = lazy(async () => ({
+  default: (await import("./TerminalPanel.tsx")).TerminalPanel,
+}))
+
+/** The Session view's tabs: the conversation, or Claude Code's own terminal. */
+export type SessionTab = "chat" | "terminal"
+
+/**
+ * One Session: its conversation, who's here, the Prompt queue and the composer, and in another
+ * tab its terminal. `tab` and `onTabChange` let the URL track the open tab.
+ */
+export function SessionView({
+  sessionId,
+  tab = "chat",
+  onTabChange,
+}: {
+  sessionId: SessionId
+  tab?: SessionTab
+  onTabChange?: (tab: SessionTab) => void
+}) {
   const hub = useHub()
   const sessions = useHubState((state) => state.sessions)
   const summary = useHubState((state) => findSession(state, sessionId))
@@ -144,6 +178,8 @@ export function SessionView({ sessionId }: { sessionId: SessionId }) {
   }
   return (
     <LoadedSession
+      tab={tab}
+      onTabChange={onTabChange}
       summary={summary}
       log={joined.log}
       presence={joined.presence}
@@ -153,11 +189,15 @@ export function SessionView({ sessionId }: { sessionId: SessionId }) {
 }
 
 function LoadedSession({
+  tab,
+  onTabChange,
   summary,
   log,
   presence,
   queue,
 }: {
+  tab: SessionTab
+  onTabChange: ((tab: SessionTab) => void) | undefined
   summary: SessionSummary
   log: ReadonlyArray<SessionLogEntry>
   presence: JoinedSession["presence"]
@@ -179,6 +219,9 @@ function LoadedSession({
         : undefined
 
   const send = (prompt: string) => command(hub.sendPrompt(summary.id, prompt))
+  // The terminal mounts when first shown and stays, so its scrollback survives switching tabs.
+  const [shownTerminal, setShownTerminal] = useState(tab === "terminal")
+  if (tab === "terminal" && !shownTerminal) setShownTerminal(true)
 
   return (
     <div {...stylex.props(styles.view)}>
@@ -225,41 +268,68 @@ function LoadedSession({
         />
       </header>
 
-      <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
-        <div {...stylex.props(styles.column, styles.transcript)}>
-          <StateBanner
-            summary={summary}
-            change={lastChange}
-            onWake={() => command(hub.wakeSession(summary.id))}
-          />
-          {items.length === 0 ? (
-            <EmptyState
-              title="Nothing here yet"
-              description="Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
-            />
-          ) : (
-            <Transcript items={items} />
-          )}
+      <Tabs
+        value={tab}
+        onValueChange={(next) => onTabChange?.(next === "terminal" ? "terminal" : "chat")}
+        sx={styles.tabs}
+      >
+        <div {...stylex.props(styles.tabList)}>
+          <TabList label="Session views">
+            <Tab value="chat">Chat</Tab>
+            <Tab value="terminal">Terminal</Tab>
+          </TabList>
         </div>
-      </div>
+        <TabPanel value="chat" keepMounted sx={styles.tabPanel}>
+          <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
+            <div {...stylex.props(styles.column, styles.transcript)}>
+              <StateBanner
+                summary={summary}
+                change={lastChange}
+                onWake={() => command(hub.wakeSession(summary.id))}
+              />
+              {items.length === 0 ? (
+                <EmptyState
+                  title="Nothing here yet"
+                  description="Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
+                />
+              ) : (
+                <Transcript items={items} />
+              )}
+            </div>
+          </div>
 
-      <div {...stylex.props(styles.column, styles.dock)}>
-        <PromptQueue
-          queue={queue}
-          onCancel={(prompt) => {
-            if (!hub.cancelPrompt(summary.id, prompt.id)) {
-              toast.show({ title: "Not connected to the Hub", intent: "warning" })
-            }
-          }}
-        />
-        <Composer
-          onSend={send}
-          onStop={() => hub.stopTurn(summary.id)}
-          running={running}
-          disabledReason={disabledReason}
-          hint={hint}
-        />
-      </div>
+          <div {...stylex.props(styles.column, styles.dock)}>
+            <PromptQueue
+              queue={queue}
+              onCancel={(prompt) => {
+                if (!hub.cancelPrompt(summary.id, prompt.id)) {
+                  toast.show({ title: "Not connected to the Hub", intent: "warning" })
+                }
+              }}
+            />
+            <Composer
+              onSend={send}
+              onStop={() => hub.stopTurn(summary.id)}
+              running={running}
+              disabledReason={disabledReason}
+              hint={hint}
+            />
+          </div>
+        </TabPanel>
+        <TabPanel value="terminal" keepMounted sx={styles.tabPanel}>
+          {shownTerminal && (
+            <Suspense
+              fallback={
+                <div {...stylex.props(styles.centered)}>
+                  <Spinner label="Loading the terminal" />
+                </div>
+              }
+            >
+              <TerminalPanel session={summary} />
+            </Suspense>
+          )}
+        </TabPanel>
+      </Tabs>
     </div>
   )
 }

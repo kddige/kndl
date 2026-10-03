@@ -249,6 +249,81 @@ export const lightShadowTheme = stylex.createTheme(shadow, lightShadow)
 export const darkColorTheme = stylex.createTheme(color, darkColor)
 export const darkShadowTheme = stylex.createTheme(shadow, darkShadow)
 
+// The terminal mirror's palette: its ground and text match the surface it sits on, and the 16
+// ANSI colours are picked to read on it. In hex, because xterm.js draws with these and parses
+// only hex and rgb() without a canvas.
+const lightTerminal = {
+  background: "#ffffff",
+  foreground: "#1a1d23",
+  cursor: "#3d5dcf",
+  selection: "#d7def7",
+  black: "#24292f",
+  red: "#cf222e",
+  green: "#116329",
+  yellow: "#7d4e00",
+  blue: "#0969da",
+  magenta: "#8250df",
+  cyan: "#1b7c83",
+  white: "#6e7781",
+  brightBlack: "#57606a",
+  brightRed: "#a40e26",
+  brightGreen: "#1a7f37",
+  brightYellow: "#633c01",
+  brightBlue: "#218bff",
+  brightMagenta: "#a475f9",
+  brightCyan: "#3192aa",
+  brightWhite: "#8c959f",
+}
+
+const darkTerminal: typeof lightTerminal = {
+  background: "#131518",
+  foreground: "#e8e9ed",
+  cursor: "#7192f4",
+  selection: "#2c3a66",
+  black: "#484f58",
+  red: "#ff7b72",
+  green: "#3fb950",
+  yellow: "#d29922",
+  blue: "#58a6ff",
+  magenta: "#bc8cff",
+  cyan: "#39c5cf",
+  white: "#b1bac4",
+  brightBlack: "#6e7681",
+  brightRed: "#ffa198",
+  brightGreen: "#56d364",
+  brightYellow: "#e3b341",
+  brightBlue: "#79c0ff",
+  brightMagenta: "#d2a8ff",
+  brightCyan: "#56d4dd",
+  brightWhite: "#f0f6fc",
+}
+
+export const terminal = stylex.defineVars({
+  background: { default: lightTerminal.background, [DARK]: darkTerminal.background },
+  foreground: { default: lightTerminal.foreground, [DARK]: darkTerminal.foreground },
+  cursor: { default: lightTerminal.cursor, [DARK]: darkTerminal.cursor },
+  selection: { default: lightTerminal.selection, [DARK]: darkTerminal.selection },
+  black: { default: lightTerminal.black, [DARK]: darkTerminal.black },
+  red: { default: lightTerminal.red, [DARK]: darkTerminal.red },
+  green: { default: lightTerminal.green, [DARK]: darkTerminal.green },
+  yellow: { default: lightTerminal.yellow, [DARK]: darkTerminal.yellow },
+  blue: { default: lightTerminal.blue, [DARK]: darkTerminal.blue },
+  magenta: { default: lightTerminal.magenta, [DARK]: darkTerminal.magenta },
+  cyan: { default: lightTerminal.cyan, [DARK]: darkTerminal.cyan },
+  white: { default: lightTerminal.white, [DARK]: darkTerminal.white },
+  brightBlack: { default: lightTerminal.brightBlack, [DARK]: darkTerminal.brightBlack },
+  brightRed: { default: lightTerminal.brightRed, [DARK]: darkTerminal.brightRed },
+  brightGreen: { default: lightTerminal.brightGreen, [DARK]: darkTerminal.brightGreen },
+  brightYellow: { default: lightTerminal.brightYellow, [DARK]: darkTerminal.brightYellow },
+  brightBlue: { default: lightTerminal.brightBlue, [DARK]: darkTerminal.brightBlue },
+  brightMagenta: { default: lightTerminal.brightMagenta, [DARK]: darkTerminal.brightMagenta },
+  brightCyan: { default: lightTerminal.brightCyan, [DARK]: darkTerminal.brightCyan },
+  brightWhite: { default: lightTerminal.brightWhite, [DARK]: darkTerminal.brightWhite },
+})
+
+export const lightTerminalTheme = stylex.createTheme(terminal, lightTerminal)
+export const darkTerminalTheme = stylex.createTheme(terminal, darkTerminal)
+
 export const font = stylex.defineVars({
   sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
   mono: 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace',
