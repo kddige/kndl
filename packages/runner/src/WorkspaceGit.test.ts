@@ -17,6 +17,7 @@ import { join } from "node:path"
 import { type GitToolCall, type SessionId, wipRef } from "@claude-hub/protocol"
 import { BunServices } from "@effect/platform-bun"
 import { Effect, Layer, Redacted, References } from "effect"
+import { gitEnvironment } from "./HostGit.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { FakeHubGit, sessionId } from "./testSupport.ts"
@@ -470,6 +471,55 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     })
     expect(readFileSync(target, "utf8")).toBe("precious\n")
     expect(existsSync(index)).toBe(true)
+  })
+
+  test("host git refuses a Workspace whose objects use alternates", async () => {
+    await prepare()
+    const elsewhere = join(dir, `elsewhere-objects-${counter}.git`)
+    git(dir, "init", "--quiet", "--bare", elsewhere)
+    const info = join(workspace(), ".git", "objects", "info")
+    mkdirSync(info, { recursive: true })
+    writeFileSync(join(workspace(), "a.txt"), "a\n")
+
+    // Empty files point nowhere, so they're fine.
+    writeFileSync(join(info, "alternates"), "")
+    writeFileSync(join(info, "http-alternates"), "")
+    expect(await call("git_commit", { message: "Add a", all: true })).toMatchObject({
+      _tag: "ToolRan",
+    })
+
+    for (const file of ["alternates", "http-alternates"]) {
+      writeFileSync(join(info, "alternates"), "")
+      writeFileSync(join(info, "http-alternates"), "")
+      writeFileSync(join(info, file), `${join(elsewhere, "objects")}\n`)
+      for (const tool of ["git_commit", "git_push"] as const)
+        expect(await call(tool, { message: "Again", all: true })).toMatchObject({
+          _tag: "ToolFailed",
+          message: expect.stringContaining(`.git/objects/info/${file} points git at other object`),
+        })
+      const before = hubGit.wipFailures.length
+      writeFileSync(join(workspace(), "b.txt"), "b\n")
+      await pushWip()
+      expect(hubGit.wipFailures.slice(before)).toEqual([
+        expect.objectContaining({ message: expect.stringContaining(`objects/info/${file}`) }),
+      ])
+    }
+    expect(git(origin, "for-each-ref", wipRef(id))).toBe("")
+  })
+
+  test("host git's environment drops variables that point it at other objects", () => {
+    const saved = process.env["GIT_ALTERNATE_OBJECT_DIRECTORIES"]
+    process.env["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = "/elsewhere/objects"
+    process.env["GIT_OBJECT_DIRECTORY"] = "/elsewhere/objects"
+    try {
+      const env = gitEnvironment({})
+      expect(env["GIT_ALTERNATE_OBJECT_DIRECTORIES"]).toBeUndefined()
+      expect(env["GIT_OBJECT_DIRECTORY"]).toBeUndefined()
+    } finally {
+      if (saved === undefined) delete process.env["GIT_ALTERNATE_OBJECT_DIRECTORIES"]
+      else process.env["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = saved
+      delete process.env["GIT_OBJECT_DIRECTORY"]
+    }
   })
 })
 

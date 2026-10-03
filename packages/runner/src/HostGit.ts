@@ -51,9 +51,12 @@ export const WipIdentity: GitIdentity = {
   email: "claude-hub@users.noreply.github.com",
 }
 
-/** Variables from the Runner's own environment that would point git somewhere else. */
+/**
+ * Variables from the Runner's own environment that would point git somewhere else, such as
+ * `GIT_ALTERNATE_OBJECT_DIRECTORIES`, which has git read objects from other directories.
+ */
 const RedirectingVariables =
-  /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|CONFIG|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS|ASKPASS)$/
+  /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|QUARANTINE_PATH|COMMON_DIR|NAMESPACE|CONFIG|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS|ASKPASS)$/
 
 /** The header GitHub takes an installation token in, for git over HTTPS. */
 export const authorizationHeader = (token: Redacted.Redacted<string>) =>
@@ -173,7 +176,8 @@ const refuse = (what: string) =>
  * Checks the Workspace's `.git` holds no link where host git reads or writes: the directory
  * itself, the index, HEAD, the object directories, and the refs and reflogs of `branches`. A link
  * planted by the Sandbox would send host git's writes, such as a new index or a reflog line, to
- * any file the Runner's user can write.
+ * any file the Runner's user can write. Also checks nothing points host git at other object
+ * directories: no `commondir`, and no non-empty `objects/info/alternates` or `http-alternates`.
  */
 const checkGitDir = (paths: WorkspacePaths, branches: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -202,6 +206,18 @@ const checkGitDir = (paths: WorkspacePaths, branches: ReadonlyArray<string>) =>
     )
     const linked = objects.find((entry) => entry.isSymbolicLink())
     if (linked !== undefined) return yield* refuse(`/objects/${linked.name}`)
+    // Alternates would have host git read objects from any directory on the host.
+    for (const file of ["objects/info/alternates", "objects/info/http-alternates"]) {
+      const path = join(dir, file)
+      const kind = yield* kindOf(path)
+      if (kind === undefined) continue
+      if (kind !== "file") return yield* refuse(`/${file}`)
+      const size = yield* Effect.promise(() => lstat(path).then((stats) => stats.size))
+      if (size > 0)
+        return yield* new GitError({
+          message: `host git refused the Workspace: its .git/${file} points git at other object directories. Remove it to use the git tools.`,
+        })
+    }
   })
 
 /**
