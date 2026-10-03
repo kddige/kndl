@@ -444,6 +444,9 @@ function Overlays() {
           <Field label="Repo">
             <Input defaultValue="kddige/claude-hub" />
           </Field>
+          <Field label="Base branch">
+            <Select options={BRANCHES} defaultValue="main" />
+          </Field>
         </Dialog>
         <Button intent="danger" onClick={() => setConfirmOpen(true)}>
           Delete Session…
