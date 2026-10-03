@@ -870,6 +870,112 @@ describe("the terminal relay", () => {
     runner.send({ ...frame, kind: "Output", data: "README.md" })
     expect(await web.untaken("TerminalFrame")).toEqual([])
   })
+
+  test("takes keystrokes only from a connection watching the terminal", async () => {
+    const { hub, runner, web, sessionId } = await sessionScene()
+    const bobWeb = await openWeb(hub, "bob")
+    bobWeb.send({ _tag: "TerminalInput", sessionId, data: "rm -rf /\r" })
+    bobWeb.send({ _tag: "TerminalResize", sessionId, size: { cols: 10, rows: 5 } })
+    expect((await bobWeb.take("CommandFailed")).command).toBe("TerminalInput")
+    expect((await bobWeb.take("CommandFailed")).command).toBe("TerminalResize")
+    web.send({ _tag: "TerminalInput", sessionId: "s-nonexistent", data: "x" })
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "TerminalInput" })
+    expect(await runner.untaken("TerminalInput")).toEqual([])
+    expect(await runner.untaken("TerminalResize")).toEqual([])
+  })
+
+  test("takes no keystrokes while the Session isn't running, and watches until it is", async () => {
+    const scene = await sessionScene()
+    const { runner, web, sessionId } = scene
+    await asleep(scene)
+
+    // Watching an Asleep Session asks the Runner for nothing; typing into it is refused.
+    web.send({ _tag: "OpenTerminal", sessionId })
+    web.send({ _tag: "TerminalInput", sessionId, data: "\u001b" })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "TerminalInput",
+      sessionId,
+      message: "The Session is Asleep: its terminal isn't running.",
+    })
+    expect(await runner.untaken("RequestTerminalSnapshot")).toEqual([])
+    expect(await runner.untaken("TerminalInput")).toEqual([])
+
+    // Woken: the Runner's snapshot on attaching reaches the watcher, and keystrokes go through.
+    web.send({ _tag: "WakeSession", sessionId })
+    await runner.take("StartSession")
+    runner.send({ _tag: "SessionStarted", sessionId })
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    const snapshot = {
+      _tag: "TerminalFrame",
+      sessionId,
+      kind: "Snapshot",
+      data: "welcome back",
+      size: { cols: 120, rows: 40 },
+    } as const
+    runner.send(snapshot)
+    expect(await web.take("TerminalFrame")).toEqual(snapshot)
+    web.send({ _tag: "TerminalInput", sessionId, data: "\u0003" })
+    expect(await runner.take("TerminalInput")).toMatchObject({ data: "\u0003" })
+  })
+
+  test("a terminal opened while its Runner is offline gets the snapshot it sends on return", async () => {
+    const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    web.send({ _tag: "OpenTerminal", sessionId })
+    web.send({ _tag: "TerminalResize", sessionId, size: { cols: 90, rows: 20 } })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "The Session is Frozen: its terminal isn't running.",
+    )
+
+    const back = await openRunner(hub, runnerToken, [sessionId])
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    const frame = {
+      _tag: "TerminalFrame",
+      sessionId,
+      kind: "Snapshot",
+      data: "still here",
+      size: { cols: 120, rows: 40 },
+    } as const
+    back.send(frame)
+    expect(await web.take("TerminalFrame")).toEqual(frame)
+  })
+
+  test("after a Hub restart, a reopened terminal asks the Runner for a fresh snapshot", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const first = await startHub({ config: { devLogin: true }, database })
+      const { runner, runnerToken, web, sessionId } = await sessionScene(first)
+      web.send({ _tag: "OpenTerminal", sessionId })
+      await runner.take("RequestTerminalSnapshot")
+      await web.close()
+      await runner.close()
+      await first.stop()
+
+      const second = await startHub({ config: { devLogin: true }, database })
+      const webBack = await openWeb(second, "alice", web.cookie)
+      const back = await openRunner(second, runnerToken, [sessionId])
+      await webBack.take("SessionUpdated", (m) => m.session.state === "Active")
+      webBack.send({ _tag: "OpenTerminal", sessionId })
+      expect(await back.take("RequestTerminalSnapshot")).toEqual({
+        _tag: "RequestTerminalSnapshot",
+        sessionId,
+      })
+      const frame = {
+        _tag: "TerminalFrame",
+        sessionId,
+        kind: "Snapshot",
+        data: "$ ",
+        size: { cols: 120, rows: 40 },
+      } as const
+      back.send(frame)
+      expect(await webBack.take("TerminalFrame")).toEqual(frame)
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("a Hub restart", () => {

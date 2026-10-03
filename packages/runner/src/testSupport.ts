@@ -71,19 +71,23 @@ export class FakePane {
       input: (data: string) => Effect.sync(() => void this.inputs.push(data)),
       resize: (size: TerminalSize) =>
         Effect.sync(() => {
+          if (size.cols === this.size.cols && size.rows === this.size.rows) return
           this.size = size
           this.resizes.push(size)
+          this.snapshot()
         }),
-      snapshot: Effect.sync(() => {
-        this.snapshots += 1
-        this.emit({ _tag: "Snapshot", data: `screen of ${this.spec.sessionId}`, size: this.size })
-      }),
+      snapshot: Effect.sync(() => this.snapshot()),
       // Claude Code exits on SIGTERM with 143.
       terminate: Effect.sync(() => {
         this.terminated = true
         this.emit({ _tag: "Exited", exitCode: 143 })
       }),
     }
+  }
+
+  private snapshot(): void {
+    this.snapshots += 1
+    this.emit({ _tag: "Snapshot", data: `screen of ${this.spec.sessionId}`, size: this.size })
   }
 
   /** The tmux session is gone: the attached client's stream ends. */
