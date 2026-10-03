@@ -81,6 +81,13 @@ export const SandboxStateReport = Schema.TaggedStruct("SandboxStateReport", {
 })
 export type SandboxStateReport = typeof SandboxStateReport.Type
 
+/** Something about the Session's Sandbox for its Participants. The Hub records it in the Session's log. */
+export const SandboxNote = Schema.TaggedStruct("SandboxNote", {
+  sessionId: SessionId,
+  message: Schema.String,
+})
+export type SandboxNote = typeof SandboxNote.Type
+
 /** A {@link PurgeSession} is done: nothing of the Session is left on the Runner. */
 export const SessionPurged = Schema.TaggedStruct("SessionPurged", {
   sessionId: SessionId,
@@ -99,6 +106,7 @@ export const RunnerToHub = Schema.Union([
   GitRequest,
   CoAuthorsCommitted,
   WipPushFailed,
+  SandboxNote,
   FetchVariables,
   TestBuildLog,
   TestBuildFinished,

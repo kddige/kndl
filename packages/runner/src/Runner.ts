@@ -4,6 +4,7 @@ import { ClaudeTrust, ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
+import { HubVariablesLive } from "./HubVariables.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { Sessions, SessionsLive } from "./Sessions.ts"
@@ -47,6 +48,7 @@ export const SessionsHost = SessionsLive.pipe(
   ]),
   Layer.provideMerge(WorkspaceGitLive),
   Layer.provideMerge(HubGitLive),
+  Layer.provideMerge(HubVariablesLive),
   Layer.provideMerge(ClaudeTrustLive(claudeConfigPath())),
   Layer.provideMerge(HubLinkLive),
 )

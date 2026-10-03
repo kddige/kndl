@@ -273,6 +273,20 @@ export const cloneWorkspace = (options: {
     yield* git(["-C", options.workspace, "switch", "--quiet", "--create", options.workBranch])
   })
 
+/**
+ * Clones the tip of `url`'s default branch into `directory`, which must be missing or empty: a
+ * Test build's fresh clone (ADR 0009).
+ */
+export const cloneDefaultBranch = (options: {
+  readonly url: string
+  readonly auth: GitAuth
+  readonly directory: string
+}) =>
+  git(["clone", "--quiet", "--depth", "1", "--", options.url, options.directory], {
+    auth: options.auth,
+    remoteUrl: options.url,
+  }).pipe(Effect.asVoid)
+
 /** What `git_commit` stages before committing. */
 export type Staging =
   | { readonly _tag: "Staged" }

@@ -18,7 +18,14 @@ import { SandboxClaudeError, sandboxClaudeGuestDir } from "./sandbox/SandboxClau
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
-import { echoTools, FakeHubGit, fakeMcpServer, sessionId } from "./testSupport.ts"
+import {
+  echoTools,
+  FakeHubGit,
+  FakeHubVariables,
+  fakeMcpServer,
+  sandboxesDefaults,
+  sessionId,
+} from "./testSupport.ts"
 import { Workspaces, WorkspacesGitClone } from "./Workspace.ts"
 import { WorkspaceGit, WorkspaceGitLive } from "./WorkspaceGit.ts"
 
@@ -49,7 +56,8 @@ const withSandboxes = async (
     makeSessionSandboxes({
       image: "docker:dind",
       claudeCacheDir: "/host/claude-code",
-      sandboxClaude: options.sandboxClaude ?? Effect.succeed("2.1.287"),
+      sandboxClaude: () => options.sandboxClaude ?? Effect.succeed("2.1.287"),
+      ...sandboxesDefaults,
       bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
     }),
   )
@@ -57,6 +65,7 @@ const withSandboxes = async (
     await body(root, sent).pipe(
       Effect.provide(sandboxes.pipe(Layer.provideMerge(FakeSandboxBackend.layer(options)))),
       Effect.provide(hub),
+      Effect.provide(new FakeHubVariables().layer),
       Effect.scoped,
       Effect.runPromise,
     )
@@ -344,7 +353,8 @@ describe("SessionSandboxes", () => {
           const sandboxes = yield* makeSessionSandboxes({
             image: "docker:dind",
             claudeCacheDir: "/host/claude-code",
-            sandboxClaude: Effect.succeed("2.1.287"),
+            sandboxClaude: () => Effect.succeed("2.1.287"),
+            ...sandboxesDefaults,
             bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
             git: workspaceGit,
           })
@@ -401,6 +411,7 @@ describe("SessionSandboxes", () => {
               FakeSandboxBackend.layer({ onSpawn: (_call, io) => fakeMcpServer(echoTools)(io) }),
               git,
               hub,
+              new FakeHubVariables().layer,
             ),
           ),
           Effect.scoped,

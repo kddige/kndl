@@ -23,6 +23,7 @@ const sessionEvents = [
   { _tag: "SessionStateChanged", state: "Archived", by: bob },
   { _tag: "TurnStopRequested", by: alice },
   { _tag: "WipNotPushed", message: "git push exited with 128: could not read from remote" },
+  { _tag: "SandboxNoted", message: "Memory capped at 8192 MiB by the Runner" },
 ]
 
 const webToHub = [

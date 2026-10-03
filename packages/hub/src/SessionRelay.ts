@@ -89,6 +89,7 @@ import {
   TurnStopRequested,
   type WebToHub,
   WipNotPushed,
+  SandboxNoted,
 } from "@claude-hub/protocol"
 import {
   Clock,
@@ -1167,6 +1168,11 @@ export class SessionRelay extends Context.Service<
               return yield* logEvent(
                 message.sessionId,
                 WipNotPushed.make({ message: message.message }),
+              )
+            case "SandboxNote":
+              return yield* logEvent(
+                message.sessionId,
+                SandboxNoted.make({ message: message.message }),
               )
           }
         })

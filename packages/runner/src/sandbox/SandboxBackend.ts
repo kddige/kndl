@@ -5,6 +5,9 @@
 // A Sandbox is addressed by its Session's id: a Session has at most one Sandbox at a time, and
 // every Sandbox and volume a backend makes is named after its Session (see Naming.ts). A backend
 // works for one Runner, and marks what it makes as that Runner's.
+//
+// A backend keeps what commands print off the host's disk: their output may hold variable values
+// (ADR 0009).
 
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
 import { Context, Data, Effect, Stream } from "effect"
@@ -64,7 +67,10 @@ export interface SandboxSpec {
    * starts the same containers on the next boot. The image must ship `dockerd`.
    */
   readonly docker?: { readonly sizeMib: number }
-  /** Environment for every command, such as Repo secrets (ADR 0004). Kept across stop and start. */
+  /**
+   * Environment for every command, kept across stop and start. Stored with the Sandbox on the
+   * host's disk, so never put secrets here: pass them per command (ADR 0009).
+   */
   readonly env: Readonly<Record<string, string>>
   /** The working directory commands start in when they name none. */
   readonly workdir?: string
@@ -142,15 +148,47 @@ export interface SandboxMetrics {
   readonly uptimeMs: number
 }
 
-/** Saving and restoring a stopped Sandbox's root filesystem. Volumes and host mounts are not saved. */
+/** A saved root filesystem, as {@link SandboxSnapshots.list} finds it. */
+export interface SnapshotListing {
+  /** Its name within its group. */
+  readonly name: string
+  /** How to restore it. */
+  readonly reference: string
+}
+
+/**
+ * Saving a stopped Sandbox's root filesystem, and booting new Sandboxes from it: how an
+ * Environment's build is kept (ADR 0009). Volumes and host mounts are not saved. Snapshots are
+ * kept in groups, and a backend keeps each Runner's groups apart from other Runners'.
+ */
 export interface SandboxSnapshots {
-  /** Saves the stopped Sandbox under `label`, and returns how to find it again. */
-  readonly snapshot: (sessionId: SessionId, label: string) => Effect.Effect<string, SandboxError>
+  /**
+   * Saves the stopped Sandbox as `name` in `group`, and returns how to restore it. Names and
+   * groups are as `isSnapshotName` and `isSnapshotGroup` allow (Naming.ts).
+   */
+  readonly snapshot: (
+    sessionId: SessionId,
+    group: string,
+    name: string,
+  ) => Effect.Effect<string, SandboxError>
   /**
    * Boots a new Sandbox for the spec's Session from a saved root filesystem, on the spec's
-   * mounts. The Session must have no Sandbox.
+   * mounts, resources and working directory, and starts Docker if the spec has it, as `create`
+   * does. The spec's image is ignored, and so is its `env`: pass environment per command. The
+   * Session must have no Sandbox.
    */
-  readonly restore: (spec: SandboxSpec, snapshot: string) => Effect.Effect<void, SandboxError>
+  readonly restore: (spec: SandboxSpec, reference: string) => Effect.Effect<void, SandboxError>
+  /** The snapshots in `group`. */
+  readonly list: (group: string) => Effect.Effect<ReadonlyArray<SnapshotListing>, SandboxError>
+  /**
+   * Removes every snapshot in `group` but the named ones, which must exist, newest first: the
+   * first becomes the group's head. With no names the whole group goes. Sandboxes booted from a
+   * removed snapshot keep working.
+   */
+  readonly retain: (
+    group: string,
+    names: ReadonlyArray<string>,
+  ) => Effect.Effect<void, SandboxError>
 }
 
 // ── Errors ─────────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import type {
   SessionStateChanged,
   TurnEnded,
   WipNotPushed,
+  SandboxNoted,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { memo } from "react"
@@ -252,7 +253,13 @@ const stateWords: Record<SessionStateChanged["state"], string> = {
   Archived: "The Session was archived",
 }
 
-function Notice({ at, event }: { at: number; event: SessionStateChanged | WipNotPushed }) {
+function Notice({
+  at,
+  event,
+}: {
+  at: number
+  event: SessionStateChanged | WipNotPushed | SandboxNoted
+}) {
   return (
     <p role="note" {...stylex.props(styles.notice)}>
       {event._tag === "SessionStateChanged" ? (
@@ -264,8 +271,10 @@ function Notice({ at, event }: { at: number; event: SessionStateChanged | WipNot
             {event.by ? `${event.message ? "," : ""} by ${event.by.name}` : ""}
           </span>
         </>
-      ) : (
+      ) : event._tag === "WipNotPushed" ? (
         <span>The WIP ref could not be pushed: {event.message}</span>
+      ) : (
+        <span>{event.message}</span>
       )}
       <time {...stylex.props(styles.time)} dateTime={new Date(at).toISOString()}>
         {clock(at)}

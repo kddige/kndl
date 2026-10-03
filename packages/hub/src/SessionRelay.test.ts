@@ -1258,6 +1258,17 @@ describe("git", () => {
     })
   })
 
+  test("a Runner's note about the Sandbox is in the Session's history", async () => {
+    const { runner, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    runner.send({ _tag: "SandboxNote", sessionId, message: "Capped at 4 CPUs" })
+    expect((await web.take("SessionEventLogged")).entry.event).toEqual({
+      _tag: "SandboxNoted",
+      message: "Capped at 4 CPUs",
+    })
+  })
+
   test("co-authors are who prompted since the last commit, each once, dev logins left out", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
     try {

@@ -1,9 +1,13 @@
-// How Sandboxes and volumes are named and labelled. Everything a backend makes starts with
-// `claude-hub-` and carries its Session's id, so the Runner can find what it made after a crash
-// (Reconcile.ts) and never mistakes anything else on the host for its own.
+// How Sandboxes, volumes and snapshots are named and labelled. Everything a backend makes starts
+// with `claude-hub-` and carries its Session's id, so the Runner can find what it made after a
+// crash (Reconcile.ts) and never mistakes anything else on the host for its own.
 //
-//   Sandbox: claude-hub-<sessionId>
-//   Volume:  claude-hub-<sessionId>.<key>
+//   Sandbox:        claude-hub-<sessionId>
+//   Volume:         claude-hub-<sessionId>.<key>
+//   Snapshot group: claude-hub-<runner mark>-<group>
+//
+// Environment builds and Test builds run in Sandboxes of their own (ADR 0009), addressed like a
+// Session's by an id no Hub-minted Session id can take: `build-…` or `testbuild-…`.
 //
 // Several Runners can share one host, and so one microsandbox (#38). Each labels what it makes
 // with its Runner mark (`claude-hub.runner`), and reconciles only what carries its own mark.
@@ -59,28 +63,56 @@ export const checkSessionId = (sessionId: SessionId) =>
         }),
       )
 
-export const sandboxName = (sessionId: SessionId) => `${prefix}${sessionId}`
+/**
+ * The names a backend gives what it makes, under `namePrefix`: {@link prefix} for a Runner, and
+ * something else only for tests that must keep apart from a Runner's Sandboxes on the same host.
+ */
+export const namesFor = (namePrefix: string) => ({
+  prefix: namePrefix,
+  sandboxName: (sessionId: SessionId) => `${namePrefix}${sessionId}`,
+  volumeName: (sessionId: SessionId, key: string) => `${namePrefix}${sessionId}.${key}`,
+  /** The backend's name for a Runner's snapshot group. */
+  snapshotGroup: (runner: string, group: string) => `${namePrefix}${runner}-${group}`,
+  /** The Session a Sandbox name belongs to, if it is one of ours. */
+  parseSandboxName: (name: string): SessionId | undefined => {
+    if (!name.startsWith(namePrefix)) return undefined
+    const sessionId = name.slice(namePrefix.length)
+    return isNameableSessionId(sessionId) ? (sessionId as SessionId) : undefined
+  },
+  /** The Session and key a volume name belongs to, if it is one of ours. */
+  parseVolumeName: (
+    name: string,
+  ): { readonly sessionId: SessionId; readonly key: string } | undefined => {
+    if (!name.startsWith(namePrefix)) return undefined
+    const rest = name.slice(namePrefix.length)
+    const dot = rest.indexOf(".")
+    if (dot < 0) return undefined
+    const sessionId = rest.slice(0, dot)
+    const key = rest.slice(dot + 1)
+    return isNameableSessionId(sessionId) && isVolumeKey(key)
+      ? { sessionId: sessionId as SessionId, key }
+      : undefined
+  },
+})
 
-export const volumeName = (sessionId: SessionId, key: string) => `${prefix}${sessionId}.${key}`
+export type Names = ReturnType<typeof namesFor>
 
-/** The Session a Sandbox name belongs to, if it is one of ours. */
-export const parseSandboxName = (name: string): SessionId | undefined => {
-  if (!name.startsWith(prefix)) return undefined
-  const sessionId = name.slice(prefix.length)
-  return isNameableSessionId(sessionId) ? (sessionId as SessionId) : undefined
-}
+export const { sandboxName, volumeName, parseSandboxName, parseVolumeName } = namesFor(prefix)
 
-/** The Session and key a volume name belongs to, if it is one of ours. */
-export const parseVolumeName = (
-  name: string,
-): { readonly sessionId: SessionId; readonly key: string } | undefined => {
-  if (!name.startsWith(prefix)) return undefined
-  const rest = name.slice(prefix.length)
-  const dot = rest.indexOf(".")
-  if (dot < 0) return undefined
-  const sessionId = rest.slice(0, dot)
-  const key = rest.slice(dot + 1)
-  return isNameableSessionId(sessionId) && isVolumeKey(key)
-    ? { sessionId: sessionId as SessionId, key }
-    : undefined
-}
+/** A snapshot group's name: lowercase letters, digits and `-`. */
+export const isSnapshotGroup = (group: string) => /^[a-z0-9][a-z0-9-]{0,47}$/.test(group)
+
+/** A snapshot's name within its group: letters, digits, `_` and `-`. */
+export const isSnapshotName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)
+
+const digest = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16)
+
+/** The Sandbox an Environment build runs in: one per build key at a time. */
+export const buildSandboxId = (key: string) => `build-${digest(key)}` as SessionId
+
+/** The Sandbox a Test build runs in. */
+export const testBuildSandboxId = (testBuildId: string) =>
+  `testbuild-${digest(testBuildId)}` as SessionId
+
+/** Whether a Sandbox is a build's or a Test build's, thrown away when done, rather than a Session's. */
+export const isBuildSandboxId = (sessionId: string) => /^(test)?build-[0-9a-f]{16}$/.test(sessionId)

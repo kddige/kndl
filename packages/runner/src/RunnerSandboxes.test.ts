@@ -21,10 +21,12 @@ import { Sessions, SessionsLive } from "./Sessions.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import {
   echoTools,
+  FakeHubVariables,
   FakeTmux,
   FakeWorkspaceGit,
   FakeWorkspaces,
   fakeMcpServer,
+  sandboxesDefaults,
   sessionId,
 } from "./testSupport.ts"
 
@@ -89,15 +91,17 @@ const runProcess = <A>(
     runner: runnerMark(host),
     onSpawn: (_call, io) => fakeMcpServer(echoTools)(io),
   })
+  const variables = new FakeHubVariables().layer
   const sandboxes = Layer.effect(
     Sandboxes,
     makeSessionSandboxes({
       image: "docker:dind",
       claudeCacheDir: "/host/claude-code",
-      sandboxClaude: Effect.succeed("2.1.287"),
+      sandboxClaude: () => Effect.succeed("2.1.287"),
+      ...sandboxesDefaults,
       bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
     }),
-  ).pipe(Layer.provide(backend))
+  ).pipe(Layer.provide([backend, variables]))
   const layer = SessionsLive.pipe(
     Layer.provideMerge(sandboxes),
     Layer.provide([
@@ -107,7 +111,7 @@ const runProcess = <A>(
       new FakeWorkspaceGit().layer,
       HubGitLive,
     ]),
-    Layer.provide([hub, config]),
+    Layer.provide([hub, config, variables]),
   )
   return body.pipe(
     Effect.provide(layer),

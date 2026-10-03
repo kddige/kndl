@@ -276,6 +276,7 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
     case "SessionStateChanged":
       return event.message === undefined ? event : { ...event, message: redact(event.message) }
     case "WipNotPushed":
+    case "SandboxNoted":
       return { ...event, message: redact(event.message) }
     case "TurnEnded":
     case "TurnStopRequested":

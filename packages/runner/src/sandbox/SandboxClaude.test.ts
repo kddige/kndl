@@ -36,7 +36,10 @@ const registry = (bytes: Uint8Array, integrity: string) => {
   const requests: Array<string> = []
   const fetch = async (url: string) => {
     requests.push(url)
-    if (url === "https://registry.test/@anthropic-ai/claude-code-linux-arm64-musl/2.1.287")
+    if (
+      url === "https://registry.test/@anthropic-ai/claude-code-linux-arm64-musl/2.1.287" ||
+      url === "https://registry.test/@anthropic-ai/claude-code-linux-arm64/2.1.287"
+    )
       return Response.json({ dist: { tarball: "https://registry.test/claude.tgz", integrity } })
     if (url === "https://registry.test/claude.tgz") return new Response(bytes)
     return new Response("not found", { status: 404 })
@@ -65,6 +68,30 @@ describe("the Sandbox's Claude Code", () => {
 
     expect(await Effect.runPromise(ensureSandboxClaude(options))).toBe(binary)
     expect(requests.length).toBe(2)
+  })
+
+  test("keeps the glibc build beside the musl one, each in its own directory", async () => {
+    const { bytes, integrity } = await tarball()
+    const { fetch, requests } = registry(bytes, integrity)
+    const cacheDir = join(dir, "cache")
+    const options = {
+      cacheDir,
+      version: "2.1.287",
+      arch: "arm64",
+      registry: "https://registry.test",
+      fetch,
+    }
+
+    const musl = await Effect.runPromise(ensureSandboxClaude(options))
+    const glibc = await Effect.runPromise(ensureSandboxClaude({ ...options, libc: "glibc" }))
+    expect(glibc).toBe(join(cacheDir, "2.1.287-glibc", "claude"))
+    expect(musl).toBe(join(cacheDir, "2.1.287", "claude"))
+    expect(requests).toContain(
+      "https://registry.test/@anthropic-ai/claude-code-linux-arm64/2.1.287",
+    )
+    expect(sandboxClaudePath("2.1.287", "glibc")).toBe(
+      "/opt/claude-hub/claude-code/2.1.287-glibc/claude",
+    )
   })
 
   test("refuses a download that fails its integrity check, leaving nothing behind", async () => {
@@ -99,6 +126,7 @@ describe("the Sandbox's Claude Code", () => {
     expect(linuxPackage("arm64")).toBe("@anthropic-ai/claude-code-linux-arm64-musl")
     expect(linuxPackage("x64")).toBe("@anthropic-ai/claude-code-linux-x64-musl")
     expect(linuxPackage("ia32")).toBeUndefined()
+    expect(linuxPackage("x64", "glibc")).toBe("@anthropic-ai/claude-code-linux-x64")
     expect(sandboxClaudePath("2.1.287")).toBe("/opt/claude-hub/claude-code/2.1.287/claude")
   })
 })
