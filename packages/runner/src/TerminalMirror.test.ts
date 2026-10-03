@@ -1,6 +1,6 @@
 // The terminal mirror end to end: a real Hub, a real Runner with real tmux, and a web client
-// over the Hub's WebSocket. The Session's "Claude Code" is a shell loop, never `claude`; the
-// Workspace and Sandbox are faked. Skipped when tmux isn't installed.
+// over the Hub's WebSocket. The Session's "Claude Code" is a small Bun script, never `claude`;
+// the Workspace and Sandbox are faked. Skipped when tmux isn't installed.
 
 import { afterAll, afterEach, describe, expect, test } from "bun:test"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
@@ -33,18 +33,25 @@ const dir = mkdtempSync(join(tmpdir(), "claude-hub-mirror-"))
 /**
  * Stands in for Claude Code: ignores its flags, says it's ready, echoes each line, prints the
  * terminal's size when asked, and survives Ctrl-C, saying so.
+ *
+ * It is a Bun script rather than a shell loop: macOS's `/bin/sh` is bash 3.2, whose `read`, after
+ * running an INT trap, now and then drops the last byte of the next line when the resize's
+ * SIGWINCH lands, so `size` arrived as `siz` and the test waited for an answer that never came.
  */
 const fakeClaude = join(dir, "fake-claude")
 writeFileSync(
   fakeClaude,
-  `#!/bin/sh
-trap 'printf "interrupted\\n"' INT
-printf 'fake claude ready\\n'
-while :; do
-  if IFS= read -r line; then
-    if [ "$line" = size ]; then stty size; else printf 'you said: %s\\n' "$line"; fi
-  fi
-done
+  `#!${process.execPath}
+process.on("SIGINT", () => process.stdout.write("interrupted\\n"))
+process.stdout.write("fake claude ready\\n")
+for await (const line of console) {
+  if (line === "size") {
+    const [cols, rows] = process.stdout.getWindowSize()
+    process.stdout.write(\`\${rows} \${cols}\\n\`)
+  } else {
+    process.stdout.write(\`you said: \${line}\\n\`)
+  }
+}
 `,
 )
 chmodSync(fakeClaude, 0o755)
