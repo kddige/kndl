@@ -24,7 +24,7 @@ import {
   type EnvironmentVersionInfo,
   environmentDraftProblems,
   MaxVariableValueLength,
-  MinSensitiveValueLength,
+  sensitiveValueProblem,
   ParticipantId,
   type Participant,
   type RunnerId,
@@ -152,10 +152,8 @@ const sensitiveOf = (variables: ReadonlyArray<ResolvedVariable>) =>
     )
     .map((variable) => variable.value)
 
-const tooShort = (name: string) =>
-  refuse(
-    `The value of ${name} is under ${MinSensitiveValueLength} characters: too short to redact from output. Make it Plain, or use a longer value.`,
-  )
+const tooShort = (name: string, value: Redacted.Redacted<string>) =>
+  refuse(sensitiveValueProblem(name, Redacted.value(value)) ?? `The value of ${name} is refused.`)
 
 const refuse = (message: string) => Effect.fail(new EnvironmentRefused({ message }))
 
@@ -402,8 +400,8 @@ export class Environments extends Context.Service<
                     `The value of ${name} is over ${MaxVariableValueLength} characters.`,
                   )
                 }
-                if (Redacted.value(variable.value).trim().length < MinSensitiveValueLength) {
-                  return yield* tooShort(name)
+                if (sensitiveValueProblem(name, Redacted.value(variable.value)) !== undefined) {
+                  return yield* tooShort(name, variable.value)
                 }
                 variables.push({
                   name,
@@ -735,8 +733,8 @@ export class Environments extends Context.Service<
             stored = existing.value.value
           } else {
             if (!secrets.available) return yield* secretsUnavailable(name)
-            if (Redacted.value(value).trim().length < MinSensitiveValueLength) {
-              return yield* tooShort(name)
+            if (sensitiveValueProblem(name, Redacted.value(value)) !== undefined) {
+              return yield* tooShort(name, value)
             }
             stored = yield* secrets
               .encrypt(value, sharedContext(name))

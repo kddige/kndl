@@ -1,6 +1,6 @@
 // Small formatters for times, durations and counts.
 
-import type { SessionState } from "@claude-hub/protocol"
+import type { SessionState, SessionSummary } from "@claude-hub/protocol"
 import type { SessionState as StatusState } from "../ui/index.ts"
 
 /** "just now", "5m ago", "3h ago", "2d ago", then the date. */
@@ -67,4 +67,17 @@ export function purgedIn(purgeAt: number, now = Date.now()): string {
 export function repoParams(repo: string): { owner: string; repo: string } {
   const slash = repo.indexOf("/")
   return { owner: repo.slice(0, slash), repo: repo.slice(slash + 1) }
+}
+
+/**
+ * Whether an Active Session runs on an older version of its Repo's Environment than the latest
+ * (ADR 0009): it picks the latest up on a restart. Other states pick it up as they next wake.
+ */
+export function environmentChanged(session: SessionSummary): boolean {
+  const { environment } = session
+  return (
+    session.state === "Active" &&
+    environment !== undefined &&
+    environment.version !== environment.latestVersion
+  )
 }

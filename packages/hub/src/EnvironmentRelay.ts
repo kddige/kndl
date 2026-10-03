@@ -35,12 +35,6 @@ import type { Peer } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 import { randomId } from "./Tokens.ts"
 
-/**
- * TODO(#50): turn on once the web UI can set up a Repo's Environment. Until then a Repo without
- * one still gets Sessions, on the Runner's default image, or every Session would be refused.
- */
-export const refuseSessionsWithoutEnvironment = false
-
 const webTags = [
   "GetEnvironment",
   "CheckEnvironmentDraft",
@@ -353,7 +347,7 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
 
   /**
    * Why a Session can't be created on `repo` yet, or undefined when it can: a Repo needs an
-   * applied Environment before its first Session (ADR 0009). See refuseSessionsWithoutEnvironment.
+   * applied Environment before its first Session (ADR 0009).
    */
   const missingEnvironment = Effect.fn("EnvironmentRelay.missingEnvironment")(function* (
     repo: string,

@@ -2,14 +2,18 @@ import type { RunnerSummary, SessionSummary } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useMemo } from "react"
-import { repoParams, statusOf, timeAgo } from "../app/format.ts"
+import { environmentChanged, repoParams, statusOf, timeAgo } from "../app/format.ts"
 import { useHubState } from "../app/hub.tsx"
 import { isListed } from "../hub/store.ts"
 import {
   Avatar,
+  Badge,
+  BoxIcon,
   BranchIcon,
+  Button,
   EmptyState,
   InboxIcon,
+  KeyIcon,
   SessionStatus,
   Spinner,
   TrashIcon,
@@ -109,7 +113,8 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
-  archived: {
+  headerActions: { display: "flex", alignItems: "center", gap: space.s2, flexWrap: "wrap" },
+  repoLinks: {
     display: "flex",
     flexWrap: "wrap",
     gap: space.s3,
@@ -117,7 +122,7 @@ const styles = stylex.create({
     padding: 0,
     listStyle: "none",
   },
-  archivedLink: {
+  repoLink: {
     display: "inline-flex",
     alignItems: "center",
     gap: space.s1_5,
@@ -130,7 +135,7 @@ const styles = stylex.create({
 
 /**
  * Every Session the Hub lists but the Archived ones, newest first, with its state, Runner and who
- * started it; then a way to each Repo's Archived Sessions.
+ * started it; then a way to each Repo's Environment and Archived Sessions.
  */
 export function SessionList() {
   const sessions = useHubState((state) => state.sessions)
@@ -147,6 +152,10 @@ export function SessionList() {
     }
     return [...counts].toSorted(([a], [b]) => a.localeCompare(b))
   }, [sessions])
+  const repos = useMemo(
+    () => [...new Set((sessions ?? []).map((session) => session.repo))].toSorted(),
+    [sessions],
+  )
   const runnersById = useMemo(
     () => new Map((runners ?? []).map((runner) => [runner.id as string, runner])),
     [runners],
@@ -165,7 +174,12 @@ export function SessionList() {
               </p>
             )}
           </div>
-          <CreateSessionDialog />
+          <div {...stylex.props(styles.headerActions)}>
+            <Button nativeButton={false} render={<Link to="/variables" />} icon={<KeyIcon />}>
+              Shared variables
+            </Button>
+            <CreateSessionDialog />
+          </div>
         </div>
         {sorted === null ? (
           <div {...stylex.props(styles.loading)}>
@@ -190,14 +204,30 @@ export function SessionList() {
             ))}
           </nav>
         )}
+        {repos.length > 0 && (
+          <ul aria-label="Environments" {...stylex.props(styles.repoLinks)}>
+            {repos.map((repo) => (
+              <li key={repo}>
+                <Link
+                  to="/repos/$owner/$repo/environment"
+                  params={repoParams(repo)}
+                  {...stylex.props(styles.repoLink, focus.ring)}
+                >
+                  <BoxIcon />
+                  Environment of {repo}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
         {archivedByRepo.length > 0 && (
-          <ul aria-label="Archived Sessions" {...stylex.props(styles.archived)}>
+          <ul aria-label="Archived Sessions" {...stylex.props(styles.repoLinks)}>
             {archivedByRepo.map(([repo, n]) => (
               <li key={repo}>
                 <Link
                   to="/repos/$owner/$repo/archived"
                   params={repoParams(repo)}
-                  {...stylex.props(styles.archivedLink, focus.ring)}
+                  {...stylex.props(styles.repoLink, focus.ring)}
                 >
                   <TrashIcon />
                   {n} archived in {repo}
@@ -230,6 +260,7 @@ function SessionRow({
         <div {...stylex.props(styles.repoLine)}>
           <span {...stylex.props(styles.repo)}>{session.repo}</span>
           <SessionStatus state={statusOf(session.state)} />
+          {environmentChanged(session) && <Badge intent="warning">Environment changed</Badge>}
         </div>
         <div {...stylex.props(styles.meta)}>
           <span {...stylex.props(styles.branch)}>

@@ -1,11 +1,16 @@
 // The web channel's client: opens the socket, says hello, decodes what the Hub sends into the
 // store, and reconnects. On reconnect it joins each joined Session again with `afterSeq`, so the
 // Hub sends only the entries it missed, and opens each open terminal again, which redraws it from
-// a fresh Snapshot.
+// a fresh Snapshot. Commands that the Hub answers (creating a Session, the Environment commands)
+// return a promise of the answer, matched to it by request id.
 
 import {
   checkHandshake,
   type CommandFailed,
+  type EnvironmentDraft,
+  type EnvironmentDraftChecked,
+  type EnvironmentState,
+  type EnvironmentVersion,
   HubToWeb,
   ProtocolVersion,
   RequestId,
@@ -13,8 +18,11 @@ import {
   type PromptId,
   type SessionId,
   type SessionSummary,
+  type SharedVariable,
+  type SharedVariableInput,
   type TerminalFrame,
   type TerminalSize,
+  type TestBuild,
   WebToHub,
 } from "@claude-hub/protocol"
 import { Schema } from "effect"
@@ -56,10 +64,22 @@ const encodeWebToHub = Schema.encodeSync(WebToHub)
 /** Draws a terminal's frames: a Snapshot resets it and draws the screen; Output writes on. */
 export type TerminalWriter = (frame: TerminalFrame) => void
 
+/** A message the Hub sends in answer to a request, with its id. */
+type Answer = Extract<HubToWeb, { readonly requestId?: RequestId }>
+type AnswerTag = Exclude<Answer["_tag"], "CommandFailed">
+
 interface PendingRequest {
-  resolve(session: SessionSummary): void
+  readonly answer: AnswerTag
+  resolve(message: Answer): void
   reject(error: CommandError): void
 }
+
+/** A command that carries a request id, without it: {@link HubClient} adds one. */
+type Request = WebToHub extends infer Message
+  ? Message extends { readonly requestId: RequestId }
+    ? Omit<Message, "requestId">
+    : never
+  : never
 
 export class HubClient {
   readonly transport: HubTransport
@@ -204,19 +224,94 @@ export class HubClient {
     return this.#send({ _tag: "RestoreSession", sessionId })
   }
 
+  /**
+   * Restarts a Session so its Sandbox is rebuilt from its Repo's latest Environment version: an
+   * Active one is put to sleep and woken again, an Asleep one just woken.
+   */
+  restartSession(sessionId: SessionId): boolean {
+    return this.#send({ _tag: "RestartSession", sessionId })
+  }
+
   /** Creates a Session; resolves with it once the Hub has, or rejects with the Hub's reason. */
-  createSession(input: NewSession): Promise<SessionSummary> {
-    const requestId = RequestId.make(`req-${Date.now().toString(36)}-${++this.#requestCount}`)
-    return new Promise((resolve, reject) => {
-      const sent = this.#send({
+  async createSession(input: NewSession): Promise<SessionSummary> {
+    const created = await this.#request(
+      {
         _tag: "CreateSession",
-        requestId,
         repo: input.repo,
         baseBranch: input.baseBranch,
         ...(input.runnerId !== undefined && { runnerId: input.runnerId }),
+      },
+      "SessionCreated",
+    )
+    return created.session
+  }
+
+  // ── Environments (ADR 0009) ──────────────────────────────────────────────
+
+  /** A Repo's Environment and versions, which the store then keeps current. */
+  getEnvironment(repo: string): Promise<EnvironmentState> {
+    return this.#request({ _tag: "GetEnvironment", repo }, "EnvironmentState")
+  }
+
+  /** Whether applying `draft` needs a Test build first, and whether one of it has passed. */
+  checkEnvironmentDraft(repo: string, draft: EnvironmentDraft): Promise<EnvironmentDraftChecked> {
+    return this.#request({ _tag: "CheckEnvironmentDraft", repo, draft }, "EnvironmentDraftChecked")
+  }
+
+  /** Builds `draft` on a Runner; the store then follows its log under the Test build's id. */
+  async startTestBuild(
+    repo: string,
+    runnerId: RunnerId,
+    draft: EnvironmentDraft,
+  ): Promise<TestBuild> {
+    const started = await this.#request(
+      { _tag: "StartTestBuild", repo, runnerId, draft },
+      "TestBuildStarted",
+    )
+    return started.testBuild
+  }
+
+  /** Applies `draft`, made from `baseVersion`, as the Repo's next Environment version. */
+  applyEnvironment(
+    repo: string,
+    baseVersion: EnvironmentVersion | null,
+    draft: EnvironmentDraft,
+  ): Promise<EnvironmentState> {
+    return this.#request({ _tag: "ApplyEnvironment", repo, baseVersion, draft }, "EnvironmentState")
+  }
+
+  /** Every shared variable, which the store then keeps current. */
+  async getSharedVariables(): Promise<ReadonlyArray<SharedVariable>> {
+    return (await this.#request({ _tag: "GetSharedVariables" }, "SharedVariables")).variables
+  }
+
+  async setSharedVariable(variable: SharedVariableInput): Promise<ReadonlyArray<SharedVariable>> {
+    return (await this.#request({ _tag: "SetSharedVariable", variable }, "SharedVariables"))
+      .variables
+  }
+
+  /** Deletes a shared variable; the Hub refuses while an Environment links it. */
+  async deleteSharedVariable(name: string): Promise<ReadonlyArray<SharedVariable>> {
+    return (await this.#request({ _tag: "DeleteSharedVariable", name }, "SharedVariables"))
+      .variables
+  }
+
+  /** Sends `command` with a new request id; resolves with the Hub's `answer` to it. */
+  #request<Tag extends AnswerTag>(
+    command: Request,
+    answer: Tag,
+  ): Promise<Extract<Answer, { readonly _tag: Tag }>> {
+    const requestId = RequestId.make(`req-${Date.now().toString(36)}-${++this.#requestCount}`)
+    return new Promise((resolve, reject) => {
+      if (!this.#send({ ...command, requestId } as WebToHub)) {
+        reject(new CommandError("Not connected to the Hub."))
+        return
+      }
+      this.#requests.set(requestId, {
+        answer,
+        resolve: (message) => resolve(message as Extract<Answer, { readonly _tag: Tag }>),
+        reject,
       })
-      if (!sent) reject(new CommandError("Not connected to the Hub."))
-      else this.#requests.set(requestId, { resolve, reject })
     })
   }
 
@@ -290,10 +385,16 @@ export class HubClient {
       case "HandshakeRejected":
         this.#reject(socket, message.message)
         break
-      case "SessionCreated": {
+      case "SessionCreated":
+      case "EnvironmentState":
+      case "EnvironmentDraftChecked":
+      case "TestBuildStarted":
+      case "SharedVariables": {
+        if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
+        if (request?.answer !== message._tag) break
         this.#requests.delete(message.requestId)
-        request?.resolve(message.session)
+        request.resolve(message)
         break
       }
       case "CommandFailed": {

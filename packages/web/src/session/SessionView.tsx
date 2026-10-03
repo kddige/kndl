@@ -7,7 +7,7 @@ import type {
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { day, purgedIn, statusOf } from "../app/format.ts"
+import { day, environmentChanged, purgedIn, statusOf } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
 import { buildTranscript, runningTurn } from "../hub/transcript.ts"
@@ -21,6 +21,7 @@ import {
   EmptyState,
   IconButton,
   InfoIcon,
+  RestartIcon,
   SessionStatus,
   Spinner,
   Tab,
@@ -310,8 +311,10 @@ function LoadedSession({
               <StateBanner
                 summary={summary}
                 change={lastChange}
+                running={running}
                 onWake={() => command(hub.wakeSession(summary.id))}
                 onRestore={() => restoreSession(hub, summary.id)}
+                onRestart={() => command(hub.restartSession(summary.id))}
               />
               {items.length === 0 ? (
                 <EmptyState
@@ -370,18 +373,49 @@ function command(sent: boolean): boolean {
 function StateBanner({
   summary,
   change,
+  running,
   onWake,
   onRestore,
+  onRestart,
 }: {
   summary: SessionSummary
   change: SessionStateChanged | undefined
+  running: boolean
   onWake: () => void
   onRestore: () => void
+  onRestart: () => void
 }) {
   const why = change?.state === summary.state ? change.message : undefined
   switch (summary.state) {
-    case "Active":
-      return null
+    case "Active": {
+      const environment = summary.environment
+      if (!environmentChanged(summary) || environment === undefined) return null
+      return (
+        <Banner
+          intent="accent"
+          icon={<InfoIcon />}
+          title="Environment changed"
+          action={
+            <Button
+              size="sm"
+              icon={<RestartIcon />}
+              // The Hub only restarts a Session with no Turn running.
+              disabled={running}
+              onClick={onRestart}
+            >
+              Restart
+            </Button>
+          }
+        >
+          {environment.version === null
+            ? `This Sandbox was started before ${summary.repo} had an Environment`
+            : `This Sandbox runs version ${environment.version} of ${summary.repo}'s Environment`}
+          ; version {environment.latestVersion} is the latest. Restarting puts the Session to sleep
+          and wakes it on a fresh Sandbox, with its Workspace and conversation as they are.
+          {running && " Once the running Turn ends."}
+        </Banner>
+      )
+    }
     case "Frozen":
       return (
         <Banner intent="frozen" icon={<InfoIcon />} title="This Session is Frozen">

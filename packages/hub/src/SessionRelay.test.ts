@@ -6,6 +6,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  DefaultEnvironmentDraft,
+  EnvironmentVersion,
   type ModCommandsEncoded,
   type ModEventsEncoded,
   Participant,
@@ -15,6 +17,7 @@ import {
 import { Effect, Exit, Option, Redacted } from "effect"
 import { signInCookie } from "./Auth.ts"
 import { databaseAt } from "./Database.ts"
+import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { SignIns } from "./SignIns.ts"
 import {
@@ -29,7 +32,14 @@ import {
   type Web,
 } from "./testChannels.ts"
 import { appId, appKeyPair, appSlug, botUserId, StandInGitHub } from "./testGitHubApi.ts"
-import { baseConfig, bearer, startHub, type TestHub, webOrigin } from "./testSupport.ts"
+import {
+  baseConfig,
+  bearer,
+  seedEnvironment,
+  startHub,
+  type TestHub,
+  webOrigin,
+} from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -94,6 +104,7 @@ async function sessionScene(hub?: TestHub) {
   const runnerToken = (await issueRunnerToken(theHub)).token
   const runner = await openRunner(theHub, runnerToken)
   const web = await openWeb(theHub, "alice")
+  await seedEnvironment(theHub, "kddige/claude-hub", "dev:alice")
   web.send({
     _tag: "CreateSession",
     requestId: "req-1",
@@ -162,7 +173,9 @@ describe("CreateSession", () => {
       baseBranch: "main",
       workBranch: `claude/${sessionId}`,
       modToken: start.modToken,
+      environment: expect.any(Object),
     })
+    expect(start.environment?.version).toBe(1)
     expect(start.modToken).toStartWith("chm_")
     expect(created).toMatchObject({
       requestId: "req-1",
@@ -517,6 +530,7 @@ describe("the Session lifecycle", () => {
     const hub = await hubSleepingAfter(150)
     const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
     const web = await openWeb(hub, "alice")
+    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
     web.send({
       _tag: "CreateSession",
       requestId: "r",
@@ -573,6 +587,7 @@ describe("the Session lifecycle", () => {
       workBranch: `claude/${sessionId}`,
       modToken: wake.modToken,
       resume: "claude-1",
+      environment: expect.any(Object),
     })
     expect(wake.modToken).not.toBe(start.modToken)
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
@@ -665,6 +680,76 @@ describe("the Session lifecycle", () => {
     expect((await web.take("CommandFailed")).message).toContain("this one is Frozen")
     web.send({ _tag: "WakeSession", sessionId })
     expect((await web.take("CommandFailed")).message).toContain("Runner is offline")
+  })
+
+  test("Restart sleeps an Active Session and wakes it on the Environment's latest version", async () => {
+    const scene = await sessionScene()
+    const { hub, runner, web, sessionId, start } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    expect(start.environment?.version).toBe(1)
+    await hub.run(
+      Effect.flatMap(Environments, (environments) =>
+        environments.apply(
+          "kddige/claude-hub",
+          EnvironmentVersion.make(1),
+          { ...DefaultEnvironmentDraft, resources: { cpus: 3, memoryMib: 4096 } },
+          ParticipantId.make("dev:alice"),
+          1,
+        ),
+      ),
+    )
+
+    web.send({ _tag: "RestartSession", sessionId })
+    expect(await runner.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+    // Asking again while it restarts changes nothing.
+    web.send({ _tag: "RestartSession", sessionId })
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    const woken = await runner.take("StartSession")
+    expect(woken).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(woken.environment?.version).toBe(2)
+    expect(await runner.untaken("StopSession")).toEqual([])
+    const changes = [
+      await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SessionStateChanged"),
+      await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SessionStateChanged"),
+    ].map((m) => m.entry.event)
+    expect(changes).toEqual([
+      {
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        by: alice,
+        message: "Restarting for the Environment's latest version",
+      },
+      { _tag: "SessionStateChanged", state: "Active", by: alice, message: "Woken on mac" },
+    ])
+
+    // An Asleep Session is just woken.
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 2 })
+    await asleep(scene)
+    web.send({ _tag: "RestartSession", sessionId })
+    expect(await runner.take("StartSession")).toMatchObject({ sessionId })
+  })
+
+  test("Restart is refused while a Turn runs, and for a Session Frozen or archived", async () => {
+    const scene = await sessionScene()
+    const { runner, web, sessionId, mod } = scene
+    await mod.post(turnStarted("t-1"))
+    web.send({ _tag: "RestartSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "RestartSession",
+      sessionId,
+      message: "A Turn is running: stop it first, then restart.",
+    })
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    web.send({ _tag: "RestartSession", sessionId })
+    expect((await web.take("CommandFailed")).message).toContain("Frozen")
+    web.send({ _tag: "ArchiveSession", sessionId })
+    await web.take("SessionUpdated", (m) => m.session.state === "Archived")
+    web.send({ _tag: "RestartSession", sessionId })
+    expect((await web.take("CommandFailed")).message).toBe("The Session is archived.")
   })
 
   test("HUB_SLEEP_AFTER_MS must be above 0", async () => {
@@ -882,6 +967,7 @@ describe("archive, restore and purge", () => {
   test("is purged once its retention is over: its rows go, and its Runner deletes the rest", async () => {
     const scene = await sessionScene(await hubRetainingFor(300))
     const { hub, runner, web, sessionId } = scene
+    await seedEnvironment(hub, "kddige/other", "dev:alice")
     web.send({
       _tag: "CreateSession",
       requestId: "req-2",

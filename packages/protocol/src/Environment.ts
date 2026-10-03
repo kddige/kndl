@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Redacted, Schema } from "effect"
 import {
   EnvironmentVersion,
   RequestId,
@@ -467,6 +467,17 @@ export function variableNameProblem(name: string): string | undefined {
   return undefined
 }
 
+/** Why a value can't be saved as Sensitive under `name`, or undefined when it can. */
+export function sensitiveValueProblem(name: string, value: string): string | undefined {
+  if (value.length > MaxVariableValueLength) {
+    return `The value of ${name} is over ${MaxVariableValueLength} characters.`
+  }
+  if (value.trim().length < MinSensitiveValueLength) {
+    return `The value of ${name} is under ${MinSensitiveValueLength} characters: too short to redact from output. Make it Plain, or use a longer value.`
+  }
+  return undefined
+}
+
 /** Why a dependency folder can't be used, or undefined when it can. */
 export function dependencyFolderProblem(folder: DependencyFolder): string | undefined {
   const { pattern, nextTo } = folder
@@ -540,6 +551,10 @@ export function environmentDraftProblems(draft: EnvironmentDraft): ReadonlyArray
     names.add(variable.name)
     if (variable._tag === "Plain" && variable.value.length > MaxVariableValueLength) {
       problems.push(`The value of ${variable.name} is over ${MaxVariableValueLength} characters.`)
+    }
+    if (variable._tag === "Sensitive" && variable.value !== undefined) {
+      const valueProblem = sensitiveValueProblem(variable.name, Redacted.value(variable.value))
+      if (valueProblem !== undefined) problems.push(valueProblem)
     }
   }
   return problems

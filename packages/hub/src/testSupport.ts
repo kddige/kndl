@@ -1,12 +1,20 @@
 // Helpers for the Hub's tests: a real Hub on 127.0.0.1 and a free port, and ways to sign in to
 // it. Not part of the Hub.
 
+import {
+  DefaultEnvironmentDraft,
+  type EnvironmentDraft,
+  ParticipantId,
+  RunnerId,
+  TestBuildId,
+} from "@claude-hub/protocol"
 import { BunHttpServer } from "@effect/platform-bun"
 import { Context, Duration, Effect, Exit, Layer, Option, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
 import type { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { DatabaseTest } from "./Database.ts"
+import { Environments } from "./Environments.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
@@ -110,3 +118,31 @@ export const devSignIn = (hub: TestHub, login = "alice") =>
     headers: { origin: webOrigin, "content-type": "application/json" },
     body: JSON.stringify({ login }),
   })
+
+/**
+ * Gives `repo` its first Environment version, applied by `by` (someone signed in), as if a Test
+ * build of `draft` had passed: a Repo needs one before its first Session (ADR 0009).
+ */
+export const seedEnvironment = (
+  hub: TestHub,
+  repo: string,
+  by: string,
+  draft: EnvironmentDraft = DefaultEnvironmentDraft,
+) =>
+  hub.run(
+    Effect.gen(function* () {
+      const environments = yield* Environments
+      const prepared = yield* environments.prepare(repo, draft)
+      const id = TestBuildId.make(`seed-${repo}`)
+      yield* environments.recordTestBuild({
+        id,
+        repo,
+        runnerId: RunnerId.make("seed"),
+        digest: prepared.digest,
+        startedBy: ParticipantId.make(by),
+        startedAt: 0,
+      })
+      yield* environments.finishTestBuild(id, "Passed", 0)
+      yield* environments.apply(repo, null, draft, ParticipantId.make(by), 0)
+    }),
+  )
