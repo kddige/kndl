@@ -1,8 +1,9 @@
 // An in-process stand-in for the Hub's web channel, until the real one (issues #7 and #8) is
 // done. It speaks the protocol over a fake socket, so the HubClient can't tell the difference,
 // and plays a scripted Session: streamed text, tool calls, a subagent, a second Participant
-// joining and queueing a prompt, and a terminal to watch and type into. `VITE_FAKE_HUB=1` runs
-// the UI against it; tests use it too.
+// joining and queueing a prompt, and a terminal to watch and type into; and Environments, shared
+// variables and Test builds with a streaming log (environments.ts). `VITE_FAKE_HUB=1` runs the UI
+// against it; tests use it too.
 //
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too.
@@ -11,6 +12,7 @@ import { checkHandshake, ProtocolVersion, WebToHub } from "@claude-hub/protocol"
 import { Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
+import { FakeEnvironments, testBuildScript } from "./environments.ts"
 import {
   archiveRetentionMs,
   bob,
@@ -96,6 +98,7 @@ export class FakeHub implements HubTransport {
   readonly stepMs: number
   readonly sessions = new Map<string, FakeSession>()
   readonly runners: Array<RunnerSummaryWire>
+  readonly environments = new FakeEnvironments()
   /** Every message each client sent, decoded, for tests to inspect. */
   readonly received: Array<WebToHub> = []
   #signedIn: boolean
@@ -176,6 +179,45 @@ export class FakeHub implements HubTransport {
   #closeAll(): void {
     // Closing a socket takes it out of the set, so iterate over a copy.
     for (const socket of Array.from(this.#sockets)) socket.close()
+  }
+
+  /**
+   * Bob applies a version of `repo`'s Environment that gives each Sandbox more memory, as a
+   * teammate would meanwhile: a draft made from the version before is then stale. In the browser,
+   * `fakeHub.teammateApplies("kddige/claude-hub")` in the console.
+   */
+  teammateApplies(repo: string): void {
+    const { environment } = this.environments.state(repo)
+    if (!environment) return
+    const { version: _, repo: __, ...recipe } = environment
+    const refused = this.environments.apply(
+      repo,
+      environment.version,
+      {
+        ...recipe,
+        resources: { ...recipe.resources, memoryMib: recipe.resources.memoryMib + 1024 },
+      },
+      bob,
+    )
+    if (refused === undefined) this.#environmentApplied(repo)
+  }
+
+  /** Tells everyone but `except` (who asked) the Repo's new version, and its Sessions too. */
+  #environmentApplied(repo: string, except?: FakeSocket): void {
+    const state = this.environments.state(repo)
+    for (const socket of this.#sockets) {
+      if (socket !== except && socket.welcomed) socket.deliver(state)
+    }
+    const latestVersion = this.environments.latestVersion(repo)
+    if (latestVersion === undefined) return
+    for (const session of this.sessions.values()) {
+      if (session.summary.repo !== repo) continue
+      session.summary = {
+        ...session.summary,
+        environment: { version: session.summary.environment?.version ?? null, latestVersion },
+      }
+      this.#summaryChanged(session)
+    }
   }
 
   /** Starts the demo Session's script now, rather than on the first join. */
@@ -303,7 +345,7 @@ export class FakeHub implements HubTransport {
         const session = this.sessions.get(message.sessionId)
         if (!session) break
         if (session.summary.state === "Asleep") {
-          this.#setState(session, "Active", "Woken on studio", this.#you)
+          this.#wake(session, "Woken on studio", this.#you)
           this.#next(session)
         } else if (session.summary.state !== "Active") {
           this.#fail(
@@ -313,6 +355,105 @@ export class FakeHub implements HubTransport {
             message.sessionId,
           )
         }
+        break
+      }
+      case "RestartSession":
+        this.#restart(socket, message.sessionId)
+        break
+      case "GetEnvironment":
+        socket.deliver({ ...this.environments.state(message.repo), requestId: message.requestId })
+        break
+      case "CheckEnvironmentDraft": {
+        const prepared = this.environments.prepare(message.repo, message.draft)
+        if (typeof prepared === "string") {
+          this.#refuse(socket, message._tag, message.requestId, prepared)
+          break
+        }
+        socket.deliver({
+          _tag: "EnvironmentDraftChecked",
+          requestId: message.requestId,
+          repo: message.repo,
+          needsTestBuild: prepared.changesBuild,
+          testBuildPassed: this.environments.testBuildPassed(message.repo, prepared.digest),
+        })
+        break
+      }
+      case "StartTestBuild": {
+        const runner = this.runners.find((candidate) => candidate.id === message.runnerId)
+        if (!runner?.isOnline) {
+          const reason = `Runner ${message.runnerId} is not online.`
+          this.#refuse(socket, message._tag, message.requestId, reason)
+          break
+        }
+        const prepared = this.environments.prepare(message.repo, message.draft)
+        if (typeof prepared === "string") {
+          this.#refuse(socket, message._tag, message.requestId, prepared)
+          break
+        }
+        const testBuildId = `tb-${++this.#ids}`
+        socket.deliver({
+          _tag: "TestBuildStarted",
+          requestId: message.requestId,
+          testBuild: {
+            id: testBuildId,
+            repo: message.repo,
+            runnerId: runner.id,
+            startedBy: this.#you,
+            startedAt: Date.now(),
+          },
+        })
+        const { lines, passes } = testBuildScript(message.repo, message.draft)
+        lines.forEach((line, index) =>
+          this.#after(index + 1, () =>
+            socket.deliver({ _tag: "TestBuildLogged", testBuildId, data: `${line}\n` }),
+          ),
+        )
+        this.#after(lines.length + 1, () => {
+          if (passes) this.environments.recordPassed(message.repo, prepared.digest)
+          socket.deliver({
+            _tag: "TestBuildEnded",
+            testBuildId,
+            repo: message.repo,
+            result: passes ? "Passed" : "Failed",
+            ...(!passes && { message: "The bootstrap script failed." }),
+          })
+        })
+        break
+      }
+      case "ApplyEnvironment": {
+        const { repo } = message
+        const refused = this.environments.apply(repo, message.baseVersion, message.draft, this.#you)
+        if (refused !== undefined) {
+          this.#refuse(socket, message._tag, message.requestId, refused)
+          break
+        }
+        socket.deliver({ ...this.environments.state(repo), requestId: message.requestId })
+        this.#environmentApplied(repo, socket)
+        break
+      }
+      case "GetSharedVariables":
+        socket.deliver({
+          _tag: "SharedVariables",
+          requestId: message.requestId,
+          variables: this.environments.sharedVariables(),
+        })
+        break
+      case "SetSharedVariable":
+      case "DeleteSharedVariable": {
+        const refused =
+          message._tag === "SetSharedVariable"
+            ? this.environments.setShared(message.variable)
+            : this.environments.deleteShared(message.name)
+        if (refused !== undefined) {
+          this.#refuse(socket, message._tag, message.requestId, refused)
+          break
+        }
+        const shared = {
+          _tag: "SharedVariables" as const,
+          variables: this.environments.sharedVariables(),
+        }
+        socket.deliver({ ...shared, requestId: message.requestId })
+        this.#toOthers(socket, shared)
         break
       }
       case "ArchiveSession": {
@@ -426,6 +567,12 @@ export class FakeHub implements HubTransport {
       socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
       return
     }
+    const version = this.environments.latestVersion(repo)
+    if (version === undefined) {
+      const message = `${repo} has no Environment yet: set one up before its first Session.`
+      socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
+      return
+    }
     const id = `s-new-${++this.#ids}`
     const summary: SessionSummaryWire = {
       id,
@@ -438,6 +585,7 @@ export class FakeHub implements HubTransport {
       creator: this.#you,
       createdAt: Date.now(),
       currentTurn: null,
+      environment: { version, latestVersion: version },
     }
     this.sessions.set(id, {
       summary,
@@ -452,6 +600,65 @@ export class FakeHub implements HubTransport {
       if (other !== socket && other.welcomed)
         other.deliver({ _tag: "SessionUpdated", session: summary })
     }
+  }
+
+  /**
+   * Sleep then wake, so the Sandbox is rebuilt from the latest Environment version; an Asleep
+   * Session is just woken. Refused as the Hub refuses it.
+   */
+  #restart(socket: FakeSocket, sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      this.#fail(socket, "RestartSession", "There is no such Session.", sessionId)
+      return
+    }
+    switch (session.summary.state) {
+      case "Asleep":
+        this.#wake(session, "Woken on studio", this.#you)
+        this.#next(session)
+        return
+      case "Active":
+        if (session.stopTurn) {
+          const reason = "A Turn is running: stop it first, then restart."
+          this.#fail(socket, "RestartSession", reason, sessionId)
+          return
+        }
+        this.#setState(
+          session,
+          "Asleep",
+          "Restarting for the Environment's latest version",
+          this.#you,
+        )
+        this.#after(6, () => {
+          if (session.summary.state !== "Asleep") return
+          this.#wake(session, "Woken on studio", this.#you)
+          this.#next(session)
+        })
+        return
+      case "Frozen":
+        this.#fail(
+          socket,
+          "RestartSession",
+          "The Session is Frozen: its Runner is offline. Restart it once the Runner returns.",
+          sessionId,
+        )
+        return
+      case "Archived":
+        this.#fail(socket, "RestartSession", "The Session is archived.", sessionId)
+        return
+    }
+  }
+
+  /** Starts an Asleep Session again, on its Repo's latest Environment version. */
+  #wake(session: FakeSession, message: string, by?: ParticipantWire): void {
+    const latest = this.environments.latestVersion(session.summary.repo)
+    if (latest !== undefined) {
+      session.summary = {
+        ...session.summary,
+        environment: { version: latest, latestVersion: latest },
+      }
+    }
+    this.#setState(session, "Active", message, by)
   }
 
   /** A prompt arrives: it runs now if the Session is idle, or waits in the Prompt queue. */
@@ -480,9 +687,7 @@ export class FakeHub implements HubTransport {
     const prompt = session.queue.shift()
     if (!prompt) return
     this.#queueChanged(session)
-    if (session.summary.state === "Asleep") {
-      this.#setState(session, "Active", "Woken by a prompt")
-    }
+    if (session.summary.state === "Asleep") this.#wake(session, "Woken by a prompt")
     this.#runTurn(session, prompt, this.#replies.get(prompt.id) ?? replyTo(prompt.text))
     this.#replies.delete(prompt.id)
   }
@@ -753,6 +958,18 @@ export class FakeHub implements HubTransport {
       message,
       ...(sessionId !== undefined && { sessionId }),
     })
+  }
+
+  /** Refuses a command that has a request to answer. */
+  #refuse(socket: FakeSocket, command: string, requestId: string, message: string): void {
+    socket.deliver({ _tag: "CommandFailed", command, requestId, message })
+  }
+
+  /** Tells every other client, as the Hub broadcasts an applied version or changed variables. */
+  #toOthers(socket: FakeSocket, message: HubMessage): void {
+    for (const other of this.#sockets) {
+      if (other !== socket && other.welcomed) other.deliver(message)
+    }
   }
 
   #after(steps: number, fn: () => void): ReturnType<typeof setTimeout> {

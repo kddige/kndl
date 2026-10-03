@@ -151,3 +151,30 @@ export function BranchIcon(props: IconProps) {
     </Icon>
   )
 }
+
+export function KeyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="5.5" cy="10.5" r="3" />
+      <path d="m7.6 8.4 5.9-5.9M11.5 4.5l1.5 1.5M10 6l1.5 1.5" />
+    </Icon>
+  )
+}
+
+export function BoxIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 1.75 13.75 5v6L8 14.25 2.25 11V5L8 1.75Z" />
+      <path d="M2.25 5 8 8.25 13.75 5M8 8.25v6" />
+    </Icon>
+  )
+}
+
+export function RestartIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.75 8a5.25 5.25 0 1 0 1.6-3.77" />
+      <path d="M2.75 2.5v2.75H5.5" />
+    </Icon>
+  )
+}

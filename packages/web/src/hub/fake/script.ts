@@ -66,6 +66,8 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         creator: you,
         createdAt: now - 2 * hour,
         currentTurn: null,
+        // Started before Alice applied version 2: it shows "Environment changed".
+        environment: { version: 1, latestVersion: 2 },
       },
       at: now - 2 * hour,
       events: [
@@ -102,6 +104,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         creator: bob,
         createdAt: now - 26 * hour,
         currentTurn: null,
+        environment: { version: 1, latestVersion: 2 },
       },
       at: now - 26 * hour,
       events: [
@@ -146,6 +149,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         creator: you,
         createdAt: now - 5 * day,
         currentTurn: null,
+        environment: { version: 1, latestVersion: 2 },
         archived: { by: bob, at: now - 3 * day, purgeAt: now + 27 * day },
       },
       at: now - 5 * day,

@@ -553,8 +553,8 @@ export function environmentDraftProblems(draft: EnvironmentDraft): ReadonlyArray
       problems.push(`The value of ${variable.name} is over ${MaxVariableValueLength} characters.`)
     }
     if (variable._tag === "Sensitive" && variable.value !== undefined) {
-      const problem = sensitiveValueProblem(variable.name, Redacted.value(variable.value))
-      if (problem !== undefined) problems.push(problem)
+      const valueProblem = sensitiveValueProblem(variable.name, Redacted.value(variable.value))
+      if (valueProblem !== undefined) problems.push(valueProblem)
     }
   }
   return problems

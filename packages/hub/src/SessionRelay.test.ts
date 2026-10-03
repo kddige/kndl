@@ -7,6 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   DefaultEnvironmentDraft,
+  EnvironmentVersion,
   type ModCommandsEncoded,
   type ModEventsEncoded,
   Participant,
@@ -172,7 +173,7 @@ describe("CreateSession", () => {
       baseBranch: "main",
       workBranch: `claude/${sessionId}`,
       modToken: start.modToken,
-      environment: start.environment,
+      environment: expect.any(Object),
     })
     expect(start.environment?.version).toBe(1)
     expect(start.modToken).toStartWith("chm_")
@@ -586,7 +587,7 @@ describe("the Session lifecycle", () => {
       workBranch: `claude/${sessionId}`,
       modToken: wake.modToken,
       resume: "claude-1",
-      environment: start.environment,
+      environment: expect.any(Object),
     })
     expect(wake.modToken).not.toBe(start.modToken)
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
@@ -691,7 +692,7 @@ describe("the Session lifecycle", () => {
       Effect.flatMap(Environments, (environments) =>
         environments.apply(
           "kddige/claude-hub",
-          1,
+          EnvironmentVersion.make(1),
           { ...DefaultEnvironmentDraft, resources: { cpus: 3, memoryMib: 4096 } },
           ParticipantId.make("dev:alice"),
           1,

@@ -1,12 +1,15 @@
 // What the web UI knows about the Hub, built only from what the Hub sends: the Runners, the
 // Sessions, for each joined Session its event log, presence and Prompt queue, and for each open
-// terminal whether it is live and its size. The terminal's output itself goes straight to the
-// view that draws it (HubClient.openTerminal), not through here.
+// terminal whether it is live and its size; the Environments and shared variables the client
+// asked for (ADR 0009), and the Test builds it started, with their logs. The terminal's output
+// itself goes straight to the view that draws it (HubClient.openTerminal), not through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
 // events, and React reads the result.
 
 import type {
+  Environment,
+  EnvironmentVersionInfo,
   EventSeq,
   HubToWeb,
   Participant,
@@ -15,8 +18,12 @@ import type {
   SessionId,
   SessionLogEntry,
   SessionSummary,
+  SharedVariable,
   TerminalFrame,
   TerminalSize,
+  TestBuild,
+  TestBuildId,
+  TestBuildResult,
 } from "@claude-hub/protocol"
 import type { SignInOptions } from "./config.ts"
 
@@ -55,6 +62,22 @@ export interface OpenTerminal {
   readonly size: TerminalSize | null
 }
 
+/** A Repo's Environment as last applied, or null before its first, and its versions. */
+export interface RepoEnvironment {
+  readonly environment: Environment | null
+  /** Newest first. */
+  readonly versions: ReadonlyArray<EnvironmentVersionInfo>
+}
+
+/** A Test build this client started, with its log so far and, once over, how it ended. */
+export interface TestBuildRun {
+  readonly testBuild: TestBuild
+  readonly log: string
+  readonly result: TestBuildResult | null
+  /** Why it failed, when the Hub says. */
+  readonly message: string | null
+}
+
 export interface HubState {
   readonly connection: Connection
   /** The signed-in person, from the welcome. */
@@ -65,6 +88,12 @@ export interface HubState {
   readonly sessions: ReadonlyArray<SessionSummary> | null
   readonly joined: Readonly<Record<SessionId, JoinedSession>>
   readonly terminals: Readonly<Record<SessionId, OpenTerminal>>
+  /** The Environments of the Repos the client asked about, kept current as versions are applied. */
+  readonly environments: Readonly<Record<string, RepoEnvironment>>
+  /** Null until the client first asks for them; then kept current. */
+  readonly sharedVariables: ReadonlyArray<SharedVariable> | null
+  /** The Test builds this client started since it loaded. */
+  readonly testBuilds: Readonly<Record<TestBuildId, TestBuildRun>>
 }
 
 /** Events the client adds to the Hub's messages. */
@@ -87,6 +116,9 @@ export const initialState: HubState = {
   sessions: null,
   joined: {},
   terminals: {},
+  environments: {},
+  sharedVariables: null,
+  testBuilds: {},
 }
 
 const emptyJoined: JoinedSession = { historyLoaded: false, log: [], presence: [], queue: [] }
@@ -182,13 +214,39 @@ export function reduce(state: HubState, action: HubAction): HubState {
       // Refusals are the client's to report.
       return state
     case "EnvironmentState":
+      return {
+        ...state,
+        environments: {
+          ...state.environments,
+          [action.repo]: { environment: action.environment, versions: action.versions },
+        },
+      }
     case "EnvironmentDraftChecked":
-    case "TestBuildStarted":
-    case "TestBuildLogged":
-    case "TestBuildEnded":
-    case "SharedVariables":
-      // TODO(#50): the Environment setup screen keeps these.
+      // An answer for whoever asked: it says nothing that lasts.
       return state
+    case "SharedVariables":
+      return { ...state, sharedVariables: action.variables }
+    case "TestBuildStarted": {
+      const { testBuild } = action
+      if (state.testBuilds[testBuild.id]) return state
+      return {
+        ...state,
+        testBuilds: {
+          ...state.testBuilds,
+          [testBuild.id]: { testBuild, log: "", result: null, message: null },
+        },
+      }
+    }
+    case "TestBuildLogged":
+      return updateTestBuild(state, action.testBuildId, (run) =>
+        run.result === null ? { ...run, log: run.log + action.data } : run,
+      )
+    case "TestBuildEnded":
+      return updateTestBuild(state, action.testBuildId, (run) => ({
+        ...run,
+        result: action.result,
+        message: action.message ?? null,
+      }))
   }
 }
 
@@ -229,6 +287,17 @@ function updateJoined(
   const session = state.joined[sessionId]
   if (!session) return state
   return { ...state, joined: { ...state.joined, [sessionId]: update(session) } }
+}
+
+/** Updates a Test build this client follows; others are dropped. */
+function updateTestBuild(
+  state: HubState,
+  id: TestBuildId,
+  update: (run: TestBuildRun) => TestBuildRun,
+): HubState {
+  const run = state.testBuilds[id]
+  if (!run) return state
+  return { ...state, testBuilds: { ...state.testBuilds, [id]: update(run) } }
 }
 
 /**

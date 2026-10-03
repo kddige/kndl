@@ -6,8 +6,10 @@ import {
   AvatarStack,
   Badge,
   Banner,
+  BoxIcon,
   BranchIcon,
   Button,
+  Checkbox,
   Dialog,
   DialogClose,
   Disclosure,
@@ -17,6 +19,8 @@ import {
   InboxIcon,
   InfoIcon,
   Input,
+  KeyIcon,
+  LogView,
   Markdown,
   Menu,
   MenuGroup,
@@ -25,11 +29,13 @@ import {
   MoreIcon,
   PlusIcon,
   Popover,
+  RestartIcon,
   Select,
   SessionStatus,
   setTheme,
   Spinner,
   StopIcon,
+  Switch,
   Tab,
   TabList,
   TabPanel,
@@ -549,6 +555,53 @@ vi.runAllTimers()
 | vitest.config.ts | -1 |
 `
 
+const BUILD_LOG = `Pulling debian:bookworm-slim on studio-mac
+$ apt-get update && apt-get install -y curl git
+Setting up git (1:2.39.5-0+deb12u1) ...
+Snapshotting the bootstrap's result
+Test build passed in 41s`
+
+function Toggles() {
+  const [atBuild, setAtBuild] = useState(true)
+  const [docker, setDocker] = useState(false)
+  const [lines, setLines] = useState(2)
+  const log = BUILD_LOG.split("\n").slice(0, lines).join("\n")
+  return (
+    <Section
+      title="Checkbox, Switch, LogView"
+      note="A Switch turns a setting on at once; a Checkbox is a choice in a form."
+    >
+      <div {...stylex.props(styles.grid)}>
+        <Checkbox label="At build" checked={atBuild} onCheckedChange={setAtBuild} />
+        <Checkbox label="Disabled, ticked" checked disabled />
+        <Switch
+          label="Docker in every Sandbox"
+          description="Each Session's Docker keeps its data on a disk of its own."
+          checked={docker}
+          onCheckedChange={setDocker}
+        />
+        <Switch label="Disabled, off" checked={false} disabled />
+      </div>
+      <LogView label="Test build log" placeholder="Waiting for the Runner…">
+        {log}
+      </LogView>
+      <LogView label="Empty log" placeholder="Waiting for the Runner…">
+        {""}
+      </LogView>
+      <Row label="log">
+        <Button size="sm" onClick={() => setLines((n) => (n >= 5 ? 0 : n + 1))}>
+          Add a line
+        </Button>
+      </Row>
+      <Row label="icons">
+        <KeyIcon aria-label="Key" />
+        <BoxIcon aria-label="Box" />
+        <RestartIcon aria-label="Restart" />
+      </Row>
+    </Section>
+  )
+}
+
 function Disclosures() {
   return (
     <Section title="Disclosure" note="Closed by default: tool calls and subagents in the chat.">
@@ -664,6 +717,7 @@ export function KitPage() {
       </Section>
 
       <Fields />
+      <Toggles />
       <Selects />
 
       <Section title="Tabs">

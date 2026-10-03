@@ -35,7 +35,6 @@ import type { Peer } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 import { randomId } from "./Tokens.ts"
 
-
 const webTags = [
   "GetEnvironment",
   "CheckEnvironmentDraft",

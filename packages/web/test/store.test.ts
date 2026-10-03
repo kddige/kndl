@@ -357,3 +357,92 @@ test("refused commands leave the state alone", () => {
     state,
   )
 })
+
+describe("Environments", () => {
+  const environment = {
+    repo: "acme/app",
+    version: 2,
+    image: "debian:bookworm-slim",
+    bootstrapScript: "",
+    docker: false,
+    dependencyFolders: [],
+    resources: { cpus: 2, memoryMib: 4096 },
+    variables: [{ _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true }],
+  } as const
+  const versions = [
+    { version: 2, appliedBy: bob, appliedAt: 2_000, rebuilt: false },
+    { version: 1, appliedBy: alice, appliedAt: 1_000, rebuilt: true },
+  ]
+  const testBuild = {
+    id: "tb-1",
+    repo: "acme/app",
+    runnerId: "r-1",
+    startedBy: alice,
+    startedAt: 3_000,
+  }
+
+  test("EnvironmentState keeps a Repo's Environment and versions, answered or broadcast", () => {
+    const state = run(
+      hub({
+        _tag: "EnvironmentState",
+        requestId: "q-1",
+        repo: "acme/app",
+        environment: null,
+        versions: [],
+      }),
+      hub({ _tag: "EnvironmentState", repo: "acme/app", environment, versions }),
+      hub({ _tag: "EnvironmentState", repo: "acme/other", environment: null, versions: [] }),
+    )
+    expect(state.environments["acme/app"]?.environment?.version).toBe(2 as never)
+    expect(state.environments["acme/app"]?.versions.map((v) => v.appliedBy.name)).toEqual([
+      "Bob",
+      "Alice",
+    ])
+    expect(state.environments["acme/other"]).toEqual({ environment: null, versions: [] })
+  })
+
+  test("SharedVariables replaces what was known", () => {
+    expect(initialState.sharedVariables).toBeNull()
+    const state = run(
+      hub({
+        _tag: "SharedVariables",
+        variables: [{ _tag: "Sensitive", name: "GH_TOKEN", linkedBy: [] }],
+      }),
+    )
+    expect(state.sharedVariables?.map((variable) => variable.name)).toEqual(["GH_TOKEN"])
+  })
+
+  test("a Test build's log streams in until it ends, and says how", () => {
+    const state = run(
+      hub({ _tag: "TestBuildStarted", requestId: "q-2", testBuild }),
+      hub({ _tag: "TestBuildLogged", testBuildId: "tb-1", data: "Pulling\n" }),
+      hub({ _tag: "TestBuildLogged", testBuildId: "tb-1", data: "Built\n" }),
+      hub({
+        _tag: "TestBuildEnded",
+        testBuildId: "tb-1",
+        repo: "acme/app",
+        result: "Failed",
+        message: "exit 1",
+      }),
+      hub({ _tag: "TestBuildLogged", testBuildId: "tb-1", data: "late\n" }),
+    )
+    expect(state.testBuilds["tb-1" as never]).toMatchObject({
+      log: "Pulling\nBuilt\n",
+      result: "Failed",
+      message: "exit 1",
+    })
+  })
+
+  test("the log of a Test build this client didn't start is dropped, as is a check", () => {
+    const state = run(hub({ _tag: "TestBuildLogged", testBuildId: "tb-9", data: "x" }))
+    expect(state).toBe(initialState)
+    const checked = hub({
+      _tag: "EnvironmentDraftChecked",
+      requestId: "q-3",
+      repo: "acme/app",
+      needsTestBuild: true,
+      testBuildPassed: false,
+    })
+    expect(reduce(initialState, checked)).toBe(initialState)
+  })
+})

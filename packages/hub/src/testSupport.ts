@@ -1,7 +1,6 @@
 // Helpers for the Hub's tests: a real Hub on 127.0.0.1 and a free port, and ways to sign in to
 // it. Not part of the Hub.
 
-import { BunHttpServer } from "@effect/platform-bun"
 import {
   DefaultEnvironmentDraft,
   type EnvironmentDraft,
@@ -9,11 +8,13 @@ import {
   RunnerId,
   TestBuildId,
 } from "@claude-hub/protocol"
+import { BunHttpServer } from "@effect/platform-bun"
 import { Context, Duration, Effect, Exit, Layer, Option, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
 import type { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { DatabaseTest } from "./Database.ts"
+import { Environments } from "./Environments.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
@@ -24,7 +25,6 @@ import {
   type HubConfigInput,
 } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
-import { Environments } from "./Environments.ts"
 
 export const webOrigin = "http://localhost:5173"
 

@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import {
   type CommandFailed,
+  DefaultEnvironmentDraft,
+  type EnvironmentDraft,
   ProtocolVersion,
   RunnerId,
   SessionId,
   type TerminalFrame,
 } from "@claude-hub/protocol"
+import { Redacted } from "effect"
+import { editFrom, toDraft } from "../src/environment/draft.ts"
 import { HubClient } from "../src/hub/client.ts"
 import { FakeHub } from "../src/hub/fake/FakeHub.ts"
 import { demoSessionId } from "../src/hub/fake/script.ts"
@@ -581,5 +585,178 @@ describe("archiving", () => {
     client.restoreSession(readme)
     await eventually(() => expect(failures).toHaveLength(1))
     expect(failures[0]).toMatchObject({ command: "RestoreSession", sessionId: "s-readme" })
+  })
+})
+
+/** A client of a fresh fake Hub, once online. */
+async function online() {
+  const set = setUp()
+  set.client.start()
+  await eventually(() => expect(set.client.getState().connection.status).toBe("online"))
+  return set
+}
+
+describe("Environments", () => {
+  const repo = "kddige/claude-hub"
+  const studio = RunnerId.make("r-studio")
+
+  /** The fake's saved Environment as a draft, changed by `change`. */
+  async function draftOf(
+    client: HubClient,
+    change: (saved: EnvironmentDraft) => EnvironmentDraft = (saved) => saved,
+  ) {
+    const { environment } = await client.getEnvironment(repo)
+    return { base: environment?.version ?? null, draft: change(toDraft(editFrom(environment))) }
+  }
+
+  test("getEnvironment answers with the versions, and the store keeps them", async () => {
+    const { client } = await online()
+    const state = await client.getEnvironment(repo)
+    expect(state.environment?.version).toBe(2 as never)
+    expect(state.versions.map((version) => `${version.version}:${version.rebuilt}`)).toEqual([
+      "2:false",
+      "1:true",
+    ])
+    expect(client.getState().environments[repo]?.environment?.image).toBe("debian:bookworm-slim")
+    // Saved Sensitive values never reach the browser.
+    expect(JSON.stringify(client.getState().environments[repo])).not.toContain("made-up")
+    const none = await client.getEnvironment("acme/new")
+    expect(none).toMatchObject({ environment: null, versions: [] })
+  })
+
+  test("a change to the build needs a passing Test build of exactly that draft", async () => {
+    const { client } = await online()
+    const { base, draft } = await draftOf(client, (saved) => ({ ...saved, image: "ubuntu:24.04" }))
+    expect(await client.checkEnvironmentDraft(repo, draft)).toMatchObject({
+      needsTestBuild: true,
+      testBuildPassed: false,
+    })
+    await expect(client.applyEnvironment(repo, base, draft)).rejects.toThrow("run a Test build")
+
+    const build = await client.startTestBuild(repo, studio, draft)
+    await eventually(() => expect(client.getState().testBuilds[build.id]?.result).toBe("Passed"))
+    expect(client.getState().testBuilds[build.id]?.log).toContain("Pulling ubuntu:24.04")
+    expect((await client.checkEnvironmentDraft(repo, draft)).testBuildPassed).toBe(true)
+    // Another draft hasn't passed.
+    const other = { ...draft, image: "ubuntu:22.04" }
+    expect((await client.checkEnvironmentDraft(repo, other)).testBuildPassed).toBe(false)
+
+    const applied = await client.applyEnvironment(repo, base, draft)
+    expect(applied.environment?.version).toBe(3 as never)
+    expect(applied.versions[0]).toMatchObject({
+      version: 3,
+      rebuilt: true,
+      appliedBy: { login: "alice" },
+    })
+  })
+
+  test("a failing bootstrap fails the Test build, with its log", async () => {
+    const { client } = await online()
+    const { draft } = await draftOf(client, (saved) => ({ ...saved, bootstrapScript: "false" }))
+    const build = await client.startTestBuild(repo, studio, draft)
+    await eventually(() => expect(client.getState().testBuilds[build.id]?.result).toBe("Failed"))
+    expect(client.getState().testBuilds[build.id]?.log).toContain("exited with status 1")
+  })
+
+  test("a change that doesn't touch the build applies at once, Sensitive values kept", async () => {
+    const { client } = await online()
+    const { base, draft } = await draftOf(client, (saved) => ({
+      ...saved,
+      resources: { cpus: 8, memoryMib: 16_384 },
+    }))
+    expect(await client.checkEnvironmentDraft(repo, draft)).toMatchObject({
+      needsTestBuild: false,
+    })
+    const applied = await client.applyEnvironment(repo, base, draft)
+    expect(applied.versions[0]).toMatchObject({ version: 3, rebuilt: false })
+    expect(applied.environment?.variables.map((variable) => variable._tag)).toEqual([
+      "Plain",
+      "Sensitive",
+      "Link",
+    ])
+  })
+
+  test("a draft made from an older version is refused, and others hear of the new one", async () => {
+    const { hub, client } = await online()
+    const { base, draft } = await draftOf(client, (saved) => ({
+      ...saved,
+      resources: { cpus: 8, memoryMib: 4096 },
+    }))
+    hub.teammateApplies(repo)
+    await eventually(() =>
+      expect(client.getState().environments[repo]?.environment?.version).toBe(3 as never),
+    )
+    expect(client.getState().environments[repo]?.versions[0]?.appliedBy.login).toBe("bob")
+    await expect(client.applyEnvironment(repo, base, draft)).rejects.toThrow(
+      "version 3 is the latest",
+    )
+  })
+
+  test("a Repo's first Environment, from the default draft, lets it have Sessions", async () => {
+    const { client } = await online()
+    await expect(client.createSession({ repo: "acme/new", baseBranch: "main" })).rejects.toThrow(
+      "acme/new has no Environment yet",
+    )
+    const build = await client.startTestBuild("acme/new", studio, DefaultEnvironmentDraft)
+    await eventually(() => expect(client.getState().testBuilds[build.id]?.result).toBe("Passed"))
+    const applied = await client.applyEnvironment("acme/new", null, DefaultEnvironmentDraft)
+    expect(applied.environment?.version).toBe(1 as never)
+    const session = await client.createSession({ repo: "acme/new", baseBranch: "main" })
+    expect(session.environment).toEqual({ version: 1 as never, latestVersion: 1 as never })
+  })
+
+  test("Sessions hear of a newer version, and a restart puts them on it", async () => {
+    const { client } = await online()
+    const { base, draft } = await draftOf(client, (saved) => ({
+      ...saved,
+      resources: { cpus: 3, memoryMib: 4096 },
+    }))
+    await client.applyEnvironment(repo, base, draft)
+    await eventually(() =>
+      expect(find(client, demoSessionId)?.environment).toEqual({
+        version: 1 as never,
+        latestVersion: 3 as never,
+      }),
+    )
+    expect(client.restartSession(demo)).toBe(true)
+    await eventually(() =>
+      expect(find(client, demoSessionId)?.environment).toEqual({
+        version: 3 as never,
+        latestVersion: 3 as never,
+      }),
+    )
+    expect(find(client, demoSessionId)?.state).toBe("Active")
+  })
+
+  test("shared variables: added, replaced write-only, and not deleted while linked", async () => {
+    const { client } = await online()
+    const listed = await client.getSharedVariables()
+    expect(listed.find((variable) => variable.name === "GH_READ_TOKEN")).toEqual({
+      _tag: "Sensitive",
+      name: "GH_READ_TOKEN",
+      linkedBy: [{ repo: repo as never, name: "GITHUB_TOKEN", availableAtBuild: false }],
+    })
+    const added = await client.setSharedVariable({
+      _tag: "Sensitive",
+      name: "API_KEY",
+      value: Redacted.make("made-up-api-key"),
+    })
+    expect(added.find((variable) => variable.name === "API_KEY")).toEqual({
+      _tag: "Sensitive",
+      name: "API_KEY",
+      linkedBy: [],
+    })
+    expect(JSON.stringify(client.getState().sharedVariables)).not.toContain("made-up")
+    // Saved again without a value, it keeps the one it has.
+    await client.setSharedVariable({ _tag: "Sensitive", name: "API_KEY" })
+    await expect(
+      client.setSharedVariable({ _tag: "Sensitive", name: "SHORT", value: Redacted.make("abc") }),
+    ).rejects.toThrow("under 4 characters")
+
+    await expect(client.deleteSharedVariable("GH_READ_TOKEN")).rejects.toThrow(
+      "GH_READ_TOKEN is linked in kddige/claude-hub",
+    )
+    const left = await client.deleteSharedVariable("API_KEY")
+    expect(left.map((variable) => variable.name)).not.toContain("API_KEY")
   })
 })

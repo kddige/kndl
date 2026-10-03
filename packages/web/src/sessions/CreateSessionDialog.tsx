@@ -2,6 +2,7 @@ import type { RunnerId, RunnerSummary } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
 import { type FormEvent, useState } from "react"
+import { repoParams } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { Button, Dialog, DialogClose, Field, Input, PlusIcon, Select } from "../ui/index.ts"
 import { color, space, text } from "../ui/tokens.stylex.ts"
@@ -51,6 +52,19 @@ export function CreateSessionDialog() {
     setBusy(true)
     setError(null)
     try {
+      // A Repo needs an Environment before its first Session (ADR 0009): set it up first, and
+      // the setup screen starts this Session once it's applied.
+      const { environment } = await hub.getEnvironment(repoValue)
+      if (environment === null) {
+        setOpen(false)
+        reset()
+        void navigate({
+          to: "/repos/$owner/$repo/environment",
+          params: repoParams(repoValue),
+          search: { branch: branchValue, ...(runner !== anyRunner && { runner }) },
+        })
+        return
+      }
       const session = await hub.createSession({
         repo: repoValue,
         baseBranch: branchValue,
