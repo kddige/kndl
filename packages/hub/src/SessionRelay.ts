@@ -17,6 +17,9 @@
 //   - Wake: a prompt to an Asleep Session (or WakeSession) wakes it. The Hub records it Active and
 //     sends StartSession with `resume`, the Claude Code session id from the mod's last hello. The
 //     prompt waits in the queue until the new mod says hello.
+//   - Restart (RestartSession, ADR 0009): an Active Session with no Turn running is put to sleep
+//     and woken as soon as it is Asleep, so its Sandbox is recreated from the Repo's latest
+//     Environment version. An Asleep one is just woken.
 //   - A start that fails, or a Claude Code that exits on its own, leaves the Session Asleep, with
 //     the reason in the logged SessionStateChanged. Prompts queued stay queued and are not retried
 //     on their own: the next prompt or WakeSession tries again.
@@ -108,7 +111,6 @@ import {
   type EnvironmentWebClient,
   isEnvironmentCommand,
   makeEnvironmentRelay,
-  refuseSessionsWithoutEnvironment,
 } from "./EnvironmentRelay.ts"
 import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
@@ -240,6 +242,11 @@ export class SessionRelay extends Context.Service<
       const starting = new Set<SessionId>()
       /** Sessions the Hub asked their Runner to stop for sleep, with why, until SessionStopped. */
       const stopping = new Map<SessionId, Why>()
+      /**
+       * Sessions being restarted (RestartSession), with who asked: put to sleep, and woken again
+       * once their Runner says they stopped.
+       */
+      const restarting = new Map<SessionId, Participant>()
       /**
        * Archived Sessions whose Runner was asked to stop them for good, until SessionStopped. The
        * stop is recorded done only then, so a Runner that drops off first is asked again.
@@ -559,6 +566,7 @@ export class SessionRelay extends Context.Service<
         inFlight.delete(session.id)
         starting.delete(session.id)
         stopping.delete(session.id)
+        restarting.delete(session.id)
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
@@ -672,6 +680,7 @@ export class SessionRelay extends Context.Service<
         inFlight.delete(session.id)
         starting.delete(session.id)
         stopping.delete(session.id)
+        restarting.delete(session.id)
         yield* outbox.clear(session.id)
         // Its Claude Code is being stopped for good: its mod has nothing more to say.
         yield* modTokens.revoke(session.id)
@@ -766,11 +775,7 @@ export class SessionRelay extends Context.Service<
               // TODO(#7 follow-up): check that the person has access to the Repo, and that the
               // base branch exists, once the GitHub App can tell.
               const missing = yield* environmentRelay.missingEnvironment(message.repo)
-              if (missing !== undefined) {
-                // TODO(#50): refuse once the web UI can set up an Environment.
-                if (refuseSessionsWithoutEnvironment) return refuse(message, missing, { requestId })
-                yield* Effect.logDebug(`${missing} Starting the Session on the Runner's default.`)
-              }
+              if (missing !== undefined) return refuse(message, missing, { requestId })
               const environment = yield* sessionEnvironment(message.repo)
               const id = SessionId.make(randomId())
               const session = yield* sessions.create({
@@ -904,6 +909,48 @@ export class SessionRelay extends Context.Service<
                   return refuse(
                     message,
                     "The Session is Frozen: its Runner is offline. It wakes when the Runner returns, if prompts are waiting.",
+                    { sessionId },
+                  )
+                case "Archived":
+                  return refuse(message, "The Session is archived.", { sessionId })
+              }
+              return
+            }
+
+            case "RestartSession": {
+              // Recreates the Sandbox from the Repo's latest Environment version (ADR 0009).
+              const { sessionId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              switch (session.value.state) {
+                case "Asleep":
+                  return yield* wake(session.value, { by: you })
+                case "Active":
+                  if (restarting.has(sessionId)) return
+                  if (stopping.has(sessionId)) {
+                    return refuse(
+                      message,
+                      "The Session is going to sleep; wake it once it is Asleep.",
+                      { sessionId },
+                    )
+                  }
+                  if (session.value.currentTurn !== null || inFlight.has(sessionId)) {
+                    return refuse(message, "A Turn is running: stop it first, then restart.", {
+                      sessionId,
+                    })
+                  }
+                  if (!onlineRunners.has(session.value.runnerId)) {
+                    return refuse(message, "The Session's Runner is offline.", { sessionId })
+                  }
+                  restarting.set(sessionId, you)
+                  return yield* putToSleep(session.value, {
+                    by: you,
+                    message: "Restarting for the Environment's latest version",
+                  })
+                case "Frozen":
+                  return refuse(
+                    message,
+                    "The Session is Frozen: its Runner is offline. Restart it once the Runner returns.",
                     { sessionId },
                   )
                 case "Archived":
@@ -1124,6 +1171,7 @@ export class SessionRelay extends Context.Service<
                 return yield* wakeIfWaiting(message.sessionId)
               }
               const asked = stopping.get(message.sessionId)
+              const restartBy = asked === undefined ? undefined : restarting.get(message.sessionId)
               yield* claudeGone(
                 session.value,
                 asked ?? {
@@ -1133,6 +1181,11 @@ export class SessionRelay extends Context.Service<
                       : `Claude Code exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
                 },
               )
+              if (restartBy !== undefined) {
+                const stopped = yield* sessions.get(message.sessionId)
+                if (Option.isSome(stopped)) yield* wake(stopped.value, { by: restartBy })
+                return
+              }
               // A prompt sent while it was going to sleep wakes it again.
               if (asked !== undefined) yield* wakeIfWaiting(message.sessionId)
               return
@@ -1242,6 +1295,7 @@ export class SessionRelay extends Context.Service<
                 for (const session of yield* sessions.listByRunner(runner.id)) {
                   // A stop it was asked for is settled by what it says when it is back.
                   stopping.delete(session.id)
+                  restarting.delete(session.id)
                   archiving.delete(session.id)
                   if (session.state === "Active" || session.state === "Asleep") {
                     yield* changeState(session, "Frozen", {

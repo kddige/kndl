@@ -9,7 +9,6 @@ import { ProtocolVersion } from "@claude-hub/protocol"
 import { Effect, Layer, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { databaseAt } from "./Database.ts"
-import { refuseSessionsWithoutEnvironment } from "./EnvironmentRelay.ts"
 import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { decryptValue, encryptValue, generateSecretsKey, Secrets } from "./Secrets.ts"
@@ -642,13 +641,21 @@ async function createSession(env: Scene, environmentVersion?: number) {
 }
 
 describe("Sessions and Environments", () => {
-  test("a Repo without an Environment still gets Sessions, until the web UI can set one up", async () => {
-    // TODO(#50): flip this test when Sessions without an Environment are refused.
-    expect(refuseSessionsWithoutEnvironment).toBe(false)
+  test("a Repo without an Environment gets no Session until one is applied", async () => {
     const env = await scene()
-    const { start, created } = await createSession(env)
-    expect(start.environment).toBeUndefined()
-    expect(created.session.environment).toBeUndefined()
+    const requestId = nextRequest()
+    env.web.send({ _tag: "CreateSession", requestId, repo, baseBranch: "main" })
+    expect(await env.web.take("CommandFailed", (m) => m.requestId === requestId)).toMatchObject({
+      command: "CreateSession",
+      message: `${repo} has no Environment yet: set one up before its first Session.`,
+    })
+    expect(await env.runner.untaken("StartSession")).toEqual([])
+
+    await testBuild(env, draft())
+    expectApplied(await apply(env, draft(), null), 1)
+    const { start, created } = await createSession(env, 1)
+    expect(start.environment?.version).toBe(1)
+    expect(created.session.environment?.latestVersion).toBe(1)
   })
 
   test("the Hub tells when a Session runs on an older version", async () => {

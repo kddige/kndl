@@ -44,6 +44,7 @@ const webToHub = [
   { _tag: "StopTurn", sessionId: "s-1" },
   { _tag: "SleepSession", sessionId: "s-1" },
   { _tag: "WakeSession", sessionId: "s-1" },
+  { _tag: "RestartSession", sessionId: "s-1" },
   { _tag: "ArchiveSession", sessionId: "s-1" },
   { _tag: "RestoreSession", sessionId: "s-1" },
   { _tag: "OpenTerminal", sessionId: "s-1" },

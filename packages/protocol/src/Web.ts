@@ -155,6 +155,16 @@ export const WakeSession = Schema.TaggedStruct("WakeSession", {
 export type WakeSession = typeof WakeSession.Type
 
 /**
+ * Restart a Session now: put it to sleep, then wake it, so its Sandbox is recreated from its
+ * Repo's latest Environment version (ADR 0009) on the same Workspace and disks, resuming its
+ * conversation. An Asleep Session is just woken. Refused while a Turn runs.
+ */
+export const RestartSession = Schema.TaggedStruct("RestartSession", {
+  sessionId: SessionId,
+})
+export type RestartSession = typeof RestartSession.Type
+
+/**
  * Delete a Session, which archives it (ADR 0003): its Sandbox is destroyed after the Runner
  * pushes its WIP ref, and anyone may restore it until it is purged. Any Participant may.
  */
@@ -191,6 +201,7 @@ export const WebToHub = Schema.Union([
   StopTurn,
   SleepSession,
   WakeSession,
+  RestartSession,
   ArchiveSession,
   RestoreSession,
   OpenTerminal,

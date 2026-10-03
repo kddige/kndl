@@ -13,6 +13,7 @@ import { RunnerTokens } from "../../hub/src/RunnerTokens.ts"
 import {
   cookieFrom,
   devSignIn,
+  seedEnvironment,
   startHub,
   stopHubs,
   type TestHub,
@@ -202,6 +203,7 @@ describe.skipIf(Bun.which("tmux") === null)("the terminal mirror", () => {
     const hub = await startHub({ config: { devLogin: true } })
     await startRunner(hub)
     const cookie = cookieFrom(await devSignIn(hub, "alice"))
+    await seedEnvironment(hub, "acme/app", "dev:alice")
     const web = await Web.open(hub, cookie)
     webs.push(web)
     await web.next(
