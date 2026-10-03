@@ -231,8 +231,8 @@ export const SessionsLive = Layer.effect(
           }
           yield* tmux.kill(sessionId)
           // The Workspace's last state goes to its WIP ref before the Session sleeps, and before
-          // it is archived: the archive hook. Archiving destroys only the Sandbox for now; when it
-          // also removes the Workspace (Workspace.ts), that must stay after this push.
+          // it is archived: the archive hook. Archiving destroys the Sandbox and its volumes and
+          // keeps the Workspace, for a restore; purging removes the Workspace later.
           yield* git.pushWip(
             sessionId,
             sessionDirectories(config.sessionsRoot, sessionId),
@@ -248,6 +248,34 @@ export const SessionsLive = Layer.effect(
             }),
           )
         }),
+      )
+
+    /**
+     * Deletes everything of a purged Session: stops Claude Code if it is somehow running, then
+     * destroys its Sandbox and volumes, and removes its directory and Claude Code's state for it.
+     * Says SessionPurged only once all of it is gone; the Hub asks again on the next connection
+     * otherwise.
+     */
+    const purge = (sessionId: SessionId) =>
+      serialized(sessionId)(
+        Effect.gen(function* () {
+          const session = running.get(sessionId)
+          if (session !== undefined) {
+            session.stopping = true
+            yield* session.pane.terminate
+            yield* Deferred.await(session.exited).pipe(Effect.timeoutOption(StopGracePeriod))
+          }
+          yield* tmux.kill(sessionId)
+          yield* sandboxes.purge(sessionId)
+          yield* workspaces.remove(sessionId)
+          yield* Effect.logInfo(`Session ${sessionId} purged`)
+          yield* hub.send(RunnerToHub.cases.SessionPurged.make({ sessionId }))
+        }),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(`Session ${sessionId} was not purged: ${message(cause)}`),
+        ),
+        Effect.ensuring(Effect.sync(() => locks.delete(sessionId))),
       )
 
     const adopt = Effect.gen(function* () {
@@ -294,6 +322,11 @@ export const SessionsLive = Layer.effect(
           return background(start(incoming))
         case "StopSession":
           return background(stop(incoming))
+        case "PurgeSession":
+          if (!isSafeSessionId(incoming.sessionId)) {
+            return Effect.logWarning(`Ignored a PurgeSession for ${incoming.sessionId}`)
+          }
+          return background(purge(incoming.sessionId))
         case "TerminalInput":
           return running.get(incoming.sessionId)?.pane.input(incoming.data) ?? Effect.void
         case "TerminalResize":

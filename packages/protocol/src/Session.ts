@@ -21,7 +21,7 @@ export type BranchName = typeof BranchName.Type
  * - `Asleep`: its Claude Code and Sandbox were stopped after being idle, or by hand; the next
  *   prompt, or a WakeSession, wakes it.
  * - `Frozen`: its Runner is offline; readable, and prompts queue until the Runner returns.
- * - `Archived`: deleted, restorable for 30 days.
+ * - `Archived`: deleted, restorable until it is purged, 30 days later by default (ADR 0003).
  */
 export const SessionState = Schema.Literals(["Active", "Asleep", "Frozen", "Archived"])
 export type SessionState = typeof SessionState.Type
@@ -54,6 +54,14 @@ export const RunnerSummary = Schema.Struct({
 })
 export type RunnerSummary = typeof RunnerSummary.Type
 
+/** Who archived a Session and when, and when it will be purged unless restored first. */
+export const ArchiveInfo = Schema.Struct({
+  by: Participant,
+  at: EpochMillis,
+  purgeAt: EpochMillis,
+})
+export type ArchiveInfo = typeof ArchiveInfo.Type
+
 /** A Session as the web UI lists it. */
 export const SessionSummary = Schema.Struct({
   id: SessionId,
@@ -69,6 +77,8 @@ export const SessionSummary = Schema.Struct({
   createdAt: EpochMillis,
   /** The Turn running now, or null when the Session is idle. */
   currentTurn: Schema.NullOr(TurnId),
+  /** Present while the Session is Archived. */
+  archived: Schema.optionalKey(ArchiveInfo),
 })
 export type SessionSummary = typeof SessionSummary.Type
 

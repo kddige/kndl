@@ -12,6 +12,7 @@ import { Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
 import {
+  archiveRetentionMs,
   bob,
   demoSessionId,
   type ReplyStep,
@@ -258,7 +259,12 @@ export class FakeHub implements HubTransport {
         const session = this.sessions.get(message.sessionId)
         if (!session) break
         if (session.summary.state === "Archived") {
-          this.#fail(socket, "SendPrompt", "The Session is archived.", message.sessionId)
+          this.#fail(
+            socket,
+            "SendPrompt",
+            "The Session is archived: restore it to send prompts.",
+            message.sessionId,
+          )
           break
         }
         this.#prompt(session, this.#you, message.text, replyTo(message.text))
@@ -309,11 +315,62 @@ export class FakeHub implements HubTransport {
         }
         break
       }
+      case "ArchiveSession": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) {
+          this.#fail(socket, "ArchiveSession", "There is no such Session.", message.sessionId)
+          break
+        }
+        if (session.summary.state === "Archived") {
+          this.#fail(
+            socket,
+            "ArchiveSession",
+            "The Session is already archived.",
+            message.sessionId,
+          )
+          break
+        }
+        const at = Date.now()
+        session.summary = {
+          ...session.summary,
+          archived: { by: this.#you, at, purgeAt: at + archiveRetentionMs },
+        }
+        this.#setState(session, "Archived", undefined, this.#you)
+        // Its Claude Code is stopped for good; the queue waits for a restore, as on the Hub.
+        session.stopTurn?.()
+        for (const watcher of this.#sockets) watcher.terminals.delete(message.sessionId)
+        break
+      }
+      case "RestoreSession": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) {
+          this.#fail(socket, "RestoreSession", "There is no such Session.", message.sessionId)
+          break
+        }
+        if (session.summary.state !== "Archived") {
+          this.#fail(socket, "RestoreSession", "The Session is not archived.", message.sessionId)
+          break
+        }
+        const { archived: _, ...summary } = session.summary
+        session.summary = summary
+        this.#setState(session, "Asleep", "Restored from the archive", this.#you)
+        break
+      }
       // The terminal, as the real Hub relays it: watching needs no running terminal, but
-      // keystrokes and resizes reach only an Active Session, from someone watching it.
+      // keystrokes and resizes reach only an Active Session, from someone watching it. An
+      // Archived Session has no terminal to open.
       case "OpenTerminal": {
         const session = this.sessions.get(message.sessionId)
         if (!session) break
+        if (session.summary.state === "Archived") {
+          this.#fail(
+            socket,
+            "OpenTerminal",
+            "The Session is archived: it has no terminal to open.",
+            message.sessionId,
+          )
+          break
+        }
         socket.terminals.add(message.sessionId)
         if (session.summary.state === "Active") this.#snapshot(session, [socket])
         break
@@ -419,6 +476,7 @@ export class FakeHub implements HubTransport {
 
   /** Delivers the next queued prompt, waking the Session first if it's Asleep. */
   #next(session: FakeSession): void {
+    if (session.summary.state === "Archived") return
     const prompt = session.queue.shift()
     if (!prompt) return
     this.#queueChanged(session)

@@ -832,6 +832,277 @@ describe("Runner reports", () => {
   })
 })
 
+/** A Hub whose Archived Sessions are purged `archiveRetentionMs` after they were archived. */
+const hubRetainingFor = (archiveRetentionMs: number) =>
+  startHub({ config: { devLogin: true, archiveRetentionMs } })
+
+const thirtyDays = 30 * 24 * 60 * 60 * 1000
+
+/** Archives the Session from `web`, and plays the Runner stopping it for good. */
+async function archived(scene: Awaited<ReturnType<typeof sessionScene>>, web = scene.web) {
+  const { runner, sessionId } = scene
+  web.send({ _tag: "ArchiveSession", sessionId })
+  expect(await runner.take("StopSession")).toEqual({
+    _tag: "StopSession",
+    sessionId,
+    reason: "Archive",
+  })
+  const update = await web.take("SessionUpdated", (m) => m.session.state === "Archived")
+  runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+  return update.session
+}
+
+const stateChanged = (state: string) => (m: Extract<Web, { _tag: "SessionEventLogged" }>) =>
+  m.entry.event._tag === "SessionStateChanged" && m.entry.event.state === state
+
+describe("archive, restore and purge", () => {
+  test("any Participant can delete a Session: it is archived at once, and its Runner stops it for good", async () => {
+    const scene = await sessionScene()
+    const { hub, runner, web, sessionId, mod } = scene
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({ _tag: "OpenTerminal", sessionId })
+    await runner.take("RequestTerminalSnapshot")
+
+    // Bob didn't create it, and may delete it all the same.
+    bobWeb.send({ _tag: "ArchiveSession", sessionId })
+    expect(await runner.take("StopSession")).toEqual({
+      _tag: "StopSession",
+      sessionId,
+      reason: "Archive",
+    })
+    const session = (await web.take("SessionUpdated", (m) => m.session.state === "Archived"))
+      .session
+    const at = defined(session.archived).at
+    expect(session.archived).toEqual({ by: bob, at, purgeAt: at + thirtyDays })
+    expect((await web.take("SessionEventLogged", stateChanged("Archived"))).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Archived",
+      by: bob,
+    })
+
+    // Its mod is cut off, and its terminal closed.
+    expect((await mod.hello()).status).toBe(401)
+    runner.send({
+      _tag: "TerminalFrame",
+      sessionId,
+      kind: "Output",
+      data: "bye",
+      size: { cols: 80, rows: 24 },
+    })
+    expect(await web.untaken("TerminalFrame")).toEqual([])
+
+    // The WIP push failed: the archive stands, with the failure in its history.
+    runner.send({ _tag: "WipPushFailed", sessionId, message: "git push exited with 128" })
+    expect(
+      (await web.take("SessionEventLogged", (m) => m.entry.event._tag === "WipNotPushed")).entry
+        .event,
+    ).toEqual({ _tag: "WipNotPushed", message: "git push exited with 128" })
+    runner.send({ _tag: "SessionStarted", sessionId })
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+
+    // No prompts, terminal or wake, and it is archived once.
+    web.send({ _tag: "SendPrompt", sessionId, text: "hello?" })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "SendPrompt",
+      sessionId,
+      message: "The Session is archived: restore it to send prompts.",
+    })
+    web.send({ _tag: "OpenTerminal", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "OpenTerminal",
+      message: "The Session is archived: it has no terminal to open.",
+    })
+    web.send({ _tag: "WakeSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "WakeSession" })
+    bobWeb.send({ _tag: "ArchiveSession", sessionId })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({
+      command: "ArchiveSession",
+      message: "The Session is already archived.",
+    })
+    expect(await runner.untaken("StartSession")).toEqual([])
+    expect(await runner.untaken("RequestTerminalSnapshot")).toEqual([])
+
+    // Still Archived, and listed so with who archived it, for the Archived screen.
+    const later = await openWeb(hub, "carol")
+    expect(later.sessions.sessions).toEqual([
+      expect.objectContaining({ id: sessionId, state: "Archived", archived: session.archived }),
+    ])
+  })
+
+  test("restoring brings it back Asleep, and the next prompt wakes it", async () => {
+    const scene = await sessionScene()
+    const { runner, web, sessionId } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await archived(scene)
+
+    web.send({ _tag: "RestoreSession", sessionId })
+    const restored = (await web.take("SessionUpdated", (m) => m.session.state === "Asleep")).session
+    expect(restored.archived).toBeUndefined()
+    expect((await web.take("SessionEventLogged", stateChanged("Asleep"))).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      by: alice,
+      message: "Restored from the archive",
+    })
+    expect(await runner.untaken("StartSession")).toEqual([])
+    web.send({ _tag: "RestoreSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "RestoreSession",
+      message: "The Session is not archived.",
+    })
+
+    // Woken on its kept Workspace, resuming its conversation; the Runner gives it a new Sandbox.
+    web.send({ _tag: "SendPrompt", sessionId, text: "back again" })
+    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+  })
+
+  test("an undo before the Runner has stopped it wakes it once stopped, if prompts wait", async () => {
+    const { runner, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({ _tag: "ArchiveSession", sessionId })
+    web.send({ _tag: "RestoreSession", sessionId })
+    await runner.take("StopSession", (m) => m.reason === "Archive")
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    web.send({ _tag: "SendPrompt", sessionId, text: "never mind" })
+    await web.take("PromptQueueChanged", queueIs("never mind"))
+    expect(await runner.untaken("StartSession")).toEqual([])
+
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+  })
+
+  test("a Runner offline when its Session is archived stops it when it is back", async () => {
+    const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    web.send({ _tag: "ArchiveSession", sessionId })
+    await web.take("SessionUpdated", (m) => m.session.state === "Archived")
+
+    const back = await openRunner(hub, runnerToken, [sessionId])
+    expect(await back.take("StopSession")).toMatchObject({ sessionId, reason: "Archive" })
+    expect(await web.untaken("SessionUpdated")).toEqual([])
+    back.send({ _tag: "SessionStopped", sessionId, reason: "Requested" })
+    await Bun.sleep(100)
+    await back.close()
+
+    // Stopped once is enough.
+    const again = await openRunner(hub, runnerToken, [])
+    expect(await again.untaken("StopSession")).toEqual([])
+  })
+
+  test("a Session restored while its Runner is offline is Frozen until the Runner is back", async () => {
+    const scene = await sessionScene()
+    const { hub, runnerToken, web, sessionId } = scene
+    await archived(scene)
+    await Bun.sleep(100)
+    await scene.runner.close()
+    web.send({ _tag: "RestoreSession", sessionId })
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+
+    await openRunner(hub, runnerToken, [])
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+  })
+
+  test("is purged once its retention is over: its rows go, and its Runner deletes the rest", async () => {
+    const scene = await sessionScene(await hubRetainingFor(300))
+    const { hub, runner, web, sessionId } = scene
+    web.send({
+      _tag: "CreateSession",
+      requestId: "req-2",
+      repo: "kddige/other",
+      baseBranch: "main",
+    })
+    const kept = (await web.take("SessionCreated")).session
+    await runner.take("StartSession")
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    const session = await archived(scene)
+    expect(defined(session.archived).purgeAt - defined(session.archived).at).toBe(300)
+
+    expect(await web.take("SessionRemoved")).toEqual({ _tag: "SessionRemoved", sessionId })
+    expect(await runner.take("PurgeSession")).toEqual({ _tag: "PurgeSession", sessionId })
+    // Gone from the Hub: history, queue and all.
+    web.send({ _tag: "RestoreSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({ message: "There is no such Session." })
+    joinSession(web, sessionId)
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "JoinSession" })
+    const later = await openWeb(hub, "bob")
+    expect(later.sessions.sessions.map((s) => s.id)).toEqual([kept.id])
+    expect(await web.untaken("SessionRemoved")).toEqual([])
+
+    // Once the Runner says it is done, it isn't asked again.
+    runner.send({ _tag: "SessionPurged", sessionId })
+    await Bun.sleep(100)
+    await runner.close()
+    const back = await openRunner(hub, scene.runnerToken, [kept.id])
+    expect(await back.untaken("PurgeSession")).toEqual([])
+  })
+
+  test("a purge waits for an offline Runner, and only that Runner can settle it", async () => {
+    const scene = await sessionScene(await hubRetainingFor(300))
+    const { hub, runner, runnerToken, web, sessionId } = scene
+    await archived(scene)
+    await Bun.sleep(100)
+    await runner.close()
+    await web.take("SessionRemoved")
+
+    // Another Runner can't say it purged this one's Session.
+    const other = await openRunner(hub, (await issueRunnerToken(hub, "linux")).token)
+    other.send({ _tag: "SessionPurged", sessionId })
+    await Bun.sleep(100)
+
+    const back = await openRunner(hub, runnerToken, [])
+    expect(await back.take("PurgeSession")).toEqual({ _tag: "PurgeSession", sessionId })
+    // Not done yet: asked again on the next connection.
+    await back.close()
+    const again = await openRunner(hub, runnerToken, [])
+    expect(await again.take("PurgeSession")).toEqual({ _tag: "PurgeSession", sessionId })
+    again.send({ _tag: "SessionPurged", sessionId })
+    await Bun.sleep(100)
+    await again.close()
+    const last = await openRunner(hub, runnerToken, [])
+    expect(await last.untaken("PurgeSession")).toEqual([])
+  })
+
+  test("a restored Session isn't purged, and archiving it again starts its retention afresh", async () => {
+    const scene = await sessionScene(await hubRetainingFor(400))
+    const { runner, web, sessionId } = scene
+    await archived(scene)
+    web.send({ _tag: "RestoreSession", sessionId })
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    await Bun.sleep(600)
+    expect(await web.untaken("SessionRemoved")).toEqual([])
+    expect(await runner.untaken("PurgeSession")).toEqual([])
+
+    await archived(scene)
+    await web.take("SessionRemoved")
+  })
+
+  test("refuses unknown Sessions", async () => {
+    const { web } = await sessionScene()
+    web.send({ _tag: "ArchiveSession", sessionId: "nope" })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "ArchiveSession",
+      message: "There is no such Session.",
+    })
+    web.send({ _tag: "RestoreSession", sessionId: "nope" })
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "RestoreSession" })
+  })
+
+  test("HUB_ARCHIVE_RETENTION_MS must be above 0", async () => {
+    const result = await Effect.runPromiseExit(
+      HubConfig.make({ ...baseConfig, archiveRetentionMs: 0 }),
+    )
+    expect(Exit.isFailure(result)).toBe(true)
+  })
+})
+
 describe("the terminal relay", () => {
   test("relays frames to the clients that opened the terminal, and keystrokes to the Runner", async () => {
     const { hub, runner, web, sessionId } = await sessionScene()

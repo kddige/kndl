@@ -149,9 +149,14 @@ export class FakeTmux {
   )
 }
 
-/** Workspaces that only record what they were asked to prepare, failing for repo `broken/repo`. */
+/**
+ * Workspaces that only record what they were asked to prepare, failing for repo `broken/repo`,
+ * and which Sessions they were asked to remove, failing while `removeFails`.
+ */
 export class FakeWorkspaces {
   readonly prepared: Array<StartSession> = []
+  readonly removed: Array<SessionId> = []
+  removeFails = false
 
   constructor(private readonly root: string) {}
 
@@ -163,6 +168,14 @@ export class FakeWorkspaces {
           return start.repo === "broken/repo"
             ? Effect.fail(new WorkspaceError({ message: "could not clone broken/repo" }))
             : Effect.succeed(sessionDirectories(this.root, start.sessionId))
+        }),
+      remove: (id) =>
+        Effect.suspend(() => {
+          if (this.removeFails) {
+            return Effect.fail(new WorkspaceError({ message: `could not delete ${id}` }))
+          }
+          this.removed.push(id)
+          return Effect.void
         }),
     }),
   )
@@ -178,6 +191,7 @@ export class FakeSandboxes {
     Sandboxes.of({
       start: (id) => Effect.sync(() => void this.calls.push(`start ${id}`)),
       stop: (id, reason) => Effect.sync(() => void this.calls.push(`stop ${id} ${reason}`)),
+      purge: (id) => Effect.sync(() => void this.calls.push(`purge ${id}`)),
       reconcile: (running) => Effect.sync(() => void this.reconciled.push([...running])),
     }),
   )

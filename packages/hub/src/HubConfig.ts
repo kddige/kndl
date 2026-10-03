@@ -45,10 +45,15 @@ export interface HubConfigInput {
   readonly devLoginName: string
   /** How long an Active Session may sit idle before it goes Asleep, in milliseconds. */
   readonly sleepAfterMs: number
+  /** How long an Archived Session can be restored before it is purged, in milliseconds. */
+  readonly archiveRetentionMs: number
 }
 
 /** How long an idle Session stays Active by default (GLOSSARY.md: Asleep). */
 export const DefaultSleepAfter = Duration.minutes(15)
+
+/** How long an Archived Session can be restored by default (ADR 0003). */
+export const DefaultArchiveRetention = Duration.days(30)
 
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
 export class HubConfigError extends Schema.TaggedError<HubConfigError>()("HubConfigError", {
@@ -92,6 +97,8 @@ export class HubConfig extends Context.Service<
      * Participant present before it is put to sleep.
      */
     readonly sleepAfter: Duration.Duration
+    /** How long an Archived Session can be restored before it is purged. */
+    readonly archiveRetention: Duration.Duration
   }
 >()("@claude-hub/hub/HubConfig") {
   /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
@@ -110,6 +117,11 @@ export class HubConfig extends Context.Service<
     if (!Number.isSafeInteger(input.sleepAfterMs) || input.sleepAfterMs <= 0) {
       return yield* new HubConfigError({
         message: `HUB_SLEEP_AFTER_MS must be a whole number of milliseconds above 0, not ${input.sleepAfterMs}.`,
+      })
+    }
+    if (!Number.isSafeInteger(input.archiveRetentionMs) || input.archiveRetentionMs <= 0) {
+      return yield* new HubConfigError({
+        message: `HUB_ARCHIVE_RETENTION_MS must be a whole number of milliseconds above 0, not ${input.archiveRetentionMs}.`,
       })
     }
     if (Option.isSome(input.githubClientId) !== Option.isSome(input.githubClientSecret)) {
@@ -154,6 +166,7 @@ export class HubConfig extends Context.Service<
       devLogin: input.devLogin ? Option.some({ defaultName: input.devLoginName }) : Option.none(),
       secureCookies: publicUrl.protocol === "https:" || !isLoopback(publicUrl.hostname),
       sleepAfter: Duration.millis(input.sleepAfterMs),
+      archiveRetention: Duration.millis(input.archiveRetentionMs),
     })
   })
 
@@ -161,8 +174,8 @@ export class HubConfig extends Context.Service<
    * From the environment: `HOST` (127.0.0.1), `PORT` (7777), `HUB_PUBLIC_URL`
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
    * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the git tools use the Runner
-   * host's credentials, and pull requests are off), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`) and `HUB_SLEEP_AFTER_MS`
-   * (15 minutes).
+   * host's credentials, and pull requests are off), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_SLEEP_AFTER_MS`
+   * (15 minutes) and `HUB_ARCHIVE_RETENTION_MS` (30 days).
    */
   static readonly layer = Layer.effect(
     HubConfig,
@@ -193,6 +206,9 @@ export class HubConfig extends Context.Service<
         ),
         sleepAfterMs: Config.Int("HUB_SLEEP_AFTER_MS").pipe(
           Config.withDefault(Duration.toMillis(DefaultSleepAfter)),
+        ),
+        archiveRetentionMs: Config.Int("HUB_ARCHIVE_RETENTION_MS").pipe(
+          Config.withDefault(Duration.toMillis(DefaultArchiveRetention)),
         ),
       })
       return yield* HubConfig.make({ ...input, githubAppPrivateKey })

@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router"
 import { HubShell } from "./app/HubShell.tsx"
 import { type SessionTab, SessionView } from "./session/SessionView.tsx"
+import { ArchivedSessions } from "./sessions/ArchivedSessions.tsx"
 import { SessionList } from "./sessions/SessionList.tsx"
 import type { ThemeMode } from "./ui/theme.ts"
 import { UIProvider } from "./ui/UIProvider.tsx"
@@ -58,6 +59,16 @@ const sessionRoute = createRoute({
   },
 })
 
+/** A Repo's Archived Sessions, restorable until they're purged. */
+const archivedRoute = createRoute({
+  getParentRoute: () => hubRoute,
+  path: "/repos/$owner/$repo/archived",
+  component: function ArchivedRoute() {
+    const { owner, repo } = archivedRoute.useParams()
+    return <ArchivedSessions repo={`${owner}/${repo}`} />
+  },
+})
+
 /** Every UI component in every state, for building and reviewing the kit. Loaded on demand. */
 const kitRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -69,7 +80,7 @@ const kitRoute = createRoute({
 })
 
 const routeTree = rootRoute.addChildren([
-  hubRoute.addChildren([sessionsRoute, sessionRoute]),
+  hubRoute.addChildren([sessionsRoute, sessionRoute, archivedRoute]),
   kitRoute,
 ])
 

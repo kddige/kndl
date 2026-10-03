@@ -25,6 +25,11 @@ export class Sandboxes extends Context.Service<
     /** `Sleep` stops the Sandbox and keeps its volumes; `Archive` destroys it (ADR 0006). */
     readonly stop: (sessionId: SessionId, reason: StopSession["reason"]) => Effect.Effect<void>
     /**
+     * Destroys whatever is left of a purged Session's Sandbox: the Sandbox if any, and every one
+     * of its volumes. Succeeds when nothing is left.
+     */
+    readonly purge: (sessionId: SessionId) => Effect.Effect<void, SandboxError>
+    /**
      * Stops any of this Runner's Sandboxes left running for a Session not among `running`, as
      * after a crash, and logs the Sandboxes it doesn't know. Other Runners' Sandboxes, and ones
      * from before Sandboxes carried their Runner's mark, are left alone. Destroys nothing.
@@ -36,5 +41,10 @@ export class Sandboxes extends Context.Service<
 /** No Sandbox: Sessions run with nothing around them, and the mod refuses every routed tool. */
 export const NoSandboxes = Layer.succeed(
   Sandboxes,
-  Sandboxes.of({ start: () => Effect.void, stop: () => Effect.void, reconcile: () => Effect.void }),
+  Sandboxes.of({
+    start: () => Effect.void,
+    stop: () => Effect.void,
+    purge: () => Effect.void,
+    reconcile: () => Effect.void,
+  }),
 )

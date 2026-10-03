@@ -193,6 +193,17 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         ),
       )
 
+    const purge = (sessionId: SessionId) =>
+      Effect.gen(function* () {
+        yield* closeBridge(sessionId)
+        yield* backend.destroy(sessionId)
+      }).pipe(
+        Effect.mapError(
+          (error) =>
+            new SandboxError({ message: `the Sandbox was not destroyed: ${errorMessage(error)}` }),
+        ),
+      )
+
     yield* Effect.addFinalizer(() =>
       Effect.forEach([...bridges.keys()], closeBridge, { discard: true }),
     )
@@ -204,7 +215,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         Effect.catchCause((cause) => Effect.logWarning("Could not reconcile Sandboxes", cause)),
       )
 
-    return Sandboxes.of({ start, stop, reconcile })
+    return Sandboxes.of({ start, stop, purge, reconcile })
   })
 
 /**

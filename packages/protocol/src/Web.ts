@@ -129,6 +129,21 @@ export const WakeSession = Schema.TaggedStruct("WakeSession", {
 })
 export type WakeSession = typeof WakeSession.Type
 
+/**
+ * Delete a Session, which archives it (ADR 0003): its Sandbox is destroyed after the Runner
+ * pushes its WIP ref, and anyone may restore it until it is purged. Any Participant may.
+ */
+export const ArchiveSession = Schema.TaggedStruct("ArchiveSession", {
+  sessionId: SessionId,
+})
+export type ArchiveSession = typeof ArchiveSession.Type
+
+/** Restore an Archived Session before it is purged. It comes back Asleep. Any Participant may. */
+export const RestoreSession = Schema.TaggedStruct("RestoreSession", {
+  sessionId: SessionId,
+})
+export type RestoreSession = typeof RestoreSession.Type
+
 /** Start receiving the Session's terminal frames, beginning with a snapshot. */
 export const OpenTerminal = Schema.TaggedStruct("OpenTerminal", {
   sessionId: SessionId,
@@ -151,6 +166,8 @@ export const WebToHub = Schema.Union([
   StopTurn,
   SleepSession,
   WakeSession,
+  ArchiveSession,
+  RestoreSession,
   OpenTerminal,
   CloseTerminal,
   TerminalInput,
@@ -185,6 +202,15 @@ export const SessionUpdated = Schema.TaggedStruct("SessionUpdated", {
   session: SessionSummary,
 })
 export type SessionUpdated = typeof SessionUpdated.Type
+
+/**
+ * A Session was purged, its archive retention (30 days by default) after it was archived: the
+ * client drops its copy of it.
+ */
+export const SessionRemoved = Schema.TaggedStruct("SessionRemoved", {
+  sessionId: SessionId,
+})
+export type SessionRemoved = typeof SessionRemoved.Type
 
 /** Answers a {@link CreateSession}. */
 export const SessionCreated = Schema.TaggedStruct("SessionCreated", {
@@ -233,6 +259,7 @@ export const HubToWeb = Schema.Union([
   RunnerList,
   SessionList,
   SessionUpdated,
+  SessionRemoved,
   SessionCreated,
   SessionHistory,
   SessionEventLogged,

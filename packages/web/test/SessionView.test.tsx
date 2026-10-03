@@ -229,3 +229,98 @@ test("the Terminal tab mirrors the Session's terminal, and takes keystrokes", as
   mounted = false
   await eventually(() => expect(hub.received.at(-1)?._tag).toBe("CloseTerminal"))
 })
+
+/** The open toast whose text includes `title`. */
+function findToast(title: string): HTMLElement | undefined {
+  const roots = document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')
+  return [...roots].find(
+    (el) => !el.hasAttribute("data-ending-style") && el.textContent?.includes(title),
+  )
+}
+
+/** The whole app at `path`, against the fake Hub with its script not playing. */
+async function openApp(path: string) {
+  const { toast } = await import("../src/ui/index.ts")
+  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+  const client = new HubClient(hub, { retryDelay: () => 1 })
+  const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }))
+  const view = await render(
+    <HubProvider client={client}>
+      <RouterProvider router={router} />
+    </HubProvider>,
+  )
+  cleanup = async () => {
+    await step(() => toast.close())
+    await view.unmount()
+    client.stop()
+    hub.dispose()
+  }
+  return {
+    router,
+    page: view.container,
+    sent: () => hub.received.map((message) => message._tag),
+    find: (id: string) => client.getState().sessions?.find((session) => session.id === id),
+  }
+}
+
+test("deleting a Session archives it, hides it from the list, and Undo restores it", async () => {
+  const { page, router, sent, find } = await openApp("/sessions/s-readme")
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("kddige/claude-hub"))
+
+  await step(() => button("Delete Session", page).click())
+  expect(sent()).toContain("ArchiveSession")
+  await eventually(() => expect(find("s-readme")?.state).toBe("Archived"))
+  // Back on the Session list, which no longer shows it but links to the Repo's archive.
+  await eventually(() => expect(router.state.location.pathname).toBe("/"))
+  const list = () => page.querySelector('nav[aria-label="Sessions"]')?.textContent ?? ""
+  await eventually(() => expect(list()).toContain("claude/web-client"))
+  expect(list()).not.toContain("claude/readme-run")
+  expect(page.querySelector('[aria-label="Archived Sessions"]')?.textContent).toContain(
+    "2 archived in kddige/claude-hub",
+  )
+
+  const deleted = findToast("Session deleted")
+  if (!deleted) throw new Error("no undo toast")
+  await step(() => button("Undo", deleted).click())
+  expect(sent()).toContain("RestoreSession")
+  await eventually(() => expect(find("s-readme")?.state).toBe("Asleep"))
+  await eventually(() => expect(list()).toContain("claude/readme-run"))
+})
+
+test("a Repo's Archived screen lists who deleted each Session, and restores it", async () => {
+  const { page, sent, find } = await openApp("/repos/kddige/claude-hub/archived")
+  const archived = () => page.querySelector('ul[aria-label="Archived Sessions"]')?.textContent ?? ""
+  await eventually(() => expect(archived()).toContain("claude/flaky-login"))
+  expect(archived()).toContain("Deleted by Bob Lee 3d ago")
+  expect(archived()).toContain("Purged in 27 days")
+
+  await step(() => button("Restore claude/flaky-login", page).click())
+  expect(sent()).toContain("RestoreSession")
+  await eventually(() => expect(find("s-flaky")?.state).toBe("Asleep"))
+  await eventually(() => expect(page.textContent).toContain("Nothing archived"))
+})
+
+test("an Archived Session can't take prompts or open its terminal, and offers a restore", async () => {
+  const { page, sent, find } = await openApp("/sessions/s-flaky?tab=terminal")
+  const banner = () =>
+    [...page.querySelectorAll('[role="status"]')]
+      .map((el) => el.textContent ?? "")
+      .find((content) => content.startsWith("This Session is")) ?? ""
+  await eventually(() => expect(banner()).toContain("This Session is Archived"))
+  expect(banner()).toContain("Bob Lee deleted it.")
+  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
+  expect(prompt?.disabled).toBe(true)
+  const labels = [...page.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))
+  expect(labels).not.toContain("Delete Session")
+  // Even asked for in the URL, the terminal stays shut: its tab is disabled.
+  const terminalTab = [...page.querySelectorAll('[role="tab"]')].find(
+    (tab) => tab.textContent === "Terminal",
+  )
+  expect(terminalTab?.hasAttribute("data-disabled")).toBe(true)
+  expect(sent()).not.toContain("OpenTerminal")
+
+  await step(() => button("Restore", page).click())
+  expect(sent()).toContain("RestoreSession")
+  await eventually(() => expect(find("s-flaky")?.state).toBe("Asleep"))
+  await eventually(() => expect(banner()).toContain("This Session is Asleep"))
+})

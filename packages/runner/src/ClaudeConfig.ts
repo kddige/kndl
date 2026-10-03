@@ -87,18 +87,51 @@ export type TrustOutcome =
   | { readonly _tag: "NoConfigFile" }
 
 /** How often a write lost to a Claude Code process rewriting the file is tried again. */
-const trustAttempts = 5
+const rewriteAttempts = 5
+
+/**
+ * Changes Claude Code's config file at `file`, a real path: `change` returns the new config, or
+ * `undefined` when the file already says what it should. Claude Code processes rewrite the file
+ * often, so the read, the change and the write happen synchronously with nothing in between: the
+ * new content goes to a temp file beside it (with the same mode), the file is read again to check
+ * nothing changed meanwhile, and the temp file is renamed over it. The result is read back, and
+ * the whole thing tried again if another write won. Says whether it had anything to change.
+ */
+function rewriteConfig(
+  file: string,
+  change: (config: Record<string, unknown>) => Record<string, unknown> | undefined,
+): "Unchanged" | "Changed" {
+  for (let attempt = 1; attempt <= rewriteAttempts; attempt++) {
+    const text = readFileSync(file, "utf8")
+    const next = change(parseConfig(text, file))
+    if (next === undefined) return attempt === 1 ? "Unchanged" : "Changed"
+    const temp = join(
+      dirname(file),
+      `.${basename(file)}.claude-hub-${process.pid}-${randomBytes(4).toString("hex")}`,
+    )
+    const mode = statSync(file).mode & 0o7777
+    try {
+      writeFileSync(temp, serialize(next, text), { mode, flag: "wx" })
+      chmodSync(temp, mode)
+      if (readFileSync(file, "utf8") !== text) continue
+      renameSync(temp, file)
+    } finally {
+      rmSync(temp, { force: true })
+    }
+    if (change(parseConfig(readFileSync(file, "utf8"), file)) === undefined) return "Changed"
+  }
+  throw new Error(`another process kept rewriting it (${rewriteAttempts} attempts)`)
+}
+
+const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
 
 /**
  * Marks `directory`, resolved with realpath, as trusted in Claude Code's config file:
  * `projects[<directory>].hasTrustDialogAccepted: true`. Claude Code inherits trust from parent
  * directories (spike #4), so trusting the sessions root once covers every Session under it.
  *
- * Writes only when the flag is missing, and never creates the file. Claude Code processes
- * rewrite the file often, so the read, the change and the write happen synchronously with
- * nothing in between: the new content goes to a temp file beside it (with the same mode), the
- * file is read again to check nothing changed meanwhile, and the temp file is renamed over it.
- * The result is read back, and the whole thing tried again if another write won.
+ * Writes only when the flag is missing, and never creates the file. See {@link rewriteConfig}
+ * for how it writes without losing a Claude Code process's own write.
  */
 export const trustDirectory = (configPath: string, directory: string) =>
   Effect.try({
@@ -106,41 +139,56 @@ export const trustDirectory = (configPath: string, directory: string) =>
       const target = realpathSync(directory)
       if (!existsSync(configPath)) return { _tag: "NoConfigFile" }
       // Write next to the real file, so a symlinked config stays a symlink.
-      const file = realpathSync(configPath)
-      for (let attempt = 1; attempt <= trustAttempts; attempt++) {
-        const text = readFileSync(file, "utf8")
-        const config = parseConfig(text, file)
-        if (hasTrust(config, target)) {
-          return attempt === 1
-            ? { _tag: "AlreadyTrusted", directory: target }
-            : { _tag: "Trusted", directory: target }
-        }
-        const temp = join(
-          dirname(file),
-          `.${basename(file)}.claude-hub-${process.pid}-${randomBytes(4).toString("hex")}`,
-        )
-        const mode = statSync(file).mode & 0o7777
-        try {
-          writeFileSync(temp, serialize(withTrust(config, target), text), { mode, flag: "wx" })
-          chmodSync(temp, mode)
-          if (readFileSync(file, "utf8") !== text) continue
-          renameSync(temp, file)
-        } finally {
-          rmSync(temp, { force: true })
-        }
-        if (hasTrust(parseConfig(readFileSync(file, "utf8"), file), target)) {
-          return { _tag: "Trusted", directory: target }
-        }
-      }
-      throw new Error(`another process kept rewriting it (${trustAttempts} attempts)`)
+      const outcome = rewriteConfig(realpathSync(configPath), (config) =>
+        hasTrust(config, target) ? undefined : withTrust(config, target),
+      )
+      return { _tag: outcome === "Unchanged" ? "AlreadyTrusted" : "Trusted", directory: target }
     },
     catch: (cause) =>
       new ClaudeConfigError({
-        message: `Could not mark ${directory} as trusted in ${configPath}: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
+        message: `Could not mark ${directory} as trusted in ${configPath}: ${causeMessage(cause)}`,
       }),
   })
+
+/**
+ * Removes `directories` from the `projects` of Claude Code's config file, where Claude Code keeps
+ * what it remembers of each directory it ran in, as when a Session is purged. Does nothing when
+ * the file or the entries are missing.
+ */
+export const forgetDirectories = (configPath: string, directories: ReadonlyArray<string>) =>
+  Effect.try({
+    try: (): void => {
+      if (!existsSync(configPath)) return
+      rewriteConfig(realpathSync(configPath), (config) => {
+        const projects = objectOrEmpty(config.projects)
+        const known = directories.filter((directory) => Object.hasOwn(projects, directory))
+        if (known.length === 0) return undefined
+        const kept = { ...projects }
+        for (const directory of known) delete kept[directory]
+        return { ...config, projects: kept }
+      })
+    },
+    catch: (cause) =>
+      new ClaudeConfigError({
+        message: `Could not forget ${directories.join(", ")} in ${configPath}: ${causeMessage(cause)}`,
+      }),
+  })
+
+/** Where Claude Code keeps its transcripts, one directory per working directory. */
+export function claudeProjectsDir(env: Record<string, string | undefined> = process.env): string {
+  return join(env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects")
+}
+
+/**
+ * The name of the directory under {@link claudeProjectsDir} that holds what Claude Code keeps of
+ * a working directory, given by its real path: every character but a letter or digit becomes `-`,
+ * as Claude Code 2.1.287 names it. Undefined for a path over 200 characters, which Claude Code
+ * shortens with a hash.
+ */
+export function claudeProjectDirName(cwd: string): string | undefined {
+  const name = cwd.replace(/[^a-zA-Z0-9]/g, "-")
+  return name.length <= 200 ? name : undefined
+}
 
 function parseConfig(text: string, path: string): Record<string, unknown> {
   const config = JSON.parse(text) as unknown

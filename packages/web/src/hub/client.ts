@@ -191,6 +191,19 @@ export class HubClient {
     return this.#send({ _tag: "WakeSession", sessionId })
   }
 
+  /**
+   * Deletes a Session, which archives it at once: its Sandbox is destroyed, and it can be
+   * restored until it is purged.
+   */
+  archiveSession(sessionId: SessionId): boolean {
+    return this.#send({ _tag: "ArchiveSession", sessionId })
+  }
+
+  /** Brings an Archived Session back, Asleep: the next prompt wakes it. */
+  restoreSession(sessionId: SessionId): boolean {
+    return this.#send({ _tag: "RestoreSession", sessionId })
+  }
+
   /** Creates a Session; resolves with it once the Hub has, or rejects with the Hub's reason. */
   createSession(input: NewSession): Promise<SessionSummary> {
     const requestId = RequestId.make(`req-${Date.now().toString(36)}-${++this.#requestCount}`)

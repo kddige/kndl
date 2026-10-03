@@ -70,6 +70,12 @@ export const SandboxStateReport = Schema.TaggedStruct("SandboxStateReport", {
 })
 export type SandboxStateReport = typeof SandboxStateReport.Type
 
+/** A {@link PurgeSession} is done: nothing of the Session is left on the Runner. */
+export const SessionPurged = Schema.TaggedStruct("SessionPurged", {
+  sessionId: SessionId,
+})
+export type SessionPurged = typeof SessionPurged.Type
+
 /** Every message a Runner sends the Hub. */
 export const RunnerToHub = Schema.Union([
   RunnerHello,
@@ -77,6 +83,7 @@ export const RunnerToHub = Schema.Union([
   SessionStartFailed,
   SessionStopped,
   SandboxStateReport,
+  SessionPurged,
   TerminalFrame,
   GitRequest,
   CoAuthorsCommitted,
@@ -123,12 +130,23 @@ export const StopSession = Schema.TaggedStruct("StopSession", {
 })
 export type StopSession = typeof StopSession.Type
 
+/**
+ * Delete everything of an Archived Session from the Runner, once it is past restoring: its
+ * Sandbox and volumes if any are left, its Workspace, and Claude Code's state for it. Answered
+ * with {@link SessionPurged}; sent again on reconnect until it is.
+ */
+export const PurgeSession = Schema.TaggedStruct("PurgeSession", {
+  sessionId: SessionId,
+})
+export type PurgeSession = typeof PurgeSession.Type
+
 /** Every message the Hub sends a Runner. */
 export const HubToRunner = Schema.Union([
   RunnerWelcome,
   HandshakeRejected,
   StartSession,
   StopSession,
+  PurgeSession,
   TerminalInput,
   TerminalResize,
   RequestTerminalSnapshot,

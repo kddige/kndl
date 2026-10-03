@@ -120,6 +120,12 @@ export function reduce(state: HubState, action: HubAction): HubState {
     case "SessionUpdated":
     case "SessionCreated":
       return { ...state, sessions: upsert(state.sessions ?? [], action.session) }
+    case "SessionRemoved": {
+      // Purged: gone from the Hub, with its history.
+      const sessions = state.sessions?.filter((session) => session.id !== action.sessionId) ?? null
+      const { [action.sessionId]: _, ...joined } = state.joined
+      return { ...state, sessions, joined }
+    }
     case "SessionHistory":
       return updateJoined(state, action.sessionId, (session) => ({
         ...session,
@@ -248,6 +254,9 @@ export function appendEntries(
 export function lastSeq(log: ReadonlyArray<SessionLogEntry>): EventSeq | undefined {
   return log.at(-1)?.seq
 }
+
+/** Whether a Session belongs in the normal Session list: every one that isn't Archived. */
+export const isListed = (session: SessionSummary): boolean => session.state !== "Archived"
 
 /** The Session with this id, if the Hub has listed it. */
 export function findSession(state: HubState, sessionId: string): SessionSummary | undefined {

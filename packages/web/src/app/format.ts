@@ -50,3 +50,21 @@ export function statusOf(state: SessionState): StatusState {
       return "archived"
   }
 }
+
+/** A day, for when something happens: "Nov 2". */
+export function day(at: number): string {
+  return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
+
+/** How long until an Archived Session is purged: "in 27 days", "in 1 day", "today". */
+export function purgedIn(purgeAt: number, now = Date.now()): string {
+  const days = Math.ceil((purgeAt - now) / 86_400_000)
+  if (days <= 0) return "today"
+  return days === 1 ? "in 1 day" : `in ${days} days`
+}
+
+/** A Repo's route params, from its `owner/name`. */
+export function repoParams(repo: string): { owner: string; repo: string } {
+  const slash = repo.indexOf("/")
+  return { owner: repo.slice(0, slash), repo: repo.slice(slash + 1) }
+}

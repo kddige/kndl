@@ -5,12 +5,13 @@ import type {
   SessionSummary,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Link } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { statusOf } from "../app/format.ts"
+import { day, purgedIn, statusOf } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
 import { buildTranscript, runningTurn } from "../hub/transcript.ts"
+import { restoreSession } from "../sessions/ArchivedSessions.tsx"
 import {
   ArrowLeftIcon,
   AvatarStack,
@@ -18,6 +19,7 @@ import {
   BranchIcon,
   Button,
   EmptyState,
+  IconButton,
   InfoIcon,
   SessionStatus,
   Spinner,
@@ -26,6 +28,7 @@ import {
   TabPanel,
   Tabs,
   toast,
+  TrashIcon,
 } from "../ui/index.ts"
 import { color, font, leading, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
 import { Composer } from "./Composer.tsx"
@@ -204,6 +207,7 @@ function LoadedSession({
   queue: JoinedSession["queue"]
 }) {
   const hub = useHub()
+  const navigate = useNavigate()
   const items = useMemo(() => buildTranscript(log), [log])
   const running = summary.currentTurn !== null || runningTurn(items) !== undefined
   const lastChange = useMemo(() => latestStateChange(log), [log])
@@ -219,9 +223,23 @@ function LoadedSession({
         : undefined
 
   const send = (prompt: string) => command(hub.sendPrompt(summary.id, prompt))
+  // An Archived Session has no terminal to open: it shows its conversation only.
+  const archived = state === "Archived"
+  const view: SessionTab = archived ? "chat" : tab
   // The terminal mounts when first shown and stays, so its scrollback survives switching tabs.
-  const [shownTerminal, setShownTerminal] = useState(tab === "terminal")
-  if (tab === "terminal" && !shownTerminal) setShownTerminal(true)
+  const [shownTerminal, setShownTerminal] = useState(view === "terminal")
+  if (view === "terminal" && !shownTerminal) setShownTerminal(true)
+
+  // Deleting archives at once, so there's nothing to confirm: the toast's Undo restores it.
+  const remove = () => {
+    if (!command(hub.archiveSession(summary.id))) return
+    toast.show({
+      title: "Session deleted",
+      description: `${summary.workBranch} is archived. Restore it from ${summary.repo}'s Archived Sessions.`,
+      action: { label: "Undo", onAction: () => command(hub.restoreSession(summary.id)) },
+    })
+    void navigate({ to: "/" })
+  }
 
   return (
     <div {...stylex.props(styles.view)}>
@@ -261,6 +279,11 @@ function LoadedSession({
             Sleep now
           </Button>
         )}
+        {state !== "Archived" && (
+          <IconButton label="Delete Session" size="sm" onClick={remove}>
+            <TrashIcon />
+          </IconButton>
+        )}
         <AvatarStack
           label="Here now"
           people={presence.map((p) => ({ id: p.id, name: p.name, src: p.avatarUrl }))}
@@ -269,14 +292,16 @@ function LoadedSession({
       </header>
 
       <Tabs
-        value={tab}
+        value={view}
         onValueChange={(next) => onTabChange?.(next === "terminal" ? "terminal" : "chat")}
         sx={styles.tabs}
       >
         <div {...stylex.props(styles.tabList)}>
           <TabList label="Session views">
             <Tab value="chat">Chat</Tab>
-            <Tab value="terminal">Terminal</Tab>
+            <Tab value="terminal" disabled={archived}>
+              Terminal
+            </Tab>
           </TabList>
         </div>
         <TabPanel value="chat" keepMounted sx={styles.tabPanel}>
@@ -286,6 +311,7 @@ function LoadedSession({
                 summary={summary}
                 change={lastChange}
                 onWake={() => command(hub.wakeSession(summary.id))}
+                onRestore={() => restoreSession(hub, summary.id)}
               />
               {items.length === 0 ? (
                 <EmptyState
@@ -317,7 +343,7 @@ function LoadedSession({
           </div>
         </TabPanel>
         <TabPanel value="terminal" keepMounted sx={styles.tabPanel}>
-          {shownTerminal && (
+          {shownTerminal && !archived && (
             <Suspense
               fallback={
                 <div {...stylex.props(styles.centered)}>
@@ -345,10 +371,12 @@ function StateBanner({
   summary,
   change,
   onWake,
+  onRestore,
 }: {
   summary: SessionSummary
   change: SessionStateChanged | undefined
   onWake: () => void
+  onRestore: () => void
 }) {
   const why = change?.state === summary.state ? change.message : undefined
   switch (summary.state) {
@@ -378,12 +406,25 @@ function StateBanner({
           they were.
         </Banner>
       )
-    case "Archived":
+    case "Archived": {
+      const archived = summary.archived
       return (
-        <Banner icon={<InfoIcon />} title="This Session is Archived">
-          It can be restored for 30 days, then it's purged.
+        <Banner
+          icon={<InfoIcon />}
+          title="This Session is Archived"
+          action={
+            <Button size="sm" onClick={onRestore}>
+              Restore
+            </Button>
+          }
+        >
+          {archived
+            ? `${archived.by.name} deleted it. It can be restored until ${day(archived.purgeAt)}, when it's purged (${purgedIn(archived.purgeAt)}). `
+            : "It can be restored until it's purged. "}
+          Its Sandbox is gone; restored, it wakes with a fresh one on the same Workspace.
         </Banner>
       )
+    }
   }
 }
 

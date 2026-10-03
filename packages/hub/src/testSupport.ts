@@ -10,7 +10,12 @@ import { DatabaseTest } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
-import { DefaultSleepAfter, HubConfig, type HubConfigInput } from "./HubConfig.ts"
+import {
+  DefaultArchiveRetention,
+  DefaultSleepAfter,
+  HubConfig,
+  type HubConfigInput,
+} from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
 
 export const webOrigin = "http://localhost:5173"
@@ -26,6 +31,7 @@ export const baseConfig: HubConfigInput = {
   devLogin: false,
   devLoginName: "dev",
   sleepAfterMs: Duration.toMillis(DefaultSleepAfter),
+  archiveRetentionMs: Duration.toMillis(DefaultArchiveRetention),
 }
 
 /** The Hub's stores and services, which tests can reach into. */

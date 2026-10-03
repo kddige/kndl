@@ -162,10 +162,13 @@ describe("a joined Session", () => {
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
     client.join(demo)
     await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
-    const joined = client.getState().joined[demo]
-    expect(joined?.log[0]?.event._tag).toBe("TurnStarted")
-    expect(joined?.presence.map((person) => person.login)).toEqual(["alice"])
-    expect(joined?.queue).toEqual([])
+    const joined = () => client.getState().joined[demo]
+    expect(joined()?.log[0]?.event._tag).toBe("TurnStarted")
+    // Who's here comes as its own message, which can land after the history.
+    await eventually(() =>
+      expect(joined()?.presence.map((person) => person.login)).toEqual(["alice"]),
+    )
+    expect(joined()?.queue).toEqual([])
   })
 
   test("joining before the welcome sends the join once welcomed", async () => {
@@ -524,5 +527,59 @@ describe("the terminal", () => {
     expect(client.sendTerminalInput(demo, "x")).toBe(false)
     expect(client.sendTerminalInput(demo, "")).toBe(false)
     expect(client.resizeTerminal(demo, { cols: 80, rows: 24 })).toBe(false)
+  })
+})
+
+const find = (client: InstanceType<typeof HubClient>, id: string) =>
+  client.getState().sessions?.find((session) => session.id === id)
+
+describe("archiving", () => {
+  const readme = SessionId.make("s-readme")
+
+  test("deleting archives a Session at once, saying who; restoring brings it back Asleep", async () => {
+    const { client } = setUp()
+    client.start()
+    client.join(readme)
+    await eventually(() => expect(client.getState().joined[readme]?.historyLoaded).toBe(true))
+
+    expect(client.archiveSession(readme)).toBe(true)
+    await eventually(() => expect(find(client, readme)?.state).toBe("Archived"))
+    const archived = find(client, readme)?.archived
+    expect(archived?.by.login).toBe("alice")
+    expect(archived && archived.purgeAt - archived.at).toBe(30 * 24 * 3_600_000)
+    const log = () => client.getState().joined[readme]?.log.map((entry) => entry.event) ?? []
+    expect(log().at(-1)).toMatchObject({ _tag: "SessionStateChanged", state: "Archived" })
+
+    expect(client.restoreSession(readme)).toBe(true)
+    await eventually(() => expect(find(client, readme)?.state).toBe("Asleep"))
+    expect(find(client, readme)?.archived).toBeUndefined()
+    expect(log().at(-1)).toMatchObject({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      by: { login: "alice" },
+    })
+  })
+
+  test("an Archived Session refuses prompts with a clear reason", async () => {
+    const { client } = setUp()
+    const failures: Array<CommandFailed> = []
+    client.onCommandFailed((failure) => failures.push(failure))
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    client.sendPrompt(SessionId.make("s-flaky"), "hello")
+    await eventually(() => expect(failures).toHaveLength(1))
+    expect(failures[0]).toMatchObject({ command: "SendPrompt", sessionId: "s-flaky" })
+    expect(failures[0]?.message).toContain("archived")
+  })
+
+  test("restoring a Session that isn't archived is refused", async () => {
+    const { client } = setUp()
+    const failures: Array<CommandFailed> = []
+    client.onCommandFailed((failure) => failures.push(failure))
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    client.restoreSession(readme)
+    await eventually(() => expect(failures).toHaveLength(1))
+    expect(failures[0]).toMatchObject({ command: "RestoreSession", sessionId: "s-readme" })
   })
 })

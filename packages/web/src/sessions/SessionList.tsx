@@ -2,9 +2,18 @@ import type { RunnerSummary, SessionSummary } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useMemo } from "react"
-import { statusOf, timeAgo } from "../app/format.ts"
+import { repoParams, statusOf, timeAgo } from "../app/format.ts"
 import { useHubState } from "../app/hub.tsx"
-import { Avatar, BranchIcon, EmptyState, InboxIcon, SessionStatus, Spinner } from "../ui/index.ts"
+import { isListed } from "../hub/store.ts"
+import {
+  Avatar,
+  BranchIcon,
+  EmptyState,
+  InboxIcon,
+  SessionStatus,
+  Spinner,
+  TrashIcon,
+} from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
 import { CreateSessionDialog } from "./CreateSessionDialog.tsx"
@@ -100,16 +109,44 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
+  archived: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: space.s3,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  },
+  archivedLink: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1_5,
+    color: color.textMuted,
+    fontSize: text.sm,
+    textDecoration: { default: "none", ":hover": "underline" },
+    borderRadius: radius.sm,
+  },
 })
 
-/** Every Session the Hub lists, newest first, with its state, Runner and who started it. */
+/**
+ * Every Session the Hub lists but the Archived ones, newest first, with its state, Runner and who
+ * started it; then a way to each Repo's Archived Sessions.
+ */
 export function SessionList() {
   const sessions = useHubState((state) => state.sessions)
   const runners = useHubState((state) => state.runners)
   const sorted = useMemo(
-    () => (sessions ? sessions.toSorted((a, b) => b.createdAt - a.createdAt) : null),
+    () =>
+      sessions ? sessions.filter(isListed).toSorted((a, b) => b.createdAt - a.createdAt) : null,
     [sessions],
   )
+  const archivedByRepo = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const session of sessions ?? []) {
+      if (!isListed(session)) counts.set(session.repo, (counts.get(session.repo) ?? 0) + 1)
+    }
+    return [...counts].toSorted(([a], [b]) => a.localeCompare(b))
+  }, [sessions])
   const runnersById = useMemo(
     () => new Map((runners ?? []).map((runner) => [runner.id as string, runner])),
     [runners],
@@ -152,6 +189,22 @@ export function SessionList() {
               />
             ))}
           </nav>
+        )}
+        {archivedByRepo.length > 0 && (
+          <ul aria-label="Archived Sessions" {...stylex.props(styles.archived)}>
+            {archivedByRepo.map(([repo, n]) => (
+              <li key={repo}>
+                <Link
+                  to="/repos/$owner/$repo/archived"
+                  params={repoParams(repo)}
+                  {...stylex.props(styles.archivedLink, focus.ring)}
+                >
+                  <TrashIcon />
+                  {n} archived in {repo}
+                </Link>
+              </li>
+            ))}
+          </ul>
         )}
       </main>
     </div>
