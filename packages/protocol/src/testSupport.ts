@@ -49,6 +49,52 @@ export const sessionSummary = {
   currentTurn: null,
 }
 
+const recipe = {
+  image: "debian:bookworm-slim",
+  bootstrapScript: "apt-get update && apt-get install -y ripgrep",
+  startScript: "bun install",
+  docker: true,
+  dependencyFolders: [
+    { pattern: "**/node_modules", nextTo: "package.json" },
+    { pattern: "build/cache" },
+  ],
+  resources: { cpus: 4, memoryMib: 8192 },
+}
+
+/** A draft as the web UI sends it, with one of each kind of variable. */
+export const environmentDraft = {
+  ...recipe,
+  variables: [
+    { _tag: "Plain", name: "NODE_ENV", value: "development" },
+    { _tag: "Sensitive", name: "NPM_TOKEN", value: "npm_secret", availableAtBuild: true },
+    { _tag: "Sensitive", name: "API_KEY", availableAtBuild: false },
+    { _tag: "Link", name: "GH_TOKEN", sharedVariable: "GITHUB_TOKEN", availableAtBuild: false },
+  ],
+}
+
+/** The same Environment as applied, as the web UI sees it: no Sensitive values. */
+export const environment = {
+  repo: "kddige/claude-hub",
+  version: 3,
+  ...recipe,
+  variables: [
+    { _tag: "Plain", name: "NODE_ENV", value: "development" },
+    { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true },
+    { _tag: "Sensitive", name: "API_KEY", availableAtBuild: false },
+    { _tag: "Link", name: "GH_TOKEN", sharedVariable: "GITHUB_TOKEN", availableAtBuild: false },
+  ],
+}
+
+/** What a Runner builds it from. */
+export const environmentRecipe = {
+  ...recipe,
+  variables: [
+    { name: "NODE_ENV", availableAtBuild: true },
+    { name: "NPM_TOKEN", availableAtBuild: true },
+    { name: "API_KEY", availableAtBuild: false },
+  ],
+}
+
 export const turnEvents = [
   {
     _tag: "TurnStarted",

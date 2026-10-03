@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { ParticipantId, PromptId, RunnerId, SessionId, TurnId } from "./Ids.ts"
+import { EnvironmentVersion, ParticipantId, PromptId, RunnerId, SessionId, TurnId } from "./Ids.ts"
 
 // Shapes shared by more than one channel: who is involved in a Session and what state it is in.
 
@@ -62,6 +62,17 @@ export const ArchiveInfo = Schema.Struct({
 })
 export type ArchiveInfo = typeof ArchiveInfo.Type
 
+/**
+ * The Environment version a Session's Sandbox runs on, against its Repo's latest: on an older one,
+ * the Session picks up the latest on its next wake, or straight away through a restart.
+ */
+export const SessionEnvironmentStatus = Schema.Struct({
+  /** Null when its Sandbox was started before the Repo had an Environment, or by an older Runner. */
+  version: Schema.NullOr(EnvironmentVersion),
+  latestVersion: EnvironmentVersion,
+})
+export type SessionEnvironmentStatus = typeof SessionEnvironmentStatus.Type
+
 /** A Session as the web UI lists it. */
 export const SessionSummary = Schema.Struct({
   id: SessionId,
@@ -79,6 +90,8 @@ export const SessionSummary = Schema.Struct({
   currentTurn: Schema.NullOr(TurnId),
   /** Present while the Session is Archived. */
   archived: Schema.optionalKey(ArchiveInfo),
+  /** Present once its Repo has an Environment. */
+  environment: Schema.optionalKey(SessionEnvironmentStatus),
 })
 export type SessionSummary = typeof SessionSummary.Type
 

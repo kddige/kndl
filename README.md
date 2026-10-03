@@ -46,6 +46,7 @@ All run from the repo root:
 |---|---|---|
 | `bun run hub` | The Hub on <http://127.0.0.1:7777>; try `/health`. | `HOST` (`127.0.0.1`), `PORT` (`7777`), `HUB_DATABASE` (`hub.db` in `packages/hub`), and the sign-in settings below |
 | `bun run runner-token <name>` | Issues a token for the Runner called `<name>` and prints it. | `HUB_DATABASE`, as for the Hub |
+| `bun run secrets-key` | Prints a new random `HUB_SECRETS_KEY`, for encrypting Sensitive variable values. See [Environments](#environments). | |
 | `bun run runner` | A Runner for this machine; see [Running a Runner](#running-a-runner). | `HUB_URL` (`http://127.0.0.1:7777`), `RUNNER_TOKEN` (required), `RUNNER_NAME` (short hostname) |
 | `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. It passes `/auth`, `/health` and `/ws` through to the Hub, so the web UI and the Hub share one origin. | `HUB_URL` (`http://127.0.0.1:7777`); `VITE_FAKE_HUB=1` runs it against an in-process fake Hub that plays a scripted Session instead, and `VITE_FAKE_HUB=signed-out` starts that signed out |
 | `claude --plugin-dir packages/mod` | Claude Code with the `hub-link` mod loaded. Build it first with `bun run mod:build`. | |
@@ -75,6 +76,7 @@ The Hub reads its sign-in and lifecycle settings from the environment:
 | `CLAUDE_HUB_DEV_USER` | `$USER` | Who dev login signs you in as, when the request names no `login`. |
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. See [The Session lifecycle](#the-session-lifecycle). |
 | `HUB_ARCHIVE_RETENTION_MS` | `2592000000` (30 days) | How long a deleted (Archived) Session can be restored before the Hub purges it. See [The Session lifecycle](#the-session-lifecycle). |
+| `HUB_SECRETS_KEY` | unset | 32 random bytes, base64 (`bun run secrets-key` makes one), that Sensitive variable values are encrypted with at rest. Unset, Sensitive values can't be saved. Once any are saved, the Hub refuses to start without the same key: keep it with the database's backups, as the values can't be read without it. See [Environments](#environments). |
 
 ### Setting up the GitHub App
 
@@ -108,6 +110,7 @@ GITHUB_CLIENT_ID=Iv1.…
 GITHUB_CLIENT_SECRET=…
 GITHUB_APP_ID=…
 GITHUB_APP_PRIVATE_KEY_PATH=/Users/you/.claude-hub/github-app.pem
+HUB_SECRETS_KEY=…   # from `bun run secrets-key`
 ```
 
 `bun run hub` and `bun run runner-token` read `packages/hub/.env.local` when it exists (both run in `packages/hub`, where Bun looks for it), so no flag is needed. Values already in the environment win.
@@ -188,6 +191,17 @@ A Session is Active, Asleep, Frozen or Archived (see [GLOSSARY.md](GLOSSARY.md))
 - **Restoring.** The toast after a delete has an **Undo**, and each Repo's **Archived** screen (linked under the Session list) lists its Archived Sessions with who deleted them and when, each with **Restore**. A restored Session is Asleep (Frozen while its Runner is offline), and the next prompt wakes it. Its Sandbox was destroyed, so the wake creates a fresh one on the kept Workspace, and `--resume` keeps the conversation; `node_modules` and Docker's data are gone with the old volumes.
 - **Purging.** `HUB_ARCHIVE_RETENTION_MS` (30 days) after it was archived, a Session is purged. A periodic sweep on the Hub deletes the Session's log, Prompt queue and rows, tells the web clients `SessionRemoved`, and keeps a note to purge it on its Runner. It sends the Runner `PurgeSession`, and the Runner deletes the Session's directory (the Workspace, Claude Code's state and the host git directory) and any Sandbox or volumes left, then answers `SessionPurged`, which clears the note. A Runner that is offline gets `PurgeSession` when it is back, on every connection until it answers.
 - **History.** Every delete, restore, sleep and stop is in the Session's history with who did it, and shows in the transcript.
+
+### Environments
+
+Each Repo has one Environment, the recipe its Sessions' Sandboxes are built from ([ADR 0009](docs/adr/0009-environments.md), and see [GLOSSARY.md](GLOSSARY.md)). Any signed-in user can change it. The Hub keeps it; the Runner builds it (issue #49), and the web UI sets it up (issue #50).
+
+- **The recipe.** A base image (`debian:bookworm-slim` by default), a bootstrap script run once per build, an optional start script run at each Session start in the Workspace, whether Docker runs in the Sandbox, dependency folders, and CPUs and memory. A dependency-folder pattern such as `**/node_modules` matches folders in the Workspace that get their own volume; with a "next to" file such as `package.json`, only those beside that file. The defaults are `node_modules` next to `package.json`, `.venv` next to `pyproject.toml` and `target` next to `Cargo.toml`.
+- **Variables.** A variable is Plain, its value shown to everyone, or Sensitive, write-only: the Hub encrypts its value with AES-256-GCM under `HUB_SECRETS_KEY` and never sends it to the web. A Sensitive variable reaches the bootstrap only when marked available at build; Plain ones always do. Names are environment-variable names, unique in an Environment, and `CLAUDE_HUB_*` is the Runner's.
+- **Shared variables.** Hub-wide variables, Plain or Sensitive, that an Environment links under a name of its own, with its own available-at-build. A linked shared variable can't be deleted, nor its value changed while a link makes it available at build.
+- **Applying.** Changes are a draft, applied as a whole as a new version, recorded with who applied it and when (never values). A draft that changes the build (image, scripts, Docker, dependency folders, or the variables available at build, values included) needs a passing Test build of exactly that draft on a Runner you pick: the Hub records each result against a keyed digest of the draft's build inputs. Other changes, such as resources or rotating a Sensitive value not available at build, apply at once.
+- **Runners and values.** `StartSession` carries the Environment's recipe and version, with variable names but no values. A Runner fetches values over its WebSocket (`FetchVariables`), only for a Session of its own that is Active or a Test build it was sent, and keeps them in memory. It reports the version a Session runs on, so the Hub shows Sessions on an older version.
+- **Without an Environment.** A Repo needs an Environment before its first Session. Until the web UI can set one up (#50), the Hub doesn't enforce this, and such a Session runs on the Runner's default image.
 
 ### The terminal mirror
 

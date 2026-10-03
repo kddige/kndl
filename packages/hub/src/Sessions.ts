@@ -1,5 +1,6 @@
 import {
   ClaudeSessionId,
+  EnvironmentVersion,
   ParticipantId,
   RunnerId,
   SessionId,
@@ -46,6 +47,8 @@ interface SessionRow {
   readonly archivedByAvatarUrl: string | null
   readonly archivedAt: number | null
   readonly purgeAt: number | null
+  readonly environmentVersion: number | null
+  readonly latestEnvironmentVersion: number | null
 }
 
 /** Archiving a Session: who did it, when, and when it is purged unless restored first. */
@@ -88,6 +91,13 @@ const toSummary = (row: SessionRow): SessionSummary =>
           purgeAt: row.purgeAt,
         },
       }),
+    ...(row.latestEnvironmentVersion !== null && {
+      environment: {
+        version:
+          row.environmentVersion === null ? null : EnvironmentVersion.make(row.environmentVersion),
+        latestVersion: EnvironmentVersion.make(row.latestEnvironmentVersion),
+      },
+    }),
   })
 
 /**
@@ -134,6 +144,14 @@ export class Sessions extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<SessionId>, SqlError>
     /** The Runner deleted what it held of a purged Session: forgets it. False if it wasn't due. */
     readonly purgeDone: (id: SessionId, runnerId: RunnerId) => Effect.Effect<boolean, SqlError>
+    /**
+     * The Environment version the Session's Sandbox runs on, as its Runner reported when it
+     * started it, or null if it didn't say.
+     */
+    readonly setEnvironmentVersion: (
+      id: SessionId,
+      version: EnvironmentVersion | null,
+    ) => Effect.Effect<void, SqlError>
     /** Claude Code's own session id, from the mod's hello, for waking the Session (#12). */
     readonly setClaudeSessionId: (
       id: SessionId,
@@ -157,9 +175,11 @@ export class Sessions extends Context.Service<
           p.avatar_url AS creatorAvatarUrl,
           s.created_at AS createdAt, s.current_turn AS currentTurn,
           s.archived_by AS archivedById, a.login AS archivedByLogin, a.name AS archivedByName,
-          a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt
+          a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt,
+          s.environment_version AS environmentVersion, e.version AS latestEnvironmentVersion
         FROM sessions s JOIN participants p ON p.id = s.creator_id
           LEFT JOIN participants a ON a.id = s.archived_by
+          LEFT JOIN environments e ON e.repo = s.repo
         ${where}
         ORDER BY s.created_at, s.id
       `
@@ -211,6 +231,13 @@ export class Sessions extends Context.Service<
         claudeSessionId: ClaudeSessionId,
       ) {
         yield* sql`UPDATE sessions SET claude_session_id = ${claudeSessionId} WHERE id = ${id}`
+      })
+
+      const setEnvironmentVersion = Effect.fn("Sessions.setEnvironmentVersion")(function* (
+        id: SessionId,
+        version: EnvironmentVersion | null,
+      ) {
+        yield* sql`UPDATE sessions SET environment_version = ${version} WHERE id = ${id}`
       })
 
       const claudeSessionId = Effect.fn("Sessions.claudeSessionId")(function* (id: SessionId) {
@@ -307,6 +334,7 @@ export class Sessions extends Context.Service<
         setState,
         setCurrentTurn,
         setClaudeSessionId,
+        setEnvironmentVersion,
         claudeSessionId,
       })
     }),

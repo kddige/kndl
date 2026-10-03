@@ -39,6 +39,9 @@
 // - Git (#13): the sender of each prompt that starts a Turn is recorded as a co-author until the
 //   Runner reports a commit. The Runner's GitRequests are answered by SessionGit, off the lock,
 //   since they may wait on GitHub. When a Turn ends the Runner is told, to push the WIP ref.
+// - Environments (#47, ADR 0009): StartSession carries the Repo's Environment as last applied,
+//   and the Runner reports the version it started the Session on. Environment commands, Test
+//   builds and variable fetches are handled by EnvironmentRelay.ts.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -84,6 +87,13 @@ import {
 import { Clock, Context, Duration, Effect, Layer, Option, type Scope, Semaphore } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { CoAuthors } from "./CoAuthors.ts"
+import {
+  type EnvironmentWebClient,
+  isEnvironmentCommand,
+  makeEnvironmentRelay,
+  refuseSessionsWithoutEnvironment,
+} from "./EnvironmentRelay.ts"
+import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
@@ -169,6 +179,7 @@ export class SessionRelay extends Context.Service<
       const config = yield* HubConfig
       const sessionGit = yield* SessionGit
       const coAuthors = yield* CoAuthors
+      const environments = yield* Environments
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
@@ -216,6 +227,14 @@ export class SessionRelay extends Context.Service<
 
       // ── Sending ──────────────────────────────────────────────────────────
 
+      /** StartSession's Environment: the Repo's as last applied, if it has one. */
+      const sessionEnvironment = Effect.fn("SessionRelay.sessionEnvironment")(function* (
+        repo: string,
+      ) {
+        const environment = yield* environments.forSession(repo)
+        return Option.isSome(environment) ? { environment: environment.value } : {}
+      })
+
       const toWeb = (message: HubToWeb, to: (client: WebClient) => boolean = () => true) => {
         for (const client of webClients) if (to(client)) client.peer.send(message)
       }
@@ -245,6 +264,16 @@ export class SessionRelay extends Context.Service<
       })
 
       /** Moves the Session to `state`, if it isn't there, logging why. */
+      const environmentRelay = yield* makeEnvironmentRelay({
+        onlineRunner: (id) => onlineRunners.get(id),
+        toWeb: (message, to: (client: EnvironmentWebClient) => boolean) => toWeb(message, to),
+        repoSessionsUpdated: Effect.fn("SessionRelay.repoSessionsUpdated")(function* (repo) {
+          for (const session of yield* sessions.list) {
+            if (session.repo === repo) toWeb(HubToWeb.cases.SessionUpdated.make({ session }))
+          }
+        }),
+      })
+
       const changeState = Effect.fn("SessionRelay.changeState")(function* (
         session: SessionSummary,
         state: SessionState,
@@ -354,6 +383,7 @@ export class SessionRelay extends Context.Service<
         // A restored Session still being stopped for its archive wakes once it is stopped.
         if (runner === undefined || session.state !== "Asleep" || archiving.has(session.id)) return
         const resume = yield* sessions.claudeSessionId(session.id)
+        const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         starting.add(session.id)
         yield* changeState(session, "Active", {
@@ -370,6 +400,7 @@ export class SessionRelay extends Context.Service<
             workBranch: session.workBranch,
             modToken,
             ...(Option.isSome(resume) ? { resume: resume.value } : {}),
+            ...environment,
           }),
         )
       })
@@ -517,6 +548,8 @@ export class SessionRelay extends Context.Service<
         })
 
         const handle = Effect.fn("SessionRelay.receiveWeb")(function* (message: WebToHub) {
+          if (isEnvironmentCommand(message))
+            return yield* environmentRelay.receiveWeb(client, message)
           switch (message._tag) {
             case "WebHello":
               return
@@ -538,6 +571,13 @@ export class SessionRelay extends Context.Service<
               }
               // TODO(#7 follow-up): check that the person has access to the Repo, and that the
               // base branch exists, once the GitHub App can tell.
+              const missing = yield* environmentRelay.missingEnvironment(message.repo)
+              if (missing !== undefined) {
+                // TODO(#50): refuse once the web UI can set up an Environment.
+                if (refuseSessionsWithoutEnvironment) return refuse(message, missing, { requestId })
+                yield* Effect.logDebug(`${missing} Starting the Session on the Runner's default.`)
+              }
+              const environment = yield* sessionEnvironment(message.repo)
               const id = SessionId.make(randomId())
               const session = yield* sessions.create({
                 id,
@@ -567,6 +607,7 @@ export class SessionRelay extends Context.Service<
                   baseBranch: session.baseBranch,
                   workBranch: session.workBranch,
                   modToken,
+                  ...environment,
                 }),
               )
               peer.send(HubToWeb.cases.SessionCreated.make({ requestId, session }))
@@ -839,6 +880,13 @@ export class SessionRelay extends Context.Service<
 
         const handle = Effect.fn("SessionRelay.receiveRunner")(function* (message: RunnerToHub) {
           if (message._tag === "RunnerHello") return
+          if (
+            message._tag === "FetchVariables" ||
+            message._tag === "TestBuildLog" ||
+            message._tag === "TestBuildFinished"
+          ) {
+            return yield* environmentRelay.receiveRunner(runner, message)
+          }
           if (message._tag === "SessionPurged") {
             // The Session is gone from the Hub by now; only the note to purge it is left.
             if (!(yield* sessions.purgeDone(message.sessionId, runner.id))) {
@@ -855,9 +903,14 @@ export class SessionRelay extends Context.Service<
             case "SessionStarted":
               // A start that raced an archive: the StopSession that follows settles it.
               if (session.value.state === "Archived" || archiving.has(message.sessionId)) return
+              yield* sessions.setEnvironmentVersion(
+                message.sessionId,
+                message.environmentVersion ?? null,
+              )
               yield* changeState(session.value, "Active", {
                 message: `Claude Code started on ${runner.name}`,
               })
+              if (session.value.state === "Active") yield* sessionUpdated(message.sessionId)
               yield* deliverNext(message.sessionId)
               return
             case "SessionStartFailed":
@@ -986,6 +1039,7 @@ export class SessionRelay extends Context.Service<
               Effect.gen(function* () {
                 if (onlineRunners.get(runner.id) !== runner) return
                 onlineRunners.delete(runner.id)
+                yield* environmentRelay.runnerGone(runner)
                 for (const session of yield* sessions.listByRunner(runner.id)) {
                   // A stop it was asked for is settled by what it says when it is back.
                   stopping.delete(session.id)

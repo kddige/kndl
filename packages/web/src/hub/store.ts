@@ -181,6 +181,14 @@ export function reduce(state: HubState, action: HubAction): HubState {
     case "CommandFailed":
       // Refusals are the client's to report.
       return state
+    case "EnvironmentState":
+    case "EnvironmentDraftChecked":
+    case "TestBuildStarted":
+    case "TestBuildLogged":
+    case "TestBuildEnded":
+    case "SharedVariables":
+      // TODO(#50): the Environment setup screen keeps these.
+      return state
   }
 }
 

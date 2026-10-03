@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { HubToRunner, RunnerToHub } from "./Runner.ts"
-import { expectEveryTag, expectRejected, expectRoundTrips, runnerLogin } from "./testSupport.ts"
+import {
+  environmentRecipe,
+  expectEveryTag,
+  expectRejected,
+  expectRoundTrips,
+  runnerLogin,
+} from "./testSupport.ts"
 import { ProtocolVersion } from "./Version.ts"
 
 const size = { cols: 160, rows: 48 }
@@ -45,6 +51,17 @@ const runnerToHub = [
   { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: 12 },
   { _tag: "WipPushFailed", sessionId: "s-1", message: "git push exited with 128" },
   { _tag: "SessionPurged", sessionId: "s-1" },
+  { _tag: "SessionStarted", sessionId: "s-1", environmentVersion: 3 },
+  { _tag: "FetchVariables", requestId: "v-1", for: { _tag: "Session", sessionId: "s-1" } },
+  { _tag: "FetchVariables", requestId: "v-2", for: { _tag: "TestBuild", testBuildId: "b-1" } },
+  { _tag: "TestBuildLog", testBuildId: "b-1", data: "Reading package lists...\n" },
+  { _tag: "TestBuildFinished", testBuildId: "b-1", result: "Passed" },
+  {
+    _tag: "TestBuildFinished",
+    testBuildId: "b-1",
+    result: "Failed",
+    message: "The start script exited with 1",
+  },
 ]
 
 const hubToRunner = [
@@ -138,6 +155,30 @@ const hubToRunner = [
     answer: { _tag: "GitFailed", message: "Pull requests need the GitHub App" },
   },
   { _tag: "SessionTurnEnded", sessionId: "s-1" },
+  {
+    _tag: "StartSession",
+    sessionId: "s-1",
+    repo: "kddige/claude-hub",
+    baseBranch: "main",
+    workBranch: "claude/s-1",
+    modToken: "mod-token",
+    environment: { version: 3, buildVersion: 2, recipe: environmentRecipe },
+  },
+  {
+    _tag: "RunTestBuild",
+    testBuildId: "b-1",
+    repo: "kddige/claude-hub",
+    recipe: environmentRecipe,
+  },
+  {
+    _tag: "VariablesFetched",
+    requestId: "v-1",
+    variables: [
+      { name: "NODE_ENV", value: "development", availableAtBuild: true },
+      { name: "NPM_TOKEN", value: "npm_secret", availableAtBuild: true },
+    ],
+  },
+  { _tag: "VariablesRefused", requestId: "v-2", message: "Not a Test build this Runner runs" },
 ]
 
 describe("RunnerToHub", () => {
@@ -180,6 +221,9 @@ describe("RunnerToHub", () => {
       ask: { _tag: "ReviewPullRequest", number: 0, body: "x", event: "COMMENT" },
     })
     expectRejected(RunnerToHub, { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: -1 })
+    expectRejected(RunnerToHub, { _tag: "SessionStarted", sessionId: "s-1", environmentVersion: 0 })
+    expectRejected(RunnerToHub, { _tag: "FetchVariables", requestId: "v-1", for: { _tag: "Repo" } })
+    expectRejected(RunnerToHub, { _tag: "TestBuildFinished", testBuildId: "b-1", result: "Ok" })
   })
 })
 
@@ -213,6 +257,13 @@ describe("HubToRunner", () => {
       },
     })
     expectRejected(HubToRunner, { _tag: "GitReply", requestId: "g-1", answer: { _tag: "Token" } })
+  })
+
+  test("keeps variable values redacted once decoded", () => {
+    const fetched = hubToRunner.find((message) => message._tag === "VariablesFetched")
+    const decoded = Schema.decodeUnknownSync(HubToRunner)(fetched)
+    expect(String(JSON.stringify(decoded))).not.toContain("npm_secret")
+    expect(String(decoded)).not.toContain("npm_secret")
   })
 
   test("keeps an installation token redacted once decoded", () => {

@@ -46,3 +46,17 @@ export type EventSeq = typeof EventSeq.Type
 /** The position of a command in a Session's mod outbox: 1, 2, ... in the order it was queued. */
 export const ModCommandSeq = Schema.Natural.pipe(Schema.brand("ModCommandSeq"))
 export type ModCommandSeq = typeof ModCommandSeq.Type
+
+/** A Test build of an Environment draft, minted by the Hub. */
+export const TestBuildId = Schema.NonEmptyString.pipe(Schema.brand("TestBuildId"))
+export type TestBuildId = typeof TestBuildId.Type
+
+/** A Runner's request for variable values, minted by the Runner to match the Hub's answer. */
+export const VariablesRequestId = Schema.NonEmptyString.pipe(Schema.brand("VariablesRequestId"))
+export type VariablesRequestId = typeof VariablesRequestId.Type
+
+/** An applied version of a Repo's Environment: 1, 2, ... in the order applied. */
+export const EnvironmentVersion = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(
+  Schema.brand("EnvironmentVersion"),
+)
+export type EnvironmentVersion = typeof EnvironmentVersion.Type

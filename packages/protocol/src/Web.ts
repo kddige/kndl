@@ -1,4 +1,19 @@
 import { Schema } from "effect"
+import {
+  ApplyEnvironment,
+  CheckEnvironmentDraft,
+  DeleteSharedVariable,
+  EnvironmentDraftChecked,
+  EnvironmentState,
+  GetEnvironment,
+  GetSharedVariables,
+  SetSharedVariable,
+  SharedVariables,
+  StartTestBuild,
+  TestBuildEnded,
+  TestBuildLogged,
+  TestBuildStarted,
+} from "./Environment.ts"
 import { EventSeq, PromptId, RequestId, RunnerId, SessionId } from "./Ids.ts"
 import {
   BranchName,
@@ -172,6 +187,13 @@ export const WebToHub = Schema.Union([
   CloseTerminal,
   TerminalInput,
   TerminalResize,
+  GetEnvironment,
+  CheckEnvironmentDraft,
+  StartTestBuild,
+  ApplyEnvironment,
+  GetSharedVariables,
+  SetSharedVariable,
+  DeleteSharedVariable,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type WebToHub = typeof WebToHub.Type
 
@@ -267,5 +289,11 @@ export const HubToWeb = Schema.Union([
   PromptQueueChanged,
   TerminalFrame,
   CommandFailed,
+  EnvironmentState,
+  EnvironmentDraftChecked,
+  TestBuildStarted,
+  TestBuildLogged,
+  TestBuildEnded,
+  SharedVariables,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToWeb = typeof HubToWeb.Type
