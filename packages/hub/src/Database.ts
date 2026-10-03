@@ -201,6 +201,22 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`CREATE INDEX test_builds_digest ON test_builds (repo, digest)`
     yield* sql`ALTER TABLE sessions ADD COLUMN environment_version INTEGER`
   }),
+
+  // Sensitive values an apply or a shared variable's change replaced (issue #48), encrypted, for
+  // redacting what a Session started before still prints: kept while a Session of the Repo runs
+  // on a version below `until_version`.
+  "0007_retired_values": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE retired_values (
+        repo TEXT NOT NULL,
+        value TEXT NOT NULL,
+        until_version INTEGER NOT NULL,
+        retired_at INTEGER NOT NULL
+      )
+    `
+    yield* sql`CREATE INDEX retired_values_repo ON retired_values (repo)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

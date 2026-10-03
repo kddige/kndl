@@ -9,6 +9,10 @@
 //   Session or Test build it runs. Versions record who applied them and when, never values.
 // - A shared variable available at build in some Environment can't change value: that would
 //   change those builds without a Test build. Untick "available at build" on its links first.
+// - Sensitive values are redacted from what the Hub stores or shows (issue #48, Redaction.ts).
+//   A value an apply or a shared variable's change replaces is kept, encrypted, as retired: a
+//   Session that started before may still print it. It is dropped once no Session that could
+//   have it is running (Active or Frozen) on a version from before the change.
 
 import {
   type DependencyFolder,
@@ -20,6 +24,7 @@ import {
   type EnvironmentVersionInfo,
   environmentDraftProblems,
   MaxVariableValueLength,
+  MinSensitiveValueLength,
   ParticipantId,
   type Participant,
   type RunnerId,
@@ -31,7 +36,7 @@ import {
   type VariableValue,
   variableNameProblem,
 } from "@claude-hub/protocol"
-import { Context, Effect, Layer, Option, Redacted, Schema } from "effect"
+import { Clock, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import { Secrets } from "./Secrets.ts"
@@ -53,6 +58,8 @@ export interface PreparedDraft {
   readonly digest: string
   /** Whether it changes the build of the Repo's Environment as applied, or there is none. */
   readonly changesBuild: boolean
+  /** The values of its Sensitive variables and of its links to Sensitive shared variables. */
+  readonly sensitiveValues: ReadonlyArray<Redacted.Redacted<string>>
 }
 
 /** A Test build to record. */
@@ -105,7 +112,7 @@ interface ResolvedVariable {
     | { readonly kind: "Plain" }
     /** A saved value keeps its ciphertext; a new one has none until it is applied. */
     | { readonly kind: "Sensitive"; readonly ciphertext: string | undefined }
-    | { readonly kind: "Link"; readonly sharedName: string }
+    | { readonly kind: "Link"; readonly sharedName: string; readonly sensitive: boolean }
 }
 
 /** The parts of a recipe beside its variables. */
@@ -134,6 +141,21 @@ const draftFieldsOf = (draft: EnvironmentDraft): RecipeFields => ({
 /** What a Sensitive value's ciphertext is bound to, so it can't be moved to another variable. */
 const environmentContext = (repo: string, name: string) => `environment:${repo}:${name}`
 const sharedContext = (name: string) => `shared:${name}`
+/** A retired value is kept under its Repo, whatever variable it came from. */
+const retiredContext = (repo: string) => `retired:${repo}`
+
+/** The values of the Sensitive variables and links to Sensitive shared variables among these. */
+const sensitiveOf = (variables: ReadonlyArray<ResolvedVariable>) =>
+  variables
+    .filter(
+      ({ stored }) => stored.kind === "Sensitive" || (stored.kind === "Link" && stored.sensitive),
+    )
+    .map((variable) => variable.value)
+
+const tooShort = (name: string) =>
+  refuse(
+    `The value of ${name} is under ${MinSensitiveValueLength} characters: too short to redact from output. Make it Plain, or use a longer value.`,
+  )
 
 const refuse = (message: string) => Effect.fail(new EnvironmentRefused({ message }))
 
@@ -199,6 +221,14 @@ export class Environments extends Context.Service<
     readonly forSession: (
       repo: string,
     ) => Effect.Effect<Option.Option<SessionEnvironment>, SqlError>
+    /**
+     * The Sensitive values to redact from what the Repo's Sessions print: its Sensitive variables
+     * and links to Sensitive shared variables as applied, and the values those replaced that a
+     * running Session may still have.
+     */
+    readonly sensitiveValues: (
+      repo: string,
+    ) => Effect.Effect<ReadonlyArray<Redacted.Redacted<string>>, EnvironmentRefused | SqlError>
     /** Every variable of the Repo's Environment as applied, with its value. */
     readonly values: (
       repo: string,
@@ -265,6 +295,24 @@ export class Environments extends Context.Service<
           ? Effect.succeed(Redacted.make(row.value))
           : decrypt(row.value, sharedContext(row.name))
 
+      /**
+       * Keeps a Sensitive value the Repo no longer has, encrypted, for redacting what Sessions on
+       * a version below `untilVersion` print.
+       */
+      const retire = Effect.fn("Environments.retire")(function* (
+        repo: string,
+        value: Redacted.Redacted<string>,
+        untilVersion: number,
+      ) {
+        const ciphertext = yield* secrets
+          .encrypt(value, retiredContext(repo))
+          .pipe(Effect.mapError((error) => new EnvironmentRefused({ message: error.message })))
+        yield* sql`
+          INSERT INTO retired_values (repo, value, until_version, retired_at)
+          VALUES (${repo}, ${ciphertext}, ${untilVersion}, ${yield* Clock.currentTimeMillis})
+        `
+      })
+
       /** The Repo's variables as applied, with their values. */
       const storedVariables = Effect.fn("Environments.storedVariables")(function* (repo: string) {
         const resolved: Array<ResolvedVariable> = []
@@ -295,7 +343,7 @@ export class Environments extends Context.Service<
               name: row.name,
               availableAtBuild,
               value: yield* sharedValue(shared.value),
-              stored: { kind: "Link", sharedName },
+              stored: { kind: "Link", sharedName, sensitive: shared.value.kind === "Sensitive" },
             })
           }
         }
@@ -354,6 +402,9 @@ export class Environments extends Context.Service<
                     `The value of ${name} is over ${MaxVariableValueLength} characters.`,
                   )
                 }
+                if (Redacted.value(variable.value).trim().length < MinSensitiveValueLength) {
+                  return yield* tooShort(name)
+                }
                 variables.push({
                   name,
                   availableAtBuild,
@@ -385,7 +436,11 @@ export class Environments extends Context.Service<
                 name,
                 availableAtBuild: variable.availableAtBuild,
                 value: yield* sharedValue(shared.value),
-                stored: { kind: "Link", sharedName: shared.value.name },
+                stored: {
+                  kind: "Link",
+                  sharedName: shared.value.name,
+                  sensitive: shared.value.kind === "Sensitive",
+                },
               })
               break
             }
@@ -403,6 +458,7 @@ export class Environments extends Context.Service<
           values: valuesOf(variables),
           digest,
           changesBuild,
+          sensitiveValues: sensitiveOf(variables),
           variables,
         }
       })
@@ -463,6 +519,10 @@ export class Environments extends Context.Service<
               dependency_folders = excluded.dependency_folders, cpus = excluded.cpus,
               memory_mib = excluded.memory_mib
           `
+          const kept = new Set(prepared.sensitiveValues.map(Redacted.value))
+          for (const value of sensitiveOf(yield* storedVariables(repo))) {
+            if (!kept.has(Redacted.value(value))) yield* retire(repo, value, version)
+          }
           yield* sql`DELETE FROM environment_variables WHERE repo = ${repo}`
           for (const [position, variable] of prepared.variables.entries()) {
             const { stored } = variable
@@ -566,6 +626,25 @@ export class Environments extends Context.Service<
         return valuesOf(yield* storedVariables(repo))
       })
 
+      const sensitiveValues = Effect.fn("Environments.sensitiveValues")(function* (repo: string) {
+        // Retired values no Session can still have are dropped: only a running Claude Code
+        // keeps the values it started with, as one woken or started anew fetches them again.
+        yield* sql`
+          DELETE FROM retired_values WHERE repo = ${repo} AND NOT EXISTS (
+            SELECT 1 FROM sessions s
+            WHERE s.repo = retired_values.repo AND s.state IN ('Active', 'Frozen')
+              AND (s.environment_version IS NULL
+                OR s.environment_version < retired_values.until_version)
+          )
+        `
+        const retired = yield* sql<{ readonly value: string }>`
+          SELECT value FROM retired_values WHERE repo = ${repo}
+        `
+        const sensitive = sensitiveOf(yield* storedVariables(repo))
+        for (const row of retired) sensitive.push(yield* decrypt(row.value, retiredContext(repo)))
+        return sensitive
+      })
+
       const recordTestBuild = Effect.fn("Environments.recordTestBuild")(function* (
         build: NewTestBuild,
       ) {
@@ -656,6 +735,9 @@ export class Environments extends Context.Service<
             stored = existing.value.value
           } else {
             if (!secrets.available) return yield* secretsUnavailable(name)
+            if (Redacted.value(value).trim().length < MinSensitiveValueLength) {
+              return yield* tooShort(name)
+            }
             stored = yield* secrets
               .encrypt(value, sharedContext(name))
               .pipe(Effect.mapError((error) => new EnvironmentRefused({ message: error.message })))
@@ -669,6 +751,23 @@ export class Environments extends Context.Service<
               return yield* refuse(
                 `${name} is available at build in ${repos}: a new value would change those builds without a Test build. Untick "available at build" on its links first, or link a new shared variable.`,
               )
+            }
+          }
+
+          // A Sensitive value replaced is retired in every Repo linking it: their running
+          // Sessions started with it. They are on the Repo's version as it is now, or older.
+          if (
+            Option.isSome(existing) &&
+            existing.value.kind === "Sensitive" &&
+            value !== undefined
+          ) {
+            const before = yield* sharedValue(existing.value)
+            if (Redacted.value(before) !== Redacted.value(value)) {
+              for (const repo of new Set((yield* linksTo(name)).map((link) => link.repo))) {
+                const environment = yield* environmentRow(repo)
+                const version = Option.isSome(environment) ? environment.value.version : 0
+                yield* retire(repo, before, version + 1)
+              }
             }
           }
 
@@ -703,6 +802,7 @@ export class Environments extends Context.Service<
         apply,
         forSession,
         values,
+        sensitiveValues,
         testBuildPassed,
         recordTestBuild,
         finishTestBuild,

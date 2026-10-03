@@ -447,6 +447,14 @@ export const MaxScriptLength = 65_536
 /** The longest a variable's value may be, in characters. */
 export const MaxVariableValueLength = 65_536
 
+/**
+ * The shortest a Sensitive value may be, in characters, leading and trailing whitespace aside.
+ * The Hub masks every occurrence of a Sensitive value in what it stores or shows (issue #48), and
+ * masking every occurrence of a shorter text would garble output while hiding a value that is
+ * guessable anyway.
+ */
+export const MinSensitiveValueLength = 4
+
 /** Why a variable name can't be used, or undefined when it can. */
 export function variableNameProblem(name: string): string | undefined {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {

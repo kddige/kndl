@@ -42,6 +42,10 @@
 // - Environments (#47, ADR 0009): StartSession carries the Repo's Environment as last applied,
 //   and the Runner reports the version it started the Session on. Environment commands, Test
 //   builds and variable fetches are handled by EnvironmentRelay.ts.
+// - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo are masked in every
+//   event before it is logged, and in terminal frames before they are relayed. Claude's text
+//   (TextDelta) and terminal Output are streams: text that could start a value is held back
+//   until the next event or frame, or `holdMillis` at most.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -70,6 +74,8 @@ import {
   type RunnerToHub,
   type SessionEvent,
   SessionEventLogged,
+  type TerminalFrame,
+  type TextDelta,
   SessionId,
   SessionRemoved,
   type SessionState,
@@ -84,7 +90,17 @@ import {
   type WebToHub,
   WipNotPushed,
 } from "@claude-hub/protocol"
-import { Clock, Context, Duration, Effect, Layer, Option, type Scope, Semaphore } from "effect"
+import {
+  Clock,
+  Context,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Redacted,
+  type Scope,
+  Semaphore,
+} from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { CoAuthors } from "./CoAuthors.ts"
 import {
@@ -98,6 +114,15 @@ import { HubConfig } from "./HubConfig.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { PromptQueue } from "./PromptQueue.ts"
+import {
+  everything,
+  holdMillis,
+  type Needles,
+  needlesOf,
+  redactEvent,
+  redactText,
+  StreamRedactor,
+} from "./Redaction.ts"
 import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
 import { SessionGit } from "./SessionGit.ts"
@@ -254,13 +279,176 @@ export class SessionRelay extends Context.Service<
         }
       })
 
-      const logEvent = Effect.fn("SessionRelay.logEvent")(function* (
+      // ── Redaction (#48) ──────────────────────────────────────────────────
+
+      /** What to redact from each Repo's Sessions, until its Sensitive values change. */
+      const needlesByRepo = new Map<string, Needles>()
+
+      const needlesFor = Effect.fn("SessionRelay.needlesFor")(function* (repo: string) {
+        const known = needlesByRepo.get(repo)
+        if (known !== undefined) return known
+        const values = yield* environments.sensitiveValues(repo).pipe(
+          Effect.map(Option.some),
+          Effect.catchTag("EnvironmentRefused", (error) =>
+            Effect.logError(
+              `Could not read the Sensitive values of ${repo}: masking everything its Sessions print`,
+              error,
+            ).pipe(Effect.as(Option.none())),
+          ),
+        )
+        // Values that can't be read are tried again next time.
+        if (Option.isNone(values)) return everything
+        const needles = needlesOf(values.value.map(Redacted.value))
+        needlesByRepo.set(repo, needles)
+        return needles
+      })
+
+      const needlesForSession = Effect.fn("SessionRelay.needlesForSession")(function* (
+        sessionId: SessionId,
+      ) {
+        const session = yield* sessions.get(sessionId)
+        return Option.isSome(session) ? yield* needlesFor(session.value.repo) : everything
+      })
+
+      /** Runs `effect` under the lock once `holdMillis` have passed. */
+      const afterHold = (effect: Effect.Effect<void, SqlError>) =>
+        Effect.sleep(Duration.millis(holdMillis)).pipe(
+          Effect.andThen(serialized(effect)),
+          Effect.catchCause((cause) => Effect.logError("Could not let held text go", cause)),
+          Effect.forkIn(layerScope),
+          Effect.asVoid,
+        )
+
+      /** Claude's text of a Turn's loop, as it streams. */
+      interface TextStream {
+        readonly turnId: TextDelta["turnId"]
+        readonly agentId: TextDelta["agentId"]
+        readonly redactor: StreamRedactor
+        flushing: boolean
+      }
+      /** Each Session's text streams, by Turn and subagent, until the Turn ends. */
+      const textStreams = new Map<SessionId, Map<string, TextStream>>()
+
+      /** Each Session's terminal Output, and the last frame's size, for held text let go. */
+      const terminalStreams = new Map<
+        SessionId,
+        { readonly redactor: StreamRedactor; size: TerminalFrame["size"]; flushing: boolean }
+      >()
+
+      const append = Effect.fn("SessionRelay.append")(function* (
         sessionId: SessionId,
         event: SessionEvent,
       ) {
         const entry = yield* log.append(sessionId, event)
         toJoined(sessionId, SessionEventLogged.make({ sessionId, entry }))
         yield* markBusy(sessionId)
+      })
+
+      /** Logs the text a stream holds back. */
+      const letTextGo = Effect.fn("SessionRelay.letTextGo")(function* (
+        sessionId: SessionId,
+        stream: TextStream,
+      ) {
+        const text = stream.redactor.flush()
+        if (text === "") return
+        yield* append(sessionId, {
+          _tag: "TextDelta",
+          turnId: stream.turnId,
+          ...(stream.agentId !== undefined && { agentId: stream.agentId }),
+          text,
+        })
+      })
+
+      /** Logs a TextDelta as far as it can be, redacted, holding back what could start a value. */
+      const textDelta = Effect.fn("SessionRelay.textDelta")(function* (
+        sessionId: SessionId,
+        needles: Needles,
+        event: TextDelta,
+      ) {
+        let streams = textStreams.get(sessionId)
+        if (streams === undefined) {
+          streams = new Map()
+          textStreams.set(sessionId, streams)
+        }
+        const key = `${event.turnId}/${event.agentId ?? ""}`
+        let stream = streams.get(key)
+        if (stream === undefined) {
+          stream = {
+            turnId: event.turnId,
+            agentId: event.agentId,
+            redactor: new StreamRedactor(needles),
+            flushing: false,
+          }
+          streams.set(key, stream)
+        }
+        stream.redactor.needles = needles
+        const text = stream.redactor.push(event.text)
+        if (text !== "") yield* append(sessionId, { ...event, text })
+        if (!stream.redactor.holding || stream.flushing) return
+        const held = stream
+        held.flushing = true
+        yield* afterHold(
+          Effect.suspend(() => {
+            held.flushing = false
+            return letTextGo(sessionId, held)
+          }),
+        )
+      })
+
+      /**
+       * Appends an event to the Session's log, redacted, and sends it to those who joined. Text
+       * held back from Claude's text streams is logged first.
+       */
+      const logEvent = Effect.fn("SessionRelay.logEvent")(function* (
+        sessionId: SessionId,
+        event: SessionEvent,
+      ) {
+        const needles = yield* needlesForSession(sessionId)
+        if (event._tag === "TextDelta") return yield* textDelta(sessionId, needles, event)
+        const streams = textStreams.get(sessionId)
+        if (streams !== undefined) {
+          for (const stream of streams.values()) yield* letTextGo(sessionId, stream)
+          if (event._tag === "TurnEnded") {
+            if (event.agentId === undefined) textStreams.delete(sessionId)
+            else streams.delete(`${event.turnId}/${event.agentId}`)
+          }
+        }
+        yield* append(sessionId, redactEvent(needles, event))
+      })
+
+      /** Sends a terminal frame, redacted, to those watching. */
+      const terminalFrame = Effect.fn("SessionRelay.terminalFrame")(function* (
+        repo: string,
+        frame: TerminalFrame,
+      ) {
+        const { sessionId } = frame
+        const needles = yield* needlesFor(repo)
+        const send = (data: string, size: TerminalFrame["size"]) =>
+          toWeb({ ...frame, size, data }, (client) => client.terminals.has(sessionId))
+        let stream = terminalStreams.get(sessionId)
+        if (stream === undefined) {
+          stream = { redactor: new StreamRedactor(needles), size: frame.size, flushing: false }
+          terminalStreams.set(sessionId, stream)
+        }
+        stream.redactor.needles = needles
+        stream.size = frame.size
+        if (frame.kind === "Snapshot") {
+          // The whole screen, held Output included.
+          stream.redactor.reset()
+          return send(redactText(needles, frame.data), frame.size)
+        }
+        const data = stream.redactor.push(frame.data)
+        if (data !== "") send(data, frame.size)
+        if (!stream.redactor.holding || stream.flushing) return
+        const held = stream
+        held.flushing = true
+        yield* afterHold(
+          Effect.sync(() => {
+            held.flushing = false
+            const rest = held.redactor.flush()
+            if (rest !== "") send(rest, held.size)
+          }),
+        )
       })
 
       /** Moves the Session to `state`, if it isn't there, logging why. */
@@ -272,6 +460,11 @@ export class SessionRelay extends Context.Service<
             if (session.repo === repo) toWeb(HubToWeb.cases.SessionUpdated.make({ session }))
           }
         }),
+        sensitiveValuesChanged: (repo) => {
+          if (repo === undefined) needlesByRepo.clear()
+          else needlesByRepo.delete(repo)
+        },
+        afterHold,
       })
 
       const changeState = Effect.fn("SessionRelay.changeState")(function* (
@@ -953,7 +1146,7 @@ export class SessionRelay extends Context.Service<
               // the other Sandbox states are for the Runner's log.
               return yield* Effect.logDebug(`Sandbox of ${message.sessionId}: ${message.state}`)
             case "TerminalFrame":
-              return toWeb(message, (client) => client.terminals.has(message.sessionId))
+              return yield* terminalFrame(session.value.repo, message)
             case "GitRequest":
               // Answered off the lock: it may wait on GitHub.
               yield* sessionGit.answer(session.value, message.ask).pipe(
