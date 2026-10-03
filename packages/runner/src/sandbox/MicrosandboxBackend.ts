@@ -16,26 +16,38 @@
 // - Sandboxes and volumes carry labels: their Session, and the mark of the Runner that made them
 //   (Naming.ts). A Sandbox's labels are read back from its config.
 //
-// Snapshots are not offered (ADR 0006 defers them). In 0.7.6 disk snapshots work, but a restored
-// Sandbox loses its env and labels, and a snapshot group's head can't be removed without --force.
+// - microsandbox writes every command's output to the Sandbox's `logs/exec.log` on the host, so
+//   that file is linked to /dev/null right after create or restore, before the first command:
+//   output may hold variable values (ADR 0009, spike #46).
+//
+// Snapshots (ADR 0009, spike #46): disk snapshots of a stopped Sandbox, kept in a group per
+// Runner and Environment. A restored Sandbox comes back with no labels, workdir or env: labels
+// and workdir are set again with `modify` (one reboot), and env is never set on the VM. A group's
+// head is its first snapshot, and can't be removed, so it is moved before old ones are removed.
 
-import { mkdir, realpath, stat } from "node:fs/promises"
+import { mkdir, readdir, realpath, rm, stat, symlink } from "node:fs/promises"
+import { homedir } from "node:os"
 import { join, posix } from "node:path"
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
 import { Cause, Effect, Layer, Option, Queue, Schema, Stream } from "effect"
-import { MicrosandboxError, NetworkPolicy, Sandbox, Volume } from "microsandbox"
-import type { SandboxStatus, Sandbox as MsbSandbox } from "microsandbox"
+import { MicrosandboxError, NetworkPolicy, Sandbox, Snapshot, Volume } from "microsandbox"
+import type {
+  MountBuilder as MountBuilderClass,
+  SandboxStatus,
+  Sandbox as MsbSandbox,
+} from "microsandbox"
+
+type MountBuilder = InstanceType<typeof MountBuilderClass>
 import { RunnerConfig } from "../RunnerConfig.ts"
 import {
-  parseSandboxName,
-  parseVolumeName,
+  isSnapshotGroup,
+  isSnapshotName,
+  namesFor,
   prefix,
   runnerLabel,
   runnerMark,
-  sandboxName,
   sessionLabel,
   volumeLabel,
-  volumeName,
 } from "./Naming.ts"
 import {
   InvalidSandboxSpec,
@@ -51,9 +63,11 @@ import type {
   ExecRequest,
   HostMount,
   Mount,
+  VolumeMount,
   SandboxBackendShape,
   SandboxError,
   SandboxListing,
+  SandboxSnapshots,
   SandboxSpec,
 } from "./SandboxBackend.ts"
 import { checkSpec, dockerDataPath, specVolumes } from "./Spec.ts"
@@ -95,7 +109,9 @@ const toError =
       }
     }
     if (cause instanceof MicrosandboxError && cause.code === "invalidConfig")
-      return new InvalidSandboxSpec({ message: `${operation}: ${cause.message}` })
+      return new InvalidSandboxSpec({
+        message: `${operation}: ${cause.message}`,
+      })
     return new SandboxBackendError({
       operation,
       message: cause instanceof Error ? cause.message : String(cause),
@@ -157,18 +173,11 @@ const hostMountPoints = (spec: SandboxSpec) => {
   })
 }
 
-const handle = (sessionId: SessionId) =>
-  call("look up Sandbox", sessionId, () => Sandbox.get(sandboxName(sessionId)))
-
-const state: SandboxBackendShape["state"] = (sessionId) =>
-  handle(sessionId).pipe(
-    Effect.map((h) => stateOf(h.status)),
-    Effect.catchTag("SandboxNotFound", () => Effect.succeed("Destroyed" as const)),
-  )
-
 /** The labels in a Sandbox's config, as `Sandbox.list` returns it. */
 const SandboxConfigLabels = Schema.fromJsonString(
-  Schema.Struct({ labels: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+  Schema.Struct({
+    labels: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  }),
 )
 const decodeConfigLabels = Schema.decodeUnknownOption(SandboxConfigLabels)
 
@@ -176,35 +185,85 @@ const decodeConfigLabels = Schema.decodeUnknownOption(SandboxConfigLabels)
 const sandboxRunner = (sandbox: { readonly configJson: string }) =>
   Option.getOrUndefined(decodeConfigLabels(sandbox.configJson))?.labels?.[runnerLabel]
 
-/** Builds and boots the VM. Host paths must already be resolved. */
-const boot = (spec: SandboxSpec, runner: string) => {
-  // Parents before the mounts nested in them.
-  const mounts = [...spec.mounts.filter((m) => m._tag === "Host"), ...specVolumes(spec)].toSorted(
+/** Where microsandbox keeps its Sandboxes. */
+const msbHome = () => process.env["MSB_HOME"] ?? join(homedir(), ".microsandbox")
+
+/** What an empty snapshot group's directory holds. */
+const groupFiles = new Set(["group.json", ".group.lock"])
+
+/** The guest mounts of a spec, parents before the mounts nested in them. */
+const sortedMounts = (spec: SandboxSpec) =>
+  [...spec.mounts.filter((m) => m._tag === "Host"), ...specVolumes(spec)].toSorted(
     (a, b) => a.guestPath.length - b.guestPath.length,
   )
-  let builder = Sandbox.builder(sandboxName(spec.sessionId))
-    .image(spec.image)
-    .cpus(spec.cpus)
-    .memory(spec.memoryMib)
-    .network((n) => n.policy(NetworkPolicy.allowAll()))
-    .label(sessionLabel, spec.sessionId)
-    .label(runnerLabel, runner)
-    .envs({ ...spec.env })
-    .detached(true)
-  if (spec.rootDiskMib !== undefined) builder = builder.rootDisk(spec.rootDiskMib)
-  if (spec.workdir !== undefined) builder = builder.workdir(spec.workdir)
-  for (const mount of mounts) {
-    builder = builder.volume(mount.guestPath, (m) => {
-      if (mount._tag === "Volume") return m.named(volumeName(spec.sessionId, mount.key))
-      const bound = m.bind(mount.hostPath).hostPermissions("mirror").quota(mount.quotaMib)
-      return mount.readOnly === true ? bound.readonly() : bound
-    })
-  }
-  return builder.create()
-}
+
+/** Fails unless a snapshot group, and name if given, are ones the Runner makes. */
+const checkSnapshotNames = (group: string, name?: string) =>
+  isSnapshotGroup(group) && (name === undefined || isSnapshotName(name))
+    ? Effect.void
+    : Effect.fail(
+        new InvalidSandboxSpec({
+          message: `snapshot ${JSON.stringify(group)} ${JSON.stringify(name)} can't be named`,
+        }),
+      )
 
 /** The microsandbox backend, working for the Runner of this mark (Naming.ts). */
-export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: string }) {
+export const make = Effect.fnUntraced(function* ({
+  runner,
+  namePrefix = prefix,
+}: {
+  readonly runner: string
+  /** What everything this backend makes is named under; see `namesFor`. */
+  readonly namePrefix?: string
+}) {
+  const { sandboxName, volumeName, parseSandboxName, parseVolumeName, snapshotGroup } =
+    namesFor(namePrefix)
+  const handle = (sessionId: SessionId) =>
+    call("look up Sandbox", sessionId, () => Sandbox.get(sandboxName(sessionId)))
+
+  const state: SandboxBackendShape["state"] = (sessionId) =>
+    handle(sessionId).pipe(
+      Effect.map((h) => stateOf(h.status)),
+      Effect.catchTag("SandboxNotFound", () => Effect.succeed("Destroyed" as const)),
+    )
+
+  /** Builds and boots the VM. Host paths must already be resolved. */
+  const boot = (spec: SandboxSpec) => {
+    const mounts = sortedMounts(spec)
+    let builder = Sandbox.builder(sandboxName(spec.sessionId))
+      .image(spec.image)
+      .cpus(spec.cpus)
+      .memory(spec.memoryMib)
+      .network((n) => n.policy(NetworkPolicy.allowAll()))
+      .label(sessionLabel, spec.sessionId)
+      .label(runnerLabel, runner)
+      .envs({ ...spec.env })
+      .detached(true)
+    if (spec.rootDiskMib !== undefined) builder = builder.rootDisk(spec.rootDiskMib)
+    if (spec.workdir !== undefined) builder = builder.workdir(spec.workdir)
+    for (const mount of mounts)
+      builder = builder.volume(mount.guestPath, (m) => configureMount(spec, mount, m))
+    return builder.create()
+  }
+
+  /** Boots a VM from a snapshot. Host paths must already be resolved. */
+  const bootFromSnapshot = (spec: SandboxSpec, reference: string) => {
+    let builder = Sandbox.restore(reference)
+      .name(sandboxName(spec.sessionId))
+      .cpus(spec.cpus)
+      .memory(spec.memoryMib)
+      .networkPolicy(NetworkPolicy.allowAll())
+    for (const mount of sortedMounts(spec))
+      builder = builder.volume(mount.guestPath, (m) => configureMount(spec, mount, m))
+    return builder.restore()
+  }
+
+  const configureMount = (spec: SandboxSpec, mount: HostMount | VolumeMount, m: MountBuilder) => {
+    if (mount._tag === "Volume") return m.named(volumeName(spec.sessionId, mount.key))
+    const bound = m.bind(mount.hostPath).hostPermissions("mirror").quota(mount.quotaMib)
+    return mount.readOnly === true ? bound.readonly() : bound
+  }
+
   // Connections to running Sandboxes, so each command doesn't reconnect.
   const connections = new Map<SessionId, MsbSandbox>()
 
@@ -232,7 +291,10 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
     if (existing !== undefined) return existing
     const h = yield* handle(sessionId)
     if (!isRunning(h.status))
-      return yield* new SandboxNotRunning({ sessionId, state: stateOf(h.status) })
+      return yield* new SandboxNotRunning({
+        sessionId,
+        state: stateOf(h.status),
+      })
     const sandbox = yield* call("connect to Sandbox", sessionId, () => h.connect())
     return yield* remember(sessionId, sandbox)
   })
@@ -264,6 +326,21 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
 
   const startDocker = (sessionId: SessionId) =>
     guestScript(sessionId, "start dockerd", startDockerScript)
+
+  /**
+   * Links the Sandbox's exec log on the host to /dev/null, so microsandbox keeps no command's
+   * output: it may hold variable values. Must come before the Sandbox's first command; the link
+   * lasts as long as the Sandbox. It can't be made before the Sandbox, since microsandbox then
+   * reports that the Sandbox exists (spike #46).
+   */
+  const silenceExecLog = (sessionId: SessionId) =>
+    call("silence the exec log", sessionId, async () => {
+      const logs = join(msbHome(), "sandboxes", sandboxName(sessionId), "logs")
+      await mkdir(logs, { recursive: true })
+      const path = join(logs, "exec.log")
+      await rm(path, { force: true })
+      await symlink("/dev/null", path)
+    })
 
   /** Stops Docker's containers cleanly. A failure is logged, not fatal: the VM stops regardless. */
   const stopDocker = (sessionId: SessionId) =>
@@ -334,7 +411,7 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
     if (Option.isSome(existing)) return yield* new SandboxAlreadyExists({ sessionId })
     const resolved = yield* prepareHost(spec)
     yield* ensureVolumes(spec)
-    const sandbox = yield* call("create Sandbox", sessionId, () => boot(resolved, runner)).pipe(
+    const sandbox = yield* call("create Sandbox", sessionId, () => boot(resolved)).pipe(
       // A VM that fails to boot is still recorded; remove it so create can be retried. In 0.7.6
       // the SDK records it again as crashed when this process exits, which the next Runner's
       // reconcile then reports; Spec.ts refuses the one cause of this we know of.
@@ -345,6 +422,7 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
       ),
     )
     yield* remember(sessionId, sandbox)
+    yield* silenceExecLog(sessionId)
     yield* startDocker(sessionId)
   })
 
@@ -402,7 +480,11 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
   const list: SandboxBackendShape["list"] = Effect.gen(function* () {
     const listings = new Map<
       SessionId,
-      { state: SandboxState; runner: string | undefined; volumes: Array<string> }
+      {
+        state: SandboxState
+        runner: string | undefined
+        volumes: Array<string>
+      }
     >()
     const entry = (sessionId: SessionId) => {
       const existing = listings.get(sessionId)
@@ -431,7 +513,7 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
     } while (cursor !== undefined)
     const volumes = yield* call("list volumes", undefined, () => Volume.list())
     for (const volume of volumes) {
-      if (!volume.name.startsWith(prefix)) continue
+      if (!volume.name.startsWith(namePrefix)) continue
       const parsed = parseVolumeName(volume.name)
       if (parsed === undefined) continue
       const found = entry(parsed.sessionId)
@@ -440,7 +522,10 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
       if (found.state === "Destroyed" && found.runner === undefined)
         found.runner = volume.labels.find(([key]) => key === runnerLabel)?.[1]
     }
-    return [...listings].map(([sessionId, found]): SandboxListing => ({ sessionId, ...found }))
+    return [...listings].map(([sessionId, found]): SandboxListing => ({
+      sessionId,
+      ...found,
+    }))
   })
 
   /**
@@ -485,7 +570,10 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
                 break
               case "exited":
                 status.exited = true
-                Queue.offerUnsafe(output, { _tag: "Exit", exitCode: event.code })
+                Queue.offerUnsafe(output, {
+                  _tag: "Exit",
+                  exitCode: event.code,
+                })
                 break
             }
           }
@@ -506,7 +594,10 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
       const { running, events } = yield* startExec(sessionId, request, "Pipe")
       const sink = yield* call("open stdin", sessionId, () => running.takeStdin())
       if (sink === null)
-        return yield* new SandboxBackendError({ operation: "open stdin", message: "stdin taken" })
+        return yield* new SandboxBackendError({
+          operation: "open stdin",
+          message: "stdin taken",
+        })
       let isClosed = false
       return {
         events,
@@ -519,6 +610,109 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
         }),
       }
     })
+
+  const listSnapshots: SandboxSnapshots["list"] = (group) =>
+    Effect.gen(function* () {
+      yield* checkSnapshotNames(group)
+      const fullGroup = snapshotGroup(runner, group)
+      const all = yield* call("list snapshots", undefined, () => Snapshot.list())
+      return all.flatMap((snapshot) => {
+        if (snapshot.group !== fullGroup || snapshot.name === null) return []
+        // A name may come back qualified by its group.
+        const name = snapshot.name.startsWith(`${fullGroup}:`)
+          ? snapshot.name.slice(fullGroup.length + 1)
+          : snapshot.name
+        return [{ name, reference: snapshot.reference }]
+      })
+    })
+
+  const snapshots: SandboxSnapshots = {
+    snapshot: Effect.fn("SandboxBackend.snapshot")(function* (
+      sessionId: SessionId,
+      group: string,
+      name: string,
+    ) {
+      yield* checkSnapshotNames(group, name)
+      const h = yield* handle(sessionId)
+      if (isRunning(h.status))
+        return yield* new SandboxNotRunning({ sessionId, state: stateOf(h.status) })
+      yield* forget(sessionId)
+      const snapshot = yield* call("snapshot Sandbox", sessionId, () =>
+        Snapshot.builder(name)
+          .fromSandbox(sandboxName(sessionId))
+          .group(snapshotGroup(runner, group))
+          .create(),
+      )
+      return snapshot.reference
+    }),
+    restore: Effect.fn("SandboxBackend.restore")(function* (spec: SandboxSpec, reference: string) {
+      const { sessionId } = spec
+      yield* checkSpec(spec)
+      const existing = yield* handle(sessionId).pipe(Effect.option)
+      if (Option.isSome(existing)) return yield* new SandboxAlreadyExists({ sessionId })
+      const resolved = yield* prepareHost(spec)
+      yield* ensureVolumes(spec)
+      const restored = yield* call("restore Sandbox", sessionId, () =>
+        bootFromSnapshot(resolved, reference),
+      ).pipe(
+        Effect.tapError((error) =>
+          error._tag === "SandboxAlreadyExists"
+            ? Effect.void
+            : Effect.promise(() => Sandbox.remove(sandboxName(sessionId)).catch(() => undefined)),
+        ),
+      )
+      yield* silenceExecLog(sessionId)
+      yield* Effect.promise(() => restored.detach().catch(() => undefined))
+      // A restored Sandbox has no labels or workdir; setting them again takes a reboot.
+      const h = yield* handle(sessionId)
+      yield* call("label restored Sandbox", sessionId, () =>
+        h.modify({
+          labels: { [sessionLabel]: sessionId, [runnerLabel]: runner },
+          ...(spec.workdir === undefined ? {} : { workdir: spec.workdir }),
+          policy: "restart",
+        }),
+      )
+      yield* connected(sessionId)
+      yield* startDocker(sessionId)
+    }),
+    list: listSnapshots,
+    retain: Effect.fn("SandboxBackend.retain")(function* (
+      group: string,
+      names: ReadonlyArray<string>,
+    ) {
+      const all = yield* listSnapshots(group)
+      const head = names[0]
+      if (head === undefined) {
+        // The whole group goes, its head too, which only a forced removal takes.
+        for (const snapshot of all)
+          yield* call("remove snapshot", undefined, () =>
+            Snapshot.remove(snapshot.reference, { force: true }),
+          )
+        // microsandbox keeps the emptied group's directory, with only its head record and lock,
+        // and has no call to remove it: one per Test build would pile up.
+        const dir = join(msbHome(), "snapshots", snapshotGroup(runner, group))
+        yield* Effect.promise(async () => {
+          const entries = await readdir(dir).catch(() => undefined)
+          if (entries?.every((entry) => groupFiles.has(entry)))
+            await rm(dir, { recursive: true, force: true })
+        })
+        return
+      }
+      if (!all.some((snapshot) => snapshot.name === head))
+        return yield* new SandboxBackendError({
+          operation: "retain snapshots",
+          message: `no snapshot ${head} in ${group}`,
+        })
+      // A group's head can't be removed, and starts as its first snapshot.
+      yield* call("move snapshot group head", undefined, () =>
+        Snapshot.groupHead(`${snapshotGroup(runner, group)}:${head}`),
+      )
+      for (const snapshot of all) {
+        if (names.includes(snapshot.name)) continue
+        yield* call("remove snapshot", undefined, () => Snapshot.remove(snapshot.reference))
+      }
+    }),
+  }
 
   const backend: SandboxBackendShape = {
     runner,
@@ -559,7 +753,7 @@ export const make = Effect.fnUntraced(function* ({ runner }: { readonly runner: 
           Effect.catchTag("SandboxBackendError", () => Effect.succeedNone),
         )
       }),
-    snapshots: Option.none(),
+    snapshots: Option.some(snapshots),
   }
   return backend
 })

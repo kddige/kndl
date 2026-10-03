@@ -51,6 +51,7 @@ const runnerToHub = [
   { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: 12 },
   { _tag: "WipPushFailed", sessionId: "s-1", message: "git push exited with 128" },
   { _tag: "SessionPurged", sessionId: "s-1" },
+  { _tag: "SandboxNote", sessionId: "s-1", message: "Memory capped at 8192 MiB by the Runner" },
   { _tag: "SessionStarted", sessionId: "s-1", environmentVersion: 3 },
   { _tag: "FetchVariables", requestId: "v-1", for: { _tag: "Session", sessionId: "s-1" } },
   { _tag: "FetchVariables", requestId: "v-2", for: { _tag: "TestBuild", testBuildId: "b-1" } },

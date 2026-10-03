@@ -58,6 +58,17 @@ export const dependencyVolumeKey = (dir: string) =>
  */
 export const cacheGuestPath = "/var/cache/claude-hub"
 
+/**
+ * Points Bun and npm into the cache volume; most other tools follow XDG_CACHE_HOME. Stored with a
+ * Sandbox without an Environment, and passed to each process in one with an Environment, whose
+ * Sandboxes keep no environment of their own (ADR 0009).
+ */
+export const cacheEnv: Readonly<Record<string, string>> = {
+  XDG_CACHE_HOME: cacheGuestPath,
+  BUN_INSTALL_CACHE_DIR: posix.join(cacheGuestPath, "bun"),
+  npm_config_cache: posix.join(cacheGuestPath, "npm"),
+}
+
 export const sessionSandboxSpec = (options: SessionLayoutOptions): SandboxSpec => {
   const cache = cacheGuestPath
   const dependencyDirs = options.dependencyDirs ?? defaults.dependencyDirs
@@ -94,12 +105,7 @@ export const sessionSandboxSpec = (options: SessionLayoutOptions): SandboxSpec =
     rootDiskMib: options.rootDiskMib ?? defaults.rootDiskMib,
     mounts,
     ...(dockerSizeMib === false ? {} : { docker: { sizeMib: dockerSizeMib } }),
-    env: {
-      XDG_CACHE_HOME: cache,
-      BUN_INSTALL_CACHE_DIR: posix.join(cache, "bun"),
-      npm_config_cache: posix.join(cache, "npm"),
-      ...options.env,
-    },
+    env: { ...cacheEnv, ...options.env },
     workdir: workspaceGuestPath,
   }
 }

@@ -243,20 +243,40 @@ describe("fake backend", () => {
       { onSpawn: () => Effect.never },
     ))
 
-  test("snapshots a stopped Sandbox's rootfs and restores it stopped", () =>
+  test("snapshots a stopped Sandbox's rootfs and boots new Sandboxes from it", () =>
     run(
       Effect.gen(function* () {
         const backend = yield* SandboxBackend
         const snapshots = Option.getOrThrow(backend.snapshots)
         yield* backend.create(layout(s1))
         yield* backend.writeFile(s1, "/etc/marker", "root")
+        expect((yield* Effect.flip(snapshots.snapshot(s1, "env-a", "b1")))._tag).toBe(
+          "SandboxNotRunning",
+        )
         yield* backend.stop(s1)
-        const reference = yield* snapshots.snapshot(s1, "before")
+        const reference = yield* snapshots.snapshot(s1, "env-a", "b1")
         yield* backend.destroy(s1)
         yield* snapshots.restore(layout(s1), reference)
-        expect(yield* backend.state(s1)).toBe("Stopped")
-        yield* backend.start(s1)
-        expect(text(yield* backend.readFile(s1, "/etc/marker"))).toBe("root")
+        yield* snapshots.restore(layout(s2), reference)
+        expect(yield* backend.state(s1)).toBe("Running")
+        expect(text(yield* backend.readFile(s2, "/etc/marker"))).toBe("root")
+        expect(yield* snapshots.list("env-a")).toEqual([{ name: "b1", reference }])
+        expect(yield* snapshots.list("env-b")).toEqual([])
+      }),
+    ))
+
+  test("retains the named snapshots in a group and removes the rest", () =>
+    run(
+      Effect.gen(function* () {
+        const backend = yield* SandboxBackend
+        const snapshots = Option.getOrThrow(backend.snapshots)
+        yield* backend.create(layout(s1))
+        yield* backend.stop(s1)
+        for (const name of ["b1", "b2", "b3"]) yield* snapshots.snapshot(s1, "env-a", name)
+        yield* snapshots.snapshot(s1, "env-b", "b1")
+        yield* snapshots.retain("env-a", ["b3", "b2"])
+        expect((yield* snapshots.list("env-a")).map((s) => s.name).toSorted()).toEqual(["b2", "b3"])
+        expect((yield* snapshots.list("env-b")).map((s) => s.name)).toEqual(["b1"])
       }),
     ))
 })

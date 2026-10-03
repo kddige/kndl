@@ -21,6 +21,7 @@ import { SandboxBackend, shell } from "./sandbox/SandboxBackend.ts"
 import { ensureSandboxClaude, hostClaudeVersion } from "./sandbox/SandboxClaude.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
+import { FakeHubVariables, sandboxesDefaults } from "./testSupport.ts"
 import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
@@ -192,12 +193,14 @@ test.skipIf(!enabled)(
         }),
         image: "docker:dind",
         claudeCacheDir: cacheDir,
-        sandboxClaude: timed(
-          "find or cache Claude Code",
-          hostClaudeVersion("claude").pipe(
-            Effect.tap((version) => ensureSandboxClaude({ cacheDir, version })),
+        sandboxClaude: () =>
+          timed(
+            "find or cache Claude Code",
+            hostClaudeVersion("claude").pipe(
+              Effect.tap((version) => ensureSandboxClaude({ cacheDir, version })),
+            ),
           ),
-        ),
+        ...sandboxesDefaults,
         layout: {
           cpus: 2,
           memoryMib: 1024,
@@ -220,7 +223,13 @@ test.skipIf(!enabled)(
           }),
           Effect.ensuring(cleanup.pipe(Effect.orDie)),
           Effect.provide(sandboxes),
-          Effect.provide(Layer.mergeAll(MicrosandboxBackend.layerFor(`it-${sessionId}`), hub)),
+          Effect.provide(
+            Layer.mergeAll(
+              MicrosandboxBackend.layerFor(`it-${sessionId}`),
+              hub,
+              new FakeHubVariables().layer,
+            ),
+          ),
           Effect.scoped,
         ),
       )

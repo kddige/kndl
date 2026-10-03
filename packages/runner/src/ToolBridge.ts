@@ -7,7 +7,9 @@
 // `POST /git/call` for the mod's git tools, which run on the host (the protocol's Git.ts).
 //
 // The server in the Sandbox runs with no Claude credentials and no host configuration: it gets
-// the Sandbox's own environment and the few variables below, nothing of the Runner's.
+// the Sandbox's own environment, the Environment's variables (ADR 0009) and the few variables
+// below, nothing of the Runner's. The variables are passed to the server's process alone, so the
+// commands it runs inherit them while the VM's stored settings never hold them.
 
 import { chmod, rm } from "node:fs/promises"
 import type { SessionId } from "@claude-hub/protocol"
@@ -33,6 +35,11 @@ export interface ToolEngineOptions {
    * is made a link to /workspace in the Sandbox, so the paths the model uses work there too.
    */
   readonly workspaceAlias?: string
+  /**
+   * More environment for the server and every command it runs, such as the Environment's
+   * variables, read each time the server starts. A failure keeps it down until the next try.
+   */
+  readonly env?: Effect.Effect<Readonly<Record<string, string>>, ToolBridgeError>
   /** How long a call waits for the server to come up. */
   readonly readyTimeout?: Duration.Input
   /** How long to wait before starting the server again after its `attempt`th failure in a row. */
@@ -144,11 +151,12 @@ export const makeToolEngine = (
         return yield* new ToolBridgeError({
           message: `preparing the Sandbox failed: ${prepared.stderr.trim() || prepared.exitCode}`,
         })
+      const env = options.env === undefined ? {} : yield* options.env
       const command = yield* backend.spawn(sessionId, {
         command: options.claudePath,
         args: ["mcp", "serve"],
         cwd: workspaceGuestPath,
-        env: toolServerEnv,
+        env: { ...env, ...toolServerEnv },
       })
       const session = yield* connectMcp(command, "claude-hub-runner")
       yield* Deferred.succeed(current, session)

@@ -63,6 +63,15 @@ export const WipNotPushed = Schema.TaggedStruct("WipNotPushed", {
 export type WipNotPushed = typeof WipNotPushed.Type
 
 /**
+ * Something the Runner wants the Session's Participants to know about its Sandbox, such as its
+ * CPU or memory being capped below what the Environment asks for (ADR 0009).
+ */
+export const SandboxNoted = Schema.TaggedStruct("SandboxNoted", {
+  message: Schema.String,
+})
+export type SandboxNoted = typeof SandboxNoted.Type
+
+/**
  * Everything a Session's history records: Turn events from the mod, and what the Hub saw
  * happen. New kinds of event are added here as members.
  */
@@ -71,6 +80,7 @@ export const SessionEvent = Schema.Union([
   SessionStateChanged,
   TurnStopRequested,
   WipNotPushed,
+  SandboxNoted,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type SessionEvent = typeof SessionEvent.Type
 

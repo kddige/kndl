@@ -21,6 +21,7 @@ import {
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
+import { HubVariablesLive } from "./HubVariables.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { SessionsLive } from "./Sessions.ts"
@@ -159,6 +160,7 @@ async function startRunner(hub: TestHub) {
   const sessionsRoot = join(dir, "sessions")
   const layer = SessionsLive.pipe(
     Layer.provideMerge(HubGitLive),
+    Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provide([

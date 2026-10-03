@@ -7,17 +7,64 @@ import {
   SessionId,
   type StartSession,
   type TerminalSize,
+  type VariablesFor,
+  type VariableValue,
 } from "@claude-hub/protocol"
-import { type Cause, Effect, Layer, Queue, Schema, Stream } from "effect"
+import { type Cause, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
+import { HubVariables, VariablesError } from "./HubVariables.ts"
 import { Sandboxes } from "./Sandbox.ts"
 import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
+import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
 import { type LaunchSpec, type PaneEvent, Tmux, TmuxError } from "./Tmux.ts"
 import { WorkspaceError, Workspaces } from "./Workspace.ts"
 import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 export const sessionId = (id: string) => Schema.decodeSync(SessionId)(id)
+
+/** A variable value, as the Hub sends it. */
+export const variable = (name: string, value: string, availableAtBuild = false): VariableValue => ({
+  name,
+  value: Redacted.make(value),
+  availableAtBuild,
+})
+
+/** The Hub's variables: answers every fetch from `values`, or refuses with `refusal`. */
+export class FakeHubVariables {
+  /** What each fetch asked for, in order. */
+  readonly asked: Array<VariablesFor> = []
+  values: ReadonlyArray<VariableValue>
+  refusal: string | undefined
+
+  constructor(values: ReadonlyArray<VariableValue> = [], refusal?: string) {
+    this.values = values
+    this.refusal = refusal
+  }
+
+  readonly layer = Layer.sync(HubVariables, () =>
+    HubVariables.of({
+      fetch: (target) =>
+        Effect.suspend(() => {
+          this.asked.push(target)
+          return this.refusal === undefined
+            ? Effect.succeed(this.values)
+            : Effect.fail(new VariablesError({ message: this.refusal }))
+        }),
+      receive: () => Effect.void,
+    }),
+  )
+}
+
+/** The Environment settings of `makeSessionSandboxes` for tests: generous limits, no clone. */
+export const sandboxesDefaults: Pick<
+  SessionSandboxesOptions,
+  "limits" | "keepBuilds" | "cloneDefaultBranch"
+> = {
+  limits: { cpus: 8, memoryMib: 16384 },
+  keepBuilds: 3,
+  cloneDefaultBranch: () => Effect.fail({ message: "tests clone nothing" }),
+}
 
 /** Re-runs `check` every 20 ms until it returns true, failing after `timeoutMs`. */
 export const waitFor = <E, R>(check: Effect.Effect<boolean, E, R>, timeoutMs = 5_000) =>
@@ -189,10 +236,21 @@ export class FakeSandboxes {
 
   readonly layer = Layer.sync(Sandboxes, () =>
     Sandboxes.of({
-      start: (id) => Effect.sync(() => void this.calls.push(`start ${id}`)),
+      start: (id, _directories, target) =>
+        Effect.sync(() => {
+          this.calls.push(`start ${id}`)
+          return target?.environment === undefined
+            ? {}
+            : { environmentVersion: target.environment.version }
+        }),
       stop: (id, reason) => Effect.sync(() => void this.calls.push(`stop ${id} ${reason}`)),
       purge: (id) => Effect.sync(() => void this.calls.push(`purge ${id}`)),
       reconcile: (running) => Effect.sync(() => void this.reconciled.push([...running])),
+      testBuild: (request, log) =>
+        Effect.andThen(
+          Effect.sync(() => void this.calls.push(`testBuild ${request.testBuildId}`)),
+          log("built\n"),
+        ),
     }),
   )
 }

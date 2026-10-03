@@ -16,6 +16,7 @@ import type {
   TurnEnded,
   TurnId,
   WipNotPushed,
+  SandboxNoted,
 } from "@claude-hub/protocol"
 
 export interface ToolCallView {
@@ -66,7 +67,7 @@ export type TranscriptItem =
       readonly kind: "notice"
       readonly key: string
       readonly at: number
-      readonly event: SessionStateChanged | WipNotPushed
+      readonly event: SessionStateChanged | WipNotPushed | SandboxNoted
     }
 
 interface MutableAgent {
@@ -200,6 +201,7 @@ export function buildTranscript(
         break
       case "SessionStateChanged":
       case "WipNotPushed":
+      case "SandboxNoted":
         items.push({ kind: "notice", key: `notice-${entry.seq}`, at: entry.at, event })
         break
     }

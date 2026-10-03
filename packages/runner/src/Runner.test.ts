@@ -10,6 +10,7 @@ import { Context, Effect, Exit, Fiber, Layer, Redacted, References } from "effec
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
+import { HubVariablesLive } from "./HubVariables.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig, type RunnerSettings } from "./RunnerConfig.ts"
 import { SessionsLive } from "./Sessions.ts"
@@ -146,6 +147,7 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
         Layer.tap((context) => Effect.sync(() => void (hubGit = Context.get(context, HubGit)))),
       ),
     ),
+    Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, git.layer]),
@@ -401,6 +403,56 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionStarted").length === 2)
 
     expect(h.tmux.launched).toHaveLength(1)
+  })
+
+  test("says which Environment version a Session's Sandbox runs", async () => {
+    const h = startRunner()
+    await connected(h)
+    const environment = {
+      version: 4,
+      buildVersion: 3,
+      recipe: {
+        image: "node:22",
+        bootstrapScript: "",
+        docker: false,
+        dependencyFolders: [],
+        resources: { cpus: 2, memoryMib: 2048 },
+        variables: [],
+      },
+    }
+    h.hub.send(startSession("s-1", { environment }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    expect(h.hub.all("SessionStarted")[0]).toMatchObject({ environmentVersion: 4 })
+    // Started again while running, it says so again.
+    h.hub.send(startSession("s-1", { environment }))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+    expect(h.hub.all("SessionStarted")[1]).toMatchObject({ environmentVersion: 4 })
+  })
+
+  test("runs a Test build, streaming its log, and reports how it ended", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send({
+      _tag: "RunTestBuild",
+      testBuildId: "tb-1",
+      repo: "acme/app",
+      recipe: {
+        image: "node:22",
+        bootstrapScript: "true",
+        docker: false,
+        dependencyFolders: [],
+        resources: { cpus: 2, memoryMib: 2048 },
+        variables: [],
+      },
+    })
+    await eventually(() => h.hub.all("TestBuildFinished").length === 1)
+    expect(h.hub.all("TestBuildLog")).toEqual([
+      expect.objectContaining({ testBuildId: "tb-1", data: "built\n" }),
+    ])
+    expect(h.hub.all("TestBuildFinished")[0]).toMatchObject({
+      testBuildId: "tb-1",
+      result: "Passed",
+    })
   })
 
   test("applies terminal input, resizes and snapshot requests", async () => {

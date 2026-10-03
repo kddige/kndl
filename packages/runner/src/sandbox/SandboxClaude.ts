@@ -1,13 +1,16 @@
 // The Claude Code binary a Sandbox runs `claude mcp serve` from (the tool bridge, ADR 0001).
 //
 // The Runner keeps Linux builds of Claude Code in a cache directory on its host, one directory
-// per version, and mounts that directory read-only into every Sandbox. The version is the host's
-// own Claude Code version, so the records `mcp serve` returns have the shapes the host's Claude
-// Code expects (spike #2). A build is downloaded from the npm registry the first time a version
-// is needed, checked against the registry's integrity hash, and kept.
+// per version and libc, and mounts that directory read-only into every Sandbox. The version is
+// the host's own Claude Code version, so the records `mcp serve` returns have the shapes the
+// host's Claude Code expects (spike #2). A build is downloaded from the npm registry the first
+// time it is needed, checked against the registry's integrity hash, and kept.
 //
-// The musl build is used because it is self-contained: it runs on the default Alpine image
-// (`docker:dind`) and on glibc images alike. Nothing here gives the Sandbox Claude credentials,
+// There are two Linux builds, and each needs its own libc: the musl build runs only where the
+// image has musl's loader (`/lib/ld-musl-*`, as on Alpine and the default `docker:dind`), and the
+// glibc build everywhere else, such as on Debian (spike #46). An Environment's build checks its
+// image and records which one its Sandboxes use; Sandboxes without an Environment boot the
+// default Alpine image and use the musl build. Nothing here gives the Sandbox Claude credentials,
 // and `mcp serve` needs none.
 
 import { createHash } from "node:crypto"
@@ -22,14 +25,26 @@ export class SandboxClaudeError extends Data.TaggedError("SandboxClaudeError")<{
   readonly message: string
 }> {}
 
-/** The npm package holding the Linux musl build for the host's CPU. */
-export const linuxPackage = (arch: string = process.arch) => {
+/** Which C library a Linux build of Claude Code needs. */
+export type Libc = "musl" | "glibc"
+
+/** The npm package holding the Linux build for the host's CPU and the given libc. */
+export const linuxPackage = (arch: string = process.arch, libc: Libc = "musl") => {
   const cpu = arch === "arm64" ? "arm64" : arch === "x64" ? "x64" : undefined
-  return cpu === undefined ? undefined : `@anthropic-ai/claude-code-linux-${cpu}-musl`
+  if (cpu === undefined) return undefined
+  return `@anthropic-ai/claude-code-linux-${cpu}${libc === "musl" ? "-musl" : ""}`
 }
 
+/** The cache's directory for a build: the musl one keeps the plain version, as it always had. */
+const buildDir = (version: string, libc: Libc) => (libc === "musl" ? version : `${version}-glibc`)
+
 /** The binary's path inside a Sandbox. */
-export const sandboxClaudePath = (version: string) => `${sandboxClaudeGuestDir}/${version}/claude`
+export const sandboxClaudePath = (version: string, libc: Libc = "musl") =>
+  `${sandboxClaudeGuestDir}/${buildDir(version, libc)}/claude`
+
+/** A shell command that prints the {@link Libc} an image needs: `musl` if it has musl's loader. */
+export const detectLibcScript =
+  "if ls /lib/ld-musl-* >/dev/null 2>&1; then echo musl; else echo glibc; fi"
 
 const Version = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
@@ -65,6 +80,8 @@ export interface EnsureOptions {
   /** The cache directory, mounted into Sandboxes at {@link sandboxClaudeGuestDir}. */
   readonly cacheDir: string
   readonly version: string
+  /** Defaults to musl. */
+  readonly libc?: Libc
   /** The npm registry. Defaults to the public one. */
   readonly registry?: string
   readonly arch?: string
@@ -87,11 +104,12 @@ export const ensureSandboxClaude = (options: EnsureOptions) =>
   Effect.tryPromise({
     try: async () => {
       if (!Version.test(options.version)) throw new Error(`not a version: ${options.version}`)
-      const target = join(options.cacheDir, options.version)
+      const libc = options.libc ?? "musl"
+      const target = join(options.cacheDir, buildDir(options.version, libc))
       const binary = join(target, "claude")
       if (await exists(binary)) return binary
 
-      const pkg = linuxPackage(options.arch)
+      const pkg = linuxPackage(options.arch, libc)
       if (pkg === undefined) throw new Error(`no Linux build of Claude Code for ${process.arch}`)
       const get = options.fetch ?? ((url: string) => fetch(url))
       const registry = (options.registry ?? "https://registry.npmjs.org").replace(/\/$/, "")

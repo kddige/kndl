@@ -71,7 +71,10 @@ export interface FakeSandboxWorld {
   readonly volumeRunners: Map<string, string | undefined>
   /** Files on the host, by absolute path: what host mounts read and write. */
   readonly hostFiles: Map<string, Uint8Array>
+  /** Saved root filesystems, by reference: `<runner>/<group>/<name>`. */
   readonly snapshots: Map<string, Map<string, Uint8Array>>
+  /** Every Sandbox booted from a snapshot, in order. */
+  readonly restores: Array<{ readonly sessionId: SessionId; readonly reference: string }>
   readonly execCalls: Array<FakeExecCall>
   readonly spawnCalls: Array<FakeExecCall>
 }
@@ -100,6 +103,7 @@ export const makeFakeWorld = (): FakeSandboxWorld => ({
   volumeRunners: new Map(),
   hostFiles: new Map(),
   snapshots: new Map(),
+  restores: [],
   execCalls: [],
   spawnCalls: [],
 })
@@ -119,6 +123,7 @@ export const makeFake = (options: FakeOptions = {}) => {
   const onExec: NonNullable<FakeOptions["onExec"]> = options.onExec ?? (() => Effect.succeed({}))
   const onSpawn: NonNullable<FakeOptions["onSpawn"]> =
     options.onSpawn ?? ((_call, io) => Effect.as(Stream.runDrain(io.stdin), 0))
+  const snapshotReference = (group: string, name: string) => `${runner}/${group}/${name}`
   /** How to kill each Sandbox's running spawned commands. */
   const killers = new Map<SessionId, Set<Effect.Effect<void>>>()
   const killAll = (sessionId: SessionId) =>
@@ -319,11 +324,11 @@ export const makeFake = (options: FakeOptions = {}) => {
           : Option.none(),
       ),
     snapshots: Option.some({
-      snapshot: (sessionId, label) =>
+      snapshot: (sessionId, group, name) =>
         Effect.flatMap(find(sessionId), (sandbox) => {
           if (sandbox.state !== "Stopped")
             return Effect.fail(new SandboxNotRunning({ sessionId, state: sandbox.state }))
-          const reference = `${sessionId}:${label}`
+          const reference = snapshotReference(group, name)
           world.snapshots.set(reference, new Map(sandbox.rootfs))
           return Effect.succeed(reference)
         }),
@@ -338,7 +343,22 @@ export const makeFake = (options: FakeOptions = {}) => {
               operation: "restore",
               message: `no snapshot ${reference}`,
             })
-          boot(spec, new Map(rootfs), "Stopped")
+          world.restores.push({ sessionId: spec.sessionId, reference })
+          boot(spec, new Map(rootfs), "Running")
+        }),
+      list: (group) =>
+        Effect.sync(() => {
+          const inGroup = snapshotReference(group, "")
+          return [...world.snapshots.keys()]
+            .filter((reference) => reference.startsWith(inGroup))
+            .map((reference) => ({ name: reference.slice(inGroup.length), reference }))
+        }),
+      retain: (group, names) =>
+        Effect.sync(() => {
+          const inGroup = snapshotReference(group, "")
+          for (const reference of world.snapshots.keys())
+            if (reference.startsWith(inGroup) && !names.includes(reference.slice(inGroup.length)))
+              world.snapshots.delete(reference)
         }),
     }),
   }

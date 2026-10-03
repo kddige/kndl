@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto"
 import type {
+  EnvironmentVersion,
   HubToRunner,
+  RunTestBuild,
   SessionId,
   StartSession,
   StopSession,
@@ -23,6 +25,7 @@ import { claudeLaunch } from "./ClaudeLaunch.ts"
 import { ClaudeTrust } from "./ClaudeTrust.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
+import { HubVariables } from "./HubVariables.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes } from "./Sandbox.ts"
 import { isSafeSessionId, sessionDirectories } from "./SessionNames.ts"
@@ -78,9 +81,12 @@ export const SessionsLive = Layer.effect(
     const trust = yield* ClaudeTrust
     const git = yield* WorkspaceGit
     const hubGit = yield* HubGit
+    const hubVariables = yield* HubVariables
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
+    /** The Environment version each started Session's Sandbox runs. */
+    const environmentVersions = new Map<SessionId, EnvironmentVersion>()
     const locks = new Map<SessionId, Semaphore.Semaphore>()
 
     /** Starting and stopping one Session happen one at a time. */
@@ -170,15 +176,26 @@ export const SessionsLive = Layer.effect(
       serialized(request.sessionId)(
         Effect.gen(function* () {
           const { sessionId } = request
-          if (running.has(sessionId)) {
-            return yield* hub.send(RunnerToHub.cases.SessionStarted.make({ sessionId }))
-          }
+          const started = (environmentVersion: EnvironmentVersion | undefined) =>
+            hub.send(
+              RunnerToHub.cases.SessionStarted.make({
+                sessionId,
+                ...(environmentVersion === undefined ? {} : { environmentVersion }),
+              }),
+            )
+          if (running.has(sessionId)) return yield* started(environmentVersions.get(sessionId))
           // Whatever is left of an earlier run, such as a tmux session whose process exited.
           yield* tmux.kill(sessionId)
           const launched = yield* Effect.gen(function* () {
             const directories = yield* workspaces.prepare(request)
-            // The Sandbox (#9) is created and started around the Workspace before Claude Code.
-            yield* sandboxes.start(sessionId, directories)
+            // The Sandbox (#9) is created and started around the Workspace before Claude Code,
+            // from the Repo's Environment if it has one (ADR 0009).
+            const sandbox = yield* sandboxes.start(sessionId, directories, {
+              repo: request.repo,
+              ...(request.environment === undefined ? {} : { environment: request.environment }),
+            })
+            if (sandbox.environmentVersion === undefined) environmentVersions.delete(sessionId)
+            else environmentVersions.set(sessionId, sandbox.environmentVersion)
             const launch = claudeLaunch({
               claudeBin: config.claudeBin,
               modDir: config.modDir,
@@ -205,7 +222,7 @@ export const SessionsLive = Layer.effect(
 
           if (Exit.isSuccess(launched)) {
             yield* Effect.logInfo(`Session ${sessionId} started`)
-            return yield* hub.send(RunnerToHub.cases.SessionStarted.make({ sessionId }))
+            return yield* started(environmentVersions.get(sessionId))
           }
           const reason = message(launched.cause)
           yield* Effect.logWarning(`Session ${sessionId} failed to start: ${reason}`)
@@ -300,6 +317,12 @@ export const SessionsLive = Layer.effect(
           yield* sandboxes
             .start(sessionId, sessionDirectories(config.sessionsRoot, sessionId))
             .pipe(
+              Effect.tap((sandbox) =>
+                Effect.sync(() => {
+                  if (sandbox.environmentVersion !== undefined)
+                    environmentVersions.set(sessionId, sandbox.environmentVersion)
+                }),
+              ),
               Effect.catchCause((cause) =>
                 Effect.logWarning(`Session ${sessionId}: its Sandbox did not come back`, cause),
               ),
@@ -307,6 +330,27 @@ export const SessionsLive = Layer.effect(
       }
       yield* sandboxes.reconcile(running.keys())
     })
+
+    /** Runs a Test build, streaming its output to the Hub, and reports how it ended. */
+    const testBuild = (request: RunTestBuild) => {
+      const { testBuildId } = request
+      return sandboxes
+        .testBuild(request, (data) =>
+          hub.send(RunnerToHub.cases.TestBuildLog.make({ testBuildId, data })),
+        )
+        .pipe(
+          Effect.exit,
+          Effect.flatMap((exit) =>
+            hub.send(
+              RunnerToHub.cases.TestBuildFinished.make(
+                Exit.isSuccess(exit)
+                  ? { testBuildId, result: "Passed" }
+                  : { testBuildId, result: "Failed", message: message(exit.cause) },
+              ),
+            ),
+          ),
+        )
+    }
 
     const handle = (incoming: HubToRunner): Effect.Effect<void> => {
       switch (incoming._tag) {
@@ -346,19 +390,10 @@ export const SessionsLive = Layer.effect(
               )
             : Effect.void
         case "RunTestBuild":
-          // TODO(#49): build Environments. Until then a Test build fails at once, so the person
-          // who started it isn't left waiting.
-          return hub.send(
-            RunnerToHub.cases.TestBuildFinished.make({
-              testBuildId: incoming.testBuildId,
-              result: "Failed",
-              message: "This Runner can't run Test builds yet (issue #49).",
-            }),
-          )
+          return background(testBuild(incoming))
         case "VariablesFetched":
         case "VariablesRefused":
-          // TODO(#49): the Runner doesn't fetch variables yet.
-          return Effect.logWarning(`Ignored a ${incoming._tag} the Runner didn't ask for`)
+          return hubVariables.receive(incoming)
         case "RunnerWelcome":
         case "HandshakeRejected":
           return Effect.logWarning(`Ignored a ${incoming._tag} after the handshake`)
