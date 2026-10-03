@@ -8,6 +8,8 @@
 // - A Runner gets variable values only for a Session of its own that is Active, or a Test build
 //   it was sent. Values go to the Runner and nowhere else: never to the web, a log or the
 //   database in plaintext.
+// - A Test build's log and result are redacted (Redaction.ts) of its draft's Sensitive values
+//   before they reach the web.
 //
 // It runs under the Session relay's lock, as part of it.
 
@@ -25,9 +27,10 @@ import {
   VariablesRefused,
   type WebToHub,
 } from "@claude-hub/protocol"
-import { Clock, Effect, Option } from "effect"
+import { Clock, Effect, Option, Redacted } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { EnvironmentRefused, Environments } from "./Environments.ts"
+import { needlesOf, type Needles, redactText, StreamRedactor } from "./Redaction.ts"
 import type { Peer } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 import { randomId } from "./Tokens.ts"
@@ -79,6 +82,12 @@ interface RunningTestBuild {
   readonly runnerId: RunnerId
   readonly startedBy: Participant
   readonly values: ReadonlyArray<VariableValue>
+  /** Its draft's Sensitive values, to redact. */
+  readonly needles: Needles
+  /** Its log, redacted as it comes. */
+  readonly log: StreamRedactor
+  /** Whether letting go of the log's held text is scheduled. */
+  flushing: boolean
 }
 
 /** What the Environment relay needs of the Session relay. */
@@ -87,6 +96,10 @@ export interface EnvironmentRelayHost {
   readonly toWeb: (message: HubToWeb, to: (client: EnvironmentWebClient) => boolean) => void
   /** Tells web clients the Repo's Sessions changed, as when its Environment has a new version. */
   readonly repoSessionsUpdated: (repo: string) => Effect.Effect<void, SqlError>
+  /** The Sensitive values of a Repo, or of every Repo when none is given, may have changed. */
+  readonly sensitiveValuesChanged: (repo?: string) => void
+  /** Runs `effect` under the relay's lock once `holdMillis` (Redaction.ts) have passed. */
+  readonly afterHold: (effect: Effect.Effect<void>) => Effect.Effect<void>
 }
 
 export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: EnvironmentRelayHost) {
@@ -106,6 +119,10 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
     message: string | undefined,
   ) {
     running.delete(build.id)
+    const held = build.log.flush()
+    if (held !== "") {
+      toStarter(build, HubToWeb.cases.TestBuildLogged.make({ testBuildId: build.id, data: held }))
+    }
     yield* environments.finishTestBuild(build.id, result, yield* Clock.currentTimeMillis)
     toStarter(
       build,
@@ -113,7 +130,7 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
         testBuildId: build.id,
         repo: build.repo,
         result,
-        ...(message !== undefined && { message }),
+        ...(message !== undefined && { message: redactText(build.needles, message) }),
       }),
     )
   })
@@ -160,6 +177,7 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
         }
         const prepared = yield* environments.prepare(message.repo, message.draft)
         const id = TestBuildId.make(randomId())
+        const needles = needlesOf(prepared.sensitiveValues.map(Redacted.value))
         yield* environments.recordTestBuild({
           id,
           repo: message.repo,
@@ -174,6 +192,9 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
           runnerId: runner.id,
           startedBy: you,
           values: prepared.values,
+          needles,
+          log: new StreamRedactor(needles),
+          flushing: false,
         })
         runner.peer.send(
           RunTestBuild.make({ testBuildId: id, repo: message.repo, recipe: prepared.recipe }),
@@ -195,6 +216,7 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
       case "ApplyEnvironment": {
         yield* environments.apply(message.repo, message.baseVersion, message.draft, you.id, at)
         const state = yield* environmentState(message.repo)
+        host.sensitiveValuesChanged(message.repo)
         peer.send({ ...state, requestId })
         host.toWeb(state, others)
         return yield* host.repoSessionsUpdated(message.repo)
@@ -210,6 +232,7 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
         } else {
           yield* environments.deleteSharedVariable(message.name)
         }
+        host.sensitiveValuesChanged()
         const shared = yield* sharedVariables
         peer.send({ ...shared, requestId })
         return host.toWeb(shared, others)
@@ -257,6 +280,27 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
     return yield* environments.values(session.value.repo)
   })
 
+  /** Sends the starter what of a Test build's log can be sent now, redacted. */
+  const logged = Effect.fn("EnvironmentRelay.logged")(function* (
+    build: RunningTestBuild,
+    data: string,
+  ) {
+    const send = (text: string) => {
+      if (text !== "") {
+        toStarter(build, HubToWeb.cases.TestBuildLogged.make({ testBuildId: build.id, data: text }))
+      }
+    }
+    send(build.log.push(data))
+    if (!build.log.holding || build.flushing) return
+    build.flushing = true
+    yield* host.afterHold(
+      Effect.sync(() => {
+        build.flushing = false
+        if (running.get(build.id) === build) send(build.log.flush())
+      }),
+    )
+  })
+
   const receiveRunner = Effect.fn("EnvironmentRelay.receiveRunner")(function* (
     runner: EnvironmentRunner,
     message: EnvironmentReport,
@@ -290,12 +334,7 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
             message.testBuildId,
           )
         }
-        if (message._tag === "TestBuildLog") {
-          return toStarter(
-            build,
-            HubToWeb.cases.TestBuildLogged.make({ testBuildId: build.id, data: message.data }),
-          )
-        }
+        if (message._tag === "TestBuildLog") return yield* logged(build, message.data)
         return yield* endTestBuild(build, message.result, message.message)
       }
     }

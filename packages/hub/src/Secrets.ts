@@ -97,7 +97,8 @@ export class Secrets extends Context.Service<
       const counted = yield* sql<{ readonly count: number }>`
         SELECT
           (SELECT COUNT(*) FROM environment_variables WHERE kind = 'Sensitive') +
-          (SELECT COUNT(*) FROM shared_variables WHERE kind = 'Sensitive') AS count
+          (SELECT COUNT(*) FROM shared_variables WHERE kind = 'Sensitive') +
+          (SELECT COUNT(*) FROM retired_values) AS count
       `.pipe(Effect.orDie)
       const stored = counted[0]?.count ?? 0
       const checks = yield* sql<{ readonly ciphertext: string }>`

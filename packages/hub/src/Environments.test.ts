@@ -5,10 +5,12 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { ProtocolVersion } from "@claude-hub/protocol"
 import { Effect, Layer, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { databaseAt } from "./Database.ts"
 import { refuseSessionsWithoutEnvironment } from "./EnvironmentRelay.ts"
+import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { decryptValue, encryptValue, generateSecretsKey, Secrets } from "./Secrets.ts"
 import {
@@ -807,5 +809,268 @@ describe("Sensitive values", () => {
         console[method] = originals[index] as never
       })
     }
+  })
+})
+
+/** Posts to the Hub as the Session's mod would, with the token from its StartSession. */
+const asMod = (env: Scene, modToken: string, path: string, body: unknown) =>
+  fetch(`${env.hub.url}${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${modToken}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
+/** Posts Turn events as the Session's mod would. */
+async function postEvents(env: Scene, modToken: string, ...messages: Array<unknown>) {
+  expect((await asMod(env, modToken, "/mod/events", { messages })).status).toBe(204)
+}
+
+/** The next `count` events of the Session logged. */
+async function loggedEvents(web: Connection<Web>, count: number) {
+  const events: Array<Record<string, unknown>> = []
+  for (let index = 0; index < count; index++) {
+    const logged = await web.take("SessionEventLogged")
+    events.push(logged.entry.event as Record<string, unknown>)
+  }
+  return events
+}
+
+const stars = (value: string) => "*".repeat(value.length)
+
+/** A Repo with an Environment linking a Sensitive shared variable, and a Session on it. */
+async function redactionScene() {
+  const env = await scene()
+  const shared = nextRequest()
+  env.web.send({
+    _tag: "SetSharedVariable",
+    requestId: shared,
+    variable: { _tag: "Sensitive", name: "GITHUB_TOKEN", value: sharedSecret },
+  })
+  await answer(env.web, shared)
+  const withLink = draft({
+    variables: [
+      ...(draft().variables as Array<unknown>),
+      { _tag: "Link", name: "GH_TOKEN", sharedVariable: "GITHUB_TOKEN", availableAtBuild: false },
+    ],
+  })
+  await testBuild(env, withLink)
+  expectApplied(await apply(env, withLink, null), 1)
+  const session = await createSession(env, 1)
+  const hello = await asMod(env, session.start.modToken, "/mod/hello", {
+    _tag: "ModHello",
+    protocolVersion: ProtocolVersion,
+    sessionId: session.sessionId,
+    claudeSessionId: "claude-1",
+    model: "claude-opus",
+  })
+  expect(hello.status).toBe(200)
+  env.web.send({ _tag: "JoinSession", sessionId: session.sessionId })
+  await env.web.take("SessionHistory")
+  return { ...env, ...session }
+}
+
+describe("Redacting Sensitive values", () => {
+  test("are masked in the transcript: prompts, text split across events, tools and subagents", async () => {
+    const env = await redactionScene()
+    const { sessionId, start, web } = env
+    const turnId = "turn-1"
+    await postEvents(
+      env,
+      start.modToken,
+      {
+        _tag: "TurnStarted",
+        turnId,
+        text: `use ${runtimeSecret}`,
+        sender: { _tag: "FromTerminal" },
+      },
+      { _tag: "TextDelta", turnId, text: `the key is ${runtimeSecret.slice(0, 9)}` },
+    )
+    await postEvents(
+      env,
+      start.modToken,
+      { _tag: "TextDelta", turnId, text: `${runtimeSecret.slice(9)}, done.` },
+      {
+        _tag: "ToolCallStarted",
+        turnId,
+        toolCallId: "call-1",
+        tool: "Bash",
+        input: JSON.stringify({ command: `curl -H "token: ${sharedSecret}"` }),
+      },
+      {
+        _tag: "ToolCallEnded",
+        turnId,
+        toolCallId: "call-1",
+        tool: "Bash",
+        outcome: "Succeeded",
+        output: `NPM_TOKEN=${buildSecret}\n`,
+      },
+      { _tag: "TextDelta", turnId, agentId: "agent-1", text: `found ${sharedSecret}` },
+      { _tag: "TurnEnded", turnId, reason: "Answered", durationMs: 5 },
+    )
+    const events = await loggedEvents(web, 7)
+    expect(events.map((event) => event._tag)).toEqual([
+      "TurnStarted",
+      "TextDelta",
+      "TextDelta",
+      "ToolCallStarted",
+      "ToolCallEnded",
+      "TextDelta",
+      "TurnEnded",
+    ])
+    const text = events
+      .filter((event) => event._tag === "TextDelta" && event.agentId === undefined)
+      .map((event) => event.text)
+      .join("")
+    expect(text).toBe(`the key is ${stars(runtimeSecret)}, done.`)
+    expect(events[0]?.text).toBe(`use ${stars(runtimeSecret)}`)
+    expect(events[3]?.input).toBe(
+      JSON.stringify({ command: `curl -H "token: ${stars(sharedSecret)}"` }),
+    )
+    expect(events[4]?.output).toBe(`NPM_TOKEN=${stars(buildSecret)}\n`)
+    expect(events[5]).toMatchObject({ agentId: "agent-1", text: `found ${stars(sharedSecret)}` })
+
+    // Joining again replays the log as it was stored: redacted.
+    const bob = await openWeb(env.hub, "bob")
+    bob.send({ _tag: "JoinSession", sessionId })
+    await bob.take("SessionHistory")
+    const everywhere = [...web.texts, ...bob.texts, await databaseText(env.hub)].join("\n")
+    for (const secret of [buildSecret, runtimeSecret, sharedSecret]) {
+      expect(everywhere).not.toContain(secret)
+    }
+  })
+
+  test("are masked in terminal frames: a Snapshot, and Output split across frames", async () => {
+    const env = await redactionScene()
+    const { runner, sessionId, web } = env
+    web.send({ _tag: "OpenTerminal", sessionId })
+    await runner.take("RequestTerminalSnapshot")
+    const size = { cols: 20, rows: 5 }
+    const frame = (kind: "Snapshot" | "Output", data: string) =>
+      runner.send({ _tag: "TerminalFrame", sessionId, kind, data, size })
+
+    // A value wrapped at the edge of the screen, and coloured part-way.
+    frame("Snapshot", `$ echo\r\n${sharedSecret.slice(0, 10)}\r\n\x1b[1m${sharedSecret.slice(10)}`)
+    expect((await web.take("TerminalFrame")).data).toBe(
+      `$ echo\r\n${"*".repeat(10)}\r\n\x1b[1m${"*".repeat(sharedSecret.length - 10)}`,
+    )
+
+    // A value split across two Output frames: its start is held until the next frame.
+    frame("Output", `API_KEY=${runtimeSecret.slice(0, 6)}`)
+    frame("Output", `${runtimeSecret.slice(6)}\r\n$ `)
+    // Held text is let go when no frame follows soon: shorter than a value can be, as it is,
+    // and longer, masked. What follows of the value is masked as it comes.
+    frame("Output", runtimeSecret.slice(0, 1))
+    await Bun.sleep(200)
+    frame("Output", `${runtimeSecret.slice(1)}\r\n${buildSecret.slice(0, 5)}`)
+    await Bun.sleep(200)
+    frame("Output", buildSecret.slice(5))
+
+    const output = (await web.untaken("TerminalFrame")).map((message) => message.data).join("")
+    expect(output).toBe(
+      `API_KEY=${stars(runtimeSecret)}\r\n$ ${runtimeSecret.slice(0, 1)}${"*".repeat(runtimeSecret.length - 1)}\r\n${stars(buildSecret)}`,
+    )
+  })
+
+  test("are masked in a Test build's log, split across chunks, and its result", async () => {
+    const env = await scene()
+    const { runner, web, runnerId } = env
+    const requestId = nextRequest()
+    web.send({ _tag: "StartTestBuild", requestId, repo, runnerId, draft: draft() })
+    const run = await runner.take("RunTestBuild")
+    const log = (data: string) =>
+      runner.send({ _tag: "TestBuildLog", testBuildId: run.testBuildId, data })
+    log(`npm config set token ${buildSecret.slice(0, 12)}`)
+    log(`${buildSecret.slice(12)}\n`)
+    log(`echo ${runtimeSecret.slice(0, 3)}`)
+    runner.send({
+      _tag: "TestBuildFinished",
+      testBuildId: run.testBuildId,
+      result: "Failed",
+      message: `bad token ${runtimeSecret}`,
+    })
+    const ended = await web.take("TestBuildEnded")
+    expect(ended.message).toBe(`bad token ${stars(runtimeSecret)}`)
+    const logged = (await web.untaken("TestBuildLogged")).map((message) => message.data).join("")
+    expect(logged).toBe(
+      `npm config set token ${stars(buildSecret)}\necho ${runtimeSecret.slice(0, 3)}`,
+    )
+  })
+
+  test("a value replaced stays masked while a Session started with it runs", async () => {
+    const env = await redactionScene()
+    const { start, web, sessionId } = env
+    // API_KEY rotated by an apply, and the shared GITHUB_TOKEN by its own change.
+    const rotated = keptDraft({
+      variables: [
+        { _tag: "Plain", name: "NODE_ENV", value: "development" },
+        { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true },
+        { _tag: "Sensitive", name: "API_KEY", value: "sk_ROTATED_1234", availableAtBuild: false },
+        { _tag: "Link", name: "GH_TOKEN", sharedVariable: "GITHUB_TOKEN", availableAtBuild: false },
+      ],
+    })
+    expectApplied(await apply(env, rotated, 1), 2)
+    const shared = nextRequest()
+    web.send({
+      _tag: "SetSharedVariable",
+      requestId: shared,
+      variable: { _tag: "Sensitive", name: "GITHUB_TOKEN", value: "ghp_ROTATED_5678" },
+    })
+    await answer(web, shared)
+    // Kept encrypted.
+    const database = await databaseText(env.hub)
+    expect(database).not.toContain(runtimeSecret)
+    expect(database).not.toContain(sharedSecret)
+
+    await postEvents(
+      env,
+      start.modToken,
+      { _tag: "TurnStarted", turnId: "t", text: "", sender: { _tag: "FromTerminal" } },
+      {
+        _tag: "TextDelta",
+        turnId: "t",
+        text: `old ${runtimeSecret} ${sharedSecret} new sk_ROTATED_1234 ghp_ROTATED_5678.`,
+      },
+    )
+    const [, delta] = await loggedEvents(web, 2)
+    expect(delta?.text).toBe(
+      `old ${stars(runtimeSecret)} ${stars(sharedSecret)} new ${"*".repeat(15)} ${"*".repeat(16)}.`,
+    )
+
+    // Once no Session that could have them runs, the old values are forgotten.
+    web.send({ _tag: "ArchiveSession", sessionId })
+    await web.take(
+      "SessionUpdated",
+      (m) => m.session.id === sessionId && m.session.state === "Archived",
+    )
+    const values = await env.hub.run(
+      Effect.gen(function* () {
+        const environments = yield* Environments
+        return yield* environments.sensitiveValues(repo)
+      }),
+    )
+    expect(values.map(Redacted.value).toSorted()).toEqual(
+      [buildSecret, "sk_ROTATED_1234", "ghp_ROTATED_5678"].toSorted(),
+    )
+  })
+
+  test("a Sensitive value too short to redact is refused", async () => {
+    const env = await scene()
+    expectRefused(
+      await apply(
+        env,
+        draft({
+          variables: [{ _tag: "Sensitive", name: "PIN", value: " 123 ", availableAtBuild: false }],
+        }),
+        null,
+      ),
+      /PIN is under 4 characters/,
+    )
+    const requestId = nextRequest()
+    env.web.send({
+      _tag: "SetSharedVariable",
+      requestId,
+      variable: { _tag: "Sensitive", name: "PIN", value: "abc" },
+    })
+    expectRefused(await answer(env.web, requestId), /PIN is under 4 characters/)
   })
 })
