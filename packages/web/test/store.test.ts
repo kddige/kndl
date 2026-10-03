@@ -7,6 +7,7 @@ import {
   type HubAction,
   type HubState,
   initialState,
+  isListed,
   lastSeq,
   reduce,
 } from "../src/hub/store.ts"
@@ -121,6 +122,28 @@ describe("Runners and Sessions", () => {
     expect(state.sessions?.map((s) => s.id)).toEqual([s1, s2])
     expect(findSession(state, "s-2")?.id).toBe(s2)
     expect(findSession(state, "nope")).toBeUndefined()
+  })
+
+  test("SessionRemoved drops a purged Session, and its joined copy", () => {
+    const state = run(
+      hub({ _tag: "SessionList", sessions: [sessionSummary, { ...sessionSummary, id: "s-2" }] }),
+      joined,
+      hub({ _tag: "SessionRemoved", sessionId: "s-1" }),
+    )
+    expect(state.sessions?.map((s) => s.id)).toEqual([s2])
+    expect(state.joined[s1]).toBeUndefined()
+  })
+
+  test("an Archived Session stays known but isn't listed", () => {
+    const archived = {
+      ...sessionSummary,
+      id: "s-2",
+      state: "Archived",
+      archived: { by: bob, at: 1, purgeAt: 2 },
+    } as const
+    const state = run(hub({ _tag: "SessionList", sessions: [sessionSummary, archived] }))
+    expect(findSession(state, "s-2")?.archived?.by.name).toBe("Bob")
+    expect(state.sessions?.filter(isListed).map((s) => s.id)).toEqual([s1])
   })
 })
 

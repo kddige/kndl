@@ -1,13 +1,24 @@
 // Clones a local Repo with real git. Skipped when git isn't installed.
 import { beforeAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BunServices } from "@effect/platform-bun"
 import { Effect, Layer, Redacted } from "effect"
 import { RunnerConfig } from "./RunnerConfig.ts"
+import { sessionDirectories } from "./SessionNames.ts"
 import { FakeHubGit, sessionId } from "./testSupport.ts"
-import { Workspaces, WorkspacesGitClone } from "./Workspace.ts"
+import { removeSessionFiles, Workspaces, WorkspacesGitClone } from "./Workspace.ts"
 
 function git(cwd: string, ...args: Array<string>): string {
   const result = Bun.spawnSync(["git", ...args], {
@@ -121,5 +132,54 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
     const result = await run(start("w-3", { resume: "c-1" }))
 
     expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "WorkspaceError" } })
+  })
+})
+
+describe("removing a purged Session's files", () => {
+  test("deletes its directory and Claude Code's transcripts and entry for it, nothing else", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-purge-")))
+    const directories = sessionDirectories(join(dir, "sessions"), sessionId("p-1"))
+    const other = sessionDirectories(join(dir, "sessions"), sessionId("p-2"))
+    for (const d of [directories, other]) mkdirSync(join(d.workspace, ".git"), { recursive: true })
+    for (const d of [directories, other]) mkdirSync(d.claude, { recursive: true })
+    // Something the Sandbox left that can't be written to, and a link out of the Workspace.
+    const outside = join(dir, "outside.txt")
+    writeFileSync(outside, "keep")
+    symlinkSync(outside, join(directories.workspace, "link"))
+    mkdirSync(join(directories.workspace, "locked", "deep"), { recursive: true })
+    writeFileSync(join(directories.workspace, "locked", "deep", "f"), "x")
+    chmodSync(join(directories.workspace, "locked", "deep"), 0o500)
+    chmodSync(join(directories.workspace, "locked"), 0o500)
+
+    const projectsDir = join(dir, "claude", "projects")
+    const transcripts = join(projectsDir, directories.claude.replace(/[^a-zA-Z0-9]/g, "-"))
+    const otherTranscripts = join(projectsDir, other.claude.replace(/[^a-zA-Z0-9]/g, "-"))
+    mkdirSync(transcripts, { recursive: true })
+    mkdirSync(otherTranscripts, { recursive: true })
+    writeFileSync(join(transcripts, "c-1.jsonl"), "{}")
+    const configPath = join(dir, ".claude.json")
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        numStartups: 3,
+        projects: { [directories.claude]: { lastCost: 1 }, [other.claude]: { lastCost: 2 } },
+      }),
+    )
+
+    await Effect.runPromise(removeSessionFiles(directories, { projectsDir, configPath }))
+
+    expect(existsSync(directories.session)).toBe(false)
+    expect(existsSync(transcripts)).toBe(false)
+    expect(readFileSync(outside, "utf8")).toBe("keep")
+    expect(existsSync(other.workspace)).toBe(true)
+    expect(existsSync(otherTranscripts)).toBe(true)
+    expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
+      numStartups: 3,
+      projects: { [other.claude]: { lastCost: 2 } },
+    })
+
+    // Nothing left to remove is fine.
+    await Effect.runPromise(removeSessionFiles(directories, { projectsDir, configPath }))
+    rmSync(dir, { recursive: true, force: true })
   })
 })

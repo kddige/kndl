@@ -48,6 +48,9 @@ interface SeedSession {
 }
 
 const hour = 3_600_000
+const day = 24 * hour
+/** How long the Hub keeps an Archived Session restorable, by default. */
+export const archiveRetentionMs = 30 * day
 
 export function seedSessions(now = Date.now()): Array<SeedSession> {
   const studio = { runnerId: "r-studio", runnerLogin: { account: "alice@example.com" } }
@@ -130,6 +133,27 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
           { _tag: "TextDelta", text: "Done: the prompt now ends with the branch in brackets." },
         ]),
         { _tag: "SessionStateChanged", state: "Frozen", message: "ci-box went offline" },
+      ],
+    },
+    {
+      summary: {
+        id: "s-flaky",
+        repo: "kddige/claude-hub",
+        baseBranch: "main",
+        workBranch: "claude/flaky-login",
+        state: "Archived",
+        ...studio,
+        creator: you,
+        createdAt: now - 5 * day,
+        currentTurn: null,
+        archived: { by: bob, at: now - 3 * day, purgeAt: now + 27 * day },
+      },
+      at: now - 5 * day,
+      events: [
+        ...turn("t-seed-4", you, "Fix the flaky login test", [
+          { _tag: "TextDelta", text: "It raced the cookie being set: it now waits for it." },
+        ]),
+        { _tag: "SessionStateChanged", state: "Archived", by: bob },
       ],
     },
   ]

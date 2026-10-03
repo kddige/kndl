@@ -247,7 +247,7 @@ function names(people: ReadonlyArray<Participant>): string {
 
 const stateWords: Record<SessionStateChanged["state"], string> = {
   Active: "The Session is Active",
-  Asleep: "The Session went to sleep",
+  Asleep: "The Session is Asleep",
   Frozen: "The Session is Frozen",
   Archived: "The Session was archived",
 }
@@ -260,8 +260,8 @@ function Notice({ at, event }: { at: number; event: SessionStateChanged | WipNot
           <SessionStatus state={statusOf(event.state)} variant="dot" />
           <span>
             {stateWords[event.state]}
-            {event.by ? ` by ${event.by.name}` : ""}
             {event.message ? `: ${event.message}` : ""}
+            {event.by ? `${event.message ? "," : ""} by ${event.by.name}` : ""}
           </span>
         </>
       ) : (

@@ -104,6 +104,24 @@ const migrations = SqliteMigrator.fromRecord({
     `
     yield* sql`CREATE INDEX session_prompters_session ON session_prompters (session_id, seq)`
   }),
+
+  // Archived Sessions (issue #18): who archived each and when, when it is purged unless restored,
+  // and whether its Runner has stopped it and destroyed its Sandbox yet. Purged Sessions whose
+  // Runner hasn't yet deleted what it holds of them wait in session_purges.
+  "0005_session_archive": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN archived_by TEXT REFERENCES participants (id)`
+    yield* sql`ALTER TABLE sessions ADD COLUMN archived_at INTEGER`
+    yield* sql`ALTER TABLE sessions ADD COLUMN purge_at INTEGER`
+    yield* sql`ALTER TABLE sessions ADD COLUMN archive_stopped INTEGER NOT NULL DEFAULT 0`
+    yield* sql`
+      CREATE TABLE session_purges (
+        session_id TEXT PRIMARY KEY,
+        runner_id TEXT NOT NULL REFERENCES runners (id) ON DELETE CASCADE,
+        purged_at INTEGER NOT NULL
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

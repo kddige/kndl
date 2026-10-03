@@ -44,6 +44,7 @@ const runnerToHub = [
   },
   { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: 12 },
   { _tag: "WipPushFailed", sessionId: "s-1", message: "git push exited with 128" },
+  { _tag: "SessionPurged", sessionId: "s-1" },
 ]
 
 const hubToRunner = [
@@ -73,6 +74,7 @@ const hubToRunner = [
   },
   { _tag: "StopSession", sessionId: "s-1", reason: "Sleep" },
   { _tag: "StopSession", sessionId: "s-1", reason: "Archive" },
+  { _tag: "PurgeSession", sessionId: "s-1" },
   { _tag: "TerminalInput", sessionId: "s-1", data: "\r" },
   { _tag: "TerminalResize", sessionId: "s-1", size },
   { _tag: "RequestTerminalSnapshot", sessionId: "s-1" },

@@ -444,6 +444,86 @@ describe("Sessions", () => {
     expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Archive", "stop s-1 Archive"])
   })
 
+  test("archives a stopped Session too, destroying what is left of its Sandbox", async () => {
+    const h = startRunner()
+    await connected(h)
+
+    // As for a Session archived while Asleep, or while the Runner was offline.
+    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Archive" })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+
+    expect(h.hub.all("SessionStopped")).toEqual([
+      { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested" },
+    ])
+    expect(h.sandboxes.calls).toEqual(["pushWip s-1 Archive", "stop s-1 Archive"])
+  })
+
+  test("purges a Session: its Sandbox and volumes, then its directory and Claude Code state", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Archive" })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+
+    h.hub.send({ _tag: "PurgeSession", sessionId: "s-1" })
+    await eventually(() => h.hub.all("SessionPurged").length === 1)
+
+    expect(h.hub.all("SessionPurged")).toEqual([{ _tag: "SessionPurged", sessionId: "s-1" }])
+    expect(h.sandboxes.calls).toEqual([
+      "start s-1",
+      "pushWip s-1 Archive",
+      "stop s-1 Archive",
+      "purge s-1",
+    ])
+    expect(h.workspaces.removed).toEqual([sessionId("s-1")])
+  })
+
+  test("stops a Session still running before purging it", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    const pane = h.tmux.pane("s-1")
+
+    h.hub.send({ _tag: "PurgeSession", sessionId: "s-1" })
+    await eventually(() => h.hub.all("SessionPurged").length === 1)
+
+    expect(pane.terminated).toBe(true)
+    expect(h.tmux.panes.size).toBe(0)
+    // Purged, not exited on its own: nothing is pushed and no SessionStopped is sent.
+    expect(h.hub.all("SessionStopped")).toEqual([])
+    expect(h.sandboxes.calls).toEqual(["start s-1", "purge s-1"])
+    expect(h.workspaces.removed).toEqual([sessionId("s-1")])
+  })
+
+  test("doesn't say a Session is purged when its files could not be deleted", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.workspaces.removeFails = true
+
+    h.hub.send({ _tag: "PurgeSession", sessionId: "s-1" })
+    await eventually(() => h.sandboxes.calls.includes("purge s-1"))
+    await Bun.sleep(50)
+    expect(h.hub.all("SessionPurged")).toEqual([])
+
+    // The Hub asks again, as on the next connection.
+    h.workspaces.removeFails = false
+    h.hub.send({ _tag: "PurgeSession", sessionId: "s-1" })
+    await eventually(() => h.hub.all("SessionPurged").length === 1)
+    expect(h.workspaces.removed).toEqual([sessionId("s-1")])
+  })
+
+  test("ignores a purge of a Session id it can't name a directory after", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send({ _tag: "PurgeSession", sessionId: "../etc" })
+    h.hub.send({ _tag: "PurgeSession", sessionId: "s-2" })
+    await eventually(() => h.hub.all("SessionPurged").length === 1)
+    expect(h.hub.all("SessionPurged")).toEqual([{ _tag: "SessionPurged", sessionId: "s-2" }])
+    expect(h.sandboxes.calls).toEqual(["purge s-2"])
+  })
+
   test("puts a Session to sleep, keeping its Workspace and Sandbox, and wakes it resuming", async () => {
     const h = startRunner()
     await connected(h)

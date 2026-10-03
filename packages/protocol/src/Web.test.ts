@@ -41,6 +41,8 @@ const webToHub = [
   { _tag: "StopTurn", sessionId: "s-1" },
   { _tag: "SleepSession", sessionId: "s-1" },
   { _tag: "WakeSession", sessionId: "s-1" },
+  { _tag: "ArchiveSession", sessionId: "s-1" },
+  { _tag: "RestoreSession", sessionId: "s-1" },
   { _tag: "OpenTerminal", sessionId: "s-1" },
   { _tag: "CloseTerminal", sessionId: "s-1" },
   { _tag: "TerminalInput", sessionId: "s-1", data: "\u001b[A" },
@@ -63,6 +65,15 @@ const hubToWeb = [
   { _tag: "SessionList", sessions: [] },
   { _tag: "SessionUpdated", session: { ...sessionSummary, state: "Asleep" } },
   { _tag: "SessionUpdated", session: { ...sessionSummary, currentTurn: "t-1" } },
+  {
+    _tag: "SessionUpdated",
+    session: {
+      ...sessionSummary,
+      state: "Archived",
+      archived: { by: bob, at: 1_790_000_000_000, purgeAt: 1_792_592_000_000 },
+    },
+  },
+  { _tag: "SessionRemoved", sessionId: "s-1" },
   { _tag: "SessionCreated", requestId: "q-1", session: sessionSummary },
   {
     _tag: "SessionHistory",
