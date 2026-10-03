@@ -32,10 +32,11 @@ export const baseConfig: HubConfigInput = {
   devLoginName: "dev",
   sleepAfterMs: Duration.toMillis(DefaultSleepAfter),
   archiveRetentionMs: Duration.toMillis(DefaultArchiveRetention),
+  secretsKey: Option.none(),
 }
 
-/** The Hub's stores and services, which tests can reach into. */
-export type Services = Layer.Success<typeof HubServices>
+/** The Hub's stores and services, and its database, which tests can reach into. */
+export type Services = Layer.Success<typeof HubServices> | SqlClient.SqlClient
 
 export interface TestHub {
   /** The Hub's address, such as `http://127.0.0.1:54321`. */

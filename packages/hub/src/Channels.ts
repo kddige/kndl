@@ -107,7 +107,8 @@ const serveChannel = <Hello, In, Out>(options: {
           for (const text of texts) {
             const decoded = decode(parseJson(text))
             if (decoded._tag === "Failure") {
-              yield* Effect.logWarning("Dropped a message the channel doesn't accept", text)
+              // Only its tag: the text may hold a Sensitive value.
+              yield* Effect.logWarning("Dropped a message the channel doesn't accept", tagOf(text))
             } else {
               yield* receive(decoded.value)
             }
@@ -131,6 +132,13 @@ const serveChannel = <Hello, In, Out>(options: {
     )
     return HttpServerResponse.empty()
   })
+
+/** The `_tag` of a JSON message, or `undefined`, for logging a message without its contents. */
+function tagOf(text: string): string | undefined {
+  const message = parseJson(text)
+  if (typeof message !== "object" || message === null || !("_tag" in message)) return undefined
+  return typeof message._tag === "string" ? message._tag.slice(0, 64) : undefined
+}
 
 function parseJson(text: string | undefined): unknown {
   try {

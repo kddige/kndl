@@ -122,6 +122,85 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+
+  // Environments (issue #47, ADR 0009): each Repo's recipe as last applied, its variables and
+  // links, the Hub-wide shared variables, and who applied each version when (no values). A
+  // Sensitive value is stored only as AES-256-GCM ciphertext (Secrets.ts); the check value tells
+  // whether HUB_SECRETS_KEY is the key they were encrypted with. Each Session records the
+  // version its Sandbox runs on, as its Runner reports it.
+  "0006_environments": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE secrets_check (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        ciphertext TEXT NOT NULL
+      )
+    `
+    yield* sql`
+      CREATE TABLE environments (
+        repo TEXT PRIMARY KEY,
+        version INTEGER NOT NULL,
+        build_version INTEGER NOT NULL,
+        image TEXT NOT NULL,
+        bootstrap_script TEXT NOT NULL,
+        start_script TEXT,
+        docker INTEGER NOT NULL,
+        dependency_folders TEXT NOT NULL,
+        cpus INTEGER NOT NULL,
+        memory_mib INTEGER NOT NULL
+      )
+    `
+    yield* sql`
+      CREATE TABLE environment_versions (
+        repo TEXT NOT NULL REFERENCES environments (repo) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        applied_by TEXT NOT NULL REFERENCES participants (id),
+        applied_at INTEGER NOT NULL,
+        rebuilt INTEGER NOT NULL,
+        PRIMARY KEY (repo, version)
+      )
+    `
+    yield* sql`
+      CREATE TABLE shared_variables (
+        name TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('Plain', 'Sensitive')),
+        value TEXT NOT NULL,
+        updated_by TEXT NOT NULL REFERENCES participants (id),
+        updated_at INTEGER NOT NULL
+      )
+    `
+    // Local variables and links share one table, so a name is unique in an Environment.
+    // `value` is the plain value, a Sensitive one's ciphertext, or null for a link.
+    yield* sql`
+      CREATE TABLE environment_variables (
+        repo TEXT NOT NULL REFERENCES environments (repo) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('Plain', 'Sensitive', 'Link')),
+        value TEXT,
+        shared_name TEXT REFERENCES shared_variables (name),
+        available_at_build INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        PRIMARY KEY (repo, name)
+      )
+    `
+    yield* sql`CREATE INDEX environment_variables_shared ON environment_variables (shared_name)`
+    // Each Test build and its result, against the digest of the draft's build inputs (an HMAC
+    // under a key derived from HUB_SECRETS_KEY, as it covers values available at build).
+    yield* sql`
+      CREATE TABLE test_builds (
+        id TEXT PRIMARY KEY,
+        repo TEXT NOT NULL,
+        runner_id TEXT NOT NULL,
+        digest TEXT NOT NULL,
+        started_by TEXT NOT NULL REFERENCES participants (id),
+        started_at INTEGER NOT NULL,
+        result TEXT CHECK (result IN ('Passed', 'Failed')),
+        finished_at INTEGER
+      )
+    `
+    yield* sql`CREATE INDEX test_builds_digest ON test_builds (repo, digest)`
+    yield* sql`ALTER TABLE sessions ADD COLUMN environment_version INTEGER`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

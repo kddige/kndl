@@ -47,6 +47,8 @@ export interface HubConfigInput {
   readonly sleepAfterMs: number
   /** How long an Archived Session can be restored before it is purged, in milliseconds. */
   readonly archiveRetentionMs: number
+  /** The key Sensitive variable values are encrypted with: 32 bytes, base64. */
+  readonly secretsKey: Option.Option<Redacted.Redacted<string>>
 }
 
 /** How long an idle Session stays Active by default (GLOSSARY.md: Asleep). */
@@ -59,6 +61,17 @@ export const DefaultArchiveRetention = Duration.days(30)
 export class HubConfigError extends Schema.TaggedError<HubConfigError>()("HubConfigError", {
   message: Schema.String,
 }) {}
+
+/** How long a key for Sensitive values is, in bytes: AES-256. */
+export const SecretsKeyBytes = 32
+
+/** Reads a key for Sensitive values from base64 or base64url, or `undefined` if it isn't one. */
+export function parseSecretsKey(text: string): Uint8Array | undefined {
+  const trimmed = text.trim()
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed)) return undefined
+  const bytes = Buffer.from(trimmed.replaceAll("-", "+").replaceAll("_", "/"), "base64")
+  return bytes.length === SecretsKeyBytes ? new Uint8Array(bytes) : undefined
+}
 
 /** True for `localhost` and loopback IP addresses (127.0.0.0/8, ::1, and 127.x mapped to IPv6). */
 export function isLoopback(host: string): boolean {
@@ -99,6 +112,11 @@ export class HubConfig extends Context.Service<
     readonly sleepAfter: Duration.Duration
     /** How long an Archived Session can be restored before it is purged. */
     readonly archiveRetention: Duration.Duration
+    /**
+     * The key Sensitive variable values are encrypted with at rest (ADR 0009), or none: Sensitive
+     * values can't then be saved, and the Hub refuses to start if any are stored.
+     */
+    readonly secretsKey: Option.Option<Redacted.Redacted<Uint8Array>>
   }
 >()("@claude-hub/hub/HubConfig") {
   /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
@@ -149,6 +167,16 @@ export class HubConfig extends Context.Service<
         })
       }
     }
+    let secretsKey = Option.none<Redacted.Redacted<Uint8Array>>()
+    if (Option.isSome(input.secretsKey)) {
+      const key = parseSecretsKey(Redacted.value(input.secretsKey.value))
+      if (key === undefined) {
+        return yield* new HubConfigError({
+          message: `HUB_SECRETS_KEY must be ${SecretsKeyBytes} random bytes in base64, as \`bun run secrets-key\` prints.`,
+        })
+      }
+      secretsKey = Option.some(Redacted.make(key))
+    }
     return HubConfig.of({
       host,
       port: input.port,
@@ -167,6 +195,7 @@ export class HubConfig extends Context.Service<
       secureCookies: publicUrl.protocol === "https:" || !isLoopback(publicUrl.hostname),
       sleepAfter: Duration.millis(input.sleepAfterMs),
       archiveRetention: Duration.millis(input.archiveRetentionMs),
+      secretsKey,
     })
   })
 
@@ -175,7 +204,8 @@ export class HubConfig extends Context.Service<
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
    * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the git tools use the Runner
    * host's credentials, and pull requests are off), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_SLEEP_AFTER_MS`
-   * (15 minutes) and `HUB_ARCHIVE_RETENTION_MS` (30 days).
+   * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days) and `HUB_SECRETS_KEY` (unset: Sensitive
+   * values can't be saved).
    */
   static readonly layer = Layer.effect(
     HubConfig,
@@ -210,6 +240,7 @@ export class HubConfig extends Context.Service<
         archiveRetentionMs: Config.Int("HUB_ARCHIVE_RETENTION_MS").pipe(
           Config.withDefault(Duration.toMillis(DefaultArchiveRetention)),
         ),
+        secretsKey: Config.option(Config.Redacted("HUB_SECRETS_KEY")),
       })
       return yield* HubConfig.make({ ...input, githubAppPrivateKey })
     }),

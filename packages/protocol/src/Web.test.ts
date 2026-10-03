@@ -2,6 +2,8 @@ import { describe, test } from "bun:test"
 import {
   alice,
   bob,
+  environment,
+  environmentDraft,
   expectEveryTag,
   expectRejected,
   expectRoundTrips,
@@ -47,6 +49,50 @@ const webToHub = [
   { _tag: "CloseTerminal", sessionId: "s-1" },
   { _tag: "TerminalInput", sessionId: "s-1", data: "\u001b[A" },
   { _tag: "TerminalResize", sessionId: "s-1", size },
+  { _tag: "GetEnvironment", requestId: "q-3", repo: "kddige/claude-hub" },
+  {
+    _tag: "CheckEnvironmentDraft",
+    requestId: "q-4",
+    repo: "kddige/claude-hub",
+    draft: environmentDraft,
+  },
+  {
+    _tag: "StartTestBuild",
+    requestId: "q-5",
+    repo: "kddige/claude-hub",
+    runnerId: "r-1",
+    draft: environmentDraft,
+  },
+  {
+    _tag: "ApplyEnvironment",
+    requestId: "q-6",
+    repo: "kddige/claude-hub",
+    baseVersion: 2,
+    draft: environmentDraft,
+  },
+  {
+    _tag: "ApplyEnvironment",
+    requestId: "q-7",
+    repo: "kddige/claude-hub",
+    baseVersion: null,
+    draft: { ...environmentDraft, variables: [] },
+  },
+  { _tag: "GetSharedVariables", requestId: "q-8" },
+  {
+    _tag: "SetSharedVariable",
+    requestId: "q-9",
+    variable: { _tag: "Plain", name: "REGISTRY", value: "ghcr.io" },
+  },
+  {
+    _tag: "SetSharedVariable",
+    requestId: "q-10",
+    variable: {
+      _tag: "Sensitive",
+      name: "GITHUB_TOKEN",
+      value: "ghp_secret",
+    },
+  },
+  { _tag: "DeleteSharedVariable", requestId: "q-11", name: "REGISTRY" },
 ]
 
 const hubToWeb = [
@@ -107,6 +153,65 @@ const hubToWeb = [
     requestId: "q-1",
     message: "No Runner online",
   },
+  {
+    _tag: "SessionUpdated",
+    session: { ...sessionSummary, environment: { version: 2, latestVersion: 3 } },
+  },
+  {
+    _tag: "SessionUpdated",
+    session: { ...sessionSummary, environment: { version: null, latestVersion: 1 } },
+  },
+  {
+    _tag: "EnvironmentState",
+    requestId: "q-3",
+    repo: "kddige/claude-hub",
+    environment,
+    versions: [
+      { version: 3, appliedBy: alice, appliedAt: 1_790_000_000_300, rebuilt: false },
+      { version: 2, appliedBy: bob, appliedAt: 1_790_000_000_200, rebuilt: true },
+    ],
+  },
+  { _tag: "EnvironmentState", repo: "kddige/claude-hub", environment: null, versions: [] },
+  {
+    _tag: "EnvironmentDraftChecked",
+    requestId: "q-4",
+    repo: "kddige/claude-hub",
+    needsTestBuild: true,
+    testBuildPassed: false,
+  },
+  {
+    _tag: "TestBuildStarted",
+    requestId: "q-5",
+    testBuild: {
+      id: "b-1",
+      repo: "kddige/claude-hub",
+      runnerId: "r-1",
+      startedBy: alice,
+      startedAt: 1_790_000_000_000,
+    },
+  },
+  { _tag: "TestBuildLogged", testBuildId: "b-1", data: "Setting up ripgrep\n" },
+  { _tag: "TestBuildEnded", testBuildId: "b-1", repo: "kddige/claude-hub", result: "Passed" },
+  {
+    _tag: "TestBuildEnded",
+    testBuildId: "b-1",
+    repo: "kddige/claude-hub",
+    result: "Failed",
+    message: "The bootstrap exited with 100",
+  },
+  {
+    _tag: "SharedVariables",
+    requestId: "q-8",
+    variables: [
+      { _tag: "Plain", name: "REGISTRY", value: "ghcr.io", linkedBy: [] },
+      {
+        _tag: "Sensitive",
+        name: "GITHUB_TOKEN",
+        linkedBy: [{ repo: "kddige/claude-hub", name: "GH_TOKEN", availableAtBuild: false }],
+      },
+    ],
+  },
+  { _tag: "SharedVariables", variables: [] },
 ]
 
 describe("SessionEvent", () => {

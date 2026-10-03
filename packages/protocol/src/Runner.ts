@@ -1,6 +1,15 @@
 import { Schema } from "effect"
+import {
+  FetchVariables,
+  RunTestBuild,
+  SessionEnvironment,
+  TestBuildFinished,
+  TestBuildLog,
+  VariablesFetched,
+  VariablesRefused,
+} from "./Environment.ts"
 import { CoAuthorsCommitted, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
-import { ClaudeSessionId, RunnerId, SessionId } from "./Ids.ts"
+import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { BranchName, RepoName, RunnerLogin } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
@@ -29,6 +38,8 @@ export type RunnerHello = typeof RunnerHello.Type
 /** Claude Code is running for the Session, with the mod loaded. */
 export const SessionStarted = Schema.TaggedStruct("SessionStarted", {
   sessionId: SessionId,
+  /** The Environment version its Sandbox runs on; absent when StartSession gave none. */
+  environmentVersion: Schema.optionalKey(EnvironmentVersion),
 })
 export type SessionStarted = typeof SessionStarted.Type
 
@@ -88,6 +99,9 @@ export const RunnerToHub = Schema.Union([
   GitRequest,
   CoAuthorsCommitted,
   WipPushFailed,
+  FetchVariables,
+  TestBuildLog,
+  TestBuildFinished,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type RunnerToHub = typeof RunnerToHub.Type
 
@@ -117,6 +131,11 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
    * Passed to Claude Code's environment on the host; never into the Sandbox (ADR 0004).
    */
   modToken: Schema.NonEmptyString,
+  /**
+   * The Repo's Environment as last applied, to build the Sandbox from (ADR 0009). Absent while the
+   * Repo has none: the Runner then uses its own default image.
+   */
+  environment: Schema.optionalKey(SessionEnvironment),
 })
 export type StartSession = typeof StartSession.Type
 
@@ -152,5 +171,8 @@ export const HubToRunner = Schema.Union([
   RequestTerminalSnapshot,
   GitReply,
   SessionTurnEnded,
+  RunTestBuild,
+  VariablesFetched,
+  VariablesRefused,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToRunner = typeof HubToRunner.Type

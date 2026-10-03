@@ -6,8 +6,6 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
-  type HubToRunner,
-  type HubToWeb,
   type ModCommandsEncoded,
   type ModEventsEncoded,
   Participant,
@@ -18,156 +16,28 @@ import { Effect, Exit, Option, Redacted } from "effect"
 import { signInCookie } from "./Auth.ts"
 import { databaseAt } from "./Database.ts"
 import { HubConfig } from "./HubConfig.ts"
-import { RunnerTokens } from "./RunnerTokens.ts"
 import { SignIns } from "./SignIns.ts"
-import { appId, appKeyPair, appSlug, botUserId, StandInGitHub } from "./testGitHubApi.ts"
 import {
-  baseConfig,
-  bearer,
-  cookieFrom,
-  devSignIn,
-  startHub,
-  stopHubs,
-  type TestHub,
-  webOrigin,
-} from "./testSupport.ts"
-
-/** Shuts down every Hub, after closing the WebSockets to it, which its shutdown waits for. */
-async function stopAll() {
-  await Promise.all([...Connection.live].map((connection) => connection.close()))
-  await stopHubs()
-}
+  type Connection,
+  issueRunnerToken,
+  openRunner,
+  openWeb,
+  runnerLogin,
+  stopAll,
+  type Tagged,
+  type ToRunner,
+  type Web,
+} from "./testChannels.ts"
+import { appId, appKeyPair, appSlug, botUserId, StandInGitHub } from "./testGitHubApi.ts"
+import { baseConfig, bearer, startHub, type TestHub, webOrigin } from "./testSupport.ts"
 
 afterEach(stopAll)
 
-type Tagged = { readonly _tag: string }
-type Web = typeof HubToWeb.Encoded
-type ToRunner = typeof HubToRunner.Encoded
 type Command = ModCommandsEncoded["messages"][number]["message"]
 type ModEvent = ModEventsEncoded["messages"][number]
 
-/**
- * A WebSocket to the Hub that keeps what it receives, so a test can take the messages it
- * expects, in any order, and check that others never came.
- */
-class Connection<In extends Tagged> {
-  /** Every connection not closed yet. */
-  static readonly live = new Set<Connection<Tagged>>()
-  private readonly received: Array<In> = []
-  private wake: Array<() => void> = []
-  readonly closed: Promise<void>
-
-  private constructor(private readonly socket: WebSocket) {
-    socket.addEventListener("message", (event) => {
-      this.received.push(JSON.parse(String(event.data)) as In)
-      for (const wake of this.wake.splice(0)) wake()
-    })
-    this.closed = new Promise((resolve) =>
-      socket.addEventListener("close", () => {
-        Connection.live.delete(this as Connection<Tagged>)
-        resolve()
-      }),
-    )
-    Connection.live.add(this as Connection<Tagged>)
-  }
-
-  static open<In extends Tagged>(
-    hub: TestHub,
-    path: string,
-    headers: Record<string, string>,
-    hello: unknown,
-  ): Promise<Connection<In>> {
-    const socket = new WebSocket(`${hub.url.replace(/^http/, "ws")}${path}`, { headers })
-    const connection = new Connection<In>(socket)
-    return new Promise((resolve, reject) => {
-      socket.addEventListener("open", () => {
-        socket.send(JSON.stringify(hello))
-        resolve(connection)
-      })
-      socket.addEventListener("error", () => reject(new Error(`could not open ${path}`)))
-    })
-  }
-
-  send(message: Tagged & Record<string, unknown>) {
-    this.socket.send(JSON.stringify(message))
-  }
-
-  /** The first message of this kind, and matching `where`, that hasn't been taken yet. */
-  async take<Tag extends In["_tag"]>(
-    tag: Tag,
-    where: (message: Extract<In, { _tag: Tag }>) => boolean = () => true,
-  ): Promise<Extract<In, { _tag: Tag }>> {
-    const deadline = Date.now() + 2_000
-    for (;;) {
-      const index = this.received.findIndex(
-        (message) => message._tag === tag && where(message as Extract<In, { _tag: Tag }>),
-      )
-      if (index >= 0) return this.received.splice(index, 1)[0] as Extract<In, { _tag: Tag }>
-      const left = deadline - Date.now()
-      if (left <= 0) {
-        throw new Error(
-          `No matching ${tag} came; got ${JSON.stringify(this.received, undefined, 2)}`,
-        )
-      }
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, left)
-        this.wake.push(() => {
-          clearTimeout(timer)
-          resolve()
-        })
-      })
-    }
-  }
-
-  /** The messages of this kind not taken yet, after waiting a moment for stragglers. */
-  async untaken<Tag extends In["_tag"]>(tag: Tag): Promise<Array<Extract<In, { _tag: Tag }>>> {
-    await Bun.sleep(150)
-    return this.received.filter((message) => message._tag === tag) as Array<
-      Extract<In, { _tag: Tag }>
-    >
-  }
-
-  async close() {
-    if (this.socket.readyState === WebSocket.CLOSED) return
-    this.socket.close(1000)
-    await this.closed
-  }
-}
-
 const alice = { id: "dev:alice", login: "alice", name: "alice" }
 const bob = { id: "dev:bob", login: "bob", name: "bob" }
-const runnerLogin = { account: "alice@example.com" }
-
-/** A web client signed in as `login`, welcomed and handed the lists. */
-async function openWeb(hub: TestHub, login: string, cookie?: string) {
-  const signIn = cookie ?? cookieFrom(await devSignIn(hub, login))
-  const web = await Connection.open<Web>(
-    hub,
-    "/ws/web",
-    { cookie: signIn, origin: webOrigin },
-    { _tag: "WebHello", protocolVersion: ProtocolVersion },
-  )
-  await web.take("WebWelcome")
-  const runners = await web.take("RunnerList")
-  const sessions = await web.take("SessionList")
-  return Object.assign(web, { cookie: signIn, runners, sessions })
-}
-
-const issueRunnerToken = (hub: TestHub, name = "mac") =>
-  hub.run(Effect.flatMap(RunnerTokens, (runners) => runners.issue(name)))
-
-/** The fake Runner, welcomed, saying it runs `sessions`. */
-async function openRunner(hub: TestHub, token: string, sessions: ReadonlyArray<string> = []) {
-  const runner = await Connection.open<ToRunner>(hub, "/ws/runner", bearer(token), {
-    _tag: "RunnerHello",
-    protocolVersion: ProtocolVersion,
-    name: "mac",
-    login: runnerLogin,
-    sessions,
-  })
-  await runner.take("RunnerWelcome")
-  return runner
-}
 
 /** The fake mod of a Session, speaking HTTP with the token from StartSession. */
 class Mod {

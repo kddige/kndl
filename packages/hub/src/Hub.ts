@@ -3,6 +3,7 @@ import { Layer } from "effect"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"
 import { CoAuthors } from "./CoAuthors.ts"
+import { Environments } from "./Environments.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
 import { ModOutbox } from "./ModOutbox.ts"
@@ -11,6 +12,7 @@ import { ModTokens } from "./ModTokens.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { Runners } from "./Runners.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
+import { Secrets } from "./Secrets.ts"
 import { SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { SessionRelay } from "./SessionRelay.ts"
@@ -21,8 +23,8 @@ import { SignIns } from "./SignIns.ts"
 export const HubRoutes = Layer.mergeAll(HealthRoute, AuthRoutes, ChannelRoutes, ModRoutes)
 
 /**
- * The credential stores, the mod outbox, the Session relay and the shutdown signal the routes use,
- * given a database and the GitHub App (GitHubApp.ts).
+ * The credential stores, the mod outbox, Environments, the Session relay and the shutdown signal
+ * the routes use, given a database and the GitHub App (GitHubApp.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
   Layer.provideMerge(SessionGit.layer),
@@ -38,8 +40,12 @@ export const HubServices = SessionRelay.layer.pipe(
       PromptQueue.layer,
       Runners.layer,
       HubShutdown.layer,
+      Environments.layer,
     ),
   ),
+  // Checks HUB_SECRETS_KEY against the Sensitive values stored, so a Hub with the wrong key
+  // refuses to start.
+  Layer.provideMerge(Secrets.layer),
 )
 
 /**

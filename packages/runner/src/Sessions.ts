@@ -345,6 +345,20 @@ export const SessionsLive = Layer.effect(
                 ),
               )
             : Effect.void
+        case "RunTestBuild":
+          // TODO(#49): build Environments. Until then a Test build fails at once, so the person
+          // who started it isn't left waiting.
+          return hub.send(
+            RunnerToHub.cases.TestBuildFinished.make({
+              testBuildId: incoming.testBuildId,
+              result: "Failed",
+              message: "This Runner can't run Test builds yet (issue #49).",
+            }),
+          )
+        case "VariablesFetched":
+        case "VariablesRefused":
+          // TODO(#49): the Runner doesn't fetch variables yet.
+          return Effect.logWarning(`Ignored a ${incoming._tag} the Runner didn't ask for`)
         case "RunnerWelcome":
         case "HandshakeRejected":
           return Effect.logWarning(`Ignored a ${incoming._tag} after the handshake`)

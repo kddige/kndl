@@ -12,6 +12,7 @@
     "format:check": "oxfmt --check",
     "hub": "bun run --filter @claude-hub/hub start",
     "runner-token": "bun run --filter @claude-hub/hub runner-token",
+    "secrets-key": "bun run --filter @claude-hub/hub secrets-key",
     "runner": "bun run mod:build && bun run --filter @claude-hub/runner start",
     "web": "bun run --filter @claude-hub/web dev",
     "mod:build": "bun run --filter @claude-hub/mod build",
