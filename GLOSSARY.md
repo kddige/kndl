@@ -16,6 +16,10 @@ _Avoid_: worker, agent, node, host
 The Claude account signed in on a Runner. Every Session on that Runner uses it, and it is shown visibly on each Session.
 _Avoid_: owner's subscription, credentials
 
+**Pairing code**:
+A short-lived, single-use code that lets a machine become a Runner of the Hub, or take over an existing Runner's place after it is reinstalled. Using it gives the machine its own lasting credential, and the code is spent.
+_Avoid_: join code, invite, enrollment token
+
 **Sandbox**:
 The isolated, disposable virtual machine in which all of a Session's file and command work happens. It is booted from a Build of its Repo's Environment.
 _Avoid_: container, VM
