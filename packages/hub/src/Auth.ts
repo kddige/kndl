@@ -12,7 +12,10 @@ import { type ModGrant, ModTokens } from "./ModTokens.ts"
 import { type RunnerIdentity, RunnerTokens } from "./RunnerTokens.ts"
 import { SignIns } from "./SignIns.ts"
 
-/** The cookie holding a browser's sign-in token. Host-only: it never names a `Domain`. */
+/**
+ * The cookie holding a browser's sign-in token. Host-only: it never names a `Domain`. No
+ * `__Host-` prefix, which browsers refuse without `Secure`: see `cookieSecurity`.
+ */
 export const signInCookie = "claude_hub_sign_in"
 
 /** No credential, or one that isn't valid here: answered with 401. */
@@ -90,7 +93,7 @@ export const authenticateMod = Effect.gen(function* () {
   return grant.value
 })
 
-/** Sets the sign-in cookie: HttpOnly, SameSite=Lax, host-only, and Secure unless on loopback. */
+/** Sets the sign-in cookie: HttpOnly, SameSite=Lax, host-only, and Secure as HubConfig says. */
 export const setSignInCookie = (
   response: HttpServerResponse.HttpServerResponse,
   signIn: { readonly token: string; readonly expiresAt: Date },
