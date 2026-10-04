@@ -183,17 +183,20 @@ main() {
     write_wrapper "$wrapper" "$home" "$bun"
     add_to_path "$(dirname "$wrapper")"
     export CLAUDE_HUB_HOME="$home"
+    # update ends with doctor, which fails on what --fix may repair: run it either way, and fail
+    # if either did.
+    status=0
     if [ -n "$ref" ]; then
-      "$wrapper" update --ref "$ref"
+      "$wrapper" update --ref "$ref" || status=$?
     else
-      "$wrapper" update
+      "$wrapper" update || status=$?
     fi
     if has_tty; then
-      "$wrapper" doctor --fix </dev/tty
+      "$wrapper" doctor --fix </dev/tty || status=$?
     else
-      "$wrapper" doctor --fix
+      "$wrapper" doctor --fix || status=$?
     fi
-    return 0
+    return "$status"
   fi
 
   [ ! -e "$app" ] || die "$app exists but isn't a git checkout: move it, and run this again."
