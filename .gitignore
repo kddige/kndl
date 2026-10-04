@@ -20,3 +20,9 @@ prototype/mod/tsconfig.json
 .env
 .env.*
 *.pem
+
+# macOS Finder metadata
+.DS_Store
+
+# Astro: generated types and the docs build
+.astro/

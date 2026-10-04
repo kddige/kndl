@@ -1,0 +1,278 @@
+---
+// The landing page's diagram: people on the web, the Hub, and Runners that each keep Claude Code
+// on the host and its tools in a Sandbox. Built from HTML rather than one SVG, so it reflows into
+// a column on a phone and its text stays readable at every width.
+---
+
+<figure class="how" aria-labelledby="how-caption">
+  <div class="flow">
+    <section class="node people" aria-label="People">
+      <p class="kicker">Browsers</p>
+      <h3>People</h3>
+      <p>Sign in to the web UI, start Sessions, send prompts, watch Claude work and type into its terminal.</p>
+      <div class="faces" aria-hidden="true"><span>AL</span><span>SN</span><span>MK</span></div>
+    </section>
+
+    <div class="wire" aria-hidden="true"><span class="label">/ws/web</span></div>
+
+    <section class="node hub" aria-label="The Hub">
+      <p class="kicker">One server</p>
+      <h3>Hub</h3>
+      <p>Knows every Session, Runner and Participant. Keeps the Prompt queues and Environments, and relays prompts and events.</p>
+      <ul class="chips" aria-label="What the Hub keeps">
+        <li>Sign-in</li>
+        <li>SQLite</li>
+        <li>GitHub App</li>
+      </ul>
+    </section>
+
+    <div class="wire fork" aria-hidden="true"><span class="label">/ws/runner</span></div>
+
+    <div class="runners">
+      {
+        ["studio-mac", "build-box"].map((name) => (
+          <section class="node runner" aria-label={`Runner ${name}`}>
+            <p class="kicker">Runner</p>
+            <h3>{name}</h3>
+            <div class="host">
+              <span class="dot" aria-hidden="true" />
+              <span>
+                <b>Claude Code</b> in tmux, on the Runner login
+              </span>
+            </div>
+            <div class="arrow" aria-hidden="true">
+              tools <span>↓</span>
+            </div>
+            <div class="sandbox">
+              <span class="dot" aria-hidden="true" />
+              <span>
+                <b>Sandbox</b> microVM with <code>/workspace</code>: every file and command tool runs here
+              </span>
+            </div>
+          </section>
+        ))
+      }
+    </div>
+  </div>
+  <figcaption id="how-caption">
+    Claude Code runs on the Runner with the Runner's credentials. Its tools run in the Session's
+    Sandbox, which never sees them.
+  </figcaption>
+</figure>
+
+<style>
+  .how {
+    margin: 0;
+  }
+  .flow {
+    display: grid;
+    gap: 0;
+    align-items: center;
+  }
+  @media (min-width: 56rem) {
+    .flow {
+      grid-template-columns: minmax(0, 0.9fr) 5.5rem minmax(0, 1fr) 5.5rem minmax(0, 1.25fr);
+    }
+  }
+
+  .node {
+    position: relative;
+    border: 1px solid var(--ch-line);
+    border-radius: 0.8rem;
+    background: var(--ch-surface-raised);
+    padding: 1rem 1.1rem 1.1rem;
+  }
+  .node h3 {
+    margin: 0 0 0.35rem;
+    font-size: var(--sl-text-lg);
+    color: var(--sl-color-white);
+  }
+  .node p {
+    margin: 0;
+    font-size: var(--sl-text-sm);
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+  .node .kicker {
+    margin-bottom: 0.2rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sl-color-gray-3);
+  }
+  .hub {
+    border-color: color-mix(in srgb, var(--sl-color-accent) 55%, var(--ch-line));
+    box-shadow: 0 18px 50px -24px var(--ch-glow);
+  }
+  .hub .kicker {
+    color: var(--sl-color-accent-high);
+  }
+
+  .faces {
+    display: flex;
+    margin-top: 0.8rem;
+  }
+  .faces span {
+    display: grid;
+    place-items: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    margin-inline-end: -0.35rem;
+    border-radius: 50%;
+    border: 2px solid var(--ch-surface-raised);
+    font-size: 0.58rem;
+    font-weight: 700;
+    color: #fff;
+    background: #3d5dcf;
+  }
+  .faces span:nth-child(2) {
+    background: #0f8a7e;
+  }
+  .faces span:nth-child(3) {
+    background: #8a5a12;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0.8rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .chips li {
+    margin: 0;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-family: var(--sl-font-mono);
+    font-size: 0.7rem;
+    color: var(--sl-color-accent-high);
+    background: var(--sl-color-accent-low);
+  }
+
+  .runners {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .runner h3 {
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-base);
+    margin-bottom: 0.6rem;
+  }
+  .host,
+  .sandbox {
+    display: flex;
+    gap: 0.55rem;
+    align-items: baseline;
+    padding: 0.5rem 0.65rem;
+    border-radius: 0.5rem;
+    font-size: var(--sl-text-xs);
+    line-height: 1.45;
+    color: var(--sl-color-gray-2);
+  }
+  .host b,
+  .sandbox b {
+    color: var(--sl-color-white);
+    font-weight: 600;
+  }
+  .host {
+    background: var(--ch-surface);
+    border: 1px solid var(--ch-line);
+  }
+  .sandbox {
+    border: 1px dashed color-mix(in srgb, var(--sl-color-green) 60%, var(--ch-line));
+    background: color-mix(in srgb, var(--sl-color-green) 7%, transparent);
+  }
+  .sandbox code {
+    font-size: 0.95em;
+    background: none;
+    padding: 0;
+  }
+  .dot {
+    flex: none;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--sl-color-accent);
+    transform: translateY(-0.05rem);
+  }
+  .sandbox .dot {
+    background: var(--sl-color-green);
+  }
+  .arrow {
+    padding: 0.2rem 0 0.2rem 1.6rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  /* The wires between the columns: vertical when stacked, horizontal side by side, where the
+     one from the Hub forks to each Runner. */
+  .wire {
+    --wire: color-mix(in srgb, var(--sl-color-accent) 65%, var(--ch-line));
+    position: relative;
+    height: 3rem;
+    display: grid;
+    place-items: center;
+  }
+  .wire::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: calc(50% - 0.75px);
+    border-inline-start: 1.5px solid var(--wire);
+  }
+  .wire .label {
+    position: relative;
+    padding: 0.1rem 0.45rem;
+    border-radius: 0.3rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.68rem;
+    color: var(--sl-color-gray-3);
+    background: var(--sl-color-bg);
+  }
+  @media (min-width: 56rem) {
+    .wire {
+      height: auto;
+      align-self: stretch;
+    }
+    .wire::before {
+      inset-block: calc(50% - 0.75px) auto;
+      inset-inline: 0;
+      border-inline-start: none;
+      border-block-start: 1.5px solid var(--wire);
+    }
+    .wire .label {
+      padding: 0;
+      background: none;
+      font-size: 0.62rem;
+      transform: translateY(-0.8rem);
+    }
+    /* The fork: half a line from the Hub, then a bracket out to the middle of each Runner. */
+    .fork::before {
+      inset-inline: 0 28%;
+    }
+    .fork::after {
+      content: "";
+      position: absolute;
+      inset-block: 25%;
+      inset-inline: 72% 0;
+      border: 1.5px solid var(--wire);
+      border-inline-end: none;
+      border-start-start-radius: 0.6rem;
+      border-end-start-radius: 0.6rem;
+    }
+    .fork .label {
+      justify-self: start;
+      margin-inline-start: 0.15rem;
+    }
+  }
+
+  figcaption {
+    margin-top: 1.25rem;
+    max-width: 44rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+</style>

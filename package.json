@@ -17,7 +17,9 @@
     "web": "bun run --filter @claude-hub/web dev",
     "web:build": "bun run --filter @claude-hub/web build",
     "mod:build": "bun run --filter @claude-hub/mod build",
-    "mod:check": "bun run --filter @claude-hub/mod check"
+    "mod:check": "bun run --filter @claude-hub/mod check",
+    "docs:dev": "bun run --filter @claude-hub/docs dev",
+    "docs:build": "bun run --filter @claude-hub/docs build"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",

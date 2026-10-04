@@ -1,0 +1,27 @@
+---
+// Starlight's footer (pagination and the rest), plus the line every page carries: claude-hub is
+// an independent project.
+import Default from "@astrojs/starlight/components/Footer.astro"
+
+const base = import.meta.env.BASE_URL
+---
+
+<Default><slot /></Default>
+<p class="independent">
+  claude-hub is an independent project. It is not affiliated with or endorsed by Anthropic.
+  Claude and Claude Code are trademarks of Anthropic, PBC. <a href={`${base}about/`}>About</a>
+</p>
+
+<style>
+  .independent {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--sl-color-hairline);
+    font-size: var(--sl-text-xs);
+    line-height: 1.6;
+    color: var(--sl-color-gray-3);
+  }
+  .independent a {
+    color: var(--sl-color-gray-2);
+  }
+</style>
