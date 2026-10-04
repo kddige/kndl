@@ -16,6 +16,7 @@ import { HubConfig } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 import { generateSecretsKey } from "./Secrets.ts"
+import { announceWebUi } from "./WebUi.ts"
 
 const ServerLive = Layer.unwrap(
   Effect.map(HubConfig, ({ host, port }) =>
@@ -51,6 +52,7 @@ const announceSignIn = Layer.effectDiscard(
 
 const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(announceSignIn),
+  Layer.provide(announceWebUi),
   Layer.provide(ServerLive),
   Layer.provide(GitHub.layer),
   Layer.provide(HubServices),

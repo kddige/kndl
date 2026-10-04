@@ -15,6 +15,7 @@
     "secrets-key": "bun run --filter @claude-hub/hub secrets-key",
     "runner": "bun run mod:build && bun run --filter @claude-hub/runner start",
     "web": "bun run --filter @claude-hub/web dev",
+    "web:build": "bun run --filter @claude-hub/web build",
     "mod:build": "bun run --filter @claude-hub/mod build",
     "mod:check": "bun run --filter @claude-hub/mod check"
   },
