@@ -18,7 +18,7 @@ Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-
 | `claude-hub onboard` | Sets the machine up as a Hub, a Runner or both: prerequisites, `hub.env` and `runner.env`, builds, services. See [below](#claude-hub-onboard). |
 | `claude-hub status` | What's installed (commit, and the branch it follows or that it's pinned), each service's state, the Hub's URL and `/health`, and whether the Runner is connected. Exits 1 only when there's no install; `doctor` is the check. |
 | `claude-hub logs [hub\|runner] [-f] [-n <lines>]` | Prints the last 100 lines (`-n`) of the service's log, and with `-f` follows it. The role can be left out when the machine has only one. |
-| `claude-hub doctor [--fix] [--yes]` | Checks the prerequisites, the env files and their permissions, that the Hub and Runner accept their configuration, the web UI and mod builds, the trust entry in `~/.claude.json`, the services, the Hub's health, and whether the Runner reaches the Hub. Prints `ok`, `!!` (a warning) or `XX` (a failure) for each, and exits 1 on a failure. `--fix` repairs what it can, after asking (`--yes` doesn't ask), then checks again. |
+| `claude-hub doctor [--fix] [--yes]` | Checks the prerequisites, the env files and their permissions, that the Hub and Runner accept their configuration, the web UI and mod builds, the trust entry in `~/.claude.json`, claude-hub data in the home without its env file, the services, the Hub's health, and whether the Runner reaches the Hub. Prints `ok`, `!!` (a warning) or `XX` (a failure) for each, and exits 1 on a failure. `--fix` repairs what it can, after asking (`--yes` doesn't ask), then checks again. It moves old data aside only when you confirm it in a terminal, even with `--yes`. |
 | `claude-hub update [--ref <ref>]` | Updates the install: fetches, moves to the target, runs `bun install`, rebuilds the web UI and the mod, rewrites and restarts the installed services, and runs `doctor`. `upgrade` is the same command. See [below](#claude-hub-update). |
 | `claude-hub uninstall [--purge] [--yes]` | Stops and removes the services, removes the `claude-hub` command and the install, and keeps the home's data. `--purge` removes the whole home. Asks first; without a terminal it needs `--yes`. |
 | `claude-hub hub install\|start\|stop\|status` | The Hub's service. `install` writes the service file and (re)starts it; `stop` stops it until the next `start` or login; `status` exits 1 unless it runs. |
@@ -48,8 +48,11 @@ Each question has a flag, and a flag that's given isn't asked. Onboard also keep
 | `--linger`, `--no-linger` | Linux: run `loginctl enable-linger`, so the services run while you're logged out and start at boot. |
 | `--non-interactive` | Never ask. A yes-or-no question takes its default, and any other missing answer fails with the flag it needs. Onboard also never asks without a terminal. |
 | `--reset` | Ask again instead of keeping the existing settings. Keeps `HUB_SECRETS_KEY`. |
+| `--move-old-data` | When the home holds claude-hub data without its env file, such as a checkout's old `sessions/`, rename each entry to `<name>.old-<YYYYMMDD>` without asking. Nothing is deleted. See [Troubleshooting](/troubleshooting/install/#the-home-holds-old-claude-hub-data). |
 
 Every yes-or-no flag has a `--no-` form, such as `--no-install-prerequisites`.
+
+Onboard asks every question before it writes anything, and writes each file whole, so Esc or Ctrl-C at a question leaves the home as it was, and exits 130. Ctrl-C during a long step (an install, a build, starting a service) stops that step's command and exits 130 too.
 
 ### `claude-hub update`
 

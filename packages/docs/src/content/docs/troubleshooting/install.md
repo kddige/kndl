@@ -51,6 +51,27 @@ onboard can't ask, so it needs --role hub|runner|both.
 
 **Fix.** Give the flag it names, or run onboard in a terminal. Every flag is in [Commands](/reference/commands/#claude-hub-onboard).
 
+## The home holds old claude-hub data
+
+**What you see.** Onboard stops before it writes anything:
+
+```
+/Users/ada/.claude-hub holds claude-hub data that wasn't set up here by `claude-hub onboard`: sessions, claude-code, with no runner.env. It is likely a checkout's, from before checkouts kept theirs in ~/.claude-hub-dev. …
+```
+
+and `claude-hub doctor` warns `!!  Old data`.
+
+**Why.** Before checkouts got the dev home `~/.claude-hub-dev`, a checkout's Runner kept its Session Workspaces in `~/.claude-hub/sessions` and used tmux server `claude-hub`: exactly what an installed Runner uses. A Runner installed over that data would carry the old Runner's mark, so it would take over the old Sessions' tmux sessions and Sandboxes, while its new Hub database knows none of those Sessions. A Hub's `hub.db` without `hub.env` is old data in the same way. Once onboard has written a role's env file, that role's data is the install's own, and none of this applies.
+
+**Fix.** Choose one:
+
+- **Move it aside.** In a terminal, onboard offers it and asks you to confirm; `claude-hub onboard --move-old-data` does it without asking, and `claude-hub doctor --fix` asks before it does. Each entry is renamed within the home, `sessions` to `sessions.old-<YYYYMMDD>` and `claude-code` to `claude-code.old-<YYYYMMDD>`; nothing is deleted. Delete them yourself once you're sure you don't need those Sessions' work.
+- **Install somewhere else.** Set `CLAUDE_HUB_HOME` to another directory, and install and onboard there.
+
+Other files in the home, such as a `github-app.pem`, stay where they are.
+
+If onboard also says that tmux server `claude-hub` has sessions, those would be re-adopted however the data is named: archive those Sessions on the Hub that started them, or stop the server with `tmux -L claude-hub kill-server`, then onboard again.
+
 ## A service won't stay up
 
 **What you see.** `claude-hub status` or `doctor` shows the Hub's or Runner's service as not running, or `XX  Hub service … its log: claude-hub logs hub`.

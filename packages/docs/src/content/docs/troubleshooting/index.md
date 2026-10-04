@@ -31,6 +31,7 @@ For a closer look on a Runner's machine, list its tmux sessions with `tmux -L cl
 - `claude-hub: command not found` after installing.
 - `claude-hub is not installed in …`
 - `onboard can't ask, so it needs --role hub|runner|both.`
+- Onboard stops: ``… holds claude-hub data that wasn't set up here by `claude-hub onboard` …``
 - A service won't stay up.
 - On Linux, the services stop when you log out.
 - The Runner can't use KVM after onboard added you to the `kvm` group.

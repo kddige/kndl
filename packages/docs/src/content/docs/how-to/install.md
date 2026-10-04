@@ -56,6 +56,8 @@ Onboard asks:
    - `https`: anyone, through an HTTPS proxy or tunnel in front of it. It asks for the public URL.
 4. For a Runner on its own, **the Hub's URL and a Runner token**. Issue the token on the Hub's machine with `claude-hub runner token <name>`. With both on one machine, onboard issues the token itself.
 
+If the home already holds claude-hub data that onboard didn't set up there, such as a checkout's `sessions/` from before checkouts kept theirs in `~/.claude-hub-dev`, onboard stops first and offers to move it aside: see [The home holds old claude-hub data](/troubleshooting/install/#the-home-holds-old-claude-hub-data).
+
 Then it writes `hub.env` and `runner.env` in the home (each readable only by you), makes a `HUB_SECRETS_KEY` if there is none, builds the web UI and the `hub-link` mod, installs and starts the services, and checks that the Hub answers and the Runner connects.
 
 Back up `hub.env` together with `hub.db`: the key in it is the only way to read the Sensitive values in the database.
