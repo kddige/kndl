@@ -6,6 +6,8 @@ The words used here (Hub, Runner, Session, Sandbox, Participant, ...) are define
 
 This is v1's scaffold: each package starts and does almost nothing yet.
 
+<!-- Test edit from a Claude Hub Session, checking commit, push and PR creation. -->
+
 ## Layout
 
 One Bun workspace in TypeScript.
