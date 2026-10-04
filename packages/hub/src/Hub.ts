@@ -17,9 +17,16 @@ import { SessionLog } from "./SessionLog.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 import { SignIns } from "./SignIns.ts"
+import { WebUiRoutes } from "./WebUi.ts"
 
-/** Every route the Hub serves. */
-export const HubRoutes = Layer.mergeAll(HealthRoute, AuthRoutes, ChannelRoutes, ModRoutes)
+/** Every route the Hub serves: its own, and the web UI's build on every other GET path. */
+export const HubRoutes = Layer.mergeAll(
+  HealthRoute,
+  AuthRoutes,
+  ChannelRoutes,
+  ModRoutes,
+  WebUiRoutes,
+)
 
 /**
  * The credential stores, the mod outbox, Environments, the Session relay and the shutdown signal

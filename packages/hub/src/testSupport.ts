@@ -42,6 +42,8 @@ export const baseConfig: HubConfigInput = {
   sleepAfterMs: Duration.toMillis(DefaultSleepAfter),
   archiveRetentionMs: Duration.toMillis(DefaultArchiveRetention),
   secretsKey: Option.none(),
+  // No web UI build: WebUi.test.ts makes its own.
+  webDir: "/nonexistent/claude-hub/web",
 }
 
 /** The Hub's stores and services, and its database, which tests can reach into. */

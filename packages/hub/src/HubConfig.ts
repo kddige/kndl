@@ -1,5 +1,6 @@
 import { createPrivateKey } from "node:crypto"
 import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 import { Config, Context, Duration, Effect, Layer, Option, Redacted, Schema } from "effect"
 
 /** The GitHub App's user sign-in credentials (issue #1). */
@@ -51,7 +52,15 @@ export interface HubConfigInput {
   readonly archiveRetentionMs: number
   /** The key Sensitive variable values are encrypted with: 32 bytes, base64. */
   readonly secretsKey: Option.Option<Redacted.Redacted<string>>
+  /** The web UI's build: the directory holding its `index.html`. */
+  readonly webDir: string
 }
+
+/**
+ * Where the Hub finds the web UI's build by default: `packages/web/dist` in this checkout, which
+ * `bun run web:build` writes.
+ */
+export const DefaultWebDir = fileURLToPath(new URL("../../web/dist", import.meta.url))
 
 /** How long an idle Session stays Active by default (GLOSSARY.md: Asleep). */
 export const DefaultSleepAfter = Duration.minutes(15)
@@ -157,6 +166,8 @@ export class HubConfig extends Context.Service<
      * values can't then be saved, and the Hub refuses to start if any are stored.
      */
     readonly secretsKey: Option.Option<Redacted.Redacted<Uint8Array>>
+    /** The web UI's build, which the Hub serves (WebUi.ts). It may not exist. */
+    readonly webDir: string
   }
 >()("@claude-hub/hub/HubConfig") {
   /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
@@ -238,6 +249,7 @@ export class HubConfig extends Context.Service<
       sleepAfter: Duration.millis(input.sleepAfterMs),
       archiveRetention: Duration.millis(input.archiveRetentionMs),
       secretsKey,
+      webDir: input.webDir,
     })
   })
 
@@ -246,8 +258,8 @@ export class HubConfig extends Context.Service<
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
    * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the Runner uses its host's
    * git credentials, and the Sandbox gets no GitHub token), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_INSECURE_COOKIES` (off), `HUB_SLEEP_AFTER_MS`
-   * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days) and `HUB_SECRETS_KEY` (unset: Sensitive
-   * values can't be saved).
+   * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days), `HUB_SECRETS_KEY` (unset: Sensitive
+   * values can't be saved) and `HUB_WEB_DIR` (DefaultWebDir).
    */
   static readonly layer = Layer.effect(
     HubConfig,
@@ -284,6 +296,7 @@ export class HubConfig extends Context.Service<
           Config.withDefault(Duration.toMillis(DefaultArchiveRetention)),
         ),
         secretsKey: Config.option(Config.Redacted("HUB_SECRETS_KEY")),
+        webDir: Config.NonEmptyString("HUB_WEB_DIR").pipe(Config.withDefault(DefaultWebDir)),
       })
       return yield* HubConfig.make({ ...input, githubAppPrivateKey })
     }),

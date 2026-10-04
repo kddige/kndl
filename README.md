@@ -13,7 +13,7 @@ One Bun workspace in TypeScript.
 | Package | What it is |
 |---|---|
 | [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as [Effect](https://effect.website) Schemas. Imported from source by the other packages. |
-| [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Signs people in, issues Runner and mod tokens, accepts the Runner and web WebSocket channels, and serves the mod's HTTP endpoints (handshake only, for now). |
+| [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Signs people in, issues Runner and mod tokens, accepts the Runner and web WebSocket channels, serves the mod's HTTP endpoints (handshake only, for now), and serves the web UI's build. |
 | [`packages/runner`](packages/runner) | A Runner: an Effect program that connects to the Hub and runs each Session's Claude Code in its own tmux session on its host, streaming the terminal, and each Session's tools in its own [microsandbox](https://github.com/microsandbox/microsandbox) Sandbox through a tool bridge. |
 | [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod a Runner loads into each Session. Sends the Session's turns to the Hub, delivers prompts from the web UI, shows the Participants above the prompt, and runs the file and command tools in the Sandbox, denying every other tool. Its logic is bundled with Effect and the protocol into one ES module (`bun run mod:build`). |
 | [`packages/web`](packages/web) | The web UI: React on Vite, built from [Base UI](https://base-ui.com) primitives and styled with StyleX. The sidebar (Sessions grouped by Repo, plus Environments, Shared variables and Archived Sessions) and the Session view, on a typed client for the web channel (`src/hub`). The UI kit is at `/kit`. |
@@ -44,14 +44,28 @@ All run from the repo root:
 
 | Command | What it starts | Env (default) |
 |---|---|---|
-| `bun run hub` | The Hub on <http://127.0.0.1:7777>; try `/health`. | `HOST` (`127.0.0.1`), `PORT` (`7777`), `HUB_DATABASE` (`hub.db` in `packages/hub`), and the sign-in settings below |
+| `bun run hub` | The Hub on <http://127.0.0.1:7777>, with the web UI's build at `/` once `bun run web:build` has made it; try `/health`. | `HOST` (`127.0.0.1`), `PORT` (`7777`), `HUB_DATABASE` (`hub.db` in `packages/hub`), `HUB_WEB_DIR` (`packages/web/dist`), and the sign-in settings below |
 | `bun run runner-token <name>` | Issues a token for the Runner called `<name>` and prints it. | `HUB_DATABASE`, as for the Hub |
 | `bun run secrets-key` | Prints a new random `HUB_SECRETS_KEY`, for encrypting Sensitive variable values. See [Environments](#environments). | |
 | `bun run runner` | A Runner for this machine; see [Running a Runner](#running-a-runner). | `HUB_URL` (`http://127.0.0.1:7777`), `RUNNER_TOKEN` (required), `RUNNER_NAME` (short hostname) |
+| `bun run web:build` | Builds the web UI into `packages/web/dist`, for the Hub to serve. See [The web UI](#the-web-ui). | |
 | `bun run web` | The web UI's Vite dev server on <http://localhost:5173>. It passes `/auth`, `/health` and `/ws` through to the Hub, so the web UI and the Hub share one origin. | `HUB_URL` (`http://127.0.0.1:7777`); `VITE_FAKE_HUB=1` runs it against an in-process fake Hub that plays a scripted Session instead, and `VITE_FAKE_HUB=signed-out` starts that signed out |
 | `claude --plugin-dir packages/mod` | Claude Code with the `hub-link` mod loaded. Build it first with `bun run mod:build`. | |
 
 Each package's own scripts (`start`, `dev`, `build`, `typecheck`) also run from inside it with `bun run <script>`.
+
+### The web UI
+
+The web UI reaches the Hub on its own origin, so there are two ways to run it, and `HUB_PUBLIC_URL` names whichever origin browsers open:
+
+| Setup | Commands | Open | `HUB_PUBLIC_URL` |
+|---|---|---|---|
+| Built, served by the Hub: one process on one port, as in production | `bun run web:build`, then `bun run hub` | <http://127.0.0.1:7777> | `http://127.0.0.1:7777` (the Hub's own URL) |
+| Development, with Vite's hot reload | `bun run hub` and `bun run web` | <http://localhost:5173> | `http://localhost:5173` (the default) |
+
+The Hub serves the build from `HUB_WEB_DIR` (default `packages/web/dist` in this checkout). Every GET path that isn't one of the Hub's own routes gets a file from the build, with its content type; any other path without a file extension, such as `/sessions/<id>`, gets `index.html`, and the web UI's router takes it from there. Unknown paths under `/auth`, `/health`, `/mod` and `/ws` stay 404s. Files under `/assets/`, which Vite names by a hash of their contents, are cached for a year; everything else, `index.html` included, is revalidated on every load, so a new build shows on the next reload without restarting the Hub.
+
+Without a build, the Hub still starts: it logs a warning at startup, and its pages answer 503 with how to build one.
 
 ## Signing in
 
@@ -69,7 +83,7 @@ The Hub reads its sign-in and lifecycle settings from the environment:
 
 | Env | Default | What it does |
 |---|---|---|
-| `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the web UI and, through it, the Hub. GitHub sends people back here, and cookie-authenticated requests must come from this origin. |
+| `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the web UI and, through it, the Hub: the Hub's own URL, such as `http://127.0.0.1:7777`, when it serves the web UI's build, or Vite's `http://localhost:5173` in development (see [The web UI](#the-web-ui)). GitHub sends people back here, and cookie-authenticated requests must come from this origin. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret (issue #1). Unset, GitHub sign-in is off. Set the App's callback URL to `<HUB_PUBLIC_URL>/auth/github/callback`. |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The App's id and the path to its private key. The Hub mints short-lived installation tokens from them for the Runners' clones and WIP pushes, and for `git` and `gh` in each Session's Sandbox ([ADR 0010](docs/adr/0010-the-sandbox-gets-a-github-token.md)). Unset, Runners use their host's own git credentials and Sandboxes get no GitHub token: see [Git from Sessions](#git-from-sessions). |
 | `CLAUDE_HUB_DEV_LOGIN` | off | `1` turns on dev login: `POST /auth/dev` signs you in as a local Participant without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers. |
@@ -85,7 +99,7 @@ Create the App once, at <https://github.com/settings/apps/new>:
 
 | Setting | Value |
 |---|---|
-| Callback URLs | `<HUB_PUBLIC_URL>/auth/github/callback`: add one per URL the Hub is reached at, such as `http://localhost:5173/auth/github/callback` and `https://hub.dige.dev/auth/github/callback` |
+| Callback URLs | `<HUB_PUBLIC_URL>/auth/github/callback`: add one per URL the Hub is reached at, such as `http://localhost:5173/auth/github/callback`, `http://127.0.0.1:7777/auth/github/callback` and `https://hub.dige.dev/auth/github/callback` |
 | Request user authorization (OAuth) during installation | unticked |
 | Expire user authorization tokens | ticked |
 | Webhook, Active | unticked |
@@ -123,14 +137,21 @@ Only the Hub's host needs these. Sign-in uses the client id and secret; installa
 ### Trying it on one machine, without GitHub
 
 ```sh
-CLAUDE_HUB_DEV_LOGIN=1 bun run hub      # the Hub, with dev login
+bun run web:build                       # builds the web UI, for the Hub to serve
+HUB_PUBLIC_URL=http://127.0.0.1:7777 CLAUDE_HUB_DEV_LOGIN=1 bun run hub   # the Hub and the web UI, with dev login
 bun run runner-token "$(hostname -s)"   # prints this machine's Runner token, once
+```
+
+Or, to work on the web UI with Vite's hot reload, run the Hub with the default `HUB_PUBLIC_URL` and Vite beside it:
+
+```sh
+CLAUDE_HUB_DEV_LOGIN=1 bun run hub      # the Hub, with dev login
 bun run web                             # the web UI on http://localhost:5173
 ```
 
 On SIGTERM or SIGINT the Hub answers any waiting mod long poll with no commands, closes the Runner and web WebSockets with 1001 (going away), and exits within a second. Runners reconnect when it comes back.
 
-Open <http://localhost:5173> and sign in with dev login. (With the GitHub App set up, drop `CLAUDE_HUB_DEV_LOGIN=1` and sign in with GitHub.)
+Open <http://127.0.0.1:7777> (or <http://localhost:5173> with Vite) and sign in with dev login. (With the GitHub App set up, drop `CLAUDE_HUB_DEV_LOGIN=1` and sign in with GitHub.)
 
 Running `runner-token` again for the same name keeps the RunnerId and replaces the token, so the old one stops working. Pass it to the Runner as `RUNNER_TOKEN`:
 
