@@ -130,7 +130,9 @@ export function prerequisitePlan(facts: HostFacts, roles: ReadonlyArray<Role>): 
         }),
       )
       afterwards.push(
-        `Log out and back in (or reboot) so ${facts.user}'s new kvm group applies, then run \`claude-hub doctor\`.`,
+        // A user's systemd manager keeps the groups it started with, and lingering keeps it
+        // running across logins: only a reboot gives the Runner's service the new group.
+        `Reboot so ${facts.user}'s new kvm group reaches the Runner's service (logging out isn't enough while the services linger), then run \`claude-hub doctor\`.`,
       )
     }
   }

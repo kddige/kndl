@@ -136,7 +136,11 @@ const logsCommand = Command.make(
       Flag.withAlias("f"),
       Flag.withDescription("Keep printing as it logs"),
     ),
-    lines: Flag.Int("lines").pipe(Flag.withAlias("n"), Flag.withDefault(100)),
+    lines: Flag.Int("lines").pipe(
+      Flag.withAlias("n"),
+      Flag.withDefault(100),
+      Flag.withDescription("How many of the last lines to print"),
+    ),
   },
   ({ role, follow, lines }) =>
     Effect.gen(function* () {

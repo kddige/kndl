@@ -99,7 +99,7 @@ describe("the prerequisite plan", () => {
     const plan = prerequisitePlan(facts, ["runner"])
 
     expect(commands(facts, ["runner"])).toEqual(["sudo usermod -aG kvm ada"])
-    expect(plan.afterwards[0]).toContain("Log out and back in")
+    expect(plan.afterwards[0]).toContain("Reboot")
   })
 
   test("Linux: no /dev/kvm can't be fixed, only reported", () => {
