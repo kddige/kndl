@@ -10,16 +10,13 @@ import {
   EnvironmentVersion,
   type ModCommandsEncoded,
   type ModEventsEncoded,
-  Participant,
   ParticipantId,
   ProtocolVersion,
 } from "@claude-hub/protocol"
 import { Effect, Exit, Option, Redacted } from "effect"
-import { signInCookie } from "./Auth.ts"
 import { databaseAt } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
-import { SignIns } from "./SignIns.ts"
 import {
   type Connection,
   issueRunnerToken,
@@ -32,14 +29,7 @@ import {
   type Web,
 } from "./testChannels.ts"
 import { appId, appKeyPair, appSlug, botUserId, StandInGitHub } from "./testGitHubApi.ts"
-import {
-  baseConfig,
-  bearer,
-  seedEnvironment,
-  startHub,
-  type TestHub,
-  webOrigin,
-} from "./testSupport.ts"
+import { baseConfig, bearer, seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -152,6 +142,14 @@ const turnStarted = (
   ...(promptId === undefined ? {} : { promptId }),
 })
 
+/** A Turn started from the terminal with `text`. */
+const turnSaying = (turnId: string, text: string): ModEvent => ({
+  _tag: "TurnStarted",
+  turnId,
+  text,
+  sender: { _tag: "FromTerminal" },
+})
+
 /** The value, failing the test when it is missing. */
 function defined<T>(value: T | undefined): T {
   expect(value).toBeDefined()
@@ -167,6 +165,9 @@ const turnEnded = (turnId: string, agentId?: string): ModEvent => ({
 })
 
 type QueueChanged = Extract<Web, { _tag: "PromptQueueChanged" }>
+
+/** A value as redaction masks it. */
+const stars = (value: string) => "*".repeat(value.length)
 
 const queueTexts = (message: QueueChanged) => message.queue.map((prompt) => prompt.text)
 
@@ -1448,37 +1449,7 @@ describe("a Hub restart", () => {
   })
 })
 
-/** Sends a prompt as the web client, and runs it as a Turn to its end. */
-async function promptTurn(
-  web: Connection<Web>,
-  mod: Mod,
-  sessionId: string,
-  text: string,
-  turnId: string,
-) {
-  web.send({ _tag: "SendPrompt", sessionId, text })
-  const [delivered] = await mod.deliveries(1_000)
-  const prompt = defined(delivered)
-  await mod.post(
-    turnStarted(turnId, prompt.promptId, { _tag: "FromParticipant", participant: prompt.sender }),
-  )
-  await mod.post(turnEnded(turnId))
-}
-
 describe("git", () => {
-  const octocat = { id: "github:583231", login: "octocat", name: "The Octocat" }
-  const hubot = { id: "github:480938", login: "hubot", name: "Hubot" }
-
-  /** A web client signed in with GitHub, as `who`. */
-  async function openGitHubWeb(hub: TestHub, who: typeof octocat) {
-    const { token } = await hub.run(
-      Effect.flatMap(SignIns, (signIns) =>
-        signIns.signIn(Participant.make({ ...who, id: ParticipantId.make(who.id) })),
-      ),
-    )
-    return openWeb(hub, who.login, `${signInCookie}=${token}`)
-  }
-
   let requests = 0
   /** Asks the Hub, as the Runner, and waits for its answer. */
   async function ask(
@@ -1492,26 +1463,32 @@ describe("git", () => {
     return (await runner.take("GitReply", (reply) => reply.requestId === requestId)).answer
   }
 
-  test("without the GitHub App, Repo access is the host's credentials and pull requests fail", async () => {
+  test("without the GitHub App, Repo access is the host's credentials and the Sandbox gets no token", async () => {
     const { runner, sessionId } = await sessionScene()
 
     expect(await ask(runner, sessionId, { _tag: "GitAccess" })).toEqual({
       _tag: "GitAccess",
       repo: "kddige/claude-hub",
-      baseBranch: "main",
-      workBranch: `claude/${sessionId}`,
       credentials: { _tag: "HostCredentials" },
     })
-    const failed = await ask(runner, sessionId, {
-      _tag: "OpenPullRequest",
-      title: "t",
-      body: "",
-      draft: false,
-    })
+    const failed = await ask(runner, sessionId, { _tag: "SandboxToken" })
     expect(failed).toMatchObject({ _tag: "GitFailed" })
-    expect((failed as { message: string }).message).toStartWith(
-      "Opening a pull request needs the GitHub App",
+    expect((failed as { message: string }).message).toContain(
+      "GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH",
     )
+  })
+
+  test("the git tools' requests are gone (#73)", async () => {
+    const { runner, sessionId } = await sessionScene()
+    for (const removed of [
+      { _tag: "CoAuthors" },
+      { _tag: "OpenPullRequest", title: "t", body: "", draft: false },
+      { _tag: "ReviewPullRequest", number: 1, body: "x", event: "COMMENT" },
+    ]) {
+      runner.send({ _tag: "GitRequest", requestId: "old", sessionId, ask: removed })
+    }
+    runner.send({ _tag: "CoAuthorsCommitted", sessionId, through: 1 })
+    expect(await runner.untaken("GitReply")).toEqual([])
   })
 
   test("a Runner can't ask about another Runner's Session", async () => {
@@ -1552,62 +1529,6 @@ describe("git", () => {
     })
   })
 
-  test("co-authors are who prompted since the last commit, each once, dev logins left out", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
-    try {
-      const database = databaseAt(join(dir, "hub.db"))
-      const first = await startHub({ config: { devLogin: true }, database })
-      const { runner, runnerToken, web: aliceWeb, sessionId, mod } = await sessionScene(first)
-      const octo = await openGitHubWeb(first, octocat)
-      const hu = await openGitHubWeb(first, hubot)
-
-      await promptTurn(octo, mod, sessionId, "one", "t-1")
-      await promptTurn(aliceWeb, mod, sessionId, "two", "t-2")
-      await promptTurn(hu, mod, sessionId, "three", "t-3")
-      await promptTurn(octo, mod, sessionId, "four", "t-4")
-      // A Turn typed at the terminal has no Participant to credit.
-      await mod.post(turnStarted("t-5"), turnEnded("t-5"))
-
-      const listed = await ask(runner, sessionId, { _tag: "CoAuthors" })
-      expect(listed).toMatchObject({
-        _tag: "CoAuthors",
-        coAuthors: [
-          { name: "The Octocat", email: "583231+octocat@users.noreply.github.com" },
-          { name: "Hubot", email: "480938+hubot@users.noreply.github.com" },
-        ],
-      })
-
-      // A prompt after the list was handed over stays for the next commit.
-      await promptTurn(hu, mod, sessionId, "five", "t-6")
-      runner.send({
-        _tag: "CoAuthorsCommitted",
-        sessionId,
-        through: (listed as { through: number }).through,
-      })
-      expect(await ask(runner, sessionId, { _tag: "CoAuthors" })).toMatchObject({
-        coAuthors: [{ name: "Hubot" }],
-      })
-
-      // The list survives a restart.
-      await Promise.all([aliceWeb, octo, hu, runner].map((connection) => connection.close()))
-      await first.stop()
-      const second = await startHub({ config: { devLogin: true }, database })
-      const back = await openRunner(second, runnerToken, [sessionId])
-      const after = await ask(back, sessionId, { _tag: "CoAuthors" })
-      expect(after).toMatchObject({ coAuthors: [{ name: "Hubot" }] })
-
-      back.send({
-        _tag: "CoAuthorsCommitted",
-        sessionId,
-        through: (after as { through: number }).through,
-      })
-      expect(await ask(back, sessionId, { _tag: "CoAuthors" })).toMatchObject({ coAuthors: [] })
-    } finally {
-      await stopAll()
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
   describe("with the GitHub App", () => {
     const keys = appKeyPair()
     let github: StandInGitHub
@@ -1636,7 +1557,7 @@ describe("git", () => {
 
       expect(access).toMatchObject({
         _tag: "GitAccess",
-        workBranch: `claude/${sessionId}`,
+        repo: "kddige/claude-hub",
         credentials: {
           _tag: "AppToken",
           token: github.mintedTokens[0],
@@ -1648,53 +1569,79 @@ describe("git", () => {
       })
     })
 
-    test("a pull request goes from the Work branch to the base branch, linking the Session", async () => {
+    test("a Sandbox token is fresh for the Session, with every permission the installation has", async () => {
       const { runner, sessionId } = await sessionScene(await appHub())
-      const question = {
-        _tag: "OpenPullRequest",
-        title: "Widgets",
-        body: "Adds widgets.",
-        draft: true,
-      }
+      const answer = await ask(runner, sessionId, { _tag: "SandboxToken" })
 
-      expect(await ask(runner, sessionId, question)).toEqual({
-        _tag: "PullRequest",
-        number: 1,
-        url: "https://github.test/kddige/claude-hub/pull/1",
-        existing: false,
-      })
-      expect(github.pulls.get("kddige/claude-hub")).toMatchObject([
+      expect(answer).toMatchObject({ _tag: "SandboxToken", token: github.mintedTokens[0] })
+      const mint = github.requests.find((request) => request.path.endsWith("/access_tokens"))
+      expect(mint?.body).toEqual({ repositories: ["claude-hub"] })
+      // A refresh is a new token.
+      const again = await ask(runner, sessionId, { _tag: "SandboxToken" })
+      expect((again as { token: string }).token).toBe(github.mintedTokens[1] ?? "")
+      expect(github.mintedTokens[1]).not.toBe(github.mintedTokens[0])
+    })
+
+    test("the Session's current and previous Sandbox tokens are redacted from all it prints", async () => {
+      const { runner, web, sessionId, mod } = await sessionScene(await appHub())
+      joinSession(web, sessionId)
+      await web.take("SessionHistory")
+      web.send({ _tag: "OpenTerminal", sessionId })
+      await runner.take("RequestTerminalSnapshot")
+
+      await ask(runner, sessionId, { _tag: "SandboxToken" })
+      await ask(runner, sessionId, { _tag: "SandboxToken" })
+      const [previous = "", current = ""] = github.mintedTokens
+
+      await mod.post(
+        turnSaying("t-1", `push with ${current}`),
         {
-          head: `claude/${sessionId}`,
-          base: "main",
-          title: "Widgets",
-          draft: true,
-          body: `Adds widgets.\n\n---\nOpened from claude-hub Session ${webOrigin}/sessions/${sessionId}`,
+          _tag: "ToolCallEnded",
+          turnId: "t-1",
+          toolCallId: "call-1",
+          tool: "Bash",
+          outcome: "Succeeded",
+          output: `password=${previous}\n`,
         },
-      ])
-      expect(await ask(runner, sessionId, question)).toMatchObject({ number: 1, existing: true })
-
-      expect(
-        await ask(runner, sessionId, {
-          _tag: "ReviewPullRequest",
-          number: 1,
-          body: "Nice",
-          event: "COMMENT",
-        }),
-      ).toEqual({
-        _tag: "ReviewPosted",
-        url: "https://github.test/kddige/claude-hub/pull/1#pullrequestreview-1",
+        turnEnded("t-1"),
+      )
+      runner.send({ _tag: "WipPushFailed", sessionId, message: `bad token ${current}` })
+      runner.send({
+        _tag: "TerminalFrame",
+        sessionId,
+        kind: "Snapshot",
+        data: `$ cat /run/claude-hub/github-token\r\n${current}\r\n$ `,
+        size: { cols: 80, rows: 24 },
       })
-      expect(
-        await ask(runner, sessionId, {
-          _tag: "ReviewPullRequest",
-          number: 7,
-          body: "Nice",
-          event: "COMMENT",
-        }),
-      ).toEqual({
-        _tag: "GitFailed",
-        message: "Could not review pull request #7: GitHub answered 404: Not Found",
+
+      const logged = []
+      for (let index = 0; index < 4; index++) {
+        logged.push((await web.take("SessionEventLogged")).entry.event)
+      }
+      expect(logged).toMatchObject([
+        { _tag: "TurnStarted", text: `push with ${stars(current)}` },
+        { _tag: "ToolCallEnded", output: `password=${stars(previous)}\n` },
+        { _tag: "TurnEnded" },
+        { _tag: "WipNotPushed", message: `bad token ${stars(current)}` },
+      ])
+      expect((await web.take("TerminalFrame")).data).toBe(
+        `$ cat /run/claude-hub/github-token\r\n${stars(current)}\r\n$ `,
+      )
+      for (const token of [previous, current]) {
+        expect(web.texts.join("\n")).not.toContain(token)
+      }
+    })
+
+    test("a token two refreshes old is no longer looked for", async () => {
+      const { runner, web, sessionId, mod } = await sessionScene(await appHub())
+      joinSession(web, sessionId)
+      await web.take("SessionHistory")
+      for (let index = 0; index < 3; index++) await ask(runner, sessionId, { _tag: "SandboxToken" })
+      const [oldest = "", previous = ""] = github.mintedTokens
+
+      await mod.post(turnSaying("t-1", `${oldest} ${previous}`))
+      expect((await web.take("SessionEventLogged")).entry.event).toMatchObject({
+        text: `${oldest} ${"*".repeat(previous.length)}`,
       })
     })
   })

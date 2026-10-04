@@ -1,10 +1,11 @@
-// The GitHub App as the git tools use it (issue #13, ADR 0005): the Hub, and only the Hub, holds
-// the App's private key. It signs a short JWT with it, mints installation tokens scoped to one
-// Repo with `contents:write` and `pull_requests:write`, and calls GitHub's pull request API with
-// them. Runners get the tokens over their WebSocket and hand them to git per command.
+// The GitHub App (ADR 0010): the Hub, and only the Hub, holds the App's private key. It signs a
+// short JWT with it and mints installation tokens scoped to one Repo: one with `contents:write`
+// that Runners hand to host git per command for the clone and WIP pushes, and one per Session
+// with every permission the installation has, which the Runner keeps in the Session's Sandbox
+// for `git` and `gh`.
 
 import { createPrivateKey, type KeyObject, sign } from "node:crypto"
-import type { GitIdentity, RepoName, ReviewEvent } from "@claude-hub/protocol"
+import type { GitIdentity, RepoName } from "@claude-hub/protocol"
 import {
   Clock,
   Context,
@@ -28,14 +29,6 @@ export class GitHubAppError extends Schema.TaggedError<GitHubAppError>()("GitHub
 export interface RepoToken {
   readonly token: Redacted.Redacted<string>
   readonly expiresAt: number
-}
-
-/** A pull request, as the git tools report it. */
-export interface PullRequest {
-  readonly number: number
-  readonly url: string
-  /** True when it was already open, rather than opened now. */
-  readonly existing: boolean
 }
 
 /** How long before it expires a cached token is replaced. */
@@ -77,9 +70,6 @@ const Installation = Schema.Struct({ id: Schema.Int })
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString, expires_at: Schema.String })
 const App = Schema.Struct({ slug: Schema.NonEmptyString })
 const User = Schema.Struct({ id: Schema.Int })
-const Pull = Schema.Struct({ number: Schema.Int, html_url: Schema.String })
-const Pulls = Schema.Array(Pull)
-const Review = Schema.Struct({ html_url: Schema.String })
 const ApiError = Schema.Struct({
   message: Schema.optional(Schema.String),
   errors: Schema.optional(
@@ -98,22 +88,12 @@ export class GitHubApp extends Context.Service<
     readonly repoToken: (repo: RepoName) => Effect.Effect<RepoToken, GitHubAppError>
     /** The App's bot, which commits made through the App are authored by. */
     readonly botIdentity: (repo: RepoName) => Effect.Effect<GitIdentity, GitHubAppError>
-    /** Opens a pull request from `head` into `base`, or finds the one open already. */
-    readonly openPullRequest: (options: {
-      readonly repo: RepoName
-      readonly head: string
-      readonly base: string
-      readonly title: string
-      readonly body: string
-      readonly draft: boolean
-    }) => Effect.Effect<PullRequest, GitHubAppError>
-    /** Posts a review on a pull request; answers with its URL. */
-    readonly reviewPullRequest: (options: {
-      readonly repo: RepoName
-      readonly number: number
-      readonly body: string
-      readonly event: ReviewEvent
-    }) => Effect.Effect<string, GitHubAppError>
+    /**
+     * A fresh installation token for a Session's Sandbox: scoped to the Repo, with no permissions
+     * list, so it has every permission the App's installation has. Never cached or shared, so
+     * each Session's token is its own.
+     */
+    readonly sandboxToken: (repo: RepoName) => Effect.Effect<RepoToken, GitHubAppError>
   }
 >()("@claude-hub/hub/GitHubApp") {
   /** The App from `HubConfig.githubApp`; when that is none, every call fails, saying so. */
@@ -126,13 +106,12 @@ export class GitHubApp extends Context.Service<
     }),
   ).pipe(Layer.provide(FetchHttpClient.layer))
 
-  /** Without the App's credentials: the git tools fall back to the host's own git credentials. */
+  /** Without the App's credentials: host git falls back to the host's own, the Sandbox gets none. */
   static readonly unconfigured = GitHubApp.of({
     isConfigured: false,
     repoToken: () => Effect.fail(notConfigured),
     botIdentity: () => Effect.fail(notConfigured),
-    openPullRequest: () => Effect.fail(notConfigured),
-    reviewPullRequest: () => Effect.fail(notConfigured),
+    sandboxToken: () => Effect.fail(notConfigured),
   })
 
   static readonly make = Effect.fnUntraced(function* (config: GitHubAppConfig) {
@@ -189,7 +168,11 @@ export class GitHubApp extends Context.Service<
         }),
       )
 
-    const mint = Effect.fn("GitHubApp.mint")(function* (repo: RepoName) {
+    /** Mints a token for the Repo only; with `permissions`, only those, else the installation's. */
+    const mint = Effect.fn("GitHubApp.mint")(function* (
+      repo: RepoName,
+      permissions?: Readonly<Record<string, string>>,
+    ) {
       const { owner, name } = splitRepo(repo)
       const installation = yield* call(
         `The GitHub App is not installed on ${repo}, or can't see it`,
@@ -201,10 +184,11 @@ export class GitHubApp extends Context.Service<
         AccessToken,
         request("POST", `/app/installations/${installation.id}/access_tokens`, { jwt: true }).pipe(
           Effect.map(
-            HttpClientRequest.bodyJsonUnsafe({
-              repositories: [name],
-              permissions: { contents: "write", pull_requests: "write" },
-            }),
+            HttpClientRequest.bodyJsonUnsafe(
+              permissions === undefined
+                ? { repositories: [name] }
+                : { repositories: [name], permissions },
+            ),
           ),
         ),
       )
@@ -226,7 +210,7 @@ export class GitHubApp extends Context.Service<
           ) {
             return cached
           }
-          const fresh = yield* mint(repo)
+          const fresh = yield* mint(repo, { contents: "write" })
           tokens.set(repo, fresh)
           return fresh
         }),
@@ -251,75 +235,15 @@ export class GitHubApp extends Context.Service<
       return bot
     })
 
-    const openPullRequest = Effect.fn("GitHubApp.openPullRequest")(function* (options: {
-      readonly repo: RepoName
-      readonly head: string
-      readonly base: string
-      readonly title: string
-      readonly body: string
-      readonly draft: boolean
-    }) {
-      const { owner, name } = splitRepo(options.repo)
-      const { token } = yield* repoToken(options.repo)
-      const open = yield* call(
-        "Could not list pull requests",
-        Pulls,
-        request("GET", `/repos/${owner}/${name}/pulls`, { token }).pipe(
-          Effect.map(
-            HttpClientRequest.setUrlParams({
-              head: `${owner}:${options.head}`,
-              base: options.base,
-              state: "open",
-            }),
-          ),
-        ),
-      )
-      const [found] = open
-      if (found !== undefined) return { number: found.number, url: found.html_url, existing: true }
-      const opened = yield* call(
-        "Could not open the pull request",
-        Pull,
-        request("POST", `/repos/${owner}/${name}/pulls`, { token }).pipe(
-          Effect.map(
-            HttpClientRequest.bodyJsonUnsafe({
-              title: options.title,
-              body: options.body,
-              head: options.head,
-              base: options.base,
-              draft: options.draft,
-            }),
-          ),
-        ),
-      )
-      return { number: opened.number, url: opened.html_url, existing: false }
-    })
-
-    const reviewPullRequest = Effect.fn("GitHubApp.reviewPullRequest")(function* (options: {
-      readonly repo: RepoName
-      readonly number: number
-      readonly body: string
-      readonly event: ReviewEvent
-    }) {
-      const { owner, name } = splitRepo(options.repo)
-      const { token } = yield* repoToken(options.repo)
-      const review = yield* call(
-        `Could not review pull request #${options.number}`,
-        Review,
-        request("POST", `/repos/${owner}/${name}/pulls/${options.number}/reviews`, { token }).pipe(
-          Effect.map(
-            HttpClientRequest.bodyJsonUnsafe({ body: options.body, event: options.event }),
-          ),
-        ),
-      )
-      return review.html_url
+    const sandboxToken = Effect.fn("GitHubApp.sandboxToken")(function* (repo: RepoName) {
+      return yield* mint(repo)
     })
 
     return GitHubApp.of({
       isConfigured: true,
       repoToken,
       botIdentity,
-      openPullRequest,
-      reviewPullRequest,
+      sandboxToken,
     })
   })
 }

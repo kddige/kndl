@@ -105,7 +105,7 @@ const toSummary = (row: SessionRow): SessionSummary =>
  * Creator, the Turn running now, and while it is Archived who archived it. People are shown with
  * their current login and name.
  *
- * Purging a Session deletes it, with its event log, Prompt queue and co-authors, and leaves a
+ * Purging a Session deletes it, with its event log and Prompt queue, and leaves a
  * note for its Runner to delete what it holds, until the Runner says it has.
  */
 export class Sessions extends Context.Service<
@@ -134,7 +134,7 @@ export class Sessions extends Context.Service<
     /** The Archived Sessions whose purge time has come, by `now`. */
     readonly dueForPurge: (now: number) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
     /**
-     * Deletes the Session, its event log, Prompt queue, co-authors and mod token, and notes that
+     * Deletes the Session, its event log, Prompt queue and mod token, and notes that
      * its Runner must delete what it holds of it.
      */
     readonly purge: (session: SessionSummary, at: number) => Effect.Effect<void, SqlError>
@@ -295,7 +295,7 @@ export class Sessions extends Context.Service<
             VALUES (${session.id}, ${session.runnerId}, ${at})
           `
         yield* sql`DELETE FROM mod_tokens WHERE session_id = ${session.id}`
-        // The event log, Prompt queue and co-authors go with it (ON DELETE CASCADE).
+        // The event log and Prompt queue go with it (ON DELETE CASCADE).
         yield* sql`DELETE FROM sessions WHERE id = ${session.id}`
       }, sql.withTransaction)
 

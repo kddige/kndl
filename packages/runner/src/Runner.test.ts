@@ -664,12 +664,12 @@ describe("Sessions", () => {
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
-    const asked = Effect.runPromise(h.hubGit().ask(sessionId("s-1"), { _tag: "CoAuthors" }))
+    const asked = Effect.runPromise(h.hubGit().ask(sessionId("s-1"), { _tag: "SandboxToken" }))
     await eventually(() => h.hub.all("GitRequest").length === 1)
     const requestId = String(h.hub.all("GitRequest")[0]?.["requestId"])
     expect(h.hub.all("GitRequest")[0]).toMatchObject({
       sessionId: "s-1",
-      ask: { _tag: "CoAuthors" },
+      ask: { _tag: "SandboxToken" },
     })
     h.hub.send({
       _tag: "GitReply",
@@ -679,17 +679,10 @@ describe("Sessions", () => {
     h.hub.send({
       _tag: "GitReply",
       requestId,
-      answer: {
-        _tag: "CoAuthors",
-        coAuthors: [{ name: "alice", email: "1+alice@users.noreply.github.com" }],
-        through: 2,
-      },
+      answer: { _tag: "SandboxToken", token: "ghs_sandbox", expiresAt: 1_000 },
     })
 
-    expect(await asked).toEqual({
-      _tag: "CoAuthors",
-      coAuthors: [{ name: "alice", email: "1+alice@users.noreply.github.com" }],
-      through: 2,
-    })
+    const answer = await asked
+    expect(answer._tag === "SandboxToken" && Redacted.value(answer.token)).toBe("ghs_sandbox")
   })
 })

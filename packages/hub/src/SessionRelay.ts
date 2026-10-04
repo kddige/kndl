@@ -39,14 +39,14 @@
 //     Claude Code's state and any volumes left. A Runner that is offline is sent it when it is
 //     back, again on every connection until it answers SessionPurged.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
-// - Git (#13): the sender of each prompt that starts a Turn is recorded as a co-author until the
-//   Runner reports a commit. The Runner's GitRequests are answered by SessionGit, off the lock,
-//   since they may wait on GitHub. When a Turn ends the Runner is told, to push the WIP ref.
+// - Git (ADR 0010): the Runner's GitRequests are answered by SessionGit, off the lock, since
+//   they may wait on GitHub. When a Turn ends the Runner is told, to push the WIP ref.
 // - Environments (#47, ADR 0009): StartSession carries the Repo's Environment as last applied,
 //   and the Runner reports the version it started the Session on. Environment commands, Test
 //   builds and variable fetches are handled by EnvironmentRelay.ts.
-// - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo are masked in every
-//   event before it is logged, and in terminal frames before they are relayed. Claude's text
+// - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo, and the Sandbox
+//   tokens of its Sessions (#73), are masked in every event before it is logged, and in terminal
+//   frames before they are relayed. Claude's text
 //   (TextDelta) and terminal Output are streams: text that could start a value is held back
 //   until the next event or frame, or `holdMillis` at most.
 //
@@ -109,7 +109,6 @@ import {
   Semaphore,
 } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
-import { CoAuthors } from "./CoAuthors.ts"
 import {
   type EnvironmentWebClient,
   isEnvironmentCommand,
@@ -226,7 +225,6 @@ export class SessionRelay extends Context.Service<
       const outbox = yield* ModOutbox
       const config = yield* HubConfig
       const sessionGit = yield* SessionGit
-      const coAuthors = yield* CoAuthors
       const environments = yield* Environments
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
@@ -351,8 +349,30 @@ export class SessionRelay extends Context.Service<
 
       // ── Redaction (#48) ──────────────────────────────────────────────────
 
-      /** What to redact from each Repo's Sessions, until its Sensitive values change. */
+      /**
+       * What to redact from each Repo's Sessions, until its Sensitive values or the Sandbox tokens
+       * of its Sessions change.
+       */
       const needlesByRepo = new Map<string, Needles>()
+
+      /**
+       * Each Session's Sandbox tokens (#73): the current one and the one before it, which a
+       * process may still hold. In memory only; a Runner asks for a fresh one when it reconnects.
+       */
+      const sandboxTokens = new Map<
+        SessionId,
+        { readonly repo: string; readonly tokens: ReadonlyArray<string> }
+      >()
+
+      /** Redacts the Session's new Sandbox token from now on, with the one before it. */
+      const sandboxTokenMinted = (session: SessionSummary, token: string) => {
+        const before = sandboxTokens.get(session.id)?.tokens ?? []
+        sandboxTokens.set(session.id, { repo: session.repo, tokens: [...before.slice(-1), token] })
+        needlesByRepo.delete(session.repo)
+      }
+
+      const tokensOfRepo = (repo: string) =>
+        [...sandboxTokens.values()].flatMap((known) => (known.repo === repo ? known.tokens : []))
 
       const needlesFor = Effect.fn("SessionRelay.needlesFor")(function* (repo: string) {
         const known = needlesByRepo.get(repo)
@@ -368,7 +388,7 @@ export class SessionRelay extends Context.Service<
         )
         // Values that can't be read are tried again next time.
         if (Option.isNone(values)) return everything
-        const needles = needlesOf(values.value.map(Redacted.value))
+        const needles = needlesOf([...values.value.map(Redacted.value), ...tokensOfRepo(repo)])
         needlesByRepo.set(repo, needles)
         return needles
       })
@@ -802,6 +822,7 @@ export class SessionRelay extends Context.Service<
           yield* sessions.purge(session, now)
           archiving.delete(session.id)
           lastBusy.delete(session.id)
+          sandboxTokens.delete(session.id)
           yield* outbox.clear(session.id)
           for (const client of webClients) {
             client.joined.delete(session.id)
@@ -1335,15 +1356,17 @@ export class SessionRelay extends Context.Service<
               // Answered off the lock: it may wait on GitHub.
               yield* sessionGit.answer(session.value, message.ask).pipe(
                 Effect.flatMap((answer) =>
-                  Effect.sync(() =>
-                    runner.peer.send(GitReply.make({ requestId: message.requestId, answer })),
-                  ),
+                  Effect.sync(() => {
+                    // Redacted before the Sandbox has it.
+                    if (answer._tag === "SandboxToken") {
+                      sandboxTokenMinted(session.value, Redacted.value(answer.token))
+                    }
+                    runner.peer.send(GitReply.make({ requestId: message.requestId, answer }))
+                  }),
                 ),
                 Effect.forkIn(layerScope),
               )
               return
-            case "CoAuthorsCommitted":
-              return yield* coAuthors.committed(message.sessionId, message.through)
             case "WipPushFailed":
               yield* Effect.logWarning(
                 `Runner ${runner.name} could not push the WIP ref of ${message.sessionId}: ${message.message}`,
@@ -1484,10 +1507,7 @@ export class SessionRelay extends Context.Service<
           if (event.promptId !== undefined) {
             if (inFlight.get(sessionId) === event.promptId) inFlight.delete(sessionId)
             const started = yield* prompts.remove(sessionId, event.promptId)
-            if (Option.isSome(started)) {
-              yield* coAuthors.record(sessionId, started.value.sender)
-              yield* queueChanged(sessionId)
-            }
+            if (Option.isSome(started)) yield* queueChanged(sessionId)
           }
           yield* sessionUpdated(sessionId)
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {

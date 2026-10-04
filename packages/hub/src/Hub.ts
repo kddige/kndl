@@ -2,7 +2,6 @@ import { MaxCommandWaitMs } from "@claude-hub/protocol"
 import { Layer } from "effect"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"
-import { CoAuthors } from "./CoAuthors.ts"
 import { Environments } from "./Environments.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
@@ -30,7 +29,6 @@ export const HubServices = SessionRelay.layer.pipe(
   Layer.provideMerge(SessionGit.layer),
   Layer.provideMerge(
     Layer.mergeAll(
-      CoAuthors.layer,
       SignIns.layer,
       RunnerTokens.layer,
       ModTokens.layer,

@@ -62,6 +62,10 @@ _Avoid_: session branch, feature branch
 A hidden git ref on the Repo's remote holding a Session's uncommitted work, so the work survives losing the Runner.
 _Avoid_: backup, stash, snapshot
 
+**Sandbox token**:
+A short-lived GitHub App installation token for one Session's Repo, kept in that Session's Sandbox so plain `git` and `gh` reach GitHub. It has every permission the App's installation has, so anything in the Sandbox can push and merge in that Repo; a GitHub ruleset on the default branch is the guardrail (ADR 0010).
+_Avoid_: GitHub credentials, PAT, git tools
+
 **Repo**:
 A GitHub repository the platform is installed on. Access to a Repo decides who can see and join its Sessions.
 _Avoid_: project, codebase

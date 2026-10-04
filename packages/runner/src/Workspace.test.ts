@@ -53,11 +53,7 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
   const origin = join(dir, "acme", "origin")
   const sessionsRoot = join(dir, "sessions")
   // Without the GitHub App: the clone uses the host's own git credentials.
-  const hubGit = new FakeHubGit({
-    repo: "acme/origin",
-    baseBranch: "main",
-    workBranch: "claude/w-1",
-  })
+  const hubGit = new FakeHubGit("acme/origin")
   beforeAll(() => {
     git(dir, "init", "--quiet", "--initial-branch=main", origin)
     git(origin, "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "first")

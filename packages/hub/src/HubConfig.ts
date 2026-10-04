@@ -9,8 +9,8 @@ export interface GitHubOAuthConfig {
 }
 
 /**
- * The GitHub App's own credentials, which mint installation tokens for the git tools (issue #13,
- * ADR 0005). Only the Hub holds them.
+ * The GitHub App's own credentials, which mint installation tokens: for the Runner's clone and
+ * WIP pushes, and for git and gh in the Sandbox (issue #73, ADR 0010). Only the Hub holds them.
  */
 export interface GitHubAppConfig {
   readonly appId: string
@@ -97,8 +97,8 @@ export class HubConfig extends Context.Service<
     /** GitHub sign-in, or none while the GitHub App isn't configured: sign-in is then off. */
     readonly github: Option.Option<GitHubOAuthConfig>
     /**
-     * The GitHub App's credentials for the git tools, or none (dev mode): git then uses the
-     * Runner host's own credentials, and pull requests are unavailable.
+     * The GitHub App's credentials, or none (dev mode): the Runner then clones and pushes WIP
+     * refs with its host's own credentials, and the Sandbox gets no GitHub token.
      */
     readonly githubApp: Option.Option<GitHubAppConfig>
     /** Dev login: sign in as a local Participant without GitHub. Loopback only. */
@@ -151,7 +151,7 @@ export class HubConfig extends Context.Service<
     if (Option.isSome(input.githubAppId) !== Option.isSome(input.githubAppPrivateKey)) {
       return yield* new HubConfigError({
         message:
-          "The git tools need both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH; only one is set.",
+          "The GitHub App needs both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH; only one is set.",
       })
     }
     if (Option.isSome(input.githubAppPrivateKey)) {
@@ -202,8 +202,8 @@ export class HubConfig extends Context.Service<
   /**
    * From the environment: `HOST` (127.0.0.1), `PORT` (7777), `HUB_PUBLIC_URL`
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
-   * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the git tools use the Runner
-   * host's credentials, and pull requests are off), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_SLEEP_AFTER_MS`
+   * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the Runner uses its host's
+   * git credentials, and the Sandbox gets no GitHub token), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_SLEEP_AFTER_MS`
    * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days) and `HUB_SECRETS_KEY` (unset: Sensitive
    * values can't be saved).
    */
