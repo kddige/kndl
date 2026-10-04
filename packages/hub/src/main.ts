@@ -105,6 +105,11 @@ if (command === undefined) {
       }
       return prompt("Type yes to clear them:")?.trim() === "yes"
     })
+  const refused = (message: string) =>
+    Effect.andThen(
+      Console.error(message),
+      Effect.sync(() => (process.exitCode = 1)),
+    )
   BunRuntime.runMain(
     Effect.gen(function* () {
       const outcome = yield* resetSecrets(confirm)
@@ -118,7 +123,13 @@ if (command === undefined) {
       } else {
         yield* Console.log(secretsResetDoneText(outcome.plan, "`bun run secrets-key`"))
       }
-    }),
+    }).pipe(
+      // A refusal says what to do, without a stack trace.
+      Effect.catchTags({
+        HubLockRefused: (error) => refused(error.message),
+        NoHubDatabase: (error) => refused(error.message),
+      }),
+    ),
   )
 } else {
   console.error(

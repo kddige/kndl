@@ -2,9 +2,9 @@
 // and free again once the holder is gone, however it went.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Effect, Exit, Scope } from "effect"
 import { holdHubLock } from "./HubLock.ts"
 import { startHubProcess } from "./testSupport.ts"
@@ -71,6 +71,10 @@ describe("The Hub's lock", () => {
 
     hub.child.kill("SIGKILL")
     await hub.child.exited
+    // Nothing of the lock's is left beside it but the lock file, which the home expects.
+    expect(readdirSync(dirname(database)).filter((name) => name.startsWith("hub.db.lock"))).toEqual(
+      ["hub.db.lock"],
+    )
     const after = await take(database)
     expect("release" in after).toBe(true)
     if ("release" in after) await after.release()

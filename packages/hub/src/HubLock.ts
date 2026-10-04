@@ -38,6 +38,8 @@ function take(file: string): Database {
     // Fail at once rather than wait for the holder.
     db.run("PRAGMA busy_timeout = 0")
     db.run("PRAGMA locking_mode = EXCLUSIVE")
+    // No `-journal` file beside it, which a holder that is killed would leave in the home.
+    db.run("PRAGMA journal_mode = MEMORY")
     // A write takes the exclusive lock, which EXCLUSIVE locking mode keeps after the commit.
     db.run("BEGIN EXCLUSIVE")
     db.run("CREATE TABLE IF NOT EXISTS holder (pid INTEGER NOT NULL)")
