@@ -21,6 +21,7 @@ import {
   IconButton,
   InfoIcon,
   LogView,
+  PageHeader,
   RestartIcon,
   SessionStatus,
   Spinner,
@@ -31,7 +32,7 @@ import {
   toast,
   TrashIcon,
 } from "../ui/index.ts"
-import { color, leading, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, space } from "../ui/tokens.stylex.ts"
 import { Composer } from "./Composer.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { Transcript } from "./Transcript.tsx"
@@ -42,43 +43,6 @@ const styles = stylex.create({
     flexDirection: "column",
     flex: 1,
     minHeight: 0,
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: space.s3,
-    paddingBlock: space.s2,
-    paddingInline: space.s4,
-    borderBottomWidth: "1px",
-    borderBottomStyle: "solid",
-    borderBottomColor: color.border,
-    backgroundColor: color.surface,
-  },
-  heading: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s0_5,
-    flex: 1,
-    minWidth: 0,
-  },
-  titleRow: { display: "flex", alignItems: "center", gap: space.s2, minWidth: 0 },
-  title: {
-    fontSize: text.md,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    lineHeight: leading.tight,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  meta: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: space.s1_5,
-    color: color.textMuted,
-    fontSize: text.sm,
   },
   scroll: {
     flex: 1,
@@ -238,45 +202,42 @@ function LoadedSession({
   }
 
   return (
-    <div {...stylex.props(styles.view)}>
-      <header {...stylex.props(styles.header)}>
-        <div {...stylex.props(styles.heading)}>
-          <div {...stylex.props(styles.titleRow)}>
-            <h1 title={summary.workBranch} {...stylex.props(styles.title)}>
-              {summary.workBranch}
-            </h1>
-            <SessionStatus state={statusOf(state)} />
-          </div>
-          <div {...stylex.props(styles.meta)}>
-            <span>{summary.repo}</span>
-            <span aria-hidden="true">·</span>
-            <span>from {summary.baseBranch}</span>
-            <span aria-hidden="true">·</span>
-            <span>on {summary.runnerLogin.account}</span>
-          </div>
-        </div>
-        {state === "Active" && (
-          <Button
-            size="sm"
-            intent="secondary"
-            // The Hub only puts a Session to sleep once started, with nothing running or waiting.
-            disabled={busy || running || queue.length > 0}
-            onClick={() => command(hub.sleepSession(summary.id))}
-          >
-            Sleep now
-          </Button>
-        )}
-        {state !== "Archived" && (
-          <IconButton label="Delete Session" size="sm" onClick={remove}>
-            <TrashIcon />
-          </IconButton>
-        )}
-        <AvatarStack
-          label="Here now"
-          people={presence.map((p) => ({ id: p.id, name: p.name, src: p.avatarUrl }))}
-          size="sm"
-        />
-      </header>
+    <main {...stylex.props(styles.view)}>
+      <PageHeader
+        title={summary.workBranch}
+        badge={<SessionStatus state={statusOf(state)} />}
+        description={
+          <>
+            {summary.repo} <span aria-hidden="true">·</span> from {summary.baseBranch}{" "}
+            <span aria-hidden="true">·</span> on {summary.runnerLogin.account}
+          </>
+        }
+        actions={
+          <>
+            {state === "Active" && (
+              <Button
+                size="sm"
+                intent="secondary"
+                // The Hub only puts a Session to sleep once started, with nothing running or waiting.
+                disabled={busy || running || queue.length > 0}
+                onClick={() => command(hub.sleepSession(summary.id))}
+              >
+                Sleep now
+              </Button>
+            )}
+            {state !== "Archived" && (
+              <IconButton label="Delete Session" size="sm" onClick={remove}>
+                <TrashIcon />
+              </IconButton>
+            )}
+            <AvatarStack
+              label="Here now"
+              people={presence.map((p) => ({ id: p.id, name: p.name, src: p.avatarUrl }))}
+              size="sm"
+            />
+          </>
+        }
+      />
 
       <Tabs
         value={view}
@@ -346,7 +307,7 @@ function LoadedSession({
           )}
         </TabPanel>
       </Tabs>
-    </div>
+    </main>
   )
 }
 

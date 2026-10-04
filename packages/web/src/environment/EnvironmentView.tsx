@@ -28,6 +28,7 @@ import {
   InfoIcon,
   Input,
   LogView,
+  PageHeader,
   PlusIcon,
   Select,
   Spinner,
@@ -38,7 +39,7 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, font, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
   type DraftFolder,
   draftIdentity,
@@ -63,6 +64,7 @@ export interface PendingSession {
 }
 
 const styles = stylex.create({
+  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   scroll: { flex: 1, overflowY: "auto" },
   page: {
     display: "flex",
@@ -73,16 +75,6 @@ const styles = stylex.create({
     paddingBlock: space.s6,
     paddingInline: space.s4,
   },
-  top: { display: "flex", alignItems: "center", gap: space.s3, flexWrap: "wrap" },
-  heading: { display: "flex", flexDirection: "column", gap: space.s0_5, flex: 1, minWidth: 0 },
-  titleRow: { display: "flex", alignItems: "center", gap: space.s2, flexWrap: "wrap" },
-  title: {
-    fontSize: text.xl,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    lineHeight: leading.tight,
-  },
-  subtitle: { color: color.textMuted, fontSize: text.sm },
   section: {
     display: "flex",
     flexDirection: "column",
@@ -209,31 +201,51 @@ export function EnvironmentView({
     })
   }, [hub, repo, online])
 
+  const environment = saved?.environment
   return (
-    <div {...stylex.props(styles.scroll)}>
-      <main {...stylex.props(styles.page)}>
-        {saved ? (
-          <EnvironmentEditor
-            key={repo}
-            repo={repo}
-            saved={saved}
-            sharedVariables={sharedVariables}
-            pendingSession={pendingSession}
-          />
-        ) : loadError ? (
-          <EmptyState
-            size="page"
-            icon={<WarningIcon />}
-            title="Can't load the Environment"
-            description={loadError}
-          />
-        ) : (
-          <div {...stylex.props(styles.loading)}>
-            <Spinner size="lg" label="Loading the Environment" />
-          </div>
-        )}
-      </main>
-    </div>
+    <main {...stylex.props(styles.view)}>
+      <PageHeader
+        title={repo}
+        badge={
+          saved &&
+          (environment ? (
+            <Badge>Version {environment.version}</Badge>
+          ) : (
+            <Badge intent="warning">Not set up</Badge>
+          ))
+        }
+        description="Environment: what every Sandbox of this Repo is built from. Changes stay in this browser until you apply them."
+        actions={
+          <Button nativeButton={false} render={<Link to="/variables" />} size="sm">
+            Shared variables
+          </Button>
+        }
+      />
+      <div {...stylex.props(styles.scroll)}>
+        <div {...stylex.props(styles.page)}>
+          {saved ? (
+            <EnvironmentEditor
+              key={repo}
+              repo={repo}
+              saved={saved}
+              sharedVariables={sharedVariables}
+              pendingSession={pendingSession}
+            />
+          ) : loadError ? (
+            <EmptyState
+              size="page"
+              icon={<WarningIcon />}
+              title="Can't load the Environment"
+              description={loadError}
+            />
+          ) : (
+            <div {...stylex.props(styles.loading)}>
+              <Spinner size="lg" label="Loading the Environment" />
+            </div>
+          )}
+        </div>
+      </div>
+    </main>
   )
 }
 
@@ -438,26 +450,6 @@ function EnvironmentEditor({
 
   return (
     <>
-      <div {...stylex.props(styles.top)}>
-        <div {...stylex.props(styles.heading)}>
-          <div {...stylex.props(styles.titleRow)}>
-            <h1 {...stylex.props(styles.title)}>{repo}</h1>
-            {environment ? (
-              <Badge>Version {environment.version}</Badge>
-            ) : (
-              <Badge intent="warning">Not set up</Badge>
-            )}
-          </div>
-          <p {...stylex.props(styles.subtitle)}>
-            Environment: what every Sandbox of this Repo is built from. Changes stay in this browser
-            until you apply them.
-          </p>
-        </div>
-        <Button nativeButton={false} render={<Link to="/variables" />} size="sm">
-          Shared variables
-        </Button>
-      </div>
-
       {pendingSession && !environment && (
         <Banner intent="accent" icon={<InfoIcon />} title={`Set up ${repo} to start your Session`}>
           A Repo needs an Environment before its first Session. This one starts from the defaults:

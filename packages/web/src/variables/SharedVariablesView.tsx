@@ -24,6 +24,7 @@ import {
   Field,
   Input,
   KeyIcon,
+  PageHeader,
   PlusIcon,
   Select,
   Spinner,
@@ -31,9 +32,10 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, font, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
+  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   scroll: { flex: 1, overflowY: "auto" },
   page: {
     display: "flex",
@@ -44,15 +46,6 @@ const styles = stylex.create({
     paddingBlock: space.s6,
     paddingInline: space.s4,
   },
-  top: { display: "flex", alignItems: "center", gap: space.s3, flexWrap: "wrap" },
-  heading: { flex: 1, minWidth: "12rem" },
-  title: {
-    fontSize: text.xl,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    lineHeight: leading.tight,
-  },
-  note: { color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
   list: {
     display: "flex",
     flexDirection: "column",
@@ -128,62 +121,61 @@ export function SharedVariablesView() {
 
   const sorted = variables?.toSorted((a, b) => a.name.localeCompare(b.name)) ?? null
   return (
-    <div {...stylex.props(styles.scroll)}>
-      <main {...stylex.props(styles.page)}>
-        <div {...stylex.props(styles.top)}>
-          <div {...stylex.props(styles.heading)}>
-            <h1 {...stylex.props(styles.title)}>Shared variables</h1>
-            <p {...stylex.props(styles.note)}>
-              Hub-wide values, such as an API key, that Environments link under a name of their own.
-              A change reaches each linking Repo's Sessions as they next start.
-            </p>
-          </div>
-          <Button intent="primary" icon={<PlusIcon />} onClick={() => setEditing("new")}>
+    <main {...stylex.props(styles.view)}>
+      <PageHeader
+        title="Shared variables"
+        description="Hub-wide values, such as an API key, that Environments link under a name of their own. A change reaches each linking Repo's Sessions as they next start."
+        actions={
+          <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
             Add shared variable
           </Button>
-        </div>
-        {sorted === null ? (
-          loadError ? (
+        }
+      />
+      <div {...stylex.props(styles.scroll)}>
+        <div {...stylex.props(styles.page)}>
+          {sorted === null ? (
+            loadError ? (
+              <EmptyState
+                size="page"
+                icon={<WarningIcon />}
+                title="Can't load the shared variables"
+                description={loadError}
+              />
+            ) : (
+              <div {...stylex.props(styles.loading)}>
+                <Spinner size="lg" label="Loading shared variables" />
+              </div>
+            )
+          ) : sorted.length === 0 ? (
             <EmptyState
               size="page"
-              icon={<WarningIcon />}
-              title="Can't load the shared variables"
-              description={loadError}
+              icon={<KeyIcon />}
+              title="No shared variables yet"
+              description="Add one here, then link it from each Environment that needs it."
+              action={
+                <Button intent="primary" icon={<PlusIcon />} onClick={() => setEditing("new")}>
+                  Add shared variable
+                </Button>
+              }
             />
           ) : (
-            <div {...stylex.props(styles.loading)}>
-              <Spinner size="lg" label="Loading shared variables" />
-            </div>
-          )
-        ) : sorted.length === 0 ? (
-          <EmptyState
-            size="page"
-            icon={<KeyIcon />}
-            title="No shared variables yet"
-            description="Add one here, then link it from each Environment that needs it."
-            action={
-              <Button intent="primary" icon={<PlusIcon />} onClick={() => setEditing("new")}>
-                Add shared variable
-              </Button>
-            }
-          />
-        ) : (
-          <ul aria-label="Shared variables" {...stylex.props(styles.list)}>
-            {sorted.map((variable, index) => (
-              <VariableRow
-                key={variable.name}
-                variable={variable}
-                first={index === 0}
-                onEdit={() => setEditing(variable)}
-                onDelete={() => setDeleting(variable)}
-              />
-            ))}
-          </ul>
-        )}
-      </main>
+            <ul aria-label="Shared variables" {...stylex.props(styles.list)}>
+              {sorted.map((variable, index) => (
+                <VariableRow
+                  key={variable.name}
+                  variable={variable}
+                  first={index === 0}
+                  onEdit={() => setEditing(variable)}
+                  onDelete={() => setDeleting(variable)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
       <EditDialog editing={editing} existing={variables ?? []} onClose={() => setEditing(null)} />
       <DeleteDialog variable={deleting} onClose={() => setDeleting(null)} />
-    </div>
+    </main>
   )
 }
 
