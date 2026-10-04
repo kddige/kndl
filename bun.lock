@@ -11,6 +11,19 @@
         "typescript": "7.0.2",
       },
     },
+    "packages/cli": {
+      "name": "@claude-hub/cli",
+      "bin": {
+        "claude-hub": "src/main.ts",
+      },
+      "dependencies": {
+        "@claude-hub/hub": "workspace:*",
+        "@claude-hub/protocol": "workspace:*",
+        "@claude-hub/runner": "workspace:*",
+        "@effect/platform-bun": "4.0.0",
+        "effect": "4.0.0",
+      },
+    },
     "packages/docs": {
       "name": "@claude-hub/docs",
       "dependencies": {
@@ -201,6 +214,8 @@
     "@clack/core": ["@clack/core@1.5.1", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ=="],
 
     "@clack/prompts": ["@clack/prompts@1.8.1", "", { "dependencies": { "@clack/core": "1.5.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ=="],
+
+    "@claude-hub/cli": ["@claude-hub/cli@workspace:packages/cli"],
 
     "@claude-hub/docs": ["@claude-hub/docs@workspace:packages/docs"],
 
