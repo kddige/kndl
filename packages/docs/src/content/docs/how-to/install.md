@@ -109,6 +109,8 @@ claude-hub uninstall
 
 It stops and removes the services, the `claude-hub` command and the install (`~/.claude-hub/app`), and keeps the home's data: `hub.env`, `runner.env`, the database, the Runner's Sessions and the logs. Install again and onboard, and the Hub and Runner pick up where they left off.
 
+The line install.sh added to your shell's startup file (`~/.zshrc`, `~/.bashrc` or `~/.profile`, marked `# claude-hub: PATH`) stays. Delete it by hand if you don't install again.
+
 `--purge` removes the whole home too. That deletes the database, its secrets key and every Session's Workspace, and can't be undone. Sessions still running keep their tmux sessions and Sandboxes, so archive or finish them first.
 
 ## From a checkout
