@@ -146,8 +146,8 @@ describe("doctor", () => {
     const facts: DoctorFacts = {
       ...healthy,
       roles: ["hub"],
-      envFiles: [healthy.envFiles[0]!],
-      services: [healthy.services[0]!],
+      envFiles: healthy.envFiles.filter((file) => file.role === "hub"),
+      services: healthy.services.filter((service) => service.role === "hub"),
       runnerReachesHub: undefined,
       oldData: { entries: ["sessions", "claude-code"], tmuxSessions: 0 },
     }
