@@ -1,43 +1,61 @@
 import * as stylex from "@stylexjs/stylex"
-import { Link, Outlet } from "@tanstack/react-router"
-import { useEffect } from "react"
+import { Link, Outlet, useRouterState } from "@tanstack/react-router"
+import { type MouseEvent, useEffect, useState, useSyncExternalStore } from "react"
 import type { Connection } from "../hub/store.ts"
+import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
 import {
-  Avatar,
   Banner,
   Button,
+  Drawer,
   EmptyState,
-  Menu,
-  MenuGroup,
-  MenuItem,
+  IconButton,
+  MenuIcon,
+  PlusIcon,
   Spinner,
   toast,
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, control, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { AppSidebar } from "./AppSidebar.tsx"
 import { useHub, useHubState } from "./hub.tsx"
 import { SignIn } from "./SignIn.tsx"
+
+/** From this width the sidebar stays in view; below it, it's a drawer behind a menu button. */
+const WIDE = "(min-width: 48rem)"
 
 const styles = stylex.create({
   shell: {
     display: "flex",
-    flexDirection: "column",
     height: "100dvh",
   },
-  header: {
+  sidebar: {
+    flexShrink: 0,
+    width: "16rem",
+    borderRightWidth: "1px",
+    borderRightStyle: "solid",
+    borderRightColor: color.border,
+  },
+  main: {
+    display: "flex",
+    flexDirection: "column",
+    flex: 1,
+    minWidth: 0,
+  },
+  topBar: {
     display: "flex",
     alignItems: "center",
-    gap: space.s3,
+    gap: space.s2,
     flexShrink: 0,
     height: "2.75rem",
-    paddingInline: space.s4,
+    paddingInline: space.s2,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: color.border,
     backgroundColor: color.surface,
   },
   brand: {
+    flex: 1,
     fontSize: text.md,
     fontWeight: weight.semibold,
     letterSpacing: tracking.tight,
@@ -45,19 +63,7 @@ const styles = stylex.create({
     textDecoration: "none",
     borderRadius: radius.sm,
   },
-  grow: { flex: 1 },
-  you: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: control.md,
-    height: control.md,
-    padding: 0,
-    borderWidth: 0,
-    borderRadius: radius.full,
-    backgroundColor: "transparent",
-    cursor: "pointer",
-  },
+  drawer: { display: "flex", flexDirection: "column", height: "100%" },
   banner: { margin: space.s3, marginBottom: 0 },
   body: {
     display: "flex",
@@ -73,11 +79,18 @@ const styles = stylex.create({
   },
 })
 
-/** The signed-in app: the header, and the page under it once the Hub has welcomed us. */
+/**
+ * The signed-in app: the sidebar, and the page beside it once the Hub has welcomed us. On a narrow
+ * screen the sidebar is a drawer, opened from a slim top bar.
+ */
 export function HubShell() {
   const hub = useHub()
   const connection = useHubState((state) => state.connection)
   const you = useHubState((state) => state.you)
+  const wide = useMediaQuery(WIDE)
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  // The page the drawer was opened on: going anywhere else closes it.
+  const [drawerOn, setDrawerOn] = useState<string | null>(null)
 
   useEffect(() => hub.start(), [hub])
   // Refusals with no request to answer, such as putting a busy Session to sleep.
@@ -109,50 +122,76 @@ export function HubShell() {
   }
   if (you === null) return <Connecting connection={connection} />
 
+  // Following a link in the drawer closes it, even one to the page already shown.
+  const closeOnLink = (event: MouseEvent) => {
+    const link = event.target instanceof Element ? event.target.closest("a[href]") : null
+    if (link && link.getAttribute("target") !== "_blank") setDrawerOn(null)
+  }
+
   return (
     <div {...stylex.props(styles.shell)}>
-      <header {...stylex.props(styles.header)}>
-        <Link to="/" {...stylex.props(styles.brand, focus.ring)}>
-          Claude Hub
-        </Link>
-        <span {...stylex.props(styles.grow)} />
-        <Menu
-          align="end"
-          trigger={
-            <button
-              type="button"
-              aria-label={`Signed in as ${you.name}`}
-              {...stylex.props(styles.you, focus.ring)}
-            >
-              <Avatar name={you.name} src={you.avatarUrl} size="md" />
-            </button>
-          }
-        >
-          <MenuGroup label={`${you.name} (@${you.login})`}>
-            <MenuItem
-              onClick={() => {
-                void hub.transport.signOut().finally(() => hub.retry())
-              }}
-            >
-              Sign out
-            </MenuItem>
-          </MenuGroup>
-        </Menu>
-      </header>
-      {connection.status === "reconnecting" && (
-        <Banner
-          intent="warning"
-          icon={<WarningIcon />}
-          title="Reconnecting to the Hub"
-          sx={styles.banner}
-        >
-          What happens meanwhile shows up once it's back.
-        </Banner>
+      {wide && (
+        <div {...stylex.props(styles.sidebar)}>
+          <AppSidebar />
+        </div>
       )}
-      <div {...stylex.props(styles.body)}>
-        <Outlet />
+      <div {...stylex.props(styles.main)}>
+        {!wide && (
+          <header {...stylex.props(styles.topBar)}>
+            <IconButton label="Open navigation" noTooltip onClick={() => setDrawerOn(pathname)}>
+              <MenuIcon />
+            </IconButton>
+            <Link to="/" {...stylex.props(styles.brand, focus.ring)}>
+              Claude Hub
+            </Link>
+            <CreateSessionDialog
+              trigger={
+                <IconButton label="New Session" noTooltip>
+                  <PlusIcon />
+                </IconButton>
+              }
+            />
+          </header>
+        )}
+        {connection.status === "reconnecting" && (
+          <Banner
+            intent="warning"
+            icon={<WarningIcon />}
+            title="Reconnecting to the Hub"
+            sx={styles.banner}
+          >
+            What happens meanwhile shows up once it's back.
+          </Banner>
+        )}
+        <div {...stylex.props(styles.body)}>
+          <Outlet />
+        </div>
       </div>
+      {!wide && (
+        <Drawer
+          label="Navigation"
+          open={drawerOn === pathname}
+          onOpenChange={(open) => setDrawerOn(open ? pathname : null)}
+        >
+          {/* Only hears the clicks of the links inside, which handle the keyboard themselves. */}
+          <div onClick={closeOnLink} {...stylex.props(styles.drawer)}>
+            <AppSidebar onClose={() => setDrawerOn(null)} />
+          </div>
+        </Drawer>
+      )}
     </div>
+  )
+}
+
+/** Whether a media query matches, following it as it changes. */
+function useMediaQuery(query: string): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const list = window.matchMedia(query)
+      list.addEventListener("change", onChange)
+      return () => list.removeEventListener("change", onChange)
+    },
+    () => window.matchMedia(query).matches,
   )
 }
 

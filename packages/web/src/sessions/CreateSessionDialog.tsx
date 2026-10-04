@@ -1,7 +1,7 @@
 import type { RunnerId, RunnerSummary } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
-import { type FormEvent, useState } from "react"
+import { type FormEvent, type ReactElement, useState } from "react"
 import { repoParams } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { Button, Dialog, DialogClose, Field, Input, PlusIcon, Select } from "../ui/index.ts"
@@ -17,8 +17,11 @@ const repoPattern = /^[^/\s]+\/[^/\s]+$/
 
 const anyRunner = "any"
 
-/** "New Session": pick a Repo, a base branch and, if it matters, the Runner to run it on. */
-export function CreateSessionDialog() {
+/**
+ * "New Session": pick a Repo, a base branch and, if it matters, the Runner to run it on. Opened by
+ * `trigger`, a primary "New Session" Button unless given.
+ */
+export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const hub = useHub()
   const runners = useHubState((state) => state.runners)
   const navigate = useNavigate()
@@ -87,9 +90,11 @@ export function CreateSessionDialog() {
         if (!next) reset()
       }}
       trigger={
-        <Button intent="primary" icon={<PlusIcon />}>
-          New Session
-        </Button>
+        trigger ?? (
+          <Button intent="primary" icon={<PlusIcon />}>
+            New Session
+          </Button>
+        )
       }
       title="New Session"
       description="Claude works on a new branch off the base branch, in a Sandbox on a Runner."

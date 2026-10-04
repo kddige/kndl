@@ -361,7 +361,7 @@ export function lastSeq(log: ReadonlyArray<SessionLogEntry>): EventSeq | undefin
   return log.at(-1)?.seq
 }
 
-/** Whether a Session belongs in the normal Session list: every one that isn't Archived. */
+/** Whether a Session is listed, as in the sidebar: every one that isn't Archived. */
 export const isListed = (session: SessionSummary): boolean => session.state !== "Archived"
 
 /** The Session with this id, if the Hub has listed it. */

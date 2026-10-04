@@ -2,21 +2,13 @@ import type { SessionId, SessionSummary } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useMemo } from "react"
-import { day, purgedIn, timeAgo } from "../app/format.ts"
+import { day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
-import {
-  ArrowLeftIcon,
-  Avatar,
-  BranchIcon,
-  Button,
-  EmptyState,
-  InboxIcon,
-  Spinner,
-  toast,
-} from "../ui/index.ts"
+import { Avatar, BranchIcon, Button, EmptyState, InboxIcon, Spinner, toast } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { groupByRepo } from "./groups.ts"
 
 const styles = stylex.create({
   scroll: { flex: 1, overflowY: "auto" },
@@ -29,7 +21,6 @@ const styles = stylex.create({
     paddingBlock: space.s6,
     paddingInline: space.s4,
   },
-  top: { display: "flex", alignItems: "center", gap: space.s3 },
   title: {
     fontSize: text.xl,
     fontWeight: weight.semibold,
@@ -37,6 +28,13 @@ const styles = stylex.create({
     lineHeight: leading.tight,
   },
   note: { color: color.textMuted, fontSize: text.sm },
+  group: { display: "flex", flexDirection: "column", gap: space.s2 },
+  repo: { fontSize: text.md, fontWeight: weight.semibold, lineHeight: leading.tight },
+  repoLink: {
+    color: color.text,
+    textDecoration: { default: "none", ":hover": "underline" },
+    borderRadius: radius.sm,
+  },
   list: {
     display: "flex",
     flexDirection: "column",
@@ -92,41 +90,26 @@ const styles = stylex.create({
  * Restoring brings a Session back Asleep.
  */
 export function ArchivedSessions({ repo }: { repo: string }) {
-  const hub = useHub()
   const sessions = useHubState((state) => state.sessions)
   const archived = useMemo(
     () =>
       sessions === null
         ? null
-        : sessions
-            .filter((session) => session.repo === repo && session.archived !== undefined)
-            .toSorted((a, b) => (b.archived?.at ?? 0) - (a.archived?.at ?? 0)),
+        : newestArchived(sessions.filter((session) => session.repo === repo)),
     [sessions, repo],
   )
 
   return (
     <div {...stylex.props(styles.scroll)}>
       <main {...stylex.props(styles.page)}>
-        <div {...stylex.props(styles.top)}>
-          <Button
-            nativeButton={false}
-            render={<Link to="/" />}
-            intent="ghost"
-            size="sm"
-            icon={<ArrowLeftIcon />}
-            aria-label="All Sessions"
-          />
-          <div>
-            <h1 {...stylex.props(styles.title)}>Archived Sessions</h1>
-            <p {...stylex.props(styles.note)}>
-              {repo}: deleted Sessions can be restored until they're purged.
-            </p>
-          </div>
+        <div>
+          <h1 {...stylex.props(styles.title)}>Archived Sessions</h1>
+          <p {...stylex.props(styles.note)}>
+            {repo}: deleted Sessions can be restored until they're purged.
+          </p>
         </div>
         {archived === null ? (
-          <div {...stylex.props(styles.loading)}>
-            <Spinner size="lg" label="Loading Sessions" />
-          </div>
+          <Loading />
         ) : archived.length === 0 ? (
           <EmptyState
             size="page"
@@ -135,14 +118,96 @@ export function ArchivedSessions({ repo }: { repo: string }) {
             description={`Sessions deleted from ${repo} show here until they're purged.`}
           />
         ) : (
-          <ul aria-label="Archived Sessions" {...stylex.props(styles.list)}>
-            {archived.map((session, index) => (
-              <ArchivedRow key={session.id} session={session} first={index === 0} hub={hub} />
-            ))}
-          </ul>
+          <ArchivedList label="Archived Sessions" sessions={archived} />
         )}
       </main>
     </div>
+  )
+}
+
+/** Every Repo's Archived Sessions, grouped by Repo: where the sidebar's "Archived Sessions" goes. */
+export function AllArchivedSessions() {
+  const sessions = useHubState((state) => state.sessions)
+  const groups = useMemo(
+    () =>
+      sessions === null
+        ? null
+        : groupByRepo(
+            sessions.filter((session) => session.archived !== undefined),
+            lastDeletedFirst,
+          ),
+    [sessions],
+  )
+
+  return (
+    <div {...stylex.props(styles.scroll)}>
+      <main {...stylex.props(styles.page)}>
+        <div>
+          <h1 {...stylex.props(styles.title)}>Archived Sessions</h1>
+          <p {...stylex.props(styles.note)}>
+            Deleted Sessions, by Repo. They can be restored until they're purged.
+          </p>
+        </div>
+        {groups === null ? (
+          <Loading />
+        ) : groups.length === 0 ? (
+          <EmptyState
+            size="page"
+            icon={<InboxIcon />}
+            title="Nothing archived"
+            description="Deleted Sessions show here until they're purged."
+          />
+        ) : (
+          groups.map(({ repo, sessions: archived }) => (
+            <section key={repo} aria-label={repo} {...stylex.props(styles.group)}>
+              <h2 {...stylex.props(styles.repo)}>
+                <Link
+                  to="/repos/$owner/$repo/archived"
+                  params={repoParams(repo)}
+                  {...stylex.props(styles.repoLink, focus.ring)}
+                >
+                  {repo}
+                </Link>
+              </h2>
+              <ArchivedList label={`Archived Sessions of ${repo}`} sessions={archived} />
+            </section>
+          ))
+        )}
+      </main>
+    </div>
+  )
+}
+
+const lastDeletedFirst = (a: SessionSummary, b: SessionSummary) =>
+  (b.archived?.at ?? 0) - (a.archived?.at ?? 0)
+
+/** The Archived ones, the most recently deleted first. */
+function newestArchived(sessions: ReadonlyArray<SessionSummary>): Array<SessionSummary> {
+  return sessions.filter((session) => session.archived !== undefined).toSorted(lastDeletedFirst)
+}
+
+function Loading() {
+  return (
+    <div {...stylex.props(styles.loading)}>
+      <Spinner size="lg" label="Loading Sessions" />
+    </div>
+  )
+}
+
+function ArchivedList({
+  label,
+  sessions,
+}: {
+  label: string
+  sessions: ReadonlyArray<SessionSummary>
+}) {
+  const hub = useHub()
+  return (
+    <ul aria-label={label} {...stylex.props(styles.list)}>
+      {sessions.map((session, index) => (
+        <ArchivedRow key={session.id} session={session} first={index === 0} hub={hub} />
+      ))}
+    </ul>
   )
 }
 

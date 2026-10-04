@@ -16,7 +16,6 @@ import { repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { RepoEnvironment, TestBuildRun } from "../hub/store.ts"
 import {
-  ArrowLeftIcon,
   Avatar,
   Badge,
   Banner,
@@ -440,14 +439,6 @@ function EnvironmentEditor({
   return (
     <>
       <div {...stylex.props(styles.top)}>
-        <Button
-          nativeButton={false}
-          render={<Link to="/" />}
-          intent="ghost"
-          size="sm"
-          icon={<ArrowLeftIcon />}
-          aria-label="All Sessions"
-        />
         <div {...stylex.props(styles.heading)}>
           <div {...stylex.props(styles.titleRow)}>
             <h1 {...stylex.props(styles.title)}>{repo}</h1>

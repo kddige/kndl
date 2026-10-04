@@ -59,8 +59,9 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   const hasButton = (name: string) =>
     [...page.querySelectorAll("button")].some((el) => el.textContent?.trim() === name)
 
-  // Connected and joined: the Session's header, with the reader present.
-  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("kddige/claude-hub"))
+  // Connected and joined: the Session's header, named by its work branch, with its Repo.
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/web-client"))
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("kddige/claude-hub")
   expect(hub.received.map((message) => message._tag)).toContain("JoinSession")
 
   // A second Participant joins, and their prompt starts a Turn under their name.
@@ -300,21 +301,18 @@ async function openApp(path: string) {
   }
 }
 
-test("deleting a Session archives it, hides it from the list, and Undo restores it", async () => {
+test("deleting a Session archives it, hides it from the sidebar, and Undo restores it", async () => {
   const { page, router, sent, find } = await openApp("/sessions/s-readme")
-  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("kddige/claude-hub"))
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/readme-run"))
 
   await step(() => button("Delete Session", page).click())
   expect(sent()).toContain("ArchiveSession")
   await eventually(() => expect(find("s-readme")?.state).toBe("Archived"))
-  // Back on the Session list, which no longer shows it but links to the Repo's archive.
+  // Back on the start page; the sidebar no longer lists it.
   await eventually(() => expect(router.state.location.pathname).toBe("/"))
-  const list = () => page.querySelector('nav[aria-label="Sessions"]')?.textContent ?? ""
+  const list = () => page.querySelector("ul[aria-labelledby]")?.textContent ?? ""
   await eventually(() => expect(list()).toContain("claude/web-client"))
   expect(list()).not.toContain("claude/readme-run")
-  expect(page.querySelector('[aria-label="Archived Sessions"]')?.textContent).toContain(
-    "2 archived in kddige/claude-hub",
-  )
 
   const deleted = findToast("Session deleted")
   if (!deleted) throw new Error("no undo toast")
