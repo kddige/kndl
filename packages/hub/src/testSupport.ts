@@ -20,6 +20,7 @@ import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import {
   DefaultArchiveRetention,
+  DefaultRepoAccessTtl,
   DefaultSleepAfter,
   HubConfig,
   type HubConfigInput,
@@ -41,6 +42,7 @@ export const baseConfig: HubConfigInput = {
   devLoginName: "dev",
   sleepAfterMs: Duration.toMillis(DefaultSleepAfter),
   archiveRetentionMs: Duration.toMillis(DefaultArchiveRetention),
+  repoAccessTtlMs: Duration.toMillis(DefaultRepoAccessTtl),
   secretsKey: Option.none(),
   // No web UI build: WebUi.test.ts makes its own.
   webDir: "/nonexistent/claude-hub/web",

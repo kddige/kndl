@@ -1,5 +1,6 @@
 // The GitHub App client against a stand-in GitHub API: the App JWT, installation tokens scoped
-// to one Repo (cached for host git, fresh for each Sandbox), and the bot identity.
+// to one Repo (cached for host git, fresh for each Sandbox), the bot identity, and who is a
+// Repo's collaborator.
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { createPrivateKey } from "node:crypto"
@@ -153,6 +154,38 @@ describe("the bot identity", () => {
   })
 })
 
+const isCollaborator = (login: string) =>
+  withApp(Effect.flatMap(GitHubApp, (app) => app.isCollaborator(repo, login)))
+
+describe("collaborators", () => {
+  test("are asked about as the Repo's installation", async () => {
+    github.grant(repo, "octocat")
+    expect(await isCollaborator("octocat")).toBe(true)
+    expect(await isCollaborator("hubot")).toBe(false)
+    expect(github.collaboratorChecks()).toBe(2)
+  })
+
+  test("can't be asked about on a Repo the App isn't installed on: a 404", async () => {
+    const error = await withApp(
+      Effect.flip(
+        Effect.flatMap(GitHubApp, (app) => app.isCollaborator(RepoName.make("octo/other"), "x")),
+      ),
+    )
+    expect(error.status).toBe(404)
+  })
+
+  test("are unknown when GitHub can't say, with its status", async () => {
+    github.collaboratorsDown = true
+    const error = await withApp(
+      Effect.flip(Effect.flatMap(GitHubApp, (app) => app.isCollaborator(repo, "octocat"))),
+    )
+    expect(error.status).toBe(503)
+    expect(error.message).toBe(
+      "Could not check octocat's access to octo/widgets: GitHub answered 503: Service Unavailable",
+    )
+  })
+})
+
 describe("without the App configured", () => {
   test("every call fails, saying what to set", async () => {
     const error = await Effect.runPromise(
@@ -172,6 +205,7 @@ describe("without the App configured", () => {
   test("has no pull request calls: gh in the Sandbox makes those (#73)", () => {
     expect(Object.keys(GitHubApp.unconfigured).toSorted()).toEqual([
       "botIdentity",
+      "isCollaborator",
       "isConfigured",
       "repoToken",
       "sandboxToken",

@@ -1,6 +1,6 @@
 // A stand-in for GitHub's REST API, as the GitHub App uses it, for the Hub's tests: an
-// in-process HTTP server on 127.0.0.1 that checks the App JWT's signature and mints installation
-// tokens. Not part of the Hub.
+// in-process HTTP server on 127.0.0.1 that checks the App JWT's signature, mints installation
+// tokens and, with one of them, says who is a Repo's collaborator. Not part of the Hub.
 
 import { generateKeyPairSync, type KeyObject, verify } from "node:crypto"
 
@@ -47,6 +47,10 @@ export class StandInGitHub {
   readonly requests: Array<ApiRequest> = []
   /** Repos (`owner/name`) the App is installed on. */
   readonly installedOn = new Set<string>()
+  /** The collaborators (logins) of each Repo (`owner/name`). */
+  readonly collaborators = new Map<string, Set<string>>()
+  /** While set, collaborator checks answer 503, as in an outage. */
+  collaboratorsDown = false
   /** How long the tokens it mints last. */
   tokenLifetimeMs = 60 * 60 * 1000
   private minted = 0
@@ -71,10 +75,32 @@ export class StandInGitHub {
     return [...this.tokens]
   }
 
-  /** Forgets everything: requests, installs and tokens. */
+  /** Makes `login` a collaborator on `repo`. */
+  grant(repo: string, login: string) {
+    const logins = this.collaborators.get(repo) ?? new Set()
+    logins.add(login)
+    this.collaborators.set(repo, logins)
+  }
+
+  /** Takes `login` off `repo`'s collaborators. */
+  revoke(repo: string, login: string) {
+    this.collaborators.get(repo)?.delete(login)
+  }
+
+  /** How many collaborator checks it has answered, for `login` if given. */
+  collaboratorChecks(login?: string) {
+    return this.requests.filter((request) => {
+      const checked = /^\/repos\/[^/]+\/[^/]+\/collaborators\/([^/]+)$/.exec(request.path)?.[1]
+      return checked !== undefined && (login === undefined || checked === login)
+    }).length
+  }
+
+  /** Forgets everything: requests, installs, collaborators and tokens. */
   reset() {
     this.requests.length = 0
     this.installedOn.clear()
+    this.collaborators.clear()
+    this.collaboratorsDown = false
     this.tokenLifetimeMs = 60 * 60 * 1000
     this.minted = 0
     this.tokens.clear()
@@ -156,6 +182,16 @@ export class StandInGitHub {
         token,
         expires_at: new Date(Date.now() + this.tokenLifetimeMs).toISOString(),
       })
+    }
+    if (
+      request.method === "GET" &&
+      (match = /^\/repos\/([^/]+\/[^/]+)\/collaborators\/([^/]+)$/.exec(path))
+    ) {
+      // As an installation, with a token it minted.
+      if (!this.tokens.has(authorization?.replace(/^Bearer /, "") ?? "")) return unauthorized
+      if (this.collaboratorsDown) return this.json(503, { message: "Service Unavailable" })
+      const isCollaborator = this.collaborators.get(match[1] ?? "")?.has(match[2] ?? "") ?? false
+      return isCollaborator ? new Response(null, { status: 204 }) : this.json(404, {})
     }
     if (request.method === "GET" && path === "/app") {
       if (!this.isApp(authorization)) return unauthorized

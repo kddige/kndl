@@ -174,7 +174,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
     case "SessionCreated":
       return { ...state, sessions: upsert(state.sessions ?? [], action.session) }
     case "SessionRemoved": {
-      // Purged: gone from the Hub, with its history.
+      // Purged, gone from the Hub with its history, or out of reach: access to its Repo was lost.
       const sessions = state.sessions?.filter((session) => session.id !== action.sessionId) ?? null
       const { [action.sessionId]: _, ...joined } = state.joined
       return { ...state, sessions, joined }

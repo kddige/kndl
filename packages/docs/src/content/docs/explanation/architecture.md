@@ -70,7 +70,7 @@ A Session's Workspace, its dependency folders and Docker's data live on disks th
 
 ## Several people, one Session
 
-A Session belongs to its Repo, not to a person ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Everyone in it is a Participant with the same rights: anyone can prompt it, type into its terminal, put it to sleep or delete it. The person who started it is recorded as its Creator, for history only.
+A Session belongs to its Repo, not to a person ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Anyone with access to the Repo on GitHub can join it ([Who can do what](/explanation/security-model/#who-can-do-what)). Everyone in it is a Participant with the same rights: anyone can prompt it, type into its terminal, put it to sleep or delete it. The person who started it is recorded as its Creator, for history only.
 
 ### The terminal mirror
 

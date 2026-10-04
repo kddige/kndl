@@ -9,6 +9,7 @@ import { ModOutbox } from "./ModOutbox.ts"
 import { ModRoutes } from "./ModRoutes.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { PromptQueue } from "./PromptQueue.ts"
+import { RepoAccess } from "./RepoAccess.ts"
 import { Runners } from "./Runners.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 import { Secrets } from "./Secrets.ts"
@@ -29,11 +30,11 @@ export const HubRoutes = Layer.mergeAll(
 )
 
 /**
- * The credential stores, the mod outbox, Environments, the Session relay and the shutdown signal
- * the routes use, given a database and the GitHub App (GitHubApp.ts).
+ * The credential stores, the mod outbox, Environments, Repo access, the Session relay and the
+ * shutdown signal the routes use, given a database and the GitHub App (GitHubApp.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
-  Layer.provideMerge(SessionGit.layer),
+  Layer.provideMerge(Layer.merge(SessionGit.layer, RepoAccess.layer)),
   Layer.provideMerge(
     Layer.mergeAll(
       SignIns.layer,
