@@ -9,9 +9,10 @@
 
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { homedir, tmpdir } from "node:os"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { RunnerToHub, SessionId, ToolBridgeReply } from "@claude-hub/protocol"
+import { devHome } from "@claude-hub/protocol/home"
 import { Duration, Effect, Layer } from "effect"
 import { Sandbox } from "microsandbox"
 import { HubLink } from "./HubLink.ts"
@@ -65,8 +66,7 @@ test.skipIf(!enabled)(
     await mkdir(directories.workspace, { recursive: true })
     await mkdir(directories.claude, { recursive: true })
     await writeFile(join(directories.workspace, "package.json"), '{"name":"app"}\n')
-    const cacheDir =
-      process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(homedir(), ".claude-hub", "claude-code")
+    const cacheDir = process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(devHome.dir, "claude-code")
     const sent: Array<RunnerToHub> = []
 
     // Sandboxes not the Runner's on this machine, such as a spike's: we must leave them be.

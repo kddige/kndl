@@ -16,7 +16,7 @@
 // any value: the Environment version, the build it booted from and its libc, and the recipe.
 
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { availableParallelism, homedir, tmpdir, totalmem } from "node:os"
+import { availableParallelism, tmpdir, totalmem } from "node:os"
 import { join } from "node:path"
 import type {
   RepoName,
@@ -27,6 +27,7 @@ import type {
   VariableValue,
 } from "@claude-hub/protocol"
 import { EnvironmentRecipe, EnvironmentVersion, RunnerToHub } from "@claude-hub/protocol"
+import { HomeConfig } from "@claude-hub/protocol/home"
 import { Config, Effect, Exit, Layer, Option, Schema, Scope, Semaphore } from "effect"
 import type { Cause } from "effect"
 import { ChildProcessSpawner } from "effect/process"
@@ -796,7 +797,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
  * |---|---|
  * | `RUNNER_SANDBOX_IMAGE` | `docker:dind` |
  * | `RUNNER_SANDBOX_CLAUDE_VERSION` | the host's `claude --version` |
- * | `RUNNER_SANDBOX_CLAUDE_CACHE` | `~/.claude-hub/claude-code` |
+ * | `RUNNER_SANDBOX_CLAUDE_CACHE` | `claude-code` in the home: `~/.claude-hub-dev/claude-code` |
  * | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count |
  * | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory |
  * | `RUNNER_SANDBOX_KEEP_BUILDS` | 3 |
@@ -807,11 +808,12 @@ export const SessionSandboxesLive = Layer.effect(
     const config = yield* RunnerConfig
     const hubGit = yield* HubGit
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+    const home = yield* HomeConfig
     const settings = yield* Config.all({
       image: Config.String("RUNNER_SANDBOX_IMAGE").pipe(Config.withDefault("docker:dind")),
       version: Config.option(Config.NonEmptyString("RUNNER_SANDBOX_CLAUDE_VERSION")),
       cacheDir: Config.String("RUNNER_SANDBOX_CLAUDE_CACHE").pipe(
-        Config.withDefault(join(homedir(), ".claude-hub", "claude-code")),
+        Config.withDefault(join(home.dir, "claude-code")),
       ),
       maxCpus: Config.Int("RUNNER_SANDBOX_MAX_CPUS").pipe(
         Config.withDefault(availableParallelism()),

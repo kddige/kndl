@@ -150,7 +150,7 @@ const stateIn = (world: FakeSandboxWorld, id: SessionId) => world.sandboxes.get(
 
 test("a re-adopted Session whose Sandbox was stopped gets it started again, and its tools back", async () => {
   const world = makeFakeWorld()
-  const host = await runnerHost("claude-hub")
+  const host = await runnerHost("claude-hub-dev")
   const s1 = sessionId("s-1")
   const dirs1 = await directories(host, s1)
 
@@ -184,8 +184,9 @@ test("a re-adopted Session whose Sandbox was stopped gets it started again, and 
 
 test("Runners restarting side by side on one host each keep to their own Sandboxes", async () => {
   const world = makeFakeWorld()
+  // An installed Runner and a dev one, on their default sockets.
   const a = await runnerHost("claude-hub")
-  const b = await runnerHost("claude-hub-test")
+  const b = await runnerHost("claude-hub-dev")
   const sa = sessionId("s-a")
   const sb = sessionId("s-b")
   const asleep = sessionId("s-asleep")

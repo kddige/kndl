@@ -23,6 +23,7 @@ import type {
   ToolBridgeReply,
 } from "@claude-hub/protocol"
 import { EnvironmentVersion } from "@claude-hub/protocol"
+import { devHome } from "@claude-hub/protocol/home"
 import { Duration, Effect, Layer, Option, Schema } from "effect"
 import { Sandbox, Snapshot, Volume } from "microsandbox"
 import { loginEnvGuestPath, readLoginEnv } from "./EnvironmentBuilds.ts"
@@ -152,8 +153,7 @@ test.skipIf(!enabled)(
     await mkdir(directories.workspace, { recursive: true })
     await mkdir(directories.claude, { recursive: true })
     await writeFile(join(directories.workspace, "package.json"), '{"name":"app"}\n')
-    const cacheDir =
-      process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(homedir(), ".claude-hub", "claude-code")
+    const cacheDir = process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(devHome.dir, "claude-code")
     const sent: Array<RunnerToHub> = []
 
     const othersBefore = await Sandbox.list().then((page) =>

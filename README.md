@@ -12,7 +12,7 @@ One Bun workspace in TypeScript.
 
 | Package | What it is |
 |---|---|
-| [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as [Effect](https://effect.website) Schemas. Imported from source by the other packages. |
+| [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as [Effect](https://effect.website) Schemas; and, as `@claude-hub/protocol/home`, which home the Hub and Runner keep their state in (see [The dev home](#the-dev-home)). Imported from source by the other packages. |
 | [`packages/hub`](packages/hub) | The Hub: Effect HTTP server on Bun, storing its data in SQLite through `@effect/sql-sqlite-bun`. Signs people in, issues Runner and mod tokens, accepts the Runner and web WebSocket channels, serves the mod's HTTP endpoints (handshake only, for now), and serves the web UI's build. |
 | [`packages/runner`](packages/runner) | A Runner: an Effect program that connects to the Hub and runs each Session's Claude Code in its own tmux session on its host, streaming the terminal, and each Session's tools in its own [microsandbox](https://github.com/microsandbox/microsandbox) Sandbox through a tool bridge. |
 | [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod a Runner loads into each Session. Sends the Session's turns to the Hub, delivers prompts from the web UI, shows the Participants above the prompt, and runs the file and command tools in the Sandbox, denying every other tool. Its logic is bundled with Effect and the protocol into one ES module (`bun run mod:build`). |
@@ -67,6 +67,19 @@ The Hub serves the build from `HUB_WEB_DIR` (default `packages/web/dist` in this
 
 Without a build, the Hub still starts: it logs a warning at startup, and its pages answer 503 with how to build one.
 
+### The dev home
+
+Run from a checkout, the Runner keeps its state in a dev home, `~/.claude-hub-dev`, and its Sessions on tmux socket `claude-hub-dev`. An installed claude-hub (the CLI to come, [#58](https://github.com/kddige/claude-hub/issues/58)) will own `~/.claude-hub` and socket `claude-hub`, so a dev Runner and an installed one can share a machine without re-adopting each other's Sessions or reconciling each other's Sandboxes. `CLAUDE_HUB_HOME` names another home, as the CLI will for the processes it installs; which home a process uses is decided in `packages/protocol/src/Home.ts`. A setting that names a path still wins over the home's.
+
+| Setting | Default from a checkout | With `CLAUDE_HUB_HOME=<home>` |
+|---|---|---|
+| `RUNNER_SESSIONS_ROOT` | `~/.claude-hub-dev/sessions` | `<home>/sessions` |
+| `RUNNER_SANDBOX_CLAUDE_CACHE` | `~/.claude-hub-dev/claude-code` | `<home>/claude-code` |
+| `RUNNER_TMUX_SOCKET` | `claude-hub-dev` | `claude-hub` |
+| `HUB_DATABASE` | `hub.db` in `packages/hub`: each checkout keeps its own, beside the `.env.local` holding its `HUB_SECRETS_KEY` | `<home>/hub.db` |
+
+**The old defaults.** Runners used to default to `~/.claude-hub/sessions`, `~/.claude-hub/claude-code` and tmux socket `claude-hub`. Nothing is migrated. A Runner on the new defaults looks for its Sessions on a new socket and sessions root, so it re-adopts none from before, and has a new Runner mark, so it leaves their Sandboxes alone. A Session from before can't be woken, as its Workspace isn't in the new sessions root: delete it, or keep running that Runner with the old values in `RUNNER_SESSIONS_ROOT`, `RUNNER_TMUX_SOCKET` and `RUNNER_SANDBOX_CLAUDE_CACHE`. To clean up after them: `tmux -L claude-hub kill-server`, remove their Sandboxes (`claude-hub-<session id>`) with microsandbox's `msb`, and delete `~/.claude-hub/sessions` and `~/.claude-hub/claude-code`. Keep `~/.claude-hub/github-app.pem` if `GITHUB_APP_PRIVATE_KEY_PATH` points there.
+
 ## Signing in
 
 Every Hub route but `GET /health` and the sign-in routes needs a credential, because code in a Sandbox can reach the Hub ([ADR 0004](docs/adr/0004-the-sandbox-is-the-security-boundary.md)):
@@ -116,7 +129,7 @@ Store the credentials on the Hub's host:
 
 | What | Where |
 |---|---|
-| The private key | `~/.claude-hub/github-app.pem`, with `chmod 600` |
+| The private key | `~/.claude-hub-dev/github-app.pem`, with `chmod 600` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | `packages/hub/.env.local`, which git ignores (as it does `.env*` and `*.pem` anywhere) |
 
 ```sh
@@ -124,7 +137,7 @@ Store the credentials on the Hub's host:
 GITHUB_CLIENT_ID=Iv1.…
 GITHUB_CLIENT_SECRET=…
 GITHUB_APP_ID=…
-GITHUB_APP_PRIVATE_KEY_PATH=/Users/you/.claude-hub/github-app.pem
+GITHUB_APP_PRIVATE_KEY_PATH=/Users/you/.claude-hub-dev/github-app.pem
 HUB_SECRETS_KEY=…   # from `bun run secrets-key`
 ```
 
@@ -163,7 +176,7 @@ RUNNER_TOKEN=chr_… bun run runner
 
 A Runner connects to the Hub's `/ws/runner` WebSocket with its Runner token as `Authorization: Bearer <RUNNER_TOKEN>`, says hello, and then starts and stops Sessions as the Hub asks. Get a token from the Hub with `bun run runner-token <name>`. If the Hub goes away, the Runner reconnects with backoff (0.5 s, doubling up to 30 s).
 
-Each Session's Claude Code runs in a tmux session named `hub-<session id>`, on the Runner's own tmux server (`tmux -L claude-hub`), so Sessions keep running when the Runner restarts, and the Runner re-adopts them when it comes back, restarting each one's Sandbox if it stopped and bringing its tool bridge back up. On SIGTERM or SIGINT the Runner exits at once and leaves those tmux sessions running. To look at one by hand: `tmux -L claude-hub attach -t hub-<session id>`.
+Each Session's Claude Code runs in a tmux session named `hub-<session id>`, on the Runner's own tmux server (`tmux -L claude-hub-dev` from a checkout), so Sessions keep running when the Runner restarts, and the Runner re-adopts them when it comes back, restarting each one's Sandbox if it stopped and bringing its tool bridge back up. On SIGTERM or SIGINT the Runner exits at once and leaves those tmux sessions running. To look at one by hand: `tmux -L claude-hub-dev attach -t hub-<session id>`.
 
 A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty directory Claude Code runs in, and `workspace/`, the Repo cloned onto the Session's Work branch, with an installation token from the Hub when it has the GitHub App, and otherwise with the host's own git credentials. Claude Code inherits workspace trust from parent directories, so the Runner trusts the sessions root itself, at startup and before each launch: it sets `projects[<sessions root>].hasTrustDialogAccepted` in Claude Code's config file (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`), keyed by the root's real path. That is one entry for the root, never one per Session. It never creates the file: if Claude Code has never run on the host, the Runner warns and each Session asks.
 
@@ -173,14 +186,14 @@ A Session's files live in `<sessions root>/<session id>/`: `claude/`, the empty 
 | `RUNNER_TOKEN` | required | The Runner token. Kept out of tmux and Claude Code's environment. |
 | `RUNNER_NAME` | the short hostname | The name the UI shows. |
 | `RUNNER_LOGIN` | the account Claude Code is signed in with (`oauthAccount.emailAddress` in `~/.claude.json`) | The Runner login, as the UI shows it. |
-| `RUNNER_SESSIONS_ROOT` | `~/.claude-hub/sessions` | Where Sessions' directories go. |
+| `RUNNER_SESSIONS_ROOT` | `~/.claude-hub-dev/sessions` (see [The dev home](#the-dev-home)) | Where Sessions' directories go. |
 | `RUNNER_MOD_DIR` | `packages/mod` in this checkout | The `hub-link` mod, loaded with `--plugin-dir`. |
 | `CLAUDE_BIN` | `claude` | The Claude Code executable. |
-| `RUNNER_TMUX_SOCKET` | `claude-hub` | The tmux server's socket name. |
+| `RUNNER_TMUX_SOCKET` | `claude-hub-dev` | The tmux server's socket name. |
 | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` | Where Repos are cloned from; `{repo}` is `owner/name`. |
 | `RUNNER_SANDBOX_IMAGE` | `docker:dind` | The Sandbox image of a Session whose Repo has no Environment. |
 | `RUNNER_SANDBOX_CLAUDE_VERSION` | the host's `claude --version` | The Claude Code version Sandboxes run `claude mcp serve` from. |
-| `RUNNER_SANDBOX_CLAUDE_CACHE` | `~/.claude-hub/claude-code` | Where the Runner keeps Linux builds of Claude Code for Sandboxes. |
+| `RUNNER_SANDBOX_CLAUDE_CACHE` | `~/.claude-hub-dev/claude-code` | Where the Runner keeps Linux builds of Claude Code for Sandboxes. |
 | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count | The most CPUs an Environment's Sandbox gets, whatever its Environment asks for. |
 | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory | The most memory, in MiB, an Environment's Sandbox gets. |
 | `RUNNER_SANDBOX_KEEP_BUILDS` | `3` | How many builds of each Repo's Environment the Runner keeps. |

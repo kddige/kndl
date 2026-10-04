@@ -1,7 +1,7 @@
 // The tool bridge on a real microsandbox VM, so it is skipped unless CLAUDE_HUB_SANDBOX_IT=1. It
 // needs `msb` installed for the current user, the `docker:dind` image, and network access to
 // npm the first time a Claude Code version is cached (to RUNNER_SANDBOX_CLAUDE_CACHE, by default
-// ~/.claude-hub/claude-code, as the Runner does). It runs only `claude mcp serve` in the VM: no
+// ~/.claude-hub-dev/claude-code, as the Runner does). It runs only `claude mcp serve` in the VM: no
 // model calls, no credentials. Everything it creates is named claude-hub-it-… and destroyed at
 // the end, pass or fail.
 //
@@ -9,9 +9,10 @@
 
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { homedir, tmpdir } from "node:os"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { RunnerToHub, SessionId, ToolBridgeReply } from "@claude-hub/protocol"
+import { devHome } from "@claude-hub/protocol/home"
 import { Duration, Effect, Layer } from "effect"
 import { Sandbox } from "microsandbox"
 import { HubLink } from "./HubLink.ts"
@@ -63,8 +64,7 @@ test.skipIf(!enabled)(
     await mkdir(directories.workspace, { recursive: true })
     await mkdir(directories.claude, { recursive: true })
     await writeFile(join(directories.workspace, "greeting.txt"), "hello from the host\n")
-    const cacheDir =
-      process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(homedir(), ".claude-hub", "claude-code")
+    const cacheDir = process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(devHome.dir, "claude-code")
     const sent: Array<RunnerToHub> = []
     process.env.CLAUDE_HUB_IT_HOST_ONLY = hostOnly
 

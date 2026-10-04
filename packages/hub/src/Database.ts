@@ -1,3 +1,5 @@
+import { join } from "node:path"
+import { HomeConfig } from "@claude-hub/protocol/home"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import { Config, Effect, Layer } from "effect"
 import { SqlClient } from "effect/sql"
@@ -238,16 +240,20 @@ const migrated = <E, R>(client: Layer.Layer<SqlClient.SqlClient, E, R>) =>
   )
 
 /**
- * The Hub's SQLite database, migrated, at `HUB_DATABASE` (default `hub.db` in `packages/hub`,
- * wherever the Hub is started from).
+ * Where the Hub's database is: `HUB_DATABASE`, or else `hub.db` in the home `CLAUDE_HUB_HOME`
+ * names. From a checkout it is `hub.db` in `packages/hub` (wherever the Hub is started from), not in
+ * the dev home: each checkout keeps its own, beside the `.env.local` holding its `HUB_SECRETS_KEY`.
  */
-export const DatabaseLive = migrated(
-  SqliteClient.layerConfig({
-    filename: Config.String("HUB_DATABASE").pipe(
-      Config.withDefault(new URL("../hub.db", import.meta.url).pathname),
+export const DatabaseFile: Config.Config<string> = Config.flatMap(HomeConfig, (home) =>
+  Config.String("HUB_DATABASE").pipe(
+    Config.withDefault(
+      home.dev ? new URL("../hub.db", import.meta.url).pathname : join(home.dir, "hub.db"),
     ),
-  }),
+  ),
 )
+
+/** The Hub's SQLite database, migrated, at {@link DatabaseFile}. */
+export const DatabaseLive = migrated(SqliteClient.layerConfig({ filename: DatabaseFile }))
 
 /** The database in a file, migrated, as tests that restart the Hub use. */
 export const databaseAt = (filename: string) => migrated(SqliteClient.layer({ filename }))
