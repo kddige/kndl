@@ -1,0 +1,148 @@
+/*
+ * The site's theme. The accent is the web UI's, oklch(52% 0.18 268) (packages/web/src/ui/tokens.stylex.ts),
+ * and the greys lean the same way, so the docs and the app read as one product.
+ * Dark is Starlight's :root; light is [data-theme="light"].
+ */
+:root {
+  --sl-color-accent-low: #1b2450;
+  --sl-color-accent: #5874ea;
+  --sl-color-accent-high: #c3cdfd;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e8e9ed;
+  --sl-color-gray-2: #c2c4cb;
+  --sl-color-gray-3: #8d909b;
+  --sl-color-gray-4: #5a5d68;
+  --sl-color-gray-5: #383b44;
+  --sl-color-gray-6: #23252c;
+  --sl-color-gray-7: #18191e;
+  --sl-color-black: #111215;
+
+  --ch-mark-tile: #3d5dcf;
+  --ch-surface: #17181d;
+  --ch-surface-raised: #1d1f26;
+  --ch-line: #2b2e37;
+  --ch-glow: rgb(61 93 207 / 0.22);
+}
+
+/* A calmer heading scale than Starlight's, for pages that are mostly sections and terms. Page
+   titles keep their size. */
+:root {
+  --sl-text-h2: var(--sl-text-2xl);
+  --sl-text-h3: var(--sl-text-xl);
+  --sl-text-h4: var(--sl-text-lg);
+}
+@media (min-width: 50em) {
+  :root {
+    --sl-text-h2: var(--sl-text-3xl);
+    --sl-text-h3: 1.375rem;
+    --sl-text-h4: var(--sl-text-lg);
+  }
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e2e8ff;
+  --sl-color-accent: #3d5dcf;
+  --sl-color-accent-high: #22337a;
+  --sl-color-white: #15171c;
+  --sl-color-gray-1: #23262e;
+  --sl-color-gray-2: #3b3f49;
+  --sl-color-gray-3: #5e626d;
+  --sl-color-gray-4: #8a8e99;
+  --sl-color-gray-5: #c5c8cf;
+  --sl-color-gray-6: #e7e9ee;
+  --sl-color-gray-7: #f4f5f8;
+  --sl-color-black: #ffffff;
+  /* Note asides: Starlight's light blue is louder than the rest of the page. */
+  --sl-color-blue-low: #eaeeff;
+  --sl-color-blue: #3d5dcf;
+  --sl-color-blue-high: #22337a;
+
+  --ch-surface: #fafafc;
+  --ch-surface-raised: #ffffff;
+  --ch-line: #e1e3e8;
+  --ch-glow: rgb(61 93 207 / 0.12);
+}
+
+/* The logo lockup in the header: a touch smaller than Starlight's default. */
+.site-title img {
+  height: 1.75rem;
+  width: auto;
+}
+
+/* Rendered ADRs: their status, above the body. */
+.adr-status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+.adr-badge {
+  font-family: var(--sl-font-mono);
+  font-size: var(--sl-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  color: var(--sl-color-accent-high);
+  background: var(--sl-color-accent-low);
+}
+.adr-badge--superseded {
+  color: var(--sl-color-orange-high);
+  background: var(--sl-color-orange-low);
+}
+
+/* "Rendered from ..." under a page built from a repo file. */
+.source-note {
+  font-size: var(--sl-text-sm);
+  color: var(--sl-color-gray-3);
+}
+
+/* The glossary's "Avoid" lines, quieter than the definitions. */
+.sl-markdown-content h3 + p + p > em:first-child {
+  color: var(--sl-color-gray-3);
+}
+
+/* Troubleshooting entries: Symptom, Cause, Fix as run-in labels. */
+.sl-markdown-content .ts-label {
+  font-family: var(--sl-font-mono);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sl-color-accent-high);
+  margin-inline-end: 0.35em;
+}
+
+/* The landing page (the splash template): section headings and leads. */
+.landing-section {
+  margin-top: clamp(3rem, 8vw, 5rem);
+}
+.landing-section > h2,
+.landing-section > p {
+  max-width: 46rem;
+}
+.landing-eyebrow {
+  margin: 0;
+  font-family: var(--sl-font-mono);
+  font-size: var(--sl-text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sl-color-accent-high);
+}
+.sl-markdown-content .landing-section > h2,
+.landing-section > h2 {
+  margin: 0.3rem 0 0.8rem;
+  font-size: clamp(var(--sl-text-2xl), 1.1rem + 1.6vw, var(--sl-text-3xl));
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+.landing-lead {
+  margin: 0 0 2rem;
+  font-size: var(--sl-text-lg);
+  line-height: 1.6;
+  color: var(--sl-color-gray-2);
+}
+.sl-markdown-content .landing-section > :is(figure, ul) {
+  margin-top: 0;
+}
