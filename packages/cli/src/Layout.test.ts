@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { resolveLayout, shellQuote, wrapperScript } from "./Layout.ts"
+import { isWrapperFor, resolveLayout, shellQuote, wrapperScript } from "./Layout.ts"
 
 describe("the installed home", () => {
   test("is ~/.claude-hub by default, never the dev home", () => {
@@ -35,6 +35,17 @@ describe("the claude-hub wrapper", () => {
         "",
       ].join("\n"),
     )
+  })
+
+  test("is recognised whichever Bun it runs, but only for its own home", () => {
+    const layout = resolveLayout({}, "/Users/ada")
+    const other = resolveLayout({ CLAUDE_HUB_HOME: "/srv/hub" }, "/Users/ada")
+    const script = wrapperScript(layout, "/opt/homebrew/bin/bun")
+
+    expect(isWrapperFor(script, layout)).toBe(true)
+    expect(isWrapperFor(wrapperScript(layout, "/My Apps/bun"), layout)).toBe(true)
+    expect(isWrapperFor(script, other)).toBe(false)
+    expect(isWrapperFor("#!/bin/sh\nexec something-else\n", layout)).toBe(false)
   })
 
   test("quotes words for sh", () => {

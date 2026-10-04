@@ -86,7 +86,26 @@ export function wrapperScript(layout: Layout, bun: string): string {
     "# claude-hub: written by install.sh. Runs the CLI from the installed checkout.",
     `: "\${CLAUDE_HUB_HOME:=${layout.home.dir}}"`,
     "export CLAUDE_HUB_HOME",
-    `exec ${shellQuote(bun)} "$CLAUDE_HUB_HOME/app/packages/cli/src/main.ts" "$@"`,
+    `exec ${shellQuote(bun)} ${WrapperArgs}`,
     "",
   ].join("\n")
+}
+
+const WrapperArgs = `"$CLAUDE_HUB_HOME/app/packages/cli/src/main.ts" "$@"`
+
+/**
+ * Whether `text` is the wrapper for this home, whichever Bun it runs: install.sh writes the Bun it
+ * found on PATH, the CLI the one running it.
+ */
+export function isWrapperFor(text: string, layout: Layout): boolean {
+  const lines = text.split("\n")
+  const expected = wrapperScript(layout, "bun").split("\n")
+  return (
+    lines.length === expected.length &&
+    lines.every((line, i) =>
+      expected[i]?.startsWith("exec ")
+        ? line.startsWith("exec ") && line.endsWith(` ${WrapperArgs}`)
+        : line === expected[i],
+    )
+  )
 }

@@ -26,7 +26,7 @@ import { Cause, ConfigProvider, Effect, Exit } from "effect"
 import type { DoctorFacts, Health } from "./Doctor.ts"
 import { type EnvFile, envValues, parseEnv, renderEnv } from "./EnvFile.ts"
 import type { HomeFacts } from "./Guards.ts"
-import { type Layout, type Role, Roles, wrapperScript } from "./Layout.ts"
+import { isWrapperFor, type Layout, type Role, Roles, wrapperScript } from "./Layout.ts"
 import { localHubUrl } from "./Onboard.ts"
 import { type HostFacts, type PackageManager, prerequisitePlan } from "./Prerequisites.ts"
 import {
@@ -299,9 +299,7 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
       wrapper: {
         path: layout.wrapper,
         exists: wrapperExists,
-        current:
-          wrapperExists &&
-          readFileSync(layout.wrapper, "utf8") === wrapperScript(layout, bunPath()),
+        current: wrapperExists && isWrapperFor(readFileSync(layout.wrapper, "utf8"), layout),
         onPath: onPath !== null && samePath(onPath, layout.wrapper),
       },
       roles,

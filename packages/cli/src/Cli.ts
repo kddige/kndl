@@ -33,10 +33,10 @@ const layout = () => resolveLayout()
 const optional = <A>(flag: Flag.Flag<A>) =>
   flag.pipe(Flag.optional, Flag.map(Option.getOrUndefined))
 
-const yes = Flag.Boolean("yes").pipe(
-  Flag.withAlias("y"),
-  Flag.withDescription("Don't ask for confirmation"),
-)
+/** A switch: off unless given. */
+const off = (name: string) => Flag.Boolean(name).pipe(Flag.withDefault(false))
+
+const yes = off("yes").pipe(Flag.withAlias("y"), Flag.withDescription("Don't ask for confirmation"))
 
 const onboardCommand = Command.make(
   "onboard",
@@ -97,10 +97,10 @@ const onboardCommand = Command.make(
         Flag.withDescription("Linux: keep the services running while you're logged out"),
       ),
     ),
-    nonInteractive: Flag.Boolean("non-interactive").pipe(
+    nonInteractive: off("non-interactive").pipe(
       Flag.withDescription("Never ask: an answer with no flag takes its default, or fails"),
     ),
-    reset: Flag.Boolean("reset").pipe(
+    reset: off("reset").pipe(
       Flag.withDescription("Ask again instead of keeping the existing settings"),
     ),
   },
@@ -132,7 +132,7 @@ const logsCommand = Command.make(
       Argument.optional,
       Argument.map(Option.getOrUndefined),
     ),
-    follow: Flag.Boolean("follow").pipe(
+    follow: off("follow").pipe(
       Flag.withAlias("f"),
       Flag.withDescription("Keep printing as it logs"),
     ),
@@ -149,7 +149,7 @@ const logsCommand = Command.make(
 
 const doctorCommand = Command.make(
   "doctor",
-  { fix: Flag.Boolean("fix").pipe(Flag.withDescription("Repair what can be repaired")), yes },
+  { fix: off("fix").pipe(Flag.withDescription("Repair what can be repaired")), yes },
   (options) => Effect.flatMap(doctor(layout(), options), exitWith),
 ).pipe(Command.withDescription("Check the install, its configuration and its services"))
 
@@ -172,7 +172,7 @@ const updateCommand = Command.make(
 const uninstallCommand = Command.make(
   "uninstall",
   {
-    purge: Flag.Boolean("purge").pipe(
+    purge: off("purge").pipe(
       Flag.withDescription(
         "Remove the whole home too: the Hub's database, its key, the Runner's Sessions",
       ),
