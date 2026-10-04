@@ -1,6 +1,6 @@
 ---
 title: GitHub and git
-description: A Repo won't clone, the GitHub App can't see it, git and gh in a Session can't reach GitHub, or the WIP ref won't push.
+description: A Repo won't clone, the GitHub App can't see it or lacks permissions, git and gh in a Session can't reach GitHub, or the WIP ref won't push.
 sidebar:
   order: 6
 ---
@@ -38,6 +38,23 @@ The same words can end the Runner's warning that a Sandbox has no GitHub token (
 **Why.** The Hub mints every token from the App's installation on the Repo's owner. The App isn't installed there, or its installation was limited to other repositories.
 
 **Fix.** On GitHub, open the App's settings, **Install App**, and add the Repo to the installation, or install it on that account or organisation. No restart is needed.
+
+## The GitHub App is missing permissions
+
+**What you see.** The web UI shows a banner, **The GitHub App is missing permissions**, that lists them. `claude-hub doctor` fails with:
+
+```
+XX  GitHub App: The App claude-hub-build-box lacks Issues: Read and write. Add it at https://github.com/settings/apps/claude-hub-build-box/permissions
+      Its installation on ada lacks Issues: Read and write. Once the App has it, accept it at https://github.com/settings/installations/12345/permissions/update
+```
+
+and the Hub logs the same lines as warnings. Meanwhile what needs the permission fails, such as `gh issue comment` in a Session with `Resource not accessible by integration`.
+
+**Why.** claude-hub came to need a permission the App was created without, or someone removed one. Or the App has it, but an installation hasn't accepted it yet: GitHub keeps an installation on its old permissions until someone who manages the account accepts the new ones.
+
+**Fix.** Follow the links: add the permissions on the App's page and **Save changes**, then on each installation's page **Accept new permissions**. Click **Check again** on the banner, or run `claude-hub doctor`. The Hub also checks every hour on its own. See [Keep the permissions in step](/how-to/set-up-the-github-app/#keep-the-permissions-in-step).
+
+If the banner never appears and doctor warns `Couldn't check its permissions`, the Hub's App settings are wrong, or GitHub can't be reached: the message says which.
 
 ## git and gh in a Session can't reach GitHub
 

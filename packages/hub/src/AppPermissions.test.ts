@@ -2,7 +2,9 @@
 // and each installation lack, and where on GitHub to fix it.
 
 import { describe, expect, test } from "bun:test"
+import { join } from "node:path"
 import {
+  accessTitle,
   type AppFacts,
   checkAppPermissions,
   describeDrift,
@@ -144,4 +146,24 @@ describe("checkAppPermissions", () => {
     expect(check.installed).toBe(0)
     expect(check.installations).toEqual([])
   })
+})
+
+test("the docs list the permissions the Hub needs", async () => {
+  // The docs page has RequiredPermissions as a table between two markers: when the list changes,
+  // put the table this expects there.
+  const page = await Bun.file(
+    join(import.meta.dir, "../../docs/src/content/docs/how-to/set-up-the-github-app.md"),
+  ).text()
+  const table = /<!-- permissions:start -->\n([\s\S]*?)<!-- permissions:end -->/.exec(page)?.[1]
+  expect(table).toBe(
+    [
+      "| Permission | Access | Why |",
+      "|---|---|---|",
+      ...RequiredPermissions.map(
+        (permission) =>
+          `| ${permission.title} | ${accessTitle(permission.access)} | ${permission.why} |`,
+      ),
+      "",
+    ].join("\n"),
+  )
 })

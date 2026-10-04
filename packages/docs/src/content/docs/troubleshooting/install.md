@@ -72,6 +72,22 @@ Other files in the home, such as a `github-app.pem`, stay where they are.
 
 If onboard also says that tmux server `claude-hub` has sessions, those would be re-adopted however the data is named: archive those Sessions on the Hub that started them, or stop the server with `tmux -L claude-hub kill-server`, then onboard again.
 
+## Onboard can't create the GitHub App
+
+**What you see.** One of:
+
+- The page onboard printed, such as `http://127.0.0.1:41234/`, doesn't load.
+- After creating the App on GitHub, the page GitHub sends you back to doesn't load, and onboard keeps waiting.
+- Onboard says `GitHub didn't hand over the new App's credentials: …`.
+
+**Why.** The page is served on the Hub's machine, on `127.0.0.1` only. A browser on another machine, such as yours when onboard runs over SSH, can't reach it without a tunnel. GitHub's code for the App's credentials works once, and expires after an hour.
+
+**Fix.**
+
+- **Over SSH**, forward the port onboard names from your own machine (`ssh -L 41234:127.0.0.1:41234 hub-box`) and reload the page.
+- **Stuck after GitHub**, copy the address the browser was sent back to, with `code=` in it, and paste it at onboard's prompt.
+- **The code was used or expired**, the App exists on GitHub without its settings saved. Either delete it (its settings, **Advanced**, **Delete GitHub App**) and run `claude-hub onboard --github-app create` again; or generate a client secret and a private key in its settings, and run `claude-hub onboard --github-app manual`.
+
 ## A service won't stay up
 
 **What you see.** `claude-hub status` or `doctor` shows the Hub's or Runner's service as not running, or `XX  Hub service … its log: claude-hub logs hub`.
