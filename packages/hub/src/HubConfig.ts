@@ -50,6 +50,8 @@ export interface HubConfigInput {
   readonly sleepAfterMs: number
   /** How long an Archived Session can be restored before it is purged, in milliseconds. */
   readonly archiveRetentionMs: number
+  /** How long the Hub trusts what GitHub said about a person's access to a Repo, in milliseconds. */
+  readonly repoAccessTtlMs: number
   /** The key Sensitive variable values are encrypted with: 32 bytes, base64. */
   readonly secretsKey: Option.Option<Redacted.Redacted<string>>
   /** The web UI's build: the directory holding its `index.html`. */
@@ -67,6 +69,14 @@ export const DefaultSleepAfter = Duration.minutes(15)
 
 /** How long an Archived Session can be restored by default (ADR 0003). */
 export const DefaultArchiveRetention = Duration.days(30)
+
+/**
+ * How long the Hub trusts an answer about a person's access to a Repo by default (RepoAccess.ts).
+ * It bounds how long someone keeps a Repo's Sessions after losing access on GitHub, and each
+ * check is a call to GitHub's API, against the App installation's rate limit of 5,000 an hour or
+ * more: five minutes keeps a team of 15 with Sessions in 10 Repos under 2,000 an hour.
+ */
+export const DefaultRepoAccessTtl = Duration.minutes(5)
 
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
 export class HubConfigError extends Schema.TaggedError<HubConfigError>()("HubConfigError", {
@@ -162,6 +172,11 @@ export class HubConfig extends Context.Service<
     /** How long an Archived Session can be restored before it is purged. */
     readonly archiveRetention: Duration.Duration
     /**
+     * How long an answer about a person's access to a Repo is cached, and how often the Repos of
+     * everyone connected are checked again (RepoAccess.ts).
+     */
+    readonly repoAccessTtl: Duration.Duration
+    /**
      * The key Sensitive variable values are encrypted with at rest (ADR 0009), or none: Sensitive
      * values can't then be saved, and the Hub refuses to start if any are stored.
      */
@@ -191,6 +206,11 @@ export class HubConfig extends Context.Service<
     if (!Number.isSafeInteger(input.archiveRetentionMs) || input.archiveRetentionMs <= 0) {
       return yield* new HubConfigError({
         message: `HUB_ARCHIVE_RETENTION_MS must be a whole number of milliseconds above 0, not ${input.archiveRetentionMs}.`,
+      })
+    }
+    if (!Number.isSafeInteger(input.repoAccessTtlMs) || input.repoAccessTtlMs <= 0) {
+      return yield* new HubConfigError({
+        message: `HUB_REPO_ACCESS_TTL_MS must be a whole number of milliseconds above 0, not ${input.repoAccessTtlMs}.`,
       })
     }
     if (Option.isSome(input.githubClientId) !== Option.isSome(input.githubClientSecret)) {
@@ -248,6 +268,7 @@ export class HubConfig extends Context.Service<
       cookieWarning: cookies.warning,
       sleepAfter: Duration.millis(input.sleepAfterMs),
       archiveRetention: Duration.millis(input.archiveRetentionMs),
+      repoAccessTtl: Duration.millis(input.repoAccessTtlMs),
       secretsKey,
       webDir: input.webDir,
     })
@@ -258,8 +279,8 @@ export class HubConfig extends Context.Service<
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
    * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the Runner uses its host's
    * git credentials, and the Sandbox gets no GitHub token), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_INSECURE_COOKIES` (off), `HUB_SLEEP_AFTER_MS`
-   * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days), `HUB_SECRETS_KEY` (unset: Sensitive
-   * values can't be saved) and `HUB_WEB_DIR` (DefaultWebDir).
+   * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days), `HUB_REPO_ACCESS_TTL_MS` (5 minutes),
+   * `HUB_SECRETS_KEY` (unset: Sensitive values can't be saved) and `HUB_WEB_DIR` (DefaultWebDir).
    */
   static readonly layer = Layer.effect(
     HubConfig,
@@ -294,6 +315,9 @@ export class HubConfig extends Context.Service<
         ),
         archiveRetentionMs: Config.Int("HUB_ARCHIVE_RETENTION_MS").pipe(
           Config.withDefault(Duration.toMillis(DefaultArchiveRetention)),
+        ),
+        repoAccessTtlMs: Config.Int("HUB_REPO_ACCESS_TTL_MS").pipe(
+          Config.withDefault(Duration.toMillis(DefaultRepoAccessTtl)),
         ),
         secretsKey: Config.option(Config.Redacted("HUB_SECRETS_KEY")),
         webDir: Config.NonEmptyString("HUB_WEB_DIR").pipe(Config.withDefault(DefaultWebDir)),
