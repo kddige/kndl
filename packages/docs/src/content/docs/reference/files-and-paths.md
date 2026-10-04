@@ -16,6 +16,7 @@ An install keeps everything in its home, `~/.claude-hub` (or `CLAUDE_HUB_HOME`):
 | `~/.claude-hub/runner.env` | The Runner's settings, with its `RUNNER_TOKEN`. Readable only by you. |
 | `~/.claude-hub/github-app-<id>.pem` | The GitHub App's private key, when onboard created the App. Readable only by you. Back it up with `hub.env`, or generate another in the App's settings. |
 | `~/.claude-hub/hub.db` | The Hub's database. Back it up together with `hub.env`. |
+| `~/.claude-hub/hub.db.lock` | The lock the running Hub holds, so a second Hub or a `secrets reset` on the same database is refused. The operating system drops it when the Hub ends. |
 | `~/.claude-hub/sessions/` | The Runner's sessions root, one directory per Session. |
 | `~/.claude-hub/claude-code/` | Linux builds of Claude Code, for Sandboxes' tool bridges. |
 | `~/.claude-hub/logs/hub.log`, `runner.log` | Each service's output. `claude-hub logs hub` prints it. |
@@ -37,10 +38,11 @@ An installed Runner's tmux server is `tmux -L claude-hub`.
 | Path | What it is |
 |---|---|
 | `packages/hub/hub.db` | The Hub's SQLite database: Sessions, their Events, Runners, Environments and Variables. `HUB_DATABASE` moves it. |
+| `packages/hub/hub.db.lock` | The lock the running Hub holds, beside its database wherever `HUB_DATABASE` puts it. |
 | `packages/hub/.env.local` | The Hub's settings, read by `bun run hub` and `bun run runner-token`. git ignores it. |
 | `packages/web/dist` | The web UI's build, which the Hub serves. `HUB_WEB_DIR` moves it. |
 
-Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the database can't be read without the key.
+Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the database can't be read without the key. If it is lost, see [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
 
 ## A Runner
 

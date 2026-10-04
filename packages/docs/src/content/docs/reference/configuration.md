@@ -25,7 +25,7 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. |
 | `HUB_ARCHIVE_RETENTION_MS` | `2592000000` (30 days) | How long an Archived Session can be restored before the Hub purges it. |
 | `HUB_REPO_ACCESS_TTL_MS` | `300000` (5 minutes) | How long the Hub trusts what GitHub said about a person's access to a Repo, and how often it checks everyone connected again. Someone who loses access is out of the Repo's Sessions within twice this. See [Who can do what](/explanation/security-model/#who-can-do-what). |
-| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values are encrypted with. Unset, Sensitive values can't be saved; once any are saved, the Hub refuses to start without the same key. |
+| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values are encrypted with. Unset, Sensitive values can't be saved; once any are saved, the Hub refuses to start without the same key. If it is lost, [`bun run secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes) clears those values so a new key can be used. |
 | `CLAUDE_HUB_HOME` | unset | See [Homes](#homes). |
 
 ## Runner

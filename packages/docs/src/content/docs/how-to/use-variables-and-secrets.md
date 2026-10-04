@@ -18,7 +18,7 @@ HUB_SECRETS_KEY=…
 ```
 
 :::danger[Back up the key with the database]
-Once any Sensitive value is saved, the Hub refuses to start without the same key, and the values can't be read without it.
+Once any Sensitive value is saved, the Hub refuses to start without the same key, and the values can't be read without it. If the key is lost, [reset the Sensitive values](#if-the-key-is-lost) and enter them again.
 :::
 
 ## Add a variable to an Environment
@@ -39,6 +39,28 @@ Once any Sensitive value is saved, the Hub refuses to start without the same key
 2. In each Repo's Environment, press **Link shared variable**, pick it, and give it the name that Environment should see, with its own **At build**.
 
 Changing a shared value changes it for every Environment that links it. While a link makes it available at build, its value can't be changed, because that would change the builds without a Test build; and a Shared variable can't be deleted while any Environment links it.
+
+## If the key is lost
+
+The values the key encrypted are lost with it: nothing can decrypt them. A reset clears them and keeps everything else, so the Hub starts with a new key and you enter the values again.
+
+1. Stop the Hub. The reset is refused while a Hub runs on the database.
+2. Reset:
+
+   ```sh
+   bun run secrets-reset          # in a checkout
+   claude-hub secrets reset       # on an installed Hub
+   ```
+
+   It lists each Sensitive variable it clears, by Repo, and the shared ones, and asks before clearing them. Without a terminal it needs `--yes`.
+3. Make a new key with `bun run secrets-key` (or `claude-hub secrets key`), set `HUB_SECRETS_KEY` to it, and start the Hub.
+4. Enter the values again. Each cleared variable keeps its name, **At build** and Links, and shows **needs a value**:
+   - On a Repo's Environment, type each value and apply. A value entered in place of a cleared one applies without a Test build, even at build.
+   - On **Shared variables**, press **Enter value** on each.
+
+Until each variable it has or links gets a value, a Repo's Sessions don't start: a new Session is refused, and one that wakes stays Asleep with a message naming the variables and its prompts queued. Its Test builds are refused too. Plain variables, Environments and their versions, and Sessions stay as they were. The reset also drops the replaced values kept to redact what older Sessions print, and the record of past Test builds, since the lost key protects both.
+
+See [Commands](/reference/commands/#bun-run-secrets-reset---yes) for the reset's options.
 
 ## What protects a Sensitive value
 

@@ -31,6 +31,20 @@ The Runner logs `Session <id> failed to start: …` with the same reason.
 
 **Fix.** Open the Session and expand **Show log** on its **Starting…** banner the next time it starts, to see the full output. Fix the script or setting, in the Repo's **Environment**, then wake the Session. If a script fails only on one Runner, compare that machine's resources and network with the others.
 
+## A Session can't start: variables need values
+
+**What you see.** A Session shows **This Session can't start**, or a new one is refused, with:
+
+```
+kddige/claude-hub's Sessions can't start: NPM_TOKEN and GH_TOKEN (the shared variable GITHUB_TOKEN) need values. Enter them on the Repo's Environment screen and the Shared variables screen.
+```
+
+A Test build of the Environment is refused with `NPM_TOKEN needs a value.`, and the variables show **needs a value** on the Environment and **Shared variables** screens.
+
+**Why.** The Hub's secrets key was lost and its Sensitive values were [reset](/how-to/use-variables-and-secrets/#if-the-key-is-lost). The variables were kept without their values, and a Sandbox started without them would fail in confusing ways, so the Repo's Sessions wait for them.
+
+**Fix.** Press **Enter values**, type each value on the Repo's Environment and apply, and press **Enter value** on each shared variable named. Then wake the Session: its queued prompts are still there.
+
 ## The Sandbox fails to start
 
 **What you see.** The transcript says `The Session is Asleep: The Sandbox failed: …`, or the start fails with a microsandbox error.

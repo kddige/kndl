@@ -25,6 +25,7 @@ Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-
 | `claude-hub runner install\|start\|stop\|status` | The same for the Runner's service. |
 | `claude-hub runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. Run it on the Hub's machine. |
 | `claude-hub secrets key` | Prints a new `HUB_SECRETS_KEY`, as [`bun run secrets-key`](#bun-run-secrets-key) does. It changes nothing. |
+| `claude-hub secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `claude-hub hub stop` first. Asks first; without a terminal it needs `--yes`. |
 
 `--help` on any command lists its flags, and `--version` prints the commit the CLI runs from.
 
@@ -98,6 +99,28 @@ The Hub stores only a hash. Issuing again for the same name keeps the Runner's i
 #### `bun run secrets-key`
 
 Prints a new `HUB_SECRETS_KEY`, 32 random bytes in base64, for encrypting Sensitive values. It changes nothing: put the key in `packages/hub/.env.local` yourself, and back it up with the database.
+
+#### `bun run secrets-reset [--yes]`
+
+For when `HUB_SECRETS_KEY` is lost, and the Hub refuses to start without it. Clears every Sensitive value the key encrypted, own and shared, and keeps the variables, which then need a value. It also drops what else the key protects: the replaced values kept for redaction, and the record of Test builds. It needs no key. It lists what it clears, by name, and asks:
+
+```
+This clears 3 Sensitive values, keeping each variable, its "available at build" and its Links:
+  - kddige/claude-hub: NPM_TOKEN, ANTHROPIC_API_KEY
+  - shared variables: GITHUB_TOKEN
+Each then needs a value: the Sessions of a Repo that has, or links, one don't start until it gets one.
+It also drops the record of 1 Test build: the lost key protects them.
+Plain variables, Environments, Sessions and the builds on Runners stay.
+Type yes to clear them:
+```
+
+`--yes` doesn't ask, and without a terminal it's needed. It's refused while a Hub runs on the database, `HUB_DATABASE` or `packages/hub/hub.db`:
+
+```
+The Sensitive values can't be reset: a Hub is running on /path/to/hub.db. Stop it first.
+```
+
+A running Hub holds `hub.db.lock`, beside the database, so the reset knows it runs; the lock goes when the Hub ends, however it ends. Then make a new key with `bun run secrets-key`, set it, start the Hub, and enter the values again. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
 
 ### Checks
 
