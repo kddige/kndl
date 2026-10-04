@@ -1,5 +1,6 @@
 // What `claude-hub doctor` checks, and what `--fix` can repair. Host.ts gathers the facts; this
 // turns them into checks, pure and tested; Cli.ts prints them and runs the fixes.
+import { DataEntries, type OldData } from "./HomeData.ts"
 import type { Role } from "./Layout.ts"
 import type { PrerequisitePlan } from "./Prerequisites.ts"
 import { describeServiceState, type ServiceState } from "./Services.ts"
@@ -19,6 +20,8 @@ export interface DoctorFacts {
   }
   /** The roles set up here: which env files exist. */
   readonly roles: ReadonlyArray<Role>
+  /** Data in the home that no role set up here owns: see HomeData.ts. */
+  readonly oldData: OldData | undefined
   readonly prerequisites: PrerequisitePlan
   /** Each set-up role's env file: its path and permission bits. */
   readonly envFiles: ReadonlyArray<{
@@ -62,6 +65,8 @@ export type Fix =
   | { readonly _tag: "InstallService"; readonly role: Role }
   | { readonly _tag: "StartService"; readonly role: Role }
   | { readonly _tag: "EnableLinger" }
+  /** Renames the old data aside, only once the person running doctor confirms it. */
+  | { readonly _tag: "MoveOldData"; readonly entries: ReadonlyArray<string> }
 
 export interface Check {
   readonly name: string
@@ -102,6 +107,16 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
           }
         : { name: "claude-hub command", status: "ok", detail: facts.wrapper.path },
   )
+
+  if (facts.oldData !== undefined && facts.oldData.entries.length > 0) {
+    const envFiles = [...new Set(facts.oldData.entries.map((entry) => `${DataEntries[entry]}.env`))]
+    checks.push({
+      name: "Old data",
+      status: "warn",
+      detail: `${facts.home} holds ${facts.oldData.entries.join(", ")} with no ${envFiles.join(" or ")}: claude-hub data that onboard didn't set up here, likely a checkout's from before ~/.claude-hub-dev. A Runner or Hub set up over it would take it over. Move it aside with \`claude-hub onboard --move-old-data\`, or \`claude-hub doctor --fix\`, which asks first; or set CLAUDE_HUB_HOME to another directory.`,
+      fix: { _tag: "MoveOldData", entries: facts.oldData.entries },
+    })
+  }
 
   if (facts.roles.length === 0) {
     checks.push({

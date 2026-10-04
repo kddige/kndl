@@ -10,7 +10,7 @@ import {
   realpathSync,
   statSync,
 } from "node:fs"
-import { chmod, mkdir, writeFile } from "node:fs/promises"
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { homedir, userInfo } from "node:os"
 import { dirname, join } from "node:path"
@@ -25,7 +25,15 @@ import { ModBundle, RunnerConfig, RunnerConfigLive } from "@claude-hub/runner/sr
 import { Cause, ConfigProvider, Effect, Exit } from "effect"
 import type { DoctorFacts, Health } from "./Doctor.ts"
 import { type EnvFile, envValues, parseEnv, renderEnv } from "./EnvFile.ts"
+import { fail } from "./Failure.ts"
 import type { HomeFacts } from "./Guards.ts"
+import {
+  asideRenames,
+  DataEntries,
+  findOldData,
+  type HomeDataFacts,
+  type Rename,
+} from "./HomeData.ts"
 import { isWrapperFor, type Layout, type Role, Roles, wrapperScript } from "./Layout.ts"
 import { localHubUrl } from "./Onboard.ts"
 import { type HostFacts, type PackageManager, prerequisitePlan } from "./Prerequisites.ts"
@@ -52,10 +60,6 @@ export function platform(): Platform | undefined {
 /** The Bun running the CLI, which the services and the wrapper run too. */
 export const bunPath = (): string => process.execPath
 
-/** Whether onboard and uninstall may ask: a terminal on both ends, and no `--non-interactive`. */
-export const canAsk = (nonInteractive: boolean) =>
-  !nonInteractive && process.stdin.isTTY === true && process.stdout.isTTY === true
-
 export const isInstalled = (layout: Layout) => existsSync(join(layout.app, ".git"))
 
 /** The roles set up in this home: those with an env file. */
@@ -71,21 +75,87 @@ export function readEnvFile(path: string): EnvFile {
 /** The env file's variables, or none when it doesn't exist. */
 export const readEnvValues = (path: string) => envValues(readEnvFile(path))
 
-/** Writes an env file, readable only by this user: it holds tokens and keys. */
-export const writeEnvFile = (path: string, file: EnvFile) =>
+/**
+ * Writes `text` to `path` with permission bits `mode`, whole: it is written beside the path and
+ * renamed over it, uninterruptibly, so the file is never seen half-written, even after Ctrl-C.
+ */
+export const writeFileWhole = (path: string, text: string, mode: number) =>
   Effect.promise(async () => {
     await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, renderEnv(file), { mode: 0o600 })
-    await chmod(path, 0o600)
+    const partial = `${path}.partial-${process.pid}`
+    try {
+      await writeFile(partial, text, { mode })
+      await chmod(partial, mode)
+      await rename(partial, path)
+    } finally {
+      await rm(partial, { force: true })
+    }
+  }).pipe(Effect.uninterruptible)
+
+/** Writes an env file, whole and readable only by this user: it holds tokens and keys. */
+export const writeEnvFile = (path: string, file: EnvFile) =>
+  writeFileWhole(path, renderEnv(file), 0o600)
+
+/**
+ * What HomeData.ts decides from. `tmux` asks tmux server `claude-hub` for its sessions, which
+ * matters only when a Runner is about to be set up.
+ */
+export const homeDataFacts = (layout: Layout, options: { readonly tmux: boolean }) =>
+  Effect.gen(function* () {
+    const data = Object.keys(DataEntries).filter((entry) => {
+      const path = join(layout.home.dir, entry)
+      try {
+        return statSync(path).isDirectory() ? readdirSync(path).length > 0 : true
+      } catch {
+        return false
+      }
+    })
+    return {
+      data,
+      envFiles: configuredRoles(layout),
+      tmuxSessions: options.tmux ? yield* tmuxSessionCount(layout.home.tmuxSocket) : 0,
+    } satisfies HomeDataFacts
   })
+
+/** How many sessions a tmux server has: 0 when it isn't running, or tmux isn't installed. */
+const tmuxSessionCount = (socket: string) =>
+  Effect.gen(function* () {
+    const result = yield* (yield* Shell).capture(
+      step("tmux", ["-L", socket, "list-sessions", "-F", "#{session_name}"], { mayFail: true }),
+    )
+    return result.exitCode === 0 ? result.stdout.split("\n").filter(Boolean).length : 0
+  }).pipe(Effect.catchTag("StepFailed", () => Effect.succeed(0)))
+
+/** The renames that move the home's `entries` aside, as of now, avoiding names already taken. */
+export function planMoveAside(layout: Layout, entries: ReadonlyArray<string>) {
+  let existing: ReadonlyArray<string> = []
+  try {
+    existing = readdirSync(layout.home.dir)
+  } catch {
+    // A home that doesn't exist has nothing to move.
+  }
+  return asideRenames(entries, new Date(), existing)
+}
+
+/**
+ * Renames entries within the home, each only when its new name is still free: a rename never
+ * replaces anything. Uninterruptible, so Ctrl-C can't stop it between two entries.
+ */
+export const moveAside = (layout: Layout, renames: ReadonlyArray<Rename>) =>
+  Effect.tryPromise({
+    try: async () => {
+      for (const { from, to } of renames) {
+        const target = join(layout.home.dir, to)
+        if (existsSync(target)) throw new Error(`${target} already exists`)
+        await rename(join(layout.home.dir, from), target)
+      }
+    },
+    catch: (error) => fail(`Could not move the old data aside: ${errorMessage(error)}`),
+  }).pipe(Effect.uninterruptible)
 
 /** Writes the `claude-hub` wrapper. */
 export const writeWrapper = (layout: Layout) =>
-  Effect.promise(async () => {
-    await mkdir(dirname(layout.wrapper), { recursive: true })
-    await writeFile(layout.wrapper, wrapperScript(layout, bunPath()), { mode: 0o755 })
-    await chmod(layout.wrapper, 0o755)
-  })
+  writeFileWhole(layout.wrapper, wrapperScript(layout, bunPath()), 0o755)
 
 /** The first line install.sh and {@link wrapperScript} put after the shebang. */
 const WrapperMark = "# claude-hub: written by install.sh."
@@ -303,6 +373,7 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
         onPath: onPath !== null && samePath(onPath, layout.wrapper),
       },
       roles,
+      oldData: findOldData(yield* homeDataFacts(layout, { tmux: false }), roles),
       prerequisites: prerequisitePlan(yield* hostFacts(layout), roles),
       envFiles: roles.map((role) => ({
         role,

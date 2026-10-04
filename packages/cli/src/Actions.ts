@@ -2,13 +2,12 @@
 // commands: run a plan's Steps, build, install and start the services, issue a token. Each is thin:
 // the decisions are made in the pure modules, and the Steps run through Shell.
 import { existsSync } from "node:fs"
-import { chmod, mkdir, writeFile } from "node:fs/promises"
+import { chmod, mkdir } from "node:fs/promises"
 import { userInfo } from "node:os"
 import { delimiter, dirname } from "node:path"
 import { issueRunnerToken } from "@claude-hub/hub/src/Admin.ts"
 import { claudeConfigPath, trustDirectory } from "@claude-hub/runner/src/ClaudeConfig.ts"
-import { ConfigProvider, Console, Effect } from "effect"
-import { Prompt } from "effect/cli"
+import { ConfigProvider, Effect } from "effect"
 import { fail } from "./Failure.ts"
 import {
   bunPath,
@@ -20,6 +19,7 @@ import {
   readEnvValues,
   serviceState,
   serviceTarget,
+  writeFileWhole,
 } from "./Host.ts"
 import type { Layout, Role } from "./Layout.ts"
 import type { PrerequisitePlan } from "./Prerequisites.ts"
@@ -32,7 +32,8 @@ import {
   startSteps,
   stopSteps,
 } from "./Services.ts"
-import { describeStep, Shell, type Step } from "./Shell.ts"
+import { describeStep, Shell, type Step, step } from "./Shell.ts"
+import { Ui } from "./Ui.ts"
 import { buildSteps } from "./Update.ts"
 
 export const RoleTitle: Record<Role, string> = { hub: "Hub", runner: "Runner" }
@@ -57,15 +58,41 @@ export const requirePlatform = (on: Platform | undefined) =>
     ? Effect.fail(fail(`claude-hub runs on macOS and Linux, not ${process.platform}.`))
     : Effect.succeed(on)
 
-/** Runs Steps in order, attached to the terminal, saying what each is for. */
-export const runSteps = (steps: ReadonlyArray<Step>) =>
+/**
+ * Runs Steps in order. On a terminal they run under spinners, their output captured and shown only
+ * when one fails: all under one spinner named `label`, or else each under its own, named by what
+ * it is for. Without a terminal they run attached to the output, each line saying what it is for.
+ */
+export const runSteps = (steps: ReadonlyArray<Step>, label?: string) =>
   Effect.gen(function* () {
     const shell = yield* Shell
-    for (const s of steps) {
-      if (s.why !== undefined && !(shell.dryRun && s.system)) yield* Console.log(`- ${s.why}`)
-      yield* shell.attached(s)
+    const ui = yield* Ui
+    if (!ui.spins) {
+      for (const s of steps) {
+        if (s.why !== undefined && !(shell.dryRun && s.system)) yield* ui.log("step", s.why)
+        yield* shell.attached(s)
+      }
+      return
     }
+    // A spinner has the terminal, so sudo can't ask for a password under one: ask it up front.
+    if (steps.some((s) => s.sudo === true) && process.getuid?.() !== 0) {
+      yield* ui.log("info", "sudo may ask for your password.")
+      yield* shell.attached(step("sudo", ["-v"], { system: true }))
+    }
+    const run = (s: Step) => shell.capture(s)
+    if (label !== undefined) {
+      yield* ui.spin(label, (progress) =>
+        Effect.forEach(steps, (s) => Effect.andThen(progress(s.why ?? s.command), run(s)), {
+          discard: true,
+        }),
+      )
+      return
+    }
+    for (const s of steps) yield* ui.spin(sentence(s.why ?? describeStep(s)), () => run(s))
   }).pipe(Effect.mapError((error) => fail(error.message)))
+
+/** `install dependencies` as `Install dependencies`. */
+const sentence = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`
 
 /** Prints what a prerequisite plan would run, for a confirmation or a refusal. */
 export function describePlan(plan: PrerequisitePlan): string {
@@ -79,24 +106,24 @@ export function describePlan(plan: PrerequisitePlan): string {
  */
 export const installPrerequisites = (
   plan: PrerequisitePlan,
-  options: { readonly approved: boolean | undefined; readonly interactive: boolean },
+  options: { readonly approved: boolean | undefined },
 ) =>
   Effect.gen(function* () {
     if (plan.steps.length === 0) return false
-    yield* Console.log(
-      `To install what's missing, claude-hub would run${plan.needsSudo ? " (with sudo)" : ""}:\n${describePlan(plan)}`,
+    const ui = yield* Ui
+    yield* ui.note(
+      describePlan(plan),
+      `To install what's missing, claude-hub would run${plan.needsSudo ? " (with sudo)" : ""}:`,
     )
     const approved =
       options.approved ??
-      (options.interactive
-        ? yield* Prompt.Confirm({ message: "Run these now?", initial: true })
-        : false)
+      (ui.interactive ? yield* ui.confirm({ message: "Run these now?", initial: true }) : false)
     if (!approved) {
-      yield* Console.log("Skipped: run them yourself, or `claude-hub doctor --fix`.")
+      yield* ui.log("warn", "Skipped: run them yourself, or `claude-hub doctor --fix`.")
       return false
     }
     yield* runSteps(plan.steps)
-    for (const line of plan.afterwards) yield* Console.log(line)
+    for (const line of plan.afterwards) yield* ui.log("warn", line)
     return true
   })
 
@@ -121,13 +148,10 @@ export const installService = (layout: Layout, role: Role, on: Platform) =>
     const target = serviceTarget(layout, role, on)
     const path = serviceFilePath(target)
     const text = serviceFile(on, { role, layout, bun: bunPath(), path: servicePath() })
-    yield* Effect.promise(async () => {
-      await mkdir(layout.logs, { recursive: true })
-      await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, text, { mode: 0o644 })
-    })
-    yield* Console.log(`- ${RoleTitle[role]} service: ${path}`)
-    yield* runSteps(installSteps(target))
+    yield* Effect.promise(() => mkdir(layout.logs, { recursive: true }))
+    yield* writeFileWhole(path, text, 0o644)
+    yield* (yield* Ui).log("step", `${RoleTitle[role]} service: ${path}`)
+    yield* runSteps(installSteps(target), `Start the ${RoleTitle[role]}'s service`)
   })
 
 export const startService = (layout: Layout, role: Role, on: Platform) =>
@@ -138,11 +162,11 @@ export const startService = (layout: Layout, role: Role, on: Platform) =>
         `The ${RoleTitle[role]} service isn't installed: \`claude-hub ${role} install\`.`,
       )
     }
-    yield* runSteps(startSteps(target))
+    yield* runSteps(startSteps(target), `Start the ${RoleTitle[role]}'s service`)
   })
 
 export const stopService = (layout: Layout, role: Role, on: Platform) =>
-  runSteps(stopSteps(serviceTarget(layout, role, on)))
+  runSteps(stopSteps(serviceTarget(layout, role, on)), `Stop the ${RoleTitle[role]}'s service`)
 
 /** Rewrites and reloads the installed services, as after an update. */
 export const restartInstalledServices = (layout: Layout, on: Platform) =>
@@ -160,7 +184,10 @@ export const enableLinger = Effect.gen(function* () {
   const shell = yield* Shell
   const ran = yield* shell.attached({ ...enableLingerStep(user), mayFail: true })
   if (ran !== 0) {
-    yield* Console.log(`Couldn't turn on lingering: run \`sudo loginctl enable-linger ${user}\`.`)
+    yield* (yield* Ui).log(
+      "warn",
+      `Couldn't turn on lingering: run \`sudo loginctl enable-linger ${user}\`.`,
+    )
   }
 }).pipe(Effect.mapError((error) => fail(error.message)))
 
@@ -174,7 +201,10 @@ export const trustSessionsRoot = (layout: Layout) =>
     yield* Effect.promise(() => mkdir(root, { recursive: true }))
     const outcome = yield* trustDirectory(claudeConfigPath(), root)
     if (outcome._tag === "NoConfigFile") {
-      yield* Console.log("Claude Code's config file doesn't exist: run `claude` once and sign in.")
+      yield* (yield* Ui).log(
+        "warn",
+        "Claude Code's config file doesn't exist: run `claude` once and sign in.",
+      )
     }
   }).pipe(Effect.mapError((error) => fail(error.message)))
 

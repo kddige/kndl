@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@clack/prompts": "1.8.1",
     "@claude-hub/hub": "workspace:*",
     "@claude-hub/protocol": "workspace:*",
     "@claude-hub/runner": "workspace:*",

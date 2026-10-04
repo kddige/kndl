@@ -7,6 +7,7 @@ import { Console, Effect, Layer } from "effect"
 import { Command } from "effect/cli"
 import { cli } from "./Cli.ts"
 import { Shell } from "./Shell.ts"
+import { Ui } from "./Ui.ts"
 
 /** The commit the CLI runs from, as its version. */
 function version(): string {
@@ -19,14 +20,20 @@ function version(): string {
 }
 
 Command.run(cli, { version: version() }).pipe(
-  // A command that can't go on says why, and exits 1; a question left with Ctrl-C exits 130.
+  // A command that can't go on says why, and exits 1. A question left with Ctrl-C or Esc exits 130,
+  // as Ctrl-C anywhere else does (BunRuntime interrupts the command): no stack trace either way.
   Effect.catchTag("CliFailure", (error) =>
     Effect.andThen(
       Console.error(error.message),
       Effect.sync(() => (process.exitCode = 1)),
     ),
   ),
-  Effect.catchTag("QuitError", () => Effect.sync(() => (process.exitCode = 130))),
-  Effect.provide(Shell.layer.pipe(Layer.provideMerge(BunServices.layer))),
+  Effect.catchTag("Cancelled", () =>
+    Effect.andThen(
+      Console.error("Cancelled."),
+      Effect.sync(() => (process.exitCode = 130)),
+    ),
+  ),
+  Effect.provide(Layer.mergeAll(Shell.layer, Ui.layer).pipe(Layer.provideMerge(BunServices.layer))),
   BunRuntime.runMain,
 )

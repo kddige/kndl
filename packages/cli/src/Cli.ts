@@ -103,6 +103,11 @@ const onboardCommand = Command.make(
     reset: off("reset").pipe(
       Flag.withDescription("Ask again instead of keeping the existing settings"),
     ),
+    moveOldData: off("move-old-data").pipe(
+      Flag.withDescription(
+        "Rename claude-hub data the home holds without its env file (sessions, claude-code, hub.db) to <name>.old-<YYYYMMDD>, keeping it",
+      ),
+    ),
   },
   (options) =>
     onboard(layout(), {

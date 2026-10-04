@@ -6,6 +6,7 @@ const healthy: DoctorFacts = {
   installed: true,
   wrapper: { path: "/home/ada/.local/bin/claude-hub", exists: true, current: true, onPath: true },
   roles: ["hub", "runner"],
+  oldData: undefined,
   prerequisites: { missing: [], steps: [], needsSudo: false, afterwards: [] },
   envFiles: [
     { role: "hub", path: "/home/ada/.claude-hub/hub.env", mode: 0o100600 },
@@ -139,6 +140,26 @@ describe("doctor", () => {
     expect(failing({ ...healthy, trust: "untrusted" })).toMatchObject([
       { name: "Claude Code trust", status: "warn", fix: { _tag: "TrustSessionsRoot" } },
     ])
+  })
+
+  test("old data in the home warns, and --fix offers to move it aside", () => {
+    const facts: DoctorFacts = {
+      ...healthy,
+      roles: ["hub"],
+      envFiles: [healthy.envFiles[0]!],
+      services: [healthy.services[0]!],
+      runnerReachesHub: undefined,
+      oldData: { entries: ["sessions", "claude-code"], tmuxSessions: 0 },
+    }
+
+    expect(failing(facts)).toMatchObject([
+      {
+        name: "Old data",
+        status: "warn",
+        fix: { _tag: "MoveOldData", entries: ["sessions", "claude-code"] },
+      },
+    ])
+    expect(failing(facts)[0]?.detail).toContain("sessions, claude-code with no runner.env")
   })
 
   test("a wrapper that runs another home's CLI is rewritten", () => {

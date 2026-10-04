@@ -2,7 +2,6 @@
 import { existsSync, realpathSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { Console, Effect } from "effect"
-import { Prompt } from "effect/cli"
 import {
   enableLinger,
   installPrerequisites,
@@ -22,11 +21,12 @@ import { fail } from "./Failure.ts"
 import { entryRemoval, homeRemoval } from "./Guards.ts"
 import {
   bunPath,
-  canAsk,
   configuredRoles,
   doctorFacts,
   homeFacts,
   isOurWrapper,
+  moveAside,
+  planMoveAside,
   platform,
   readCheckout,
   serviceTarget,
@@ -35,6 +35,7 @@ import {
 import { type Layout, Roles } from "./Layout.ts"
 import { afterUninstallSteps, type Platform, serviceFilePath, uninstallSteps } from "./Services.ts"
 import { Shell, step } from "./Shell.ts"
+import { Ui } from "./Ui.ts"
 import {
   buildSteps,
   describeCheckout,
@@ -72,10 +73,10 @@ export const doctor = (layout: Layout, options: { readonly fix: boolean; readonl
     }
     if (fixes.length === 0) return passed
     yield* Console.log("\nFixing:")
-    const interactive = canAsk(options.yes)
+    const ui = yield* Ui
     for (const fix of fixes) {
-      yield* applyFix(layout, on, fix, { yes: options.yes, interactive, facts }).pipe(
-        Effect.catchTag("CliFailure", (error) => Console.log(`! ${error.message}`)),
+      yield* applyFix(layout, on, fix, { yes: options.yes, facts }).pipe(
+        Effect.catchTag("CliFailure", (error) => ui.log("error", error.message)),
       )
     }
     yield* Console.log("\nAfter fixing:")
@@ -88,25 +89,24 @@ const applyFix = (
   fix: Fix,
   context: {
     readonly yes: boolean
-    readonly interactive: boolean
     readonly facts: Effect.Success<ReturnType<typeof doctorFacts>>
   },
 ) =>
   Effect.gen(function* () {
+    const ui = yield* Ui
     switch (fix._tag) {
       case "InstallPrerequisites":
         yield* installPrerequisites(context.facts.prerequisites, {
           approved: context.yes ? true : undefined,
-          interactive: context.interactive,
         })
         return
       case "WriteWrapper":
         yield* writeWrapper(layout)
-        yield* Console.log(`- wrote ${layout.wrapper}`)
+        yield* ui.log("step", `wrote ${layout.wrapper}`)
         return
       case "RestrictEnvFile":
         yield* restrictEnvFile(fix.path)
-        yield* Console.log(`- made ${fix.path} readable only by you`)
+        yield* ui.log("step", `made ${fix.path} readable only by you`)
         return
       case "BuildMod":
         yield* runSteps([
@@ -120,7 +120,7 @@ const applyFix = (
         return
       case "TrustSessionsRoot":
         yield* trustSessionsRoot(layout)
-        yield* Console.log("- trusted the sessions root in Claude Code's config file")
+        yield* ui.log("step", "trusted the sessions root in Claude Code's config file")
         return
       case "InstallService":
         yield* installService(layout, fix.role, on)
@@ -131,13 +131,36 @@ const applyFix = (
       case "EnableLinger": {
         const approved =
           context.yes ||
-          (context.interactive &&
-            (yield* Prompt.Confirm({
+          (ui.interactive &&
+            (yield* ui.confirm({
               message:
                 "Keep the services running while you're logged out (loginctl enable-linger)?",
               initial: true,
             })))
         if (approved) yield* enableLinger
+        return
+      }
+      case "MoveOldData": {
+        // Never on --yes alone: the person running doctor confirms this one themselves.
+        const renames = planMoveAside(layout, fix.entries)
+        const listed = renames.map((rename) => `${rename.from} → ${rename.to}`).join(", ")
+        if (!ui.interactive) {
+          yield* ui.log(
+            "warn",
+            `The old data stays where it is: doctor moves it only when you confirm, in a terminal. Or run \`claude-hub onboard --move-old-data\`.`,
+          )
+          return
+        }
+        const approved = yield* ui.confirm({
+          message: `Move the old data aside in ${layout.home.dir}: ${listed}? Nothing is deleted.`,
+          initial: false,
+        })
+        if (!approved) {
+          yield* ui.log("warn", "The old data stays where it is.")
+          return
+        }
+        yield* moveAside(layout, renames)
+        yield* ui.log("step", `moved aside: ${listed}`)
         return
       }
     }
@@ -231,16 +254,17 @@ export const uninstall = (
         `It keeps ${layout.home.dir}'s data: hub.env, runner.env, hub.db, sessions/, logs/.`,
       )
     }
+    const ui = yield* Ui
     const approved =
       options.yes ||
-      (canAsk(false) &&
-        (yield* Prompt.Confirm({
+      (ui.interactive &&
+        (yield* ui.confirm({
           message: options.purge ? "Purge everything?" : "Uninstall?",
           initial: false,
         })))
     if (!approved) {
       return yield* fail(
-        canAsk(false)
+        ui.interactive
           ? "Nothing was removed."
           : "Nothing was removed: pass --yes to uninstall without a terminal.",
       )

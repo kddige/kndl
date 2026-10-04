@@ -1,11 +1,14 @@
 // `claude-hub onboard`: asks what Onboard.ts can't decide on its own, writes `hub.env` and
 // `runner.env`, builds, and installs and starts the services. Every question has a flag; with
-// `--non-interactive` (or no terminal) it never asks.
+// `--non-interactive` (or no terminal) it never asks, and never loads the prompt library. The
+// questions go through Ui, so the flow runs in tests against a script of answers.
+//
+// Every question comes before anything is written, and each file is written whole, so Ctrl-C at a
+// question leaves the home as it was.
 import { mkdir } from "node:fs/promises"
 import { hostname, networkInterfaces, userInfo } from "node:os"
 import { generateSecretsKey } from "@claude-hub/hub/src/Secrets.ts"
-import { Console, Effect, Redacted } from "effect"
-import { Prompt } from "effect/cli"
+import { Effect } from "effect"
 import {
   build,
   enableLinger,
@@ -20,10 +23,14 @@ import {
 import { updateEnv } from "./EnvFile.ts"
 import { fail } from "./Failure.ts"
 import { refuseHome } from "./Guards.ts"
+import { canMoveAside, explainOldData, findOldData } from "./HomeData.ts"
 import {
-  canAsk,
+  configuredRoles,
+  homeDataFacts,
   homeFacts,
   hostFacts,
+  moveAside,
+  planMoveAside,
   platform,
   readEnvFile,
   readEnvValues,
@@ -37,6 +44,7 @@ import {
   DefaultPort,
   defaultPublicUrl,
   existingRole,
+  type HubChoices,
   hubChoicesFrom,
   hubEnvUpdates,
   lanAddress,
@@ -54,6 +62,7 @@ import { prerequisitePlan } from "./Prerequisites.ts"
 import { lingers, lingerStatusStep } from "./Services.ts"
 import { Shell } from "./Shell.ts"
 import { runnerConnectionAfter, runnerLogSize } from "./Status.ts"
+import { plainUi, Ui } from "./Ui.ts"
 
 /** Onboard's flags: each answers a question. */
 export interface OnboardOptions {
@@ -71,6 +80,8 @@ export interface OnboardOptions {
   readonly linger: boolean | undefined
   readonly nonInteractive: boolean
   readonly reset: boolean
+  /** Move old data in the home aside without asking: see HomeData.ts. */
+  readonly moveOldData: boolean
 }
 
 const RoleChoiceTitles: Record<RoleChoice, string> = {
@@ -79,12 +90,83 @@ const RoleChoiceTitles: Record<RoleChoice, string> = {
   both: "Both: a Hub, and a Runner for it, on this machine",
 }
 
-export const onboard = (layout: Layout, options: OnboardOptions) =>
-  Effect.gen(function* () {
+/** Onboard: settings, prerequisites, builds, services. `--non-interactive` gets the plain Ui. */
+export const onboard = (layout: Layout, options: OnboardOptions) => {
+  const flow = Effect.gen(function* () {
     yield* requireInstall(layout)
     const on = yield* requirePlatform(platform())
-    const interactive = canAsk(options.nonInteractive)
+    const ui = yield* Ui
     const shell = yield* Shell
+    yield* ui.intro(`claude-hub onboard, in ${layout.home.dir}`)
+
+    const roles = yield* configure(layout, options)
+
+    const plan = prerequisitePlan(yield* hostFacts(layout), roles)
+    yield* installPrerequisites(plan, { approved: options.installPrerequisites })
+    for (const missing of plan.missing.filter((m) => !m.fixable)) {
+      yield* ui.log("warn", `${missing.name}: ${missing.detail}`)
+    }
+
+    yield* Effect.promise(() => mkdir(layout.logs, { recursive: true }))
+    yield* build(layout, roles)
+
+    const services = options.services ?? true
+    if (!services) {
+      yield* ui.log(
+        "info",
+        "Services not installed (--no-services): `claude-hub hub install`, `claude-hub runner install`.",
+      )
+    } else {
+      const runnerLogFrom = runnerLogSize(layout)
+      for (const role of roles) yield* installService(layout, role, on)
+      if (on === "linux") {
+        const user = userInfo().username
+        const already = shell.dryRun
+          ? false
+          : lingers(
+              (yield* shell
+                .capture(lingerStatusStep(user))
+                .pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" }))))
+                .stdout,
+            )
+        if (!already) {
+          const linger = yield* answer(
+            pickAnswer({
+              flag: options.linger,
+              existing: undefined,
+              reset: false,
+              interactive: ui.interactive,
+              fallback: false,
+            }),
+            "--linger",
+            () =>
+              ui.confirm({
+                message:
+                  "Keep the services running while you're logged out, and start them at boot (loginctl enable-linger)?",
+                initial: true,
+              }),
+          )
+          if (linger) yield* enableLinger
+        }
+      }
+      yield* healthCheck(layout, roles, runnerLogFrom)
+    }
+
+    yield* ui.note(summary(layout, roles), "Next")
+    yield* ui.outro("Done.")
+  })
+  return options.nonInteractive ? flow.pipe(Effect.provideService(Ui, plainUi)) : flow
+}
+
+/**
+ * Onboard's questions, and the env files their answers make: the role, the old data in the home,
+ * the Hub's reach, the Runner's Hub and token. Asks everything before it writes anything. Returns
+ * the roles set up.
+ */
+export const configure = (layout: Layout, options: OnboardOptions) =>
+  Effect.gen(function* () {
+    const ui = yield* Ui
+    const interactive = ui.interactive
 
     // Onboard writes the home's env files, and `--reset` rewrites them: never somewhere that isn't
     // a claude-hub home, such as the home directory itself.
@@ -107,27 +189,19 @@ export const onboard = (layout: Layout, options: OnboardOptions) =>
       }),
       "--role hub|runner|both",
       () =>
-        Prompt.Select({
+        ui.select({
           message: "What does this machine run?",
-          choices: RoleChoices.map((value) => ({ title: RoleChoiceTitles[value], value })),
+          choices: RoleChoices.map((value) => ({ value, label: RoleChoiceTitles[value] })),
         }),
     )
     const roles = rolesOf(choice)
-    yield* Console.log(
-      `Setting up: ${roles.map((role) => RoleTitle[role]).join(" and ")}, in ${layout.home.dir}`,
-    )
+    yield* ui.log("info", `Setting up: ${roles.map((role) => RoleTitle[role]).join(" and ")}`)
 
-    // 2. Prerequisites.
-    const plan = prerequisitePlan(yield* hostFacts(layout), roles)
-    yield* installPrerequisites(plan, { approved: options.installPrerequisites, interactive })
-    for (const missing of plan.missing.filter((m) => !m.fixable)) {
-      yield* Console.log(`! ${missing.name}: ${missing.detail}`)
-    }
+    // 2. Data in the home that isn't this install's: what to move aside, once all is answered.
+    const renames = yield* protectHome(layout, roles, options.moveOldData)
 
-    yield* Effect.promise(() => mkdir(layout.logs, { recursive: true }))
-
-    // 3. Hub.
-    let hubPort = DefaultPort
+    // 3. The Hub's questions.
+    let hub: HubChoices | undefined
     if (roles.includes("hub")) {
       const existing = hubChoicesFrom(hubValues)
       const reach = yield* answer(
@@ -139,14 +213,14 @@ export const onboard = (layout: Layout, options: OnboardOptions) =>
         }),
         "--reach local|lan|https",
         () =>
-          Prompt.Select({
+          ui.select({
             message: "Who reaches this Hub?",
-            choices: Reaches.map((value) => ({ title: ReachTitles[value], value })),
+            choices: Reaches.map((value) => ({ value, label: ReachTitles[value] })),
           }),
       )
       const keep = existing !== undefined && !options.reset && existing.reach === reach
-      hubPort = options.port ?? (keep ? existing.port : undefined) ?? DefaultPort
-      const suggested = defaultPublicUrl(reach, hubPort, lanAddress(networkInterfaces()))
+      const port = options.port ?? (keep ? existing.port : undefined) ?? DefaultPort
+      const suggested = defaultPublicUrl(reach, port, lanAddress(networkInterfaces()))
       const publicUrl = yield* answer(
         pickAnswer({
           flag: options.publicUrl,
@@ -157,16 +231,13 @@ export const onboard = (layout: Layout, options: OnboardOptions) =>
         }),
         "--public-url <url>",
         () =>
-          Prompt.String({
+          ui.text({
             message:
               reach === "https"
                 ? "The Hub's public HTTPS URL, where browsers reach it"
                 : "The Hub's URL on your network, where browsers reach it",
-            ...(suggested === undefined ? {} : { default: suggested }),
-            validate: (value) => {
-              const problem = checkPublicUrl(reach, value)
-              return problem === undefined ? Effect.succeed(value) : Effect.fail(problem)
-            },
+            ...(suggested === undefined ? {} : { initial: suggested }),
+            validate: (value) => checkPublicUrl(reach, value),
           }),
       )
       const problem = checkPublicUrl(reach, publicUrl)
@@ -174,8 +245,9 @@ export const onboard = (layout: Layout, options: OnboardOptions) =>
 
       let insecureCookies = false
       if (reach === "lan") {
-        yield* Console.log(
+        yield* ui.note(
           "Over plain HTTP on your network, browsers drop the Hub's Secure cookies and sign-in fails, unless HUB_INSECURE_COOKIES=1 drops Secure. Then sign-in tokens travel in cleartext: anyone who can watch the network can take over a sign-in. Only do it on a network you trust; prefer HTTPS, an SSH tunnel or Tailscale.",
+          "Plain HTTP",
         )
         insecureCookies = yield* answer(
           pickAnswer({
@@ -186,7 +258,7 @@ export const onboard = (layout: Layout, options: OnboardOptions) =>
             fallback: false,
           }),
           "--insecure-cookies",
-          () => Prompt.Confirm({ message: "Set HUB_INSECURE_COOKIES=1?", initial: false }),
+          () => ui.confirm({ message: "Set HUB_INSECURE_COOKIES=1?", initial: false }),
         )
       }
       let devLogin = false
@@ -201,60 +273,39 @@ export const onboard = (layout: Layout, options: OnboardOptions) =>
           }),
           "--dev-login",
           () =>
-            Prompt.Confirm({
+            ui.confirm({
               message:
                 "Sign in without GitHub (dev login, this machine only), until the GitHub App is set up?",
               initial: true,
             }),
         )
       }
-
-      const existingKey = hubValues.HUB_SECRETS_KEY
-      const secretsKey = existingKey ?? generateSecretsKey()
-      yield* writeEnvFile(
-        layout.envFile("hub"),
-        updateEnv(
-          readEnvFile(layout.envFile("hub")),
-          hubEnvUpdates({ reach, port: hubPort, publicUrl, insecureCookies, devLogin }, secretsKey),
-        ),
-      )
-      yield* Console.log(`- wrote ${layout.envFile("hub")}`)
-      if (existingKey === undefined) {
-        yield* Console.log(
-          `\nA new HUB_SECRETS_KEY is in ${layout.envFile("hub")}. Back it up together with ${layout.hubDb}: without it, the Sensitive values saved in the database can't be read, and the Hub won't start.\n`,
-        )
-      }
+      hub = { reach, port, publicUrl, insecureCookies, devLogin }
     }
 
-    // 4. Runner.
+    // 4. The Runner's questions. With the Hub on this machine, the Runner reaches it on loopback,
+    // and its token is issued directly once hub.env is written.
+    let runner: { name: string; hubUrl: string; token: string | undefined } | undefined
     if (roles.includes("runner")) {
       const name =
         options.runnerName ??
         (options.reset ? undefined : runnerValues.RUNNER_NAME) ??
         hostname().split(".")[0] ??
         "runner"
-      let hubUrl: string
-      let token: string
-      if (roles.includes("hub")) {
-        // The Hub is on this machine: reach it on loopback, and issue the token directly.
-        hubUrl = localHubUrl(hubPort)
+      if (hub !== undefined) {
+        const hubUrl = localHubUrl(hub.port)
         const kept =
           !options.reset &&
           options.token === undefined &&
-          runnerValues.RUNNER_TOKEN !== undefined &&
           runnerValues.HUB_URL === hubUrl &&
           (options.runnerName === undefined || options.runnerName === runnerValues.RUNNER_NAME)
-        if (kept && runnerValues.RUNNER_TOKEN !== undefined) {
-          token = runnerValues.RUNNER_TOKEN
-        } else if (options.token !== undefined) {
-          token = options.token
-        } else {
-          const issued = yield* issueToken(layout, name)
-          yield* Console.log(`- issued a token for Runner ${issued.name} (${issued.runnerId})`)
-          token = issued.token
+        runner = {
+          name,
+          hubUrl,
+          token: options.token ?? (kept ? runnerValues.RUNNER_TOKEN : undefined),
         }
       } else {
-        hubUrl = yield* answer(
+        const hubUrl = yield* answer(
           pickAnswer({
             flag: options.hubUrl,
             existing: runnerValues.HUB_URL,
@@ -263,18 +314,18 @@ export const onboard = (layout: Layout, options: OnboardOptions) =>
           }),
           "--hub-url <url>",
           () =>
-            Prompt.String({
+            ui.text({
               message: "The Hub's URL, as this machine reaches it",
               validate: (value) =>
                 checkPublicUrl("local", value) === undefined
-                  ? Effect.succeed(value)
-                  : Effect.fail(`${value} isn't an http or https URL.`),
+                  ? undefined
+                  : `${value} isn't an http or https URL.`,
             }),
         )
         if (checkPublicUrl("local", hubUrl) !== undefined) {
           return yield* fail(`--hub-url ${hubUrl} isn't an http or https URL.`)
         }
-        token = yield* answer(
+        const token = yield* answer(
           pickAnswer({
             flag: options.token,
             existing: runnerValues.RUNNER_TOKEN,
@@ -283,97 +334,146 @@ export const onboard = (layout: Layout, options: OnboardOptions) =>
           }),
           "--token <token> (from `claude-hub runner token <name>` on the Hub's machine)",
           () =>
-            Prompt.Password({
+            ui.password({
               message: `This Runner's token, from \`claude-hub runner token ${name}\` on the Hub's machine`,
-              validate: (value) => {
-                const problem = checkRunnerToken(value)
-                return problem === undefined ? Effect.succeed(value) : Effect.fail(problem)
-              },
-            }).pipe(Prompt.map(Redacted.value)),
+              validate: checkRunnerToken,
+            }),
+        )
+        runner = { name, hubUrl, token }
+      }
+      if (runner.token !== undefined) {
+        const tokenProblem = checkRunnerToken(runner.token)
+        if (tokenProblem !== undefined) return yield* fail(tokenProblem)
+      }
+    }
+
+    // 5. Move the old data aside, and write the env files, each whole.
+    if (renames !== undefined) {
+      yield* moveAside(layout, renames)
+      yield* ui.log(
+        "success",
+        `Moved aside, in ${layout.home.dir}: ${renames.map((r) => `${r.from} → ${r.to}`).join(", ")}`,
+      )
+    }
+    if (hub !== undefined) {
+      const existingKey = hubValues.HUB_SECRETS_KEY
+      yield* writeEnvFile(
+        layout.envFile("hub"),
+        updateEnv(
+          readEnvFile(layout.envFile("hub")),
+          hubEnvUpdates(hub, existingKey ?? generateSecretsKey()),
+        ),
+      )
+      yield* ui.log("step", `wrote ${layout.envFile("hub")}`)
+      if (existingKey === undefined) {
+        yield* ui.note(
+          `A new HUB_SECRETS_KEY is in ${layout.envFile("hub")}. Back it up together with ${layout.hubDb}: without it, the Sensitive values saved in the database can't be read, and the Hub won't start.`,
+          "Back up the secrets key",
         )
       }
-      const tokenProblem = checkRunnerToken(token)
-      if (tokenProblem !== undefined) return yield* fail(tokenProblem)
+    }
+    if (runner !== undefined) {
+      let token = runner.token
+      if (token === undefined) {
+        const issued = yield* issueToken(layout, runner.name)
+        yield* ui.log("step", `issued a token for Runner ${issued.name} (${issued.runnerId})`)
+        token = issued.token
+      }
       yield* writeEnvFile(
         layout.envFile("runner"),
         updateEnv(
           readEnvFile(layout.envFile("runner")),
-          runnerEnvUpdates({ hubUrl, token: token.trim(), name }),
+          runnerEnvUpdates({ hubUrl: runner.hubUrl, token: token.trim(), name: runner.name }),
         ),
       )
-      yield* Console.log(`- wrote ${layout.envFile("runner")}`)
+      yield* ui.log("step", `wrote ${layout.envFile("runner")}`)
     }
+    return roles
+  })
 
-    // Build what the roles run.
-    yield* build(layout, roles)
-
-    // 5. Services.
-    const services = options.services ?? true
-    if (!services) {
-      yield* Console.log(
-        "Services not installed (--no-services): `claude-hub hub install`, `claude-hub runner install`.",
-      )
-    } else {
-      const runnerLogFrom = runnerLogSize(layout)
-      for (const role of roles) yield* installService(layout, role, on)
-      if (on === "linux") {
-        const user = userInfo().username
-        const already = shell.dryRun
-          ? false
-          : lingers(
-              (yield* shell
-                .capture(lingerStatusStep(user))
-                .pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" }))))
-                .stdout,
-            )
-        if (!already) {
-          const linger = yield* answer(
-            pickAnswer({
-              flag: options.linger,
-              existing: undefined,
-              reset: false,
-              interactive,
-              fallback: false,
-            }),
-            "--linger",
-            () =>
-              Prompt.Confirm({
-                message:
-                  "Keep the services running while you're logged out, and start them at boot (loginctl enable-linger)?",
-                initial: true,
-              }),
-          )
-          if (linger) yield* enableLinger
-        }
+/**
+ * Stops on claude-hub data in the home that this install didn't make (HomeData.ts), unless it is to
+ * be moved aside: with `--move-old-data`, or when the person chooses to and confirms it. Returns the
+ * renames for configure to make once every question is answered, or `undefined` when there's no
+ * old data. Nothing is ever deleted.
+ */
+const protectHome = (layout: Layout, roles: ReadonlyArray<Role>, moveOldData: boolean) =>
+  Effect.gen(function* () {
+    const ui = yield* Ui
+    const setUp = configuredRoles(layout)
+    const facts = yield* homeDataFacts(layout, {
+      tmux: roles.includes("runner") && !setUp.includes("runner"),
+    })
+    const old = findOldData(facts, roles)
+    if (old === undefined) return undefined
+    const renames = planMoveAside(layout, old.entries)
+    const explanation = explainOldData(old, layout.home.dir, renames)
+    if (!canMoveAside(old)) return yield* fail(explanation)
+    const listed = renames.map((rename) => `${rename.from} → ${rename.to}`).join(", ")
+    if (!moveOldData) {
+      if (!ui.interactive) {
+        return yield* fail(
+          `${explanation}\n\nonboard can't ask, so it needs --move-old-data to move it aside.`,
+        )
       }
-      yield* healthCheck(layout, roles, runnerLogFrom)
+      yield* ui.note(explanation, "Old claude-hub data")
+      const choice = yield* ui.select({
+        message: "What now?",
+        choices: [
+          { value: "move", label: "Move it aside", hint: listed },
+          { value: "stop", label: "Stop, to set CLAUDE_HUB_HOME to another directory" },
+        ],
+      })
+      const confirmed =
+        choice === "move" &&
+        (yield* ui.confirm({
+          message: `Rename ${listed}, in ${layout.home.dir}?`,
+          initial: false,
+        }))
+      if (!confirmed) {
+        return yield* fail(
+          "Nothing was changed. Move the old data yourself, or set CLAUDE_HUB_HOME to another directory, and onboard again.",
+        )
+      }
     }
-
-    yield* Console.log(summary(layout, roles))
+    return renames
   })
 
 /** After the services start: the Hub answers `/health`, and the Runner says it connected. */
 const healthCheck = (layout: Layout, roles: ReadonlyArray<Role>, runnerLogFrom: number) =>
   Effect.gen(function* () {
+    const ui = yield* Ui
     if ((yield* Shell).dryRun) {
-      yield* Console.log("[dry run] the services weren't started, so their health isn't checked.")
+      yield* ui.log(
+        "info",
+        "[dry run] the services weren't started, so their health isn't checked.",
+      )
       return
     }
     if (roles.includes("hub")) {
-      const result = yield* waitForHub(layout)
-      yield* Console.log(
-        result.ok
-          ? `Hub: ${result.url}/health answers.`
-          : `Hub: ${result.url}/health: ${result.detail}. See \`claude-hub logs hub\` and \`claude-hub doctor\`.`,
+      const result = yield* ui.spin(
+        "Waiting for the Hub to answer",
+        () => waitForHub(layout),
+        (answered) => (answered.ok ? `Hub: ${answered.url}/health answers` : "Hub: no answer"),
       )
+      if (!result.ok) {
+        yield* ui.log(
+          "warn",
+          `Hub: ${result.url}/health: ${result.detail}. See \`claude-hub logs hub\` and \`claude-hub doctor\`.`,
+        )
+      }
     }
     if (roles.includes("runner")) {
-      yield* Console.log(`Runner: ${yield* runnerConnectionAfter(layout, runnerLogFrom, 30)}`)
+      yield* ui.spin(
+        "Waiting for the Runner to connect",
+        () => runnerConnectionAfter(layout, runnerLogFrom, 30),
+        (said) => `Runner: ${said}`,
+      )
     }
   })
 
 function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
-  const lines = ["", "Done."]
+  const lines: Array<string> = []
   if (roles.includes("hub")) {
     const values = readEnvValues(layout.envFile("hub"))
     lines.push(`The Hub: ${values.HUB_PUBLIC_URL ?? "(no HUB_PUBLIC_URL)"}`)
@@ -388,10 +488,10 @@ function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
   return lines.join("\n")
 }
 
-/** Resolves one answer: given, asked with `prompt`, or a failure naming the flag. */
-const answer = <A>(picked: Answer<A>, flag: string, prompt: () => Prompt.Prompt<A>) =>
+/** Resolves one answer: given, asked with `ask`, or a failure naming the flag. */
+const answer = <A, E, R>(picked: Answer<A>, flag: string, ask: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     if (picked._tag === "Given") return picked.value
     if (picked._tag === "Missing") return yield* fail(`onboard can't ask, so it needs ${flag}.`)
-    return yield* prompt()
+    return yield* ask()
   })
