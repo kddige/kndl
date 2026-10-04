@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs"
-import { homedir, hostname } from "node:os"
+import { hostname } from "node:os"
 import { join, resolve } from "node:path"
+import { HomeConfig } from "@claude-hub/protocol/home"
 import { Config, Context, Effect, Layer, type Redacted } from "effect"
 
 /** What a Runner is configured with. Read from the environment by {@link RunnerConfigLive}. */
@@ -36,7 +37,9 @@ export class RunnerConfig extends Context.Service<RunnerConfig, RunnerSettings>(
 export const RunnerTokenVariable = "RUNNER_TOKEN"
 
 /**
- * Reads the configuration from the environment:
+ * Reads the configuration from the environment. The sessions root and the tmux socket default to
+ * the home's (see `@claude-hub/protocol/home`): from a checkout, the dev home `~/.claude-hub-dev`,
+ * unless `CLAUDE_HUB_HOME` names another.
  *
  * | Variable | Default |
  * |---|---|
@@ -44,15 +47,16 @@ export const RunnerTokenVariable = "RUNNER_TOKEN"
  * | `RUNNER_TOKEN` | required |
  * | `RUNNER_NAME` | the short hostname |
  * | `RUNNER_LOGIN` | `oauthAccount.emailAddress` from Claude Code's `.claude.json` |
- * | `RUNNER_SESSIONS_ROOT` | `~/.claude-hub/sessions` |
+ * | `RUNNER_SESSIONS_ROOT` | `sessions` in the home: `~/.claude-hub-dev/sessions` |
  * | `RUNNER_MOD_DIR` | `packages/mod` in this checkout |
  * | `CLAUDE_BIN` | `claude` |
- * | `RUNNER_TMUX_SOCKET` | `claude-hub` |
+ * | `RUNNER_TMUX_SOCKET` | the home's: `claude-hub-dev` |
  * | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` |
  */
 export const RunnerConfigLive = Layer.effect(
   RunnerConfig,
   Effect.gen(function* () {
+    const home = yield* HomeConfig
     const settings = yield* Config.all({
       hubUrl: Config.URL("HUB_URL").pipe(Config.withDefault(new URL("http://127.0.0.1:7777"))),
       name: Config.String("RUNNER_NAME").pipe(
@@ -61,13 +65,13 @@ export const RunnerConfigLive = Layer.effect(
       token: Config.Redacted(RunnerTokenVariable),
       login: Config.option(Config.NonEmptyString("RUNNER_LOGIN")),
       sessionsRoot: Config.String("RUNNER_SESSIONS_ROOT").pipe(
-        Config.withDefault(join(homedir(), ".claude-hub", "sessions")),
+        Config.withDefault(join(home.dir, "sessions")),
       ),
       modDir: Config.String("RUNNER_MOD_DIR").pipe(
         Config.withDefault(resolve(import.meta.dir, "../../mod")),
       ),
       claudeBin: Config.String("CLAUDE_BIN").pipe(Config.withDefault("claude")),
-      tmuxSocket: Config.String("RUNNER_TMUX_SOCKET").pipe(Config.withDefault("claude-hub")),
+      tmuxSocket: Config.String("RUNNER_TMUX_SOCKET").pipe(Config.withDefault(home.tmuxSocket)),
       repoUrlTemplate: Config.String("RUNNER_REPO_URL").pipe(
         Config.withDefault("https://github.com/{repo}.git"),
       ),

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import type { SessionId } from "@claude-hub/protocol"
+import { devHome, homeAt } from "@claude-hub/protocol/home"
+import type { Home } from "@claude-hub/protocol/home"
 import { Effect, Option, Stream } from "effect"
 import {
   FakeSandboxBackend,
@@ -40,6 +44,10 @@ const bad = async (patch: Partial<ReturnType<typeof layout>>) =>
 const reconcileOn = (backend: SandboxBackendShape, known: Array<SessionId>) =>
   Effect.runPromise(reconcileSandboxes(known).pipe(Effect.provideService(SandboxBackend, backend)))
 
+/** The mark of a Runner on the home's default socket and sessions root. */
+const markIn = (home: Home) =>
+  runnerMark({ tmuxSocket: home.tmuxSocket, sessionsRoot: join(home.dir, "sessions") })
+
 describe("naming", () => {
   test("names carry the prefix and the Session id, and parse back", () => {
     expect(sandboxName(s1)).toBe("claude-hub-s-1")
@@ -49,11 +57,18 @@ describe("naming", () => {
   })
 
   test("a Runner's mark is fixed by its tmux socket and sessions root", () => {
-    const runner = { tmuxSocket: "claude-hub", sessionsRoot: "/Users/a/.claude-hub/sessions" }
+    const runner = {
+      tmuxSocket: "claude-hub-dev",
+      sessionsRoot: "/Users/a/.claude-hub-dev/sessions",
+    }
     expect(runnerMark(runner)).toMatch(/^[0-9a-f]{16}$/)
     expect(runnerMark({ ...runner })).toBe(runnerMark(runner))
     expect(runnerMark({ ...runner, tmuxSocket: "claude-hub-test" })).not.toBe(runnerMark(runner))
     expect(runnerMark({ ...runner, sessionsRoot: "/tmp/sessions" })).not.toBe(runnerMark(runner))
+  })
+
+  test("a dev Runner and an installed one on the same host have different marks", () => {
+    expect(markIn(devHome)).not.toBe(markIn(homeAt(join(homedir(), ".claude-hub"))))
   })
 
   test("names without the prefix are never ours", () => {
