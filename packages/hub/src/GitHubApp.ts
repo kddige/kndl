@@ -2,7 +2,8 @@
 // short JWT with it and mints installation tokens scoped to one Repo: one with `contents:write`
 // that Runners hand to host git per command for the clone and WIP pushes, and one per Session
 // with every permission the installation has, which the Runner keeps in the Session's Sandbox
-// for `git` and `gh`.
+// for `git` and `gh`. As the installation, it also answers who has access to a Repo
+// (RepoAccess.ts).
 
 import { createPrivateKey, type KeyObject, sign } from "node:crypto"
 import type { GitIdentity, RepoName } from "@claude-hub/protocol"
@@ -23,6 +24,8 @@ import { type GitHubAppConfig, HubConfig } from "./HubConfig.ts"
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
 export class GitHubAppError extends Schema.TaggedError<GitHubAppError>()("GitHubAppError", {
   message: Schema.String,
+  /** The HTTP status GitHub answered with, when it answered. */
+  status: Schema.optional(Schema.Int),
 }) {}
 
 /** An installation token for one Repo. */
@@ -94,6 +97,16 @@ export class GitHubApp extends Context.Service<
      * each Session's token is its own.
      */
     readonly sandboxToken: (repo: RepoName) => Effect.Effect<RepoToken, GitHubAppError>
+    /**
+     * Whether the GitHub account `login` is a collaborator on the Repo: an outside collaborator,
+     * an organization member with access through a team or the organization's base permission,
+     * or an owner. Asked as the Repo's installation, which needs only the Metadata permission
+     * every App has. Fails with status 404 when the App isn't installed on the Repo.
+     */
+    readonly isCollaborator: (
+      repo: RepoName,
+      login: string,
+    ) => Effect.Effect<boolean, GitHubAppError>
   }
 >()("@claude-hub/hub/GitHubApp") {
   /** The App from `HubConfig.githubApp`; when that is none, every call fails, saying so. */
@@ -112,6 +125,7 @@ export class GitHubApp extends Context.Service<
     repoToken: () => Effect.fail(notConfigured),
     botIdentity: () => Effect.fail(notConfigured),
     sandboxToken: () => Effect.fail(notConfigured),
+    isCollaborator: () => Effect.fail(notConfigured),
   })
 
   static readonly make = Effect.fnUntraced(function* (config: GitHubAppConfig) {
@@ -154,6 +168,7 @@ export class GitHubApp extends Context.Service<
         if (response.status < 200 || response.status >= 300) {
           return yield* new GitHubAppError({
             message: `${what}: GitHub answered ${response.status}${apiMessage(text)}`,
+            status: response.status,
           })
         }
         return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(text)
@@ -239,11 +254,36 @@ export class GitHubApp extends Context.Service<
       return yield* mint(repo)
     })
 
+    const isCollaborator = Effect.fn("GitHubApp.isCollaborator")(
+      function* (repo: RepoName, login: string) {
+        const { owner, name } = splitRepo(repo)
+        const { token } = yield* repoToken(repo)
+        const response = yield* http.execute(
+          yield* request(
+            "GET",
+            `/repos/${owner}/${name}/collaborators/${encodeURIComponent(login)}`,
+            { token },
+          ),
+        )
+        // 204 for a collaborator; 404 for anyone else, a public Repo's other readers included.
+        if (response.status === 204) return true
+        if (response.status === 404) return false
+        return yield* new GitHubAppError({
+          message: `Could not check ${login}'s access to ${repo}: GitHub answered ${response.status}${apiMessage(yield* response.text)}`,
+          status: response.status,
+        })
+      },
+      Effect.catchTag("HttpClientError", (error) =>
+        Effect.fail(new GitHubAppError({ message: `Could not check access: ${error.message}` })),
+      ),
+    )
+
     return GitHubApp.of({
       isConfigured: true,
       repoToken,
       botIdentity,
       sandboxToken,
+      isCollaborator,
     })
   })
 }
