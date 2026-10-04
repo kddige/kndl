@@ -16,7 +16,7 @@ import {
   trustSessionsRoot,
   waitForHub,
 } from "./Actions.ts"
-import { type Check, diagnose, type Fix, statusMark } from "./Doctor.ts"
+import { type Check, diagnose, type Fix, formatChecks } from "./Doctor.ts"
 import { fail } from "./Failure.ts"
 import { entryRemoval, homeRemoval } from "./Guards.ts"
 import {
@@ -49,12 +49,7 @@ import {
 /** Prints doctor's checks. Returns whether none failed. */
 const report = (checks: ReadonlyArray<Check>) =>
   Effect.gen(function* () {
-    const width = Math.max(...checks.map((check) => check.name.length))
-    for (const check of checks) {
-      yield* Console.log(
-        `${statusMark[check.status]}  ${check.name.padEnd(width)}  ${check.detail}`,
-      )
-    }
+    for (const line of formatChecks(checks)) yield* Console.log(line)
     return checks.every((check) => check.status !== "fail")
   })
 

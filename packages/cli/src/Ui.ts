@@ -110,10 +110,13 @@ let clackModule: Promise<Clack> | undefined
 const withClack = <A, E, R>(use: (clack: Clack) => Effect.Effect<A, E, R>) =>
   Effect.promise(() => (clackModule ??= import("@clack/prompts"))).pipe(Effect.flatMap(use))
 
-/** A clack prompt's answer, or Cancelled. */
-const ask = <A>(prompt: (clack: Clack) => Promise<A | symbol>) =>
+/**
+ * A clack prompt's answer, or Cancelled. Interrupting it, as a race lost to something else does,
+ * takes the prompt off the terminal.
+ */
+const ask = <A>(prompt: (clack: Clack, signal: AbortSignal) => Promise<A | symbol>) =>
   withClack((clack) =>
-    Effect.promise(() => prompt(clack)).pipe(
+    Effect.promise((signal) => prompt(clack, signal)).pipe(
       Effect.flatMap((value) =>
         clack.isCancel(value) ? Effect.fail(new Cancelled()) : Effect.succeed(value as A),
       ),
@@ -152,9 +155,10 @@ const clackUi: UiShape = {
     readonly choices: ReadonlyArray<Choice<A>>
     readonly initial?: A
   }) =>
-    ask<A>((clack) =>
+    ask<A>((clack, signal) =>
       clack.select<A>({
         message: options.message,
+        signal,
         options: options.choices.map((choice) => ({
           value: choice.value,
           label: choice.label,
@@ -164,20 +168,21 @@ const clackUi: UiShape = {
       }),
     ),
   confirm: (options) =>
-    ask<boolean>((clack) =>
-      clack.confirm({ message: options.message, initialValue: options.initial }),
+    ask<boolean>((clack, signal) =>
+      clack.confirm({ message: options.message, initialValue: options.initial, signal }),
     ),
   text: (options) =>
-    ask<string>((clack) =>
+    ask<string>((clack, signal) =>
       clack.text({
         message: options.message,
+        signal,
         ...(options.initial === undefined ? {} : { initialValue: options.initial }),
         ...validator(options.validate),
       }),
     ),
   password: (options) =>
-    ask<string>((clack) =>
-      clack.password({ message: options.message, ...validator(options.validate) }),
+    ask<string>((clack, signal) =>
+      clack.password({ message: options.message, signal, ...validator(options.validate) }),
     ),
   intro: (title) => withClack((clack) => Effect.sync(() => clack.intro(title))),
   outro: (message) => withClack((clack) => Effect.sync(() => clack.outro(message))),
@@ -203,10 +208,13 @@ const clackUi: UiShape = {
 /** An answer a scripted Ui gives to cancel the question. */
 export const CancelAnswer: unique symbol = Symbol.for("@claude-hub/cli/Ui/Cancel")
 
+/** An answer a scripted Ui never gives: for a question raced against something else, which wins. */
+export const NoAnswer: unique symbol = Symbol.for("@claude-hub/cli/Ui/NoAnswer")
+
 /**
- * A Ui for tests: each question takes the next answer from `answers` (CancelAnswer cancels it), and
- * every question and line shown is recorded in `transcript`. With `interactive: false` it stands in
- * for the plain Ui, which the flows never ask.
+ * A Ui for tests: each question takes the next answer from `answers` (CancelAnswer cancels it,
+ * NoAnswer leaves it unanswered), and every question and line shown is recorded in `transcript`.
+ * With `interactive: false` it stands in for the plain Ui, which the flows never ask.
  */
 export function scriptedUi(
   answers: ReadonlyArray<unknown>,
@@ -228,6 +236,7 @@ export function scriptedUi(
       if (queue.length === 0) return Effect.die(new Error(`No scripted answer for "${message}"`))
       const answer = queue.shift()
       if (answer === CancelAnswer) return Effect.fail(new Cancelled())
+      if (answer === NoAnswer) return Effect.never
       const problem =
         validate !== undefined && typeof answer === "string" ? validate(answer) : undefined
       if (problem !== undefined) {

@@ -1,8 +1,8 @@
 // A stand-in for GitHub's REST API, as the GitHub App uses it, for the Hub's and the CLI's tests:
 // an in-process HTTP server on 127.0.0.1 that checks the App JWT's signature, mints installation
 // tokens and, with one of them, says who is a Repo's collaborator. It also describes the App and
-// its installations, and hands out a new App's credentials for a manifest's code, as GitHub does
-// once it has registered the App. Not part of the Hub.
+// its installations, stands in for GitHub's web page that registers an App from a manifest, and
+// hands out the new App's credentials for the code it redirects back with. Not part of the Hub.
 
 import { generateKeyPairSync, type KeyObject, verify } from "node:crypto"
 import { manifestPermissions, RequiredEvents } from "./AppPermissions.ts"
@@ -93,6 +93,11 @@ export class StandInGitHub {
   readonly installations: Array<StandInInstallation> = [defaultInstallation()]
   /** The codes GitHub would redirect back with, each for the App it registered. */
   readonly manifestCodes = new Map<string, StandInConversion>()
+  /** The manifests POSTed to its "new App" page, and the organization each was for, if any. */
+  readonly manifests: Array<{
+    readonly organization: string | undefined
+    readonly manifest: unknown
+  }> = []
   private minted = 0
   private readonly tokens = new Set<string>()
 
@@ -139,13 +144,19 @@ export class StandInGitHub {
    * A code, as GitHub redirects back with once it has registered an App from a manifest, and the
    * App and credentials the conversion hands out for it, with a fresh private key.
    */
-  registerApp(options: { readonly code?: string; readonly webhookSecret?: string } = {}) {
+  registerApp(
+    options: {
+      readonly code?: string
+      readonly webhookSecret?: string
+      readonly owner?: string
+    } = {},
+  ) {
     const code = options.code ?? `code${this.manifestCodes.size + 1}`
     const id = 1000 + this.manifestCodes.size
     const conversion: StandInConversion = {
       id,
       slug: `claude-hub-new-${id}`,
-      owner: this.appOwner.login,
+      owner: options.owner ?? this.appOwner.login,
       clientId: `Iv23li${id}`,
       clientSecret: `standin-client-secret-${id}`,
       webhookSecret: options.webhookSecret ?? null,
@@ -168,6 +179,7 @@ export class StandInGitHub {
     this.appOwner = { login: "kddige", type: "User" }
     this.installations.splice(0, this.installations.length, defaultInstallation())
     this.manifestCodes.clear()
+    this.manifests.length = 0
     this.minted = 0
     this.tokens.clear()
   }
@@ -217,7 +229,12 @@ export class StandInGitHub {
     const path = decodeURIComponent(url.pathname)
     const authorization = request.headers.get("authorization")
     const text = await request.text()
-    const body = text === "" ? undefined : (JSON.parse(text) as unknown)
+    const body =
+      text === ""
+        ? undefined
+        : request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")
+          ? Object.fromEntries(new URLSearchParams(text))
+          : (JSON.parse(text) as unknown)
     this.requests.push({
       method: request.method,
       path,
@@ -314,6 +331,22 @@ export class StandInGitHub {
         webhook_secret: conversion.webhookSecret,
         pem: conversion.pem,
       })
+    }
+    if (
+      request.method === "POST" &&
+      (match = /^(?:\/organizations\/([^/]+))?\/settings\/apps\/new$/.exec(path))
+    ) {
+      // GitHub's web page, as the browser reaches it with a manifest: here the App is made at
+      // once, where GitHub would first let the person name it and confirm.
+      const form = body as { readonly manifest?: string } | undefined
+      const manifest = JSON.parse(form?.manifest ?? "null") as { redirect_url?: string } | null
+      if (manifest?.redirect_url === undefined) return this.json(422, { message: "No manifest" })
+      this.manifests.push({ organization: match[1], manifest })
+      const { code } = this.registerApp(match[1] === undefined ? {} : { owner: match[1] })
+      const back = new URL(manifest.redirect_url)
+      back.searchParams.set("code", code)
+      back.searchParams.set("state", url.searchParams.get("state") ?? "")
+      return new Response(null, { status: 302, headers: { location: back.href } })
     }
     if (request.method === "GET" && path === `/users/${appSlug}[bot]`) {
       return this.json(200, { id: botUserId, login: `${appSlug}[bot]` })

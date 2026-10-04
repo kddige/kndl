@@ -14,6 +14,7 @@ import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { homedir, userInfo } from "node:os"
 import { dirname, join } from "node:path"
+import { GitHubApp } from "@claude-hub/hub/src/GitHubApp.ts"
 import { HubConfig, cookieSecurity } from "@claude-hub/hub/src/HubConfig.ts"
 import {
   claudeConfigPath,
@@ -22,8 +23,9 @@ import {
   readClaudeConfig,
 } from "@claude-hub/runner/src/ClaudeConfig.ts"
 import { ModBundle, RunnerConfig, RunnerConfigLive } from "@claude-hub/runner/src/RunnerConfig.ts"
-import { Cause, ConfigProvider, Effect, Exit } from "effect"
-import type { DoctorFacts, Health } from "./Doctor.ts"
+import { Cause, ConfigProvider, Effect, Exit, Option } from "effect"
+import { FetchHttpClient } from "effect/http"
+import type { AppPermissionsFact, DoctorFacts, Health } from "./Doctor.ts"
 import { type EnvFile, envValues, parseEnv, renderEnv } from "./EnvFile.ts"
 import { fail } from "./Failure.ts"
 import type { HomeFacts } from "./Guards.ts"
@@ -305,6 +307,41 @@ export const runnerConfigError = (layout: Layout) =>
     homeEnvironment(layout, "runner"),
   )
 
+/**
+ * hub.env's GitHub App, checked against the permissions and events the Hub needs, as the Hub
+ * checks it (AppPermissions.ts): `undefined` without an App, or with a configuration the Hub
+ * refuses, which the configuration check reports. `apiUrl` is GitHub's API, unless a test's.
+ */
+export const appPermissionsFact = (layout: Layout, apiUrl?: URL) =>
+  Effect.gen(function* () {
+    const { githubApp } = yield* HubConfig
+    if (Option.isNone(githubApp)) return undefined
+    const app = yield* GitHubApp.make(
+      apiUrl === undefined ? githubApp.value : { ...githubApp.value, apiUrl },
+    )
+    return yield* app.checkPermissions.pipe(
+      Effect.map((check): AppPermissionsFact => ({ _tag: "Checked", check })),
+      Effect.catchTag("GitHubAppError", (error) =>
+        Effect.succeed<AppPermissionsFact>({ _tag: "Unchecked", detail: error.message }),
+      ),
+      Effect.timeoutOrElse({
+        duration: "15 seconds",
+        orElse: () =>
+          Effect.succeed<AppPermissionsFact>({
+            _tag: "Unchecked",
+            detail: "GitHub didn't answer within 15 seconds",
+          }),
+      }),
+    )
+  }).pipe(
+    Effect.provide(HubConfig.layer),
+    Effect.provide(FetchHttpClient.layer),
+    Effect.provide(
+      ConfigProvider.layer(ConfigProvider.fromEnv({ env: homeEnvironment(layout, "hub") })),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  )
+
 /** The environment a role's service runs with: its env file, in this home, from this app. */
 export function homeEnvironment(layout: Layout, role: Role): Record<string, string> {
   return {
@@ -355,6 +392,8 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
       }
     }
 
+    const hubProblem = hub ? yield* hubConfigError(layout) : undefined
+
     let linger: boolean | undefined
     if (on === "linux" && roles.length > 0 && !shell.dryRun) {
       const result = yield* shell
@@ -380,7 +419,8 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
         path: layout.envFile(role),
         mode: statSync(layout.envFile(role)).mode,
       })),
-      hubConfigError: hub ? yield* hubConfigError(layout) : undefined,
+      hubConfigError: hubProblem,
+      githubApp: hub && hubProblem === undefined ? yield* appPermissionsFact(layout) : undefined,
       // Without the mod the Runner refuses any configuration: the mod check says so on its own.
       runnerConfigError: runner && modBuilt ? yield* runnerConfigError(layout) : undefined,
       services,

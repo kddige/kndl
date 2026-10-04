@@ -20,6 +20,8 @@ import {
   RoleTitle,
   waitForHub,
 } from "./Actions.ts"
+import { type AppSetupChoice, AppSetupChoices, appEnvUpdates } from "./AppManifest.ts"
+import { type AppPlan, AppSetupTitles, askAppPlan, createApp } from "./AppSetup.ts"
 import { updateEnv } from "./EnvFile.ts"
 import { fail } from "./Failure.ts"
 import { refuseHome } from "./Guards.ts"
@@ -72,6 +74,8 @@ export interface OnboardOptions {
   readonly publicUrl: string | undefined
   readonly insecureCookies: boolean | undefined
   readonly devLogin: boolean | undefined
+  /** The GitHub App: create it from the manifest, paste its settings, or leave it. */
+  readonly githubApp: AppSetupChoice | undefined
   readonly hubUrl: string | undefined
   readonly token: string | undefined
   readonly runnerName: string | undefined
@@ -201,7 +205,7 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
     const renames = yield* protectHome(layout, roles, options.moveOldData)
 
     // 3. The Hub's questions.
-    let hub: HubChoices | undefined
+    let hub: (HubChoices & { readonly app: AppPlan }) | undefined
     if (roles.includes("hub")) {
       const existing = hubChoicesFrom(hubValues)
       const reach = yield* answer(
@@ -280,7 +284,29 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
             }),
         )
       }
-      hub = { reach, port, publicUrl, insecureCookies, devLogin }
+      const hasApp = hubValues.GITHUB_APP_ID !== undefined
+      const appChoice = yield* answer(
+        pickAnswer<AppSetupChoice>({
+          flag: options.githubApp,
+          // A home set up before keeps what it has: `--github-app create` makes one later.
+          existing: existing === undefined ? undefined : "skip",
+          reset: options.reset,
+          interactive,
+          fallback: "skip",
+        }),
+        "--github-app create|manual|skip",
+        () =>
+          ui.select({
+            message: "GitHub sign-in, and Repos' tokens, need a GitHub App. Set it up now?",
+            choices: AppSetupChoices.map((value) => ({
+              value,
+              label: AppSetupTitles(hasApp)[value],
+            })),
+            initial: hasApp ? "skip" : "create",
+          }),
+      )
+      const app = yield* askAppPlan(appChoice)
+      hub = { reach, port, publicUrl, insecureCookies, devLogin, app }
     }
 
     // 4. The Runner's questions. With the Hub on this machine, the Runner reaches it on loopback,
@@ -356,15 +382,30 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
       )
     }
     if (hub !== undefined) {
+      // GitHub hands out a new App's credentials once: they're saved as soon as they come.
+      const created =
+        hub.app._tag === "Create"
+          ? yield* createApp(layout, hub.publicUrl, hub.app.owner, platform() ?? "linux")
+          : undefined
+      const appSettings = hub.app._tag === "Manual" ? hub.app.settings : created?.settings
       const existingKey = hubValues.HUB_SECRETS_KEY
       yield* writeEnvFile(
         layout.envFile("hub"),
-        updateEnv(
-          readEnvFile(layout.envFile("hub")),
-          hubEnvUpdates(hub, existingKey ?? generateSecretsKey()),
-        ),
+        updateEnv(readEnvFile(layout.envFile("hub")), {
+          ...hubEnvUpdates(hub, existingKey ?? generateSecretsKey()),
+          ...(appSettings === undefined ? {} : appEnvUpdates(appSettings)),
+        }),
       )
-      yield* ui.log("step", `wrote ${layout.envFile("hub")}`)
+      yield* ui.log(
+        "step",
+        `wrote ${layout.envFile("hub")}${appSettings === undefined ? "" : `, with the GitHub App ${appSettings.appId}`}`,
+      )
+      if (created !== undefined) {
+        yield* ui.note(
+          `Install ${created.slug} on the Repos claude-hub works in: ${created.installUrl}\nUntil then, the Hub has no Repos to offer.`,
+          "Install the GitHub App",
+        )
+      }
       if (existingKey === undefined) {
         yield* ui.note(
           `A new HUB_SECRETS_KEY is in ${layout.envFile("hub")}. Back it up together with ${layout.hubDb}: without it, the Sensitive values saved in the database can't be read, and the Hub won't start.`,
@@ -478,7 +519,9 @@ function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
     const values = readEnvValues(layout.envFile("hub"))
     lines.push(`The Hub: ${values.HUB_PUBLIC_URL ?? "(no HUB_PUBLIC_URL)"}`)
     lines.push(
-      "GitHub sign-in needs a GitHub App, which you set up by hand for now: see https://kddige.github.io/claude-hub/how-to/set-up-the-github-app/ and put its settings in hub.env.",
+      values.GITHUB_APP_ID === undefined
+        ? "GitHub sign-in needs a GitHub App: `claude-hub onboard --github-app create` creates one. See https://kddige.github.io/claude-hub/how-to/set-up-the-github-app/."
+        : "Install the GitHub App on the Repos claude-hub works in; `claude-hub doctor` checks its permissions.",
     )
     lines.push(
       "Add a Runner on another machine: `claude-hub runner token <name>` here, then `claude-hub onboard --role runner` there.",

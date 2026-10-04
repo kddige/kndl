@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { type DoctorFacts, diagnose } from "./Doctor.ts"
+import {
+  type AppFacts,
+  checkAppPermissions,
+  type InstallationFacts,
+  manifestPermissions,
+} from "@claude-hub/hub/src/AppPermissions.ts"
+import { type DoctorFacts, diagnose, formatChecks } from "./Doctor.ts"
 
 const healthy: DoctorFacts = {
   home: "/home/ada/.claude-hub",
@@ -13,6 +19,7 @@ const healthy: DoctorFacts = {
     { role: "runner", path: "/home/ada/.claude-hub/runner.env", mode: 0o100600 },
   ],
   hubConfigError: undefined,
+  githubApp: undefined,
   runnerConfigError: undefined,
   services: [
     { role: "hub", state: { _tag: "Running", pid: 1 } },
@@ -166,5 +173,102 @@ describe("doctor", () => {
     const facts = { ...healthy, wrapper: { ...healthy.wrapper, current: false } }
 
     expect(failing(facts)).toMatchObject([{ fix: { _tag: "WriteWrapper" } }])
+  })
+})
+
+const check = (facts: DoctorFacts) => diagnose(facts).find((c) => c.name === "GitHub App")
+
+describe("doctor and the GitHub App", () => {
+  const app: AppFacts = {
+    slug: "claude-hub-mac",
+    htmlUrl: "https://github.com/apps/claude-hub-mac",
+    owner: { login: "ada", type: "User" },
+    permissions: manifestPermissions(),
+    events: [],
+  }
+  const installation: InstallationFacts = {
+    id: 7,
+    account: "ada",
+    htmlUrl: "https://github.com/settings/installations/7",
+    permissions: manifestPermissions(),
+    events: [],
+    suspended: false,
+  }
+  const withApp = (
+    app_: AppFacts,
+    installations: ReadonlyArray<InstallationFacts> = [installation],
+  ): DoctorFacts => ({
+    ...healthy,
+    githubApp: { _tag: "Checked", check: checkAppPermissions(app_, installations, 0) },
+  })
+
+  test("an App with every permission, installed, passes", () => {
+    expect(check(withApp(app))).toEqual({
+      name: "GitHub App",
+      status: "ok",
+      detail: "claude-hub-mac and its installation have the permissions the Hub needs",
+    })
+  })
+
+  test("a permission the App lacks fails, linking to its settings; there's no fix", () => {
+    const { issues: _, ...lacking } = manifestPermissions()
+    const found = check(
+      withApp({ ...app, permissions: lacking }, [{ ...installation, permissions: lacking }]),
+    )
+
+    expect(found?.status).toBe("fail")
+    expect(found?.fix).toBeUndefined()
+    expect(found?.detail).toContain(
+      "The App claude-hub-mac lacks Issues: Read and write. Add it at https://github.com/settings/apps/claude-hub-mac/permissions",
+    )
+    expect(found?.detail).toContain(
+      "Its installation on ada lacks Issues: Read and write. Once the App has it, accept it at https://github.com/settings/installations/7/permissions/update",
+    )
+  })
+
+  test("an installation that hasn't accepted the App's new permissions fails, linking to its review", () => {
+    const found = check(
+      withApp(app, [
+        { ...installation, permissions: { ...manifestPermissions(), issues: "read" } },
+      ]),
+    )
+
+    expect(found?.status).toBe("fail")
+    expect(found?.detail).toStartWith(
+      "Its installation on ada lacks Issues: Read and write. Accept it at https://github.com/settings/installations/7/permissions/update",
+    )
+  })
+
+  test("an App installed nowhere warns, linking to its install page", () => {
+    expect(check(withApp(app, []))).toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("https://github.com/apps/claude-hub-mac/installations/new"),
+    })
+  })
+
+  test("GitHub not answering warns, and doesn't fail doctor", () => {
+    expect(
+      check({ ...healthy, githubApp: { _tag: "Unchecked", detail: "GitHub answered 401" } }),
+    ).toMatchObject({
+      status: "warn",
+      detail: "Couldn't check its permissions: GitHub answered 401",
+    })
+  })
+
+  test("no App, or no Hub here: no check", () => {
+    expect(check(healthy)).toBeUndefined()
+  })
+
+  test("doctor prints a detail's lines under each other", () => {
+    expect(
+      formatChecks([
+        { name: "Install", status: "ok", detail: "/home/ada/.claude-hub/app" },
+        { name: "GitHub App", status: "fail", detail: "The App lacks one.\nIts installation too." },
+      ]),
+    ).toEqual([
+      "ok  Install     /home/ada/.claude-hub/app",
+      "XX  GitHub App  The App lacks one.",
+      "                Its installation too.",
+    ])
   })
 })
