@@ -3,7 +3,6 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
-import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { MaxCommandWaitMs, ProtocolVersion, SessionId } from "@claude-hub/protocol"
@@ -11,8 +10,8 @@ import { Effect, Layer } from "effect"
 import { databaseAt } from "./Database.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
+import { startHubProcess } from "./testSupport.ts"
 
-const mainPath = new URL("./main.ts", import.meta.url).pathname
 const dirs: Array<string> = []
 const children: Array<Bun.Subprocess> = []
 
@@ -20,21 +19,6 @@ afterEach(() => {
   for (const child of children.splice(0)) child.kill("SIGKILL")
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
-
-/** A port nothing listens on, for now. */
-const freePort = () =>
-  new Promise<number>((resolve, reject) => {
-    const server = createServer()
-    server.once("error", reject)
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address()
-      server.close(() =>
-        typeof address === "object" && address
-          ? resolve(address.port)
-          : reject(new Error("no port")),
-      )
-    })
-  })
 
 /** A database with a Runner and a mod token for its Session `s-a`. */
 async function seed(filename: string) {
@@ -56,33 +40,18 @@ async function seed(filename: string) {
   )
 }
 
-async function startHubProcess() {
+async function startSeededHub() {
   const dir = mkdtempSync(join(tmpdir(), "claude-hub-shutdown-"))
   dirs.push(dir)
   const database = join(dir, "hub.db")
   const tokens = await seed(database)
-  const port = await freePort()
-  const child = Bun.spawn(["bun", mainPath], {
-    env: { ...process.env, HUB_DATABASE: database, HOST: "127.0.0.1", PORT: String(port) },
-    stdout: "ignore",
-    stderr: "ignore",
-  })
-  children.push(child)
-  const url = `http://127.0.0.1:${port}`
-  for (let attempt = 0; ; attempt++) {
-    const up = await fetch(`${url}/health`).then(
-      (response) => response.ok,
-      () => false,
-    )
-    if (up) break
-    if (attempt > 100) throw new Error("The Hub didn't start")
-    await Bun.sleep(50)
-  }
-  return { child, url, ...tokens }
+  const hub = await startHubProcess(database)
+  children.push(hub.child)
+  return { ...hub, ...tokens }
 }
 
 /** Opens what keeps a Hub busy: a Runner's channel and a mod's long poll of its commands. */
-async function connect(hub: Awaited<ReturnType<typeof startHubProcess>>) {
+async function connect(hub: Awaited<ReturnType<typeof startSeededHub>>) {
   const socket = new WebSocket(`${hub.url.replace(/^http/, "ws")}/ws/runner`, {
     headers: { authorization: `Bearer ${hub.runnerToken}` },
   })
@@ -132,7 +101,7 @@ async function connect(hub: Awaited<ReturnType<typeof startHubProcess>>) {
 test.each(["SIGTERM", "SIGINT"] as const)(
   "exits promptly on %s with a Runner connected and a long poll waiting",
   async (signal) => {
-    const hub = await startHubProcess()
+    const hub = await startSeededHub()
     const { closed, poll } = await connect(hub)
 
     const sent = performance.now()

@@ -17,6 +17,8 @@ import {
   dependencyFolderProblem,
   sensitiveValueProblem,
   type SharedVariable,
+  type ValueNeeded,
+  valuesNeededText,
   variableNameProblem,
 } from "@claude-hub/protocol"
 import { Redacted } from "effect"
@@ -183,9 +185,33 @@ export interface Saved {
   readonly sharedVariables: ReadonlyArray<SharedVariable> | null
 }
 
+/** Whether a shared variable needs a value (#57): a Sensitive one whose value was cleared. */
+export const needsValue = (shared: SharedVariable | undefined): boolean =>
+  shared?._tag === "Sensitive" && shared.needsValue
+
+/**
+ * The variables of the Environment as applied that need a value (#57): its own, and those that
+ * link a shared variable that needs one. The Repo's Sessions don't start until they get one.
+ */
+export function valuesNeeded(saved: Saved): ReadonlyArray<ValueNeeded> {
+  const sharedNeeding = new Set(
+    (saved.sharedVariables ?? []).filter(needsValue).map((shared) => shared.name),
+  )
+  return (saved.environment?.variables ?? []).flatMap((variable): Array<ValueNeeded> => {
+    if (variable._tag === "Sensitive" && variable.needsValue) {
+      return [{ name: variable.name, availableAtBuild: variable.availableAtBuild }]
+    }
+    if (variable._tag === "Link" && sharedNeeding.has(variable.sharedVariable)) {
+      return [variable]
+    }
+    return []
+  })
+}
+
 /**
  * Why the Hub would refuse the draft, as far as the browser can tell: the protocol's rules, a
- * Sensitive variable with neither a new value nor a saved one, a link to no shared variable.
+ * Sensitive variable with neither a new value nor a saved one, a link to no shared variable or to
+ * one that needs a value.
  */
 export function draftProblems(edit: EnvironmentEdit, saved: Saved): DraftProblems {
   const draft = toDraft(edit)
@@ -195,12 +221,13 @@ export function draftProblems(edit: EnvironmentEdit, saved: Saved): DraftProblem
   const variables: Record<string, string> = {}
   const folders: Record<string, string> = {}
 
-  const savedSensitive = new Set(
-    (saved.environment?.variables ?? [])
-      .filter((variable) => variable._tag === "Sensitive")
-      .map((variable) => variable.name),
+  // Each saved Sensitive variable, and whether it needs a value.
+  const savedSensitive = new Map(
+    (saved.environment?.variables ?? []).flatMap((variable) =>
+      variable._tag === "Sensitive" ? [[variable.name, variable.needsValue] as const] : [],
+    ),
   )
-  const shared = saved.sharedVariables && new Set(saved.sharedVariables.map((v) => v.name))
+  const shared = saved.sharedVariables && new Map(saved.sharedVariables.map((v) => [v.name, v]))
   const seen = new Map<string, number>()
   for (const variable of edit.variables) {
     const name = variable.name.trim()
@@ -220,6 +247,9 @@ export function draftProblems(edit: EnvironmentEdit, saved: Saved): DraftProblem
       else if (!savedSensitive.has(name)) {
         problem = `${name} has no saved Sensitive value: enter one.`
         all.push(problem)
+      } else if (savedSensitive.get(name) === true) {
+        problem = `${valuesNeededText([{ name, availableAtBuild: variable.availableAtBuild }])}: enter one.`
+        all.push(problem)
       }
     }
     if (problem === undefined && variable.kind === "Link") {
@@ -228,6 +258,10 @@ export function draftProblems(edit: EnvironmentEdit, saved: Saved): DraftProblem
         all.push(`${name} links no shared variable: pick one.`)
       } else if (shared && !shared.has(variable.sharedVariable)) {
         problem = `There is no shared variable ${variable.sharedVariable} to link as ${name}.`
+        all.push(problem)
+      } else if (needsValue(shared?.get(variable.sharedVariable))) {
+        const needed = { ...variable, name }
+        problem = `${valuesNeededText([needed])}: set it on the Shared variables screen.`
         all.push(problem)
       }
     }

@@ -47,6 +47,8 @@ For a closer look on a Runner's machine, list its tmux sessions with `tmux -L cl
 - The browser shows `The Hub's web UI isn't built.`
 - The Hub refuses dev login: `Dev login (CLAUDE_HUB_DEV_LOGIN) is refused: …`
 - The Hub refuses to start because of `HUB_SECRETS_KEY`.
+- The secrets key is lost.
+- `… a Hub is running on …/hub.db. Stop it first.`
 - The Hub's settings in `.env.local` are ignored.
 
 ### [Signing in](/troubleshooting/sign-in/)
@@ -72,6 +74,7 @@ For a closer look on a Runner's machine, list its tmux sessions with `tmux -L cl
 ### [Sessions and Sandboxes](/troubleshooting/sessions/)
 
 - A new Session goes straight to Asleep: `Claude Code could not start on …`.
+- A Session can't start: `… need values`.
 - `The Sandbox failed: host path … is not a directory`.
 - Claude's tools are refused: `… could not run in this Session's Sandbox (…), so it did not run at all.`
 - **Restart** or **Sleep now** is refused.

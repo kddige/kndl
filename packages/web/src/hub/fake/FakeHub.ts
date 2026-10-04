@@ -8,7 +8,7 @@
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too.
 
-import { checkHandshake, ProtocolVersion, WebToHub } from "@claude-hub/protocol"
+import { cantStartText, checkHandshake, ProtocolVersion, WebToHub } from "@claude-hub/protocol"
 import { Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
@@ -784,6 +784,18 @@ export class FakeHub implements HubTransport {
    * delivered once it has started.
    */
   #wake(session: FakeSession, message: string, by?: ParticipantWire): void {
+    // As on the Hub, it stays Asleep while its Environment needs values (#57).
+    const needed = this.environments.valuesNeeded(session.summary.repo)
+    if (needed.length > 0) {
+      this.#append(session, {
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        message: `Claude Code could not start: ${cantStartText(session.summary.repo, needed)}`,
+        valuesNeeded: true,
+      })
+      this.#summaryChanged(session)
+      return
+    }
     this.#start(session, { message, ...(by !== undefined && { by }) })
   }
 

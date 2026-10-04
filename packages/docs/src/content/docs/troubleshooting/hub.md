@@ -61,11 +61,11 @@ HubConfigError: HUB_SECRETS_KEY must be 32 random bytes in base64, as `bun run s
 ```
 
 ```
-HubConfigError: The Hub stores 3 Sensitive variable values, encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with.
+HubConfigError: The Hub stores 3 Sensitive variable values, encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with. If that key is lost, `bun run secrets-reset` (or `claude-hub secrets reset`) clears those values, keeping their variables, so a new key can be used.
 ```
 
 ```
-HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 Sensitive variable values were saved with. Set it to that key.
+HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 Sensitive variable values were saved with. Set it to that key. If that key is lost, `bun run secrets-reset` (or `claude-hub secrets reset`) clears those values, keeping their variables, so a new key can be used.
 ```
 
 **Why.** Sensitive values are encrypted with `HUB_SECRETS_KEY`. Once any are saved, the Hub won't start without the same key, because it couldn't decrypt them for Sessions.
@@ -73,7 +73,38 @@ HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 Sensitive variable va
 **Fix.**
 
 - For the first message, make a key with `bun run secrets-key` and use what it prints, whole.
-- For the others, find the key the values were saved with, usually in `packages/hub/.env.local`, and set it. If it is lost, the values are too: the Hub can't recover them.
+- For the others, find the key the values were saved with, usually in `packages/hub/.env.local` (an install's `hub.env`), and set it. If it is lost, see [the next section](#the-secrets-key-is-lost).
+
+## The secrets key is lost
+
+**What you see.** The Hub refuses to start as in [the section above](#the-secrets-key-is-wrong-or-missing), and no copy of the key the values were saved with is left: not in `.env.local` or `hub.env`, nor in a backup.
+
+**Why.** The values are lost with the key: nothing can decrypt them. The Hub won't start while it stores values it can't decrypt.
+
+**Fix.** Stop the Hub, then clear the values and keep their variables:
+
+```sh
+bun run secrets-reset          # in a checkout
+claude-hub secrets reset       # on an installed Hub
+```
+
+Make a new key with `bun run secrets-key` (or `claude-hub secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Each cleared variable shows **needs a value**: enter the values again on each Repo's Environment and on **Shared variables**. Until then the Repo's Sessions don't start. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+
+## A Hub is already running on the database
+
+**What you see.** The Hub, or `secrets-reset`, exits with:
+
+```
+HubLockRefused: The Hub can't start: a Hub is running on /path/to/hub.db. Stop it first.
+```
+
+```
+The Sensitive values can't be reset: a Hub is running on /path/to/hub.db. Stop it first.
+```
+
+**Why.** A running Hub holds a lock on `hub.db.lock`, beside its database, so a second Hub on the same database, or a reset under a live Hub, is refused. The operating system drops the lock when the Hub ends, even if it crashed, so a stale lock can't be the cause.
+
+**Fix.** Stop the other Hub: `claude-hub hub stop` for an installed one, or the terminal running `bun run hub`. `claude-hub status` shows whether the installed one runs. To run two Hubs side by side, give each its own `HUB_DATABASE`.
 
 ## The GitHub settings are incomplete
 

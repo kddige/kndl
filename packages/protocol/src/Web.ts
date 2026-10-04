@@ -45,6 +45,11 @@ export const SessionStateChanged = Schema.TaggedStruct("SessionStateChanged", {
   by: Schema.optionalKey(Participant),
   /** Why, when it says more than the state, such as why a Session is Frozen. */
   message: Schema.optionalKey(Schema.String),
+  /**
+   * Set when the Session didn't start because its Environment has, or links, a variable that
+   * needs a value (#57), so the web can lead to where it's entered.
+   */
+  valuesNeeded: Schema.optionalKey(Schema.Boolean),
 })
 export type SessionStateChanged = typeof SessionStateChanged.Type
 

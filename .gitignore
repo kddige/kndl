@@ -6,6 +6,8 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+# The lock a running Hub holds beside its database (packages/hub/src/HubLock.ts)
+*.db.lock
 
 # The mod's bundle, built by `bun run mod:build`
 packages/mod/hooks/hub-link-lib.js

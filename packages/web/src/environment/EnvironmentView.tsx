@@ -3,11 +3,12 @@
 // browser until applied. Also where a Repo without an Environment is set up before its first
 // Session.
 
-import type {
-  EnvironmentVersionInfo,
-  RunnerId,
-  RunnerSummary,
-  SharedVariable,
+import {
+  type EnvironmentVersionInfo,
+  type RunnerId,
+  type RunnerSummary,
+  type SharedVariable,
+  valuesNeededText,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
@@ -50,10 +51,12 @@ import {
   forgetEdit,
   isUnchanged,
   loadEdit,
+  needsValue,
   newFolder,
   newVariable,
   storeEdit,
   toDraft,
+  valuesNeeded,
   type VariableKind,
 } from "./draft.ts"
 
@@ -442,14 +445,38 @@ function EnvironmentEditor({
         folder.key === key ? { ...folder, ...change } : folder,
       ),
     }))
-  const savedSensitive = new Set(
-    (environment?.variables ?? [])
-      .filter((variable) => variable._tag === "Sensitive")
-      .map((variable) => variable.name),
+  // Each saved Sensitive variable, and whether it needs a value.
+  const savedSensitive = new Map(
+    (environment?.variables ?? []).flatMap((variable) =>
+      variable._tag === "Sensitive" ? [[variable.name, variable.needsValue] as const] : [],
+    ),
   )
+  const needed = valuesNeeded({ environment: environment ?? null, sharedVariables })
+  const neededShared = needed.some((variable) => variable.sharedVariable !== undefined)
 
   return (
     <>
+      {needed.length > 0 && (
+        <Banner
+          intent="danger"
+          icon={<WarningIcon />}
+          title={`${repo}'s Sessions can't start: ${valuesNeededText(needed)}`}
+          {...(neededShared && {
+            action: (
+              <Button nativeButton={false} render={<Link to="/variables" />} size="sm">
+                Shared variables
+              </Button>
+            ),
+          })}
+        >
+          The Hub's secrets key was replaced, and the values it encrypted were cleared.{" "}
+          {needed.length === 1 ? "Enter it again" : "Enter them again"}
+          {neededShared
+            ? ": shared variables on the Shared variables screen, the others below, then apply."
+            : " below, and apply. No Test build is needed for that."}
+        </Banner>
+      )}
+
       {pendingSession && !environment && (
         <Banner intent="accent" icon={<InfoIcon />} title={`Set up ${repo} to start your Session`}>
           A Repo needs an Environment before its first Session. This one starts from the defaults:
@@ -600,7 +627,8 @@ function EnvironmentEditor({
                 key={variable.key}
                 variable={variable}
                 problem={problems.variables[variable.key]}
-                hasSavedValue={savedSensitive.has(variable.name.trim())}
+                hasSavedValue={savedSensitive.get(variable.name.trim()) === false}
+                needsValue={savedSensitive.get(variable.name.trim()) === true}
                 sharedVariables={sharedVariables}
                 onChange={(change) => setVariable(variable.key, change)}
                 onRemove={() =>
@@ -846,6 +874,7 @@ function VariableRow({
   variable,
   problem,
   hasSavedValue,
+  needsValue: savedNeedsValue,
   sharedVariables,
   onChange,
   onRemove,
@@ -853,11 +882,14 @@ function VariableRow({
   variable: DraftVariable
   problem: string | undefined
   hasSavedValue: boolean
+  /** A saved Sensitive variable whose value was cleared (#57). */
+  needsValue: boolean
   sharedVariables: ReadonlyArray<SharedVariable> | null
   onChange: (change: Partial<DraftVariable>) => void
   onRemove: () => void
 }) {
   const name = variable.name.trim()
+  const linked = sharedVariables?.find((shared) => shared.name === variable.sharedVariable)
   return (
     <div {...stylex.props(styles.row)}>
       <Field label="Name" invalid={problem !== undefined} sx={styles.rowName}>
@@ -907,6 +939,9 @@ function VariableRow({
             <span {...stylex.props(styles.valueLine)}>
               Value
               {hasSavedValue && variable.value === "" && <Badge intent="success">set</Badge>}
+              {savedNeedsValue && variable.value === "" && (
+                <Badge intent="danger">needs a value</Badge>
+              )}
             </span>
           }
           sx={styles.rowValue}
@@ -915,7 +950,13 @@ function VariableRow({
             size="sm"
             type="password"
             value={variable.value}
-            placeholder={hasSavedValue ? "Saved: type to replace it" : "Enter a value"}
+            placeholder={
+              hasSavedValue
+                ? "Saved: type to replace it"
+                : savedNeedsValue
+                  ? "Cleared: enter it again"
+                  : "Enter a value"
+            }
             autoComplete="off"
             onValueChange={(value: string) => onChange({ value })}
             sx={styles.mono}
@@ -924,7 +965,14 @@ function VariableRow({
       )}
       {variable.kind === "Link" && (
         <Field
-          label="Shared variable"
+          label={
+            <span {...stylex.props(styles.valueLine)}>
+              Shared variable
+              {variable.kind === "Link" && needsValue(linked) && (
+                <Badge intent="danger">needs a value</Badge>
+              )}
+            </span>
+          }
           {...(sharedVariables?.length === 0 && {
             description: (
               <Link to="/variables" {...stylex.props(styles.link, focus.ring)}>

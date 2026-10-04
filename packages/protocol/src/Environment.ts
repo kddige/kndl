@@ -112,6 +112,11 @@ export type EnvironmentDraft = typeof EnvironmentDraft.Type
 export const SensitiveVariable = Schema.TaggedStruct("Sensitive", {
   name: Schema.String,
   availableAtBuild: Schema.Boolean,
+  /**
+   * Whether it has no value: `secrets-reset` cleared the one a lost HUB_SECRETS_KEY encrypted.
+   * The Repo's Sessions don't start until a new value is applied.
+   */
+  needsValue: Schema.Boolean,
 })
 export type SensitiveVariable = typeof SensitiveVariable.Type
 
@@ -162,6 +167,11 @@ export const SharedVariable = Schema.Union([
   Schema.TaggedStruct("Sensitive", {
     name: Schema.String,
     linkedBy: Schema.Array(SharedVariableUse),
+    /**
+     * Whether it has no value, as {@link SensitiveVariable}'s `needsValue`: the Sessions of every
+     * Repo linking it don't start until it gets one.
+     */
+    needsValue: Schema.Boolean,
   }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type SharedVariable = typeof SharedVariable.Type
@@ -479,6 +489,47 @@ export function sensitiveValueProblem(name: string, value: string): string | und
     return `The value of ${name} is under ${MinSensitiveValueLength} characters: too short to redact from output. Make it Plain, or use a longer value.`
   }
   return undefined
+}
+
+/** A variable of an Environment that needs a value: its own, or the shared variable it links. */
+export interface ValueNeeded {
+  readonly name: string
+  readonly availableAtBuild: boolean
+  /** The shared variable it links, which needs the value; none for its own. */
+  readonly sharedVariable?: string
+}
+
+/**
+ * Names the variables that need a value (#57), as the Hub's refusals and a failed Session start say
+ * it, and the Environment screen with them.
+ */
+export function valuesNeededText(needed: ReadonlyArray<ValueNeeded>): string {
+  const names = needed.map((variable) =>
+    variable.sharedVariable === undefined
+      ? variable.name
+      : variable.sharedVariable === variable.name
+        ? `${variable.name} (shared)`
+        : `${variable.name} (the shared variable ${variable.sharedVariable})`,
+  )
+  const listed =
+    names.length <= 1
+      ? (names[0] ?? "")
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+  return `${listed} ${names.length === 1 ? "needs a value" : "need values"}`
+}
+
+/** Why the Repo's Sessions don't start while variables need a value, and where to enter them. */
+export function cantStartText(repo: string, needed: ReadonlyArray<ValueNeeded>): string {
+  const screens = [
+    ...(needed.some((variable) => variable.sharedVariable === undefined)
+      ? ["the Repo's Environment screen"]
+      : []),
+    ...(needed.some((variable) => variable.sharedVariable !== undefined)
+      ? ["the Shared variables screen"]
+      : []),
+  ]
+  const which = needed.length === 1 ? "it" : "them"
+  return `${repo}'s Sessions can't start: ${valuesNeededText(needed)}. Enter ${which} on ${screens.join(" and ")}.`
 }
 
 /** Why a dependency folder can't be used, or undefined when it can. */

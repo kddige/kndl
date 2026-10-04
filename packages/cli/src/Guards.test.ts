@@ -3,7 +3,16 @@ import { entryRemoval, homeRemoval, refuseHome } from "./Guards.ts"
 
 const userHome = "/Users/ada"
 const home = "/Users/ada/.claude-hub"
-const installed = ["app", "hub.env", "runner.env", "hub.db", "sessions", "claude-code", "logs"]
+const installed = [
+  "app",
+  "hub.env",
+  "runner.env",
+  "hub.db",
+  "hub.db.lock",
+  "sessions",
+  "claude-code",
+  "logs",
+]
 
 describe("purging the home", () => {
   test("removes exactly the resolved home, when it holds only claude-hub's entries", () => {

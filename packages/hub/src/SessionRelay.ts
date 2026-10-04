@@ -23,6 +23,9 @@
 //   - A start that fails, or a Claude Code that exits on its own, leaves the Session Asleep, with
 //     the reason in the logged SessionStateChanged. Prompts queued stay queued and are not retried
 //     on their own: the next prompt or WakeSession tries again.
+//   - A Session whose Environment has, or links, a variable that needs a value (#57) doesn't
+//     start: CreateSession is refused, and a wake leaves it Asleep, its prompts queued, with a
+//     SessionStateChanged naming the variables. Starting without them would be confusing.
 //   - Frozen: while its Runner is offline. Prompts queue up. When the Runner is back the Session is
 //     Active if its Claude Code is still running in tmux, otherwise Asleep, and woken if prompts
 //     are waiting.
@@ -103,6 +106,7 @@ import {
   PurgeSession,
   TurnStopRequested,
   type WebToHub,
+  cantStartText,
   AppPermissionsChecked,
   WipNotPushed,
   SandboxNoted,
@@ -818,6 +822,20 @@ export class SessionRelay extends Context.Service<
         const runner = onlineRunners.get(session.runnerId)
         // A restored Session still being stopped for its archive wakes once it is stopped.
         if (runner === undefined || session.state !== "Asleep" || archiving.has(session.id)) return
+        const needed = yield* environments.valuesNeeded(session.repo)
+        if (needed.length > 0) {
+          restarts.delete(session.id)
+          yield* logEvent(
+            session.id,
+            SessionStateChanged.make({
+              state: "Asleep",
+              ...why,
+              message: `Claude Code could not start: ${cantStartText(session.repo, needed)}`,
+              valuesNeeded: true,
+            }),
+          )
+          return yield* sessionUpdated(session.id)
+        }
         const resume = yield* sessions.claudeSessionId(session.id)
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
@@ -1078,6 +1096,10 @@ export class SessionRelay extends Context.Service<
               // TODO: check that the base branch exists, once the GitHub App can tell.
               const missing = yield* environmentRelay.missingEnvironment(message.repo)
               if (missing !== undefined) return refuse(message, missing, { requestId })
+              const needed = yield* environments.valuesNeeded(message.repo)
+              if (needed.length > 0) {
+                return refuse(message, cantStartText(message.repo, needed), { requestId })
+              }
               const environment = yield* sessionEnvironment(message.repo)
               const id = SessionId.make(randomId())
               const session = yield* sessions.create({
