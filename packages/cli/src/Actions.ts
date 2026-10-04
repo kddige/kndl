@@ -6,8 +6,14 @@ import { chmod, mkdir } from "node:fs/promises"
 import { userInfo } from "node:os"
 import { delimiter, dirname } from "node:path"
 import { issueRunnerToken } from "@claude-hub/hub/src/Admin.ts"
+import {
+  resetSecrets,
+  type SecretsResetPlan,
+  secretsResetDoneText,
+  secretsResetPlanText,
+} from "@claude-hub/hub/src/SecretsReset.ts"
 import { claudeConfigPath, trustDirectory } from "@claude-hub/runner/src/ClaudeConfig.ts"
-import { ConfigProvider, Effect } from "effect"
+import { ConfigProvider, Console, Effect } from "effect"
 import { fail } from "./Failure.ts"
 import {
   bunPath,
@@ -224,6 +230,59 @@ export const issueToken = (layout: Layout, name: string) =>
       Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
       Effect.mapError((error) => fail(`Could not issue a token for ${name}: ${String(error)}`)),
     )
+  })
+
+/**
+ * Clears the Sensitive values in this home's Hub database after its HUB_SECRETS_KEY is lost
+ * (SecretsReset.ts, which `bun run secrets-reset` shares). Says what it clears and asks first,
+ * unless `yes`; without a terminal it needs `yes`. Refused while the Hub runs on the database.
+ */
+export const resetHubSecrets = (layout: Layout, options: { readonly yes: boolean }) =>
+  Effect.gen(function* () {
+    const env = homeEnvironment(layout, "hub")
+    if (!existsSync(layout.envFile("hub")) && env.HUB_DATABASE === undefined) {
+      return yield* fail(
+        `No Hub is set up in ${layout.home.dir}: reset its secrets on the Hub's machine.`,
+      )
+    }
+    const ui = yield* Ui
+    const confirm = (plan: SecretsResetPlan) =>
+      Effect.gen(function* () {
+        yield* Console.log(secretsResetPlanText(plan))
+        return (
+          options.yes ||
+          (ui.interactive &&
+            (yield* ui.confirm({ message: "Clear these values?", initial: false })))
+        )
+      })
+    const outcome = yield* resetSecrets(confirm).pipe(
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+      Effect.mapError((error) => {
+        switch (error._tag) {
+          case "Cancelled":
+            return error
+          case "HubLockRefused":
+            return fail(`${error.message} The Hub's service stops with \`claude-hub hub stop\`.`)
+          case "NoHubDatabase":
+            return fail(error.message)
+          default:
+            return fail(`Could not reset the Sensitive values: ${String(error)}`)
+        }
+      }),
+    )
+    if (outcome._tag === "NothingToReset") {
+      yield* Console.log(
+        "Nothing to reset: the Hub stores no Sensitive values, so a new key works as it is. Make one with `claude-hub secrets key`.",
+      )
+    } else if (outcome._tag === "Kept") {
+      return yield* fail(
+        ui.interactive
+          ? "Nothing was cleared."
+          : "Nothing was cleared: pass --yes to reset without a terminal.",
+      )
+    } else {
+      yield* Console.log(secretsResetDoneText(outcome.plan, "`claude-hub secrets key`"))
+    }
   })
 
 /**

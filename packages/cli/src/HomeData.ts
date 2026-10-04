@@ -18,6 +18,8 @@ export const DataEntries: Readonly<Record<string, Role>> = {
   "hub.db": "hub",
   "hub.db-wal": "hub",
   "hub.db-shm": "hub",
+  // A running Hub's lock on hub.db (the Hub's HubLock.ts).
+  "hub.db.lock": "hub",
 }
 
 export interface HomeDataFacts {

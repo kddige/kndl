@@ -8,6 +8,7 @@ import {
   issueToken,
   requireInstall,
   requirePlatform,
+  resetHubSecrets,
   RoleTitle,
   startService,
   stopService,
@@ -248,8 +249,13 @@ const secretsCommand = Command.make("secrets").pipe(
     Command.make("key", {}, () => Console.log(secretsKeyNotice(layout().envFile("hub")))).pipe(
       Command.withDescription("Print a new HUB_SECRETS_KEY"),
     ),
+    Command.make("reset", { yes }, (options) => resetHubSecrets(layout(), options)).pipe(
+      Command.withDescription(
+        "After losing HUB_SECRETS_KEY: clear the Sensitive values it encrypted, with the Hub stopped",
+      ),
+    ),
   ]),
-  Command.withDescription("The Hub's secrets key"),
+  Command.withDescription("The Hub's secrets key, and starting over without it"),
 )
 
 export const cli = Command.make("claude-hub").pipe(

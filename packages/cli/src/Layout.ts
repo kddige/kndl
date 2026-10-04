@@ -40,6 +40,8 @@ export const HomeEntries = [
   "hub.env",
   "runner.env",
   "hub.db",
+  // The running Hub's lock on hub.db (the Hub's HubLock.ts); it stays when the Hub stops.
+  "hub.db.lock",
   "sessions",
   "claude-code",
   "logs",
