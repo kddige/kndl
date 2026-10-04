@@ -5,7 +5,17 @@ import * as stylex from "@stylexjs/stylex"
 import { type ReactElement, type ReactNode, useId, useState } from "react"
 import { ChevronRightIcon } from "./icons.tsx"
 import { focus } from "./shared.ts"
-import { color, control, leading, motion, radius, space, text, weight } from "./tokens.stylex.ts"
+import {
+  chrome,
+  color,
+  control,
+  leading,
+  motion,
+  radius,
+  space,
+  text,
+  weight,
+} from "./tokens.stylex.ts"
 import { Tooltip } from "./Tooltip.tsx"
 
 const TOUCH = "@media (pointer: coarse)"
@@ -23,7 +33,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s2,
     flexShrink: 0,
-    height: "2.75rem",
+    height: chrome.barHeight,
     paddingInlineStart: space.s4,
     paddingInlineEnd: space.s2,
   },

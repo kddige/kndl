@@ -36,6 +36,7 @@ import {
   NavItem,
   NavSection,
   NavSlot,
+  PageHeader,
   PlusIcon,
   Popover,
   RestartIcon,
@@ -56,7 +57,7 @@ import {
   TrashIcon,
   WarningIcon,
 } from "../ui/index.ts"
-import { color, font, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const route = getRouteApi("/kit")
 
@@ -70,20 +71,6 @@ const styles = stylex.create({
     flexDirection: "column",
     gap: space.s10,
   },
-  header: {
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    flexWrap: "wrap",
-    gap: space.s4,
-  },
-  title: {
-    fontSize: text.xl,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    lineHeight: leading.tight,
-  },
-  lede: { color: color.textMuted, marginTop: space.s1 },
   section: {
     display: "flex",
     flexDirection: "column",
@@ -169,6 +156,16 @@ const styles = stylex.create({
     borderRadius: radius.md,
     overflow: "hidden",
   },
+  // A page's top, framed like the page it heads; the narrow one is a phone's width.
+  pageFrame: {
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    borderRadius: radius.md,
+    overflow: "hidden",
+    backgroundColor: color.bg,
+  },
+  phoneFrame: { maxWidth: "24rem" },
   brand: { flex: 1, fontWeight: weight.semibold },
   footerNote: { paddingInline: space.s2, color: color.textMuted, fontSize: text.sm },
   warningIcon: { display: "inline-flex", color: color.warning },
@@ -754,6 +751,55 @@ function SidebarKit() {
   )
 }
 
+function PageHeaders() {
+  return (
+    <Section
+      title="PageHeader"
+      note="The top of every page beside the sidebar. Its title row is as tall as the sidebar's header, with the same gutter and type, so the title sits level with the brand."
+    >
+      <div {...stylex.props(styles.pageFrame)}>
+        <PageHeader title="Environments" />
+      </div>
+      <div {...stylex.props(styles.pageFrame)}>
+        <PageHeader
+          title="Shared variables"
+          description="Hub-wide values, such as an API key, that Environments link under a name of their own."
+          actions={
+            <Button intent="primary" size="sm" icon={<PlusIcon />}>
+              Add shared variable
+            </Button>
+          }
+        />
+      </div>
+      <div {...stylex.props(styles.pageFrame)}>
+        <PageHeader
+          title="kddige/claude-hub"
+          badge={<Badge intent="warning">Not set up</Badge>}
+          description="Environment: what every Sandbox of this Repo is built from."
+          actions={<Button size="sm">Shared variables</Button>}
+        />
+      </div>
+      <Row label="phone">
+        <div {...stylex.props(styles.pageFrame, styles.phoneFrame)}>
+          <PageHeader
+            title="claude/a-very-long-work-branch-name-that-does-not-fit"
+            badge={<SessionStatus state="active" />}
+            description="kddige/claude-hub · from main · on ada@example.com"
+            actions={
+              <>
+                <IconButton label="Delete Session" size="sm">
+                  <TrashIcon />
+                </IconButton>
+                <AvatarStack label="Here now" people={PEOPLE.slice(0, 2)} size="sm" />
+              </>
+            }
+          />
+        </div>
+      </Row>
+    </Section>
+  )
+}
+
 function Disclosures() {
   return (
     <Section title="Disclosure" note="Closed by default: tool calls and subagents in the chat.">
@@ -817,132 +863,130 @@ function Banners() {
 
 export function KitPage() {
   return (
-    <main {...stylex.props(styles.page)}>
-      <header {...stylex.props(styles.header)}>
-        <div>
-          <h1 {...stylex.props(styles.title)}>UI kit</h1>
-          <p {...stylex.props(styles.lede)}>
-            Every component in its states. Switch the theme to check both palettes.
-          </p>
-        </div>
-        <ThemeSwitch />
-      </header>
+    <main>
+      <PageHeader
+        title="UI kit"
+        description="Every component in its states. Switch the theme to check both palettes."
+        actions={<ThemeSwitch />}
+      />
+      <div {...stylex.props(styles.page)}>
+        <Section title="Colour tokens" note="Semantic roles; the values change with the theme.">
+          <div {...stylex.props(styles.swatches)}>
+            {SWATCHES.map(([name, value]) => (
+              <div key={name} {...stylex.props(styles.swatch)}>
+                <span {...stylex.props(styles.chip, styles.chipColor(value))} />
+                {name}
+              </div>
+            ))}
+          </div>
+        </Section>
 
-      <Section title="Colour tokens" note="Semantic roles; the values change with the theme.">
-        <div {...stylex.props(styles.swatches)}>
-          {SWATCHES.map(([name, value]) => (
-            <div key={name} {...stylex.props(styles.swatch)}>
-              <span {...stylex.props(styles.chip, styles.chipColor(value))} />
-              {name}
-            </div>
-          ))}
-        </div>
-      </Section>
+        <Buttons />
 
-      <Buttons />
+        <Section title="Badge, SessionStatus">
+          <Row label="badge">
+            <Badge>12</Badge>
+            <Badge intent="accent">New</Badge>
+            <Badge intent="success">Merged</Badge>
+            <Badge intent="warning">Behind main</Badge>
+            <Badge intent="danger">Failed</Badge>
+          </Row>
+          <Row label="session">
+            <SessionStatus state="active" />
+            <SessionStatus state="asleep" />
+            <SessionStatus state="frozen" />
+            <SessionStatus state="archived" />
+          </Row>
+          <Row label="dot only">
+            <SessionStatus state="active" variant="dot" />
+            <SessionStatus state="asleep" variant="dot" />
+            <SessionStatus state="frozen" variant="dot" />
+            <SessionStatus state="archived" variant="dot" />
+          </Row>
+        </Section>
 
-      <Section title="Badge, SessionStatus">
-        <Row label="badge">
-          <Badge>12</Badge>
-          <Badge intent="accent">New</Badge>
-          <Badge intent="success">Merged</Badge>
-          <Badge intent="warning">Behind main</Badge>
-          <Badge intent="danger">Failed</Badge>
-        </Row>
-        <Row label="session">
-          <SessionStatus state="active" />
-          <SessionStatus state="asleep" />
-          <SessionStatus state="frozen" />
-          <SessionStatus state="archived" />
-        </Row>
-        <Row label="dot only">
-          <SessionStatus state="active" variant="dot" />
-          <SessionStatus state="asleep" variant="dot" />
-          <SessionStatus state="frozen" variant="dot" />
-          <SessionStatus state="archived" variant="dot" />
-        </Row>
-      </Section>
+        <Section title="Avatar, AvatarStack">
+          <Row label="sizes">
+            <Avatar name="Ada Lovelace" size="sm" />
+            <Avatar name="Ada Lovelace" />
+            <Avatar name="Ada Lovelace" size="lg" />
+            <Avatar name="Picture" src={PICTURE} size="lg" />
+          </Row>
+          <Row label="hues">
+            {PEOPLE.map((person) => (
+              <Avatar key={person.id} name={person.name} />
+            ))}
+          </Row>
+          <Row label="stack">
+            <AvatarStack label="Participants" people={PEOPLE.slice(0, 3)} />
+            <AvatarStack label="Participants" people={PEOPLE} />
+            <AvatarStack label="Participants" people={PEOPLE} size="sm" max={3} />
+          </Row>
+        </Section>
 
-      <Section title="Avatar, AvatarStack">
-        <Row label="sizes">
-          <Avatar name="Ada Lovelace" size="sm" />
-          <Avatar name="Ada Lovelace" />
-          <Avatar name="Ada Lovelace" size="lg" />
-          <Avatar name="Picture" src={PICTURE} size="lg" />
-        </Row>
-        <Row label="hues">
-          {PEOPLE.map((person) => (
-            <Avatar key={person.id} name={person.name} />
-          ))}
-        </Row>
-        <Row label="stack">
-          <AvatarStack label="Participants" people={PEOPLE.slice(0, 3)} />
-          <AvatarStack label="Participants" people={PEOPLE} />
-          <AvatarStack label="Participants" people={PEOPLE} size="sm" max={3} />
-        </Row>
-      </Section>
+        <Fields />
+        <Toggles />
+        <Selects />
 
-      <Fields />
-      <Toggles />
-      <Selects />
+        <Section title="Tabs">
+          <Tabs defaultValue="chat">
+            <TabList label="Session views">
+              <Tab value="chat">Chat</Tab>
+              <Tab value="terminal">Terminal</Tab>
+              <Tab value="previews">
+                Previews <Badge>2</Badge>
+              </Tab>
+              <Tab value="settings" disabled>
+                Settings
+              </Tab>
+            </TabList>
+            <TabPanel value="chat" sx={styles.panel}>
+              The conversation, Turn by Turn.
+            </TabPanel>
+            <TabPanel value="terminal" sx={styles.panel}>
+              Claude Code's terminal, live, to watch and type into.
+            </TabPanel>
+            <TabPanel value="previews" sx={styles.panel}>
+              Ports served from the Sandbox.
+            </TabPanel>
+          </Tabs>
+        </Section>
 
-      <Section title="Tabs">
-        <Tabs defaultValue="chat">
-          <TabList label="Session views">
-            <Tab value="chat">Chat</Tab>
-            <Tab value="terminal">Terminal</Tab>
-            <Tab value="previews">
-              Previews <Badge>2</Badge>
-            </Tab>
-            <Tab value="settings" disabled>
-              Settings
-            </Tab>
-          </TabList>
-          <TabPanel value="chat" sx={styles.panel}>
-            The conversation, Turn by Turn.
-          </TabPanel>
-          <TabPanel value="terminal" sx={styles.panel}>
-            Claude Code's terminal, live, to watch and type into.
-          </TabPanel>
-          <TabPanel value="previews" sx={styles.panel}>
-            Ports served from the Sandbox.
-          </TabPanel>
-        </Tabs>
-      </Section>
+        <Overlays />
+        <Toasts />
+        <Banners />
+        <Disclosures />
+        <SidebarKit />
+        <PageHeaders />
 
-      <Overlays />
-      <Toasts />
-      <Banners />
-      <Disclosures />
-      <SidebarKit />
+        <Section title="Markdown" note="Claude's answers. A small, safe subset: no raw HTML.">
+          <div {...stylex.props(styles.panel)}>
+            <Markdown text={MARKDOWN} />
+          </div>
+        </Section>
 
-      <Section title="Markdown" note="Claude's answers. A small, safe subset: no raw HTML.">
-        <div {...stylex.props(styles.panel)}>
-          <Markdown text={MARKDOWN} />
-        </div>
-      </Section>
-
-      <Section title="EmptyState, Spinner">
-        <EmptyState
-          icon={<InboxIcon />}
-          title="No Sessions yet"
-          description="Start one on any Repo you can access. Everyone with access can join it."
-          action={
-            <Button intent="primary" icon={<PlusIcon />}>
-              New Session
-            </Button>
-          }
-        />
-        <EmptyState
-          title="No Archived Sessions"
-          description="Deleted Sessions stay here for 30 days."
-        />
-        <Row label="spinner">
-          <Spinner size="sm" />
-          <Spinner />
-          <Spinner size="lg" label="Loading Sessions" />
-        </Row>
-      </Section>
+        <Section title="EmptyState, Spinner">
+          <EmptyState
+            icon={<InboxIcon />}
+            title="No Sessions yet"
+            description="Start one on any Repo you can access. Everyone with access can join it."
+            action={
+              <Button intent="primary" icon={<PlusIcon />}>
+                New Session
+              </Button>
+            }
+          />
+          <EmptyState
+            title="No Archived Sessions"
+            description="Deleted Sessions stay here for 30 days."
+          />
+          <Row label="spinner">
+            <Spinner size="sm" />
+            <Spinner />
+            <Spinner size="lg" label="Loading Sessions" />
+          </Row>
+        </Section>
+      </div>
     </main>
   )
 }

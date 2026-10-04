@@ -380,6 +380,14 @@ export const control = stylex.defineVars({
   lg: "2.5rem",
 })
 
+/**
+ * The app's chrome. The Sidebar's header, the top bar on narrow screens and a PageHeader's title
+ * row share one height, so the page's title sits level with the brand beside it.
+ */
+export const chrome = stylex.defineVars({
+  barHeight: "2.75rem",
+})
+
 export const radius = stylex.defineVars({
   sm: "4px",
   md: "6px",
