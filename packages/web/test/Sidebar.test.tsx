@@ -156,6 +156,25 @@ test("the start page points at the sidebar, and the general nav marks its page",
   await eventually(() => expect(current()).toEqual(["Archived Sessions"]))
 })
 
+test("each page beside the sidebar opens with the one PageHeader, holding its only h1", async () => {
+  const { page, router } = await open("/")
+  const pages = [
+    ["/sessions/s-readme", "claude/readme-run"],
+    ["/environments", "Environments"],
+    ["/repos/kddige/claude-hub/environment", "kddige/claude-hub"],
+    ["/variables", "Shared variables"],
+    ["/archive", "Archived Sessions"],
+    ["/repos/kddige/claude-hub/archived", "Archived Sessions"],
+  ] as const
+  for (const [path, title] of pages) {
+    await step(() => router.history.push(path))
+    await eventually(() =>
+      expect(page.querySelector("main > header:first-child h1")?.textContent).toBe(title),
+    )
+    expect(page.querySelectorAll("h1").length).toBe(1)
+  }
+})
+
 test("the Environments page lists every Repo with a Session, Archived ones included", async () => {
   const { page } = await open("/environments")
   const list = () => page.querySelector('ul[aria-label="Environments"]')

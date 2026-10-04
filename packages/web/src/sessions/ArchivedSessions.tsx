@@ -5,12 +5,22 @@ import { useMemo } from "react"
 import { day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
-import { Avatar, BranchIcon, Button, EmptyState, InboxIcon, Spinner, toast } from "../ui/index.ts"
+import {
+  Avatar,
+  BranchIcon,
+  Button,
+  EmptyState,
+  InboxIcon,
+  PageHeader,
+  Spinner,
+  toast,
+} from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, font, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { groupByRepo } from "./groups.ts"
 
 const styles = stylex.create({
+  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   scroll: { flex: 1, overflowY: "auto" },
   page: {
     display: "flex",
@@ -21,13 +31,6 @@ const styles = stylex.create({
     paddingBlock: space.s6,
     paddingInline: space.s4,
   },
-  title: {
-    fontSize: text.xl,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    lineHeight: leading.tight,
-  },
-  note: { color: color.textMuted, fontSize: text.sm },
   group: { display: "flex", flexDirection: "column", gap: space.s2 },
   repo: { fontSize: text.md, fontWeight: weight.semibold, lineHeight: leading.tight },
   repoLink: {
@@ -100,28 +103,28 @@ export function ArchivedSessions({ repo }: { repo: string }) {
   )
 
   return (
-    <div {...stylex.props(styles.scroll)}>
-      <main {...stylex.props(styles.page)}>
-        <div>
-          <h1 {...stylex.props(styles.title)}>Archived Sessions</h1>
-          <p {...stylex.props(styles.note)}>
-            {repo}: deleted Sessions can be restored until they're purged.
-          </p>
+    <main {...stylex.props(styles.view)}>
+      <PageHeader
+        title="Archived Sessions"
+        description={`${repo}: deleted Sessions can be restored until they're purged.`}
+      />
+      <div {...stylex.props(styles.scroll)}>
+        <div {...stylex.props(styles.page)}>
+          {archived === null ? (
+            <Loading />
+          ) : archived.length === 0 ? (
+            <EmptyState
+              size="page"
+              icon={<InboxIcon />}
+              title="Nothing archived"
+              description={`Sessions deleted from ${repo} show here until they're purged.`}
+            />
+          ) : (
+            <ArchivedList label="Archived Sessions" sessions={archived} />
+          )}
         </div>
-        {archived === null ? (
-          <Loading />
-        ) : archived.length === 0 ? (
-          <EmptyState
-            size="page"
-            icon={<InboxIcon />}
-            title="Nothing archived"
-            description={`Sessions deleted from ${repo} show here until they're purged.`}
-          />
-        ) : (
-          <ArchivedList label="Archived Sessions" sessions={archived} />
-        )}
-      </main>
-    </div>
+      </div>
+    </main>
   )
 }
 
@@ -140,41 +143,41 @@ export function AllArchivedSessions() {
   )
 
   return (
-    <div {...stylex.props(styles.scroll)}>
-      <main {...stylex.props(styles.page)}>
-        <div>
-          <h1 {...stylex.props(styles.title)}>Archived Sessions</h1>
-          <p {...stylex.props(styles.note)}>
-            Deleted Sessions, by Repo. They can be restored until they're purged.
-          </p>
+    <main {...stylex.props(styles.view)}>
+      <PageHeader
+        title="Archived Sessions"
+        description="Deleted Sessions, by Repo. They can be restored until they're purged."
+      />
+      <div {...stylex.props(styles.scroll)}>
+        <div {...stylex.props(styles.page)}>
+          {groups === null ? (
+            <Loading />
+          ) : groups.length === 0 ? (
+            <EmptyState
+              size="page"
+              icon={<InboxIcon />}
+              title="Nothing archived"
+              description="Deleted Sessions show here until they're purged."
+            />
+          ) : (
+            groups.map(({ repo, sessions: archived }) => (
+              <section key={repo} aria-label={repo} {...stylex.props(styles.group)}>
+                <h2 {...stylex.props(styles.repo)}>
+                  <Link
+                    to="/repos/$owner/$repo/archived"
+                    params={repoParams(repo)}
+                    {...stylex.props(styles.repoLink, focus.ring)}
+                  >
+                    {repo}
+                  </Link>
+                </h2>
+                <ArchivedList label={`Archived Sessions of ${repo}`} sessions={archived} />
+              </section>
+            ))
+          )}
         </div>
-        {groups === null ? (
-          <Loading />
-        ) : groups.length === 0 ? (
-          <EmptyState
-            size="page"
-            icon={<InboxIcon />}
-            title="Nothing archived"
-            description="Deleted Sessions show here until they're purged."
-          />
-        ) : (
-          groups.map(({ repo, sessions: archived }) => (
-            <section key={repo} aria-label={repo} {...stylex.props(styles.group)}>
-              <h2 {...stylex.props(styles.repo)}>
-                <Link
-                  to="/repos/$owner/$repo/archived"
-                  params={repoParams(repo)}
-                  {...stylex.props(styles.repoLink, focus.ring)}
-                >
-                  {repo}
-                </Link>
-              </h2>
-              <ArchivedList label={`Archived Sessions of ${repo}`} sessions={archived} />
-            </section>
-          ))
-        )}
-      </main>
-    </div>
+      </div>
+    </main>
   )
 }
 

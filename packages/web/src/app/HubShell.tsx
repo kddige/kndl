@@ -16,7 +16,7 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { chrome, color, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
 import { AppSidebar } from "./AppSidebar.tsx"
 import { useHub, useHubState } from "./hub.tsx"
 import { SignIn } from "./SignIn.tsx"
@@ -47,7 +47,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s2,
     flexShrink: 0,
-    height: "2.75rem",
+    height: chrome.barHeight,
     paddingInline: space.s2,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
