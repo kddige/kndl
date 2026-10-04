@@ -37,10 +37,13 @@ export const baseConfig: HubConfigInput = {
   githubAppId: Option.none(),
   githubAppPrivateKey: Option.none(),
   devLogin: false,
+  insecureCookies: false,
   devLoginName: "dev",
   sleepAfterMs: Duration.toMillis(DefaultSleepAfter),
   archiveRetentionMs: Duration.toMillis(DefaultArchiveRetention),
   secretsKey: Option.none(),
+  // No web UI build: WebUi.test.ts makes its own.
+  webDir: "/nonexistent/claude-hub/web",
 }
 
 /** The Hub's stores and services, and its database, which tests can reach into. */

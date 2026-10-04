@@ -1,5 +1,6 @@
 import { createPrivateKey } from "node:crypto"
 import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 import { Config, Context, Duration, Effect, Layer, Option, Redacted, Schema } from "effect"
 
 /** The GitHub App's user sign-in credentials (issue #1). */
@@ -41,6 +42,8 @@ export interface HubConfigInput {
   /** GitHub's REST API, for the App: GitHubApiUrl unless a test points it elsewhere. */
   readonly githubApiUrl?: URL
   readonly devLogin: boolean
+  /** Drop `Secure` from cookies when browsers reach the Hub over plain HTTP on a non-loopback host. */
+  readonly insecureCookies: boolean
   /** Who dev login signs in as when the form names no one. */
   readonly devLoginName: string
   /** How long an Active Session may sit idle before it goes Asleep, in milliseconds. */
@@ -49,7 +52,15 @@ export interface HubConfigInput {
   readonly archiveRetentionMs: number
   /** The key Sensitive variable values are encrypted with: 32 bytes, base64. */
   readonly secretsKey: Option.Option<Redacted.Redacted<string>>
+  /** The web UI's build: the directory holding its `index.html`. */
+  readonly webDir: string
 }
+
+/**
+ * Where the Hub finds the web UI's build by default: `packages/web/dist` in this checkout, which
+ * `bun run web:build` writes.
+ */
+export const DefaultWebDir = fileURLToPath(new URL("../../web/dist", import.meta.url))
 
 /** How long an idle Session stays Active by default (GLOSSARY.md: Asleep). */
 export const DefaultSleepAfter = Duration.minutes(15)
@@ -87,6 +98,39 @@ export function isLoopback(host: string): boolean {
   )
 }
 
+/**
+ * Whether cookies get `Secure`, and what to warn about at startup. Browsers drop a Secure cookie
+ * set over plain HTTP, except on loopback, so a Hub reached at `http://192.168.x.x` can't sign
+ * anyone in unless `insecure` (HUB_INSECURE_COOKIES) drops `Secure`. That never weakens an HTTPS
+ * Hub. No cookie takes a `__Host-` or `__Secure-` prefix, which browsers refuse without `Secure`.
+ */
+export function cookieSecurity(
+  publicUrl: URL,
+  insecure: boolean,
+): { readonly secure: boolean; readonly warning: Option.Option<string> } {
+  const https = publicUrl.protocol === "https:"
+  const loopback = isLoopback(publicUrl.hostname)
+  if (insecure) {
+    return {
+      secure: https,
+      warning: Option.some(
+        https
+          ? `HUB_INSECURE_COOKIES is set but does nothing: browsers reach the Hub over HTTPS (${publicUrl.origin}), so its cookies stay Secure. Unset it.`
+          : `INSECURE COOKIES (HUB_INSECURE_COOKIES): the Hub's cookies are not Secure, so sign-in tokens travel in cleartext to ${publicUrl.origin}. Anyone who can watch that network can take over a sign-in. Only use it on a network you trust, and prefer HTTPS, an SSH tunnel or Tailscale.`,
+      ),
+    }
+  }
+  if (!https && !loopback) {
+    return {
+      secure: true,
+      warning: Option.some(
+        `Browsers reach the Hub over plain HTTP at ${publicUrl.origin} (HUB_PUBLIC_URL), so they will drop its Secure cookies and sign-in will fail. Serve it over HTTPS, reach it through an SSH tunnel to localhost or over Tailscale HTTPS, or, on a network you trust, set HUB_INSECURE_COOKIES=1.`,
+      ),
+    }
+  }
+  return { secure: https, warning: Option.none() }
+}
+
 /** The Hub's configuration, checked. */
 export class HubConfig extends Context.Service<
   HubConfig,
@@ -103,8 +147,13 @@ export class HubConfig extends Context.Service<
     readonly githubApp: Option.Option<GitHubAppConfig>
     /** Dev login: sign in as a local Participant without GitHub. Loopback only. */
     readonly devLogin: Option.Option<{ readonly defaultName: string }>
-    /** Cookies get `Secure` unless browsers reach the Hub on a loopback address over HTTP. */
+    /**
+     * Cookies get `Secure` unless browsers reach the Hub on a loopback address over HTTP, or over
+     * HTTP with HUB_INSECURE_COOKIES set.
+     */
     readonly secureCookies: boolean
+    /** What to warn about the cookies at startup, or none: see `cookieSecurity`. */
+    readonly cookieWarning: Option.Option<string>
     /**
      * How long an Active Session goes with no Turn running, no prompt queued and no
      * Participant present before it is put to sleep.
@@ -117,6 +166,8 @@ export class HubConfig extends Context.Service<
      * values can't then be saved, and the Hub refuses to start if any are stored.
      */
     readonly secretsKey: Option.Option<Redacted.Redacted<Uint8Array>>
+    /** The web UI's build, which the Hub serves (WebUi.ts). It may not exist. */
+    readonly webDir: string
   }
 >()("@claude-hub/hub/HubConfig") {
   /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
@@ -177,6 +228,7 @@ export class HubConfig extends Context.Service<
       }
       secretsKey = Option.some(Redacted.make(key))
     }
+    const cookies = cookieSecurity(publicUrl, input.insecureCookies)
     return HubConfig.of({
       host,
       port: input.port,
@@ -192,10 +244,12 @@ export class HubConfig extends Context.Service<
         (appId, privateKey) => ({ appId, privateKey, apiUrl: input.githubApiUrl ?? GitHubApiUrl }),
       ),
       devLogin: input.devLogin ? Option.some({ defaultName: input.devLoginName }) : Option.none(),
-      secureCookies: publicUrl.protocol === "https:" || !isLoopback(publicUrl.hostname),
+      secureCookies: cookies.secure,
+      cookieWarning: cookies.warning,
       sleepAfter: Duration.millis(input.sleepAfterMs),
       archiveRetention: Duration.millis(input.archiveRetentionMs),
       secretsKey,
+      webDir: input.webDir,
     })
   })
 
@@ -203,9 +257,9 @@ export class HubConfig extends Context.Service<
    * From the environment: `HOST` (127.0.0.1), `PORT` (7777), `HUB_PUBLIC_URL`
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
    * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the Runner uses its host's
-   * git credentials, and the Sandbox gets no GitHub token), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_SLEEP_AFTER_MS`
-   * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days) and `HUB_SECRETS_KEY` (unset: Sensitive
-   * values can't be saved).
+   * git credentials, and the Sandbox gets no GitHub token), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_INSECURE_COOKIES` (off), `HUB_SLEEP_AFTER_MS`
+   * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days), `HUB_SECRETS_KEY` (unset: Sensitive
+   * values can't be saved) and `HUB_WEB_DIR` (DefaultWebDir).
    */
   static readonly layer = Layer.effect(
     HubConfig,
@@ -230,6 +284,7 @@ export class HubConfig extends Context.Service<
         githubClientSecret: Config.option(Config.Redacted("GITHUB_CLIENT_SECRET")),
         githubAppId: Config.option(Config.NonEmptyString("GITHUB_APP_ID")),
         devLogin: Config.Boolean("CLAUDE_HUB_DEV_LOGIN").pipe(Config.withDefault(false)),
+        insecureCookies: Config.Boolean("HUB_INSECURE_COOKIES").pipe(Config.withDefault(false)),
         devLoginName: Config.String("CLAUDE_HUB_DEV_USER").pipe(
           Config.orElse(() => Config.String("USER")),
           Config.withDefault("dev"),
@@ -241,6 +296,7 @@ export class HubConfig extends Context.Service<
           Config.withDefault(Duration.toMillis(DefaultArchiveRetention)),
         ),
         secretsKey: Config.option(Config.Redacted("HUB_SECRETS_KEY")),
+        webDir: Config.NonEmptyString("HUB_WEB_DIR").pipe(Config.withDefault(DefaultWebDir)),
       })
       return yield* HubConfig.make({ ...input, githubAppPrivateKey })
     }),
