@@ -42,8 +42,8 @@ function typeInto(field: HTMLInputElement, value: string): void {
   field.dispatchEvent(new Event("input", { bubbles: true }))
 }
 
-async function open(path: string) {
-  const hub = new FakeHub({ stepMs: 2 })
+async function open(path: string, stepMs = 2) {
+  const hub = new FakeHub({ stepMs })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }))
   const view = await render(
@@ -146,7 +146,8 @@ test("a draft made before someone else applied is refused, with a way to reload"
 })
 
 test("a Repo without an Environment is set up before its first Session", async () => {
-  const { page, router, status } = await open("/repos/acme/new/environment?branch=main")
+  // Slow enough to see the new Session's start.
+  const { page, router, status } = await open("/repos/acme/new/environment?branch=main", 15)
   await eventually(() =>
     expect(page.textContent).toContain("Set up acme/new to start your Session"),
   )
@@ -156,6 +157,22 @@ test("a Repo without an Environment is set up before its first Session", async (
   await eventually(() => expect(status()).toContain("Test build passed"))
   await step(() => button("Apply and start Session").click())
   await eventually(() => expect(router.state.location.pathname).toStartWith("/sessions/"))
+
+  // The new Session shows it is starting, with its build's log, not a changed Environment (#70).
+  await eventually(() => expect(page.textContent).toContain("Starting…"))
+  expect(page.textContent).toContain("Starting the Sandbox on version 1 of acme/new's Environment")
+  expect(page.textContent).not.toContain("Environment changed")
+  expect(button("Sleep now").disabled).toBe(true)
+  await step(() => button("Show log").click())
+  const log = () => page.querySelector('[aria-label="Start log"]')?.textContent ?? ""
+  await eventually(() => expect(log()).toContain("Building version 1 of acme/new's Environment"))
+  // Shown as text: the build's colours are dropped.
+  expect(log()).not.toContain("\u001b")
+
+  // Started, it shows neither.
+  await eventually(() => expect(page.textContent).not.toContain("Starting…"))
+  expect(page.textContent).not.toContain("Environment changed")
+  expect(button("Sleep now").disabled).toBe(false)
 })
 
 test("shared variables: linked ones show who links them, and can't be deleted", async () => {

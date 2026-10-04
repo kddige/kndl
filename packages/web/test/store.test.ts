@@ -10,6 +10,7 @@ import {
   isListed,
   lastSeq,
   reduce,
+  startLogLimit,
 } from "../src/hub/store.ts"
 import {
   alice,
@@ -150,7 +151,13 @@ describe("Runners and Sessions", () => {
 describe("joining and leaving", () => {
   test("Joined starts an empty Session that waits for its history", () => {
     const state = run(joined)
-    expect(state.joined[s1]).toEqual({ historyLoaded: false, log: [], presence: [], queue: [] })
+    expect(state.joined[s1]).toEqual({
+      historyLoaded: false,
+      log: [],
+      presence: [],
+      queue: [],
+      startLog: null,
+    })
   })
 
   test("Joined again keeps what is known", () => {
@@ -286,7 +293,42 @@ describe("presence and the Prompt queue", () => {
       { _tag: "Left", sessionId: s1 },
       joined,
     )
-    expect(state.joined[s1]).toEqual({ historyLoaded: false, log: [], presence: [], queue: [] })
+    expect(state.joined[s1]).toEqual({
+      historyLoaded: false,
+      log: [],
+      presence: [],
+      queue: [],
+      startLog: null,
+    })
+  })
+})
+
+function startLogged(since: number, data: string, replace?: boolean) {
+  return hub({
+    _tag: "SessionStartLogged",
+    sessionId: "s-1",
+    since,
+    data,
+    ...(replace !== undefined && { replace }),
+  })
+}
+
+describe("the start log", () => {
+  test("a start's output adds up; all of it so far, or another start's, replaces it", () => {
+    let state = run(joined, startLogged(1, "Step 1\r\n"), startLogged(1, "Step 2\r\n"))
+    expect(state.joined[s1]?.startLog).toEqual({ since: 1, text: "Step 1\r\nStep 2\r\n" })
+    state = reduce(state, startLogged(1, "Step 1\r\nStep 2\r\nStep 3\r\n", true))
+    expect(state.joined[s1]?.startLog?.text).toBe("Step 1\r\nStep 2\r\nStep 3\r\n")
+    state = reduce(state, startLogged(2, "again\r\n"))
+    expect(state.joined[s1]?.startLog).toEqual({ since: 2, text: "again\r\n" })
+  })
+
+  test("only its end is kept, and a Session not joined drops it", () => {
+    const long = "x".repeat(startLogLimit)
+    const state = run(joined, startLogged(1, long), startLogged(1, "end"))
+    expect(state.joined[s1]?.startLog?.text.length).toBe(startLogLimit)
+    expect(state.joined[s1]?.startLog?.text.endsWith("xend")).toBe(true)
+    expect(run(startLogged(1, "nobody")).joined).toEqual({})
   })
 })
 

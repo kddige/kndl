@@ -58,6 +58,7 @@
 import {
   CommandFailed,
   DeliverPrompt,
+  type EnvironmentVersion,
   GitReply,
   type HubToRunner,
   HubToWeb,
@@ -81,6 +82,8 @@ import {
   type TextDelta,
   SessionId,
   SessionRemoved,
+  type SessionRestart,
+  SessionStartLogged,
   type SessionState,
   SessionStateChanged,
   type SessionSummary,
@@ -154,6 +157,23 @@ interface Why {
   readonly by?: Participant
   readonly message?: string
 }
+
+/** A StartSession its Runner hasn't answered yet (#70). */
+interface StartUnderWay {
+  readonly since: number
+  /** The Environment version it was sent, if the Repo has an Environment. */
+  readonly environmentVersion: EnvironmentVersion | undefined
+  /**
+   * What its terminal printed before Claude Code's terminal was up, redacted: the Environment's
+   * build and start script. Its last `startLogLimit` characters.
+   */
+  log: string
+  /** Whether the Runner has sent a Snapshot of Claude Code's terminal: output after it is Claude's. */
+  attached: boolean
+}
+
+/** How much of a start's output the Hub keeps for clients that join while it runs. */
+export const startLogLimit = 64 * 1024
 
 /** How often the Hub looks for idle Sessions to put to sleep: a tenth of the wait, 10 ms to 30 s. */
 export const idleCheckInterval = (sleepAfter: Duration.Duration) =>
@@ -248,6 +268,16 @@ export class SessionRelay extends Context.Service<
        */
       const restarting = new Map<SessionId, Participant>()
       /**
+       * Sessions whose StartSession the Runner hasn't answered yet, with the output of their
+       * build and start script so far: the web shows them starting (#70).
+       */
+      const starts = new Map<SessionId, StartUnderWay>()
+      /**
+       * Restarts under way, shown to the web: from the RestartSession until the Session has
+       * started again, or failed to. `restarting` is only the part before it is Asleep.
+       */
+      const restarts = new Map<SessionId, SessionRestart>()
+      /**
        * Archived Sessions whose Runner was asked to stop them for good, until SessionStopped. The
        * stop is recorded done only then, so a Runner that drops off first is asked again.
        */
@@ -280,11 +310,43 @@ export class SessionRelay extends Context.Service<
         }),
       )
 
+      /** The Session as the web sees it: what is stored, and whether it is starting or restarting. */
+      const forWeb = (session: SessionSummary): SessionSummary => {
+        const start = starts.get(session.id)
+        const restart = restarts.get(session.id)
+        if (start === undefined && restart === undefined) return session
+        return {
+          ...session,
+          ...(start !== undefined && {
+            starting: {
+              since: start.since,
+              ...(start.environmentVersion !== undefined && {
+                environmentVersion: start.environmentVersion,
+              }),
+            },
+          }),
+          ...(restart !== undefined && { restarting: restart }),
+        }
+      }
+
       const sessionUpdated = Effect.fn("SessionRelay.sessionUpdated")(function* (id: SessionId) {
         const session = yield* sessions.get(id)
         if (Option.isSome(session)) {
-          toWeb(HubToWeb.cases.SessionUpdated.make({ session: session.value }))
+          toWeb(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session.value) }))
         }
+      })
+
+      /** Records that the Hub sent the Session a StartSession, before the state change says so. */
+      const startSent = Effect.fn("SessionRelay.startSent")(function* (
+        sessionId: SessionId,
+        environment: { readonly environment?: { readonly version: EnvironmentVersion } },
+      ) {
+        starts.set(sessionId, {
+          since: yield* Clock.currentTimeMillis,
+          environmentVersion: environment.environment?.version,
+          log: "",
+          attached: false,
+        })
       })
 
       // ── Redaction (#48) ──────────────────────────────────────────────────
@@ -431,8 +493,16 @@ export class SessionRelay extends Context.Service<
       ) {
         const { sessionId } = frame
         const needles = yield* needlesFor(repo)
-        const send = (data: string, size: TerminalFrame["size"]) =>
+        const send = (data: string, size: TerminalFrame["size"]) => {
           toWeb({ ...frame, size, data }, (client) => client.terminals.has(sessionId))
+          // Before Claude Code's terminal is up, the output is the start's: the Environment's
+          // build and start script. A terminal shows nothing until a Snapshot, so the web shows
+          // it from here instead (#70).
+          const start = starts.get(sessionId)
+          if (start === undefined || start.attached || data === "") return
+          start.log = (start.log + data).slice(-startLogLimit)
+          toJoined(sessionId, SessionStartLogged.make({ sessionId, since: start.since, data }))
+        }
         let stream = terminalStreams.get(sessionId)
         if (stream === undefined) {
           stream = { redactor: new StreamRedactor(needles), size: frame.size, flushing: false }
@@ -441,6 +511,8 @@ export class SessionRelay extends Context.Service<
         stream.redactor.needles = needles
         stream.size = frame.size
         if (frame.kind === "Snapshot") {
+          const start = starts.get(sessionId)
+          if (start !== undefined) start.attached = true
           // The whole screen, held Output included.
           stream.redactor.reset()
           return send(redactText(needles, frame.data), frame.size)
@@ -465,7 +537,9 @@ export class SessionRelay extends Context.Service<
         toWeb: (message, to: (client: EnvironmentWebClient) => boolean) => toWeb(message, to),
         repoSessionsUpdated: Effect.fn("SessionRelay.repoSessionsUpdated")(function* (repo) {
           for (const session of yield* sessions.list) {
-            if (session.repo === repo) toWeb(HubToWeb.cases.SessionUpdated.make({ session }))
+            if (session.repo === repo) {
+              toWeb(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) }))
+            }
           }
         }),
         sensitiveValuesChanged: (repo) => {
@@ -562,11 +636,15 @@ export class SessionRelay extends Context.Service<
       const claudeGone = Effect.fn("SessionRelay.claudeGone")(function* (
         session: SessionSummary,
         why: Why,
+        /** It went to sleep for a restart, and is about to be woken: the restart goes on. */
+        restartGoesOn = false,
       ) {
         inFlight.delete(session.id)
         starting.delete(session.id)
+        starts.delete(session.id)
         stopping.delete(session.id)
         restarting.delete(session.id)
+        if (!restartGoesOn) restarts.delete(session.id)
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
@@ -588,6 +666,7 @@ export class SessionRelay extends Context.Service<
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         starting.add(session.id)
+        yield* startSent(session.id, environment)
         yield* changeState(session, "Active", {
           ...why,
           message: Option.isSome(resume)
@@ -637,6 +716,8 @@ export class SessionRelay extends Context.Service<
         if (session.state !== "Active" || session.currentTurn !== null) return false
         if (!onlineRunners.has(session.runnerId)) return false
         if (stopping.has(session.id) || inFlight.has(session.id)) return false
+        // A start can take minutes to build its Environment: it isn't idle until it's over.
+        if (starts.has(session.id)) return false
         if (presenceOf(session.id).length > 0) return false
         return (yield* prompts.list(session.id)).length === 0
       })
@@ -679,8 +760,10 @@ export class SessionRelay extends Context.Service<
         const at = yield* Clock.currentTimeMillis
         inFlight.delete(session.id)
         starting.delete(session.id)
+        starts.delete(session.id)
         stopping.delete(session.id)
         restarting.delete(session.id)
+        restarts.delete(session.id)
         yield* outbox.clear(session.id)
         // Its Claude Code is being stopped for good: its mod has nothing more to say.
         yield* modTokens.revoke(session.id)
@@ -791,6 +874,7 @@ export class SessionRelay extends Context.Service<
               })
               const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
               starting.add(id)
+              yield* startSent(id, environment)
               yield* logEvent(
                 id,
                 SessionStateChanged.make({
@@ -809,8 +893,8 @@ export class SessionRelay extends Context.Service<
                   ...environment,
                 }),
               )
-              peer.send(HubToWeb.cases.SessionCreated.make({ requestId, session }))
-              toWeb(HubToWeb.cases.SessionUpdated.make({ session }))
+              peer.send(HubToWeb.cases.SessionCreated.make({ requestId, session: forWeb(session) }))
+              toWeb(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) }))
               return
             }
 
@@ -820,6 +904,17 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return
               const entries = yield* log.history(sessionId, message.afterSeq)
               peer.send(HubToWeb.cases.SessionHistory.make({ sessionId, entries }))
+              const start = starts.get(sessionId)
+              if (start !== undefined && start.log !== "") {
+                peer.send(
+                  SessionStartLogged.make({
+                    sessionId,
+                    since: start.since,
+                    data: start.log,
+                    replace: true,
+                  }),
+                )
+              }
               const before = presenceOf(sessionId)
               client.joined.add(sessionId)
               peer.send(
@@ -878,6 +973,13 @@ export class SessionRelay extends Context.Service<
                   { sessionId },
                 )
               }
+              if (starts.has(sessionId)) {
+                return refuse(
+                  message,
+                  "The Session is still starting; put it to sleep once it has started.",
+                  { sessionId },
+                )
+              }
               if (session.value.currentTurn !== null) {
                 return refuse(message, "A Turn is running: stop it first.", { sessionId })
               }
@@ -922,11 +1024,27 @@ export class SessionRelay extends Context.Service<
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
+              if (restarts.has(sessionId)) {
+                return refuse(message, "The Session is already restarting.", { sessionId })
+              }
               switch (session.value.state) {
-                case "Asleep":
-                  return yield* wake(session.value, { by: you })
+                case "Asleep": {
+                  // Set first, so the woken Session shows it is restarting.
+                  restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
+                  yield* wake(session.value, { by: you })
+                  if (!starts.has(sessionId)) restarts.delete(sessionId)
+                  return
+                }
                 case "Active":
-                  if (restarting.has(sessionId)) return
+                  if (starts.has(sessionId)) {
+                    // Its Sandbox is being made from the version it was sent: restarting now
+                    // would only start it again behind this start.
+                    return refuse(
+                      message,
+                      "The Session is still starting; restart it once it has started.",
+                      { sessionId },
+                    )
+                  }
                   if (stopping.has(sessionId)) {
                     return refuse(
                       message,
@@ -943,10 +1061,13 @@ export class SessionRelay extends Context.Service<
                     return refuse(message, "The Session's Runner is offline.", { sessionId })
                   }
                   restarting.set(sessionId, you)
-                  return yield* putToSleep(session.value, {
+                  restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
+                  yield* putToSleep(session.value, {
                     by: you,
                     message: "Restarting for the Environment's latest version",
                   })
+                  // Nothing in the log says so until it is Asleep: the summary does.
+                  return yield* sessionUpdated(sessionId)
                 case "Frozen":
                   return refuse(
                     message,
@@ -1089,7 +1210,9 @@ export class SessionRelay extends Context.Service<
               // TODO(#7 follow-up): only the Sessions of Repos the person has access to.
               // Archived Sessions are listed too, with who archived them, for the Archived
               // screen; the web UI leaves them out of its Session list.
-              peer.send(HubToWeb.cases.SessionList.make({ sessions: yield* sessions.list }))
+              peer.send(
+                HubToWeb.cases.SessionList.make({ sessions: (yield* sessions.list).map(forWeb) }),
+              )
             }),
           ).pipe(Effect.orDie)
           yield* Effect.addFinalizer(() =>
@@ -1144,6 +1267,8 @@ export class SessionRelay extends Context.Service<
             case "SessionStarted":
               // A start that raced an archive: the StopSession that follows settles it.
               if (session.value.state === "Archived" || archiving.has(message.sessionId)) return
+              starts.delete(message.sessionId)
+              restarts.delete(message.sessionId)
               yield* sessions.setEnvironmentVersion(
                 message.sessionId,
                 message.environmentVersion ?? null,
@@ -1180,10 +1305,15 @@ export class SessionRelay extends Context.Service<
                       ? "Claude Code stopped"
                       : `Claude Code exited${message.exitCode === undefined ? "" : ` with code ${message.exitCode}`}`,
                 },
+                restartBy !== undefined,
               )
               if (restartBy !== undefined) {
                 const stopped = yield* sessions.get(message.sessionId)
                 if (Option.isSome(stopped)) yield* wake(stopped.value, { by: restartBy })
+                // Not woken after all, as for an archive meanwhile: the restart is over.
+                if (!starts.has(message.sessionId) && restarts.delete(message.sessionId)) {
+                  yield* sessionUpdated(message.sessionId)
+                }
                 return
               }
               // A prompt sent while it was going to sleep wakes it again.
@@ -1297,6 +1427,9 @@ export class SessionRelay extends Context.Service<
                   stopping.delete(session.id)
                   restarting.delete(session.id)
                   archiving.delete(session.id)
+                  // A start under way is settled by what it says when it is back, too.
+                  starts.delete(session.id)
+                  restarts.delete(session.id)
                   if (session.state === "Active" || session.state === "Asleep") {
                     yield* changeState(session, "Frozen", {
                       message: `${runner.name} went offline`,

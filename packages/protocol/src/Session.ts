@@ -73,6 +73,29 @@ export const SessionEnvironmentStatus = Schema.Struct({
 })
 export type SessionEnvironmentStatus = typeof SessionEnvironmentStatus.Type
 
+/**
+ * A start of the Session's Claude Code and Sandbox the Hub is waiting on: from its StartSession
+ * until the Runner says it started, or couldn't. A start may first build the Environment and run
+ * its start script, which can take minutes.
+ */
+export const SessionStart = Schema.Struct({
+  /** When the Hub sent StartSession. */
+  since: EpochMillis,
+  /** The Environment version it is being started on; absent for a Repo without an Environment. */
+  environmentVersion: Schema.optionalKey(EnvironmentVersion),
+})
+export type SessionStart = typeof SessionStart.Type
+
+/**
+ * A RestartSession under way: an Active Session goes to sleep, then starts again; an Asleep one
+ * starts. Over once it has started, or failed to.
+ */
+export const SessionRestart = Schema.Struct({
+  by: Participant,
+  since: EpochMillis,
+})
+export type SessionRestart = typeof SessionRestart.Type
+
 /** A Session as the web UI lists it. */
 export const SessionSummary = Schema.Struct({
   id: SessionId,
@@ -92,6 +115,13 @@ export const SessionSummary = Schema.Struct({
   archived: Schema.optionalKey(ArchiveInfo),
   /** Present once its Repo has an Environment. */
   environment: Schema.optionalKey(SessionEnvironmentStatus),
+  /**
+   * Present while its Claude Code and Sandbox are being started. `environment.version` stays the
+   * one it ran on before, if any, until the start is over.
+   */
+  starting: Schema.optionalKey(SessionStart),
+  /** Present while a restart is under way. */
+  restarting: Schema.optionalKey(SessionRestart),
 })
 export type SessionSummary = typeof SessionSummary.Type
 

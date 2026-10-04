@@ -48,7 +48,22 @@ export interface JoinedSession {
   readonly log: ReadonlyArray<SessionLogEntry>
   readonly presence: ReadonlyArray<Participant>
   readonly queue: ReadonlyArray<QueuedPrompt>
+  /** The output of its latest start the client has seen, or null before any. */
+  readonly startLog: StartLog | null
 }
+
+/**
+ * What a Session's start printed before Claude Code's terminal was up: its Environment's build
+ * and start script, as terminal output. Only its last `startLogLimit` characters are kept.
+ */
+export interface StartLog {
+  /** The start it is from: the SessionSummary's `starting.since` while it runs. */
+  readonly since: number
+  readonly text: string
+}
+
+/** How much of a start's output the client keeps. */
+export const startLogLimit = 256 * 1024
 
 /**
  * A terminal the client has open. It is `waiting` until a Snapshot arrives, after opening and
@@ -121,7 +136,13 @@ export const initialState: HubState = {
   testBuilds: {},
 }
 
-const emptyJoined: JoinedSession = { historyLoaded: false, log: [], presence: [], queue: [] }
+const emptyJoined: JoinedSession = {
+  historyLoaded: false,
+  log: [],
+  presence: [],
+  queue: [],
+  startLog: null,
+}
 
 export function reduce(state: HubState, action: HubAction): HubState {
   switch (action._tag) {
@@ -186,6 +207,14 @@ export function reduce(state: HubState, action: HubAction): HubState {
         ...session,
         queue: action.queue,
       }))
+    case "SessionStartLogged":
+      return updateJoined(state, action.sessionId, (session) => {
+        // All of it so far, or another start's output: in place of what was held.
+        const held =
+          action.replace || session.startLog?.since !== action.since ? "" : session.startLog.text
+        const text = (held + action.data).slice(-startLogLimit)
+        return { ...session, startLog: { since: action.since, text } }
+      })
     case "TerminalOpened": {
       const size = state.terminals[action.sessionId]?.size ?? null
       return {

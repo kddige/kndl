@@ -13,6 +13,7 @@ import { editFrom, toDraft } from "../src/environment/draft.ts"
 import { HubClient } from "../src/hub/client.ts"
 import { FakeHub } from "../src/hub/fake/FakeHub.ts"
 import { demoSessionId } from "../src/hub/fake/script.ts"
+import { findSession } from "../src/hub/store.ts"
 import type { HubTransport, SocketHandlers } from "../src/hub/transport.ts"
 import { alice } from "./fixtures.ts"
 
@@ -710,7 +711,13 @@ describe("Environments", () => {
     const applied = await client.applyEnvironment("acme/new", null, DefaultEnvironmentDraft)
     expect(applied.environment?.version).toBe(1 as never)
     const session = await client.createSession({ repo: "acme/new", baseBranch: "main" })
-    expect(session.environment).toEqual({ version: 1 as never, latestVersion: 1 as never })
+    // Being started on version 1, it runs on none until its Runner says it started (#70).
+    expect(session.environment).toEqual({ version: null, latestVersion: 1 as never })
+    expect(session.starting?.environmentVersion).toBe(1 as never)
+    await eventually(() =>
+      expect(findSession(client.getState(), session.id)?.environment?.version).toBe(1 as never),
+    )
+    expect(findSession(client.getState(), session.id)?.starting).toBeUndefined()
   })
 
   test("Sessions hear of a newer version, and a restart puts them on it", async () => {
@@ -726,7 +733,17 @@ describe("Environments", () => {
         latestVersion: 3 as never,
       }),
     )
+    const failures: Array<CommandFailed> = []
+    client.onCommandFailed((failure) => failures.push(failure))
     expect(client.restartSession(demo)).toBe(true)
+    // Restarting shows until it is back, and another restart meanwhile is refused (#70).
+    await eventually(() => expect(find(client, demoSessionId)?.restarting?.by.login).toBeDefined())
+    expect(client.restartSession(demo)).toBe(true)
+    await eventually(() => expect(failures).toHaveLength(1))
+    expect(failures[0]).toMatchObject({
+      command: "RestartSession",
+      message: "The Session is already restarting.",
+    })
     await eventually(() =>
       expect(find(client, demoSessionId)?.environment).toEqual({
         version: 3 as never,
@@ -734,6 +751,8 @@ describe("Environments", () => {
       }),
     )
     expect(find(client, demoSessionId)?.state).toBe("Active")
+    expect(find(client, demoSessionId)?.restarting).toBeUndefined()
+    expect(find(client, demoSessionId)?.starting).toBeUndefined()
   })
 
   test("shared variables: added, replaced write-only, and not deleted while linked", async () => {

@@ -164,6 +164,27 @@ const hubToWeb = [
     session: { ...sessionSummary, environment: { version: null, latestVersion: 1 } },
   },
   {
+    _tag: "SessionUpdated",
+    session: {
+      ...sessionSummary,
+      environment: { version: null, latestVersion: 1 },
+      starting: { since: 1_790_000_000_000, environmentVersion: 1 },
+      restarting: { by: bob, since: 1_789_999_990_000 },
+    },
+  },
+  {
+    _tag: "SessionUpdated",
+    session: { ...sessionSummary, starting: { since: 1_790_000_000_000 } },
+  },
+  { _tag: "SessionStartLogged", sessionId: "s-1", since: 1_790_000_000_000, data: "Step 1/3\r\n" },
+  {
+    _tag: "SessionStartLogged",
+    sessionId: "s-1",
+    since: 1_790_000_000_000,
+    data: "Step 1/3\r\nStep 2/3\r\n",
+    replace: true,
+  },
+  {
     _tag: "EnvironmentState",
     requestId: "q-3",
     repo: "kddige/claude-hub",

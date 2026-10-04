@@ -17,6 +17,8 @@ export interface BannerProps {
   icon?: ReactNode
   /** A button that deals with it. */
   action?: ReactNode
+  /** More to show under the description, such as a Disclosure with a log: block content. */
+  detail?: ReactNode
   sx?: stylex.StyleXStyles
 }
 
@@ -48,6 +50,7 @@ const styles = stylex.create({
   },
   title: { fontWeight: weight.semibold },
   description: { color: color.text, opacity: 0.85 },
+  detail: { marginTop: space.s1_5, minWidth: 0 },
   action: {
     display: "flex",
     alignItems: "center",
@@ -90,7 +93,15 @@ const intents = stylex.create({
 })
 
 /** A strip across a view that says what state it's in, such as a Frozen Session's. */
-export function Banner({ title, children, intent = "neutral", icon, action, sx }: BannerProps) {
+export function Banner({
+  title,
+  children,
+  intent = "neutral",
+  icon,
+  action,
+  detail,
+  sx,
+}: BannerProps) {
   return (
     <div role="status" {...stylex.props(styles.root, intents[intent], sx)}>
       {icon && (
@@ -101,6 +112,7 @@ export function Banner({ title, children, intent = "neutral", icon, action, sx }
       <div {...stylex.props(styles.body)}>
         <p {...stylex.props(styles.title)}>{title}</p>
         {children && <p {...stylex.props(styles.description)}>{children}</p>}
+        {detail && <div {...stylex.props(styles.detail)}>{detail}</div>}
       </div>
       {action && <div {...stylex.props(styles.action)}>{action}</div>}
     </div>

@@ -7,7 +7,7 @@ import type {
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { day, environmentChanged, purgedIn, statusOf } from "../app/format.ts"
+import { day, environmentChanged, purgedIn, statusOf, terminalText } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
 import { buildTranscript, runningTurn } from "../hub/transcript.ts"
@@ -18,9 +18,11 @@ import {
   Banner,
   BranchIcon,
   Button,
+  Disclosure,
   EmptyState,
   IconButton,
   InfoIcon,
+  LogView,
   RestartIcon,
   SessionStatus,
   Spinner,
@@ -188,6 +190,7 @@ export function SessionView({
       log={joined.log}
       presence={joined.presence}
       queue={joined.queue}
+      startLog={joined.startLog}
     />
   )
 }
@@ -199,6 +202,7 @@ function LoadedSession({
   log,
   presence,
   queue,
+  startLog,
 }: {
   tab: SessionTab
   onTabChange: ((tab: SessionTab) => void) | undefined
@@ -206,6 +210,7 @@ function LoadedSession({
   log: ReadonlyArray<SessionLogEntry>
   presence: JoinedSession["presence"]
   queue: JoinedSession["queue"]
+  startLog: JoinedSession["startLog"]
 }) {
   const hub = useHub()
   const navigate = useNavigate()
@@ -213,11 +218,15 @@ function LoadedSession({
   const running = summary.currentTurn !== null || runningTurn(items) !== undefined
   const lastChange = useMemo(() => latestStateChange(log), [log])
   const scroller = useStickToBottom(items)
+  const restart = useRestart(summary, () => command(hub.restartSession(summary.id)))
 
   const state = summary.state
+  // Being started or restarted, it can't be put to sleep or restarted (#70).
+  const busy = summary.starting !== undefined || summary.restarting !== undefined
   const disabledReason = state === "Archived" ? "Archived: restore it to send prompts" : undefined
-  const hint =
-    state === "Asleep"
+  const hint = busy
+    ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until Claude Code is up.`
+    : state === "Asleep"
       ? "Asleep: sending a prompt wakes it."
       : state === "Frozen"
         ? "Frozen: prompts wait in the queue until its Runner is back."
@@ -273,8 +282,8 @@ function LoadedSession({
           <Button
             size="sm"
             intent="secondary"
-            // The Hub only puts a Session to sleep with nothing running or waiting.
-            disabled={running || queue.length > 0}
+            // The Hub only puts a Session to sleep once started, with nothing running or waiting.
+            disabled={busy || running || queue.length > 0}
             onClick={() => command(hub.sleepSession(summary.id))}
           >
             Sleep now
@@ -312,9 +321,10 @@ function LoadedSession({
                 summary={summary}
                 change={lastChange}
                 running={running}
+                startLog={startLog}
+                restart={restart}
                 onWake={() => command(hub.wakeSession(summary.id))}
                 onRestore={() => restoreSession(hub, summary.id)}
-                onRestart={() => command(hub.restartSession(summary.id))}
               />
               {items.length === 0 ? (
                 <EmptyState
@@ -369,23 +379,105 @@ function command(sent: boolean): boolean {
   return sent
 }
 
-/** Shown while the Session is Frozen, Asleep or Archived, with why from its latest state change. */
+/** Asking for a restart, and whether it was just asked: from the click until the Hub answers. */
+interface Restart {
+  readonly ask: () => void
+  readonly asked: boolean
+}
+
+/** How long a restart shows as asked without word from the Hub, as when it refuses it. */
+const restartAskedMs = 5_000
+
+function useRestart(summary: SessionSummary, send: () => boolean): Restart {
+  // The summary when it was asked: any update from the Hub, the restart's included, replaces it.
+  const [askedOf, setAskedOf] = useState<SessionSummary | null>(null)
+  const asked = askedOf === summary
+  useEffect(() => {
+    if (!asked) return
+    // A refusal changes nothing in the summary: the toast says why.
+    const timer = setTimeout(() => setAskedOf(null), restartAskedMs)
+    return () => clearTimeout(timer)
+  }, [asked])
+  return {
+    asked,
+    ask: () => {
+      if (send()) setAskedOf(summary)
+    },
+  }
+}
+
+/**
+ * Shown while the Session is being started or restarted (#70): what is going on, and the start's
+ * output so far, which is its Environment's build and start script.
+ *
+ * The output is shown here rather than in the Terminal tab: the terminal draws only from a
+ * Snapshot of Claude Code's screen, which there is none of until Claude Code is up, and the chat
+ * is where people wait for it.
+ */
+function StartingBanner({
+  summary,
+  startLog,
+}: {
+  summary: SessionSummary
+  startLog: JoinedSession["startLog"]
+}) {
+  const { starting, restarting } = summary
+  const you = useHubState((state) => state.you)
+  const asker = restarting && (restarting.by.id === you?.id ? "You" : restarting.by.name)
+  const output = starting && startLog?.since === starting.since ? startLog.text : ""
+  const plain = useMemo(() => terminalText(output), [output])
+  const version = starting?.environmentVersion
+  return (
+    <Banner
+      intent="accent"
+      icon={<Spinner size="sm" />}
+      title={restarting ? "Restarting…" : "Starting…"}
+      detail={
+        starting && (
+          <Disclosure variant="plain" summary="Show log">
+            <LogView label="Start log" placeholder="Nothing printed yet.">
+              {plain}
+            </LogView>
+          </Disclosure>
+        )
+      }
+    >
+      {starting === undefined
+        ? `${asker ? `${asker} asked for a restart. ` : ""}Stopping Claude Code and its Sandbox, to start them again on ${summary.repo}'s latest Environment. `
+        : version === undefined
+          ? "Starting Claude Code in a fresh Sandbox. "
+          : `Starting the Sandbox on version ${version} of ${summary.repo}'s Environment: building it if its Runner hasn't yet, which can take a few minutes, then running its start script. `}
+      Prompts sent now wait in the queue until Claude Code is up.
+    </Banner>
+  )
+}
+
+/**
+ * Shown while the Session is starting or restarting, Frozen, Asleep or Archived, or runs on an
+ * older Environment, with why from its latest state change.
+ */
 function StateBanner({
   summary,
   change,
   running,
+  startLog,
+  restart,
   onWake,
   onRestore,
-  onRestart,
 }: {
   summary: SessionSummary
   change: SessionStateChanged | undefined
   running: boolean
+  startLog: JoinedSession["startLog"]
+  restart: Restart
   onWake: () => void
   onRestore: () => void
-  onRestart: () => void
 }) {
   const why = change?.state === summary.state ? change.message : undefined
+  const busy = summary.starting !== undefined || summary.restarting !== undefined
+  if (busy && (summary.state === "Active" || summary.state === "Asleep")) {
+    return <StartingBanner summary={summary} startLog={startLog} />
+  }
   switch (summary.state) {
     case "Active": {
       const environment = summary.environment
@@ -401,7 +493,8 @@ function StateBanner({
               icon={<RestartIcon />}
               // The Hub only restarts a Session with no Turn running.
               disabled={running}
-              onClick={onRestart}
+              loading={restart.asked}
+              onClick={restart.ask}
             >
               Restart
             </Button>
