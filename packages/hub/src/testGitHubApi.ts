@@ -1,6 +1,6 @@
 // A stand-in for GitHub's REST API, as the GitHub App uses it, for the Hub's tests: an
-// in-process HTTP server on 127.0.0.1 that checks the App JWT's signature, mints installation
-// tokens, and keeps pull requests and reviews in memory. Not part of the Hub.
+// in-process HTTP server on 127.0.0.1 that checks the App JWT's signature and mints installation
+// tokens. Not part of the Hub.
 
 import { generateKeyPairSync, type KeyObject, verify } from "node:crypto"
 
@@ -27,16 +27,6 @@ export interface ApiRequest {
   readonly body: unknown
 }
 
-export interface PullState {
-  readonly number: number
-  readonly head: string
-  readonly base: string
-  readonly title: string
-  readonly body: string
-  readonly draft: boolean
-  readonly html_url: string
-}
-
 /** The claims of a JWT whose RS256 signature `key` verifies, else undefined. */
 export function verifiedJwt(jwt: string, key: KeyObject): Record<string, unknown> | undefined {
   const [header, payload, signature] = jwt.split(".")
@@ -57,9 +47,6 @@ export class StandInGitHub {
   readonly requests: Array<ApiRequest> = []
   /** Repos (`owner/name`) the App is installed on. */
   readonly installedOn = new Set<string>()
-  /** Open pull requests, per Repo. */
-  readonly pulls = new Map<string, Array<PullState>>()
-  readonly reviews: Array<{ repo: string; number: number; body: string; event: string }> = []
   /** How long the tokens it mints last. */
   tokenLifetimeMs = 60 * 60 * 1000
   private minted = 0
@@ -84,12 +71,10 @@ export class StandInGitHub {
     return [...this.tokens]
   }
 
-  /** Forgets everything: requests, installs, tokens, pull requests and reviews. */
+  /** Forgets everything: requests, installs and tokens. */
   reset() {
     this.requests.length = 0
     this.installedOn.clear()
-    this.pulls.clear()
-    this.reviews.length = 0
     this.tokenLifetimeMs = 60 * 60 * 1000
     this.minted = 0
     this.tokens.clear()
@@ -135,11 +120,6 @@ export class StandInGitHub {
     )
   }
 
-  private isInstallation(authorization: string | null) {
-    const token = authorization?.replace(/^Bearer /, "")
-    return token !== undefined && this.tokens.has(token)
-  }
-
   private async handle(request: Request): Promise<Response> {
     const url = new URL(request.url)
     const path = decodeURIComponent(url.pathname)
@@ -183,52 +163,6 @@ export class StandInGitHub {
     }
     if (request.method === "GET" && path === `/users/${appSlug}[bot]`) {
       return this.json(200, { id: botUserId, login: `${appSlug}[bot]` })
-    }
-    if ((match = /^\/repos\/([^/]+)\/([^/]+)\/pulls$/.exec(path))) {
-      if (!this.isInstallation(authorization)) return unauthorized
-      const owner = match[1] ?? ""
-      const repo = `${owner}/${match[2]}`
-      const pulls = this.pulls.get(repo) ?? []
-      if (request.method === "GET") {
-        const head = url.searchParams.get("head")
-        const base = url.searchParams.get("base")
-        return this.json(
-          200,
-          pulls.filter(
-            (pull) =>
-              (head === null || `${owner}:${pull.head}` === head) &&
-              (base === null || pull.base === base),
-          ),
-        )
-      }
-      const input = body as Omit<PullState, "number" | "html_url">
-      if (input.head === input.base) {
-        return this.json(422, {
-          message: "Validation Failed",
-          errors: [{ message: `No commits between ${input.base} and ${input.head}` }],
-        })
-      }
-      const number = pulls.length + 1
-      const pull = { ...input, number, html_url: `https://github.test/${repo}/pull/${number}` }
-      this.pulls.set(repo, [...pulls, pull])
-      return this.json(201, pull)
-    }
-    if (
-      request.method === "POST" &&
-      (match = /^\/repos\/([^/]+\/[^/]+)\/pulls\/(\d+)\/reviews$/.exec(path))
-    ) {
-      if (!this.isInstallation(authorization)) return unauthorized
-      const repo = match[1] ?? ""
-      const number = Number(match[2])
-      if (!(this.pulls.get(repo) ?? []).some((pull) => pull.number === number)) {
-        return this.json(404, { message: "Not Found" })
-      }
-      const input = body as { body: string; event: string }
-      this.reviews.push({ repo, number, ...input })
-      return this.json(200, {
-        id: this.reviews.length,
-        html_url: `https://github.test/${repo}/pull/${number}#pullrequestreview-${this.reviews.length}`,
-      })
     }
     return this.json(404, { message: "Not Found" })
   }

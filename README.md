@@ -71,7 +71,7 @@ The Hub reads its sign-in and lifecycle settings from the environment:
 |---|---|---|
 | `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the web UI and, through it, the Hub. GitHub sends people back here, and cookie-authenticated requests must come from this origin. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret (issue #1). Unset, GitHub sign-in is off. Set the App's callback URL to `<HUB_PUBLIC_URL>/auth/github/callback`. |
-| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The App's id and the path to its private key. The Hub mints short-lived installation tokens from them for the Runners' clones and pushes and for pull requests ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)). Unset, Runners use their host's own git credentials and the pull request tools are off: see [Git from Sessions](#git-from-sessions). |
+| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The App's id and the path to its private key. The Hub mints short-lived installation tokens from them for the Runners' clones and WIP pushes, and for `git` and `gh` in each Session's Sandbox ([ADR 0010](docs/adr/0010-the-sandbox-gets-a-github-token.md)). Unset, Runners use their host's own git credentials and Sandboxes get no GitHub token: see [Git from Sessions](#git-from-sessions). |
 | `CLAUDE_HUB_DEV_LOGIN` | off | `1` turns on dev login: `POST /auth/dev` signs you in as a local Participant without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers. |
 | `CLAUDE_HUB_DEV_USER` | `$USER` | Who dev login signs you in as, when the request names no `login`. |
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. See [The Session lifecycle](#the-session-lifecycle). |
@@ -88,7 +88,7 @@ Create the App once, at <https://github.com/settings/apps/new>:
 | Request user authorization (OAuth) during installation | unticked |
 | Expire user authorization tokens | ticked |
 | Webhook, Active | unticked |
-| Repository permissions | Contents: read and write. Pull requests: read and write. Metadata: read-only, which GitHub adds on its own. |
+| Repository permissions | Contents: read and write. Pull requests: read and write. Metadata: read-only, which GitHub adds on its own. Each Session's Sandbox gets a token with every permission you grant here, on its own Repo, so grant only what you want Claude to have; add Workflows: read and write if Sessions should change `.github/workflows`. |
 | Where can this GitHub App be installed? | Only on this account |
 
 After creating it:
@@ -115,7 +115,9 @@ HUB_SECRETS_KEY=…   # from `bun run secrets-key`
 
 `bun run hub` and `bun run runner-token` read `packages/hub/.env.local` when it exists (both run in `packages/hub`, where Bun looks for it), so no flag is needed. Values already in the environment win.
 
-Only the Hub's host needs these. Sign-in uses the client id and secret; the git tools use `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH`. Only the Hub holds the App's credentials: Runners never see the private key, and get short-lived installation tokens from the Hub when they need one ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)).
+Only the Hub's host needs these. Sign-in uses the client id and secret; installation tokens use `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH`. Only the Hub holds the App's credentials: Runners never see the private key, and get short-lived installation tokens from the Hub when they need one ([ADR 0010](docs/adr/0010-the-sandbox-gets-a-github-token.md)).
+
+**Protect the default branch.** Anything running in a Session's Sandbox can push any branch of its Repo and merge its pull requests (see [Git from Sessions](#git-from-sessions)). The guardrail is a GitHub ruleset on each Repo's default branch, under the Repo's Settings, Rules, Rulesets: require a pull request before merging, with at least one approval, and block force pushes. Leave the App off the ruleset's bypass list.
 
 ### Trying it on one machine, without GitHub
 
@@ -236,24 +238,36 @@ The Session view's **Terminal** tab shows the Session's Claude Code terminal, li
 
 ### Git from Sessions
 
-Claude commits, pushes and opens pull requests with host tools, never from the Sandbox ([ADR 0005](docs/adr/0005-git-remote-operations-are-host-tools.md)). The `hub-link` mod registers four tools, which Claude sees as `mcp__hub-link__<name>` and which run without a permission prompt:
+Claude, and anything else running in a Session's Sandbox, uses plain `git` and `gh` to commit, push, open pull requests and review ([ADR 0010](docs/adr/0010-the-sandbox-gets-a-github-token.md)). There are no git tools in the mod, and nothing refuses `git commit` or `git push` in Bash.
 
-| Tool | What it does |
-|---|---|
-| `git_commit` | Stages `paths`, or everything with `all` (untracked files included), and commits what is staged to the Work branch, with `message` and the Co-authored-by trailers below. With the GitHub App the author is the App's bot, `<slug>[bot] <id+slug[bot]@users.noreply.github.com>`; without it, the Runner host's git identity. |
-| `git_push` | Pushes the Work branch to the same branch on origin. Never a force push, and never to any other branch. |
-| `open_pr` | Opens a pull request (`title`, `body`, `draft`) from the Work branch into the Session's base branch, or returns the one already open. The body ends with a link back to the Session, `<HUB_PUBLIC_URL>/sessions/<id>`. |
-| `review_pr` | Posts a review on pull request `number`, with `body` and an `event` (`COMMENT` by default, or `APPROVE` or `REQUEST_CHANGES`). |
+**What a Session can do.** The Sandbox holds a GitHub App installation token for the Session's Repo with every permission the App's installation has. So anything in the Sandbox can push any branch of that Repo and merge its pull requests, for as long as the Session runs. claude-hub doesn't stop it: the guardrail is a GitHub ruleset on the Repo's default branch (see [Setting up the GitHub App](#setting-up-the-github-app)). The token reaches no other Repo.
 
-The mod posts each call to the Runner on the Session's tool bridge socket (`POST /git/call`), so it never sees a token. The Runner runs `git_commit` and `git_push` against the Workspace on its host, and asks the Hub over its WebSocket for what it needs: an installation token for the push, the commit's author, and the co-authors. The Hub makes the pull request calls itself. Every other tool stays denied.
+**The token.** Only the Hub holds the GitHub App's private key. It signs an App JWT (RS256), finds the Repo's installation, and mints an installation token restricted to the Session's one Repo, with no permissions list. Each Session gets its own; none is cached. The Runner asks for one over its WebSocket, for a Session of its own, when the Sandbox starts or wakes, and every 45 minutes while it runs, as each lasts an hour. If there is none (no GitHub App, as in dev mode, or GitHub failing), the Session still starts without it: the Runner logs that once and asks again every five minutes.
 
-**Tokens.** Only the Hub holds the GitHub App's private key. It signs an App JWT (RS256), finds the Repo's installation, and mints an installation token scoped to that one Repo with `contents:write` and `pull_requests:write`, which it caches until five minutes before it expires. A Runner gets the token for one command at a time, for its clones, commits, pushes and WIP pushes. The token reaches git only in that command's environment, as an `http.extraHeader` passed through `GIT_CONFIG_COUNT`. It is never written to disk, to a remote URL or to `.git/config`, and never logged.
+**In the Sandbox.** The Runner mounts a tmpfs at `/run/claude-hub` (mode 0700) and writes the token to `/run/claude-hub/github-token` (mode 0600) with the backend's file write, so it is only ever in the VM's memory: never in the VM's environment, which microsandbox stores in its database, never in the VM's root filesystem image, and never on the Runner's disk. Then:
 
-**Without the GitHub App** (dev mode), the Runner clones, commits and pushes with its host's own git credentials and identity, as before. `open_pr` and `review_pr` then fail with a message saying they need the GitHub App.
+- **git**: a credential helper for `https://github.com` in the system gitconfig (`git config --system`) reads that file, with username `x-access-token`, so `git push` and `git fetch` work in `/workspace` and anywhere else. It is set only if git is in the image when the token arrives, and again at each refresh.
+- **gh**: `~/.config/gh/hosts.yml` links to `/run/claude-hub/gh-hosts.yml`, which names the token as `github.com`'s `oauth_token`, with `user: x-access-token` and `git_protocol: https`. `gh auth token` prints it; `gh auth login` isn't needed.
 
-**Co-authored-by trailers.** The Hub records the sender of every prompt that starts a Turn, in SQLite, so the list survives a restart. At commit time it hands the Runner everyone who prompted since the last commit, each once, as `Co-authored-by: <name> <<github id>+<login>@users.noreply.github.com>`, the noreply address GitHub links to the account. When the commit succeeds it forgets those prompts, and keeps any sent during the commit. The GitHub user id comes from the Participant id (`github:<id>`), which sign-in already stores. Dev-login Participants have no GitHub account, so they get no trailer. Neither do prompts typed into the tmux terminal, which have no Participant.
+**Installing gh.** claude-hub doesn't install gh. Install it in the Environment's bootstrap script, for example from GitHub's apt repository on the default Debian image:
 
-**Bash in the Sandbox.** The mod refuses Bash commands that run `git commit` or `git push`, including forms like `git -C dir push`, `cd dir && git commit`, `env X=1 git push`, and commands chained with `;`, `&&`, `||` or `|`. The refusal points Claude to the git tools. This is guidance, not the security boundary: a determined command can get past a pattern match. The boundary is that no token ever enters the Sandbox, so a push from there has nothing to authenticate with.
+```sh
+# Bootstrap
+install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+apt-get update && apt-get install -y gh
+```
+
+Debian's own `gh` package (`apt-get install -y gh`) works too, but is older.
+
+**Redaction.** The Hub minted the token, so it knows it. It masks the Session's current token and the one before it from the Session's transcript, terminal frames and logs, the same way as Sensitive values (see [Environments](#environments)).
+
+**Commits.** They are authored by whatever identity the Sandbox's git has; set `user.name` and `user.email` in the bootstrap, or let Claude set them. There are no automatic `Co-authored-by` trailers.
+
+**Without the GitHub App** (dev mode), the Sandbox gets no token, so `git push` and `gh` there have nothing to authenticate with, and the Runner clones and pushes the WIP ref with its host's own git credentials.
+
+**Host git.** The Runner still runs git on its host for two things: cloning the Repo into the Workspace, and pushing the WIP ref. With the GitHub App, it uses a separate token minted with `contents:write` only, cached until five minutes before it expires, for one command at a time. That token reaches git only in that command's environment, as an `http.extraHeader` passed through `GIT_CONFIG_COUNT`. It is never written to disk, to a remote URL or to `.git/config`, and never logged.
 
 **Host git and the shared `.git`.** The Workspace, `.git` included, is mounted read-write into the Sandbox, so `.git/config` and `.git/hooks` may hold whatever the Sandbox put there. Host git must never run any of it with a token in its environment. So the Runner runs its git commands with a git directory of its own for the Session (`<sessions root>/<session id>/host-git`), which the Sandbox can't reach, reading the Workspace's objects, index and files as data. Hooks and fsmonitor are off, and it pushes to the URL it builds from `RUNNER_REPO_URL`, never to `remote.origin.url`.
 

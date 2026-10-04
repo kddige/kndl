@@ -10,6 +10,8 @@
 // passed to each process the Runner starts in the Sandbox, never set on the VM, over the login
 // environment its build kept, which each new Sandbox probes again after its start script (#67).
 //
+// Once a Session's Sandbox runs, it is kept with a GitHub token for git and gh (SandboxGitHub.ts).
+//
 // The Session's directory holds `sandbox.json`, what its Sandbox was last built from, without
 // any value: the Environment version, the build it booted from and its libc, and the recipe.
 
@@ -42,6 +44,7 @@ import {
 } from "./EnvironmentBuilds.ts"
 import type { BuildLog, ResourceLimits } from "./EnvironmentBuilds.ts"
 import { cloneDefaultBranch } from "./HostGit.ts"
+import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables, variablesEnv } from "./HubVariables.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
@@ -71,11 +74,12 @@ import {
   workspaceGuestPath,
 } from "./sandbox/SessionLayout.ts"
 import type { SessionLayoutOptions } from "./sandbox/SessionLayout.ts"
+import { keepSandboxToken } from "./SandboxGitHub.ts"
+import type { SandboxTokenSource } from "./SandboxGitHub.ts"
 import type { SessionDirectories } from "./SessionNames.ts"
 import { InitialTerminalSize } from "./Sessions.ts"
 import { makeToolEngine, serveToolBridge, ToolBridgeError } from "./ToolBridge.ts"
 import type { ToolEngineOptions } from "./ToolBridge.ts"
-import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 export interface SessionSandboxesOptions {
   /** The OCI image Sandboxes boot when their Repo has no Environment. */
@@ -93,11 +97,8 @@ export interface SessionSandboxesOptions {
     Omit<SessionLayoutOptions, "sessionId" | "image" | "workspaceHostPath" | "env">
   >
   readonly bridge?: Pick<ToolEngineOptions, "readyTimeout" | "restartDelay">
-  /**
-   * Answers the mod's git tools, which the tool bridge serves beside the Sandbox's tools but runs
-   * on the host. Without it they are refused.
-   */
-  readonly git?: WorkspaceGit["Service"]
+  /** Fresh GitHub tokens for Sessions' Sandboxes. Without it, Sandboxes get none. */
+  readonly githubToken?: SandboxTokenSource
   /** The most CPUs and memory an Environment's Sandbox gets, whatever it asks for. */
   readonly limits: ResourceLimits
   /** How many builds of each Repo's Environment this Runner keeps. At least 1. */
@@ -221,6 +222,8 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
 
     /** Each Session's open tool bridge, closed when its Sandbox stops. */
     const bridges = new Map<SessionId, Scope.Closeable>()
+    /** What keeps each running Session's Sandbox with a GitHub token, closed when it stops. */
+    const tokenKeepers = new Map<SessionId, Scope.Closeable>()
     /** Each running Environment Session's variable values: in memory only. */
     const variables = new Map<SessionId, ReadonlyArray<VariableValue>>()
     /** Builds of one Repo happen one at a time. */
@@ -294,6 +297,27 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         return scope === undefined ? Effect.void : Scope.close(scope, Exit.void)
       })
 
+    const closeTokenKeeper = (sessionId: SessionId) =>
+      Effect.suspend(() => {
+        const scope = tokenKeepers.get(sessionId)
+        tokenKeepers.delete(sessionId)
+        return scope === undefined ? Effect.void : Scope.close(scope, Exit.void)
+      })
+
+    /** Closes what runs beside the Session's Sandbox: its tool bridge and its token keeper. */
+    const release = (sessionId: SessionId) =>
+      Effect.andThen(closeBridge(sessionId), closeTokenKeeper(sessionId))
+
+    /** Gets the running Sandbox a GitHub token, in the background, and keeps it fresh. */
+    const keepToken = (sessionId: SessionId) =>
+      Effect.gen(function* () {
+        const source = options.githubToken
+        if (source === undefined || tokenKeepers.has(sessionId)) return
+        const scope = yield* Scope.fork(layerScope)
+        yield* keepSandboxToken({ backend, sessionId, source }).pipe(Scope.provide(scope))
+        tokenKeepers.set(sessionId, scope)
+      })
+
     const openBridge = (
       sessionId: SessionId,
       directories: SessionDirectories,
@@ -327,12 +351,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
               : {}),
             ...options.bridge,
           })
-          const git = options.git
-          yield* serveToolBridge(
-            directories.toolsSocket,
-            engine,
-            git === undefined ? undefined : (call) => git.call(sessionId, directories, call),
-          )
+          yield* serveToolBridge(directories.toolsSocket, engine)
         }).pipe(
           Effect.provideService(SandboxBackend, backend),
           Scope.provide(scope),
@@ -506,7 +525,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         let state = yield* backend.state(sessionId)
         if (replace && state !== "Destroyed") {
           // Its Environment's Sandbox: the default one is made anew on the same volumes.
-          yield* closeBridge(sessionId)
+          yield* release(sessionId)
           yield* backend.destroy(sessionId, { keepVolumes: true })
           state = "Destroyed"
         }
@@ -527,6 +546,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           }
           yield* report(sessionId, "Running")
         }
+        yield* keepToken(sessionId)
         yield* openBridge(sessionId, directories, sandboxClaudePath(version, "musl"), false)
         return {}
       })
@@ -552,7 +572,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           })
         if (state !== "Destroyed" && record?.version !== environment.version) {
           // Another version's, or one whose start never finished: made anew on its volumes.
-          yield* closeBridge(sessionId)
+          yield* release(sessionId)
           yield* backend.destroy(sessionId, { keepVolumes: true })
           state = "Destroyed"
         }
@@ -586,6 +606,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         }
         const version = yield* sandboxClaude(libc)
         yield* report(sessionId, "Running")
+        yield* keepToken(sessionId)
         yield* bindDependencyFolders(sessionId, directories.workspace, recipe)
         if (state === "Destroyed") {
           yield* runStart(sessionId, recipe, values, log)
@@ -645,7 +666,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
 
     const stop = (sessionId: SessionId, reason: "Sleep" | "Archive") =>
       Effect.gen(function* () {
-        yield* closeBridge(sessionId)
+        yield* release(sessionId)
         variables.delete(sessionId)
         if ((yield* backend.state(sessionId)) === "Destroyed" && reason === "Sleep") return
         yield* report(sessionId, "Stopping")
@@ -667,7 +688,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
 
     const purge = (sessionId: SessionId) =>
       Effect.gen(function* () {
-        yield* closeBridge(sessionId)
+        yield* release(sessionId)
         variables.delete(sessionId)
         yield* backend.destroy(sessionId)
       }).pipe(
@@ -739,7 +760,9 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       )
 
     yield* Effect.addFinalizer(() =>
-      Effect.forEach([...bridges.keys()], closeBridge, { discard: true }),
+      Effect.forEach(new Set([...bridges.keys(), ...tokenKeepers.keys()]), release, {
+        discard: true,
+      }),
     )
 
     const reconcile = (running: Iterable<SessionId>) =>
@@ -782,7 +805,7 @@ export const SessionSandboxesLive = Layer.effect(
   Sandboxes,
   Effect.gen(function* () {
     const config = yield* RunnerConfig
-    const git = yield* WorkspaceGit
+    const hubGit = yield* HubGit
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const settings = yield* Config.all({
       image: Config.String("RUNNER_SANDBOX_IMAGE").pipe(Config.withDefault("docker:dind")),
@@ -803,7 +826,7 @@ export const SessionSandboxesLive = Layer.effect(
       onSome: Effect.succeed,
     })
     return yield* makeSessionSandboxes({
-      git,
+      githubToken: (sessionId) => hubGit.ask(sessionId, { _tag: "SandboxToken" }),
       image: settings.image,
       claudeCacheDir: settings.cacheDir,
       sandboxClaude: (libc) =>

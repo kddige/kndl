@@ -1,4 +1,5 @@
-// Git on the Runner's host, against a Session's Workspace (ADR 0005, issue #13).
+// Git on the Runner's host, against a Session's Workspace (ADR 0010): the clone, and the WIP
+// snapshots it pushes. Everything else git does runs in the Sandbox.
 //
 // The Workspace, `.git` included, is mounted read-write into the Sandbox, so its `.git/config`,
 // `.git/hooks` and `.git/info` may hold whatever the Sandbox wrote there. Host git must never run
@@ -10,8 +11,8 @@
 //   (SessionDirectories.hostGit), which the Sandbox can't reach and whose config the Runner
 //   wrote. They use the Workspace's objects, index and files through `GIT_OBJECT_DIRECTORY`,
 //   `GIT_INDEX_FILE` and `GIT_WORK_TREE`, all of which git reads as data.
-// - Reading and moving the Workspace's refs (rev-parse, symbolic-ref, update-ref) runs against
-//   its own `.git`. These commands run no filter, helper or fsmonitor; hooks are off.
+// - Reading the Workspace's HEAD (rev-parse) runs against its own `.git`. That runs no filter,
+//   helper or fsmonitor; hooks are off.
 // - Every command runs with `core.hooksPath=/dev/null`: no hook runs, not even the host's own.
 // - Pushes go to the URL the Runner builds from RUNNER_REPO_URL, never to `remote.origin.url`.
 // - A GitHub App token reaches git only in the environment of the one command that needs it, as
@@ -19,7 +20,7 @@
 //   remote URL or to any config file, and never logged.
 
 import { lstat, readdir } from "node:fs/promises"
-import { join, posix } from "node:path"
+import { join } from "node:path"
 import { Data, Effect, Redacted } from "effect"
 import { hostEnvironment, runCommand } from "./Process.ts"
 
@@ -130,7 +131,7 @@ const git = (args: ReadonlyArray<string>, options: RunOptions = {}) =>
 
 const gitDir = (paths: WorkspacePaths) => join(paths.workspace, ".git")
 
-/** git on the Workspace's own `.git`, for its refs only. */
+/** git on the Workspace's own `.git`, to read its HEAD. */
 const refGit = (paths: WorkspacePaths, args: ReadonlyArray<string>) =>
   git(args, { cwd: paths.hostGit, variables: { GIT_DIR: gitDir(paths) } })
 
@@ -174,21 +175,18 @@ const refuse = (what: string) =>
 
 /**
  * Checks the Workspace's `.git` holds no link where host git reads or writes: the directory
- * itself, the index, HEAD, the object directories, and the refs and reflogs of `branches`. A link
+ * itself, the index, HEAD and the object directories. A link
  * planted by the Sandbox would send host git's writes, such as a new index or a reflog line, to
  * any file the Runner's user can write. Also checks nothing points host git at other object
  * directories: no `commondir`, and no non-empty `objects/info/alternates` or `http-alternates`.
  */
-const checkGitDir = (paths: WorkspacePaths, branches: ReadonlyArray<string>) =>
+const checkGitDir = (paths: WorkspacePaths) =>
   Effect.gen(function* () {
     const dir = gitDir(paths)
     if ((yield* kindOf(dir)) !== "directory") return yield* refuse("")
     // A linked worktree's `.git` would point refs and config at another directory.
     if ((yield* kindOf(join(dir, "commondir"))) !== undefined) return yield* refuse("/commondir")
     const files = ["index", "HEAD", "packed-refs", "info/exclude", "logs/HEAD"]
-    for (const branch of branches)
-      for (const ref of [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`])
-        files.push(ref, `logs/${ref}`)
     for (const file of files) {
       // Every directory on the way, then the file itself, which may be missing.
       const parts = file.split("/")
@@ -215,7 +213,7 @@ const checkGitDir = (paths: WorkspacePaths, branches: ReadonlyArray<string>) =>
       const size = yield* Effect.promise(() => lstat(path).then((stats) => stats.size))
       if (size > 0)
         return yield* new GitError({
-          message: `host git refused the Workspace: its .git/${file} points git at other object directories. Remove it to use the git tools.`,
+          message: `host git refused the Workspace: its .git/${file} points git at other object directories. Remove it so WIP pushes work.`,
         })
     }
   })
@@ -225,9 +223,9 @@ const checkGitDir = (paths: WorkspacePaths, branches: ReadonlyArray<string>) =>
  * Workspace's `info/exclude` into it, so untracked files the Workspace ignores stay out of WIP
  * snapshots. Exclude patterns are only data.
  */
-const prepareHostGit = (paths: WorkspacePaths, branches: ReadonlyArray<string> = []) =>
+const prepareHostGit = (paths: WorkspacePaths) =>
   Effect.gen(function* () {
-    yield* checkGitDir(paths, branches)
+    yield* checkGitDir(paths)
     if ((yield* kindOf(join(paths.hostGit, "HEAD"))) === undefined) {
       yield* git(["init", "--quiet", "--bare", paths.hostGit])
       yield* git(["config", "core.bare", "false"], { variables: { GIT_DIR: paths.hostGit } })
@@ -244,15 +242,6 @@ const prepareHostGit = (paths: WorkspacePaths, branches: ReadonlyArray<string> =
 const resolveCommit = (paths: WorkspacePaths, ref: string) =>
   refGit(paths, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]).pipe(
     Effect.map((sha) => (sha === "" ? undefined : sha)),
-    Effect.catchTag("GitError", () => Effect.succeed(undefined)),
-  )
-
-/** The branch the Workspace has checked out, or undefined when its HEAD is detached. */
-export const currentBranch = (paths: WorkspacePaths) =>
-  refGit(paths, ["symbolic-ref", "--quiet", "HEAD"]).pipe(
-    Effect.map((ref) =>
-      ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : undefined,
-    ),
     Effect.catchTag("GitError", () => Effect.succeed(undefined)),
   )
 
@@ -286,126 +275,6 @@ export const cloneDefaultBranch = (options: {
     auth: options.auth,
     remoteUrl: options.url,
   }).pipe(Effect.asVoid)
-
-/** What `git_commit` stages before committing. */
-export type Staging =
-  | { readonly _tag: "Staged" }
-  | { readonly _tag: "All" }
-  | { readonly _tag: "Paths"; readonly paths: ReadonlyArray<string> }
-
-export interface Committed {
-  readonly commit: string
-  readonly parent: string
-  /** The files the commit changed, as `git diff --name-status` lists them. */
-  readonly changes: ReadonlyArray<string>
-}
-
-/**
- * Stages `staging` in the Workspace's index and commits what is staged onto `workBranch`, which
- * must be checked out. The commit is made with commit-tree and the branch moved with update-ref,
- * only if it hasn't moved meanwhile.
- */
-export const commitWorkspace = (
-  paths: WorkspacePaths,
-  options: {
-    readonly workBranch: string
-    readonly message: string
-    readonly staging: Staging
-    readonly identity?: GitIdentity
-  },
-) =>
-  Effect.gen(function* () {
-    yield* prepareHostGit(paths, [options.workBranch])
-    const branch = yield* currentBranch(paths)
-    if (branch !== options.workBranch)
-      return yield* new GitError({
-        message: `The Workspace is on ${branch === undefined ? "a detached HEAD" : `branch ${branch}`}, not the Work branch ${options.workBranch}. Commits go on the Work branch only: switch back with \`git switch ${options.workBranch}\`.`,
-      })
-    const parent = yield* resolveCommit(paths, `refs/heads/${options.workBranch}`)
-    if (parent === undefined)
-      return yield* new GitError({ message: `the Work branch ${options.workBranch} has no commit` })
-
-    switch (options.staging._tag) {
-      case "All":
-        yield* treeGit(paths, ["add", "--all"])
-        break
-      case "Paths":
-        yield* treeGit(paths, [
-          "add",
-          "--all",
-          "--",
-          ...options.staging.paths.map((path) => `:(literal)${path}`),
-        ])
-        break
-      case "Staged":
-        break
-    }
-    const tree = yield* treeGit(paths, ["write-tree"])
-    const changes = yield* treeGit(paths, [
-      "diff-tree",
-      "--no-commit-id",
-      "--name-status",
-      "-r",
-      parent,
-      tree,
-    ])
-    if (changes === "")
-      return yield* new GitError({
-        message:
-          "Nothing to commit: nothing is staged that differs from the last commit. Pass `paths`, or `all: true` to commit every change.",
-      })
-    const commit = yield* treeGit(
-      paths,
-      ["commit-tree", tree, "-p", parent, "-m", options.message],
-      options.identity === undefined ? {} : { identity: options.identity },
-    )
-    yield* refGit(paths, [
-      "update-ref",
-      "-m",
-      "claude-hub: git_commit",
-      `refs/heads/${options.workBranch}`,
-      commit,
-      parent,
-    ])
-    return { commit, parent, changes: changes.split("\n") } satisfies Committed
-  })
-
-/**
- * Pushes the Work branch to `url`, never forced: a remote branch with commits the Workspace
- * lacks rejects it. Moves the Workspace's `refs/remotes/origin/<branch>` along. Returns the
- * commit pushed.
- */
-export const pushWorkBranch = (
-  paths: WorkspacePaths,
-  options: { readonly url: string; readonly auth: GitAuth; readonly workBranch: string },
-) =>
-  Effect.gen(function* () {
-    yield* prepareHostGit(paths, [options.workBranch])
-    const ref = `refs/heads/${options.workBranch}`
-    const commit = yield* resolveCommit(paths, ref)
-    if (commit === undefined)
-      return yield* new GitError({ message: `the Work branch ${options.workBranch} has no commit` })
-    yield* treeGit(
-      paths,
-      ["push", "--quiet", "--no-verify", "--", options.url, `${commit}:${ref}`],
-      {
-        auth: options.auth,
-        remoteUrl: options.url,
-      },
-    ).pipe(
-      Effect.mapError((error) =>
-        /\[rejected\]|non-fast-forward|fetch first/.test(error.message)
-          ? new GitError({
-              message: `The push was rejected: the remote ${options.workBranch} has commits this Workspace doesn't have. Nothing was force-pushed. (${error.message})`,
-            })
-          : error,
-      ),
-    )
-    yield* refGit(paths, ["update-ref", `refs/remotes/origin/${options.workBranch}`, commit]).pipe(
-      Effect.ignore,
-    )
-    return commit
-  })
 
 export interface SnapshotTree {
   readonly tree: string
@@ -459,23 +328,3 @@ export const forcePushRef = (
       remoteUrl: options.url,
     },
   ).pipe(Effect.asVoid)
-
-/**
- * A path the model gave, relative to the Workspace: one under any of `roots` (the paths the
- * model knows the Workspace by) is made relative, and one leading out of the Workspace is
- * refused.
- */
-export const workspaceRelative = (
-  path: string,
-  roots: ReadonlyArray<string>,
-): string | undefined => {
-  let relative = path
-  if (posix.isAbsolute(path)) {
-    const root = roots.find((candidate) => path === candidate || path.startsWith(`${candidate}/`))
-    if (root === undefined) return undefined
-    relative = path.slice(root.length + 1)
-  }
-  const normal = posix.normalize(relative === "" ? "." : relative)
-  if (normal === ".." || normal.startsWith("../") || posix.isAbsolute(normal)) return undefined
-  return normal
-}

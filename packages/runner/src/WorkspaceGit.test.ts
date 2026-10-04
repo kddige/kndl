@@ -1,4 +1,4 @@
-// The git tools and the WIP ref, with real git against a local bare repo and a fake Hub that
+// The WIP ref, with real git against a local bare repo and a fake Hub that
 // hands out a fake token. Skipped when git isn't installed.
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import {
@@ -14,23 +14,21 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type GitToolCall, type SessionId, wipRef } from "@claude-hub/protocol"
+import { type SessionId, wipRef } from "@claude-hub/protocol"
 import { BunServices } from "@effect/platform-bun"
 import { Effect, Layer, Redacted, References } from "effect"
-import { gitEnvironment } from "./HostGit.ts"
+import { gitEnvironment, WipIdentity } from "./HostGit.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { FakeHubGit, sessionId } from "./testSupport.ts"
 import { Workspaces, WorkspacesGitClone } from "./Workspace.ts"
-import { withCoAuthors, WorkspaceGit, WorkspaceGitLive, type WipReason } from "./WorkspaceGit.ts"
+import { WorkspaceGit, WorkspaceGitLive, type WipReason } from "./WorkspaceGit.ts"
 
 const Token = "ghs_FAKEtoken0123456789abcdef"
 const Bot = {
   name: "claude-hub-test[bot]",
   email: "42+claude-hub-test[bot]@users.noreply.github.com",
 }
-const Alice = { name: "alice", email: "1001+alice@users.noreply.github.com" }
-const Bob = { name: "bob", email: "1002+bob@users.noreply.github.com" }
 
 const testIdentity = {
   GIT_AUTHOR_NAME: "t",
@@ -85,11 +83,7 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     git(seed, "add", ".")
     git(seed, "commit", "--quiet", "-m", "first")
     git(seed, "push", "--quiet", "origin", "HEAD:main")
-    hubGit = new FakeHubGit({
-      repo: `acme/repo-${counter}`,
-      baseBranch: "main",
-      workBranch: `claude/g-${counter}`,
-    })
+    hubGit = new FakeHubGit(`acme/repo-${counter}`)
     hubGit.useToken(Token, Bot)
   })
 
@@ -142,9 +136,6 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
       ),
     )
 
-  const call = (tool: GitToolCall["tool"], input: Record<string, unknown> = {}) =>
-    run(Effect.flatMap(WorkspaceGit, (g) => g.call(id, directories(), { tool, input })))
-
   const pushWip = (reason: WipReason = "TurnEnded") =>
     run(Effect.flatMap(WorkspaceGit, (g) => g.pushWip(id, directories(), reason)))
 
@@ -165,165 +156,17 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     expectNoTokenOnDisk()
   })
 
-  test("git_commit commits on the Work branch as the App's bot, with the co-authors' trailers", async () => {
-    await prepare()
-    hubGit.coAuthors = [Alice, Bob]
-    hubGit.through = 3
-    writeFileSync(join(workspace(), "a.txt"), "a\n")
-    writeFileSync(join(workspace(), "b.txt"), "b\n")
-
-    const reply = await call("git_commit", { message: "Add a and b", all: true })
-
-    expect(reply).toMatchObject({ _tag: "ToolRan" })
-    expect(reply._tag === "ToolRan" && reply.result).toContain(`on ${workBranch()}: Add a and b`)
-    expect(git(workspace(), "log", "-1", "--format=%an <%ae>|%cn <%ce>")).toBe(
-      `${Bot.name} <${Bot.email}>|${Bot.name} <${Bot.email}>`,
-    )
-    expect(git(workspace(), "log", "-1", "--format=%B")).toBe(
-      `Add a and b\n\nCo-authored-by: alice <${Alice.email}>\nCo-authored-by: bob <${Bob.email}>`,
-    )
-    expect(
-      git(workspace(), "show", "--name-only", "--format=", "HEAD").split("\n").toSorted(),
-    ).toEqual(["a.txt", "b.txt"])
-    // The Workspace's index matches the commit, and the Hub was told to reset its list.
-    expect(git(workspace(), "status", "--porcelain")).toBe("")
-    expect(hubGit.committed).toEqual([{ sessionId: id, through: 3 }])
-    expectNoTokenOnDisk()
-  })
-
-  test("git_commit with paths stages only those, by any path the model knows the Workspace by", async () => {
-    await prepare()
-    writeFileSync(join(workspace(), "a.txt"), "a\n")
-    writeFileSync(join(workspace(), "b.txt"), "b\n")
-
-    const reply = await call("git_commit", { message: "Add a", paths: ["/workspace/a.txt"] })
-
-    expect(reply).toMatchObject({ _tag: "ToolRan" })
-    expect(git(workspace(), "show", "--name-only", "--format=", "HEAD")).toBe("a.txt")
-    expect(git(workspace(), "status", "--porcelain")).toBe("?? b.txt")
-  })
-
-  test("git_commit refuses paths outside the Workspace, an empty commit, and other branches", async () => {
-    await prepare()
-    const head = git(workspace(), "rev-parse", "HEAD")
-
-    expect(await call("git_commit", { message: "x", paths: ["/etc/passwd"] })).toMatchObject({
-      _tag: "ToolFailed",
-      message: "/etc/passwd is not in the Workspace.",
-    })
-    expect(await call("git_commit", { message: "x", paths: ["../outside"] })).toMatchObject({
-      _tag: "ToolFailed",
-    })
-    expect(await call("git_commit", { message: "x", all: true })).toMatchObject({
-      _tag: "ToolFailed",
-      message: expect.stringContaining("Nothing to commit"),
-    })
-    expect(await call("git_commit", {})).toMatchObject({
-      _tag: "ToolFailed",
-      message: expect.stringContaining("git_commit was called with input it doesn't take"),
-    })
-
-    git(workspace(), "switch", "--quiet", "--create", "elsewhere")
-    writeFileSync(join(workspace(), "a.txt"), "a\n")
-    expect(await call("git_commit", { message: "x", all: true })).toMatchObject({
-      _tag: "ToolFailed",
-      message: expect.stringContaining(`not the Work branch ${workBranch()}`),
-    })
-    expect(git(workspace(), "rev-parse", "HEAD")).toBe(head)
-    expect(hubGit.committed).toEqual([])
-  })
-
-  test("git_push pushes the Work branch, and never forces it", async () => {
-    await prepare()
-    writeFileSync(join(workspace(), "a.txt"), "a\n")
-    await call("git_commit", { message: "Add a", all: true })
-    const head = git(workspace(), "rev-parse", "HEAD")
-
-    const reply = await call("git_push")
-
-    expect(reply).toMatchObject({ _tag: "ToolRan" })
-    expect(git(origin, "rev-parse", `refs/heads/${workBranch()}`)).toBe(head)
-    expect(git(workspace(), "rev-parse", `refs/remotes/origin/${workBranch()}`)).toBe(head)
-    expectNoTokenOnDisk()
-
-    // Someone else pushes to the Work branch; the Session's next push is refused, not forced.
-    const other = join(dir, `other-${counter}`)
-    git(dir, "clone", "--quiet", "--branch", workBranch(), origin, other)
-    writeFileSync(join(other, "theirs.txt"), "theirs\n")
-    git(other, "add", ".")
-    git(other, "commit", "--quiet", "-m", "theirs")
-    git(other, "push", "--quiet", "origin", workBranch())
-    const theirs = git(other, "rev-parse", "HEAD")
-    writeFileSync(join(workspace(), "b.txt"), "b\n")
-    await call("git_commit", { message: "Add b", all: true })
-
-    expect(await call("git_push")).toMatchObject({
-      _tag: "ToolFailed",
-      message: expect.stringContaining("Nothing was force-pushed"),
-    })
-    expect(git(origin, "rev-parse", `refs/heads/${workBranch()}`)).toBe(theirs)
-  })
-
-  test("git_push pushes the Work branch only, whichever branch is checked out", async () => {
-    await prepare()
-    git(workspace(), "switch", "--quiet", "--create", "elsewhere")
-    writeFileSync(join(workspace(), "a.txt"), "a\n")
-    git(workspace(), "add", ".")
-    git(workspace(), "commit", "--quiet", "-m", "elsewhere")
-
-    expect(await call("git_push")).toMatchObject({ _tag: "ToolRan" })
-    expect(
-      git(origin, "branch", "--list", "--format=%(refname:short)").split("\n").toSorted(),
-    ).toEqual(["claude/g-" + counter, "main"])
-  })
-
-  test("without the GitHub App, commits and pushes use the host's identity and credentials", async () => {
+  test("without the GitHub App, the WIP push uses the host's credentials, as claude-hub", async () => {
     hubGit.credentials = { _tag: "HostCredentials" }
     await prepare()
-    hubGit.coAuthors = [Alice]
     writeFileSync(join(workspace(), "a.txt"), "a\n")
-    const saved = { ...process.env }
-    Object.assign(process.env, {
-      GIT_AUTHOR_NAME: "Host User",
-      GIT_AUTHOR_EMAIL: "host@example.com",
-      GIT_COMMITTER_NAME: "Host User",
-      GIT_COMMITTER_EMAIL: "host@example.com",
-    })
-    try {
-      expect(await call("git_commit", { message: "Add a", all: true })).toMatchObject({
-        _tag: "ToolRan",
-      })
-    } finally {
-      for (const key of Object.keys(testIdentity)) {
-        if (saved[key] === undefined) delete process.env[key]
-        else process.env[key] = saved[key]
-      }
-    }
-    expect(git(workspace(), "log", "-1", "--format=%an <%ae>")).toBe("Host User <host@example.com>")
-    expect(git(workspace(), "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).toBe(
-      `alice <${Alice.email}>`,
+
+    await pushWip()
+
+    expect(hubGit.wipFailures).toEqual([])
+    expect(git(origin, "log", "-1", "--format=%an <%ae>", wipRef(id))).toBe(
+      `${WipIdentity.name} <${WipIdentity.email}>`,
     )
-    expect(await call("git_push")).toMatchObject({ _tag: "ToolRan" })
-  })
-
-  test("open_pr and review_pr go to the Hub, which holds the App", async () => {
-    expect(await call("open_pr", { title: "T", body: "B", draft: true })).toMatchObject({
-      _tag: "ToolRan",
-      result: `Opened pull request #7: https://github.com/acme/repo-${counter}/pull/7`,
-    })
-    expect(await call("review_pr", { number: 3, body: "Looks good" })).toMatchObject({
-      _tag: "ToolRan",
-    })
-    expect(hubGit.asked.map(({ ask }) => ask)).toEqual([
-      { _tag: "OpenPullRequest", title: "T", body: "B", draft: true },
-      { _tag: "ReviewPullRequest", number: 3, body: "Looks good", event: "COMMENT" },
-    ])
-
-    hubGit.answer = () => ({ _tag: "GitFailed", message: "open_pr needs the GitHub App" })
-    expect(await call("open_pr", { title: "T" })).toEqual({
-      _tag: "ToolFailed",
-      message: "open_pr needs the GitHub App",
-    })
   })
 
   test("the WIP ref holds every file but ignored ones, and leaves the index and branches alone", async () => {
@@ -368,7 +211,8 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     expect(git(origin, "rev-parse", wipRef(id))).toBe(first)
 
     // A commit replaces the snapshot's parent: the new WIP commit doesn't descend from the old.
-    await call("git_commit", { message: "Add a", all: true })
+    git(workspace(), "add", "--all")
+    git(workspace(), "commit", "--quiet", "-m", "Add a")
     await pushWip("Sleep")
     const second = git(origin, "rev-parse", wipRef(id))
     expect(second).not.toBe(first)
@@ -438,18 +282,10 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     writeFileSync(join(workspace(), ".gitattributes"), "* filter=evil\n")
     writeFileSync(join(workspace(), "a.txt"), "a\n")
 
-    expect(await call("git_commit", { message: "Add a", all: true })).toMatchObject({
-      _tag: "ToolRan",
-    })
-    expect(await call("git_push")).toMatchObject({ _tag: "ToolRan" })
-    writeFileSync(join(workspace(), "b.txt"), "b\n")
     await pushWip()
 
     expect(readdirSync(planted)).toEqual([])
-    // The pushes went to origin, not where the planted config pointed.
-    expect(git(origin, "rev-parse", `refs/heads/${workBranch()}`)).toBe(
-      git(workspace(), "rev-parse", "HEAD"),
-    )
+    // The push went to origin, not where the planted config pointed.
     expect(git(origin, "rev-parse", "--verify", "--quiet", wipRef(id))).not.toBe("")
     expect(git(other, "for-each-ref")).toBe("")
     expect(hubGit.wipFailures).toEqual([])
@@ -465,10 +301,11 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     Bun.spawnSync(["ln", "-s", target, index])
     writeFileSync(join(workspace(), "a.txt"), "a\n")
 
-    expect(await call("git_commit", { message: "Add a", all: true })).toMatchObject({
-      _tag: "ToolFailed",
-      message: expect.stringContaining("refused the Workspace"),
-    })
+    await pushWip()
+
+    expect(hubGit.wipFailures).toEqual([
+      expect.objectContaining({ message: expect.stringContaining("refused the Workspace") }),
+    ])
     expect(readFileSync(target, "utf8")).toBe("precious\n")
     expect(existsSync(index)).toBe(true)
   })
@@ -484,27 +321,24 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     // Empty files point nowhere, so they're fine.
     writeFileSync(join(info, "alternates"), "")
     writeFileSync(join(info, "http-alternates"), "")
-    expect(await call("git_commit", { message: "Add a", all: true })).toMatchObject({
-      _tag: "ToolRan",
-    })
+    await pushWip()
+    expect(hubGit.wipFailures).toEqual([])
+    const pushed = git(origin, "rev-parse", wipRef(id))
 
     for (const file of ["alternates", "http-alternates"]) {
       writeFileSync(join(info, "alternates"), "")
       writeFileSync(join(info, "http-alternates"), "")
       writeFileSync(join(info, file), `${join(elsewhere, "objects")}\n`)
-      for (const tool of ["git_commit", "git_push"] as const)
-        expect(await call(tool, { message: "Again", all: true })).toMatchObject({
-          _tag: "ToolFailed",
-          message: expect.stringContaining(`.git/objects/info/${file} points git at other object`),
-        })
       const before = hubGit.wipFailures.length
       writeFileSync(join(workspace(), "b.txt"), "b\n")
       await pushWip()
       expect(hubGit.wipFailures.slice(before)).toEqual([
-        expect.objectContaining({ message: expect.stringContaining(`objects/info/${file}`) }),
+        expect.objectContaining({
+          message: expect.stringContaining(`.git/objects/info/${file} points git at other object`),
+        }),
       ])
     }
-    expect(git(origin, "for-each-ref", wipRef(id))).toBe("")
+    expect(git(origin, "rev-parse", wipRef(id))).toBe(pushed)
   })
 
   test("host git's environment drops variables that point it at other objects", () => {
@@ -520,22 +354,5 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
       else process.env["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = saved
       delete process.env["GIT_OBJECT_DIRECTORY"]
     }
-  })
-})
-
-describe("withCoAuthors", () => {
-  test("adds a trailer block, once per email, after any trailers already there", () => {
-    expect(withCoAuthors("Fix it\n", [])).toBe("Fix it")
-    expect(withCoAuthors("Fix it", [Alice, Alice])).toBe(
-      `Fix it\n\nCo-authored-by: alice <${Alice.email}>`,
-    )
-    expect(
-      withCoAuthors(
-        `Fix it\n\nMore words.\n\nCo-authored-by: Alice <${Alice.email.toUpperCase()}>`,
-        [Alice, Bob],
-      ),
-    ).toBe(
-      `Fix it\n\nMore words.\n\nCo-authored-by: Alice <${Alice.email.toUpperCase()}>\nCo-authored-by: bob <${Bob.email}>`,
-    )
   })
 })

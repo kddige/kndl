@@ -301,25 +301,18 @@ export const echoTools: ToolHandler = (name, args) =>
 
 /**
  * The Hub's side of the git conversation, in memory: Repo access with the credentials a test
- * sets (a fake token, or the host's), the co-authors it sets, and a record of what was asked and
- * reported. `answer` overrides any answer.
+ * sets (a fake token, or the host's), Sandbox tokens while it has a token to give (`sandbox-1`,
+ * `sandbox-2`, ...), and a record of what was asked and reported. `answer` overrides any answer.
  */
 export class FakeHubGit {
   readonly asked: Array<{ readonly sessionId: SessionId; readonly ask: GitAsk }> = []
-  readonly committed: Array<{ readonly sessionId: SessionId; readonly through: number }> = []
   readonly wipFailures: Array<{ readonly sessionId: SessionId; readonly message: string }> = []
+  /** The Sandbox tokens handed out, oldest first. */
+  readonly sandboxTokens: Array<string> = []
   credentials: GitCredentials = GitCredentials.cases.HostCredentials.make({})
-  coAuthors: Array<GitIdentity> = []
-  through = 0
   answer: ((sessionId: SessionId, ask: GitAsk) => GitAnswer | undefined) | undefined
 
-  constructor(
-    readonly repo: {
-      readonly repo: string
-      readonly baseBranch: string
-      readonly workBranch: string
-    },
-  ) {}
+  constructor(readonly repo: string) {}
 
   /** Hands out `token` as the App's installation token, with `author` as its bot. */
   useToken(token: string, author: GitIdentity, expiresAt = Date.now() + 3_600_000) {
@@ -338,21 +331,19 @@ export class FakeHubGit {
       case "GitAccess":
         return Schema.decodeUnknownSync(GitAnswer)({
           _tag: "GitAccess",
-          ...this.repo,
+          repo: this.repo,
           credentials: Schema.encodeSync(GitCredentials)(this.credentials),
         })
-      case "CoAuthors":
-        return GitAnswer.cases.CoAuthors.make({ coAuthors: this.coAuthors, through: this.through })
-      case "OpenPullRequest":
-        return GitAnswer.cases.PullRequest.make({
-          number: 7,
-          url: `https://github.com/${this.repo.repo}/pull/7`,
-          existing: false,
+      case "SandboxToken": {
+        if (this.credentials._tag === "HostCredentials")
+          return GitAnswer.cases.GitFailed.make({ message: "No GitHub App is configured" })
+        const token = `sandbox-${this.sandboxTokens.length + 1}`
+        this.sandboxTokens.push(token)
+        return GitAnswer.cases.SandboxToken.make({
+          token: Redacted.make(token),
+          expiresAt: Date.now() + 3_600_000,
         })
-      case "ReviewPullRequest":
-        return GitAnswer.cases.ReviewPosted.make({
-          url: `https://github.com/${this.repo.repo}/pull/${ask.number}#review`,
-        })
+      }
     }
   }
 
@@ -364,11 +355,6 @@ export class FakeHubGit {
           return this.reply(session, ask)
         }),
       receive: () => Effect.void,
-      committed: (session, through) =>
-        Effect.sync(() => {
-          this.committed.push({ sessionId: session, through })
-          this.coAuthors = []
-        }),
       wipPushFailed: (session, message) =>
         Effect.sync(() => void this.wipFailures.push({ sessionId: session, message })),
     }),
@@ -376,19 +362,14 @@ export class FakeHubGit {
 }
 
 /**
- * Git that only records calls, `pushWip <id> <reason>` and `<tool> <id>`, into `calls`: pass
- * another fake's record to see the order they ran in.
+ * Git that only records calls, `pushWip <id> <reason>`, into `calls`: pass another fake's record
+ * to see the order they ran in.
  */
 export class FakeWorkspaceGit {
   constructor(readonly calls: Array<string> = []) {}
 
   readonly layer = Layer.sync(WorkspaceGit, () =>
     WorkspaceGit.of({
-      call: (session, _directories, request) =>
-        Effect.sync(() => {
-          this.calls.push(`${request.tool} ${session}`)
-          return { _tag: "ToolRan" as const, result: `${request.tool} ran` }
-        }),
       pushWip: (session, _directories, reason) =>
         Effect.sync(() => void this.calls.push(`pushWip ${session} ${reason}`)),
     }),

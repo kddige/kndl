@@ -35,20 +35,7 @@ const runnerToHub = [
   },
   { _tag: "TerminalFrame", sessionId: "s-1", kind: "Output", data: "x", size },
   { _tag: "GitRequest", requestId: "g-1", sessionId: "s-1", ask: { _tag: "GitAccess" } },
-  { _tag: "GitRequest", requestId: "g-2", sessionId: "s-1", ask: { _tag: "CoAuthors" } },
-  {
-    _tag: "GitRequest",
-    requestId: "g-3",
-    sessionId: "s-1",
-    ask: { _tag: "OpenPullRequest", title: "Add a health check", body: "", draft: true },
-  },
-  {
-    _tag: "GitRequest",
-    requestId: "g-4",
-    sessionId: "s-1",
-    ask: { _tag: "ReviewPullRequest", number: 7, body: "Looks good", event: "COMMENT" },
-  },
-  { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: 12 },
+  { _tag: "GitRequest", requestId: "g-2", sessionId: "s-1", ask: { _tag: "SandboxToken" } },
   { _tag: "WipPushFailed", sessionId: "s-1", message: "git push exited with 128" },
   { _tag: "SessionPurged", sessionId: "s-1" },
   { _tag: "SandboxNote", sessionId: "s-1", message: "Memory capped at 8192 MiB by the Runner" },
@@ -102,8 +89,6 @@ const hubToRunner = [
     answer: {
       _tag: "GitAccess",
       repo: "kddige/claude-hub",
-      baseBranch: "main",
-      workBranch: "claude/s-1",
       credentials: {
         _tag: "AppToken",
         token: "ghs_installation",
@@ -121,39 +106,18 @@ const hubToRunner = [
     answer: {
       _tag: "GitAccess",
       repo: "kddige/claude-hub",
-      baseBranch: "main",
-      workBranch: "claude/s-1",
       credentials: { _tag: "HostCredentials" },
     },
   },
   {
     _tag: "GitReply",
     requestId: "g-2",
-    answer: {
-      _tag: "CoAuthors",
-      coAuthors: [{ name: "Alice", email: "583231+alice@users.noreply.github.com" }],
-      through: 12,
-    },
+    answer: { _tag: "SandboxToken", token: "ghs_sandbox", expiresAt: 1_790_000_000_000 },
   },
   {
     _tag: "GitReply",
-    requestId: "g-3",
-    answer: {
-      _tag: "PullRequest",
-      number: 7,
-      url: "https://github.com/kddige/claude-hub/pull/7",
-      existing: false,
-    },
-  },
-  {
-    _tag: "GitReply",
-    requestId: "g-4",
-    answer: { _tag: "ReviewPosted", url: "https://github.com/kddige/claude-hub/pull/7#r1" },
-  },
-  {
-    _tag: "GitReply",
-    requestId: "g-3",
-    answer: { _tag: "GitFailed", message: "Pull requests need the GitHub App" },
+    requestId: "g-2",
+    answer: { _tag: "GitFailed", message: "The Hub has no GitHub App" },
   },
   { _tag: "SessionTurnEnded", sessionId: "s-1" },
   {
@@ -207,7 +171,7 @@ describe("RunnerToHub", () => {
       _tag: "GitRequest",
       requestId: "",
       sessionId: "s-1",
-      ask: { _tag: "CoAuthors" },
+      ask: { _tag: "SandboxToken" },
     })
     expectRejected(RunnerToHub, {
       _tag: "GitRequest",
@@ -215,13 +179,7 @@ describe("RunnerToHub", () => {
       sessionId: "s-1",
       ask: { _tag: "Push" },
     })
-    expectRejected(RunnerToHub, {
-      _tag: "GitRequest",
-      requestId: "g",
-      sessionId: "s-1",
-      ask: { _tag: "ReviewPullRequest", number: 0, body: "x", event: "COMMENT" },
-    })
-    expectRejected(RunnerToHub, { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: -1 })
+    expectRejected(RunnerToHub, { _tag: "CoAuthorsCommitted", sessionId: "s-1", through: 1 })
     expectRejected(RunnerToHub, { _tag: "SessionStarted", sessionId: "s-1", environmentVersion: 0 })
     expectRejected(RunnerToHub, { _tag: "FetchVariables", requestId: "v-1", for: { _tag: "Repo" } })
     expectRejected(RunnerToHub, { _tag: "TestBuildFinished", testBuildId: "b-1", result: "Ok" })
@@ -247,8 +205,6 @@ describe("HubToRunner", () => {
       answer: {
         _tag: "GitAccess",
         repo: "kddige/claude-hub",
-        baseBranch: "main",
-        workBranch: "w",
         credentials: {
           _tag: "AppToken",
           token: "",

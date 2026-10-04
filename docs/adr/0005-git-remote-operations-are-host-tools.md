@@ -1,6 +1,8 @@
 ---
-status: accepted
+status: superseded by 0010
 ---
+
+> Superseded by [ADR 0010](0010-the-sandbox-gets-a-github-token.md) (#73): the Sandbox now gets a short-lived GitHub token and uses plain `git` and `gh`. The host git tools, the Bash refusal and the `Co-authored-by` trailers are gone. The WIP ref, and host git that never runs what the Sandbox configured, stay.
 
 # Git remote operations run on the host; no GitHub token enters the Sandbox
 

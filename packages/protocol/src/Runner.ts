@@ -8,7 +8,7 @@ import {
   VariablesFetched,
   VariablesRefused,
 } from "./Environment.ts"
-import { CoAuthorsCommitted, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
+import { GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { BranchName, RepoName, RunnerLogin } from "./Session.ts"
 import {
@@ -104,7 +104,6 @@ export const RunnerToHub = Schema.Union([
   SessionPurged,
   TerminalFrame,
   GitRequest,
-  CoAuthorsCommitted,
   WipPushFailed,
   SandboxNote,
   FetchVariables,

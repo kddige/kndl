@@ -1,5 +1,5 @@
 // The GitHub App client against a stand-in GitHub API: the App JWT, installation tokens scoped
-// to one Repo and cached, the bot identity, and pull requests.
+// to one Repo (cached for host git, fresh for each Sandbox), and the bot identity.
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { createPrivateKey } from "node:crypto"
@@ -56,7 +56,7 @@ describe("the App JWT", () => {
 })
 
 describe("installation tokens", () => {
-  test("are minted for the Repo alone, with contents and pull requests write", async () => {
+  test("for host git are minted for the Repo alone, with contents write only", async () => {
     const token = await withApp(Effect.flatMap(GitHubApp, (app) => app.repoToken(repo)))
 
     expect(github.mintedTokens).toEqual([Redacted.value(token.token)])
@@ -66,10 +66,7 @@ describe("installation tokens", () => {
     expect(mint).toMatchObject({
       method: "POST",
       path: "/app/installations/42/access_tokens",
-      body: {
-        repositories: ["widgets"],
-        permissions: { contents: "write", pull_requests: "write" },
-      },
+      body: { repositories: ["widgets"], permissions: { contents: "write" } },
     })
     // Both as the App, with the JWT.
     for (const request of [lookup, mint]) {
@@ -97,6 +94,32 @@ describe("installation tokens", () => {
         const first = yield* app.repoToken(repo)
         const again = yield* app.repoToken(repo)
         expect(Redacted.value(again.token)).not.toBe(Redacted.value(first.token))
+      }),
+    )
+    expect(github.mintCount).toBe(3)
+  })
+
+  test("for a Sandbox are minted for the Repo alone, with no permissions list", async () => {
+    const token = await withApp(Effect.flatMap(GitHubApp, (app) => app.sandboxToken(repo)))
+
+    expect(github.mintedTokens).toEqual([Redacted.value(token.token)])
+    expect(token.expiresAt).toBeGreaterThan(Date.now() + Duration.toMillis(Duration.minutes(59)))
+    const mint = github.requests.find((request) => request.path.endsWith("/access_tokens"))
+    // Without `permissions`, GitHub grants every permission the installation has.
+    expect(mint?.body).toEqual({ repositories: ["widgets"] })
+  })
+
+  test("for a Sandbox are fresh each time, and never the host's", async () => {
+    await withApp(
+      Effect.gen(function* () {
+        const app = yield* GitHubApp
+        const host = yield* app.repoToken(repo)
+        const first = yield* app.sandboxToken(repo)
+        const second = yield* app.sandboxToken(repo)
+        const values = [host, first, second].map((token) => Redacted.value(token.token))
+        expect(new Set(values).size).toBe(3)
+        // The host's cached token is still the one it had.
+        expect(Redacted.value((yield* app.repoToken(repo)).token)).toBe(Redacted.value(host.token))
       }),
     )
     expect(github.mintCount).toBe(3)
@@ -130,65 +153,6 @@ describe("the bot identity", () => {
   })
 })
 
-/** Opens a pull request from `head` into main. */
-const openFrom = (head: string) =>
-  Effect.flatMap(GitHubApp, (app) =>
-    app.openPullRequest({
-      repo,
-      head,
-      base: "main",
-      title: "Widgets",
-      body: "Body",
-      draft: true,
-    }),
-  )
-
-describe("pull requests", () => {
-  test("are opened from the Work branch, or the open one is returned", async () => {
-    const opened = await withApp(openFrom("claude/s-1"))
-    expect(opened).toEqual({
-      number: 1,
-      url: `https://github.test/${repo}/pull/1`,
-      existing: false,
-    })
-    expect(github.pulls.get(repo)).toEqual([
-      {
-        number: 1,
-        head: "claude/s-1",
-        base: "main",
-        title: "Widgets",
-        body: "Body",
-        draft: true,
-        html_url: opened.url,
-      },
-    ])
-    // With an installation token, not the JWT.
-    const create = github.requests.find((r) => r.method === "POST" && r.path.endsWith("/pulls"))
-    expect(github.mintedTokens).toContain(create?.authorization?.replace(/^Bearer /, "") ?? "")
-
-    expect(await withApp(openFrom("claude/s-1"))).toEqual({ ...opened, existing: true })
-    expect(github.pulls.get(repo)).toHaveLength(1)
-  })
-
-  test("pass on GitHub's reason when it refuses", async () => {
-    const error = await withApp(Effect.flip(openFrom("main")))
-    expect(error.message).toBe(
-      "Could not open the pull request: GitHub answered 422: Validation Failed; No commits between main and main",
-    )
-  })
-
-  test("are reviewed with the event asked for", async () => {
-    await withApp(openFrom("claude/s-1"))
-    const url = await withApp(
-      Effect.flatMap(GitHubApp, (app) =>
-        app.reviewPullRequest({ repo, number: 1, body: "Looks good", event: "APPROVE" }),
-      ),
-    )
-    expect(url).toBe(`https://github.test/${repo}/pull/1#pullrequestreview-1`)
-    expect(github.reviews).toEqual([{ repo, number: 1, body: "Looks good", event: "APPROVE" }])
-  })
-})
-
 describe("without the App configured", () => {
   test("every call fails, saying what to set", async () => {
     const error = await Effect.runPromise(
@@ -197,6 +161,21 @@ describe("without the App configured", () => {
       ),
     )
     expect(error.message).toContain("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH")
+    const sandbox = await Effect.runPromise(
+      Effect.flip(Effect.flatMap(GitHubApp, (app) => app.sandboxToken(repo))).pipe(
+        Effect.provide(GitHubApp.layer.pipe(Layer.provide(HubConfig.layerFrom(baseConfig)))),
+      ),
+    )
+    expect(sandbox.message).toContain("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH")
+  })
+
+  test("has no pull request calls: gh in the Sandbox makes those (#73)", () => {
+    expect(Object.keys(GitHubApp.unconfigured).toSorted()).toEqual([
+      "botIdentity",
+      "isConfigured",
+      "repoToken",
+      "sandboxToken",
+    ])
   })
 })
 
@@ -207,7 +186,7 @@ const configError = (input: Partial<typeof appConfig>) =>
 describe("HubConfig", () => {
   test("needs both the App id and its key", async () => {
     expect((await configError({ githubAppId: Option.none() })).message).toBe(
-      "The git tools need both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH; only one is set.",
+      "The GitHub App needs both GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH; only one is set.",
     )
     expect((await configError({ githubAppPrivateKey: Option.none() })).message).toContain(
       "only one",

@@ -217,6 +217,13 @@ const migrations = SqliteMigrator.fromRecord({
     `
     yield* sql`CREATE INDEX retired_values_repo ON retired_values (repo)`
   }),
+
+  // The git tools are gone (#73, ADR 0010), and with them the Co-authored-by trailers 0004 kept
+  // the prompters for.
+  "0008_drop_session_prompters": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`DROP TABLE session_prompters`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
