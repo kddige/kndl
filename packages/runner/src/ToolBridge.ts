@@ -7,9 +7,11 @@
 // `POST /git/call` for the mod's git tools, which run on the host (the protocol's Git.ts).
 //
 // The server in the Sandbox runs with no Claude credentials and no host configuration: it gets
-// the Sandbox's own environment, the Environment's variables (ADR 0009) and the few variables
-// below, nothing of the Runner's. The variables are passed to the server's process alone, so the
-// commands it runs inherit them while the VM's stored settings never hold them.
+// the Sandbox's own environment, its login shell's environment and the Environment's variables
+// (ADR 0009, #67) and the few variables below, nothing of the Runner's. They are passed to the
+// server's process alone, so the commands it runs inherit them while the VM's stored settings
+// never hold them. Claude Code's Bash tool sources ~/.bashrc for its functions and aliases, but
+// takes PATH from the server's own environment, so the login environment's PATH must be there.
 
 import { chmod, rm } from "node:fs/promises"
 import type { SessionId } from "@claude-hub/protocol"
@@ -36,8 +38,9 @@ export interface ToolEngineOptions {
    */
   readonly workspaceAlias?: string
   /**
-   * More environment for the server and every command it runs, such as the Environment's
-   * variables, read each time the server starts. A failure keeps it down until the next try.
+   * More environment for the server and every command it runs, such as the Sandbox's login
+   * environment and the Environment's variables, read each time the server starts. A failure
+   * keeps it down until the next try.
    */
   readonly env?: Effect.Effect<Readonly<Record<string, string>>, ToolBridgeError>
   /** How long a call waits for the server to come up. */

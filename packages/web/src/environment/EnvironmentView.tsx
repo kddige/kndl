@@ -522,7 +522,7 @@ function EnvironmentEditor({
       >
         <Field
           label="Image"
-          description="Any OCI image, such as debian:bookworm-slim."
+          description="Any OCI image, such as buildpack-deps:bookworm."
           invalid={problems.image !== undefined}
           error={problems.image}
         >

@@ -419,9 +419,12 @@ export type TestBuildFinished = typeof TestBuildFinished.Type
 
 // ── Defaults and rules ─────────────────────────────────────────────────────
 
-/** The recipe a new Environment starts from: Debian, nothing installed, no variables. */
+/**
+ * The recipe a new Environment starts from: Debian with the usual build tools (curl, wget, git,
+ * ssh, gcc, make and common `-dev` libraries), nothing else installed, no variables.
+ */
 export const DefaultEnvironmentDraft: EnvironmentDraft = {
-  image: "debian:bookworm-slim",
+  image: "buildpack-deps:bookworm",
   bootstrapScript: "",
   docker: false,
   dependencyFolders: [
@@ -513,7 +516,7 @@ export function environmentDraftProblems(draft: EnvironmentDraft): ReadonlyArray
   const problems: Array<string> = []
   const { image } = draft
   if (image.length > 256 || !/^[A-Za-z0-9][A-Za-z0-9._\-/:@]*$/.test(image)) {
-    problems.push(`"${draft.image}" is not an image reference, such as debian:bookworm-slim.`)
+    problems.push(`"${draft.image}" is not an image reference, such as buildpack-deps:bookworm.`)
   }
   if (draft.bootstrapScript.length > MaxScriptLength) {
     problems.push(`The bootstrap script is over ${MaxScriptLength} characters.`)

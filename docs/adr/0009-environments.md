@@ -8,7 +8,7 @@ Each Repo has exactly one Environment: the recipe its Sandboxes are built from. 
 
 An Environment holds:
 
-- **Image:** any OCI image. Debian is the default.
+- **Image:** any OCI image. Debian with the usual build tools (`buildpack-deps:bookworm`) is the default.
 - **Bootstrap script:** installs tools without the Workspace. It runs once per version on each Runner, and the disk is snapshotted, so Sessions boot from the snapshot instead of installing on every boot.
 - **Start script (optional):** runs in each new Sandbox with the Workspace present.
 - **Docker toggle:** the Runner installs Docker into the build, starts it on its own disk in each Sandbox, and stops its containers before sleep.
@@ -26,6 +26,12 @@ A Variable is Plain or Sensitive.
 - **Who manages them:** any signed-in user can, since there are no roles yet. This is a known gap.
 
 A Runner keeps values in memory only. It fetches them from the Hub and passes them in the environment of each process it starts in the Sandbox: the tool bridge, the start script, and the bootstrap. It never sets them on the VM, because microsandbox stores VM-level env in plaintext in its database and keeps it after the Sandbox is removed (#46). microsandbox also writes every exec's output to the Sandbox's `logs/exec.log`. The Runner links that file to `/dev/null` before the first exec, so command output that prints a value never lands on its disk.
+
+## The login environment
+
+Every process the Runner starts in a Sandbox gets the environment a login shell there ends with, as a terminal on the person's own machine would (#67). Tool installers such as mise, rustup and nvm put themselves on `PATH` through `~/.bashrc` and `~/.profile`, and nothing the Runner starts reads those on its own. Claude Code's Bash tool does source `~/.bashrc`, for functions and aliases, but sets `PATH` back to its own process's.
+
+So the build runs one interactive login shell (`bash -lic`, else `sh -lc`) after the bootstrap, the way VS Code dev containers' `userEnvProbe` does, and keeps its final environment in the build. Each new Sandbox probes again in the Workspace after its start script. The start script and the tool bridge get that environment with the Variables over it. The probe runs with no Variable in its environment and drops any entry named as one, so it holds no value.
 
 A value the bootstrap writes to a file ends up in the build's snapshot on the Runner's disk, and a value written inside a Sandbox stays in its disks. Both are up to the Environment's author.
 
