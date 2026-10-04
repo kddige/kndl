@@ -762,6 +762,7 @@ describe("Environments", () => {
       _tag: "Sensitive",
       name: "GH_READ_TOKEN",
       linkedBy: [{ repo: repo as never, name: "GITHUB_TOKEN", availableAtBuild: false }],
+      needsValue: false,
     })
     const added = await client.setSharedVariable({
       _tag: "Sensitive",
@@ -772,6 +773,7 @@ describe("Environments", () => {
       _tag: "Sensitive",
       name: "API_KEY",
       linkedBy: [],
+      needsValue: false,
     })
     expect(JSON.stringify(client.getState().sharedVariables)).not.toContain("made-up")
     // Saved again without a value, it keeps the one it has.

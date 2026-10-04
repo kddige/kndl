@@ -37,7 +37,9 @@ import {
   type SharedVariableInput,
   type TestBuildId,
   type TestBuildResult,
+  type ValueNeeded,
   type VariableValue,
+  valuesNeededText,
   variableNameProblem,
 } from "@claude-hub/protocol"
 import { Clock, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
@@ -108,30 +110,6 @@ interface SharedRow {
   readonly kind: "Plain" | "Sensitive"
   /** The plain value, a Sensitive one's ciphertext, or null when a Sensitive one needs a value. */
   readonly value: string | null
-}
-
-/** A variable of an Environment that needs a value: its own, or the shared variable it links. */
-export interface ValueNeeded {
-  readonly name: string
-  readonly availableAtBuild: boolean
-  /** The shared variable it links, which needs the value; none for its own. */
-  readonly sharedVariable?: string
-}
-
-/** Names the variables that need a value, as a refusal or a failed start says it. */
-export function valuesNeededText(needed: ReadonlyArray<ValueNeeded>): string {
-  const names = needed.map((variable) =>
-    variable.sharedVariable === undefined
-      ? variable.name
-      : variable.sharedVariable === variable.name
-        ? `${variable.name} (shared)`
-        : `${variable.name} (the shared variable ${variable.sharedVariable})`,
-  )
-  const listed =
-    names.length <= 1
-      ? (names[0] ?? "")
-      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
-  return `${listed} ${names.length === 1 ? "needs a value" : "need values"}`
 }
 
 /** Why the Repo's Sessions don't start while variables need a value, and where to enter them. */

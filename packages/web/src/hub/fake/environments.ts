@@ -8,6 +8,7 @@ import {
   type SharedVariableInput,
   variableNameProblem,
   sensitiveValueProblem,
+  valuesNeededText,
 } from "@claude-hub/protocol"
 import { Redacted } from "effect"
 import { bob, you } from "./script.ts"
@@ -28,7 +29,8 @@ interface FakeEnvironment {
 
 interface FakeShared {
   readonly kind: "Plain" | "Sensitive"
-  readonly value: string
+  /** Null when a Sensitive one needs a value (#57). */
+  readonly value: string | null
 }
 
 /** A draft the fake would build: its digest, and whether it changes the build. */
@@ -68,7 +70,7 @@ export class FakeEnvironments {
         resources: { cpus: 4, memoryMib: 8192 },
         variables: [
           { _tag: "Plain", name: "NODE_ENV", value: "development" },
-          { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true },
+          { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true, needsValue: false },
           {
             _tag: "Link",
             name: "GITHUB_TOKEN",
@@ -116,8 +118,13 @@ export class FakeEnvironments {
             variable.value === undefined
               ? current?.sensitive.get(variable.name)
               : Redacted.value(variable.value)
-          if (value === undefined)
-            return `${variable.name} has no saved Sensitive value: enter one.`
+          if (value === undefined) {
+            return current?.environment.variables.some(
+              (saved) => saved._tag === "Sensitive" && saved.name === variable.name,
+            )
+              ? `${valuesNeededText([variable])}: enter one.`
+              : `${variable.name} has no saved Sensitive value: enter one.`
+          }
           if (variable.availableAtBuild) atBuild.push([variable.name, value])
           break
         }
@@ -126,18 +133,26 @@ export class FakeEnvironments {
           if (!shared) {
             return `There is no shared variable ${variable.sharedVariable} to link as ${variable.name}.`
           }
+          if (shared.value === null) {
+            return `${valuesNeededText([variable])}: set it on the Shared variables screen.`
+          }
           if (variable.availableAtBuild) atBuild.push([variable.name, shared.value])
           break
         }
       }
     }
     const digest = buildDigest(draft, atBuild)
+    // A value entered for one that needs it restores it, as on the Hub: no Test build for that.
     const changesBuild =
-      !current || buildDigest(current.environment, this.#atBuild(current)) !== digest
+      !current ||
+      buildDigest(current.environment, this.#atBuild(current, new Map(atBuild))) !== digest
     return { digest, changesBuild }
   }
 
-  #atBuild(current: FakeEnvironment): Array<[string, string]> {
+  #atBuild(
+    current: FakeEnvironment,
+    restored: ReadonlyMap<string, string>,
+  ): Array<[string, string]> {
     const atBuild: Array<[string, string]> = []
     for (const variable of current.environment.variables) {
       switch (variable._tag) {
@@ -146,7 +161,10 @@ export class FakeEnvironments {
           break
         case "Sensitive":
           if (variable.availableAtBuild) {
-            atBuild.push([variable.name, current.sensitive.get(variable.name) ?? ""])
+            const value = variable.needsValue
+              ? restored.get(variable.name)
+              : current.sensitive.get(variable.name)
+            atBuild.push([variable.name, value ?? ""])
           }
           break
         case "Link":
@@ -157,6 +175,26 @@ export class FakeEnvironments {
       }
     }
     return atBuild
+  }
+
+  /**
+   * What `secrets-reset` does on the Hub (#57): every Sensitive value, own or shared, is cleared
+   * and needs a value again; the variables and links stay.
+   */
+  resetSecrets(): void {
+    for (const found of this.#environments.values()) {
+      found.sensitive.clear()
+      found.environment = {
+        ...found.environment,
+        variables: found.environment.variables.map((variable) =>
+          variable._tag === "Sensitive" ? { ...variable, needsValue: true } : variable,
+        ),
+      }
+    }
+    for (const [name, shared] of this.#shared) {
+      if (shared.kind === "Sensitive") this.#shared.set(name, { kind: "Sensitive", value: null })
+    }
+    this.#passed.clear()
   }
 
   testBuildPassed(repo: string, digest: string): boolean {
@@ -212,6 +250,7 @@ export class FakeEnvironments {
                 _tag: "Sensitive" as const,
                 name: variable.name,
                 availableAtBuild: variable.availableAtBuild,
+                needsValue: false,
               }
             : { ...variable },
         ),
@@ -240,8 +279,8 @@ export class FakeEnvironments {
             })),
         )
         return shared.kind === "Plain"
-          ? { _tag: "Plain" as const, name, value: shared.value, linkedBy }
-          : { _tag: "Sensitive" as const, name, linkedBy }
+          ? { _tag: "Plain" as const, name, value: shared.value ?? "", linkedBy }
+          : { _tag: "Sensitive" as const, name, linkedBy, needsValue: shared.value === null }
       })
   }
 
@@ -256,6 +295,9 @@ export class FakeEnvironments {
     if (variable.value === undefined) {
       const kept = this.#shared.get(name)
       if (kept?.kind !== "Sensitive") return `${name} has no saved Sensitive value: enter one.`
+      if (kept.value === null) {
+        return `${valuesNeededText([{ name, availableAtBuild: false }])}: enter one.`
+      }
       return undefined
     }
     const value = Redacted.value(variable.value)

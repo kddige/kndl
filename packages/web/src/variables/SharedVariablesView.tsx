@@ -1,12 +1,14 @@
 // The Hub-wide shared variables (ADR 0009): one value, such as an API key, that many Environments
 // link under a name of their own. Listed with who links each; added, edited and deleted here.
-// Saved Sensitive values are never sent to the browser, so they can only be replaced.
+// Saved Sensitive values are never sent to the browser, so they can only be replaced. One whose
+// value `secrets-reset` cleared (#57) needs a value, said at the top and on its row.
 
 import {
   MaxVariableValueLength,
   type SharedVariable,
   type SharedVariableInput,
   sensitiveValueProblem,
+  valuesNeededText,
   variableNameProblem,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
@@ -15,8 +17,10 @@ import { Redacted } from "effect"
 import { type FormEvent, useEffect, useState } from "react"
 import { repoParams } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
+import { needsValue } from "../environment/draft.ts"
 import {
   Badge,
+  Banner,
   Button,
   Dialog,
   DialogClose,
@@ -120,6 +124,7 @@ export function SharedVariablesView() {
   }, [hub, online])
 
   const sorted = variables?.toSorted((a, b) => a.name.localeCompare(b.name)) ?? null
+  const needed = (sorted ?? []).filter(needsValue)
   return (
     <main {...stylex.props(styles.view)}>
       <PageHeader
@@ -133,6 +138,20 @@ export function SharedVariablesView() {
       />
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.page)}>
+          {needed.length > 0 && (
+            <Banner
+              intent="danger"
+              icon={<WarningIcon />}
+              title={valuesNeededText(
+                needed.map((variable) => ({ name: variable.name, availableAtBuild: false })),
+              )}
+            >
+              The Hub's secrets key was replaced, and the values it encrypted were cleared. The
+              Sessions of each Repo that links {needed.length === 1 ? "it" : "one"} don't start
+              until {needed.length === 1 ? "it gets" : "each gets"} a value again: edit{" "}
+              {needed.length === 1 ? "it" : "each"} to enter one.
+            </Banner>
+          )}
           {sorted === null ? (
             loadError ? (
               <EmptyState
@@ -198,7 +217,11 @@ function VariableRow({
           {variable._tag === "Sensitive" ? (
             <>
               <Badge intent="warning">Sensitive</Badge>
-              <Badge intent="success">set</Badge>
+              {variable.needsValue ? (
+                <Badge intent="danger">needs a value</Badge>
+              ) : (
+                <Badge intent="success">set</Badge>
+              )}
             </>
           ) : (
             <Badge>Plain</Badge>
@@ -239,8 +262,13 @@ function VariableRow({
         </div>
       </div>
       <div {...stylex.props(styles.actions)}>
-        <Button size="sm" aria-label={`Edit ${variable.name}`} onClick={onEdit}>
-          Edit
+        <Button
+          size="sm"
+          {...(needsValue(variable) && { intent: "primary" })}
+          aria-label={`Edit ${variable.name}`}
+          onClick={onEdit}
+        >
+          {needsValue(variable) ? "Enter value" : "Edit"}
         </Button>
         <Button size="sm" intent="ghost" aria-label={`Delete ${variable.name}`} onClick={onDelete}>
           Delete
@@ -286,8 +314,10 @@ function EditDialog({
   }, [editing, saved])
 
   const trimmed = name.trim()
-  // A Sensitive value saved before can be kept: it's left blank.
-  const keepsSensitive = saved?._tag === "Sensitive" && kind === "Sensitive" && value === ""
+  // A Sensitive value saved before can be kept: it's left blank. One that was cleared can't.
+  const savedValue = saved?._tag === "Sensitive" && kind === "Sensitive"
+  const cleared = savedValue && needsValue(saved)
+  const keepsSensitive = savedValue && !cleared && value === ""
   const nameProblem = !adding
     ? undefined
     : trimmed === ""
@@ -396,9 +426,12 @@ function EditDialog({
           label={
             <span>
               Value{" "}
-              {saved?._tag === "Sensitive" && kind === "Sensitive" && (
-                <Badge intent="success">set</Badge>
-              )}
+              {savedValue &&
+                (cleared ? (
+                  <Badge intent="danger">needs a value</Badge>
+                ) : (
+                  <Badge intent="success">set</Badge>
+                ))}
             </span>
           }
           invalid={touched && valueProblem !== undefined}
@@ -410,7 +443,7 @@ function EditDialog({
             autoComplete="off"
             onValueChange={(next: string) => setValue(next)}
             placeholder={
-              saved?._tag === "Sensitive" && kind === "Sensitive" ? "Saved: type to replace it" : ""
+              cleared ? "Cleared: enter it again" : savedValue ? "Saved: type to replace it" : ""
             }
             spellCheck={false}
             autoCapitalize="off"

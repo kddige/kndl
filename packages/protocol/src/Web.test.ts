@@ -25,7 +25,6 @@ const sessionEvents = [
     _tag: "SessionStateChanged",
     state: "Asleep",
     message: "Claude Code could not start: API_KEY needs a value",
-    valuesNeeded: ["API_KEY"],
   },
   { _tag: "TurnStopRequested", by: alice },
   { _tag: "WipNotPushed", message: "git push exited with 128: could not read from remote" },

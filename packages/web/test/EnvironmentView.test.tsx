@@ -42,8 +42,13 @@ function typeInto(field: HTMLInputElement, value: string): void {
   field.dispatchEvent(new Event("input", { bubbles: true }))
 }
 
-async function open(path: string, stepMs = 2) {
+async function open(
+  path: string,
+  stepMs = 2,
+  before?: (hub: InstanceType<typeof FakeHub>) => void,
+) {
   const hub = new FakeHub({ stepMs })
+  before?.(hub)
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }))
   const view = await render(
@@ -195,4 +200,58 @@ test("shared variables: linked ones show who links them, and can't be deleted", 
       "GH_READ_TOKEN is linked in kddige/claude-hub",
     ),
   )
+})
+
+const dialog = () => document.querySelector('[role="dialog"]') as HTMLElement
+
+/** The "needs a value" badges in `within`. */
+const needsValueBadges = (within: ParentNode) =>
+  [...within.querySelectorAll("span")].filter((span) => span.textContent === "needs a value")
+
+test("after a secrets-reset, the Environment asks for the cleared values again", async () => {
+  const { page, section, status } = await open("/repos/kddige/claude-hub/environment", 2, (hub) =>
+    hub.environments.resetSecrets(),
+  )
+  await eventually(() =>
+    expect(page.textContent).toContain(
+      "kddige/claude-hub's Sessions can't start: NPM_TOKEN and GITHUB_TOKEN (the shared variable GH_READ_TOKEN) need values",
+    ),
+  )
+  await eventually(() => expect(needsValueBadges(section("Variables"))).toHaveLength(2))
+  expect(section("Variables").textContent).toContain("NPM_TOKEN needs a value: enter one.")
+  expect(section("Variables").textContent).toContain(
+    "GITHUB_TOKEN (the shared variable GH_READ_TOKEN) needs a value: set it on the Shared variables screen.",
+  )
+  const banner = [...page.querySelectorAll('[role="status"]')].find((shown) =>
+    shown.textContent?.includes("Sessions can't start"),
+  )
+  expect(banner?.querySelector('a[href="/variables"]')?.textContent).toBe("Shared variables")
+
+  // Entering one clears it on its row; the link's waits for the shared variable.
+  const sensitive = section("Variables").querySelector('input[type="password"]')
+  expect(sensitive?.getAttribute("placeholder")).toBe("Cleared: enter it again")
+  await step(() => typeInto(sensitive as HTMLInputElement, "made-up-new-npm-token"))
+  expect(needsValueBadges(section("Variables"))).toHaveLength(1)
+  expect(section("Variables").textContent).not.toContain("NPM_TOKEN needs a value")
+  expect(status()).not.toContain("No changes to apply.")
+})
+
+test("after a secrets-reset, a shared variable asks for its value, and entering it clears that", async () => {
+  const { page } = await open("/variables", 2, (hub) => hub.environments.resetSecrets())
+  await eventually(() => expect(page.textContent).toContain("GH_READ_TOKEN needs a value"))
+  const row = () => page.querySelector('li[aria-label="GH_READ_TOKEN"]')
+  expect(needsValueBadges(row() as Element)).toHaveLength(1)
+
+  await step(() => button("Edit GH_READ_TOKEN").click())
+  await eventually(() => expect(dialog()).not.toBeNull())
+  const value = dialog().querySelector('input[type="password"]') as HTMLInputElement
+  expect(value.getAttribute("placeholder")).toBe("Cleared: enter it again")
+  // Kept blank, it is refused: there is nothing to keep.
+  await step(() => button("Save", dialog()).click())
+  expect(dialog().textContent).toContain("under 4 characters")
+  await step(() => typeInto(value, "made-up-new-gh-token"))
+  await step(() => button("Save", dialog()).click())
+  await eventually(() => expect(row()?.textContent).toContain("set"))
+  expect(needsValueBadges(row() as Element)).toHaveLength(0)
+  expect(page.textContent).not.toContain("GH_READ_TOKEN needs a value")
 })

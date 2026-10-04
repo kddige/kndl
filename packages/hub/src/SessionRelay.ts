@@ -826,7 +826,6 @@ export class SessionRelay extends Context.Service<
               state: "Asleep",
               ...why,
               message: `Claude Code could not start: ${cantStartText(session.repo, needed)}`,
-              valuesNeeded: needed.map((variable) => variable.name),
             }),
           )
           return yield* sessionUpdated(session.id)

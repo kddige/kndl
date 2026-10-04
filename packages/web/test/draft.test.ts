@@ -6,6 +6,7 @@ import {
   EnvironmentVersion,
   RepoName,
   type SharedVariable,
+  valuesNeededText,
 } from "@claude-hub/protocol"
 import { Redacted } from "effect"
 import {
@@ -20,6 +21,7 @@ import {
   parseEdit,
   storeEdit,
   toDraft,
+  valuesNeeded,
 } from "../src/environment/draft.ts"
 
 // A made-up secret, never a real one.
@@ -36,13 +38,13 @@ const saved: Environment = {
   resources: { cpus: 2, memoryMib: 4096 },
   variables: [
     { _tag: "Plain", name: "NODE_ENV", value: "development" },
-    { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true },
+    { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true, needsValue: false },
     { _tag: "Link", name: "GITHUB_TOKEN", sharedVariable: "GH_TOKEN", availableAtBuild: false },
   ],
 }
 
 const shared: ReadonlyArray<SharedVariable> = [
-  { _tag: "Sensitive", name: "GH_TOKEN", linkedBy: [] },
+  { _tag: "Sensitive", name: "GH_TOKEN", linkedBy: [], needsValue: false },
 ]
 
 const withVariable = (edit: EnvironmentEdit, change: Partial<EnvironmentEdit["variables"][0]>) => ({
@@ -155,6 +157,38 @@ describe("problems", () => {
       sharedVariable: "SENTRY_DSN",
     })
     expect(problemsOf(gone).all).toContain("There is no shared variable SENTRY_DSN to link as DSN.")
+  })
+
+  test("a value that needs entering again, after secrets-reset, in the Hub's words", () => {
+    const reset: Environment = {
+      ...saved,
+      variables: saved.variables.map((variable) =>
+        variable._tag === "Sensitive" ? { ...variable, needsValue: true } : variable,
+      ),
+    }
+    const resetShared: ReadonlyArray<SharedVariable> = [
+      { _tag: "Sensitive", name: "GH_TOKEN", linkedBy: [], needsValue: true },
+    ]
+    const after = { environment: reset, sharedVariables: resetShared }
+    expect(valuesNeededText(valuesNeeded(after))).toBe(
+      "NPM_TOKEN and GITHUB_TOKEN (the shared variable GH_TOKEN) need values",
+    )
+    const edit = editFrom(reset)
+    const [, npm, link] = edit.variables
+    const problems = draftProblems(edit, after)
+    expect(problems.variables[npm?.key ?? ""]).toBe("NPM_TOKEN needs a value: enter one.")
+    expect(problems.variables[link?.key ?? ""]).toBe(
+      "GITHUB_TOKEN (the shared variable GH_TOKEN) needs a value: set it on the Shared variables screen.",
+    )
+    // Entering one clears it.
+    const entered = {
+      ...edit,
+      variables: edit.variables.map((variable) =>
+        variable.kind === "Sensitive" ? { ...variable, value: secret } : variable,
+      ),
+    }
+    expect(draftProblems(entered, after).variables[npm?.key ?? ""]).toBeUndefined()
+    expect(valuesNeeded({ environment: saved, sharedVariables: shared })).toEqual([])
   })
 
   test("a reserved or unnamed variable", () => {

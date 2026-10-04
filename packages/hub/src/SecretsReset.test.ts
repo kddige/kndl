@@ -77,7 +77,7 @@ async function scene(hub: TestHub) {
   const issued = await issueRunnerToken(hub)
   const runner = await openRunner(hub, issued.token)
   const web = await openWeb(hub, "alice")
-  const request = async (message: Record<string, unknown>) => {
+  const request = async (message: { readonly _tag: string } & Record<string, unknown>) => {
     const requestId = nextRequest()
     web.send({ ...message, requestId })
     return answer(web, requestId)
@@ -293,7 +293,6 @@ describe("secrets-reset", () => {
     expect(failed.entry.event).toMatchObject({
       state: "Asleep",
       message: `Claude Code could not start: ${cantStart}`,
-      valuesNeeded: ["NPM_TOKEN", "API_KEY", "GH_TOKEN", "SIGNING_KEY"],
     })
     expect(await runner.untaken("StartSession")).toEqual([])
     expect(

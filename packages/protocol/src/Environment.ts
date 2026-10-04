@@ -491,6 +491,33 @@ export function sensitiveValueProblem(name: string, value: string): string | und
   return undefined
 }
 
+/** A variable of an Environment that needs a value: its own, or the shared variable it links. */
+export interface ValueNeeded {
+  readonly name: string
+  readonly availableAtBuild: boolean
+  /** The shared variable it links, which needs the value; none for its own. */
+  readonly sharedVariable?: string
+}
+
+/**
+ * Names the variables that need a value (#57), as the Hub's refusals and a failed Session start say
+ * it, and the Environment screen with them.
+ */
+export function valuesNeededText(needed: ReadonlyArray<ValueNeeded>): string {
+  const names = needed.map((variable) =>
+    variable.sharedVariable === undefined
+      ? variable.name
+      : variable.sharedVariable === variable.name
+        ? `${variable.name} (shared)`
+        : `${variable.name} (the shared variable ${variable.sharedVariable})`,
+  )
+  const listed =
+    names.length <= 1
+      ? (names[0] ?? "")
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+  return `${listed} ${names.length === 1 ? "needs a value" : "need values"}`
+}
+
 /** Why a dependency folder can't be used, or undefined when it can. */
 export function dependencyFolderProblem(folder: DependencyFolder): string | undefined {
   const { pattern, nextTo } = folder

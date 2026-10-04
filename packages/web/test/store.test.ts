@@ -409,7 +409,9 @@ describe("Environments", () => {
     docker: false,
     dependencyFolders: [],
     resources: { cpus: 2, memoryMib: 4096 },
-    variables: [{ _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true }],
+    variables: [
+      { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true, needsValue: false },
+    ],
   } as const
   const versions = [
     { version: 2, appliedBy: bob, appliedAt: 2_000, rebuilt: false },
@@ -448,7 +450,7 @@ describe("Environments", () => {
     const state = run(
       hub({
         _tag: "SharedVariables",
-        variables: [{ _tag: "Sensitive", name: "GH_TOKEN", linkedBy: [] }],
+        variables: [{ _tag: "Sensitive", name: "GH_TOKEN", linkedBy: [], needsValue: false }],
       }),
     )
     expect(state.sharedVariables?.map((variable) => variable.name)).toEqual(["GH_TOKEN"])
