@@ -486,6 +486,19 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       readOnly: true,
     }
 
+    /**
+     * Makes the Claude Code cache directory if it isn't there, as a Sandbox can't mount a missing
+     * host directory: an Environment's Sandbox mounts it before its build's libc, and so the
+     * download that would make it, is known (#69).
+     */
+    const claudeMountReady = Effect.tryPromise({
+      try: () => mkdir(options.claudeCacheDir, { recursive: true, mode: 0o700 }),
+      catch: (error) =>
+        new SandboxError({
+          message: `could not create ${options.claudeCacheDir}: ${errorMessage(error)}`,
+        }),
+    })
+
     /** A Sandbox on the Runner's default image, for a Repo without an Environment. */
     const startPlain = (sessionId: SessionId, directories: SessionDirectories, replace: boolean) =>
       Effect.gen(function* () {
@@ -507,6 +520,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
               image: options.image,
               workspaceHostPath: directories.workspace,
             })
+            yield* claudeMountReady
             yield* backend.create({ ...spec, mounts: [...spec.mounts, claudeMount] })
           } else {
             yield* backend.start(sessionId)
@@ -554,6 +568,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           libc = build.libc
           const resources = capResources(recipe.resources, options.limits)
           if (resources.note !== undefined) yield* note(sessionId, resources.note)
+          yield* claudeMountReady
           yield* snapshots.restore(
             environmentSpec({
               sessionId,

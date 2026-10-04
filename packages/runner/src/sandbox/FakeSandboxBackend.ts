@@ -11,12 +11,14 @@
 // Each fake works for one Runner, by its mark. Two fakes given the same `world` are two Runners
 // on one host, sharing one microsandbox.
 
+import { stat } from "node:fs/promises"
 import { posix } from "node:path"
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
 import { Context, Effect, Fiber, Layer, Option, Queue, Stream } from "effect"
 import type { Cause, Scope } from "effect"
 import { parseVolumeName, volumeName } from "./Naming.ts"
 import {
+  InvalidSandboxSpec,
   SandboxAlreadyExists,
   SandboxBackend,
   SandboxBackendError,
@@ -91,6 +93,11 @@ export interface FakeOptions {
    * reads stdin to the end and exits 0.
    */
   readonly onSpawn?: (call: FakeExecCall, io: FakeProcessIO) => Effect.Effect<number>
+  /**
+   * Refuses, as microsandbox does, to create or restore a Sandbox with a host mount whose path
+   * isn't a directory on the real disk. Off by default, so tests may mount made-up paths.
+   */
+  readonly checkHostPaths?: boolean
 }
 
 /** The mark of a fake's Runner, unless the test names one. */
@@ -166,6 +173,31 @@ export const makeFake = (options: FakeOptions = {}) => {
     world.volumes.set(name, files)
     return { files, key: `/${relative}` }
   }
+
+  const checkHostPaths = (spec: SandboxSpec) =>
+    Effect.forEach(
+      options.checkHostPaths === true ? spec.mounts : [],
+      (mount) =>
+        mount._tag !== "Host"
+          ? Effect.void
+          : Effect.flatMap(
+              Effect.promise(() =>
+                stat(mount.hostPath).then(
+                  (stats) => stats.isDirectory(),
+                  () => false,
+                ),
+              ),
+              (isDirectory) =>
+                isDirectory
+                  ? Effect.void
+                  : Effect.fail(
+                      new InvalidSandboxSpec({
+                        message: `host path ${mount.hostPath} is not a directory`,
+                      }),
+                    ),
+            ),
+      { discard: true },
+    )
 
   const boot = (spec: SandboxSpec, rootfs: Map<string, Uint8Array>, state: SandboxState) => {
     for (const volume of specVolumes(spec)) {
@@ -244,6 +276,7 @@ export const makeFake = (options: FakeOptions = {}) => {
         yield* checkSpec(spec)
         if (world.sandboxes.has(spec.sessionId))
           return yield* new SandboxAlreadyExists({ sessionId: spec.sessionId })
+        yield* checkHostPaths(spec)
         boot(spec, new Map(), "Running")
       }),
     start: (sessionId) =>
@@ -343,6 +376,7 @@ export const makeFake = (options: FakeOptions = {}) => {
               operation: "restore",
               message: `no snapshot ${reference}`,
             })
+          yield* checkHostPaths(spec)
           world.restores.push({ sessionId: spec.sessionId, reference })
           boot(spec, new Map(rootfs), "Running")
         }),
