@@ -92,6 +92,10 @@ _Avoid_: setup script, install script, Dockerfile
 The Environment's optional script that runs in each new Sandbox with the Workspace present.
 _Avoid_: init script, entrypoint, setup script
 
+**Login environment**:
+The environment a login shell in a Sandbox ends with, after its profile and `~/.bashrc` ran. The Build records it, and every process the Runner starts in the Sandbox gets it, under the Variables.
+_Avoid_: shell env, user env, dotfiles
+
 **Variable**:
 A named value an Environment passes to the processes in its Sandboxes. It is Plain, or Sensitive: write-only once saved, encrypted on the Hub and redacted from everything it stores or shows.
 _Avoid_: Repo secret, secret, env var, credential

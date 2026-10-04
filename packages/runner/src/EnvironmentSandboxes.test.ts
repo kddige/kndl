@@ -15,7 +15,15 @@ import type {
 } from "@claude-hub/protocol"
 import { EnvironmentVersion } from "@claude-hub/protocol"
 import { Effect, Layer, References, Schema } from "effect"
-import { buildGroup, buildName } from "./EnvironmentBuilds.ts"
+import {
+  buildGroup,
+  buildName,
+  loginEnvGuestPath,
+  loginEnvMarker,
+  loginEnvProbeScript,
+  parseLoginEnv,
+  scriptRunner,
+} from "./EnvironmentBuilds.ts"
 import { HubLink } from "./HubLink.ts"
 import { Sandboxes } from "./Sandbox.ts"
 import { dependencyDiskGuestPath } from "./sandbox/DependencyFolders.ts"
@@ -74,6 +82,33 @@ const scriptOf = (call: FakeExecCall) =>
 
 const isScript = (name: string) => (call: FakeExecCall) => scriptOf(call) === name
 
+/** Whether an exec is the login environment's probe. */
+const isProbe = (call: FakeExecCall) => call.request.args?.[1] === loginEnvProbeScript
+
+/** What the probe prints for a login shell that ends with `env`, after some noise of its own. */
+const probeReply = (env: Record<string, string>): FakeExecReply => ({
+  stdout: `welcome!\n${loginEnvMarker}${Object.entries(env)
+    .map(([name, value]) => `${name}=${value}\0`)
+    .join("")}${loginEnvMarker}`,
+})
+
+/**
+ * The login environment the fake's shells end with: mise's PATH, with the Workspace's own tools
+ * once in the Workspace, what the shell sets for itself, and a stale value for one of the
+ * Environment's variables, as a ~/.profile might set it.
+ */
+const loginEnvIn = (cwd: string | undefined): Record<string, string> => ({
+  PATH:
+    cwd === workspaceGuestPath
+      ? "/root/.local/share/mise/shims:/root/.local/bin:/workspace/bin:/usr/bin:/bin"
+      : "/root/.local/share/mise/shims:/root/.local/bin:/usr/bin:/bin",
+  HOME: "/root",
+  MISE_SHELL: "bash",
+  PWD: cwd ?? "/",
+  SHLVL: "2",
+  NPM_TOKEN: "from-profile",
+})
+
 interface Harness {
   readonly root: string
   readonly sent: Array<RunnerToHub>
@@ -122,7 +157,11 @@ const withEnvironments = async (
     onExec: (call) =>
       Effect.succeed(
         onExec?.(call) ??
-          (call.request.args?.includes(detectLibcScript) ? { stdout: "musl\n" } : {}),
+          (isProbe(call)
+            ? probeReply(loginEnvIn(call.request.cwd))
+            : call.request.args?.includes(detectLibcScript)
+              ? { stdout: "musl\n" }
+              : {}),
       ),
   })
   try {
@@ -208,9 +247,13 @@ describe("Sandboxes from an Environment", () => {
           NPM_TOKEN: "npm-made-up",
           API_KEY: "k-1",
         })
+        // Scripts run with bash -e where the image has bash.
+        expect(calls[start]?.request.args?.[1]).toBe(scriptRunner)
+        expect(scriptRunner).toContain('exec bash -e "$1"')
 
         // The build showed in the Session's terminal, and the Sandbox was reported running.
         expect(terminal(sent)).toContain("Running the bootstrap script...\r\n")
+        expect(terminal(sent)).toContain("Reading the login shell's environment...\r\n")
         expect(terminal(sent)).toContain("Running the start script...\r\n")
         expect(states(sent)).toEqual(["Starting", "Running"])
 
@@ -229,6 +272,103 @@ describe("Sandboxes from an Environment", () => {
       }),
     ))
 
+  test("the build keeps its login shell's environment, probed with no variable, for the start script", () =>
+    withEnvironments(({ root }) =>
+      Effect.gen(function* () {
+        const sandboxes = yield* Sandboxes
+        const world = yield* FakeSandboxBackend
+        yield* sandboxes.start(s1, yield* directoriesIn(root), {
+          repo,
+          environment: environment(1),
+        })
+
+        // The probe ran in the build's Sandbox after the bootstrap, in an interactive login
+        // shell, with nothing of the Runner's environment and no variable.
+        const build = world.execCalls.filter((call) => call.sessionId !== s1)
+        const probe = build.findIndex(isProbe)
+        expect(probe).toBeGreaterThan(build.findIndex(isScript("bootstrap")))
+        expect(build[probe]?.request.env).toBeUndefined()
+        expect(build[probe]?.request.cwd).toBe("/root")
+        expect(loginEnvProbeScript).toContain('bash -lic "$1"')
+
+        // The build keeps it, without what the shell sets for itself or a variable's name.
+        const [snapshot] = world.snapshots.values()
+        const kept = JSON.parse(
+          new TextDecoder().decode(snapshot?.get(loginEnvGuestPath) ?? new Uint8Array()),
+        )
+        expect(kept).toEqual({
+          PATH: "/root/.local/share/mise/shims:/root/.local/bin:/usr/bin:/bin",
+          HOME: "/root",
+          MISE_SHELL: "bash",
+        })
+
+        // The start script got it, under the variables.
+        const calls = world.execCalls.filter((call) => call.sessionId === s1)
+        const start = calls.findIndex(isScript("start"))
+        expect(calls[start]?.request.env).toMatchObject({
+          ...kept,
+          NPM_TOKEN: "npm-made-up",
+          API_KEY: "k-1",
+        })
+        // Then the Session's Sandbox was probed again in the Workspace.
+        const again = calls.findIndex(isProbe)
+        expect(again).toBeGreaterThan(start)
+        expect(calls[again]?.request.cwd).toBe(workspaceGuestPath)
+        expect(calls[again]?.request.env).toBeUndefined()
+      }),
+    ))
+
+  test("a build made before builds kept a login environment is probed before the start script", () =>
+    withEnvironments(({ root }) =>
+      Effect.gen(function* () {
+        const sandboxes = yield* Sandboxes
+        const world = yield* FakeSandboxBackend
+        yield* sandboxes.start(s1, yield* directoriesIn(root, s1), {
+          repo,
+          environment: environment(1),
+        })
+        for (const files of world.snapshots.values()) files.delete(loginEnvGuestPath)
+
+        yield* sandboxes.start(s2, yield* directoriesIn(root, s2), {
+          repo,
+          environment: environment(1),
+        })
+        const calls = world.execCalls.filter((call) => call.sessionId === s2)
+        const start = calls.findIndex(isScript("start"))
+        expect(calls.findIndex(isProbe)).toBeLessThan(start)
+        expect(calls[start]?.request.env).toMatchObject({
+          PATH: "/root/.local/share/mise/shims:/root/.local/bin:/usr/bin:/bin",
+          NPM_TOKEN: "npm-made-up",
+        })
+      }),
+    ))
+
+  test("a login shell that fails fails the build with the end of its output", () =>
+    withEnvironments(
+      ({ root }) =>
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes
+          const world = yield* FakeSandboxBackend
+          const error = yield* Effect.flip(
+            sandboxes.start(s1, yield* directoriesIn(root), {
+              repo,
+              environment: environment(1),
+            }),
+          )
+          expect(error.message).toContain(
+            "Reading the login shell's environment failed: it exited with 127",
+          )
+          expect(error.message).toContain("/root/.bashrc: line 3: mise: not found")
+          expect(world.snapshots.size).toBe(0)
+        }),
+      {
+        onExec: (call) =>
+          isProbe(call)
+            ? { exitCode: 127, stderr: "/root/.bashrc: line 3: mise: not found\n" }
+            : undefined,
+      },
+    ))
+
   test("the tool bridge's processes get the variables, and run the libc's Claude Code", () =>
     withEnvironments(
       ({ root }) =>
@@ -241,7 +381,13 @@ describe("Sandboxes from an Environment", () => {
           yield* waitFor(Effect.sync(() => world.spawnCalls.some((c) => c.sessionId === s1)))
           const serve = world.spawnCalls.find((call) => call.sessionId === s1)
           expect(serve?.request.command).toBe(sandboxClaudePath("2.1.287", "glibc"))
-          expect(serve?.request.env).toMatchObject({ NPM_TOKEN: "npm-made-up", API_KEY: "k-1" })
+          // The login environment probed in the Workspace, under the variables.
+          expect(serve?.request.env).toMatchObject({
+            PATH: "/root/.local/share/mise/shims:/root/.local/bin:/workspace/bin:/usr/bin:/bin",
+            MISE_SHELL: "bash",
+            NPM_TOKEN: "npm-made-up",
+            API_KEY: "k-1",
+          })
           expect(snapshotNames(world)).toEqual([`${buildGroup(repo)}/${buildName(1, "glibc")}`])
         }),
       {
@@ -543,4 +689,21 @@ describe("Test builds", () => {
             : undefined,
       },
     ))
+})
+
+describe("The login environment's probe output", () => {
+  test("takes only what is between the markers, and leaves out the shell's own entries", () => {
+    const output = `bash: no job control in this shell\n${loginEnvMarker}PATH=/a:/b\0EMPTY=\0EQ=a=b\0MULTI=one\ntwo\0PWD=/root\0SHLVL=1\0_=/usr/bin/cat\0BASH_FUNC_nvm%%=() {  echo\n}\0SECRET=x\0${loginEnvMarker}`
+    expect(parseLoginEnv(output, new Set(["SECRET"]))).toEqual({
+      PATH: "/a:/b",
+      EMPTY: "",
+      EQ: "a=b",
+      MULTI: "one\ntwo",
+    })
+  })
+
+  test("is nothing without both markers", () => {
+    expect(parseLoginEnv("PATH=/a\0")).toBeUndefined()
+    expect(parseLoginEnv(`${loginEnvMarker}PATH=/a\0`)).toBeUndefined()
+  })
 })

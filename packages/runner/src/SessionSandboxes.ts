@@ -7,7 +7,8 @@
 // Each new Sandbox then gets its dependency folders bound and runs the start script; each later
 // boot binds the folders again. A Sandbox of an older version is recreated at its next start,
 // keeping its volumes. The Environment's variables are fetched from the Hub, kept in memory, and
-// passed to each process the Runner starts in the Sandbox, never set on the VM.
+// passed to each process the Runner starts in the Sandbox, never set on the VM, over the login
+// environment its build kept, which each new Sandbox probes again after its start script (#67).
 //
 // The Session's directory holds `sandbox.json`, what its Sandbox was last built from, without
 // any value: the Environment version, the build it booted from and its libc, and the recipe.
@@ -33,8 +34,11 @@ import {
   buildName,
   capResources,
   parseBuildName,
+  probeLoginEnv,
+  readLoginEnv,
   runScript,
   testBuildGroup,
+  variableNames,
 } from "./EnvironmentBuilds.ts"
 import type { BuildLog, ResourceLimits } from "./EnvironmentBuilds.ts"
 import { cloneDefaultBranch } from "./HostGit.ts"
@@ -156,9 +160,16 @@ const failureMessage = (cause: Cause.Cause<unknown>) =>
 const buildEnv = (values: ReadonlyArray<VariableValue>) =>
   variablesEnv(values, (value) => value.availableAtBuild)
 
-/** The environment of each process the Runner starts in an Environment's Sandbox. */
-const processEnv = (values: ReadonlyArray<VariableValue>) => ({
+/**
+ * The environment of each process the Runner starts in an Environment's Sandbox: its login
+ * environment (EnvironmentBuilds.ts) over the cache settings, and the variables over both.
+ */
+const processEnv = (
+  login: Readonly<Record<string, string>>,
+  values: ReadonlyArray<VariableValue>,
+) => ({
   ...cacheEnv,
+  ...login,
   ...variablesEnv(values),
 })
 
@@ -301,10 +312,17 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
             workspaceAlias: directories.claude,
             ...(withEnvironment
               ? {
-                  env: sessionVariables(sessionId).pipe(
-                    Effect.map(processEnv),
-                    Effect.mapError((error) => new ToolBridgeError({ message: error.message })),
-                  ),
+                  env: Effect.all([
+                    readLoginEnv(backend, sessionId).pipe(
+                      Effect.map(Option.getOrElse(() => ({}))),
+                      Effect.mapError(
+                        (error) => new ToolBridgeError({ message: errorMessage(error) }),
+                      ),
+                    ),
+                    sessionVariables(sessionId).pipe(
+                      Effect.mapError((error) => new ToolBridgeError({ message: error.message })),
+                    ),
+                  ]).pipe(Effect.map(([login, values]) => processEnv(login, values))),
                 }
               : {}),
             ...options.bridge,
@@ -321,6 +339,46 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           Effect.onError(() => Scope.close(scope, Exit.void)),
         )
         bridges.set(sessionId, scope)
+      })
+
+    /**
+     * Readies a new Sandbox once its folders are bound: runs the start script, if the recipe has
+     * one, in the Workspace with the build's login environment and the variables, then probes the
+     * login environment again there, so the tool bridge also gets what the start script set up.
+     */
+    const runStart = (
+      sessionId: SessionId,
+      recipe: SessionEnvironment["recipe"],
+      values: ReadonlyArray<VariableValue>,
+      log: BuildLog,
+    ) =>
+      Effect.gen(function* () {
+        const exclude = variableNames(recipe)
+        if (recipe.startScript !== undefined && recipe.startScript.trim() !== "") {
+          // A build made before builds kept a login environment is probed now.
+          const login = yield* readLoginEnv(backend, sessionId).pipe(
+            Effect.flatMap(
+              Option.match({
+                onSome: Effect.succeed,
+                onNone: () => probeLoginEnv(backend, sessionId, { cwd: "/root", exclude }),
+              }),
+            ),
+          )
+          yield* log("Running the start script...\n")
+          yield* runScript(
+            backend,
+            sessionId,
+            {
+              label: "The start script",
+              name: "start",
+              script: recipe.startScript,
+              env: processEnv(login, values),
+              cwd: workspaceGuestPath,
+            },
+            log,
+          )
+        }
+        yield* probeLoginEnv(backend, sessionId, { cwd: workspaceGuestPath, exclude })
       })
 
     /** Binds the dependency folders found in the Workspace on the host from the Sandbox's disk. */
@@ -515,21 +573,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         yield* report(sessionId, "Running")
         yield* bindDependencyFolders(sessionId, directories.workspace, recipe)
         if (state === "Destroyed") {
-          if (recipe.startScript !== undefined && recipe.startScript.trim() !== "") {
-            yield* log("Running the start script...\n")
-            yield* runScript(
-              backend,
-              sessionId,
-              {
-                label: "The start script",
-                name: "start",
-                script: recipe.startScript,
-                env: processEnv(values),
-                cwd: workspaceGuestPath,
-              },
-              log,
-            )
-          }
+          yield* runStart(sessionId, recipe, values, log)
           yield* writeRecord(directories, {
             repo,
             version: environment.version,
@@ -659,21 +703,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
             reference,
           )
           yield* bindDependencyFolders(sessionId, workspace, recipe)
-          if (recipe.startScript !== undefined && recipe.startScript.trim() !== "") {
-            yield* log("Running the start script...\n")
-            yield* runScript(
-              backend,
-              sessionId,
-              {
-                label: "The start script",
-                name: "start",
-                script: recipe.startScript,
-                env: processEnv(values),
-                cwd: workspaceGuestPath,
-              },
-              log,
-            )
-          }
+          yield* runStart(sessionId, recipe, values, log)
           yield* log("The Test build passed.\n")
         }).pipe(
           Effect.ensuring(

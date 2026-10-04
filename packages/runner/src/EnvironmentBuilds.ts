@@ -1,5 +1,6 @@
 // An Environment's builds on this Runner (ADR 0009): the bootstrap run on the Environment's image,
-// without the Workspace, then the disk snapshotted. Sessions boot from the snapshot.
+// without the Workspace, and the login shell's environment read and kept (#67, below), then the
+// disk snapshotted. Sessions boot from the snapshot.
 //
 // Builds are keyed by the Environment's build version, the version that last changed the build,
 // and kept in one snapshot group per Repo. Each is named `b<build version>-<libc>`, recording which
@@ -11,7 +12,8 @@
 
 import { createHash } from "node:crypto"
 import type { EnvironmentRecipe, EnvironmentResources, SessionId } from "@claude-hub/protocol"
-import { Data, Effect, Stream } from "effect"
+import { Data, Duration, Effect, Schema, Stream } from "effect"
+import type { Option } from "effect"
 import type { SandboxBackendShape, SandboxError } from "./sandbox/SandboxBackend.ts"
 import type { Libc } from "./sandbox/SandboxClaude.ts"
 import { detectLibcScript } from "./sandbox/SandboxClaude.ts"
@@ -115,9 +117,17 @@ const tail = () => {
 }
 
 /**
+ * Runs the script at `$1`: with its own interpreter if it starts with `#!`, otherwise with
+ * `bash -e` where the image has bash and `sh -e` where it doesn't, so it stops at its first
+ * failing command.
+ */
+export const scriptRunner =
+  'chmod 755 "$1"; if head -c 2 "$1" | grep -q "^#!"; then exec "$1"; ' +
+  'elif command -v bash >/dev/null 2>&1; then exec bash -e "$1"; else exec sh -e "$1"; fi'
+
+/**
  * Runs a script in the Sandbox, streaming its output to `log`, and fails with the end of that
- * output unless it exits 0. A script starting with `#!` runs with its own interpreter; any other
- * with `sh -e`, so it stops at its first failing command. It gets no stdin.
+ * output unless it exits 0. It runs as {@link scriptRunner} says, with no stdin.
  */
 export const runScript = (
   backend: SandboxBackendShape,
@@ -142,12 +152,7 @@ export const runScript = (
     yield* backend
       .execStream(sessionId, {
         command: "sh",
-        args: [
-          "-c",
-          'chmod 755 "$1"; if head -c 2 "$1" | grep -q "^#!"; then exec "$1"; else exec sh -e "$1"; fi',
-          "sh",
-          path,
-        ],
+        args: ["-c", scriptRunner, "sh", path],
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         ...(options.env === undefined ? {} : { env: options.env }),
       })
@@ -171,10 +176,131 @@ export const runScript = (
     }
   })
 
+// ── The login environment ──────────────────────────────────────────────────
+//
+// What a terminal on the person's own machine would have (#67): the environment a login shell
+// ends with, found the way VS Code dev containers' `userEnvProbe: loginInteractiveShell` finds
+// it. Installers such as mise, rustup, nvm and bun's put themselves on PATH through ~/.bashrc and
+// ~/.profile, which no process the Runner starts reads on its own. So the build runs `bash -lic`
+// (`sh -lc` without bash) once after the bootstrap and keeps what it ends with in the build's
+// disk, each new Sandbox probes again in the Workspace after its start script, and the Runner
+// passes the result to every process it starts for the Environment, under the variables.
+//
+// The probe runs with no variable in its environment, so it captures no value, and entries named
+// as one of the Environment's variables are dropped: those always come from the Hub.
+
+/** Where a build, and each Sandbox booted from it, keeps its login environment, as JSON. */
+export const loginEnvGuestPath = "/var/lib/claude-hub/login-env.json"
+
+/** How long the login shell may take before the probe gives up on it. */
+export const loginEnvTimeout = Duration.seconds(60)
+
+/** What the probe prints around the environment, so nothing else the shell prints is taken. */
+export const loginEnvMarker = "__claude_hub_login_env_6b1f__"
+
+/**
+ * Runs `$1` in an interactive login shell: bash where the image has it, which reads
+ * /etc/profile, then ~/.bash_profile or ~/.profile (Debian's sources ~/.bashrc), and `sh -l`
+ * otherwise, which reads /etc/profile and ~/.profile.
+ */
+export const loginEnvProbeScript =
+  'if command -v bash >/dev/null 2>&1; then exec bash -lic "$1"; else exec sh -lc "$1"; fi'
+
+/** What the login shell runs: its environment, NUL-separated, between two markers. */
+const loginEnvDump = `printf '%s' ${loginEnvMarker}; cat /proc/self/environ; printf '%s' ${loginEnvMarker}`
+
+/** Set by the shell for itself: never taken from the probe. */
+const shellOwn = new Set(["PWD", "OLDPWD", "SHLVL", "_", "PS1", "PS2", "PS4", "PROMPT_COMMAND"])
+
+const variableName = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+const decodeLoginEnv = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+)
+
+/**
+ * The environment between the probe's markers, without what the shell sets for itself, exported
+ * functions, and anything named in `exclude`. Undefined if the markers aren't there.
+ */
+export const parseLoginEnv = (
+  output: string,
+  exclude: ReadonlySet<string> = new Set(),
+): Record<string, string> | undefined => {
+  const start = output.indexOf(loginEnvMarker)
+  const end = output.lastIndexOf(loginEnvMarker)
+  if (start < 0 || end <= start) return undefined
+  const env: Record<string, string> = {}
+  for (const entry of output.slice(start + loginEnvMarker.length, end).split("\0")) {
+    const equals = entry.indexOf("=")
+    if (equals <= 0) continue
+    const name = entry.slice(0, equals)
+    if (!variableName.test(name) || shellOwn.has(name) || exclude.has(name)) continue
+    env[name] = entry.slice(equals + 1)
+  }
+  return env
+}
+
+/**
+ * Probes the Sandbox's login environment in `cwd`, with no environment of the Runner's, and
+ * keeps it at {@link loginEnvGuestPath}, without the entries named in `exclude`. Fails when the
+ * shell doesn't start, or doesn't finish within {@link loginEnvTimeout}.
+ */
+export const probeLoginEnv = (
+  backend: SandboxBackendShape,
+  sessionId: SessionId,
+  options: { readonly cwd: string; readonly exclude: ReadonlySet<string> },
+): Effect.Effect<Record<string, string>, BuildFailed | SandboxError> =>
+  Effect.gen(function* () {
+    const ran = yield* backend
+      .exec(sessionId, {
+        command: "sh",
+        args: ["-c", loginEnvProbeScript, "sh", loginEnvDump],
+        cwd: options.cwd,
+      })
+      .pipe(
+        Effect.timeoutOrElse({
+          duration: loginEnvTimeout,
+          orElse: () =>
+            Effect.fail(
+              new BuildFailed({
+                message: `The login shell did not finish within ${Duration.toSeconds(loginEnvTimeout)} seconds. Look in ~/.profile and ~/.bashrc for a command that waits.`,
+              }),
+            ),
+        }),
+      )
+    const env = parseLoginEnv(ran.stdout, options.exclude)
+    if (env === undefined) {
+      const end = ran.stderr.trim().slice(-tailLength)
+      return yield* new BuildFailed({
+        message: `Reading the login shell's environment failed: it exited with ${ran.exitCode}${end === "" ? "." : `:\n${end}`}`,
+      })
+    }
+    yield* backend.writeFile(sessionId, loginEnvGuestPath, `${JSON.stringify(env, null, 2)}\n`)
+    return env
+  })
+
+/**
+ * The Sandbox's login environment as its build or its last probe kept it, or none for a Sandbox
+ * of a build made before builds kept one.
+ */
+export const readLoginEnv = (
+  backend: SandboxBackendShape,
+  sessionId: SessionId,
+): Effect.Effect<Option.Option<Record<string, string>>, SandboxError> =>
+  backend.readFile(sessionId, loginEnvGuestPath).pipe(
+    Effect.map((data) => decodeLoginEnv(new TextDecoder().decode(data))),
+    Effect.catchTag("SandboxBackendError", () => Effect.succeedNone),
+  )
+
+/** The names of a recipe's variables, which a probe never sets. */
+export const variableNames = (recipe: EnvironmentRecipe): ReadonlySet<string> =>
+  new Set(recipe.variables.map((variable) => variable.name))
+
 /**
  * Builds a recipe in a new Sandbox of its own, `sessionId`, and leaves it stopped for a
- * snapshot: Docker if toggled, then the bootstrap with the variables available at build. Returns
- * the libc the image needs. Any Sandbox already there under that id is destroyed first.
+ * snapshot: Docker if toggled, then the bootstrap with the variables available at build, then
+ * the login environment's probe, without them. Returns the libc the image needs. Any Sandbox
+ * already there under that id is destroyed first.
  */
 export const buildInSandbox = (
   backend: SandboxBackendShape,
@@ -231,6 +357,8 @@ export const buildInSandbox = (
         log,
       )
     }
+    yield* log("Reading the login shell's environment...\n")
+    yield* probeLoginEnv(backend, sessionId, { cwd: "/root", exclude: variableNames(recipe) })
     yield* log("Saving the build...\n")
     yield* backend.stop(sessionId)
     return libc

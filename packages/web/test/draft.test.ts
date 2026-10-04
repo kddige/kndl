@@ -113,7 +113,7 @@ describe("problems", () => {
   test("the protocol's, in its words", () => {
     const problems = problemsOf({ ...editFrom(saved), image: "not an image", memoryMib: "64" })
     expect(problems.image).toBe(
-      '"not an image" is not an image reference, such as debian:bookworm-slim.',
+      '"not an image" is not an image reference, such as buildpack-deps:bookworm.',
     )
     expect(problems.memoryMib).toContain("Memory must be from 256")
     expect(problems.all).toEqual(
