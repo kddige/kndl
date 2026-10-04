@@ -20,6 +20,7 @@ const none: OnboardOptions = {
   publicUrl: undefined,
   insecureCookies: undefined,
   devLogin: undefined,
+  githubApp: undefined,
   hubUrl: undefined,
   token: undefined,
   runnerName: undefined,
@@ -81,7 +82,7 @@ const failure = (exit: Exit.Exit<unknown, unknown>) =>
 
 describe("onboard, answered from a script", () => {
   test("a Hub on the LAN: hub.env from the answers, readable only by its user", async () => {
-    const { exit, transcript } = await run(["hub", "lan", "http://192.168.1.20:7777", true])
+    const { exit, transcript } = await run(["hub", "lan", "http://192.168.1.20:7777", true, "skip"])
 
     expect(Exit.isSuccess(exit)).toBe(true)
     expect(env("hub")).toMatchObject({
@@ -111,7 +112,7 @@ describe("onboard, answered from a script", () => {
   })
 
   test("both on one machine: the Runner gets a token issued by the new Hub", async () => {
-    const { exit } = await run(["both", "local", true], { runnerName: "mac" })
+    const { exit } = await run(["both", "local", true, "skip"], { runnerName: "mac" })
 
     expect(Exit.isSuccess(exit)).toBe(true)
     expect(env("hub")).toMatchObject({
@@ -124,7 +125,7 @@ describe("onboard, answered from a script", () => {
   })
 
   test("a run again keeps the settings, and asks nothing", async () => {
-    await run(["hub", "lan", "http://192.168.1.20:7777", false])
+    await run(["hub", "lan", "http://192.168.1.20:7777", false, "skip"])
     const key = env("hub").HUB_SECRETS_KEY
     const { exit, transcript } = await run([])
 

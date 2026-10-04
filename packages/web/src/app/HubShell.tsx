@@ -17,6 +17,7 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { chrome, color, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { AppPermissionsBanner } from "./AppPermissionsBanner.tsx"
 import { AppSidebar } from "./AppSidebar.tsx"
 import { useHub, useHubState } from "./hub.tsx"
 import { SignIn } from "./SignIn.tsx"
@@ -163,6 +164,7 @@ export function HubShell() {
             What happens meanwhile shows up once it's back.
           </Banner>
         )}
+        <AppPermissionsBanner sx={styles.banner} />
         <div {...stylex.props(styles.body)}>
           <Outlet />
         </div>

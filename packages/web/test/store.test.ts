@@ -393,6 +393,27 @@ describe("terminals", () => {
   })
 })
 
+test("the GitHub App's permission check is kept, the latest in place of the one before", () => {
+  const check = {
+    slug: "claude-hub-alice",
+    settingsUrl: "https://github.com/settings/apps/claude-hub-alice/permissions",
+    installUrl: "https://github.com/apps/claude-hub-alice/installations/new",
+    missing: [{ name: "issues", title: "Issues", access: "write" as const }],
+    missingEvents: [],
+    installed: 1,
+    installations: [],
+    checkedAt: 1,
+  }
+  expect(initialState.appPermissions).toBeNull()
+  const drifted = run(hub({ _tag: "AppPermissionsChecked", check }))
+  expect(drifted.appPermissions?.missing.map((permission) => permission.name)).toEqual(["issues"])
+  const fixed = reduce(
+    drifted,
+    hub({ _tag: "AppPermissionsChecked", requestId: "q-1", check: { ...check, missing: [] } }),
+  )
+  expect(fixed.appPermissions?.missing).toEqual([])
+})
+
 test("refused commands leave the state alone", () => {
   const state = run(listed, joined)
   expect(reduce(state, hub({ _tag: "CommandFailed", command: "SendPrompt", message: "no" }))).toBe(

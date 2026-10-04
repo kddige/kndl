@@ -1,5 +1,7 @@
 // What `claude-hub doctor` checks, and what `--fix` can repair. Host.ts gathers the facts; this
 // turns them into checks, pure and tested; Cli.ts prints them and runs the fixes.
+import { describeDrift } from "@claude-hub/hub/src/AppPermissions.ts"
+import { type AppPermissionsCheck, hasPermissionDrift } from "@claude-hub/protocol"
 import { DataEntries, type OldData } from "./HomeData.ts"
 import type { Role } from "./Layout.ts"
 import type { PrerequisitePlan } from "./Prerequisites.ts"
@@ -31,6 +33,11 @@ export interface DoctorFacts {
   }>
   /** Why the Hub would refuse its configuration, if it would. */
   readonly hubConfigError: string | undefined
+  /**
+   * The GitHub App's permissions, checked against the Hub's, when hub.env has an App; or that it
+   * has GitHub sign-in without one. `undefined` with neither.
+   */
+  readonly githubApp: AppPermissionsFact | undefined
   /** Why the Runner would refuse its configuration, if it would. */
   readonly runnerConfigError: string | undefined
   readonly services: ReadonlyArray<{ readonly role: Role; readonly state: ServiceState }>
@@ -47,6 +54,15 @@ export interface DoctorFacts {
   /** Linux: whether the user's services keep running while they're logged out. */
   readonly linger: boolean | undefined
 }
+
+/**
+ * What checking the GitHub App's permissions on GitHub found, or why it couldn't; or that hub.env
+ * turns GitHub sign-in on with no App to check who can see a Repo.
+ */
+export type AppPermissionsFact =
+  | { readonly _tag: "Checked"; readonly check: AppPermissionsCheck }
+  | { readonly _tag: "Unchecked"; readonly detail: string }
+  | { readonly _tag: "SignInWithoutApp" }
 
 export interface Health {
   readonly url: string
@@ -161,6 +177,7 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
         ? { name: "Hub configuration", status: "ok", detail: "the Hub accepts it" }
         : { name: "Hub configuration", status: "fail", detail: facts.hubConfigError },
     )
+    if (facts.githubApp !== undefined) checks.push(appCheck(facts.githubApp))
     if (facts.cookieWarning !== undefined) {
       checks.push({ name: "LAN cookies", status: "warn", detail: facts.cookieWarning })
     }
@@ -255,6 +272,47 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
   return checks
 }
 
+/**
+ * The GitHub App against the permissions the Hub needs. GitHub has no API to change them, so
+ * there's no fix: the detail links to where the App's owner adds them, and where each account
+ * accepts them.
+ */
+function appCheck(fact: AppPermissionsFact): Check {
+  const name = "GitHub App"
+  if (fact._tag === "SignInWithoutApp") {
+    // Repo access (RepoAccess.ts) asks GitHub, as the App, who is a Repo's collaborator.
+    return {
+      name,
+      status: "fail",
+      detail:
+        "GitHub sign-in is on (GITHUB_CLIENT_ID), but hub.env has no GitHub App, so nobody signed in with GitHub can see any Session: the Hub asks GitHub, as the App, who can access each Repo. Create one with `claude-hub onboard --github-app create`, or set up one you made yourself with `claude-hub onboard --github-app manual`.",
+    }
+  }
+  if (fact._tag === "Unchecked") {
+    return { name, status: "warn", detail: `Couldn't check its permissions: ${fact.detail}` }
+  }
+  const { check } = fact
+  if (hasPermissionDrift(check)) {
+    return {
+      name,
+      status: "fail",
+      detail: `${describeDrift(check).join("\n")}\nUntil then, what needs it fails: see https://kddige.github.io/claude-hub/how-to/set-up-the-github-app/.`,
+    }
+  }
+  if (check.installed === 0) {
+    return {
+      name,
+      status: "warn",
+      detail: `${check.slug} has the permissions it needs, but isn't installed anywhere: install it on your Repos at ${check.installUrl}`,
+    }
+  }
+  return {
+    name,
+    status: "ok",
+    detail: `${check.slug} and its ${check.installed === 1 ? "installation have" : `${check.installed} installations have`} the permissions the Hub needs`,
+  }
+}
+
 function healthCheck(name: string, health: Health): Check {
   return health.ok
     ? { name, status: "ok", detail: `${health.url}/health answers` }
@@ -263,3 +321,16 @@ function healthCheck(name: string, health: Health): Check {
 
 /** The mark doctor prints before a check. */
 export const statusMark: Record<Check["status"], string> = { ok: "ok", warn: "!!", fail: "XX" }
+
+/** The lines doctor prints: a check's mark, name and detail, its detail's own lines lined up. */
+export function formatChecks(checks: ReadonlyArray<Check>): ReadonlyArray<string> {
+  const width = Math.max(...checks.map((check) => check.name.length))
+  const indent = " ".repeat(2 + 2 + width + 2)
+  return checks.flatMap((check) => {
+    const [first, ...rest] = check.detail.split("\n")
+    return [
+      `${statusMark[check.status]}  ${check.name.padEnd(width)}  ${first ?? ""}`,
+      ...rest.map((line) => `${indent}${line}`),
+    ]
+  })
+}
