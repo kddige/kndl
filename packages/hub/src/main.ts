@@ -84,6 +84,46 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(HubConfig.layer),
 )
 
+/** A refusal, said without a stack trace, failing the command. */
+const refused = (message: string) =>
+  Effect.andThen(
+    Console.error(message),
+    Effect.sync(() => (process.exitCode = 1)),
+  )
+
+/** Says what the reset clears and asks, in a terminal, unless `yes`; without one it needs `yes`. */
+const confirmReset = (yes: boolean) => (plan: SecretsResetPlan) =>
+  Effect.sync(() => {
+    console.log(secretsResetPlanText(plan))
+    if (yes) return true
+    if (process.stdin.isTTY !== true) {
+      console.error("Pass --yes to reset without a terminal.")
+      return false
+    }
+    return prompt("Type yes to clear them:")?.trim() === "yes"
+  })
+
+/** `secrets-reset [--yes]`, in SecretsReset.ts. */
+const secretsReset = (yes: boolean) =>
+  Effect.gen(function* () {
+    const outcome = yield* resetSecrets(confirmReset(yes))
+    if (outcome._tag === "NothingToReset") {
+      yield* Console.log(
+        "Nothing to reset: the Hub stores no Sensitive values, so a new key works as it is. Make one with `bun run secrets-key`.",
+      )
+    } else if (outcome._tag === "Kept") {
+      yield* Console.log("Nothing was cleared.")
+      process.exitCode = 1
+    } else {
+      yield* Console.log(secretsResetDoneText(outcome.plan, "`bun run secrets-key`"))
+    }
+  }).pipe(
+    Effect.catchTags({
+      HubLockRefused: (error) => refused(error.message),
+      NoHubDatabase: (error) => refused(error.message),
+    }),
+  )
+
 const [command, ...args] = process.argv.slice(2)
 if (command === undefined) {
   BunRuntime.runMain(Layer.launch(HubLive))
@@ -94,43 +134,7 @@ if (command === undefined) {
 } else if (command === "secrets-key" && args.length === 0) {
   console.log(secretsKeyNotice("packages/hub/.env.local"))
 } else if (command === "secrets-reset" && args.every((arg) => arg === "--yes")) {
-  const yes = args.length > 0
-  const confirm = (plan: SecretsResetPlan) =>
-    Effect.sync(() => {
-      console.log(secretsResetPlanText(plan))
-      if (yes) return true
-      if (process.stdin.isTTY !== true) {
-        console.error("Pass --yes to reset without a terminal.")
-        return false
-      }
-      return prompt("Type yes to clear them:")?.trim() === "yes"
-    })
-  const refused = (message: string) =>
-    Effect.andThen(
-      Console.error(message),
-      Effect.sync(() => (process.exitCode = 1)),
-    )
-  BunRuntime.runMain(
-    Effect.gen(function* () {
-      const outcome = yield* resetSecrets(confirm)
-      if (outcome._tag === "NothingToReset") {
-        yield* Console.log(
-          "Nothing to reset: the Hub stores no Sensitive values, so a new key works as it is. Make one with `bun run secrets-key`.",
-        )
-      } else if (outcome._tag === "Kept") {
-        yield* Console.log("Nothing was cleared.")
-        process.exitCode = 1
-      } else {
-        yield* Console.log(secretsResetDoneText(outcome.plan, "`bun run secrets-key`"))
-      }
-    }).pipe(
-      // A refusal says what to do, without a stack trace.
-      Effect.catchTags({
-        HubLockRefused: (error) => refused(error.message),
-        NoHubDatabase: (error) => refused(error.message),
-      }),
-    ),
-  )
+  BunRuntime.runMain(secretsReset(args.length > 0))
 } else {
   console.error(
     "Usage: bun src/main.ts [runner-token <name> | secrets-key | secrets-reset [--yes]]",
