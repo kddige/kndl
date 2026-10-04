@@ -49,6 +49,15 @@
 //   frames before they are relayed. Claude's text
 //   (TextDelta) and terminal Output are streams: text that could start a value is held back
 //   until the next event or frame, or `holdMillis` at most.
+// - Repo access (#52, ADR 0003, RepoAccess.ts): a web client is sent only the Sessions of Repos
+//   its person has access to, and every command about a Session, or creating one, is checked
+//   first, off the lock, since it may wait on GitHub. A Session the person has no access to is
+//   refused as if there were no such Session. Each connection keeps what it knows of its person's
+//   access to each Repo; a Session in a Repo it doesn't know yet is held back until it is asked.
+//   Every `HubConfig.repoAccessTtl` the Repos of everyone connected are checked again, so a
+//   person who lost access is taken out of the Repo's Sessions (and their presence) within about
+//   twice that, or at their next command once their cached answer expires, whichever is first.
+//   When GitHub can't say, a person keeps what they had.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -128,6 +137,7 @@ import {
   redactText,
   StreamRedactor,
 } from "./Redaction.ts"
+import { RepoAccess } from "./RepoAccess.ts"
 import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
 import { SessionGit } from "./SessionGit.ts"
@@ -182,6 +192,17 @@ export const idleCheckInterval = (sleepAfter: Duration.Duration) =>
 export const purgeCheckInterval = (retention: Duration.Duration) =>
   Duration.millis(Math.min(Math.max(Duration.toMillis(retention) / 10, 10), 3_600_000))
 
+/** How many Repo access checks the Hub has GitHub answer at once. */
+const accessCheckConcurrency = 8
+
+/** What Repo access says of a web command (see `authorize`). */
+interface AccessVerdict {
+  /** What GitHub said of the person's access to the Repo the command is about. */
+  readonly learned?: { readonly repo: string; readonly allowed: boolean }
+  /** Why the command is refused, if it is. */
+  readonly refusal?: string
+}
+
 /** The work branch a new Session commits to. */
 export const workBranchFor = (sessionId: SessionId) => `claude/${sessionId}`
 
@@ -226,6 +247,7 @@ export class SessionRelay extends Context.Service<
       const config = yield* HubConfig
       const sessionGit = yield* SessionGit
       const environments = yield* Environments
+      const access = yield* RepoAccess
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
@@ -237,6 +259,11 @@ export class SessionRelay extends Context.Service<
         readonly joined: Set<SessionId>
         /** The Sessions whose terminal this connection watches. */
         readonly terminals: Set<SessionId>
+        /**
+         * Whether its person has access to each Repo, as last asked (ADR 0003). It is sent the
+         * Sessions of a Repo only once this says so.
+         */
+        readonly repos: Map<string, boolean>
       }
       interface OnlineRunner {
         readonly id: RunnerId
@@ -327,11 +354,24 @@ export class SessionRelay extends Context.Service<
         }
       }
 
+      /**
+       * Sends the Session to every client whose person has access to its Repo, and asks for those
+       * who aren't known yet (see `learnAccess`).
+       */
+      const sessionToWeb = Effect.fn("SessionRelay.sessionToWeb")(function* (
+        session: SessionSummary,
+      ) {
+        const message = HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) })
+        for (const client of webClients) {
+          const known = client.repos.get(session.repo)
+          if (known === true) client.peer.send(message)
+          else if (known === undefined) yield* learnAccess(client.you, session.repo)
+        }
+      })
+
       const sessionUpdated = Effect.fn("SessionRelay.sessionUpdated")(function* (id: SessionId) {
         const session = yield* sessions.get(id)
-        if (Option.isSome(session)) {
-          toWeb(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session.value) }))
-        }
+        if (Option.isSome(session)) yield* sessionToWeb(session.value)
       })
 
       /** Records that the Hub sent the Session a StartSession, before the state change says so. */
@@ -557,9 +597,7 @@ export class SessionRelay extends Context.Service<
         toWeb: (message, to: (client: EnvironmentWebClient) => boolean) => toWeb(message, to),
         repoSessionsUpdated: Effect.fn("SessionRelay.repoSessionsUpdated")(function* (repo) {
           for (const session of yield* sessions.list) {
-            if (session.repo === repo) {
-              toWeb(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) }))
-            }
+            if (session.repo === repo) yield* sessionToWeb(session)
           }
         }),
         sensitiveValuesChanged: (repo) => {
@@ -622,6 +660,100 @@ export class SessionRelay extends Context.Service<
         yield* presenceToMod(sessionId)
         return true
       })
+
+      // ── Repo access (#52, ADR 0003) ──────────────────────────────────────
+
+      /**
+       * Records what GitHub said of the person's access to the Repo on each of their connections.
+       * A connection that gains it is sent the Repo's Sessions. One that loses it is taken out of
+       * them, joined or watching, with presence updated, and told they are gone.
+       */
+      const accessKnown = Effect.fn("SessionRelay.accessKnown")(function* (
+        who: Participant,
+        repo: string,
+        allowed: boolean,
+      ) {
+        const changed = [...webClients].filter(
+          (client) => client.you.id === who.id && client.repos.get(repo) !== allowed,
+        )
+        if (changed.length === 0) return
+        const ofRepo = (yield* sessions.list).filter((session) => session.repo === repo)
+        for (const client of changed) {
+          const before = client.repos.get(repo)
+          client.repos.set(repo, allowed)
+          if (allowed) {
+            for (const session of ofRepo) {
+              client.peer.send(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) }))
+            }
+            continue
+          }
+          if (before !== true) continue
+          yield* Effect.logInfo(`${who.login} no longer has access to ${repo}: out of its Sessions`)
+          for (const session of ofRepo) {
+            client.terminals.delete(session.id)
+            if (client.joined.has(session.id)) {
+              const presence = presenceOf(session.id)
+              client.joined.delete(session.id)
+              yield* presenceChanged(session.id, presence)
+            }
+            client.peer.send(SessionRemoved.make({ sessionId: session.id }))
+          }
+        }
+      })
+
+      /** Asks GitHub, once at a time, for a person's access to a Repo none of their connections knows. */
+      const learning = new Set<string>()
+      const learnAccess = Effect.fn("SessionRelay.learnAccess")(function* (
+        who: Participant,
+        repo: string,
+      ) {
+        const key = `${who.id}\n${repo}`
+        if (learning.has(key)) return
+        learning.add(key)
+        yield* access.check(who, repo).pipe(
+          Effect.flatMap((allowed) => serialized(accessKnown(who, repo, allowed))),
+          // Asked again at the next recheck.
+          Effect.catchTag("RepoAccessUnknown", (error) => Effect.logWarning(error.message)),
+          Effect.catchCause((cause) => Effect.logError("Could not check Repo access", cause)),
+          Effect.ensuring(Effect.sync(() => learning.delete(key))),
+          Effect.forkIn(layerScope),
+        )
+      })
+
+      /**
+       * Checks everyone connected against every Repo with Sessions again, as the cache lets it:
+       * a person who lost access is taken out of the Repo's Sessions. Off the lock but for the
+       * changes, since it may wait on GitHub. When GitHub can't say, a person keeps what they had.
+       */
+      const recheckAccess = Effect.gen(function* () {
+        const repos = new Set((yield* sessions.list).map((session) => session.repo))
+        const people = new Map([...webClients].map((client) => [client.you.id, client.you]))
+        const failures: Array<string> = []
+        const answers = yield* Effect.forEach(
+          [...people.values()].flatMap((who) => [...repos].map((repo) => ({ who, repo }))),
+          ({ who, repo }) =>
+            access.check(who, repo).pipe(
+              Effect.map((allowed) => ({ who, repo, allowed })),
+              Effect.catchTag("RepoAccessUnknown", (error) =>
+                Effect.sync(() => void failures.push(error.message)),
+              ),
+            ),
+          { concurrency: accessCheckConcurrency },
+        )
+        if (failures.length > 0) {
+          yield* Effect.logWarning(
+            `Repo access rechecks failed (${failures.length}); those people keep what they had`,
+            failures[0],
+          )
+        }
+        yield* serialized(
+          Effect.forEach(answers, (answer) =>
+            answer === undefined
+              ? Effect.void
+              : accessKnown(answer.who, answer.repo, answer.allowed),
+          ),
+        )
+      }).pipe(Effect.withSpan("SessionRelay.recheckAccess"))
 
       // ── The Prompt queue ─────────────────────────────────────────────────
 
@@ -828,7 +960,10 @@ export class SessionRelay extends Context.Service<
             client.joined.delete(session.id)
             client.terminals.delete(session.id)
           }
-          toWeb(SessionRemoved.make({ sessionId: session.id }))
+          toWeb(
+            SessionRemoved.make({ sessionId: session.id }),
+            (client) => client.repos.get(session.repo) === true,
+          )
           onlineRunners
             .get(session.runnerId)
             ?.peer.send(PurgeSession.make({ sessionId: session.id }))
@@ -842,8 +977,64 @@ export class SessionRelay extends Context.Service<
         const refuse = (
           message: WebToHub,
           why: string,
-          about: { readonly sessionId?: SessionId; readonly requestId?: RequestId },
+          about: { readonly sessionId?: SessionId; readonly requestId?: RequestId } = {
+            ...("sessionId" in message ? { sessionId: message.sessionId } : {}),
+            ...("requestId" in message ? { requestId: message.requestId } : {}),
+          },
         ) => peer.send(CommandFailed.make({ command: message._tag, message: why, ...about }))
+
+        /**
+         * What Repo access says of a command (ADR 0003), asked off the lock: what GitHub said, to
+         * record under it, and why the command is refused, if it is. A Session in a Repo the
+         * person has no access to is refused as if there were no such Session. Leaving a Session
+         * or closing its terminal needs no access, nor do Environment commands: there are no
+         * roles yet (ADR 0009).
+         */
+        const authorize = Effect.fn("SessionRelay.authorize")(function* (
+          message: WebToHub,
+        ): Effect.fn.Return<AccessVerdict, SqlError> {
+          if (isEnvironmentCommand(message)) return {}
+          let repo: string
+          let refusal: string
+          switch (message._tag) {
+            case "WebHello":
+            case "LeaveSession":
+            case "CloseTerminal":
+              return {}
+            case "CreateSession":
+              repo = message.repo
+              refusal = `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`
+              break
+            default: {
+              const session = yield* sessions.get(message.sessionId)
+              // Refused as no such Session, under the lock.
+              if (Option.isNone(session)) return {}
+              repo = session.value.repo
+              refusal = "There is no such Session."
+            }
+          }
+          const checked = yield* access.check(you, repo).pipe(
+            Effect.map((allowed) => ({ allowed })),
+            Effect.catchTag("RepoAccessUnknown", (error) =>
+              Effect.succeed({ unknown: error.message }),
+            ),
+          )
+          if ("allowed" in checked) {
+            return {
+              learned: { repo, allowed: checked.allowed },
+              ...(!checked.allowed && { refusal }),
+            }
+          }
+          // When GitHub can't say, the person keeps what they had.
+          if (client.repos.get(repo) === true) return {}
+          yield* Effect.logWarning(checked.unknown)
+          return {
+            refusal:
+              message._tag === "CreateSession"
+                ? checked.unknown
+                : "Could not check your access on GitHub; try again.",
+          }
+        })
 
         /** The Session a command names, or none, having refused the command. */
         const sessionFor = Effect.fn(function* (message: WebToHub & { sessionId: SessionId }) {
@@ -876,8 +1067,8 @@ export class SessionRelay extends Context.Service<
                   { requestId },
                 )
               }
-              // TODO(#7 follow-up): check that the person has access to the Repo, and that the
-              // base branch exists, once the GitHub App can tell.
+              // Repo access was checked before the lock was taken.
+              // TODO: check that the base branch exists, once the GitHub App can tell.
               const missing = yield* environmentRelay.missingEnvironment(message.repo)
               if (missing !== undefined) return refuse(message, missing, { requestId })
               const environment = yield* sessionEnvironment(message.repo)
@@ -915,8 +1106,7 @@ export class SessionRelay extends Context.Service<
                 }),
               )
               peer.send(HubToWeb.cases.SessionCreated.make({ requestId, session: forWeb(session) }))
-              toWeb(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) }))
-              return
+              return yield* sessionToWeb(session)
             }
 
             case "JoinSession": {
@@ -1102,8 +1292,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "ArchiveSession": {
-              // TODO(#7 follow-up): only people with access to the Session's Repo, once the
-              // GitHub App can tell; until then any signed-in Participant may (ADR 0003).
+              // Anyone with access to the Session's Repo may (ADR 0003).
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -1131,6 +1320,7 @@ export class SessionRelay extends Context.Service<
 
             case "CancelPrompt": {
               const { sessionId, promptId } = message
+              if (Option.isNone(yield* sessionFor(message))) return
               if (inFlight.get(sessionId) === promptId) {
                 return refuse(message, "The prompt was already delivered to Claude Code.", {
                   sessionId,
@@ -1185,11 +1375,11 @@ export class SessionRelay extends Context.Service<
             case "TerminalResize": {
               // Keystrokes reach only a running Claude Code, from someone watching its terminal.
               const { sessionId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
               if (!client.terminals.has(sessionId)) {
                 return refuse(message, "Open the Session's terminal first.", { sessionId })
               }
-              const session = yield* sessionFor(message)
-              if (Option.isNone(session)) return
               const runner = onlineRunners.get(session.value.runnerId)
               if (session.value.state !== "Active" || runner === undefined) {
                 return refuse(
@@ -1205,16 +1395,21 @@ export class SessionRelay extends Context.Service<
         })
 
         return (message) =>
-          serialized(handle(message)).pipe(
+          authorize(message).pipe(
+            Effect.flatMap((verdict) =>
+              serialized(
+                Effect.gen(function* () {
+                  const { learned, refusal } = verdict
+                  if (learned !== undefined) yield* accessKnown(you, learned.repo, learned.allowed)
+                  if (refusal !== undefined) return refuse(message, refusal)
+                  return yield* handle(message)
+                }),
+              ),
+            ),
             Effect.catchTag("SqlError", (error) =>
               Effect.logError("A web command failed", error).pipe(
                 Effect.andThen(
-                  Effect.sync(() =>
-                    refuse(message, "The Hub could not do that; try again.", {
-                      ...("sessionId" in message ? { sessionId: message.sessionId } : {}),
-                      ...("requestId" in message ? { requestId: message.requestId } : {}),
-                    }),
-                  ),
+                  Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
                 ),
               ),
             ),
@@ -1223,19 +1418,43 @@ export class SessionRelay extends Context.Service<
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
         Effect.gen(function* () {
-          const client: WebClient = { you, peer, joined: new Set(), terminals: new Set() }
-          yield* serialized(
-            Effect.gen(function* () {
-              webClients.add(client)
-              peer.send(yield* runnerList)
-              // TODO(#7 follow-up): only the Sessions of Repos the person has access to.
-              // Archived Sessions are listed too, with who archived them, for the Archived
-              // screen; the web UI leaves them out of its Session list.
-              peer.send(
-                HubToWeb.cases.SessionList.make({ sessions: (yield* sessions.list).map(forWeb) }),
-              )
-            }),
-          ).pipe(Effect.orDie)
+          const client: WebClient = {
+            you,
+            peer,
+            joined: new Set(),
+            terminals: new Set(),
+            repos: new Map(),
+          }
+          yield* Effect.gen(function* () {
+            // Off the lock, since it may wait on GitHub. A Repo GitHub can't say about now is
+            // asked about again at the next recheck.
+            const asked = new Set((yield* sessions.list).map((session) => session.repo))
+            yield* Effect.forEach(
+              asked,
+              (repo) =>
+                access.check(you, repo).pipe(
+                  Effect.map((allowed) => void client.repos.set(repo, allowed)),
+                  Effect.catchTag("RepoAccessUnknown", (error) => Effect.logWarning(error.message)),
+                ),
+              { concurrency: accessCheckConcurrency, discard: true },
+            )
+            yield* serialized(
+              Effect.gen(function* () {
+                webClients.add(client)
+                peer.send(yield* runnerList)
+                // Only the Sessions of Repos the person has access to. Archived Sessions are
+                // listed too, with who archived them, for the Archived screen; the web UI leaves
+                // them out of its Session list.
+                const listed: Array<SessionSummary> = []
+                for (const session of yield* sessions.list) {
+                  if (client.repos.get(session.repo) === true) listed.push(forWeb(session))
+                  // A Repo whose first Session was created meanwhile.
+                  else if (!asked.has(session.repo)) yield* learnAccess(you, session.repo)
+                }
+                peer.send(HubToWeb.cases.SessionList.make({ sessions: listed }))
+              }),
+            )
+          }).pipe(Effect.orDie)
           yield* Effect.addFinalizer(() =>
             serialized(
               Effect.gen(function* () {
@@ -1558,6 +1777,14 @@ export class SessionRelay extends Context.Service<
       yield* Effect.sleep(purgeCheckInterval(config.archiveRetention)).pipe(
         Effect.andThen(serialized(purgeDue)),
         Effect.catchCause((cause) => Effect.logError("Could not purge Archived Sessions", cause)),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
+
+      // As often as answers expire: access lost is noticed within twice that (see the top).
+      yield* Effect.sleep(config.repoAccessTtl).pipe(
+        Effect.andThen(recheckAccess),
+        Effect.catchCause((cause) => Effect.logError("Could not recheck Repo access", cause)),
         Effect.forever,
         Effect.forkIn(layerScope),
       )

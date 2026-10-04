@@ -234,7 +234,7 @@ export const RunnerList = Schema.TaggedStruct("RunnerList", {
 })
 export type RunnerList = typeof RunnerList.Type
 
-/** Every Session the person can see, in full: sent after the welcome. */
+/** Every Session the person can see, those of the Repos they have access to, in full: sent after the welcome. */
 export const SessionList = Schema.TaggedStruct("SessionList", {
   sessions: Schema.Array(SessionSummary),
 })
@@ -247,8 +247,9 @@ export const SessionUpdated = Schema.TaggedStruct("SessionUpdated", {
 export type SessionUpdated = typeof SessionUpdated.Type
 
 /**
- * A Session was purged, its archive retention (30 days by default) after it was archived: the
- * client drops its copy of it.
+ * The client can no longer see a Session, and drops its copy of it: it was purged, its archive
+ * retention (30 days by default) after it was archived, or the person lost access to its Repo on
+ * GitHub, which also took them out of it.
  */
 export const SessionRemoved = Schema.TaggedStruct("SessionRemoved", {
   sessionId: SessionId,

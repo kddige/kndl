@@ -10,13 +10,16 @@ import {
   EnvironmentVersion,
   type ModCommandsEncoded,
   type ModEventsEncoded,
+  Participant,
   ParticipantId,
   ProtocolVersion,
 } from "@claude-hub/protocol"
 import { Effect, Exit, Option, Redacted } from "effect"
+import { signInCookie } from "./Auth.ts"
 import { databaseAt } from "./Database.ts"
 import { Environments } from "./Environments.ts"
-import { HubConfig } from "./HubConfig.ts"
+import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
+import { SignIns } from "./SignIns.ts"
 import {
   type Connection,
   issueRunnerToken,
@@ -1644,5 +1647,275 @@ describe("git", () => {
         text: `${oldest} ${"*".repeat(previous.length)}`,
       })
     })
+  })
+})
+
+/** A Session alice starts in `inRepo`. */
+async function startIn(
+  hub: TestHub,
+  runner: Connection<ToRunner>,
+  web: Connection<Web>,
+  inRepo: string,
+) {
+  await seedEnvironment(hub, inRepo, "dev:alice")
+  const requestId = `req-${inRepo}`
+  web.send({ _tag: "CreateSession", requestId, repo: inRepo, baseBranch: "main" })
+  await runner.take("StartSession", (start) => start.repo === inRepo)
+  const created = await web.take("SessionCreated", (m) => m.requestId === requestId)
+  return created.session.id
+}
+
+/** What the Hub says to a command about a Session that isn't there, or out of reach. */
+const noSuchSession = (command: string, sessionId: string) => ({
+  _tag: "CommandFailed" as const,
+  command,
+  sessionId,
+  message: "There is no such Session.",
+})
+
+describe("Repo access", () => {
+  const keys = appKeyPair()
+  let github: StandInGitHub
+
+  beforeAll(() => {
+    github = StandInGitHub.start(keys.publicKey)
+  })
+  afterAll(() => github.stop())
+
+  const repo = "kddige/claude-hub"
+  const secret = "kddige/secret"
+  const octocat = { id: "github:1", login: "octocat", name: "octocat" }
+  const hubot = { id: "github:2", login: "hubot", name: "hubot" }
+
+  /** A Hub with the GitHub App on `repo` and `secret`; alice, by dev login, has access to both. */
+  const accessHub = (config: Partial<HubConfigInput> = {}) => {
+    github.reset()
+    github.installedOn.add(repo)
+    github.installedOn.add(secret)
+    return startHub({
+      config: {
+        devLogin: true,
+        githubAppId: Option.some(appId),
+        githubAppPrivateKey: Option.some(Redacted.make(keys.privateKeyPem)),
+        githubApiUrl: github.url,
+        ...config,
+      },
+    })
+  }
+
+  /** A web client signed in with GitHub as `who`. */
+  async function openGitHubWeb(hub: TestHub, who: typeof octocat) {
+    const { token } = await hub.run(
+      Effect.gen(function* () {
+        const signIns = yield* SignIns
+        return yield* signIns.signIn(Participant.make({ ...who, id: ParticipantId.make(who.id) }))
+      }),
+    )
+    return openWeb(hub, who.login, `${signInCookie}=${token}`)
+  }
+
+  test("a person is sent only the Sessions of Repos they have access to", async () => {
+    const { hub, runner, web, sessionId } = await sessionScene(await accessHub())
+    const hidden = await startIn(hub, runner, web, secret)
+    github.installedOn.add("kddige/later")
+    github.grant(repo, "octocat")
+    github.grant("kddige/later", "octocat")
+
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+    const hubotWeb = await openGitHubWeb(hub, hubot)
+    expect(octocatWeb.sessions.sessions.map((session) => session.id)).toEqual([sessionId])
+    expect(hubotWeb.sessions.sessions).toEqual([])
+
+    // And as they change, or a Repo gets its first Session.
+    runner.send({ _tag: "SessionStarted", sessionId: hidden, environmentVersion: 1 })
+    await web.take("SessionUpdated", (m) => m.session.id === hidden && !m.session.starting)
+    web.send({ _tag: "ArchiveSession", sessionId })
+    await octocatWeb.take("SessionUpdated", (m) => m.session.state === "Archived")
+    const later = await startIn(hub, runner, web, "kddige/later")
+    await octocatWeb.take("SessionUpdated", (m) => m.session.id === later)
+    const updated = await octocatWeb.untaken("SessionUpdated")
+    expect(updated.map((m) => m.session.id)).not.toContain(hidden)
+    expect(await hubotWeb.untaken("SessionUpdated")).toEqual([])
+  })
+
+  test("every command about a Session out of reach is refused as if there were none", async () => {
+    const { hub, runner, mod, sessionId } = await sessionScene(await accessHub())
+    const hubotWeb = await openGitHubWeb(hub, hubot)
+    await mod.poll()
+    const commands = [
+      { _tag: "JoinSession" },
+      { _tag: "SendPrompt", text: "hi" },
+      { _tag: "CancelPrompt", promptId: "p-1" },
+      { _tag: "StopTurn" },
+      { _tag: "SleepSession" },
+      { _tag: "WakeSession" },
+      { _tag: "RestartSession" },
+      { _tag: "ArchiveSession" },
+      { _tag: "RestoreSession" },
+      { _tag: "OpenTerminal" },
+      { _tag: "TerminalInput", data: "ls\r" },
+      { _tag: "TerminalResize", size: { cols: 80, rows: 24 } },
+    ]
+    for (const command of commands) {
+      for (const id of [sessionId, "no-such-session"]) {
+        hubotWeb.send({ ...command, sessionId: id })
+        expect(await hubotWeb.take("CommandFailed")).toEqual(noSuchSession(command._tag, id))
+      }
+    }
+
+    // None reached the Session.
+    expect(await mod.poll()).toEqual([])
+    expect(await runner.untaken("RequestTerminalSnapshot")).toEqual([])
+    expect(await runner.untaken("TerminalInput")).toEqual([])
+    expect(await runner.untaken("StopSession")).toEqual([])
+    expect(await hubotWeb.untaken("SessionHistory")).toEqual([])
+  })
+
+  test("creating a Session needs access to its Repo", async () => {
+    const { hub, runner } = await sessionScene(await accessHub())
+    github.grant(repo, "octocat")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+
+    for (const elsewhere of [secret, "kddige/not-installed"]) {
+      octocatWeb.send({
+        _tag: "CreateSession",
+        requestId: "r",
+        repo: elsewhere,
+        baseBranch: "main",
+      })
+      expect(await octocatWeb.take("CommandFailed")).toEqual({
+        _tag: "CommandFailed",
+        command: "CreateSession",
+        requestId: "r",
+        message: `You have no access to ${elsewhere} on GitHub, or the GitHub App isn't installed on it.`,
+      })
+    }
+    octocatWeb.send({ _tag: "CreateSession", requestId: "ok", repo, baseBranch: "main" })
+    expect((await octocatWeb.take("SessionCreated")).session.creator).toMatchObject(octocat)
+    expect((await runner.untaken("StartSession")).map((start) => start.repo)).toEqual([repo])
+  })
+
+  test("a collaborator can join, prompt and type, and GitHub is asked once", async () => {
+    const { hub, runner, mod, sessionId } = await sessionScene(await accessHub())
+    github.grant(repo, "octocat")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+
+    joinSession(octocatWeb, sessionId)
+    expect(await octocatWeb.take("SessionHistory")).toMatchObject({ sessionId })
+    await octocatWeb.take("PresenceChanged")
+    await mod.poll()
+    octocatWeb.send({ _tag: "SendPrompt", sessionId, text: "hi" })
+    expect((await mod.deliveries(500)).map((delivery) => delivery.text)).toEqual(["hi"])
+    octocatWeb.send({ _tag: "OpenTerminal", sessionId })
+    await runner.take("RequestTerminalSnapshot")
+    octocatWeb.send({ _tag: "TerminalInput", sessionId, data: "ls\r" })
+    await runner.take("TerminalInput")
+
+    // As the list was made; the answer was cached for everything since.
+    expect(github.collaboratorChecks("octocat")).toBe(1)
+  })
+
+  test("a cached answer stands until it expires, even after access is lost", async () => {
+    // Rechecks are an hour apart.
+    const { hub, sessionId } = await sessionScene(await accessHub({ repoAccessTtlMs: 3_600_000 }))
+    github.grant(repo, "octocat")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+    github.revoke(repo, "octocat")
+
+    joinSession(octocatWeb, sessionId)
+    expect(await octocatWeb.take("SessionHistory")).toMatchObject({ sessionId })
+    expect(github.collaboratorChecks("octocat")).toBe(1)
+  })
+
+  test("a person who loses access is taken out of the Repo's Sessions, with presence updated", async () => {
+    const { hub, runner, web, mod, sessionId } = await sessionScene(
+      await accessHub({ repoAccessTtlMs: 100 }),
+    )
+    github.grant(repo, "octocat")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+    joinSession(web, sessionId)
+    await web.take("PresenceChanged")
+    joinSession(octocatWeb, sessionId)
+    await octocatWeb.take("SessionHistory")
+    await web.take("PresenceChanged", (m) => m.participants.length === 2)
+    for (const client of [web, octocatWeb]) {
+      client.send({ _tag: "OpenTerminal", sessionId })
+      await runner.take("RequestTerminalSnapshot")
+    }
+
+    github.revoke(repo, "octocat")
+    expect(await octocatWeb.take("SessionRemoved")).toEqual({ _tag: "SessionRemoved", sessionId })
+    expect((await web.take("PresenceChanged")).participants).toEqual([alice])
+    const presence = (await mod.poll()).filter((command) => command._tag === "PresenceChanged")
+    expect(presence.at(-1)).toMatchObject({ participants: [alice] })
+
+    // Out of its terminal, and refused.
+    const frame = {
+      _tag: "TerminalFrame",
+      sessionId,
+      kind: "Output",
+      data: "$ ",
+      size: { cols: 80, rows: 24 },
+    } as const
+    runner.send(frame)
+    expect(await web.take("TerminalFrame")).toEqual(frame)
+    expect(await octocatWeb.untaken("TerminalFrame")).toEqual([])
+    octocatWeb.send({ _tag: "SendPrompt", sessionId, text: "still here?" })
+    expect(await octocatWeb.take("CommandFailed")).toEqual(noSuchSession("SendPrompt", sessionId))
+
+    // Given back, the Session shows again.
+    github.grant(repo, "octocat")
+    expect((await octocatWeb.take("SessionUpdated")).session.id).toBe(sessionId)
+  })
+
+  test("when GitHub can't say, a person keeps what they had and no one new gets in", async () => {
+    const { hub, mod, sessionId } = await sessionScene(await accessHub({ repoAccessTtlMs: 100 }))
+    github.grant(repo, "octocat")
+    github.grant(repo, "hubot")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+    joinSession(octocatWeb, sessionId)
+    await octocatWeb.take("PresenceChanged")
+
+    github.collaboratorsDown = true
+    await Bun.sleep(300)
+    await mod.poll()
+    octocatWeb.send({ _tag: "SendPrompt", sessionId, text: "hi" })
+    expect((await mod.deliveries(500)).map((delivery) => delivery.text)).toEqual(["hi"])
+    expect(await octocatWeb.untaken("SessionRemoved")).toEqual([])
+
+    const hubotWeb = await openGitHubWeb(hub, hubot)
+    expect(hubotWeb.sessions.sessions).toEqual([])
+    joinSession(hubotWeb, sessionId)
+    expect((await hubotWeb.take("CommandFailed")).message).toBe(
+      "Could not check your access on GitHub; try again.",
+    )
+
+    // Once GitHub answers again, at the next recheck.
+    github.collaboratorsDown = false
+    expect((await hubotWeb.take("SessionUpdated")).session.id).toBe(sessionId)
+  })
+
+  test("dev login has access to every Repo, and a dev sign-in none once it is off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const devHub = await startHub({ config: { devLogin: true }, database })
+      const { runner, web, sessionId } = await sessionScene(devHub)
+      const other = await startIn(devHub, runner, web, secret)
+      const bobWeb = await openWeb(devHub, "bob")
+      expect(bobWeb.sessions.sessions.map((session) => session.id).toSorted()).toEqual(
+        [sessionId, other].toSorted(),
+      )
+      await stopAll()
+
+      const offHub = await startHub({ config: { devLogin: false }, database })
+      const back = await openWeb(offHub, "alice", web.cookie)
+      expect(back.sessions.sessions).toEqual([])
+      joinSession(back, sessionId)
+      expect(await back.take("CommandFailed")).toEqual(noSuchSession("JoinSession", sessionId))
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
