@@ -61,6 +61,10 @@ const noKey = new SecretsUnavailable({
     "Sensitive values need HUB_SECRETS_KEY in the Hub's configuration: run `bun run secrets-key`, put the key in packages/hub/.env.local, and restart the Hub.",
 })
 
+/** What to do when the key the stored values were saved with is gone. */
+const lostKey =
+  "If that key is lost, `bun run secrets-reset` (or `claude-hub secrets reset`) clears those values, keeping their variables, so a new key can be used."
+
 /**
  * Encrypts and decrypts Sensitive values with the key from the Hub's config. Building it checks
  * the key against the stored check value, and fails when Sensitive values are stored but the key
@@ -96,8 +100,9 @@ export class Secrets extends Context.Service<
 
       const counted = yield* sql<{ readonly count: number }>`
         SELECT
-          (SELECT COUNT(*) FROM environment_variables WHERE kind = 'Sensitive') +
-          (SELECT COUNT(*) FROM shared_variables WHERE kind = 'Sensitive') +
+          (SELECT COUNT(*) FROM environment_variables
+            WHERE kind = 'Sensitive' AND value IS NOT NULL) +
+          (SELECT COUNT(*) FROM shared_variables WHERE kind = 'Sensitive' AND value IS NOT NULL) +
           (SELECT COUNT(*) FROM retired_values) AS count
       `.pipe(Effect.orDie)
       const stored = counted[0]?.count ?? 0
@@ -109,7 +114,7 @@ export class Secrets extends Context.Service<
       if (Option.isNone(key)) {
         if (stored > 0) {
           return yield* new HubConfigError({
-            message: `The Hub stores ${stored} Sensitive variable value${stored === 1 ? "" : "s"}, encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with.`,
+            message: `The Hub stores ${stored} Sensitive variable value${stored === 1 ? "" : "s"}, encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with. ${lostKey}`,
           })
         }
       } else {
@@ -117,7 +122,7 @@ export class Secrets extends Context.Service<
           check !== undefined && decryptValue(key.value, check, checkContext) === checkText
         if (!matches && stored > 0) {
           return yield* new HubConfigError({
-            message: `HUB_SECRETS_KEY is not the key the Hub's ${stored} Sensitive variable value${stored === 1 ? " was" : "s were"} saved with. Set it to that key.`,
+            message: `HUB_SECRETS_KEY is not the key the Hub's ${stored} Sensitive variable value${stored === 1 ? " was" : "s were"} saved with. Set it to that key. ${lostKey}`,
           })
         }
         if (!matches) {

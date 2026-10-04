@@ -14,6 +14,7 @@
     "hub": "bun run --filter @claude-hub/hub start",
     "runner-token": "bun run --filter @claude-hub/hub runner-token",
     "secrets-key": "bun run --filter @claude-hub/hub secrets-key",
+    "secrets-reset": "bun run --filter @claude-hub/hub secrets-reset",
     "runner": "bun run mod:build && bun run --filter @claude-hub/runner start",
     "web": "bun run --filter @claude-hub/web dev",
     "web:build": "bun run --filter @claude-hub/web build",

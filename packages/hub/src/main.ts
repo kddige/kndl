@@ -3,19 +3,27 @@
 //
 // `bun src/main.ts` serves the Hub; `bun src/main.ts runner-token <name>` issues a Runner's
 // token and prints it; `bun src/main.ts secrets-key` prints a new HUB_SECRETS_KEY (both in
-// Admin.ts, which the claude-hub CLI shares). Configuration is read from the environment: see
-// HubConfig.ts and Database.ts.
+// Admin.ts); `bun src/main.ts secrets-reset [--yes]` clears the Sensitive values a lost key
+// encrypted (SecretsReset.ts). The claude-hub CLI shares all three. Configuration is read from
+// the environment: see HubConfig.ts and Database.ts.
 
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option } from "effect"
 import { HttpRouter } from "effect/http"
 import { issueRunnerToken, runnerTokenNotice, secretsKeyNotice } from "./Admin.ts"
-import { DatabaseLive } from "./Database.ts"
+import { DatabaseFile, DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import { HubConfig } from "./HubConfig.ts"
+import { holdHubLock } from "./HubLock.ts"
 import { drainFirst } from "./HubShutdown.ts"
+import {
+  resetSecrets,
+  type SecretsResetPlan,
+  secretsResetDoneText,
+  secretsResetPlanText,
+} from "./SecretsReset.ts"
 import { announceWebUi } from "./WebUi.ts"
 
 const ServerLive = Layer.unwrap(
@@ -53,6 +61,18 @@ const announceSignIn = Layer.effectDiscard(
   }),
 )
 
+/**
+ * The database, held by this Hub until it stops (HubLock.ts): a second Hub on it, or a
+ * `secrets-reset`, is refused meanwhile. The lock is taken before the database is opened.
+ */
+const HeldDatabase = DatabaseLive.pipe(
+  Layer.provide(
+    Layer.effectDiscard(
+      Effect.flatMap(DatabaseFile, (database) => holdHubLock(database, "The Hub can't start")),
+    ),
+  ),
+)
+
 const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(announceSignIn),
   Layer.provide(announceWebUi),
@@ -60,7 +80,7 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(GitHub.layer),
   Layer.provide(HubServices),
   Layer.provide(GitHubApp.layer),
-  Layer.provide(DatabaseLive),
+  Layer.provide(HeldDatabase),
   Layer.provide(HubConfig.layer),
 )
 
@@ -73,7 +93,36 @@ if (command === undefined) {
   )
 } else if (command === "secrets-key" && args.length === 0) {
   console.log(secretsKeyNotice("packages/hub/.env.local"))
+} else if (command === "secrets-reset" && args.every((arg) => arg === "--yes")) {
+  const yes = args.length > 0
+  const confirm = (plan: SecretsResetPlan) =>
+    Effect.sync(() => {
+      console.log(secretsResetPlanText(plan))
+      if (yes) return true
+      if (process.stdin.isTTY !== true) {
+        console.error("Pass --yes to reset without a terminal.")
+        return false
+      }
+      return prompt("Type yes to clear them:")?.trim() === "yes"
+    })
+  BunRuntime.runMain(
+    Effect.gen(function* () {
+      const outcome = yield* resetSecrets(confirm)
+      if (outcome._tag === "NothingToReset") {
+        yield* Console.log(
+          "Nothing to reset: the Hub stores no Sensitive values, so a new key works as it is. Make one with `bun run secrets-key`.",
+        )
+      } else if (outcome._tag === "Kept") {
+        yield* Console.log("Nothing was cleared.")
+        process.exitCode = 1
+      } else {
+        yield* Console.log(secretsResetDoneText(outcome.plan, "`bun run secrets-key`"))
+      }
+    }),
+  )
 } else {
-  console.error("Usage: bun src/main.ts [runner-token <name> | secrets-key]")
+  console.error(
+    "Usage: bun src/main.ts [runner-token <name> | secrets-key | secrets-reset [--yes]]",
+  )
   process.exit(2)
 }

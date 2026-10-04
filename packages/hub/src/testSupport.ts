@@ -1,6 +1,7 @@
 // Helpers for the Hub's tests: a real Hub on 127.0.0.1 and a free port, and ways to sign in to
 // it. Not part of the Hub.
 
+import { createServer } from "node:net"
 import {
   DefaultEnvironmentDraft,
   type EnvironmentDraft,
@@ -103,6 +104,60 @@ export async function startHub(
       openHubs.delete(scope)
       await Effect.runPromise(Scope.close(scope, Exit.void))
     },
+  }
+}
+
+/** A port nothing listens on, for now. */
+export const freePort = () =>
+  new Promise<number>((resolve, reject) => {
+    const server = createServer()
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      server.close(() =>
+        typeof address === "object" && address
+          ? resolve(address.port)
+          : reject(new Error("no port")),
+      )
+    })
+  })
+
+const mainPath = new URL("./main.ts", import.meta.url).pathname
+
+/**
+ * The Hub as `bun run hub` runs it, in a child process, on the database file `database`, once it
+ * answers `/health`, with `env` added to its environment. Fails, saying what it printed, if it exits
+ * first. Kill `child` when done.
+ */
+export async function startHubProcess(database: string, env: Record<string, string> = {}) {
+  const port = await freePort()
+  const child = Bun.spawn(["bun", mainPath], {
+    env: {
+      ...process.env,
+      ...env,
+      HUB_DATABASE: database,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const url = `http://127.0.0.1:${port}`
+  for (let attempt = 0; ; attempt++) {
+    const up = await fetch(`${url}/health`).then(
+      (response) => response.ok,
+      () => false,
+    )
+    if (up) return { child, url }
+    if (child.exitCode !== null) {
+      const printed = (await child.stdout.text()) + (await child.stderr.text())
+      throw new Error(`The Hub exited with ${child.exitCode}: ${printed}`)
+    }
+    if (attempt > 100) {
+      child.kill("SIGKILL")
+      throw new Error("The Hub didn't start")
+    }
+    await Bun.sleep(50)
   }
 }
 

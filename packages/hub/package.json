@@ -6,6 +6,7 @@
     "start": "bun src/main.ts",
     "runner-token": "bun src/main.ts runner-token",
     "secrets-key": "bun src/main.ts secrets-key",
+    "secrets-reset": "bun src/main.ts secrets-reset",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
