@@ -44,8 +44,8 @@ The same words can end the Runner's warning that a Sandbox has no GitHub token (
 **What you see.** The web UI shows a banner, **The GitHub App is missing permissions**, that lists them. `claude-hub doctor` fails with:
 
 ```
-XX  GitHub App: The App claude-hub-build-box lacks Issues: Read and write. Add it at https://github.com/settings/apps/claude-hub-build-box/permissions
-      Its installation on ada lacks Issues: Read and write. Once the App has it, accept it at https://github.com/settings/installations/12345/permissions/update
+XX  GitHub App: The App claude-hub-build-box lacks Issues: read and write. Add it at https://github.com/settings/apps/claude-hub-build-box/permissions
+      Its installation on ada lacks Issues: read and write. Once the App has it, accept it at https://github.com/settings/installations/12345/permissions/update
 ```
 
 and the Hub logs the same lines as warnings. Meanwhile what needs the permission fails, such as `gh issue comment` in a Session with `Resource not accessible by integration`.

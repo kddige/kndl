@@ -219,10 +219,10 @@ describe("doctor and the GitHub App", () => {
     expect(found?.status).toBe("fail")
     expect(found?.fix).toBeUndefined()
     expect(found?.detail).toContain(
-      "The App claude-hub-mac lacks Issues: Read and write. Add it at https://github.com/settings/apps/claude-hub-mac/permissions",
+      "The App claude-hub-mac lacks Issues: read and write. Add it at https://github.com/settings/apps/claude-hub-mac/permissions",
     )
     expect(found?.detail).toContain(
-      "Its installation on ada lacks Issues: Read and write. Once the App has it, accept it at https://github.com/settings/installations/7/permissions/update",
+      "Its installation on ada lacks Issues: read and write. Once the App has it, accept it at https://github.com/settings/installations/7/permissions/update",
     )
   })
 
@@ -235,7 +235,7 @@ describe("doctor and the GitHub App", () => {
 
     expect(found?.status).toBe("fail")
     expect(found?.detail).toStartWith(
-      "Its installation on ada lacks Issues: Read and write. Accept it at https://github.com/settings/installations/7/permissions/update",
+      "Its installation on ada lacks Issues: read and write. Accept it at https://github.com/settings/installations/7/permissions/update",
     )
   })
 

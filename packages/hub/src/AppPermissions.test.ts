@@ -3,8 +3,8 @@
 
 import { describe, expect, test } from "bun:test"
 import { join } from "node:path"
+import { accessLabel } from "@claude-hub/protocol"
 import {
-  accessTitle,
   type AppFacts,
   checkAppPermissions,
   describeDrift,
@@ -100,7 +100,7 @@ describe("checkAppPermissions", () => {
       "https://github.com/organizations/octo/settings/apps/claude-hub-ada/permissions",
     )
     expect(describeDrift(check)).toEqual([
-      "The App claude-hub-ada lacks Issues: Read and write. Add it at https://github.com/organizations/octo/settings/apps/claude-hub-ada/permissions",
+      "The App claude-hub-ada lacks Issues: read and write. Add it at https://github.com/organizations/octo/settings/apps/claude-hub-ada/permissions",
     ])
   })
 
@@ -133,7 +133,7 @@ describe("checkAppPermissions", () => {
       },
     ])
     expect(describeDrift(check)).toEqual([
-      "Its installation on octo lacks Pull requests: Read and write, Issues: Read and write. Accept it at https://github.com/organizations/octo/settings/installations/8/permissions/update",
+      "Its installation on octo lacks Pull requests: read and write, Issues: read and write. Accept it at https://github.com/organizations/octo/settings/installations/8/permissions/update",
     ])
   })
 
@@ -161,7 +161,7 @@ test("the docs list the permissions the Hub needs", async () => {
       "|---|---|---|",
       ...RequiredPermissions.map(
         (permission) =>
-          `| ${permission.title} | ${accessTitle(permission.access)} | ${permission.why} |`,
+          `| ${permission.title} | ${accessLabel(permission.access)} | ${permission.why} |`,
       ),
       "",
     ].join("\n"),

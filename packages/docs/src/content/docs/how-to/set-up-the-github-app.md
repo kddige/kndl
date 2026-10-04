@@ -45,19 +45,19 @@ Without the tunnel, the page doesn't load on your machine, and neither does the 
 
 ## The permissions
 
-The App needs these repository permissions, and no webhook. Each Session's Sandbox gets a token with all of them, on its own Repo, so this is also what Claude can do there.
+The App needs these repository permissions, and no webhook.
 
 <!-- permissions:start -->
 | Permission | Access | Why |
 |---|---|---|
-| Contents | Read and write | Runners clone Repos and push WIP refs; Sessions push branches. |
-| Pull requests | Read and write | Sessions open, review and merge pull requests with gh. |
-| Issues | Read and write | Sessions read and comment on the issues they work on with gh. |
-| Metadata | Read-only | The Hub checks who is a Repo's collaborator. GitHub gives every App this one. |
+| Contents | read and write | Runners clone Repos and push WIP refs; git in the Sandbox pushes branches. |
+| Pull requests | read and write | gh pr in the Sandbox: opening, reviewing and merging pull requests. |
+| Issues | read and write | gh issue in the Sandbox: reading and commenting on issues. |
+| Metadata | read-only | Repo access: the Hub asks GitHub who is a Repo's collaborator. GitHub gives every App this one. |
 <!-- permissions:end -->
 
-:::caution[Grant only what Claude should have]
-Add **Workflows: read and write** only if Sessions should be able to change `.github/workflows`. Anything you add beyond this list, every Sandbox gets too.
+:::caution[The Sandbox token gets all of these]
+Each Session's Sandbox gets a token with every one of these permissions, on its own Repo ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)). This list is what Claude, and anything else running in a Sandbox, can do there. Issues, for example, lets a Sandbox open, edit, comment on and close its Repo's issues, as well as read them. Every permission you add beyond the list, such as **Workflows: read and write** so Sessions can change `.github/workflows`, every Sandbox gets too.
 :::
 
 ## Install the App

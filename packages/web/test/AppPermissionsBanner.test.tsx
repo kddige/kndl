@@ -68,9 +68,9 @@ test("says what the App and each installation lack, linking to where to fix it",
   await eventually(() => expect(banner()).toBeDefined())
   const text = banner()?.textContent ?? ""
   expect(text).toContain("The GitHub App is missing permissions")
-  expect(text).toContain("The App claude-hub-alice lacks Issues (read and write).")
+  expect(text).toContain("The App claude-hub-alice lacks Issues: read and write.")
   expect(text).toContain(
-    "Then, on acme, accept Pull requests (read and write) and Issues (read and write).",
+    "Then, on acme, accept Pull requests: read and write, Issues: read and write.",
   )
   const links = [...(banner()?.querySelectorAll("a") ?? [])]
   expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([

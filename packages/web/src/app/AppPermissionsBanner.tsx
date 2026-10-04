@@ -3,8 +3,8 @@
 // account. First the App's own settings; then each account it's installed on, which has to accept
 // what the App asks for.
 
-import type { AppPermission, AppPermissionsCheck } from "@claude-hub/protocol"
-import { hasPermissionDrift } from "@claude-hub/protocol"
+import type { AppPermissionsCheck } from "@claude-hub/protocol"
+import { describeMissing, hasPermissionDrift } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
 import { Banner, Button, ExternalLinkIcon, toast, WarningIcon } from "../ui/index.ts"
@@ -86,7 +86,7 @@ function Steps({ check }: { check: AppPermissionsCheck }) {
       {appLacks && (
         <li {...stylex.props(styles.item)}>
           The App <span {...stylex.props(styles.name)}>{check.slug}</span> lacks{" "}
-          {describe(check.missing, check.missingEvents)}.{" "}
+          {describeMissing(check.missing, check.missingEvents)}.{" "}
           <ExternalLink href={check.settingsUrl}>Edit its permissions</ExternalLink>
         </li>
       )}
@@ -94,7 +94,7 @@ function Steps({ check }: { check: AppPermissionsCheck }) {
         <li key={installation.id} {...stylex.props(styles.item)}>
           {appLacks ? "Then, on " : "On "}
           <span {...stylex.props(styles.name)}>{installation.account}</span>, accept{" "}
-          {describe(installation.missing, installation.missingEvents)}.{" "}
+          {describeMissing(installation.missing, installation.missingEvents)}.{" "}
           <ExternalLink href={installation.reviewUrl}>Review the request</ExternalLink>
         </li>
       ))}
@@ -114,20 +114,4 @@ function ExternalLink({ href, children }: { href: string; children: string }) {
       <ExternalLinkIcon aria-hidden="true" />
     </a>
   )
-}
-
-/** "Issues (read and write) and Pull requests (read and write)". */
-function describe(missing: ReadonlyArray<AppPermission>, events: ReadonlyArray<string>): string {
-  const parts = [
-    ...missing.map((permission) => `${permission.title} (${accessLabel[permission.access]})`),
-    ...events.map((event) => `the ${event} event`),
-  ]
-  if (parts.length <= 1) return parts.join("")
-  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`
-}
-
-const accessLabel: Record<AppPermission["access"], string> = {
-  read: "read-only",
-  write: "read and write",
-  admin: "admin",
 }

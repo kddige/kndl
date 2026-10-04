@@ -54,6 +54,31 @@ export const AppPermissionsCheck = Schema.Struct({
 })
 export type AppPermissionsCheck = typeof AppPermissionsCheck.Type
 
+/** An access in words: "read-only", "read and write" or "admin". */
+export function accessLabel(access: PermissionAccess): string {
+  switch (access) {
+    case "read":
+      return "read-only"
+    case "write":
+      return "read and write"
+    case "admin":
+      return "admin"
+  }
+}
+
+/**
+ * What is missing, in the words the Hub's log, doctor and the web UI all use: "Pull requests:
+ * read and write, Issues: read and write, the push event".
+ */
+export const describeMissing = (
+  missing: ReadonlyArray<AppPermission>,
+  events: ReadonlyArray<string>,
+): string =>
+  [
+    ...missing.map((permission) => `${permission.title}: ${accessLabel(permission.access)}`),
+    ...events.map((event) => `the ${event} event`),
+  ].join(", ")
+
 /** Whether the check found anything missing, on the App or any installation. */
 export const hasPermissionDrift = (check: AppPermissionsCheck): boolean =>
   check.missing.length > 0 || check.missingEvents.length > 0 || check.installations.length > 0

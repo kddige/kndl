@@ -7,14 +7,15 @@
 // installation keeps the old ones. GitHub has no API to change either, so the check only says what
 // is missing and where on GitHub to fix it.
 
-import type {
-  AppPermission,
-  AppPermissionsCheck,
-  InstallationDrift,
-  PermissionAccess,
+import {
+  type AppPermission,
+  type AppPermissionsCheck,
+  describeMissing,
+  type InstallationDrift,
+  type PermissionAccess,
 } from "@claude-hub/protocol"
 
-/** A permission the App needs, and why. */
+/** A permission the App needs, and the feature that needs it. */
 export interface RequiredPermission extends AppPermission {
   readonly why: string
 }
@@ -25,29 +26,34 @@ export interface RequiredPermission extends AppPermission {
  * something claude-hub or a Session needs.
  */
 export const RequiredPermissions: ReadonlyArray<RequiredPermission> = [
+  // Runners' clones and WIP pushes, and git in the Sandbox, with the tokens GitHubApp.ts mints.
   {
     name: "contents",
     title: "Contents",
     access: "write",
-    why: "Runners clone Repos and push WIP refs; Sessions push branches.",
+    why: "Runners clone Repos and push WIP refs; git in the Sandbox pushes branches.",
   },
+  // gh pr in the Sandbox.
   {
     name: "pull_requests",
     title: "Pull requests",
     access: "write",
-    why: "Sessions open, review and merge pull requests with gh.",
+    why: "gh pr in the Sandbox: opening, reviewing and merging pull requests.",
   },
+  // gh issue in the Sandbox.
   {
     name: "issues",
     title: "Issues",
     access: "write",
-    why: "Sessions read and comment on the issues they work on with gh.",
+    why: "gh issue in the Sandbox: reading and commenting on issues.",
   },
+  // Repo access (RepoAccess.ts): GitHubApp.ts's isCollaborator, which asks
+  // GET /repos/{owner}/{name}/collaborators/{login} as the Repo's installation.
   {
     name: "metadata",
     title: "Metadata",
     access: "read",
-    why: "The Hub checks who is a Repo's collaborator. GitHub gives every App this one.",
+    why: "Repo access: the Hub asks GitHub who is a Repo's collaborator. GitHub gives every App this one.",
   },
 ]
 
@@ -167,28 +173,6 @@ export function describeDrift(check: AppPermissionsCheck): ReadonlyArray<string>
     )
   }
   return lines
-}
-
-/** What is missing, as "Issues: Read and write, the push event". */
-export const describeMissing = (
-  missing: ReadonlyArray<AppPermission>,
-  events: ReadonlyArray<string>,
-): string =>
-  [
-    ...missing.map((permission) => `${permission.title}: ${accessTitle(permission.access)}`),
-    ...events.map((event) => `the ${event} event`),
-  ].join(", ")
-
-/** As GitHub's settings page says it: "Read-only", "Read and write", "Admin". */
-export function accessTitle(access: PermissionAccess): string {
-  switch (access) {
-    case "read":
-      return "Read-only"
-    case "write":
-      return "Read and write"
-    case "admin":
-      return "Admin"
-  }
 }
 
 /** The manifest's `default_permissions`: each required permission and its access. */
