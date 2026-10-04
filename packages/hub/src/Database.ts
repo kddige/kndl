@@ -226,6 +226,44 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`DROP TABLE session_prompters`
   }),
+
+  // A Sensitive variable can need a value (#57): `bun run secrets-reset` clears the values a lost
+  // HUB_SECRETS_KEY encrypted, keeping the variables. In both tables, a Sensitive variable with a
+  // null value needs one. `shared_variables.value` was NOT NULL, so it is rebuilt; the
+  // environment_variables rows that reference it are set aside meanwhile, as dropping a table
+  // they reference would fail their foreign keys.
+  "0009_values_needed": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE environment_variables_kept AS SELECT * FROM environment_variables`
+    yield* sql`DROP TABLE environment_variables`
+    yield* sql`
+      CREATE TABLE shared_variables_new (
+        name TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('Plain', 'Sensitive')),
+        value TEXT CHECK (value IS NOT NULL OR kind = 'Sensitive'),
+        updated_by TEXT NOT NULL REFERENCES participants (id),
+        updated_at INTEGER NOT NULL
+      )
+    `
+    yield* sql`INSERT INTO shared_variables_new SELECT * FROM shared_variables`
+    yield* sql`DROP TABLE shared_variables`
+    yield* sql`ALTER TABLE shared_variables_new RENAME TO shared_variables`
+    yield* sql`
+      CREATE TABLE environment_variables (
+        repo TEXT NOT NULL REFERENCES environments (repo) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('Plain', 'Sensitive', 'Link')),
+        value TEXT,
+        shared_name TEXT REFERENCES shared_variables (name),
+        available_at_build INTEGER NOT NULL,
+        position INTEGER NOT NULL,
+        PRIMARY KEY (repo, name)
+      )
+    `
+    yield* sql`INSERT INTO environment_variables SELECT * FROM environment_variables_kept`
+    yield* sql`DROP TABLE environment_variables_kept`
+    yield* sql`CREATE INDEX environment_variables_shared ON environment_variables (shared_name)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

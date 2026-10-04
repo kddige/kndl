@@ -112,6 +112,11 @@ export type EnvironmentDraft = typeof EnvironmentDraft.Type
 export const SensitiveVariable = Schema.TaggedStruct("Sensitive", {
   name: Schema.String,
   availableAtBuild: Schema.Boolean,
+  /**
+   * Whether it has no value: `secrets-reset` cleared the one a lost HUB_SECRETS_KEY encrypted.
+   * The Repo's Sessions don't start until a new value is applied.
+   */
+  needsValue: Schema.Boolean,
 })
 export type SensitiveVariable = typeof SensitiveVariable.Type
 
@@ -162,6 +167,11 @@ export const SharedVariable = Schema.Union([
   Schema.TaggedStruct("Sensitive", {
     name: Schema.String,
     linkedBy: Schema.Array(SharedVariableUse),
+    /**
+     * Whether it has no value, as {@link SensitiveVariable}'s `needsValue`: the Sessions of every
+     * Repo linking it don't start until it gets one.
+     */
+    needsValue: Schema.Boolean,
   }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type SharedVariable = typeof SharedVariable.Type

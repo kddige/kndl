@@ -13,6 +13,10 @@
 //   A value an apply or a shared variable's change replaces is kept, encrypted, as retired: a
 //   Session that started before may still print it. It is dropped once no Session that could
 //   have it is running (Active or Frozen) on a version from before the change.
+// - A Sensitive variable, own or shared, can need a value: `secrets-reset` (SecretsReset.ts)
+//   cleared the one a lost key encrypted (#57). The Repo's Sessions don't start, and no draft
+//   keeping it can be applied or Test built, until a value is entered. Entering one restores it,
+//   so it applies with no Test build, even at build.
 
 import {
   type DependencyFolder,
@@ -90,7 +94,10 @@ type VariableKind = "Plain" | "Sensitive" | "Link"
 interface VariableRow {
   readonly name: string
   readonly kind: VariableKind
-  /** The plain value, a Sensitive one's ciphertext, or null for a link. */
+  /**
+   * The plain value, a Sensitive one's ciphertext, or null for a link or a Sensitive variable
+   * that needs a value.
+   */
   readonly value: string | null
   readonly sharedName: string | null
   readonly availableAtBuild: number
@@ -99,8 +106,46 @@ interface VariableRow {
 interface SharedRow {
   readonly name: string
   readonly kind: "Plain" | "Sensitive"
-  /** The plain value, or a Sensitive one's ciphertext. */
-  readonly value: string
+  /** The plain value, a Sensitive one's ciphertext, or null when a Sensitive one needs a value. */
+  readonly value: string | null
+}
+
+/** A variable of an Environment that needs a value: its own, or the shared variable it links. */
+export interface ValueNeeded {
+  readonly name: string
+  readonly availableAtBuild: boolean
+  /** The shared variable it links, which needs the value; none for its own. */
+  readonly sharedVariable?: string
+}
+
+/** Names the variables that need a value, as a refusal or a failed start says it. */
+export function valuesNeededText(needed: ReadonlyArray<ValueNeeded>): string {
+  const names = needed.map((variable) =>
+    variable.sharedVariable === undefined
+      ? variable.name
+      : variable.sharedVariable === variable.name
+        ? `${variable.name} (shared)`
+        : `${variable.name} (the shared variable ${variable.sharedVariable})`,
+  )
+  const listed =
+    names.length <= 1
+      ? (names[0] ?? "")
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+  return `${listed} ${names.length === 1 ? "needs a value" : "need values"}`
+}
+
+/** Why the Repo's Sessions don't start while variables need a value, and where to enter them. */
+export function cantStartText(repo: string, needed: ReadonlyArray<ValueNeeded>): string {
+  const screens = [
+    ...(needed.some((variable) => variable.sharedVariable === undefined)
+      ? ["the Repo's Environment screen"]
+      : []),
+    ...(needed.some((variable) => variable.sharedVariable !== undefined)
+      ? ["the Shared variables screen"]
+      : []),
+  ]
+  const which = needed.length === 1 ? "it" : "them"
+  return `${repo}'s Sessions can't start: ${valuesNeededText(needed)}. Enter ${which} on ${screens.join(" and ")}.`
 }
 
 /** A variable with its value, and how it is stored. */
@@ -227,7 +272,12 @@ export class Environments extends Context.Service<
     readonly sensitiveValues: (
       repo: string,
     ) => Effect.Effect<ReadonlyArray<Redacted.Redacted<string>>, EnvironmentRefused | SqlError>
-    /** Every variable of the Repo's Environment as applied, with its value. */
+    /**
+     * The variables of the Repo's Environment as applied that need a value (#57), its own or
+     * through a link, in order. Its Sessions don't start while there are any.
+     */
+    readonly valuesNeeded: (repo: string) => Effect.Effect<ReadonlyArray<ValueNeeded>, SqlError>
+    /** Every variable of the Repo's Environment as applied, with its value; refused while any needs one. */
     readonly values: (
       repo: string,
     ) => Effect.Effect<ReadonlyArray<VariableValue>, EnvironmentRefused | SqlError>
@@ -288,10 +338,13 @@ export class Environments extends Context.Service<
         return Option.fromNullishOr(rows[0])
       })
 
+      /** A shared variable's value, or none when it needs one. */
       const sharedValue = (row: SharedRow) =>
-        row.kind === "Plain"
-          ? Effect.succeed(Redacted.make(row.value))
-          : decrypt(row.value, sharedContext(row.name))
+        row.value === null
+          ? Effect.succeed(Option.none<Redacted.Redacted<string>>())
+          : row.kind === "Plain"
+            ? Effect.succeed(Option.some(Redacted.make(row.value)))
+            : Effect.map(decrypt(row.value, sharedContext(row.name)), Option.some)
 
       /**
        * Keeps a Sensitive value the Repo no longer has, encrypted, for redacting what Sessions on
@@ -311,9 +364,13 @@ export class Environments extends Context.Service<
         `
       })
 
-      /** The Repo's variables as applied, with their values. */
+      /**
+       * The Repo's variables as applied: those with a value, resolved, and those that need one
+       * (#57), which have none to resolve.
+       */
       const storedVariables = Effect.fn("Environments.storedVariables")(function* (repo: string) {
         const resolved: Array<ResolvedVariable> = []
+        const needed: Array<ValueNeeded> = []
         for (const row of yield* variableRows(repo)) {
           const availableAtBuild = row.availableAtBuild === 1
           if (row.kind === "Plain") {
@@ -324,12 +381,15 @@ export class Environments extends Context.Service<
               stored: { kind: "Plain" },
             })
           } else if (row.kind === "Sensitive") {
-            const ciphertext = row.value ?? ""
+            if (row.value === null) {
+              needed.push({ name: row.name, availableAtBuild })
+              continue
+            }
             resolved.push({
               name: row.name,
               availableAtBuild,
-              value: yield* decrypt(ciphertext, environmentContext(repo, row.name)),
-              stored: { kind: "Sensitive", ciphertext },
+              value: yield* decrypt(row.value, environmentContext(repo, row.name)),
+              stored: { kind: "Sensitive", ciphertext: row.value },
             })
           } else {
             const sharedName = row.sharedName ?? ""
@@ -337,15 +397,20 @@ export class Environments extends Context.Service<
             if (Option.isNone(shared)) {
               return yield* refuse(`The shared variable ${sharedName} is gone.`)
             }
+            const value = yield* sharedValue(shared.value)
+            if (Option.isNone(value)) {
+              needed.push({ name: row.name, availableAtBuild, sharedVariable: sharedName })
+              continue
+            }
             resolved.push({
               name: row.name,
               availableAtBuild,
-              value: yield* sharedValue(shared.value),
+              value: value.value,
               stored: { kind: "Link", sharedName, sensitive: shared.value.kind === "Sensitive" },
             })
           }
         }
-        return resolved
+        return { resolved, needed }
       })
 
       /**
@@ -412,8 +477,13 @@ export class Environments extends Context.Service<
                 break
               }
               const kept = saved.get(name)
-              if (kept?.kind !== "Sensitive" || kept.value === null) {
+              if (kept?.kind !== "Sensitive") {
                 return yield* refuse(`${name} has no saved Sensitive value: enter one.`)
+              }
+              if (kept.value === null) {
+                return yield* refuse(
+                  `${valuesNeededText([{ name, availableAtBuild }])}: enter one.`,
+                )
               }
               variables.push({
                 name,
@@ -430,10 +500,17 @@ export class Environments extends Context.Service<
                   `There is no shared variable ${variable.sharedVariable} to link as ${name}.`,
                 )
               }
+              const value = yield* sharedValue(shared.value)
+              if (Option.isNone(value)) {
+                const needed = { ...variable, sharedVariable: shared.value.name }
+                return yield* refuse(
+                  `${valuesNeededText([needed])}: set it on the Shared variables screen.`,
+                )
+              }
               variables.push({
                 name,
                 availableAtBuild: variable.availableAtBuild,
-                value: yield* sharedValue(shared.value),
+                value: value.value,
                 stored: {
                   kind: "Link",
                   sharedName: shared.value.name,
@@ -447,9 +524,24 @@ export class Environments extends Context.Service<
 
         const fields = draftFieldsOf(draft)
         const digest = buildDigest(fields, variables)
-        const changesBuild = Option.isNone(current)
-          ? true
-          : buildDigest(recipeFieldsOf(current.value), yield* storedVariables(repo)) !== digest
+        let changesBuild = true
+        if (Option.isSome(current)) {
+          const { resolved, needed } = yield* storedVariables(repo)
+          // A value entered for one that needs it (#57) restores it rather than changing the
+          // build, even at build: the build as applied counts the draft's value in its place.
+          // Builds already on Runners keep the lost one, as they keep any value they built with.
+          const restored = variables.filter((variable) =>
+            needed.some(
+              (gone) =>
+                gone.sharedVariable === undefined &&
+                gone.name === variable.name &&
+                gone.availableAtBuild === variable.availableAtBuild &&
+                variable.stored.kind === "Sensitive",
+            ),
+          )
+          changesBuild =
+            buildDigest(recipeFieldsOf(current.value), [...resolved, ...restored]) !== digest
+        }
         return {
           repo,
           recipe: recipeOf(fields, variables),
@@ -518,7 +610,7 @@ export class Environments extends Context.Service<
               memory_mib = excluded.memory_mib
           `
           const kept = new Set(prepared.sensitiveValues.map(Redacted.value))
-          for (const value of sensitiveOf(yield* storedVariables(repo))) {
+          for (const value of sensitiveOf((yield* storedVariables(repo)).resolved)) {
             if (!kept.has(Redacted.value(value))) yield* retire(repo, value, version)
           }
           yield* sql`DELETE FROM environment_variables WHERE repo = ${repo}`
@@ -583,7 +675,12 @@ export class Environments extends Context.Service<
             case "Plain":
               return { _tag: "Plain" as const, name: variable.name, value: variable.value ?? "" }
             case "Sensitive":
-              return { _tag: "Sensitive" as const, name: variable.name, availableAtBuild }
+              return {
+                _tag: "Sensitive" as const,
+                name: variable.name,
+                availableAtBuild,
+                needsValue: variable.value === null,
+              }
             case "Link":
               return {
                 _tag: "Link" as const,
@@ -620,8 +717,32 @@ export class Environments extends Context.Service<
         })
       })
 
+      const valuesNeeded = Effect.fn("Environments.valuesNeeded")(function* (repo: string) {
+        const rows = yield* sql<{
+          readonly name: string
+          readonly availableAtBuild: number
+          readonly sharedName: string | null
+        }>`
+          SELECT v.name, v.available_at_build AS availableAtBuild,
+            CASE WHEN v.kind = 'Link' THEN v.shared_name END AS sharedName
+          FROM environment_variables v LEFT JOIN shared_variables s ON s.name = v.shared_name
+          WHERE v.repo = ${repo} AND (
+            (v.kind = 'Sensitive' AND v.value IS NULL)
+            OR (v.kind = 'Link' AND s.kind = 'Sensitive' AND s.value IS NULL)
+          )
+          ORDER BY v.position
+        `
+        return rows.map((row): ValueNeeded => ({
+          name: row.name,
+          availableAtBuild: row.availableAtBuild === 1,
+          ...(row.sharedName !== null && { sharedVariable: row.sharedName }),
+        }))
+      })
+
       const values = Effect.fn("Environments.values")(function* (repo: string) {
-        return valuesOf(yield* storedVariables(repo))
+        const { resolved, needed } = yield* storedVariables(repo)
+        if (needed.length > 0) return yield* refuse(`${valuesNeededText(needed)}.`)
+        return valuesOf(resolved)
       })
 
       const sensitiveValues = Effect.fn("Environments.sensitiveValues")(function* (repo: string) {
@@ -638,7 +759,8 @@ export class Environments extends Context.Service<
         const retired = yield* sql<{ readonly value: string }>`
           SELECT value FROM retired_values WHERE repo = ${repo}
         `
-        const sensitive = sensitiveOf(yield* storedVariables(repo))
+        // A variable that needs a value has none to redact.
+        const sensitive = sensitiveOf((yield* storedVariables(repo)).resolved)
         for (const row of retired) sensitive.push(yield* decrypt(row.value, retiredContext(repo)))
         return sensitive
       })
@@ -694,8 +816,8 @@ export class Environments extends Context.Service<
               availableAtBuild: link.availableAtBuild === 1,
             }))
           return row.kind === "Plain"
-            ? { _tag: "Plain", name: row.name, value: row.value, linkedBy }
-            : { _tag: "Sensitive", name: row.name, linkedBy }
+            ? { _tag: "Plain", name: row.name, value: row.value ?? "", linkedBy }
+            : { _tag: "Sensitive", name: row.name, linkedBy, needsValue: row.value === null }
         })
       }).pipe(Effect.withSpan("Environments.sharedVariables"))
 
@@ -730,6 +852,11 @@ export class Environments extends Context.Service<
             if (Option.isNone(existing) || existing.value.kind !== "Sensitive") {
               return yield* refuse(`${name} has no saved Sensitive value: enter one.`)
             }
+            if (existing.value.value === null) {
+              return yield* refuse(
+                `${valuesNeededText([{ name, availableAtBuild: false }])}: enter one.`,
+              )
+            }
             stored = existing.value.value
           } else {
             if (!secrets.available) return yield* secretsUnavailable(name)
@@ -741,30 +868,33 @@ export class Environments extends Context.Service<
               .pipe(Effect.mapError((error) => new EnvironmentRefused({ message: error.message })))
           }
 
-          if (Option.isSome(existing) && value !== undefined) {
-            const before = Redacted.value(yield* sharedValue(existing.value))
-            const atBuild = (yield* linksTo(name)).filter((link) => link.availableAtBuild === 1)
-            if (before !== Redacted.value(value) && atBuild.length > 0) {
+          // Its value now: none when it is new, or needs one (#57). A value that is gone can only
+          // be replaced, even where it is available at build: the builds Runners have keep the
+          // lost one, and a version built anew gets this one, as no build can have the lost one
+          // again.
+          const before = Option.isSome(existing)
+            ? yield* sharedValue(existing.value)
+            : Option.none<Redacted.Redacted<string>>()
+          if (
+            Option.isSome(before) &&
+            value !== undefined &&
+            Redacted.value(before.value) !== Redacted.value(value)
+          ) {
+            const links = yield* linksTo(name)
+            const atBuild = links.filter((link) => link.availableAtBuild === 1)
+            if (atBuild.length > 0) {
               const repos = [...new Set(atBuild.map((link) => link.repo))].join(", ")
               return yield* refuse(
                 `${name} is available at build in ${repos}: a new value would change those builds without a Test build. Untick "available at build" on its links first, or link a new shared variable.`,
               )
             }
-          }
-
-          // A Sensitive value replaced is retired in every Repo linking it: their running
-          // Sessions started with it. They are on the Repo's version as it is now, or older.
-          if (
-            Option.isSome(existing) &&
-            existing.value.kind === "Sensitive" &&
-            value !== undefined
-          ) {
-            const before = yield* sharedValue(existing.value)
-            if (Redacted.value(before) !== Redacted.value(value)) {
-              for (const repo of new Set((yield* linksTo(name)).map((link) => link.repo))) {
+            // A Sensitive value replaced is retired in every Repo linking it: their running
+            // Sessions started with it. They are on the Repo's version as it is now, or older.
+            if (Option.isSome(existing) && existing.value.kind === "Sensitive") {
+              for (const repo of new Set(links.map((link) => link.repo))) {
                 const environment = yield* environmentRow(repo)
                 const version = Option.isSome(environment) ? environment.value.version : 0
-                yield* retire(repo, before, version + 1)
+                yield* retire(repo, before.value, version + 1)
               }
             }
           }
@@ -799,6 +929,7 @@ export class Environments extends Context.Service<
         prepare,
         apply,
         forSession,
+        valuesNeeded,
         values,
         sensitiveValues,
         testBuildPassed,

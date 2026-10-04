@@ -43,7 +43,15 @@ describe("EnvironmentState", () => {
         version: 1 as never,
         ...DefaultEnvironmentDraft,
         // A value that slipped into a view is not part of the schema, so it is not sent.
-        variables: [{ _tag: "Sensitive", name: "TOKEN", availableAtBuild: false, value: "x1" }],
+        variables: [
+          {
+            _tag: "Sensitive",
+            name: "TOKEN",
+            availableAtBuild: false,
+            needsValue: false,
+            value: "x1",
+          },
+        ],
       } as never,
       versions: [],
     })

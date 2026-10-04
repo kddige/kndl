@@ -346,8 +346,8 @@ describe("Applying an Environment", () => {
     const applied = expectApplied(await apply(env, draft(), null), 1)
     expect(applied.environment?.variables).toEqual([
       { _tag: "Plain", name: "NODE_ENV", value: "development" },
-      { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true },
-      { _tag: "Sensitive", name: "API_KEY", availableAtBuild: false },
+      { _tag: "Sensitive", name: "NPM_TOKEN", availableAtBuild: true, needsValue: false },
+      { _tag: "Sensitive", name: "API_KEY", availableAtBuild: false, needsValue: false },
     ])
     expect(applied.versions).toMatchObject([
       { version: 1, appliedBy: { id: "dev:alice" }, rebuilt: true },
@@ -556,7 +556,7 @@ describe("Shared variables", () => {
       _tag: "SharedVariables",
       requestId: expect.any(String),
       variables: [
-        { _tag: "Sensitive", name: "GITHUB_TOKEN", linkedBy: [] },
+        { _tag: "Sensitive", name: "GITHUB_TOKEN", linkedBy: [], needsValue: false },
         { _tag: "Plain", name: "REGISTRY", value: "ghcr.io", linkedBy: [] },
       ],
     })
