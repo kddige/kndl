@@ -37,6 +37,7 @@ export const baseConfig: HubConfigInput = {
   githubAppId: Option.none(),
   githubAppPrivateKey: Option.none(),
   devLogin: false,
+  insecureCookies: false,
   devLoginName: "dev",
   sleepAfterMs: Duration.toMillis(DefaultSleepAfter),
   archiveRetentionMs: Duration.toMillis(DefaultArchiveRetention),
