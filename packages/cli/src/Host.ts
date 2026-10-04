@@ -309,13 +309,16 @@ export const runnerConfigError = (layout: Layout) =>
 
 /**
  * hub.env's GitHub App, checked against the permissions and events the Hub needs, as the Hub
- * checks it (AppPermissions.ts): `undefined` without an App, or with a configuration the Hub
- * refuses, which the configuration check reports. `apiUrl` is GitHub's API, unless a test's.
+ * checks it (AppPermissions.ts). Without an App, whether GitHub sign-in is on anyway; `undefined`
+ * with neither, or with a configuration the Hub refuses, which the configuration check reports.
+ * `apiUrl` is GitHub's API, unless a test's.
  */
 export const appPermissionsFact = (layout: Layout, apiUrl?: URL) =>
   Effect.gen(function* () {
-    const { githubApp } = yield* HubConfig
-    if (Option.isNone(githubApp)) return undefined
+    const { github, githubApp } = yield* HubConfig
+    if (Option.isNone(githubApp)) {
+      return Option.isSome(github) ? ({ _tag: "SignInWithoutApp" } as const) : undefined
+    }
     const app = yield* GitHubApp.make(
       apiUrl === undefined ? githubApp.value : { ...githubApp.value, apiUrl },
     )

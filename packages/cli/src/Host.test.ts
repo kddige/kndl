@@ -27,8 +27,8 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true })
 })
 
-/** A hub.env with the stand-in's App, or none. */
-function hubEnv(app: boolean) {
+/** A hub.env with the stand-in's App or none, and with GitHub sign-in or not. */
+function hubEnv(app: boolean, signIn = false) {
   const key = join(layout.home.dir, "github-app.pem")
   writeFileSync(key, keys.privateKeyPem, { mode: 0o600 })
   writeFileSync(
@@ -36,6 +36,7 @@ function hubEnv(app: boolean) {
     [
       "HUB_PUBLIC_URL=http://127.0.0.1:7777",
       ...(app ? [`GITHUB_APP_ID=${appId}`, `GITHUB_APP_PRIVATE_KEY_PATH=${key}`] : []),
+      ...(signIn ? ["GITHUB_CLIENT_ID=Iv23liTest", "GITHUB_CLIENT_SECRET=client-secret"] : []),
       "",
     ].join("\n"),
     { mode: 0o600 },
@@ -84,6 +85,13 @@ describe("doctor's GitHub App check", () => {
     hubEnv(false)
 
     expect(await fact()).toBeUndefined()
+    expect(github.requests).toEqual([])
+  })
+
+  test("GitHub sign-in without an App is found, without asking GitHub", async () => {
+    hubEnv(false, true)
+
+    expect(await fact()).toEqual({ _tag: "SignInWithoutApp" })
     expect(github.requests).toEqual([])
   })
 })

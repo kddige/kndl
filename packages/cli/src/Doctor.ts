@@ -33,7 +33,10 @@ export interface DoctorFacts {
   }>
   /** Why the Hub would refuse its configuration, if it would. */
   readonly hubConfigError: string | undefined
-  /** The GitHub App's permissions, checked against the Hub's, when hub.env has an App. */
+  /**
+   * The GitHub App's permissions, checked against the Hub's, when hub.env has an App; or that it
+   * has GitHub sign-in without one. `undefined` with neither.
+   */
   readonly githubApp: AppPermissionsFact | undefined
   /** Why the Runner would refuse its configuration, if it would. */
   readonly runnerConfigError: string | undefined
@@ -52,10 +55,14 @@ export interface DoctorFacts {
   readonly linger: boolean | undefined
 }
 
-/** What checking the GitHub App's permissions on GitHub found, or why it couldn't. */
+/**
+ * What checking the GitHub App's permissions on GitHub found, or why it couldn't; or that hub.env
+ * turns GitHub sign-in on with no App to check who can see a Repo.
+ */
 export type AppPermissionsFact =
   | { readonly _tag: "Checked"; readonly check: AppPermissionsCheck }
   | { readonly _tag: "Unchecked"; readonly detail: string }
+  | { readonly _tag: "SignInWithoutApp" }
 
 export interface Health {
   readonly url: string
@@ -272,6 +279,15 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
  */
 function appCheck(fact: AppPermissionsFact): Check {
   const name = "GitHub App"
+  if (fact._tag === "SignInWithoutApp") {
+    // Repo access (RepoAccess.ts) asks GitHub, as the App, who is a Repo's collaborator.
+    return {
+      name,
+      status: "fail",
+      detail:
+        "GitHub sign-in is on (GITHUB_CLIENT_ID), but hub.env has no GitHub App, so nobody signed in with GitHub can see any Session: the Hub asks GitHub, as the App, who can access each Repo. Create one with `claude-hub onboard --github-app create`, or set up one you made yourself with `claude-hub onboard --github-app manual`.",
+    }
+  }
   if (fact._tag === "Unchecked") {
     return { name, status: "warn", detail: `Couldn't check its permissions: ${fact.detail}` }
   }

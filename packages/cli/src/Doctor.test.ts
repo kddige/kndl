@@ -259,6 +259,16 @@ describe("doctor and the GitHub App", () => {
     expect(check(healthy)).toBeUndefined()
   })
 
+  test("GitHub sign-in without an App fails: nobody signed in with GitHub sees a Session", () => {
+    const found = check({ ...healthy, githubApp: { _tag: "SignInWithoutApp" } })
+
+    expect(found?.status).toBe("fail")
+    expect(found?.fix).toBeUndefined()
+    expect(found?.detail).toContain("nobody signed in with GitHub can see any Session")
+    expect(found?.detail).toContain("claude-hub onboard --github-app create")
+    expect(found?.detail).toContain("claude-hub onboard --github-app manual")
+  })
+
   test("doctor prints a detail's lines under each other", () => {
     expect(
       formatChecks([
