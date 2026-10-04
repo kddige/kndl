@@ -17,12 +17,13 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 | `HUB_DATABASE` | `hub.db` in `packages/hub` | The SQLite database. With `CLAUDE_HUB_HOME` set, `hub.db` in that home. |
 | `HUB_WEB_DIR` | `packages/web/dist` | The web UI's build, which the Hub serves. Without one, the Hub warns at startup and its pages answer 503. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret. Set both, or neither; unset, GitHub sign-in is off. |
-| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The GitHub App's id and the path to its private key (an RSA PEM). The Hub mints installation tokens from them for Runners' clones and WIP pushes, and for `git` and `gh` in Sandboxes. Set both, or neither; unset, Runners use their host's git credentials and Sandboxes get no GitHub token. |
+| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The GitHub App's id and the path to its private key (an RSA PEM). The Hub mints installation tokens from them for Runners' clones and WIP pushes, for `git` and `gh` in Sandboxes, and to check who has access to a Repo. Set both, or neither; unset, Runners use their host's git credentials, Sandboxes get no GitHub token, and GitHub sign-ins have access to no Repo. |
 | `CLAUDE_HUB_DEV_LOGIN` | off | `1` turns on dev login, which signs anyone in as any name without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers. |
 | `CLAUDE_HUB_DEV_USER` | `$USER`, else `dev` | Who dev login signs you in as when you give no name. |
 | `HUB_INSECURE_COOKIES` | off | `1` drops `Secure` from the Hub's cookies when `HUB_PUBLIC_URL` is plain HTTP. Sign-in tokens then travel in cleartext. See [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/#last-resort-plain-http-on-a-network-you-trust). |
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. |
 | `HUB_ARCHIVE_RETENTION_MS` | `2592000000` (30 days) | How long an Archived Session can be restored before the Hub purges it. |
+| `HUB_REPO_ACCESS_TTL_MS` | `300000` (5 minutes) | How long the Hub trusts what GitHub said about a person's access to a Repo, and how often it checks everyone connected again. Someone who loses access is out of the Repo's Sessions within twice this. See [Who can do what](/explanation/security-model/#who-can-do-what). |
 | `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values are encrypted with. Unset, Sensitive values can't be saved; once any are saved, the Hub refuses to start without the same key. |
 | `CLAUDE_HUB_HOME` | unset | See [Homes](#homes). |
 

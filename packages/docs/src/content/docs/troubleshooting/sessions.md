@@ -105,6 +105,14 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 
 **Fix.** For the first, run `bun run secrets-key`, add the line it prints to `packages/hub/.env.local` and restart the Hub. For the second, make the variable Plain, or use the real, longer value. See [Use variables and secrets](/how-to/use-variables-and-secrets/).
 
+## A Session is missing, or `There is no such Session.`
+
+**What you see.** A teammate's Session isn't in your list, a link to it says `There is no such Session.`, or a Session you were in disappears. Starting a Session says `You have no access to owner/name on GitHub, or the GitHub App isn't installed on it.`
+
+**Why.** You see only the Sessions of Repos you have access to on GitHub, as a collaborator, and only Repos the GitHub App is installed on. Someone who loses access is taken out of the Repo's Sessions within twice `HUB_REPO_ACCESS_TTL_MS`. `Could not check your access on GitHub; try again.` means GitHub didn't answer the Hub. See [Who can do what](/explanation/security-model/#who-can-do-what).
+
+**Fix.** Have the Repo's owner add you on GitHub, or install the App on it. Its Sessions show up within twice `HUB_REPO_ACCESS_TTL_MS` (5 minutes by default), with no reload. Without `GITHUB_APP_ID` on the Hub, GitHub sign-ins see no Sessions at all: [set up the GitHub App](/how-to/set-up-the-github-app/).
+
 ## Restart or Sleep now is refused
 
 **What you see.** Pressing **Restart** or **Sleep now** shows a refusal, such as:

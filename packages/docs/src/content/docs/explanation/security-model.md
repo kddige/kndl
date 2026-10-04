@@ -41,15 +41,17 @@ Cookie-authenticated requests must come from `HUB_PUBLIC_URL`'s origin, and the 
 
 ## Who can do what
 
-Today, everyone who can sign in is equal:
+A Session belongs to its Repo, not to its Creator ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Whoever has access to the Repo on GitHub sees its Sessions, and can join, prompt, stop, type into the terminal of, put to sleep, wake, delete or restore any of them. No one else can.
 
-- Any signed-in person sees every Session, and can join, prompt, type into the terminal of, put to sleep or delete any of them. A Session belongs to its Repo, not to its Creator ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)).
-- Any signed-in person can change any Repo's Environment and the Shared variables.
+- **Access to a Repo** means the GitHub App is installed on it, and GitHub says you are a collaborator on it: an outside collaborator, an organization member with access through a team or the organization's base permission, or its owner. A public Repo's other readers don't count. The Hub asks as the App's installation, which needs no permission beyond Metadata. Without the App (`GITHUB_APP_ID` unset), a GitHub sign-in has access to no Repo.
+- **Dev login** has access to every Repo, while it is on.
+- **The Hub checks every Session command** before it runs, in one place: the Session list and its updates, joining and the event log, prompts, Stop, the terminal, sleep and wake, delete and restore, and starting a Session in a Repo. A Session you have no access to answers as if it didn't exist.
+- **Answers are cached** for `HUB_REPO_ACCESS_TTL_MS`, 5 minutes by default, to stay well within GitHub's rate limit. As often, the Hub checks everyone connected again. So someone who loses access on GitHub is taken out of the Repo's Sessions within twice that: they leave its Sessions' presence and terminals, and the Sessions leave their list. When GitHub can't answer, people keep the access they had, and no one gains any until it can.
 
-GitHub sign-in admits anyone with a GitHub account who can reach the Hub's sign-in page, so keep the Hub on a network, tailnet or proxy that only your team can reach.
+GitHub sign-in admits anyone with a GitHub account who can reach the Hub's sign-in page. They see no Session without access to its Repo, but still keep the Hub on a network, tailnet or proxy that only your team can reach.
 
 :::caution[Known gaps]
-Checking that a person has access to a Repo before showing or starting its Sessions is planned but not yet enforced, and there are no roles yet. Until then, treat everyone who can sign in to the Hub as trusted with every Repo the GitHub App is installed on.
+There are no roles yet: any signed-in person can change any Repo's Environment and the Shared variables, whatever their access to the Repo. A prompt already queued still runs after its sender loses access.
 :::
 
 ## Every Session on a Runner uses its login
