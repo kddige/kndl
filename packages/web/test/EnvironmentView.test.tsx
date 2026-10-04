@@ -68,8 +68,9 @@ async function open(path: string, stepMs = 2) {
 
 test("a change to the image needs a passing Test build before it applies", async () => {
   const { page, section, status } = await open("/repos/kddige/claude-hub/environment")
+  // Headed by the Repo while it loads, then with its version beside it.
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("kddige/claude-hub"))
-  expect(page.textContent).toContain("Version 2")
+  await eventually(() => expect(page.textContent).toContain("Version 2"))
   expect(section("Version history").textContent).toContain("Changed the build")
   expect(status()).toContain("No changes to apply.")
   expect(button("Apply").disabled).toBe(true)

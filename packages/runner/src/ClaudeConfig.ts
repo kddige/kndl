@@ -198,7 +198,8 @@ function parseConfig(text: string, path: string): Record<string, unknown> {
   return config as Record<string, unknown>
 }
 
-function hasTrust(config: unknown, directory: string): boolean {
+/** Whether `directory` (already resolved with realpath) is marked trusted in the config. */
+export function hasTrust(config: unknown, directory: string): boolean {
   return field(field(field(config, "projects"), directory), "hasTrustDialogAccepted") === true
 }
 

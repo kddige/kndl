@@ -2,7 +2,7 @@
 title: Runners
 description: A Runner won't start, can't reach the Hub, or doesn't show up in the web UI.
 sidebar:
-  order: 3
+  order: 4
 ---
 
 A Runner checks its settings and Claude Code's login before it connects. Then it connects out to the Hub and keeps reconnecting while it can't, so a Runner that is running but never shows up in **New Session** is almost always a connection problem: look at its log.

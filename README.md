@@ -24,7 +24,15 @@ The words used here are defined in [`GLOSSARY.md`](GLOSSARY.md), and the design 
 
 ## Quick start
 
-On one machine, without GitHub. You need [Bun](https://bun.sh) 1.4 or newer, Claude Code (`claude`) signed in, `tmux` and `git`, and a Mac with Apple Silicon or Linux with KVM for the Sandboxes.
+To install a Hub, a Runner or both as services, with the GitHub CLI signed in (the repository is private):
+
+```sh
+gh api repos/kddige/claude-hub/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
+```
+
+It installs into `~/.claude-hub` and starts `claude-hub onboard`; then `claude-hub status`, `doctor`, `logs` and `update` look after it. See [Install claude-hub](https://kddige.github.io/claude-hub/how-to/install/).
+
+To run it from this checkout instead, on one machine and without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, Claude Code (`claude`) signed in, `tmux` and `git`, and a Mac with Apple Silicon or Linux with KVM for the Sandboxes.
 
 ```sh
 bun install
@@ -41,8 +49,6 @@ RUNNER_TOKEN=chr_… bun run runner
 
 Open <http://127.0.0.1:7777>, sign in with dev login, and create a Session. The [tutorial](https://kddige.github.io/claude-hub/tutorials/first-session/) walks through it, and the [how-to guides](https://kddige.github.io/claude-hub/how-to/install/) cover GitHub sign-in, more Runners and reaching the Hub from other machines.
 
-A `claude-hub` CLI that installs and runs all this is coming ([#84](https://github.com/kddige/claude-hub/issues/84)).
-
 ## Development
 
 One Bun workspace in TypeScript, with [Effect](https://effect.website):
@@ -52,6 +58,7 @@ One Bun workspace in TypeScript, with [Effect](https://effect.website):
 | [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as Effect Schemas. |
 | [`packages/hub`](packages/hub) | The Hub: an Effect HTTP server on Bun, with SQLite. |
 | [`packages/runner`](packages/runner) | A Runner: Claude Code in tmux, its tools in a microsandbox Sandbox. |
+| [`packages/cli`](packages/cli) | The `claude-hub` command: installs, runs and looks after a Hub and Runner as services. |
 | [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod each Session loads. |
 | [`packages/web`](packages/web) | The web UI: React on Vite, Base UI and StyleX. |
 | [`packages/docs`](packages/docs) | The documentation site: Astro Starlight. |

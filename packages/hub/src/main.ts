@@ -2,20 +2,20 @@
 // Participant, and relays prompts and events between them.
 //
 // `bun src/main.ts` serves the Hub; `bun src/main.ts runner-token <name>` issues a Runner's
-// token and prints it; `bun src/main.ts secrets-key` prints a new HUB_SECRETS_KEY. Configuration is read from the environment: see HubConfig.ts and
-// Database.ts, and the README.
+// token and prints it; `bun src/main.ts secrets-key` prints a new HUB_SECRETS_KEY (both in
+// Admin.ts, which the claude-hub CLI shares). Configuration is read from the environment: see
+// HubConfig.ts and Database.ts.
 
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect, Layer, Option } from "effect"
 import { HttpRouter } from "effect/http"
+import { issueRunnerToken, runnerTokenNotice, secretsKeyNotice } from "./Admin.ts"
 import { DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
-import { RunnerTokens } from "./RunnerTokens.ts"
-import { generateSecretsKey } from "./Secrets.ts"
 import { announceWebUi } from "./WebUi.ts"
 
 const ServerLive = Layer.unwrap(
@@ -64,36 +64,15 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(HubConfig.layer),
 )
 
-/** Issues a token for the Runner of this name (rotating any earlier one) and prints it. */
-const issueRunnerToken = (name: string) =>
-  Effect.gen(function* () {
-    const issued = yield* (yield* RunnerTokens).issue(name)
-    yield* Console.log(
-      [
-        `Runner ${issued.name} (${issued.runnerId}). Its token, shown only now:`,
-        "",
-        `  ${issued.token}`,
-        "",
-        "Any earlier token for this Runner no longer works. Give the token to the Runner as RUNNER_TOKEN.",
-      ].join("\n"),
-    )
-  }).pipe(Effect.provide(RunnerTokens.layer.pipe(Layer.provideMerge(DatabaseLive))))
-
 const [command, ...args] = process.argv.slice(2)
 if (command === undefined) {
   BunRuntime.runMain(Layer.launch(HubLive))
 } else if (command === "runner-token" && args.length === 1 && args[0]) {
-  BunRuntime.runMain(issueRunnerToken(args[0]))
-} else if (command === "secrets-key" && args.length === 0) {
-  console.log(
-    [
-      "A new key for the Hub's Sensitive values. Put it in packages/hub/.env.local:",
-      "",
-      `  HUB_SECRETS_KEY=${generateSecretsKey()}`,
-      "",
-      "Keep a copy somewhere safe: without it, the Sensitive values saved under it can't be read, and the Hub won't start.",
-    ].join("\n"),
+  BunRuntime.runMain(
+    Effect.flatMap(issueRunnerToken(args[0]), (issued) => Console.log(runnerTokenNotice(issued))),
   )
+} else if (command === "secrets-key" && args.length === 0) {
+  console.log(secretsKeyNotice("packages/hub/.env.local"))
 } else {
   console.error("Usage: bun src/main.ts [runner-token <name> | secrets-key]")
   process.exit(2)

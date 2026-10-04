@@ -10,6 +10,7 @@
     "lint": "oxlint --deny-warnings",
     "format": "oxfmt --write",
     "format:check": "oxfmt --check",
+    "cli": "bun packages/cli/src/main.ts",
     "hub": "bun run --filter @claude-hub/hub start",
     "runner-token": "bun run --filter @claude-hub/hub runner-token",
     "secrets-key": "bun run --filter @claude-hub/hub secrets-key",

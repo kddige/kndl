@@ -51,7 +51,7 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 
 ## Homes
 
-A Hub or Runner keeps its state in a home. From a checkout, that is the dev home, `~/.claude-hub-dev`, with tmux socket `claude-hub-dev`. `CLAUDE_HUB_HOME` names another, with tmux socket `claude-hub`; the `claude-hub` CLI ([#84](https://github.com/kddige/claude-hub/issues/84)) will set it to `~/.claude-hub` for the processes it installs, so a dev Runner and an installed one can share a machine. A variable that names a path still wins over the home's.
+A Hub or Runner keeps its state in a home. From a checkout, that is the dev home, `~/.claude-hub-dev`, with tmux socket `claude-hub-dev`. `CLAUDE_HUB_HOME` names another, with tmux socket `claude-hub`; the [`claude-hub` command](/reference/commands/#the-claude-hub-command) sets it to `~/.claude-hub` for the services it installs, so a dev Runner and an installed one can share a machine. An installed Hub and Runner read their settings from `<home>/hub.env` and `<home>/runner.env`; see [An installed home](/reference/files-and-paths/#an-installed-home). A variable that names a path still wins over the home's.
 
 | Setting | From a checkout | With `CLAUDE_HUB_HOME=<home>` |
 |---|---|---|
