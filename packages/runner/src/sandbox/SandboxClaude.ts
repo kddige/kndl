@@ -130,7 +130,7 @@ export const ensureSandboxClaude = (options: EnsureOptions) =>
       const digest = `sha512-${createHash("sha512").update(bytes).digest("base64")}`
       if (digest !== integrity) throw new Error(`${dist.tarball} failed its integrity check`)
 
-      await mkdir(options.cacheDir, { recursive: true })
+      await mkdir(options.cacheDir, { recursive: true, mode: 0o700 })
       const staging = await mkdtemp(join(options.cacheDir, `.download-${options.version}-`))
       try {
         await writeFile(join(staging, "package.tgz"), bytes)

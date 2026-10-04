@@ -2,7 +2,7 @@
 // them, start scripts, variables, resources, versions, pruning and Test builds.
 
 import { describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type {
@@ -30,7 +30,11 @@ import { dependencyDiskGuestPath } from "./sandbox/DependencyFolders.ts"
 import { FakeSandboxBackend } from "./sandbox/FakeSandboxBackend.ts"
 import type { FakeExecCall, FakeExecReply, FakeSandboxWorld } from "./sandbox/FakeSandboxBackend.ts"
 import type { SandboxBackend } from "./sandbox/SandboxBackend.ts"
-import { detectLibcScript, sandboxClaudePath } from "./sandbox/SandboxClaude.ts"
+import {
+  detectLibcScript,
+  sandboxClaudeGuestDir,
+  sandboxClaudePath,
+} from "./sandbox/SandboxClaude.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
@@ -143,7 +147,7 @@ const withEnvironments = async (
     Sandboxes,
     makeSessionSandboxes({
       image: "docker:dind",
-      claudeCacheDir: "/host/claude-code",
+      claudeCacheDir: join(root, "claude-code"),
       sandboxClaude: () => Effect.succeed("2.1.287"),
       ...sandboxesDefaults,
       scratchDir: join(root, "scratch"),
@@ -153,6 +157,7 @@ const withEnvironments = async (
   )
   const onExec = options.onExec
   const backend = FakeSandboxBackend.layer({
+    checkHostPaths: true,
     onSpawn: (_call, io) => fakeMcpServer(echoTools)(io),
     onExec: (call) =>
       Effect.succeed(
@@ -269,6 +274,38 @@ describe("Sandboxes from an Environment", () => {
         })
         expect(record).not.toContain("npm-made-up")
         expect(record).not.toContain("k-1")
+      }),
+    ))
+
+  test("a fresh Runner's first Session makes the Claude Code cache folder before mounting it", () =>
+    withEnvironments(({ root }) =>
+      Effect.gen(function* () {
+        const sandboxes = yield* Sandboxes
+        const world = yield* FakeSandboxBackend
+        const cacheDir = join(root, "claude-code")
+        const cacheStat = Effect.promise(() => stat(cacheDir).catch(() => undefined))
+        expect(yield* cacheStat).toBeUndefined()
+
+        // The fake refuses a host mount whose folder is missing, as microsandbox does (#69), and
+        // the Sandbox mounts the folder before the download for its build's libc could make it.
+        const started = yield* sandboxes.start(s1, yield* directoriesIn(root), {
+          repo,
+          environment: environment(1),
+        })
+        expect(started).toEqual({ environmentVersion: version(1) })
+        expect(world.restores).toHaveLength(1)
+        expect(world.sandboxes.get(s1)?.spec.mounts).toContainEqual(
+          expect.objectContaining({
+            _tag: "Host",
+            hostPath: cacheDir,
+            guestPath: sandboxClaudeGuestDir,
+            readOnly: true,
+          }),
+        )
+        // Only the Runner's user may reach into it.
+        const made = yield* cacheStat
+        expect(made?.isDirectory()).toBe(true)
+        expect((made?.mode ?? 0) & 0o777).toBe(0o700)
       }),
     ))
 

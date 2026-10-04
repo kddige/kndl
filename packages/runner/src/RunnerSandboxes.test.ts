@@ -96,7 +96,7 @@ const runProcess = <A>(
     Sandboxes,
     makeSessionSandboxes({
       image: "docker:dind",
-      claudeCacheDir: "/host/claude-code",
+      claudeCacheDir: join(host.sessionsRoot, "claude-code"),
       sandboxClaude: () => Effect.succeed("2.1.287"),
       ...sandboxesDefaults,
       bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },

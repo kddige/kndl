@@ -55,7 +55,7 @@ const withSandboxes = async (
     Sandboxes,
     makeSessionSandboxes({
       image: "docker:dind",
-      claudeCacheDir: "/host/claude-code",
+      claudeCacheDir: join(root, "claude-code"),
       sandboxClaude: () => options.sandboxClaude ?? Effect.succeed("2.1.287"),
       ...sandboxesDefaults,
       bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
@@ -63,7 +63,11 @@ const withSandboxes = async (
   )
   try {
     await body(root, sent).pipe(
-      Effect.provide(sandboxes.pipe(Layer.provideMerge(FakeSandboxBackend.layer(options)))),
+      Effect.provide(
+        sandboxes.pipe(
+          Layer.provideMerge(FakeSandboxBackend.layer({ checkHostPaths: true, ...options })),
+        ),
+      ),
       Effect.provide(hub),
       Effect.provide(new FakeHubVariables().layer),
       Effect.scoped,
@@ -149,7 +153,7 @@ describe("SessionSandboxes", () => {
         // Claude Code for `mcp serve`, read-only; and nothing of the host's Claude configuration.
         expect(spec?.mounts).toContainEqual(
           expect.objectContaining({
-            hostPath: "/host/claude-code",
+            hostPath: join(root, "claude-code"),
             guestPath: sandboxClaudeGuestDir,
             readOnly: true,
           }),
@@ -352,7 +356,7 @@ describe("SessionSandboxes", () => {
           })
           const sandboxes = yield* makeSessionSandboxes({
             image: "docker:dind",
-            claudeCacheDir: "/host/claude-code",
+            claudeCacheDir: join(root, "claude-code"),
             sandboxClaude: () => Effect.succeed("2.1.287"),
             ...sandboxesDefaults,
             bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
