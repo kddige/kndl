@@ -617,6 +617,82 @@ describe("GitHub sign-in", () => {
   })
 })
 
+/** Whether cookies get Secure, and the warning the Hub logs at startup, for this config. */
+const cookiesFor = (publicUrl: string, insecureCookies = false) =>
+  Effect.runPromise(
+    HubConfig.make({ ...baseConfig, publicUrl: new URL(publicUrl), insecureCookies }).pipe(
+      Effect.map((config) => ({
+        secure: config.secureCookies,
+        warning: Option.getOrUndefined(config.cookieWarning),
+      })),
+    ),
+  )
+
+describe("cookies", () => {
+  test("are Secure over HTTPS, with nothing to warn about", async () => {
+    expect(await cookiesFor("https://hub.example.com")).toEqual({
+      secure: true,
+      warning: undefined,
+    })
+  })
+
+  test("are not Secure on loopback over HTTP, with nothing to warn about", async () => {
+    for (const url of ["http://localhost:5173", "http://127.0.0.1:5173", "http://[::1]:5173"]) {
+      expect(await cookiesFor(url)).toEqual({ secure: false, warning: undefined })
+    }
+  })
+
+  test("stay Secure over HTTP on a LAN address, with a warning that points to the ways out", async () => {
+    const { secure, warning } = await cookiesFor("http://192.168.1.10:5173")
+
+    expect(secure).toBe(true)
+    expect(warning).toContain("http://192.168.1.10:5173")
+    expect(warning).toContain("drop")
+    expect(warning).toContain("HTTPS")
+    expect(warning).toContain("SSH tunnel")
+    expect(warning).toContain("Tailscale")
+    expect(warning).toContain("HUB_INSECURE_COOKIES=1")
+  })
+
+  test("are not Secure over HTTP on a LAN address with HUB_INSECURE_COOKIES, with a loud warning", async () => {
+    const { secure, warning } = await cookiesFor("http://192.168.1.10:5173", true)
+
+    expect(secure).toBe(false)
+    expect(warning).toContain("INSECURE COOKIES")
+    expect(warning).toContain("cleartext")
+  })
+
+  test("stay Secure over HTTPS with HUB_INSECURE_COOKIES, with a warning that it does nothing", async () => {
+    const { secure, warning } = await cookiesFor("https://hub.example.com", true)
+
+    expect(secure).toBe(true)
+    expect(warning).toContain("does nothing")
+  })
+
+  test("are set without Secure or a __Host-/__Secure- prefix when HUB_INSECURE_COOKIES is on", async () => {
+    const hub = await startHub({
+      github: GitHub.layerTest({
+        code: "good-code",
+        user: { id: 42, login: "octocat", name: null },
+      }),
+      config: { publicUrl: new URL("http://192.168.1.10:5173"), insecureCookies: true },
+    })
+    const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
+    const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
+    const callback = await fetch(
+      `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
+      { redirect: "manual", headers: { cookie: `claude_hub_oauth_state=${state}` } },
+    )
+    const setCookies = [...start.headers.getSetCookie(), ...callback.headers.getSetCookie()]
+
+    expect(setCookies.some((cookie) => cookie.startsWith(`${signInCookie}=`))).toBe(true)
+    for (const cookie of setCookies) {
+      expect(cookie).not.toContain("Secure")
+      expect(cookie).not.toMatch(/^__(?:Host|Secure)-/)
+    }
+  })
+})
+
 const githubWith = (avatar_url: string | undefined) =>
   GitHub.layerTest({
     code: "good-code",

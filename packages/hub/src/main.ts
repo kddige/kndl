@@ -42,6 +42,9 @@ const announceSignIn = Layer.effectDiscard(
         "HUB_SECRETS_KEY is not set: Environments can't hold Sensitive values. Run `bun run secrets-key` to make one.",
       )
     }
+    if (Option.isSome(config.cookieWarning)) {
+      yield* Effect.logWarning(config.cookieWarning.value)
+    }
     if (Option.isSome(config.devLogin)) {
       yield* Effect.logWarning(
         `Dev login is on (CLAUDE_HUB_DEV_LOGIN): anyone reaching ${config.publicUrl.origin} can sign in without GitHub.`,

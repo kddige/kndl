@@ -15,7 +15,10 @@ import { HubConfig, isLoopback } from "./HubConfig.ts"
 import { SignIns } from "./SignIns.ts"
 import { constantTimeEqual, hashSecret, randomSecret } from "./Tokens.ts"
 
-/** Holds the OAuth `state` between leaving for GitHub and coming back. */
+/**
+ * Holds the OAuth `state` between leaving for GitHub and coming back. No `__Host-` or `__Secure-`
+ * prefix, which browsers refuse without `Secure`: see `cookieSecurity`.
+ */
 const stateCookie = "claude_hub_oauth_state"
 
 /** What `GET /auth/me` answers with 401: the ways to sign in that are on. */
