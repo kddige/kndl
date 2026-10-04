@@ -276,11 +276,18 @@ function SessionRow({
         </div>
       </div>
       <div {...stylex.props(styles.side)}>
-        {session.currentTurn !== null && (
+        {session.restarting !== undefined || session.starting !== undefined ? (
           <span {...stylex.props(styles.working)}>
             <Spinner size="sm" />
-            Working
+            {session.restarting ? "Restarting" : "Starting"}
           </span>
+        ) : (
+          session.currentTurn !== null && (
+            <span {...stylex.props(styles.working)}>
+              <Spinner size="sm" />
+              Working
+            </span>
+          )
         )}
         <span>{timeAgo(session.createdAt)}</span>
         <Avatar name={session.creator.name} src={session.creator.avatarUrl} size="sm" />

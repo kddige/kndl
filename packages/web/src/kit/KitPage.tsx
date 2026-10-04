@@ -646,6 +646,20 @@ function Banners() {
       <Banner intent="danger" icon={<WarningIcon />} title="The Runner went offline">
         The Session carries on when it's back.
       </Banner>
+      <Banner
+        intent="accent"
+        icon={<Spinner size="sm" />}
+        title="Starting…"
+        detail={
+          <Disclosure variant="plain" summary="Show log">
+            <LogView label="Start log">
+              {"#1 [internal] load build definition\n#2 DONE 0.4s\n"}
+            </LogView>
+          </Disclosure>
+        }
+      >
+        Building the Environment, then running its start script.
+      </Banner>
       <Banner intent="accent" icon={<BranchIcon />} title="On claude/fix-flaky-search" />
       <Banner title="Neutral, with nothing else" />
     </Section>

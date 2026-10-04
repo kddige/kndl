@@ -335,3 +335,41 @@ export function testBuildScript(
   }
   return { lines, passes }
 }
+
+/**
+ * What a Session's start prints before Claude Code is up, as its Runner sends it (#70): the
+ * Environment's build the first time the Session starts on its version, then its start script.
+ * Terminal output, as a build's is: colours, and lines ended with CR LF.
+ */
+export function sessionStartScript(
+  environment: EnvironmentWire | null,
+  build: boolean,
+): Array<string> {
+  const lines: Array<string> = []
+  if (environment !== null && build) {
+    lines.push(
+      `Building version ${environment.version} of ${environment.repo}'s Environment`,
+      "#1 [internal] load build definition from Dockerfile",
+      `#2 [1/3] FROM docker.io/library/${environment.image}`,
+      "#2 \u001b[34mDONE 3.1s\u001b[0m",
+      "#3 [2/3] RUN the bootstrap script",
+    )
+    for (const line of environment.bootstrapScript.split("\n")) {
+      if (line.trim() !== "") lines.push(`#3 + ${line}`)
+    }
+    lines.push(
+      "#3 \u001b[34mDONE 24.6s\u001b[0m",
+      "#4 [3/3] exporting to image",
+      "#4 \u001b[34mDONE 2.2s\u001b[0m",
+    )
+  }
+  lines.push("Starting the Sandbox")
+  if (environment?.startScript !== undefined) {
+    lines.push("Running the start script")
+    for (const line of environment.startScript.split("\n")) {
+      if (line.trim() !== "") lines.push(`+ ${line}`)
+    }
+  }
+  lines.push("\u001b[32m✓\u001b[0m Starting Claude Code")
+  return lines.map((line) => `${line}\r\n`)
+}

@@ -116,7 +116,23 @@ async function sessionScene(hub?: TestHub) {
   const sessionId = created.session.id
   const mod = new Mod(theHub, sessionId, start.modToken)
   expect((await mod.hello()).status).toBe(200)
-  return { hub: theHub, runner, runnerToken, web, start, created, sessionId, mod }
+  runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+  const started = await web.take(
+    "SessionUpdated",
+    (m) => m.session.id === sessionId && !m.session.starting,
+  )
+  return {
+    hub: theHub,
+    runner,
+    runnerToken,
+    web,
+    start,
+    created,
+    /** The Session once its Runner said it started. */
+    session: started.session,
+    sessionId,
+    mod,
+  }
 }
 
 const joinSession = (web: Connection<Web>, sessionId: string, afterSeq?: number) =>
@@ -217,13 +233,13 @@ describe("CreateSession", () => {
   })
 
   test("lists the Runner and the Session to web clients that connect later", async () => {
-    const { hub, created } = await sessionScene()
+    const { hub, session } = await sessionScene()
     const bobWeb = await openWeb(hub, "bob")
 
     expect(bobWeb.runners.runners).toMatchObject([
       { name: "mac", login: runnerLogin, isOnline: true },
     ])
-    expect(bobWeb.sessions.sessions).toEqual([created.session])
+    expect(bobWeb.sessions.sessions).toEqual([session])
   })
 })
 
@@ -550,6 +566,7 @@ describe("the Session lifecycle", () => {
 
     const mod = new Mod(hub, sessionId, start.modToken)
     await mod.hello()
+    runner.send({ _tag: "SessionStarted", sessionId })
     const [delivered] = await mod.deliveries(500)
     await mod.post(turnStarted("t-1", delivered?.promptId))
     await Bun.sleep(400)
@@ -702,8 +719,12 @@ describe("the Session lifecycle", () => {
 
     web.send({ _tag: "RestartSession", sessionId })
     expect(await runner.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
-    // Asking again while it restarts changes nothing.
+    // Asking again while it restarts is refused.
     web.send({ _tag: "RestartSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "RestartSession",
+      message: "The Session is already restarting.",
+    })
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
     const woken = await runner.take("StartSession")
     expect(woken).toMatchObject({ sessionId, resume: "claude-1" })
@@ -750,6 +771,121 @@ describe("the Session lifecycle", () => {
     await web.take("SessionUpdated", (m) => m.session.state === "Archived")
     web.send({ _tag: "RestartSession", sessionId })
     expect((await web.take("CommandFailed")).message).toBe("The Session is archived.")
+  })
+
+  test("the summary says starting from StartSession until SessionStarted, on the version sent", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
+    const web = await openWeb(hub, "alice")
+    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    web.send({
+      _tag: "CreateSession",
+      requestId: "r",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+    })
+    const start = await runner.take("StartSession")
+    const { sessionId } = start
+    const created = (await web.take("SessionCreated")).session
+    expect(created.state).toBe("Active")
+    // Not started on any version yet: the version it is being started on says what is coming.
+    expect(created.environment).toEqual({ version: null, latestVersion: 1 })
+    expect(created.starting).toEqual({ since: expect.any(Number), environmentVersion: 1 })
+    expect((await openWeb(hub, "bob")).sessions.sessions[0]?.starting).toEqual(created.starting)
+
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const started = await web.take("SessionUpdated", (m) => m.session.starting === undefined)
+    expect(started.session.environment).toEqual({ version: 1, latestVersion: 1 })
+  })
+
+  test("a start that fails is over too", async () => {
+    const scene = await sessionScene()
+    const { runner, web, sessionId } = scene
+    await asleep(scene)
+    web.send({ _tag: "WakeSession", sessionId })
+    await runner.take("StartSession")
+    await web.take("SessionUpdated", (m) => m.session.state === "Active" && !!m.session.starting)
+    runner.send({ _tag: "SessionStartFailed", sessionId, message: "no Docker" })
+    const asleepAgain = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(asleepAgain.session.starting).toBeUndefined()
+  })
+
+  test("Restart and Sleep now are refused while the Session is starting, and it isn't idle", async () => {
+    const hub = await hubSleepingAfter(100)
+    const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
+    const web = await openWeb(hub, "alice")
+    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    web.send({
+      _tag: "CreateSession",
+      requestId: "r",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+    })
+    const { sessionId } = await runner.take("StartSession")
+
+    web.send({ _tag: "RestartSession", sessionId })
+    expect(await web.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "RestartSession",
+      sessionId,
+      message: "The Session is still starting; restart it once it has started.",
+    })
+    web.send({ _tag: "SleepSession", sessionId })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "The Session is still starting; put it to sleep once it has started.",
+    )
+    // Building its Environment can take minutes: it isn't put to sleep meanwhile.
+    await Bun.sleep(300)
+    expect(await runner.untaken("StopSession")).toEqual([])
+    expect(await runner.untaken("StartSession")).toEqual([])
+
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    expect(await runner.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+  })
+
+  test("a restart shows from the RestartSession until the Session has started again", async () => {
+    const { runner, web, sessionId } = await sessionScene()
+    web.send({ _tag: "RestartSession", sessionId })
+    await runner.take("StopSession")
+    const asked = await web.take("SessionUpdated", (m) => m.session.restarting !== undefined)
+    expect(asked.session).toMatchObject({
+      state: "Active",
+      restarting: { by: alice, since: expect.any(Number) },
+    })
+    expect(asked.session.starting).toBeUndefined()
+
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    expect(
+      (await web.take("SessionUpdated", (m) => m.session.state === "Asleep")).session.restarting,
+    ).toEqual(asked.session.restarting)
+    await runner.take("StartSession")
+    // Earlier summaries of its first start are still untaken: this one is starting again.
+    const starting = await web.take(
+      "SessionUpdated",
+      (m) => m.session.starting !== undefined && m.session.restarting !== undefined,
+    )
+    expect(starting.session.state).toBe("Active")
+    expect(starting.session.restarting).toEqual(asked.session.restarting)
+
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const back = await web.take("SessionUpdated", (m) => m.session.starting === undefined)
+    expect(back.session.restarting).toBeUndefined()
+  })
+
+  test("restarting an Asleep Session shows until it has started", async () => {
+    const scene = await sessionScene()
+    const { runner, web, sessionId } = scene
+    await asleep(scene)
+    web.send({ _tag: "RestartSession", sessionId })
+    await runner.take("StartSession")
+    const woken = await web.take(
+      "SessionUpdated",
+      (m) => m.session.starting !== undefined && m.session.restarting !== undefined,
+    )
+    expect(woken.session).toMatchObject({ state: "Active", restarting: { by: alice } })
+    runner.send({ _tag: "SessionStartFailed", sessionId, message: "no Docker" })
+    const failed = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(failed.session.restarting).toBeUndefined()
   })
 
   test("HUB_SLEEP_AFTER_MS must be above 0", async () => {
@@ -1098,6 +1234,69 @@ describe("the terminal relay", () => {
     expect(await web.untaken("TerminalFrame")).toEqual([])
   })
 
+  test("before Claude Code's terminal is up, its output is the start's log, for joined clients", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
+    const web = await openWeb(hub, "alice")
+    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    web.send({
+      _tag: "CreateSession",
+      requestId: "r",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+    })
+    const { sessionId } = await runner.take("StartSession")
+    const { since } = defined((await web.take("SessionCreated")).session.starting)
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    const output = (data: string) =>
+      runner.send({
+        _tag: "TerminalFrame",
+        sessionId,
+        kind: "Output",
+        data,
+        size: { cols: 120, rows: 40 },
+      })
+
+    output("Step 1/2\r\n")
+    expect(await web.take("SessionStartLogged")).toEqual({
+      _tag: "SessionStartLogged",
+      sessionId,
+      since,
+      data: "Step 1/2\r\n",
+    })
+    output("Step 2/2\r\n")
+    await web.take("SessionStartLogged", (m) => m.data === "Step 2/2\r\n")
+
+    // A late joiner gets it so far, in one piece.
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(bobWeb, sessionId)
+    expect(await bobWeb.take("SessionStartLogged")).toEqual({
+      _tag: "SessionStartLogged",
+      sessionId,
+      since,
+      data: "Step 1/2\r\nStep 2/2\r\n",
+      replace: true,
+    })
+
+    // Once Claude Code's terminal is up, its output is the Terminal tab's alone.
+    runner.send({
+      _tag: "TerminalFrame",
+      sessionId,
+      kind: "Snapshot",
+      data: "claude",
+      size: { cols: 120, rows: 40 },
+    })
+    output("hello from claude")
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    await web.take("SessionUpdated", (m) => m.session.starting === undefined)
+    expect(await web.untaken("SessionStartLogged")).toEqual([])
+    const carol = await openWeb(hub, "carol")
+    joinSession(carol, sessionId)
+    await carol.take("SessionHistory")
+    expect(await carol.untaken("SessionStartLogged")).toEqual([])
+  })
+
   test("takes keystrokes only from a connection watching the terminal", async () => {
     const { hub, runner, web, sessionId } = await sessionScene()
     const bobWeb = await openWeb(hub, "bob")
@@ -1211,7 +1410,7 @@ describe("a Hub restart", () => {
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
-      const { runner, runnerToken, web, sessionId, mod, created } = await sessionScene(first)
+      const { runner, runnerToken, web, sessionId, mod, session } = await sessionScene(first)
       await mod.post(turnStarted("t-1"))
       joinSession(web, sessionId)
       web.send({ _tag: "SendPrompt", sessionId, text: "one" })
@@ -1224,9 +1423,7 @@ describe("a Hub restart", () => {
 
       const second = await startHub({ config: { devLogin: true }, database })
       const back = await openWeb(second, "alice", web.cookie)
-      expect(back.sessions.sessions).toEqual([
-        { ...created.session, state: "Frozen", currentTurn: "t-1" },
-      ])
+      expect(back.sessions.sessions).toEqual([{ ...session, state: "Frozen", currentTurn: "t-1" }])
 
       await openRunner(second, runnerToken, [sessionId])
       await back.take("SessionUpdated", (m) => m.session.state === "Active")

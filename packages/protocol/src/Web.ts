@@ -276,6 +276,21 @@ export const SessionEventLogged = Schema.TaggedStruct("SessionEventLogged", {
 })
 export type SessionEventLogged = typeof SessionEventLogged.Type
 
+/**
+ * Output of a joined Session's start before Claude Code's terminal is up: its Environment's build
+ * and start script, redacted, as it streams. On join, while a start is under way, the Hub sends
+ * what there is so far as one message that replaces what the client held. `since` is the start's
+ * (the SessionSummary's `starting.since`), so a client can tell one start's output from another's.
+ */
+export const SessionStartLogged = Schema.TaggedStruct("SessionStartLogged", {
+  sessionId: SessionId,
+  since: EpochMillis,
+  data: Schema.String,
+  /** The output so far, or its end if long, in place of what the client held. */
+  replace: Schema.optionalKey(Schema.Boolean),
+})
+export type SessionStartLogged = typeof SessionStartLogged.Type
+
 /** A joined Session's Prompt queue, in full and in order: sent on join and whenever it changes. */
 export const PromptQueueChanged = Schema.TaggedStruct("PromptQueueChanged", {
   sessionId: SessionId,
@@ -308,6 +323,7 @@ export const HubToWeb = Schema.Union([
   SessionEventLogged,
   PresenceChanged,
   PromptQueueChanged,
+  SessionStartLogged,
   TerminalFrame,
   CommandFailed,
   EnvironmentState,

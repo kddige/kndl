@@ -72,12 +72,42 @@ export function repoParams(repo: string): { owner: string; repo: string } {
 /**
  * Whether an Active Session runs on an older version of its Repo's Environment than the latest
  * (ADR 0009): it picks the latest up on a restart. Other states pick it up as they next wake.
+ * A Session being started counts the version it is being started on, not the one it ran before
+ * (#70); one being restarted is getting the latest already.
  */
 export function environmentChanged(session: SessionSummary): boolean {
-  const { environment } = session
+  const { environment, starting } = session
+  if (session.state !== "Active" || environment === undefined) return false
+  if (session.restarting !== undefined) return false
+  const version = starting ? (starting.environmentVersion ?? null) : environment.version
+  return version !== environment.latestVersion
+}
+
+/**
+ * Terminal output as plain text, for a log view: colours and cursor moves dropped, and a line a
+ * progress bar redrew (with a carriage return) shown as it was last drawn.
+ */
+export function terminalText(output: string): string {
   return (
-    session.state === "Active" &&
-    environment !== undefined &&
-    environment.version !== environment.latestVersion
+    output
+      .replace(terminalEscapes, "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      // A carriage return that ends the output so far is a redraw still to come.
+      .map((line) => line.split("\r").findLast((drawn) => drawn !== "") ?? "")
+      .join("\n")
+      .replace(controlCharacters, "")
   )
 }
+
+/**
+ * ESC and what follows it: OSC sequences (window titles, links) up to BEL or ST, CSI sequences
+ * (colours, cursor moves, erasing), and other two-character escapes.
+ */
+const terminalEscapes =
+  // oxlint-disable-next-line eslint/no-control-regex -- matching terminal escapes is the point
+  /\u001b(?:\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\[[0-?]*[ -/]*[@-~]?|[@-Z\\-_]?)/g
+
+/** Control characters other than tab and newline, which a log view can't show. */
+// oxlint-disable-next-line eslint/no-control-regex -- removing them is the point
+const controlCharacters = /[\u0000-\u0008\u000b-\u001f\u007f]/g

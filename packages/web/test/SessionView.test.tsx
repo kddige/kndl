@@ -109,9 +109,12 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   await eventually(() => expect(conversation()).toContain("Disclosure is the one"))
 })
 
-/** The whole app on one of the fake Hub's seeded Sessions, its script not playing. */
-async function openSession(sessionId: string) {
-  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+/**
+ * The whole app on one of the fake Hub's seeded Sessions, its script not playing, once a banner
+ * starting with `bannerStart` shows.
+ */
+async function openSession(sessionId: string, bannerStart = "This Session is", stepMs = 2) {
+  const hub = new FakeHub({ stepMs, autoplay: false })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(
     createMemoryHistory({ initialEntries: [`/sessions/${sessionId}`] }),
@@ -131,7 +134,7 @@ async function openSession(sessionId: string) {
   const banner = () =>
     [...page.querySelectorAll('[role="status"]')]
       .map((el) => el.textContent ?? "")
-      .find((content) => content.startsWith("This Session is")) ?? ""
+      .find((content) => content.startsWith(bannerStart)) ?? ""
   await eventually(() => expect(banner()).not.toBe(""))
   return {
     hub,
@@ -151,6 +154,11 @@ test("an Asleep Session wakes from its banner, and an idle Active one sleeps on 
   expect(sent()).toContain("WakeSession")
   await eventually(() => expect(header()).toContain("Active"))
   expect(banner()).toBe("")
+  // Woken, it is started first: it can't be put to sleep until that is done (#70).
+  expect(page.textContent).toContain("Starting…")
+  expect(button("Sleep now", page).disabled).toBe(true)
+  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+  expect(page.textContent).not.toContain("Starting…")
 
   await step(() => button("Sleep now", page).click())
   expect(sent()).toContain("SleepSession")
@@ -158,6 +166,35 @@ test("an Asleep Session wakes from its banner, and an idle Active one sleeps on 
   expect([...page.querySelectorAll("button")].some((b) => b.textContent === "Sleep now")).toBe(
     false,
   )
+})
+
+test("a restart for a changed Environment shows its progress until the Session is back", async () => {
+  // Slow enough to see each step of the restart.
+  const { page, banner, sent } = await openSession(demoSessionId, "Environment changed", 15)
+  expect(banner()).toContain("version 2 is the latest")
+  const statuses = () =>
+    [...page.querySelectorAll('[role="status"]')].map((el) => el.textContent ?? "").join("\n")
+
+  await step(() => button("Restart", page).click())
+  expect(sent()).toContain("RestartSession")
+  // Stopping it first, then starting it on the latest version, with its log.
+  await eventually(() => expect(statuses()).toContain("Restarting…"))
+  expect(statuses()).toContain("You asked for a restart.")
+  expect(banner()).toBe("")
+  expect(button("Sleep now", page).disabled).toBe(true)
+  await eventually(() => expect(statuses()).toContain("Starting the Sandbox on version 2"))
+  expect(statuses()).toContain("Restarting…")
+  await step(() => button("Show log", page).click())
+  await eventually(() =>
+    expect(page.querySelector('[aria-label="Start log"]')?.textContent).toContain(
+      "Building version 2 of kddige/claude-hub's Environment",
+    ),
+  )
+
+  // Back, on the latest version: no banner.
+  await eventually(() => expect(statuses()).not.toContain("Restarting…"))
+  expect(banner()).toBe("")
+  expect(button("Sleep now", page).disabled).toBe(false)
 })
 
 test("a Frozen Session takes prompts, which wait in its queue", async () => {

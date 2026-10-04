@@ -12,7 +12,7 @@ import { checkHandshake, ProtocolVersion, WebToHub } from "@claude-hub/protocol"
 import { Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
-import { FakeEnvironments, testBuildScript } from "./environments.ts"
+import { FakeEnvironments, sessionStartScript, testBuildScript } from "./environments.ts"
 import {
   archiveRetentionMs,
   bob,
@@ -56,6 +56,8 @@ interface FakeSession {
   stopTurn: (() => void) | null
   /** Its Claude Code terminal, made when first opened. */
   terminal: FakeTerminal | null
+  /** What its latest start printed, for clients that join while it runs. */
+  startLog: string
 }
 
 class FakeSocket implements HubSocket {
@@ -126,6 +128,7 @@ export class FakeHub implements HubTransport {
         guests: [],
         stopTurn: null,
         terminal: null,
+        startLog: "",
       })
     }
   }
@@ -287,6 +290,16 @@ export class FakeHub implements HubTransport {
           sessionId: message.sessionId,
           queue: session.queue,
         })
+        const starting = session.summary.starting
+        if (starting && session.startLog !== "") {
+          socket.deliver({
+            _tag: "SessionStartLogged",
+            sessionId: message.sessionId,
+            since: starting.since,
+            data: session.startLog,
+            replace: true,
+          })
+        }
         this.#presence(session)
         if (message.sessionId === demoSessionId && this.#autoplay) this.play()
         break
@@ -329,6 +342,11 @@ export class FakeHub implements HubTransport {
       case "SleepSession": {
         const session = this.sessions.get(message.sessionId)
         if (!session) break
+        if (session.summary.starting) {
+          const reason = "The Session is still starting; put it to sleep once it has started."
+          this.#fail(socket, "SleepSession", reason, message.sessionId)
+          break
+        }
         if (session.summary.state !== "Active" || session.stopTurn || session.queue.length > 0) {
           this.#fail(
             socket,
@@ -472,8 +490,10 @@ export class FakeHub implements HubTransport {
           break
         }
         const at = Date.now()
+        // A start or restart under way is over: its Claude Code is stopped for good.
+        const { starting: _, restarting: __, ...summary } = session.summary
         session.summary = {
-          ...session.summary,
+          ...summary,
           archived: { by: this.#you, at, purgeAt: at + archiveRetentionMs },
         }
         this.#setState(session, "Archived", undefined, this.#you)
@@ -585,21 +605,74 @@ export class FakeHub implements HubTransport {
       creator: this.#you,
       createdAt: Date.now(),
       currentTurn: null,
-      environment: { version, latestVersion: version },
+      // Not started on any version until its Runner says so: it is being started on `version`.
+      environment: { version: null, latestVersion: version },
     }
-    this.sessions.set(id, {
+    const session: FakeSession = {
       summary,
       log: [],
       queue: [],
       guests: [],
       stopTurn: null,
       terminal: null,
-    })
-    socket.deliver({ _tag: "SessionCreated", requestId, session: summary })
+      startLog: "",
+    }
+    this.sessions.set(id, session)
+    this.#start(session)
+    socket.deliver({ _tag: "SessionCreated", requestId, session: session.summary })
     for (const other of this.#sockets) {
       if (other !== socket && other.welcomed)
-        other.deliver({ _tag: "SessionUpdated", session: summary })
+        other.deliver({ _tag: "SessionUpdated", session: session.summary })
     }
+  }
+
+  /**
+   * Starts the Session's Claude Code and Sandbox, as the Hub does on create and wake: Active at
+   * once, with `why` in its history, and starting until its Runner says it started, which
+   * streams the start's output meanwhile (#70). Queued prompts wait until it has started.
+   */
+  #start(session: FakeSession, why?: { message: string; by?: ParticipantWire }): void {
+    const sessionId = session.summary.id
+    const { environment } = this.environments.state(session.summary.repo)
+    const since = Date.now()
+    // Built the first time it starts on a version; after that the Runner has the build.
+    const build =
+      environment !== null && session.summary.environment?.version !== environment.version
+    session.startLog = ""
+    session.summary = {
+      ...session.summary,
+      starting: { since, ...(environment !== null && { environmentVersion: environment.version }) },
+    }
+    if (why) this.#setState(session, "Active", why.message, why.by)
+    const lines = sessionStartScript(environment, build)
+    const stillStarting = () => session.summary.starting?.since === since
+    lines.forEach((data, index) =>
+      this.#after(2 * index + 1, () => {
+        if (!stillStarting()) return
+        session.startLog += data
+        for (const socket of this.#joinedSockets(session)) {
+          socket.deliver({ _tag: "SessionStartLogged", sessionId, since, data })
+        }
+      }),
+    )
+    this.#after(2 * lines.length + 1, () => {
+      if (!stillStarting()) return
+      const { starting: _, restarting: __, ...summary } = session.summary
+      session.summary =
+        environment === null
+          ? summary
+          : {
+              ...summary,
+              environment: {
+                version: environment.version,
+                latestVersion: this.environments.latestVersion(summary.repo) ?? environment.version,
+              },
+            }
+      this.#summaryChanged(session)
+      // Claude Code is up: its Runner sends a snapshot to everyone watching.
+      this.#snapshot(session)
+      this.#next(session)
+    })
   }
 
   /**
@@ -612,27 +685,44 @@ export class FakeHub implements HubTransport {
       this.#fail(socket, "RestartSession", "There is no such Session.", sessionId)
       return
     }
+    if (session.summary.restarting) {
+      this.#fail(socket, "RestartSession", "The Session is already restarting.", sessionId)
+      return
+    }
+    const restarting = { by: this.#you, since: Date.now() }
     switch (session.summary.state) {
       case "Asleep":
+        session.summary = { ...session.summary, restarting }
         this.#wake(session, "Woken on studio", this.#you)
-        this.#next(session)
         return
       case "Active":
+        if (session.summary.starting) {
+          const reason = "The Session is still starting; restart it once it has started."
+          this.#fail(socket, "RestartSession", reason, sessionId)
+          return
+        }
         if (session.stopTurn) {
           const reason = "A Turn is running: stop it first, then restart."
           this.#fail(socket, "RestartSession", reason, sessionId)
           return
         }
-        this.#setState(
-          session,
-          "Asleep",
-          "Restarting for the Environment's latest version",
-          this.#you,
-        )
+        // Active until its Runner has stopped it, then Asleep, then started again.
+        session.summary = { ...session.summary, restarting }
+        this.#summaryChanged(session)
+        this.#after(3, () => {
+          if (session.summary.restarting !== restarting) return
+          this.#setState(
+            session,
+            "Asleep",
+            "Restarting for the Environment's latest version",
+            this.#you,
+          )
+        })
         this.#after(6, () => {
-          if (session.summary.state !== "Asleep") return
+          if (session.summary.state !== "Asleep" || session.summary.restarting !== restarting) {
+            return
+          }
           this.#wake(session, "Woken on studio", this.#you)
-          this.#next(session)
         })
         return
       case "Frozen":
@@ -649,16 +739,12 @@ export class FakeHub implements HubTransport {
     }
   }
 
-  /** Starts an Asleep Session again, on its Repo's latest Environment version. */
+  /**
+   * Starts an Asleep Session again, on its Repo's latest Environment version; queued prompts are
+   * delivered once it has started.
+   */
   #wake(session: FakeSession, message: string, by?: ParticipantWire): void {
-    const latest = this.environments.latestVersion(session.summary.repo)
-    if (latest !== undefined) {
-      session.summary = {
-        ...session.summary,
-        environment: { version: latest, latestVersion: latest },
-      }
-    }
-    this.#setState(session, "Active", message, by)
+    this.#start(session, { message, ...(by !== undefined && { by }) })
   }
 
   /** A prompt arrives: it runs now if the Session is idle, or waits in the Prompt queue. */
@@ -681,13 +767,21 @@ export class FakeHub implements HubTransport {
     if (session.stopTurn === null && session.summary.state !== "Frozen") this.#next(session)
   }
 
-  /** Delivers the next queued prompt, waking the Session first if it's Asleep. */
+  /**
+   * Delivers the next queued prompt; an Asleep Session is woken first, and a starting or
+   * restarting one gets it once it has started.
+   */
   #next(session: FakeSession): void {
-    if (session.summary.state === "Archived") return
+    const { state, starting, restarting } = session.summary
+    if (state === "Archived" || starting || restarting) return
+    if (session.queue.length === 0) return
+    if (session.summary.state === "Asleep") {
+      this.#wake(session, "Woken by a prompt")
+      return
+    }
     const prompt = session.queue.shift()
     if (!prompt) return
     this.#queueChanged(session)
-    if (session.summary.state === "Asleep") this.#wake(session, "Woken by a prompt")
     this.#runTurn(session, prompt, this.#replies.get(prompt.id) ?? replyTo(prompt.text))
     this.#replies.delete(prompt.id)
   }
@@ -902,8 +996,8 @@ export class FakeHub implements HubTransport {
     })
     this.#summaryChanged(session)
     // Claude Code starts again with the Session, and its Runner sends a snapshot to everyone
-    // watching.
-    if (state === "Active" && !wasActive) this.#snapshot(session)
+    // watching; a Session being started sends it once Claude Code is up.
+    if (state === "Active" && !wasActive && !session.summary.starting) this.#snapshot(session)
   }
 
   #append(session: FakeSession, event: SessionEventWire): void {
