@@ -1,13 +1,15 @@
 // What the web UI knows about the Hub, built only from what the Hub sends: the Runners, the
 // Sessions, for each joined Session its event log, presence and Prompt queue, and for each open
 // terminal whether it is live and its size; the Environments and shared variables the client
-// asked for (ADR 0009), and the Test builds it started, with their logs. The terminal's output
-// itself goes straight to the view that draws it (HubClient.openTerminal), not through here.
+// asked for (ADR 0009), the Test builds it started, with their logs, and what the GitHub App's
+// permissions lack (issue #86). The terminal's output itself goes straight to the view that draws
+// it (HubClient.openTerminal), not through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
 // events, and React reads the result.
 
 import type {
+  AppPermissionsCheck,
   Environment,
   EnvironmentVersionInfo,
   EventSeq,
@@ -109,6 +111,8 @@ export interface HubState {
   readonly sharedVariables: ReadonlyArray<SharedVariable> | null
   /** The Test builds this client started since it loaded. */
   readonly testBuilds: Readonly<Record<TestBuildId, TestBuildRun>>
+  /** The Hub's last check of the GitHub App's permissions; null without the App, or before one. */
+  readonly appPermissions: AppPermissionsCheck | null
 }
 
 /** Events the client adds to the Hub's messages. */
@@ -134,6 +138,7 @@ export const initialState: HubState = {
   environments: {},
   sharedVariables: null,
   testBuilds: {},
+  appPermissions: null,
 }
 
 const emptyJoined: JoinedSession = {
@@ -276,6 +281,8 @@ export function reduce(state: HubState, action: HubAction): HubState {
         result: action.result,
         message: action.message ?? null,
       }))
+    case "AppPermissionsChecked":
+      return { ...state, appPermissions: action.check }
   }
 }
 

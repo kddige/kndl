@@ -2,6 +2,7 @@
 // Turns it streams. All made up; the people are Alice (you) and Bob.
 
 import type {
+  AppPermissionsCheckWire,
   ParticipantWire,
   RunnerSummaryWire,
   SessionEventWire,
@@ -318,4 +319,33 @@ export function replyTo(text: string): ReadonlyArray<ReplyStep> {
       text: "\n\nThat's done. In a real Session this is where Claude's answer streams in.",
     },
   ]
+}
+
+/**
+ * A permission check that found the GitHub App short of Issues, and its installation on acme
+ * behind on Pull requests too: for the banner, in tests and from the console.
+ */
+export function driftedAppPermissions(now = Date.now()): AppPermissionsCheckWire {
+  return {
+    slug: "claude-hub-alice",
+    settingsUrl: "https://github.com/settings/apps/claude-hub-alice/permissions",
+    installUrl: "https://github.com/apps/claude-hub-alice/installations/new",
+    missing: [{ name: "issues", title: "Issues", access: "write" }],
+    missingEvents: [],
+    installed: 2,
+    installations: [
+      {
+        id: 42,
+        account: "acme",
+        reviewUrl:
+          "https://github.com/organizations/acme/settings/installations/42/permissions/update",
+        missing: [
+          { name: "pull_requests", title: "Pull requests", access: "write" },
+          { name: "issues", title: "Issues", access: "write" },
+        ],
+        missingEvents: [],
+      },
+    ],
+    checkedAt: now,
+  }
 }

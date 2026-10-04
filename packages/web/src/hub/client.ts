@@ -5,6 +5,7 @@
 // return a promise of the answer, matched to it by request id.
 
 import {
+  type AppPermissionsCheck,
   checkHandshake,
   type CommandFailed,
   type EnvironmentDraft,
@@ -280,6 +281,11 @@ export class HubClient {
     return this.#request({ _tag: "ApplyEnvironment", repo, baseVersion, draft }, "EnvironmentState")
   }
 
+  /** Has the Hub check the GitHub App's permissions now; the store then holds what it found. */
+  async checkAppPermissions(): Promise<AppPermissionsCheck> {
+    return (await this.#request({ _tag: "CheckAppPermissions" }, "AppPermissionsChecked")).check
+  }
+
   /** Every shared variable, which the store then keeps current. */
   async getSharedVariables(): Promise<ReadonlyArray<SharedVariable>> {
     return (await this.#request({ _tag: "GetSharedVariables" }, "SharedVariables")).variables
@@ -389,7 +395,8 @@ export class HubClient {
       case "EnvironmentState":
       case "EnvironmentDraftChecked":
       case "TestBuildStarted":
-      case "SharedVariables": {
+      case "SharedVariables":
+      case "AppPermissionsChecked": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break
