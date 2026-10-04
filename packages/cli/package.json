@@ -1,0 +1,20 @@
+{
+  "name": "@claude-hub/cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "claude-hub": "src/main.ts"
+  },
+  "scripts": {
+    "start": "bun src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "1.8.1",
+    "@claude-hub/hub": "workspace:*",
+    "@claude-hub/protocol": "workspace:*",
+    "@claude-hub/runner": "workspace:*",
+    "@effect/platform-bun": "4.0.0",
+    "effect": "4.0.0"
+  }
+}

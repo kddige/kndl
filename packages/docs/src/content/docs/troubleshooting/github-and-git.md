@@ -2,7 +2,7 @@
 title: GitHub and git
 description: A Repo won't clone, the GitHub App can't see it, git and gh in a Session can't reach GitHub, or the WIP ref won't push.
 sidebar:
-  order: 5
+  order: 6
 ---
 
 Two kinds of git run for a Session: the Runner's own, on its host, which clones the Repo and pushes the WIP ref, and the Session's, in its Sandbox, which Claude uses. They get their access differently. See [Git from Sessions](/explanation/git-from-sessions/).

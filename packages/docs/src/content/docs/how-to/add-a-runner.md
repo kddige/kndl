@@ -13,9 +13,31 @@ Soon a Runner joins from a one-paste command made on a Runners page in the web U
 
 ## Before you start
 
-The machine needs what the [install guide](/how-to/install/#what-each-machine-needs) lists for a Runner: Bun, git, tmux, Claude Code signed in, and microsandbox on a Mac with Apple Silicon or Linux with KVM. It needs a checkout of claude-hub with `bun install` run, and it must reach the Hub's URL.
+The machine needs what the [install guide](/how-to/install/#what-each-machine-needs) lists for a Runner: Bun, git, tmux, Claude Code signed in, and microsandbox on a Mac with Apple Silicon or Linux with KVM. It must reach the Hub's URL.
 
-## Issue a Runner token
+## With the `claude-hub` command
+
+On the **Hub's machine**, issue the Runner's token:
+
+```sh
+claude-hub runner token build-box
+```
+
+On the **Runner's machine**, [install claude-hub](/how-to/install/#install). When onboard asks, choose **Runner**, then give it the Hub's URL and the token. Or, without questions:
+
+```sh
+claude-hub onboard --role runner --hub-url https://hub.example.com --token chr_… --runner-name build-box
+```
+
+Onboard writes `~/.claude-hub/runner.env`, installs the Runner's service and waits for it to connect. `claude-hub status` shows whether it's connected, and `claude-hub logs runner` what it logged.
+
+The rest of this page runs a Runner from a checkout. What the Runner does once it runs is the same either way.
+
+## From a checkout
+
+The machine needs a checkout of claude-hub with `bun install` run.
+
+### Issue a Runner token
 
 On the **Hub's machine**, in its checkout, name the Runner and issue its token:
 
@@ -25,7 +47,7 @@ bun run runner-token build-box
 
 It prints a token that starts with `chr_`. The Hub keeps only a hash of it, so copy it now. Running `runner-token` again for the same name keeps the Runner's id and its Sessions, and replaces the token, so the old one stops working.
 
-## Start the Runner
+### Start the Runner
 
 On the **Runner's machine**, in its checkout:
 
@@ -61,7 +83,7 @@ If the Hub goes away, the Runner reconnects with backoff, from half a second dou
 
 ## Stop or restart it
 
-Ctrl-C (SIGINT) or SIGTERM stops the Runner at once. Its Sessions keep running in tmux, on its own tmux server (`tmux -L claude-hub-dev` from a checkout), and it re-adopts them when it starts again. While it is offline its Sessions are Frozen: readable, with prompts waiting in their queues.
+Ctrl-C (SIGINT) or SIGTERM stops the Runner at once; `claude-hub runner stop` stops an installed one. Its Sessions keep running in tmux, on its own tmux server (`tmux -L claude-hub-dev` from a checkout, `tmux -L claude-hub` installed), and it re-adopts them when it starts again. While it is offline its Sessions are Frozen: readable, with prompts waiting in their queues.
 
 To look at a Session's Claude Code by hand:
 
