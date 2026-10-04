@@ -1,11 +1,35 @@
 ---
 title: Files and paths
-description: Where the Hub and a Runner keep their state on disk, and what claude-hub names in tmux and microsandbox.
+description: Where an installed claude-hub and a checkout keep their state on disk, and what claude-hub names in tmux and microsandbox.
 sidebar:
   order: 3
 ---
 
-Paths here are for a checkout, which uses the dev home `~/.claude-hub-dev`. With `CLAUDE_HUB_HOME` set, read that home instead: see [Homes](/reference/configuration/#homes).
+An install keeps everything in its home, `~/.claude-hub` (or `CLAUDE_HUB_HOME`): see [An installed home](#an-installed-home). The rest of this page is for a checkout, which uses the dev home `~/.claude-hub-dev`; an installed Hub and Runner keep the same files in their home instead, as [Homes](/reference/configuration/#homes) lists.
+
+## An installed home
+
+| Path | What it is |
+|---|---|
+| `~/.claude-hub/app/` | The install: a checkout of claude-hub, which the services and the `claude-hub` command run. `claude-hub update` moves it, and discards changes made in it. |
+| `~/.claude-hub/hub.env` | The Hub's settings, read by its service and by `claude-hub runner token`. Readable only by you (`600`): it holds `HUB_SECRETS_KEY`. |
+| `~/.claude-hub/runner.env` | The Runner's settings, with its `RUNNER_TOKEN`. Readable only by you. |
+| `~/.claude-hub/hub.db` | The Hub's database. Back it up together with `hub.env`. |
+| `~/.claude-hub/sessions/` | The Runner's sessions root, one directory per Session. |
+| `~/.claude-hub/claude-code/` | Linux builds of Claude Code, for Sandboxes' tool bridges. |
+| `~/.claude-hub/logs/hub.log`, `runner.log` | Each service's output. `claude-hub logs hub` prints it. |
+
+Outside the home:
+
+| Path | What it is |
+|---|---|
+| `~/.local/bin/claude-hub` | The `claude-hub` command: a small script that runs the install's CLI. |
+| `~/Library/LaunchAgents/io.github.kddige.claude-hub.hub.plist`, `….runner.plist` | macOS: the services, as launchd agents. |
+| `~/.config/systemd/user/claude-hub-hub.service`, `claude-hub-runner.service` | Linux: the services, as systemd user units (`$XDG_CONFIG_HOME/systemd/user` when that is set). |
+
+Each service runs the install's Hub or Runner with its env file and `CLAUDE_HUB_HOME` set, logs to `logs/`, starts at login and restarts if it crashes. `claude-hub uninstall` removes the install, the command and the services, and keeps the rest of the home; `--purge` removes the home too.
+
+An installed Runner's tmux server is `tmux -L claude-hub`.
 
 ## The Hub
 

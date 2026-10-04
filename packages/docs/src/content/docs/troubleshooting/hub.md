@@ -2,7 +2,7 @@
 title: The Hub
 description: The Hub won't start, refuses its configuration, or serves no web UI.
 sidebar:
-  order: 1
+  order: 2
 ---
 
 The Hub checks its configuration before it listens. When it refuses, it logs one `ERROR` line saying what to change, and exits.

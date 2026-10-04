@@ -2,7 +2,7 @@
 title: Signing in
 description: Sign-in fails, doesn't stick, or isn't offered, with GitHub or with dev login.
 sidebar:
-  order: 2
+  order: 3
 ---
 
 Most sign-in problems come from one setting: `HUB_PUBLIC_URL`, the URL browsers use to reach the web UI. It defaults to `http://localhost:5173`, Vite's dev server. GitHub sends people back to it, the Hub accepts cookie-authenticated requests only from it, and it decides whether cookies are `Secure`.

@@ -12,16 +12,32 @@ Each entry on these pages starts with what you see, quotes the message where cla
 
 | Where | What it tells you |
 |---|---|
-| The Hub's terminal | Startup warnings and refusals, sign-in failures and refused Runner connections. |
-| The Runner's terminal | Why it won't start, whether it reached the Hub, and what happened to Sandboxes. |
+| `claude-hub doctor` | On an installed machine: what's wrong with the install, the settings, the services and the Hub's health, and how to fix it. `--fix` repairs what it can. |
+| `claude-hub status` | Whether the services run, the Hub answers and the Runner is connected. |
+| The Hub's terminal, or `claude-hub logs hub` | Startup warnings and refusals, sign-in failures and refused Runner connections. |
+| The Runner's terminal, or `claude-hub logs runner` | Why it won't start, whether it reached the Hub, and what happened to Sandboxes. |
 | A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`, and notes about its Sandbox and WIP ref. |
 | A Session's **Starting…** banner | While a Session starts, **Show log** holds the output of its Build, Bootstrap script and Start script. |
 | A Session's **Terminal** tab | Claude Code's own screen, as it runs in tmux on the Runner. |
 | `/health` on the Hub | `{"status":"ok"}` when the Hub is up. It needs no sign-in. |
 
-For a closer look on a Runner's machine, list its tmux sessions with `tmux -L claude-hub-dev ls` and its Sandboxes with `bun x msb list` from `packages/runner`. See [Files and paths](/reference/files-and-paths/) for what each is named.
+For a closer look on a Runner's machine, list its tmux sessions with `tmux -L claude-hub-dev ls` (`tmux -L claude-hub ls` installed) and its Sandboxes with `bun x msb list` from `packages/runner`. See [Files and paths](/reference/files-and-paths/) for what each is named.
 
 ## By symptom
+
+### [Installing and the CLI](/troubleshooting/install/)
+
+- install.sh says `Could not clone kddige/claude-hub: it's private, …`
+- `claude-hub: command not found` after installing.
+- `claude-hub is not installed in …`
+- `onboard can't ask, so it needs --role hub|runner|both.`
+- A service won't stay up.
+- On Linux, the services stop when you log out.
+- The Runner can't use KVM after onboard added you to the `kvm` group.
+- `… is readable by others (mode 644); it holds secrets and should be 600.`
+- `origin has no branch or tag named …, and it isn't a commit id.`
+- `The install is pinned at …, so update stays there.`
+- Uninstall refuses the home.
 
 ### [The Hub](/troubleshooting/hub/)
 

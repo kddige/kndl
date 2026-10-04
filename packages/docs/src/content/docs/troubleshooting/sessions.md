@@ -2,7 +2,7 @@
 title: Sessions and Sandboxes
 description: A Session won't start or wake, its Sandbox fails, an Environment's Test build fails, or the web UI refuses an action.
 sidebar:
-  order: 4
+  order: 5
 ---
 
 When a Session can't start, it doesn't retry on its own. It goes Asleep with the reason in its transcript, and its queued prompts wait. Fix the cause, then send a prompt or press **Wake now** to try again. See [the Session lifecycle](/explanation/session-lifecycle/#when-a-start-fails).
