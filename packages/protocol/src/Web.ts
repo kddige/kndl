@@ -14,6 +14,7 @@ import {
   TestBuildLogged,
   TestBuildStarted,
 } from "./Environment.ts"
+import { AppPermissionsCheck } from "./GitHubApp.ts"
 import { EventSeq, PromptId, RequestId, RunnerId, SessionId } from "./Ids.ts"
 import {
   BranchName,
@@ -195,6 +196,16 @@ export const CloseTerminal = Schema.TaggedStruct("CloseTerminal", {
 })
 export type CloseTerminal = typeof CloseTerminal.Type
 
+/**
+ * Check the GitHub App's permissions again now, rather than at the next periodic check: after
+ * changing them on GitHub. Answered with an AppPermissionsChecked, which every other client gets
+ * too, or a CommandFailed.
+ */
+export const CheckAppPermissions = Schema.TaggedStruct("CheckAppPermissions", {
+  requestId: RequestId,
+})
+export type CheckAppPermissions = typeof CheckAppPermissions.Type
+
 /** Every message a web client sends the Hub. */
 export const WebToHub = Schema.Union([
   WebHello,
@@ -220,6 +231,7 @@ export const WebToHub = Schema.Union([
   GetSharedVariables,
   SetSharedVariable,
   DeleteSharedVariable,
+  CheckAppPermissions,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type WebToHub = typeof WebToHub.Type
 
@@ -316,6 +328,18 @@ export const CommandFailed = Schema.TaggedStruct("CommandFailed", {
 })
 export type CommandFailed = typeof CommandFailed.Type
 
+/**
+ * What the Hub found when it last checked the GitHub App's permissions (GitHubApp.ts): sent after
+ * the welcome once there is a check, and whenever a check finds something else. Not sent without
+ * the App, or before a check has succeeded.
+ */
+export const AppPermissionsChecked = Schema.TaggedStruct("AppPermissionsChecked", {
+  /** The CheckAppPermissions this answers, for the client that sent it. */
+  requestId: Schema.optionalKey(RequestId),
+  check: AppPermissionsCheck,
+})
+export type AppPermissionsChecked = typeof AppPermissionsChecked.Type
+
 /** Every message the Hub sends a web client. */
 export const HubToWeb = Schema.Union([
   WebWelcome,
@@ -338,5 +362,6 @@ export const HubToWeb = Schema.Union([
   TestBuildLogged,
   TestBuildEnded,
   SharedVariables,
+  AppPermissionsChecked,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToWeb = typeof HubToWeb.Type

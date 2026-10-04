@@ -51,8 +51,8 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds |
-| Hub to browser | `WebWelcome` or `HandshakeRejected`; `RunnerList`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; terminal frames; `CommandFailed` |
+| Browser to Hub | `WebHello`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions` |
+| Hub to browser | `WebWelcome` or `HandshakeRejected`; `RunnerList`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `AppPermissionsChecked`; terminal frames; `CommandFailed` |
 
 ## Mod channel: `/mod/*`
 

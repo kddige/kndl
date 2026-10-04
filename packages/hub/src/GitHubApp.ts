@@ -3,10 +3,14 @@
 // that Runners hand to host git per command for the clone and WIP pushes, and one per Session
 // with every permission the installation has, which the Runner keeps in the Session's Sandbox
 // for `git` and `gh`. As the installation, it also answers who has access to a Repo
-// (RepoAccess.ts).
+// (RepoAccess.ts). As the App, it reads its own permissions and its installations', to check them
+// against what the Hub needs (AppPermissions.ts).
+//
+// It also makes the App in the first place: `claude-hub onboard` registers it on GitHub from a
+// manifest, and trades the code GitHub hands back for its credentials (convertManifest).
 
 import { createPrivateKey, type KeyObject, sign } from "node:crypto"
-import type { GitIdentity, RepoName } from "@claude-hub/protocol"
+import type { AppPermissionsCheck, GitIdentity, RepoName } from "@claude-hub/protocol"
 import {
   Clock,
   Context,
@@ -19,7 +23,8 @@ import {
   Semaphore,
 } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
-import { type GitHubAppConfig, HubConfig } from "./HubConfig.ts"
+import { type AppFacts, checkAppPermissions, type InstallationFacts } from "./AppPermissions.ts"
+import { type GitHubAppConfig, GitHubApiUrl, HubConfig } from "./HubConfig.ts"
 
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
 export class GitHubAppError extends Schema.TaggedError<GitHubAppError>()("GitHubAppError", {
@@ -72,6 +77,35 @@ const splitRepo = (repo: RepoName) => {
 const Installation = Schema.Struct({ id: Schema.Int })
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString, expires_at: Schema.String })
 const App = Schema.Struct({ slug: Schema.NonEmptyString })
+const Grants = Schema.Record(Schema.String, Schema.String)
+/** `GET /app`, as the permission check reads it. An enterprise's App has no owner login. */
+const AppDetails = Schema.Struct({
+  slug: Schema.NonEmptyString,
+  html_url: Schema.String,
+  owner: Schema.NullOr(
+    Schema.Struct({ login: Schema.optional(Schema.String), type: Schema.optional(Schema.String) }),
+  ),
+  permissions: Grants,
+  events: Schema.Array(Schema.String),
+})
+/** One of `GET /app/installations`. An enterprise's account has a name, not a login. */
+const InstallationDetails = Schema.Struct({
+  id: Schema.Int,
+  account: Schema.NullOr(
+    Schema.Struct({ login: Schema.optional(Schema.String), name: Schema.optional(Schema.String) }),
+  ),
+  html_url: Schema.String,
+  permissions: Grants,
+  events: Schema.Array(Schema.String),
+  suspended_at: Schema.optional(Schema.NullOr(Schema.String)),
+})
+/** The most installations GitHub lists on one page. */
+const installationsPerPage = 100
+
+const notConfigured = new GitHubAppError({
+  message:
+    "This needs the GitHub App, which the Hub doesn't have: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH on the Hub.",
+})
 const User = Schema.Struct({ id: Schema.Int })
 const ApiError = Schema.Struct({
   message: Schema.optional(Schema.String),
@@ -107,6 +141,11 @@ export class GitHubApp extends Context.Service<
       repo: RepoName,
       login: string,
     ) => Effect.Effect<boolean, GitHubAppError>
+    /**
+     * The App's permissions and events, and each installation's, against those the Hub needs
+     * (AppPermissions.ts): `GET /app`, and every page of `GET /app/installations`.
+     */
+    readonly checkPermissions: Effect.Effect<AppPermissionsCheck, GitHubAppError>
   }
 >()("@claude-hub/hub/GitHubApp") {
   /** The App from `HubConfig.githubApp`; when that is none, every call fails, saying so. */
@@ -126,6 +165,7 @@ export class GitHubApp extends Context.Service<
     botIdentity: () => Effect.fail(notConfigured),
     sandboxToken: () => Effect.fail(notConfigured),
     isCollaborator: () => Effect.fail(notConfigured),
+    checkPermissions: Effect.fail(notConfigured),
   })
 
   static readonly make = Effect.fnUntraced(function* (config: GitHubAppConfig) {
@@ -156,32 +196,11 @@ export class GitHubApp extends Context.Service<
         ),
       )
 
-    /** Sends the request and decodes a 2xx answer; any other is a GitHubAppError with GitHub's words. */
     const call = <A, I>(
       what: string,
       schema: Schema.Codec<A, I>,
       made: Effect.Effect<HttpClientRequest.HttpClientRequest>,
-    ) =>
-      Effect.gen(function* () {
-        const response = yield* http.execute(yield* made)
-        const text = yield* response.text
-        if (response.status < 200 || response.status >= 300) {
-          return yield* new GitHubAppError({
-            message: `${what}: GitHub answered ${response.status}${apiMessage(text)}`,
-            status: response.status,
-          })
-        }
-        return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(text)
-      }).pipe(
-        Effect.catchTags({
-          HttpClientError: (error) =>
-            Effect.fail(new GitHubAppError({ message: `${what}: ${error.message}` })),
-          SchemaError: () =>
-            Effect.fail(
-              new GitHubAppError({ message: `${what}: GitHub sent an unexpected answer` }),
-            ),
-        }),
-      )
+    ) => Effect.flatMap(made, (built) => callWith(http, what, schema, built))
 
     /** Mints a token for the Repo only; with `permissions`, only those, else the installation's. */
     const mint = Effect.fn("GitHubApp.mint")(function* (
@@ -278,19 +297,144 @@ export class GitHubApp extends Context.Service<
       ),
     )
 
+    const checkPermissions = Effect.gen(function* () {
+      const app = yield* call(
+        "Could not read the GitHub App's permissions",
+        AppDetails,
+        request("GET", "/app", { jwt: true }),
+      )
+      const installations: Array<InstallationFacts> = []
+      for (let page = 1; ; page++) {
+        const listed = yield* call(
+          "Could not list the GitHub App's installations",
+          Schema.Array(InstallationDetails),
+          request("GET", `/app/installations?per_page=${installationsPerPage}&page=${page}`, {
+            jwt: true,
+          }),
+        )
+        for (const installation of listed) {
+          installations.push({
+            id: installation.id,
+            account:
+              installation.account?.login ??
+              installation.account?.name ??
+              `installation ${installation.id}`,
+            htmlUrl: installation.html_url,
+            permissions: installation.permissions,
+            events: installation.events,
+            suspended: installation.suspended_at != null,
+          })
+        }
+        if (listed.length < installationsPerPage) break
+      }
+      const facts: AppFacts = {
+        slug: app.slug,
+        htmlUrl: app.html_url,
+        owner: { login: app.owner?.login ?? "", type: app.owner?.type ?? "User" },
+        permissions: app.permissions,
+        events: app.events,
+      }
+      return checkAppPermissions(facts, installations, yield* Clock.currentTimeMillis)
+    }).pipe(Effect.withSpan("GitHubApp.checkPermissions"))
+
     return GitHubApp.of({
       isConfigured: true,
       repoToken,
       botIdentity,
       sandboxToken,
       isCollaborator,
+      checkPermissions,
     })
   })
 }
 
-const notConfigured = new GitHubAppError({
-  message:
-    "This needs the GitHub App, which the Hub doesn't have: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH on the Hub.",
+/** Sends `request` and decodes a 2xx answer; any other is a GitHubAppError with GitHub's words. */
+const callWith = <A, I>(
+  http: HttpClient.HttpClient,
+  what: string,
+  schema: Schema.Codec<A, I>,
+  request: HttpClientRequest.HttpClientRequest,
+) =>
+  Effect.gen(function* () {
+    const response = yield* http.execute(request)
+    const text = yield* response.text
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new GitHubAppError({
+        message: `${what}: GitHub answered ${response.status}${apiMessage(text)}`,
+        status: response.status,
+      })
+    }
+    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(text)
+  }).pipe(
+    Effect.catchTags({
+      HttpClientError: (error) =>
+        Effect.fail(new GitHubAppError({ message: `${what}: ${error.message}` })),
+      SchemaError: () =>
+        Effect.fail(new GitHubAppError({ message: `${what}: GitHub sent an unexpected answer` })),
+    }),
+  )
+
+/** What GitHub hands back for a manifest's code: the new App and its credentials. */
+export interface ManifestConversion {
+  readonly id: number
+  readonly slug: string
+  /** `https://github.com/apps/<slug>`. */
+  readonly htmlUrl: string
+  readonly owner: string
+  readonly clientId: string
+  readonly clientSecret: Redacted.Redacted<string>
+  /** Only for an App with a webhook, which the Hub's has not. */
+  readonly webhookSecret: Option.Option<Redacted.Redacted<string>>
+  /** The App's private key, PEM. GitHub hands it out this once. */
+  readonly pem: Redacted.Redacted<string>
+}
+
+const Conversion = Schema.Struct({
+  id: Schema.Int,
+  slug: Schema.NonEmptyString,
+  html_url: Schema.String,
+  owner: Schema.NullOr(Schema.Struct({ login: Schema.optional(Schema.String) })),
+  client_id: Schema.NonEmptyString,
+  client_secret: Schema.NonEmptyString,
+  webhook_secret: Schema.optional(Schema.NullOr(Schema.String)),
+  pem: Schema.NonEmptyString,
+})
+
+/**
+ * Trades the code GitHub redirected back with, once it registered an App from a manifest, for the
+ * App's credentials: `POST /app-manifests/{code}/conversions`, which needs no credentials of its
+ * own. A code works once, within an hour.
+ */
+export const convertManifest = Effect.fn("GitHubApp.convertManifest")(function* (
+  code: string,
+  apiUrl: URL = GitHubApiUrl,
+) {
+  const http = yield* HttpClient.HttpClient
+  const converted = yield* callWith(
+    http,
+    "GitHub didn't hand over the new App's credentials",
+    Conversion,
+    HttpClientRequest.post(
+      new URL(`app-manifests/${encodeURIComponent(code)}/conversions`, withSlash(apiUrl)),
+    ).pipe(
+      HttpClientRequest.accept("application/vnd.github+json"),
+      HttpClientRequest.setHeader("x-github-api-version", "2022-11-28"),
+      HttpClientRequest.setHeader("user-agent", "claude-hub"),
+    ),
+  )
+  return {
+    id: converted.id,
+    slug: converted.slug,
+    htmlUrl: converted.html_url,
+    owner: converted.owner?.login ?? "",
+    clientId: converted.client_id,
+    clientSecret: Redacted.make(converted.client_secret),
+    webhookSecret:
+      converted.webhook_secret == null || converted.webhook_secret === ""
+        ? Option.none()
+        : Option.some(Redacted.make(converted.webhook_secret)),
+    pem: Redacted.make(converted.pem),
+  } satisfies ManifestConversion
 })
 
 const withSlash = (url: URL) => (url.href.endsWith("/") ? url.href : `${url.href}/`)

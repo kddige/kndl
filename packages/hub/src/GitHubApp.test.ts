@@ -1,12 +1,14 @@
 // The GitHub App client against a stand-in GitHub API: the App JWT, installation tokens scoped
-// to one Repo (cached for host git, fresh for each Sandbox), the bot identity, and who is a
-// Repo's collaborator.
+// to one Repo (cached for host git, fresh for each Sandbox), the bot identity, who is a Repo's
+// collaborator, the App's and its installations' permissions, and trading a manifest's code for a
+// new App's credentials.
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { createPrivateKey } from "node:crypto"
 import { RepoName } from "@claude-hub/protocol"
 import { Duration, Effect, Layer, Option, Redacted } from "effect"
-import { appJwt, GitHubApp } from "./GitHubApp.ts"
+import { FetchHttpClient } from "effect/http"
+import { appJwt, convertManifest, GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import {
   appId,
@@ -203,13 +205,147 @@ describe("without the App configured", () => {
   })
 
   test("has no pull request calls: gh in the Sandbox makes those (#73)", () => {
-    expect(Object.keys(GitHubApp.unconfigured).toSorted()).toEqual([
-      "botIdentity",
-      "isCollaborator",
-      "isConfigured",
-      "repoToken",
-      "sandboxToken",
+    expect(Object.keys(GitHubApp.unconfigured).toSorted()).toEqual(
+      [
+        "botIdentity",
+        "checkPermissions",
+        "isCollaborator",
+        "isConfigured",
+        "repoToken",
+        "sandboxToken",
+      ].toSorted(),
+    )
+  })
+})
+
+const checkPermissions = () => withApp(Effect.flatMap(GitHubApp, (app) => app.checkPermissions))
+
+describe("the permission check", () => {
+  test("finds nothing when the App and its installation have all it needs", async () => {
+    const check = await checkPermissions()
+    expect(check).toMatchObject({
+      slug: appSlug,
+      settingsUrl: `https://github.com/settings/apps/${appSlug}/permissions`,
+      installUrl: `https://github.com/apps/${appSlug}/installations/new`,
+      missing: [],
+      installed: 1,
+      installations: [],
+    })
+    // Both as the App.
+    expect(github.requests.map((request) => request.path)).toEqual(["/app", "/app/installations"])
+    for (const request of github.requests) {
+      const jwt = request.authorization?.replace(/^Bearer /, "") ?? ""
+      expect(verifiedJwt(jwt, keys.publicKey)).toMatchObject({ iss: appId })
+    }
+  })
+
+  test("finds what the App lacks, and an installation that hasn't accepted it", async () => {
+    github.appPermissions = { contents: "write", metadata: "read", pull_requests: "write" }
+    github.installations.push({
+      id: 43,
+      account: "octo",
+      accountType: "Organization",
+      permissions: { contents: "read", metadata: "read" },
+      events: [],
+      suspended: false,
+    })
+    const check = await checkPermissions()
+    expect(check.missing).toEqual([{ name: "issues", title: "Issues", access: "write" }])
+    expect(check.installed).toBe(2)
+    expect(check.installations).toEqual([
+      {
+        id: 43,
+        account: "octo",
+        reviewUrl:
+          "https://github.com/organizations/octo/settings/installations/43/permissions/update",
+        missing: [
+          { name: "contents", title: "Contents", access: "write" },
+          { name: "pull_requests", title: "Pull requests", access: "write" },
+          { name: "issues", title: "Issues", access: "write" },
+        ],
+        missingEvents: [],
+      },
     ])
+  })
+
+  test("reads every page of installations", async () => {
+    for (let id = 100; id < 250; id++) {
+      github.installations.push({
+        id,
+        account: `user${id}`,
+        accountType: "User",
+        permissions: { metadata: "read" },
+        events: [],
+        suspended: false,
+      })
+    }
+    const check = await checkPermissions()
+    expect(check.installed).toBe(151)
+    expect(check.installations.map((installation) => installation.id)).toContain(249)
+    expect(github.requests.map((request) => request.path)).toEqual([
+      "/app",
+      "/app/installations",
+      "/app/installations",
+    ])
+  })
+
+  test("fails with GitHub's status when it can't say", async () => {
+    github.appDown = true
+    const error = await withApp(
+      Effect.flip(Effect.flatMap(GitHubApp, (app) => app.checkPermissions)),
+    )
+    expect(error.status).toBe(503)
+    expect(error.message).toBe(
+      "Could not read the GitHub App's permissions: GitHub answered 503: Service Unavailable",
+    )
+  })
+})
+
+const convert = (code: string) =>
+  Effect.runPromise(convertManifest(code, github.url).pipe(Effect.provide(FetchHttpClient.layer)))
+
+describe("the manifest conversion", () => {
+  test("trades a code for the new App's credentials, with none of its own", async () => {
+    const { code, conversion } = github.registerApp()
+    const converted = await convert(code)
+    expect(converted).toMatchObject({
+      id: conversion.id,
+      slug: conversion.slug,
+      htmlUrl: `https://github.com/apps/${conversion.slug}`,
+      owner: "kddige",
+      clientId: conversion.clientId,
+    })
+    expect(Redacted.value(converted.clientSecret)).toBe(conversion.clientSecret)
+    expect(Redacted.value(converted.pem)).toBe(conversion.pem)
+    expect(Option.isNone(converted.webhookSecret)).toBe(true)
+    const [request] = github.requests
+    expect(request).toMatchObject({ method: "POST", path: `/app-manifests/${code}/conversions` })
+    expect(request?.authorization ?? undefined).toBeUndefined()
+  })
+
+  test("hands over the webhook secret when GitHub made one", async () => {
+    const { code } = github.registerApp({ webhookSecret: "whsec" })
+    const converted = await convert(code)
+    expect(Option.map(converted.webhookSecret, Redacted.value)).toEqual(Option.some("whsec"))
+  })
+
+  test("never shows the secrets in its printed form", async () => {
+    const { code, conversion } = github.registerApp()
+    const printed = JSON.stringify(await convert(code))
+    expect(printed).not.toContain(conversion.clientSecret)
+    expect(printed).not.toContain("PRIVATE KEY")
+  })
+
+  test("refuses a code that was used, or never was, with GitHub's words", async () => {
+    const { code } = github.registerApp()
+    await convert(code)
+    const error = await Effect.runPromise(
+      Effect.flip(convertManifest(code, github.url)).pipe(Effect.provide(FetchHttpClient.layer)),
+    )
+    expect(error.status).toBe(404)
+    expect(error.message).toBe(
+      "GitHub didn't hand over the new App's credentials: GitHub answered 404: Not Found",
+    )
   })
 })
 

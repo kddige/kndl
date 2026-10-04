@@ -100,6 +100,7 @@ const webToHub = [
     },
   },
   { _tag: "DeleteSharedVariable", requestId: "q-11", name: "REGISTRY" },
+  { _tag: "CheckAppPermissions", requestId: "q-12" },
 ]
 
 const hubToWeb = [
@@ -242,6 +243,28 @@ const hubToWeb = [
     ],
   },
   { _tag: "SharedVariables", variables: [] },
+  {
+    _tag: "AppPermissionsChecked",
+    requestId: "q-12",
+    check: {
+      slug: "claude-hub-ada",
+      settingsUrl: "https://github.com/settings/apps/claude-hub-ada/permissions",
+      installUrl: "https://github.com/apps/claude-hub-ada/installations/new",
+      missing: [{ name: "issues", title: "Issues", access: "write" }],
+      missingEvents: [],
+      installed: 2,
+      installations: [
+        {
+          id: 7,
+          account: "ada",
+          reviewUrl: "https://github.com/settings/installations/7/permissions/update",
+          missing: [{ name: "pull_requests", title: "Pull requests", access: "write" }],
+          missingEvents: [],
+        },
+      ],
+      checkedAt: 1_700_000_000_000,
+    },
+  },
 ]
 
 describe("SessionEvent", () => {

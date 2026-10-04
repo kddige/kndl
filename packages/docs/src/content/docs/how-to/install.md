@@ -54,7 +54,8 @@ Onboard asks:
    - `local`: only this machine, on `127.0.0.1`. It offers dev login, so you can sign in before the GitHub App is set up.
    - `lan`: your local network over plain HTTP, on `0.0.0.0`, with a URL from this machine's network address. It offers `HUB_INSECURE_COOKIES=1`, without which browsers drop sign-in cookies over plain HTTP; see [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/) for what that costs.
    - `https`: anyone, through an HTTPS proxy or tunnel in front of it. It asks for the public URL.
-4. For a Runner on its own, **the Hub's URL and a Runner token**. Issue the token on the Hub's machine with `claude-hub runner token <name>`. With both on one machine, onboard issues the token itself.
+4. For a Hub, **the GitHub App**, for GitHub sign-in and Repos' tokens: create it on GitHub now from claude-hub's manifest, in a browser; paste the settings of one you made yourself; or not now. See [Set up the GitHub App](/how-to/set-up-the-github-app/).
+5. For a Runner on its own, **the Hub's URL and a Runner token**. Issue the token on the Hub's machine with `claude-hub runner token <name>`. With both on one machine, onboard issues the token itself.
 
 If the home already holds claude-hub data that onboard didn't set up there, such as a checkout's `sessions/` from before checkouts kept theirs in `~/.claude-hub-dev`, onboard stops first and offers to move it aside: see [The home holds old claude-hub data](/troubleshooting/install/#the-home-holds-old-claude-hub-data).
 
@@ -79,9 +80,7 @@ The services are systemd user units. Without lingering, systemd stops them when 
 
 On Linux, the Runner's user also needs `/dev/kvm`. Onboard adds it to the `kvm` group. Reboot afterwards: the services keep the groups they started with, and while they linger, logging out and in doesn't restart them.
 
-:::note[Coming]
-GitHub sign-in needs a GitHub App, which you set up by hand for now: see [Set up the GitHub App](/how-to/set-up-the-github-app/), and put its settings in `~/.claude-hub/hub.env`. GitHub App setup is a later slice ([#86](https://github.com/kddige/claude-hub/issues/86)).
-:::
+Onboard on a home it set up before keeps the GitHub App `hub.env` has, or its lack of one. `claude-hub onboard --github-app create` creates one then.
 
 ## Check on it
 

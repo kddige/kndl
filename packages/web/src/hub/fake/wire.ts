@@ -2,6 +2,7 @@
 // keeps its data in these, as the real Hub's database would, so ids are plain strings.
 
 import type {
+  AppPermissionsCheck,
   Environment,
   EnvironmentVersionInfo,
   HubToWeb,
@@ -24,3 +25,4 @@ export type RunnerSummaryWire = (typeof RunnerSummary)["Encoded"]
 export type EnvironmentWire = (typeof Environment)["Encoded"]
 export type EnvironmentVersionInfoWire = (typeof EnvironmentVersionInfo)["Encoded"]
 export type SharedVariableWire = (typeof SharedVariable)["Encoded"]
+export type AppPermissionsCheckWire = (typeof AppPermissionsCheck)["Encoded"]

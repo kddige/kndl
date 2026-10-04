@@ -107,6 +107,7 @@ import {
   TurnStopRequested,
   type WebToHub,
   cantStartText,
+  AppPermissionsChecked,
   WipNotPushed,
   SandboxNoted,
 } from "@claude-hub/protocol"
@@ -117,6 +118,7 @@ import {
   Effect,
   Layer,
   Option,
+  PubSub,
   Redacted,
   type Scope,
   Semaphore,
@@ -131,6 +133,7 @@ import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
+import { PermissionDrift } from "./PermissionDrift.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import {
   everything,
@@ -252,6 +255,7 @@ export class SessionRelay extends Context.Service<
       const sessionGit = yield* SessionGit
       const environments = yield* Environments
       const access = yield* RepoAccess
+      const drift = yield* PermissionDrift
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
@@ -990,6 +994,9 @@ export class SessionRelay extends Context.Service<
 
       // ── The web channel ──────────────────────────────────────────────────
 
+      /** A web command the relay handles under its lock, once Repo access allows it. */
+      type RelayedCommand = Exclude<WebToHub, { readonly _tag: "CheckAppPermissions" }>
+
       const receiveWeb = (client: WebClient): Receive<WebToHub> => {
         const { you, peer } = client
         const refuse = (
@@ -1009,7 +1016,7 @@ export class SessionRelay extends Context.Service<
          * roles yet (ADR 0009).
          */
         const authorize = Effect.fn("SessionRelay.authorize")(function* (
-          message: WebToHub,
+          message: RelayedCommand,
         ): Effect.fn.Return<AccessVerdict, SqlError> {
           if (isEnvironmentCommand(message)) return {}
           let repo: string
@@ -1063,7 +1070,7 @@ export class SessionRelay extends Context.Service<
           return session
         })
 
-        const handle = Effect.fn("SessionRelay.receiveWeb")(function* (message: WebToHub) {
+        const handle = Effect.fn("SessionRelay.receiveWeb")(function* (message: RelayedCommand) {
           if (isEnvironmentCommand(message))
             return yield* environmentRelay.receiveWeb(client, message)
           switch (message._tag) {
@@ -1416,26 +1423,48 @@ export class SessionRelay extends Context.Service<
           }
         })
 
-        return (message) =>
-          authorize(message).pipe(
-            Effect.flatMap((verdict) =>
-              serialized(
-                Effect.gen(function* () {
-                  const { learned, refusal } = verdict
-                  if (learned !== undefined) yield* accessKnown(you, learned.repo, learned.allowed)
-                  if (refusal !== undefined) return refuse(message, refusal)
-                  return yield* handle(message)
-                }),
-              ),
-            ),
-            Effect.catchTag("SqlError", (error) =>
-              Effect.logError("A web command failed", error).pipe(
-                Effect.andThen(
-                  Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+        /**
+         * Checks the GitHub App's permissions now, off the lock since it waits on GitHub. Anyone
+         * signed in may ask: it changes nothing, and checks no more often than checkSpacing.
+         */
+        const checkAppPermissions = (requestId: RequestId) =>
+          drift.check.pipe(
+            Effect.match({
+              onFailure: (error) =>
+                peer.send(
+                  CommandFailed.make({
+                    command: "CheckAppPermissions",
+                    message: error.message,
+                    requestId,
+                  }),
                 ),
-              ),
-            ),
+              onSuccess: (check) => peer.send(AppPermissionsChecked.make({ requestId, check })),
+            }),
           )
+
+        return (message) =>
+          message._tag === "CheckAppPermissions"
+            ? checkAppPermissions(message.requestId)
+            : authorize(message).pipe(
+                Effect.flatMap((verdict) =>
+                  serialized(
+                    Effect.gen(function* () {
+                      const { learned, refusal } = verdict
+                      if (learned !== undefined)
+                        yield* accessKnown(you, learned.repo, learned.allowed)
+                      if (refusal !== undefined) return refuse(message, refusal)
+                      return yield* handle(message)
+                    }),
+                  ),
+                ),
+                Effect.catchTag("SqlError", (error) =>
+                  Effect.logError("A web command failed", error).pipe(
+                    Effect.andThen(
+                      Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                    ),
+                  ),
+                ),
+              )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
@@ -1474,6 +1503,10 @@ export class SessionRelay extends Context.Service<
                   else if (!asked.has(session.repo)) yield* learnAccess(you, session.repo)
                 }
                 peer.send(HubToWeb.cases.SessionList.make({ sessions: listed }))
+                const checked = yield* drift.latest
+                if (Option.isSome(checked)) {
+                  peer.send(AppPermissionsChecked.make({ check: checked.value }))
+                }
               }),
             )
           }).pipe(Effect.orDie)
@@ -1807,6 +1840,14 @@ export class SessionRelay extends Context.Service<
       yield* Effect.sleep(config.repoAccessTtl).pipe(
         Effect.andThen(recheckAccess),
         Effect.catchCause((cause) => Effect.logError("Could not recheck Repo access", cause)),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
+
+      // A check that found something new, for everyone connected.
+      const driftChanges = yield* drift.changes
+      yield* PubSub.take(driftChanges).pipe(
+        Effect.map((check) => toWeb(AppPermissionsChecked.make({ check }))),
         Effect.forever,
         Effect.forkIn(layerScope),
       )

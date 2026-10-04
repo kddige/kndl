@@ -5,6 +5,7 @@
 // on the mod's side is pending spike #4.
 export * from "./Environment.ts"
 export * from "./Git.ts"
+export * from "./GitHubApp.ts"
 export * from "./Health.ts"
 export * from "./Ids.ts"
 export * from "./Mod.ts"

@@ -13,6 +13,7 @@ import {
   startService,
   stopService,
 } from "./Actions.ts"
+import { AppSetupChoices } from "./AppManifest.ts"
 import { fail } from "./Failure.ts"
 import { configuredRoles, platform, serviceState, serviceTarget } from "./Host.ts"
 import { resolveLayout, type Role, Roles } from "./Layout.ts"
@@ -69,6 +70,13 @@ const onboardCommand = Command.make(
     ),
     devLogin: optional(
       Flag.Boolean("dev-login").pipe(Flag.withDescription("local: sign in without GitHub")),
+    ),
+    githubApp: optional(
+      Flag.Literals("github-app", AppSetupChoices).pipe(
+        Flag.withDescription(
+          "The GitHub App: create it on GitHub from claude-hub's manifest, paste a manual one's settings, or skip",
+        ),
+      ),
     ),
     hubUrl: optional(
       Flag.String("hub-url").pipe(

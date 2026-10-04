@@ -111,7 +111,7 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 
 **Why.** You see only the Sessions of Repos you have access to on GitHub, as a collaborator, and only Repos the GitHub App is installed on. Someone who loses access is taken out of the Repo's Sessions within twice `HUB_REPO_ACCESS_TTL_MS`. `Could not check your access on GitHub; try again.` means GitHub didn't answer the Hub. See [Who can do what](/explanation/security-model/#who-can-do-what).
 
-**Fix.** Have the Repo's owner add you on GitHub, or install the App on it. Its Sessions show up within twice `HUB_REPO_ACCESS_TTL_MS` (5 minutes by default), with no reload. Without `GITHUB_APP_ID` on the Hub, GitHub sign-ins see no Sessions at all: [set up the GitHub App](/how-to/set-up-the-github-app/).
+**Fix.** Have the Repo's owner add you on GitHub, or install the App on it. Its Sessions show up within twice `HUB_REPO_ACCESS_TTL_MS` (5 minutes by default), with no reload. Without `GITHUB_APP_ID` on the Hub, GitHub sign-ins see no Sessions at all, and `claude-hub doctor` fails its `GitHub App` check: [set up the GitHub App](/how-to/set-up-the-github-app/).
 
 ## Restart or Sleep now is refused
 

@@ -1,9 +1,9 @@
 // An in-process stand-in for the Hub's web channel, until the real one (issues #7 and #8) is
 // done. It speaks the protocol over a fake socket, so the HubClient can't tell the difference,
 // and plays a scripted Session: streamed text, tool calls, a subagent, a second Participant
-// joining and queueing a prompt, and a terminal to watch and type into; and Environments, shared
-// variables and Test builds with a streaming log (environments.ts). `VITE_FAKE_HUB=1` runs the UI
-// against it; tests use it too.
+// joining and queueing a prompt, and a terminal to watch and type into; Environments, shared
+// variables and Test builds with a streaming log (environments.ts); and, when asked to, a GitHub
+// App short of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
 //
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too.
@@ -26,6 +26,7 @@ import {
 } from "./script.ts"
 import { FakeTerminal } from "./terminal.ts"
 import type {
+  AppPermissionsCheckWire,
   HubMessage,
   LogEntryWire,
   ParticipantWire,
@@ -44,6 +45,11 @@ export interface FakeHubOptions {
   signInOptions?: SignInOptions
   /** Start the demo Session's script when it's first joined. Default true. */
   autoplay?: boolean
+  /**
+   * What the last check of the GitHub App's permissions found, as the Hub sends it; null for a
+   * Hub without the App. Default null.
+   */
+  appPermissions?: AppPermissionsCheckWire | null
 }
 
 interface FakeSession {
@@ -107,6 +113,7 @@ export class FakeHub implements HubTransport {
   #signInOptions: SignInOptions
   #you: ParticipantWire = defaultYou
   #autoplay: boolean
+  #appPermissions: AppPermissionsCheckWire | null
   #scriptStarted = false
   readonly #sockets = new Set<FakeSocket>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
@@ -119,6 +126,7 @@ export class FakeHub implements HubTransport {
     this.#signedIn = options.signedIn ?? true
     this.#signInOptions = options.signInOptions ?? { github: true, dev: true }
     this.#autoplay = options.autoplay ?? true
+    this.#appPermissions = options.appPermissions ?? null
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       this.sessions.set(seed.summary.id, {
@@ -223,6 +231,19 @@ export class FakeHub implements HubTransport {
     }
   }
 
+  /**
+   * Changes what the GitHub App's permission check finds, as fixing them on GitHub would, and tells
+   * everyone: the real Hub does at its next check. In the browser,
+   * `fakeHub.setAppPermissions(null)` in the console.
+   */
+  setAppPermissions(check: AppPermissionsCheckWire | null): void {
+    this.#appPermissions = check
+    if (check === null) return
+    for (const socket of this.#sockets) {
+      if (socket.welcomed) socket.deliver({ _tag: "AppPermissionsChecked", check })
+    }
+  }
+
   /** Starts the demo Session's script now, rather than on the first join. */
   play(): void {
     if (this.#scriptStarted) return
@@ -267,6 +288,25 @@ export class FakeHub implements HubTransport {
         socket.deliver({
           _tag: "SessionList",
           sessions: [...this.sessions.values()].map((session) => session.summary),
+        })
+        if (this.#appPermissions !== null) {
+          socket.deliver({ _tag: "AppPermissionsChecked", check: this.#appPermissions })
+        }
+        break
+      case "CheckAppPermissions":
+        if (this.#appPermissions === null) {
+          this.#refuse(
+            socket,
+            message._tag,
+            message.requestId,
+            "This needs the GitHub App, which the Hub doesn't have.",
+          )
+          break
+        }
+        socket.deliver({
+          _tag: "AppPermissionsChecked",
+          requestId: message.requestId,
+          check: { ...this.#appPermissions, checkedAt: Date.now() },
         })
         break
       case "CreateSession":
