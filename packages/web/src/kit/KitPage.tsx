@@ -1,7 +1,8 @@
 import * as stylex from "@stylexjs/stylex"
 import { getRouteApi } from "@tanstack/react-router"
-import { type ReactNode, useEffect, useState } from "react"
+import { type ComponentProps, type ReactNode, useEffect, useState } from "react"
 import {
+  ArchiveIcon,
   Avatar,
   AvatarStack,
   Badge,
@@ -13,7 +14,9 @@ import {
   Dialog,
   DialogClose,
   Disclosure,
+  Drawer,
   EmptyState,
+  ExternalLinkIcon,
   Field,
   IconButton,
   InboxIcon,
@@ -25,14 +28,21 @@ import {
   Menu,
   MenuGroup,
   MenuItem,
+  MenuIcon,
   MenuSeparator,
   MoreIcon,
+  NavGroup,
+  NavIconLink,
+  NavItem,
+  NavSection,
+  NavSlot,
   PlusIcon,
   Popover,
   RestartIcon,
   Select,
   SessionStatus,
   setTheme,
+  Sidebar,
   Spinner,
   StopIcon,
   Switch,
@@ -149,6 +159,19 @@ const styles = stylex.create({
   },
   popoverPerson: { display: "flex", alignItems: "center", gap: space.s2 },
   composer: { maxHeight: "12rem" },
+  sidebarFrame: {
+    width: "16rem",
+    maxWidth: "100%",
+    height: "30rem",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    borderRadius: radius.md,
+    overflow: "hidden",
+  },
+  brand: { flex: 1, fontWeight: weight.semibold },
+  footerNote: { paddingInline: space.s2, color: color.textMuted, fontSize: text.sm },
+  warningIcon: { display: "inline-flex", color: color.warning },
   themeSelect: { minWidth: "7rem" },
 })
 
@@ -600,6 +623,132 @@ function Toggles() {
         <KeyIcon aria-label="Key" />
         <BoxIcon aria-label="Box" />
         <RestartIcon aria-label="Restart" />
+        <ExternalLinkIcon aria-label="External link" />
+        <MenuIcon aria-label="Menu" />
+        <ArchiveIcon aria-label="Archive" />
+      </Row>
+    </Section>
+  )
+}
+
+// Kit-only links: they mark themselves current instead of going anywhere.
+function KitLink({ onPick, ...props }: ComponentProps<"a"> & { onPick: () => void }) {
+  return (
+    <a
+      {...props}
+      href="#sidebar"
+      onClick={(event) => {
+        event.preventDefault()
+        onPick()
+      }}
+    />
+  )
+}
+
+function SidebarKit() {
+  const [current, setCurrent] = useState("fix")
+  const [drawer, setDrawer] = useState(false)
+  const item = (id: string) => ({
+    render: <KitLink onPick={() => setCurrent(id)} />,
+    current: current === id,
+  })
+  const sidebar = (
+    <Sidebar
+      label="Kit navigation"
+      header={
+        <>
+          <span {...stylex.props(styles.brand)}>Claude Hub</span>
+          <IconButton label="New Session" size="sm">
+            <PlusIcon />
+          </IconButton>
+        </>
+      }
+      footer={<p {...stylex.props(styles.footerNote)}>2 of 3 Runners online</p>}
+    >
+      <NavSection>
+        <NavItem {...item("environments")} icon={<BoxIcon />}>
+          Environments
+        </NavItem>
+        <NavItem {...item("variables")} icon={<KeyIcon />}>
+          Shared variables
+        </NavItem>
+        <NavItem {...item("archive")} icon={<ArchiveIcon />}>
+          Archived Sessions
+        </NavItem>
+      </NavSection>
+      <NavSection label="Sessions">
+        <NavGroup
+          label="kddige/claude-hub"
+          action={
+            <NavIconLink href="https://github.com" label="Open kddige/claude-hub on GitHub">
+              <ExternalLinkIcon />
+            </NavIconLink>
+          }
+        >
+          <NavItem {...item("fix")} icon={<SessionStatus state="active" variant="dot" />}>
+            73-sandbox-token
+          </NavItem>
+          <NavItem
+            {...item("working")}
+            icon={<SessionStatus state="active" variant="dot" />}
+            trailing={
+              <NavSlot>
+                <Spinner size="sm" label="Working" />
+              </NavSlot>
+            }
+          >
+            feat/sidebar
+          </NavItem>
+          <NavItem
+            {...item("long")}
+            icon={<SessionStatus state="asleep" variant="dot" />}
+            title="claude/a-very-long-work-branch-name-that-does-not-fit"
+            trailing={
+              <NavSlot>
+                <span
+                  role="img"
+                  aria-label="Environment changed"
+                  {...stylex.props(styles.warningIcon)}
+                >
+                  <WarningIcon />
+                </span>
+              </NavSlot>
+            }
+          >
+            claude/a-very-long-work-branch-name-that-does-not-fit
+          </NavItem>
+          <NavItem {...item("frozen")} icon={<SessionStatus state="frozen" variant="dot" />}>
+            fix-flaky-search
+          </NavItem>
+        </NavGroup>
+        <NavGroup label="kddige/collapsed-at-first" defaultOpen={false}>
+          <NavItem {...item("hidden")} icon={<SessionStatus state="asleep" variant="dot" />}>
+            main-fix
+          </NavItem>
+        </NavGroup>
+        <NavGroup label="an-organisation-with-a-long-name/and-a-long-repo">
+          <NavItem {...item("other")} icon={<SessionStatus state="active" variant="dot" />}>
+            main
+          </NavItem>
+        </NavGroup>
+      </NavSection>
+    </Sidebar>
+  )
+  return (
+    <Section
+      title="Sidebar, NavSection, NavGroup, NavItem, Drawer"
+      note="The current item has a bar, weight and fill, and aria-current. Hover a row; toggle a Repo; the second Repo starts collapsed."
+    >
+      <div id="sidebar" {...stylex.props(styles.sidebarFrame)}>
+        {sidebar}
+      </div>
+      <Row label="drawer">
+        <IconButton label="Open navigation" onClick={() => setDrawer(true)}>
+          <MenuIcon />
+        </IconButton>
+        <Drawer label="Kit navigation" open={drawer} onOpenChange={setDrawer}>
+          {sidebar}
+        </Drawer>
       </Row>
     </Section>
   )
@@ -765,6 +914,7 @@ export function KitPage() {
       <Toasts />
       <Banners />
       <Disclosures />
+      <SidebarKit />
 
       <Section title="Markdown" note="Claude's answers. A small, safe subset: no raw HTML.">
         <div {...stylex.props(styles.panel)}>

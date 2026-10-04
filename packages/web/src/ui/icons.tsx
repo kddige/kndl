@@ -178,3 +178,29 @@ export function RestartIcon(props: IconProps) {
     </Icon>
   )
 }
+
+export function ExternalLinkIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9.5 2.75h3.75V6.5M13.25 2.75 7.5 8.5" />
+      <path d="M11.25 9.5v3a.75.75 0 0 1-.75.75h-7a.75.75 0 0 1-.75-.75v-7a.75.75 0 0 1 .75-.75h3" />
+    </Icon>
+  )
+}
+
+export function MenuIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.75 4.5h10.5M2.75 8h10.5M2.75 11.5h10.5" />
+    </Icon>
+  )
+}
+
+export function ArchiveIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2" y="3" width="12" height="3" rx="0.75" />
+      <path d="M3 6v6.25c0 .41.34.75.75.75h8.5c.41 0 .75-.34.75-.75V6M6.5 8.75h3" />
+    </Icon>
+  )
+}

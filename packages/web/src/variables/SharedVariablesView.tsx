@@ -16,7 +16,6 @@ import { type FormEvent, useEffect, useState } from "react"
 import { repoParams } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import {
-  ArrowLeftIcon,
   Badge,
   Button,
   Dialog,
@@ -132,14 +131,6 @@ export function SharedVariablesView() {
     <div {...stylex.props(styles.scroll)}>
       <main {...stylex.props(styles.page)}>
         <div {...stylex.props(styles.top)}>
-          <Button
-            nativeButton={false}
-            render={<Link to="/" />}
-            intent="ghost"
-            size="sm"
-            icon={<ArrowLeftIcon />}
-            aria-label="All Sessions"
-          />
           <div {...stylex.props(styles.heading)}>
             <h1 {...stylex.props(styles.title)}>Shared variables</h1>
             <p {...stylex.props(styles.note)}>

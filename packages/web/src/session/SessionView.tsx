@@ -5,7 +5,7 @@ import type {
   SessionSummary,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Link, useNavigate } from "@tanstack/react-router"
+import { useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { day, environmentChanged, purgedIn, statusOf, terminalText } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
@@ -13,10 +13,8 @@ import { findSession, type JoinedSession } from "../hub/store.ts"
 import { buildTranscript, runningTurn } from "../hub/transcript.ts"
 import { restoreSession } from "../sessions/ArchivedSessions.tsx"
 import {
-  ArrowLeftIcon,
   AvatarStack,
   Banner,
-  BranchIcon,
   Button,
   Disclosure,
   EmptyState,
@@ -33,7 +31,7 @@ import {
   toast,
   TrashIcon,
 } from "../ui/index.ts"
-import { color, font, leading, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, leading, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
 import { Composer } from "./Composer.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { Transcript } from "./Transcript.tsx"
@@ -81,13 +79,6 @@ const styles = stylex.create({
     gap: space.s1_5,
     color: color.textMuted,
     fontSize: text.sm,
-  },
-  branch: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: space.s1,
-    fontFamily: font.mono,
-    fontSize: text.xs,
   },
   scroll: {
     flex: 1,
@@ -166,11 +157,6 @@ export function SessionView({
           size="page"
           title="No such Session"
           description="It may have been purged, or it's on a Repo you can't access."
-          action={
-            <Button nativeButton={false} render={<Link to="/" />} icon={<ArrowLeftIcon />}>
-              All Sessions
-            </Button>
-          }
         />
       </div>
     )
@@ -254,24 +240,15 @@ function LoadedSession({
   return (
     <div {...stylex.props(styles.view)}>
       <header {...stylex.props(styles.header)}>
-        <Button
-          nativeButton={false}
-          render={<Link to="/" />}
-          intent="ghost"
-          size="sm"
-          icon={<ArrowLeftIcon />}
-          aria-label="All Sessions"
-        />
         <div {...stylex.props(styles.heading)}>
           <div {...stylex.props(styles.titleRow)}>
-            <h1 {...stylex.props(styles.title)}>{summary.repo}</h1>
+            <h1 title={summary.workBranch} {...stylex.props(styles.title)}>
+              {summary.workBranch}
+            </h1>
             <SessionStatus state={statusOf(state)} />
           </div>
           <div {...stylex.props(styles.meta)}>
-            <span {...stylex.props(styles.branch)}>
-              <BranchIcon />
-              {summary.workBranch}
-            </span>
+            <span>{summary.repo}</span>
             <span aria-hidden="true">·</span>
             <span>from {summary.baseBranch}</span>
             <span aria-hidden="true">·</span>
