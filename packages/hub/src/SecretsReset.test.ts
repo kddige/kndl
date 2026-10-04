@@ -293,6 +293,7 @@ describe("secrets-reset", () => {
     expect(failed.entry.event).toMatchObject({
       state: "Asleep",
       message: `Claude Code could not start: ${cantStart}`,
+      valuesNeeded: true,
     })
     expect(await runner.untaken("StartSession")).toEqual([])
     expect(

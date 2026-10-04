@@ -7,7 +7,14 @@ import type {
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { day, environmentChanged, purgedIn, statusOf, terminalText } from "../app/format.ts"
+import {
+  day,
+  environmentChanged,
+  purgedIn,
+  repoParams,
+  statusOf,
+  terminalText,
+} from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
 import { buildTranscript, runningTurn } from "../hub/transcript.ts"
@@ -263,6 +270,12 @@ function LoadedSession({
                 restart={restart}
                 onWake={() => command(hub.wakeSession(summary.id))}
                 onRestore={() => restoreSession(hub, summary.id)}
+                onEnterValues={() =>
+                  void navigate({
+                    to: "/repos/$owner/$repo/environment",
+                    params: repoParams(summary.repo),
+                  })
+                }
               />
               {items.length === 0 ? (
                 <EmptyState
@@ -402,6 +415,7 @@ function StateBanner({
   restart,
   onWake,
   onRestore,
+  onEnterValues,
 }: {
   summary: SessionSummary
   change: SessionStateChanged | undefined
@@ -410,6 +424,7 @@ function StateBanner({
   restart: Restart
   onWake: () => void
   onRestore: () => void
+  onEnterValues: () => void
 }) {
   const why = change?.state === summary.state ? change.message : undefined
   const busy = summary.starting !== undefined || summary.restarting !== undefined
@@ -455,6 +470,24 @@ function StateBanner({
         </Banner>
       )
     case "Asleep":
+      // It didn't start because variables need a value (#57): waking it again won't help.
+      if (change?.state === "Asleep" && change.valuesNeeded === true) {
+        return (
+          <Banner
+            intent="danger"
+            icon={<InfoIcon />}
+            title="This Session can't start"
+            action={
+              <Button size="sm" onClick={onEnterValues}>
+                Enter values
+              </Button>
+            }
+          >
+            {why ? sentence(why) : ""}
+            Prompts sent now wait in the queue until it starts.
+          </Banner>
+        )
+      }
       return (
         <Banner
           intent="asleep"

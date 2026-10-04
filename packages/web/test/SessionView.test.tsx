@@ -169,6 +169,26 @@ test("an Asleep Session wakes from its banner, and an idle Active one sleeps on 
   )
 })
 
+test("a Session that can't start for values a secrets-reset cleared leads to its Environment", async () => {
+  const { hub, page, banner, header, sent } = await openSession("s-readme", "This Session")
+  hub.environments.resetSecrets()
+
+  await step(() => button("Wake now", page).click())
+  expect(sent()).toContain("WakeSession")
+  await eventually(() => expect(banner()).toContain("This Session can't start"))
+  expect(banner()).toContain(
+    "kddige/claude-hub's Sessions can't start: NPM_TOKEN and GITHUB_TOKEN (the shared variable GH_READ_TOKEN) need values.",
+  )
+  expect(banner()).toContain("Prompts sent now wait in the queue until it starts.")
+  expect(header()).toContain("Asleep")
+
+  await step(() => button("Enter values", page).click())
+  await eventually(() =>
+    expect(page.querySelector("h1")?.textContent).toContain("kddige/claude-hub"),
+  )
+  await eventually(() => expect(page.textContent).toContain("NPM_TOKEN needs a value: enter one."))
+})
+
 test("a restart for a changed Environment shows its progress until the Session is back", async () => {
   // Slow enough to see each step of the restart.
   const { page, banner, sent } = await openSession(demoSessionId, "Environment changed", 15)

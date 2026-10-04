@@ -106,6 +106,7 @@ import {
   PurgeSession,
   TurnStopRequested,
   type WebToHub,
+  cantStartText,
   WipNotPushed,
   SandboxNoted,
 } from "@claude-hub/protocol"
@@ -126,7 +127,7 @@ import {
   isEnvironmentCommand,
   makeEnvironmentRelay,
 } from "./EnvironmentRelay.ts"
-import { cantStartText, Environments } from "./Environments.ts"
+import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
@@ -826,6 +827,7 @@ export class SessionRelay extends Context.Service<
               state: "Asleep",
               ...why,
               message: `Claude Code could not start: ${cantStartText(session.repo, needed)}`,
+              valuesNeeded: true,
             }),
           )
           return yield* sessionUpdated(session.id)

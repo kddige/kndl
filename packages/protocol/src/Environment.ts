@@ -518,6 +518,20 @@ export function valuesNeededText(needed: ReadonlyArray<ValueNeeded>): string {
   return `${listed} ${names.length === 1 ? "needs a value" : "need values"}`
 }
 
+/** Why the Repo's Sessions don't start while variables need a value, and where to enter them. */
+export function cantStartText(repo: string, needed: ReadonlyArray<ValueNeeded>): string {
+  const screens = [
+    ...(needed.some((variable) => variable.sharedVariable === undefined)
+      ? ["the Repo's Environment screen"]
+      : []),
+    ...(needed.some((variable) => variable.sharedVariable !== undefined)
+      ? ["the Shared variables screen"]
+      : []),
+  ]
+  const which = needed.length === 1 ? "it" : "them"
+  return `${repo}'s Sessions can't start: ${valuesNeededText(needed)}. Enter ${which} on ${screens.join(" and ")}.`
+}
+
 /** Why a dependency folder can't be used, or undefined when it can. */
 export function dependencyFolderProblem(folder: DependencyFolder): string | undefined {
   const { pattern, nextTo } = folder

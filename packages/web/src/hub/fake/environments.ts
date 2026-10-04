@@ -8,6 +8,7 @@ import {
   type SharedVariableInput,
   variableNameProblem,
   sensitiveValueProblem,
+  type ValueNeeded,
   valuesNeededText,
 } from "@claude-hub/protocol"
 import { Redacted } from "effect"
@@ -175,6 +176,18 @@ export class FakeEnvironments {
       }
     }
     return atBuild
+  }
+
+  /** The variables of the Repo's Environment that need a value, its own or linked (#57). */
+  valuesNeeded(repo: string): ReadonlyArray<ValueNeeded> {
+    const variables = this.#environments.get(repo)?.environment.variables ?? []
+    return variables.flatMap((variable): ReadonlyArray<ValueNeeded> => {
+      if (variable._tag === "Sensitive" && variable.needsValue) return [variable]
+      if (variable._tag === "Link" && this.#shared.get(variable.sharedVariable)?.value === null) {
+        return [variable]
+      }
+      return []
+    })
   }
 
   /**
