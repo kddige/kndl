@@ -5,11 +5,12 @@ import { repoParams } from "../app/format.ts"
 import { useHubState } from "../app/hub.tsx"
 import { isListed } from "../hub/store.ts"
 import { knownRepos } from "../sessions/groups.ts"
-import { BoxIcon, ChevronRightIcon, EmptyState, Spinner } from "../ui/index.ts"
+import { BoxIcon, ChevronRightIcon, EmptyState, PageHeader, Spinner } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, leading, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
+  view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   scroll: { flex: 1, overflowY: "auto" },
   page: {
     display: "flex",
@@ -20,13 +21,6 @@ const styles = stylex.create({
     paddingBlock: space.s6,
     paddingInline: space.s4,
   },
-  title: {
-    fontSize: text.xl,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    lineHeight: leading.tight,
-  },
-  note: { color: color.textMuted, fontSize: text.sm },
   list: {
     display: "flex",
     flexDirection: "column",
@@ -87,49 +81,48 @@ export function EnvironmentList() {
   )
 
   return (
-    <div {...stylex.props(styles.scroll)}>
-      <main {...stylex.props(styles.page)}>
-        <div>
-          <h1 {...stylex.props(styles.title)}>Environments</h1>
-          <p {...stylex.props(styles.note)}>
-            What every Sandbox of a Repo is built from: one Environment per Repo. A Repo shows here
-            once it has a Session; start one to set up a new Repo.
-          </p>
-        </div>
-        {repos === null ? (
-          <div {...stylex.props(styles.loading)}>
-            <Spinner size="lg" label="Loading Repos" />
-          </div>
-        ) : repos.length === 0 ? (
-          <EmptyState
-            size="page"
-            icon={<BoxIcon />}
-            title="No Repos yet"
-            description="A Repo's Environment is set up with its first Session."
-          />
-        ) : (
-          <ul aria-label="Environments" {...stylex.props(styles.list)}>
-            {repos.map(({ repo, listed }, index) => (
-              <li key={repo} {...stylex.props(styles.item, index === 0 && styles.firstItem)}>
-                <Link
-                  to="/repos/$owner/$repo/environment"
-                  params={repoParams(repo)}
-                  {...stylex.props(styles.row, focus.ringInset)}
-                >
-                  <BoxIcon {...stylex.props(styles.icon)} />
-                  <span {...stylex.props(styles.main)}>
-                    <span {...stylex.props(styles.repo)}>{repo}</span>
-                    <span {...stylex.props(styles.count)}>
-                      {listed === 0 ? "No" : listed} {listed === 1 ? "Session" : "Sessions"}
+    <main {...stylex.props(styles.view)}>
+      <PageHeader
+        title="Environments"
+        description="What every Sandbox of a Repo is built from: one Environment per Repo. A Repo shows here once it has a Session; start one to set up a new Repo."
+      />
+      <div {...stylex.props(styles.scroll)}>
+        <div {...stylex.props(styles.page)}>
+          {repos === null ? (
+            <div {...stylex.props(styles.loading)}>
+              <Spinner size="lg" label="Loading Repos" />
+            </div>
+          ) : repos.length === 0 ? (
+            <EmptyState
+              size="page"
+              icon={<BoxIcon />}
+              title="No Repos yet"
+              description="A Repo's Environment is set up with its first Session."
+            />
+          ) : (
+            <ul aria-label="Environments" {...stylex.props(styles.list)}>
+              {repos.map(({ repo, listed }, index) => (
+                <li key={repo} {...stylex.props(styles.item, index === 0 && styles.firstItem)}>
+                  <Link
+                    to="/repos/$owner/$repo/environment"
+                    params={repoParams(repo)}
+                    {...stylex.props(styles.row, focus.ringInset)}
+                  >
+                    <BoxIcon {...stylex.props(styles.icon)} />
+                    <span {...stylex.props(styles.main)}>
+                      <span {...stylex.props(styles.repo)}>{repo}</span>
+                      <span {...stylex.props(styles.count)}>
+                        {listed === 0 ? "No" : listed} {listed === 1 ? "Session" : "Sessions"}
+                      </span>
                     </span>
-                  </span>
-                  <ChevronRightIcon {...stylex.props(styles.chevron)} />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </main>
-    </div>
+                    <ChevronRightIcon {...stylex.props(styles.chevron)} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </main>
   )
 }
