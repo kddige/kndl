@@ -17,6 +17,7 @@ import {
   readCommands,
   readHelloReply,
   resultSummary,
+  sandboxEnvironment,
   turnEndReason,
 } from "./HubMessages.ts"
 import type { ModEventEncoded } from "./HubMessages.ts"
@@ -242,4 +243,30 @@ test("a prompt from a Participant is led by their name", () => {
 test("the hooks module reads the tools socket by the protocol's name", async () => {
   const glue = await Bun.file(new URL("../hooks/register.ts", import.meta.url)).text()
   expect(glue).toContain(`$.env.get("${ToolsSocketVariable}")`)
+})
+
+test("the Sandbox's environment names its checkout, Repo, Work branch and platform", () => {
+  const text = sandboxEnvironment({
+    workspace: "/workspace",
+    repo: "acme/app",
+    workBranch: "claude/fix-login",
+  })
+  expect(text).toContain(" - Primary working directory: /workspace\n")
+  expect(text).toContain(" - Is a git repository: true\n")
+  expect(text).toContain(" - Repository: acme/app, checked out at /workspace\n")
+  expect(text).toContain(" - Work branch: claude/fix-login")
+  expect(text).toContain(" - Platform: linux\n")
+  expect(text).toContain(" - Shell: bash\n")
+  expect(text).not.toMatch(/darwin|zsh|\/Users\//i)
+})
+
+test("the Sandbox's environment leaves out what the Runner didn't say", () => {
+  const text = sandboxEnvironment({
+    workspace: "/workspace",
+    repo: undefined,
+    workBranch: undefined,
+  })
+  expect(text).toContain("Primary working directory: /workspace")
+  expect(text).not.toContain("Repository:")
+  expect(text).not.toContain("Work branch:")
 })

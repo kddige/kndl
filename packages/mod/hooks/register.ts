@@ -10,6 +10,8 @@
 //   the Hub (see HubLink.ts).
 // - The person at the terminal: a band above the prompt shows the Participants, and the `!`
 //   shell shortcut, which would run a command on the host, is refused.
+// - The model: the system prompt says the Session is shared, and describes the Sandbox, where its
+//   tools run, in place of Claude Code's description of the host.
 //
 // The rest of the mod, with Effect and the protocol, is bundled from src/ into
 // hooks/hub-link-lib.js (`bun run build`): Claude Code's mod runtime loads no package but its
@@ -28,6 +30,7 @@ import {
   ReadBeforeEdit,
   resultSummary,
   runInSandbox,
+  sandboxEnvironment,
   sharedSessionNote,
   startsShellMode,
   toolArguments,
@@ -39,6 +42,7 @@ import type {
   LinkStatus,
   ModCommand,
   Participant,
+  SandboxFacts,
   ToolAnswer,
   ToolCallOutcome,
   ToolDecision,
@@ -63,6 +67,8 @@ const band = atom(
 const state = {
   link: undefined as HubLink | undefined,
   toolsSocket: undefined as string | undefined,
+  /** What the Runner said about the Sandbox; null when no Runner started this Claude Code. */
+  sandbox: undefined as SandboxFacts | null | undefined,
   /** The Turn running on the main loop. */
   mainTurn: undefined as string | undefined,
   /** The Turn each subagent's loop is in, from its steps; tool calls carry only the agent. */
@@ -142,6 +148,19 @@ const startLink = async ($: EngineInterface) => {
     log: (text) => $.ui.log(text, { to: "debug" }),
   })
   state.link.start()
+}
+
+const sandboxFacts = async ($: EngineInterface) => {
+  if (state.sandbox !== undefined) return state.sandbox
+  const [workspace, repo, workBranch] = await Promise.all([
+    $.env.get("CLAUDE_HUB_WORKSPACE"),
+    $.env.get("CLAUDE_HUB_REPO"),
+    $.env.get("CLAUDE_HUB_WORK_BRANCH"),
+  ])
+  state.sandbox = workspace
+    ? { workspace, repo: repo || undefined, workBranch: workBranch || undefined }
+    : null
+  return state.sandbox
 }
 
 /** One exchange with the tool bridge, through Claude Code's fetch. */
@@ -318,13 +337,30 @@ export function register(on: On) {
 
   on("prompt.compose", async ($, e, next) => {
     const composed = await next(e)
+    const sandbox = await sandboxFacts($)
     return {
       sections: [
         ...composed.sections,
         { id: `${plugin}:shared-session`, text: sharedSessionNote, scope: "session" },
+        ...(sandbox === null
+          ? []
+          : [
+              {
+                id: `${plugin}:sandbox-environment`,
+                text: sandboxEnvironment(sandbox),
+                scope: "session" as const,
+              },
+            ]),
       ],
     }
   })
+
+  // Claude Code's environment block describes the host (its directory, platform and OS), and comes
+  // only with a prompt typed at the terminal, so late in a Session driven from the Hub (#127). The
+  // Sandbox's is in the system prompt instead, so the host's is left out.
+  on("prompt.attachment", { type: "environment" }, async ($, e, next) =>
+    (await sandboxFacts($)) === null ? next(e) : { text: null },
+  )
 
   // `!` runs a shell command on the host, outside every tool hook (spike #2): refuse the key.
   on("prompt.edit", async ($, e, next) => {
