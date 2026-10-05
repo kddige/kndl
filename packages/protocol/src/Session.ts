@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { BuildVersion, RunnerVersionStatus } from "./Build.ts"
 import { EnvironmentVersion, ParticipantId, PromptId, RunnerId, SessionId, TurnId } from "./Ids.ts"
 
 // Shapes shared by more than one channel: who is involved in a Session and what state it is in.
@@ -45,12 +46,19 @@ export const RunnerLogin = Schema.Struct({
 })
 export type RunnerLogin = typeof RunnerLogin.Type
 
-/** A Runner as the web UI lists it. */
+/** A Runner as the web UI lists it: every Runner paired with the Hub and not removed. */
 export const RunnerSummary = Schema.Struct({
   id: RunnerId,
   name: Schema.NonEmptyString,
-  login: RunnerLogin,
+  /** The Runner login it last said hello with; null until it first connects. */
+  login: Schema.NullOr(RunnerLogin),
   isOnline: Schema.Boolean,
+  /** The version it last said hello with; null before it connects, or from a Runner too old to say. */
+  version: Schema.NullOr(BuildVersion),
+  /** Its version against the Hub's own (WebWelcome's `hub`). */
+  versionStatus: RunnerVersionStatus,
+  /** When it was last connected: now, while it is online; null before it first connects. */
+  lastSeenAt: Schema.NullOr(EpochMillis),
 })
 export type RunnerSummary = typeof RunnerSummary.Type
 

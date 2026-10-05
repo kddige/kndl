@@ -101,10 +101,20 @@ const webToHub = [
   },
   { _tag: "DeleteSharedVariable", requestId: "q-11", name: "REGISTRY" },
   { _tag: "CheckAppPermissions", requestId: "q-12" },
+  { _tag: "CreatePairingCode", requestId: "q-13" },
+  { _tag: "CreatePairingCode", requestId: "q-14", runnerId: "r-1" },
+  { _tag: "RevokePairingCode", requestId: "q-15", pairingCodeId: "pc-1" },
+  { _tag: "RemoveRunner", requestId: "q-16", runnerId: "r-1" },
 ]
 
 const hubToWeb = [
   { _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice },
+  {
+    _tag: "WebWelcome",
+    protocolVersion: ProtocolVersion,
+    you: alice,
+    hub: { commit: "a".repeat(40), branch: "main" },
+  },
   {
     _tag: "HandshakeRejected",
     reason: "ProtocolVersionMismatch",
@@ -113,7 +123,26 @@ const hubToWeb = [
   },
   {
     _tag: "RunnerList",
-    runners: [{ id: "r-1", name: "studio", login: runnerLogin, isOnline: true }],
+    runners: [
+      {
+        id: "r-1",
+        name: "studio",
+        login: runnerLogin,
+        isOnline: true,
+        version: { commit: "b".repeat(40) },
+        versionStatus: "Behind",
+        lastSeenAt: 1_790_000_000_000,
+      },
+      {
+        id: "r-2",
+        name: "new-mac",
+        login: null,
+        isOnline: false,
+        version: null,
+        versionStatus: "Unknown",
+        lastSeenAt: null,
+      },
+    ],
   },
   { _tag: "SessionList", sessions: [sessionSummary] },
   { _tag: "SessionList", sessions: [] },
@@ -265,6 +294,29 @@ const hubToWeb = [
       checkedAt: 1_700_000_000_000,
     },
   },
+  {
+    _tag: "PairingCodeCreated",
+    requestId: "q-13",
+    id: "pc-1",
+    code: "7K3QH-WM2PA-9XC4R-TBV0E",
+    link: "https://hub.example.com#7K3QH-WM2PA-9XC4R-TBV0E",
+    expiresAt: 1_790_000_900_000,
+  },
+  {
+    _tag: "PairingCodeList",
+    requestId: "q-15",
+    codes: [
+      {
+        id: "pc-2",
+        runnerId: "r-1",
+        createdBy: alice,
+        createdAt: 1_790_000_000_000,
+        expiresAt: 1_790_000_900_000,
+      },
+    ],
+  },
+  { _tag: "PairingCodeList", codes: [] },
+  { _tag: "RunnerRemoved", requestId: "q-16", runnerId: "r-1" },
 ]
 
 describe("SessionEvent", () => {

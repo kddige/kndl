@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { BuildVersion } from "./Build.ts"
 import {
   FetchVariables,
   RunTestBuild,
@@ -32,6 +33,11 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
   login: RunnerLogin,
   /** Sessions whose Claude Code is still running here, re-adopted after a Runner restart. */
   sessions: Schema.Array(SessionId),
+  /**
+   * The commit the Runner runs (ADR 0011). Optional, so a Runner from before it was added still
+   * connects, and is listed with its version unknown.
+   */
+  version: Schema.optionalKey(BuildVersion),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
