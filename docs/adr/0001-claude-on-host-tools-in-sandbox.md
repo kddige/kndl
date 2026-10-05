@@ -1,6 +1,8 @@
 ---
-status: accepted
+status: superseded by 0013
 ---
+
+> Superseded by [ADR 0013](0013-claude-code-runs-in-the-sandbox.md): Claude Code now runs in the Sandbox, and a credential proxy on the Runner keeps the Claude login out of it. The tool bridge, the hardened launch and the amendments below are retired (#147).
 
 # Claude Code runs on the host; every file and command tool runs in the Sandbox
 
