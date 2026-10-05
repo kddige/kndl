@@ -15,7 +15,8 @@
 //   isn't installed on it (or there's no such Repo), or the person isn't a collaborator. Telling
 //   the two apart says whether the App is installed on a Repo the person can't reach; commands
 //   about the Repo are refused alike either way.
-// - A yes is cached for `HubConfig.repoAccessTtl`, a no for `refusedAnswerTtl` only. A failure to
+// - A yes is cached for `HubConfig.repoAccessTtl`, a no for `refusedAnswerTtl` only (or the TTL,
+//   if that is shorter). A failure to
 //   ask isn't cached, nor an answer slower than `lookupTimeout`: the next check asks again.
 //   `forget` drops what is cached for a person and a Repo, for a check asked again by hand.
 
@@ -87,7 +88,7 @@ export class RepoAccess extends Context.Service<
         if (Exit.isFailure(exit)) return Duration.zero
         return exit.value === "Allowed" || exit.value === true
           ? config.repoAccessTtl
-          : refusedAnswerTtl
+          : Duration.min(refusedAnswerTtl, config.repoAccessTtl)
       }
 
       const askGitHub = <A>(asked: Effect.Effect<A, GitHubAppError>) =>

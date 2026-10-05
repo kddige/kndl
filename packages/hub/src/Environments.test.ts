@@ -342,7 +342,11 @@ describe("Applying an Environment", () => {
       testBuildPassed: true,
     })
 
+    // bob has the Repo's Environment open.
     const bob = await openWeb(env.hub, "bob")
+    const opened = nextRequest()
+    bob.send({ _tag: "GetEnvironment", requestId: opened, repo })
+    expect((await answer(bob, opened))._tag).toBe("EnvironmentState")
     const applied = expectApplied(await apply(env, draft(), null), 1)
     expect(applied.environment?.variables).toEqual([
       { _tag: "Plain", name: "NODE_ENV", value: "development" },
