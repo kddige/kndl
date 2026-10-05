@@ -102,7 +102,7 @@ Every script runs from the root of a claude-hub checkout. They keep their state 
 |---|---|
 | `bun run hub` | Starts the Hub on `HOST:PORT` (`127.0.0.1:7777`). Reads `packages/hub/.env.local`. |
 | `bun run runner` | Builds the `hub-link` mod, then starts a Runner. Needs `RUNNER_TOKEN`. |
-| `bun run web` | Starts Vite's dev server for the web UI on <http://localhost:5173>, passing `/auth`, `/health` and `/ws` through to the Hub. |
+| `bun run web` | Starts Vite's dev server for the web UI on <http://localhost:5173>, passing `/auth`, `/health`, `/runner/` and `/ws` through to the Hub. |
 | `bun run web:build` | Builds the web UI into `packages/web/dist`, which the Hub serves. |
 | `bun run cli <command>` | Runs the [`claude-hub` command](#the-claude-hub-command) from the checkout. It manages the installed home, not the dev home. |
 

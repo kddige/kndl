@@ -81,7 +81,7 @@ Each Session's Claude Code starts with the hardened flags of [ADR 0001](/referen
 
 | Variable | Default | What it does |
 |---|---|---|
-| `HUB_URL` | `http://127.0.0.1:7777` | The Hub Vite passes `/auth`, `/health` and `/ws` through to. |
+| `HUB_URL` | `http://127.0.0.1:7777` | The Hub Vite passes `/auth`, `/health`, `/runner/` and `/ws` through to. |
 | `VITE_FAKE_HUB` | unset | `1` runs the web UI against an in-process fake Hub that plays a scripted Session; `signed-out` starts it signed out. |
 
 ## Tests

@@ -51,9 +51,7 @@ bun run hub     # the Hub, on http://127.0.0.1:7777
 bun run web     # the web UI, on http://localhost:5173
 ```
 
-Vite passes `/auth`, `/health` and `/ws` through to the Hub (at `HUB_URL`, default `http://127.0.0.1:7777`), so the web UI and the Hub share one origin. `HUB_PUBLIC_URL` keeps its default, `http://localhost:5173`.
-
-Runners connect to the Hub itself, not through Vite, which doesn't pass `/runner/pair` on: to pair a Runner with this Hub, give `claude-hub runner join` the code alone with `--hub-url http://127.0.0.1:7777`.
+Vite passes `/auth`, `/health`, `/runner/` and `/ws` through to the Hub (at `HUB_URL`, default `http://127.0.0.1:7777`), so the web UI and the Hub share one origin. `HUB_PUBLIC_URL` keeps its default, `http://localhost:5173`.
 
 To work on the web UI with no Hub at all, `VITE_FAKE_HUB=1 bun run web` runs it against an in-process fake Hub that plays a scripted Session; `VITE_FAKE_HUB=signed-out` starts that signed out.
 

@@ -14,6 +14,7 @@ export default defineConfig({
     proxy: {
       "/auth": hub,
       "/health": hub,
+      "/runner/": hub,
       "/ws": { target: hub, ws: true },
     },
   },
