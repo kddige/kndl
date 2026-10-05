@@ -65,7 +65,7 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 
 ## What a Runner gives Claude Code
 
-Each Session's Claude Code starts with the hardened flags of [ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) (`--setting-sources ""`, `--strict-mcp-config`, a fixed `--tools` list, and `--settings` with `disableSkillShellExecution` on and `autoMemoryEnabled` off), with `--session-id` for a new Session or `--resume` to wake one, and these variables, which the mod uses:
+Each Session's Claude Code starts with the hardened flags of [ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) (`--setting-sources ""`, `--strict-mcp-config`, a fixed `--tools` list, and `--settings` with `disableSkillShellExecution` on and `autoMemoryEnabled` off), `--plugin-dir` for the mod and again for the Repo's skills, with `--session-id` for a new Session or `--resume` to wake one, and these variables, which the mod uses:
 
 | Variable | What it is |
 |---|---|
@@ -76,6 +76,7 @@ Each Session's Claude Code starts with the hardened flags of [ADR 0001](/referen
 | `CLAUDE_HUB_WORKSPACE` | Where the Workspace is in the Sandbox: `/workspace`. Claude is told this as its working directory. |
 | `CLAUDE_HUB_REPO` | The Session's Repo, such as `acme/app`, for Claude's environment. |
 | `CLAUDE_HUB_WORK_BRANCH` | The Session's Work branch, for Claude's environment. |
+| `CLAUDE_HUB_REPO_FILES` | The Session's copy of the Repo's `CLAUDE.md` and skills: `<sessions root>/<session id>/repo`. |
 | `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS` | `1`, since git runs in the Sandbox rather than beside Claude Code. |
 | `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | `1`, because a background command's output would stay in the Sandbox. |
 | `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | `1`, because Claude Code would save memory in the Sandbox, where it is lost. It wins over any setting. |
