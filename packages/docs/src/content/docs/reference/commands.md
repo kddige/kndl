@@ -22,8 +22,9 @@ Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-
 | `claude-hub update [--ref <ref>]` | Updates the install: fetches, moves to the target, runs `bun install`, rebuilds the web UI and the mod, rewrites and restarts the installed services, and runs `doctor`. `upgrade` is the same command. See [below](#claude-hub-update). |
 | `claude-hub uninstall [--purge] [--yes]` | Stops and removes the services, removes the `claude-hub` command and the install, and keeps the home's data. `--purge` removes the whole home. Asks first; without a terminal it needs `--yes`. |
 | `claude-hub hub install\|start\|stop\|status` | The Hub's service. `install` writes the service file and (re)starts it; `stop` stops it until the next `start` or login; `status` exits 1 unless it runs. |
+| `claude-hub runner join '<link>'` | Makes the machine a Runner with a pairing link from the Hub's Runners page, without touching the Hub's machine. See [below](#claude-hub-runner-join). |
 | `claude-hub runner install\|start\|stop\|status` | The same for the Runner's service. |
-| `claude-hub runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. Run it on the Hub's machine. |
+| `claude-hub runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. Run it on the Hub's machine. A [pairing link](#claude-hub-runner-join) needs no access to it. |
 | `claude-hub secrets key` | Prints a new `HUB_SECRETS_KEY`, as [`bun run secrets-key`](#bun-run-secrets-key) does. It changes nothing. |
 | `claude-hub secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `claude-hub hub stop` first. Asks first; without a terminal it needs `--yes`. |
 
@@ -42,6 +43,7 @@ Each question has a flag, and a flag that's given isn't asked. Onboard also keep
 | `--insecure-cookies` | `lan` only: sets `HUB_INSECURE_COOKIES=1`. Off by default. |
 | `--dev-login` | `local` only: sets `CLAUDE_HUB_DEV_LOGIN=1`. |
 | `--github-app create\|manual\|skip` | The GitHub App. `create` creates it on GitHub from claude-hub's manifest, in a browser, and saves its settings and private key; `manual` asks for the settings of an App you made yourself; `skip` leaves `hub.env`'s as they are. Both `create` and `manual` need a terminal. See [Set up the GitHub App](/how-to/set-up-the-github-app/). |
+| `--pair '<link>'` | A Runner's pairing link, from **Add a Runner** or **Re-pair** on the Hub's Runners page: onboard redeems it for the Runner's token and `HUB_URL`, as [`runner join`](#claude-hub-runner-join) does. Instead of `--hub-url` and `--token`; with `--hub-url`, the code alone is enough. Runner only. |
 | `--hub-url <url>` | A Runner's `HUB_URL`, for a Hub on another machine. With `--role both` it's the Hub's loopback URL. |
 | `--token <chr_…>` | A Runner's `RUNNER_TOKEN`, from `claude-hub runner token <name>` on the Hub's machine. With `--role both`, onboard issues one when it's left out. |
 | `--runner-name <name>` | The Runner's `RUNNER_NAME`, by default the short hostname. |
@@ -55,6 +57,26 @@ Each question has a flag, and a flag that's given isn't asked. Onboard also keep
 Every yes-or-no flag has a `--no-` form, such as `--no-install-prerequisites`.
 
 Onboard asks every question before it writes anything, and writes each file whole, so Esc or Ctrl-C at a question leaves the home as it was, and exits 130. Ctrl-C during a long step (an install, a build, starting a service) stops that step's command and exits 130 too.
+
+### `claude-hub runner join`
+
+```sh
+claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
+```
+
+Makes this machine a Runner with a pairing link: **Add a Runner** on the Hub's Runners page makes one, and **Re-pair** one for a Runner that's already there. It's [onboard](#claude-hub-onboard) with `--role runner --pair '<link>'`: it checks the prerequisites, redeems the code with the Hub (`POST /runner/pair`) for the Runner's token, writes `runner.env` whole, installs and starts the Runner's service, and asks the Hub (`GET /runner/connection`) until it says the Runner is connected, for up to 30 seconds.
+
+| Flag | Answers |
+|---|---|
+| `--name <name>` | The new Runner's name, by default the short hostname. A Re-pair keeps the Runner's own name. |
+| `--hub-url <url>` | The Hub's URL, when what's given is only the code. |
+| `--install-prerequisites` | Install what's missing without asking. Some steps use `sudo`. |
+| `--no-services` | Write `runner.env` and build, but don't install or start the service. |
+| `--linger`, `--no-linger` | Linux: keep the service running while you're logged out. |
+| `--non-interactive` | Never ask. |
+| `--move-old-data` | As for [onboard](#claude-hub-onboard). |
+
+The code is redeemed before anything is installed or built, so a later step that fails doesn't waste it: `claude-hub onboard` finishes the job with the token `runner.env` already holds. A code that can't be used fails before anything is written. See [Troubleshooting](/troubleshooting/runners/#the-pairing-code-cant-be-used).
 
 ### `claude-hub update`
 

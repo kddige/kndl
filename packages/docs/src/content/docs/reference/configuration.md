@@ -13,7 +13,7 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 |---|---|---|
 | `HOST` | `127.0.0.1` | The address the Hub listens on. |
 | `PORT` | `7777` | The port the Hub listens on. |
-| `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the web UI and, through it, the Hub: the Hub's own URL when it serves the web UI's build, or Vite's in development. GitHub sends people back here after sign-in, and cookie-authenticated requests must come from this origin. |
+| `HUB_PUBLIC_URL` | `http://localhost:5173` | Where browsers reach the web UI and, through it, the Hub: the Hub's own URL when it serves the web UI's build, or Vite's in development. GitHub sends people back here after sign-in, cookie-authenticated requests must come from this origin, and the Runners page's pairing links carry its origin, so new Runners must reach the Hub there. |
 | `HUB_DATABASE` | `hub.db` in `packages/hub` | The SQLite database. With `CLAUDE_HUB_HOME` set, `hub.db` in that home. |
 | `HUB_WEB_DIR` | `packages/web/dist` | The web UI's build, which the Hub serves. Without one, the Hub warns at startup and its pages answer 503. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret. Set both, or neither; unset, GitHub sign-in is off. |
@@ -33,8 +33,8 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 | Variable | Default | What it does |
 |---|---|---|
 | `HUB_URL` | `http://127.0.0.1:7777` | The Hub. The Runner connects to `/ws/runner` on it, over `wss:` for an `https:` URL. |
-| `RUNNER_TOKEN` | required | The Runner token from `bun run runner-token`. Kept out of tmux's and Claude Code's environment. |
-| `RUNNER_NAME` | the short hostname | The name the web UI shows. |
+| `RUNNER_TOKEN` | required | The Runner's token: `claude-hub runner join` writes it, from a Pairing code; `claude-hub runner token` or `bun run runner-token` issues one on the Hub's machine. Kept out of tmux's and Claude Code's environment. |
+| `RUNNER_NAME` | the short hostname | The name it said hello with. The web UI shows the name the Runner was paired or issued its token with. |
 | `RUNNER_LOGIN` | the account Claude Code is signed in with | How the Runner login is shown. Read from `oauthAccount.emailAddress` in Claude Code's config file when unset; the Runner refuses to start if it finds none. |
 | `RUNNER_SESSIONS_ROOT` | `~/.claude-hub-dev/sessions` | Where each Session's directory goes. |
 | `RUNNER_TMUX_SOCKET` | `claude-hub-dev` | The tmux server (`tmux -L <name>`) the Sessions run on. |

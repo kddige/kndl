@@ -565,7 +565,7 @@ function RemoveDialog({ runner, onClose }: { runner: RunnerSummary | null; onClo
       title={refusal ? `${shown?.name ?? ""} can't be removed yet` : `Remove ${shown?.name ?? ""}?`}
       description={
         refusal ??
-        "Its token stops working at once and, if it's connected, it's disconnected. Its Archived Sessions can't be restored afterwards. To use the machine again, add it as a new Runner."
+        "Its token stops working at once and, if it's connected, it's disconnected. Its Archived Sessions can't be restored unless a Runner by the same name is added again."
       }
       footer={
         refusal ? (
