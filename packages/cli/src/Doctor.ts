@@ -366,9 +366,7 @@ export function tmuxServerCheck(server: TmuxServerFact, home: string): Check {
   }
   if (problems.length === 0) {
     const elsewhere =
-      server.cwd !== undefined && server.cwd.path !== home
-        ? `, started in ${server.cwd.path}`
-        : ""
+      server.cwd !== undefined && server.cwd.path !== home ? `, started in ${server.cwd.path}` : ""
     return { name, status: "ok", detail: `socket ${server.socket}, ${sessions}${elsewhere}` }
   }
   const restart = "`claude-hub runner stop`, then `claude-hub runner start`"

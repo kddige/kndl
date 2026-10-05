@@ -46,6 +46,12 @@ const ownServer: TmuxServerFact = {
   servicePath,
 }
 
+/** Doctor's tmux server check, for a server like {@link ownServer} but for `server`. */
+const tmuxCheck = (server: Partial<TmuxServerFact>) =>
+  diagnose({ ...healthy, tmuxServer: { ...ownServer, ...server } }).find(
+    (c) => c.name === "tmux server",
+  )
+
 const failing = (facts: DoctorFacts) => diagnose(facts).filter((c) => c.status !== "ok")
 
 describe("doctor", () => {
@@ -156,24 +162,19 @@ describe("doctor", () => {
   })
 
   describe("the tmux server on the Runner's socket", () => {
-    const check = (server: Partial<TmuxServerFact>) =>
-      diagnose({ ...healthy, tmuxServer: { ...ownServer, ...server } }).find(
-        (c) => c.name === "tmux server",
-      )
-
     test("one the Runner service runs passes", () => {
-      expect(check({})).toMatchObject({ status: "ok", detail: "socket claude-hub, 2 sessions" })
+      expect(tmuxCheck({})).toMatchObject({ status: "ok", detail: "socket claude-hub, 2 sessions" })
     })
 
     test("one started elsewhere passes once its PWD is unset and its PATH is the service's", () => {
-      expect(check({ cwd: { path: "/home/ada/src/claude-hub", exists: true } })).toMatchObject({
+      expect(tmuxCheck({ cwd: { path: "/home/ada/src/claude-hub", exists: true } })).toMatchObject({
         status: "ok",
       })
     })
 
     test("a deleted working directory and a stale PWD and PATH warn, saying each", () => {
       const stale = "/home/ada/src/old-checkout"
-      const result = check({
+      const result = tmuxCheck({
         sessions: 0,
         cwd: { path: stale, exists: false },
         pwd: { path: stale, exists: false },
@@ -190,14 +191,14 @@ describe("doctor", () => {
     })
 
     test("with Sessions in it, the warning says the Runner keeps it and refreshes it", () => {
-      const result = check({ pwd: { path: "/home/ada/src/gone", exists: false } })
+      const result = tmuxCheck({ pwd: { path: "/home/ada/src/gone", exists: false } })
 
       expect(result?.status).toBe("warn")
       expect(result?.detail).toContain("It has 2 sessions, so the Runner keeps it")
     })
 
     test("its PATH isn't judged without a service file to compare with", () => {
-      expect(check({ path: "/usr/bin", servicePath: undefined })?.status).toBe("ok")
+      expect(tmuxCheck({ path: "/usr/bin", servicePath: undefined })?.status).toBe("ok")
     })
 
     test("is not checked when no server runs", () => {

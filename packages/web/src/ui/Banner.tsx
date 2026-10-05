@@ -116,7 +116,9 @@ export function Banner({
         {children && <p {...stylex.props(styles.description)}>{children}</p>}
         {detail && <div {...stylex.props(styles.detail)}>{detail}</div>}
       </div>
-      {action && <div {...stylex.props(styles.action, detail && styles.actionTop)}>{action}</div>}
+      {action && (
+        <div {...stylex.props(styles.action, Boolean(detail) && styles.actionTop)}>{action}</div>
+      )}
     </div>
   )
 }

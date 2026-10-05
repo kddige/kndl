@@ -27,13 +27,7 @@ import { ModBundle, RunnerConfig, RunnerConfigLive } from "@claude-hub/runner/sr
 import { parseServerEnvironment } from "@claude-hub/runner/src/Tmux.ts"
 import { Cause, ConfigProvider, Effect, Exit, Option } from "effect"
 import { FetchHttpClient } from "effect/http"
-import type {
-  AppPermissionsFact,
-  DoctorFacts,
-  Health,
-  Place,
-  TmuxServerFact,
-} from "./Doctor.ts"
+import type { AppPermissionsFact, DoctorFacts, Health, Place, TmuxServerFact } from "./Doctor.ts"
 import { type EnvFile, envValues, parseEnv, renderEnv } from "./EnvFile.ts"
 import { fail } from "./Failure.ts"
 import type { HomeFacts } from "./Guards.ts"
@@ -153,8 +147,6 @@ export const tmuxServerFact = (socket: string, servicePath: string | undefined) 
     const variables = parseServerEnvironment(environment)
     const sessions = (yield* tmux("list-sessions", "-F", "#{session_name}")) ?? ""
     const pid = ((yield* tmux("display-message", "-p", "#{pid}")) ?? "").trim()
-    const place = (path: string | undefined): Place | undefined =>
-      path === undefined || path === "" ? undefined : { path, exists: existsSync(path) }
     return {
       socket,
       sessions: sessions.split("\n").filter((name) => name.trim() !== "").length,
@@ -164,6 +156,10 @@ export const tmuxServerFact = (socket: string, servicePath: string | undefined) 
       servicePath,
     } satisfies TmuxServerFact
   }).pipe(Effect.orElseSucceed(() => undefined))
+
+/** A directory and whether it still exists; undefined for none. */
+const place = (path: string | undefined): Place | undefined =>
+  path === undefined || path === "" ? undefined : { path, exists: existsSync(path) }
 
 /** A process's working directory: /proc on Linux, lsof on macOS; undefined when unreadable. */
 const processCwd = (pid: string) =>
