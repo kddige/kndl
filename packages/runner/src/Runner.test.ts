@@ -3,12 +3,13 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ClaudeSessionId, ProtocolVersion, TestBuildId } from "@claude-hub/protocol"
+import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@claude-hub/protocol"
 import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
 import { ClaudeProjectsDir, claudeProjectDirName } from "./ClaudeConfig.ts"
+import { childSystemPrompt } from "./ClaudeLaunch.ts"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -476,6 +477,19 @@ describe("Sessions", () => {
       ["Snapshot", "screen of s-1"],
       ["Output", "hello"],
     ])
+  })
+
+  test("tells a Child Session's Claude Code whose child it is, and its mod", async () => {
+    const h = startRunner()
+    await connected(h)
+    const parent = { id: SessionId.make("s-parent"), title: "Release 2.0" }
+    h.hub.send(startSession("s-1", { parent }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    const [spec] = h.tmux.launched
+    expect(spec?.argv.slice(-2)).toEqual(["--append-system-prompt", childSystemPrompt(parent)])
+    expect(childSystemPrompt(parent)).toContain('"Release 2.0" (s-parent)')
+    expect(spec?.env).toMatchObject({ CLAUDE_HUB_PARENT_SESSION_ID: "s-parent" })
   })
 
   test("resumes Claude Code's conversation when waking a Session", async () => {

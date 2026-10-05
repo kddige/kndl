@@ -282,6 +282,7 @@ export const SessionsLive = Layer.effect(
               modToken: request.modToken,
               toolsSocket: directories.toolsSocket,
               conversation: yield* conversationFor(request, directories.claude),
+              ...(request.parent === undefined ? {} : { parent: request.parent }),
             })
             // Its trust may have been dropped since startup, and the dialog would stop the mod.
             yield* trust.ensure
