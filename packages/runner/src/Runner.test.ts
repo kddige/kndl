@@ -481,7 +481,7 @@ describe("Sessions", () => {
       "--plugin-dir",
       join(h.settings.sessionsRoot, "s-1", "repo", ".claude"),
       "--tools",
-      "Bash,Read,Write,Edit,NotebookEdit,Glob,Grep,WebSearch",
+      "Bash,Read,Write,Edit,NotebookEdit,WebSearch",
       "--strict-mcp-config",
       "--setting-sources",
       "",

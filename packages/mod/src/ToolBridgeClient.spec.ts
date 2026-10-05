@@ -253,7 +253,7 @@ describe("callDeadlineMs", () => {
     expect(callDeadlineMs("Bash", { timeout: 300_000 })).toBe(300_000 + TimeoutGraceMs)
     expect(callDeadlineMs("Bash", { timeout: 3_600_000 })).toBe(600_000 + TimeoutGraceMs)
     expect(callDeadlineMs("Bash", { timeout: "soon" })).toBe(120_000 + TimeoutGraceMs)
-    expect(callDeadlineMs("Grep", {})).toBe(300_000)
+    expect(callDeadlineMs("Read", {})).toBe(300_000)
   })
 })
 

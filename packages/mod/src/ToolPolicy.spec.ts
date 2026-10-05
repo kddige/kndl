@@ -124,15 +124,7 @@ describe("decideTool", () => {
   test("allows exactly the Sandbox tools and WebSearch", () => {
     const tools = [...SandboxTools, "WebSearch", "WebFetch", ...otherTools]
     const decided = (tag: string) => tools.filter((tool) => decideTool(tool, {})._tag === tag)
-    expect(decided("RunInSandbox")).toEqual([
-      "Bash",
-      "Read",
-      "Write",
-      "Edit",
-      "NotebookEdit",
-      "Glob",
-      "Grep",
-    ])
+    expect(decided("RunInSandbox")).toEqual(["Bash", "Read", "Write", "Edit", "NotebookEdit"])
     expect(decided("LeaveToClaudeCode")).toEqual(["WebSearch"])
   })
 

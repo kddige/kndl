@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import type { BranchName, RepoName, SessionId } from "@claude-hub/protocol"
-import { claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
+import { SandboxTools } from "@claude-hub/protocol"
+import { ClaudeTools, claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
 
 test("the mod reads every variable the Runner sets for it, by the same name", async () => {
   // The loader lists a hooks module's variables from its literal `$.env.get` calls, so the mod
@@ -32,4 +33,13 @@ test("the Session's model and effort go as flags, so they never reach settings.j
   const { argv } = claudeLaunch({ ...options, model: "opus[1m]", effort: "xhigh" })
   expect(argv.slice(-4)).toEqual(["--model", "opus[1m]", "--effort", "xhigh"])
   expect(claudeLaunch({ ...options, effort: "low" }).argv.slice(-2)).toEqual(["--effort", "low"])
+})
+
+test("Claude Code keeps the Sandbox tools and WebSearch, and no tool it doesn't have (#140)", () => {
+  const { argv } = claudeLaunch(options)
+  // An empty list would break `$.tool.register`; a name Claude Code has no tool for is still
+  // offered to the model, which can't call it.
+  expect(argv[argv.indexOf("--tools") + 1]).toBe([...SandboxTools, "WebSearch"].join(","))
+  expect(ClaudeTools).not.toContain("Glob")
+  expect(ClaudeTools).not.toContain("Grep")
 })

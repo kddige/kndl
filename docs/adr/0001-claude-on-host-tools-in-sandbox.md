@@ -4,7 +4,7 @@ status: accepted
 
 # Claude Code runs on the host; every file and command tool runs in the Sandbox
 
-The Claude Code process for a Session runs on the Runner host, but its file and command tools (Bash, Read, Write, Edit, NotebookEdit, Glob, Grep) execute inside the Session's Sandbox. The mod intercepts each `tool.call` and answers it with `{ result }` from the Sandbox, so the model keeps the built-in tools it was trained on. It denies by default: any other tool that would touch the host filesystem or start processes is refused. WebSearch, which runs at Anthropic, is the one tool it leaves to Claude Code (amended in #126, below). This keeps Claude's credentials and configuration out of the Sandbox, while nothing the agent does touches the host.
+The Claude Code process for a Session runs on the Runner host, but its file and command tools (Bash, Read, Write, Edit and NotebookEdit) execute inside the Session's Sandbox. The mod intercepts each `tool.call` and answers it with `{ result }` from the Sandbox, so the model keeps the built-in tools it was trained on. It denies by default: any other tool that would touch the host filesystem or start processes is refused. WebSearch, which runs at Anthropic, is the one tool it leaves to Claude Code (amended in #126, below). This keeps Claude's credentials and configuration out of the Sandbox, while nothing the agent does touches the host.
 
 ## Considered options
 
@@ -18,6 +18,10 @@ The Claude Code process for a Session runs on the Runner host, but its file and 
 - Some things still run on the host regardless of tool routing: hooks, MCP servers, `CLAUDE.md` and `@`-mentions, the git status snapshot, skill shell injection and statusline commands. Runners therefore launch Claude Code with an explicit `--tools` list, `--strict-mcp-config`, minimal setting sources, `disableSkillShellExecution` and `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS=1`, from an empty per-session host directory. The Repo's `CLAUDE.md` and skills are read in the Sandbox instead (amended in #125, below).
 - File tools must not run on the host even though the Workspace lives there: a symlink created inside the Sandbox could point a host-side Read at `~/.ssh`.
 - The first implementation forwards intercepted calls to `claude mcp serve` inside the Sandbox, to reuse the real tool code. That depends on a spike; the fallback is our own agent in the Sandbox.
+
+## Glob and Grep (amended in #140)
+
+The list first had Glob and Grep too. Claude Code 2.1.287 and 2.1.289 have no such tools: search runs through Bash. Given in `--tools`, the names were still offered to the model, and each call failed with `Tool Grep not found` or `Tool Glob not found`. Claude Code 2.1.289 lists neither without `--tools`. Both are gone from the Runner's `--tools` list and from the tools the bridge runs.
 
 ## Web search (amended in #126)
 

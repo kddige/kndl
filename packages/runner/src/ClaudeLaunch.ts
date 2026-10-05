@@ -14,21 +14,13 @@ import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 /**
  * The tools Claude Code keeps (ADR 0001): the file and command tools, which the mod answers from
  * the Sandbox through the tool bridge (#11), and WebSearch, which the mod leaves to Claude Code:
- * the search runs at Anthropic, not on the host (#126). Claude Code 2.1.287 has no Glob or Grep
- * tool (its search runs through Bash), so those two only matter to builds that still have them.
- * Leaving ToolSearch out also turns tool search off, so the mod's own tools are listed directly
- * (spike #4). Never pass an empty list: that breaks `$.tool.register`.
+ * the search runs at Anthropic, not on the host (#126). Glob and Grep are left out (#140): Claude
+ * Code 2.1.287 and 2.1.289 have no such tools (search runs through Bash), yet offer the model any
+ * name given here, and a call to it fails. Leaving ToolSearch out also turns tool search off, so
+ * the mod's own tools are listed directly (spike #4). Never pass an empty list: that breaks
+ * `$.tool.register`.
  */
-export const ClaudeTools = [
-  "Bash",
-  "Read",
-  "Write",
-  "Edit",
-  "NotebookEdit",
-  "Glob",
-  "Grep",
-  "WebSearch",
-]
+export const ClaudeTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "WebSearch"]
 
 /**
  * Settings passed with `--settings`, which `--setting-sources ""` still honours (spike #4).
