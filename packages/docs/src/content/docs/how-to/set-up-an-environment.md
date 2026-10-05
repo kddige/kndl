@@ -5,9 +5,16 @@ sidebar:
   order: 5
 ---
 
-Each Repo has one Environment: the recipe its Sessions' Sandboxes are built from. A Repo needs one before its first Session. Any signed-in Participant can change it.
+Each Repo has one Environment: the recipe its Sessions' Sandboxes are built from. A Repo needs one before its first Session. Anyone with access to the Repo on GitHub can change it.
 
 Open it from **Environments** in the sidebar, or at `/repos/<owner>/<name>/environment`. Starting a Session on a Repo without one takes you there too, and starts the Session once you apply.
+
+Before you set anything up, the Hub checks the Repo with GitHub. **New Session** checks it as you type it; the Environment page checks it as it opens. If you can't use the Repo, you are told why at once:
+
+- **The GitHub App isn't installed on owner/name**, with an **Install the App** link. Install it on the Repo, or add the Repo to the App's installation, then press **check again**.
+- **You don't have access to owner/name on GitHub.** Have the Repo's owner add you as a collaborator, then press **Check again**.
+
+See [the Environment won't open](/troubleshooting/sessions/#the-environment-wont-open-or-new-session-refuses-the-repo) for more. A Dev login has access to every Repo, but still needs the App on the Repo for a Test build.
 
 ## Choose the image
 
@@ -84,7 +91,7 @@ Tick **Docker in every Sandbox** if Sessions should run containers, for example 
 
 Changes are a draft, kept in your browser until you apply them. The **Apply** section says whether the draft needs a Test build:
 
-- **A change to the build** (the image, either script, Docker, the dependency folders, or a variable available at build, including its value) needs a passing Test build of exactly this draft. Pick a Runner in **Runner to build on**, press **Test build** and watch the **Test build log**. A Test build runs the Bootstrap script, then the Start script on a fresh clone of the Repo's default branch, and leaves nothing behind.
+- **A change to the build** (the image, either script, Docker, the dependency folders, or a variable available at build, including its value) needs a passing Test build of exactly this draft. Pick a Runner in **Runner to build on**, press **Test build** and watch the **Test build log**. A Test build runs the Bootstrap script, then the Start script on a fresh clone of the Repo's default branch, and leaves nothing behind. The Runner clones with a read-only token for the Repo from the Hub's GitHub App, not with its machine's own git credentials, and keeps nothing of it.
 - **Other changes**, such as resources, apply at once.
 
 Press **Apply** once it is enabled. The draft becomes a new version, listed under **Version history** with who applied it. Versions keep no values.

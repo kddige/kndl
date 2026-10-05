@@ -26,6 +26,7 @@ Sessions never ask for tool approval: everything inside the Sandbox is allowed (
 | Mod tokens, one per run of a Session | Claude Code's environment on the Runner; the Hub keeps a hash | Never |
 | Sign-in cookies | the browser; the Hub keeps a hash | Never |
 | The Sandbox token, for `git` and `gh` | the Sandbox's memory | Yes, by design ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)) |
+| A Test build's clone token, read-only and for one Repo | the environment of the Runner's one `git clone` | Never |
 | Environment Variables | encrypted on the Hub if Sensitive; in the Runner's memory while needed | Yes, by design: in every process's environment |
 
 Two things deliberately do reach the Sandbox, and anything running there can read them:
@@ -43,15 +44,20 @@ Cookie-authenticated requests must come from `HUB_PUBLIC_URL`'s origin, and the 
 
 A Session belongs to its Repo, not to its Creator ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Whoever has access to the Repo on GitHub sees its Sessions, and can join, prompt, stop, type into the terminal of, put to sleep, wake, delete or restore any of them. No one else can.
 
+The Repo's Environment follows the same access ([ADR 0009](/reference/decisions/0009-environments/#who-can-use-an-environment-amended-in-104)). Whoever has access to the Repo can open its Environment, run Test builds of drafts and apply new versions. No one else can.
+
 - **Access to a Repo** means the GitHub App is installed on it, and GitHub says you are a collaborator on it: an outside collaborator, an organization member with access through a team or the organization's base permission, or its owner. A public Repo's other readers don't count. The Hub asks as the App's installation, which needs no permission beyond Metadata. Without the App (`GITHUB_APP_ID` unset), a GitHub sign-in has access to no Repo.
 - **Dev login** has access to every Repo, while it is on.
 - **The Hub checks every Session command** before it runs, in one place: the Session list and its updates, joining and the event log, prompts, Stop, the terminal, sleep and wake, delete and restore, and starting a Session in a Repo. A Session you have no access to answers as if it didn't exist.
-- **Answers are cached** for `HUB_REPO_ACCESS_TTL_MS`, 5 minutes by default, to stay well within GitHub's rate limit. As often, the Hub checks everyone connected again. So someone who loses access on GitHub is taken out of the Repo's Sessions within twice that: they leave its Sessions' presence and terminals, and the Sessions leave their list. When GitHub can't answer, people keep the access they had, and no one gains any until it can.
+- **It checks every Environment command too:** opening an Environment, checking a draft, starting a Test build and applying a version. A refusal reads the same whether the Repo exists or not, so it doesn't tell anyone which Repos exist or have an Environment.
+- **Shared variables belong to no Repo,** so anyone signed in can manage them. Their values are write-only, and a Link only puts one into a Repo whose Environment you can already change.
+- **Answers are cached** for `HUB_REPO_ACCESS_TTL_MS`, 5 minutes by default, to stay well within GitHub's rate limit. A refusal is cached for at most 30 seconds, so a Repo that was just shared with you or had the App installed works again soon. As often as the TTL, the Hub checks everyone connected again. So someone who loses access on GitHub is taken out of the Repo's Sessions and its Environment within twice the TTL: they leave its Sessions' presence and terminals, and the Sessions and the Environment screen leave their view. When GitHub can't answer, people keep the access they had, and no one gains any until it can.
+- **A Test build clones with a token for its Repo only**, minted by the Hub with read access to the code and nothing else. The Runner passes it to git for that one clone and never writes it down. Only without the GitHub App does a Runner clone with its host's own git credentials, as it does for Sessions.
 
 GitHub sign-in admits anyone with a GitHub account who can reach the Hub's sign-in page. They see no Session without access to its Repo, but still keep the Hub on a network, tailnet or proxy that only your team can reach.
 
 :::caution[Known gaps]
-There are no roles yet: any signed-in person can change any Repo's Environment and the Shared variables, whatever their access to the Repo. A prompt already queued still runs after its sender loses access.
+There are no roles: everyone with access to a Repo can do everything with its Sessions and Environment, and any signed-in person can manage the Shared variables. A prompt already queued still runs after its sender loses access.
 :::
 
 ## Every Session on a Runner uses its login
