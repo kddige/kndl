@@ -19,6 +19,15 @@ import {
   TerminalInput,
   TerminalResize,
 } from "./Terminal.ts"
+import {
+  ApplyUpdate,
+  CheckUpdate,
+  RunnerUpdater,
+  UpdateChecked,
+  UpdateFailed,
+  UpdateFailure,
+  UpdateProgress,
+} from "./Update.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 
 // The Runner ↔ Hub channel. The Runner connects with its own token (issue #7), sends a
@@ -45,6 +54,13 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * the GitHub App sends it no Test builds.
    */
   asksCloneAccess: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * Whether it updates itself when the Hub asks (#87). A Runner from before doesn't say, and is
+   * never asked.
+   */
+  updater: Schema.optionalKey(RunnerUpdater),
+  /** Its last update, when that failed: kept until it next updates, so a restarted Hub hears it. */
+  lastUpdate: Schema.optionalKey(UpdateFailure),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
@@ -132,6 +148,9 @@ export const RunnerToHub = Schema.Union([
   FetchCloneAccess,
   TestBuildLog,
   TestBuildFinished,
+  UpdateChecked,
+  UpdateProgress,
+  UpdateFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type RunnerToHub = typeof RunnerToHub.Type
 
@@ -204,5 +223,7 @@ export const HubToRunner = Schema.Union([
   RunTestBuild,
   VariablesFetched,
   VariablesRefused,
+  CheckUpdate,
+  ApplyUpdate,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToRunner = typeof HubToRunner.Type

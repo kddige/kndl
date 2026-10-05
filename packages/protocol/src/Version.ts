@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { BuildVersion } from "./Build.ts"
 
 /**
  * The protocol version every peer speaks. Bump it on any change a peer built against the old
@@ -34,6 +35,12 @@ export const HandshakeRejected = Schema.TaggedStruct("HandshakeRejected", {
   protocolVersion: Schema.Int,
   /** Says what went wrong and which side to update, for logs and the UI. */
   message: Schema.String,
+  /**
+   * The commit the Hub runs, when it is the Hub rejecting a Runner: a Runner turned away for its
+   * protocol version can still update to it (ADR 0011). Optional, so the shape stays one every
+   * version reads.
+   */
+  hubVersion: Schema.optionalKey(BuildVersion),
 })
 export type HandshakeRejected = typeof HandshakeRejected.Type
 
@@ -41,12 +48,18 @@ export type HandshakeRejected = typeof HandshakeRejected.Type
  * Checks a peer's hello (or the Hub's welcome) before it is decoded in full. Returns the
  * {@link HandshakeRejected} to send, or `undefined` when the versions match.
  */
-export function checkHandshake(message: unknown): HandshakeRejected | undefined {
+export function checkHandshake(
+  message: unknown,
+  /** The Hub's commit, to tell a Runner it turns away (see {@link HandshakeRejected}). */
+  hubVersion?: BuildVersion,
+): HandshakeRejected | undefined {
+  const version = hubVersion === undefined ? {} : { hubVersion }
   if (!Schema.is(VersionProbe)(message)) {
     return HandshakeRejected.make({
       reason: "MalformedHandshake",
       protocolVersion: ProtocolVersion,
       message: `Expected a handshake with a protocolVersion; this side speaks protocol version ${ProtocolVersion}.`,
+      ...version,
     })
   }
   if (message.protocolVersion !== ProtocolVersion) {
@@ -55,6 +68,7 @@ export function checkHandshake(message: unknown): HandshakeRejected | undefined 
       reason: "ProtocolVersionMismatch",
       protocolVersion: ProtocolVersion,
       message: `Protocol version mismatch: the peer speaks version ${message.protocolVersion}, this side speaks version ${ProtocolVersion}. Update ${older}.`,
+      ...version,
     })
   }
   return undefined
