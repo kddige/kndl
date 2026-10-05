@@ -16,4 +16,5 @@ export {
 } from "./HubMessages.ts"
 export { newCallId, ReadBeforeEdit, runInSandbox } from "./ToolBridgeClient.ts"
 export type { BridgeExchange, ToolAnswer } from "./ToolBridgeClient.ts"
-export { decideTool, startsShellMode, toolArguments } from "./ToolPolicy.ts"
+export { decideTool, isClaudeCodeTool, startsShellMode, toolArguments } from "./ToolPolicy.ts"
+export type { ToolDecision } from "./ToolPolicy.ts"

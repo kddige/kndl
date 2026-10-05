@@ -1,17 +1,19 @@
 import { describe, expect, test } from "bun:test"
 import { SandboxTools } from "@claude-hub/protocol"
 import {
+  ClaudeCodeTools,
   decideTool,
   noBackground,
   notAvailable,
+  noWebFetch,
   startsShellMode,
   toolArguments,
 } from "./ToolPolicy.ts"
 
 /**
- * Every Claude Code tool name we could enumerate: the built-ins of 2.1.287 (from the API types it
- * lays beside a mod), names older and newer builds have used, and the shapes of MCP and plugin
- * tools.
+ * Every Claude Code tool name we could enumerate, but WebSearch and WebFetch, which have tests of
+ * their own: the built-ins of 2.1.287 (from the API types it lays beside a mod), names older and
+ * newer builds have used, and the shapes of MCP and plugin tools.
  */
 const otherTools = [
   "Agent",
@@ -82,8 +84,6 @@ const otherTools = [
   "TodoWrite",
   "ToolSearch",
   "WaitForMcpServers",
-  "WebFetch",
-  "WebSearch",
   "Workflow",
   // MCP and plugin tools, including ones named like a routed tool.
   "mcp__github__create_pull_request",
@@ -100,6 +100,10 @@ const otherTools = [
   "Bash ",
   "Bash\u0000",
   "Edit2",
+  "websearch",
+  "web_search",
+  "WebSearch ",
+  "mcp__x__WebSearch",
   "",
   "__proto__",
   "constructor",
@@ -117,11 +121,39 @@ describe("decideTool", () => {
       expect(decideTool(tool, {})).toEqual({ _tag: "Deny", reason: notAvailable(tool) })
   })
 
-  test("allows exactly the Sandbox tools", () => {
-    const allowed = [...SandboxTools, ...otherTools].filter(
-      (tool) => decideTool(tool, {})._tag === "RunInSandbox",
-    )
-    expect(allowed).toEqual(["Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"])
+  test("allows exactly the Sandbox tools and WebSearch", () => {
+    const tools = [...SandboxTools, "WebSearch", "WebFetch", ...otherTools]
+    const decided = (tag: string) => tools.filter((tool) => decideTool(tool, {})._tag === tag)
+    expect(decided("RunInSandbox")).toEqual([
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "NotebookEdit",
+      "Glob",
+      "Grep",
+    ])
+    expect(decided("LeaveToClaudeCode")).toEqual(["WebSearch"])
+  })
+
+  test("leaves WebSearch to Claude Code: it runs at Anthropic, not on the host (#126)", () => {
+    expect(ClaudeCodeTools).toEqual(["WebSearch"])
+    expect(decideTool("WebSearch", { query: "effect 4 release notes" })).toEqual({
+      _tag: "LeaveToClaudeCode",
+      tool: "WebSearch",
+    })
+  })
+
+  test("denies WebFetch, pointing at curl in the Sandbox (#126)", () => {
+    const decision = decideTool("WebFetch", { url: "https://example.com", prompt: "x" })
+    expect(decision).toEqual({ _tag: "Deny", reason: noWebFetch })
+    expect(noWebFetch).toContain("curl")
+    expect(noWebFetch).toContain("Bash")
+    expect(noWebFetch).toContain("Sandbox")
+  })
+
+  test("names WebSearch among the tools in a denial", () => {
+    expect(notAvailable("Agent")).toContain("WebSearch")
   })
 
   test("has no git tools: they are denied like any unknown tool (#73)", () => {
