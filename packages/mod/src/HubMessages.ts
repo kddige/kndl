@@ -147,6 +147,10 @@ export const sharedSessionNote = [
   '..." came from another Claude Hub Session, not a person. When it matters who asked for what,',
   "address people by name. Your file and command tools run in a sandbox VM where",
   "the repository is checked out; nothing you run reaches the machine Claude Code runs on.",
+  // Claude Code's own guidance says to suggest `! <command>` (#132); the mod refuses `!`.
+  "The `! <command>` prompt shortcut would run on that machine, so it is off in this session and",
+  "you never suggest it: run a command yourself with Bash, in the sandbox, and if only a person",
+  "can run it, such as an interactive login, tell them what to run and where.",
 ].join(" ")
 
 /** What the Runner tells the mod about the Session's Sandbox (the Runner's ClaudeLaunch.ts). */
