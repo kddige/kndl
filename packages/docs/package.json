@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && bun scripts/check-links.ts",
+    "check-links": "bun scripts/check-links.ts",
     "preview": "astro preview",
     "brand": "bun scripts/brand.ts",
     "typecheck": "astro check"

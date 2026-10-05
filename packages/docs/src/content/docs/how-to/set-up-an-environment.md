@@ -2,7 +2,7 @@
 title: Set up an Environment
 description: Give a Repo the image, scripts, tools and resources its Sessions' Sandboxes need, test the build and apply it.
 sidebar:
-  order: 5
+  order: 6
 ---
 
 Each Repo has one Environment: the recipe its Sessions' Sandboxes are built from. A Repo needs one before its first Session. Anyone with access to the Repo on GitHub can change it.

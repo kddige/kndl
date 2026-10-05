@@ -54,15 +54,29 @@ export default defineConfig({
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       sidebar: [
         { label: "Tutorials", items: [{ autogenerate: { directory: "tutorials" } }] },
-        { label: "How-to guides", items: [{ autogenerate: { directory: "how-to" } }] },
+        {
+          label: "How-to guides",
+          items: [
+            { slug: "how-to/install" },
+            { slug: "how-to/run-the-hub" },
+            { slug: "how-to/add-a-runner" },
+            { slug: "how-to/reach-the-hub-from-other-machines" },
+            { slug: "how-to/set-up-the-github-app" },
+            { slug: "how-to/set-up-an-environment" },
+            { slug: "how-to/use-variables-and-secrets" },
+            { slug: "how-to/work-in-a-session" },
+            { slug: "how-to/develop-claude-hub" },
+          ],
+        },
+        { label: "Explanation", items: [{ autogenerate: { directory: "explanation" } }] },
         {
           label: "Reference",
           items: [
-            { slug: "reference/configuration" },
             { slug: "reference/commands" },
+            { slug: "reference/configuration" },
             { slug: "reference/files-and-paths" },
-            { slug: "reference/protocol" },
             { slug: "reference/glossary" },
+            { slug: "reference/protocol" },
             {
               label: "Decisions (ADRs)",
               collapsed: true,
@@ -70,7 +84,6 @@ export default defineConfig({
             },
           ],
         },
-        { label: "Explanation", items: [{ autogenerate: { directory: "explanation" } }] },
         { label: "Troubleshooting", items: [{ autogenerate: { directory: "troubleshooting" } }] },
         { label: "About", slug: "about" },
       ],

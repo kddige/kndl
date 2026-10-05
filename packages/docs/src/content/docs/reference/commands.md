@@ -2,7 +2,7 @@
 title: Commands
 description: The claude-hub command for installed Hubs and Runners, and the bun run scripts at a checkout's root.
 sidebar:
-  order: 2
+  order: 1
 ---
 
 An installed Hub or Runner is run with the [`claude-hub` command](#the-claude-hub-command). A checkout, for working on claude-hub itself, is run with the [`bun run` scripts](#scripts-in-a-checkout) at its root.
@@ -24,7 +24,7 @@ Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-
 | `claude-hub hub install\|start\|stop\|status` | The Hub's service. `install` writes the service file and (re)starts it; `stop` stops it until the next `start` or login; `status` exits 1 unless it runs. |
 | `claude-hub runner join '<link>'` | Makes the machine a Runner with a pairing link from the Hub's Runners page, without touching the Hub's machine. See [below](#claude-hub-runner-join). |
 | `claude-hub runner install\|start\|stop\|status` | The same for the Runner's service. |
-| `claude-hub runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. Run it on the Hub's machine. A [pairing link](#claude-hub-runner-join) needs no access to it. |
+| `claude-hub runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. For a Runner the Hub has, it replaces that Runner's token. Run it on the Hub's machine. A [pairing link](#claude-hub-runner-join) needs no access to it. |
 | `claude-hub secrets key` | Prints a new `HUB_SECRETS_KEY`, as [`bun run secrets-key`](#bun-run-secrets-key) does. It changes nothing. |
 | `claude-hub secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `claude-hub hub stop` first. Asks first; without a terminal it needs `--yes`. |
 
@@ -68,7 +68,7 @@ Makes this machine a Runner with a pairing link: **Add a Runner** on the Hub's R
 
 | Flag | Answers |
 |---|---|
-| `--name <name>` | The new Runner's name, by default the short hostname. A Re-pair keeps the Runner's own name. |
+| `--name <name>` | The new Runner's name, by default the short hostname: up to 63 letters, digits, dots, dashes and underscores, starting with a letter or digit. The name is the Runner's identity: one the Hub has is refused, and a removed Runner's name takes over that Runner's record and Archived Sessions, so use a new name for a clean slate ([Runner names](/how-to/add-a-runner/#runner-names)). A Re-pair keeps the Runner's own name. |
 | `--hub-url <url>` | The Hub's URL, when what's given is only the code. |
 | `--install-prerequisites` | Install what's missing without asking. Some steps use `sudo`. |
 | `--no-services` | Write `runner.env` and build, but don't install or start the service. |
@@ -90,7 +90,7 @@ The code is redeemed before anything is installed or built, so a later step that
 
 The install's checkout belongs to the CLI: `update` discards changes made in it.
 
-On the Hub's machine, `update` leaves the Hub a note of its new commit before restarting it, and the restarted Hub asks each connected Runner that updates itself to follow ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)): the Runner checks the commit is on `origin/main`, the Hub puts its Sessions to sleep, and it moves, builds and restarts. The Runner on the Hub's machine is drained the same way rather than restarted under its Sessions; `update` restarts it at once instead when it can't follow (it's from before Runners followed the Hub, or its service file changed). On a machine with only a Runner, `update` moves that Runner and restarts it, as before.
+On the Hub's machine, `update` leaves the Hub a note of its new commit before restarting it, and the restarted Hub asks each connected Runner that updates itself to follow ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)): the Runner checks the commit is on `origin/main`, the Hub puts its Sessions to sleep, and it moves, builds and restarts. The Runner on the Hub's machine is drained the same way rather than restarted under its Sessions; `update` restarts it at once instead when it can't follow (it's from before Runners followed the Hub, or its service file changed). On a machine with only a Runner, `update` moves that Runner and restarts it.
 
 ## Scripts in a checkout
 
@@ -102,7 +102,7 @@ Every script runs from the root of a claude-hub checkout. They keep their state 
 |---|---|
 | `bun run hub` | Starts the Hub on `HOST:PORT` (`127.0.0.1:7777`). Reads `packages/hub/.env.local`. |
 | `bun run runner` | Builds the `hub-link` mod, then starts a Runner. Needs `RUNNER_TOKEN`. |
-| `bun run web` | Starts Vite's dev server for the web UI on <http://localhost:5173>, passing `/auth`, `/health` and `/ws` through to the Hub. |
+| `bun run web` | Starts Vite's dev server for the web UI on <http://localhost:5173>, passing `/auth`, `/health`, `/runner/` and `/ws` through to the Hub. |
 | `bun run web:build` | Builds the web UI into `packages/web/dist`, which the Hub serves. |
 | `bun run cli <command>` | Runs the [`claude-hub` command](#the-claude-hub-command) from the checkout. It manages the installed home, not the dev home. |
 
@@ -120,7 +120,7 @@ Runner build-box (…). Its token, shown only now:
 Any earlier token for this Runner no longer works. Give the token to the Runner as RUNNER_TOKEN.
 ```
 
-The Hub stores only a hash. Issuing again for the same name keeps the Runner's id and its Sessions, and replaces its token. Run it on the Hub's machine: it writes to the Hub's database.
+The Hub stores only a hash. Issuing again for the same name keeps the Runner's id and its Sessions, and replaces its token; for a removed Runner's name, it brings that Runner back, with its Archived Sessions ([Runner names](/how-to/add-a-runner/#runner-names)). Run it on the Hub's machine: it writes to the Hub's database.
 
 #### `bun run secrets-key`
 

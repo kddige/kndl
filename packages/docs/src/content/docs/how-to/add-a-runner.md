@@ -2,20 +2,20 @@
 title: Add a Runner
 description: Connect a machine to the Hub as a Runner, on the Hub's own machine or another, and keep it running.
 sidebar:
-  order: 4
+  order: 3
 ---
 
-A Runner is a machine that runs Sessions, on its own Claude login. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
+A Runner is a machine that runs Sessions, on its own [Runner login](/reference/glossary/): the Claude account signed in on it. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
 
 ## Before you start
 
 The machine needs what the [install guide](/how-to/install/#what-each-machine-needs) lists for a Runner: Bun, git, tmux, Claude Code signed in, and microsandbox on a Mac with Apple Silicon or Linux with KVM. It must reach the Hub's URL, the one in the Hub's `HUB_PUBLIC_URL`.
 
-## With a pairing code
+## With a Pairing code
 
 Nothing is done on the Hub's machine: anyone signed in to the web UI adds a Runner.
 
-1. In the web UI, open **Runners** in the sidebar and choose **Add a Runner**. It shows a command with a [pairing code](#pairing-codes) in it:
+1. In the web UI, open **Runners** in the sidebar and choose **Add a Runner**. It shows a command with a [Pairing code](#pairing-codes) in it:
 
    ```sh
    claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
@@ -25,7 +25,7 @@ Nothing is done on the Hub's machine: anyone signed in to the web UI adds a Runn
 
 `runner join` checks the machine has what a Runner needs (and offers to install what's missing), redeems the code with the Hub for the Runner's token, writes `~/.claude-hub/runner.env`, installs and starts the Runner's service, and waits until the Hub says the Runner is connected. The Runners page shows the new Runner as soon as the code is used.
 
-The Runner is named after the machine's short hostname; `--name build-box` names it something else. Without questions, for a script:
+The Runner is named after the machine's short hostname; `--name build-box` names it something else. The name is the Runner's identity on the Hub, so choose it with [Runner names](#runner-names) in mind. Without questions, for a script:
 
 ```sh
 claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE' --name build-box --non-interactive
@@ -42,7 +42,7 @@ claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE' --name 
 
 ## With a Runner token
 
-For a Hub from before pairing codes, or to script everything from the Hub's machine. On the **Hub's machine**, issue the Runner's token:
+For a Hub from before Pairing codes, or to script everything from the Hub's machine. On the **Hub's machine**, issue the Runner's token:
 
 ```sh
 claude-hub runner token build-box
@@ -60,8 +60,19 @@ Onboard writes `~/.claude-hub/runner.env`, installs the Runner's service and wai
 
 **Runners** in the sidebar lists every Runner paired with the Hub: whether it's online, the Claude login it runs Sessions on, the commit it runs (and its branch), when it was last seen, and how many of its Sessions aren't Archived. A Runner on an older commit than the Hub is marked **behind the Hub**; see [Keep Runners on the Hub's commit](#keep-runners-on-the-hubs-commit). The header says which commit the Hub runs.
 
-- **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place: it keeps the Runner's name, id and Sessions, and gets a new token. The old token stops working, and a machine still connected with it is disconnected. Use it when a Runner's token is lost, or to move a Runner to a new machine. `--name` is ignored for a Re-pair.
-- **Remove** revokes the Runner's token, and disconnects it if it's connected. It's refused while the Runner has Sessions that aren't Archived (Active, Asleep or Frozen): archive them first. To use the machine again, add it again with **Add a Runner**: a Runner added by a removed one's name takes its place, and its Archived Sessions can be restored again.
+- **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place: it keeps the Runner's name, id and Sessions, and gets a new token. The old token stops working, and a machine still connected with it is disconnected. Use it to put a reinstalled machine back in its own place, when a Runner's token is lost, or to move a Runner to a new machine. `--name` is ignored for a Re-pair.
+- **Remove** revokes the Runner's token, and disconnects it if it's connected. It's refused while the Runner has Sessions that aren't Archived (Active, Asleep or Frozen): archive them first. The Runner's name is then free, and a machine paired later under it takes the removed Runner's place: see [Runner names](#runner-names).
+
+### Runner names
+
+A Runner's name is its identity on the Hub: its Sessions, Archived ones included, belong to the Runner of that name. It's the name the Runner was paired or issued its token under; `RUNNER_NAME` in its `runner.env` changes only what it says on connecting.
+
+- **A reinstalled machine** goes back in its own place with **Re-pair**: it keeps its name and Sessions.
+- **A name the Hub has** can't be taken by a new Runner. `runner join` refuses with `The Hub already has a Runner named build-box …`, and the code isn't used up.
+- **A removed Runner's name** is free again. A machine paired later under it takes over the removed Runner's record, with its Archived Sessions, which can then be restored onto it. Removing a Runner and adding the machine again under the same name is that takeover.
+- **For a clean slate**, with none of the old Runner's Sessions, pair the machine under a name the Hub has never had: `claude-hub runner join '<link>' --name build-box-2`.
+
+`claude-hub runner token <name>` follows the same names without a Pairing code: for a Runner the Hub has, it replaces its token; for a removed one's name, it brings that Runner back.
 
 ## Keep Runners on the Hub's commit
 
@@ -73,7 +84,9 @@ A Runner **behind the Hub** keeps its running Sessions, but the Hub doesn't star
 
 1. The Runner checks it may: it fetches from origin, and moves only to a commit reachable from `origin/main`. A Runner whose `runner.env` sets `RUNNER_UPDATE_ANY_COMMIT=1` follows any commit origin has, such as a Hub running a branch. Otherwise its row says **refuses: not on main**, and why.
 2. The Hub drains it: no Session starts or wakes there, running Turns get up to ten minutes to end before the Hub stops them, and each Active Session is put to sleep. **Update now** stops the running Turns at once. A sleeping Session keeps its conversation, and the next prompt wakes it on the new version.
-3. The Runner checks out the commit, runs `bun install`, builds the `hub-link` mod, checks that it loads, and exits; its service starts it again on the new commit. Its row says where it is: **Checking**, **Waiting for Turns**, **Installing and building**, **Restarting**.
+3. The Runner checks out the commit, runs `bun install`, builds the `hub-link` mod, checks that it loads, and exits; its service starts it again on the new commit.
+
+Meanwhile its row is marked **updating**, then **restarting**, with a line saying where it is, such as `No new Sessions. Waiting for 2 Sessions' Turns to end (stopped in 9 min if still running)…` or `Installing and building…`.
 
 If a step fails, or the Runner starts three times on the new commit without the Hub welcoming it, the Runner goes back to the commit it ran, rebuilds it, reconnects and reports the error, which its row shows as **update failed** with git's or bun's message. It doesn't try that commit again by itself: fix the cause, then **Update** again.
 

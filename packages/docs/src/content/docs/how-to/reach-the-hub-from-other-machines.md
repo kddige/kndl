@@ -2,7 +2,7 @@
 title: Reach the Hub from other machines
 description: Put the Hub behind HTTPS, an SSH tunnel or Tailscale, so teammates and Runners elsewhere can reach it and sign-in works.
 sidebar:
-  order: 8
+  order: 4
 ---
 
 The Hub listens on `127.0.0.1:7777` by default, so only its own machine can reach it. Before others can, decide which URL they open: that URL is `HUB_PUBLIC_URL`, and it must be HTTPS or `localhost`.
@@ -39,7 +39,7 @@ Add `https://hub.example.com/auth/github/callback` to the GitHub App's callback 
 
 ## Option 2: Tailscale Serve
 
-On a tailnet, [Tailscale Serve](https://tailscale.com/kb/1312/serve) gives the Hub an HTTPS URL that only your tailnet can reach, with no certificate to manage:
+On a tailnet, [Tailscale Serve](https://tailscale.com/kb/1312/serve) gives the Hub an HTTPS URL that only your tailnet can reach, with no certificate to manage. Turn on HTTPS certificates for the tailnet first, in its admin console's DNS settings:
 
 ```sh
 tailscale serve --bg 7777

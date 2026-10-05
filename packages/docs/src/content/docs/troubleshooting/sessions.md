@@ -78,7 +78,7 @@ A Test build of the Environment is refused with `NPM_TOKEN needs a value.`, and 
 
 **Why.** The Hub's secrets key was lost and its Sensitive values were [reset](/how-to/use-variables-and-secrets/#if-the-key-is-lost). The variables were kept without their values, and a Sandbox started without them would fail in confusing ways, so the Repo's Sessions wait for them.
 
-**Fix.** Press **Enter values**, type each value on the Repo's Environment and apply, and press **Enter value** on each shared variable named. Then wake the Session: its queued prompts are still there.
+**Fix.** Press **Enter values**, type each value on the Repo's Environment and apply, and press **Enter value** on each Shared variable named. Then wake the Session: its queued prompts are still there.
 
 ## The Sandbox fails to start
 

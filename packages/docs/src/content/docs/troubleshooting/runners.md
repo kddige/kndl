@@ -74,7 +74,7 @@ The Runner keeps trying, so it connects on its own once the Hub is back.
 
 **Fix.** Make the Hub reachable from the Runner's machine, and point `HUB_URL` at it. [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/) covers HTTPS, Tailscale and SSH tunnels. A Runner only needs to reach the Hub; nothing connects in to the Runner.
 
-## The pairing code can't be used
+## The Pairing code can't be used
 
 **What you see.** `claude-hub runner join` stops before writing anything with:
 
@@ -95,7 +95,7 @@ A few other answers come before the Hub is asked, or instead:
 
 ## The Runner was paired but doesn't connect
 
-**What you see.** `runner join` pairs, then says `Runner: not connected to the Hub after 30 seconds: see \`claude-hub logs runner\``.
+**What you see.** `runner join` pairs, then says `` Runner: not connected to the Hub after 30 seconds: see `claude-hub logs runner` ``.
 
 **Why.** The token is in `runner.env` and the Runners page lists the Runner, offline, but the service didn't start or can't reach the Hub over its WebSocket. A proxy that passes plain HTTP but not WebSockets does this.
 

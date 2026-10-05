@@ -2,7 +2,7 @@
 title: Set up the GitHub App
 description: Create the GitHub App that signs people in and mints the tokens Runners clone with and Sessions push with, keep its permissions in step with the Hub's, and protect your default branch.
 sidebar:
-  order: 3
+  order: 5
 ---
 
 One GitHub App does two jobs for the Hub:
