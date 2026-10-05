@@ -752,3 +752,98 @@ describe("what the model is told about its environment", () => {
     expect(environment.text).toBe(hostEnvironment)
   })
 })
+
+const repoFiles = "/sessions/s1/repo"
+
+/** Answers `$.fs.read` from `files`, rejecting a path not among them as missing. */
+const fakeFiles = (on: On, files: Record<string, string>) => {
+  const read: Array<string> = []
+  on("fs.read", async (_, e) => {
+    read.push(e.path)
+    const text = files[e.path]
+    if (text === undefined) throw new Error(`ENOENT: no such file, open '${e.path}'`)
+    return { value: text }
+  })
+  return read
+}
+
+/** What Claude Code loaded from the host, as the engine hands it to `prompt.context`. */
+const hostInstructions = [
+  { path: "/etc/claude-code/CLAUDE.md", kind: "managed" as const, content: "Policy." },
+  { path: "/Users/ada/.claude/CLAUDE.md", kind: "user" as const, content: "Mine." },
+]
+
+/** Claude Code's own context: what it was handed. */
+const engineContext = (on: On) =>
+  on("prompt.context", (_, e) => ({
+    blocks: e.blocks,
+    ...(e.instructionFiles === undefined ? {} : { instructionFiles: e.instructionFiles }),
+  }))
+
+describe("the Repo's CLAUDE.md and skills (#125)", () => {
+  test("the Repo's instruction files stand in for the host's, but the managed policy", async ($, on) => {
+    mock.env(on, { ...sandbox, CLAUDE_HUB_REPO_FILES: repoFiles })
+    const read = fakeFiles(on, {
+      [`${repoFiles}/instructions.json`]: JSON.stringify({
+        instructions: [
+          { path: "/workspace/CLAUDE.md", content: "Use bun." },
+          { path: "/workspace/a.md", content: "A.", parent: "/workspace/CLAUDE.md" },
+        ],
+      }),
+    })
+
+    engineContext(on)
+    const context = await $.prompt.context({ blocks: [], instructionFiles: hostInstructions })
+
+    expect(read).toEqual([`${repoFiles}/instructions.json`])
+    expect(context.instructionFiles).toEqual([
+      { path: "/etc/claude-code/CLAUDE.md", kind: "managed", content: "Policy." },
+      { path: "/workspace/CLAUDE.md", kind: "project", content: "Use bun." },
+      { path: "/workspace/a.md", kind: "project", content: "A.", parent: "/workspace/CLAUDE.md" },
+    ])
+  })
+
+  test("without the Runner's list, the host's are still left out", async ($, on) => {
+    mock.env(on, { ...sandbox, CLAUDE_HUB_REPO_FILES: repoFiles })
+    fakeFiles(on, {})
+
+    engineContext(on)
+    const context = await $.prompt.context({ blocks: [], instructionFiles: hostInstructions })
+
+    expect(context.instructionFiles).toEqual([hostInstructions[0]])
+  })
+
+  test("outside a Runner, Claude Code's own instruction files stand", async ($, on) => {
+    mock.env(on, {})
+    const read = fakeFiles(on, {})
+
+    engineContext(on)
+    const context = await $.prompt.context({ blocks: [], instructionFiles: hostInstructions })
+
+    expect(read).toEqual([])
+    expect(context.instructionFiles).toEqual(hostInstructions)
+  })
+
+  test("instruction files a hook above made unknown stay unknown", async ($, on) => {
+    mock.env(on, { ...sandbox, CLAUDE_HUB_REPO_FILES: repoFiles })
+    const read = fakeFiles(on, {})
+    engineContext(on)
+
+    const context = await $.prompt.context({ blocks: [{ name: "claudeMd", text: "Rewritten." }] })
+
+    expect(read).toEqual([])
+    expect(context).toEqual({ blocks: [{ name: "claudeMd", text: "Rewritten." }] })
+  })
+
+  test("a Repo skill points at its directory in the Workspace", async ($, on) => {
+    mock.env(on, { ...sandbox, CLAUDE_HUB_REPO_FILES: repoFiles })
+    on("skill.prompt", (_, e) => ({ text: e.text }))
+
+    const { text } = await $.skill.prompt({
+      skill: "repo:deploy",
+      text: `Base directory for this skill: ${repoFiles}/.claude/skills/deploy\n\nShip it.`,
+    })
+
+    expect(text).toBe("Base directory for this skill: /workspace/.claude/skills/deploy\n\nShip it.")
+  })
+})

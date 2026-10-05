@@ -28,8 +28,9 @@ import { ClaudeTrust } from "./ClaudeTrust.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
+import { writeRepoFiles } from "./RepoFiles.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
-import { Sandboxes } from "./Sandbox.ts"
+import { noRepoFiles, Sandboxes } from "./Sandbox.ts"
 import { isSafeSessionId, sessionDirectories } from "./SessionNames.ts"
 import { type Pane, Tmux } from "./Tmux.ts"
 import { Workspaces } from "./Workspace.ts"
@@ -249,6 +250,33 @@ export const SessionsLive = Layer.effect(
         return { _tag: "New", id } as const
       })
 
+    /**
+     * Reads the Repo's skills and CLAUDE.md from the Workspace through the Sandbox, and writes them
+     * for Claude Code over what an earlier start wrote, at every start and wake (#125). A Session
+     * whose files can't be read starts without them.
+     */
+    const copyRepoFiles = (sessionId: SessionId, directory: string) =>
+      Effect.gen(function* () {
+        const files = yield* sandboxes
+          .repoFiles(sessionId)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.as(
+                Effect.logWarning(
+                  `Session ${sessionId}: the Repo's skills and CLAUDE.md were not read`,
+                  cause,
+                ),
+                noRepoFiles,
+              ),
+            ),
+          )
+        if (files.skipped.length > 0)
+          yield* Effect.logInfo(
+            `Session ${sessionId}: left out of the Repo's skills and CLAUDE.md: ${files.skipped.slice(0, 20).join("; ")}`,
+          )
+        yield* writeRepoFiles(directory, files)
+      })
+
     const start = (request: StartSession) =>
       serialized(request.sessionId)(
         Effect.gen(function* () {
@@ -274,6 +302,7 @@ export const SessionsLive = Layer.effect(
             })
             if (sandbox.environmentVersion === undefined) environmentVersions.delete(sessionId)
             else environmentVersions.set(sessionId, sandbox.environmentVersion)
+            yield* copyRepoFiles(sessionId, directories.repoFiles)
             const launch = claudeLaunch({
               claudeBin: config.claudeBin,
               modDir: config.modDir,
@@ -281,6 +310,7 @@ export const SessionsLive = Layer.effect(
               sessionId,
               modToken: request.modToken,
               toolsSocket: directories.toolsSocket,
+              repoFiles: directories.repoFiles,
               repo: request.repo,
               workBranch: request.workBranch,
               conversation: yield* conversationFor(request, directories.claude),

@@ -14,6 +14,33 @@ export class SandboxError extends Data.TaggedError("SandboxError")<{
   readonly message: string
 }> {}
 
+// The Repo's skills and CLAUDE.md, as read from a Session's Workspace for Claude Code on the host
+// (RepoFiles.ts, #125).
+
+/** One instruction file, its path relative to the Workspace. */
+export interface InstructionFile {
+  readonly path: string
+  readonly content: string
+  /** The file whose `@` import brought it in. */
+  readonly parent?: string
+}
+
+export interface Skill {
+  /** Its directory's name under `.claude/skills/`. */
+  readonly name: string
+  /** The SKILL.md written for Claude Code: its frontmatter cut down, its text defused. */
+  readonly content: string
+}
+
+/** What is copied of a Repo, and what was left out and why. */
+export interface RepoFiles {
+  readonly instructions: ReadonlyArray<InstructionFile>
+  readonly skills: ReadonlyArray<Skill>
+  readonly skipped: ReadonlyArray<string>
+}
+
+export const noRepoFiles: RepoFiles = { instructions: [], skills: [], skipped: [] }
+
 /** What a Session's Sandbox is built from. */
 export interface SandboxTarget {
   readonly repo: RepoName
@@ -50,6 +77,11 @@ export class Sandboxes extends Context.Service<
       directories: SessionDirectories,
       target?: SandboxTarget,
     ) => Effect.Effect<SandboxStarted, SandboxError>
+    /**
+     * Reads the Repo's skills and CLAUDE.md from the Workspace in the started Sandbox, never from
+     * the host's copy of it: regular files only, within limits, defused (RepoFiles.ts, #125).
+     */
+    readonly repoFiles: (sessionId: SessionId) => Effect.Effect<RepoFiles, SandboxError>
     /** `Sleep` stops the Sandbox and keeps its volumes; `Archive` destroys it (ADR 0006). */
     readonly stop: (sessionId: SessionId, reason: StopSession["reason"]) => Effect.Effect<void>
     /**
@@ -80,6 +112,7 @@ export const NoSandboxes = Layer.succeed(
   Sandboxes,
   Sandboxes.of({
     start: () => Effect.succeed({}),
+    repoFiles: () => Effect.succeed(noRepoFiles),
     stop: () => Effect.void,
     purge: () => Effect.void,
     reconcile: () => Effect.void,

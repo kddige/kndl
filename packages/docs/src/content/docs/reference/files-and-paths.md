@@ -65,6 +65,7 @@ Under the sessions root, `<session id>/` holds:
 | `workspace/` | The Workspace: the Repo's checkout on the Session's Work branch, mounted into the Sandbox at `/workspace`. |
 | `host-git/` | The Runner's own git directory for the Workspace. Never mounted into the Sandbox, so nothing in the Sandbox can change the config or hooks the Runner's git runs with. |
 | `tools.sock` | The Unix socket of the Session's tool bridge, which the mod sends tool calls to. |
+| `repo/` | The Repo's `CLAUDE.md` and skills, copied from the Workspace at each start and wake, over the last copy: `instructions.json`, which the mod adds to Claude's context, and `.claude/`, a plugin of the Repo's skills ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/#repo-skills-and-claudemd-amended-in-125)). |
 
 Archiving a Session keeps its directory; purging it deletes the directory and what Claude Code kept for it.
 

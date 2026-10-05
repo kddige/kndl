@@ -1,6 +1,13 @@
 // The Runner against a fake Hub WebSocket server, with tmux, the Workspace and the Sandbox faked.
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@claude-hub/protocol"
@@ -450,6 +457,8 @@ describe("Sessions", () => {
       expect.stringMatching(/^[0-9a-f-]{36}$/),
       "--plugin-dir",
       "/opt/claude-hub/packages/mod",
+      "--plugin-dir",
+      join(h.settings.sessionsRoot, "s-1", "repo", ".claude"),
       "--tools",
       "Bash,Read,Write,Edit,NotebookEdit,Glob,Grep,WebSearch",
       "--strict-mcp-config",
@@ -469,6 +478,7 @@ describe("Sessions", () => {
       CLAUDE_HUB_WORKSPACE: "/workspace",
       CLAUDE_HUB_REPO: "acme/app",
       CLAUDE_HUB_WORK_BRANCH: "claude/s-1",
+      CLAUDE_HUB_REPO_FILES: join(h.settings.sessionsRoot, "s-1", "repo"),
     })
     expect(h.workspaces.prepared).toMatchObject([{ sessionId: "s-1", workBranch: "claude/s-1" }])
     expect(h.sandboxes.calls).toEqual(["start s-1"])
@@ -503,6 +513,40 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+  })
+
+  test("copies the Repo's skills and CLAUDE.md for Claude Code at each start, over the last ones", async () => {
+    const h = startRunner()
+    await connected(h)
+    const repoFiles = join(h.settings.sessionsRoot, "s-1", "repo")
+    // Left by an earlier start, or by anything else: it goes.
+    mkdirSync(join(repoFiles, ".claude", "skills", "old"), { recursive: true })
+    writeFileSync(join(repoFiles, ".claude", "skills", "old", "SKILL.md"), "stale")
+    h.sandboxes.repo = {
+      instructions: [
+        { path: "CLAUDE.md", content: "Use bun.\n" },
+        { path: "AGENTS.md", content: "Be brief.\n", parent: "CLAUDE.md" },
+      ],
+      skills: [{ name: "deploy", content: '---\nname: "deploy"\n---\nShip it.\n' }],
+      skipped: [],
+    }
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    expect(h.sandboxes.repoFilesRead).toEqual([sessionId("s-1")])
+    expect(readFileSync(join(repoFiles, ".claude", "skills", "deploy", "SKILL.md"), "utf8")).toBe(
+      '---\nname: "deploy"\n---\nShip it.\n',
+    )
+    expect(existsSync(join(repoFiles, ".claude", "skills", "old"))).toBe(false)
+    expect(
+      JSON.parse(readFileSync(join(repoFiles, ".claude", ".claude-plugin", "plugin.json"), "utf8")),
+    ).toMatchObject({ name: "repo" })
+    expect(JSON.parse(readFileSync(join(repoFiles, "instructions.json"), "utf8"))).toEqual({
+      instructions: [
+        { path: "/workspace/CLAUDE.md", content: "Use bun.\n" },
+        { path: "/workspace/AGENTS.md", content: "Be brief.\n", parent: "/workspace/CLAUDE.md" },
+      ],
+    })
   })
 
   test("starts a new conversation with the same id when Claude Code never wrote one to resume", async () => {
