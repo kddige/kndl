@@ -363,6 +363,59 @@ test("deleting a Session archives it, hides it from the sidebar, and Undo restor
   await eventually(() => expect(list()).toContain("claude/readme-run"))
 })
 
+/** The open dialog. */
+function dialog(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[role="dialog"]')
+}
+
+test("deleting a Parent Session lists the Child Sessions archived with it, first", async () => {
+  const { page, sent, find } = await openApp("/sessions/s-release")
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("Release 0.4"))
+
+  await step(() => button("Delete Session", page).click())
+  await eventually(() =>
+    expect(dialog()?.textContent).toContain("Delete Release 0.4 and its Child Sessions?"),
+  )
+  expect(sent()).not.toContain("ArchiveSession")
+  const listed = [...(dialog()?.querySelectorAll("li") ?? [])].map((li) => li.textContent)
+  expect(listed).toEqual(["API docsActive", "ChangelogAsleep"])
+  expect(dialog()?.textContent).toContain("Undo restores only Release 0.4")
+
+  await step(() => button("Delete", dialog() ?? document).click())
+  expect(sent()).toContain("ArchiveSession")
+  // The Hub archives its Child Sessions with it.
+  await eventually(() => expect(find("s-release")?.state).toBe("Archived"))
+  await eventually(() => expect(find("s-api-docs")?.state).toBe("Archived"))
+  expect(find("s-changelog")?.state).toBe("Archived")
+})
+
+test("a Session without Child Sessions is deleted without asking", async () => {
+  const { page, sent } = await openApp("/sessions/s-api-docs")
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("API docs"))
+  await step(() => button("Delete Session", page).click())
+  expect(sent()).toContain("ArchiveSession")
+  expect(document.querySelector('[role="dialog"] li')).toBeNull()
+})
+
+test("a Report's Turn shows the Child Session it's from, without the Hub's note", async () => {
+  const { page } = await openApp("/sessions/s-release")
+  await eventually(() => expect(page.textContent).toContain("Report from Child Session"))
+  const link = page.querySelector<HTMLAnchorElement>('a[href="/sessions/s-changelog"]')
+  expect(link?.textContent).toBe("Changelog")
+  expect(page.textContent).toContain("The changelog is in CHANGELOG.md")
+  expect(page.textContent).not.toContain("This is a Report, not a prompt from a person")
+})
+
+test("in a Child Session, its Parent Session's message shows as from it", async () => {
+  const { page } = await openApp("/sessions/s-api-docs")
+  await eventually(() => expect(page.textContent).toContain("Parent Session"))
+  expect(
+    page.querySelector<HTMLAnchorElement>('main a[href="/sessions/s-release"]')?.textContent,
+  ).toBe("Release 0.4")
+  expect(page.textContent).toContain("Document every message in packages/protocol")
+  expect(page.textContent).not.toContain("[Message from your Parent Session")
+})
+
 test("a Repo's Archived screen lists who deleted each Session, and restores it", async () => {
   const { page, sent, find } = await openApp("/repos/kddige/claude-hub/archived")
   const archived = () => page.querySelector('ul[aria-label="Archived Sessions"]')?.textContent ?? ""

@@ -106,7 +106,10 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
 
   // Archived Sessions aren't listed; each Repo is a section under its name, in alphabetical order.
   expect(groups()).toEqual([
-    { repo: "kddige/claude-hub", sessions: ["claude/readme-run", "claude/web-client"] },
+    {
+      repo: "kddige/claude-hub",
+      sessions: ["claude/readme-run", "claude/web-client", "Release 0.4", "API docs", "Changelog"],
+    },
     { repo: "kddige/dotfiles", sessions: ["claude/zsh-prompt"] },
   ])
   expect(current()).toEqual(["claude/readme-run"])
@@ -258,7 +261,7 @@ test("the Environments page lists every Repo with a Session, Archived ones inclu
     a.textContent,
   ])
   expect(rows).toEqual([
-    ["/repos/kddige/claude-hub/environment", "kddige/claude-hub2 Sessions"],
+    ["/repos/kddige/claude-hub/environment", "kddige/claude-hub5 Sessions"],
     ["/repos/kddige/dotfiles/environment", "kddige/dotfiles1 Session"],
   ])
 })

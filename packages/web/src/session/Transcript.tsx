@@ -1,15 +1,26 @@
 import type {
   Participant,
+  PromptSender,
   SessionStateChanged,
   TurnEnded,
   WipNotPushed,
   SandboxNoted,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
+import { Link } from "@tanstack/react-router"
 import { memo } from "react"
 import { clock, count, duration, statusOf } from "../app/format.ts"
 import type { AgentView, Block, TranscriptItem, TurnBlock, TurnView } from "../hub/transcript.ts"
-import { Avatar, Badge, Disclosure, Markdown, SessionStatus, Spinner } from "../ui/index.ts"
+import {
+  Avatar,
+  Badge,
+  BranchIcon,
+  Disclosure,
+  Markdown,
+  SessionStatus,
+  Spinner,
+} from "../ui/index.ts"
+import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { ToolCall } from "./ToolCall.tsx"
 
@@ -69,6 +80,28 @@ const styles = stylex.create({
     fontFamily: font.mono,
     fontSize: text.xs,
     flexShrink: 0,
+  },
+  sessionMark: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "1.75rem",
+    height: "1.75rem",
+    borderRadius: radius.md,
+    backgroundColor: color.surfaceActive,
+    color: color.textMuted,
+    flexShrink: 0,
+  },
+  sessionLink: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontWeight: weight.semibold,
+    color: "inherit",
+    textDecorationLine: { default: "none", ":hover": "underline" },
+    textUnderlineOffset: "2px",
+    borderRadius: radius.sm,
   },
   reply: {
     display: "flex",
@@ -138,16 +171,7 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
   return (
     <article {...stylex.props(styles.turn)} data-turn={turn.turnId}>
       <div {...stylex.props(styles.speaker)}>
-        {sender._tag === "FromParticipant" ? (
-          <Avatar name={sender.participant.name} src={sender.participant.avatarUrl} />
-        ) : (
-          <span aria-hidden="true" {...stylex.props(styles.terminalMark)}>
-            &gt;_
-          </span>
-        )}
-        <span {...stylex.props(styles.name)}>
-          {sender._tag === "FromParticipant" ? sender.participant.name : "Terminal"}
-        </span>
+        <Sender sender={sender} />
         <time {...stylex.props(styles.time)} dateTime={new Date(turn.at).toISOString()}>
           {clock(turn.at)}
         </time>
@@ -168,6 +192,47 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
     </article>
   )
 })
+
+/** Who prompted a Turn: a person, the terminal, or another Session, linked (ADR 0012). */
+function Sender({ sender }: { sender: PromptSender }) {
+  switch (sender._tag) {
+    case "FromParticipant":
+      return (
+        <>
+          <Avatar name={sender.participant.name} src={sender.participant.avatarUrl} />
+          <span {...stylex.props(styles.name)}>{sender.participant.name}</span>
+        </>
+      )
+    case "FromTerminal":
+      return (
+        <>
+          <span aria-hidden="true" {...stylex.props(styles.terminalMark)}>
+            &gt;_
+          </span>
+          <span {...stylex.props(styles.name)}>Terminal</span>
+        </>
+      )
+    case "FromParentSession":
+    case "FromChildSession":
+      return (
+        <>
+          <span aria-hidden="true" {...stylex.props(styles.sessionMark)}>
+            <BranchIcon />
+          </span>
+          <Link
+            to="/sessions/$sessionId"
+            params={{ sessionId: sender.session.id }}
+            {...stylex.props(styles.sessionLink, focus.ring)}
+          >
+            {sender.session.title}
+          </Link>
+          <Badge intent={sender._tag === "FromChildSession" ? "accent" : "neutral"}>
+            {sender._tag === "FromChildSession" ? "Report from Child Session" : "Parent Session"}
+          </Badge>
+        </>
+      )
+  }
+}
 
 function TurnBlockView({ block }: { block: TurnBlock }) {
   if (block.kind === "agent") return <Agent agent={block.agent} />

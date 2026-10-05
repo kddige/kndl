@@ -26,6 +26,8 @@ import {
   AvatarStack,
   Banner,
   Button,
+  Dialog,
+  DialogClose,
   Disclosure,
   EmptyState,
   IconButton,
@@ -91,6 +93,28 @@ const styles = stylex.create({
     fontWeight: weight.semibold,
   },
   badges: { display: "inline-flex", alignItems: "center", gap: space.s1 },
+  children: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s1,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  },
+  child: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.s2,
+    minWidth: 0,
+  },
+  childTitle: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontWeight: weight.medium,
+  },
   tabList: {
     paddingInline: space.s4,
     backgroundColor: color.surface,
@@ -193,6 +217,17 @@ function LoadedSession({
   const [renaming, setRenaming] = useState(false)
   const title = sessionTitle(summary)
 
+  // Its Child Sessions that deleting it would archive too (ADR 0012).
+  const sessions = useHubState((hubState) => hubState.sessions)
+  const children = useMemo(
+    () =>
+      (sessions ?? []).filter(
+        (session) => session.parentId === summary.id && session.state !== "Archived",
+      ),
+    [sessions, summary.id],
+  )
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
@@ -213,16 +248,23 @@ function LoadedSession({
   const [shownTerminal, setShownTerminal] = useState(view === "terminal")
   if (view === "terminal" && !shownTerminal) setShownTerminal(true)
 
-  // Deleting archives at once, so there's nothing to confirm: the toast's Undo restores it.
-  const remove = () => {
+  // Deleting archives at once, so there's nothing to confirm: the toast's Undo restores it. Its
+  // Child Sessions are archived with it, and Undo leaves them archived, so a Parent Session's
+  // delete is confirmed first, listing them.
+  const archive = () => {
+    setConfirmingDelete(false)
     if (!command(hub.archiveSession(summary.id))) return
     toast.show({
       title: "Session deleted",
-      description: `${title} is archived. Restore it from ${summary.repo}'s Archived Sessions.`,
+      description:
+        children.length === 0
+          ? `${title} is archived. Restore it from ${summary.repo}'s Archived Sessions.`
+          : `${title} and its Child Sessions are archived. Restore them from ${summary.repo}'s Archived Sessions.`,
       action: { label: "Undo", onAction: () => command(hub.restoreSession(summary.id)) },
     })
     void navigate({ to: "/" })
   }
+  const remove = () => (children.length === 0 ? archive() : setConfirmingDelete(true))
 
   return (
     <main {...stylex.props(styles.view)}>
@@ -290,6 +332,37 @@ function LoadedSession({
           </>
         }
       />
+
+      <Dialog
+        size="sm"
+        open={confirmingDelete}
+        onOpenChange={(open) => {
+          if (!open) setConfirmingDelete(false)
+        }}
+        title={`Delete ${title} and its Child Sessions?`}
+        description={`${
+          children.length === 1
+            ? "Its Child Session is archived with it."
+            : `Its ${children.length} Child Sessions are archived with it.`
+        } Undo restores only ${title}; restore a Child Session from ${summary.repo}'s Archived Sessions.`}
+        footer={
+          <>
+            <DialogClose>Cancel</DialogClose>
+            <Button intent="danger" onClick={archive}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <ul aria-label="Its Child Sessions" {...stylex.props(styles.children)}>
+          {children.map((child) => (
+            <li key={child.id} {...stylex.props(styles.child)}>
+              <span {...stylex.props(styles.childTitle)}>{sessionTitle(child)}</span>
+              <SessionStatus state={statusOf(child.state)} />
+            </li>
+          ))}
+        </ul>
+      </Dialog>
 
       <Tabs
         value={view}
