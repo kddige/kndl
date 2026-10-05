@@ -9,7 +9,8 @@
 // - The Hub: says hello, reports the Turn's events, and takes prompts, stops and presence from
 //   the Hub (see HubLink.ts).
 // - Child Sessions (ADR 0012): a Session that isn't a Child Session gets the tools that create
-//   and coordinate them, answered by the Hub (see src/ChildTools.ts).
+//   and coordinate them; a Child Session gets one, to message its parent. The Hub answers both
+//   (see src/ChildTools.ts).
 // - The person at the terminal: a band above the prompt shows the Participants, and the `!`
 //   shell shortcut, which would run a command on the host, is refused.
 // - The model: the system prompt says the Session is shared, and describes the Sandbox, where its
@@ -31,6 +32,7 @@ import {
   HubLink,
   isClaudeCodeTool,
   newCallId,
+  parentTools,
   promptFromParticipant,
   ReadBeforeEdit,
   resultSummary,
@@ -172,11 +174,13 @@ const startLink = async ($: EngineInterface) => {
     log: (text) => $.ui.log(text, { to: "debug" }),
   })
   state.link.start()
-  // Sessions nest one level deep: a Child Session doesn't get the tools (the Hub refuses it too).
-  if (!parentSessionId) await Promise.all(childTools.map((tool) => $.tool.register(tool)))
+  // Sessions nest one level deep: a Child Session gets only the tool to message its parent, in
+  // place of the ones that make and coordinate children (the Hub refuses the wrong one too).
+  const tools = parentSessionId ? parentTools : childTools
+  await Promise.all(tools.map((tool) => $.tool.register(tool)))
 }
 
-/** Answers a call to one of the Child Session tools, from the Hub. */
+/** Answers a call to one of the Child Session tools, or message_parent, from the Hub. */
 const answerChildTool = async (
   request: Exclude<ReturnType<typeof childToolRequest>, undefined>,
 ): Promise<ToolAnswer> => {

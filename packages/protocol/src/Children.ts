@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { SessionId } from "./Ids.ts"
-import { BranchName, EpochMillis, SessionName, SessionState } from "./Session.ts"
+import { BranchName, EpochMillis, SessionName, SessionRef, SessionState } from "./Session.ts"
 
 // The Child Session tools (ADR 0012), over the mod's channel: a Parent Session's Claude Code calls
 // them as mod tools, and its mod asks the Hub with `POST /mod/children`, the body a ChildRequest,
@@ -9,7 +9,9 @@ import { BranchName, EpochMillis, SessionName, SessionState } from "./Session.ts
 // Like the rest of the mod channel, it answers 409 until the mod has said hello.
 //
 // A Child Session runs in its Parent Session's Repo, for its Creator, on a Runner the Hub picks.
-// Its final message of every Turn reaches the Parent Session as a Report, a queued prompt.
+// Its final message of every Turn reaches the Parent Session as a Report, a queued prompt. Its one
+// tool, message_parent, asks with MessageParent: a message to its parent mid-Turn, queued the same
+// way. The Hub refuses MessageParent from a Session that isn't a Child Session.
 
 /**
  * How many exchanges in a row a Parent and Child Session may have, with no person's prompt to
@@ -49,6 +51,13 @@ export type ReadChild = typeof ReadChild.Type
 export const ArchiveChild = Schema.TaggedStruct("ArchiveChild", { childId: SessionId })
 export type ArchiveChild = typeof ArchiveChild.Type
 
+/**
+ * A Child Session's message to its Parent Session, mid-Turn: queued there as a prompt, waking it
+ * if it is Asleep. Unlike a Report, it doesn't count as an exchange for the loop guard.
+ */
+export const MessageParent = Schema.TaggedStruct("MessageParent", { text: Schema.NonEmptyString })
+export type MessageParent = typeof MessageParent.Type
+
 /** The body of `POST /mod/children`. */
 export const ChildRequest = Schema.Union([
   CreateChild,
@@ -56,6 +65,7 @@ export const ChildRequest = Schema.Union([
   ListChildren,
   ReadChild,
   ArchiveChild,
+  MessageParent,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ChildRequest = typeof ChildRequest.Type
 export type ChildRequestEncoded = typeof ChildRequest.Encoded
@@ -105,6 +115,14 @@ export type ChildRead = typeof ChildRead.Type
 export const ChildArchived = Schema.TaggedStruct("ChildArchived", { child: ChildSummary })
 export type ChildArchived = typeof ChildArchived.Type
 
+/** The message was queued for the caller's Parent Session. */
+export const ParentMessaged = Schema.TaggedStruct("ParentMessaged", {
+  parent: SessionRef,
+  /** Whether a Turn of the parent is running, so it reads the message once that Turn ends. */
+  working: Schema.Boolean,
+})
+export type ParentMessaged = typeof ParentMessaged.Type
+
 /** The request was refused, and why. */
 export const ChildRefused = Schema.TaggedStruct("ChildRefused", { message: Schema.String })
 export type ChildRefused = typeof ChildRefused.Type
@@ -116,6 +134,7 @@ export const ChildReply = Schema.Union([
   ChildList,
   ChildRead,
   ChildArchived,
+  ParentMessaged,
   ChildRefused,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ChildReply = typeof ChildReply.Type

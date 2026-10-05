@@ -50,6 +50,17 @@ const hubToMod = [
     sender: alice,
     fromSession: { _tag: "FromChildSession", session: { id: "s-2", title: "claude/s-2" } },
   },
+  {
+    _tag: "DeliverPrompt",
+    sessionId: "s-1",
+    promptId: "p-3",
+    text: "[Message from Child Session ...]",
+    sender: alice,
+    fromSession: {
+      _tag: "FromChildSessionMessage",
+      session: { id: "s-2", title: "claude/s-2" },
+    },
+  },
   { _tag: "StopTurn", sessionId: "s-1" },
   { _tag: "PresenceChanged", sessionId: "s-1", participants: [alice, bob] },
   { _tag: "PresenceChanged", sessionId: "s-1", participants: [] },

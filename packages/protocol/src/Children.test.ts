@@ -14,6 +14,7 @@ const requests = [
   { _tag: "ListChildren" },
   { _tag: "ReadChild", childId: "s-2" },
   { _tag: "ArchiveChild", childId: "s-2" },
+  { _tag: "MessageParent", text: "Should the reference cover the deprecated v0 messages?" },
 ]
 
 const child = {
@@ -34,6 +35,7 @@ const replies = [
   { _tag: "ChildList", children: [] },
   { _tag: "ChildRead", child: reported, conversation: "[Parent Session] Update the docs" },
   { _tag: "ChildArchived", child: { ...reported, state: "Archived" } },
+  { _tag: "ParentMessaged", parent: { id: "s-1", title: "Release" }, working: false },
   { _tag: "ChildRefused", message: "A Child Session can't create Child Sessions." },
 ]
 
@@ -48,6 +50,7 @@ describe("ChildRequest", () => {
     expectRejected(ChildRequest, { _tag: "CreateChild", prompt: "go", name: " padded " })
     expectRejected(ChildRequest, { _tag: "CreateChild", prompt: "go", name: "x".repeat(81) })
     expectRejected(ChildRequest, { _tag: "MessageChild", childId: "s-2", text: "" })
+    expectRejected(ChildRequest, { _tag: "MessageParent", text: "" })
   })
 })
 

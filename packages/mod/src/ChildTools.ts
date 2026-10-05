@@ -1,7 +1,9 @@
 // The Child Session tools (ADR 0012): what a Parent Session's model calls to delegate work to full
-// Sessions, and how the mod turns a call into a ChildRequest for the Hub and the Hub's ChildReply
-// back into text for the model. Only a Session that isn't itself a Child Session gets them; the
-// Hub refuses a child's request as well. hooks/register.ts registers and serves them.
+// Sessions, the one tool a Child Session's model calls to message its parent, and how the mod
+// turns a call into a ChildRequest for the Hub and the Hub's ChildReply back into text for the
+// model. A Session that isn't itself a Child Session gets `childTools`; a Child Session gets
+// `parentTools` instead. The Hub refuses a request from the wrong one as well. hooks/register.ts
+// registers and serves them.
 
 import { ChildRequest } from "@claude-hub/protocol"
 import type { ChildReply, ChildSummary } from "@claude-hub/protocol"
@@ -122,6 +124,36 @@ export const childTools: ReadonlyArray<ChildToolSpec> = [
   },
 ]
 
+/** The tools a Child Session gets in place of {@link childTools}: one, to message its parent. */
+export const parentTools: ReadonlyArray<ChildToolSpec> = [
+  {
+    name: "message_parent",
+    description: [
+      "Send your Parent Session a message now, while you keep working: it is queued there as a prompt, marked as a message from you and not a Report, and wakes your Parent Session if it is Asleep.",
+      "",
+      "When to use it: for something your Parent Session should know before this Turn ends, such as a question it can answer while you go on with another part of the task, a decision that changes its plans, or a progress note on long work. Use it sparingly.",
+      "",
+      "When not to:",
+      "- To say what you did or found once you're done, end your Turn: your final message reaches your Parent Session as a Report on its own. Don't send it twice.",
+      "- If you can't go on without an answer, end your Turn with the question instead: its answer comes as your next prompt.",
+      "",
+      "Any answer reaches you as a prompt marked as from your Parent Session once this Turn ends, not during it.",
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description:
+            "What to tell your Parent Session. It doesn't see your conversation: say enough to be understood on its own.",
+        },
+      },
+      required: ["message"],
+      additionalProperties: false,
+    },
+  },
+]
+
 const decodeRequest = Schema.decodeUnknownExit(ChildRequest)
 
 const text = (value: unknown) => (typeof value === "string" ? value : undefined)
@@ -153,6 +185,8 @@ export const childToolRequest = (
         return { _tag: "ReadChild", childId: input["child_id"] }
       case "archive_child":
         return { _tag: "ArchiveChild", childId: input["child_id"] }
+      case "message_parent":
+        return { _tag: "MessageParent", text: input["message"] }
       default:
         return undefined
     }
@@ -223,6 +257,14 @@ export const childReplyText = (
       }
     case "ChildArchived":
       return { text: `Archived Child Session ${summaryLine(reply.child)}.` }
+    case "ParentMessaged":
+      return {
+        text: `Queued your message for your Parent Session "${reply.parent.title}" (id ${reply.parent.id}). ${
+          reply.working
+            ? "It reads it once its current Turn ends."
+            : "It reads it as soon as it is ready."
+        } Any answer reaches you as a prompt after this Turn ends, and your Report still goes to it then.`,
+      }
     case "ChildRefused":
       return { refused: reply.message }
   }

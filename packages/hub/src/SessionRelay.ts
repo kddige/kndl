@@ -59,6 +59,11 @@
 //     parent. An Archived parent gets none. The loop guard counts a child's Turns in a row that
 //     its parent prompted; a person's prompt to either starts it again. From LoopGuardExchanges
 //     on, each Report's note asks the parent to check it is still making progress.
+//   - A child messages its parent mid-Turn (MessageParent, #122): queued like a Report, sent as
+//     from the Child Session's message, waking an Asleep parent. It neither counts for the loop
+//     guard nor starts it again (the Turn it is sent from ends in a Report, which counts), but
+//     its note carries the reminder while the count is at LoopGuardExchanges. Refused for a
+//     Session that isn't a child, and when its parent is Archived or gone.
 //   - Archiving a parent archives its children; restoring it restores only the parent.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
 // - Git (ADR 0010): the Runner's GitRequests are answered by SessionGit, off the lock, since
@@ -99,6 +104,7 @@ import {
   CommandFailed,
   DeliverPrompt,
   FromChildSession,
+  FromChildSessionMessage,
   FromParentSession,
   type EnvironmentVersion,
   GitAnswer,
@@ -175,6 +181,8 @@ import {
   finalMessage,
   isPerson,
   oneLevelDeep,
+  childMessageText,
+  notAChild,
   parentMessageText,
   reportText,
 } from "./ChildSessions.ts"
@@ -1403,10 +1411,10 @@ export class SessionRelay extends Context.Service<
         return child.value
       })
 
-      /** A Child Session request other than CreateChild, under the lock. */
+      /** A Parent Session's request other than CreateChild, under the lock. */
       const childCommand = Effect.fn("SessionRelay.childCommand")(function* (
         parentId: SessionId,
-        request: Exclude<ChildRequest, { readonly _tag: "CreateChild" }>,
+        request: Exclude<ChildRequest, { readonly _tag: "CreateChild" | "MessageParent" }>,
       ): Effect.fn.Return<ChildReply, SqlError> {
         const found = yield* sessions.get(parentId)
         if (Option.isNone(found)) return childRefused("There is no such Session.")
@@ -1482,10 +1490,68 @@ export class SessionRelay extends Context.Service<
         }
       })
 
+      /**
+       * A Child Session's message to its parent, mid-Turn, under the lock: queued as a prompt,
+       * waking the parent if it is Asleep, as a Report is. Refused for a Session that isn't a
+       * child, and when its parent is Archived or gone.
+       */
+      const messageParent = Effect.fn("SessionRelay.messageParent")(function* (
+        childId: SessionId,
+        request: Extract<ChildRequest, { readonly _tag: "MessageParent" }>,
+      ): Effect.fn.Return<ChildReply, SqlError> {
+        const found = yield* sessions.get(childId)
+        if (Option.isNone(found)) return childRefused("There is no such Session.")
+        const child = found.value
+        if (child.parentId === undefined) return childRefused(notAChild)
+        const parent = yield* sessions.get(child.parentId)
+        if (Option.isNone(parent)) {
+          return childRefused("Your Parent Session no longer exists: the message can't be sent.")
+        }
+        const parentRef = sessionRef(parent.value)
+        if (parent.value.state === "Archived") {
+          return childRefused(
+            `Your Parent Session "${parentRef.title}" is archived: it takes no messages.`,
+          )
+        }
+        const ref = sessionRef(child)
+        // Mid-Turn or with a prompt on its way, the parent reads the message after that Turn.
+        const working = parent.value.currentTurn !== null || inFlight.has(parent.value.id)
+        // The loop guard's count as of the child's last Report: a message doesn't change it.
+        const { exchanges } = yield* sessions.childRecord(childId)
+        yield* prompts.add(
+          parent.value.id,
+          QueuedPrompt.make({
+            id: PromptId.make(randomId()),
+            text: childMessageText(ref, request.text, exchanges),
+            sender: parent.value.creator,
+            fromSession: FromChildSessionMessage.make({ session: ref }),
+            queuedAt: yield* Clock.currentTimeMillis,
+          }),
+        )
+        yield* queueChanged(parent.value.id)
+        if (parent.value.state === "Asleep") {
+          const refused = yield* wake(
+            parent.value,
+            {},
+            `for a message from Child Session "${ref.title}"`,
+          )
+          if (refused !== undefined) {
+            return childRefused(
+              `Your message waits in its queue, but your Parent Session can't wake now. ${refused}`,
+            )
+          }
+        } else {
+          yield* deliverNext(parent.value.id)
+        }
+        return ChildReply.cases.ParentMessaged.make({ parent: parentRef, working })
+      })
+
       const childRequest = Effect.fn("SessionRelay.childRequest")(function* (
         sessionId: SessionId,
         request: ChildRequest,
       ): Effect.fn.Return<ChildReply, SqlError> {
+        if (request._tag === "MessageParent")
+          return yield* serialized(messageParent(sessionId, request))
         if (request._tag !== "CreateChild")
           return yield* serialized(childCommand(sessionId, request))
         const found = yield* sessions.get(sessionId)

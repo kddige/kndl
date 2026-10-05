@@ -20,7 +20,7 @@ import {
 } from "@claude-hub/protocol"
 import { Effect, Exit, Option, Redacted } from "effect"
 import { signInCookie } from "./Auth.ts"
-import { oneLevelDeep } from "./ChildSessions.ts"
+import { notAChild, oneLevelDeep } from "./ChildSessions.ts"
 import { databaseAt } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
@@ -2134,6 +2134,17 @@ const reportNote = (childId: string, title = branchTitle(childId)) =>
     "This is a Report, not a prompt from a person: the final message of a Turn your Child Session just ended. The people in this Session don't see Reports, so relay what matters to them. More Reports may follow while it works.",
   ].join("\n")
 
+const messageNote = (childId: string, title = branchTitle(childId)) =>
+  [
+    `[Message from Child Session "${title}" (${childId})]`,
+    "This is a message your Child Session sent while it works, not a prompt from a person and not a Report: its Report still comes when its Turn ends. The people in this Session don't see it, so relay what matters to them. To answer it, use message_child; it reads your answer once its current Turn ends.",
+  ].join("\n")
+
+const fromChildMessage = (childId: string, title = branchTitle(childId)) => ({
+  _tag: "FromChildSessionMessage" as const,
+  session: { id: childId, title },
+})
+
 const loopGuardLine = (exchanges: number) =>
   `You and this Child Session have gone back and forth ${exchanges} times with no person's prompt in between. Check that the work is still making progress before you message it again; if it isn't, stop and tell the people here.`
 
@@ -2317,6 +2328,173 @@ describe("Child Sessions", () => {
       turnEnded("p-asked"),
     )
     expect(await exchange(100)).toBe(`${reportNote(childId)}\n\nRound 100 done.`)
+  })
+
+  test("a child messages its parent mid-Turn: queued as a message, and its Report still follows", async () => {
+    const { web, sessionId, mod, childId, childMod } = await childScene(undefined, {
+      name: "Docs",
+    })
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    const [task] = await childMod.deliveries(500)
+    await childMod.post(turnStarted("c-1", task?.promptId, fromParent(sessionId)))
+
+    // The parent is mid-Turn: the message waits in its queue until that Turn ends.
+    await mod.post(turnStarted("p-1"))
+    expect(
+      await childMod.children({ _tag: "MessageParent", text: "Should I cover the v0 messages?" }),
+    ).toEqual({
+      _tag: "ParentMessaged",
+      parent: { id: sessionId, title: branchTitle(sessionId) },
+      working: true,
+    })
+    const queued = await web.take(
+      "PromptQueueChanged",
+      (m) => m.sessionId === sessionId && m.queue.length > 0,
+    )
+    expect(queued.queue).toEqual([
+      expect.objectContaining({
+        sender: alice,
+        fromSession: fromChildMessage(childId, "Docs"),
+      }),
+    ])
+    expect(await mod.deliveries(200)).toEqual([])
+    await mod.post(turnEnded("p-1"))
+    const [message] = await mod.deliveries(500)
+    expect(message).toEqual({
+      _tag: "DeliverPrompt",
+      sessionId,
+      promptId: expect.any(String),
+      text: `${messageNote(childId, "Docs")}\n\nShould I cover the v0 messages?`,
+      sender: alice,
+      fromSession: fromChildMessage(childId, "Docs"),
+    })
+
+    // Idle, the parent gets the next one at once.
+    await mod.post(
+      turnStarted("p-2", message?.promptId, fromChildMessage(childId, "Docs")),
+      turnEnded("p-2"),
+    )
+    expect(
+      replied(
+        await childMod.children({ _tag: "MessageParent", text: "Halfway there." }),
+        "ParentMessaged",
+      ).working,
+    ).toBe(false)
+    const [second] = await mod.deliveries(500)
+    expect(second?.text).toBe(`${messageNote(childId, "Docs")}\n\nHalfway there.`)
+
+    // The child's Turn still ends in a Report.
+    await mod.post(
+      turnStarted("p-3", second?.promptId, fromChildMessage(childId, "Docs")),
+      turnEnded("p-3"),
+    )
+    await childMod.post({ _tag: "TextDelta", turnId: "c-1", text: "Done." }, turnEnded("c-1"))
+    expect((await mod.deliveries(500)).map((delivery) => delivery.text)).toEqual([
+      `${reportNote(childId, "Docs")}\n\nDone.`,
+    ])
+  })
+
+  test("a message wakes an Asleep parent, which gets it once its new mod says hello", async () => {
+    const scene = await childScene()
+    const { hub, runner, web, sessionId, childId, childMod } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await asleep(scene)
+
+    expect(
+      replied(
+        await childMod.children({ _tag: "MessageParent", text: "A question." }),
+        "ParentMessaged",
+      ).working,
+    ).toBe(false)
+    const wake = await runner.take("StartSession", (m) => m.sessionId === sessionId)
+    expect(wake).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(
+      (await web.take("SessionEventLogged", stateChanged("Active"))).entry.event,
+    ).toMatchObject({
+      message: `Woken on mac for a message from Child Session "${branchTitle(childId)}"`,
+    })
+
+    runner.send({ _tag: "SessionStarted", sessionId })
+    const woken = new Mod(hub, sessionId, wake.modToken)
+    expect((await woken.hello()).status).toBe(200)
+    expect((await woken.deliveries(500)).map((delivery) => delivery.text)).toEqual([
+      `${messageNote(childId)}\n\nA question.`,
+    ])
+  })
+
+  test("a message neither counts for the loop guard nor starts it again, and carries its reminder", async () => {
+    const { sessionId, mod, childId, childMod } = await childScene()
+    await childMod.deliveries(500)
+    await mod.poll()
+
+    /** The parent's Turn on what it was just delivered. */
+    const read = async (turnId: string, sender: Sender) => {
+      const [delivered] = await mod.deliveries(500)
+      await mod.post(turnStarted(turnId, delivered?.promptId, sender), turnEnded(turnId))
+      return defined(delivered).text
+    }
+    const message = async (round: number) => {
+      replied(
+        await childMod.children({ _tag: "MessageParent", text: `Round ${round} going.` }),
+        "ParentMessaged",
+      )
+      return read(`m-${round}`, fromChildMessage(childId))
+    }
+
+    expect(await message(0)).toBe(`${messageNote(childId)}\n\nRound 0 going.`)
+    for (let round = 1; round <= LoopGuardExchanges; round++) {
+      await childMod.post(
+        ...turnEnding(`c-${round}`, `Round ${round} done.`, fromParent(sessionId)),
+      )
+      const report = await read(`p-${round}`, fromChild(childId))
+      // Messages between the exchanges don't add to the count.
+      if (round < LoopGuardExchanges) {
+        expect(report).not.toContain("back and forth")
+        expect(await message(round)).not.toContain("back and forth")
+      } else {
+        expect(report).toContain(loopGuardLine(LoopGuardExchanges))
+      }
+    }
+    expect(await message(LoopGuardExchanges)).toBe(
+      `${messageNote(childId)}\n${loopGuardLine(LoopGuardExchanges)}\n\nRound ${LoopGuardExchanges} going.`,
+    )
+  })
+
+  test("only a Child Session can message a parent, and not an archived one", async () => {
+    const { hub, runner, web, sessionId, mod, childId } = await childScene()
+    expect(await mod.children({ _tag: "MessageParent", text: "Hello?" })).toEqual({
+      _tag: "ChildRefused",
+      message: notAChild,
+    })
+
+    web.send({ _tag: "ArchiveSession", sessionId })
+    for (let index = 0; index < 2; index++) {
+      const stop = await runner.take("StopSession", (m) => m.reason === "Archive")
+      runner.send({
+        _tag: "SessionStopped",
+        sessionId: stop.sessionId,
+        reason: "Requested",
+        exitCode: 143,
+      })
+    }
+    // The child, restored on its own and woken, can't reach its archived parent.
+    web.send({ _tag: "RestoreSession", sessionId: childId })
+    await web.take(
+      "SessionUpdated",
+      (m) => m.session.id === childId && m.session.state === "Asleep",
+    )
+    web.send({ _tag: "SendPrompt", sessionId: childId, text: "Carry on" })
+    const wake = await runner.take("StartSession", (m) => m.sessionId === childId)
+    runner.send({ _tag: "SessionStarted", sessionId: childId })
+    const childMod = new Mod(hub, childId, wake.modToken)
+    expect((await childMod.hello()).status).toBe(200)
+    expect(await childMod.children({ _tag: "MessageParent", text: "Hello?" })).toEqual({
+      _tag: "ChildRefused",
+      message: `Your Parent Session "${branchTitle(sessionId)}" is archived: it takes no messages.`,
+    })
+    expect(await runner.untaken("StartSession")).toEqual([])
   })
 
   test("a parent messages, lists and reads its children; a message wakes an Asleep child", async () => {

@@ -4,7 +4,13 @@
 // (spike #4).
 
 export type { FromSession, ModCommand, Participant, ToolCallOutcome } from "@claude-hub/protocol"
-export { childReplyText, childToolPrefix, childToolRequest, childTools } from "./ChildTools.ts"
+export {
+  childReplyText,
+  childToolPrefix,
+  childToolRequest,
+  childTools,
+  parentTools,
+} from "./ChildTools.ts"
 export { HubLink } from "./HubLink.ts"
 export type { LinkStatus } from "./HubLink.ts"
 export {
