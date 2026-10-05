@@ -25,7 +25,7 @@ Nothing is done on the Hub's machine: anyone signed in to the web UI adds a Runn
 
 `runner join` checks the machine has what a Runner needs (and offers to install what's missing), redeems the code with the Hub for the Runner's token, writes `~/.claude-hub/runner.env`, installs and starts the Runner's service, and waits until the Hub says the Runner is connected. The Runners page shows the new Runner as soon as the code is used.
 
-The Runner is named after the machine's short hostname; `--name build-box` names it something else. Without questions, for a script:
+The Runner is named after the machine's short hostname; `--name build-box` names it something else. The name is the Runner's identity on the Hub, so choose it with [Runner names](#runner-names) in mind. Without questions, for a script:
 
 ```sh
 claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE' --name build-box --non-interactive
@@ -60,8 +60,19 @@ Onboard writes `~/.claude-hub/runner.env`, installs the Runner's service and wai
 
 **Runners** in the sidebar lists every Runner paired with the Hub: whether it's online, the Claude login it runs Sessions on, the commit it runs (and its branch), when it was last seen, and how many of its Sessions aren't Archived. A Runner on an older commit than the Hub is marked **behind the Hub**; see [Keep Runners on the Hub's commit](#keep-runners-on-the-hubs-commit). The header says which commit the Hub runs.
 
-- **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place: it keeps the Runner's name, id and Sessions, and gets a new token. The old token stops working, and a machine still connected with it is disconnected. Use it when a Runner's token is lost, or to move a Runner to a new machine. `--name` is ignored for a Re-pair.
-- **Remove** revokes the Runner's token, and disconnects it if it's connected. It's refused while the Runner has Sessions that aren't Archived (Active, Asleep or Frozen): archive them first. To use the machine again, add it again with **Add a Runner**: a Runner added by a removed one's name takes its place, and its Archived Sessions can be restored again.
+- **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place: it keeps the Runner's name, id and Sessions, and gets a new token. The old token stops working, and a machine still connected with it is disconnected. Use it to put a reinstalled machine back in its own place, when a Runner's token is lost, or to move a Runner to a new machine. `--name` is ignored for a Re-pair.
+- **Remove** revokes the Runner's token, and disconnects it if it's connected. It's refused while the Runner has Sessions that aren't Archived (Active, Asleep or Frozen): archive them first. The Runner's name is then free, and a machine paired later under it takes the removed Runner's place: see [Runner names](#runner-names).
+
+### Runner names
+
+A Runner's name is its identity on the Hub: its Sessions, Archived ones included, belong to the Runner of that name. It's the name the Runner was paired or issued its token under; `RUNNER_NAME` in its `runner.env` changes only what it says on connecting.
+
+- **A reinstalled machine** goes back in its own place with **Re-pair**: it keeps its name and Sessions.
+- **A name the Hub has** can't be taken by a new Runner. `runner join` refuses with `The Hub already has a Runner named build-box …`, and the code isn't used up.
+- **A removed Runner's name** is free again. A machine paired later under it takes over the removed Runner's record, with its Archived Sessions, which can then be restored onto it. Removing a Runner and adding the machine again under the same name is that takeover.
+- **For a clean slate**, with none of the old Runner's Sessions, pair the machine under a name the Hub has never had: `claude-hub runner join '<link>' --name build-box-2`.
+
+`claude-hub runner token <name>` follows the same names without a Pairing code: for a Runner the Hub has, it replaces its token; for a removed one's name, it brings that Runner back.
 
 ## Keep Runners on the Hub's commit
 
