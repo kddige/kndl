@@ -6,7 +6,7 @@ import {
   type RunnerVersionStatus,
   runnerVersionStatus,
 } from "@claude-hub/protocol"
-import { checkoutHolds, readBuildVersion } from "@claude-hub/protocol/checkout"
+import { checkoutHolds, readBuildVersion, thisCheckout } from "@claude-hub/protocol/checkout"
 import { Context, Effect, Layer } from "effect"
 
 export class HubVersion extends Context.Service<
@@ -22,10 +22,12 @@ export class HubVersion extends Context.Service<
   static readonly layer = Layer.sync(HubVersion, () => {
     const version = readBuildVersion()
     // git answers in a few milliseconds, but the Runner list is sent often: each commit is asked
-    // about once. The Hub's own commit doesn't change while it runs.
+    // about once. Against the commit the Hub started from, not the checkout's HEAD, which a pull
+    // moves before the Hub restarts.
     const held = new Map<string, boolean | undefined>()
     const holds = (commit: string) => {
-      if (!held.has(commit)) held.set(commit, checkoutHolds(commit))
+      if (version === undefined) return undefined
+      if (!held.has(commit)) held.set(commit, checkoutHolds(commit, thisCheckout, version.commit))
       return held.get(commit)
     }
     return HubVersion.of({

@@ -30,13 +30,18 @@ export function readBuildVersion(dir: string = thisCheckout): BuildVersion | und
 }
 
 /**
- * Whether the checkout's HEAD has `commit` in its history. A commit the checkout has never
- * fetched isn't in it. `undefined` when git can't say, such as outside a checkout.
+ * Whether `commit` is in the history of `of` (HEAD by default) in the checkout. A commit the
+ * checkout has never fetched isn't in it. `undefined` when git can't say, such as outside a
+ * checkout.
  */
-export function checkoutHolds(commit: string, dir: string = thisCheckout): boolean | undefined {
+export function checkoutHolds(
+  commit: string,
+  dir: string = thisCheckout,
+  of = "HEAD",
+): boolean | undefined {
   if (!/^[0-9a-f]{7,64}$/.test(commit)) return undefined
   try {
-    execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", commit, "HEAD"], {
+    execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", commit, of], {
       stdio: "ignore",
       timeout: 5_000,
     })
