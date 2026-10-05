@@ -44,6 +44,7 @@ import {
   sortRunners,
   timeLeft,
   updateAction,
+  manualUpdateText,
   updateNote,
   versionNote,
   waitingCodes,
@@ -321,6 +322,7 @@ function RunnerRow({
   // While it updates, the update says it all: being behind is why.
   const note = underWay ? undefined : versionNote(runner.versionStatus, runner.updater)
   const action = updateAction(runner)
+  const manual = manualUpdateText(runner)
   return (
     <li aria-label={runner.name} {...stylex.props(styles.row, first && styles.firstRow)}>
       <div {...stylex.props(styles.main)}>
@@ -379,6 +381,11 @@ function RunnerRow({
           >
             {update.busy && <Spinner size="sm" />}
             <span {...stylex.props(styles.updateText)}>{update.detail}</span>
+          </p>
+        )}
+        {manual && (
+          <p {...stylex.props(styles.updateLine)}>
+            <span {...stylex.props(styles.updateText)}>{manual}</span>
           </p>
         )}
       </div>
@@ -729,15 +736,20 @@ function UpdateDialog({
         </>
       }
     >
-      {!waiting && sessions > 0 && (
-        <p {...stylex.props(styles.note)}>
-          Update now stops running Turns at once instead of letting them finish.
-        </p>
-      )}
-      {error && (
-        <p role="alert" {...stylex.props(styles.error)}>
-          {error}
-        </p>
+      {/* One expression, null when there's nothing to add, so the dialog leaves out its body. */}
+      {(waiting || sessions === 0) && error === null ? null : (
+        <>
+          {!waiting && sessions > 0 && (
+            <p {...stylex.props(styles.note)}>
+              Update now stops running Turns at once instead of letting them finish.
+            </p>
+          )}
+          {error && (
+            <p role="alert" {...stylex.props(styles.error)}>
+              {error}
+            </p>
+          )}
+        </>
       )}
     </Dialog>
   )

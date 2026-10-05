@@ -63,6 +63,16 @@ export function versionNote(
   }
 }
 
+/**
+ * Why a Runner that doesn't run the Hub's commit has no Update, said on its row (a tooltip alone
+ * isn't seen on a phone): it doesn't update itself. `undefined` when it does, or needn't.
+ */
+export function manualUpdateText(runner: RunnerSummary): string | undefined {
+  if (runner.versionStatus !== "Behind" && runner.versionStatus !== "Differs") return undefined
+  if (runner.update !== undefined || runner.updater?.self === true) return undefined
+  return howToUpdate(runner.updater)
+}
+
 /** How a Runner comes to run the Hub's commit, by the way it said it updates. */
 function howToUpdate(updater: RunnerUpdater | undefined): string {
   if (updater === undefined) {
@@ -118,13 +128,14 @@ export function updateNote(
     case "Draining": {
       if (update.now) return busy("Stopping its running Turns, then putting its Sessions to sleep…")
       if (update.waitingFor === 0) return busy("Putting its Sessions to sleep…")
-      const sessions = update.waitingFor === 1 ? "1 Session" : `${update.waitingFor} Sessions`
+      const turns =
+        update.waitingFor === 1 ? "1 Session's Turn" : `${update.waitingFor} Sessions' Turns`
       const left = update.deadline - now
       const stop =
         left <= 0
           ? "stopping them now"
           : `stopped in ${left < 60_000 ? "under a minute" : `${Math.ceil(left / 60_000)} min`} if still running`
-      return busy(`No new Sessions. Waiting for ${sessions} to finish their Turn (${stop})…`)
+      return busy(`No new Sessions. Waiting for ${turns} to end (${stop})…`)
     }
     case "Applying":
       return busy(applyText(update.step, commit))
@@ -146,7 +157,9 @@ export function updateNote(
       return {
         label: "update failed",
         intent: "danger",
-        detail: update.failure.message,
+        detail: update.failure.rolledBack
+          ? `Moving to ${commit} failed, so it went back to the commit it ran: ${update.failure.message}`
+          : `Moving to ${commit} failed, and so did going back; see its log: ${update.failure.message}`,
         busy: false,
       }
   }

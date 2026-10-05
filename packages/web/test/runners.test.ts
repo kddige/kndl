@@ -7,6 +7,7 @@ import {
 } from "@claude-hub/protocol"
 import {
   codeOutcome,
+  manualUpdateText,
   sortRunners,
   timeLeft,
   updateAction,
@@ -73,6 +74,17 @@ describe("a Runner's update", () => {
     ).toBe("Update")
   })
 
+  test("says on the row why a Runner behind has no Update: it's updated by hand", () => {
+    expect(manualUpdateText(behind)).toBeUndefined()
+    expect(manualUpdateText({ ...behind, updater: { self: false, reason: "dev checkout" } })).toBe(
+      "It doesn't update itself: dev checkout.",
+    )
+    const { updater: _, ...old } = behind
+    expect(manualUpdateText(old)).toContain("run `claude-hub update` on its machine once")
+    expect(manualUpdateText({ ...old, versionStatus: "Current" })).toBeUndefined()
+    expect(manualUpdateText({ ...old, versionStatus: "Unknown" })).toBeUndefined()
+  })
+
   test("offers to stop running Turns while it waits for them, and nothing once it moves", () => {
     const draining = {
       _tag: "Draining" as const,
@@ -103,10 +115,10 @@ describe("a Runner's update", () => {
       waitingFor: 2,
     }
     expect(updateNote(draining, 0)?.detail).toBe(
-      "No new Sessions. Waiting for 2 Sessions to finish their Turn (stopped in 10 min if still running)…",
+      "No new Sessions. Waiting for 2 Sessions' Turns to end (stopped in 10 min if still running)…",
     )
     expect(updateNote({ ...draining, waitingFor: 1 }, 570_000)?.detail).toContain(
-      "1 Session to finish their Turn (stopped in under a minute",
+      "1 Session's Turn to end (stopped in under a minute",
     )
     expect(updateNote({ ...draining, now: true }, 0)?.detail).toContain(
       "Stopping its running Turns",
@@ -138,8 +150,17 @@ describe("a Runner's update", () => {
     expect(failed).toMatchObject({
       label: "update failed",
       intent: "danger",
-      detail: "bun install failed.",
+      detail:
+        "Moving to 824de4a1f0c3 failed, so it went back to the commit it ran: bun install failed.",
     })
+    const stuck = updateNote(
+      {
+        _tag: "Failed",
+        failure: { target, message: "git checkout failed.", rolledBack: false, at: 0 },
+      },
+      0,
+    )
+    expect(stuck?.detail).toContain("and so did going back; see its log")
   })
 
   test("the badge says how to bring a Runner behind to the Hub's commit", () => {
