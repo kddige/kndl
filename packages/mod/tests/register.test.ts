@@ -210,6 +210,29 @@ describe("tools", () => {
       expect(answer.deny).toBeDefined()
       expect(answer.deny).toContain("not available in this Claude Hub Session")
     }
+    expect(fetched.deny).toContain("curl through Bash")
+  })
+
+  test("leaves WebSearch to Claude Code, without asking (#126)", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    const requests = fakeFetch(on, () => ran({}))
+    let reachedCore = 0
+    on("tool.call", () => {
+      reachedCore++
+      return { result: { query: "bun", results: [], durationSeconds: 1 } } as never
+    })
+    on("tool.check", () => ({ decision: "ask", reason: "WebSearchTool requires permission." }))
+
+    const answer = await $.tool.call({ tool: "WebSearch", query: "bun" })
+    const checked = await $.tool.check({ tool: "WebSearch", input: { query: "bun" } })
+    const other = await $.tool.check({ tool: "WebFetch", input: { url: "https://example.com" } })
+
+    expect(reachedCore).toBe(1)
+    expect(requests).toHaveLength(0)
+    expect(answer.deny).toBeUndefined()
+    expect(answer.result).toMatchObject({ query: "bun" })
+    expect(checked.decision).toBe("allow")
+    expect(other.decision).toBe("ask")
   })
 
   test("refuses a background command", async ($, on) => {
