@@ -197,9 +197,10 @@ test("a Session is renamed in place from its header, and New Session doesn't ask
   await eventually(() => expect(title()).toBe("README: how to run it"))
   expect(description()).toContain("claude/readme-run from main")
   expect(current()).toEqual(["README: how to run it"])
-  expect(hub.received.filter((m) => m._tag === "RenameSession")).toEqual([
-    { _tag: "RenameSession", sessionId: "s-readme", name: "README: how to run it" },
-  ])
+  const renames = hub.received.flatMap((m) =>
+    m._tag === "RenameSession" ? [{ sessionId: String(m.sessionId), name: m.name }] : [],
+  )
+  expect(renames).toEqual([{ sessionId: "s-readme", name: "README: how to run it" }])
 
   // New Session has no name field: a Session is named once it exists.
   await step(() => button("New Session", document).click())
