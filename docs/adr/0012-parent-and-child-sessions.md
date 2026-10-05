@@ -1,6 +1,8 @@
 ---
-status: accepted
+status: superseded by 0014
 ---
+
+> Superseded by [ADR 0014](0014-subagents-replace-child-sessions.md): with Claude Code in the Sandbox, Sessions delegate with Claude Code's own subagents, shown under the Session in the web UI. Child Sessions, their tools and Reports are removed (#152).
 
 # Sessions delegate work to Child Sessions
 

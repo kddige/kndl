@@ -1,0 +1,1 @@
+Experiment 2. Call the Agent tool once with subagent_type "general-purpose", model "haiku", run_in_background false, description "count words", and prompt "Run the Bash command wc -w README.md, then say one short sentence about the result." Do not give it a name. Then reply with what it returned, nothing else.

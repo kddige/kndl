@@ -1,0 +1,5 @@
+{
+  "name": "spike148-control",
+  "version": "0.0.1",
+  "description": "Spike #148: does what a person in the web UI would to a Session's agents: list, message, stop."
+}

@@ -1,0 +1,1 @@
+Experiment 1. Call the Agent tool once with subagent_type "general-purpose", model "haiku", run_in_background false, name "counter", description "count lines", prompt "Run the Bash command wc -l calc.py and reply with just the number." Then reply with the number it returned and nothing else.

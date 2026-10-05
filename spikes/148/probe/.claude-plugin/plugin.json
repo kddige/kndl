@@ -1,0 +1,5 @@
+{
+  "name": "spike148-probe",
+  "version": "0.0.1",
+  "description": "Spike #148: logs what the mod API shows of subagents, and runs commands on them."
+}

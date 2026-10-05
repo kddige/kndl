@@ -5,7 +5,7 @@ supersedes: 0002
 
 # Each person brings their Claude credential; a Session runs on its Creator's
 
-Each person pastes their own Claude credential into the Hub once, on their account page: a `claude setup-token` token for their subscription, or an Anthropic API key. The Hub stores it encrypted, and a Session runs on its Creator's credential, whichever Runner it is on. A Child Session runs on its parent's Creator's, as ADR 0012 already makes it act as them. Credentials belong to people, not machines, so any Runner can run anyone's Session, and nobody needs to sign in to Claude on a Runner.
+Each person pastes their own Claude credential into the Hub once, on their account page: a `claude setup-token` token for their subscription, or an Anthropic API key. The Hub stores it encrypted, and a Session runs on its Creator's credential, whichever Runner it is on. Credentials belong to people, not machines, so any Runner can run anyone's Session, and nobody needs to sign in to Claude on a Runner.
 
 Other Participants prompting a Session use its Creator's credential. This is the pair-prompting of ADR 0002, now with the person who started the Session rather than the Runner's owner.
 
