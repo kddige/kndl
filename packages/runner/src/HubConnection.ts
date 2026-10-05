@@ -5,10 +5,11 @@ import {
   type RunnerLogin,
   RunnerToHub,
 } from "@claude-hub/protocol"
+import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { Data, Duration, Effect, Redacted, Schema } from "effect"
 import { Socket } from "effect/socket"
 import { HubLink } from "./HubLink.ts"
-import { RunnerConfig, runnerSocketUrl } from "./RunnerConfig.ts"
+import { RunnerConfig, runnerConnectionUrl, runnerSocketUrl } from "./RunnerConfig.ts"
 import { Sessions } from "./Sessions.ts"
 
 /** The Hub turned this Runner away for good, such as for speaking another protocol version. */
@@ -34,6 +35,30 @@ export const DefaultBackoff: Backoff = { initial: "500 millis", max: "30 seconds
 /** How long the Hub has to answer the hello. */
 const WelcomeTimeout = Duration.seconds(10)
 
+/** The commit this Runner runs, for its hello (ADR 0011). Read once: it doesn't change. */
+const buildVersion = readBuildVersion()
+
+/**
+ * What the Runner logs when the Hub no longer takes its token: it was removed on the Runners
+ * page, or a Re-pair gave another machine (or another `runner join` here) its place.
+ */
+export const TokenRefusedText =
+  "The Hub doesn't accept this Runner's token: the Runner was removed on the Hub's Runners page, or paired again with a new token. To pair this machine again, make a code on the Runners page (Add a Runner, or Re-pair) and run `claude-hub runner join '<link>'`. Retrying meanwhile."
+
+/** Whether the Hub refuses the Runner's token, by asking it over HTTP. */
+const tokenRefused = Effect.gen(function* () {
+  const config = yield* RunnerConfig
+  return yield* Effect.tryPromise(() =>
+    fetch(runnerConnectionUrl(config.hubUrl), {
+      headers: { authorization: `Bearer ${Redacted.value(config.token)}` },
+      signal: AbortSignal.timeout(5_000),
+    }),
+  ).pipe(
+    Effect.map((response) => response.status === 401),
+    Effect.orElseSucceed(() => false),
+  )
+})
+
 const encodeOutgoing = Schema.encodeSync(RunnerToHub)
 const decodeIncoming = Schema.decodeUnknownExit(HubToRunner)
 
@@ -58,7 +83,11 @@ export const runHubConnection = (login: RunnerLogin, backoff: Backoff = DefaultB
     for (;;) {
       const welcomed = yield* connectOnce(login).pipe(
         Effect.catchTag("ConnectionLost", (lost) =>
-          Effect.logWarning(`Hub connection: ${lost.message}`).pipe(Effect.as(lost.welcomed)),
+          Effect.gen(function* () {
+            yield* Effect.logWarning(`Hub connection: ${lost.message}`)
+            if (yield* tokenRefused) yield* Effect.logError(TokenRefusedText)
+            return lost.welcomed
+          }),
         ),
       )
       if (welcomed) delay = initial
@@ -102,6 +131,7 @@ const connectOnce = (login: RunnerLogin) =>
           name: config.name,
           login,
           sessions: [...(yield* sessions.running)],
+          ...(buildVersion !== undefined && { version: buildVersion }),
         }),
       ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
 
