@@ -6,7 +6,7 @@ How the docs site (`packages/docs`, published at <https://kddige.github.io/claud
 
 The site describes the code on `main`, not other docs. Check every command, flag, setting, default, path and quoted message against the code before you write it, and grep for a message before you quote it. A wrong page is worse than a missing one ([Write the Docs: Current](https://www.writethedocs.org/guide/writing/docs-principles/)).
 
-- Document what exists. No "coming soon", "lands with #NN" or "today" notes for planned work, and no docs for designs that only have an ADR (Parent and Child Sessions, Previews). The issue tracker holds plans.
+- Document what exists. No "coming soon", "lands with #NN" or "today" notes for planned work, and no docs for designs that only have an ADR (Previews). The issue tracker holds plans.
 - A PR that changes behaviour updates the pages that describe it, in the same PR: the how-to, the reference row, the Troubleshooting entry that quotes its message.
 
 ## Where a page goes
@@ -45,7 +45,7 @@ From the [Google developer documentation style guide](https://developers.google.
 
 ## Glossary terms
 
-`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Work branch, WIP ref, Pairing code, Runner login, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
+`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Session name, Parent Session, Child Session, Report, Work branch, WIP ref, Pairing code, Runner login, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
 
 Link a term to its page (or to the [glossary](https://kddige.github.io/claude-hub/reference/glossary/)) on its first use in a page when the reader may not know it. Don't invent synonyms: a Sandbox is never a "VM" or "container" in prose that means the Sandbox.
 

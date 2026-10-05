@@ -33,7 +33,7 @@ Type a prompt and send it. While a Turn is running, a prompt from anyone waits i
 
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
 
-Claude's tools are limited to Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, and run in the Sandbox. Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host.
+Claude's tools are limited to Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, and run in the Sandbox. Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host. The exception is the tools that hand work to Child Sessions, which ask the Hub: see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/).
 
 ## Use the terminal
 
@@ -53,9 +53,9 @@ A Session whose Runner is offline is Frozen: you can read it, and prompts you se
 
 ## Delete and restore
 
-**Delete Session**, the trash button in the Session's header, archives the Session at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox, keeping the Workspace and Claude Code's state. Any Participant can do it.
+**Delete Session**, the trash button in the Session's header, archives the Session at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox, keeping the Workspace and Claude Code's state. Any Participant can do it. A Parent Session's Child Sessions are archived with it, so for a Parent Session the web UI lists them and asks first.
 
-- **Undo** in the toast restores it straight away.
+- **Undo** in the toast restores it straight away, but not its Child Sessions.
 - **Archived Sessions**, in the sidebar, lists the Archived Sessions of every Repo, with who deleted each and when, and a **Restore** button.
 
 A restored Session is Asleep, and the next prompt wakes it in a fresh Sandbox, on the kept Workspace, with the conversation intact; its `node_modules` and Docker's data are gone with the old Sandbox.
