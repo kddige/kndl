@@ -336,6 +336,15 @@ export class HubClient {
     await this.#request({ _tag: "RemoveRunner", runnerId }, "RunnerRemoved")
   }
 
+  /**
+   * Updates a Runner to the Hub's commit (ADR 0011): its Turns end, or stop at once with `now`, its
+   * Sessions sleep, and it moves and restarts. The RunnerList follows the update; the Hub refuses,
+   * saying why, when the Runner can't update itself.
+   */
+  async updateRunner(runnerId: RunnerId, now: boolean): Promise<void> {
+    await this.#request({ _tag: "UpdateRunner", runnerId, now }, "RunnerUpdateRequested")
+  }
+
   /** Sends `command` with a new request id; resolves with the Hub's `answer` to it. */
   #request<Tag extends AnswerTag>(
     command: Request,
@@ -434,7 +443,8 @@ export class HubClient {
       case "RepoChecked":
       case "PairingCodeCreated":
       case "PairingCodeList":
-      case "RunnerRemoved": {
+      case "RunnerRemoved":
+      case "RunnerUpdateRequested": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break

@@ -206,6 +206,9 @@ export function reduce(state: HubState, action: HubAction): HubState {
         ...state,
         runners: state.runners?.filter((runner) => runner.id !== action.runnerId) ?? null,
       }
+    case "RunnerUpdateRequested":
+      // The RunnerList that follows shows the update.
+      return state
     case "PairingCodeList":
       return { ...state, pairingCodes: action.codes }
     case "PairingCodeRedeemed":
