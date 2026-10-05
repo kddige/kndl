@@ -207,16 +207,22 @@ export class FakeHub implements HubTransport {
       versionStatus: "Current" as const,
       lastSeenAt: Date.now(),
     }
-    if (code.runnerId === undefined) {
-      this.runners = [
-        ...this.runners,
-        { id: `r-${++this.#ids}`, name, openSessions: 0, ...connected },
-      ]
+    const runnerId = code.runnerId ?? `r-${++this.#ids}`
+    const repaired = this.runners.find((runner) => runner.id === runnerId)
+    if (repaired === undefined) {
+      this.runners = [...this.runners, { id: runnerId, name, openSessions: 0, ...connected }]
     } else {
       this.runners = this.runners.map((runner) =>
-        runner.id === code.runnerId ? { ...runner, ...connected } : runner,
+        runner.id === runnerId ? { ...runner, ...connected } : runner,
       )
     }
+    this.#toAll({
+      _tag: "PairingCodeRedeemed",
+      id: code.id,
+      runnerId,
+      name: repaired?.name ?? name,
+      repaired: repaired !== undefined,
+    })
     this.#toAll(this.#runnerList())
     this.#toAll(this.#pairingCodeList())
   }

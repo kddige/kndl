@@ -16,9 +16,11 @@ import type {
   EnvironmentVersionInfo,
   EventSeq,
   HubToWeb,
+  PairingCodeId,
   Participant,
   PendingPairingCode,
   QueuedPrompt,
+  RunnerId,
   RunnerSummary,
   SessionId,
   SessionLogEntry,
@@ -111,6 +113,8 @@ export interface HubState {
    * the first PairingCodeList. One may have expired since: compare its `expiresAt` with the clock.
    */
   readonly pairingCodes: ReadonlyArray<PendingPairingCode> | null
+  /** The Pairing codes redeemed while connected, and the Runner each paired, by code id. */
+  readonly redeemedCodes: Readonly<Record<PairingCodeId, RunnerId>>
   /** Null until the first SessionList. */
   readonly sessions: ReadonlyArray<SessionSummary> | null
   readonly joined: Readonly<Record<SessionId, JoinedSession>>
@@ -144,6 +148,7 @@ export const initialState: HubState = {
   runners: null,
   hubVersion: null,
   pairingCodes: null,
+  redeemedCodes: {},
   sessions: null,
   joined: {},
   terminals: {},
@@ -197,6 +202,8 @@ export function reduce(state: HubState, action: HubAction): HubState {
       }
     case "PairingCodeList":
       return { ...state, pairingCodes: action.codes }
+    case "PairingCodeRedeemed":
+      return { ...state, redeemedCodes: { ...state.redeemedCodes, [action.id]: action.runnerId } }
     case "PairingCodeCreated":
       // The code is for whoever asked: the PairingCodeList that follows lists it, without it.
       return state

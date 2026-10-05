@@ -319,6 +319,7 @@ const hubToWeb = [
   },
   { _tag: "PairingCodeList", codes: [] },
   { _tag: "RunnerRemoved", requestId: "q-16", runnerId: "r-1" },
+  { _tag: "PairingCodeRedeemed", id: "pc-1", runnerId: "r-1", name: "studio", repaired: true },
 ]
 
 describe("SessionEvent", () => {

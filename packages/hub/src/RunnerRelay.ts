@@ -13,6 +13,7 @@ import {
   type HubToWeb,
   PairingCodeCreated,
   PairingCodeList,
+  PairingCodeRedeemed,
   pairingLink,
   type Participant,
   type RequestId,
@@ -145,6 +146,14 @@ export const makeRunnerRelay = Effect.fn("makeRunnerRelay")(function* (deps: {
         "This Runner was paired again, and its token replaced",
       )
     }
+    deps.toWeb(
+      PairingCodeRedeemed.make({
+        id: redeemed.pairingCodeId,
+        runnerId: redeemed.runnerId,
+        name: redeemed.name,
+        repaired: redeemed.repaired,
+      }),
+    )
     yield* deps.runnersChanged
     yield* codesChanged()
     return redeemed

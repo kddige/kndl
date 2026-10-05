@@ -404,6 +404,18 @@ export const PairingCodeList = Schema.TaggedStruct("PairingCodeList", {
 })
 export type PairingCodeList = typeof PairingCodeList.Type
 
+/**
+ * A Pairing code was redeemed, for a new Runner or to Re-pair one: sent to every web client, before
+ * the RunnerList and PairingCodeList that follow, so the page that showed the code can say so.
+ */
+export const PairingCodeRedeemed = Schema.TaggedStruct("PairingCodeRedeemed", {
+  id: PairingCodeId,
+  runnerId: RunnerId,
+  name: Schema.NonEmptyString,
+  repaired: Schema.Boolean,
+})
+export type PairingCodeRedeemed = typeof PairingCodeRedeemed.Type
+
 /** Answers a {@link RemoveRunner}; the RunnerList that follows leaves the Runner out. */
 export const RunnerRemoved = Schema.TaggedStruct("RunnerRemoved", {
   requestId: RequestId,
@@ -436,6 +448,7 @@ export const HubToWeb = Schema.Union([
   AppPermissionsChecked,
   PairingCodeCreated,
   PairingCodeList,
+  PairingCodeRedeemed,
   RunnerRemoved,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToWeb = typeof HubToWeb.Type
