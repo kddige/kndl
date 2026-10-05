@@ -27,6 +27,7 @@ import {
   type HubConfigInput,
 } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
+import { HubVersion } from "./HubVersion.ts"
 
 export const webOrigin = "http://localhost:5173"
 
@@ -50,7 +51,7 @@ export const baseConfig: HubConfigInput = {
 }
 
 /** The Hub's stores and services, and its database, which tests can reach into. */
-export type Services = Layer.Success<typeof HubServices> | SqlClient.SqlClient
+export type Services = Layer.Success<typeof HubServices> | SqlClient.SqlClient | HubVersion
 
 export interface TestHub {
   /** The Hub's address, such as `http://127.0.0.1:54321`. */
@@ -78,6 +79,8 @@ export async function startHub(
     readonly githubApp?: Layer.Layer<GitHubApp, unknown, HubConfig>
     /** The database; a fresh in-memory one by default. */
     readonly database?: Layer.Layer<SqlClient.SqlClient, unknown>
+    /** The Hub's own version; this checkout's by default. */
+    readonly hubVersion?: Layer.Layer<HubVersion>
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -89,6 +92,7 @@ export async function startHub(
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
     Layer.provideMerge(options.githubApp ?? GitHubApp.layer),
+    Layer.provideMerge(options.hubVersion ?? HubVersion.layer),
     Layer.provideMerge(options.database ?? DatabaseTest),
     Layer.provideMerge(HubConfig.layerFrom({ ...baseConfig, ...options.config })),
   )

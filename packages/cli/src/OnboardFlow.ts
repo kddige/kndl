@@ -8,6 +8,7 @@
 import { mkdir } from "node:fs/promises"
 import { hostname, networkInterfaces, userInfo } from "node:os"
 import { generateSecretsKey } from "@claude-hub/hub/src/Secrets.ts"
+import { type PairingTarget, parsePairing } from "@claude-hub/protocol"
 import { Effect } from "effect"
 import {
   build,
@@ -38,6 +39,14 @@ import {
   readEnvValues,
   writeEnvFile,
 } from "./Host.ts"
+import { HubClient } from "./HubClient.ts"
+import {
+  type ConnectionCheck,
+  connectionSettled,
+  describeConnectionCheck,
+  describePaired,
+  shortHostname,
+} from "./Join.ts"
 import type { Layout, Role } from "./Layout.ts"
 import {
   type Answer,
@@ -78,6 +87,11 @@ export interface OnboardOptions {
   readonly githubApp: AppSetupChoice | undefined
   readonly hubUrl: string | undefined
   readonly token: string | undefined
+  /**
+   * A pairing link from the Hub's Runners page, `<hub-url>#<code>`, or a code alone with
+   * `hubUrl`: the Runner redeems it for its token (`runner join`, `--pair`).
+   */
+  readonly pair: string | undefined
   readonly runnerName: string | undefined
   readonly installPrerequisites: boolean | undefined
   readonly services: boolean | undefined
@@ -180,10 +194,15 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
     const hubValues = readEnvValues(layout.envFile("hub"))
     const runnerValues = readEnvValues(layout.envFile("runner"))
 
-    // 1. Role.
+    // 1. Role. A pairing link sets up a Runner for a Hub elsewhere.
+    if (options.pair !== undefined && options.role !== undefined && options.role !== "runner") {
+      return yield* fail(
+        `A pairing link sets up a Runner for a Hub elsewhere, so it goes with --role runner, not --role ${options.role}.`,
+      )
+    }
     const choice = yield* answer(
       pickAnswer({
-        flag: options.role,
+        flag: options.pair === undefined ? options.role : "runner",
         existing: existingRole(
           hubValues.HUB_PUBLIC_URL !== undefined,
           runnerValues.RUNNER_TOKEN !== undefined,
@@ -311,14 +330,24 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
 
     // 4. The Runner's questions. With the Hub on this machine, the Runner reaches it on loopback,
     // and its token is issued directly once hub.env is written.
-    let runner: { name: string; hubUrl: string; token: string | undefined } | undefined
+    // A pairing link is redeemed for the token once every question is answered.
+    let runner:
+      | {
+          name: string
+          hubUrl: string
+          token: string | undefined
+          pairing?: PairingTarget
+        }
+      | undefined
     if (roles.includes("runner")) {
       const name =
         options.runnerName ??
         (options.reset ? undefined : runnerValues.RUNNER_NAME) ??
-        hostname().split(".")[0] ??
-        "runner"
-      if (hub !== undefined) {
+        shortHostname(hostname())
+      const pairing = hub === undefined ? yield* askPairing(options, runnerValues) : undefined
+      if (pairing !== undefined) {
+        runner = { name, hubUrl: pairing.hubUrl, token: undefined, pairing }
+      } else if (hub !== undefined) {
         const hubUrl = localHubUrl(hub.port)
         const kept =
           !options.reset &&
@@ -338,7 +367,7 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
             reset: options.reset,
             interactive,
           }),
-          "--hub-url <url>",
+          "--pair '<link>' (from the Hub's Runners page), or --hub-url <url> and --token <token>",
           () =>
             ui.text({
               message: "The Hub's URL, as this machine reaches it",
@@ -373,7 +402,23 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
       }
     }
 
-    // 5. Move the old data aside, and write the env files, each whole.
+    // 5. Redeem the pairing link, move the old data aside, and write the env files, each whole.
+    // The code is redeemed before the prerequisites are installed and the Runner built, which can
+    // take longer than its 15 minutes; with the token in runner.env, a later step that fails is
+    // retried with `claude-hub onboard`, which keeps it, without a new code.
+    if (runner?.pairing !== undefined) {
+      const target = runner.pairing
+      const client = yield* HubClient
+      const name = runner.name
+      const outcome = yield* ui.spin(
+        `Pairing with ${target.hubUrl}`,
+        () => client.pair(target, name),
+        (done) => (done._tag === "Paired" ? `Paired as ${done.paired.name}` : "Not paired"),
+      )
+      if (outcome._tag === "Refused") return yield* fail(outcome.message)
+      yield* ui.log("success", describePaired(outcome.paired, target.hubUrl))
+      runner = { ...runner, name: outcome.paired.name, token: outcome.paired.token }
+    }
     if (renames !== undefined) {
       yield* moveAside(layout, renames)
       yield* ui.log(
@@ -430,6 +475,49 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
       yield* ui.log("step", `wrote ${layout.envFile("runner")}`)
     }
     return roles
+  })
+
+/**
+ * The pairing link a Runner for a Hub elsewhere joins with: `--pair`'s; or, when nothing set this
+ * Runner up before (or `--reset`) and no `--hub-url` or `--token` says otherwise, the person's
+ * choice of a link over a token. `undefined` when the Runner gets a token instead.
+ */
+const askPairing = (options: OnboardOptions, runnerValues: Readonly<Record<string, string>>) =>
+  Effect.gen(function* () {
+    const ui = yield* Ui
+    const check = (text: string) => parsePairing(text, options.hubUrl)
+    let text = options.pair
+    if (text === undefined) {
+      const settled =
+        options.token !== undefined ||
+        options.hubUrl !== undefined ||
+        (!options.reset && runnerValues.RUNNER_TOKEN !== undefined)
+      if (settled || !ui.interactive) return undefined
+      const how = yield* ui.select({
+        message: "How does this Runner get its token?",
+        choices: [
+          {
+            value: "pair" as const,
+            label: "A pairing link, from the Hub's Runners page (Add a Runner)",
+          },
+          {
+            value: "token" as const,
+            label: "A Runner token, from `claude-hub runner token <name>` on the Hub's machine",
+          },
+        ],
+      })
+      if (how === "token") return undefined
+      text = yield* ui.text({
+        message: "The pairing link, from the Hub's Runners page (Add a Runner)",
+        validate: (value) => {
+          const parsed = check(value)
+          return parsed._tag === "Invalid" ? parsed.message : undefined
+        },
+      })
+    }
+    const parsed = check(text)
+    if (parsed._tag === "Invalid") return yield* fail(parsed.message)
+    return parsed.target
   })
 
 /**
@@ -505,12 +593,38 @@ const healthCheck = (layout: Layout, roles: ReadonlyArray<Role>, runnerLogFrom: 
       }
     }
     if (roles.includes("runner")) {
-      yield* ui.spin(
+      const said = yield* ui.spin(
         "Waiting for the Runner to connect",
-        () => runnerConnectionAfter(layout, runnerLogFrom, 30),
-        (said) => `Runner: ${said}`,
+        () => runnerConnected(layout, runnerLogFrom, 30),
+        (result) => `Runner: ${result.said}`,
       )
+      if (!said.ok) yield* ui.log("warn", `Runner: ${said.said}`)
     }
+  })
+
+/**
+ * Waits up to `seconds` for the Hub to say it has the Runner connected, asking it with the
+ * Runner's token. A Hub too old to say, or that this machine can't ask, leaves it to what the
+ * Runner's log says after byte `logFrom`.
+ */
+const runnerConnected = (layout: Layout, logFrom: number, seconds: number) =>
+  Effect.gen(function* () {
+    const client = yield* HubClient
+    const values = readEnvValues(layout.envFile("runner"))
+    const { HUB_URL: hubUrl, RUNNER_TOKEN: token } = values
+    let check: ConnectionCheck = { _tag: "Unsupported" }
+    if (hubUrl !== undefined && token !== undefined) {
+      for (let waited = 0; ; waited += 1) {
+        check = yield* client.connection(hubUrl, token)
+        if (connectionSettled(check) || waited >= seconds) break
+        yield* Effect.sleep("1 second")
+      }
+    }
+    if (check._tag === "Unsupported" || check._tag === "Unreachable") {
+      const said = yield* runnerConnectionAfter(layout, logFrom, seconds)
+      return { ok: said.startsWith("connected"), said }
+    }
+    return { ok: check._tag === "Online", said: describeConnectionCheck(check, seconds) }
   })
 
 function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
@@ -524,7 +638,7 @@ function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
         : "Install the GitHub App on the Repos claude-hub works in; `claude-hub doctor` checks its permissions.",
     )
     lines.push(
-      "Add a Runner on another machine: `claude-hub runner token <name>` here, then `claude-hub onboard --role runner` there.",
+      "Add a Runner on another machine: Add a Runner on the Hub's Runners page, and run the command it shows there.",
     )
   }
   lines.push("`claude-hub status` shows how things are; `claude-hub doctor` checks them.")

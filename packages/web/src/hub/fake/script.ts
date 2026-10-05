@@ -1,4 +1,4 @@
-// What the fake Hub knows and plays: two Runners, a few Sessions with some history, and the
+// What the fake Hub knows and plays: two Runners, one behind the Hub's commit, a few Sessions with some history, and the
 // Turns it streams. All made up; the people are Alice (you) and Bob.
 
 import type {
@@ -34,10 +34,33 @@ export type ReplyStep =
   | { readonly kind: "queue"; readonly sender: ParticipantWire; readonly text: string }
   | { readonly kind: "pause"; readonly steps: number }
 
+/** The commit the fake Hub runs. */
+export const hubVersion = { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", branch: "main" }
+
+/** The Runners paired with the fake Hub; their `openSessions` is counted from the Sessions. */
 export function seedRunners(): Array<RunnerSummaryWire> {
+  const now = Date.now()
   return [
-    { id: "r-studio", name: "studio", login: { account: "alice@example.com" }, isOnline: true },
-    { id: "r-ci", name: "ci-box", login: { account: "ci@example.com" }, isOnline: false },
+    {
+      id: "r-studio",
+      name: "studio",
+      login: { account: "alice@example.com" },
+      isOnline: true,
+      version: hubVersion,
+      versionStatus: "Current",
+      lastSeenAt: now,
+      openSessions: 0,
+    },
+    {
+      id: "r-ci",
+      name: "ci-box",
+      login: { account: "ci@example.com" },
+      isOnline: false,
+      version: { commit: "5d2b9e07c41a8f3362e0d9b7a1c4f58e2b6d0a93", branch: "main" },
+      versionStatus: "Behind",
+      lastSeenAt: now - 3 * 60 * 60 * 1000,
+      openSessions: 0,
+    },
   ]
 }
 

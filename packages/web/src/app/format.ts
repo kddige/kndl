@@ -1,6 +1,6 @@
 // Small formatters for times, durations and counts.
 
-import type { SessionState, SessionSummary } from "@claude-hub/protocol"
+import type { RunnerSummary, SessionState, SessionSummary } from "@claude-hub/protocol"
 import type { SessionState as StatusState } from "../ui/index.ts"
 
 /** "just now", "5m ago", "3h ago", "2d ago", then the date. */
@@ -111,3 +111,8 @@ const terminalEscapes =
 /** Control characters other than tab and newline, which a log view can't show. */
 // oxlint-disable-next-line eslint/no-control-regex -- removing them is the point
 const controlCharacters = /[\u0000-\u0008\u000b-\u001f\u007f]/g
+
+/** A Runner as a picker names it: "studio · alice@example.com", or its name until it connects. */
+export function runnerLabel(runner: RunnerSummary): string {
+  return runner.login === null ? runner.name : `${runner.name} · ${runner.login.account}`
+}

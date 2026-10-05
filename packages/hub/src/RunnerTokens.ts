@@ -19,13 +19,18 @@ export class RunnerTokens extends Context.Service<
   {
     /**
      * A new token for the Runner of this name, which is registered if it is new. Issuing again
-     * replaces the old token, keeping the RunnerId.
+     * replaces the old token, keeping the RunnerId; a removed Runner of this name is back.
      */
     readonly issue: (
       name: string,
     ) => Effect.Effect<RunnerIdentity & { readonly token: string }, SqlError>
-    /** The Runner a token belongs to, or none for anything but a current Runner token. */
+    /**
+     * The Runner a token belongs to, or none for anything but a current Runner token: one a Re-pair
+     * replaced, or a removed Runner's, is no longer one.
+     */
     readonly authenticate: (token: string) => Effect.Effect<Option.Option<RunnerIdentity>, SqlError>
+    /** Removes a Runner: its token stops working, and it is no longer listed. */
+    readonly remove: (id: RunnerId) => Effect.Effect<void, SqlError>
   }
 >()("@claude-hub/hub/RunnerTokens") {
   static readonly layer = Layer.effect(
@@ -42,7 +47,7 @@ export class RunnerTokens extends Context.Service<
         yield* sql`
           INSERT INTO runners (id, name, secret_hash, created_at)
           VALUES (${minted.id}, ${name}, ${minted.secretHash}, ${now})
-          ON CONFLICT (id) DO UPDATE SET secret_hash = excluded.secret_hash
+          ON CONFLICT (id) DO UPDATE SET secret_hash = excluded.secret_hash, removed_at = NULL
         `
         return { runnerId: RunnerId.make(minted.id), name, token: minted.token }
       }, sql.withTransaction)
@@ -51,7 +56,8 @@ export class RunnerTokens extends Context.Service<
         const parsed = parseToken("runner", token)
         if (parsed === undefined) return Option.none<RunnerIdentity>()
         const rows = yield* sql<{ readonly name: string; readonly secretHash: string }>`
-          SELECT name, secret_hash AS secretHash FROM runners WHERE id = ${parsed.id}
+          SELECT name, secret_hash AS secretHash FROM runners
+          WHERE id = ${parsed.id} AND removed_at IS NULL
         `
         const row = rows[0]
         if (row === undefined || !secretMatches(parsed.secret, row.secretHash)) {
@@ -60,7 +66,12 @@ export class RunnerTokens extends Context.Service<
         return Option.some({ runnerId: RunnerId.make(parsed.id), name: row.name })
       })
 
-      return RunnerTokens.of({ issue, authenticate })
+      const remove = Effect.fn("RunnerTokens.remove")(function* (id: RunnerId) {
+        const now = yield* Clock.currentTimeMillis
+        yield* sql`UPDATE runners SET removed_at = ${now} WHERE id = ${id} AND removed_at IS NULL`
+      })
+
+      return RunnerTokens.of({ issue, authenticate, remove })
     }),
   )
 }

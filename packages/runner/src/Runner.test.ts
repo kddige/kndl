@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ClaudeSessionId, ProtocolVersion } from "@claude-hub/protocol"
+import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Exit, Fiber, Layer, Redacted, References } from "effect"
@@ -187,6 +188,8 @@ const startSession = (id: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 })
 
+const buildVersion = readBuildVersion()
+
 /** Waits for the welcome, so the Hub can send. */
 const connected = (h: Harness) =>
   eventually(() => h.hub.connections.length > 0 && h.hub.current.received.length > 0)
@@ -203,6 +206,8 @@ describe("connecting", () => {
       name: "mac",
       login: { account: "alice@example.com" },
       sessions: [],
+      // The commit this checkout is at, when it is a git checkout (ADR 0011).
+      ...(buildVersion !== undefined && { version: buildVersion }),
     })
   })
 

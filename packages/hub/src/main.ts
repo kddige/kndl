@@ -18,6 +18,7 @@ import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { holdHubLock } from "./HubLock.ts"
 import { drainFirst } from "./HubShutdown.ts"
+import { announceHubVersion, HubVersion } from "./HubVersion.ts"
 import {
   resetSecrets,
   type SecretsResetPlan,
@@ -76,10 +77,12 @@ const HeldDatabase = DatabaseLive.pipe(
 const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(announceSignIn),
   Layer.provide(announceWebUi),
+  Layer.provide(announceHubVersion),
   Layer.provide(ServerLive),
   Layer.provide(GitHub.layer),
   Layer.provide(HubServices),
   Layer.provide(GitHubApp.layer),
+  Layer.provide(HubVersion.layer),
   Layer.provide(HeldDatabase),
   Layer.provide(HubConfig.layer),
 )

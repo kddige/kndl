@@ -18,7 +18,7 @@ ERROR (#2): ConfigError: SchemaError(Expected string
 
 **Why.** `RUNNER_TOKEN` isn't set. Every Runner needs one, and the Runner doesn't read `packages/hub/.env.local`, which is the Hub's.
 
-**Fix.** Issue a token on the Hub's machine with `bun run runner-token <name>`, and start the Runner with it. See [Add a Runner](/how-to/add-a-runner/).
+**Fix.** Pair the machine with `claude-hub runner join`, which writes the token, or issue one on the Hub's machine with `bun run runner-token <name>` and start the Runner with it. See [Add a Runner](/how-to/add-a-runner/).
 
 ## No Claude account is signed in
 
@@ -62,7 +62,7 @@ INFO (#2): Reconnecting to the Hub in 500 ms
 
 - Check the Hub is up from the Runner's machine: `curl <HUB_URL>/health` should answer `{"status":"ok"}`.
 - Check `HUB_URL` is the Hub's own URL, with `https:` if the Hub is behind HTTPS. The Runner adds `/ws/runner`, over `wss:` for an `https:` URL.
-- For a refused token, run `bun run runner-token <name>` on the Hub's machine again and restart the Runner with the new token.
+- For a refused token, see [The Hub doesn't accept the Runner's token](#the-hub-doesnt-accept-the-runners-token).
 
 The Runner keeps trying, so it connects on its own once the Hub is back.
 
@@ -73,6 +73,63 @@ The Runner keeps trying, so it connects on its own once the Hub is back.
 **Why.** The Hub listens on `127.0.0.1` by default, so only its own machine can reach it. `HUB_URL` also defaults to `http://127.0.0.1:7777`, which on the second machine names that machine itself.
 
 **Fix.** Make the Hub reachable from the Runner's machine, and point `HUB_URL` at it. [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/) covers HTTPS, Tailscale and SSH tunnels. A Runner only needs to reach the Hub; nothing connects in to the Runner.
+
+## The pairing code can't be used
+
+**What you see.** `claude-hub runner join` stops before writing anything with:
+
+```
+That pairing code can't be used: it may be mistyped, expired (codes last 15 minutes), already used or revoked. Make a new one on the Hub's Runners page (Add a Runner).
+```
+
+**Why.** The Hub gives the same answer for every code it won't take, so as not to tell a guesser which codes exist. A code works once, for 15 minutes; one made with **Re-pair** also stops working when its Runner is removed.
+
+**Fix.** Make a new code on the Runners page and paste the new command. Pasting the whole command, quotes included, avoids typos; a code typed by hand may use any case, and dashes and spaces are optional.
+
+A few other answers come before the Hub is asked, or instead:
+
+- `The code after # isn't a whole pairing code …`: part of the link is missing. Copy the command again.
+- `The Hub already has a Runner named build-box …`: the short hostname is taken by another Runner. Join with `--name` and another name, or, if this machine should take that Runner's place, **Re-pair** it on the Runners page and join with that code. The code isn't used up.
+- `… doesn't pair Runners with codes: it runs a claude-hub from before them`: update the Hub, or issue a token on its machine with `claude-hub runner token <name>` and run `claude-hub onboard --role runner --hub-url <url> --token <token>`.
+- `Couldn't reach the Hub at …`: the machine can't reach the URL in the link, the Hub's `HUB_PUBLIC_URL`. See [A Runner on another machine never shows up](#a-runner-on-another-machine-never-shows-up).
+
+## The Runner was paired but doesn't connect
+
+**What you see.** `runner join` pairs, then says `Runner: not connected to the Hub after 30 seconds: see \`claude-hub logs runner\``.
+
+**Why.** The token is in `runner.env` and the Runners page lists the Runner, offline, but the service didn't start or can't reach the Hub over its WebSocket. A proxy that passes plain HTTP but not WebSockets does this.
+
+**Fix.** Read `claude-hub logs runner` and run `claude-hub doctor`. Once it's fixed, `claude-hub runner start` (or `claude-hub onboard`, which keeps the token) finishes the job: the code is already used, and the token doesn't expire.
+
+## The Hub doesn't accept the Runner's token
+
+**What you see.** The Runner logs, at every reconnect:
+
+```
+The Hub doesn't accept this Runner's token: the Runner was removed on the Hub's Runners page, or paired again with a new token. …
+```
+
+and `claude-hub status` says the Hub doesn't accept the token.
+
+**Why.** Someone removed the Runner on the Runners page, or Re-paired it, and another `runner join` used that code, here or on another machine. Either way, the Hub closed this Runner's connection and the token stopped working. Its Sessions keep running in tmux.
+
+**Fix.** If the machine should still be a Runner, make a code on the Runners page and run `claude-hub runner join` with it: **Re-pair** the Runner if it's still listed, to keep its Sessions; **Add a Runner** if it was removed. If it shouldn't, stop it with `claude-hub runner stop`, or `claude-hub uninstall`.
+
+## A Runner can't be removed
+
+**What you see.** **Remove** on the Runners page says `Runner build-box has 2 Sessions that aren't Archived. Archive them first, then remove the Runner.`
+
+**Why.** A removed Runner can never connect again, so its Active, Asleep and Frozen Sessions would be stuck.
+
+**Fix.** Archive each of its Sessions (the count on the Runners page says how many), then remove it. A Frozen Session can be archived while its Runner is offline.
+
+## A Runner is behind the Hub
+
+**What you see.** The Runners page marks a Runner **behind the Hub**, or **not the Hub's commit**.
+
+**Why.** It runs an older commit of claude-hub than the Hub, or one the Hub's history doesn't have, such as another branch's. Runners report their commit when they connect; a Runner from before that is listed with **Version unknown**.
+
+**Fix.** On the Runner's machine, run `claude-hub update`, which restarts it on the latest commit. Nothing breaks in the meantime as long as both speak the same protocol version; when they don't, the Hub turns the Runner away and its log says which side to update.
 
 ## Its Sessions are Frozen
 

@@ -8,6 +8,7 @@ import { Effect, Exit, Option } from "effect"
 import { signInCookie } from "./Auth.ts"
 import { GitHub } from "./GitHub.ts"
 import { HubConfig } from "./HubConfig.ts"
+import { HubVersion } from "./HubVersion.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
@@ -415,8 +416,12 @@ describe("mod channel", () => {
 })
 
 describe("web channel", () => {
-  test("welcomes the signed-in person from the web UI's origin, then lists Runners and Sessions", async () => {
-    const hub = await startHub({ config: { devLogin: true } })
+  test("welcomes the signed-in person from the web UI's origin, then lists Runners, Pairing codes and Sessions", async () => {
+    const hubVersion = { commit: "c".repeat(40), branch: "main" }
+    const hub = await startHub({
+      config: { devLogin: true },
+      hubVersion: HubVersion.fixed(hubVersion),
+    })
     const cookie = cookieFrom(await devSignIn(hub))
     const outcome = await openSocket(hub, "/ws/web", {
       headers: { cookie, origin: webOrigin },
@@ -428,8 +433,10 @@ describe("web channel", () => {
         _tag: "WebWelcome",
         protocolVersion: ProtocolVersion,
         you: { id: "dev:alice", login: "alice", name: "alice" },
+        hub: hubVersion,
       },
       { _tag: "RunnerList", runners: [] },
+      { _tag: "PairingCodeList", codes: [] },
       { _tag: "SessionList", sessions: [] },
     ])
   })

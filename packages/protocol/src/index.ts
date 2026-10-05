@@ -3,12 +3,14 @@
 // Every schema has a type of the same name (`typeof X.Type`). The mod imports those types only,
 // with `import type`, because Claude Code's mod runtime may not run Effect: runtime validation
 // on the mod's side is pending spike #4.
+export * from "./Build.ts"
 export * from "./Environment.ts"
 export * from "./Git.ts"
 export * from "./GitHubApp.ts"
 export * from "./Health.ts"
 export * from "./Ids.ts"
 export * from "./Mod.ts"
+export * from "./Pairing.ts"
 export * from "./Runner.ts"
 export * from "./Session.ts"
 export * from "./Terminal.ts"

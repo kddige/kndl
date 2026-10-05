@@ -10,6 +10,7 @@ import { appKeyPair, StandInGitHub } from "@claude-hub/hub/src/testGitHubApi.ts"
 import { Cause, Effect, Exit } from "effect"
 import { GitHubSiteRef } from "./AppSetup.ts"
 import { envValues, parseEnv } from "./EnvFile.ts"
+import { HubClient } from "./HubClient.ts"
 import { type Layout, resolveLayout } from "./Layout.ts"
 import { configure, type OnboardOptions } from "./OnboardFlow.ts"
 import { Shell } from "./Shell.ts"
@@ -28,6 +29,7 @@ const none: OnboardOptions = {
   githubApp: "create",
   hubUrl: undefined,
   token: undefined,
+  pair: undefined,
   runnerName: undefined,
   installPrerequisites: undefined,
   services: undefined,
@@ -72,6 +74,7 @@ function start(
       Effect.provideService(Ui, ui),
       Effect.provideService(Shell, fakeShell(settings.dryRun ?? false)),
       Effect.provideService(GitHubSiteRef, { web: github.url, api: github.url }),
+      Effect.provide(HubClient.unused),
     ),
   )
   return { done, transcript }

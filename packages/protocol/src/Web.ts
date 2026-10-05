@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { BuildVersion } from "./Build.ts"
 import {
   ApplyEnvironment,
   CheckEnvironmentDraft,
@@ -16,6 +17,7 @@ import {
 } from "./Environment.ts"
 import { AppPermissionsCheck } from "./GitHubApp.ts"
 import { EventSeq, PromptId, RequestId, RunnerId, SessionId } from "./Ids.ts"
+import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
   BranchName,
   EpochMillis,
@@ -206,6 +208,39 @@ export const CheckAppPermissions = Schema.TaggedStruct("CheckAppPermissions", {
 })
 export type CheckAppPermissions = typeof CheckAppPermissions.Type
 
+// ── Runners (issue #85) ──
+
+/**
+ * Mint a Pairing code (GLOSSARY.md): for a new Runner, or, with `runnerId`, to Re-pair that Runner,
+ * which keeps its RunnerId and Sessions and gets a new token in place of its old one. Anyone signed
+ * in may. Answered with a {@link PairingCodeCreated}, the only place the code is ever shown.
+ */
+export const CreatePairingCode = Schema.TaggedStruct("CreatePairingCode", {
+  requestId: RequestId,
+  runnerId: Schema.optionalKey(RunnerId),
+})
+export type CreatePairingCode = typeof CreatePairingCode.Type
+
+/**
+ * Revoke a Pairing code not yet used; Runners already paired are untouched. Answered with a
+ * {@link PairingCodeList}.
+ */
+export const RevokePairingCode = Schema.TaggedStruct("RevokePairingCode", {
+  requestId: RequestId,
+  pairingCodeId: PairingCodeId,
+})
+export type RevokePairingCode = typeof RevokePairingCode.Type
+
+/**
+ * Remove a Runner: its token stops working, and a connected Runner is disconnected. Refused while
+ * it has Sessions that aren't Archived. Answered with a {@link RunnerRemoved}.
+ */
+export const RemoveRunner = Schema.TaggedStruct("RemoveRunner", {
+  requestId: RequestId,
+  runnerId: RunnerId,
+})
+export type RemoveRunner = typeof RemoveRunner.Type
+
 /** Every message a web client sends the Hub. */
 export const WebToHub = Schema.Union([
   WebHello,
@@ -232,6 +267,9 @@ export const WebToHub = Schema.Union([
   SetSharedVariable,
   DeleteSharedVariable,
   CheckAppPermissions,
+  CreatePairingCode,
+  RevokePairingCode,
+  RemoveRunner,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type WebToHub = typeof WebToHub.Type
 
@@ -242,6 +280,8 @@ export const WebWelcome = Schema.TaggedStruct("WebWelcome", {
   protocolVersion: CurrentProtocolVersion,
   /** The signed-in person. */
   you: Participant,
+  /** The commit the Hub runs, which Runners are compared with; absent outside a git checkout. */
+  hub: Schema.optionalKey(BuildVersion),
 })
 export type WebWelcome = typeof WebWelcome.Type
 
@@ -340,6 +380,49 @@ export const AppPermissionsChecked = Schema.TaggedStruct("AppPermissionsChecked"
 })
 export type AppPermissionsChecked = typeof AppPermissionsChecked.Type
 
+/** Answers a {@link CreatePairingCode}. The code is shown here only: the Hub keeps its hash. */
+export const PairingCodeCreated = Schema.TaggedStruct("PairingCodeCreated", {
+  requestId: RequestId,
+  id: PairingCodeId,
+  /** The code, in groups of five. */
+  code: Schema.NonEmptyString,
+  /** The Hub's public URL with the code as its fragment, for `claude-hub runner join`. */
+  link: Schema.NonEmptyString,
+  expiresAt: EpochMillis,
+  runnerId: Schema.optionalKey(RunnerId),
+})
+export type PairingCodeCreated = typeof PairingCodeCreated.Type
+
+/**
+ * The Pairing codes not yet used, revoked or expired, without the codes: sent after the welcome,
+ * whenever one is minted, used or revoked, and in answer to a {@link RevokePairingCode}. A client
+ * drops one by itself once its `expiresAt` has passed.
+ */
+export const PairingCodeList = Schema.TaggedStruct("PairingCodeList", {
+  requestId: Schema.optionalKey(RequestId),
+  codes: Schema.Array(PendingPairingCode),
+})
+export type PairingCodeList = typeof PairingCodeList.Type
+
+/**
+ * A Pairing code was redeemed, for a new Runner or to Re-pair one: sent to every web client, before
+ * the RunnerList and PairingCodeList that follow, so the page that showed the code can say so.
+ */
+export const PairingCodeRedeemed = Schema.TaggedStruct("PairingCodeRedeemed", {
+  id: PairingCodeId,
+  runnerId: RunnerId,
+  name: Schema.NonEmptyString,
+  repaired: Schema.Boolean,
+})
+export type PairingCodeRedeemed = typeof PairingCodeRedeemed.Type
+
+/** Answers a {@link RemoveRunner}; the RunnerList that follows leaves the Runner out. */
+export const RunnerRemoved = Schema.TaggedStruct("RunnerRemoved", {
+  requestId: RequestId,
+  runnerId: RunnerId,
+})
+export type RunnerRemoved = typeof RunnerRemoved.Type
+
 /** Every message the Hub sends a web client. */
 export const HubToWeb = Schema.Union([
   WebWelcome,
@@ -363,5 +446,9 @@ export const HubToWeb = Schema.Union([
   TestBuildEnded,
   SharedVariables,
   AppPermissionsChecked,
+  PairingCodeCreated,
+  PairingCodeList,
+  PairingCodeRedeemed,
+  RunnerRemoved,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToWeb = typeof HubToWeb.Type

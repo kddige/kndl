@@ -6,6 +6,7 @@ import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"
 import { Command } from "effect/cli"
 import { cli } from "./Cli.ts"
+import { HubClient } from "./HubClient.ts"
 import { Shell } from "./Shell.ts"
 import { Ui } from "./Ui.ts"
 
@@ -34,6 +35,10 @@ Command.run(cli, { version: version() }).pipe(
       Effect.sync(() => (process.exitCode = 130)),
     ),
   ),
-  Effect.provide(Layer.mergeAll(Shell.layer, Ui.layer).pipe(Layer.provideMerge(BunServices.layer))),
+  Effect.provide(
+    Layer.mergeAll(Shell.layer, Ui.layer, HubClient.layer).pipe(
+      Layer.provideMerge(BunServices.layer),
+    ),
+  ),
   BunRuntime.runMain,
 )

@@ -13,6 +13,8 @@ import {
   type EnvironmentState,
   type EnvironmentVersion,
   HubToWeb,
+  type PairingCodeCreated,
+  type PairingCodeId,
   ProtocolVersion,
   RequestId,
   type RunnerId,
@@ -302,6 +304,29 @@ export class HubClient {
       .variables
   }
 
+  // ── Runners (issue #85) ──────────────────────────────────────────────────
+
+  /**
+   * Mints a Pairing code: for a new Runner, or, with `runnerId`, to Re-pair that one. The answer
+   * is the only place the code is ever shown.
+   */
+  createPairingCode(runnerId?: RunnerId): Promise<PairingCodeCreated> {
+    return this.#request(
+      { _tag: "CreatePairingCode", ...(runnerId !== undefined && { runnerId }) },
+      "PairingCodeCreated",
+    )
+  }
+
+  /** Revokes a Pairing code not yet used; a Runner already paired with one is untouched. */
+  async revokePairingCode(pairingCodeId: PairingCodeId): Promise<void> {
+    await this.#request({ _tag: "RevokePairingCode", pairingCodeId }, "PairingCodeList")
+  }
+
+  /** Removes a Runner; the Hub refuses while it has Sessions that aren't Archived, and says so. */
+  async removeRunner(runnerId: RunnerId): Promise<void> {
+    await this.#request({ _tag: "RemoveRunner", runnerId }, "RunnerRemoved")
+  }
+
   /** Sends `command` with a new request id; resolves with the Hub's `answer` to it. */
   #request<Tag extends AnswerTag>(
     command: Request,
@@ -396,7 +421,10 @@ export class HubClient {
       case "EnvironmentDraftChecked":
       case "TestBuildStarted":
       case "SharedVariables":
-      case "AppPermissionsChecked": {
+      case "AppPermissionsChecked":
+      case "PairingCodeCreated":
+      case "PairingCodeList":
+      case "RunnerRemoved": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break

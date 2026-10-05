@@ -8,6 +8,8 @@ import { HubShutdown } from "./HubShutdown.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModRoutes } from "./ModRoutes.ts"
 import { ModTokens } from "./ModTokens.ts"
+import { PairingCodes } from "./PairingCodes.ts"
+import { PairingRoutes } from "./PairingRoutes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { RepoAccess } from "./RepoAccess.ts"
@@ -27,13 +29,14 @@ export const HubRoutes = Layer.mergeAll(
   AuthRoutes,
   ChannelRoutes,
   ModRoutes,
+  PairingRoutes,
   WebUiRoutes,
 )
 
 /**
  * The credential stores, the mod outbox, Environments, Repo access, the GitHub App's permission
- * check, the Session relay and the shutdown signal the routes use, given a database and the GitHub
- * App (GitHubApp.ts).
+ * check, the Pairing codes, the Session relay and the shutdown signal the routes use, given a
+ * database, the GitHub App (GitHubApp.ts) and the Hub's version (HubVersion.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SessionGit.layer, RepoAccess.layer, PermissionDrift.layer)),
@@ -47,6 +50,7 @@ export const HubServices = SessionRelay.layer.pipe(
       SessionLog.layer,
       PromptQueue.layer,
       Runners.layer,
+      PairingCodes.layer,
       HubShutdown.layer,
       Environments.layer,
     ),

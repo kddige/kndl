@@ -99,6 +99,11 @@ export const RunnerConfigLive = Layer.effect(
 export const ModBundle = "hooks/hub-link-lib.js"
 
 /** The Hub's WebSocket endpoint for Runners: `/ws/runner`, over `ws:` or `wss:`. */
+/** Where the Runner asks whether the Hub has it connected, and still takes its token. */
+export function runnerConnectionUrl(hubUrl: URL): string {
+  return new URL("/runner/connection", hubUrl).href
+}
+
 export function runnerSocketUrl(hubUrl: URL): string {
   const url = new URL("/ws/runner", hubUrl)
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:"

@@ -13,7 +13,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { type ReactNode, useEffect, useMemo, useState } from "react"
-import { repoParams, timeAgo } from "../app/format.ts"
+import { repoParams, runnerLabel, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { RepoEnvironment, TestBuildRun } from "../hub/store.ts"
 import {
@@ -780,7 +780,7 @@ function EnvironmentEditor({
                 onValueChange={(value) => setRunnerId(value)}
                 options={onlineRunners.map((runner: RunnerSummary) => ({
                   value: runner.id as string,
-                  label: `${runner.name} · ${runner.login.account}`,
+                  label: runnerLabel(runner),
                 }))}
                 sx={styles.runnerSelect}
               />

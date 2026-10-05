@@ -1,8 +1,8 @@
-import type { RunnerId, RunnerSummary } from "@claude-hub/protocol"
+import type { RunnerId } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
 import { type FormEvent, type ReactElement, useState } from "react"
-import { repoParams } from "../app/format.ts"
+import { repoParams, runnerLabel } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { Button, Dialog, DialogClose, Field, Input, PlusIcon, Select } from "../ui/index.ts"
 import { color, space, text } from "../ui/tokens.stylex.ts"
@@ -150,7 +150,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
               { value: anyRunner, label: "Any online Runner" },
               ...(runners ?? []).map((candidate) => ({
                 value: candidate.id as string,
-                label: runnerLabel(candidate),
+                label: `${runnerLabel(candidate)}${candidate.isOnline ? "" : " (offline)"}`,
                 disabled: !candidate.isOnline,
               })),
             ]}
@@ -164,8 +164,4 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
       </form>
     </Dialog>
   )
-}
-
-function runnerLabel(runner: RunnerSummary): string {
-  return `${runner.name} · ${runner.login.account}${runner.isOnline ? "" : " (offline)"}`
 }

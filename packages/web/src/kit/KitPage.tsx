@@ -9,6 +9,7 @@ import {
   Banner,
   BoxIcon,
   BranchIcon,
+  CopyIcon,
   Button,
   Checkbox,
   Dialog,
@@ -40,6 +41,7 @@ import {
   PlusIcon,
   Popover,
   RestartIcon,
+  ServerIcon,
   Select,
   SessionStatus,
   setTheme,
@@ -623,6 +625,8 @@ function Toggles() {
         <ExternalLinkIcon aria-label="External link" />
         <MenuIcon aria-label="Menu" />
         <ArchiveIcon aria-label="Archive" />
+        <ServerIcon aria-label="Server" />
+        <CopyIcon aria-label="Copy" />
       </Row>
     </Section>
   )

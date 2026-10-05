@@ -29,6 +29,7 @@ import {
   NavSection,
   NavSlot,
   PlusIcon,
+  ServerIcon,
   SessionStatus,
   Sidebar,
   Spinner,
@@ -92,7 +93,8 @@ const styles = stylex.create({
 })
 
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
-function sectionOf(pathname: string): "environments" | "variables" | "archive" | null {
+function sectionOf(pathname: string): "runners" | "environments" | "variables" | "archive" | null {
+  if (pathname === "/runners") return "runners"
   if (pathname === "/environments" || /^\/repos\/[^/]+\/[^/]+\/environment$/.test(pathname))
     return "environments"
   if (pathname === "/variables") return "variables"
@@ -182,6 +184,13 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
       }
     >
       <NavSection>
+        <NavItem
+          render={<Link to="/runners" />}
+          icon={<ServerIcon />}
+          current={section === "runners"}
+        >
+          Runners
+        </NavItem>
         <NavItem
           render={<Link to="/environments" />}
           icon={<BoxIcon />}

@@ -131,8 +131,10 @@ import {
 } from "./EnvironmentRelay.ts"
 import { Environments } from "./Environments.ts"
 import { HubConfig } from "./HubConfig.ts"
+import { HubVersion } from "./HubVersion.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
+import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import {
@@ -145,6 +147,7 @@ import {
   StreamRedactor,
 } from "./Redaction.ts"
 import { RepoAccess } from "./RepoAccess.ts"
+import { isRunnerCommand, makeRunnerRelay } from "./RunnerRelay.ts"
 import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
 import { SessionGit } from "./SessionGit.ts"
@@ -233,6 +236,16 @@ export class SessionRelay extends Context.Service<
       hello: RunnerHello,
       peer: Peer<HubToRunner>,
     ) => Effect.Effect<Receive<RunnerToHub>, never, Scope.Scope>
+    /**
+     * Redeems a Pairing code (`POST /runner/pair`): the Runner's new token, which a Re-pair gives
+     * in place of the one the Runner had.
+     */
+    readonly redeemPairing: (
+      code: string,
+      name: string,
+    ) => Effect.Effect<Redeemed, SqlError | PairingRefused>
+    /** Whether a Runner is connected now. */
+    readonly runnerOnline: (id: RunnerId) => boolean
     /** The Session's mod said hello. */
     readonly modHello: (sessionId: SessionId, hello: ModHello) => Effect.Effect<void, SqlError>
     /** The Session's mod reported Turn events and failed deliveries, oldest first. */
@@ -256,6 +269,7 @@ export class SessionRelay extends Context.Service<
       const environments = yield* Environments
       const access = yield* RepoAccess
       const drift = yield* PermissionDrift
+      const hubVersion = yield* HubVersion
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
@@ -337,11 +351,26 @@ export class SessionRelay extends Context.Service<
       const toJoined = (sessionId: SessionId, message: HubToWeb) =>
         toWeb(message, (client) => client.joined.has(sessionId))
 
-      const runnerList = Effect.map(runners.list, (known) =>
-        HubToWeb.cases.RunnerList.make({
-          runners: known.map((runner) => ({ ...runner, isOnline: onlineRunners.has(runner.id) })),
-        }),
-      )
+      const runnerList = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        return HubToWeb.cases.RunnerList.make({
+          runners: (yield* runners.list).map((runner) => {
+            const isOnline = onlineRunners.has(runner.id)
+            return {
+              ...runner,
+              isOnline,
+              versionStatus: hubVersion.statusOf(runner.version),
+              lastSeenAt: isOnline ? now : runner.lastSeenAt,
+            }
+          }),
+        })
+      })
+
+      const runnerRelay = yield* makeRunnerRelay({
+        toWeb: (message, to) => toWeb(message, to),
+        runnersChanged: Effect.map(runnerList, (list) => toWeb(list)),
+        disconnect: (id, code, reason) => onlineRunners.get(id)?.peer.close(code, reason),
+      })
 
       /** The Session as the web sees it: what is stored, and whether it is starting or restarting. */
       const forWeb = (session: SessionSummary): SessionSummary => {
@@ -949,6 +978,8 @@ export class SessionRelay extends Context.Service<
         })
         yield* logEvent(session.id, SessionStateChanged.make({ state: "Archived", by }))
         yield* sessionUpdated(session.id)
+        // Its Runner has one Session fewer that keeps it from being removed.
+        toWeb(yield* runnerList)
         const runner = onlineRunners.get(session.runnerId)
         if (runner !== undefined) stopForArchive(runner, session.id)
       })
@@ -966,6 +997,7 @@ export class SessionRelay extends Context.Service<
         )
         // It stays Asleep even with prompts queued from before: the next prompt or a wake wakes it.
         yield* sessionUpdated(session.id)
+        toWeb(yield* runnerList)
       })
 
       /** Purges every Archived Session past its retention. */
@@ -1018,7 +1050,7 @@ export class SessionRelay extends Context.Service<
         const authorize = Effect.fn("SessionRelay.authorize")(function* (
           message: RelayedCommand,
         ): Effect.fn.Return<AccessVerdict, SqlError> {
-          if (isEnvironmentCommand(message)) return {}
+          if (isEnvironmentCommand(message) || isRunnerCommand(message)) return {}
           let repo: string
           let refusal: string
           switch (message._tag) {
@@ -1073,6 +1105,7 @@ export class SessionRelay extends Context.Service<
         const handle = Effect.fn("SessionRelay.receiveWeb")(function* (message: RelayedCommand) {
           if (isEnvironmentCommand(message))
             return yield* environmentRelay.receiveWeb(client, message)
+          if (isRunnerCommand(message)) return yield* runnerRelay.receiveWeb(client, message)
           switch (message._tag) {
             case "WebHello":
               return
@@ -1135,6 +1168,7 @@ export class SessionRelay extends Context.Service<
                 }),
               )
               peer.send(HubToWeb.cases.SessionCreated.make({ requestId, session: forWeb(session) }))
+              toWeb(yield* runnerList)
               return yield* sessionToWeb(session)
             }
 
@@ -1339,6 +1373,13 @@ export class SessionRelay extends Context.Service<
               if (session.value.state !== "Archived" || archived === undefined) {
                 return refuse(message, "The Session is not archived.", { sessionId })
               }
+              if (Option.isNone(yield* runners.get(session.value.runnerId))) {
+                return refuse(
+                  message,
+                  "The Session's Runner was removed from the Hub, so it can't be restored.",
+                  { sessionId },
+                )
+              }
               if ((yield* Clock.currentTimeMillis) >= archived.purgeAt) {
                 return refuse(message, "The Session is past restoring: it is being purged.", {
                   sessionId,
@@ -1493,6 +1534,7 @@ export class SessionRelay extends Context.Service<
               Effect.gen(function* () {
                 webClients.add(client)
                 peer.send(yield* runnerList)
+                peer.send(yield* runnerRelay.pendingList())
                 // Only the Sessions of Repos the person has access to. Archived Sessions are
                 // listed too, with who archived them, for the Archived screen; the web UI leaves
                 // them out of its Session list.
@@ -1683,7 +1725,11 @@ export class SessionRelay extends Context.Service<
                 .get(runner.id)
                 ?.peer.close(RelayCloseCode.Replaced, "Replaced by a newer connection")
               onlineRunners.set(runner.id, runner)
-              yield* runners.recordLogin(runner.id, runner.login)
+              yield* runners.recordHello(
+                runner.id,
+                { login: runner.login, version: hello.version },
+                yield* Clock.currentTimeMillis,
+              )
               toWeb(yield* runnerList)
               const running = new Set(hello.sessions)
               // Sessions purged while it was away, and archived ones it hasn't stopped yet.
@@ -1718,6 +1764,7 @@ export class SessionRelay extends Context.Service<
               Effect.gen(function* () {
                 if (onlineRunners.get(runner.id) !== runner) return
                 onlineRunners.delete(runner.id)
+                yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
                 yield* environmentRelay.runnerGone(runner)
                 for (const session of yield* sessions.listByRunner(runner.id)) {
                   // A stop it was asked for is settled by what it says when it is back.
@@ -1852,7 +1899,17 @@ export class SessionRelay extends Context.Service<
         Effect.forkIn(layerScope),
       )
 
-      return SessionRelay.of({ connectWeb, connectRunner, modHello, modEvents })
+      const redeemPairing = (code: string, name: string) =>
+        serialized(runnerRelay.redeem(code, name))
+
+      return SessionRelay.of({
+        connectWeb,
+        connectRunner,
+        redeemPairing,
+        runnerOnline: (id) => onlineRunners.has(id),
+        modHello,
+        modEvents,
+      })
     }),
   )
 }

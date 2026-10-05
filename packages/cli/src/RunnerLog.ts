@@ -1,6 +1,6 @@
 // Whether the installed Runner is connected to its Hub, read from the last thing its log says
-// about the connection. The Hub has no unauthenticated way to ask, and the log is the Runner's own
-// account of it.
+// about the connection: the Runner's own account of it. The Hub's is `GET /runner/connection`
+// (HubClient.ts), which a Hub from before Pairing codes doesn't answer.
 
 export type RunnerConnection =
   | { readonly _tag: "Connected"; readonly runnerId: string }

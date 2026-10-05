@@ -10,6 +10,7 @@ import {
 import { HubShell } from "./app/HubShell.tsx"
 import { EnvironmentList } from "./environment/EnvironmentList.tsx"
 import { EnvironmentView } from "./environment/EnvironmentView.tsx"
+import { RunnersView } from "./runners/RunnersView.tsx"
 import { type SessionTab, SessionView } from "./session/SessionView.tsx"
 import { AllArchivedSessions, ArchivedSessions } from "./sessions/ArchivedSessions.tsx"
 import { Home } from "./sessions/Home.tsx"
@@ -130,6 +131,13 @@ const variablesRoute = createRoute({
   component: SharedVariablesView,
 })
 
+/** The Runners paired with the Hub: adding, Re-pairing and removing them (issue #85). */
+const runnersRoute = createRoute({
+  getParentRoute: () => hubRoute,
+  path: "/runners",
+  component: RunnersView,
+})
+
 /** Every UI component in every state, for building and reviewing the kit. Loaded on demand. */
 const kitRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -149,6 +157,7 @@ const routeTree = rootRoute.addChildren([
     environmentsRoute,
     environmentRoute,
     variablesRoute,
+    runnersRoute,
   ]),
   kitRoute,
 ])
