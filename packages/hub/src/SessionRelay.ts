@@ -46,6 +46,12 @@
 // - Session names (#120): anyone with access can rename a Session (RenameSession), in any state;
 //   every client that can see it gets the SessionUpdated. A Session without a name is shown by its
 //   Work branch.
+// - Model and effort (#128): a Session's setting, chosen with CreateSession or changed by anyone
+//   with access (SetSessionModel) unless it is Archived, and checked against the models its
+//   Runner's Claude Code said it has. Each change is logged as a ModelSwitched. Claude Code takes
+//   them as `--model` and `--effort` when it starts; a running one never switches mid-Turn: once
+//   no Turn runs, the Hub sends RelaunchSession, and the Runner starts Claude Code again,
+//   resuming its conversation, in the same Sandbox. The queued prompts wait for its new mod.
 // - Child Sessions (#121, ADR 0012): a Session's Claude Code creates, messages, lists, reads and
 //   archives its Child Sessions with the mod's tools (`POST /mod/children`, `childRequest`).
 //   - One level deep: a Child Session is refused. A child runs in its parent's Repo, for its
@@ -161,6 +167,10 @@ import {
   type SessionName,
   type SessionRef,
   sessionTitle,
+  findModel,
+  modelNotFoundText,
+  ModelSwitched,
+  RelaunchSession,
 } from "@claude-hub/protocol"
 import {
   Clock,
@@ -217,7 +227,7 @@ import { RunnerUpdatePush } from "./RunnerUpdatePush.ts"
 import { makeRunnerUpdates } from "./RunnerUpdates.ts"
 import { creatorIdentity, SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
-import { Sessions } from "./Sessions.ts"
+import { type ModelSetting, Sessions } from "./Sessions.ts"
 import { randomId } from "./Tokens.ts"
 
 /** A connection to a peer, as its channel gives it: sending never waits. */
@@ -295,6 +305,12 @@ const noRepoAccess = (repo: string) =>
 /** Why a dev login's Test build is refused: the App can't mint a token to clone it with. */
 const notInstalledForTestBuild = (repo: string) =>
   `The GitHub App isn't installed on ${repo}, so a Test build can't clone it: install the App on the Repo, then try again.`
+
+/** StartSession's and RelaunchSession's `model` and `effort` (#128): the Session's setting. */
+const modelFlags = (setting: ModelSetting): ModelSetting => ({
+  ...(setting.model !== undefined && { model: setting.model }),
+  ...(setting.effort !== undefined && { effort: setting.effort }),
+})
 
 /** The work branch a new Session commits to. */
 export const workBranchFor = (sessionId: SessionId) => `claude/${sessionId}`
@@ -401,6 +417,8 @@ export class SessionRelay extends Context.Service<
         readonly version: BuildVersion | undefined
         /** Whether it updates itself (#87); `undefined` from a Runner too old to say. */
         readonly updater: RunnerUpdater | undefined
+        /** Whether it takes a RelaunchSession (#128). */
+        readonly relaunches: boolean
       }
 
       const webClients = new Set<WebClient>()
@@ -463,7 +481,7 @@ export class SessionRelay extends Context.Service<
       const runnerList: Effect.Effect<RunnerList, SqlError> = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         return HubToWeb.cases.RunnerList.make({
-          runners: (yield* runners.list).map(({ updater, ...runner }) => {
+          runners: (yield* runners.list).map(({ updater, models, ...runner }) => {
             const isOnline = onlineRunners.has(runner.id)
             const update = runnerUpdates.stateOf(runner.id)
             return {
@@ -472,6 +490,7 @@ export class SessionRelay extends Context.Service<
               versionStatus: hubVersion.statusOf(runner.version),
               lastSeenAt: isOnline ? now : runner.lastSeenAt,
               ...(updater !== null && { updater }),
+              ...(models !== null && { models }),
               ...(update !== undefined && { update }),
             }
           }),
@@ -969,6 +988,8 @@ export class SessionRelay extends Context.Service<
         if (session.value.state !== "Active" || session.value.currentTurn !== null) return
         // A Runner draining for its update takes no prompts: they wait for it to be back.
         if (runnerUpdates.holding(session.value.runnerId)) return
+        // A new model or effort first (#128): the prompt waits for the new mod's hello.
+        if (session.value.modelPending === true && (yield* relaunch(session.value))) return
         const [head] = yield* prompts.list(sessionId)
         if (head === undefined) return
         inFlight.set(sessionId, head.id)
@@ -982,6 +1003,40 @@ export class SessionRelay extends Context.Service<
             ...(head.fromSession !== undefined && { fromSession: head.fromSession }),
           }),
         )
+      })
+
+      /**
+       * Starts the Session's Claude Code again with its model and effort as set now (#128), once
+       * they changed while it ran: Claude Code alone, resuming its conversation, its Sandbox left
+       * running. Only between Turns: `deliverNext` asks, when the Session is Active and idle.
+       * Whether it was sent; not to a Runner that doesn't take it, or before Claude Code's
+       * conversation is known, when the setting waits for the Session's next wake instead.
+       */
+      const relaunch = Effect.fn("SessionRelay.relaunch")(function* (session: SessionSummary) {
+        const runner = onlineRunners.get(session.runnerId)
+        if (runner === undefined || !runner.relaunches) return false
+        const resume = yield* sessions.claudeSessionId(session.id)
+        if (Option.isNone(resume)) return false
+        // In place of the old one: the old mod has nothing more to say.
+        const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
+        // Commands the old mod didn't collect are stale, as when it sleeps.
+        yield* outbox.clear(session.id)
+        starting.add(session.id)
+        yield* sessions.setModelPending(session.id, false)
+        yield* Effect.logInfo(`Restarting Claude Code of ${session.id} for its new model`)
+        runner.peer.send(
+          RelaunchSession.make({
+            sessionId: session.id,
+            repo: session.repo,
+            workBranch: session.workBranch,
+            resume: resume.value,
+            modToken,
+            ...(yield* parentOf(session)),
+            ...modelFlags(session),
+          }),
+        )
+        yield* sessionUpdated(session.id)
+        return true
       })
 
       /**
@@ -1003,6 +1058,8 @@ export class SessionRelay extends Context.Service<
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
+        // Its next start takes its model and effort as set then.
+        if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
         if (session.state === "Archived") return
         if (session.state === "Asleep") return yield* sessionUpdated(session.id)
         yield* changeState(session, "Asleep", why)
@@ -1049,6 +1106,8 @@ export class SessionRelay extends Context.Service<
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         starting.add(session.id)
         yield* startSent(session.id, environment)
+        // It starts with its model and effort as set now (#128).
+        if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
         const woken =
           cause === undefined ? `Woken on ${runner.name}` : `Woken on ${runner.name} ${cause}`
         yield* changeState(session, "Active", {
@@ -1068,6 +1127,7 @@ export class SessionRelay extends Context.Service<
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
             ...parent,
+            ...modelFlags(session),
           }),
         )
         return undefined
@@ -1249,7 +1309,52 @@ export class SessionRelay extends Context.Service<
         readonly firstPrompt?: QueuedPrompt
         /** Called once it is created and starting, before every client is sent it. */
         readonly created?: (session: SessionSummary) => void
+        /** Its model and effort (#128), checked with `checkModel`; Claude Code's default if absent. */
+        readonly model?: ModelSetting
       }
+
+      /** A model and effort checked against what a Runner's Claude Code takes (#128). */
+      interface CheckedModel {
+        readonly setting: ModelSetting
+        /** What the Runner's Claude Code calls the model; for the default, the model it runs. */
+        readonly label: string | undefined
+      }
+
+      /**
+       * A model and effort as asked for (#128), checked against what the Runner's Claude Code
+       * takes, as it last said in its hello: the setting, or why it is refused. A model it doesn't
+       * list is refused with Claude Code's own words. With no list, as from a Runner whose Claude
+       * Code couldn't say, only Claude Code's default is taken.
+       */
+      const checkModel = Effect.fn("SessionRelay.checkModel")(function* (
+        runnerId: RunnerId,
+        asked: ModelSetting,
+      ): Effect.fn.Return<CheckedModel | string, SqlError> {
+        const known = Option.getOrUndefined(yield* runners.get(runnerId))
+        const models = known?.models ?? null
+        if (models === null) {
+          if (asked.model === undefined && asked.effort === undefined) {
+            return { setting: {}, label: undefined }
+          }
+          return `${known?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
+        }
+        const model = asked.model === undefined ? models.default : findModel(models, asked.model)
+        if (model === undefined) return modelNotFoundText(asked.model ?? "")
+        if (asked.effort !== undefined) {
+          if (!model.effort) return `${model.label} takes no effort level.`
+          if (!models.efforts.includes(asked.effort)) {
+            return `Claude Code on ${known?.name ?? "the Runner"} has no effort level '${asked.effort}'.`
+          }
+        }
+        return {
+          setting: {
+            // The `default` alias is no setting: Claude Code's default, whatever it is then.
+            ...(model !== models.default && asked.model !== undefined && { model: asked.model }),
+            ...(asked.effort !== undefined && { effort: asked.effort }),
+          },
+          label: model.label,
+        }
+      })
 
       /**
        * Creates a Session and starts it on the plan's Runner, which must be online and able to
@@ -1278,6 +1383,7 @@ export class SessionRelay extends Context.Service<
           createdAt: yield* Clock.currentTimeMillis,
           ...(plan.name !== undefined && { name: plan.name }),
           ...(plan.parent !== undefined && { parentId: plan.parent.id }),
+          ...modelFlags(plan.model ?? {}),
         })
         // Delivered once its mod says hello.
         if (plan.firstPrompt !== undefined) yield* prompts.add(id, plan.firstPrompt)
@@ -1295,6 +1401,7 @@ export class SessionRelay extends Context.Service<
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
             ...(plan.parent !== undefined && { parent: sessionRef(plan.parent) }),
+            ...modelFlags(session),
           }),
         )
         plan.created?.(session)
@@ -1783,6 +1890,8 @@ export class SessionRelay extends Context.Service<
               }
               const behind = runnerRefusal(runner)
               if (behind !== undefined) return refuse(message, behind, { requestId })
+              const model = yield* checkModel(runner.id, message)
+              if (typeof model === "string") return refuse(message, model, { requestId })
               // Repo access was checked before the lock was taken.
               // TODO: check that the base branch exists, once the GitHub App can tell.
               const created = yield* startNew({
@@ -1791,6 +1900,7 @@ export class SessionRelay extends Context.Service<
                 runner,
                 creator: you,
                 why: { by: you, message: `Started on ${runner.name} from ${message.baseBranch}` },
+                model: model.setting,
                 created: (session) =>
                   peer.send(
                     HubToWeb.cases.SessionCreated.make({ requestId, session: forWeb(session) }),
@@ -2012,6 +2122,41 @@ export class SessionRelay extends Context.Service<
               if ((session.value.name ?? null) === renamed.name) return
               yield* sessions.setName(sessionId, renamed.name)
               return yield* sessionUpdated(sessionId)
+            }
+
+            case "SetSessionModel": {
+              // Anyone with access to the Session's Repo may, in any state but Archived (#128).
+              const { sessionId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              if (session.value.state === "Archived") {
+                return refuse(message, "The Session is archived: restore it to change its model.", {
+                  sessionId,
+                })
+              }
+              const checked = yield* checkModel(session.value.runnerId, message)
+              if (typeof checked === "string") return refuse(message, checked, { sessionId })
+              const { setting } = checked
+              if (
+                session.value.model === setting.model &&
+                session.value.effort === setting.effort
+              ) {
+                return
+              }
+              // A running Claude Code is started again with it once no Turn runs (`relaunch`); one
+              // that isn't running starts with it when it wakes.
+              const running = session.value.state === "Active" || session.value.state === "Frozen"
+              yield* sessions.setModel(sessionId, setting, running)
+              yield* logEvent(
+                sessionId,
+                ModelSwitched.make({
+                  by: you,
+                  ...setting,
+                  ...(checked.label !== undefined && { modelLabel: checked.label }),
+                }),
+              )
+              yield* sessionUpdated(sessionId)
+              return yield* deliverNext(sessionId)
             }
 
             case "RestoreSession": {
@@ -2471,6 +2616,7 @@ export class SessionRelay extends Context.Service<
             asksCloneAccess: hello.asksCloneAccess === true,
             version: hello.version,
             updater: hello.updater,
+            relaunches: hello.relaunches === true,
           }
           yield* serialized(
             Effect.gen(function* () {
@@ -2480,7 +2626,12 @@ export class SessionRelay extends Context.Service<
               onlineRunners.set(runner.id, runner)
               yield* runners.recordHello(
                 runner.id,
-                { login: runner.login, version: hello.version, updater: hello.updater },
+                {
+                  login: runner.login,
+                  version: hello.version,
+                  updater: hello.updater,
+                  models: hello.models,
+                },
                 yield* Clock.currentTimeMillis,
               )
               // Settles an update it restarted for, before its Sessions wake.

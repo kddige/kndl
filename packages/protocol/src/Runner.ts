@@ -12,6 +12,7 @@ import {
 } from "./Environment.ts"
 import { GitIdentity, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
+import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
 import { BranchName, RepoName, RunnerLogin, SessionRef } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
@@ -61,6 +62,16 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
   updater: Schema.optionalKey(RunnerUpdater),
   /** Its last update, when that failed: kept until it next updates, so a restarted Hub hears it. */
   lastUpdate: Schema.optionalKey(UpdateFailure),
+  /**
+   * The models and effort levels its Claude Code takes (#128). Absent from a Runner from before,
+   * or one that couldn't find out: its Sessions then run Claude Code's defaults only.
+   */
+  models: Schema.optionalKey(RunnerModels),
+  /**
+   * It takes a {@link RelaunchSession} (#128). A Runner from before doesn't say so: a Session's
+   * new model then takes effect when it next wakes.
+   */
+  relaunches: Schema.optionalKey(Schema.Literal(true)),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
@@ -196,8 +207,33 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
    * tools.
    */
   parent: Schema.optionalKey(SessionRef),
+  /** The model to start Claude Code on, its `--model` (#128); absent for Claude Code's default. */
+  model: Schema.optionalKey(ModelName),
+  /** The effort level to start Claude Code at, its `--effort` (#128); absent for its default. */
+  effort: Schema.optionalKey(EffortLevel),
 })
 export type StartSession = typeof StartSession.Type
+
+/**
+ * Start a running Session's Claude Code again with its model and effort as they are set now
+ * (#128): Claude Code alone, resuming its conversation, with its Sandbox left running. The Hub
+ * sends it only while no Turn runs, and only to a Runner whose hello says it `relaunches`.
+ * Answered as a StartSession is, with SessionStarted, or SessionStartFailed when Claude Code
+ * didn't start again.
+ */
+export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
+  sessionId: SessionId,
+  repo: RepoName,
+  workBranch: BranchName,
+  /** Claude Code's session id to resume, from its mod's last hello. */
+  resume: ClaudeSessionId,
+  /** A new mod token, in place of the old one, which the Hub revoked as it sent this. */
+  modToken: Schema.NonEmptyString,
+  parent: Schema.optionalKey(SessionRef),
+  model: Schema.optionalKey(ModelName),
+  effort: Schema.optionalKey(EffortLevel),
+})
+export type RelaunchSession = typeof RelaunchSession.Type
 
 /**
  * Stop a Session's Claude Code and its Sandbox: `Sleep` keeps the Sandbox's volumes to wake on,
@@ -224,6 +260,7 @@ export const HubToRunner = Schema.Union([
   RunnerWelcome,
   HandshakeRejected,
   StartSession,
+  RelaunchSession,
   StopSession,
   PurgeSession,
   TerminalInput,

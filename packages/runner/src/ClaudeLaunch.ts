@@ -1,6 +1,8 @@
 import type {
   BranchName,
   ClaudeSessionId,
+  EffortLevel,
+  ModelName,
   RepoName,
   SessionId,
   SessionRef,
@@ -87,6 +89,10 @@ export interface ClaudeLaunchOptions {
     | { readonly _tag: "Resume"; readonly id: ClaudeSessionId }
   /** The Parent Session, when this Session is a Child Session (ADR 0012). */
   readonly parent?: SessionRef
+  /** The model, its `--model` (#128); Claude Code's default when absent. */
+  readonly model?: ModelName
+  /** The effort level, its `--effort` (#128); Claude Code's default when absent. */
+  readonly effort?: EffortLevel
 }
 
 export interface ClaudeLaunch {
@@ -103,6 +109,9 @@ export interface ClaudeLaunch {
  * A new conversation gets `--session-id`, chosen by the Runner, so its id is known up front; waking
  * uses `--resume`, which restores the conversation and keeps the id (spike #4). A Child Session
  * gets its paragraph on every launch, waking included, since the flag lasts only for the process.
+ *
+ * The Session's model and effort go as `--model` and `--effort` (#128), which, unlike `/model`
+ * and `/effort`, last only for the process and are never written to the host's settings.json.
  */
 export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
   const conversation =
@@ -129,6 +138,8 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       ...(options.parent === undefined
         ? []
         : ["--append-system-prompt", childSystemPrompt(options.parent)]),
+      ...(options.model === undefined ? [] : ["--model", options.model]),
+      ...(options.effort === undefined ? [] : ["--effort", options.effort]),
     ],
     env: {
       CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1",

@@ -3,6 +3,7 @@ import { lstatSync, mkdirSync } from "node:fs"
 import type {
   EnvironmentVersion,
   HubToRunner,
+  RelaunchSession,
   RunTestBuild,
   SessionId,
   StartSession,
@@ -236,7 +237,7 @@ export const SessionsLive = Layer.effect(
      * can't be resumed: it starts new instead, with the same id, so the Hub's id stays right
      * (#105).
      */
-    const conversationFor = (request: StartSession, cwd: string) =>
+    const conversationFor = (request: StartSession | RelaunchSession, cwd: string) =>
       Effect.gen(function* () {
         if (request.resume === undefined) {
           return { _tag: "New", id: randomUUID() } as const
@@ -315,6 +316,8 @@ export const SessionsLive = Layer.effect(
               workBranch: request.workBranch,
               conversation: yield* conversationFor(request, directories.claude),
               ...(request.parent === undefined ? {} : { parent: request.parent }),
+              ...(request.model === undefined ? {} : { model: request.model }),
+              ...(request.effort === undefined ? {} : { effort: request.effort }),
             })
             // Its trust may have been dropped since startup, and the dialog would stop the mod.
             yield* trust.ensure
@@ -338,6 +341,82 @@ export const SessionsLive = Layer.effect(
           modTokens.delete(sessionId)
           yield* Effect.logWarning(`Session ${sessionId} failed to start: ${reason}`)
           yield* tmux.kill(sessionId)
+          yield* sandboxes.stop(sessionId, "Sleep")
+          yield* hub.send(RunnerToHub.cases.SessionStartFailed.make({ sessionId, message: reason }))
+        }),
+      )
+
+    /**
+     * Starts a running Session's Claude Code again with the model and effort the Hub sends (#128),
+     * resuming its conversation: Claude Code exits as on a stop and starts in a new tmux session,
+     * while its Sandbox, tool bridge and Repo files stay as they are. The Hub sends it only while
+     * no Turn runs. A Claude Code that won't start again leaves the Session as a failed start does,
+     * asleep.
+     */
+    const relaunch = (request: RelaunchSession) =>
+      serialized(request.sessionId)(
+        Effect.gen(function* () {
+          const { sessionId } = request
+          const session = running.get(sessionId)
+          if (session === undefined) {
+            return yield* hub.send(
+              RunnerToHub.cases.SessionStartFailed.make({
+                sessionId,
+                message: "Claude Code was not running to restart with the new model",
+              }),
+            )
+          }
+          session.stopping = true
+          yield* session.pane.terminate
+          yield* Deferred.await(session.exited).pipe(Effect.timeoutOption(StopGracePeriod))
+          yield* tmux.kill(sessionId)
+          modTokens.delete(sessionId)
+          const launched = yield* Effect.gen(function* () {
+            const directories = sessionDirectories(config.sessionsRoot, sessionId)
+            const launch = claudeLaunch({
+              claudeBin: config.claudeBin,
+              modDir: config.modDir,
+              hubUrl: config.hubUrl,
+              sessionId,
+              modToken: request.modToken,
+              toolsSocket: directories.toolsSocket,
+              repoFiles: directories.repoFiles,
+              repo: request.repo,
+              workBranch: request.workBranch,
+              conversation: yield* conversationFor(request, directories.claude),
+              ...(request.parent === undefined ? {} : { parent: request.parent }),
+              ...(request.model === undefined ? {} : { model: request.model }),
+              ...(request.effort === undefined ? {} : { effort: request.effort }),
+            })
+            yield* trust.ensure
+            yield* ensureDirectory(directories.claude)
+            modTokens.set(sessionId, request.modToken)
+            yield* tmux.launch({
+              sessionId,
+              cwd: directories.claude,
+              argv: launch.argv,
+              env: launch.env,
+              size: InitialTerminalSize,
+            })
+            yield* watch(sessionId)
+          }).pipe(Effect.exit)
+
+          if (Exit.isSuccess(launched)) {
+            const model = [request.model ?? "default model", request.effort ?? "default effort"]
+            yield* Effect.logInfo(`Session ${sessionId} restarted on ${model.join(", ")}`)
+            const environmentVersion = environmentVersions.get(sessionId)
+            return yield* hub.send(
+              RunnerToHub.cases.SessionStarted.make({
+                sessionId,
+                ...(environmentVersion === undefined ? {} : { environmentVersion }),
+              }),
+            )
+          }
+          const reason = message(launched.cause)
+          modTokens.delete(sessionId)
+          yield* Effect.logWarning(`Session ${sessionId} failed to restart: ${reason}`)
+          yield* tmux.kill(sessionId)
+          yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
           yield* sandboxes.stop(sessionId, "Sleep")
           yield* hub.send(RunnerToHub.cases.SessionStartFailed.make({ sessionId, message: reason }))
         }),
@@ -507,6 +586,11 @@ export const SessionsLive = Layer.effect(
             )
           }
           return background(start(incoming))
+        case "RelaunchSession":
+          if (!isSafeSessionId(incoming.sessionId)) {
+            return Effect.logWarning(`Ignored a RelaunchSession for ${incoming.sessionId}`)
+          }
+          return background(relaunch(incoming))
         case "StopSession":
           return background(stop(incoming))
         case "PurgeSession":

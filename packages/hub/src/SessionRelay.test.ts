@@ -106,10 +106,18 @@ class Mod {
 }
 
 /** A Hub with an online Runner and alice signed in on the web, who creates a Session. */
-async function sessionScene(hub?: TestHub) {
+async function sessionScene(
+  hub?: TestHub,
+  options: {
+    /** More of the Runner's hello, such as its models (#128). */
+    readonly runnerHello?: Record<string, unknown>
+    /** More of the CreateSession, such as its model (#128). */
+    readonly create?: Record<string, unknown>
+  } = {},
+) {
   const theHub = hub ?? (await startHub({ config: { devLogin: true } }))
   const runnerToken = (await issueRunnerToken(theHub)).token
-  const runner = await openRunner(theHub, runnerToken)
+  const runner = await openRunner(theHub, runnerToken, [], undefined, true, options.runnerHello)
   const web = await openWeb(theHub, "alice")
   await seedEnvironment(theHub, "kddige/claude-hub", "dev:alice")
   web.send({
@@ -117,6 +125,7 @@ async function sessionScene(hub?: TestHub) {
     requestId: "req-1",
     repo: "kddige/claude-hub",
     baseBranch: "main",
+    ...options.create,
   })
   const start = await runner.take("StartSession")
   const created = await web.take("SessionCreated")
@@ -1333,6 +1342,265 @@ describe("Session names", () => {
       await stopAll()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+// What a Runner's Claude Code says it has (#128), as Claude Code 2.1.289 resolves its aliases.
+const opus = {
+  alias: "opus",
+  id: "claude-opus-5-5",
+  label: "Opus 5.5",
+  description: "Best for everyday, complex tasks",
+  effort: true,
+}
+const runnerModels = {
+  default: { ...opus, alias: "default" },
+  models: [
+    opus,
+    {
+      alias: "sonnet",
+      id: "claude-sonnet-5-5",
+      label: "Sonnet 5.5",
+      description: "Efficient for routine tasks",
+      effort: true,
+    },
+    {
+      alias: "haiku",
+      id: "claude-haiku-4-5-20251001",
+      label: "Haiku 4.5",
+      description: "Fastest for quick answers",
+      effort: false,
+    },
+  ],
+  efforts: ["low", "medium", "high", "xhigh", "max"],
+}
+/** A Runner as it says hello since #128: with its models, and taking RelaunchSession. */
+const modelRunner = { runnerHello: { models: runnerModels, relaunches: true } }
+
+type Scene = Awaited<ReturnType<typeof sessionScene>>
+
+const modelSwitched = (m: Extract<Web, { _tag: "SessionEventLogged" }>) =>
+  m.entry.event._tag === "ModelSwitched"
+
+/** The RelaunchSession the Runner is sent, answered as the Runner does, and the new mod's hello. */
+async function relaunched(scene: Scene) {
+  const { hub, runner, sessionId } = scene
+  const relaunch = await runner.take("RelaunchSession")
+  runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+  const mod = new Mod(hub, sessionId, relaunch.modToken)
+  expect((await mod.hello()).status).toBe(200)
+  return { relaunch, mod }
+}
+
+describe("model and effort (#128)", () => {
+  test("a Runner's models reach the web in the Runners list", async () => {
+    const { hub } = await sessionScene(undefined, modelRunner)
+    expect((await openWeb(hub, "bob")).runners.runners).toMatchObject([
+      { name: "mac", models: runnerModels },
+    ])
+  })
+
+  test("a new Session starts on Claude Code's default, with no flags", async () => {
+    const { start, session } = await sessionScene(undefined, modelRunner)
+    expect(start).not.toHaveProperty("model")
+    expect(start).not.toHaveProperty("effort")
+    expect(session).not.toHaveProperty("model")
+    expect(session).not.toHaveProperty("effort")
+  })
+
+  test("a new Session can start on a model and effort its Runner's Claude Code has", async () => {
+    const { start, session } = await sessionScene(undefined, {
+      ...modelRunner,
+      create: { model: "sonnet", effort: "high" },
+    })
+    expect(start).toMatchObject({ model: "sonnet", effort: "high" })
+    expect(session).toMatchObject({ model: "sonnet", effort: "high" })
+    expect(session).not.toHaveProperty("modelPending")
+  })
+
+  test("a model or effort the Runner's Claude Code doesn't have is refused, in its words", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
+      models: { ...runnerModels, efforts: ["low", "medium", "high"] },
+      relaunches: true,
+    })
+    const web = await openWeb(hub, "alice")
+    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    const create = (more: Record<string, unknown>) =>
+      web.send({
+        _tag: "CreateSession",
+        requestId: "r",
+        repo: "kddige/claude-hub",
+        baseBranch: "main",
+        ...more,
+      })
+
+    create({ model: "gpt-5" })
+    expect((await web.take("CommandFailed")).message).toBe("Model 'gpt-5' not found")
+    create({ model: "haiku", effort: "low" })
+    expect((await web.take("CommandFailed")).message).toBe("Haiku 4.5 takes no effort level.")
+    create({ effort: "max" })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "Claude Code on mac has no effort level 'max'.",
+    )
+    expect(await web.untaken("SessionCreated")).toEqual([])
+  })
+
+  test("a Runner that hasn't said its models takes only Claude Code's default", async () => {
+    const { web, sessionId } = await sessionScene()
+    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet" })
+    expect(await web.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "SetSessionModel",
+      sessionId,
+      message:
+        "mac hasn't said which models its Claude Code has: only Claude Code's default model can be used there.",
+    })
+  })
+
+  test("anyone with access can change it: everyone sees it, and the history says who", async () => {
+    const scene = await sessionScene(undefined, modelRunner)
+    const { hub, web, sessionId, session } = scene
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+
+    // Bob didn't create it, and may change it all the same.
+    bobWeb.send({ _tag: "SetSessionModel", sessionId, model: "sonnet", effort: "high" })
+    for (const client of [web, bobWeb]) {
+      const changed = await client.take("SessionUpdated", (m) => m.session.model === "sonnet")
+      expect(changed.session).toEqual({
+        ...session,
+        model: "sonnet",
+        effort: "high",
+        modelPending: true,
+      })
+    }
+    expect((await web.take("SessionEventLogged", modelSwitched)).entry.event).toEqual({
+      _tag: "ModelSwitched",
+      by: bob,
+      model: "sonnet",
+      modelLabel: "Sonnet 5.5",
+      effort: "high",
+    })
+    const later = await openWeb(hub, "carol")
+    expect(later.sessions.sessions[0]).toMatchObject({ model: "sonnet", effort: "high" })
+
+    // The same setting again changes nothing.
+    await relaunched(scene)
+    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet", effort: "high" })
+    expect(await web.untaken("CommandFailed")).toEqual([])
+    expect((await web.untaken("SessionEventLogged")).filter(modelSwitched)).toEqual([])
+
+    // Back to the default: no model, named by the model Claude Code runs for it.
+    web.send({ _tag: "SetSessionModel", sessionId, model: "default" })
+    expect((await web.take("SessionEventLogged", modelSwitched)).entry.event).toEqual({
+      _tag: "ModelSwitched",
+      by: alice,
+      modelLabel: "Opus 5.5",
+    })
+    const reset = await web.take("SessionUpdated", (m) => m.session.model === undefined)
+    expect(reset.session).not.toHaveProperty("effort")
+  })
+
+  test("an idle Session's Claude Code is started again with it, resuming its conversation", async () => {
+    const scene = await sessionScene(undefined, modelRunner)
+    const { web, sessionId, mod, start } = scene
+    web.send({ _tag: "SetSessionModel", sessionId, model: "opus", effort: "xhigh" })
+    const { relaunch, mod: newMod } = await relaunched(scene)
+    expect(relaunch).toEqual({
+      _tag: "RelaunchSession",
+      sessionId,
+      repo: "kddige/claude-hub",
+      workBranch: `claude/${sessionId}`,
+      resume: "claude-1",
+      modToken: relaunch.modToken,
+      model: "opus",
+      effort: "xhigh",
+    })
+    // The old mod's token is gone with it.
+    expect(relaunch.modToken).not.toBe(start.modToken)
+    expect((await mod.hello()).status).toBe(401)
+    const settled = await web.take(
+      "SessionUpdated",
+      (m) => m.session.model === "opus" && m.session.modelPending === undefined,
+    )
+    expect(settled.session.state).toBe("Active")
+
+    web.send({ _tag: "SendPrompt", sessionId, text: "on Opus now" })
+    expect((await newMod.deliveries(500)).map((command) => command.text)).toEqual(["on Opus now"])
+  })
+
+  test("never mid-Turn: it applies from the next Turn, which waits for the new Claude Code", async () => {
+    const scene = await sessionScene(undefined, modelRunner)
+    const { runner, web, sessionId, mod } = scene
+    await mod.post(turnStarted("t-1"))
+    await web.take("SessionUpdated", (m) => m.session.currentTurn === "t-1")
+
+    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet" })
+    await web.take("SessionUpdated", (m) => m.session.modelPending === true)
+    web.send({ _tag: "SendPrompt", sessionId, text: "next" })
+    expect(await runner.untaken("RelaunchSession")).toEqual([])
+    expect(await mod.deliveries()).toEqual([])
+
+    // The Turn ends: Claude Code is started again before the prompt goes, to the new mod.
+    await mod.post(turnEnded("t-1"))
+    const { relaunch, mod: newMod } = await relaunched(scene)
+    expect(relaunch.model).toBe("sonnet")
+    expect((await mod.hello()).status).toBe(401)
+    expect((await newMod.deliveries(500)).map((command) => command.text)).toEqual(["next"])
+  })
+
+  test("an Asleep Session starts with it when it wakes", async () => {
+    const scene = await sessionScene(undefined, modelRunner)
+    const { runner, web, sessionId } = scene
+    await asleep(scene)
+    web.send({ _tag: "SetSessionModel", sessionId, model: "haiku" })
+    const changed = await web.take("SessionUpdated", (m) => m.session.model === "haiku")
+    expect(changed.session).not.toHaveProperty("modelPending")
+
+    web.send({ _tag: "WakeSession", sessionId })
+    expect(await runner.take("StartSession")).toMatchObject({ resume: "claude-1", model: "haiku" })
+    expect(await runner.untaken("RelaunchSession")).toEqual([])
+  })
+
+  test("a Runner from before RelaunchSession gets it when the Session next wakes", async () => {
+    const scene = await sessionScene(undefined, { runnerHello: { models: runnerModels } })
+    const { runner, web, sessionId } = scene
+    web.send({ _tag: "SetSessionModel", sessionId, effort: "low" })
+    await web.take("SessionUpdated", (m) => m.session.modelPending === true)
+    expect(await runner.untaken("RelaunchSession")).toEqual([])
+
+    await asleep(scene)
+    web.send({ _tag: "WakeSession", sessionId })
+    const wake = await runner.take("StartSession")
+    expect(wake).toMatchObject({ effort: "low" })
+    expect(wake).not.toHaveProperty("model")
+  })
+
+  test("Claude Code that doesn't start again leaves the Session Asleep, saying why", async () => {
+    const scene = await sessionScene(undefined, modelRunner)
+    const { runner, web, sessionId } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet" })
+    await runner.take("RelaunchSession")
+    runner.send({ _tag: "SessionStartFailed", sessionId, message: "tmux is gone" })
+    const asleepNow = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(asleepNow.session).toMatchObject({ model: "sonnet" })
+    expect(asleepNow.session).not.toHaveProperty("modelPending")
+    expect(
+      (await web.take("SessionEventLogged", stateChanged("Asleep"))).entry.event,
+    ).toMatchObject({ message: "Claude Code could not start on mac: tmux is gone" })
+  })
+
+  test("an Archived Session's model can't be changed", async () => {
+    const scene = await sessionScene(undefined, modelRunner)
+    await archived(scene)
+    scene.web.send({ _tag: "SetSessionModel", sessionId: scene.sessionId, model: "sonnet" })
+    expect((await scene.web.take("CommandFailed")).message).toBe(
+      "The Session is archived: restore it to change its model.",
+    )
   })
 })
 

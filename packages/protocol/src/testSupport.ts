@@ -36,6 +36,42 @@ export const bob = { id: "u-2", login: "bob", name: "Bob" }
 
 export const runnerLogin = { account: "alice@example.com" }
 
+/** What a Runner's Claude Code takes, as its hello says (#128). */
+export const runnerModels = {
+  default: {
+    alias: "default",
+    id: "claude-opus-5-5",
+    label: "Opus 5.5",
+    description: "Best for everyday, complex tasks",
+    effort: true,
+  },
+  models: [
+    {
+      alias: "opus",
+      id: "claude-opus-5-5",
+      label: "Opus 5.5",
+      description: "Best for everyday, complex tasks",
+      effort: true,
+    },
+    {
+      alias: "sonnet",
+      id: "claude-sonnet-5-5",
+      label: "Sonnet 5.5",
+      description: "Efficient for routine tasks",
+      effort: true,
+    },
+    {
+      alias: "haiku",
+      id: "claude-haiku-4-5-20251001",
+      label: "Haiku 4.5",
+      description: "Fastest for quick answers",
+      effort: false,
+    },
+    { alias: "opus[1m]", id: "claude-opus-5-5[1m]", label: "Opus 5.5 (1M context)", effort: true },
+  ],
+  efforts: ["low", "medium", "high", "xhigh", "max"],
+}
+
 export const sessionSummary = {
   id: "s-1",
   repo: "kddige/claude-hub",

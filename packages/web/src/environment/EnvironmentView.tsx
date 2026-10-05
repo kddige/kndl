@@ -4,7 +4,9 @@
 // Session.
 
 import {
+  type EffortLevel,
   type EnvironmentVersionInfo,
+  type ModelName,
   type RunnerId,
   type RunnerSummary,
   type SharedVariable,
@@ -65,6 +67,8 @@ import {
 export interface PendingSession {
   readonly baseBranch: string
   readonly runnerId?: RunnerId
+  readonly model?: ModelName
+  readonly effort?: EffortLevel
 }
 
 const styles = stylex.create({
@@ -415,6 +419,8 @@ function EnvironmentEditor({
         repo,
         baseBranch: pending.baseBranch,
         ...(pending.runnerId !== undefined && { runnerId: pending.runnerId }),
+        ...(pending.model !== undefined && { model: pending.model }),
+        ...(pending.effort !== undefined && { effort: pending.effort }),
       })
       void navigate({ to: "/sessions/$sessionId", params: { sessionId: session.id } })
     } catch (error) {

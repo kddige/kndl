@@ -3,6 +3,7 @@ import {
   CommitIdPattern,
   RunnerId,
   type RunnerLogin,
+  RunnerModels,
   RunnerUpdater,
   type SessionState,
 } from "@claude-hub/protocol"
@@ -25,6 +26,8 @@ export interface KnownRunner {
   readonly openSessions: number
   /** Whether it updates itself, as it last said; null from a Runner too old to say (#87). */
   readonly updater: RunnerUpdater | null
+  /** The models its Claude Code offers, as it last said; null before it first says (#128). */
+  readonly models: RunnerModels | null
 }
 
 /** The Session states that keep a Runner from being removed. */
@@ -39,9 +42,11 @@ interface RunnerRow {
   readonly lastSeenAt: number | null
   readonly openSessions: number
   readonly updater: string | null
+  readonly models: string | null
 }
 
 const decodeUpdater = Schema.decodeUnknownOption(Schema.fromJsonString(RunnerUpdater))
+const decodeModels = Schema.decodeUnknownOption(Schema.fromJsonString(RunnerModels))
 
 const fromRow = (row: RunnerRow): KnownRunner => ({
   id: RunnerId.make(row.id),
@@ -56,6 +61,7 @@ const fromRow = (row: RunnerRow): KnownRunner => ({
   lastSeenAt: row.lastSeenAt,
   openSessions: row.openSessions,
   updater: row.updater === null ? null : Option.getOrNull(decodeUpdater(row.updater)),
+  models: row.models === null ? null : Option.getOrNull(decodeModels(row.models)),
 })
 
 /**
@@ -66,13 +72,17 @@ const fromRow = (row: RunnerRow): KnownRunner => ({
 export class Runners extends Context.Service<
   Runners,
   {
-    /** A Runner said hello: what it said, and that it is connected as of `at`. */
+    /**
+     * A Runner said hello: what it said, and that it is connected as of `at`. Its models are kept
+     * from before when it doesn't say, as when its Claude Code couldn't tell it this time.
+     */
     readonly recordHello: (
       id: RunnerId,
       hello: {
         readonly login: RunnerLogin
         readonly version: BuildVersion | undefined
         readonly updater: RunnerUpdater | undefined
+        readonly models?: RunnerModels | undefined
       },
       at: number,
     ) => Effect.Effect<void, SqlError>
@@ -95,6 +105,7 @@ export class Runners extends Context.Service<
           readonly login: RunnerLogin
           readonly version: BuildVersion | undefined
           readonly updater: RunnerUpdater | undefined
+          readonly models?: RunnerModels | undefined
         },
         at: number,
       ) {
@@ -103,6 +114,7 @@ export class Runners extends Context.Service<
             version_commit = ${hello.version?.commit ?? null},
             version_branch = ${hello.version?.branch ?? null},
             updater = ${hello.updater === undefined ? null : JSON.stringify(hello.updater)},
+            models = COALESCE(${hello.models === undefined ? null : JSON.stringify(hello.models)}, models),
             last_seen_at = ${at}
           WHERE id = ${id}
         `
@@ -114,7 +126,7 @@ export class Runners extends Context.Service<
 
       const select = (where: Fragment) => sql<RunnerRow>`
         SELECT r.id, r.name, r.login_account AS account, r.version_commit AS "commit",
-          r.version_branch AS branch, r.last_seen_at AS lastSeenAt, r.updater,
+          r.version_branch AS branch, r.last_seen_at AS lastSeenAt, r.updater, r.models,
           (SELECT count(*) FROM sessions s
             WHERE s.runner_id = r.id AND s.state IN ${sql.in(openStates)}) AS openSessions
         FROM runners r

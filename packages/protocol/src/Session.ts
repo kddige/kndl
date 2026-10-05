@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { BuildVersion, RunnerVersionStatus } from "./Build.ts"
 import { EnvironmentVersion, ParticipantId, PromptId, RunnerId, SessionId, TurnId } from "./Ids.ts"
+import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
 import { RunnerUpdater, RunnerUpdateState } from "./Update.ts"
 
 // Shapes shared by more than one channel: who is involved in a Session and what state it is in.
@@ -101,6 +102,11 @@ export const RunnerSummary = Schema.Struct({
   updater: Schema.optionalKey(RunnerUpdater),
   /** Its update under way, or the last one's refusal or failure (#87). */
   update: Schema.optionalKey(RunnerUpdateState),
+  /**
+   * The models and effort levels its Claude Code takes, as its last hello said (#128); absent
+   * from a Runner too old to say, or that couldn't find out.
+   */
+  models: Schema.optionalKey(RunnerModels),
 })
 export type RunnerSummary = typeof RunnerSummary.Type
 
@@ -187,6 +193,18 @@ export const SessionSummary = Schema.Struct({
    * showed, redacted as the terminal is, so why it exited can be read (#105).
    */
   lastOutput: Schema.optionalKey(Schema.String),
+  /**
+   * The model its Claude Code runs, as `--model` takes it (#128): absent for Claude Code's
+   * default. Shared: anyone with access may change it, from the next Turn on.
+   */
+  model: Schema.optionalKey(ModelName),
+  /** Its effort level (#128): absent for Claude Code's default. */
+  effort: Schema.optionalKey(EffortLevel),
+  /**
+   * Present while its Claude Code still runs on the model and effort from before it was changed:
+   * they apply once no Turn runs, when the Hub restarts Claude Code with them.
+   */
+  modelPending: Schema.optionalKey(Schema.Literal(true)),
 })
 export type SessionSummary = typeof SessionSummary.Type
 

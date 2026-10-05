@@ -1,4 +1,4 @@
-import type { RunnerId, SessionId } from "@claude-hub/protocol"
+import { type EffortLevel, EffortLevels, type RunnerId, type SessionId } from "@claude-hub/protocol"
 import {
   createRootRoute,
   createRoute,
@@ -92,24 +92,34 @@ interface SetupSearch {
   /** Its base branch. */
   branch?: string
   runner?: string
+  /** Its model and effort (#128); the Hub checks them when it starts it. */
+  model?: string
+  effort?: EffortLevel
 }
+
+const nonEmpty = (value: unknown): value is string => typeof value === "string" && value !== ""
 
 /**
  * A Repo's Environment (ADR 0009). With ?branch=, it's the setup before the Repo's first Session,
- * which starts on that branch (and ?runner=) once the Environment is applied.
+ * which starts on that branch (and ?runner=, ?model=, ?effort=) once the Environment is applied.
  */
 const environmentRoute = createRoute({
   getParentRoute: () => hubRoute,
   path: "/repos/$owner/$repo/environment",
   validateSearch: (search: Record<string, unknown>): SetupSearch => {
-    const { branch, runner } = search
-    return typeof branch === "string" && branch !== ""
-      ? { branch, ...(typeof runner === "string" && runner !== "" && { runner }) }
+    const { branch, runner, model, effort } = search
+    return nonEmpty(branch)
+      ? {
+          branch,
+          ...(nonEmpty(runner) && { runner }),
+          ...(nonEmpty(model) && { model }),
+          ...(EffortLevels.some((level) => level === effort) && { effort: effort as EffortLevel }),
+        }
       : {}
   },
   component: function EnvironmentRoute() {
     const { owner, repo } = environmentRoute.useParams()
-    const { branch, runner } = environmentRoute.useSearch()
+    const { branch, runner, model, effort } = environmentRoute.useSearch()
     return (
       <EnvironmentView
         key={`${owner}/${repo}`}
@@ -117,7 +127,12 @@ const environmentRoute = createRoute({
         pendingSession={
           branch === undefined
             ? undefined
-            : { baseBranch: branch, ...(runner !== undefined && { runnerId: runner as RunnerId }) }
+            : {
+                baseBranch: branch,
+                ...(runner !== undefined && { runnerId: runner as RunnerId }),
+                ...(model !== undefined && { model }),
+                ...(effort !== undefined && { effort }),
+              }
         }
       />
     )

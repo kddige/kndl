@@ -3,14 +3,19 @@ import type {
   PromptSender,
   SessionStateChanged,
   TurnEnded,
-  WipNotPushed,
-  SandboxNoted,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { memo } from "react"
+import { createContext, memo, useContext } from "react"
 import { clock, count, duration, statusOf } from "../app/format.ts"
-import type { AgentView, Block, TranscriptItem, TurnBlock, TurnView } from "../hub/transcript.ts"
+import type {
+  AgentView,
+  Block,
+  NoticeEvent,
+  TranscriptItem,
+  TurnBlock,
+  TurnView,
+} from "../hub/transcript.ts"
 import {
   Avatar,
   Badge,
@@ -22,7 +27,16 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { modelSwitchedText } from "./models.ts"
 import { ToolCall } from "./ToolCall.tsx"
+
+/**
+ * Names the model a Turn ran when the footer should say so: when it isn't the one the Session is
+ * set to, as for a Turn before a switch (#128). Undefined says nothing.
+ */
+type NameTurnModel = (model: string) => string | undefined
+
+const TurnModelContext = createContext<NameTurnModel>(() => undefined)
 
 const styles = stylex.create({
   list: {
@@ -148,23 +162,30 @@ const styles = stylex.create({
 /** The Session's conversation: each Turn's prompt and Claude's reply, and state changes. */
 export const Transcript = memo(function Transcript({
   items,
+  nameTurnModel = noTurnModel,
 }: {
   items: ReadonlyArray<TranscriptItem>
+  /** Names a Turn's model in its footer when it isn't the Session's own. */
+  nameTurnModel?: NameTurnModel
 }) {
   return (
-    <ol aria-label="Conversation" {...stylex.props(styles.list)}>
-      {items.map((item) => (
-        <li key={item.key}>
-          {item.kind === "turn" ? (
-            <Turn turn={item.turn} />
-          ) : (
-            <Notice at={item.at} event={item.event} />
-          )}
-        </li>
-      ))}
-    </ol>
+    <TurnModelContext value={nameTurnModel}>
+      <ol aria-label="Conversation" {...stylex.props(styles.list)}>
+        {items.map((item) => (
+          <li key={item.key}>
+            {item.kind === "turn" ? (
+              <Turn turn={item.turn} />
+            ) : (
+              <Notice at={item.at} event={item.event} />
+            )}
+          </li>
+        ))}
+      </ol>
+    </TurnModelContext>
   )
 })
+
+const noTurnModel: NameTurnModel = () => undefined
 
 const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
   const sender = turn.sender
@@ -277,6 +298,7 @@ const Agent = memo(function Agent({ agent }: { agent: AgentView }) {
 })
 
 function TurnFooter({ turn }: { turn: TurnView }) {
+  const nameTurnModel = useContext(TurnModelContext)
   const stoppers = names(turn.stopRequests)
   if (turn.end === null) {
     return (
@@ -288,9 +310,11 @@ function TurnFooter({ turn }: { turn: TurnView }) {
       </div>
     )
   }
+  const otherModel = turn.end.usage && nameTurnModel(turn.end.usage.model)
   return (
     <div {...stylex.props(styles.footer)}>
       <EndBadge end={turn.end} stoppers={stoppers} />
+      {otherModel !== undefined && <span title="The model this Turn ran on">{otherModel}</span>}
       <span>{duration(turn.end.durationMs)}</span>
       {turn.end.usage && (
         <span title={turn.end.usage.model}>
@@ -326,13 +350,7 @@ const stateWords: Record<SessionStateChanged["state"], string> = {
   Archived: "The Session was archived",
 }
 
-function Notice({
-  at,
-  event,
-}: {
-  at: number
-  event: SessionStateChanged | WipNotPushed | SandboxNoted
-}) {
+function Notice({ at, event }: { at: number; event: NoticeEvent }) {
   return (
     <p role="note" {...stylex.props(styles.notice)}>
       {event._tag === "SessionStateChanged" ? (
@@ -346,6 +364,11 @@ function Notice({
         </>
       ) : event._tag === "WipNotPushed" ? (
         <span>The WIP ref could not be pushed: {event.message}</span>
+      ) : event._tag === "ModelSwitched" ? (
+        <>
+          <Avatar name={event.by.name} src={event.by.avatarUrl} size="sm" />
+          <span>{modelSwitchedText(event)}</span>
+        </>
       ) : (
         <span>{event.message}</span>
       )}

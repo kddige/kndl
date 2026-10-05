@@ -280,6 +280,7 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
       return { ...event, message: redact(event.message) }
     case "TurnEnded":
     case "TurnStopRequested":
+    case "ModelSwitched":
       return event
   }
 }
