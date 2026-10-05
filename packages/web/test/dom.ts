@@ -1,4 +1,4 @@
-import { afterAll } from "bun:test"
+import { afterAll, setDefaultTimeout } from "bun:test"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
@@ -50,8 +50,27 @@ function escape(text: string): string {
  */
 export function installDom(teardown?: () => unknown): void {
   GlobalRegistrator.register({ url: "http://localhost/" })
+  // Longer than the tests' own 5 s waits for what they expect, so on a slow machine (a Sandbox)
+  // a check that never comes fails its own test. Bun's 5 s timeout would end the test while its
+  // wait goes on, overlapping React's act() in every test after it, which then all fail (#112).
+  setDefaultTimeout(30_000)
+  // A failed expect() prints what it got. For a node, Bun would print happy-dom's whole object
+  // graph: its parents, the document and the window. That took seconds per failure, so a check
+  // retried until an element goes was slow, and the last failure wrote millions of lines (#112).
+  Object.defineProperty(window.Node.prototype, Bun.inspect.custom, {
+    configurable: true,
+    value(this: Node) {
+      return describeNode(this)
+    },
+  })
   afterAll(async () => {
     await teardown?.()
     await GlobalRegistrator.unregister()
   })
+}
+
+/** A node as a failed expect() shows it: its HTML, cut short. */
+function describeNode(node: Node): string {
+  const text = node instanceof Element ? node.outerHTML : `${node.nodeName} ${node.textContent}`
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text
 }
