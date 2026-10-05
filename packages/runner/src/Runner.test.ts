@@ -17,6 +17,7 @@ import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
 import { ClaudeProjectsDir, claudeProjectDirName } from "./ClaudeConfig.ts"
 import { childSystemPrompt } from "./ClaudeLaunch.ts"
+import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -35,6 +36,13 @@ import {
 import { Updater } from "./Updater.ts"
 
 const token = "chr_test.secret"
+
+/** What the Runner's Claude Code takes, as it says in its hello (#128). */
+const models = {
+  default: { alias: "default", id: "claude-opus-5-5", label: "Opus 5.5", effort: true },
+  models: [{ alias: "sonnet", id: "claude-sonnet-5-5", label: "Sonnet 5.5", effort: true }],
+  efforts: ["low", "medium", "high"],
+} as const
 
 /** A message the fake Hub received. */
 interface Received {
@@ -152,6 +160,7 @@ class FakeUpdater {
 function startRunner(
   setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () => {},
   updater: Layer.Layer<Updater> = Updater.manual(),
+  claudeModels: Layer.Layer<ClaudeModels> = StaticClaudeModels(models),
 ): Harness {
   const dir = mkdtempSync(join(tmpdir(), "claude-hub-runner-"))
   const sessionsRoot = join(dir, "sessions")
@@ -193,6 +202,7 @@ function startRunner(
     Layer.provideMerge(updater),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
+    Layer.provideMerge(claudeModels),
     Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, git.layer]),
     Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
     Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
@@ -267,7 +277,18 @@ describe("connecting", () => {
       asksCloneAccess: true,
       // Whether it updates itself when the Hub asks (#87).
       updater: { self: false, reason: "it runs in a test" },
+      // What its Claude Code takes, and that it restarts Claude Code on a new model (#128).
+      models,
+      relaunches: true,
     })
+  })
+
+  test("leaves the models out of its hello when Claude Code couldn't say", async () => {
+    const h = startRunner(undefined, undefined, StaticClaudeModels(undefined))
+    await connected(h)
+
+    expect(h.hub.current.received[0]).not.toHaveProperty("models")
+    expect(h.hub.current.received[0]).toMatchObject({ relaunches: true })
   })
 
   test("says in its hello that it updates itself, and how its last update failed", async () => {
@@ -503,6 +524,82 @@ describe("Sessions", () => {
     expect(spec?.argv.slice(-2)).toEqual(["--append-system-prompt", childSystemPrompt(parent)])
     expect(childSystemPrompt(parent)).toContain('"Release 2.0" (s-parent)')
     expect(spec?.env).toMatchObject({ CLAUDE_HUB_PARENT_SESSION_ID: "s-parent" })
+  })
+
+  test("starts Claude Code on the Session's model and effort (#128)", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1", { model: "sonnet", effort: "high" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    expect(h.tmux.launched[0]?.argv.slice(-4)).toEqual(["--model", "sonnet", "--effort", "high"])
+  })
+
+  test("restarts Claude Code alone on a new model, resuming its conversation (#128)", async () => {
+    const h = startRunner()
+    await connected(h)
+    const parent = { id: SessionId.make("s-parent"), title: "Release 2.0" }
+    h.hub.send(startSession("s-1", { parent }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    const first = h.tmux.pane("s-1")
+    writeTranscript(h, "s-1", "3c1f6f0e-claude")
+
+    h.hub.send({
+      _tag: "RelaunchSession",
+      sessionId: "s-1",
+      repo: "acme/app",
+      workBranch: "claude/s-1",
+      resume: "3c1f6f0e-claude",
+      modToken: "chm_mod.second",
+      parent,
+      model: "opus[1m]",
+      effort: "max",
+    })
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    expect(first.terminated).toBe(true)
+    const relaunched = h.tmux.launched[1]
+    expect(relaunched?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+    expect(relaunched?.argv.slice(-6)).toEqual([
+      "--append-system-prompt",
+      childSystemPrompt(parent),
+      "--model",
+      "opus[1m]",
+      "--effort",
+      "max",
+    ])
+    expect(relaunched?.env).toMatchObject({
+      CLAUDE_HUB_MOD_TOKEN: "chm_mod.second",
+      CLAUDE_HUB_REPO: "acme/app",
+      CLAUDE_HUB_WORK_BRANCH: "claude/s-1",
+      CLAUDE_HUB_PARENT_SESSION_ID: "s-parent",
+    })
+    // The Sandbox, the Workspace and the Repo files are left as they are.
+    expect(h.sandboxes.calls).toEqual(["start s-1"])
+    expect(h.workspaces.prepared).toHaveLength(1)
+    expect(h.sandboxes.repoFilesRead).toHaveLength(1)
+    // Its exit was asked for, so it isn't reported as Claude Code exiting on its own.
+    expect(h.hub.all("SessionStopped")).toEqual([])
+
+    // The new Claude Code streams as the first did.
+    h.tmux.pane("s-1").output("on opus")
+    await eventually(() => h.hub.all("TerminalFrame").some((frame) => frame.data === "on opus"))
+  })
+
+  test("says a relaunch failed when Claude Code wasn't running", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send({
+      _tag: "RelaunchSession",
+      sessionId: "s-1",
+      repo: "acme/app",
+      workBranch: "claude/s-1",
+      resume: "3c1f6f0e-claude",
+      modToken: "chm_mod.second",
+    })
+    await eventually(() => h.hub.all("SessionStartFailed").length === 1)
+
+    expect(h.tmux.launched).toEqual([])
   })
 
   test("resumes Claude Code's conversation when waking a Session", async () => {

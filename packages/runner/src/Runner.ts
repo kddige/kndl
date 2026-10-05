@@ -1,5 +1,6 @@
 import { Effect, Layer } from "effect"
 import { claudeConfigPath, resolveRunnerLogin } from "./ClaudeConfig.ts"
+import { ClaudeModelsLive } from "./ClaudeModels.ts"
 import { ClaudeTrust, ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.ts"
 import { HubGitLive } from "./HubGit.ts"
@@ -53,5 +54,6 @@ export const SessionsHost = SessionsLive.pipe(
   Layer.provideMerge(HubGitLive),
   Layer.provideMerge(HubVariablesLive),
   Layer.provideMerge(ClaudeTrustLive(claudeConfigPath())),
+  Layer.provideMerge(ClaudeModelsLive),
   Layer.provideMerge(HubLinkLive),
 )

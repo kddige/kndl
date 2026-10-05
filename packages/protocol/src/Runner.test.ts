@@ -223,10 +223,19 @@ const hubToRunner = [
     model: "sonnet",
     effort: "xhigh",
   },
-  { _tag: "RelaunchSession", sessionId: "s-1", resume: "0b6d6c1e-claude", modToken: "mod-2" },
+  {
+    _tag: "RelaunchSession",
+    sessionId: "s-1",
+    repo: "kddige/claude-hub",
+    workBranch: "claude/s-1",
+    resume: "0b6d6c1e-claude",
+    modToken: "mod-2",
+  },
   {
     _tag: "RelaunchSession",
     sessionId: "s-2",
+    repo: "kddige/claude-hub",
+    workBranch: "claude/s-2",
     resume: "0b6d6c1e-claude",
     modToken: "mod-3",
     parent: { id: "s-1", title: "Release" },
@@ -306,7 +315,13 @@ describe("HubToRunner", () => {
     expectRejected(HubToRunner, { ...hubToRunner[2], model: "--dangerously-skip-permissions" })
     expectRejected(HubToRunner, { ...hubToRunner[2], model: "opus plan" })
     expectRejected(HubToRunner, { ...hubToRunner[2], effort: "extra" })
-    expectRejected(HubToRunner, { _tag: "RelaunchSession", sessionId: "s-1", modToken: "m" })
+    expectRejected(HubToRunner, {
+      _tag: "RelaunchSession",
+      sessionId: "s-1",
+      repo: "kddige/claude-hub",
+      workBranch: "claude/s-1",
+      modToken: "m",
+    })
   })
 
   test("keeps variable values redacted once decoded", () => {

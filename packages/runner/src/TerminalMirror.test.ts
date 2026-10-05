@@ -19,6 +19,7 @@ import {
   type TestHub,
   webOrigin,
 } from "../../hub/src/testSupport.ts"
+import { StaticClaudeModels } from "./ClaudeModels.ts"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -169,6 +170,7 @@ async function startRunner(hub: TestHub) {
     Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
+    Layer.provideMerge(StaticClaudeModels(undefined)),
     Layer.provide([
       TmuxLive,
       new FakeWorkspaces(sessionsRoot).layer,

@@ -223,6 +223,8 @@ export type StartSession = typeof StartSession.Type
  */
 export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   sessionId: SessionId,
+  repo: RepoName,
+  workBranch: BranchName,
   /** Claude Code's session id to resume, from its mod's last hello. */
   resume: ClaudeSessionId,
   /** A new mod token, in place of the old one, which the Hub revoked as it sent this. */

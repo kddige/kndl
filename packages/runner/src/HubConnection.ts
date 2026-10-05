@@ -9,6 +9,7 @@ import {
 import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { Data, Duration, Effect, Redacted, Schema } from "effect"
 import { Socket } from "effect/socket"
+import { ClaudeModels } from "./ClaudeModels.ts"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig, runnerConnectionUrl, runnerSocketUrl } from "./RunnerConfig.ts"
 import { Sessions } from "./Sessions.ts"
@@ -156,6 +157,7 @@ const connectOnce = (login: RunnerLogin) =>
       )
       const writer = yield* socket.writer
       const hello = yield* updater.hello
+      const models = yield* (yield* ClaudeModels).current
       const write = (message: RunnerToHub) => writer.write(JSON.stringify(encodeOutgoing(message)))
 
       yield* write(
@@ -168,6 +170,8 @@ const connectOnce = (login: RunnerLogin) =>
           asksCloneAccess: true,
           updater: hello.updater,
           ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
+          ...(models !== undefined && { models }),
+          relaunches: true,
         }),
       ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
 
