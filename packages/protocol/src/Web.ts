@@ -17,6 +17,7 @@ import {
 } from "./Environment.ts"
 import { AppPermissionsCheck } from "./GitHubApp.ts"
 import { EventSeq, PromptId, RequestId, RunnerId, SessionId } from "./Ids.ts"
+import { EffortLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
   BranchName,
@@ -80,6 +81,22 @@ export const SandboxNoted = Schema.TaggedStruct("SandboxNoted", {
 export type SandboxNoted = typeof SandboxNoted.Type
 
 /**
+ * A Participant changed the Session's model or effort (#128): what it is set to now, which its
+ * Claude Code runs from the next Turn on. An absent `model` or `effort` is Claude Code's default.
+ */
+export const ModelSwitched = Schema.TaggedStruct("ModelSwitched", {
+  by: Participant,
+  model: Schema.optionalKey(ModelName),
+  /**
+   * What the Runner's Claude Code called the model then, such as `Sonnet 5.5`; for the default,
+   * the model it runs.
+   */
+  modelLabel: Schema.optionalKey(Schema.NonEmptyString),
+  effort: Schema.optionalKey(EffortLevel),
+})
+export type ModelSwitched = typeof ModelSwitched.Type
+
+/**
  * Everything a Session's history records: Turn events from the mod, and what the Hub saw
  * happen. New kinds of event are added here as members.
  */
@@ -89,6 +106,7 @@ export const SessionEvent = Schema.Union([
   TurnStopRequested,
   WipNotPushed,
   SandboxNoted,
+  ModelSwitched,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type SessionEvent = typeof SessionEvent.Type
 
@@ -108,12 +126,18 @@ export const WebHello = Schema.TaggedStruct("WebHello", {
 })
 export type WebHello = typeof WebHello.Type
 
-/** Start a new Session on a Repo, from a base branch. The Hub picks a Runner if none is named. */
+/**
+ * Start a new Session on a Repo, from a base branch. The Hub picks a Runner if none is named. A
+ * `model` or `effort` the Runner's Claude Code doesn't take is refused; absent, Claude Code's own
+ * default is used (#128).
+ */
 export const CreateSession = Schema.TaggedStruct("CreateSession", {
   requestId: RequestId,
   repo: RepoName,
   baseBranch: BranchName,
   runnerId: Schema.optionalKey(RunnerId),
+  model: Schema.optionalKey(ModelName),
+  effort: Schema.optionalKey(EffortLevel),
 })
 export type CreateSession = typeof CreateSession.Type
 
@@ -192,6 +216,21 @@ export const RenameSession = Schema.TaggedStruct("RenameSession", {
   name: Schema.String,
 })
 export type RenameSession = typeof RenameSession.Type
+
+/**
+ * Set the Session's model and effort (#128), both at once; an absent one is Claude Code's default.
+ * Anyone with access to its Repo may, in any state but Archived. A model or effort the Runner's
+ * Claude Code doesn't take is refused, a model as Claude Code refuses it (`Model 'x' not found`).
+ * Every client that can see the Session gets a SessionUpdated, and its log a ModelSwitched. A
+ * running Turn goes on as it is: Claude Code is restarted with the new setting once no Turn runs,
+ * or starts with it when the Session next wakes.
+ */
+export const SetSessionModel = Schema.TaggedStruct("SetSessionModel", {
+  sessionId: SessionId,
+  model: Schema.optionalKey(ModelName),
+  effort: Schema.optionalKey(EffortLevel),
+})
+export type SetSessionModel = typeof SetSessionModel.Type
 
 /** Restore an Archived Session before it is purged. It comes back Asleep. Any Participant may. */
 export const RestoreSession = Schema.TaggedStruct("RestoreSession", {
@@ -294,6 +333,7 @@ export const WebToHub = Schema.Union([
   ArchiveSession,
   RestoreSession,
   RenameSession,
+  SetSessionModel,
   OpenTerminal,
   CloseTerminal,
   TerminalInput,

@@ -8,6 +8,7 @@ import {
   expectRejected,
   expectRoundTrips,
   runnerLogin,
+  runnerModels,
   sessionSummary,
   turnEvents,
 } from "./testSupport.ts"
@@ -29,6 +30,9 @@ const sessionEvents = [
   { _tag: "TurnStopRequested", by: alice },
   { _tag: "WipNotPushed", message: "git push exited with 128: could not read from remote" },
   { _tag: "SandboxNoted", message: "Memory capped at 8192 MiB by the Runner" },
+  { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", effort: "high" },
+  { _tag: "ModelSwitched", by: bob, modelLabel: "Opus 5.5" },
+  { _tag: "ModelSwitched", by: bob },
 ]
 
 const webToHub = [
@@ -110,6 +114,17 @@ const webToHub = [
   { _tag: "RevokePairingCode", requestId: "q-15", pairingCodeId: "pc-1" },
   { _tag: "RemoveRunner", requestId: "q-16", runnerId: "r-1" },
   { _tag: "UpdateRunner", requestId: "q-17", runnerId: "r-1", now: false },
+  {
+    _tag: "CreateSession",
+    requestId: "q-18",
+    repo: "kddige/claude-hub",
+    baseBranch: "main",
+    model: "opus[1m]",
+    effort: "low",
+  },
+  { _tag: "SetSessionModel", sessionId: "s-1", model: "sonnet", effort: "xhigh" },
+  { _tag: "SetSessionModel", sessionId: "s-1", model: "claude-sonnet-4-5" },
+  { _tag: "SetSessionModel", sessionId: "s-1" },
 ]
 
 const hubToWeb = [
@@ -190,6 +205,26 @@ const hubToWeb = [
     },
   },
   { _tag: "SessionUpdated", session: { ...sessionSummary, id: "s-2", parentId: "s-1" } },
+  {
+    _tag: "SessionUpdated",
+    session: { ...sessionSummary, model: "sonnet", effort: "high", modelPending: true },
+  },
+  {
+    _tag: "RunnerList",
+    runners: [
+      {
+        id: "r-1",
+        name: "studio",
+        login: runnerLogin,
+        isOnline: true,
+        version: null,
+        versionStatus: "Unknown",
+        lastSeenAt: 1_790_000_000_000,
+        openSessions: 1,
+        models: runnerModels,
+      },
+    ],
+  },
   { _tag: "SessionRemoved", sessionId: "s-1" },
   { _tag: "SessionCreated", requestId: "q-1", session: sessionSummary },
   {
@@ -404,6 +439,12 @@ describe("WebToHub", () => {
     expectRejected(WebToHub, { _tag: "JoinSession", sessionId: "s-1", afterSeq: -1 })
     expectRejected(WebToHub, { _tag: "CancelPrompt", sessionId: "s-1" })
     expectRejected(WebToHub, { _tag: "DeliverPrompt", sessionId: "s-1", promptId: "p", text: "x" })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "" })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "-p" })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "x".repeat(201) })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", effort: "extra" })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", effort: "auto" })
+    expectRejected(WebToHub, { ...webToHub[1], model: "son net" })
   })
 })
 
