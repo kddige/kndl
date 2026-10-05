@@ -1,5 +1,6 @@
 import type { BranchName, ClaudeSessionId, RepoName, SessionId } from "@claude-hub/protocol"
 import { ToolsSocketVariable } from "@claude-hub/protocol"
+import { repoPluginDirectory } from "./RepoFiles.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 
 /**
@@ -43,6 +44,11 @@ export const ModEnvironment = {
   workspace: "CLAUDE_HUB_WORKSPACE",
   repo: "CLAUDE_HUB_REPO",
   workBranch: "CLAUDE_HUB_WORK_BRANCH",
+  /**
+   * The Session's Repo files directory, which the Runner fills from the Sandbox (#125): the mod
+   * adds its CLAUDE.md files to the context, and shows its skills' directory as the Workspace's.
+   */
+  repoFiles: "CLAUDE_HUB_REPO_FILES",
 } as const
 
 export interface ClaudeLaunchOptions {
@@ -53,6 +59,8 @@ export interface ClaudeLaunchOptions {
   readonly modToken: string
   /** The Session's tool bridge socket. */
   readonly toolsSocket: string
+  /** The Session's Repo files directory, with the Repo's skills and CLAUDE.md (RepoFiles.ts). */
+  readonly repoFiles: string
   readonly repo: RepoName
   readonly workBranch: BranchName
   /** Start a new conversation with this id, or resume an existing one (waking an Asleep Session). */
@@ -69,7 +77,8 @@ export interface ClaudeLaunch {
 
 /**
  * The command line that runs a Session's Claude Code on the host, with the hardened flags of
- * ADR 0001 and the mod loaded. It is started from an empty per-Session directory.
+ * ADR 0001, the mod loaded, and the Repo's skills as a plugin. It is started from an empty
+ * per-Session directory.
  *
  * A new conversation gets `--session-id`, chosen by the Runner, so its id is known up front; waking
  * uses `--resume`, which restores the conversation and keeps the id (spike #4).
@@ -85,6 +94,10 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       ...conversation,
       "--plugin-dir",
       options.modDir,
+      // The Repo's skills, as the Runner copied them out of the Sandbox (#125). Project settings
+      // stay off: the source that loads a project's skills loads its settings.json too.
+      "--plugin-dir",
+      repoPluginDirectory(options.repoFiles),
       "--tools",
       ClaudeTools.join(","),
       "--strict-mcp-config",
@@ -107,6 +120,7 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       [ModEnvironment.workspace]: workspaceGuestPath,
       [ModEnvironment.repo]: options.repo,
       [ModEnvironment.workBranch]: options.workBranch,
+      [ModEnvironment.repoFiles]: options.repoFiles,
     },
   }
 }

@@ -16,6 +16,12 @@ export {
   turnUsage,
 } from "./HubMessages.ts"
 export type { SandboxFacts } from "./HubMessages.ts"
+export {
+  parseRepoInstructions,
+  repoInstructionsFile,
+  skillInWorkspace,
+  withRepoInstructions,
+} from "./RepoFiles.ts"
 export { newCallId, ReadBeforeEdit, runInSandbox } from "./ToolBridgeClient.ts"
 export type { BridgeExchange, ToolAnswer } from "./ToolBridgeClient.ts"
 export { decideTool, isClaudeCodeTool, startsShellMode, toolArguments } from "./ToolPolicy.ts"

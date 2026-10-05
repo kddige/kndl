@@ -8,6 +8,8 @@ import type {
   StopSession,
 } from "@claude-hub/protocol"
 import { Context, Data, Effect, Layer } from "effect"
+import type { RepoFiles } from "./RepoFiles.ts"
+import { noRepoFiles } from "./RepoFiles.ts"
 import type { SessionDirectories } from "./SessionNames.ts"
 
 export class SandboxError extends Data.TaggedError("SandboxError")<{
@@ -50,6 +52,11 @@ export class Sandboxes extends Context.Service<
       directories: SessionDirectories,
       target?: SandboxTarget,
     ) => Effect.Effect<SandboxStarted, SandboxError>
+    /**
+     * Reads the Repo's skills and CLAUDE.md from the Workspace in the started Sandbox, never from
+     * the host's copy of it: regular files only, within limits, defused (RepoFiles.ts, #125).
+     */
+    readonly repoFiles: (sessionId: SessionId) => Effect.Effect<RepoFiles, SandboxError>
     /** `Sleep` stops the Sandbox and keeps its volumes; `Archive` destroys it (ADR 0006). */
     readonly stop: (sessionId: SessionId, reason: StopSession["reason"]) => Effect.Effect<void>
     /**
@@ -80,6 +87,7 @@ export const NoSandboxes = Layer.succeed(
   Sandboxes,
   Sandboxes.of({
     start: () => Effect.succeed({}),
+    repoFiles: () => Effect.succeed(noRepoFiles),
     stop: () => Effect.void,
     purge: () => Effect.void,
     reconcile: () => Effect.void,
