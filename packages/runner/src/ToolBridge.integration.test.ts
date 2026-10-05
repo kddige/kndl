@@ -11,7 +11,12 @@ import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { RunnerToHub, SessionId, ToolBridgeReply } from "@claude-hub/protocol"
+import type {
+  RunnerToHub,
+  SessionId,
+  ToolBridgeReply,
+  ToolCallReplyEncoded,
+} from "@claude-hub/protocol"
 import { devHome } from "@claude-hub/protocol/home"
 import { Duration, Effect, Layer } from "effect"
 import { Sandbox } from "microsandbox"
@@ -45,6 +50,17 @@ const call = (socket: string, tool: string, input: Record<string, unknown>) =>
       body: JSON.stringify({ tool, input }),
     })
     return (await response.json()) as ToolBridgeReply
+  })
+
+/** One request to the bridge's long-call routes, with its status and decoded reply. */
+const exchange = (socket: string, method: string, path: string, body?: unknown) =>
+  Effect.promise(async () => {
+    const response = await fetch(`http://bridge${path}`, {
+      method,
+      unix: socket,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    return { status: response.status, reply: (await response.json()) as ToolCallReplyEncoded }
   })
 
 /** Stands in for a secret in the Runner's environment: it must never show up inside the VM. */
@@ -119,6 +135,30 @@ test.skipIf(!enabled)(
 
       const failed = yield* call(socket, "Bash", { command: "exit 3" })
       expect(failed._tag).toBe("ToolFailed")
+
+      // A long call is waited for in steps, and cancelling it kills its process in the VM (#109).
+      const started = yield* exchange(socket, "POST", "/tools/calls?waitMs=1000", {
+        callId: "it-long",
+        tool: "Bash",
+        input: { command: "sleep 47; echo slept" },
+      })
+      expect(started).toMatchObject({ status: 202, reply: { _tag: "ToolRunning" } })
+      const step = yield* exchange(socket, "GET", "/tools/calls/it-long?waitMs=1000")
+      expect(step).toMatchObject({ status: 202, reply: { _tag: "ToolRunning" } })
+      const cancelled = yield* exchange(socket, "DELETE", "/tools/calls/it-long")
+      expect(cancelled.reply._tag).toBe("ToolLost")
+      const sleeping = yield* timed(
+        "cancelled command gone",
+        Effect.gen(function* () {
+          for (let attempt = 0; attempt < 50; attempt++) {
+            const ps = yield* backend.exec(sessionId, shell("pgrep -f 'slee[p] 47' || true"))
+            if (ps.stdout.trim() === "") return "gone"
+            yield* Effect.sleep("200 millis")
+          }
+          return "still running"
+        }),
+      )
+      expect(sleeping).toBe("gone")
 
       // The server dies; the bridge starts it again.
       yield* backend.exec(sessionId, shell("pkill -f 'mcp serve' || true"))
