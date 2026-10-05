@@ -1,6 +1,6 @@
 ---
 title: Work in a Session
-description: Start, find and rename a Session, prompt it with others, use its terminal, put it to sleep, delete and restore it, and get its work out.
+description: Start, find and rename a Session, prompt it with others, use the Repo's skills and CLAUDE.md, use its terminal, put it to sleep, delete and restore it, and get its work out.
 sidebar:
   order: 8
 ---
@@ -34,6 +34,23 @@ Type a prompt and send it. While a Turn is running, a prompt from anyone waits i
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
 
 Claude's tools are limited to Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, which run in the Sandbox; WebSearch, which runs at Anthropic; and the tools that hand work to Child Sessions, which ask the Hub (see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/)). Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host. To have Claude read a web page, ask it to fetch the page: it uses `curl` in the Sandbox, because WebFetch is denied.
+
+## Use the Repo's skills and CLAUDE.md
+
+Claude follows the Repo's `CLAUDE.md` and can use the Repo's skills, as it would in a checkout of the Repo. Each time the Session starts or wakes, the Runner reads them from the Workspace, in the Sandbox:
+
+- `CLAUDE.md` and `.claude/CLAUDE.md` at the Repo's root, and the files they import with `@path`, when those are in the Repo too.
+- Each skill's `.claude/skills/<name>/SKILL.md`. Run one with `/repo:<name>`, or with `/<name>` when no other skill has that name, or let Claude choose it. The skill's other files stay in the Workspace, where Claude reads them with its tools.
+
+To change them, edit them in the Repo like any other file. A skill changes the next time the Session starts or wakes. A woken Session resumes its conversation with the instructions it started with, so a changed `CLAUDE.md` reaches Claude once the Session has woken and the conversation is cleared (`/clear` in the **Terminal**) or compacted.
+
+Nothing in the Repo runs on the Runner's machine, so some files are left out:
+
+- `CLAUDE.local.md`, `CLAUDE.md` files in subdirectories, and `.claude/rules/`.
+- The Repo's `.claude/settings.json`, hooks, `.mcp.json`, agents and commands. A skill keeps only its name, `description`, `when_to_use`, `argument-hint`, `disable-model-invocation` and `user-invocable`. Other fields, such as `allowed-tools`, `hooks` and `model`, are ignored.
+- A skill's inline shell commands (`` !`command` ``) don't run. Ask Claude to run the command instead.
+
+In a skill, Claude sees a zero-width space before each `@` and between each `!` and a backtick. Claude Code acts on neither on the host, and the mod tells Claude to leave the spaces out of what it writes. If a file you expect is missing, see [Claude doesn't follow the Repo's CLAUDE.md, or a skill is missing](/troubleshooting/sessions/#claude-doesnt-follow-the-repos-claudemd-or-a-skill-is-missing).
 
 ## Use the terminal
 

@@ -14,7 +14,7 @@ import {
 import { type Cause, Effect, Fiber, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
-import { Sandboxes, type SandboxTarget } from "./Sandbox.ts"
+import { noRepoFiles, type RepoFiles, Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
@@ -255,6 +255,10 @@ export class FakeSandboxes {
   readonly reconciled: Array<Array<SessionId>> = []
   /** What each `start` was given to start the Sandbox from. */
   readonly targets: Array<SandboxTarget | undefined> = []
+  /** What `repoFiles` reads from every Session's Workspace. */
+  repo: RepoFiles = noRepoFiles
+  /** The Sessions whose Repo files were read, in order. */
+  readonly repoFilesRead: Array<SessionId> = []
 
   readonly layer = Layer.sync(Sandboxes, () =>
     Sandboxes.of({
@@ -265,6 +269,11 @@ export class FakeSandboxes {
           return target?.environment === undefined
             ? {}
             : { environmentVersion: target.environment.version }
+        }),
+      repoFiles: (id) =>
+        Effect.sync(() => {
+          this.repoFilesRead.push(id)
+          return this.repo
         }),
       stop: (id, reason) => Effect.sync(() => void this.calls.push(`stop ${id} ${reason}`)),
       purge: (id) => Effect.sync(() => void this.calls.push(`purge ${id}`)),

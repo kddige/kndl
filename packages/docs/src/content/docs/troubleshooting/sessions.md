@@ -162,6 +162,31 @@ Bash may have run in this Session's Sandbox, but its result was lost (the tool b
 
 **Fix.** Update the Runner's checkout and restart the Runner, then restart the Session (**Sleep now**, then **Wake now**) so its Claude Code loads the new mod too. Until then, check what a failed call did before running it again.
 
+## Claude doesn't follow the Repo's CLAUDE.md, or a skill is missing
+
+**What you see.** Claude doesn't know an instruction from the Repo's `CLAUDE.md`, or `/repo:<name>` isn't a command. The Runner logs what it left out:
+
+```
+Session <id>: left out of the Repo's skills and CLAUDE.md: …
+```
+
+or, when it couldn't read the Workspace at all, `Session <id>: the Repo's skills and CLAUDE.md were not read`.
+
+**Why.** The Runner copies only what is safe to hand to Claude Code on the host ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/#repo-skills-and-claudemd-amended-in-125)). It leaves out:
+
+- `… a symbolic link is along its path`: the file, or a folder above it, is a symbolic link.
+- `… larger than 65536 bytes`: the file is over 64 KiB. The instruction files together stop at 256 KiB.
+- `… is outside the Workspace`: an `@` import points outside the Repo, such as `@~/notes.md` or `@../other.md`.
+- `… not UTF-8 text` or `… not text`: the file isn't text, or isn't UTF-8.
+- `… not a skill name`: a skill's folder name must start with a letter or digit, and hold only letters, digits, `.`, `_` and `-`, up to 64 characters.
+- `… imports past depth 5` and `… past the limit of 32 imports`.
+
+Files Claude Code would load in a checkout, but a Session never does, aren't listed: `CLAUDE.local.md`, `CLAUDE.md` files in subdirectories, `.claude/rules/` and commands. See [Use the Repo's skills and CLAUDE.md](/how-to/work-in-a-session/#use-the-repos-skills-and-claudemd).
+
+The copy is taken when the Session starts or wakes. A `CLAUDE.md` changed after that, or one a woken Session started without, isn't in the conversation yet.
+
+**Fix.** Move the file into the Repo, replace the link with the file, or split a large file. Then sleep and wake the Session (**Sleep now**, then send a prompt) and run `/clear` in the **Terminal**, so the conversation starts over with the new instructions. To keep a `CLAUDE.local.md` instruction, move it into `CLAUDE.md`.
+
 ## The Test build fails
 
 **What you see.** On the Repo's **Environment** page, the Test build ends with **Test build failed** and the end of the failing step's output, such as:

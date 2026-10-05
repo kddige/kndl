@@ -26,7 +26,7 @@ export function sessionIdOfTmuxName(name: string): SessionId | undefined {
 
 /** Where a Session's files live under the sessions root. */
 export interface SessionDirectories {
-  /** `<root>/<session id>`, which holds the other two. */
+  /** `<root>/<session id>`, which holds the others. */
   readonly session: string
   /** The empty directory Claude Code runs in (ADR 0001). */
   readonly claude: string
@@ -43,6 +43,11 @@ export interface SessionDirectories {
    * `.git/config` and `.git/hooks`, which the Sandbox can write (HostGit.ts).
    */
   readonly hostGit: string
+  /**
+   * The Repo's skills and CLAUDE.md, as the Runner copied them out of the Sandbox when the Session
+   * last started (RepoFiles.ts). Rewritten at each start; never the Workspace's own files.
+   */
+  readonly repoFiles: string
 }
 
 export function sessionDirectories(sessionsRoot: string, id: SessionId): SessionDirectories {
@@ -53,5 +58,6 @@ export function sessionDirectories(sessionsRoot: string, id: SessionId): Session
     workspace: join(session, "workspace"),
     toolsSocket: join(session, "tools.sock"),
     hostGit: join(session, "host-git"),
+    repoFiles: join(session, "repo"),
   }
 }

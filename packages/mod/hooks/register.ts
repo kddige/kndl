@@ -14,6 +14,9 @@
 //   shell shortcut, which would run a command on the host, is refused.
 // - The model: the system prompt says the Session is shared, and describes the Sandbox, where its
 //   tools run, in place of Claude Code's description of the host.
+// - The Repo: its CLAUDE.md and skills, which the Runner copied out of the Sandbox, stand in for
+//   any instruction files from the host, and its skills point at the Workspace (see
+//   src/RepoFiles.ts).
 //
 // The rest of the mod, with Effect and the protocol, is bundled from src/ into
 // hooks/hub-link-lib.js (`bun run build`): Claude Code's mod runtime loads no package but its
@@ -31,16 +34,20 @@ import {
   HubLink,
   isClaudeCodeTool,
   newCallId,
+  parseRepoInstructions,
   promptFromParticipant,
   ReadBeforeEdit,
+  repoInstructionsFile,
   resultSummary,
   runInSandbox,
   sandboxEnvironment,
   sharedSessionNote,
+  skillInWorkspace,
   startsShellMode,
   toolArguments,
   turnEndReason,
   turnUsage,
+  withRepoInstructions,
 } from "./hub-link-lib.js"
 import type {
   BridgeExchange,
@@ -75,6 +82,8 @@ const state = {
   toolsSocket: undefined as string | undefined,
   /** What the Runner said about the Sandbox; null when no Runner started this Claude Code. */
   sandbox: undefined as SandboxFacts | null | undefined,
+  /** Where the Runner copied the Repo's skills and CLAUDE.md; null when it copied none. */
+  repoFiles: undefined as string | null | undefined,
   /** The Turn running on the main loop. */
   mainTurn: undefined as string | undefined,
   /** The Turn each subagent's loop is in, from its steps; tool calls carry only the agent. */
@@ -203,6 +212,22 @@ const sandboxFacts = async ($: EngineInterface) => {
     ? { workspace, repo: repo || undefined, workBranch: workBranch || undefined }
     : null
   return state.sandbox
+}
+
+const repoFilesDirectory = async ($: EngineInterface) => {
+  if (state.repoFiles !== undefined) return state.repoFiles
+  state.repoFiles = (await $.env.get("CLAUDE_HUB_REPO_FILES"))?.replace(/\/+$/, "") || null
+  return state.repoFiles
+}
+
+/** The Repo's instruction files, as the Runner copied them; none when it copied none. */
+const repoInstructions = async ($: EngineInterface, directory: string) => {
+  try {
+    return parseRepoInstructions(String(await $.fs.read(`${directory}/${repoInstructionsFile}`)))
+  } catch (error) {
+    $.ui.log(`hub-link: no Repo instructions: ${error}`, { to: "debug" })
+    return []
+  }
 }
 
 /** One exchange with the tool bridge, through Claude Code's fetch. */
@@ -409,6 +434,32 @@ export function register(on: On) {
   on("prompt.attachment", { type: "environment" }, async ($, e, next) =>
     (await sandboxFacts($)) === null ? next(e) : { text: null },
   )
+
+  // The Repo's CLAUDE.md, read in the Sandbox by the Runner, is the Session's project instructions
+  // (#125). Claude Code loads no project's from the host (`--setting-sources ""`); any other file
+  // it found there, but the organization's managed policy, is left out too. A hook above that
+  // rewrote the instructions' text leaves their files unknown, and then none is added.
+  on("prompt.context", async ($, e, next) => {
+    const context = await next(e)
+    const directory = await repoFilesDirectory($)
+    if (directory === null || context.instructionFiles === undefined) return context
+    return {
+      blocks: context.blocks,
+      instructionFiles: withRepoInstructions(
+        context.instructionFiles,
+        await repoInstructions($, directory),
+      ),
+    }
+  })
+
+  // A Repo skill's directory is the copy on the host Claude Code loaded it from; the model's tools
+  // run in the Sandbox, where the skill's own files are, so its prompt points there.
+  on("skill.prompt", async ($, e, next) => {
+    const prompt = await next(e)
+    const [directory, sandbox] = await Promise.all([repoFilesDirectory($), sandboxFacts($)])
+    if (directory === null || sandbox === null) return prompt
+    return { text: skillInWorkspace(prompt.text, directory, sandbox.workspace) }
+  })
 
   // `!` runs a shell command on the host, outside every tool hook (spike #2): refuse the key.
   on("prompt.edit", async ($, e, next) => {

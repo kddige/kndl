@@ -51,6 +51,7 @@ import { cloneDefaultBranch, type GitAuth } from "./HostGit.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables, variablesEnv } from "./HubVariables.ts"
+import { collectRepoFiles, sandboxWorkspace } from "./RepoFiles.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { SandboxError, Sandboxes } from "./Sandbox.ts"
 import type { SandboxTarget } from "./Sandbox.ts"
@@ -797,7 +798,10 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         Effect.catchCause((cause) => Effect.logWarning("Could not reconcile Sandboxes", cause)),
       )
 
-    return Sandboxes.of({ start, stop, purge, reconcile, testBuild })
+    const repoFiles = (sessionId: SessionId) =>
+      collectRepoFiles(sandboxWorkspace(backend, sessionId))
+
+    return Sandboxes.of({ start, repoFiles, stop, purge, reconcile, testBuild })
   })
 
 /**
