@@ -61,7 +61,7 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 
 `RunnerHello` carries the Runner's name, its Runner login, the Sessions it still runs, and `version`: the commit its checkout is on and the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `version` is optional, so a Runner from before it still connects, listed with its version unknown. The Hub compares it with its own commit for the Runners page, and does nothing else with it yet.
 
-`StartSession` carries what the Runner needs to start or wake a Session: its Repo, Work branch and Environment, and a fresh mod token.
+`StartSession` carries what the Runner needs to start or wake a Session: its Repo, Work branch and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/explanation/git-from-sessions/#in-the-sandbox)). `gitIdentity` is optional, so a Runner still starts Sessions for a Hub from before it, without setting an identity.
 
 `SessionStopped` says why Claude Code stopped: `Requested`, after a `StopSession`, or `Exited` on its own, with its exit code. For `Exited` it may carry `output`, the last lines Claude Code's terminal showed, as plain text of at most 4,000 characters. `output` is optional, so a Runner from before it still connects. The Hub redacts it as it does terminal frames and shows it on the Session while it is Asleep.
 

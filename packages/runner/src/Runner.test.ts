@@ -345,6 +345,15 @@ describe("trust", () => {
 })
 
 describe("Sessions", () => {
+  test("starts the Sandbox with the git identity the Hub sent", async () => {
+    const h = startRunner()
+    await connected(h)
+    const gitIdentity = { name: "Ada Lovelace", email: "1+ada@users.noreply.github.com" }
+    h.hub.send(startSession("s-1", { gitIdentity }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    expect(h.sandboxes.targets).toEqual([{ repo: "acme/app", gitIdentity }])
+  })
+
   test("starts Claude Code in tmux with the hardened flags and the mod, then streams it", async () => {
     const h = startRunner()
     await connected(h)

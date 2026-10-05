@@ -14,7 +14,7 @@ import {
 import { type Cause, Effect, Fiber, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
-import { Sandboxes } from "./Sandbox.ts"
+import { Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
@@ -253,12 +253,15 @@ export class FakeSandboxes {
   readonly calls: Array<string> = []
   /** The running Sessions each `reconcile` was given. */
   readonly reconciled: Array<Array<SessionId>> = []
+  /** What each `start` was given to start the Sandbox from. */
+  readonly targets: Array<SandboxTarget | undefined> = []
 
   readonly layer = Layer.sync(Sandboxes, () =>
     Sandboxes.of({
       start: (id, _directories, target) =>
         Effect.sync(() => {
           this.calls.push(`start ${id}`)
+          this.targets.push(target)
           return target?.environment === undefined
             ? {}
             : { environmentVersion: target.environment.version }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { RunnerToHub, SandboxStateReport, SessionId } from "@claude-hub/protocol"
+import type { RepoName, RunnerToHub, SandboxStateReport, SessionId } from "@claude-hub/protocol"
 import { Effect, Layer, Schedule } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
@@ -12,7 +12,7 @@ import type { FakeOptions } from "./sandbox/FakeSandboxBackend.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
 import { SandboxClaudeError, sandboxClaudeGuestDir } from "./sandbox/SandboxClaude.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
-import { ghHostsPath, tokenPath } from "./SandboxGitHub.ts"
+import { ghHostsPath, identityScript, tokenPath } from "./SandboxGitHub.ts"
 import type { SandboxTokenSource } from "./SandboxGitHub.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
@@ -328,6 +328,30 @@ describe("SessionSandboxes", () => {
       },
     )
   })
+
+  test("sets git's identity in the Sandbox at each start, to the Session's Creator", () =>
+    withSandboxes((root) =>
+      Effect.gen(function* () {
+        const sandboxes = yield* Sandboxes
+        const world = yield* FakeSandboxBackend
+        const directories = yield* directoriesIn(root)
+        const gitIdentity = { name: "Ada Lovelace", email: "1+ada@users.noreply.github.com" }
+        const identitySets = () =>
+          world.execCalls.filter((call) => call.request.args?.[1] === identityScript)
+
+        yield* sandboxes.start(s1, directories, { repo: "acme/app" as RepoName, gitIdentity })
+        expect(identitySets().map((call) => call.request.args?.slice(3))).toEqual([
+          ["Ada Lovelace", "1+ada@users.noreply.github.com"],
+        ])
+
+        // A Runner restart brings it back without one, and from an older Hub there is none.
+        yield* sandboxes.stop(s1, "Sleep")
+        yield* sandboxes.start(s1, directories)
+        yield* sandboxes.stop(s1, "Sleep")
+        yield* sandboxes.start(s1, directories, { repo: "acme/app" as RepoName })
+        expect(identitySets()).toHaveLength(1)
+      }),
+    ))
 
   test("a Sandbox that gets no GitHub token, as without a GitHub App, starts all the same", () => {
     const hubGit = new FakeHubGit("acme/app")
