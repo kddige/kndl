@@ -922,8 +922,8 @@ describe("Runner reports", () => {
     const output = "error: The current working directory was deleted"
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1, output })
 
-    const asleep = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
-    expect(asleep.session.lastOutput).toBe(output)
+    const slept = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(slept.session.lastOutput).toBe(output)
     // Kept on the Session: a web client connecting later sees it too.
     const later = await openWeb(hub, "alice")
     expect(later.sessions.sessions.find((s) => s.id === sessionId)?.lastOutput).toBe(output)
@@ -944,9 +944,9 @@ describe("Runner reports", () => {
     const output = `${"a".repeat(MaxLastOutputLength)}\nthe end`
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1, output })
 
-    const asleep = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
-    expect(asleep.session.lastOutput).toHaveLength(MaxLastOutputLength)
-    expect(asleep.session.lastOutput?.endsWith("\nthe end")).toBe(true)
+    const slept = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(slept.session.lastOutput).toHaveLength(MaxLastOutputLength)
+    expect(slept.session.lastOutput?.endsWith("\nthe end")).toBe(true)
   })
 
   test("a Runner can't report on another Runner's Session", async () => {
