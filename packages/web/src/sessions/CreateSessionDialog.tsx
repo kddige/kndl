@@ -5,6 +5,8 @@ import { type FormEvent, type ReactElement, useState } from "react"
 import { repoParams, runnerLabel } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, RepoRefusal, repoPattern, useRepoCheck } from "../app/repoAccess.tsx"
+import { ModelPicker } from "../session/ModelPicker.tsx"
+import { fitSetting, type ModelSetting, sharedModels } from "../session/models.ts"
 import { Button, Dialog, DialogClose, Field, Input, PlusIcon, Select } from "../ui/index.ts"
 import { color, space, text } from "../ui/tokens.stylex.ts"
 
@@ -27,6 +29,8 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const [repo, setRepo] = useState("")
   const [baseBranch, setBaseBranch] = useState("main")
   const [runner, setRunner] = useState<string>(anyRunner)
+  // Claude Code's own default unless one is picked (#128).
+  const [modelChoice, setModelChoice] = useState<ModelSetting>({})
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -40,11 +44,19 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const repoInvalid = repoMalformed || repoRefused
   const branchInvalid = touched && branchValue === ""
   const online = (runners ?? []).filter((candidate) => candidate.isOnline)
+  // The models it can run: the chosen Runner's, or for any Runner, what every online one has.
+  const models =
+    runner === anyRunner
+      ? sharedModels(online.map((candidate) => candidate.models))
+      : runners?.find((candidate) => candidate.id === runner)?.models
+  // A choice the Runner picked since doesn't have is dropped, not sent to be refused.
+  const modelSetting = fitSetting(models, modelChoice)
 
   const reset = () => {
     setRepo("")
     setBaseBranch("main")
     setRunner(anyRunner)
+    setModelChoice({})
     setTouched(false)
     setBusy(false)
     setError(null)
@@ -66,7 +78,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         void navigate({
           to: "/repos/$owner/$repo/environment",
           params: repoParams(repoValue),
-          search: { branch: branchValue, ...(runner !== anyRunner && { runner }) },
+          search: { branch: branchValue, ...(runner !== anyRunner && { runner }), ...modelSetting },
         })
         return
       }
@@ -74,6 +86,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         repo: repoValue,
         baseBranch: branchValue,
         ...(runner !== anyRunner && { runnerId: runner as RunnerId }),
+        ...modelSetting,
       })
       setOpen(false)
       reset()
@@ -162,6 +175,17 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
                 disabled: !candidate.isOnline,
               })),
             ]}
+          />
+        </Field>
+        <Field
+          label="Model"
+          description="Claude Code's default unless you pick one. Anyone in the Session can change it later."
+        >
+          <ModelPicker
+            models={models}
+            value={modelSetting}
+            onChange={setModelChoice}
+            appearance="field"
           />
         </Field>
         {error && (

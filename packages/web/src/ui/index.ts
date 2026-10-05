@@ -17,7 +17,17 @@ export * from "./icons.tsx"
 export { InlineEdit, type InlineEditProps } from "./InlineEdit.tsx"
 export { LogView } from "./LogView.tsx"
 export { Markdown } from "./Markdown.tsx"
-export { Menu, MenuGroup, MenuItem, MenuSeparator, type MenuItemIntent } from "./Menu.tsx"
+export {
+  Menu,
+  MenuGroup,
+  MenuItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuSubmenu,
+  type MenuItemIntent,
+  type MenuSide,
+} from "./Menu.tsx"
 export { PageHeader } from "./PageHeader.tsx"
 export { Popover } from "./Popover.tsx"
 export { Select, type SelectOption, type SelectSize } from "./Select.tsx"
@@ -29,3 +39,4 @@ export { setTheme, themes, type ThemeMode } from "./theme.ts"
 export { toast, type ToastAction, type ToastIntent, type ToastOptions } from "./Toast.tsx"
 export { Tooltip } from "./Tooltip.tsx"
 export { UIProvider } from "./UIProvider.tsx"
+export { useMediaQuery, WIDE } from "./useMediaQuery.ts"

@@ -8,7 +8,16 @@ import {
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import {
   day,
   environmentChanged,
@@ -48,6 +57,8 @@ import {
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import { Composer } from "./Composer.tsx"
+import { ModelPicker } from "./ModelPicker.tsx"
+import { modelName, otherTurnModel } from "./models.ts"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { Transcript } from "./Transcript.tsx"
 
@@ -228,17 +239,35 @@ function LoadedSession({
   )
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
+  // Its model and effort, from what its Runner said its Claude Code has (#128).
+  const models = useHubState(
+    (hubState) => hubState.runners?.find((runner) => runner.id === summary.runnerId)?.models,
+  )
+  const setting = useMemo(
+    () => ({
+      ...(summary.model !== undefined && { model: summary.model }),
+      ...(summary.effort !== undefined && { effort: summary.effort }),
+    }),
+    [summary.model, summary.effort],
+  )
+  const nameTurnModel = useCallback(
+    (model: string) => otherTurnModel(models, setting, model),
+    [models, setting],
+  )
+
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
   const disabledReason = state === "Archived" ? "Archived: restore it to send prompts" : undefined
   const hint = busy
     ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until Claude Code is up.`
-    : state === "Asleep"
-      ? "Asleep: sending a prompt wakes it."
-      : state === "Frozen"
-        ? "Frozen: prompts wait in the queue until its Runner is back."
-        : undefined
+    : summary.modelPending === true && running
+      ? `${modelName(models, setting)} takes over when this Turn ends.`
+      : state === "Asleep"
+        ? "Asleep: sending a prompt wakes it."
+        : state === "Frozen"
+          ? "Frozen: prompts wait in the queue until its Runner is back."
+          : undefined
 
   const send = (prompt: string) => command(hub.sendPrompt(summary.id, prompt))
   // An Archived Session has no terminal to open: it shows its conversation only.
@@ -401,7 +430,7 @@ function LoadedSession({
                   description="Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
                 />
               ) : (
-                <Transcript items={items} />
+                <Transcript items={items} nameTurnModel={nameTurnModel} />
               )}
             </div>
           </div>
@@ -421,6 +450,15 @@ function LoadedSession({
               running={running}
               disabledReason={disabledReason}
               hint={hint}
+              picker={
+                <ModelPicker
+                  models={models}
+                  value={setting}
+                  onChange={(next) => command(hub.setSessionModel(summary.id, next))}
+                  disabled={archived}
+                  side="top"
+                />
+              }
             />
           </div>
         </TabPanel>

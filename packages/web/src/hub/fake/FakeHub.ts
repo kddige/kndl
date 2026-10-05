@@ -11,7 +11,10 @@
 import {
   cantStartText,
   checkHandshake,
+  type EffortLevel,
+  findModel,
   formatPairingCode,
+  modelNotFoundText,
   PairingAlphabet,
   PairingCodeLength,
   PairingCodeLifetimeMs,
@@ -463,8 +466,57 @@ export class FakeHub implements HubTransport {
       }
       case "CreateSession":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
-        this.#create(socket, message.requestId, message.repo, message.baseBranch, message.runnerId)
+        this.#create(
+          socket,
+          message.requestId,
+          message.repo,
+          message.baseBranch,
+          message.runnerId,
+          {
+            ...(message.model !== undefined && { model: message.model }),
+            ...(message.effort !== undefined && { effort: message.effort }),
+          },
+        )
         break
+      // As the Hub does (#128): anyone may, but not in an Archived Session; the Runner's Claude
+      // Code must have the model and level. A running Turn finishes on the old model.
+      case "SetSessionModel": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) {
+          this.#fail(socket, message._tag, "There is no such Session.", message.sessionId)
+          break
+        }
+        if (session.summary.state === "Archived") {
+          const refusal = "The Session is archived: restore it to change its model."
+          this.#fail(socket, message._tag, refusal, message.sessionId)
+          break
+        }
+        const checked = this.#checkModel(session.summary.runnerId, message)
+        if (typeof checked === "string") {
+          this.#fail(socket, message._tag, checked, message.sessionId)
+          break
+        }
+        const { model: _, effort: __, modelPending: ___, ...rest } = session.summary
+        if (session.summary.model === checked.model && session.summary.effort === checked.effort)
+          break
+        // The real Hub restarts Claude Code with it once no Turn runs; here, only the wait shows.
+        const pending = session.summary.currentTurn !== null
+        session.summary = {
+          ...rest,
+          ...(checked.model !== undefined && { model: checked.model }),
+          ...(checked.effort !== undefined && { effort: checked.effort }),
+          ...(pending && { modelPending: true }),
+        }
+        this.#append(session, {
+          _tag: "ModelSwitched",
+          by: this.#you,
+          ...(checked.model !== undefined && { model: checked.model }),
+          ...(checked.label !== undefined && { modelLabel: checked.label }),
+          ...(checked.effort !== undefined && { effort: checked.effort }),
+        })
+        this.#summaryChanged(session)
+        break
+      }
       case "JoinSession": {
         const session = this.sessions.get(message.sessionId)
         if (!session) {
@@ -866,12 +918,50 @@ export class FakeHub implements HubTransport {
 
   // ── What the Hub does ────────────────────────────────────────────────────
 
+  /**
+   * A model setting as the Runner's Claude Code has it, as the Hub checks it (#128): the setting
+   * to keep, with the `default` alias as none, and the model's name; or why it is refused.
+   */
+  #checkModel(
+    runnerId: string,
+    asked: { readonly model?: string; readonly effort?: EffortLevel },
+  ): { model?: string; effort?: EffortLevel; label?: string } | string {
+    const runner = this.runners.find((candidate) => candidate.id === runnerId)
+    const models = runner?.models
+    if (models === undefined) {
+      if (asked.model === undefined && asked.effort === undefined) return {}
+      return `${runner?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
+    }
+    const option = asked.model === undefined ? models.default : findModel(models, asked.model)
+    if (option === undefined) return modelNotFoundText(asked.model ?? "")
+    if (asked.effort !== undefined) {
+      if (!option.effort) return `${option.label} takes no effort level.`
+      if (!models.efforts.includes(asked.effort))
+        return `Claude Code on ${runner?.name ?? "the Runner"} has no effort level '${asked.effort}'.`
+    }
+    return {
+      ...(option !== models.default && asked.model !== undefined && { model: asked.model }),
+      ...(asked.effort !== undefined && { effort: asked.effort }),
+      label: option.label,
+    }
+  }
+
+  /** The model a Session's Turns run, as its Runner's Claude Code resolves its setting. */
+  #modelId(session: FakeSession): string {
+    const models = this.runners.find((runner) => runner.id === session.summary.runnerId)?.models
+    const { model } = session.summary
+    if (models === undefined) return model ?? "claude-opus-5-5"
+    const option = model === undefined ? models.default : findModel(models, model)
+    return option?.id ?? model ?? models.default.id
+  }
+
   #create(
     socket: FakeSocket,
     requestId: string,
     repo: string,
     baseBranch: string,
     runnerId: string | undefined,
+    asked: { readonly model?: string; readonly effort?: EffortLevel },
   ): void {
     const runner =
       runnerId === undefined
@@ -880,6 +970,16 @@ export class FakeHub implements HubTransport {
     if (!runner || !runner.isOnline || runner.login === null) {
       const message = runner ? `${runner.name} is offline.` : "No Runner is online."
       socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
+      return
+    }
+    const checked = this.#checkModel(runner.id, asked)
+    if (typeof checked === "string") {
+      socket.deliver({
+        _tag: "CommandFailed",
+        command: "CreateSession",
+        requestId,
+        message: checked,
+      })
       return
     }
     const version = this.environments.latestVersion(repo)
@@ -902,6 +1002,8 @@ export class FakeHub implements HubTransport {
       currentTurn: null,
       // Not started on any version until its Runner says so: it is being started on `version`.
       environment: { version: null, latestVersion: version },
+      ...(checked.model !== undefined && { model: checked.model }),
+      ...(checked.effort !== undefined && { effort: checked.effort }),
     }
     const session: FakeSession = {
       summary,
@@ -1115,6 +1217,8 @@ export class FakeHub implements HubTransport {
   #runTurn(session: FakeSession, prompt: QueuedPromptWire, steps: ReadonlyArray<ReplyStep>): void {
     const turnId = `t-${++this.#ids}`
     const started = Date.now()
+    // Settled when it starts: a switch while it runs takes over from the next Turn.
+    const turnModel = this.#modelId(session)
     const timers: Array<ReturnType<typeof setTimeout>> = []
     const openTools = new Map<string, { tool: string; agentId?: string }>()
     const openAgents = new Set<string>()
@@ -1154,7 +1258,7 @@ export class FakeHub implements HubTransport {
         durationMs: Date.now() - started,
         ...(reason === "Answered" && {
           usage: {
-            model: "claude-opus-4-1",
+            model: turnModel,
             inputTokens: 1_200 + steps.length * 300,
             outputTokens: 180 + steps.length * 40,
             cacheReadInputTokens: 24_000,
@@ -1163,7 +1267,9 @@ export class FakeHub implements HubTransport {
         }),
       })
       session.stopTurn = null
-      session.summary = { ...session.summary, currentTurn: null }
+      // A model switched while it ran takes over now, as the Hub restarts Claude Code with it.
+      const { modelPending: _, ...summary } = session.summary
+      session.summary = { ...summary, currentTurn: null }
       this.#summaryChanged(session)
       this.#after(2, () => this.#next(session))
     }

@@ -1,5 +1,5 @@
 import * as stylex from "@stylexjs/stylex"
-import { type FormEvent, type KeyboardEvent, useState } from "react"
+import { type FormEvent, type KeyboardEvent, type ReactNode, useState } from "react"
 import { ArrowUpIcon, Button, IconButton, StopIcon, Textarea } from "../ui/index.ts"
 import { color, radius, shadow, space, text } from "../ui/tokens.stylex.ts"
 
@@ -30,7 +30,7 @@ const styles = stylex.create({
     alignItems: "center",
     gap: space.s2,
   },
-  hint: { flex: 1, color: color.textSubtle, fontSize: text.xs },
+  hint: { flex: 1, minWidth: 0, color: color.textSubtle, fontSize: text.xs },
 })
 
 export interface ComposerProps {
@@ -43,10 +43,12 @@ export interface ComposerProps {
   disabledReason?: string | undefined
   /** What a prompt does now, such as waking an Asleep Session. */
   hint?: string | undefined
+  /** The model picker, at the start of the bar under the prompt (#128). */
+  picker?: ReactNode
 }
 
 /** Where a Participant writes prompts. A prompt always goes through the Prompt queue. */
-export function Composer({ onSend, onStop, running, disabledReason, hint }: ComposerProps) {
+export function Composer({ onSend, onStop, running, disabledReason, hint, picker }: ComposerProps) {
   const [draft, setDraft] = useState("")
   const disabled = disabledReason !== undefined
   const empty = draft.trim() === ""
@@ -85,6 +87,7 @@ export function Composer({ onSend, onStop, running, disabledReason, hint }: Comp
         sx={styles.textarea}
       />
       <div {...stylex.props(styles.bar)}>
+        {picker}
         <span {...stylex.props(styles.hint)}>
           {hint ??
             (disabled

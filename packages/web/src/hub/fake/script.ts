@@ -51,6 +51,58 @@ export type ReplyStep =
 /** The commit the fake Hub runs. */
 export const hubVersion = { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", branch: "main" }
 
+/**
+ * What the fake Runners' Claude Code has (#128), as a Runner on Claude Code 2.1.289 says it in its
+ * hello: Haiku takes no effort level.
+ */
+export const fakeModels: NonNullable<RunnerSummaryWire["models"]> = {
+  default: {
+    alias: "default",
+    id: "claude-opus-5-5",
+    label: "Opus 5.5",
+    description: "Best for everyday, complex tasks",
+    effort: true,
+  },
+  models: [
+    {
+      alias: "opus",
+      id: "claude-opus-5-5",
+      label: "Opus 5.5",
+      description: "Best for everyday, complex tasks",
+      effort: true,
+    },
+    {
+      alias: "fable",
+      id: "claude-fable-5-1",
+      label: "Fable 5.1",
+      description: "Most capable for your hardest and longest-running tasks",
+      effort: true,
+    },
+    {
+      alias: "sonnet",
+      id: "claude-sonnet-5-5",
+      label: "Sonnet 5.5",
+      description: "Efficient for routine tasks",
+      effort: true,
+    },
+    {
+      alias: "haiku",
+      id: "claude-haiku-4-5-20251001",
+      label: "Haiku 4.5",
+      description: "Fastest for quick answers",
+      effort: false,
+    },
+    {
+      alias: "opus[1m]",
+      id: "claude-opus-5-5[1m]",
+      label: "Opus 5.5 (1M context)",
+      description: "Opus with a 1M-token context, for long sessions",
+      effort: true,
+    },
+  ],
+  efforts: ["low", "medium", "high", "xhigh", "max"],
+}
+
 /** The Runners paired with the fake Hub; their `openSessions` is counted from the Sessions. */
 export function seedRunners(): Array<RunnerSummaryWire> {
   const now = Date.now()
@@ -65,6 +117,7 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       lastSeenAt: now,
       openSessions: 0,
       updater: { self: true },
+      models: fakeModels,
     },
     {
       id: "r-ci",
@@ -76,6 +129,7 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       lastSeenAt: now - 3 * 60 * 60 * 1000,
       openSessions: 0,
       updater: { self: true },
+      models: fakeModels,
     },
   ]
 }
@@ -108,6 +162,9 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         currentTurn: null,
         // Started before Alice applied version 2: it shows "Environment changed".
         environment: { version: 1, latestVersion: 2 },
+        // Bob switched it after the first Turn, which ran on Claude Code's default (#128).
+        model: "sonnet",
+        effort: "high",
       },
       at: now - 2 * hour,
       events: [
@@ -131,6 +188,13 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
             text: "Added `reconnects with afterSeq` to **client.test.ts**. It drops the socket mid-Turn and checks that:\n\n1. the client says hello again,\n2. it joins with the last `seq` it has, and\n3. no entry shows twice.\n\nAll tests pass.",
           },
         ]),
+        {
+          _tag: "ModelSwitched",
+          by: bob,
+          model: "sonnet",
+          modelLabel: "Sonnet 5.5",
+          effort: "high",
+        },
       ],
     },
     {
@@ -475,7 +539,7 @@ function sessionTurn(
     reason: "Answered",
     durationMs: 18_400,
     usage: {
-      model: "claude-opus-4-1",
+      model: "claude-opus-5-5",
       inputTokens: 3_100,
       outputTokens: 420,
       cacheReadInputTokens: 22_000,

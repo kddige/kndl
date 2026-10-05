@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex"
 import { Link, Outlet, useRouterState } from "@tanstack/react-router"
-import { type MouseEvent, useEffect, useState, useSyncExternalStore } from "react"
+import { type MouseEvent, useEffect, useState } from "react"
 import type { Connection } from "../hub/store.ts"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
 import {
@@ -17,13 +17,11 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { chrome, color, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { useMediaQuery, WIDE } from "../ui/useMediaQuery.ts"
 import { AppPermissionsBanner } from "./AppPermissionsBanner.tsx"
 import { AppSidebar } from "./AppSidebar.tsx"
 import { useHub, useHubState } from "./hub.tsx"
 import { SignIn } from "./SignIn.tsx"
-
-/** From this width the sidebar stays in view; below it, it's a drawer behind a menu button. */
-const WIDE = "(min-width: 48rem)"
 
 const styles = stylex.create({
   shell: {
@@ -182,18 +180,6 @@ export function HubShell() {
         </Drawer>
       )}
     </div>
-  )
-}
-
-/** Whether a media query matches, following it as it changes. */
-function useMediaQuery(query: string): boolean {
-  return useSyncExternalStore(
-    (onChange) => {
-      const list = window.matchMedia(query)
-      list.addEventListener("change", onChange)
-      return () => list.removeEventListener("change", onChange)
-    },
-    () => window.matchMedia(query).matches,
   )
 }
 

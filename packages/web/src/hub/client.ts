@@ -9,10 +9,12 @@ import {
   checkHandshake,
   type CommandFailed,
   type EnvironmentDraft,
+  type EffortLevel,
   type EnvironmentDraftChecked,
   type EnvironmentState,
   type EnvironmentVersion,
   HubToWeb,
+  type ModelName,
   type PairingCodeCreated,
   type PairingCodeId,
   ProtocolVersion,
@@ -49,6 +51,9 @@ export interface NewSession {
   readonly repo: string
   readonly baseBranch: string
   readonly runnerId?: RunnerId
+  /** The model to start it on; Claude Code's default without one (#128). */
+  readonly model?: ModelName
+  readonly effort?: EffortLevel
 }
 
 /** A command the Hub refused, or that couldn't be sent. */
@@ -231,6 +236,23 @@ export class HubClient {
     return this.#send({ _tag: "RenameSession", sessionId, name })
   }
 
+  /**
+   * Sets the model and effort a Session runs, for everyone in it (#128); an absent one is Claude
+   * Code's default. A running Turn finishes on the old one: the new one runs from the next Turn.
+   * Every open tab gets the change as a SessionUpdated, and the transcript a ModelSwitched.
+   */
+  setSessionModel(
+    sessionId: SessionId,
+    setting: { readonly model?: ModelName; readonly effort?: EffortLevel },
+  ): boolean {
+    return this.#send({
+      _tag: "SetSessionModel",
+      sessionId,
+      ...(setting.model !== undefined && { model: setting.model }),
+      ...(setting.effort !== undefined && { effort: setting.effort }),
+    })
+  }
+
   /** Brings an Archived Session back, Asleep: the next prompt wakes it. */
   restoreSession(sessionId: SessionId): boolean {
     return this.#send({ _tag: "RestoreSession", sessionId })
@@ -252,6 +274,8 @@ export class HubClient {
         repo: input.repo,
         baseBranch: input.baseBranch,
         ...(input.runnerId !== undefined && { runnerId: input.runnerId }),
+        ...(input.model !== undefined && { model: input.model }),
+        ...(input.effort !== undefined && { effort: input.effort }),
       },
       "SessionCreated",
     )
