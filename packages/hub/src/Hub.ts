@@ -15,6 +15,7 @@ import { PromptQueue } from "./PromptQueue.ts"
 import { RepoAccess } from "./RepoAccess.ts"
 import { Runners } from "./Runners.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
+import { RunnerUpdatePush } from "./RunnerUpdatePush.ts"
 import { Secrets } from "./Secrets.ts"
 import { SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
@@ -53,6 +54,7 @@ export const HubServices = SessionRelay.layer.pipe(
       PairingCodes.layer,
       HubShutdown.layer,
       Environments.layer,
+      RunnerUpdatePush.layer,
     ),
   ),
   // Checks HUB_SECRETS_KEY against the Sensitive values stored, so a Hub with the wrong key

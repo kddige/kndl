@@ -255,11 +255,17 @@ describe("Runners", () => {
             version: null,
             lastSeenAt: null,
             openSessions: 0,
+            updater: null,
           },
         ])
 
         const version = { commit: "a".repeat(40), branch: "main" }
-        yield* runners.recordHello(studio.runnerId, { login: { account: "a@b.c" }, version }, 10)
+        const updater = { self: false, reason: "it runs from a developer's checkout" }
+        yield* runners.recordHello(
+          studio.runnerId,
+          { login: { account: "a@b.c" }, version, updater },
+          10,
+        )
         yield* runners.recordSeen(studio.runnerId, 20)
         expect(yield* runners.get(studio.runnerId)).toEqual(
           Option.some({
@@ -269,18 +275,19 @@ describe("Runners", () => {
             version,
             lastSeenAt: 20,
             openSessions: 0,
+            updater,
           }),
         )
 
-        // A Runner from before the version was in the hello.
+        // A Runner from before the version and the updater were in the hello.
         yield* runners.recordHello(
           studio.runnerId,
-          { login: { account: "a@b.c" }, version: undefined },
+          { login: { account: "a@b.c" }, version: undefined, updater: undefined },
           30,
         )
-        expect(Option.map(yield* runners.get(studio.runnerId), (r) => r.version)).toEqual(
-          Option.some(null),
-        )
+        expect(
+          Option.map(yield* runners.get(studio.runnerId), (r) => [r.version, r.updater]),
+        ).toEqual(Option.some([null, null]))
       }),
     ))
 })

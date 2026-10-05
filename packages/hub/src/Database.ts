@@ -296,6 +296,25 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE sessions ADD COLUMN last_output TEXT`
   }),
+
+  // Runners follow the Hub's commit (issue #87, ADR 0011). A Runner keeps whether it said it updates
+  // itself (`updater`, its hello's RunnerUpdater as JSON; null from a Runner too old to say).
+  // `claude-hub update` on the Hub's machine leaves one row in `runner_update_push`: the commit it
+  // moved the Hub to, which the Hub, once it runs that commit, tells Runners to follow as they
+  // connect; every Runner's, or only `local_runner_id`'s with `--no-update-runners`.
+  "0012_runner_updates": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE runners ADD COLUMN updater TEXT`
+    yield* sql`
+      CREATE TABLE runner_update_push (
+        target_commit TEXT NOT NULL,
+        update_now INTEGER NOT NULL,
+        all_runners INTEGER NOT NULL,
+        local_runner_id TEXT REFERENCES runners (id) ON DELETE SET NULL,
+        requested_at INTEGER NOT NULL
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
