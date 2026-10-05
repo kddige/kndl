@@ -618,6 +618,8 @@ describe("Child Sessions", () => {
       sender: fromSession,
       promptId: "pr-1",
     })
+  })
+})
 
 const sandbox = {
   CLAUDE_HUB_WORKSPACE: "/workspace",
