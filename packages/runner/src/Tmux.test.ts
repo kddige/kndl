@@ -19,6 +19,10 @@ import {
 
 const socket = `claude-hub-test-${process.pid}`
 
+const tmuxMissing = Bun.which("tmux") === null
+// Bun doesn't say why a test was skipped, so this does.
+if (tmuxMissing) console.warn("Skipping the TmuxLive tests: tmux isn't installed")
+
 const tmuxOn = (tmuxSocket: string) =>
   TmuxLive.pipe(
     Layer.provide(
@@ -46,6 +50,7 @@ const TestTmux = tmuxOn(socket)
 const foreignSockets: Array<string> = []
 
 afterAll(() => {
+  if (tmuxMissing) return
   for (const name of [socket, ...foreignSockets]) Bun.spawnSync(["tmux", "-L", name, "kill-server"])
 })
 
@@ -138,7 +143,7 @@ describe("lastOutputOf", () => {
   })
 })
 
-describe.skipIf(Bun.which("tmux") === null)("TmuxLive", () => {
+describe.skipIf(tmuxMissing)("TmuxLive", () => {
   test("runs a command in tmux, streams its terminal and reports its exit", async () => {
     const id = sessionId("tmux-1")
     // Prints its arguments (an empty one, and one ending in `;`) and an env var, echoes one line
