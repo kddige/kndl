@@ -2,10 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { SessionId } from "@claude-hub/protocol"
+import { ParticipantId, PromptId, QueuedPrompt, SessionId } from "@claude-hub/protocol"
 import { ConfigProvider, Effect, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { DatabaseFile, databaseAt } from "./Database.ts"
+import { PromptQueue } from "./PromptQueue.ts"
 import { Sessions } from "./Sessions.ts"
 
 const dirs: Array<string> = []
@@ -37,6 +38,20 @@ describe("the Hub's database", () => {
 const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient.SqlClient>) =>
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
+/**
+ * Takes the database back to before migration 0014, Child Sessions: the migrator runs only the
+ * migrations after the last it ran, so a test of an earlier one undoes this first.
+ */
+const beforeChildSessions = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP INDEX sessions_parent_id`
+  for (const column of ["parent_id", "last_report", "last_report_at", "parent_exchanges"]) {
+    yield* sql.unsafe(`ALTER TABLE sessions DROP COLUMN ${column}`)
+  }
+  yield* sql`ALTER TABLE queued_prompts DROP COLUMN from_session`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'child_sessions'`
+})
+
 describe("migration 0013, Session names", () => {
   test("leaves the Sessions there were unnamed, shown by their Work branch, and lets them be named", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
@@ -51,6 +66,7 @@ describe("migration 0013, Session names", () => {
         yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
           VALUES ('r-1', 'build-box', 'hash', 1)`
         // A database from before it: no name column, and the migration not yet run.
+        yield* beforeChildSessions
         yield* sql`ALTER TABLE sessions DROP COLUMN name`
         yield* sql`
           INSERT INTO sessions (
@@ -75,6 +91,99 @@ describe("migration 0013, Session names", () => {
       }).pipe(Effect.provide(Sessions.layer)),
     )
     expect(after).toEqual({ before: ["claude/s-1", undefined], named: "Health check" })
+  })
+})
+
+describe("migration 0014, Child Sessions", () => {
+  test("leaves the Sessions and queued prompts there were with no parent and no sending Session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* beforeChildSessions
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
+            creator_id, created_at
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
+        `
+        yield* sql`
+          INSERT INTO queued_prompts (id, session_id, text, sender_id, queued_at)
+          VALUES ('q-1', 's-1', 'Fix the test', 'p-1', 2)
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const prompts = yield* PromptQueue
+        const id = SessionId.make("s-1")
+        const before = Option.getOrThrow(yield* sessions.get(id))
+        const queue = yield* prompts.list(id)
+        const record = yield* sessions.childRecord(id)
+        return {
+          parentId: before.parentId,
+          children: (yield* sessions.children(id)).length,
+          record,
+          fromSession: queue.map((prompt) => prompt.fromSession),
+        }
+      }).pipe(Effect.provide([Sessions.layer, PromptQueue.layer])),
+    )
+    expect(after).toEqual({
+      parentId: undefined,
+      children: 0,
+      record: { exchanges: 0 },
+      fromSession: [undefined],
+    })
+  })
+
+  test("keeps a prompt another Session sent with who sent it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    const sent = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
+            creator_id, created_at
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
+        `
+        const prompts = yield* PromptQueue
+        const id = SessionId.make("s-1")
+        yield* prompts.add(
+          id,
+          QueuedPrompt.make({
+            id: PromptId.make("q-1"),
+            text: "[Report] Done.",
+            sender: { id: ParticipantId.make("p-1"), login: "alice", name: "Alice" },
+            fromSession: {
+              _tag: "FromChildSession",
+              session: { id: SessionId.make("s-2"), title: "Docs" },
+            },
+            queuedAt: 2,
+          }),
+        )
+        return (yield* prompts.list(id)).map((prompt) => prompt.fromSession)
+      }).pipe(Effect.provide(PromptQueue.layer)),
+    )
+    expect(sent).toEqual([
+      { _tag: "FromChildSession", session: { id: SessionId.make("s-2"), title: "Docs" } },
+    ])
   })
 })
 

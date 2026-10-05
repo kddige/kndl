@@ -322,6 +322,21 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE sessions ADD COLUMN name TEXT`
   }),
+
+  // Child Sessions (issue #121, ADR 0012). A Child Session keeps its Parent Session's id, with no
+  // foreign key: a parent purged first leaves its child a child, one level deep. `last_report` is
+  // its final message of its last Turn, as its parent got it, and `parent_exchanges` how many
+  // Turns in a row its parent prompted with no person's prompt to either (the loop guard). A
+  // queued prompt another Session sent keeps it, as FromSession JSON, in `from_session`.
+  "0014_child_sessions": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN parent_id TEXT`
+    yield* sql`ALTER TABLE sessions ADD COLUMN last_report TEXT`
+    yield* sql`ALTER TABLE sessions ADD COLUMN last_report_at INTEGER`
+    yield* sql`ALTER TABLE sessions ADD COLUMN parent_exchanges INTEGER NOT NULL DEFAULT 0`
+    yield* sql`CREATE INDEX sessions_parent_id ON sessions (parent_id)`
+    yield* sql`ALTER TABLE queued_prompts ADD COLUMN from_session TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

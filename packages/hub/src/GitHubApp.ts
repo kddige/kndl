@@ -116,6 +116,7 @@ const notConfigured = new GitHubAppError({
     "This needs the GitHub App, which the Hub doesn't have: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH on the Hub.",
 })
 const User = Schema.Struct({ id: Schema.Int })
+const Repository = Schema.Struct({ default_branch: Schema.NonEmptyString })
 const ApiError = Schema.Struct({
   message: Schema.optional(Schema.String),
   errors: Schema.optional(
@@ -163,6 +164,11 @@ export class GitHubApp extends Context.Service<
       login: string,
     ) => Effect.Effect<boolean, GitHubAppError>
     /**
+     * The Repo's default branch, as GitHub names it, asked as the Repo's installation: a Child
+     * Session's base when its parent names none (ADR 0012).
+     */
+    readonly defaultBranch: (repo: RepoName) => Effect.Effect<string, GitHubAppError>
+    /**
      * The App's permissions and events, and each installation's, against those the Hub needs
      * (AppPermissions.ts): `GET /app`, and every page of `GET /app/installations`.
      */
@@ -189,6 +195,7 @@ export class GitHubApp extends Context.Service<
     isInstalled: () => Effect.fail(notConfigured),
     installUrl: Effect.fail(notConfigured),
     isCollaborator: () => Effect.fail(notConfigured),
+    defaultBranch: () => Effect.fail(notConfigured),
     checkPermissions: Effect.fail(notConfigured),
   })
 
@@ -359,6 +366,17 @@ export class GitHubApp extends Context.Service<
       ),
     )
 
+    const defaultBranch = Effect.fn("GitHubApp.defaultBranch")(function* (repo: RepoName) {
+      const { owner, name } = splitRepo(repo)
+      const { token } = yield* repoToken(repo)
+      const repository = yield* call(
+        `Could not look up ${repo}'s default branch`,
+        Repository,
+        request("GET", `/repos/${owner}/${name}`, { token }),
+      )
+      return repository.default_branch
+    })
+
     const checkPermissions = Effect.gen(function* () {
       const app = yield* call(
         "Could not read the GitHub App's permissions",
@@ -408,6 +426,7 @@ export class GitHubApp extends Context.Service<
       isInstalled,
       installUrl,
       isCollaborator,
+      defaultBranch,
       checkPermissions,
     })
   })

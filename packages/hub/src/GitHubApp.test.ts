@@ -188,6 +188,24 @@ describe("collaborators", () => {
   })
 })
 
+describe("a Repo's default branch", () => {
+  test("is asked for as the Repo's installation", async () => {
+    github.defaultBranches.set(repo, "trunk")
+    expect(await withApp(Effect.flatMap(GitHubApp, (app) => app.defaultBranch(repo)))).toBe("trunk")
+    const asked = github.requests.find((request) => request.path === `/repos/${repo}`)
+    expect(asked?.authorization).toStartWith("Bearer ghs_standin")
+  })
+
+  test("can't be asked for on a Repo the App isn't installed on", async () => {
+    const error = await withApp(
+      Effect.flip(
+        Effect.flatMap(GitHubApp, (app) => app.defaultBranch(RepoName.make("octo/other"))),
+      ),
+    )
+    expect(error.message).toContain("octo/other")
+  })
+})
+
 describe("without the App configured", () => {
   test("every call fails, saying what to set", async () => {
     const error = await Effect.runPromise(
@@ -210,6 +228,7 @@ describe("without the App configured", () => {
         "botIdentity",
         "checkPermissions",
         "cloneToken",
+        "defaultBranch",
         "installUrl",
         "isCollaborator",
         "isConfigured",
