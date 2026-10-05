@@ -54,7 +54,8 @@ describe("Pairing codes on the page", () => {
 
   test("say how long they have left", () => {
     expect(timeLeft(15 * 60_000, 0)).toBe("15 min")
-    expect(timeLeft(90_000, 0)).toBe("1 min")
+    expect(timeLeft(15 * 60_000 - 500, 0)).toBe("15 min")
+    expect(timeLeft(80_000, 0)).toBe("1 min")
     expect(timeLeft(30_000, 0)).toBe("under a minute")
   })
 

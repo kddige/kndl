@@ -433,7 +433,9 @@ function PairDialog({
       description={
         confirming
           ? `For a machine whose token was lost, or one taking ${repair.name}'s place. It keeps its name and Sessions. Once the new code is used, its current token stops working and, if it's connected, it's disconnected.`
-          : "Run this on the machine that will run Sessions. It checks the machine has what a Runner needs, pairs it with the Hub, and installs and starts the Runner service."
+          : repair
+            ? `Run this on the machine that will be ${repair.name}. It checks the machine has what a Runner needs, pairs it with the Hub in ${repair.name}'s place, and installs and starts the Runner service.`
+            : "Run this on the machine that will run Sessions. It checks the machine has what a Runner needs, pairs it with the Hub, and installs and starts the Runner service."
       }
       footer={
         confirming ? (
@@ -448,21 +450,26 @@ function PairDialog({
         )
       }
     >
-      {!confirming && (
-        <div {...stylex.props(styles.dialogBody)}>
-          {minted ? (
-            <MintedCode minted={minted} />
-          ) : error === null ? (
-            <p {...stylex.props(styles.status)}>
-              <Spinner size="sm" /> Making a pairing code…
+      {/* One expression, null while only asking, so the dialog leaves out its body. */}
+      {confirming && error === null ? null : (
+        <>
+          {!confirming && (
+            <div {...stylex.props(styles.dialogBody)}>
+              {minted ? (
+                <MintedCode minted={minted} />
+              ) : error === null ? (
+                <p {...stylex.props(styles.status)}>
+                  <Spinner size="sm" /> Making a pairing code…
+                </p>
+              ) : null}
+            </div>
+          )}
+          {error && (
+            <p role="alert" {...stylex.props(styles.error)}>
+              {error}
             </p>
-          ) : null}
-        </div>
-      )}
-      {error && (
-        <p role="alert" {...stylex.props(styles.error)}>
-          {error}
-        </p>
+          )}
+        </>
       )}
     </Dialog>
   )

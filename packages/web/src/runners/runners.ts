@@ -26,8 +26,9 @@ export function waitingCodes(
 
 /** "14 min", "1 min", "under a minute": how long a code has left. */
 export function timeLeft(expiresAt: number, now: number): string {
-  const minutes = Math.floor((expiresAt - now) / 60_000)
-  return minutes < 1 ? "under a minute" : `${minutes} min`
+  const left = expiresAt - now
+  // To the nearest minute, so a code just made says 15, not 14.
+  return left < 60_000 ? "under a minute" : `${Math.round(left / 60_000)} min`
 }
 
 /** What a Runner's version against the Hub's says, when it says anything worth a badge. */
