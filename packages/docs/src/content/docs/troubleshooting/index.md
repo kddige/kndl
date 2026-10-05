@@ -77,6 +77,8 @@ For a closer look on a Runner's machine, list its tmux sessions with `tmux -L cl
 - A Session can't start: `… need values`.
 - `The Sandbox failed: host path … is not a directory`.
 - Claude's tools are refused: `… could not run in this Session's Sandbox (…), so it did not run at all.`
+- `… may have run in this Session's Sandbox, but its result was lost (…). Check before running it again.`
+- Tool calls over 30 seconds fail: `… aborted: no complete answer within 30000ms`.
 - **Restart** or **Sleep now** is refused.
 - The Test build fails.
 - A Sensitive variable can't be saved.

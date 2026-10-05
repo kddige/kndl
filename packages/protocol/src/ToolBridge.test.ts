@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { expectEveryTag, expectRejected, expectRoundTrips } from "./testSupport.ts"
 import { Schema } from "effect"
+import { expectEveryTag, expectRejected, expectRoundTrips } from "./testSupport.ts"
 import {
   SandboxTools,
   ToolBridgeCall,

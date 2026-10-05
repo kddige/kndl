@@ -1,6 +1,6 @@
 ---
 title: Sessions and Sandboxes
-description: A Session won't start or wake, its Sandbox fails, an Environment won't open or its Test build fails, or the web UI refuses an action.
+description: A Session won't start or wake, its Sandbox fails, its tool calls fail or may have run, an Environment won't open or its Test build fails, or the web UI refuses an action.
 sidebar:
   order: 5
 ---
@@ -89,6 +89,43 @@ and the Runner logs `Session <id>: tool server down: …` with the same reason.
 - `no Claude Code at …`: the Linux build of Claude Code isn't where the Runner mounted it, for example after its cache folder was deleted while the Sandbox ran.
 
 **Fix.** For a missing bash, install it in the Environment's Bootstrap script, or pick a base image that has it, such as the default `buildpack-deps:bookworm`. For anything else, restart the Session (**Sleep now**, then **Wake now**) so the Runner sets the Sandbox up again, and check the Runner's log for the reason.
+
+## A tool call may have run, but its result was lost
+
+**What you see.** A tool call comes back with text such as:
+
+```
+Bash may have run in this Session's Sandbox, but its result was lost (the tool bridge stopped answering: …). Check before running it again. It never runs on the host.
+```
+
+or, for a call that ran out of time or was interrupted:
+
+```
+Bash did not finish within 2.5 minutes, so it was stopped in this Session's Sandbox. It may have run in part: check before running it again. It never runs on the host.
+Bash was interrupted, and stopped in this Session's Sandbox. It may have run in part: check before running it again. It never runs on the host.
+```
+
+**Why.** The tool bridge had taken the call, so the command may have done some or all of its work before the answer was lost. Lost answers come from the Sandbox or its tool server stopping mid-call, or the Runner's bridge not answering. A call stops when it runs past its tool's time (Bash's own `timeout`, at most 10 minutes; 5 minutes for the other tools) or when someone interrupts the Turn; see [Long tool calls](/explanation/architecture/#long-tool-calls). Claude is told to check before it runs the call again, since running a command like `git stash pop` twice can do harm.
+
+**Fix.** Usually nothing: Claude checks, such as with `git status`, and goes on. For a command that needs longer than 10 minutes, have Claude split it, or run it in the background in the Sandbox with `nohup … &` and check its log. If calls keep getting lost, check the Runner's log for `tool server down`, and see [Claude's tools are refused](#claudes-tools-are-refused).
+
+## Tool calls over 30 seconds fail
+
+**What you see.** Every tool call that takes longer than 30 seconds fails, with:
+
+```
+Bash could not run in this Session's Sandbox (the tool bridge is unreachable: HooksError: hub-link: $.http.fetch(http://tool-bridge/tools/call) over …/tools.sock aborted: no complete answer within 30000ms), so it did not run at all. It never runs on the host.
+```
+
+or, from a newer mod:
+
+```
+Bash may have run in this Session's Sandbox, but its result was lost (the tool bridge gave no answer: …. This Session's Runner is older than its mod and can't wait on a call for longer than 30 seconds; update the Runner). Check before running it again. It never runs on the host.
+```
+
+**Why.** Before [#109](https://github.com/kddige/claude-hub/issues/109), the mod waited for a call in one request, which Claude Code gives up on after 30 seconds. The first message is wrong about the call not running: the bridge kept running it in the Sandbox. A newer mod waits in steps, but needs a Runner that can answer that way; with an older one, it falls back to the one request and its 30 seconds.
+
+**Fix.** Update the Runner's checkout and restart the Runner, then restart the Session (**Sleep now**, then **Wake now**) so its Claude Code loads the new mod too. Until then, check what a failed call did before running it again.
 
 ## The Test build fails
 
