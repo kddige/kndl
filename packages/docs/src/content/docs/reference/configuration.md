@@ -63,7 +63,7 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 
 ## What a Runner gives Claude Code
 
-Each Session's Claude Code starts with the hardened flags of [ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) (`--setting-sources ""`, `--strict-mcp-config`, a fixed `--tools` list), with `--session-id` for a new Session or `--resume` to wake one, and these variables, which the mod uses:
+Each Session's Claude Code starts with the hardened flags of [ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) (`--setting-sources ""`, `--strict-mcp-config`, a fixed `--tools` list, and `--settings` with `disableSkillShellExecution` on and `autoMemoryEnabled` off), with `--session-id` for a new Session or `--resume` to wake one, and these variables, which the mod uses:
 
 | Variable | What it is |
 |---|---|
@@ -73,6 +73,7 @@ Each Session's Claude Code starts with the hardened flags of [ADR 0001](/referen
 | `CLAUDE_HUB_TOOLS_SOCKET` | The Session's tool bridge: `<sessions root>/<session id>/tools.sock`. |
 | `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS` | `1`, since git runs in the Sandbox rather than beside Claude Code. |
 | `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | `1`, because a background command's output would stay in the Sandbox. |
+| `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | `1`, because Claude Code would save memory in the Sandbox, where it is lost. It wins over any setting. |
 
 ## Web UI dev server
 

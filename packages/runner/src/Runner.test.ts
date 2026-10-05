@@ -365,11 +365,12 @@ describe("Sessions", () => {
       "--setting-sources",
       "",
       "--settings",
-      '{"disableSkillShellExecution":true}',
+      '{"disableSkillShellExecution":true,"autoMemoryEnabled":false}',
     ])
     expect(spec?.env).toEqual({
       CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1",
       CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       CLAUDE_HUB_URL: h.hub.url.href,
       CLAUDE_HUB_SESSION_ID: "s-1",
       CLAUDE_HUB_MOD_TOKEN: "chm_mod.secret",
