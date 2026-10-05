@@ -34,8 +34,24 @@ _Avoid_: port forward, tunnel
 One ongoing Claude Code conversation working on one Repo, on its own Work branch. A Session belongs to its Repo, not to a person.
 _Avoid_: chat, thread, agent, job
 
+**Parent Session**:
+A Session that has created Child Sessions to delegate work to. Any Session can be one; "coordinator" describes how it is used, not a kind of Session.
+_Avoid_: main session, coordinator session, orchestrator
+
+**Child Session**:
+A Session created by another Session (its Parent Session) to carry out a task, in the parent's Repo and with the parent's Creator. It is a full Session people can open and prompt, but it can't create children of its own.
+_Avoid_: subagent, sub-session, worker
+
+**Report**:
+A Child Session's final message at the end of a Turn, delivered to its Parent Session as a queued prompt.
+_Avoid_: notification, result, callback
+
+**Session name**:
+A Session's editable display name. It defaults to the Session's Work branch; a Parent Session may name its children.
+_Avoid_: title, label
+
 **Creator**:
-The person who started a Session. Recorded for history only; it grants no special rights.
+The person who started a Session; for a Child Session, its Parent Session's Creator. It grants no special rights in the Session, but the Repo access check and the git identity in its Sandbox are theirs.
 _Avoid_: owner
 
 **Participant**:
