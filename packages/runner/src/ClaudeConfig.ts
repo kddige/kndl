@@ -12,7 +12,7 @@ import {
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import type { RunnerLogin } from "@claude-hub/protocol"
-import { Data, Effect, FileSystem } from "effect"
+import { Context, Data, Effect, FileSystem } from "effect"
 
 // Claude Code's own config file, `.claude.json`: the Runner reads the account signed in from it
 // (the Runner login, ADR 0002), and marks the sessions root as trusted in it, so no Session stops
@@ -179,6 +179,11 @@ export function claudeProjectsDir(env: Record<string, string | undefined> = proc
   return join(env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "projects")
 }
 
+/** {@link claudeProjectsDir} for the Runner, or a test's own. */
+export const ClaudeProjectsDir = Context.Reference<string>("@claude-hub/runner/ClaudeProjectsDir", {
+  defaultValue: () => claudeProjectsDir(),
+})
+
 /**
  * The name of the directory under {@link claudeProjectsDir} that holds what Claude Code keeps of
  * a working directory, given by its real path: every character but a letter or digit becomes `-`,
@@ -188,6 +193,33 @@ export function claudeProjectsDir(env: Record<string, string | undefined> = proc
 export function claudeProjectDirName(cwd: string): string | undefined {
   const name = cwd.replace(/[^a-zA-Z0-9]/g, "-")
   return name.length <= 200 ? name : undefined
+}
+
+/**
+ * Whether Claude Code keeps a transcript of conversation `id` begun in `cwd`, the directory it
+ * ran in: `<projects>/<cwd's name>/<id>.jsonl`, looked for under `cwd` as given and as its real
+ * path. `--resume` of a conversation without one fails, as when Claude Code exited before it
+ * wrote any (#105). Undefined when it can't tell: a path too long to name the way Claude Code
+ * does.
+ */
+export function hasTranscript(
+  cwd: string,
+  id: string,
+  projectsDir: string = claudeProjectsDir(),
+  exists: (path: string) => boolean = existsSync,
+): boolean | undefined {
+  let real = cwd
+  try {
+    real = realpathSync(cwd)
+  } catch {
+    // It doesn't exist (yet): the path as given is all there is.
+  }
+  const names = [...new Set([cwd, real])].map(claudeProjectDirName)
+  const found = names.some(
+    (name) => name !== undefined && exists(join(projectsDir, name, `${id}.jsonl`)),
+  )
+  if (found) return true
+  return names.includes(undefined) ? undefined : false
 }
 
 function parseConfig(text: string, path: string): Record<string, unknown> {
