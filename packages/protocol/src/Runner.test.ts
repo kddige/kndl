@@ -42,6 +42,15 @@ const runnerToHub = [
   { _tag: "SessionStarted", sessionId: "s-1", environmentVersion: 3 },
   { _tag: "FetchVariables", requestId: "v-1", for: { _tag: "Session", sessionId: "s-1" } },
   { _tag: "FetchVariables", requestId: "v-2", for: { _tag: "TestBuild", testBuildId: "b-1" } },
+  { _tag: "FetchCloneAccess", requestId: "g-3", testBuildId: "b-1" },
+  {
+    _tag: "RunnerHello",
+    protocolVersion: ProtocolVersion,
+    name: "studio",
+    login: runnerLogin,
+    sessions: [],
+    asksCloneAccess: true,
+  },
   { _tag: "TestBuildLog", testBuildId: "b-1", data: "Reading package lists...\n" },
   { _tag: "TestBuildFinished", testBuildId: "b-1", result: "Passed" },
   {
@@ -118,6 +127,19 @@ const hubToRunner = [
     _tag: "GitReply",
     requestId: "g-2",
     answer: { _tag: "GitFailed", message: "The Hub has no GitHub App" },
+  },
+  {
+    _tag: "GitReply",
+    requestId: "g-3",
+    answer: {
+      _tag: "CloneAccess",
+      credentials: { _tag: "CloneToken", token: "ghs_clone", expiresAt: 1_790_000_000_000 },
+    },
+  },
+  {
+    _tag: "GitReply",
+    requestId: "g-3",
+    answer: { _tag: "CloneAccess", credentials: { _tag: "HostCredentials" } },
   },
   { _tag: "SessionTurnEnded", sessionId: "s-1" },
   {
