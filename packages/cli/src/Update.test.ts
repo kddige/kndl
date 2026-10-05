@@ -4,9 +4,11 @@ import {
   buildSteps,
   describeCheckout,
   gitSteps,
+  localRunnerRestart,
   parseLsRemote,
   pinnedNotice,
   RefNotFound,
+  runnersNotice,
   updateTarget,
 } from "./Update.ts"
 
@@ -111,5 +113,74 @@ describe("describing the checkout", () => {
   test("following a branch, or pinned", () => {
     expect(describeCheckout(onMain)).toBe("111111111111, following main")
     expect(describeCheckout(pinned)).toBe("333333333333, pinned at v0.1.0")
+  })
+})
+
+describe("restarting the Runner on this machine", () => {
+  const facts = {
+    installed: true,
+    hubRestarts: true,
+    serviceFileChanged: false,
+    updatesItself: true,
+  }
+
+  test("a Runner that updates itself, beside the Hub, is drained by the Hub", () => {
+    expect(localRunnerRestart(facts)).toBe("Hub")
+  })
+
+  test("otherwise its service restarts at once, as before", () => {
+    // No Hub here: a Runner's machine, updated by hand.
+    expect(localRunnerRestart({ ...facts, hubRestarts: false })).toBe("Service")
+    // Too old to update itself, or the Hub doesn't know it.
+    expect(localRunnerRestart({ ...facts, updatesItself: false })).toBe("Service")
+    // Only reinstalling the service loads its new file.
+    expect(localRunnerRestart({ ...facts, serviceFileChanged: true })).toBe("Service")
+  })
+
+  test("no Runner service, nothing to restart", () => {
+    expect(localRunnerRestart({ ...facts, installed: false })).toBe("None")
+  })
+})
+
+describe("what update says of the Runners", () => {
+  const commit = "abcdef0123456789abcdef0123456789abcdef01"
+
+  test("the Hub asks every Runner, and the one here follows by the Hub", () => {
+    const lines = runnersNotice({
+      commit,
+      updateRunners: true,
+      now: false,
+      local: "Hub",
+      localName: "studio",
+    })
+    expect(lines[0]).toContain("asks its Runners to follow abcdef012345")
+    expect(lines[0]).toContain("letting running Turns end first")
+    expect(lines[1]).toContain("studio, on this machine, follows")
+  })
+
+  test("--no-update-runners leaves the others; --now stops Turns", () => {
+    const lines = runnersNotice({
+      commit,
+      updateRunners: false,
+      now: true,
+      local: "Service",
+      localName: undefined,
+    })
+    expect(lines[0]).toContain("--no-update-runners")
+    expect(lines[1]).toBe(
+      "The Runner here, on this machine, restarts now, under any Sessions it runs.",
+    )
+  })
+
+  test("no Runner here, nothing said of one", () => {
+    expect(
+      runnersNotice({
+        commit,
+        updateRunners: true,
+        now: false,
+        local: "None",
+        localName: undefined,
+      }),
+    ).toHaveLength(1)
   })
 })

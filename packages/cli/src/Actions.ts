@@ -2,10 +2,11 @@
 // commands: run a plan's Steps, build, install and start the services, issue a token. Each is thin:
 // the decisions are made in the pure modules, and the Steps run through Shell.
 import { existsSync } from "node:fs"
-import { chmod, mkdir } from "node:fs/promises"
+import { chmod, mkdir, readFile } from "node:fs/promises"
 import { userInfo } from "node:os"
 import { delimiter, dirname } from "node:path"
 import { issueRunnerToken } from "@claude-hub/hub/src/Admin.ts"
+import { requestRunnerUpdates } from "@claude-hub/hub/src/RunnerUpdatePush.ts"
 import {
   resetSecrets,
   type SecretsResetPlan,
@@ -13,11 +14,12 @@ import {
   secretsResetPlanText,
 } from "@claude-hub/hub/src/SecretsReset.ts"
 import { claudeConfigPath, trustDirectory } from "@claude-hub/runner/src/ClaudeConfig.ts"
-import { ConfigProvider, Console, Effect } from "effect"
+import { Cause, ConfigProvider, Console, Effect } from "effect"
 import { fail } from "./Failure.ts"
 import {
   bunPath,
   configuredRoles,
+  errorMessage,
   health,
   homeEnvironment,
   hubLocalUrl,
@@ -174,14 +176,71 @@ export const startService = (layout: Layout, role: Role, on: Platform) =>
 export const stopService = (layout: Layout, role: Role, on: Platform) =>
   runSteps(stopSteps(serviceTarget(layout, role, on)), `Stop the ${RoleTitle[role]}'s service`)
 
-/** Rewrites and reloads the installed services, as after an update. */
-export const restartInstalledServices = (layout: Layout, on: Platform) =>
+/**
+ * Rewrites and reloads the installed services, as after an update; but not `except`'s, which
+ * restarts some other way (the Runner on the Hub's machine, which the Hub drains).
+ */
+export const restartInstalledServices = (layout: Layout, on: Platform, except?: Role) =>
   Effect.gen(function* () {
     for (const role of configuredRoles(layout)) {
-      const state = yield* serviceState(serviceTarget(layout, role, on))
-      if (state._tag === "NotInstalled") continue
+      if (role === except) continue
+      if (!(yield* serviceInstalled(layout, role, on))) continue
       yield* installService(layout, role, on)
     }
+  })
+
+/** Whether a role's service is installed here. */
+export const serviceInstalled = (layout: Layout, role: Role, on: Platform) =>
+  Effect.map(
+    serviceState(serviceTarget(layout, role, on)),
+    (state) => state._tag !== "NotInstalled",
+  )
+
+/** Whether the installed service file of a role differs from the one the CLI writes now. */
+export const serviceFileChanged = (layout: Layout, role: Role, on: Platform) =>
+  Effect.promise(async () => {
+    const path = serviceFilePath(serviceTarget(layout, role, on))
+    const text = serviceFile(on, { role, layout, bun: bunPath(), path: servicePath() })
+    try {
+      return (await readFile(path, "utf8")) !== text
+    } catch {
+      return true
+    }
+  })
+
+/**
+ * Leaves this home's Hub the commit `update` moved it to, for its Runners to follow once it runs
+ * it (issue #87). Says, of the Runner on this machine, whether the Hub knows it and whether it
+ * updates itself. `undefined` when no Hub is set up here, or the database couldn't be written,
+ * which it warns of: the update goes on, and the Runners page updates Runners by hand.
+ *
+ * It opens the database as issuing a token does, migrating it, while the old Hub still runs on
+ * it: migrations only add, and the Hub restarts right after.
+ */
+export const leaveRunnerUpdatePush = (
+  layout: Layout,
+  options: { readonly commit: string; readonly now: boolean; readonly allRunners: boolean },
+) =>
+  Effect.gen(function* () {
+    const env = homeEnvironment(layout, "hub")
+    if (!existsSync(layout.envFile("hub")) && env.HUB_DATABASE === undefined) return undefined
+    const localToken = configuredRoles(layout).includes("runner")
+      ? readEnvValues(layout.envFile("runner")).RUNNER_TOKEN
+      : undefined
+    return yield* requestRunnerUpdates({ ...options, localToken }).pipe(
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+      Effect.catchCause((cause) =>
+        Effect.flatMap(Ui, (ui) =>
+          Effect.as(
+            ui.log(
+              "warn",
+              `Couldn't ask the Hub to update its Runners: ${errorMessage(Cause.squash(cause))}. Update them from the Runners page.`,
+            ),
+            undefined,
+          ),
+        ),
+      ),
+    )
   })
 
 /** Lets the user's services run while they're logged out (Linux), or says how. */

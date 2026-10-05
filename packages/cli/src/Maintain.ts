@@ -6,12 +6,15 @@ import {
   enableLinger,
   installPrerequisites,
   installService,
+  leaveRunnerUpdatePush,
   requireInstall,
   requirePlatform,
   restartInstalledServices,
   restrictEnvFile,
   RoleTitle,
   runSteps,
+  serviceFileChanged,
+  serviceInstalled,
   startService,
   trustSessionsRoot,
   waitForHub,
@@ -40,9 +43,11 @@ import {
   buildSteps,
   describeCheckout,
   gitSteps,
+  localRunnerRestart,
   parseLsRemote,
   pinnedNotice,
   RefNotFound,
+  runnersNotice,
   updateTarget,
 } from "./Update.ts"
 
@@ -161,12 +166,25 @@ const applyFix = (
     }
   })
 
+/** What `update` is asked to do. */
+export interface UpdateOptions {
+  /** `--ref`/`--branch`: where to move the install. */
+  readonly ref: string | undefined
+  /** On the Hub's machine, ask the Runners on other machines to follow (not `--no-update-runners`). */
+  readonly updateRunners: boolean
+  /** `--now`: Runners stop their running Turns at once, rather than letting them end. */
+  readonly now: boolean
+}
+
 /**
  * Moves the install to `ref`, or along the branch it follows; then installs, builds, restarts the
- * installed services and runs doctor.
+ * installed services and runs doctor. On the Hub's machine, it leaves the Hub the commit for its
+ * Runners to follow (issue #87); the Runner here, when it updates itself, is drained by the Hub
+ * and restarts itself, rather than restarting under its Sessions.
  */
-export const update = (layout: Layout, ref: string | undefined) =>
+export const update = (layout: Layout, options: UpdateOptions) =>
   Effect.gen(function* () {
+    const ref = options.ref
     yield* requireInstall(layout)
     const on = yield* requirePlatform(platform())
     const shell = yield* Shell
@@ -196,7 +214,35 @@ export const update = (layout: Layout, ref: string | undefined) =>
     yield* runSteps(buildSteps(layout.app, bunPath(), configuredRoles(layout)))
     const after = yield* readCheckout(layout.app)
     yield* Console.log(`Now at ${describeCheckout(after)}.`)
-    yield* restartInstalledServices(layout, on)
+    const roles = configuredRoles(layout)
+    const hubRestarts = roles.includes("hub") && (yield* serviceInstalled(layout, "hub", on))
+    const pushed = hubRestarts
+      ? yield* leaveRunnerUpdatePush(layout, {
+          commit: after.commit,
+          now: options.now,
+          allRunners: options.updateRunners,
+        })
+      : undefined
+    const local = roles.includes("runner")
+      ? localRunnerRestart({
+          installed: yield* serviceInstalled(layout, "runner", on),
+          hubRestarts: pushed !== undefined,
+          serviceFileChanged: yield* serviceFileChanged(layout, "runner", on),
+          updatesItself: pushed?.localRunner?.updatesItself === true,
+        })
+      : "None"
+    if (pushed !== undefined) {
+      for (const line of runnersNotice({
+        commit: after.commit,
+        updateRunners: options.updateRunners,
+        now: options.now,
+        local,
+        localName: pushed.localRunner?.name,
+      })) {
+        yield* Console.log(line)
+      }
+    }
+    yield* restartInstalledServices(layout, on, local === "Hub" ? "runner" : undefined)
     // The Hub runs its migrations as it starts: give it the time before checking on it.
     if (configuredRoles(layout).includes("hub")) yield* waitForHub(layout)
     yield* Console.log("")

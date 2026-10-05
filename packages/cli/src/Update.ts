@@ -146,3 +146,59 @@ export function buildSteps(
       : []),
   ]
 }
+
+/**
+ * How `update` restarts the Runner on this machine (issue #87, ADR 0011):
+ * - `Hub`: the Hub it shares the checkout with drains it, putting its Sessions to sleep, and it
+ *   restarts itself on the commit `update` moved the checkout to;
+ * - `Service`: `update` restarts its service at once, under its running Sessions, as before
+ *   Runners followed the Hub: a Runner on a machine with no Hub, or one that doesn't update itself
+ *   (too old to, or whose service file changed, which only reinstalling the service loads);
+ * - `None`: no Runner service is installed here.
+ */
+export type LocalRunnerRestart = "Hub" | "Service" | "None"
+
+export function localRunnerRestart(facts: {
+  /** The Runner's service is installed. */
+  readonly installed: boolean
+  /** The Hub's service is installed here, and `update` restarts it. */
+  readonly hubRestarts: boolean
+  /** The service file `update` would write differs from the installed one. */
+  readonly serviceFileChanged: boolean
+  /** The Hub knows the Runner here, and it said it updates itself. */
+  readonly updatesItself: boolean
+}): LocalRunnerRestart {
+  if (!facts.installed) return "None"
+  if (!facts.hubRestarts || facts.serviceFileChanged || !facts.updatesItself) return "Service"
+  return "Hub"
+}
+
+/** What `update` on the Hub's machine says about the Runners it asks to follow. */
+export function runnersNotice(options: {
+  readonly commit: string
+  readonly updateRunners: boolean
+  readonly now: boolean
+  readonly local: LocalRunnerRestart
+  readonly localName: string | undefined
+}): ReadonlyArray<string> {
+  const commit = options.commit.slice(0, 12)
+  const turns = options.now
+    ? "stopping their running Turns at once (--now)"
+    : "letting running Turns end first (up to 10 minutes)"
+  const lines = options.updateRunners
+    ? [
+        `The Hub asks its Runners to follow ${commit} as they reconnect, ${turns}. Runners from before this feature, and ones run from a developer's checkout, need updating by hand; the Runners page shows which.`,
+      ]
+    : [
+        `--no-update-runners: the Hub leaves Runners on other machines on their commit. The Runners page updates each one when you choose.`,
+      ]
+  const name = options.localName ?? "The Runner here"
+  if (options.local === "Hub") {
+    lines.push(
+      `${name}, on this machine, follows: the Hub puts its Sessions to sleep (${turns}), then it restarts on ${commit}.`,
+    )
+  } else if (options.local === "Service") {
+    lines.push(`${name}, on this machine, restarts now, under any Sessions it runs.`)
+  }
+  return lines
+}
