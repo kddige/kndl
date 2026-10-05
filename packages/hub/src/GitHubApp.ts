@@ -23,7 +23,12 @@ import {
   Semaphore,
 } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
-import { type AppFacts, checkAppPermissions, type InstallationFacts } from "./AppPermissions.ts"
+import {
+  type AppFacts,
+  appInstallUrl,
+  checkAppPermissions,
+  type InstallationFacts,
+} from "./AppPermissions.ts"
 import { type GitHubAppConfig, GitHubApiUrl, HubConfig } from "./HubConfig.ts"
 
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
@@ -76,7 +81,7 @@ const splitRepo = (repo: RepoName) => {
 
 const Installation = Schema.Struct({ id: Schema.Int })
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString, expires_at: Schema.String })
-const App = Schema.Struct({ slug: Schema.NonEmptyString })
+const App = Schema.Struct({ slug: Schema.NonEmptyString, html_url: Schema.String })
 const Grants = Schema.Record(Schema.String, Schema.String)
 /** `GET /app`, as the permission check reads it. An enterprise's App has no owner login. */
 const AppDetails = Schema.Struct({
@@ -132,6 +137,18 @@ export class GitHubApp extends Context.Service<
      */
     readonly sandboxToken: (repo: RepoName) => Effect.Effect<RepoToken, GitHubAppError>
     /**
+     * A fresh installation token for a Test build's clone (#104): scoped to the Repo, with
+     * `contents:read` only. Never cached: the Runner hands it to git for the one clone.
+     */
+    readonly cloneToken: (repo: RepoName) => Effect.Effect<RepoToken, GitHubAppError>
+    /**
+     * Whether the App is installed on the Repo and can see it, asked as the App. A Repo that
+     * doesn't exist, or that the App can't see, is not installed.
+     */
+    readonly isInstalled: (repo: RepoName) => Effect.Effect<boolean, GitHubAppError>
+    /** Where to install the App on another account or Repo, from its `html_url`; kept once read. */
+    readonly installUrl: Effect.Effect<string, GitHubAppError>
+    /**
      * Whether the GitHub account `login` is a collaborator on the Repo: an outside collaborator,
      * an organization member with access through a team or the organization's base permission,
      * or an owner. Asked as the Repo's installation, which needs only the Metadata permission
@@ -164,6 +181,9 @@ export class GitHubApp extends Context.Service<
     repoToken: () => Effect.fail(notConfigured),
     botIdentity: () => Effect.fail(notConfigured),
     sandboxToken: () => Effect.fail(notConfigured),
+    cloneToken: () => Effect.fail(notConfigured),
+    isInstalled: () => Effect.fail(notConfigured),
+    installUrl: Effect.fail(notConfigured),
     isCollaborator: () => Effect.fail(notConfigured),
     checkPermissions: Effect.fail(notConfigured),
   })
@@ -174,6 +194,7 @@ export class GitHubApp extends Context.Service<
     const tokens = new Map<RepoName, RepoToken>()
     const minting = yield* Semaphore.make(1)
     let bot: GitIdentity | undefined
+    let appHtmlUrl: string | undefined
 
     /** A request to the API, as the App (`jwt`) or an installation (`token`). */
     const request = (
@@ -273,6 +294,43 @@ export class GitHubApp extends Context.Service<
       return yield* mint(repo)
     })
 
+    const cloneToken = Effect.fn("GitHubApp.cloneToken")(function* (repo: RepoName) {
+      return yield* mint(repo, { contents: "read" })
+    })
+
+    const isInstalled = Effect.fn("GitHubApp.isInstalled")(
+      function* (repo: RepoName) {
+        const { owner, name } = splitRepo(repo)
+        const response = yield* http.execute(
+          yield* request("GET", `/repos/${owner}/${name}/installation`, { jwt: true }),
+        )
+        if (response.status === 200) return true
+        if (response.status === 404) return false
+        return yield* new GitHubAppError({
+          message: `Could not check whether the GitHub App is installed on ${repo}: GitHub answered ${response.status}${apiMessage(yield* response.text)}`,
+          status: response.status,
+        })
+      },
+      Effect.catchTag("HttpClientError", (error) =>
+        Effect.fail(
+          new GitHubAppError({
+            message: `Could not check where the GitHub App is installed: ${error.message}`,
+          }),
+        ),
+      ),
+    )
+
+    const installUrl = Effect.suspend(() =>
+      appHtmlUrl === undefined
+        ? call("Could not look up the GitHub App", App, request("GET", "/app", { jwt: true })).pipe(
+            Effect.map((app) => {
+              appHtmlUrl = app.html_url
+              return appHtmlUrl
+            }),
+          )
+        : Effect.succeed(appHtmlUrl),
+    ).pipe(Effect.map((htmlUrl) => appInstallUrl({ htmlUrl })))
+
     const isCollaborator = Effect.fn("GitHubApp.isCollaborator")(
       function* (repo: RepoName, login: string) {
         const { owner, name } = splitRepo(repo)
@@ -342,6 +400,9 @@ export class GitHubApp extends Context.Service<
       repoToken,
       botIdentity,
       sandboxToken,
+      cloneToken,
+      isInstalled,
+      installUrl,
       isCollaborator,
       checkPermissions,
     })

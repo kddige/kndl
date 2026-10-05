@@ -209,8 +209,11 @@ describe("without the App configured", () => {
       [
         "botIdentity",
         "checkPermissions",
+        "cloneToken",
+        "installUrl",
         "isCollaborator",
         "isConfigured",
+        "isInstalled",
         "repoToken",
         "sandboxToken",
       ].toSorted(),
