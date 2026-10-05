@@ -1,7 +1,7 @@
 // WebSocket peers for the Hub's tests: web clients and a fake Runner that keep what they
 // receive, so a test can take the messages it expects. Not part of the Hub.
 
-import type { HubToRunner, HubToWeb } from "@claude-hub/protocol"
+import type { BuildVersion, HubToRunner, HubToWeb } from "@claude-hub/protocol"
 import { ProtocolVersion } from "@claude-hub/protocol"
 import { Effect } from "effect"
 import { RunnerTokens } from "./RunnerTokens.ts"
@@ -28,7 +28,8 @@ export class Connection<In extends Tagged> {
   /** Every message received, taken or not, as the text that came over the socket. */
   readonly texts: Array<string> = []
   private wake: Array<() => void> = []
-  readonly closed: Promise<void>
+  /** Settles when the socket closes, with the close code and reason. */
+  readonly closed: Promise<{ readonly code: number; readonly reason: string }>
 
   private constructor(private readonly socket: WebSocket) {
     socket.addEventListener("message", (event) => {
@@ -37,9 +38,9 @@ export class Connection<In extends Tagged> {
       for (const wake of this.wake.splice(0)) wake()
     })
     this.closed = new Promise((resolve) =>
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
         Connection.live.delete(this as Connection<Tagged>)
-        resolve()
+        resolve({ code: event.code, reason: event.reason })
       }),
     )
     Connection.live.add(this as Connection<Tagged>)
@@ -131,18 +132,20 @@ export async function openWeb(hub: TestHub, login: string, cookie?: string) {
   )
   await web.take("WebWelcome")
   const runners = await web.take("RunnerList")
+  const pairingCodes = await web.take("PairingCodeList")
   const sessions = await web.take("SessionList")
-  return Object.assign(web, { cookie: signIn, runners, sessions })
+  return Object.assign(web, { cookie: signIn, runners, pairingCodes, sessions })
 }
 
 export const issueRunnerToken = (hub: TestHub, name = "mac") =>
   hub.run(Effect.flatMap(RunnerTokens, (runners) => runners.issue(name)))
 
-/** The fake Runner, welcomed, saying it runs `sessions`. */
+/** The fake Runner, welcomed, saying it runs `sessions`, and its version if given one. */
 export async function openRunner(
   hub: TestHub,
   token: string,
   sessions: ReadonlyArray<string> = [],
+  version?: BuildVersion,
 ) {
   const runner = await Connection.open<ToRunner>(hub, "/ws/runner", bearer(token), {
     _tag: "RunnerHello",
@@ -150,6 +153,7 @@ export async function openRunner(
     name: "mac",
     login: runnerLogin,
     sessions,
+    ...(version !== undefined && { version }),
   })
   await runner.take("RunnerWelcome")
   return runner

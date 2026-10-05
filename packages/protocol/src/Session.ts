@@ -59,6 +59,11 @@ export const RunnerSummary = Schema.Struct({
   versionStatus: RunnerVersionStatus,
   /** When it was last connected: now, while it is online; null before it first connects. */
   lastSeenAt: Schema.NullOr(EpochMillis),
+  /**
+   * Its Sessions that aren't Archived: Active, Asleep or Frozen, in any Repo. While it has any,
+   * it can't be removed.
+   */
+  openSessions: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 })
 export type RunnerSummary = typeof RunnerSummary.Type
 

@@ -7,9 +7,10 @@ import { RunnerHello } from "./Runner.ts"
 const hub = { commit: "a".repeat(40), branch: "main" }
 const older = { commit: "b".repeat(40) }
 
-describe("a Runner's version against the Hub's", () => {
-  const holds = (held: boolean | undefined) => () => held
+/** A Hub whose history holds every commit, none, or can't say. */
+const holds = (held: boolean | undefined) => () => held
 
+describe("a Runner's version against the Hub's", () => {
   test("is Current on the same commit, whatever the branch", () => {
     expect(runnerVersionStatus({ commit: hub.commit }, hub, holds(undefined))).toBe("Current")
   })

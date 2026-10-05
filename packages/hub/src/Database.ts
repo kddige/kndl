@@ -264,6 +264,31 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`DROP TABLE environment_variables_kept`
     yield* sql`CREATE INDEX environment_variables_shared ON environment_variables (shared_name)`
   }),
+
+  // Pairing codes and the Runners page (issue #85). A Runner keeps the version it last said hello
+  // with and when it was last connected. A removed Runner keeps its row, which its Archived
+  // Sessions refer to, with `removed_at` set: its token no longer works, and it isn't listed. A
+  // Pairing code is kept as its hash, and is spent, revoked or expired once one of `used_at`,
+  // `revoked_at` or `expires_at` says so; `runner_id` is the Runner a Re-pair's code is for.
+  "0010_pairing": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE runners ADD COLUMN version_commit TEXT`
+    yield* sql`ALTER TABLE runners ADD COLUMN version_branch TEXT`
+    yield* sql`ALTER TABLE runners ADD COLUMN last_seen_at INTEGER`
+    yield* sql`ALTER TABLE runners ADD COLUMN removed_at INTEGER`
+    yield* sql`
+      CREATE TABLE pairing_codes (
+        id TEXT PRIMARY KEY,
+        code_hash TEXT NOT NULL UNIQUE,
+        runner_id TEXT REFERENCES runners (id) ON DELETE CASCADE,
+        created_by TEXT NOT NULL REFERENCES participants (id),
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER,
+        revoked_at INTEGER
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

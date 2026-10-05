@@ -22,6 +22,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"
 import { authenticateParticipant, authenticateRunner, requireSameOrigin } from "./Auth.ts"
 import { HubShutdown } from "./HubShutdown.ts"
+import { HubVersion } from "./HubVersion.ts"
 import { type Peer, type Receive, SessionRelay } from "./SessionRelay.ts"
 
 /** How long a peer has to send its hello once the socket is open. */
@@ -151,6 +152,7 @@ function parseJson(text: string | undefined): unknown {
 export const ChannelRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const relay = yield* SessionRelay
+    const hub = (yield* HubVersion).version
 
     // A Runner, by its Runner token. Its RunnerId comes from the token, not the hello.
     yield* router.add(
@@ -183,7 +185,12 @@ export const ChannelRoutes = HttpRouter.use(
           hello: WebHello,
           incoming: WebToHub,
           outgoing: HubToWeb,
-          welcome: () => HubToWeb.cases.WebWelcome.make({ protocolVersion: ProtocolVersion, you }),
+          welcome: () =>
+            HubToWeb.cases.WebWelcome.make({
+              protocolVersion: ProtocolVersion,
+              you,
+              ...(hub !== undefined && { hub }),
+            }),
           connect: (_hello, peer) => relay.connectWeb(you, peer),
         })
       }),

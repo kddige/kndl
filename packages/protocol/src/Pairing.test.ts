@@ -27,6 +27,13 @@ describe("pairing codes", () => {
   })
 })
 
+/** What's wrong with `text`, as parsePairing says. */
+const invalid = (text: string) => {
+  const parsed = parsePairing(text)
+  if (parsed._tag !== "Invalid") throw new Error(`parsed ${text}`)
+  return parsed.message
+}
+
 describe("pairing links", () => {
   test("carry the Hub's origin and the code, and paste as one command", () => {
     const link = pairingLink("https://hub.example.com/some/page", code)
@@ -62,11 +69,6 @@ describe("pairing links", () => {
   })
 
   test("say what's wrong with anything else", () => {
-    const invalid = (text: string) => {
-      const parsed = parsePairing(text)
-      if (parsed._tag !== "Invalid") throw new Error(`parsed ${text}`)
-      return parsed.message
-    }
     expect(invalid("ftp://hub.example.com#7K3QH-WM2PA-9XC4R-TBV0E")).toContain("isn't an http")
     expect(invalid("https://hub.example.com#7K3QH")).toContain("isn't a whole pairing code")
     expect(invalid("hello")).toContain("isn't a pairing link")

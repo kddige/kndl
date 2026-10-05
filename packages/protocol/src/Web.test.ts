@@ -132,6 +132,7 @@ const hubToWeb = [
         version: { commit: "b".repeat(40) },
         versionStatus: "Behind",
         lastSeenAt: 1_790_000_000_000,
+        openSessions: 2,
       },
       {
         id: "r-2",
@@ -141,6 +142,7 @@ const hubToWeb = [
         version: null,
         versionStatus: "Unknown",
         lastSeenAt: null,
+        openSessions: 0,
       },
     ],
   },

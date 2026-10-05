@@ -26,7 +26,7 @@ export const PairingCodeLength = 20
 
 /** A code as it is shown: its characters in groups of five, joined by dashes. */
 export function formatPairingCode(code: string): string {
-  return (code.match(/.{1,5}/g) ?? []).join("-")
+  return (code.replaceAll("-", "").match(/.{1,5}/g) ?? []).join("-")
 }
 
 /**
@@ -54,6 +54,8 @@ export function pairingCommand(link: string): string {
   return `claude-hub runner join '${link}'`
 }
 
+const invalid = (message: string) => ({ _tag: "Invalid", message }) as const
+
 /** A pairing link, read: where the Hub is, and the code to redeem there. */
 export interface PairingTarget {
   /** The Hub's origin, such as `https://hub.example.com`. */
@@ -69,11 +71,12 @@ export interface PairingTarget {
 export function parsePairing(
   text: string,
   hubUrl?: string,
-): { readonly _tag: "Parsed"; readonly target: PairingTarget } | {
-  readonly _tag: "Invalid"
-  readonly message: string
-} {
-  const invalid = (message: string) => ({ _tag: "Invalid", message }) as const
+):
+  | { readonly _tag: "Parsed"; readonly target: PairingTarget }
+  | {
+      readonly _tag: "Invalid"
+      readonly message: string
+    } {
   const trimmed = text.trim().replace(/^'(.*)'$/s, "$1")
   const hash = trimmed.indexOf("#")
   if (hash < 0) {
