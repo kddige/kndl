@@ -1,4 +1,5 @@
 import {
+  type ChildReport,
   ClaudeSessionId,
   EnvironmentVersion,
   ParticipantId,
@@ -26,6 +27,18 @@ export interface NewSession {
   /** The Creator, a signed-in Participant: recorded for history only (ADR 0003). */
   readonly creatorId: ParticipantId
   readonly createdAt: number
+  /** Its Session name, if it is given one from the start, as a Child Session can be. */
+  readonly name?: SessionName
+  /** Its Parent Session, for a Child Session (ADR 0012). */
+  readonly parentId?: SessionId
+}
+
+/** What a Child Session's Parent Session has had from it (ADR 0012). */
+export interface ChildRecord {
+  /** Its final message of its last Turn; absent until a Turn ends. */
+  readonly lastReport?: ChildReport
+  /** Its Turns in a row its parent prompted, with no person's prompt to either: the loop guard. */
+  readonly exchanges: number
 }
 
 interface SessionRow {
@@ -41,6 +54,7 @@ interface SessionRow {
   readonly creatorLogin: string
   readonly creatorName: string
   readonly creatorAvatarUrl: string | null
+  readonly parentId: string | null
   readonly createdAt: number
   readonly currentTurn: string | null
   readonly archivedById: string | null
@@ -79,6 +93,7 @@ const toSummary = (row: SessionRow): SessionSummary =>
       name: row.creatorName,
       ...(row.creatorAvatarUrl !== null && { avatarUrl: row.creatorAvatarUrl }),
     },
+    ...(row.parentId !== null && { parentId: SessionId.make(row.parentId) }),
     createdAt: row.createdAt,
     currentTurn: row.currentTurn === null ? null : TurnId.make(row.currentTurn),
     ...(row.archivedById !== null &&
@@ -124,6 +139,23 @@ export class Sessions extends Context.Service<
     readonly listByRunner: (
       runnerId: RunnerId,
     ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
+    /** The Session's Child Sessions, Archived ones too, oldest first (ADR 0012). */
+    readonly children: (
+      parentId: SessionId,
+    ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
+    /** What the Child Session's parent has had from it. */
+    readonly childRecord: (id: SessionId) => Effect.Effect<ChildRecord, SqlError>
+    /** Keeps the Child Session's Report, as its parent was sent it, and the loop guard's count. */
+    readonly recordReport: (
+      id: SessionId,
+      report: ChildReport,
+      exchanges: number,
+    ) => Effect.Effect<void, SqlError>
+    /**
+     * A person prompted the Session: the loop guard counts afresh for it as a Child Session, and
+     * for its own Child Sessions.
+     */
+    readonly personPrompted: (id: SessionId) => Effect.Effect<void, SqlError>
     readonly setState: (id: SessionId, state: SessionState) => Effect.Effect<void, SqlError>
     /** Its Session name, or null to clear it, so it is shown by its Work branch. */
     readonly setName: (id: SessionId, name: SessionName | null) => Effect.Effect<void, SqlError>
@@ -186,7 +218,7 @@ export class Sessions extends Context.Service<
           s.state,
           s.runner_id AS runnerId, s.runner_login_account AS runnerLoginAccount,
           s.creator_id AS creatorId, p.login AS creatorLogin, p.name AS creatorName,
-          p.avatar_url AS creatorAvatarUrl,
+          p.avatar_url AS creatorAvatarUrl, s.parent_id AS parentId,
           s.created_at AS createdAt, s.current_turn AS currentTurn,
           s.archived_by AS archivedById, a.login AS archivedByLogin, a.name AS archivedByName,
           a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt,
@@ -208,11 +240,12 @@ export class Sessions extends Context.Service<
         yield* sql`
           INSERT INTO sessions (
             id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at
+            creator_id, created_at, name, parent_id
           ) VALUES (
             ${session.id}, ${session.repo}, ${session.baseBranch}, ${session.workBranch},
             ${session.state}, ${session.runnerId}, ${session.runnerLogin.account},
-            ${session.creatorId}, ${session.createdAt}
+            ${session.creatorId}, ${session.createdAt}, ${session.name ?? null},
+            ${session.parentId ?? null}
           )
         `
         return Option.getOrThrow(yield* get(session.id))
@@ -225,6 +258,53 @@ export class Sessions extends Context.Service<
       const listByRunner = Effect.fn("Sessions.listByRunner")(function* (runnerId: RunnerId) {
         const rows = yield* select(sql`WHERE s.runner_id = ${runnerId}`)
         return rows.map(toSummary)
+      })
+
+      const children = Effect.fn("Sessions.children")(function* (parentId: SessionId) {
+        const rows = yield* select(sql`WHERE s.parent_id = ${parentId}`)
+        return rows.map(toSummary)
+      })
+
+      const childRecord = Effect.fn("Sessions.childRecord")(function* (
+        id: SessionId,
+      ): Effect.fn.Return<ChildRecord, SqlError> {
+        const rows = yield* sql<{
+          readonly lastReport: string | null
+          readonly lastReportAt: number | null
+          readonly exchanges: number
+        }>`
+          SELECT last_report AS lastReport, last_report_at AS lastReportAt,
+            parent_exchanges AS exchanges
+          FROM sessions WHERE id = ${id}
+        `
+        const row = rows[0]
+        if (row === undefined) return { exchanges: 0 }
+        return {
+          ...(row.lastReport !== null &&
+            row.lastReportAt !== null && {
+              lastReport: { text: row.lastReport, at: row.lastReportAt },
+            }),
+          exchanges: row.exchanges,
+        }
+      })
+
+      const recordReport = Effect.fn("Sessions.recordReport")(function* (
+        id: SessionId,
+        report: ChildReport,
+        exchanges: number,
+      ) {
+        yield* sql`
+          UPDATE sessions SET last_report = ${report.text}, last_report_at = ${report.at},
+            parent_exchanges = ${exchanges}
+          WHERE id = ${id}
+        `
+      })
+
+      const personPrompted = Effect.fn("Sessions.personPrompted")(function* (id: SessionId) {
+        yield* sql`
+          UPDATE sessions SET parent_exchanges = 0
+          WHERE (id = ${id} OR parent_id = ${id}) AND parent_exchanges > 0
+        `
       })
 
       const setState = Effect.fn("Sessions.setState")(function* (
@@ -360,6 +440,10 @@ export class Sessions extends Context.Service<
         get,
         list,
         listByRunner,
+        children,
+        childRecord,
+        recordReport,
+        personPrompted,
         setState,
         setName,
         setCurrentTurn,

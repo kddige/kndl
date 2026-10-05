@@ -12,7 +12,7 @@ import {
 } from "./Environment.ts"
 import { GitIdentity, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
-import { BranchName, RepoName, RunnerLogin } from "./Session.ts"
+import { BranchName, RepoName, RunnerLogin, SessionRef } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
   TerminalFrame,
@@ -190,6 +190,12 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
    * own: the Session's Creator (#110). Absent from a Hub older than that.
    */
   gitIdentity: Schema.optionalKey(GitIdentity),
+  /**
+   * Its Parent Session, when it is a Child Session (ADR 0012): Claude Code is told whose child it
+   * is and that its final message of each Turn goes there, and its mod offers no Child Session
+   * tools.
+   */
+  parent: Schema.optionalKey(SessionRef),
 })
 export type StartSession = typeof StartSession.Type
 

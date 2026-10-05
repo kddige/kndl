@@ -5,6 +5,7 @@ import type {
   AppPermissionsCheck,
   Environment,
   EnvironmentVersionInfo,
+  FromSession,
   HubToWeb,
   Participant,
   PendingPairingCode,
@@ -18,6 +19,7 @@ import type {
 
 export type HubMessage = (typeof HubToWeb)["Encoded"]
 export type ParticipantWire = (typeof Participant)["Encoded"]
+export type FromSessionWire = (typeof FromSession)["Encoded"]
 export type SessionSummaryWire = (typeof SessionSummary)["Encoded"]
 export type SessionEventWire = (typeof SessionEvent)["Encoded"]
 export type LogEntryWire = (typeof SessionLogEntry)["Encoded"]

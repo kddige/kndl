@@ -62,7 +62,7 @@ When the Runner is back, the Session is Active if its Claude Code is still runni
 
 Any Participant can delete a Session, from the trash button in its header ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Deleting archives it at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox with its disks, keeping the Workspace and Claude Code's state. If the WIP push fails, the archive still completes, with the failure in the Session's history.
 
-An Archived Session is hidden from the sidebar, refuses prompts, and its terminal can't be opened.
+An Archived Session is hidden from the sidebar, refuses prompts, and its terminal can't be opened. Deleting a [Parent Session](/how-to/coordinate-with-child-sessions/) archives its Child Sessions too, and restoring it restores only the Parent Session.
 
 - **Undo** on the toast after a delete restores it.
 - **Archived Sessions** in the sidebar lists every Repo's Archived Sessions, with who deleted each and when, and a **Restore** button.

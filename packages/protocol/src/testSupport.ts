@@ -144,4 +144,18 @@ export const turnEvents = [
     },
   },
   { _tag: "TurnEnded", turnId: "t-2", reason: "Stopped", durationMs: 800 },
+  {
+    _tag: "TurnStarted",
+    turnId: "t-3",
+    text: '[Parent Session "Release"] Also update the changelog.',
+    sender: { _tag: "FromParentSession", session: { id: "s-0", title: "Release" } },
+    promptId: "p-2",
+  },
+  {
+    _tag: "TurnStarted",
+    turnId: "t-4",
+    text: "[Report from Child Session ...]",
+    sender: { _tag: "FromChildSession", session: { id: "s-2", title: "claude/s-2" } },
+    promptId: "p-3",
+  },
 ]

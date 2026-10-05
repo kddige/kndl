@@ -75,6 +75,8 @@ export class StandInGitHub {
   readonly installedOn = new Set<string>()
   /** The collaborators (logins) of each Repo (`owner/name`). */
   readonly collaborators = new Map<string, Set<string>>()
+  /** Each Repo's (`owner/name`) default branch, if not `main`. */
+  readonly defaultBranches = new Map<string, string>()
   /** While set, collaborator checks answer 503, as in an outage. */
   collaboratorsDown = false
   /** While set, `GET /app` answers 503, as in an outage. */
@@ -171,6 +173,7 @@ export class StandInGitHub {
     this.requests.length = 0
     this.installedOn.clear()
     this.collaborators.clear()
+    this.defaultBranches.clear()
     this.collaboratorsDown = false
     this.appDown = false
     this.tokenLifetimeMs = 60 * 60 * 1000
@@ -275,6 +278,16 @@ export class StandInGitHub {
       if (this.collaboratorsDown) return this.json(503, { message: "Service Unavailable" })
       const isCollaborator = this.collaborators.get(match[1] ?? "")?.has(match[2] ?? "") ?? false
       return isCollaborator ? new Response(null, { status: 204 }) : this.json(404, {})
+    }
+    if (request.method === "GET" && (match = /^\/repos\/([^/]+\/[^/]+)$/.exec(path))) {
+      // As an installation, with a token it minted.
+      if (!this.tokens.has(authorization?.replace(/^Bearer /, "") ?? "")) return unauthorized
+      const repo = match[1] ?? ""
+      if (!this.installedOn.has(repo)) return this.json(404, { message: "Not Found" })
+      return this.json(200, {
+        full_name: repo,
+        default_branch: this.defaultBranches.get(repo) ?? "main",
+      })
     }
     if (request.method === "GET" && path === "/app") {
       if (!this.isApp(authorization)) return unauthorized

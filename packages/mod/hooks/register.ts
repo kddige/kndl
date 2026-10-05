@@ -8,6 +8,8 @@
 //   interrupted or the session ends (see src/ToolBridgeClient.ts).
 // - The Hub: says hello, reports the Turn's events, and takes prompts, stops and presence from
 //   the Hub (see HubLink.ts).
+// - Child Sessions (ADR 0012): a Session that isn't a Child Session gets the tools that create
+//   and coordinate them, answered by the Hub (see src/ChildTools.ts).
 // - The person at the terminal: a band above the prompt shows the Participants, and the `!`
 //   shell shortcut, which would run a command on the host, is refused.
 // - The model: the system prompt says the Session is shared, and describes the Sandbox, where its
@@ -24,6 +26,9 @@ import { atom, read, update } from "claude-code"
 import type { EngineInterface, On } from "claude-code"
 import type { HubLinkBand } from "../types"
 import {
+  childReplyText,
+  childToolRequest,
+  childTools,
   clip,
   decideTool,
   HubLink,
@@ -46,6 +51,7 @@ import {
 } from "./hub-link-lib.js"
 import type {
   BridgeExchange,
+  FromSession,
   LinkStatus,
   ModCommand,
   Participant,
@@ -82,8 +88,17 @@ const state = {
   mainTurn: undefined as string | undefined,
   /** The Turn each subagent's loop is in, from its steps; tool calls carry only the agent. */
   agentTurns: new Map<string, string>(),
-  /** The prompt delivered from the Hub that the next Turn starts with. */
-  delivered: undefined as { readonly promptId: string; readonly sender: Participant } | undefined,
+  /**
+   * The prompt delivered from the Hub that the next Turn starts with, and who sent it: a person,
+   * or another Session.
+   */
+  delivered: undefined as
+    | {
+        readonly promptId: string
+        readonly sender: Participant
+        readonly fromSession: FromSession | undefined
+      }
+    | undefined,
   readBeforeEdit: new ReadBeforeEdit(),
   minted: 0,
   /** The calls running in the Sandbox, by the id the bridge knows each by. */
@@ -108,10 +123,18 @@ const deliverPrompt = async (
     if (state.delivered?.promptId === command.promptId) state.delivered = undefined
     report({ _tag: "PromptFailed", promptId: command.promptId, message })
   }
-  state.delivered = { promptId: command.promptId, sender: command.sender }
+  state.delivered = {
+    promptId: command.promptId,
+    sender: command.sender,
+    fromSession: command.fromSession,
+  }
   try {
     const entered = await $.prompt.submit({
-      text: promptFromParticipant(command.sender, command.text),
+      // Another Session's prompt comes with its note, saying where it is from.
+      text:
+        command.fromSession === undefined
+          ? promptFromParticipant(command.sender, command.text)
+          : command.text,
       asUser: true,
     })
     if (entered.drop !== undefined) failed(`a hook dropped the prompt: ${entered.drop}`)
@@ -136,10 +159,11 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
 }
 
 const startLink = async ($: EngineInterface) => {
-  const [hubUrl, sessionId, modToken] = await Promise.all([
+  const [hubUrl, sessionId, modToken, parentSessionId] = await Promise.all([
     $.env.get("CLAUDE_HUB_URL"),
     $.env.get("CLAUDE_HUB_SESSION_ID"),
     $.env.get("CLAUDE_HUB_MOD_TOKEN"),
+    $.env.get("CLAUDE_HUB_PARENT_SESSION_ID"),
   ])
   if (!hubUrl || !sessionId || !modToken) {
     $.ui.log("hub-link: not started by a Runner, so not linked to a Hub", { to: "debug" })
@@ -157,6 +181,24 @@ const startLink = async ($: EngineInterface) => {
     log: (text) => $.ui.log(text, { to: "debug" }),
   })
   state.link.start()
+  // Sessions nest one level deep: a Child Session doesn't get the tools (the Hub refuses it too).
+  if (!parentSessionId) await Promise.all(childTools.map((tool) => $.tool.register(tool)))
+}
+
+/** Answers a call to one of the Child Session tools, from the Hub. */
+const answerChildTool = async (
+  request: Exclude<ReturnType<typeof childToolRequest>, undefined>,
+): Promise<ToolAnswer> => {
+  if ("invalid" in request) return { _tag: "Failed", message: request.invalid }
+  if (state.link === undefined)
+    return { _tag: "Refused", message: "This Session isn't linked to a Claude Hub." }
+  const reply = await state.link.askChildren(request)
+  if ("failed" in reply)
+    return { _tag: "Failed", message: `The Hub didn't answer: ${reply.failed}. Try again later.` }
+  const answer = childReplyText(reply)
+  return "text" in answer
+    ? { _tag: "Ran", result: answer.text }
+    : { _tag: "Failed", message: answer.refused }
 }
 
 const sandboxFacts = async ($: EngineInterface) => {
@@ -263,8 +305,9 @@ export function register(on: On) {
     return ended
   })
 
-  // Every tool call is answered here: from the Sandbox, or refused. Only WebSearch, which runs at
-  // Anthropic rather than on the host (#126), is passed on to Claude Code.
+  // Every tool call is answered here: from the Sandbox, from the Hub (the Child Session tools), or
+  // refused. Only WebSearch, which runs at Anthropic rather than on the host (#126), is passed on to
+  // Claude Code.
   on("tool.call", async ($, e, next) => {
     const tool = String(e.tool)
     const input = toolArguments(e as unknown as Record<string, unknown>)
@@ -285,16 +328,21 @@ export function register(on: On) {
       if (turnId !== undefined)
         report({ _tag: "ToolCallEnded", turnId, ...loop, toolCallId, tool, outcome, output })
     }
-    const decision = decideTool(tool, input)
-    if (decision._tag === "LeaveToClaudeCode") {
-      const done = await next(e)
-      if (done.deny !== undefined) ended("Denied", clip(done.deny))
-      else ended(done.isError ? "Failed" : "Succeeded", resultSummary(tool, done.result))
-      return done
+    const childRequest = childToolRequest(tool, input)
+    let answer: ToolAnswer
+    if (childRequest !== undefined) answer = await answerChildTool(childRequest)
+    else {
+      const decision = decideTool(tool, input)
+      if (decision._tag === "LeaveToClaudeCode") {
+        const done = await next(e)
+        if (done.deny !== undefined) ended("Denied", clip(done.deny))
+        else ended(done.isError ? "Failed" : "Succeeded", resultSummary(tool, done.result))
+        return done
+      }
+      // Waiting on the bridge is `$` calls, which the hook's budget doesn't count, so a call may
+      // run for as long as its tool allows. `next.signal` aborts when the Turn is interrupted.
+      answer = await answerToolCall($, decision, input, e.tool_use_id || undefined, next.signal)
     }
-    // Waiting on the bridge is `$` calls, which the hook's budget doesn't count, so a call may run
-    // for as long as its tool allows. `next.signal` aborts when the Turn is interrupted.
-    const answer = await answerToolCall($, decision, input, e.tool_use_id || undefined, next.signal)
     ended(
       outcomes[answer._tag],
       answer._tag === "Ran" ? resultSummary(tool, answer.result) : clip(answer.message),
@@ -326,7 +374,7 @@ export function register(on: On) {
       sender:
         delivered === undefined
           ? { _tag: "FromTerminal" }
-          : { _tag: "FromParticipant", participant: delivered.sender },
+          : (delivered.fromSession ?? { _tag: "FromParticipant", participant: delivered.sender }),
       ...(delivered === undefined ? {} : { promptId: delivered.promptId }),
     })
     return next(e)

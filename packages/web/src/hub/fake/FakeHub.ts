@@ -31,6 +31,9 @@ import {
   archiveRetentionMs,
   bob,
   demoSessionId,
+  releaseReply,
+  releaseReport,
+  releaseSessionId,
   hubVersion,
   type ReplyStep,
   replyTo,
@@ -42,6 +45,7 @@ import {
 import { FakeTerminal } from "./terminal.ts"
 import type {
   AppPermissionsCheckWire,
+  FromSessionWire,
   HubMessage,
   LogEntryWire,
   ParticipantWire,
@@ -142,6 +146,7 @@ export class FakeHub implements HubTransport {
   #autoplay: boolean
   #appPermissions: AppPermissionsCheckWire | null
   #scriptStarted = false
+  #releaseStarted = false
   readonly #sockets = new Set<FakeSocket>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
   /** The scripted reply each queued prompt gets when it's delivered. */
@@ -373,6 +378,20 @@ export class FakeHub implements HubTransport {
     )
   }
 
+  /** API docs reports to Release 0.4, the first time someone opens it; Changelog follows. */
+  #playRelease(): void {
+    if (this.#releaseStarted) return
+    this.#releaseStarted = true
+    const session = this.sessions.get(releaseSessionId)
+    if (!session) return
+    this.#after(4, () =>
+      this.#prompt(session, session.summary.creator, releaseReport.text, releaseReply, {
+        _tag: "FromChildSession",
+        session: releaseReport.from,
+      }),
+    )
+  }
+
   // ── The channel ──────────────────────────────────────────────────────────
 
   receive(socket: FakeSocket, text: string): void {
@@ -476,6 +495,7 @@ export class FakeHub implements HubTransport {
         }
         this.#presence(session)
         if (message.sessionId === demoSessionId && this.#autoplay) this.play()
+        if (message.sessionId === releaseSessionId && this.#autoplay) this.#playRelease()
         break
       }
       case "LeaveSession": {
@@ -750,17 +770,11 @@ export class FakeHub implements HubTransport {
           )
           break
         }
-        const at = Date.now()
-        // A start or restart under way is over: its Claude Code is stopped for good.
-        const { starting: _, restarting: __, ...summary } = session.summary
-        session.summary = {
-          ...summary,
-          archived: { by: this.#you, at, purgeAt: at + archiveRetentionMs },
-        }
-        this.#setState(session, "Archived", undefined, this.#you)
-        // Its Claude Code is stopped for good; the queue waits for a restore, as on the Hub.
-        session.stopTurn?.()
-        for (const watcher of this.#sockets) watcher.terminals.delete(message.sessionId)
+        this.#archive(session)
+        // As on the Hub, its Child Sessions are archived with it (ADR 0012).
+        for (const child of this.sessions.values())
+          if (child.summary.parentId === session.summary.id && child.summary.state !== "Archived")
+            this.#archive(child)
         this.#toAll(this.#runnerList())
         break
       }
@@ -1043,18 +1057,34 @@ export class FakeHub implements HubTransport {
     this.#start(session, { message, ...(by !== undefined && { by }) })
   }
 
+  #archive(session: FakeSession): void {
+    const at = Date.now()
+    // A start or restart under way is over: its Claude Code is stopped for good.
+    const { starting: _, restarting: __, ...summary } = session.summary
+    session.summary = {
+      ...summary,
+      archived: { by: this.#you, at, purgeAt: at + archiveRetentionMs },
+    }
+    this.#setState(session, "Archived", undefined, this.#you)
+    // Its Claude Code is stopped for good; the queue waits for a restore, as on the Hub.
+    session.stopTurn?.()
+    for (const watcher of this.#sockets) watcher.terminals.delete(session.summary.id)
+  }
+
   /** A prompt arrives: it runs now if the Session is idle, or waits in the Prompt queue. */
   #prompt(
     session: FakeSession,
     sender: ParticipantWire,
     text: string,
     reply: ReadonlyArray<ReplyStep>,
+    fromSession?: FromSessionWire,
   ): void {
     const prompt: QueuedPromptWire = {
       id: `p-${++this.#ids}`,
       text,
       sender,
       queuedAt: Date.now(),
+      ...(fromSession !== undefined && { fromSession }),
     }
     this.#replies.set(prompt.id, reply)
     session.queue.push(prompt)
@@ -1144,9 +1174,9 @@ export class FakeHub implements HubTransport {
     this.#append(session, {
       _tag: "TurnStarted",
       turnId,
-      // The Hub tells the model who is talking.
-      text: `[${prompt.sender.name}] ${prompt.text}`,
-      sender: { _tag: "FromParticipant", participant: prompt.sender },
+      // The Hub tells the model who is talking: another Session's prompt carries its note already.
+      text: prompt.fromSession ? prompt.text : `[${prompt.sender.name}] ${prompt.text}`,
+      sender: prompt.fromSession ?? { _tag: "FromParticipant", participant: prompt.sender },
       promptId: prompt.id,
     })
 
@@ -1215,7 +1245,17 @@ export class FakeHub implements HubTransport {
           })
           break
         case "queue":
-          schedule(0, () => this.#prompt(session, step.sender, step.text, replyTo(step.text)))
+          schedule(0, () =>
+            this.#prompt(
+              session,
+              step.sender,
+              step.text,
+              step.fromSession
+                ? [{ kind: "text", text: "Noted: I'll pass that on." }]
+                : replyTo(step.text),
+              step.fromSession,
+            ),
+          )
           break
         case "pause":
           at += step.steps

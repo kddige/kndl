@@ -253,6 +253,25 @@ describe("displayPrompt", () => {
     expect(displayPrompt("[Bob] hi", fromAlice as never)).toBe("[Bob] hi")
     expect(displayPrompt("[Alice] hi", { _tag: "FromTerminal" })).toBe("[Alice] hi")
   })
+
+  test("drops the Hub's note from another Session's prompt", () => {
+    const session = { id: "s-2", title: "API docs" } as never
+    expect(
+      displayPrompt(
+        '[Report from Child Session "API docs" (s-2)]\nThis is a Report.\n\nDone.\n\nAll green.',
+        { _tag: "FromChildSession", session },
+      ),
+    ).toBe("Done.\n\nAll green.")
+    expect(
+      displayPrompt('[Message from your Parent Session "Release" (s-1)]\n\nGo on.', {
+        _tag: "FromParentSession",
+        session,
+      }),
+    ).toBe("Go on.")
+    expect(displayPrompt("No note here.\n\nAt all.", { _tag: "FromChildSession", session })).toBe(
+      "No note here.\n\nAt all.",
+    )
+  })
 })
 
 describe("tool call summaries", () => {

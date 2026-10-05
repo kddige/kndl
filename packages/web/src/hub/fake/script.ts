@@ -1,8 +1,10 @@
 // What the fake Hub knows and plays: two Runners, one behind the Hub's commit, a few Sessions with some history, and the
-// Turns it streams. All made up; the people are Alice (you) and Bob.
+// Turns it streams. All made up; the people are Alice (you) and Bob. One Session is a Parent
+// Session with two Child Sessions, and gets their Reports (ADR 0012).
 
 import type {
   AppPermissionsCheckWire,
+  FromSessionWire,
   ParticipantWire,
   RunnerSummaryWire,
   SessionEventWire,
@@ -13,6 +15,10 @@ export const you: ParticipantWire = { id: "u-alice", login: "alice", name: "Alic
 export const bob: ParticipantWire = { id: "u-bob", login: "bob", name: "Bob Lee" }
 
 export const demoSessionId = "s-demo"
+/** The Parent Session, and its two Child Sessions. */
+export const releaseSessionId = "s-release"
+export const apiDocsSessionId = "s-api-docs"
+export const changelogSessionId = "s-changelog"
 
 /** One thing a scripted Turn does. Steps with an `agentId` are a subagent's. */
 export type ReplyStep =
@@ -30,8 +36,16 @@ export type ReplyStep =
       readonly during?: ReadonlyArray<ReplyStep>
     }
   | { readonly kind: "agentEnd"; readonly agentId: string }
-  /** Someone else queues a prompt while the Turn runs. */
-  | { readonly kind: "queue"; readonly sender: ParticipantWire; readonly text: string }
+  /**
+   * Someone else queues a prompt while the Turn runs. With `fromSession` it's another Session's,
+   * `text` with the Hub's note, and `sender` the Session's Creator.
+   */
+  | {
+      readonly kind: "queue"
+      readonly sender: ParticipantWire
+      readonly text: string
+      readonly fromSession?: FromSessionWire
+    }
   | { readonly kind: "pause"; readonly steps: number }
 
 /** The commit the fake Hub runs. */
@@ -186,27 +200,212 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         { _tag: "SessionStateChanged", state: "Archived", by: bob },
       ],
     },
+    ...releaseSessions(now),
   ]
 }
 
-/** A finished Turn, for seeding history. */
+const release = { id: releaseSessionId, title: "Release 0.4" }
+const apiDocs = { id: apiDocsSessionId, title: "API docs" }
+const changelog = { id: changelogSessionId, title: "Changelog" }
+
+/** A Report as the Hub queues it for the Parent Session: its note, then the child's message. */
+export function reportText(child: { id: string; title: string }, message: string): string {
+  return [
+    `[Report from Child Session "${child.title}" (${child.id})]`,
+    "This is a Report, not a prompt from a person: the final message of a Turn your Child Session just ended. The people in this Session don't see Reports, so relay what matters to them. More Reports may follow while it works.",
+    "",
+    message,
+  ].join("\n")
+}
+
+/** A message from the Parent Session as the Hub queues it for the child. */
+function parentMessageText(text: string): string {
+  return `[Message from your Parent Session "${release.title}" (${release.id})]\n\n${text}`
+}
+
+/** Release 0.4 hands the docs and the changelog to two Child Sessions. */
+function releaseSessions(now: number): Array<SeedSession> {
+  const studio = { runnerId: "r-studio", runnerLogin: { account: "alice@example.com" } }
+  const at = now - 40 * 60_000
+  const environment = { version: 2, latestVersion: 2 }
+  const created = (child: { id: string; title: string }, task: string) =>
+    tool(
+      "mcp__hub-link__create_child",
+      { task, name: child.title },
+      `Created Child Session "${child.title}" (id ${child.id}): Active, idle; Work branch claude/${child.id.slice(2)}, from main`,
+    )
+  return [
+    {
+      summary: {
+        id: releaseSessionId,
+        name: release.title,
+        repo: "kddige/claude-hub",
+        baseBranch: "main",
+        workBranch: "claude/release-0-4",
+        state: "Active",
+        ...studio,
+        creator: you,
+        createdAt: at,
+        currentTurn: null,
+        environment,
+      },
+      at,
+      events: [
+        ...turn("t-release-1", you, "Get 0.4 ready: the API docs and the changelog", [
+          {
+            _tag: "TextDelta",
+            text: "These two don't touch each other, so I'll hand each to a Child Session and keep an eye on them.",
+          },
+          created(apiDocs, "Document every message in packages/protocol for the 0.4 reference."),
+          created(changelog, "Write the 0.4 changelog from the merged pull requests since 0.3."),
+          {
+            _tag: "TextDelta",
+            text: "Both are working. They report back when each Turn ends; I'll tell you what they find.",
+          },
+        ]),
+        ...sessionTurn(
+          "t-release-2",
+          { _tag: "FromChildSession", session: changelog },
+          reportText(
+            changelog,
+            "The changelog is in CHANGELOG.md: 14 entries, grouped by package.",
+          ),
+          [
+            {
+              _tag: "TextDelta",
+              text: "**Changelog** is done: 14 entries in CHANGELOG.md, grouped by package. API docs is still working.",
+            },
+          ],
+        ),
+      ],
+    },
+    {
+      summary: {
+        id: apiDocsSessionId,
+        name: apiDocs.title,
+        repo: "kddige/claude-hub",
+        baseBranch: "main",
+        workBranch: "claude/api-docs",
+        state: "Active",
+        ...studio,
+        creator: you,
+        createdAt: at + 60_000,
+        currentTurn: null,
+        environment,
+        parentId: releaseSessionId,
+      },
+      at: at + 60_000,
+      events: [
+        ...sessionTurn(
+          "t-api-1",
+          { _tag: "FromParentSession", session: release },
+          parentMessageText("Document every message in packages/protocol for the 0.4 reference."),
+          [
+            tool(
+              "Glob",
+              { pattern: "packages/protocol/src/*.ts" },
+              "Hub.ts\nMod.ts\nRunner.ts\nSession.ts\nTurn.ts\nWeb.ts",
+            ),
+            {
+              _tag: "TextDelta",
+              text: "I've drafted the Web and Runner messages in the reference. Mod and Turn are next.",
+            },
+          ],
+        ),
+      ],
+    },
+    {
+      summary: {
+        id: changelogSessionId,
+        name: changelog.title,
+        repo: "kddige/claude-hub",
+        baseBranch: "main",
+        workBranch: "claude/changelog",
+        state: "Asleep",
+        ...studio,
+        creator: you,
+        createdAt: at + 2 * 60_000,
+        currentTurn: null,
+        environment,
+        parentId: releaseSessionId,
+      },
+      at: at + 2 * 60_000,
+      events: [
+        ...sessionTurn(
+          "t-changelog-1",
+          { _tag: "FromParentSession", session: release },
+          parentMessageText("Write the 0.4 changelog from the merged pull requests since 0.3."),
+          [
+            {
+              _tag: "TextDelta",
+              text: "The changelog is in CHANGELOG.md: 14 entries, grouped by package.",
+            },
+          ],
+        ),
+        { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 15m" },
+      ],
+    },
+  ]
+}
+
+/** API docs' next Report, which wakes Release 0.4; Changelog's follows while it's answered. */
+export const releaseReport = {
+  from: apiDocs,
+  text: reportText(
+    apiDocs,
+    "The reference covers every protocol message now, Mod and Turn included.",
+  ),
+}
+
+export const releaseReply: ReadonlyArray<ReplyStep> = [
+  {
+    kind: "tool",
+    tool: "mcp__hub-link__read_child",
+    input: { child_id: apiDocsSessionId },
+    output: `"API docs" (id ${apiDocsSessionId}): Active, idle; Work branch claude/api-docs, from main`,
+    steps: 3,
+  },
+  {
+    kind: "queue",
+    sender: you,
+    text: reportText(changelog, "I added the two fixes merged this morning to CHANGELOG.md."),
+    fromSession: { _tag: "FromChildSession", session: changelog },
+  },
+  { kind: "pause", steps: 30 },
+  {
+    kind: "text",
+    text: "**API docs** is done: the reference now covers every protocol message. Both Child Sessions have finished, so 0.4 is ready to review.",
+  },
+]
+
+type TurnBody = ReadonlyArray<
+  | { _tag: "TextDelta"; text: string }
+  | { _tag: "Tool"; tool: string; input: string; output: string }
+>
+
+/** A finished Turn a person prompted, for seeding history. */
 function turn(
   turnId: string,
   sender: ParticipantWire,
   prompt: string,
-  body: ReadonlyArray<
-    | { _tag: "TextDelta"; text: string }
-    | { _tag: "Tool"; tool: string; input: string; output: string }
-  >,
+  body: TurnBody,
 ): Array<SessionEventWire> {
-  const events: Array<SessionEventWire> = [
-    {
-      _tag: "TurnStarted",
-      turnId,
-      text: `[${sender.name}] ${prompt}`,
-      sender: { _tag: "FromParticipant", participant: sender },
-    },
-  ]
+  return sessionTurn(
+    turnId,
+    { _tag: "FromParticipant", participant: sender },
+    `[${sender.name}] ${prompt}`,
+    body,
+  )
+}
+
+/** A finished Turn, for seeding history: `text` is the prompt as the model got it. */
+function sessionTurn(
+  turnId: string,
+  sender: Extract<SessionEventWire, { _tag: "TurnStarted" }>["sender"],
+  text: string,
+  body: TurnBody,
+): Array<SessionEventWire> {
+  const events: Array<SessionEventWire> = [{ _tag: "TurnStarted", turnId, text, sender }]
   let count = 0
   for (const part of body) {
     if (part._tag === "TextDelta") {

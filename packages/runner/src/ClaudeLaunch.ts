@@ -1,4 +1,10 @@
-import type { BranchName, ClaudeSessionId, RepoName, SessionId } from "@claude-hub/protocol"
+import type {
+  BranchName,
+  ClaudeSessionId,
+  RepoName,
+  SessionId,
+  SessionRef,
+} from "@claude-hub/protocol"
 import { ToolsSocketVariable } from "@claude-hub/protocol"
 import { repoPluginDirectory } from "./RepoFiles.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
@@ -38,6 +44,11 @@ export const ModEnvironment = {
   /** The Unix socket of the Session's tool bridge, which answers the routed tools. */
   toolsSocket: ToolsSocketVariable,
   /**
+   * A Child Session's Parent Session id (ADR 0012), set only for a child. The mod leaves out the
+   * Child Session tools when it is set: Sessions nest one level deep.
+   */
+  parentSessionId: "CLAUDE_HUB_PARENT_SESSION_ID",
+  /**
    * Where the Workspace is in the Sandbox, the Repo and the Work branch: the model is told these,
    * not the host's directory and platform, which Claude Code would tell it (#127).
    */
@@ -50,6 +61,13 @@ export const ModEnvironment = {
    */
   repoFiles: "CLAUDE_HUB_REPO_FILES",
 } as const
+
+/**
+ * What a Child Session's model is told of its place (ADR 0012), appended to Claude Code's system
+ * prompt with `--append-system-prompt`, for children only.
+ */
+export const childSystemPrompt = (parent: SessionRef) =>
+  `You are a Child Session in claude-hub: the Parent Session "${parent.title}" (${parent.id}) created you to do part of its work, and its messages reach you as prompts marked as from it. People may prompt you too. The final message of each of your Turns, whoever prompted it, goes to your Parent Session as a Report, so end every Turn with a message that stands on its own: what you did, what you found, and what you need from it, if anything. You can't create Child Sessions of your own.`
 
 export interface ClaudeLaunchOptions {
   readonly claudeBin: string
@@ -67,6 +85,8 @@ export interface ClaudeLaunchOptions {
   readonly conversation:
     | { readonly _tag: "New"; readonly id: string }
     | { readonly _tag: "Resume"; readonly id: ClaudeSessionId }
+  /** The Parent Session, when this Session is a Child Session (ADR 0012). */
+  readonly parent?: SessionRef
 }
 
 export interface ClaudeLaunch {
@@ -81,7 +101,8 @@ export interface ClaudeLaunch {
  * per-Session directory.
  *
  * A new conversation gets `--session-id`, chosen by the Runner, so its id is known up front; waking
- * uses `--resume`, which restores the conversation and keeps the id (spike #4).
+ * uses `--resume`, which restores the conversation and keeps the id (spike #4). A Child Session
+ * gets its paragraph on every launch, waking included, since the flag lasts only for the process.
  */
 export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
   const conversation =
@@ -105,6 +126,9 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       "",
       "--settings",
       JSON.stringify(ClaudeFlagSettings),
+      ...(options.parent === undefined
+        ? []
+        : ["--append-system-prompt", childSystemPrompt(options.parent)]),
     ],
     env: {
       CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1",
@@ -117,6 +141,9 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       [ModEnvironment.sessionId]: options.sessionId,
       [ModEnvironment.modToken]: options.modToken,
       [ModEnvironment.toolsSocket]: options.toolsSocket,
+      ...(options.parent === undefined
+        ? {}
+        : { [ModEnvironment.parentSessionId]: options.parent.id }),
       [ModEnvironment.workspace]: workspaceGuestPath,
       [ModEnvironment.repo]: options.repo,
       [ModEnvironment.workBranch]: options.workBranch,
