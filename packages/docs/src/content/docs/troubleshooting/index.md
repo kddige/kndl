@@ -68,6 +68,10 @@ For a closer look on a Runner's machine, list its tmux sessions with `tmux -L cl
 - The Runner exits with `The hub-link mod isn't built: …`.
 - The Runner keeps logging `Hub connection: could not connect to …`.
 - A Runner on another machine never shows up.
+- `… this Runner needs an update. Update it on the Runners page.`, or a Runner is **behind the Hub**.
+- A Runner's row says **refuses: not on main**.
+- A Runner's row says **update failed**.
+- The Runner logs `The Hub turned this Runner away: …`.
 - Sessions exit at once with `The current working directory was deleted`, or doctor warns about the `tmux server`.
 - A Session is Frozen.
 - Sessions from before an update are gone.

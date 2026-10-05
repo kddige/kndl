@@ -254,6 +254,19 @@ export const RemoveRunner = Schema.TaggedStruct("RemoveRunner", {
 })
 export type RemoveRunner = typeof RemoveRunner.Type
 
+/**
+ * Update a Runner to the Hub's commit (ADR 0011): it stops taking Sessions, its running Turns end
+ * (within about ten minutes, or at once with `now`), its Sessions sleep, and it moves to the commit
+ * and restarts. Sent again with `now` while it waits, it stops the Turns at once. Answered with a
+ * {@link RunnerUpdateRequested}; the RunnerList follows the update.
+ */
+export const UpdateRunner = Schema.TaggedStruct("UpdateRunner", {
+  requestId: RequestId,
+  runnerId: RunnerId,
+  now: Schema.Boolean,
+})
+export type UpdateRunner = typeof UpdateRunner.Type
+
 /** Every message a web client sends the Hub. */
 export const WebToHub = Schema.Union([
   WebHello,
@@ -284,6 +297,7 @@ export const WebToHub = Schema.Union([
   CreatePairingCode,
   RevokePairingCode,
   RemoveRunner,
+  UpdateRunner,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type WebToHub = typeof WebToHub.Type
 
@@ -463,6 +477,13 @@ export const RunnerRemoved = Schema.TaggedStruct("RunnerRemoved", {
 })
 export type RunnerRemoved = typeof RunnerRemoved.Type
 
+/** Answers an {@link UpdateRunner}: the update is under way, as the RunnerList shows. */
+export const RunnerUpdateRequested = Schema.TaggedStruct("RunnerUpdateRequested", {
+  requestId: RequestId,
+  runnerId: RunnerId,
+})
+export type RunnerUpdateRequested = typeof RunnerUpdateRequested.Type
+
 /** Every message the Hub sends a web client. */
 export const HubToWeb = Schema.Union([
   WebWelcome,
@@ -492,5 +513,6 @@ export const HubToWeb = Schema.Union([
   PairingCodeList,
   PairingCodeRedeemed,
   RunnerRemoved,
+  RunnerUpdateRequested,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToWeb = typeof HubToWeb.Type

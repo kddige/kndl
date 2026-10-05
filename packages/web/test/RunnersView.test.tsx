@@ -36,6 +36,7 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
 
 const dialog = () => document.querySelector('[role="dialog"]')
 const runners = () => document.querySelector('[aria-label="Runners"]')
+const ciBox = () => runners()?.querySelector('[aria-label="ci-box"]')?.textContent ?? ""
 
 async function openRunners() {
   const hub = new FakeHub({ stepMs: 2, autoplay: false })
@@ -142,4 +143,67 @@ test("refuses to remove a Runner with open Sessions, and removes one without", a
   expect(hub.received.find((m) => m._tag === "RemoveRunner")).toMatchObject({
     runnerId: expect.any(String),
   })
+})
+
+test("updates a Runner behind the Hub, following the update to the Hub's commit", async () => {
+  const { hub } = await openRunners()
+  await step(() => hub.patchRunner("r-ci", { isOnline: true }))
+  await eventually(() => expect(button("Update ci-box")).toBeTruthy())
+  await step(() => button("Update ci-box").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Update ci-box?"))
+  expect(dialog()?.textContent).toContain("824de4a1f0c3, the Hub's commit")
+  // It has a Session: Update now is there too, to stop its Turns at once.
+  expect(button("Update now")).toBeTruthy()
+  await step(() => button("Update").click())
+  expect(hub.received.find((m) => m._tag === "UpdateRunner")).toMatchObject({
+    runnerId: "r-ci",
+    now: false,
+  })
+  await eventually(() => expect(ciBox()).toContain("updating"))
+  await eventually(() => expect(ciBox()).toContain("824de4a1f0c3 (main)"), 10_000)
+  expect(ciBox()).not.toContain("behind the Hub")
+  expect(ciBox()).not.toContain("updating")
+})
+
+test("shows a refused or failed update, and offers nothing to a Runner updated by hand", async () => {
+  const { hub } = await openRunners()
+  const target = { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", branch: "main" }
+  await step(() =>
+    hub.patchRunner("r-ci", {
+      isOnline: true,
+      update: {
+        _tag: "Refused",
+        target,
+        at: Date.now(),
+        refusal: { reason: "NotOnMain", message: "824de4a1f0c3 isn't on origin/main." },
+      },
+    }),
+  )
+  await eventually(() => expect(ciBox()).toContain("refuses: not on main"))
+  expect(ciBox()).toContain("isn't on origin/main")
+
+  await step(() =>
+    hub.patchRunner("r-ci", {
+      update: {
+        _tag: "Failed",
+        failure: {
+          target,
+          message:
+            "Updating to 824de4a1f0c3 failed while installing and building. It went back to the commit it ran.",
+          rolledBack: true,
+          at: Date.now(),
+        },
+      },
+    }),
+  )
+  await eventually(() => expect(ciBox()).toContain("update failed"))
+  expect(ciBox()).toContain("It went back to the commit it ran.")
+
+  await step(() =>
+    hub.patchRunner("r-ci", {
+      updater: { self: false, reason: "it runs from a developer's checkout" },
+    }),
+  )
+  await settle()
+  expect(document.querySelector('[aria-label="Update ci-box"]')).toBeNull()
 })

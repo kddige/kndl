@@ -7,6 +7,7 @@
 // ModRoutes.ts.
 
 import {
+  type BuildVersion,
   checkHandshake,
   HandshakeRejected,
   HubToRunner,
@@ -53,6 +54,11 @@ const serveChannel = <Hello, In, Out>(options: {
     hello: Hello,
     peer: Peer<Out>,
   ) => Effect.Effect<Receive<In>, never, Scope.Scope>
+  /**
+   * The Hub's commit, said in a rejection: a Runner turned away for its protocol version can
+   * still update to it (ADR 0011).
+   */
+  readonly hubVersion?: BuildVersion | undefined
 }) =>
   Effect.gen(function* () {
     const shutdown = yield* HubShutdown
@@ -77,7 +83,7 @@ const serveChannel = <Hello, In, Out>(options: {
           }),
         )
         const message = parseJson(first)
-        const mismatch = checkHandshake(message)
+        const mismatch = checkHandshake(message, options.hubVersion)
         if (mismatch !== undefined) return yield* reject(mismatch)
         const hello = Schema.decodeUnknownExit(options.hello)(message)
         if (hello._tag === "Failure") {
@@ -86,6 +92,7 @@ const serveChannel = <Hello, In, Out>(options: {
               reason: "MalformedHandshake",
               protocolVersion: ProtocolVersion,
               message: "The hello is not one this channel accepts.",
+              ...(options.hubVersion !== undefined && { hubVersion: options.hubVersion }),
             }),
           )
         }
@@ -170,6 +177,7 @@ export const ChannelRoutes = HttpRouter.use(
               runnerId: runner.runnerId,
             }),
           connect: (hello, peer) => relay.connectRunner(runner, hello, peer),
+          hubVersion: hub,
         })
       }),
     )

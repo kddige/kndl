@@ -1,4 +1,5 @@
 import {
+  type BuildVersion,
   checkHandshake,
   HubToRunner,
   ProtocolVersion,
@@ -11,10 +12,15 @@ import { Socket } from "effect/socket"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig, runnerConnectionUrl, runnerSocketUrl } from "./RunnerConfig.ts"
 import { Sessions } from "./Sessions.ts"
+import { Updater } from "./Updater.ts"
 
-/** The Hub turned this Runner away for good, such as for speaking another protocol version. */
+/**
+ * The Hub turned this Runner away, such as for speaking another protocol version: it says the
+ * commit it runs, if it is new enough to (ADR 0011).
+ */
 export class HubRejected extends Data.TaggedError("HubRejected")<{
   readonly message: string
+  readonly hubVersion?: BuildVersion | undefined
 }> {}
 
 /** One connection ended, before or after the welcome; the Runner reconnects. */
@@ -28,9 +34,18 @@ export interface Backoff {
   readonly initial: Duration.Input
   /** The longest wait between reconnects. */
   readonly max: Duration.Input
+  /**
+   * The wait after the Hub turned the Runner away. It never exits for that, which its service
+   * would only restart in a loop: it retries this slowly, in case the Hub or it was updated.
+   */
+  readonly rejected?: Duration.Input
 }
 
-export const DefaultBackoff: Backoff = { initial: "500 millis", max: "30 seconds" }
+export const DefaultBackoff: Backoff = {
+  initial: "500 millis",
+  max: "30 seconds",
+  rejected: "1 minute",
+}
 
 /** How long the Hub has to answer the hello. */
 const WelcomeTimeout = Duration.seconds(10)
@@ -72,13 +87,16 @@ function parseJson(text: string): unknown {
 
 /**
  * Stays connected to the Hub: connects with the Runner token, says hello, and on the welcome
- * hands the Hub's messages to {@link Sessions}. Reconnects with exponential backoff, which starts
- * over after every welcome. Fails only with {@link HubRejected}.
+ * hands the Hub's messages to {@link Sessions}, and those about updating to the {@link Updater}.
+ * Reconnects with exponential backoff, which starts over after every welcome. Never ends: when the
+ * Hub turns it away, it says what to do, updates itself if it can, and retries slowly.
  */
 export const runHubConnection = (login: RunnerLogin, backoff: Backoff = DefaultBackoff) =>
   Effect.gen(function* () {
+    const updater = yield* Updater
     const initial = Duration.toMillis(Duration.fromInputUnsafe(backoff.initial))
     const max = Duration.toMillis(Duration.fromInputUnsafe(backoff.max))
+    const rejectedWait = Duration.fromInputUnsafe(backoff.rejected ?? "1 minute")
     let delay = initial
     for (;;) {
       const welcomed = yield* connectOnce(login).pipe(
@@ -89,7 +107,20 @@ export const runHubConnection = (login: RunnerLogin, backoff: Backoff = DefaultB
             return lost.welcomed
           }),
         ),
+        Effect.catchTag("HubRejected", (rejected) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(`The Hub turned this Runner away: ${rejected.message}`)
+            yield* updater.rejected(rejected.hubVersion)
+            yield* Effect.logInfo(`Connecting to the Hub again in ${Duration.format(rejectedWait)}`)
+            yield* Effect.sleep(rejectedWait)
+            return "rejected" as const
+          }),
+        ),
       )
+      if (welcomed === "rejected") {
+        delay = initial
+        continue
+      }
       if (welcomed) delay = initial
       yield* Effect.logInfo(`Reconnecting to the Hub in ${Math.round(delay)} ms`)
       yield* Effect.sleep(Duration.millis(delay))
@@ -102,6 +133,7 @@ const connectOnce = (login: RunnerLogin) =>
     Effect.gen(function* () {
       const config = yield* RunnerConfig
       const sessions = yield* Sessions
+      const updater = yield* Updater
       const hub = yield* HubLink
       const makeWebSocket = yield* Socket.WebSocketConstructor
       const url = runnerSocketUrl(config.hubUrl)
@@ -123,6 +155,7 @@ const connectOnce = (login: RunnerLogin) =>
         Effect.mapError((error) => lost(`could not connect to ${url}: ${error.message}`)),
       )
       const writer = yield* socket.writer
+      const hello = yield* updater.hello
       const write = (message: RunnerToHub) => writer.write(JSON.stringify(encodeOutgoing(message)))
 
       yield* write(
@@ -133,6 +166,8 @@ const connectOnce = (login: RunnerLogin) =>
           sessions: [...(yield* sessions.running)],
           ...(buildVersion !== undefined && { version: buildVersion }),
           asksCloneAccess: true,
+          updater: hello.updater,
+          ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
         }),
       ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
 
@@ -150,7 +185,10 @@ const connectOnce = (login: RunnerLogin) =>
       const answer = parseJson(first[0])
       const welcome = decodeIncoming(answer)
       if (welcome._tag === "Success" && welcome.value._tag === "HandshakeRejected") {
-        return yield* new HubRejected({ message: welcome.value.message })
+        return yield* new HubRejected({
+          message: welcome.value.message,
+          hubVersion: welcome.value.hubVersion,
+        })
       }
       const mismatch = checkHandshake(answer)
       if (mismatch !== undefined) return yield* new HubRejected({ message: mismatch.message })
@@ -160,25 +198,27 @@ const connectOnce = (login: RunnerLogin) =>
 
       welcomed = true
       yield* Effect.logInfo(`Connected to the Hub as Runner ${welcome.value.runnerId}`)
+      yield* updater.welcomed
       yield* hub.connect(write)
       yield* Effect.addFinalizer(() => hub.disconnect)
       yield* sessions.snapshotAll
 
       // Messages from the rest of the batch the welcome came in, then everything after it.
-      yield* Effect.forEach(first.slice(1), (text) => dispatch(sessions, text), { discard: true })
+      const route = (text: string) => dispatch(sessions, updater, text)
+      yield* Effect.forEach(first.slice(1), route, { discard: true })
       return yield* Effect.forever(
-        pull.pipe(
-          Effect.flatMap((batch) =>
-            Effect.forEach(batch, (text) => dispatch(sessions, text), { discard: true }),
-          ),
-        ),
+        pull.pipe(Effect.flatMap((batch) => Effect.forEach(batch, route, { discard: true }))),
       ).pipe(Effect.mapError((error) => lost(`the connection closed: ${error.message}`)))
     }),
   )
 
-const dispatch = (sessions: Sessions["Service"], text: string) => {
+const dispatch = (sessions: Sessions["Service"], updater: Updater["Service"], text: string) => {
   const message = decodeIncoming(parseJson(text))
-  return message._tag === "Success"
-    ? sessions.handle(message.value)
-    : Effect.logWarning("Ignored a message from the Hub the Runner could not decode")
+  if (message._tag === "Failure") {
+    return Effect.logWarning("Ignored a message from the Hub the Runner could not decode")
+  }
+  const incoming = message.value
+  return incoming._tag === "CheckUpdate" || incoming._tag === "ApplyUpdate"
+    ? updater.handle(incoming)
+    : sessions.handle(incoming)
 }

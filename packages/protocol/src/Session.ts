@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { BuildVersion, RunnerVersionStatus } from "./Build.ts"
 import { EnvironmentVersion, ParticipantId, PromptId, RunnerId, SessionId, TurnId } from "./Ids.ts"
+import { RunnerUpdater, RunnerUpdateState } from "./Update.ts"
 
 // Shapes shared by more than one channel: who is involved in a Session and what state it is in.
 
@@ -64,6 +65,10 @@ export const RunnerSummary = Schema.Struct({
    * it can't be removed.
    */
   openSessions: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** Whether it updates itself, as it said in its last hello; absent from a Runner too old to say. */
+  updater: Schema.optionalKey(RunnerUpdater),
+  /** Its update under way, or the last one's refusal or failure (#87). */
+  update: Schema.optionalKey(RunnerUpdateState),
 })
 export type RunnerSummary = typeof RunnerSummary.Type
 

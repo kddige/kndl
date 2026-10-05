@@ -92,10 +92,16 @@ import {
   QueuedPrompt,
   type RequestId,
   RequestTerminalSnapshot,
+  type BuildVersion,
+  NeedsUpdateText,
   type RunnerHello,
+  type RunnerList,
   type RunnerId,
   type RunnerLogin,
   type RunnerToHub,
+  type RunnerUpdater,
+  RunnerUpdateRequested,
+  sessionsRefusal,
   type SessionEvent,
   SessionEventLogged,
   type TerminalFrame,
@@ -163,6 +169,8 @@ import { RepoAccess } from "./RepoAccess.ts"
 import { isRunnerCommand, makeRunnerRelay } from "./RunnerRelay.ts"
 import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
+import { RunnerUpdatePush } from "./RunnerUpdatePush.ts"
+import { makeRunnerUpdates } from "./RunnerUpdates.ts"
 import { creatorIdentity, SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { Sessions } from "./Sessions.ts"
@@ -215,6 +223,9 @@ export const lastOutputText = (needles: Needles, output: string) =>
   redactText(needles, output).slice(-MaxLastOutputLength)
 
 /** How often the Hub looks for idle Sessions to put to sleep: a tenth of the wait, 10 ms to 30 s. */
+/** How often draining Runners are checked for Turns past their deadline (RunnerUpdates.ts). */
+const drainCheckInterval = Duration.seconds(5)
+
 export const idleCheckInterval = (sleepAfter: Duration.Duration) =>
   Duration.millis(Math.min(Math.max(Duration.toMillis(sleepAfter) / 10, 10), 30_000))
 
@@ -299,6 +310,7 @@ export class SessionRelay extends Context.Service<
       const app = yield* GitHubApp
       const drift = yield* PermissionDrift
       const hubVersion = yield* HubVersion
+      const updatePush = yield* RunnerUpdatePush
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
@@ -323,6 +335,10 @@ export class SessionRelay extends Context.Service<
         readonly peer: Peer<HubToRunner>
         /** Whether it asks how to clone a Test build (#104). */
         readonly asksCloneAccess: boolean
+        /** The commit it runs, as its hello said. */
+        readonly version: BuildVersion | undefined
+        /** Whether it updates itself (#87); `undefined` from a Runner too old to say. */
+        readonly updater: RunnerUpdater | undefined
       }
 
       const webClients = new Set<WebClient>()
@@ -382,16 +398,19 @@ export class SessionRelay extends Context.Service<
       const toJoined = (sessionId: SessionId, message: HubToWeb) =>
         toWeb(message, (client) => client.joined.has(sessionId))
 
-      const runnerList = Effect.gen(function* () {
+      const runnerList: Effect.Effect<RunnerList, SqlError> = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         return HubToWeb.cases.RunnerList.make({
-          runners: (yield* runners.list).map((runner) => {
+          runners: (yield* runners.list).map(({ updater, ...runner }) => {
             const isOnline = onlineRunners.has(runner.id)
+            const update = runnerUpdates.stateOf(runner.id)
             return {
               ...runner,
               isOnline,
               versionStatus: hubVersion.statusOf(runner.version),
               lastSeenAt: isOnline ? now : runner.lastSeenAt,
+              ...(updater !== null && { updater }),
+              ...(update !== undefined && { update }),
             }
           }),
         })
@@ -402,6 +421,48 @@ export class SessionRelay extends Context.Service<
         runnersChanged: Effect.map(runnerList, (list) => toWeb(list)),
         disconnect: (id, code, reason) => onlineRunners.get(id)?.peer.close(code, reason),
       })
+
+      // Runners follow the Hub's commit (#87): RunnerUpdates.ts drains a Runner and moves it.
+      const runnerUpdates = makeRunnerUpdates({
+        hub: hubVersion.version,
+        statusOf: (version) => hubVersion.statusOf(version ?? null),
+        push:
+          hubVersion.version === undefined
+            ? undefined
+            : Option.getOrUndefined(yield* updatePush.forCommit(hubVersion.version.commit)),
+        online: (id) => onlineRunners.get(id),
+        drainSessions: (id) =>
+          Effect.map(sessions.listByRunner(id), (list) =>
+            list.map((session) => ({
+              id: session.id,
+              state: session.state,
+              turn: session.currentTurn !== null || inFlight.has(session.id),
+              settling: starts.has(session.id) || stopping.has(session.id),
+            })),
+          ),
+        session: (id) => Effect.map(sessions.get(id), Option.getOrUndefined),
+        putToSleep: (session, message) => putToSleep(session, { message }),
+        stopTurn: Effect.fn(function* (sessionId, by) {
+          if (by !== undefined) yield* logEvent(sessionId, TurnStopRequested.make({ by }))
+          yield* outbox.enqueue(sessionId, StopTurn.make({ sessionId }))
+        }),
+        runnersChanged: Effect.map(runnerList, (list) => toWeb(list)),
+      })
+
+      /**
+       * Why no Session may start or wake on the Runner now: it is behind the Hub, or updating
+       * (ADR 0011). Its running Sessions go on.
+       */
+      const runnerRefusal = (runner: OnlineRunner) => {
+        const why = sessionsRefusal(
+          hubVersion.statusOf(runner.version ?? null),
+          runnerUpdates.stateOf(runner.id),
+        )
+        if (why === undefined) return undefined
+        return why === NeedsUpdateText
+          ? `${runner.name}: ${why}. Update it on the Runners page.`
+          : `${runner.name}: ${why}. Sessions start and wake there again once it is back.`
+      }
 
       /** The Session as the web sees it: what is stored, and whether it is starting or restarting. */
       const forWeb = (session: SessionSummary): SessionSummary => {
@@ -844,6 +905,8 @@ export class SessionRelay extends Context.Service<
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         if (session.value.state !== "Active" || session.value.currentTurn !== null) return
+        // A Runner draining for its update takes no prompts: they wait for it to be back.
+        if (runnerUpdates.holding(session.value.runnerId)) return
         const [head] = yield* prompts.list(sessionId)
         if (head === undefined) return
         inFlight.set(sessionId, head.id)
@@ -887,10 +950,18 @@ export class SessionRelay extends Context.Service<
        * Code again, resuming the conversation its mod last said hello from, on the same
        * Workspace and Sandbox volumes. Queued prompts are delivered once the new mod says hello.
        */
-      const wake = Effect.fn("SessionRelay.wake")(function* (session: SessionSummary, why: Why) {
+      const wake = Effect.fn("SessionRelay.wake")(function* (
+        session: SessionSummary,
+        why: Why,
+      ): Effect.fn.Return<string | undefined, SqlError> {
         const runner = onlineRunners.get(session.runnerId)
         // A restored Session still being stopped for its archive wakes once it is stopped.
-        if (runner === undefined || session.state !== "Asleep" || archiving.has(session.id)) return
+        if (runner === undefined || session.state !== "Asleep" || archiving.has(session.id)) {
+          return undefined
+        }
+        // Its prompts wait in its queue, and wake it once its Runner is updated.
+        const refusal = runnerRefusal(runner)
+        if (refusal !== undefined) return refusal
         const needed = yield* environments.valuesNeeded(session.repo)
         if (needed.length > 0) {
           restarts.delete(session.id)
@@ -903,7 +974,8 @@ export class SessionRelay extends Context.Service<
               valuesNeeded: true,
             }),
           )
-          return yield* sessionUpdated(session.id)
+          yield* sessionUpdated(session.id)
+          return undefined
         }
         const resume = yield* sessions.claudeSessionId(session.id)
         const environment = yield* sessionEnvironment(session.repo)
@@ -928,6 +1000,7 @@ export class SessionRelay extends Context.Service<
             gitIdentity: creatorIdentity(session.creator),
           }),
         )
+        return undefined
       })
 
       /** Wakes the Session if it is Asleep with prompts waiting, as ones queued while Frozen. */
@@ -1105,6 +1178,7 @@ export class SessionRelay extends Context.Service<
             case "GetSharedVariables":
             case "SetSharedVariable":
             case "DeleteSharedVariable":
+            case "UpdateRunner":
               return {}
             case "StartTestBuild":
               return yield* authorizeTestBuild(message.repo)
@@ -1190,6 +1264,16 @@ export class SessionRelay extends Context.Service<
             case "WebHello":
               return
 
+            case "UpdateRunner": {
+              const { requestId, runnerId } = message
+              const refused = yield* runnerUpdates.request(runnerId, {
+                now: message.now,
+                by: you,
+              })
+              if (refused !== undefined) return refuse(message, refused, { requestId })
+              return peer.send(RunnerUpdateRequested.make({ requestId, runnerId }))
+            }
+
             case "CreateSession": {
               const { requestId } = message
               const runner =
@@ -1205,6 +1289,8 @@ export class SessionRelay extends Context.Service<
                   { requestId },
                 )
               }
+              const behind = runnerRefusal(runner)
+              if (behind !== undefined) return refuse(message, behind, { requestId })
               // Repo access was checked before the lock was taken.
               // TODO: check that the base branch exists, once the GitHub App can tell.
               const missing = yield* environmentRelay.missingEnvironment(message.repo)
@@ -1309,7 +1395,12 @@ export class SessionRelay extends Context.Service<
               )
               yield* queueChanged(sessionId)
               if (session.value.state === "Asleep") {
-                yield* wake(session.value, { by: you })
+                const refused = yield* wake(session.value, { by: you })
+                if (refused !== undefined) {
+                  return refuse(message, `Your prompt waits in the queue. ${refused}`, {
+                    sessionId,
+                  })
+                }
               } else {
                 yield* deliverNext(sessionId)
               }
@@ -1351,8 +1442,11 @@ export class SessionRelay extends Context.Service<
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
               switch (session.value.state) {
-                case "Asleep":
-                  return yield* wake(session.value, { by: you })
+                case "Asleep": {
+                  const refused = yield* wake(session.value, { by: you })
+                  if (refused !== undefined) return refuse(message, refused, { sessionId })
+                  return
+                }
                 case "Active":
                   if (stopping.has(sessionId)) {
                     return refuse(
@@ -1386,8 +1480,9 @@ export class SessionRelay extends Context.Service<
                 case "Asleep": {
                   // Set first, so the woken Session shows it is restarting.
                   restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
-                  yield* wake(session.value, { by: you })
+                  const refused = yield* wake(session.value, { by: you })
                   if (!starts.has(sessionId)) restarts.delete(sessionId)
+                  if (refused !== undefined) return refuse(message, refused, { sessionId })
                   return
                 }
                 case "Active":
@@ -1711,6 +1806,13 @@ export class SessionRelay extends Context.Service<
         const handle = Effect.fn("SessionRelay.receiveRunner")(function* (message: RunnerToHub) {
           if (message._tag === "RunnerHello") return
           if (
+            message._tag === "UpdateChecked" ||
+            message._tag === "UpdateProgress" ||
+            message._tag === "UpdateFailed"
+          ) {
+            return yield* runnerUpdates.receive(runner.id, message)
+          }
+          if (
             message._tag === "FetchVariables" ||
             message._tag === "TestBuildLog" ||
             message._tag === "TestBuildFinished"
@@ -1864,8 +1966,18 @@ export class SessionRelay extends Context.Service<
           }
         })
 
+        /** Messages after which a draining Runner may have a Session to put to sleep, or none left. */
+        const settles = new Set<RunnerToHub["_tag"]>([
+          "SessionStarted",
+          "SessionStartFailed",
+          "SessionStopped",
+        ])
         return (message) =>
-          serialized(handle(message)).pipe(
+          serialized(
+            settles.has(message._tag)
+              ? Effect.andThen(handle(message), runnerUpdates.drain(runner.id))
+              : handle(message),
+          ).pipe(
             Effect.catchTag("SqlError", (error) =>
               Effect.logError(`A message from Runner ${runner.name} failed`, error),
             ),
@@ -1884,6 +1996,8 @@ export class SessionRelay extends Context.Service<
             login: hello.login,
             peer,
             asksCloneAccess: hello.asksCloneAccess === true,
+            version: hello.version,
+            updater: hello.updater,
           }
           yield* serialized(
             Effect.gen(function* () {
@@ -1893,9 +2007,11 @@ export class SessionRelay extends Context.Service<
               onlineRunners.set(runner.id, runner)
               yield* runners.recordHello(
                 runner.id,
-                { login: runner.login, version: hello.version },
+                { login: runner.login, version: hello.version, updater: hello.updater },
                 yield* Clock.currentTimeMillis,
               )
+              // Settles an update it restarted for, before its Sessions wake.
+              yield* runnerUpdates.hello(runner, hello.lastUpdate)
               toWeb(yield* runnerList)
               const running = new Set(hello.sessions)
               // Sessions purged while it was away, and archived ones it hasn't stopped yet.
@@ -1923,6 +2039,8 @@ export class SessionRelay extends Context.Service<
                   yield* wakeIfWaiting(session.id)
                 }
               }
+              // A push `claude-hub update` left drains it, now its Sessions are settled.
+              yield* runnerUpdates.drain(runner.id)
             }),
           ).pipe(Effect.orDie)
           yield* Effect.addFinalizer(() =>
@@ -1930,6 +2048,7 @@ export class SessionRelay extends Context.Service<
               Effect.gen(function* () {
                 if (onlineRunners.get(runner.id) !== runner) return
                 onlineRunners.delete(runner.id)
+                yield* runnerUpdates.gone(runner.id)
                 yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
                 yield* environmentRelay.runnerGone(runner)
                 for (const session of yield* sessions.listByRunner(runner.id)) {
@@ -2021,6 +2140,8 @@ export class SessionRelay extends Context.Service<
         }
         for (const event of events) yield* modEvent(sessionId, event)
         yield* deliverNext(sessionId)
+        // A Turn that ended may let its draining Runner's Session sleep.
+        yield* runnerUpdates.drain(session.value.runnerId)
       }, serialized)
 
       // ── Start-up ─────────────────────────────────────────────────────────
@@ -2045,6 +2166,14 @@ export class SessionRelay extends Context.Service<
       yield* Effect.sleep(purgeCheckInterval(config.archiveRetention)).pipe(
         Effect.andThen(serialized(purgeDue)),
         Effect.catchCause((cause) => Effect.logError("Could not purge Archived Sessions", cause)),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
+
+      // A draining Runner's Turns are stopped at its deadline.
+      yield* Effect.sleep(drainCheckInterval).pipe(
+        Effect.andThen(serialized(runnerUpdates.drainAll)),
+        Effect.catchCause((cause) => Effect.logError("Could not drain updating Runners", cause)),
         Effect.forever,
         Effect.forkIn(layerScope),
       )

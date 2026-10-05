@@ -55,6 +55,8 @@ describe("the launchd LaunchAgent", () => {
     expect(plist).toContain(
       "<key>PATH</key>\n    <string>/home/ada/.bun/bin:/usr/bin:/bin</string>",
     )
+    // Tells a Runner its service starts it again, so it may restart to update itself (#87).
+    expect(plist).toContain("<key>CLAUDE_HUB_SERVICE</key>\n    <string>hub</string>")
     expect(plist).toContain("<key>WorkingDirectory</key>\n  <string>/home/ada/.claude-hub</string>")
   })
 
@@ -110,6 +112,7 @@ describe("the systemd user unit", () => {
   test("sets CLAUDE_HUB_HOME and the PATH, and runs in the home", () => {
     expect(unit).toContain("Environment=CLAUDE_HUB_HOME=/home/ada/.claude-hub")
     expect(unit).toContain("Environment=PATH=/home/ada/.bun/bin:/usr/bin:/bin")
+    expect(unit).toContain("Environment=CLAUDE_HUB_SERVICE=runner")
     expect(unit).toContain("WorkingDirectory=/home/ada/.claude-hub")
   })
 

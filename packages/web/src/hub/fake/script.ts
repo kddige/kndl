@@ -50,6 +50,7 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       versionStatus: "Current",
       lastSeenAt: now,
       openSessions: 0,
+      updater: { self: true },
     },
     {
       id: "r-ci",
@@ -60,6 +61,7 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       versionStatus: "Behind",
       lastSeenAt: now - 3 * 60 * 60 * 1000,
       openSessions: 0,
+      updater: { self: true },
     },
   ]
 }

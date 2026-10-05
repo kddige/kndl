@@ -58,10 +58,30 @@ Onboard writes `~/.claude-hub/runner.env`, installs the Runner's service and wai
 
 ## The Runners page
 
-**Runners** in the sidebar lists every Runner paired with the Hub: whether it's online, the Claude login it runs Sessions on, the commit it runs (and its branch), when it was last seen, and how many of its Sessions aren't Archived. A Runner on an older commit than the Hub is marked **behind the Hub**: update it with `claude-hub update` on its machine. The header says which commit the Hub runs.
+**Runners** in the sidebar lists every Runner paired with the Hub: whether it's online, the Claude login it runs Sessions on, the commit it runs (and its branch), when it was last seen, and how many of its Sessions aren't Archived. A Runner on an older commit than the Hub is marked **behind the Hub**; see [Keep Runners on the Hub's commit](#keep-runners-on-the-hubs-commit). The header says which commit the Hub runs.
 
 - **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place: it keeps the Runner's name, id and Sessions, and gets a new token. The old token stops working, and a machine still connected with it is disconnected. Use it when a Runner's token is lost, or to move a Runner to a new machine. `--name` is ignored for a Re-pair.
 - **Remove** revokes the Runner's token, and disconnects it if it's connected. It's refused while the Runner has Sessions that aren't Archived (Active, Asleep or Frozen): archive them first. To use the machine again, add it again with **Add a Runner**: a Runner added by a removed one's name takes its place, and its Archived Sessions can be restored again.
+
+## Keep Runners on the Hub's commit
+
+Runners follow the Hub's commit ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `claude-hub update` on the Hub's machine moves the Hub, and the Hub then asks each Runner to move to its commit as it reconnects. `--no-update-runners` leaves Runners on other machines where they are; the Runner on the Hub's own machine follows either way, since they share the install. See [`claude-hub update`](/reference/commands/#claude-hub-update).
+
+A Runner **behind the Hub** keeps its running Sessions, but the Hub doesn't start or wake Sessions there: `CreateSession` and waking answer `build-box: this Runner needs an update. Update it on the Runners page.`, and prompts sent to its Asleep Sessions wait in their queue until it is updated.
+
+**Update** on its row moves it to the Hub's commit:
+
+1. The Runner checks it may: it fetches from origin, and moves only to a commit reachable from `origin/main`. A Runner whose `runner.env` sets `RUNNER_UPDATE_ANY_COMMIT=1` follows any commit origin has, such as a Hub running a branch. Otherwise its row says **refuses: not on main**, and why.
+2. The Hub drains it: no Session starts or wakes there, running Turns get up to ten minutes to end before the Hub stops them, and each Active Session is put to sleep. **Update now** stops the running Turns at once. A sleeping Session keeps its conversation, and the next prompt wakes it on the new version.
+3. The Runner checks out the commit, runs `bun install`, builds the `hub-link` mod, checks that it loads, and exits; its service starts it again on the new commit. Its row says where it is: **Checking**, **Waiting for Turns**, **Installing and building**, **Restarting**.
+
+If a step fails, or the Runner starts three times on the new commit without the Hub welcoming it, the Runner goes back to the commit it ran, rebuilds it, reconnects and reports the error, which its row shows as **update failed** with git's or bun's message. It doesn't try that commit again by itself: fix the cause, then **Update** again.
+
+Only a Runner installed as the claude-hub service updates itself, since only a service manager starts it again. Its row has no **Update**, and says why, when it:
+
+- runs from a checkout (`bun run runner`): it never rewrites a developer's checkout. Pull the checkout to the Hub's commit and restart it.
+- runs from a claude-hub from before Runners followed the Hub. Run `claude-hub update` on its machine once; it follows from then on.
+- runs from another checkout than the install, or not as the service: run `claude-hub update` on its machine.
 
 The rest of this page runs a Runner from a checkout. What the Runner does once it runs is the same either way.
 

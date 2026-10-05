@@ -1,12 +1,19 @@
 // What the Runners page works out from the Hub's state: the order Runners are listed in, how a
-// Pairing code it showed is getting on, and how its expiry and a Runner's version read.
+// Pairing code it showed is getting on, how its expiry and a Runner's version read, and how a
+// Runner's update (#87) is getting on and what its row offers for it.
 
-import type {
-  PairingCodeId,
-  PendingPairingCode,
-  RunnerId,
-  RunnerSummary,
-  RunnerVersionStatus,
+import {
+  type BuildVersion,
+  type PairingCodeId,
+  type PendingPairingCode,
+  refusalText,
+  type RunnerId,
+  type RunnerSummary,
+  type RunnerUpdater,
+  type RunnerUpdateState,
+  type RunnerVersionStatus,
+  type UpdateStep,
+  updateUnderWay,
 } from "@claude-hub/protocol"
 
 /** Online Runners first, then by name. */
@@ -31,25 +38,157 @@ export function timeLeft(expiresAt: number, now: number): string {
   return left < 60_000 ? "under a minute" : `${Math.round(left / 60_000)} min`
 }
 
-/** What a Runner's version against the Hub's says, when it says anything worth a badge. */
+/**
+ * What a Runner's version against the Hub's says, when it says anything worth a badge; `updater`
+ * is how it said it updates, for how to bring it to the Hub's commit.
+ */
 export function versionNote(
   status: RunnerVersionStatus,
+  updater?: RunnerUpdater,
 ): { readonly label: string; readonly title: string } | undefined {
   switch (status) {
     case "Behind":
       return {
         label: "behind the Hub",
-        title: "It runs an older commit than the Hub: update its checkout and restart it.",
+        title: `It runs an older commit than the Hub, so no Session starts or wakes there. ${howToUpdate(updater)}`,
       }
     case "Differs":
       return {
         label: "not the Hub's commit",
-        title: "It runs a commit the Hub's history doesn't have: a newer one, or another branch's.",
+        title: `It runs a commit the Hub's history doesn't have: a newer one, or another branch's. ${howToUpdate(updater)}`,
       }
     case "Current":
     case "Unknown":
       return undefined
   }
+}
+
+/**
+ * Why a Runner that doesn't run the Hub's commit has no Update, said on its row (a tooltip alone
+ * isn't seen on a phone): it doesn't update itself. `undefined` when it does, or needn't.
+ */
+export function manualUpdateText(runner: RunnerSummary): string | undefined {
+  if (runner.versionStatus !== "Behind" && runner.versionStatus !== "Differs") return undefined
+  if (runner.update !== undefined || runner.updater?.self === true) return undefined
+  return howToUpdate(runner.updater)
+}
+
+/** How a Runner comes to run the Hub's commit, by the way it said it updates. */
+function howToUpdate(updater: RunnerUpdater | undefined): string {
+  if (updater === undefined) {
+    return "It's too old to update itself: run `claude-hub update` on its machine once."
+  }
+  if (updater.self) return "Update moves it to the Hub's commit."
+  return `It doesn't update itself${updater.reason === undefined ? "" : `: ${updater.reason}`}.`
+}
+
+/** A Runner's update, as its row shows it: a badge, and a line saying where it is. */
+export interface UpdateNote {
+  readonly label: string
+  readonly intent: "accent" | "warning" | "danger"
+  readonly detail: string
+  /** It is under way: the line has a spinner. */
+  readonly busy: boolean
+}
+
+/** Where an applied update is, as its row says it. */
+function applyText(step: UpdateStep | undefined, commit: string): string {
+  switch (step) {
+    case undefined:
+      return `Moving to ${commit}…`
+    case "Fetching":
+      return "Fetching from origin…"
+    case "CheckingOut":
+      return `Checking out ${commit}…`
+    case "Installing":
+      return "Installing and building…"
+    case "Restarting":
+      return `Checking it starts on ${commit}…`
+  }
+}
+
+/** An update under way, saying where it is. */
+const busy = (detail: string): UpdateNote => ({
+  label: "updating",
+  intent: "accent",
+  detail,
+  busy: true,
+})
+
+/** What a Runner's row says of its update, if it has one under way, refused or failed. */
+export function updateNote(
+  update: RunnerUpdateState | undefined,
+  now: number,
+): UpdateNote | undefined {
+  if (update === undefined) return undefined
+  const commit = shortCommit(targetOf(update))
+  switch (update._tag) {
+    case "Checking":
+      return busy(`Checking it can move to ${commit}…`)
+    case "Draining": {
+      if (update.now) return busy("Stopping its running Turns, then putting its Sessions to sleep…")
+      if (update.waitingFor === 0) return busy("Putting its Sessions to sleep…")
+      const turns =
+        update.waitingFor === 1 ? "1 Session's Turn" : `${update.waitingFor} Sessions' Turns`
+      const left = update.deadline - now
+      const stop =
+        left <= 0
+          ? "stopping them now"
+          : `stopped in ${left < 60_000 ? "under a minute" : `${Math.ceil(left / 60_000)} min`} if still running`
+      return busy(`No new Sessions. Waiting for ${turns} to end (${stop})…`)
+    }
+    case "Applying":
+      return busy(applyText(update.step, commit))
+    case "Restarting":
+      return {
+        label: "restarting",
+        intent: "accent",
+        detail: `Restarting on ${commit}…`,
+        busy: true,
+      }
+    case "Refused":
+      return {
+        label: refusalText(update.refusal),
+        intent: "warning",
+        detail: update.refusal.message,
+        busy: false,
+      }
+    case "Failed":
+      return {
+        label: "update failed",
+        intent: "danger",
+        detail: update.failure.rolledBack
+          ? `Moving to ${commit} failed, so it went back to the commit it ran: ${update.failure.message}`
+          : `Moving to ${commit} failed, and so did going back; see its log: ${update.failure.message}`,
+        busy: false,
+      }
+  }
+}
+
+/** What a Runner's row offers for its update, if anything. */
+export type UpdateAction =
+  /** Update it to the Hub's commit: it is online, updates itself, and runs another commit. */
+  | "Update"
+  /** It waits for running Turns to end: stop them at once. */
+  | "UpdateNow"
+
+export function updateAction(runner: RunnerSummary): UpdateAction | undefined {
+  const update = runner.update
+  if (update?._tag === "Draining") return update.now ? undefined : "UpdateNow"
+  if (updateUnderWay(update)) return undefined
+  if (!runner.isOnline || runner.updater?.self !== true) return undefined
+  return runner.versionStatus === "Behind" || runner.versionStatus === "Differs"
+    ? "Update"
+    : undefined
+}
+
+function targetOf(update: RunnerUpdateState) {
+  return update._tag === "Failed" ? update.failure.target : update.target
+}
+
+/** A commit as the page shows it, short. */
+export function shortCommit(version: BuildVersion): string {
+  return version.commit.slice(0, 12)
 }
 
 /** A code the Runners page showed, as it was minted. */

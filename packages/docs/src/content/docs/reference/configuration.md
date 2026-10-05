@@ -47,6 +47,8 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count | The most CPUs a Sandbox gets, whatever its Environment asks for. |
 | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory | The most memory, in MiB, a Sandbox gets. |
 | `RUNNER_SANDBOX_KEEP_BUILDS` | `3` | How many builds of each Repo's Environment the Runner keeps. |
+| `RUNNER_UPDATE_ANY_COMMIT` | unset | `1`: when the Hub asks, the Runner moves to its commit even if it isn't on `origin/main`, such as a Hub running a branch. Unset, it refuses such a commit ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)). |
+| `CLAUDE_HUB_SERVICE` | unset | Set to `runner` (or `hub`) by the service files the `claude-hub` command installs. A Runner updates itself only when it is set and the Runner runs from the install, `<home>/app`: only a service manager starts it again after it exits. |
 | `CLAUDE_CONFIG_DIR` | unset | Read as Claude Code reads it: the Runner looks for Claude Code's config file at `$CLAUDE_CONFIG_DIR/.claude.json` instead of `~/.claude.json`. |
 | `CLAUDE_HUB_HOME` | unset | See [Homes](#homes). |
 

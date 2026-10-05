@@ -507,6 +507,10 @@ export const SessionsLive = Layer.effect(
         case "RunnerWelcome":
         case "HandshakeRejected":
           return Effect.logWarning(`Ignored a ${incoming._tag} after the handshake`)
+        case "CheckUpdate":
+        case "ApplyUpdate":
+          // The connection hands these to the Updater.
+          return Effect.void
       }
     }
 

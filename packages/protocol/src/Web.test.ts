@@ -107,6 +107,7 @@ const webToHub = [
   { _tag: "CreatePairingCode", requestId: "q-14", runnerId: "r-1" },
   { _tag: "RevokePairingCode", requestId: "q-15", pairingCodeId: "pc-1" },
   { _tag: "RemoveRunner", requestId: "q-16", runnerId: "r-1" },
+  { _tag: "UpdateRunner", requestId: "q-17", runnerId: "r-1", now: false },
 ]
 
 const hubToWeb = [
@@ -135,6 +136,32 @@ const hubToWeb = [
         versionStatus: "Behind",
         lastSeenAt: 1_790_000_000_000,
         openSessions: 2,
+        updater: { self: true },
+        update: {
+          _tag: "Draining",
+          target: { commit: "a".repeat(40), branch: "main" },
+          since: 1_790_000_000_000,
+          deadline: 1_790_000_600_000,
+          now: false,
+          waitingFor: 1,
+        },
+      },
+      {
+        id: "r-3",
+        name: "laptop",
+        login: runnerLogin,
+        isOnline: true,
+        version: { commit: "b".repeat(40) },
+        versionStatus: "Behind",
+        lastSeenAt: 1_790_000_000_000,
+        openSessions: 0,
+        updater: { self: false, reason: "It runs from a developer's checkout" },
+        update: {
+          _tag: "Refused",
+          target: { commit: "a".repeat(40) },
+          at: 1_790_000_000_000,
+          refusal: { reason: "NotOnMain", message: "Not reachable from origin/main" },
+        },
       },
       {
         id: "r-2",
@@ -332,6 +359,7 @@ const hubToWeb = [
   { _tag: "PairingCodeList", codes: [] },
   { _tag: "RunnerRemoved", requestId: "q-16", runnerId: "r-1" },
   { _tag: "PairingCodeRedeemed", id: "pc-1", runnerId: "r-1", name: "studio", repaired: true },
+  { _tag: "RunnerUpdateRequested", requestId: "q-17", runnerId: "r-1" },
 ]
 
 describe("SessionEvent", () => {

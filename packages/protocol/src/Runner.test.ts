@@ -65,6 +65,26 @@ const runnerToHub = [
     result: "Failed",
     message: "The start script exited with 1",
   },
+  { _tag: "UpdateChecked", target: { commit: "a".repeat(40), branch: "main" } },
+  {
+    _tag: "UpdateChecked",
+    target: { commit: "a".repeat(40), branch: "main" },
+    refusal: { reason: "NotOnMain", message: "Not reachable from origin/main" },
+  },
+  {
+    _tag: "UpdateProgress",
+    target: { commit: "a".repeat(40), branch: "main" },
+    step: "Installing",
+  },
+  {
+    _tag: "UpdateFailed",
+    failure: {
+      target: { commit: "a".repeat(40), branch: "main" },
+      message: "bun install failed",
+      rolledBack: true,
+      at: 1,
+    },
+  },
 ]
 
 const hubToRunner = [
@@ -172,6 +192,8 @@ const hubToRunner = [
     ],
   },
   { _tag: "VariablesRefused", requestId: "v-2", message: "Not a Test build this Runner runs" },
+  { _tag: "CheckUpdate", target: { commit: "a".repeat(40), branch: "main" } },
+  { _tag: "ApplyUpdate", target: { commit: "a".repeat(40) } },
 ]
 
 describe("RunnerToHub", () => {

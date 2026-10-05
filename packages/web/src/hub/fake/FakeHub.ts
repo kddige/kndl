@@ -19,6 +19,7 @@ import {
   ProtocolVersion,
   type RepoStatus,
   runnerRemovalRefusal,
+  UpdateDrainMillis,
   WebToHub,
 } from "@claude-hub/protocol"
 import { Schema } from "effect"
@@ -199,6 +200,17 @@ export class FakeHub implements HubTransport {
   }
 
   // ── Test controls ────────────────────────────────────────────────────────
+
+  /**
+   * Changes a Runner as the Hub would list it: online and behind the Hub, say, or with an update
+   * refused or failed. In the browser, `fakeHub.patchRunner("r-ci", { isOnline: true })`.
+   */
+  patchRunner(runnerId: string, patch: Partial<RunnerSummaryWire>): void {
+    this.runners = this.runners.map((runner) =>
+      runner.id === runnerId ? { ...runner, ...patch } : runner,
+    )
+    this.#toAll(this.#runnerList())
+  }
 
   /**
    * A machine redeems the newest Pairing code, as `claude-hub runner join` would, and connects: a
@@ -696,6 +708,30 @@ export class FakeHub implements HubTransport {
         socket.deliver({ _tag: "RunnerRemoved", requestId: message.requestId, runnerId: runner.id })
         this.#toAll(this.#runnerList())
         this.#toAll(this.#pairingCodeList())
+        break
+      }
+      case "UpdateRunner": {
+        const runner = this.runners.find((candidate) => candidate.id === message.runnerId)
+        const refused =
+          runner === undefined
+            ? "There is no such Runner."
+            : !runner.isOnline
+              ? `${runner.name} is offline: it can update once it is back.`
+              : runner.updater?.self !== true
+                ? `${runner.name} doesn't update itself.`
+                : runner.versionStatus === "Current"
+                  ? `${runner.name} already runs the Hub's commit.`
+                  : undefined
+        if (runner === undefined || refused !== undefined) {
+          this.#refuse(socket, message._tag, message.requestId, refused ?? "")
+          break
+        }
+        socket.deliver({
+          _tag: "RunnerUpdateRequested",
+          requestId: message.requestId,
+          runnerId: runner.id,
+        })
+        this.#updateRunner(runner.id)
         break
       }
       case "ArchiveSession": {
@@ -1317,6 +1353,47 @@ export class FakeHub implements HubTransport {
         ).length,
       })),
     }
+  }
+
+  /**
+   * Plays a Runner's update to the Hub's commit, as the Hub reports it: checked, drained (the fake
+   * has no Turns to wait for), applied step by step, restarted, and back on the Hub's commit.
+   */
+  #updateRunner(runnerId: string): void {
+    const set = (update: RunnerSummaryWire["update"], more: Partial<RunnerSummaryWire> = {}) => {
+      this.runners = this.runners.map((runner) => {
+        if (runner.id !== runnerId) return runner
+        const { update: _, ...rest } = runner
+        return { ...rest, ...more, ...(update !== undefined && { update }) }
+      })
+      this.#toAll(this.#runnerList())
+    }
+    const target = hubVersion
+    const since = Date.now()
+    const plan: Array<() => void> = [
+      () => set({ _tag: "Checking", target, since }),
+      () =>
+        set({
+          _tag: "Draining",
+          target,
+          since,
+          deadline: since + UpdateDrainMillis,
+          now: false,
+          waitingFor: 0,
+        }),
+      ...(["Fetching", "CheckingOut", "Installing", "Restarting"] as const).map(
+        (step) => () => set({ _tag: "Applying", target, since, step }),
+      ),
+      () => set({ _tag: "Restarting", target, since }, { isOnline: false }),
+      () =>
+        set(undefined, {
+          isOnline: true,
+          version: target,
+          versionStatus: "Current",
+          lastSeenAt: Date.now(),
+        }),
+    ]
+    plan.forEach((step, index) => this.#after(index * 6, step))
   }
 
   #pairingCodeList(): Extract<HubMessage, { _tag: "PairingCodeList" }> {

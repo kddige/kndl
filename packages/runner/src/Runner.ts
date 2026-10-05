@@ -10,12 +10,14 @@ import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { Sessions, SessionsLive } from "./Sessions.ts"
 import { SessionSandboxesLive } from "./SessionSandboxes.ts"
 import { TmuxLive } from "./Tmux.ts"
+import { Updater } from "./Updater.ts"
 import { WorkspacesGitClone } from "./Workspace.ts"
 import { WorkspaceGitLive } from "./WorkspaceGit.ts"
 
 /**
- * The Runner: reads its Runner login, trusts its sessions root, re-adopts the Sessions still
- * running in tmux, and stays connected to the Hub. Ends only if the Hub turns it away for good.
+ * The Runner: settles an update it restarted for (see Updater.ts), reads its Runner login, trusts
+ * its sessions root, re-adopts the Sessions still running in tmux, and stays connected to the Hub.
+ * Never ends on its own.
  */
 export const runRunner = (
   options: { readonly claudeConfigPath?: string; readonly backoff?: Backoff } = {},
@@ -25,6 +27,7 @@ export const runRunner = (
     const sessions = yield* Sessions
     const trust = yield* ClaudeTrust
     const configPath = options.claudeConfigPath ?? claudeConfigPath()
+    yield* (yield* Updater).boot
 
     const login = yield* resolveRunnerLogin(config.login, configPath)
     yield* trust.ensure

@@ -68,6 +68,10 @@ export function updateTarget(
     if (checkout.branch !== undefined) return { _tag: "Branch", name: checkout.branch }
     return { _tag: "Pinned", at: checkout.tag ?? checkout.commit.slice(0, 12) }
   }
+  // No branch, tag or commit id starts with "-": git would read such a ref as an option.
+  if (ref.startsWith("-")) {
+    return new RefNotFound({ message: `${ref} isn't a branch, tag or commit id.` })
+  }
   if (remote.branches.includes(ref)) return { _tag: "Branch", name: ref }
   if (remote.tags.includes(ref)) return { _tag: "Tag", name: ref }
   if (/^[0-9a-f]{7,40}$/i.test(ref)) return { _tag: "Commit", sha: ref.toLowerCase() }
@@ -76,7 +80,10 @@ export function updateTarget(
   })
 }
 
-/** The git Steps, in the checkout, that move it to `target`. */
+/**
+ * The git Steps, in the checkout, that move it to `target`. `--end-of-options` comes before the
+ * ref, which the person typed, so git never reads it as an option.
+ */
 export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
   const fetch = step("git", ["fetch", "--prune", "--tags", "--force", "origin"], {
     cwd: app,
@@ -88,7 +95,15 @@ export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
         fetch,
         step(
           "git",
-          ["checkout", "--force", "-B", target.name, "--track", `origin/${target.name}`],
+          [
+            "checkout",
+            "--force",
+            "-B",
+            target.name,
+            "--track",
+            "--end-of-options",
+            `origin/${target.name}`,
+          ],
           {
             cwd: app,
             why: `follow ${target.name}`,
@@ -98,15 +113,19 @@ export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
     case "Tag":
       return [
         fetch,
-        step("git", ["checkout", "--force", "--detach", `refs/tags/${target.name}`], {
-          cwd: app,
-          why: `pin to ${target.name}`,
-        }),
+        step(
+          "git",
+          ["checkout", "--force", "--detach", "--end-of-options", `refs/tags/${target.name}`],
+          {
+            cwd: app,
+            why: `pin to ${target.name}`,
+          },
+        ),
       ]
     case "Commit":
       return [
         fetch,
-        step("git", ["checkout", "--force", "--detach", target.sha], {
+        step("git", ["checkout", "--force", "--detach", "--end-of-options", target.sha], {
           cwd: app,
           why: `pin to ${target.sha}`,
         }),
@@ -145,4 +164,60 @@ export function buildSteps(
       ? [step(bun, ["run", "web:build"], { cwd: app, why: "build the web UI" })]
       : []),
   ]
+}
+
+/**
+ * How `update` restarts the Runner on this machine (issue #87, ADR 0011):
+ * - `Hub`: the Hub it shares the checkout with drains it, putting its Sessions to sleep, and it
+ *   restarts itself on the commit `update` moved the checkout to;
+ * - `Service`: `update` restarts its service at once, under its running Sessions, as before
+ *   Runners followed the Hub: a Runner on a machine with no Hub, or one that doesn't update itself
+ *   (too old to, or whose service file changed, which only reinstalling the service loads);
+ * - `None`: no Runner service is installed here.
+ */
+export type LocalRunnerRestart = "Hub" | "Service" | "None"
+
+export function localRunnerRestart(facts: {
+  /** The Runner's service is installed. */
+  readonly installed: boolean
+  /** The Hub's service is installed here, and `update` restarts it. */
+  readonly hubRestarts: boolean
+  /** The service file `update` would write differs from the installed one. */
+  readonly serviceFileChanged: boolean
+  /** The Hub knows the Runner here, and it said it updates itself. */
+  readonly updatesItself: boolean
+}): LocalRunnerRestart {
+  if (!facts.installed) return "None"
+  if (!facts.hubRestarts || facts.serviceFileChanged || !facts.updatesItself) return "Service"
+  return "Hub"
+}
+
+/** What `update` on the Hub's machine says about the Runners it asks to follow. */
+export function runnersNotice(options: {
+  readonly commit: string
+  readonly updateRunners: boolean
+  readonly now: boolean
+  readonly local: LocalRunnerRestart
+  readonly localName: string | undefined
+}): ReadonlyArray<string> {
+  const commit = options.commit.slice(0, 12)
+  const turns = options.now
+    ? "stopping their running Turns at once (--now)"
+    : "letting running Turns end first (up to 10 minutes)"
+  const lines = options.updateRunners
+    ? [
+        `The Hub asks its Runners to follow ${commit} as they reconnect, ${turns}. Runners from before this feature, and ones run from a developer's checkout, need updating by hand; the Runners page shows which.`,
+      ]
+    : [
+        `--no-update-runners: the Hub leaves Runners on other machines on their commit. The Runners page updates each one when you choose.`,
+      ]
+  const name = options.localName ?? "The Runner here"
+  if (options.local === "Hub") {
+    lines.push(
+      `${name}, on this machine, follows: the Hub puts its Sessions to sleep (${turns}), then it restarts on ${commit}.`,
+    )
+  } else if (options.local === "Service") {
+    lines.push(`${name}, on this machine, restarts now, under any Sessions it runs.`)
+  }
+  return lines
 }

@@ -34,13 +34,15 @@ Each Session starts from a base branch onto its own Work branch, `claude/<sessio
 
 ## Going to sleep
 
-An Active Session with no Turn running, no prompt queued and no Participant present for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**.
+An Active Session with no Turn running, no prompt queued and no Participant present for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**, and each of a Runner's Sessions before it [updates](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit), once its running Turn ends (or is stopped, after ten minutes or with **Update now**).
 
 The Runner stops Claude Code, runs `docker stop` on the Sandbox's containers so databases shut down cleanly, and stops the Sandbox, keeping its disks and the Workspace. It pushes the [WIP ref](/explanation/git-from-sessions/#the-wip-ref) first. Only when the Runner reports the Session stopped does the Hub record it Asleep; prompts sent meanwhile wait, and wake it once it is.
 
 ## Waking
 
 A prompt to an Asleep Session wakes it, as does **Wake now** on its banner. The Runner starts the same Sandbox again, so `node_modules`, package caches and Docker's data are as they were, and starts Claude Code with `--resume`, which keeps the conversation. Queued prompts are delivered once the mod has said hello.
+
+A Session doesn't wake while its Runner is behind the Hub or updating: its prompts wait in the queue, and wake it once the Runner runs the Hub's commit.
 
 If the Repo's Environment has a newer version, waking makes the Sandbox afresh from the new build instead, on the same Workspace and disks. **Restart** on a Session's **Environment changed** banner does that at once: it puts the Session to sleep as soon as no Turn is running, and wakes it.
 

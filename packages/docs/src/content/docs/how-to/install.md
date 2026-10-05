@@ -102,6 +102,8 @@ It fetches, moves to the latest commit of the branch the install follows (`main`
 
 `--ref` moves the install: a branch is followed from then on, and a tag or commit pins it, so a plain `update` stays put until you `update --ref main`. `upgrade` is the same command, and `--branch` the same flag.
 
+On the Hub's machine, the Hub's Runners follow it to the new commit: each stops taking Sessions, lets running Turns end (up to ten minutes; `--now` stops them at once), puts its Sessions to sleep, updates and restarts. `--no-update-runners` leaves Runners on other machines where they are, to update one at a time from the Runners page. See [Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit).
+
 ## Uninstall
 
 ```sh

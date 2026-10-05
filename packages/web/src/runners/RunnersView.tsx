@@ -2,9 +2,12 @@
 // login and version against the Hub's own, when it was last seen and how many Sessions it has.
 // Anyone signed in adds a Runner here with a Pairing code, Re-pairs one (a new token, same RunnerId
 // and Sessions) or removes one, once its Sessions are all Archived. Codes still waiting are listed
-// so they can be revoked. Every confirmation is a Dialog on the page.
+// so they can be revoked. A Runner behind the Hub that updates itself has Update (#87): it moves
+// to the Hub's commit once its Sessions sleep, and its row follows the update, or says why it
+// refused or failed. Every confirmation is a Dialog on the page.
 
 import {
+  type BuildVersion,
   describeBuild,
   type PairingCodeCreated,
   pairingCommand,
@@ -35,7 +38,17 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
-import { codeOutcome, sortRunners, timeLeft, versionNote, waitingCodes } from "./runners.ts"
+import {
+  codeOutcome,
+  shortCommit,
+  sortRunners,
+  timeLeft,
+  updateAction,
+  manualUpdateText,
+  updateNote,
+  versionNote,
+  waitingCodes,
+} from "./runners.ts"
 
 const styles = stylex.create({
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
@@ -134,6 +147,18 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  updateLine: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: space.s2,
+    margin: 0,
+    color: color.textMuted,
+    fontSize: text.sm,
+    lineHeight: leading.snug,
+  },
+  updateText: { minWidth: 0, overflowWrap: "anywhere", whiteSpace: "pre-line" },
+  updateWarning: { color: color.warningSubtleText },
+  updateDanger: { color: color.dangerSubtleText },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
 
@@ -190,6 +215,7 @@ export function RunnersView() {
   const now = useNow(15_000)
   const pairing = usePairing()
   const [removing, setRemoving] = useState<RunnerSummary | null>(null)
+  const [updating, setUpdating] = useState<RunnerSummary | null>(null)
 
   const sorted = runners === null ? null : sortRunners(runners)
   const waiting = waitingCodes(codes, now)
@@ -242,6 +268,7 @@ export function RunnersView() {
                   runner={runner}
                   first={index === 0}
                   now={now}
+                  onUpdate={() => setUpdating(runner)}
                   onRepair={() => pairing.open({ _tag: "Repair", runner })}
                   onRemove={() => setRemoving(runner)}
                 />
@@ -270,6 +297,7 @@ export function RunnersView() {
       </div>
       <PairDialog pairing={pairing.pairing} onConfirm={pairing.confirm} onClose={pairing.close} />
       <RemoveDialog runner={removing} onClose={() => setRemoving(null)} />
+      <UpdateDialog runner={updating} hub={hubVersion} onClose={() => setUpdating(null)} />
     </main>
   )
 }
@@ -278,16 +306,23 @@ function RunnerRow({
   runner,
   first,
   now,
+  onUpdate,
   onRepair,
   onRemove,
 }: {
   runner: RunnerSummary
   first: boolean
   now: number
+  onUpdate: () => void
   onRepair: () => void
   onRemove: () => void
 }) {
-  const note = versionNote(runner.versionStatus)
+  const update = updateNote(runner.update, now)
+  const underWay = update?.busy === true
+  // While it updates, the update says it all: being behind is why.
+  const note = underWay ? undefined : versionNote(runner.versionStatus, runner.updater)
+  const action = updateAction(runner)
+  const manual = manualUpdateText(runner)
   return (
     <li aria-label={runner.name} {...stylex.props(styles.row, first && styles.firstRow)}>
       <div {...stylex.props(styles.main)}>
@@ -305,6 +340,7 @@ function RunnerRow({
               </span>
             </Tooltip>
           )}
+          {update && <Badge intent={update.intent}>{update.label}</Badge>}
         </div>
         <p {...stylex.props(styles.facts)}>
           <span {...stylex.props(styles.fact)}>
@@ -334,8 +370,36 @@ function RunnerRow({
               : `${runner.openSessions} ${runner.openSessions === 1 ? "Session" : "Sessions"}`}
           </span>
         </p>
+        {update && (
+          <p
+            aria-live="polite"
+            {...stylex.props(
+              styles.updateLine,
+              update.intent === "warning" && styles.updateWarning,
+              update.intent === "danger" && styles.updateDanger,
+            )}
+          >
+            {update.busy && <Spinner size="sm" />}
+            <span {...stylex.props(styles.updateText)}>{update.detail}</span>
+          </p>
+        )}
+        {manual && (
+          <p {...stylex.props(styles.updateLine)}>
+            <span {...stylex.props(styles.updateText)}>{manual}</span>
+          </p>
+        )}
       </div>
       <div {...stylex.props(styles.actions)}>
+        {action && (
+          <Button
+            size="sm"
+            intent="primary"
+            aria-label={`${action === "Update" ? "Update" : "Update now"} ${runner.name}`}
+            onClick={onUpdate}
+          >
+            {action === "Update" ? "Update" : "Update now"}
+          </Button>
+        )}
         <Button size="sm" aria-label={`Re-pair ${runner.name}`} onClick={onRepair}>
           Re-pair
         </Button>
@@ -584,6 +648,108 @@ function RemoveDialog({ runner, onClose }: { runner: RunnerSummary | null; onClo
         <p role="alert" {...stylex.props(styles.error)}>
           {error}
         </p>
+      )}
+    </Dialog>
+  )
+}
+
+/**
+ * Updates a Runner to the Hub's commit once it's confirmed: either letting running Turns end
+ * (within ten minutes), or stopping them at once. Opened on a Runner already waiting for its
+ * Turns, it only offers to stop them now.
+ */
+function UpdateDialog({
+  runner,
+  hub,
+  onClose,
+}: {
+  runner: RunnerSummary | null
+  hub: BuildVersion | null
+  onClose: () => void
+}) {
+  const client = useHub()
+  const shown = useLastOpened(runner)
+  const [busy, setBusy] = useState<"wait" | "now" | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    setBusy(null)
+    setError(null)
+  }, [runner])
+
+  const waiting = shown?.update?._tag === "Draining"
+  const sessions = shown?.openSessions ?? 0
+  const update = async (now: boolean) => {
+    if (!shown) return
+    setBusy(now ? "now" : "wait")
+    setError(null)
+    try {
+      await client.updateRunner(shown.id, now)
+      onClose()
+    } catch (cause) {
+      setError(messageOf(cause))
+      setBusy(null)
+    }
+  }
+  const target = hub === null ? "the Hub's commit" : shortCommit(hub)
+  return (
+    <Dialog
+      open={runner !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+      title={
+        waiting ? `Stop ${shown?.name ?? ""}'s running Turns?` : `Update ${shown?.name ?? ""}?`
+      }
+      description={
+        waiting
+          ? "Its Sessions' Turns stop where they are, as Stop would, so it can update now rather than in up to ten minutes. Each Session sleeps and keeps its conversation."
+          : `It moves to ${target}, the Hub's commit, and restarts. Meanwhile no Session starts or wakes there${sessions === 0 ? "" : ", running Turns finish (up to ten minutes) and its Active Sessions are put to sleep: the next prompt wakes each, with its conversation, on the new version"}.`
+      }
+      footer={
+        <>
+          <DialogClose>Cancel</DialogClose>
+          {waiting ? (
+            <Button intent="danger" loading={busy === "now"} onClick={() => void update(true)}>
+              Stop Turns and update
+            </Button>
+          ) : (
+            <>
+              {sessions > 0 && (
+                <Button
+                  loading={busy === "now"}
+                  disabled={busy === "wait"}
+                  onClick={() => void update(true)}
+                >
+                  Update now
+                </Button>
+              )}
+              <Button
+                intent="primary"
+                loading={busy === "wait"}
+                disabled={busy === "now"}
+                onClick={() => void update(false)}
+              >
+                Update
+              </Button>
+            </>
+          )}
+        </>
+      }
+    >
+      {/* One expression, null when there's nothing to add, so the dialog leaves out its body. */}
+      {(waiting || sessions === 0) && error === null ? null : (
+        <>
+          {!waiting && sessions > 0 && (
+            <p {...stylex.props(styles.note)}>
+              Update now stops running Turns at once instead of letting them finish.
+            </p>
+          )}
+          {error && (
+            <p role="alert" {...stylex.props(styles.error)}>
+              {error}
+            </p>
+          )}
+        </>
       )}
     </Dialog>
   )

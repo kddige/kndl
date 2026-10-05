@@ -187,8 +187,19 @@ const updateCommand = Command.make(
         Flag.withDescription("A branch to follow, or a tag or commit to pin to"),
       ),
     ),
+    noUpdateRunners: off("no-update-runners").pipe(
+      Flag.withDescription(
+        "On the Hub's machine: leave Runners on other machines on their commit (the Runner here still follows)",
+      ),
+    ),
+    now: off("now").pipe(
+      Flag.withDescription(
+        "Runners updating stop their running Turns at once, rather than letting them end",
+      ),
+    ),
   },
-  ({ ref }) => Effect.flatMap(update(layout(), ref), exitWith),
+  ({ ref, noUpdateRunners, now }) =>
+    Effect.flatMap(update(layout(), { ref, updateRunners: !noUpdateRunners, now }), exitWith),
 ).pipe(
   Command.withAlias("upgrade"),
   Command.withDescription("Update the install, rebuild, and restart its services"),
