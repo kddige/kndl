@@ -13,3 +13,7 @@ This is pair-prompting, not shared accounts: other Participants are prompting a 
 - **Hub stores each user's `setup-token`**: rejected, because it conflicts with the credential terms.
 - **Whoever prompts pays (restart under their login each Turn)**: needs the same token storage.
 - **Org API key**: explicitly allowed and simplest; deferred, not rejected.
+
+## Amendment: the login reaches Claude Code through the Runner's proxy (ADR 0013)
+
+Claude Code now runs in the Sandbox, so the Runner no longer hands it the login. The Runner holds the credential, preferably a `claude setup-token` token, and its credential proxy puts it on each request in place of a per-Session token. Sessions still run on the Runner owner's account. The credential still stays on the Runner, and the Hub still never sees it.

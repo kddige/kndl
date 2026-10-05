@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 supersedes: 0001
 ---
 
@@ -21,7 +21,7 @@ ADR 0001 kept Claude Code on the host to keep the login out of the VM. The price
 
 ## What goes away
 
-The tool bridge (`claude mcp serve` in the VM, the tool socket and the mod's routing), the hardened launch (`--tools`, `--setting-sources ""`, `disableSkillShellExecution`, the empty host directory), the Repo files copy of #125, the WebFetch denial of #126, and the `!` note of #136. Claude Code's in-process Agent tool stays off for ADR 0012's reasons.
+The tool bridge (`claude mcp serve` in the VM, the tool socket and the mod's routing), the hardened launch (`--tools`, `--setting-sources ""`, `disableSkillShellExecution`, the empty host directory), the Repo files copy of #125, the WebFetch denial of #126, and the `!` note of #136. Claude Code's own subagents can run in the Sandbox too; whether they replace Child Sessions is ADR 0014's question (#148).
 
 ## Considered options
 
