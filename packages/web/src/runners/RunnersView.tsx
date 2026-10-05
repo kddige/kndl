@@ -14,11 +14,11 @@ import {
   type PendingPairingCode,
   type RunnerSummary,
   runnerRemovalRefusal,
-} from "@claude-hub/protocol"
-import * as stylex from "@stylexjs/stylex"
-import { useEffect, useState } from "react"
-import { timeAgo } from "../app/format.ts"
-import { useHub, useHubState } from "../app/hub.tsx"
+} from "@claude-hub/protocol";
+import * as stylex from "@stylexjs/stylex";
+import { useEffect, useState } from "react";
+import { timeAgo } from "../app/format.ts";
+import { useHub, useHubState } from "../app/hub.tsx";
 import {
   Badge,
   Banner,
@@ -36,8 +36,16 @@ import {
   toast,
   Tooltip,
   WarningIcon,
-} from "../ui/index.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+} from "../ui/index.ts";
+import {
+  color,
+  font,
+  leading,
+  radius,
+  space,
+  text,
+  weight,
+} from "../ui/tokens.stylex.ts";
 import {
   codeOutcome,
   shortCommit,
@@ -48,7 +56,7 @@ import {
   updateNote,
   versionNote,
   waitingCodes,
-} from "./runners.ts"
+} from "./runners.ts";
 
 const styles = stylex.create({
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
@@ -94,8 +102,19 @@ const styles = stylex.create({
     borderTopColor: color.border,
   },
   firstRow: { borderTopWidth: 0 },
-  main: { display: "flex", flexDirection: "column", gap: space.s1, flex: 1, minWidth: "14rem" },
-  nameLine: { display: "flex", alignItems: "center", gap: space.s2, flexWrap: "wrap" },
+  main: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s1,
+    flex: 1,
+    minWidth: "14rem",
+  },
+  nameLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.s2,
+    flexWrap: "wrap",
+  },
   name: { fontSize: text.md, fontWeight: weight.semibold },
   facts: {
     display: "flex",
@@ -107,10 +126,20 @@ const styles = stylex.create({
     color: color.textMuted,
     fontSize: text.sm,
   },
-  fact: { display: "inline-flex", alignItems: "center", gap: space.s1_5, minWidth: 0 },
+  fact: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1_5,
+    minWidth: 0,
+  },
   mono: { fontFamily: font.mono },
   actions: { display: "flex", gap: space.s2 },
-  dot: { width: "0.5rem", height: "0.5rem", borderRadius: "50%", flexShrink: 0 },
+  dot: {
+    width: "0.5rem",
+    height: "0.5rem",
+    borderRadius: "50%",
+    flexShrink: 0,
+  },
   online: { backgroundColor: color.success },
   offline: { backgroundColor: color.borderStrong },
   dialogBody: { display: "flex", flexDirection: "column", gap: space.s3 },
@@ -137,7 +166,12 @@ const styles = stylex.create({
     overflowWrap: "anywhere",
     userSelect: "all",
   },
-  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  note: {
+    margin: 0,
+    color: color.textMuted,
+    fontSize: text.sm,
+    lineHeight: leading.snug,
+  },
   status: {
     display: "flex",
     alignItems: "center",
@@ -146,7 +180,12 @@ const styles = stylex.create({
     color: color.textMuted,
     fontSize: text.sm,
   },
-  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
+  error: {
+    margin: 0,
+    color: color.dangerSubtleText,
+    fontSize: text.sm,
+    lineHeight: leading.snug,
+  },
   updateLine: {
     display: "flex",
     alignItems: "flex-start",
@@ -160,19 +199,19 @@ const styles = stylex.create({
   updateWarning: { color: color.warningSubtleText },
   updateDanger: { color: color.dangerSubtleText },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
-})
+});
 
 /** What a pairing dialog is for: a new Runner, or a Re-pair of one. */
 type PairTarget =
   | { readonly _tag: "New" }
-  | { readonly _tag: "Repair"; readonly runner: RunnerSummary }
+  | { readonly _tag: "Repair"; readonly runner: RunnerSummary };
 
 /** The pairing dialog's state: what it's for, and the code made for it, once there is one. */
 interface Pairing {
-  readonly target: PairTarget
-  readonly minted: PairingCodeCreated | null
-  readonly busy: boolean
-  readonly error: string | null
+  readonly target: PairTarget;
+  readonly minted: PairingCodeCreated | null;
+  readonly busy: boolean;
+  readonly error: string | null;
 }
 
 /**
@@ -180,21 +219,23 @@ interface Pairing {
  * confirmed. Codes are made from clicks, not effects, so each opening makes one.
  */
 function usePairing() {
-  const hub = useHub()
-  const [pairing, setPairing] = useState<Pairing | null>(null)
+  const hub = useHub();
+  const [pairing, setPairing] = useState<Pairing | null>(null);
   const mint = async (target: PairTarget) => {
-    setPairing({ target, minted: null, busy: true, error: null })
-    const runnerId = target._tag === "Repair" ? target.runner.id : undefined
+    setPairing({ target, minted: null, busy: true, error: null });
+    const runnerId = target._tag === "Repair" ? target.runner.id : undefined;
     const settle = (next: Partial<Pairing>) =>
       setPairing((current) =>
-        current?.target === target ? { ...current, busy: false, ...next } : current,
-      )
+        current?.target === target
+          ? { ...current, busy: false, ...next }
+          : current,
+      );
     try {
-      settle({ minted: await hub.createPairingCode(runnerId) })
+      settle({ minted: await hub.createPairingCode(runnerId) });
     } catch (error) {
-      settle({ error: messageOf(error) })
+      settle({ error: messageOf(error) });
     }
-  }
+  };
   return {
     pairing,
     open: (target: PairTarget) =>
@@ -202,24 +243,24 @@ function usePairing() {
         ? void mint(target)
         : setPairing({ target, minted: null, busy: false, error: null }),
     confirm: () => {
-      if (pairing) void mint(pairing.target)
+      if (pairing) void mint(pairing.target);
     },
     close: () => setPairing(null),
-  }
+  };
 }
 
 export function RunnersView() {
-  const runners = useHubState((state) => state.runners)
-  const codes = useHubState((state) => state.pairingCodes)
-  const hubVersion = useHubState((state) => state.hubVersion)
-  const now = useNow(15_000)
-  const pairing = usePairing()
-  const [removing, setRemoving] = useState<RunnerSummary | null>(null)
-  const [updating, setUpdating] = useState<RunnerSummary | null>(null)
+  const runners = useHubState((state) => state.runners);
+  const codes = useHubState((state) => state.pairingCodes);
+  const hubVersion = useHubState((state) => state.hubVersion);
+  const now = useNow(15_000);
+  const pairing = usePairing();
+  const [removing, setRemoving] = useState<RunnerSummary | null>(null);
+  const [updating, setUpdating] = useState<RunnerSummary | null>(null);
 
-  const sorted = runners === null ? null : sortRunners(runners)
-  const waiting = waitingCodes(codes, now)
-  const addRunner = () => pairing.open({ _tag: "New" })
+  const sorted = runners === null ? null : sortRunners(runners);
+  const waiting = waitingCodes(codes, now);
+  const addRunner = () => pairing.open({ _tag: "New" });
   return (
     <main {...stylex.props(styles.view)}>
       <PageHeader
@@ -230,14 +271,22 @@ export function RunnersView() {
             {hubVersion && (
               <>
                 {" "}
-                The Hub runs <span {...stylex.props(styles.mono)}>{describeBuild(hubVersion)}</span>
+                The Hub runs{" "}
+                <span {...stylex.props(styles.mono)}>
+                  {describeBuild(hubVersion)}
+                </span>
                 .
               </>
             )}
           </>
         }
         actions={
-          <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={addRunner}>
+          <Button
+            intent="primary"
+            size="sm"
+            icon={<PlusIcon />}
+            onClick={addRunner}
+          >
             Add a Runner
           </Button>
         }
@@ -255,7 +304,11 @@ export function RunnersView() {
               title="No Runners yet"
               description="A Runner is a machine that runs Sessions. Add one with a pairing code: one command on the machine pairs it and starts it."
               action={
-                <Button intent="primary" icon={<PlusIcon />} onClick={addRunner}>
+                <Button
+                  intent="primary"
+                  icon={<PlusIcon />}
+                  onClick={addRunner}
+                >
                   Add a Runner
                 </Button>
               }
@@ -276,11 +329,17 @@ export function RunnersView() {
             </ul>
           )}
           {waiting.length > 0 && (
-            <section aria-labelledby="waiting-codes" {...stylex.props(styles.section)}>
+            <section
+              aria-labelledby="waiting-codes"
+              {...stylex.props(styles.section)}
+            >
               <h2 id="waiting-codes" {...stylex.props(styles.sectionTitle)}>
                 Pairing codes not used yet
               </h2>
-              <ul aria-label="Pairing codes not used yet" {...stylex.props(styles.list)}>
+              <ul
+                aria-label="Pairing codes not used yet"
+                {...stylex.props(styles.list)}
+              >
                 {waiting.map((code, index) => (
                   <CodeRow
                     key={code.id}
@@ -295,11 +354,19 @@ export function RunnersView() {
           )}
         </div>
       </div>
-      <PairDialog pairing={pairing.pairing} onConfirm={pairing.confirm} onClose={pairing.close} />
+      <PairDialog
+        pairing={pairing.pairing}
+        onConfirm={pairing.confirm}
+        onClose={pairing.close}
+      />
       <RemoveDialog runner={removing} onClose={() => setRemoving(null)} />
-      <UpdateDialog runner={updating} hub={hubVersion} onClose={() => setUpdating(null)} />
+      <UpdateDialog
+        runner={updating}
+        hub={hubVersion}
+        onClose={() => setUpdating(null)}
+      />
     </main>
-  )
+  );
 }
 
 function RunnerRow({
@@ -310,29 +377,41 @@ function RunnerRow({
   onRepair,
   onRemove,
 }: {
-  runner: RunnerSummary
-  first: boolean
-  now: number
-  onUpdate: () => void
-  onRepair: () => void
-  onRemove: () => void
+  runner: RunnerSummary;
+  first: boolean;
+  now: number;
+  onUpdate: () => void;
+  onRepair: () => void;
+  onRemove: () => void;
 }) {
-  const update = updateNote(runner.update, now)
-  const underWay = update?.busy === true
+  const update = updateNote(runner.update, now);
+  const underWay = update?.busy === true;
   // While it updates, the update says it all: being behind is why.
-  const note = underWay ? undefined : versionNote(runner.versionStatus, runner.updater)
-  const action = updateAction(runner)
-  const manual = manualUpdateText(runner)
+  const note = underWay
+    ? undefined
+    : versionNote(runner.versionStatus, runner.updater);
+  const action = updateAction(runner);
+  const manual = manualUpdateText(runner);
   return (
-    <li aria-label={runner.name} {...stylex.props(styles.row, first && styles.firstRow)}>
+    <li
+      aria-label={runner.name}
+      {...stylex.props(styles.row, first && styles.firstRow)}
+    >
       <div {...stylex.props(styles.main)}>
         <div {...stylex.props(styles.nameLine)}>
           <span
             aria-hidden="true"
-            {...stylex.props(styles.dot, runner.isOnline ? styles.online : styles.offline)}
+            {...stylex.props(
+              styles.dot,
+              runner.isOnline ? styles.online : styles.offline,
+            )}
           />
           <span {...stylex.props(styles.name)}>{runner.name}</span>
-          {runner.isOnline ? <Badge intent="success">online</Badge> : <Badge>offline</Badge>}
+          {runner.isOnline ? (
+            <Badge intent="success">online</Badge>
+          ) : (
+            <Badge>offline</Badge>
+          )}
           {note && (
             <Tooltip content={note.title}>
               <span tabIndex={0}>
@@ -352,7 +431,10 @@ function RunnerRow({
                 "Version unknown"
               )
             ) : (
-              <span title={runner.version.commit} {...stylex.props(styles.mono)}>
+              <span
+                title={runner.version.commit}
+                {...stylex.props(styles.mono)}
+              >
                 {describeBuild(runner.version)}
               </span>
             )}
@@ -400,15 +482,24 @@ function RunnerRow({
             {action === "Update" ? "Update" : "Update now"}
           </Button>
         )}
-        <Button size="sm" aria-label={`Re-pair ${runner.name}`} onClick={onRepair}>
+        <Button
+          size="sm"
+          aria-label={`Re-pair ${runner.name}`}
+          onClick={onRepair}
+        >
           Re-pair
         </Button>
-        <Button size="sm" intent="ghost" aria-label={`Remove ${runner.name}`} onClick={onRemove}>
+        <Button
+          size="sm"
+          intent="ghost"
+          aria-label={`Remove ${runner.name}`}
+          onClick={onRemove}
+        >
           Remove
         </Button>
       </div>
     </li>
-  )
+  );
 }
 
 function CodeRow({
@@ -417,32 +508,37 @@ function CodeRow({
   first,
   now,
 }: {
-  code: PendingPairingCode
-  runners: ReadonlyArray<RunnerSummary>
-  first: boolean
-  now: number
+  code: PendingPairingCode;
+  runners: ReadonlyArray<RunnerSummary>;
+  first: boolean;
+  now: number;
 }) {
-  const hub = useHub()
-  const [busy, setBusy] = useState(false)
-  const runner = runners.find((candidate) => candidate.id === code.runnerId)
+  const hub = useHub();
+  const [busy, setBusy] = useState(false);
+  const runner = runners.find((candidate) => candidate.id === code.runnerId);
   const what =
-    code.runnerId === undefined ? "A new Runner" : `Re-pair ${runner?.name ?? "a removed Runner"}`
+    code.runnerId === undefined
+      ? "A new Runner"
+      : `Re-pair ${runner?.name ?? "a removed Runner"}`;
   const revoke = async () => {
-    setBusy(true)
+    setBusy(true);
     try {
-      await hub.revokePairingCode(code.id)
-      toast.show({ title: "Pairing code revoked" })
+      await hub.revokePairingCode(code.id);
+      toast.show({ title: "Pairing code revoked" });
     } catch (error) {
       toast.show({
         title: "Couldn't revoke the code",
         description: messageOf(error),
         intent: "danger",
-      })
-      setBusy(false)
+      });
+      setBusy(false);
     }
-  }
+  };
   return (
-    <li aria-label={what} {...stylex.props(styles.row, first && styles.firstRow)}>
+    <li
+      aria-label={what}
+      {...stylex.props(styles.row, first && styles.firstRow)}
+    >
       <div {...stylex.props(styles.main)}>
         <span {...stylex.props(styles.name)}>{what}</span>
         <p {...stylex.props(styles.facts)}>
@@ -462,7 +558,7 @@ function CodeRow({
         Revoke
       </Button>
     </li>
-  )
+  );
 }
 
 /**
@@ -475,23 +571,23 @@ function PairDialog({
   onConfirm,
   onClose,
 }: {
-  pairing: Pairing | null
-  onConfirm: () => void
-  onClose: () => void
+  pairing: Pairing | null;
+  onConfirm: () => void;
+  onClose: () => void;
 }) {
   // While the dialog closes, it keeps showing what it was opened for.
-  const shown = useLastOpened(pairing)
-  const repair = shown?.target._tag === "Repair" ? shown.target.runner : null
-  const minted = shown?.minted ?? null
-  const busy = shown?.busy ?? false
-  const error = shown?.error ?? null
+  const shown = useLastOpened(pairing);
+  const repair = shown?.target._tag === "Repair" ? shown.target.runner : null;
+  const minted = shown?.minted ?? null;
+  const busy = shown?.busy ?? false;
+  const error = shown?.error ?? null;
   // A Re-pair asks first, and stays asking while its code is made or if making it failed.
-  const confirming = repair !== null && minted === null
+  const confirming = repair !== null && minted === null;
   return (
     <Dialog
       open={pairing !== null}
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open) onClose();
       }}
       title={repair ? `Re-pair ${repair.name}` : "Add a Runner"}
       description={
@@ -536,24 +632,28 @@ function PairDialog({
         </>
       )}
     </Dialog>
-  )
+  );
 }
 
 /** The command a minted code is pasted in, and how the code is getting on. */
 function MintedCode({ minted }: { minted: PairingCodeCreated }) {
-  const state = useHubState((hub) => hub)
-  const now = useNow(1_000)
-  const outcome = codeOutcome(minted, state, now)
-  const command = pairingCommand(minted.link)
+  const state = useHubState((hub) => hub);
+  const now = useNow(1_000);
+  const outcome = codeOutcome(minted, state, now);
+  const command = pairingCommand(minted.link);
   if (outcome._tag === "Used") {
-    const runner = outcome.runner
+    const runner = outcome.runner;
     return (
-      <Banner intent="accent" icon={<CheckIcon />} title={`Paired ${runner?.name ?? "the Runner"}`}>
+      <Banner
+        intent="accent"
+        icon={<CheckIcon />}
+        title={`Paired ${runner?.name ?? "the Runner"}`}
+      >
         {runner?.isOnline
           ? `${runner.name} is online.`
           : "Waiting for it to connect: the join command starts its service."}
       </Banner>
-    )
+    );
   }
   if (outcome._tag !== "Waiting") {
     return (
@@ -564,72 +664,94 @@ function MintedCode({ minted }: { minted: PairingCodeCreated }) {
       >
         It can't be used any more. Close this and make another.
       </Banner>
-    )
+    );
   }
   return (
     <>
       <div {...stylex.props(styles.command)}>
-        <code aria-label="Pairing command" {...stylex.props(styles.commandText)}>
+        <code
+          aria-label="Pairing command"
+          {...stylex.props(styles.commandText)}
+        >
           {command}
         </code>
-        <IconButton label="Copy command" size="sm" onClick={() => void copy(command)}>
+        <IconButton
+          label="Copy command"
+          size="sm"
+          onClick={() => void copy(command)}
+        >
           <CopyIcon />
         </IconButton>
       </div>
       <p {...stylex.props(styles.note)}>
-        Works once, for the next {timeLeft(minted.expiresAt, now)}. The code is shown only here:
-        anyone with it can pair a machine, so share it only with whoever is setting up the Runner.
+        Works once, for the next {timeLeft(minted.expiresAt, now)}. The code is
+        shown only here: anyone with it can pair a machine, so share it only
+        with whoever is setting up the Runner.
       </p>
       <p {...stylex.props(styles.status)} aria-live="polite">
         <Spinner size="sm" /> Waiting for the machine to pair…
       </p>
     </>
-  )
+  );
 }
 
 /**
  * Removes a Runner once it's confirmed; a Runner with Sessions that aren't Archived is refused, as
  * the Hub would, and the dialog says to archive them first.
  */
-function RemoveDialog({ runner, onClose }: { runner: RunnerSummary | null; onClose: () => void }) {
-  const hub = useHub()
-  const shown = useLastOpened(runner)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+function RemoveDialog({
+  runner,
+  onClose,
+}: {
+  runner: RunnerSummary | null;
+  onClose: () => void;
+}) {
+  const hub = useHub();
+  const shown = useLastOpened(runner);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    setBusy(false)
-    setError(null)
-  }, [runner])
+    setBusy(false);
+    setError(null);
+  }, [runner]);
 
   // The live count: a Session archived meanwhile makes it removable.
-  const live = useHubState((state) => state.runners?.find((other) => other.id === shown?.id))
-  const refusal = shown ? runnerRemovalRefusal(shown.name, (live ?? shown).openSessions) : undefined
+  const live = useHubState((state) =>
+    state.runners?.find((other) => other.id === shown?.id),
+  );
+  const refusal = shown
+    ? runnerRemovalRefusal(shown.name, (live ?? shown).openSessions)
+    : undefined;
 
   const remove = async () => {
-    if (!shown) return
-    setBusy(true)
-    setError(null)
+    if (!shown) return;
+    setBusy(true);
+    setError(null);
     try {
-      await hub.removeRunner(shown.id)
-      toast.show({ title: `Removed ${shown.name}` })
-      onClose()
+      await hub.removeRunner(shown.id);
+      toast.show({ title: `Removed ${shown.name}` });
+      onClose();
     } catch (cause) {
-      setError(messageOf(cause))
-      setBusy(false)
+      setError(messageOf(cause));
+      setBusy(false);
     }
-  }
+  };
 
   return (
     <Dialog
       size="sm"
       open={runner !== null}
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open) onClose();
       }}
-      title={refusal ? `${shown?.name ?? ""} can't be removed yet` : `Remove ${shown?.name ?? ""}?`}
+      title={
+        refusal
+          ? `${shown?.name ?? ""} can't be removed yet`
+          : `Remove ${shown?.name ?? ""}?`
+      }
       description={
         refusal ??
-        "Its token stops working at once and, if it's connected, it's disconnected. Its Archived Sessions can't be restored unless a Runner by the same name is added again."
+        "Its token stops working at once and, if it's connected, it's disconnected. Its Archived Sessions can't be restored unless a Runner by the same name is added again: a Runner's name is its identity, so use a new name to start clean."
       }
       footer={
         refusal ? (
@@ -637,7 +759,11 @@ function RemoveDialog({ runner, onClose }: { runner: RunnerSummary | null; onClo
         ) : (
           <>
             <DialogClose>Cancel</DialogClose>
-            <Button intent="danger" loading={busy} onClick={() => void remove()}>
+            <Button
+              intent="danger"
+              loading={busy}
+              onClick={() => void remove()}
+            >
               Remove
             </Button>
           </>
@@ -650,7 +776,7 @@ function RemoveDialog({ runner, onClose }: { runner: RunnerSummary | null; onClo
         </p>
       )}
     </Dialog>
-  )
+  );
 }
 
 /**
@@ -663,42 +789,44 @@ function UpdateDialog({
   hub,
   onClose,
 }: {
-  runner: RunnerSummary | null
-  hub: BuildVersion | null
-  onClose: () => void
+  runner: RunnerSummary | null;
+  hub: BuildVersion | null;
+  onClose: () => void;
 }) {
-  const client = useHub()
-  const shown = useLastOpened(runner)
-  const [busy, setBusy] = useState<"wait" | "now" | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const client = useHub();
+  const shown = useLastOpened(runner);
+  const [busy, setBusy] = useState<"wait" | "now" | null>(null);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    setBusy(null)
-    setError(null)
-  }, [runner])
+    setBusy(null);
+    setError(null);
+  }, [runner]);
 
-  const waiting = shown?.update?._tag === "Draining"
-  const sessions = shown?.openSessions ?? 0
+  const waiting = shown?.update?._tag === "Draining";
+  const sessions = shown?.openSessions ?? 0;
   const update = async (now: boolean) => {
-    if (!shown) return
-    setBusy(now ? "now" : "wait")
-    setError(null)
+    if (!shown) return;
+    setBusy(now ? "now" : "wait");
+    setError(null);
     try {
-      await client.updateRunner(shown.id, now)
-      onClose()
+      await client.updateRunner(shown.id, now);
+      onClose();
     } catch (cause) {
-      setError(messageOf(cause))
-      setBusy(null)
+      setError(messageOf(cause));
+      setBusy(null);
     }
-  }
-  const target = hub === null ? "the Hub's commit" : shortCommit(hub)
+  };
+  const target = hub === null ? "the Hub's commit" : shortCommit(hub);
   return (
     <Dialog
       open={runner !== null}
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open) onClose();
       }}
       title={
-        waiting ? `Stop ${shown?.name ?? ""}'s running Turns?` : `Update ${shown?.name ?? ""}?`
+        waiting
+          ? `Stop ${shown?.name ?? ""}'s running Turns?`
+          : `Update ${shown?.name ?? ""}?`
       }
       description={
         waiting
@@ -709,7 +837,11 @@ function UpdateDialog({
         <>
           <DialogClose>Cancel</DialogClose>
           {waiting ? (
-            <Button intent="danger" loading={busy === "now"} onClick={() => void update(true)}>
+            <Button
+              intent="danger"
+              loading={busy === "now"}
+              onClick={() => void update(true)}
+            >
               Stop Turns and update
             </Button>
           ) : (
@@ -741,7 +873,8 @@ function UpdateDialog({
         <>
           {!waiting && sessions > 0 && (
             <p {...stylex.props(styles.note)}>
-              Update now stops running Turns at once instead of letting them finish.
+              Update now stops running Turns at once instead of letting them
+              finish.
             </p>
           )}
           {error && (
@@ -752,39 +885,39 @@ function UpdateDialog({
         </>
       )}
     </Dialog>
-  )
+  );
 }
 
 async function copy(command: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(command)
-    toast.show({ title: "Copied the command" })
+    await navigator.clipboard.writeText(command);
+    toast.show({ title: "Copied the command" });
   } catch {
     toast.show({
       title: "Couldn't copy",
       description: "Select the command and copy it yourself.",
       intent: "warning",
-    })
+    });
   }
 }
 
 /** The time, updated every `ms`. */
 function useNow(ms: number): number {
-  const [now, setNow] = useState(Date.now)
+  const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), ms)
-    return () => clearInterval(timer)
-  }, [ms])
-  return now
+    const timer = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(timer);
+  }, [ms]);
+  return now;
 }
 
 /** `value`, or while it is null (a dialog closing), the last value it wasn't. */
 function useLastOpened<T>(value: T | null): T | null {
-  const [last, setLast] = useState(value)
-  if (value !== null && value !== last) setLast(value)
-  return value ?? last
+  const [last, setLast] = useState(value);
+  if (value !== null && value !== last) setLast(value);
+  return value ?? last;
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return error instanceof Error ? error.message : String(error);
 }
