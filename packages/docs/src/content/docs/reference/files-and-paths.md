@@ -20,6 +20,7 @@ An install keeps everything in its home, `~/.claude-hub` (or `CLAUDE_HUB_HOME`):
 | `~/.claude-hub/hub.db.lock` | The lock the running Hub holds, so a second Hub or a `secrets reset` on the same database is refused. The operating system drops it when the Hub ends. |
 | `~/.claude-hub/sessions/` | The Runner's sessions root, one directory per Session. |
 | `~/.claude-hub/claude-code/` | Linux builds of Claude Code, for Sandboxes' tool bridges. |
+| `~/.claude-hub/claude-token` | Off macOS, the Runner's [Claude credential](/reference/configuration/#the-runners-claude-credential) for Sessions without their own, if you put one there: a setup-token or API key. It must be readable only by you (`600`). |
 | `~/.claude-hub/logs/hub.log`, `runner.log` | Each service's output. `claude-hub logs hub` prints it. |
 
 Outside the home:
@@ -52,7 +53,7 @@ Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the databa
 | `~/.claude-hub-dev/sessions/` | The sessions root (`RUNNER_SESSIONS_ROOT`), with one directory per Session. |
 | `~/.claude-hub-dev/claude-code/` | Linux builds of Claude Code, which Sandboxes run the tool bridge from (`RUNNER_SANDBOX_CLAUDE_CACHE`). |
 | `packages/mod/` | The `hub-link` mod, loaded into each Session's Claude Code (`RUNNER_MOD_DIR`). |
-| `~/.claude.json` | Claude Code's config file. The Runner reads the signed-in account from it and adds one folder-trust entry, for its sessions root. `$CLAUDE_CONFIG_DIR/.claude.json` when that is set. |
+| `~/.claude.json` | Claude Code's config file. The Runner reads the signed-in account and its plan from it and adds one folder-trust entry, for its sessions root. `$CLAUDE_CONFIG_DIR/.claude.json` when that is set. |
 | `~/.microsandbox/` | microsandbox's home (`MSB_HOME`), with its Sandboxes, volumes, snapshots and their logs. |
 
 ### One Session's directory

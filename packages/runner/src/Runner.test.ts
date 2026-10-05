@@ -27,6 +27,7 @@ import { RunnerConfig, type RunnerSettings } from "./RunnerConfig.ts"
 import { SessionsLive } from "./Sessions.ts"
 import {
   eventually,
+  FakeCredentialProxy,
   FakeSandboxes,
   FakeTmux,
   FakeWorkspaceGit,
@@ -180,6 +181,7 @@ function startRunner(
   const sandboxes = new FakeSandboxes()
   // One record of Sandbox and git calls, in the order they ran.
   const git = new FakeWorkspaceGit(sandboxes.calls)
+  const proxy = new FakeCredentialProxy()
   const settings: RunnerSettings = {
     hubUrl: hub.url,
     name: "mac",
@@ -203,7 +205,7 @@ function startRunner(
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provideMerge(claudeModels),
-    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, git.layer]),
+    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, git.layer, proxy.layer]),
     Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
     Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
   )

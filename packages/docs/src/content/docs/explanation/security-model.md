@@ -23,6 +23,8 @@ Sessions never ask for tool approval: everything inside the Sandbox is allowed (
 | Credential | Lives on | Reaches a Sandbox? |
 |---|---|---|
 | The Runner login (Claude credentials) | each Runner | Never |
+| The Runner's own Claude credential, for Sessions without their Creator's | the Runner owner's Keychain or a private file; the credential proxy's memory | Never ([The credential proxy](#the-credential-proxy)) |
+| Session tokens, one per run of a Session | the credential proxy's memory, as SHA-256 hashes | Yes, by design: they stand in for the Claude credential and the mod token |
 | The GitHub App's private key and client secret | the Hub | Never |
 | `HUB_SECRETS_KEY` | the Hub | Never |
 | Runner tokens | the Runner, as `RUNNER_TOKEN`; the Hub keeps a hash | Never; kept out of tmux and Claude Code's environment too |
@@ -36,6 +38,22 @@ Two things deliberately do reach the Sandbox, and anything running there can rea
 
 - **The Sandbox token** can push any branch of the Session's Repo and merge its pull requests, with whatever permissions the App's installation has. Protect each Repo's default branch with a ruleset. See [Git from Sessions](/explanation/git-from-sessions/).
 - **Variables**, Sensitive ones included. Give a Sandbox only what its Sessions need.
+
+## The credential proxy
+
+Claude Code is moving into the Sandbox ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)), where anything Claude runs could read a credential it held. So it will hold none: each Runner runs a credential proxy on its host's loopback, port `RUNNER_PROXY_PORT`, which every Sandbox reaches at `host.microsandbox.internal`, and Claude Code and its mod hold only a Session token.
+
+- **A Session token is the only identity.** Every Sandbox's connection reaches the proxy from the host's own loopback address, so the proxy tells Sessions apart by token alone. A token is 32 random bytes, issued as a Session starts or wakes and revoked as it sleeps, is archived, stops or exits; the proxy keeps only its SHA-256. A request without a live token is answered 401. A Runner restart revokes them all.
+- **It forwards three requests to Anthropic and nothing else:** `POST /v1/messages`, `POST /v1/messages/count_tokens` and `GET /v1/models`, the ones Claude Code sends. Anything else is answered 404, its path checked after `..` is resolved. It swaps the Session token for the Session's Claude credential: a subscription token as the bearer, an API key as `x-api-key`. A response streams back as it comes, with nothing buffered.
+- **It relays the mod's calls to the Hub,** `/mod/*`, swapping the Session token for the Session's mod token, so the mod token stays on the Runner too.
+- **Credentials stay in memory.** A Session's credential is its Creator's ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)), held by the proxy for as long as the Session's token lives and dropped when it is revoked, never written to disk. A Session without one uses the Runner's own, read from the owner's Keychain or a file only the Runner's user can read ([The Runner's Claude credential](/reference/configuration/#the-runners-claude-credential)).
+- **Nothing secret is logged.** The proxy logs one line per request to Anthropic, under its Session: method, path, status, time and whose credential it went with. Never a credential, a mod token or a Session token.
+
+Anything in a Sandbox can read its Session token, and spend its Session's credential through the proxy while the Session is awake. It can't take the credential away, use it after the Session sleeps, or reach any API path but inference.
+
+:::note
+Until Claude Code runs in the Sandbox ([#146](https://github.com/kddige/claude-hub/issues/146)), the Runner already runs the proxy and issues and revokes Session tokens, but Claude Code still runs on the host with the Runner login and the mod token, as below.
+:::
 
 ## Every endpoint needs a credential
 

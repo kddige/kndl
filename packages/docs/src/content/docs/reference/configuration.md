@@ -47,10 +47,37 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count | The most CPUs a Sandbox gets, whatever its Environment asks for. |
 | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory | The most memory, in MiB, a Sandbox gets. |
 | `RUNNER_SANDBOX_KEEP_BUILDS` | `3` | How many builds of each Repo's Environment the Runner keeps. |
+| `RUNNER_PROXY_PORT` | `7779`; `7778` in an installed home | The port of the Runner's [credential proxy](/explanation/security-model/#the-credential-proxy) on the host's loopback, which Sandboxes reach at `host.microsandbox.internal`. If the port is taken, the Runner logs an error and runs on without it. |
+| `RUNNER_CLAUDE_CREDENTIAL` | `auto` | Where the Runner's own Claude credential is read from: see [The Runner's Claude credential](#the-runners-claude-credential). |
+| `RUNNER_CLAUDE_PLAN` | the plan in Claude Code's config file | The plan the Runner's credential is on: `pro`, `max`, `team` or `enterprise`. Claude Code in a Sandbox is told it, as it can't ask Anthropic through the proxy. |
+| `RUNNER_CLAUDE_RATE_LIMIT_TIER` | Claude Code's for the plan | The rate-limit tier of `RUNNER_CLAUDE_PLAN`: `default_claude_ai` for `pro` and `default_claude_max_5x` for `max` unless given, such as `default_claude_max_20x`. |
 | `RUNNER_UPDATE_ANY_COMMIT` | unset | `1`: when the Hub asks, the Runner moves to its commit even if it isn't on `origin/main`, such as a Hub running a branch. Unset, it refuses such a commit ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)). |
 | `CLAUDE_HUB_SERVICE` | unset | Set to `runner` (or `hub`) by the service files the `claude-hub` command installs. A Runner updates itself only when it is set and the Runner runs from the install, `<home>/app`: only a service manager starts it again after it exits. |
 | `CLAUDE_CONFIG_DIR` | unset | Read as Claude Code reads it: the Runner looks for Claude Code's config file at `$CLAUDE_CONFIG_DIR/.claude.json` instead of `~/.claude.json`. |
 | `CLAUDE_HUB_HOME` | unset | See [Homes](#homes). |
+
+### The Runner's Claude credential
+
+Claude Code in a Sandbox runs on its Session's Claude credential, which the credential proxy holds in memory for as long as the Session is awake ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/), [ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). A Session without one runs on the Runner's own, read from where `RUNNER_CLAUDE_CREDENTIAL` says:
+
+| Value | Read from |
+|---|---|
+| `auto`, or unset | On macOS, the Keychain item `claude-hub-setup-token`; elsewhere, the file `<home>/claude-token`. Without either, Claude Code's own login on this host. |
+| `keychain` | The Keychain item `claude-hub-setup-token`. |
+| `keychain:<service>` | The Keychain item with that service name. |
+| `file:<path>` | That file, which must be the Runner user's and readable by no one else (`chmod 600`). |
+| `claude-code` | Claude Code's own login: its Keychain item `Claude Code-credentials` on macOS, else `~/.claude/.credentials.json` (in `CLAUDE_CONFIG_DIR` when set). |
+| `none` | None: a Session without its own credential is answered 401 by the proxy. |
+
+A setup-token is what `claude setup-token` prints, good for a year. On a Mac, put it in the Keychain and the Runner needs nothing else:
+
+```sh
+security add-generic-password -s claude-hub-setup-token -a "$USER" -w
+```
+
+`security` asks for the token, so it stays out of your shell's history. A Keychain item or file can hold an Anthropic API key (`sk-ant-api…`) instead, which Sessions are then billed by.
+
+The Runner reads its credential when it starts and logs where it came from, or why there is none; it starts either way. It never writes it anywhere, never logs it, and never refreshes Claude Code's login: it reads that again close to its expiry, and when Anthropic refuses it, and logs a warning once it has expired, until `claude` on the host refreshes it. A setup-token is read again when Anthropic refuses it, so a replaced one is picked up without a restart.
 
 ## Homes
 
@@ -61,6 +88,7 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 | `RUNNER_SESSIONS_ROOT` | `~/.claude-hub-dev/sessions` | `<home>/sessions` |
 | `RUNNER_SANDBOX_CLAUDE_CACHE` | `~/.claude-hub-dev/claude-code` | `<home>/claude-code` |
 | `RUNNER_TMUX_SOCKET` | `claude-hub-dev` | `claude-hub` |
+| `RUNNER_PROXY_PORT` | `7779` | `7778` |
 | `HUB_DATABASE` | `hub.db` in `packages/hub`, beside the `.env.local` holding its `HUB_SECRETS_KEY` | `<home>/hub.db` |
 
 ## What a Runner gives Claude Code
@@ -81,6 +109,20 @@ Each Session's Claude Code starts with the hardened flags of [ADR 0001](/referen
 | `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS` | `1`, since git runs in the Sandbox rather than beside Claude Code. |
 | `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | `1`, because a background command's output would stay in the Sandbox. |
 | `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | `1`, because Claude Code would save memory in the Sandbox, where it is lost. It wins over any setting. |
+
+### In a Sandbox
+
+Once Claude Code runs in the Sandbox ([#146](https://github.com/kddige/claude-hub/issues/146)), it and its mod reach Anthropic and the Hub through the [credential proxy](/explanation/security-model/#the-credential-proxy), holding the Session token alone. These variables replace the Hub URL and mod token above, and the credential's kind decides the rest.
+
+| Variable | What it is |
+|---|---|
+| `ANTHROPIC_BASE_URL`, `CLAUDE_HUB_URL` | The proxy as the Sandbox reaches it: `http://host.microsandbox.internal:<RUNNER_PROXY_PORT>`. |
+| `CLAUDE_HUB_MOD_TOKEN` | The Session token. |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_AUTOUPDATER` | `1`: the proxy forwards inference alone. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | The Session token, for a subscription token. |
+| `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL`, `CLAUDE_CODE_OAUTH_SCOPES` | For a subscription token: Claude Code treats the proxy as Anthropic's API, with a setup-token's scopes. |
+| `CLAUDE_CODE_SUBSCRIPTION_TYPE`, `CLAUDE_CODE_RATE_LIMIT_TIER` | For a subscription token, its plan, when known: the Creator's, or for the Runner's credential `RUNNER_CLAUDE_PLAN`. |
+| `ANTHROPIC_AUTH_TOKEN` | The Session token, for an API key, in place of all the subscription variables. |
 
 ## Web UI dev server
 
