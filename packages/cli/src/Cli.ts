@@ -88,6 +88,13 @@ const onboardCommand = Command.make(
         Flag.withDescription("A Runner's token, from `claude-hub runner token <name>`"),
       ),
     ),
+    pair: optional(
+      Flag.String("pair").pipe(
+        Flag.withDescription(
+          "A Runner's pairing link, from the Hub's Runners page (Add a Runner), instead of --hub-url and --token",
+        ),
+      ),
+    ),
     runnerName: optional(
       Flag.String("runner-name").pipe(
         Flag.withDescription("The Runner's name (the short hostname)"),
@@ -242,14 +249,80 @@ const tokenCommand = Command.make("token", { name: Argument.String("name") }, ({
   Command.withDescription("Issue a Runner's token, on the Hub's machine; rotates any earlier one"),
 )
 
+const joinCommand = Command.make(
+  "join",
+  {
+    link: Argument.String("link").pipe(
+      Argument.withDescription(
+        "The pairing link from the Hub's Runners page (Add a Runner): '<hub-url>#<code>'",
+      ),
+    ),
+    name: optional(
+      Flag.String("name").pipe(
+        Flag.withDescription("The new Runner's name (the short hostname); a Re-pair keeps its own"),
+      ),
+    ),
+    hubUrl: optional(
+      Flag.String("hub-url").pipe(
+        Flag.withDescription("The Hub's URL, when the link is only the code"),
+      ),
+    ),
+    installPrerequisites: optional(
+      Flag.Boolean("install-prerequisites").pipe(
+        Flag.withDescription("Install what's missing without asking (may use sudo)"),
+      ),
+    ),
+    services: optional(
+      Flag.Boolean("services").pipe(Flag.withDescription("Install and start the service (yes)")),
+    ),
+    linger: optional(
+      Flag.Boolean("linger").pipe(
+        Flag.withDescription("Linux: keep the service running while you're logged out"),
+      ),
+    ),
+    nonInteractive: off("non-interactive").pipe(
+      Flag.withDescription("Never ask: an answer with no flag takes its default, or fails"),
+    ),
+    moveOldData: off("move-old-data").pipe(
+      Flag.withDescription(
+        "Rename claude-hub data the home holds without its env file to <name>.old-<YYYYMMDD>, keeping it",
+      ),
+    ),
+  },
+  (options) =>
+    onboard(layout(), {
+      role: "runner",
+      reach: undefined,
+      port: undefined,
+      publicUrl: undefined,
+      insecureCookies: undefined,
+      devLogin: undefined,
+      githubApp: undefined,
+      hubUrl: options.hubUrl,
+      token: undefined,
+      pair: options.link,
+      runnerName: options.name,
+      installPrerequisites: options.installPrerequisites,
+      services: options.services,
+      linger: options.linger,
+      nonInteractive: options.nonInteractive,
+      reset: false,
+      moveOldData: options.moveOldData,
+    }),
+).pipe(
+  Command.withDescription(
+    "Make this machine a Runner, with a pairing link from the Hub's Runners page; installs and starts its service",
+  ),
+)
+
 const hubCommand = Command.make("hub").pipe(
   Command.withSubcommands(serviceCommands("hub")),
   Command.withDescription("The Hub's service"),
 )
 
 const runnerCommand = Command.make("runner").pipe(
-  Command.withSubcommands([...serviceCommands("runner"), tokenCommand]),
-  Command.withDescription("The Runner's service, and Runner tokens"),
+  Command.withSubcommands([joinCommand, ...serviceCommands("runner"), tokenCommand]),
+  Command.withDescription("Join a Hub as a Runner; the Runner's service, and Runner tokens"),
 )
 
 const secretsCommand = Command.make("secrets").pipe(

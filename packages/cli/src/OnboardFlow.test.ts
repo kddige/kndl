@@ -5,9 +5,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { type PairingTarget, RunnerId } from "@claude-hub/protocol"
 import { Cause, Effect, Exit } from "effect"
 import { envValues, parseEnv } from "./EnvFile.ts"
 import { dateStamp } from "./HomeData.ts"
+import { HubClient } from "./HubClient.ts"
+import type { PairOutcome } from "./Join.ts"
 import { type Layout, resolveLayout } from "./Layout.ts"
 import { configure, type OnboardOptions } from "./OnboardFlow.ts"
 import { Shell } from "./Shell.ts"
@@ -23,6 +26,7 @@ const none: OnboardOptions = {
   githubApp: undefined,
   hubUrl: undefined,
   token: undefined,
+  pair: undefined,
   runnerName: undefined,
   installPrerequisites: undefined,
   services: undefined,
@@ -59,17 +63,45 @@ const fakeShell = (tmuxSessions = 0) =>
     attached: () => Effect.succeed(0),
   })
 
+/** The redemptions the stand-in Hub was asked for, in order. */
+let redemptions: Array<{ readonly target: PairingTarget; readonly name: string }> = []
+
+/** A Hub that answers every redemption with `outcome`, given the name asked for. */
+const standInHub = (outcome: (name: string) => PairOutcome) =>
+  HubClient.of({
+    pair: (target, name) =>
+      Effect.sync(() => {
+        redemptions.push({ target, name })
+        return outcome(name)
+      }),
+    connection: () => Effect.die(new Error("not asked in configure")),
+  })
+
+const paired = (name: string, repaired = false): PairOutcome => ({
+  _tag: "Paired",
+  paired: { runnerId: RunnerId.make("r-1"), name, token: "chr_paired", repaired },
+})
+
+beforeEach(() => {
+  redemptions = []
+})
+
 /** Runs onboard's questions against `answers`. */
 function run(
   answers: ReadonlyArray<unknown>,
   options: Partial<OnboardOptions> = {},
-  settings: { readonly interactive?: boolean; readonly tmuxSessions?: number } = {},
+  settings: {
+    readonly interactive?: boolean
+    readonly tmuxSessions?: number
+    readonly hub?: (name: string) => PairOutcome
+  } = {},
 ) {
   const { ui, transcript } = scriptedUi(answers, settings)
   return Effect.runPromiseExit(
     configure(layout, { ...none, ...options }).pipe(
       Effect.provideService(Ui, ui),
       Effect.provideService(Shell, fakeShell(settings.tmuxSessions)),
+      Effect.provideService(HubClient, standInHub(settings.hub ?? paired)),
     ),
   ).then((exit) => ({ exit, transcript }))
 }
@@ -98,7 +130,7 @@ describe("onboard, answered from a script", () => {
   })
 
   test("a Runner for a Hub elsewhere: runner.env from the URL and token", async () => {
-    const { exit } = await run(["runner", "https://hub.example.com", "chr_secret"], {
+    const { exit } = await run(["runner", "token", "https://hub.example.com", "chr_secret"], {
       runnerName: "mac",
     })
 
@@ -149,6 +181,121 @@ describe("onboard, answered from a script", () => {
   })
 })
 
+const link = "https://hub.example.com#7K3QH-WM2PA-B4XZC-9DFGR"
+const code = "7K3QHWM2PAB4XZC9DFGR"
+
+describe("onboard with a pairing link", () => {
+  test("redeems it, without asking anything, and writes runner.env from the Hub's answer", async () => {
+    const { exit, transcript } = await run(
+      [],
+      { pair: link, runnerName: "mac" },
+      { interactive: false },
+    )
+
+    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(redemptions).toEqual([
+      { target: { hubUrl: "https://hub.example.com", code }, name: "mac" },
+    ])
+    expect(env("runner")).toEqual({
+      HUB_URL: "https://hub.example.com",
+      RUNNER_TOKEN: "chr_paired",
+      RUNNER_NAME: "mac",
+    })
+    expect(statSync(layout.envFile("runner")).mode & 0o777).toBe(0o600)
+    expect(transcript.filter((line) => line.startsWith("?"))).toEqual([])
+  })
+
+  test("a Re-pair's code keeps the Runner's own name, whatever was asked for", async () => {
+    const { exit } = await run(
+      [],
+      { pair: link, runnerName: "mac" },
+      {
+        interactive: false,
+        hub: () => paired("studio", true),
+      },
+    )
+
+    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(env("runner").RUNNER_NAME).toBe("studio")
+  })
+
+  test("replaces the token and Hub of a Runner set up before", async () => {
+    writeFileSync(
+      layout.envFile("runner"),
+      "HUB_URL=http://old-hub:7777\nRUNNER_TOKEN=chr_old\nRUNNER_NAME=mac\nRUNNER_SESSIONS_ROOT=/work\n",
+    )
+    const { exit } = await run([], { pair: link }, { interactive: false })
+
+    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(redemptions.map((r) => r.name)).toEqual(["mac"])
+    expect(env("runner")).toEqual({
+      HUB_URL: "https://hub.example.com",
+      RUNNER_TOKEN: "chr_paired",
+      RUNNER_NAME: "mac",
+      RUNNER_SESSIONS_ROOT: "/work",
+    })
+  })
+
+  test("a refused code fails with the Hub's reason, writing nothing", async () => {
+    const { exit } = await run(
+      [],
+      { pair: link },
+      {
+        interactive: false,
+        hub: () => ({ _tag: "Refused", message: "That pairing code can't be used" }),
+      },
+    )
+
+    expect(String((failure(exit) as { message: string }).message)).toBe(
+      "That pairing code can't be used",
+    )
+    expect(existsSync(layout.envFile("runner"))).toBe(false)
+  })
+
+  test("a link that isn't one fails before the Hub is asked", async () => {
+    const { exit } = await run([], { pair: "https://hub.example.com#nope" }, { interactive: false })
+
+    expect(String((failure(exit) as { message: string }).message)).toContain(
+      "isn't a whole pairing code",
+    )
+    expect(redemptions).toEqual([])
+  })
+
+  test("a code alone needs --hub-url", async () => {
+    const alone = await run([], { pair: "7k3qh-wm2pa-b4xzc-9dfgr" }, { interactive: false })
+    expect(String((failure(alone.exit) as { message: string }).message)).toContain("Hub's URL")
+
+    const withUrl = await run(
+      [],
+      { pair: "7k3qh-wm2pa-b4xzc-9dfgr", hubUrl: "http://10.0.0.5:7777/" },
+      { interactive: false },
+    )
+    expect(Exit.isSuccess(withUrl.exit)).toBe(true)
+    expect(redemptions.at(-1)?.target).toEqual({ hubUrl: "http://10.0.0.5:7777", code })
+  })
+
+  test("goes only with --role runner", async () => {
+    const { exit } = await run([], { pair: link, role: "both" }, { interactive: false })
+
+    expect(String((failure(exit) as { message: string }).message)).toContain("--role runner")
+    expect(redemptions).toEqual([])
+  })
+
+  test("asked for: a Runner chooses a pairing link over a token", async () => {
+    const { exit, transcript } = await run(["runner", "pair", link], { runnerName: "mac" })
+
+    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(transcript).toContain("? select: How does this Runner get its token?")
+    expect(env("runner").RUNNER_TOKEN).toBe("chr_paired")
+  })
+
+  test("without a terminal or flags, a Runner fails naming --pair", async () => {
+    const { exit } = await run([], { role: "runner" }, { interactive: false })
+
+    expect(String((failure(exit) as { message: string }).message)).toContain("--pair")
+  })
+})
+
 /** A home as a checkout's Runner left it, before checkouts had a dev home. */
 const oldHome = () => {
   mkdirSync(join(layout.sessions, "s1"), { recursive: true })
@@ -164,7 +311,7 @@ describe("onboard on a home with old data", () => {
   test("moves it aside after a choice and a confirmation, deleting nothing", async () => {
     oldHome()
     const { exit, transcript } = await run(
-      ["runner", "move", true, "https://hub.example.com", "chr_secret"],
+      ["runner", "move", true, "token", "https://hub.example.com", "chr_secret"],
       { runnerName: "mac" },
     )
 

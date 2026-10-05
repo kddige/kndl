@@ -14,6 +14,8 @@ import {
   serviceState,
   serviceTarget,
 } from "./Host.ts"
+import { HubClient } from "./HubClient.ts"
+import { describeConnectionCheck } from "./Join.ts"
 import type { Layout } from "./Layout.ts"
 import { describeConnection, runnerConnection } from "./RunnerLog.ts"
 import { describeServiceState } from "./Services.ts"
@@ -102,7 +104,13 @@ export const status = (layout: Layout) =>
         lines.push(
           `            ${values.RUNNER_NAME ? `named ${values.RUNNER_NAME}, ` : ""}Hub ${values.HUB_URL ?? "(none set)"}`,
         )
-        lines.push(`            ${readRunnerConnection(layout)}`)
+        lines.push(`            log: ${readRunnerConnection(layout)}`)
+        if (values.HUB_URL !== undefined && values.RUNNER_TOKEN !== undefined) {
+          const check = yield* (yield* HubClient).connection(values.HUB_URL, values.RUNNER_TOKEN)
+          if (check._tag !== "Unsupported") {
+            lines.push(`            Hub: ${describeConnectionCheck(check)}`)
+          }
+        }
       }
     }
     if (shell.dryRun) lines.push("  (dry run: launchctl and systemctl weren't asked)")
