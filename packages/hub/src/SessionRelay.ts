@@ -1004,10 +1004,13 @@ export class SessionRelay extends Context.Service<
        * Wakes an Asleep Session on its online Runner: records it Active and starts its Claude
        * Code again, resuming the conversation its mod last said hello from, on the same
        * Workspace and Sandbox volumes. Queued prompts are delivered once the new mod says hello.
+       * `cause`, such as `for a Report from Child Session "Docs"`, follows "Woken on <Runner>" in
+       * its history.
        */
       const wake = Effect.fn("SessionRelay.wake")(function* (
         session: SessionSummary,
         why: Why,
+        cause?: string,
       ): Effect.fn.Return<string | undefined, SqlError> {
         const runner = onlineRunners.get(session.runnerId)
         // A restored Session still being stopped for its archive wakes once it is stopped.
@@ -1038,11 +1041,13 @@ export class SessionRelay extends Context.Service<
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         starting.add(session.id)
         yield* startSent(session.id, environment)
+        const woken =
+          cause === undefined ? `Woken on ${runner.name}` : `Woken on ${runner.name} ${cause}`
         yield* changeState(session, "Active", {
           ...why,
           message: Option.isSome(resume)
-            ? `Woken on ${runner.name}`
-            : `Woken on ${runner.name}, with a new conversation: Claude Code's last one is unknown`,
+            ? woken
+            : `${woken}, with a new conversation: Claude Code's last one is unknown`,
         })
         runner.peer.send(
           StartSession.make({
@@ -1456,9 +1461,11 @@ export class SessionRelay extends Context.Service<
             )
             yield* queueChanged(child.id)
             if (child.state === "Asleep") {
-              const refused = yield* wake(child, {
-                message: `Woken for a message from its Parent Session "${ref.title}"`,
-              })
+              const refused = yield* wake(
+                child,
+                {},
+                `for a message from its Parent Session "${ref.title}"`,
+              )
               if (refused !== undefined) {
                 return childRefused(
                   `Your message waits in its queue, but it can't wake now. ${refused}`,
@@ -1544,9 +1551,11 @@ export class SessionRelay extends Context.Service<
         )
         yield* queueChanged(parent.value.id)
         if (parent.value.state === "Asleep") {
-          const refused = yield* wake(parent.value, {
-            message: `Woken for a Report from Child Session "${ref.title}"`,
-          })
+          const refused = yield* wake(
+            parent.value,
+            {},
+            `for a Report from Child Session "${ref.title}"`,
+          )
           if (refused !== undefined) {
             yield* Effect.logInfo(`A Report waits for Session ${parent.value.id}: ${refused}`)
           }
