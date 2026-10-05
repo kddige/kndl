@@ -12,6 +12,20 @@ A Runner checks out the Hub's commit only if it is reachable from `origin/main` 
 
 **Sessions during an update.** The mod loaded in a running Claude Code is the old one. So a Runner stops taking new Sessions, lets running Turns finish (up to about ten minutes, or cancels them at once with `--now`), puts every Active Session to sleep, updates and restarts. The next prompt wakes each Session with the new mod and `--resume`, keeping its conversation, Workspace and Sandbox volumes. A failed update rolls back to the previous commit and is reported to the Hub.
 
+## Which Runners update themselves (amended in #87)
+
+Implementing it showed that "each Runner updates itself and restarts" needs two things a Runner can't always count on, so only some do:
+
+- **Something starts it again.** A Runner restarts by exiting, and only a service manager brings it back. So a Runner updates itself only when the claude-hub service runs it (its service file sets `CLAUDE_HUB_SERVICE=runner`) from the install's own checkout, `<home>/app`, which belongs to the CLI. It says so in its hello, and the Runners page offers **Update** only then.
+- **The checkout is its to move.** A Runner run with `bun run runner` from a developer's checkout never moves that checkout: it would discard or tangle someone's work. It reports its commit, is marked behind like any other, and its log and row say to pull and restart it. A Runner from before this feature, or not run as the service, likewise needs `claude-hub update` on its machine, once.
+
+Two cases can't drain the Runner first, and restart it under its running Sessions, as any Runner restart does (their Claude Code keeps running in tmux, and the old mod reconnects):
+
+- **A rejected Runner.** The Hub doesn't talk to a Runner it turns away, so it can't put its Sessions to sleep. Following the Hub's commit is the only way the Runner gets back, so it does, without a drain.
+- **The Hub's own machine, when its Runner can't follow.** `claude-hub update` moves the checkout the Hub and its Runner share, then the Hub drains the Runner and the Runner restarts on the commit already checked out. When the Runner can't do that (it's from before this feature, or its service file changed, which only reinstalling the service loads), `update` restarts its service directly, as it did before.
+
+The Hub hears of a push from `claude-hub update` through its database, written before the CLI restarts it, rather than through a running Hub: the CLI works the same whether the Hub is up or not.
+
 ## Considered options
 
 - **Each machine updates by hand.** No Hub reaching into Runners, but Runners drift behind the Hub, and a Runner missing a new tool fails in confusing ways.

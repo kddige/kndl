@@ -16,6 +16,7 @@ An install keeps everything in its home, `~/.claude-hub` (or `CLAUDE_HUB_HOME`):
 | `~/.claude-hub/runner.env` | The Runner's settings, with its `RUNNER_TOKEN`. Readable only by you. |
 | `~/.claude-hub/github-app-<id>.pem` | The GitHub App's private key, when onboard created the App. Readable only by you. Back it up with `hub.env`, or generate another in the App's settings. |
 | `~/.claude-hub/hub.db` | The Hub's database. Back it up together with `hub.env`. |
+| `~/.claude-hub/runner-update.json` | The Runner's update under way, or its last failed one: what it moved from, so it can go back, and the error it reports to the Hub. An update is done once the Hub welcomes the Runner on the new commit; a failed one is kept until the checkout moves again, so a restarted Hub still hears of it. |
 | `~/.claude-hub/hub.db.lock` | The lock the running Hub holds, so a second Hub or a `secrets reset` on the same database is refused. The operating system drops it when the Hub ends. |
 | `~/.claude-hub/sessions/` | The Runner's sessions root, one directory per Session. |
 | `~/.claude-hub/claude-code/` | Linux builds of Claude Code, for Sandboxes' tool bridges. |

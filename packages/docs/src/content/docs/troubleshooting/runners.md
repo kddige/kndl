@@ -125,11 +125,65 @@ and `claude-hub status` says the Hub doesn't accept the token.
 
 ## A Runner is behind the Hub
 
-**What you see.** The Runners page marks a Runner **behind the Hub**, or **not the Hub's commit**.
+**What you see.** The Runners page marks a Runner **behind the Hub**, or **not the Hub's commit**. Starting a Session on it, or waking one of its Sessions, fails with:
 
-**Why.** It runs an older commit of claude-hub than the Hub, or one the Hub's history doesn't have, such as another branch's. Runners report their commit when they connect; a Runner from before that is listed with **Version unknown**.
+```
+build-box: this Runner needs an update. Update it on the Runners page.
+```
 
-**Fix.** On the Runner's machine, run `claude-hub update`, which restarts it on the latest commit. Nothing breaks in the meantime as long as both speak the same protocol version; when they don't, the Hub turns the Runner away and its log says which side to update.
+**Why.** It runs an older commit of claude-hub than the Hub, or one the Hub's history doesn't have, such as another branch's. A new or woken Session may need what the Hub's commit added, so the Hub starts and wakes none there; Sessions already running there go on, and prompts to its Asleep Sessions wait in their queue. Runners report their commit when they connect; a Runner from before that is listed with **Version unknown**.
+
+**Fix.** Press **Update** on its row ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)). A row without **Update** says why the Runner doesn't update itself:
+
+- It runs from a checkout (`bun run runner`): pull the checkout to the Hub's commit and restart it.
+- It's from before Runners followed the Hub, or isn't run as the claude-hub service: run `claude-hub update` on its machine.
+
+While it updates, Sessions fail with `build-box: this Runner is updating. Sessions start and wake there again once it is back.`
+
+## A Runner refuses to update
+
+**What you see.** The Runner's row says **refuses: not on main**:
+
+```
+1a2b3c4d5e6f isn't on origin/main. To follow any commit, set RUNNER_UPDATE_ANY_COMMIT=1 in the Runner's runner.env.
+```
+
+or **refuses: commit not on origin** (`origin has no commit 1a2b3c4d5e6f: push it before the Hub's Runners can follow it.`), or **couldn't check the commit** (`It couldn't fetch from origin: …`).
+
+**Why.** A Runner moves only to a commit it can fetch, and by default only to one on `origin/main`, so a Hub running a branch or an unpushed commit can't move its Runners there unasked.
+
+**Fix.** For **not on main**: run the Hub on `main`, or, to let this Runner follow any commit, add `RUNNER_UPDATE_ANY_COMMIT=1` to its `runner.env`, restart it with `claude-hub runner stop` and `claude-hub runner start`, and press **Update** again. For **not on origin**: push the commit the Hub runs. For **couldn't check**: the Runner's machine can't fetch from origin; run `git fetch` in its install, `~/.claude-hub/app`, to see why (the same credentials `claude-hub update` uses).
+
+## A Runner's update failed
+
+**What you see.** The Runner's row says **update failed**:
+
+```
+Moving to 1a2b3c4d5e6f failed, so it went back to the commit it ran: bun install failed: …
+```
+
+**Why.** A step of the update failed: checking out the commit, `bun install`, building the mod, the check that the Runner loads, or the Runner, restarted on the new commit, didn't get the Hub's welcome in three starts. The Runner went back to the commit it ran, rebuilt it and reconnected, and its Sessions wake there. If going back failed too, the row says `and so did going back; see its log`.
+
+**Fix.** Read `claude-hub logs runner` on its machine for the full output, fix the cause (often the network, or disk space), and press **Update** again. The Runner doesn't try the same commit again by itself. If going back failed, run `claude-hub update` on its machine, which puts the install back in order.
+
+## The Hub turns the Runner away
+
+**What you see.** The Runner logs, and tries again every minute:
+
+```
+The Hub turned this Runner away: Protocol version mismatch: the peer speaks version 1, this side speaks version 2. Update the peer.
+Updating this Runner to the Hub's commit (the Hub runs 1a2b3c4d5e6f on main).
+```
+
+or, for a Runner that doesn't update itself:
+
+```
+To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f on main): run `claude-hub update` on this machine. Retrying meanwhile.
+```
+
+**Why.** The Hub and the Runner speak different protocol versions. The Hub's answer always says which commit it runs, whatever the version, so a Runner that updates itself moves to it, as it would for **Update**, and restarts. Its Sessions keep running in tmux meanwhile; the Hub can't put them to sleep while it turns the Runner away.
+
+**Fix.** Usually nothing: the Runner connects again on the Hub's commit. If it can't follow (the log says it failed to update to that commit, or how to update it), run `claude-hub update` on its machine, or for a checkout, pull it to the Hub's commit and restart `bun run runner`.
 
 ## Its Sessions are Frozen
 
