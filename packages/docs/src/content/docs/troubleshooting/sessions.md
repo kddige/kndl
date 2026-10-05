@@ -43,14 +43,13 @@ and, under it, **Show Claude Code's last output**.
 
 **Why.** Claude Code ended on its own rather than being put to sleep: it crashed, refused to start, or was quit from its terminal. Exit code 0 means it quit normally, as after `/exit`. What it printed before it exited says why.
 
-**Fix.** Press **Show Claude Code's last output** to read the last lines its terminal showed (up to 40), as plain text. Sensitive values of the Repo's Environment are redacted there, as in the terminal. The Runner's log has the same lines, unredacted, in a warning:
+**Fix.** Press **Show Claude Code's last output** to read the last lines its terminal showed (up to 40), as plain text. Sensitive values of the Repo's Environment are redacted there, as in the terminal. The Runner's log only notes the exit, never the output itself, since only the Hub can redact it:
 
 ```
-WARN (#2): Session <id> exited with 1. Its last output:
-error: The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.
+WARN (#2): Session <id> exited with 1; its last 3 line(s) of output are on the Session's page
 ```
 
-Read it with `claude-hub logs runner`, or the Runner's own output when you run it from a checkout. Fix what it names, then send a prompt or press **Wake now**: the output stays under the banner until the Session wakes. Some causes:
+Fix what the output names, then send a prompt or press **Wake now**: the output stays under the banner until the Session wakes. Some causes:
 
 - `The current working directory was deleted`: the Runner's tmux server was started by another process, from a directory since deleted. See [Sessions exit at once with "The current working directory was deleted"](/troubleshooting/runners/#sessions-exit-at-once-with-the-current-working-directory-was-deleted).
 - A sign-in or usage message: Claude Code's login on that Runner needs attention. Run `claude` there as the Runner's user.

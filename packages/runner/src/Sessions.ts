@@ -207,7 +207,14 @@ export const SessionsLive = Layer.effect(
           modTokens.delete(sessionId)
           const exited = `Session ${sessionId} exited with ${exitCode ?? "unknown status"}`
           const log = exitCode === 0 ? Effect.logInfo : Effect.logWarning
-          yield* log(output === "" ? exited : `${exited}. Its last output:\n${output}`)
+          // Only the Hub knows the Environment's Sensitive values, so the output itself goes to the
+          // Hub, which redacts it, and never into the Runner's log file.
+          const lines = output === "" ? 0 : output.split("\n").length
+          yield* log(
+            lines === 0
+              ? exited
+              : `${exited}; its last ${lines} line(s) of output are on the Session's page`,
+          )
           yield* tmux.kill(sessionId)
           yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
           yield* sandboxes.stop(sessionId, "Sleep")
