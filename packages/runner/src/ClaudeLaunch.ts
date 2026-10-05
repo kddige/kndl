@@ -1,5 +1,6 @@
-import type { ClaudeSessionId, SessionId } from "@claude-hub/protocol"
+import type { BranchName, ClaudeSessionId, RepoName, SessionId } from "@claude-hub/protocol"
 import { ToolsSocketVariable } from "@claude-hub/protocol"
+import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 
 /**
  * The tools Claude Code keeps (ADR 0001): the file and command tools, which the mod answers from
@@ -18,13 +19,20 @@ export const ClaudeTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "Gl
  */
 export const ClaudeFlagSettings = { disableSkillShellExecution: true, autoMemoryEnabled: false }
 
-/** The environment variables the mod reads to reach the Hub. */
+/** The environment variables the mod reads to reach the Hub, and to tell the model about the Sandbox. */
 export const ModEnvironment = {
   hubUrl: "CLAUDE_HUB_URL",
   sessionId: "CLAUDE_HUB_SESSION_ID",
   modToken: "CLAUDE_HUB_MOD_TOKEN",
   /** The Unix socket of the Session's tool bridge, which answers the routed tools. */
   toolsSocket: ToolsSocketVariable,
+  /**
+   * Where the Workspace is in the Sandbox, the Repo and the Work branch: the model is told these,
+   * not the host's directory and platform, which Claude Code would tell it (#127).
+   */
+  workspace: "CLAUDE_HUB_WORKSPACE",
+  repo: "CLAUDE_HUB_REPO",
+  workBranch: "CLAUDE_HUB_WORK_BRANCH",
 } as const
 
 export interface ClaudeLaunchOptions {
@@ -35,6 +43,8 @@ export interface ClaudeLaunchOptions {
   readonly modToken: string
   /** The Session's tool bridge socket. */
   readonly toolsSocket: string
+  readonly repo: RepoName
+  readonly workBranch: BranchName
   /** Start a new conversation with this id, or resume an existing one (waking an Asleep Session). */
   readonly conversation:
     | { readonly _tag: "New"; readonly id: string }
@@ -84,6 +94,9 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       [ModEnvironment.sessionId]: options.sessionId,
       [ModEnvironment.modToken]: options.modToken,
       [ModEnvironment.toolsSocket]: options.toolsSocket,
+      [ModEnvironment.workspace]: workspaceGuestPath,
+      [ModEnvironment.repo]: options.repo,
+      [ModEnvironment.workBranch]: options.workBranch,
     },
   }
 }

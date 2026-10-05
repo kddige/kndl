@@ -10,10 +10,12 @@ export {
   clip,
   promptFromParticipant,
   resultSummary,
+  sandboxEnvironment,
   sharedSessionNote,
   turnEndReason,
   turnUsage,
 } from "./HubMessages.ts"
+export type { SandboxFacts } from "./HubMessages.ts"
 export { newCallId, ReadBeforeEdit, runInSandbox } from "./ToolBridgeClient.ts"
 export type { BridgeExchange, ToolAnswer } from "./ToolBridgeClient.ts"
 export { decideTool, startsShellMode, toolArguments } from "./ToolPolicy.ts"

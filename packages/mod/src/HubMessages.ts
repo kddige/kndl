@@ -133,6 +133,41 @@ export const sharedSessionNote = [
   "the repository is checked out; nothing you run reaches the machine Claude Code runs on.",
 ].join(" ")
 
+/** What the Runner tells the mod about the Session's Sandbox (the Runner's ClaudeLaunch.ts). */
+export interface SandboxFacts {
+  /** Where the Workspace, the Repo's checkout, is mounted in the Sandbox. */
+  readonly workspace: string
+  readonly repo: string | undefined
+  readonly workBranch: string | undefined
+}
+
+/**
+ * What the model is told about where its tools run, in the system prompt (#127).
+ *
+ * Claude Code's own environment block describes the host it runs on: its empty per-Session
+ * directory, which is no git repository, and the host's platform and OS. That is not where the
+ * tools run. Claude Code also leaves it off a prompt a mod submits, as the Hub's are, and sends it
+ * only with a later tool result, so a Session driven from the Hub got it late, after the model
+ * had already guessed. This section replaces it, and is in the system prompt from the first request. The Sandbox is always Linux, and its tool
+ * server runs commands with bash (the Runner's ToolBridge.ts).
+ */
+export const sandboxEnvironment = (facts: SandboxFacts) =>
+  [
+    "# Sandbox environment",
+    "Your file and command tools run in this Session's sandbox, a Linux machine of its own:",
+    ` - Primary working directory: ${facts.workspace}`,
+    " - Is a git repository: true",
+    ...(facts.repo === undefined
+      ? []
+      : [` - Repository: ${facts.repo}, checked out at ${facts.workspace}`]),
+    ...(facts.workBranch === undefined
+      ? []
+      : [` - Work branch: ${facts.workBranch}, the branch this Session was started on`]),
+    " - Platform: linux",
+    " - Shell: bash",
+    "Claude Code itself runs on another machine, which your tools never reach: use the paths above, not a path or platform you see for that machine.",
+  ].join("\n")
+
 const maxQueued = 5_000
 
 /**
