@@ -64,7 +64,7 @@ test("lists each Runner with its login, version, last connection and Sessions", 
   expect(studio).toContain("online")
   expect(studio).toContain("alice@example.com")
   expect(studio).toContain("824de4a1f0c3 (main)")
-  expect(studio).toContain("2 Sessions")
+  expect(studio).toContain("5 Sessions")
   expect(ci).toContain("offline")
   expect(ci).toContain("behind the Hub")
   expect(ci).toContain("Last seen 3h ago")

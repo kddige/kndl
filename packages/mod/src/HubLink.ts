@@ -7,12 +7,14 @@
 // runtime, which has no timers of its own, and under `bun test`.
 
 import { MaxCommandWaitMs } from "@claude-hub/protocol"
-import type { ModCommand } from "@claude-hub/protocol"
+import type { ChildReply, ChildRequest, ModCommand } from "@claude-hub/protocol"
 import {
   checkEvent,
+  childRequestBody,
   eventsBody,
   helloBody,
   Outbox,
+  readChildReply,
   readCommands,
   readHelloReply,
 } from "./HubMessages.ts"
@@ -101,6 +103,37 @@ export class HubLink {
     }
     this.outbox.push(checked.event)
     this.scheduleFlush()
+  }
+
+  /**
+   * Asks the Hub for one of the Child Session tools (`POST /mod/children`): its reply, or
+   * `{ failed }` when there is none.
+   */
+  async askChildren(request: ChildRequest): Promise<ChildReply | { readonly failed: string }> {
+    // A 409 means the Hub restarted and forgot the mod: say hello again, once.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (this.isStopped) return { failed: "the link to the Hub is stopped" }
+      if (!this.isGreeted && !(await this.sayHello()))
+        return { failed: "the Hub refused this Session's link" }
+      let response: { readonly status: number; readonly text: string }
+      try {
+        response = await this.options.fetch(`${this.url}/mod/children`, {
+          method: "POST",
+          headers: this.headers,
+          body: childRequestBody(request),
+        })
+      } catch (error) {
+        return { failed: `the Hub could not be reached: ${error}` }
+      }
+      if (response.status === 409) {
+        this.isGreeted = false
+        continue
+      }
+      const reply = response.status === 200 ? readChildReply(response.text) : undefined
+      if (reply !== undefined) return reply
+      return { failed: `the Hub answered ${response.status}` }
+    }
+    return { failed: "the Hub kept asking this Session's link to say hello" }
   }
 
   /** Posts what is queued now, as when the session ends. */

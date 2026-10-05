@@ -19,7 +19,7 @@ Everything goes through the Hub: Runners, browsers and each Session's mod all co
 | `GET /ws/runner` | a Runner | `Authorization: Bearer <Runner token>` |
 | `POST /runner/pair` | `claude-hub runner join` | none: the [Pairing code](#pairing) in the body is the credential. |
 | `GET /runner/connection` | `claude-hub runner join`, onboard | `Authorization: Bearer <Runner token>` |
-| `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands` | one Session's mod | `Authorization: Bearer <mod token>` |
+| `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands`, `POST /mod/children` | one Session's mod | `Authorization: Bearer <mod token>` |
 | anything else | a browser | none: the web UI's build. |
 
 Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair` and the web UI needs a credential. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
@@ -80,7 +80,7 @@ A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self":
 
 `claude-hub update` on the Hub's machine leaves the Hub a note of the commit it moved to, in its database, before restarting it; the restarted Hub sends `CheckUpdate` to each Runner the note covers as it says hello, unless the Runner already runs the commit or last failed to update to it.
 
-`StartSession` carries what the Runner needs to start or wake a Session: its Repo, Work branch and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/explanation/git-from-sessions/#in-the-sandbox)). `gitIdentity` is optional, so a Runner still starts Sessions for a Hub from before it, without setting an identity.
+`StartSession` carries what the Runner needs to start or wake a Session: its Repo, Work branch and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/explanation/git-from-sessions/#in-the-sandbox)). `gitIdentity` is optional, so a Runner still starts Sessions for a Hub from before it, without setting an identity. For a Child Session it also carries `parent`, its Parent Session's `id` and `title`: the Runner tells Claude Code whose child it is, and sets `CLAUDE_HUB_PARENT_SESSION_ID` ([What a Runner gives Claude Code](/reference/configuration/#what-a-runner-gives-claude-code)).
 
 `SessionStopped` says why Claude Code stopped: `Requested`, after a `StopSession`, or `Exited` on its own, with its exit code. For `Exited` it may carry `output`, the last lines Claude Code's terminal showed, as plain text of at most 4,000 characters. `output` is optional, so a Runner from before it still connects. The Hub redacts it as it does terminal frames and shows it on the Session while it is Asleep.
 
@@ -95,6 +95,21 @@ A WebSocket per browser tab.
 | Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo` |
 | Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; terminal frames; `CommandFailed` |
 
+Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `parentId` when it is a Child Session: its Parent Session's id. No message creates a Child Session from the browser.
+
+### Prompts from other Sessions
+
+A prompt one Session sends another, a Parent Session's message or a Child Session's Report ([ADR 0012](/reference/decisions/0012-parent-and-child-sessions/)), goes through the Prompt queue like a person's. Its `QueuedPrompt` carries `fromSession`: `FromParentSession` or `FromChildSession`, whose `session` is the sending Session's `id` and `title`; its `sender` is the Creator the Sessions run for; and its `text` is what the model reads, a note from the Hub, then a blank line, then the message:
+
+```
+[Report from Child Session "API docs" (s-2)]
+This is a Report, not a prompt from a person: the final message of a Turn your Child Session just ended. The people in this Session don't see Reports, so relay what matters to them. More Reports may follow while it works.
+
+The reference covers every protocol message now.
+```
+
+A Parent Session's message starts `[Message from your Parent Session "<title>" (<id>)]` instead. From the 20th Turn in a row a Child Session's Parent Session prompted, with no person's prompt to either Session in between, the Report's note has one more line, asking the parent to check that the work is still making progress. The Turn the prompt starts has the same `fromSession` as its `sender` in `TurnStarted`, and the web UI shows the message without the note.
+
 `UpdateRunner { runnerId, now }` updates a Runner from the Runners page; sent again with `now: true` while it waits for Turns, it stops them. Each Runner in `RunnerList` carries its `updater` and, while one is under way or after it ended badly, `update`: `Checking`, `Draining` (with `waitingFor`, the Sessions still Active, and `deadline`), `Applying` (with `step`), `Restarting`, `Refused` (with `refusal`) or `Failed` (with `failure`).
 
 Every Session and Environment command is checked against the person's access to its Repo ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/), [ADR 0009](/reference/decisions/0009-environments/)). A refusal is a `CommandFailed` that reads the same whether the Repo exists or not. `CheckRepo` asks about a Repo up front, as it is entered: `RepoChecked` says `Allowed`, `NotInstalled` (the GitHub App isn't installed on it, or there is no such Repo, with the App's install link) or `NoAccess`. `fresh: true` asks GitHub again rather than the Hub's cache. `RepoAccessLost` tells a client that has lost access to a Repo to drop its Environment, as `SessionRemoved` does each of its Sessions.
@@ -105,7 +120,26 @@ Plain HTTP from the `hub-link` mod inside each Session's Claude Code:
 
 - `POST /mod/hello` once at start, answered with `ModWelcome`.
 - `POST /mod/events` with the Session's Events as they happen: prompts, tool calls and results, Turn starts and ends.
-- `GET /mod/commands`, a long poll: the Hub answers with commands such as `DeliverPrompt` when it has some, or with none after a while. The mod answers a prompt it can't deliver with `PromptFailed`.
+- `GET /mod/commands`, a long poll: the Hub answers with commands such as `DeliverPrompt` when it has some, or with none after a while. The mod answers a prompt it can't deliver with `PromptFailed`. A `DeliverPrompt` with `fromSession` is from another Session: the mod submits its `text` as it is, without the sender's name.
+- `POST /mod/children` with a Child Session tool's request, answered `200` with the Hub's reply.
+
+Each route answers `409` until the mod has said hello.
+
+### Child Session tools
+
+A Session's mod registers these tools for Claude, unless the Session is a Child Session. Claude Code names each `mcp__hub-link__<tool>`. The mod sends each call to the Hub as the body of `POST /mod/children`, and gives Claude the reply as text, or as the tool's error for `ChildRefused`.
+
+| Tool | Input | Request | Reply |
+|---|---|---|---|
+| `create_child` | `task`; optional `name` (its Session name) and `base` (default: the Repo's default branch) | `CreateChild { prompt, name?, baseBranch? }` | `ChildCreated { child }`. The task is queued as the child's first prompt. |
+| `message_child` | `child_id`, `message` | `MessageChild { childId, text }` | `ChildMessaged { child }`. Queued as a prompt; wakes the child if it is Asleep. |
+| `list_children` | none | `ListChildren` | `ChildList { children }`: the caller's Child Sessions that aren't Archived, oldest first. |
+| `read_child` | `child_id` | `ReadChild { childId }` | `ChildRead { child, conversation }`: its recent Turns as text, redacted as its history is, at most 24,000 characters. |
+| `archive_child` | `child_id` | `ArchiveChild { childId }` | `ChildArchived { child }` |
+
+Each `child` is a `ChildSummary`: `id`, `title`, `baseBranch`, `workBranch`, `state`, `working` (a Turn is running), `queued` (prompts in its Prompt queue) and, once a Turn has ended, `lastReport` with its `text` and `at`.
+
+Any request can get `ChildRefused { message }` instead: from a Child Session ("A Child Session can't create Child Sessions of its own: Sessions nest one level deep. …"), for a Session that isn't one of the caller's Child Sessions, or for a Creator who can't use the Repo. The Hub checks `create_child` against the Parent Session's Creator's access to the Repo.
 
 ## Tool bridge
 

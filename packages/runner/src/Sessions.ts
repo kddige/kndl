@@ -284,6 +284,7 @@ export const SessionsLive = Layer.effect(
               repo: request.repo,
               workBranch: request.workBranch,
               conversation: yield* conversationFor(request, directories.claude),
+              ...(request.parent === undefined ? {} : { parent: request.parent }),
             })
             // Its trust may have been dropped since startup, and the dialog would stop the mod.
             yield* trust.ensure

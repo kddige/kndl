@@ -231,11 +231,27 @@ function freeze(turn: MutableTurn): TurnView {
   }
 }
 
+/** How the note the Hub puts before another Session's prompt starts (ADR 0012). */
+const sessionNotes = ["[Message from your Parent Session ", "[Report from Child Session "]
+
 /**
- * The prompt as its sender wrote it. The Hub prefixes a Participant's prompt with `[Name] ` so
- * the model knows who is talking; the chat already says who, so the prefix is dropped.
+ * A prompt from another Session as that Session wrote it: the Hub's note for the model, which
+ * says who sent it and what it is, ends at the first blank line.
+ */
+export function withoutSessionNote(text: string): string {
+  if (!sessionNotes.some((note) => text.startsWith(note))) return text
+  const end = text.indexOf("\n\n")
+  return end === -1 ? text : text.slice(end + 2)
+}
+
+/**
+ * The prompt as its sender wrote it. The Hub prefixes a Participant's prompt with `[Name] `, and
+ * another Session's with a note, so the model knows who is talking; the chat already says who, so
+ * the prefix is dropped.
  */
 export function displayPrompt(text: string, sender: PromptSender): string {
+  if (sender._tag === "FromParentSession" || sender._tag === "FromChildSession")
+    return withoutSessionNote(text)
   if (sender._tag !== "FromParticipant") return text
   const { name, login } = sender.participant
   for (const label of [name, login]) {

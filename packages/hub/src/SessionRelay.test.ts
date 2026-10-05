@@ -6,8 +6,11 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  type ChildReply,
+  type ChildRequest,
   DefaultEnvironmentDraft,
   EnvironmentVersion,
+  LoopGuardExchanges,
   MaxLastOutputLength,
   type ModCommandsEncoded,
   type ModEventsEncoded,
@@ -17,6 +20,7 @@ import {
 } from "@claude-hub/protocol"
 import { Effect, Exit, Option, Redacted } from "effect"
 import { signInCookie } from "./Auth.ts"
+import { oneLevelDeep } from "./ChildSessions.ts"
 import { databaseAt } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
@@ -39,6 +43,8 @@ afterEach(stopAll)
 
 type Command = ModCommandsEncoded["messages"][number]["message"]
 type ModEvent = ModEventsEncoded["messages"][number]
+type ChildRequestJson = typeof ChildRequest.Encoded
+type ChildReplyJson = typeof ChildReply.Encoded
 
 const alice = { id: "dev:alice", login: "alice", name: "alice" }
 const bob = { id: "dev:bob", login: "bob", name: "bob" }
@@ -89,6 +95,13 @@ class Mod {
   /** The prompts delivered since the last poll. */
   async deliveries(waitMs = 0) {
     return (await this.poll(waitMs)).filter((command) => command._tag === "DeliverPrompt")
+  }
+
+  /** Asks at `/mod/children`, as the Session's Child Session tools do. */
+  async children(request: ChildRequestJson): Promise<ChildReplyJson> {
+    const response = await this.request("/mod/children", request)
+    expect(response.status).toBe(200)
+    return (await response.json()) as ChildReplyJson
   }
 }
 
@@ -2053,5 +2066,504 @@ describe("Repo access", () => {
       await stopAll()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+/** The reply, failing the test unless it is a `tag`. */
+function replied<Tag extends ChildReplyJson["_tag"]>(reply: ChildReplyJson, tag: Tag) {
+  expect(reply).toMatchObject({ _tag: tag })
+  return reply as Extract<ChildReplyJson, { _tag: Tag }>
+}
+
+type CreateChildJson = Extract<ChildRequestJson, { _tag: "CreateChild" }>
+
+/** The scene's Session with a Child Session it created, started, and its mod said hello. */
+async function childScene(hub?: TestHub, task: Partial<Omit<CreateChildJson, "_tag">> = {}) {
+  const scene = await sessionScene(hub)
+  const childCreated = replied(
+    await scene.mod.children({ _tag: "CreateChild", prompt: "Write the docs", ...task }),
+    "ChildCreated",
+  )
+  const childId = childCreated.child.id
+  const childStart = await scene.runner.take("StartSession", (m) => m.sessionId === childId)
+  const childMod = new Mod(scene.hub, childId, childStart.modToken)
+  expect((await childMod.hello()).status).toBe(200)
+  scene.runner.send({ _tag: "SessionStarted", sessionId: childId, environmentVersion: 1 })
+  await scene.web.take("SessionUpdated", (m) => m.session.id === childId && !m.session.starting)
+  return { ...scene, childCreated, childId, childStart, childMod }
+}
+
+/** A Session's title, as a prompt it sends names it, while it has no name: its Work branch. */
+const branchTitle = (sessionId: string) => `claude/${sessionId}`
+
+const fromParent = (parentId: string): Sender => ({
+  _tag: "FromParentSession",
+  session: { id: parentId, title: branchTitle(parentId) },
+})
+
+const fromChild = (childId: string, title = branchTitle(childId)): Sender => ({
+  _tag: "FromChildSession",
+  session: { id: childId, title },
+})
+
+/** A whole Turn that ends, after a tool call, saying `text`. */
+const turnEnding = (
+  turnId: string,
+  text: string,
+  sender?: Sender,
+  promptId?: string,
+): Array<ModEvent> => [
+  turnStarted(turnId, promptId, sender),
+  { _tag: "TextDelta", turnId, text: "Let me look." },
+  { _tag: "ToolCallStarted", turnId, toolCallId: `${turnId}-call`, tool: "Bash", input: "ls" },
+  {
+    _tag: "ToolCallEnded",
+    turnId,
+    toolCallId: `${turnId}-call`,
+    tool: "Bash",
+    outcome: "Succeeded",
+    output: "README.md\n",
+  },
+  { _tag: "TextDelta", turnId, text },
+  turnEnded(turnId),
+]
+
+const reportNote = (childId: string, title = branchTitle(childId)) =>
+  [
+    `[Report from Child Session "${title}" (${childId})]`,
+    "This is a Report, not a prompt from a person: the final message of a Turn your Child Session just ended. The people in this Session don't see Reports, so relay what matters to them. More Reports may follow while it works.",
+  ].join("\n")
+
+const loopGuardLine = (exchanges: number) =>
+  `You and this Child Session have gone back and forth ${exchanges} times with no person's prompt in between. Check that the work is still making progress before you message it again; if it isn't, stop and tell the people here.`
+
+describe("Child Sessions", () => {
+  test("a Session creates one in its Repo, for its Creator, its task queued from the Parent Session", async () => {
+    const { hub, sessionId, childCreated, childId, childStart, childMod } = await childScene(
+      undefined,
+      { name: "Docs" },
+    )
+    const parent = { id: sessionId, title: branchTitle(sessionId) }
+
+    expect(childCreated.child).toMatchObject({
+      id: childId,
+      title: "Docs",
+      baseBranch: "main",
+      workBranch: branchTitle(childId),
+      state: "Active",
+      working: true,
+      queued: 1,
+    })
+    // Without the GitHub App to ask for the default branch, its parent's base.
+    expect(childStart).toEqual({
+      _tag: "StartSession",
+      sessionId: childId,
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+      workBranch: branchTitle(childId),
+      modToken: childStart.modToken,
+      environment: expect.any(Object),
+      gitIdentity: { name: "alice", email: "alice@dev-login.invalid" },
+      parent,
+    })
+    const bobWeb = await openWeb(hub, "bob")
+    expect(bobWeb.sessions.sessions.find((session) => session.id === childId)).toMatchObject({
+      name: "Docs",
+      parentId: sessionId,
+      repo: "kddige/claude-hub",
+      creator: alice,
+    })
+    expect(
+      bobWeb.sessions.sessions.find((session) => session.id === sessionId)?.parentId,
+    ).toBeUndefined()
+
+    expect(await childMod.deliveries(500)).toEqual([
+      {
+        _tag: "DeliverPrompt",
+        sessionId: childId,
+        promptId: expect.any(String),
+        text: `[Message from your Parent Session "${parent.title}" (${sessionId})]\n\nWrite the docs`,
+        sender: alice,
+        fromSession: { _tag: "FromParentSession", session: parent },
+      },
+    ])
+  })
+
+  test("Sessions nest one level deep", async () => {
+    const { runner, web, childMod } = await childScene()
+
+    expect(await childMod.children({ _tag: "CreateChild", prompt: "Split it up" })).toEqual({
+      _tag: "ChildRefused",
+      message: oneLevelDeep,
+    })
+    expect(await runner.untaken("StartSession")).toEqual([])
+    expect(await web.untaken("SessionCreated")).toEqual([])
+  })
+
+  test("every Turn a child ends goes to its parent as a Report, whoever prompted it", async () => {
+    const { web, sessionId, mod, childId, childMod } = await childScene(undefined, {
+      name: "Docs",
+    })
+    const [task] = await childMod.deliveries(500)
+    await mod.poll()
+
+    await childMod.post(
+      ...turnEnding("c-1", "The docs are written.", fromParent(sessionId), task?.promptId),
+    )
+    const [report] = await mod.deliveries(500)
+    expect(report).toEqual({
+      _tag: "DeliverPrompt",
+      sessionId,
+      promptId: expect.any(String),
+      text: `${reportNote(childId, "Docs")}\n\nThe docs are written.`,
+      // Queued on its Creator's behalf, from the Child Session.
+      sender: alice,
+      fromSession: { _tag: "FromChildSession", session: { id: childId, title: "Docs" } },
+    })
+
+    // A person prompts the child: its parent hears of that Turn too, once its own has ended.
+    web.send({ _tag: "SendPrompt", sessionId: childId, text: "Add a README too" })
+    const [prompted] = await childMod.deliveries(500)
+    await childMod.post(
+      ...turnEnding(
+        "c-2",
+        "README added.",
+        { _tag: "FromParticipant", participant: alice },
+        prompted?.promptId,
+      ),
+    )
+    expect(await mod.deliveries(200)).toEqual([])
+    await mod.post(
+      turnStarted("p-1", report?.promptId, fromChild(childId, "Docs")),
+      turnEnded("p-1"),
+    )
+    const [second] = await mod.deliveries(500)
+    expect(second?.text).toBe(`${reportNote(childId, "Docs")}\n\nREADME added.`)
+
+    // A Turn with no text after its last tool call says so.
+    await childMod.post(turnStarted("c-3", undefined, fromParent(sessionId)), {
+      _tag: "ToolCallStarted",
+      turnId: "c-3",
+      toolCallId: "c-3-call",
+      tool: "Bash",
+      input: "ls",
+    })
+    await childMod.post({ _tag: "TurnEnded", turnId: "c-3", reason: "Stopped", durationMs: 5 })
+    await mod.post(
+      turnStarted("p-2", second?.promptId, fromChild(childId, "Docs")),
+      turnEnded("p-2"),
+    )
+    expect((await mod.deliveries(500)).map((delivery) => delivery.text)).toEqual([
+      `${reportNote(childId, "Docs")}\n\n(The Child Session's Turn was stopped before it wrote a final message.)`,
+    ])
+  })
+
+  test("a Report wakes an Asleep parent, which gets it once its new mod says hello", async () => {
+    const scene = await childScene()
+    const { hub, runner, web, sessionId, childId, childMod } = scene
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await asleep(scene)
+    const [task] = await childMod.deliveries(500)
+
+    await childMod.post(...turnEnding("c-1", "All done.", fromParent(sessionId), task?.promptId))
+    const wake = await runner.take("StartSession", (m) => m.sessionId === sessionId)
+    expect(wake).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(wake.parent).toBeUndefined()
+    expect(
+      (await web.take("SessionEventLogged", stateChanged("Active"))).entry.event,
+    ).toMatchObject({
+      message: `Woken on mac for a Report from Child Session "${branchTitle(childId)}"`,
+    })
+
+    runner.send({ _tag: "SessionStarted", sessionId })
+    const woken = new Mod(hub, sessionId, wake.modToken)
+    expect((await woken.hello()).status).toBe(200)
+    expect((await woken.deliveries(500)).map((delivery) => delivery.text)).toEqual([
+      `${reportNote(childId)}\n\nAll done.`,
+    ])
+  })
+
+  test(`after ${LoopGuardExchanges} exchanges with no person's prompt, the Report asks the parent to check its progress`, async () => {
+    const { web, sessionId, mod, childId, childMod } = await childScene()
+    await childMod.deliveries(500)
+    await mod.poll()
+
+    /** The child's Turn, prompted by its parent, and the Report its parent gets of it. */
+    const exchange = async (round: number, sender = fromParent(sessionId)) => {
+      await childMod.post(...turnEnding(`c-${round}`, `Round ${round} done.`, sender))
+      const [report] = await mod.deliveries(500)
+      await mod.post(
+        turnStarted(`p-${round}`, report?.promptId, fromChild(childId)),
+        turnEnded(`p-${round}`),
+      )
+      return defined(report).text
+    }
+
+    for (let round = 1; round < LoopGuardExchanges; round++) {
+      expect(await exchange(round)).not.toContain("back and forth")
+    }
+    expect(await exchange(LoopGuardExchanges)).toBe(
+      `${reportNote(childId)}\n${loopGuardLine(LoopGuardExchanges)}\n\nRound ${LoopGuardExchanges} done.`,
+    )
+    // It is a note, not a block: the next one comes, still asking.
+    expect(await exchange(LoopGuardExchanges + 1)).toContain(loopGuardLine(LoopGuardExchanges + 1))
+
+    // A person's prompt to the parent starts the count again.
+    web.send({ _tag: "SendPrompt", sessionId, text: "How is it going?" })
+    const [asked] = await mod.deliveries(500)
+    await mod.post(
+      turnStarted("p-asked", asked?.promptId, { _tag: "FromParticipant", participant: alice }),
+      turnEnded("p-asked"),
+    )
+    expect(await exchange(100)).toBe(`${reportNote(childId)}\n\nRound 100 done.`)
+  })
+
+  test("a parent messages, lists and reads its children; a message wakes an Asleep child", async () => {
+    const { hub, runner, web, sessionId, mod, childId, childMod } = await childScene(undefined, {
+      name: "Docs",
+    })
+    const [task] = await childMod.deliveries(500)
+    await childMod.post(
+      ...turnEnding("c-1", "The docs are written.", fromParent(sessionId), task?.promptId),
+    )
+
+    const list = replied(await mod.children({ _tag: "ListChildren" }), "ChildList")
+    expect(list.children).toEqual([
+      {
+        id: childId,
+        title: "Docs",
+        baseBranch: "main",
+        workBranch: branchTitle(childId),
+        state: "Active",
+        working: false,
+        queued: 0,
+        lastReport: { text: "The docs are written.", at: expect.any(Number) },
+      },
+    ])
+    const read = replied(await mod.children({ _tag: "ReadChild", childId }), "ChildRead")
+    expect(read.conversation).toBe(
+      [
+        `[Active: Created by its Parent Session "${branchTitle(sessionId)}"; started on mac from main]`,
+        "[From the Parent Session]",
+        "Let me look.",
+        "[Tool call: Bash]",
+        "The docs are written.",
+        "[Turn ended: Answered]",
+      ].join("\n\n"),
+    )
+
+    // Asleep, a message wakes it, and it still knows its parent.
+    web.send({ _tag: "SleepSession", sessionId: childId })
+    await runner.take("StopSession", (m) => m.sessionId === childId)
+    runner.send({ _tag: "SessionStopped", sessionId: childId, reason: "Requested", exitCode: 143 })
+    await web.take(
+      "SessionUpdated",
+      (m) => m.session.id === childId && m.session.state === "Asleep",
+    )
+    const messaged = replied(
+      await mod.children({ _tag: "MessageChild", childId, text: "Now the changelog" }),
+      "ChildMessaged",
+    )
+    expect(messaged.child).toMatchObject({ state: "Active", queued: 1, working: true })
+    const wake = await runner.take("StartSession", (m) => m.sessionId === childId)
+    expect(wake.parent).toEqual({ id: sessionId, title: branchTitle(sessionId) })
+    runner.send({ _tag: "SessionStarted", sessionId: childId })
+    const woken = new Mod(hub, childId, wake.modToken)
+    expect((await woken.hello()).status).toBe(200)
+    expect((await woken.deliveries(500)).map((delivery) => delivery.text)).toEqual([
+      `[Message from your Parent Session "${branchTitle(sessionId)}" (${sessionId})]\n\nNow the changelog`,
+    ])
+  })
+
+  test("a Session reaches only its own children", async () => {
+    const { hub, runner, web, sessionId, mod, childId } = await childScene()
+    web.send({
+      _tag: "CreateSession",
+      requestId: "req-2",
+      repo: "kddige/claude-hub",
+      baseBranch: "main",
+    })
+    const otherStart = await runner.take("StartSession")
+    const otherMod = new Mod(hub, otherStart.sessionId, otherStart.modToken)
+    expect((await otherMod.hello()).status).toBe(200)
+
+    const notYours = {
+      _tag: "ChildRefused" as const,
+      message: `Session ${childId} is not one of your Child Sessions.`,
+    }
+    for (const request of [
+      { _tag: "ArchiveChild", childId },
+      { _tag: "MessageChild", childId, text: "Stop that" },
+      { _tag: "ReadChild", childId },
+    ] as const) {
+      expect(await otherMod.children(request)).toEqual(notYours)
+    }
+    expect(replied(await otherMod.children({ _tag: "ListChildren" }), "ChildList")).toEqual({
+      _tag: "ChildList",
+      children: [],
+    })
+    // Nor is a Session its own child, or its parent's sibling.
+    expect(await mod.children({ _tag: "ArchiveChild", childId: sessionId })).toEqual({
+      _tag: "ChildRefused",
+      message: `Session ${sessionId} is not one of your Child Sessions.`,
+    })
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    // Its own parent can archive it, on its Creator's behalf.
+    joinSession(web, childId)
+    await web.take("SessionHistory")
+    expect(
+      replied(await mod.children({ _tag: "ArchiveChild", childId }), "ChildArchived").child,
+    ).toMatchObject({ id: childId, state: "Archived" })
+    expect(await runner.take("StopSession")).toEqual({
+      _tag: "StopSession",
+      sessionId: childId,
+      reason: "Archive",
+    })
+    expect((await web.take("SessionEventLogged", stateChanged("Archived"))).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Archived",
+      by: alice,
+      message: `Archived by its Parent Session "${branchTitle(sessionId)}"`,
+    })
+    expect(replied(await mod.children({ _tag: "ListChildren" }), "ChildList").children).toEqual([])
+    expect(await mod.children({ _tag: "MessageChild", childId, text: "hello?" })).toMatchObject({
+      _tag: "ChildRefused",
+    })
+  })
+
+  test("archiving a parent archives its children; restoring it restores only the parent", async () => {
+    const { hub, runner, web, sessionId, mod, childId } = await childScene()
+    const second = replied(
+      await mod.children({ _tag: "CreateChild", prompt: "Fix the tests" }),
+      "ChildCreated",
+    ).child.id
+    await runner.take("StartSession", (m) => m.sessionId === second)
+    joinSession(web, childId)
+    await web.take("SessionHistory")
+
+    web.send({ _tag: "ArchiveSession", sessionId })
+    const stopped = []
+    for (let index = 0; index < 3; index++) {
+      stopped.push(await runner.take("StopSession", (m) => m.reason === "Archive"))
+    }
+    expect(stopped.map((m) => m.sessionId).toSorted()).toEqual(
+      [sessionId, childId, second].toSorted(),
+    )
+    for (const id of [sessionId, childId, second]) {
+      const update = await web.take(
+        "SessionUpdated",
+        (m) => m.session.id === id && m.session.state === "Archived",
+      )
+      expect(update.session.archived?.by).toEqual(alice)
+    }
+    expect((await web.take("SessionEventLogged", stateChanged("Archived"))).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Archived",
+      by: alice,
+      message: `Archived with its Parent Session "${branchTitle(sessionId)}"`,
+    })
+    for (const id of [sessionId, childId, second]) {
+      runner.send({ _tag: "SessionStopped", sessionId: id, reason: "Requested", exitCode: 143 })
+    }
+
+    web.send({ _tag: "RestoreSession", sessionId })
+    await web.take(
+      "SessionUpdated",
+      (m) => m.session.id === sessionId && m.session.state === "Asleep",
+    )
+    // Its children stay in the archive.
+    const later = await openWeb(hub, "bob")
+    expect(
+      later.sessions.sessions
+        .filter((session) => session.parentId === sessionId)
+        .map((session) => session.state),
+    ).toEqual(["Archived", "Archived"])
+
+    // A child restored by hand is its parent's child again.
+    web.send({ _tag: "RestoreSession", sessionId: childId })
+    const restored = await web.take(
+      "SessionUpdated",
+      (m) => m.session.id === childId && m.session.state === "Asleep",
+    )
+    expect(restored.session.parentId).toBe(sessionId)
+  })
+
+  describe("with the GitHub App", () => {
+    const keys = appKeyPair()
+    let github: StandInGitHub
+
+    beforeAll(() => {
+      github = StandInGitHub.start(keys.publicKey)
+    })
+    afterAll(() => github.stop())
+
+    const repo = "kddige/claude-hub"
+    const octocat = { id: "github:1", login: "octocat", name: "octocat" }
+
+    test("a child runs for its parent's Creator, from the Repo's default branch, while they have access", async () => {
+      github.reset()
+      github.installedOn.add(repo)
+      github.grant(repo, "octocat")
+      github.defaultBranches.set(repo, "trunk")
+      const hub = await startHub({
+        config: {
+          devLogin: true,
+          githubAppId: Option.some(appId),
+          githubAppPrivateKey: Option.some(Redacted.make(keys.privateKeyPem)),
+          githubApiUrl: github.url,
+          repoAccessTtlMs: 100,
+        },
+      })
+      const { runner } = await sessionScene(hub)
+      const { token } = await hub.run(
+        Effect.gen(function* () {
+          const signIns = yield* SignIns
+          return yield* signIns.signIn(
+            Participant.make({ ...octocat, id: ParticipantId.make(octocat.id) }),
+          )
+        }),
+      )
+      const octocatWeb = await openWeb(hub, "octocat", `${signInCookie}=${token}`)
+      octocatWeb.send({ _tag: "CreateSession", requestId: "r", repo, baseBranch: "main" })
+      const start = await runner.take("StartSession")
+      const parentMod = new Mod(hub, start.sessionId, start.modToken)
+      expect((await parentMod.hello()).status).toBe(200)
+
+      const child = replied(
+        await parentMod.children({ _tag: "CreateChild", prompt: "Write the docs" }),
+        "ChildCreated",
+      ).child
+      expect(child.baseBranch).toBe("trunk")
+      expect(await runner.take("StartSession", (m) => m.sessionId === child.id)).toMatchObject({
+        baseBranch: "trunk",
+        gitIdentity: { name: "octocat", email: "1+octocat@users.noreply.github.com" },
+      })
+      expect(
+        (await octocatWeb.take("SessionUpdated", (m) => m.session.id === child.id)).session,
+      ).toMatchObject({ parentId: start.sessionId, creator: octocat })
+
+      // A base it names wins.
+      const named = replied(
+        await parentMod.children({
+          _tag: "CreateChild",
+          prompt: "Backport it",
+          baseBranch: "release",
+        }),
+        "ChildCreated",
+      ).child
+      expect(named.baseBranch).toBe("release")
+      await runner.take("StartSession", (m) => m.sessionId === named.id)
+
+      // Its Creator loses access: no more children.
+      github.revoke(repo, "octocat")
+      await Bun.sleep(300)
+      expect(await parentMod.children({ _tag: "CreateChild", prompt: "One more" })).toEqual({
+        _tag: "ChildRefused",
+        message: `octocat, who this Session runs for, has no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`,
+      })
+      expect(await runner.untaken("StartSession")).toEqual([])
+    })
   })
 })

@@ -3,6 +3,8 @@
 // the Hub refuse a whole batch, and every reply is decoded before the mod acts on it.
 
 import {
+  ChildReply,
+  ChildRequest,
   MaxToolSummaryLength,
   ModCommands,
   ModEvent,
@@ -61,6 +63,18 @@ export const checkEvent = (
 /** The body of `POST /mod/events`, from events {@link checkEvent} passed. */
 export const eventsBody = (messages: ReadonlyArray<ModEventEncoded>) =>
   JSON.stringify({ messages } satisfies ModEventsEncoded)
+
+/** The body of `POST /mod/children`. */
+export const childRequestBody = (request: ChildRequest) =>
+  JSON.stringify(Schema.encodeSync(ChildRequest)(request))
+
+const decodeChildReply = Schema.decodeUnknownExit(Schema.fromJsonString(ChildReply))
+
+/** Reads the Hub's answer to `POST /mod/children`; undefined when it isn't one. */
+export const readChildReply = (text: string): ChildReply | undefined => {
+  const reply = decodeChildReply(text)
+  return Exit.isSuccess(reply) ? reply.value : undefined
+}
 
 const decodeHelloReply = Schema.decodeUnknownExit(Schema.fromJsonString(ModHelloReply))
 const decodeCommands = Schema.decodeUnknownExit(Schema.fromJsonString(ModCommands))
@@ -128,8 +142,10 @@ export const promptFromParticipant = (sender: Participant, text: string) =>
 export const sharedSessionNote = [
   "This session is shared through Claude Hub: several people may watch it live in a web UI and",
   'send it prompts. A prompt that starts with a name in brackets, such as "[Ada Lovelace] ...",',
-  "came from that person; a prompt without one was typed at the terminal. When it matters who",
-  "asked for what, address people by name. Your file and command tools run in a sandbox VM where",
+  "came from that person; a prompt without one was typed at the terminal. A prompt that starts",
+  'with a note such as "[Report from Child Session ...]" or "[Message from your Parent Session',
+  '..." came from another Claude Hub Session, not a person. When it matters who asked for what,',
+  "address people by name. Your file and command tools run in a sandbox VM where",
   "the repository is checked out; nothing you run reaches the machine Claude Code runs on.",
 ].join(" ")
 

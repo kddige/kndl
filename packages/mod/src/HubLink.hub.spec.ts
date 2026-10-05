@@ -230,3 +230,24 @@ test("after a Hub restart, says hello again and takes commands from after=0", as
     close()
   }
 })
+
+test("asks the Hub for its Child Sessions, saying hello first", async () => {
+  const current = { hub: await startHub({ config: { devLogin: true } }) }
+  const modToken = await seed(current.hub)
+  const { link, close, requests } = linkTo(current, modToken)
+  try {
+    expect(await link.askChildren({ _tag: "ListChildren" })).toEqual({
+      _tag: "ChildList",
+      children: [],
+    })
+    expect(requests).toEqual(["POST /mod/hello", "POST /mod/children"])
+    expect(
+      await link.askChildren({ _tag: "ArchiveChild", childId: SessionId.make("s-other") }),
+    ).toEqual({
+      _tag: "ChildRefused",
+      message: "Session s-other is not one of your Child Sessions.",
+    })
+  } finally {
+    close()
+  }
+})
