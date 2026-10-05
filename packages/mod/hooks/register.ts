@@ -2,7 +2,9 @@
 //
 // - Tools: the file and command tools run in the Session's Sandbox through the Runner's tool
 //   bridge; every other tool is denied. Nothing is ever passed on to Claude Code to run, so a
-//   tool can't reach the host even when the bridge is down: the call is refused instead.
+//   tool can't reach the host even when the bridge is down: the call is refused instead. A call
+//   runs for as long as its tool allows; the mod cancels it in the Sandbox when the Turn is
+//   interrupted or the session ends (see src/ToolBridgeClient.ts).
 // - The Hub: says hello, reports the Turn's events, and takes prompts, stops and presence from
 //   the Hub (see HubLink.ts).
 // - The person at the terminal: a band above the prompt shows the Participants, and the `!`
@@ -19,6 +21,7 @@ import {
   clip,
   decideTool,
   HubLink,
+  newCallId,
   promptFromParticipant,
   ReadBeforeEdit,
   resultSummary,
@@ -30,6 +33,7 @@ import {
   turnUsage,
 } from "./hub-link-lib.js"
 import type {
+  BridgeExchange,
   LinkStatus,
   ModCommand,
   Participant,
@@ -64,6 +68,8 @@ const state = {
   delivered: undefined as { readonly promptId: string; readonly sender: Participant } | undefined,
   readBeforeEdit: new ReadBeforeEdit(),
   minted: 0,
+  /** The calls running in the Sandbox, by the id the bridge knows each by. */
+  running: new Set<string>(),
 }
 
 const report = (event: Record<string, unknown>) => state.link?.report(event)
@@ -135,37 +141,67 @@ const startLink = async ($: EngineInterface) => {
   state.link.start()
 }
 
+/** One exchange with the tool bridge, through Claude Code's fetch. */
+const bridgeExchange =
+  ($: EngineInterface): BridgeExchange =>
+  (socketPath, request) =>
+    $.http.fetch(`http://tool-bridge${request.path}`, {
+      method: request.method,
+      socketPath,
+      ...(request.body === undefined
+        ? {}
+        : { headers: { "content-type": "application/json" }, body: request.body }),
+    })
+
 /** Answers a tool call: from the Sandbox, or with a refusal. */
 const answerToolCall = async (
   $: EngineInterface,
   tool: string,
   input: Record<string, unknown>,
+  toolUseId: string | undefined,
+  signal: AbortSignal,
 ): Promise<ToolAnswer> => {
   const decision = decideTool(tool, input)
   if (decision._tag === "Deny") return { _tag: "Refused", message: decision.reason }
   const unread = state.readBeforeEdit.check(decision.tool, input)
   if (unread !== undefined) return { _tag: "Failed", message: unread }
   state.toolsSocket ??= (await $.env.get("CLAUDE_HUB_TOOLS_SOCKET")) || undefined
-  const answer = await runInSandbox(
-    (socketPath, body) =>
-      $.http.fetch("http://tool-bridge/tools/call", {
-        method: "POST",
-        socketPath,
-        headers: { "content-type": "application/json" },
-        body,
-      }),
-    state.toolsSocket,
-    decision.tool,
-    input,
+  const callId = newCallId(toolUseId)
+  state.running.add(callId)
+  try {
+    const answer = await runInSandbox(bridgeExchange($), state.toolsSocket, decision.tool, input, {
+      callId,
+      signal,
+    })
+    if (answer._tag === "Ran") state.readBeforeEdit.record(decision.tool, input, answer.result)
+    return answer
+  } finally {
+    state.running.delete(callId)
+  }
+}
+
+/** Cancels the calls still running in the Sandbox, as the session ends. */
+const cancelRunning = async ($: EngineInterface) => {
+  const socketPath = state.toolsSocket
+  const running = [...state.running]
+  state.running.clear()
+  if (socketPath === undefined) return
+  const exchange = bridgeExchange($)
+  await Promise.all(
+    running.map((callId) =>
+      exchange(socketPath, {
+        method: "DELETE",
+        path: `/tools/calls/${encodeURIComponent(callId)}`,
+      }).catch(() => undefined),
+    ),
   )
-  if (answer._tag === "Ran") state.readBeforeEdit.record(decision.tool, input, answer.result)
-  return answer
 }
 
 const outcomes: Record<ToolAnswer["_tag"], ToolCallOutcome> = {
   Ran: "Succeeded",
   Failed: "Failed",
   Refused: "Denied",
+  Lost: "Failed",
 }
 
 export function register(on: On) {
@@ -177,12 +213,12 @@ export function register(on: On) {
 
   on("session.end", async ($, e, next) => {
     const ended = await next(e)
-    await state.link?.flushNow()
+    await Promise.all([cancelRunning($), state.link?.flushNow()])
     return ended
   })
 
   // Every tool call is answered here and never passed on: from the Sandbox, or refused.
-  on("tool.call", async ($, e, _next) => {
+  on("tool.call", async ($, e, next) => {
     const tool = String(e.tool)
     const input = toolArguments(e as unknown as Record<string, unknown>)
     const agentId = e.agentId
@@ -198,7 +234,9 @@ export function register(on: On) {
         tool,
         input: clip(JSON.stringify(input)),
       })
-    const answer = await answerToolCall($, tool, input)
+    // Waiting on the bridge is `$` calls, which the hook's budget doesn't count, so a call may run
+    // for as long as its tool allows. `next.signal` aborts when the Turn is interrupted.
+    const answer = await answerToolCall($, tool, input, e.tool_use_id || undefined, next.signal)
     if (turnId !== undefined)
       report({
         _tag: "ToolCallEnded",
