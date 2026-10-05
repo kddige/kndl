@@ -5,7 +5,7 @@
 // - Anyone signed in may mint a code, revoke one, or remove a Runner: there are no roles yet.
 // - A Re-pair's redemption replaces the Runner's token, so a Runner still connected with the old
 //   one is disconnected; it can't connect again with it.
-// - A Runner is removed only while all its Sessions are Archived (removalRefusal). Its token stops
+// - A Runner is removed only while all its Sessions are Archived (runnerRemovalRefusal). Its token stops
 //   working, its codes not yet used are revoked, and, if it is connected, it is disconnected.
 
 import {
@@ -18,13 +18,14 @@ import {
   type RequestId,
   type RunnerId,
   RunnerRemoved,
+  runnerRemovalRefusal,
   type WebToHub,
 } from "@claude-hub/protocol"
 import { Effect, Option } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { HubConfig } from "./HubConfig.ts"
 import { PairingCodes } from "./PairingCodes.ts"
-import { removalRefusal, Runners } from "./Runners.ts"
+import { Runners } from "./Runners.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 
 const webTags = ["CreatePairingCode", "RevokePairingCode", "RemoveRunner"] as const
@@ -115,7 +116,7 @@ export const makeRunnerRelay = Effect.fn("makeRunnerRelay")(function* (deps: {
       case "RemoveRunner": {
         const runner = yield* runners.get(message.runnerId)
         if (Option.isNone(runner)) return refuse("There is no such Runner.")
-        const refusal = removalRefusal(runner.value.name, runner.value.openSessions)
+        const refusal = runnerRemovalRefusal(runner.value.name, runner.value.openSessions)
         if (refusal !== undefined) return refuse(refusal)
         yield* tokens.remove(message.runnerId)
         yield* codes.revokeFor(message.runnerId)

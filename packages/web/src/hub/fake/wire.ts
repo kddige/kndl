@@ -7,6 +7,7 @@ import type {
   EnvironmentVersionInfo,
   HubToWeb,
   Participant,
+  PendingPairingCode,
   QueuedPrompt,
   RunnerSummary,
   SessionEvent,
@@ -26,3 +27,4 @@ export type EnvironmentWire = (typeof Environment)["Encoded"]
 export type EnvironmentVersionInfoWire = (typeof EnvironmentVersionInfo)["Encoded"]
 export type SharedVariableWire = (typeof SharedVariable)["Encoded"]
 export type AppPermissionsCheckWire = (typeof AppPermissionsCheck)["Encoded"]
+export type PendingPairingCodeWire = (typeof PendingPairingCode)["Encoded"]

@@ -170,3 +170,15 @@ export function checkRunnerName(name: string): string | undefined {
     ? undefined
     : `${JSON.stringify(name)} can't be a Runner's name: use up to 63 letters, digits, dots, dashes and underscores, starting with a letter or digit.`
 }
+
+// ── Removing ──────────────────────────────────────────────────────────────
+
+/**
+ * Why a Runner can't be removed, or `undefined` when it can: while it has Sessions that aren't
+ * Archived, they would be stranded on a Runner that can never come back.
+ */
+export function runnerRemovalRefusal(name: string, openSessions: number): string | undefined {
+  if (openSessions === 0) return undefined
+  const sessions = openSessions === 1 ? "1 Session" : `${openSessions} Sessions`
+  return `Runner ${name} has ${sessions} that ${openSessions === 1 ? "isn't" : "aren't"} Archived. Archive ${openSessions === 1 ? "it" : "them"} first, then remove the Runner.`
+}

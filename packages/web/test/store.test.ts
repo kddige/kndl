@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionId, TerminalFrame } from "@claude-hub/protocol"
+import { ProtocolVersion, type SessionId, type TerminalFrame } from "@claude-hub/protocol"
 import {
   acceptsFrame,
   appendEntries,
@@ -20,7 +20,7 @@ import {
   history,
   hub,
   logged,
-  runnerLogin,
+  runnerSummary,
   sessionSummary,
   welcome,
 } from "./fixtures.ts"
@@ -84,7 +84,7 @@ describe("connection", () => {
 
 describe("Runners and Sessions", () => {
   test("RunnerList and SessionList replace what was known", () => {
-    const runner = { id: "r-1", name: "studio", login: runnerLogin, isOnline: true }
+    const runner = runnerSummary
     let state = run(
       hub({ _tag: "RunnerList", runners: [runner] }),
       listed,
@@ -95,6 +95,35 @@ describe("Runners and Sessions", () => {
 
     state = reduce(state, hub({ _tag: "SessionList", sessions: [] }))
     expect(state.sessions).toEqual([])
+  })
+
+  test("RunnerRemoved drops the Runner before the RunnerList that follows it", () => {
+    const state = run(
+      hub({ _tag: "RunnerList", runners: [runnerSummary, { ...runnerSummary, id: "r-2" }] }),
+      hub({ _tag: "RunnerRemoved", requestId: "q-1", runnerId: "r-1" }),
+    )
+    expect(state.runners?.map((r) => String(r.id))).toEqual(["r-2"])
+  })
+
+  test("the welcome says the Hub's commit, and the Pairing codes waiting are kept", () => {
+    const pending = {
+      id: "pc-1",
+      createdBy: alice,
+      createdAt: 1_790_000_000_000,
+      expiresAt: 1_790_000_900_000,
+    }
+    const state = run(
+      hub({
+        _tag: "WebWelcome",
+        protocolVersion: ProtocolVersion,
+        you: alice,
+        hub: { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1" },
+      }),
+      hub({ _tag: "PairingCodeList", codes: [pending] }),
+    )
+    expect(state.hubVersion?.commit).toBe("824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1")
+    expect(state.pairingCodes?.map((code) => String(code.id))).toEqual(["pc-1"])
+    expect(reduce(state, welcome()).hubVersion).toBeNull()
   })
 
   test("SessionUpdated replaces a Session in place and adds an unknown one", () => {

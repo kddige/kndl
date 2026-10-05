@@ -19,7 +19,7 @@ import {
   pairingCodeState,
   PairingRefused,
 } from "./PairingCodes.ts"
-import { removalRefusal, Runners } from "./Runners.ts"
+import { Runners } from "./Runners.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 import { SignIns } from "./SignIns.ts"
 
@@ -90,16 +90,6 @@ describe("a Pairing code's state", () => {
     expect(pairingCodeState({ ...row, usedAt: 5 }, 10)).toBe("Used")
     expect(pairingCodeState({ ...row, revokedAt: 5 }, 10)).toBe("Revoked")
     expect(pairingCodeState({ ...row, usedAt: 5 }, 2_000)).toBe("Used")
-  })
-})
-
-describe("removing a Runner", () => {
-  test("is allowed only once its Sessions are all Archived", () => {
-    expect(removalRefusal("studio", 0)).toBeUndefined()
-    expect(removalRefusal("studio", 1)).toBe(
-      "Runner studio has 1 Session that isn't Archived. Archive it first, then remove the Runner.",
-    )
-    expect(removalRefusal("studio", 3)).toContain("3 Sessions that aren't Archived. Archive them")
   })
 })
 

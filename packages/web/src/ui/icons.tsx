@@ -161,6 +161,26 @@ export function KeyIcon(props: IconProps) {
   )
 }
 
+/** A Runner: a machine that runs Sessions. */
+export function ServerIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2.25" y="2.25" width="11.5" height="4.5" rx="1.25" />
+      <rect x="2.25" y="9.25" width="11.5" height="4.5" rx="1.25" />
+      <path d="M4.75 4.5h.01M4.75 11.5h.01M7.5 4.5h3.75M7.5 11.5h3.75" />
+    </Icon>
+  )
+}
+
+export function CopyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="5.25" y="5.25" width="8.5" height="8.5" rx="1.5" />
+      <path d="M10.75 5.25V3.75a1.5 1.5 0 0 0-1.5-1.5h-5.5a1.5 1.5 0 0 0-1.5 1.5v5.5a1.5 1.5 0 0 0 1.5 1.5h1.5" />
+    </Icon>
+  )
+}
+
 export function BoxIcon(props: IconProps) {
   return (
     <Icon {...props}>

@@ -6,6 +6,7 @@ import {
   pairingCommand,
   pairingLink,
   parsePairing,
+  runnerRemovalRefusal,
 } from "./Pairing.ts"
 
 const code = "7K3QHWM2PA9XC4RTBV0E"
@@ -84,5 +85,17 @@ describe("Runner names", () => {
     expect(checkRunnerName("-x")).toContain("can't be a Runner's name")
     expect(checkRunnerName("a b")).toContain("can't be a Runner's name")
     expect(checkRunnerName("x".repeat(64))).toContain("can't be a Runner's name")
+  })
+})
+
+describe("removing a Runner", () => {
+  test("is allowed only once its Sessions are all Archived", () => {
+    expect(runnerRemovalRefusal("studio", 0)).toBeUndefined()
+    expect(runnerRemovalRefusal("studio", 1)).toBe(
+      "Runner studio has 1 Session that isn't Archived. Archive it first, then remove the Runner.",
+    )
+    expect(runnerRemovalRefusal("studio", 3)).toContain(
+      "3 Sessions that aren't Archived. Archive them",
+    )
   })
 })

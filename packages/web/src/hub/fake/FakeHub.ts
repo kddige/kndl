@@ -8,7 +8,18 @@
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too.
 
-import { cantStartText, checkHandshake, ProtocolVersion, WebToHub } from "@claude-hub/protocol"
+import {
+  cantStartText,
+  checkHandshake,
+  formatPairingCode,
+  PairingAlphabet,
+  PairingCodeLength,
+  PairingCodeLifetimeMs,
+  pairingLink,
+  ProtocolVersion,
+  runnerRemovalRefusal,
+  WebToHub,
+} from "@claude-hub/protocol"
 import { Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
@@ -17,6 +28,7 @@ import {
   archiveRetentionMs,
   bob,
   demoSessionId,
+  hubVersion,
   type ReplyStep,
   replyTo,
   scriptedTurn,
@@ -30,6 +42,7 @@ import type {
   HubMessage,
   LogEntryWire,
   ParticipantWire,
+  PendingPairingCodeWire,
   QueuedPromptWire,
   RunnerSummaryWire,
   SessionEventWire,
@@ -105,7 +118,10 @@ const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 export class FakeHub implements HubTransport {
   readonly stepMs: number
   readonly sessions = new Map<string, FakeSession>()
-  readonly runners: Array<RunnerSummaryWire>
+  /** The paired Runners; their `openSessions` is counted afresh from `sessions` as they're sent. */
+  runners: Array<RunnerSummaryWire>
+  /** Pairing codes not yet redeemed or revoked; one may have expired. */
+  readonly pairingCodes: Array<PendingPairingCodeWire> = []
   readonly environments = new FakeEnvironments()
   /** Every message each client sent, decoded, for tests to inspect. */
   readonly received: Array<WebToHub> = []
@@ -174,6 +190,36 @@ export class FakeHub implements HubTransport {
   }
 
   // ── Test controls ────────────────────────────────────────────────────────
+
+  /**
+   * A machine redeems the newest Pairing code, as `claude-hub runner join` would, and connects: a
+   * new Runner named `name`, or, for a Re-pair's code, that Runner with a new token. In the
+   * browser, `fakeHub.redeemPairingCode("mac-mini")` in the console.
+   */
+  redeemPairingCode(name = "mac-mini"): void {
+    const code = this.pairingCodes.at(-1)
+    if (code === undefined) return
+    this.#dropCodes((other) => other.id === code.id)
+    const connected = {
+      isOnline: true,
+      login: { account: "alice@example.com" },
+      version: hubVersion,
+      versionStatus: "Current" as const,
+      lastSeenAt: Date.now(),
+    }
+    if (code.runnerId === undefined) {
+      this.runners = [
+        ...this.runners,
+        { id: `r-${++this.#ids}`, name, openSessions: 0, ...connected },
+      ]
+    } else {
+      this.runners = this.runners.map((runner) =>
+        runner.id === code.runnerId ? { ...runner, ...connected } : runner,
+      )
+    }
+    this.#toAll(this.#runnerList())
+    this.#toAll(this.#pairingCodeList())
+  }
 
   /** Drops every connection, as a network blip would. */
   dropConnections(): void {
@@ -283,8 +329,14 @@ export class FakeHub implements HubTransport {
     switch (message._tag) {
       case "WebHello":
         socket.welcomed = true
-        socket.deliver({ _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: this.#you })
-        socket.deliver({ _tag: "RunnerList", runners: this.runners })
+        socket.deliver({
+          _tag: "WebWelcome",
+          protocolVersion: ProtocolVersion,
+          you: this.#you,
+          hub: hubVersion,
+        })
+        socket.deliver(this.#runnerList())
+        socket.deliver(this.#pairingCodeList())
         socket.deliver({
           _tag: "SessionList",
           sessions: [...this.sessions.values()].map((session) => session.summary),
@@ -514,6 +566,65 @@ export class FakeHub implements HubTransport {
         this.#toOthers(socket, shared)
         break
       }
+      case "CreatePairingCode": {
+        const { runnerId } = message
+        if (runnerId !== undefined && !this.runners.some((runner) => runner.id === runnerId)) {
+          this.#refuse(socket, message._tag, message.requestId, "There is no such Runner.")
+          break
+        }
+        let code = ""
+        for (let i = 0; i < PairingCodeLength; i++) {
+          code += PairingAlphabet[Math.floor(Math.random() * PairingAlphabet.length)]
+        }
+        const createdAt = Date.now()
+        const pending: PendingPairingCodeWire = {
+          id: `pc-${++this.#ids}`,
+          createdBy: this.#you,
+          createdAt,
+          expiresAt: createdAt + PairingCodeLifetimeMs,
+          ...(runnerId !== undefined && { runnerId }),
+        }
+        // A Re-pair's new code replaces the Runner's earlier one, as on the Hub.
+        this.#dropCodes((other) => runnerId !== undefined && other.runnerId === runnerId)
+        this.pairingCodes.push(pending)
+        socket.deliver({
+          _tag: "PairingCodeCreated",
+          requestId: message.requestId,
+          id: pending.id,
+          code: formatPairingCode(code),
+          link: pairingLink(globalThis.location?.origin ?? "http://localhost:5173", code),
+          expiresAt: pending.expiresAt,
+          ...(runnerId !== undefined && { runnerId }),
+        })
+        this.#toAll(this.#pairingCodeList())
+        break
+      }
+      case "RevokePairingCode": {
+        this.#dropCodes((code) => code.id === message.pairingCodeId)
+        socket.deliver({ ...this.#pairingCodeList(), requestId: message.requestId })
+        this.#toOthers(socket, this.#pairingCodeList())
+        break
+      }
+      case "RemoveRunner": {
+        const runner = this.#runnerList().runners.find(
+          (candidate) => candidate.id === message.runnerId,
+        )
+        if (!runner) {
+          this.#refuse(socket, message._tag, message.requestId, "There is no such Runner.")
+          break
+        }
+        const refused = runnerRemovalRefusal(runner.name, runner.openSessions)
+        if (refused !== undefined) {
+          this.#refuse(socket, message._tag, message.requestId, refused)
+          break
+        }
+        this.runners = this.runners.filter((candidate) => candidate.id !== runner.id)
+        this.#dropCodes((code) => code.runnerId === runner.id)
+        socket.deliver({ _tag: "RunnerRemoved", requestId: message.requestId, runnerId: runner.id })
+        this.#toAll(this.#runnerList())
+        this.#toAll(this.#pairingCodeList())
+        break
+      }
       case "ArchiveSession": {
         const session = this.sessions.get(message.sessionId)
         if (!session) {
@@ -540,6 +651,7 @@ export class FakeHub implements HubTransport {
         // Its Claude Code is stopped for good; the queue waits for a restore, as on the Hub.
         session.stopTurn?.()
         for (const watcher of this.#sockets) watcher.terminals.delete(message.sessionId)
+        this.#toAll(this.#runnerList())
         break
       }
       case "RestoreSession": {
@@ -555,6 +667,7 @@ export class FakeHub implements HubTransport {
         const { archived: _, ...summary } = session.summary
         session.summary = summary
         this.#setState(session, "Asleep", "Restored from the archive", this.#you)
+        this.#toAll(this.#runnerList())
         break
       }
       // The terminal, as the real Hub relays it: watching needs no running terminal, but
@@ -622,7 +735,7 @@ export class FakeHub implements HubTransport {
       runnerId === undefined
         ? this.runners.find((candidate) => candidate.isOnline)
         : this.runners.find((candidate) => candidate.id === runnerId)
-    if (!runner || !runner.isOnline) {
+    if (!runner || !runner.isOnline || runner.login === null) {
       const message = runner ? `${runner.name} is offline.` : "No Runner is online."
       socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
       return
@@ -664,6 +777,7 @@ export class FakeHub implements HubTransport {
       if (other !== socket && other.welcomed)
         other.deliver({ _tag: "SessionUpdated", session: session.summary })
     }
+    this.#toAll(this.#runnerList())
   }
 
   /**
@@ -1109,6 +1223,38 @@ export class FakeHub implements HubTransport {
   /** Refuses a command that has a request to answer. */
   #refuse(socket: FakeSocket, command: string, requestId: string, message: string): void {
     socket.deliver({ _tag: "CommandFailed", command, requestId, message })
+  }
+
+  /** Tells every client. */
+  #toAll(message: HubMessage): void {
+    for (const socket of this.#sockets) if (socket.welcomed) socket.deliver(message)
+  }
+
+  /** The Runners as the Hub lists them, each with its Sessions that aren't Archived counted. */
+  #runnerList(): Extract<HubMessage, { _tag: "RunnerList" }> {
+    const sessions = [...this.sessions.values()].map((session) => session.summary)
+    return {
+      _tag: "RunnerList",
+      runners: this.runners.map((runner) => ({
+        ...runner,
+        openSessions: sessions.filter(
+          (session) => session.runnerId === runner.id && session.state !== "Archived",
+        ).length,
+      })),
+    }
+  }
+
+  #pairingCodeList(): Extract<HubMessage, { _tag: "PairingCodeList" }> {
+    const now = Date.now()
+    return {
+      _tag: "PairingCodeList",
+      codes: this.pairingCodes.filter((code) => code.expiresAt > now),
+    }
+  }
+
+  #dropCodes(drop: (code: PendingPairingCodeWire) => boolean): void {
+    const kept = this.pairingCodes.filter((code) => !drop(code))
+    this.pairingCodes.splice(0, this.pairingCodes.length, ...kept)
   }
 
   /** Tells every other client, as the Hub broadcasts an applied version or changed variables. */

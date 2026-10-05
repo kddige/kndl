@@ -26,16 +26,6 @@ export interface KnownRunner {
 /** The Session states that keep a Runner from being removed. */
 const openStates: ReadonlyArray<SessionState> = ["Active", "Asleep", "Frozen"]
 
-/**
- * Why a Runner can't be removed, or `undefined` when it can: while it has Sessions that aren't
- * Archived, they would be stranded on a Runner that can never come back.
- */
-export function removalRefusal(name: string, openSessions: number): string | undefined {
-  if (openSessions === 0) return undefined
-  const sessions = openSessions === 1 ? "1 Session" : `${openSessions} Sessions`
-  return `Runner ${name} has ${sessions} that ${openSessions === 1 ? "isn't" : "aren't"} Archived. Archive ${openSessions === 1 ? "it" : "them"} first, then remove the Runner.`
-}
-
 interface RunnerRow {
   readonly id: string
   readonly name: string

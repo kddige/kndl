@@ -2,7 +2,8 @@
 // Sessions, for each joined Session its event log, presence and Prompt queue, and for each open
 // terminal whether it is live and its size; the Environments and shared variables the client
 // asked for (ADR 0009), the Test builds it started, with their logs, and what the GitHub App's
-// permissions lack (issue #86). The terminal's output itself goes straight to the view that draws
+// permissions lack (issue #86); the Pairing codes waiting to be redeemed and the Hub's own commit,
+// for the Runners page (issue #85). The terminal's output itself goes straight to the view that draws
 // it (HubClient.openTerminal), not through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
@@ -10,11 +11,13 @@
 
 import type {
   AppPermissionsCheck,
+  BuildVersion,
   Environment,
   EnvironmentVersionInfo,
   EventSeq,
   HubToWeb,
   Participant,
+  PendingPairingCode,
   QueuedPrompt,
   RunnerSummary,
   SessionId,
@@ -101,6 +104,13 @@ export interface HubState {
   readonly you: Participant | null
   /** Null until the first RunnerList. */
   readonly runners: ReadonlyArray<RunnerSummary> | null
+  /** The commit the Hub runs, from the welcome; null when it doesn't say. */
+  readonly hubVersion: BuildVersion | null
+  /**
+   * The Pairing codes not yet used, revoked or expired, as the Hub last listed them; null until
+   * the first PairingCodeList. One may have expired since: compare its `expiresAt` with the clock.
+   */
+  readonly pairingCodes: ReadonlyArray<PendingPairingCode> | null
   /** Null until the first SessionList. */
   readonly sessions: ReadonlyArray<SessionSummary> | null
   readonly joined: Readonly<Record<SessionId, JoinedSession>>
@@ -132,6 +142,8 @@ export const initialState: HubState = {
   connection: { status: "connecting", attempt: 0 },
   you: null,
   runners: null,
+  hubVersion: null,
+  pairingCodes: null,
   sessions: null,
   joined: {},
   terminals: {},
@@ -168,11 +180,26 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return { ...state, joined }
     }
     case "WebWelcome":
-      return { ...state, you: action.you, connection: { status: "online" } }
+      return {
+        ...state,
+        you: action.you,
+        hubVersion: action.hub ?? null,
+        connection: { status: "online" },
+      }
     case "HandshakeRejected":
       return { ...state, connection: { status: "rejected", message: action.message } }
     case "RunnerList":
       return { ...state, runners: action.runners }
+    case "RunnerRemoved":
+      return {
+        ...state,
+        runners: state.runners?.filter((runner) => runner.id !== action.runnerId) ?? null,
+      }
+    case "PairingCodeList":
+      return { ...state, pairingCodes: action.codes }
+    case "PairingCodeCreated":
+      // The code is for whoever asked: the PairingCodeList that follows lists it, without it.
+      return state
     case "SessionList":
       return { ...state, sessions: action.sessions }
     case "SessionUpdated":
