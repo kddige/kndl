@@ -693,6 +693,14 @@ const engineSections = (on: On) =>
     sections: [{ id: "env_info_simple", text: "# Environment", scope: "session" }],
   }))
 
+/** Claude Code's guidance on `!` in a terminal session, as 2.1.289 words it. */
+const bangGuidance = [
+  "# Session-specific guidance",
+  " - If you need the user to run a shell command themselves (e.g., an interactive login like",
+  "`gcloud auth login`), suggest they type `! <command>` in the prompt — the `!` prefix runs the",
+  "command in this session so its output lands directly in the conversation.",
+].join(" ")
+
 describe("what the model is told about its environment", () => {
   test("the system prompt describes the Sandbox, from the first request", async ($, on) => {
     mock.env(on, sandbox)
@@ -712,6 +720,24 @@ describe("what the model is told about its environment", () => {
       "hub-link:shared-session",
       "hub-link:sandbox-environment",
     ])
+  })
+
+  test("after Claude Code's advice to suggest `! <command>`, the system prompt says it's off", async ($, on) => {
+    mock.env(on, sandbox)
+    on("prompt.compose", () => ({
+      sections: [{ id: "session_guidance", text: bangGuidance, scope: "session" }],
+    }))
+
+    const { sections } = await $.prompt.compose(composeInput)
+
+    expect(sections.map((section) => section.id)).toEqual([
+      "session_guidance",
+      "hub-link:shared-session",
+      "hub-link:sandbox-environment",
+    ])
+    const shared = sections.find((section) => section.id === "hub-link:shared-session")
+    expect(shared?.text).toContain("`! <command>` prompt shortcut would run on that machine")
+    expect(shared?.text).toContain("run a command yourself with Bash, in the sandbox")
   })
 
   test("Claude Code's description of the host is left out", async ($, on) => {
