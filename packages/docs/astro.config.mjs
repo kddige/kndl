@@ -1,11 +1,11 @@
 // The claude-hub docs site: Astro Starlight, published to GitHub Pages under /claude-hub/.
-import { unified } from "@astrojs/markdown-remark";
-import starlight from "@astrojs/starlight";
-import { defineConfig } from "astro/config";
-import { rehypeBaseLinks } from "./src/plugins/rehypeBaseLinks.ts";
+import { unified } from "@astrojs/markdown-remark"
+import starlight from "@astrojs/starlight"
+import { defineConfig } from "astro/config"
+import { rehypeBaseLinks } from "./src/plugins/rehypeBaseLinks.ts"
 
-const site = "https://kddige.github.io";
-const base = "/claude-hub/";
+const site = "https://kddige.github.io"
+const base = "/claude-hub/"
 
 export default defineConfig({
   site,
@@ -118,4 +118,4 @@ export default defineConfig({
       ],
     }),
   ],
-});
+})

@@ -26,10 +26,10 @@ Next, [add a Runner](/how-to/add-a-runner/). To let other machines and people re
 
 The web UI reaches the Hub on its own origin, so there are two ways to run them from a checkout. `HUB_PUBLIC_URL` names whichever origin browsers open.
 
-| Setup                                                                   | Commands                                | Open                    | `HUB_PUBLIC_URL`                           |
-| ----------------------------------------------------------------------- | --------------------------------------- | ----------------------- | ------------------------------------------ |
+| Setup | Commands | Open | `HUB_PUBLIC_URL` |
+|---|---|---|---|
 | **Built, served by the Hub**: one process on one port, as in production | `bun run web:build`, then `bun run hub` | <http://127.0.0.1:7777> | `http://127.0.0.1:7777`, the Hub's own URL |
-| **Development**, with Vite's hot reload                                 | `bun run hub` and `bun run web`         | <http://localhost:5173> | `http://localhost:5173`, the default       |
+| **Development**, with Vite's hot reload | `bun run hub` and `bun run web` | <http://localhost:5173> | `http://localhost:5173`, the default |
 
 ### Serve the built web UI from the Hub
 
