@@ -423,7 +423,7 @@ export class SessionRelay extends Context.Service<
       })
 
       // Runners follow the Hub's commit (#87): RunnerUpdates.ts drains a Runner and moves it.
-      const runnerUpdates = yield* makeRunnerUpdates({
+      const runnerUpdates = makeRunnerUpdates({
         hub: hubVersion.version,
         statusOf: (version) => hubVersion.statusOf(version ?? null),
         push:

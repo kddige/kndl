@@ -141,15 +141,15 @@ describe("an update's state", () => {
   })
 })
 
-describe("draining a Runner", () => {
-  const ids = (...names: ReadonlyArray<string>) => names.map((name) => SessionId.make(name))
-  const session = (id: string, state: "Active" | "Asleep", turn = false, settling = false) => ({
-    id: SessionId.make(id),
-    state,
-    turn,
-    settling,
-  })
+const ids = (...names: ReadonlyArray<string>) => names.map((name) => SessionId.make(name))
+const session = (id: string, state: "Active" | "Asleep", turn = false, settling = false) => ({
+  id: SessionId.make(id),
+  state,
+  turn,
+  settling,
+})
 
+describe("draining a Runner", () => {
   test("puts idle Sessions to sleep, and waits for Turns", () => {
     const plan = drainPlan(
       [

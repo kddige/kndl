@@ -245,7 +245,7 @@ export interface UpdatingRunner {
   readonly peer: { readonly send: (message: HubToRunner) => void }
 }
 
-export const makeRunnerUpdates = Effect.fn("makeRunnerUpdates")(function* (deps: {
+export function makeRunnerUpdates(deps: {
   readonly hub: BuildVersion | undefined
   readonly statusOf: (version: BuildVersion | undefined) => RunnerVersionStatus
   /** The push `claude-hub update` left for the Hub's commit, if any. */
@@ -446,6 +446,6 @@ export const makeRunnerUpdates = Effect.fn("makeRunnerUpdates")(function* (deps:
   }
 
   return { stateOf, holding, request, receive, hello, gone, forget, drain, drainAll }
-})
+}
 
-export type RunnerUpdates = Effect.Success<ReturnType<typeof makeRunnerUpdates>>
+export type RunnerUpdates = ReturnType<typeof makeRunnerUpdates>

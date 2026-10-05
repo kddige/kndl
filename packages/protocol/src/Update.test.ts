@@ -27,7 +27,8 @@ describe("HandshakeRejected", () => {
       message: Schema.String,
     })
     const rejected = checkHandshake({ protocolVersion: 0 }, target)
-    const encoded = JSON.parse(JSON.stringify(Schema.encodeSync(HandshakeRejected)(rejected!)))
+    if (rejected === undefined) throw new Error("expected a rejection")
+    const encoded = JSON.parse(JSON.stringify(Schema.encodeSync(HandshakeRejected)(rejected)))
     expect(Schema.decodeUnknownSync(Before)(encoded).message).toContain("Update the peer.")
     expect(Schema.decodeUnknownSync(HandshakeRejected)(encoded).hubVersion).toEqual(target)
   })
