@@ -4,7 +4,9 @@
 //
 // Both kinds run `bun --env-file=<home>/<role>.env <home>/app/packages/<role>/src/main.ts` in the
 // home, with CLAUDE_HUB_HOME set, so the env file is read the same way, by Bun, on both platforms.
-// Both log to `<home>/logs/<role>.log` and restart the process when it crashes.
+// Both log to `<home>/logs/<role>.log` and restart the process when it exits unsuccessfully, as
+// when it crashes, or a Runner exits to restart on the commit it updated to (#87). They set
+// CLAUDE_HUB_SERVICE to the role, which tells the Runner that something starts it again.
 import { join } from "node:path"
 import type { Layout, Role } from "./Layout.ts"
 import { type Step, step } from "./Shell.ts"
@@ -37,6 +39,12 @@ export interface ServiceTarget {
 
 /** The launchd label: `io.github.kddige.claude-hub.hub`, `….runner`. */
 export const launchdLabel = (role: Role) => `io.github.kddige.claude-hub.${role}`
+
+/**
+ * Set to the role on the process a service runs: the Runner updates itself only when it is set,
+ * since exiting to restart is safe only under a service (see the Runner's SelfUpdate.ts).
+ */
+export const ServiceVariable = "CLAUDE_HUB_SERVICE"
 
 /** The systemd unit: `claude-hub-hub.service`, `claude-hub-runner.service`. */
 export const systemdUnit = (role: Role) => `claude-hub-${role}.service`
@@ -89,6 +97,8 @@ export function launchdPlist(spec: ServiceSpec): string {
     `  <dict>`,
     `    <key>CLAUDE_HUB_HOME</key>`,
     `    <string>${xml(spec.layout.home.dir)}</string>`,
+    `    <key>${ServiceVariable}</key>`,
+    `    <string>${spec.role}</string>`,
     `    <key>PATH</key>`,
     `    <string>${xml(spec.path)}</string>`,
     `  </dict>`,
@@ -130,6 +140,7 @@ export function systemdUnitFile(spec: ServiceSpec): string {
     `Type=simple`,
     `WorkingDirectory=${systemdPath(spec.layout.home.dir)}`,
     `Environment=${systemdWord(`CLAUDE_HUB_HOME=${spec.layout.home.dir}`)}`,
+    `Environment=${ServiceVariable}=${spec.role}`,
     `Environment=${systemdWord(`PATH=${spec.path}`)}`,
     `ExecStart=${programArguments(spec).map(systemdWord).join(" ")}`,
     `Restart=on-failure`,

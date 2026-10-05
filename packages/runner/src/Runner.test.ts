@@ -7,7 +7,7 @@ import { ClaudeSessionId, ProtocolVersion, TestBuildId } from "@claude-hub/proto
 import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
-import { Context, Effect, Exit, Fiber, Layer, Redacted, References } from "effect"
+import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
 import { ClaudeProjectsDir, claudeProjectDirName } from "./ClaudeConfig.ts"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
@@ -24,6 +24,7 @@ import {
   FakeWorkspaces,
   sessionId,
 } from "./testSupport.ts"
+import { Updater } from "./Updater.ts"
 
 const token = "chr_test.secret"
 
@@ -115,7 +116,35 @@ afterEach(async () => {
   }
 })
 
-function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () => {}): Harness {
+/** An Updater that records what the connection asked of it. */
+class FakeUpdater {
+  readonly handled: Array<unknown> = []
+  readonly rejected: Array<unknown> = []
+  welcomed = 0
+  readonly layer = Layer.succeed(
+    Updater,
+    Updater.of({
+      hello: Effect.succeed({
+        updater: { self: true },
+        lastUpdate: {
+          target: { commit: "b".repeat(40) },
+          message: "Updating failed",
+          rolledBack: true,
+          at: 1,
+        },
+      }),
+      boot: Effect.void,
+      welcomed: Effect.sync(() => void this.welcomed++),
+      handle: (message) => Effect.sync(() => void this.handled.push(message)),
+      rejected: (hub) => Effect.sync(() => void this.rejected.push(hub)),
+    }),
+  )
+}
+
+function startRunner(
+  setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () => {},
+  updater: Layer.Layer<Updater> = Updater.manual(),
+): Harness {
   const dir = mkdtempSync(join(tmpdir(), "claude-hub-runner-"))
   const sessionsRoot = join(dir, "sessions")
   const claudeConfig = join(dir, ".claude.json")
@@ -153,6 +182,7 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
       ),
     ),
     Layer.provideMerge(HubVariablesLive),
+    Layer.provideMerge(updater),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, git.layer]),
@@ -162,7 +192,7 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
   const runner = Effect.runFork(
     runRunner({
       claudeConfigPath: claudeConfig,
-      backoff: { initial: "20 millis", max: "100 millis" },
+      backoff: { initial: "20 millis", max: "100 millis", rejected: "50 millis" },
     }).pipe(
       Effect.provide(layer),
       Effect.provideService(ClaudeProjectsDir, projectsDir),
@@ -227,7 +257,36 @@ describe("connecting", () => {
       ...(buildVersion !== undefined && { version: buildVersion }),
       // It asks how to clone each Test build (#104).
       asksCloneAccess: true,
+      // Whether it updates itself when the Hub asks (#87).
+      updater: { self: false, reason: "it runs in a test" },
     })
+  })
+
+  test("says in its hello that it updates itself, and how its last update failed", async () => {
+    const updater = new FakeUpdater()
+    const h = startRunner(undefined, updater.layer)
+    await connected(h)
+
+    expect(h.hub.current.received[0]).toMatchObject({
+      updater: { self: true },
+      lastUpdate: { target: { commit: "b".repeat(40) }, rolledBack: true },
+    })
+    await eventually(() => updater.welcomed === 1)
+  })
+
+  test("hands the Hub's update messages to the Updater", async () => {
+    const updater = new FakeUpdater()
+    const h = startRunner(undefined, updater.layer)
+    await connected(h)
+    const target = { commit: "c".repeat(40), branch: "main" }
+    h.hub.send({ _tag: "CheckUpdate", target })
+    h.hub.send({ _tag: "ApplyUpdate", target })
+    await eventually(() => updater.handled.length === 2)
+
+    expect(updater.handled).toEqual([
+      { _tag: "CheckUpdate", target },
+      { _tag: "ApplyUpdate", target },
+    ])
   })
 
   test("retries with backoff while the Hub refuses the token", async () => {
@@ -239,33 +298,40 @@ describe("connecting", () => {
     expect(h.hub.authorizations).toHaveLength(3)
   })
 
-  test("stops for good when the Hub rejects the handshake", async () => {
+  test("never exits when the Hub rejects the handshake: tells the Updater the Hub's commit and retries", async () => {
+    const hubVersion = { commit: "d".repeat(40), branch: "main" }
+    const updater = new FakeUpdater()
     const h = startRunner(({ hub }) => {
       hub.answer = () => ({
         _tag: "HandshakeRejected",
         reason: "ProtocolVersionMismatch",
         protocolVersion: ProtocolVersion + 1,
         message: "Update the Runner.",
+        hubVersion,
       })
-    })
-    const exit = await Effect.runPromise(Fiber.await(h.runner))
+    }, updater.layer)
+    // A service would only restart a Runner that exits, in a loop: it keeps trying, slowly.
+    await eventually(() => h.hub.connections.length >= 2)
 
-    expect(Exit.isFailure(exit)).toBe(true)
-    expect(String(Exit.isFailure(exit) && exit.cause)).toContain("Update the Runner.")
-    expect(h.hub.connections).toHaveLength(1)
+    expect(updater.rejected.slice(0, 2)).toEqual([hubVersion, hubVersion])
+    expect(h.runner.pollUnsafe()).toBeUndefined()
   })
 
-  test("refuses a welcome from another protocol version", async () => {
+  test("refuses a welcome from another protocol version, and keeps trying", async () => {
+    const updater = new FakeUpdater()
     const h = startRunner(({ hub }) => {
       hub.answer = () => ({
         _tag: "RunnerWelcome",
         protocolVersion: ProtocolVersion + 1,
         runnerId: "r",
       })
-    })
-    const exit = await Effect.runPromise(Fiber.await(h.runner))
+    }, updater.layer)
+    await eventually(() => h.hub.connections.length >= 2)
 
-    expect(String(Exit.isFailure(exit) && exit.cause)).toContain("Protocol version mismatch")
+    // An older Hub says no commit: the Updater only says how to update by hand.
+    expect(updater.rejected[0]).toBeUndefined()
+    expect(updater.welcomed).toBe(0)
+    expect(h.runner.pollUnsafe()).toBeUndefined()
   })
 
   test("re-adopts Sessions left running in tmux and snapshots them once welcomed", async () => {

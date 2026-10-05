@@ -28,6 +28,7 @@ import { RunnerConfig } from "./RunnerConfig.ts"
 import { SessionsLive } from "./Sessions.ts"
 import { FakeSandboxes, FakeWorkspaceGit, FakeWorkspaces } from "./testSupport.ts"
 import { TmuxLive } from "./Tmux.ts"
+import { Updater } from "./Updater.ts"
 
 const tmuxSocket = `claude-hub-mirror-test-${process.pid}`
 const tmuxMissing = Bun.which("tmux") === null
@@ -191,6 +192,7 @@ async function startRunner(hub: TestHub) {
       ),
     ),
     Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
+    Layer.merge(Updater.manual()),
   )
   runners.push(
     Effect.runFork(
