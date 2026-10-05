@@ -10,8 +10,13 @@ import { ToolsSocketVariable } from "@claude-hub/protocol"
  */
 export const ClaudeTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"]
 
-/** Settings passed with `--settings`, which `--setting-sources ""` still honours (spike #4). */
-export const ClaudeFlagSettings = { disableSkillShellExecution: true }
+/**
+ * Settings passed with `--settings`, which `--setting-sources ""` still honours (spike #4).
+ *
+ * Auto memory is off (#111): Claude Code would save its notes with Write, which runs in the
+ * Sandbox, so they would be lost with it, and each Session has its own memory directory anyway.
+ */
+export const ClaudeFlagSettings = { disableSkillShellExecution: true, autoMemoryEnabled: false }
 
 /** The environment variables the mod reads to reach the Hub. */
 export const ModEnvironment = {
@@ -73,6 +78,8 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       // Background Bash would leave its output in the Sandbox, where Claude Code can't read it
       // back (spike #2). This drops `run_in_background` and Ctrl+B; the mod refuses it as well.
       CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      // Also turns auto memory off, ahead of any setting, a managed one included (#111).
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       [ModEnvironment.hubUrl]: options.hubUrl.href,
       [ModEnvironment.sessionId]: options.sessionId,
       [ModEnvironment.modToken]: options.modToken,
