@@ -7,6 +7,7 @@ import {
   TestBuildId,
   VariablesRequestId,
 } from "./Ids.ts"
+import { GitRequestId } from "./Git.ts"
 import { EpochMillis, Participant, RepoName } from "./Session.ts"
 
 // Environments (ADR 0009): each Repo's recipe for its Sandboxes, versioned on the Hub and built
@@ -411,6 +412,17 @@ export const FetchVariables = Schema.TaggedStruct("FetchVariables", {
   for: VariablesFor,
 })
 export type FetchVariables = typeof FetchVariables.Type
+
+/**
+ * Ask how to clone a Test build this Runner runs (#104), just before cloning. Answered with a
+ * GitReply of the same `requestId`, whose answer is a CloneAccess or a GitFailed saying why, such
+ * as the GitHub App not being installed on the Repo.
+ */
+export const FetchCloneAccess = Schema.TaggedStruct("FetchCloneAccess", {
+  requestId: GitRequestId,
+  testBuildId: TestBuildId,
+})
+export type FetchCloneAccess = typeof FetchCloneAccess.Type
 
 /** Output of a Test build, in order. */
 export const TestBuildLog = Schema.TaggedStruct("TestBuildLog", {

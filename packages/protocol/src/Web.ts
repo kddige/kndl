@@ -208,6 +208,19 @@ export const CheckAppPermissions = Schema.TaggedStruct("CheckAppPermissions", {
 })
 export type CheckAppPermissions = typeof CheckAppPermissions.Type
 
+/**
+ * Check a Repo as it is entered, for a new Session or Environment (#104): whether the person has
+ * access to it, and if not, why. With `fresh`, GitHub is asked again rather than the Hub's
+ * cached answer used, as after installing the GitHub App. Answered with a {@link RepoChecked}, or
+ * a CommandFailed when GitHub can't say.
+ */
+export const CheckRepo = Schema.TaggedStruct("CheckRepo", {
+  requestId: RequestId,
+  repo: RepoName,
+  fresh: Schema.optionalKey(Schema.Boolean),
+})
+export type CheckRepo = typeof CheckRepo.Type
+
 // ── Runners (issue #85) ──
 
 /**
@@ -267,6 +280,7 @@ export const WebToHub = Schema.Union([
   SetSharedVariable,
   DeleteSharedVariable,
   CheckAppPermissions,
+  CheckRepo,
   CreatePairingCode,
   RevokePairingCode,
   RemoveRunner,
@@ -380,6 +394,32 @@ export const AppPermissionsChecked = Schema.TaggedStruct("AppPermissionsChecked"
 })
 export type AppPermissionsChecked = typeof AppPermissionsChecked.Type
 
+/**
+ * What {@link CheckRepo} found: the person has access to the Repo; the GitHub App isn't installed
+ * on it, or there is no such Repo; or the App is, and the person has no access on GitHub.
+ */
+export const RepoStatus = Schema.Literals(["Allowed", "NotInstalled", "NoAccess"])
+export type RepoStatus = typeof RepoStatus.Type
+
+/** Answers a {@link CheckRepo}. */
+export const RepoChecked = Schema.TaggedStruct("RepoChecked", {
+  requestId: RequestId,
+  repo: RepoName,
+  status: RepoStatus,
+  /** Where to install the GitHub App, when it isn't installed on the Repo and the Hub knows. */
+  installUrl: Schema.optionalKey(Schema.String),
+})
+export type RepoChecked = typeof RepoChecked.Type
+
+/**
+ * The person no longer has access to the Repo (ADR 0003): its Environment, and any of its Test
+ * builds, are gone from this client, as its Sessions are with a SessionRemoved each.
+ */
+export const RepoAccessLost = Schema.TaggedStruct("RepoAccessLost", {
+  repo: RepoName,
+})
+export type RepoAccessLost = typeof RepoAccessLost.Type
+
 /** Answers a {@link CreatePairingCode}. The code is shown here only: the Hub keeps its hash. */
 export const PairingCodeCreated = Schema.TaggedStruct("PairingCodeCreated", {
   requestId: RequestId,
@@ -446,6 +486,8 @@ export const HubToWeb = Schema.Union([
   TestBuildEnded,
   SharedVariables,
   AppPermissionsChecked,
+  RepoChecked,
+  RepoAccessLost,
   PairingCodeCreated,
   PairingCodeList,
   PairingCodeRedeemed,

@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { BuildVersion } from "./Build.ts"
 import {
+  FetchCloneAccess,
   FetchVariables,
   RunTestBuild,
   SessionEnvironment,
@@ -38,6 +39,12 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * connects, and is listed with its version unknown.
    */
   version: Schema.optionalKey(BuildVersion),
+  /**
+   * The Runner asks the Hub how to clone each Test build, with a FetchCloneAccess (#104). A Runner
+   * from before doesn't say so: it would clone with its host's own git credentials, so a Hub with
+   * the GitHub App sends it no Test builds.
+   */
+  asksCloneAccess: Schema.optionalKey(Schema.Literal(true)),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
@@ -113,6 +120,7 @@ export const RunnerToHub = Schema.Union([
   WipPushFailed,
   SandboxNote,
   FetchVariables,
+  FetchCloneAccess,
   TestBuildLog,
   TestBuildFinished,
 ]).pipe(Schema.toTaggedUnion("_tag"))
