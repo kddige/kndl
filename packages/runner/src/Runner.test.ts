@@ -450,7 +450,7 @@ describe("Sessions", () => {
       "--plugin-dir",
       "/opt/claude-hub/packages/mod",
       "--tools",
-      "Bash,Read,Write,Edit,NotebookEdit,Glob,Grep",
+      "Bash,Read,Write,Edit,NotebookEdit,Glob,Grep,WebSearch",
       "--strict-mcp-config",
       "--setting-sources",
       "",
