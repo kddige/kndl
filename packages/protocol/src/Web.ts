@@ -181,6 +181,18 @@ export const ArchiveSession = Schema.TaggedStruct("ArchiveSession", {
 })
 export type ArchiveSession = typeof ArchiveSession.Type
 
+/**
+ * Rename a Session (its Session name, GLOSSARY.md). Anyone with access to its Repo may, whatever its
+ * state. The Hub trims the name; an empty one clears it, so the Session is shown by its Work branch
+ * again, and one over MaxSessionNameLength characters is refused. Every client that can see
+ * the Session gets it as a SessionUpdated.
+ */
+export const RenameSession = Schema.TaggedStruct("RenameSession", {
+  sessionId: SessionId,
+  name: Schema.String,
+})
+export type RenameSession = typeof RenameSession.Type
+
 /** Restore an Archived Session before it is purged. It comes back Asleep. Any Participant may. */
 export const RestoreSession = Schema.TaggedStruct("RestoreSession", {
   sessionId: SessionId,
@@ -281,6 +293,7 @@ export const WebToHub = Schema.Union([
   RestartSession,
   ArchiveSession,
   RestoreSession,
+  RenameSession,
   OpenTerminal,
   CloseTerminal,
   TerminalInput,

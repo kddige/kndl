@@ -315,6 +315,13 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+
+  // Session names (issue #120): a Session's editable display name, null until someone names it,
+  // when the web UI shows its Work branch.
+  "0013_session_name": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN name TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

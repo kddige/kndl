@@ -43,6 +43,9 @@
 //     Session, its log and its queue, and sends the Runner PurgeSession to delete its directory,
 //     Claude Code's state and any volumes left. A Runner that is offline is sent it when it is
 //     back, again on every connection until it answers SessionPurged.
+// - Session names (#120): anyone with access can rename a Session (RenameSession), in any state;
+//   every client that can see it gets the SessionUpdated. A Session without a name is shown by its
+//   Work branch.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
 // - Git (ADR 0010): the Runner's GitRequests are answered by SessionGit, off the lock, since
 //   they may wait on GitHub. When a Turn ends the Runner is told, to push the WIP ref.
@@ -128,6 +131,7 @@ import {
   WipNotPushed,
   SandboxNoted,
   MaxLastOutputLength,
+  sessionNameFrom,
 } from "@claude-hub/protocol"
 import {
   Clock,
@@ -1539,6 +1543,18 @@ export class SessionRelay extends Context.Service<
                 return refuse(message, "The Session is already archived.", { sessionId })
               }
               return yield* archive(session.value, you)
+            }
+
+            case "RenameSession": {
+              // Anyone with access to the Session's Repo may, in any state (#120).
+              const { sessionId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              const renamed = sessionNameFrom(message.name)
+              if (typeof renamed === "string") return refuse(message, renamed, { sessionId })
+              if ((session.value.name ?? null) === renamed.name) return
+              yield* sessions.setName(sessionId, renamed.name)
+              return yield* sessionUpdated(sessionId)
             }
 
             case "RestoreSession": {
