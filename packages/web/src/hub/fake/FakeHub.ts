@@ -320,6 +320,19 @@ export class FakeHub implements HubTransport {
     this.#toAll({ _tag: "RepoAccessLost", repo })
   }
 
+  /**
+   * Claude Code exits on its own, as when it can't start (#105): the Session goes Asleep with
+   * what it printed last, as the Hub keeps it from its Runner's SessionStopped. In the browser,
+   * `fakeHub.claudeExits("s-demo", 1, "error: …")` in the console.
+   */
+  claudeExits(sessionId: string, exitCode: number, output: string): void {
+    const session = this.sessions.get(sessionId)
+    if (!session) return
+    const { starting: _, restarting: __, ...summary } = session.summary
+    session.summary = { ...summary, currentTurn: null, lastOutput: output }
+    this.#setState(session, "Asleep", `Claude Code exited with code ${exitCode}`)
+  }
+
   /** Refuses a command about a Repo out of reach, as the real Hub does; whether it did. */
   #refusedRepo(socket: FakeSocket, command: string, requestId: string, repo: string): boolean {
     if ((this.repoAccess.get(repo) ?? "Allowed") === "Allowed") return false
@@ -853,8 +866,10 @@ export class FakeHub implements HubTransport {
     const build =
       environment !== null && session.summary.environment?.version !== environment.version
     session.startLog = ""
+    // As on the Hub, what Claude Code printed before it last exited goes once it starts again.
+    const { lastOutput: _lastOutput, ...rest } = session.summary
     session.summary = {
-      ...session.summary,
+      ...rest,
       starting: { since, ...(environment !== null && { environmentVersion: environment.version }) },
     }
     if (why) this.#setState(session, "Active", why.message, why.by)

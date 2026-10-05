@@ -1,6 +1,6 @@
 // The Runner against a fake Hub WebSocket server, with tmux, the Workspace and the Sandbox faked.
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ClaudeSessionId, ProtocolVersion, TestBuildId } from "@claude-hub/protocol"
@@ -8,6 +8,7 @@ import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Exit, Fiber, Layer, Redacted, References } from "effect"
+import { ClaudeProjectsDir, claudeProjectDirName } from "./ClaudeConfig.ts"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -101,6 +102,8 @@ interface Harness {
   readonly settings: RunnerSettings
   /** Claude Code's config file, which the Runner trusts its sessions root in. */
   readonly claudeConfig: string
+  /** Where Claude Code keeps its transcripts, for the Runner to tell whether one exists. */
+  readonly projectsDir: string
 }
 
 const running: Array<{ hub: FakeHub; runner: Fiber.Fiber<never, unknown> }> = []
@@ -116,6 +119,7 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
   const dir = mkdtempSync(join(tmpdir(), "claude-hub-runner-"))
   const sessionsRoot = join(dir, "sessions")
   const claudeConfig = join(dir, ".claude.json")
+  const projectsDir = join(dir, "projects")
   writeFileSync(
     claudeConfig,
     JSON.stringify({
@@ -159,7 +163,11 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
     runRunner({
       claudeConfigPath: claudeConfig,
       backoff: { initial: "20 millis", max: "100 millis" },
-    }).pipe(Effect.provide(layer), Effect.provideService(References.MinimumLogLevel, "None")),
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(ClaudeProjectsDir, projectsDir),
+      Effect.provideService(References.MinimumLogLevel, "None"),
+    ),
   )
   running.push({ hub, runner })
   return {
@@ -175,7 +183,16 @@ function startRunner(setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () =
     runner,
     settings,
     claudeConfig,
+    projectsDir,
   }
+}
+
+/** Gives Session `id` a transcript of Claude Code's conversation `conversation`, as once it ran. */
+function writeTranscript(h: Harness, id: string, conversation: string): void {
+  const name = claudeProjectDirName(join(h.settings.sessionsRoot, id, "claude"))
+  if (name === undefined) throw new Error("the sessions root is too long to name")
+  mkdirSync(join(h.projectsDir, name), { recursive: true })
+  writeFileSync(join(h.projectsDir, name, `${conversation}.jsonl`), "{}\n")
 }
 
 const startSession = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -291,6 +308,7 @@ describe("connecting", () => {
       sessionId: "s-1",
       reason: "Exited",
       exitCode: 0,
+      output: "lost while disconnected",
     })
   })
 })
@@ -372,10 +390,22 @@ describe("Sessions", () => {
   test("resumes Claude Code's conversation when waking a Session", async () => {
     const h = startRunner()
     await connected(h)
+    writeTranscript(h, "s-1", "3c1f6f0e-claude")
     h.hub.send(startSession("s-1", { resume: "3c1f6f0e-claude" }))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+  })
+
+  test("starts a new conversation with the same id when Claude Code never wrote one to resume", async () => {
+    const h = startRunner()
+    await connected(h)
+    // Claude Code exited before its first turn, as in a deleted working directory (#105).
+    h.hub.send(startSession("s-1", { resume: "3c1f6f0e-claude" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    // The same id, so the Hub's stays right for the next wake.
+    expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--session-id", "3c1f6f0e-claude"])
   })
 
   test("reports a start that failed and leaves nothing running", async () => {
@@ -601,6 +631,7 @@ describe("Sessions", () => {
     // for the wake.
     expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Sleep", "stop s-1 Sleep"])
 
+    writeTranscript(h, "s-1", "3c1f6f0e-claude")
     h.hub.send(startSession("s-1", { modToken: "chm_woken.secret", resume: "3c1f6f0e-claude" }))
     await eventually(() => h.hub.all("SessionStarted").length === 2)
     expect(h.sandboxes.calls).toEqual([
@@ -639,6 +670,11 @@ describe("Sessions", () => {
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
+    // What it printed goes with it, read before its tmux session is killed, without its mod token.
+    h.tmux
+      .pane("s-1")
+      .output("\u001b[31mError:\u001b[0m The current working directory was deleted\r\n")
+    h.tmux.pane("s-1").output("token chm_mod.secret\r\n")
     h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 1 })
     await eventually(() => h.hub.all("SessionStopped").length === 1)
 
@@ -647,9 +683,32 @@ describe("Sessions", () => {
       sessionId: "s-1",
       reason: "Exited",
       exitCode: 1,
+      output: "Error: The current working directory was deleted\ntoken **************",
     })
     expect(h.tmux.panes.size).toBe(0)
     expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Sleep", "stop s-1 Sleep"])
+  })
+
+  test("sends no output for a Session that exited without printing anything", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 0 })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+
+    expect(h.hub.all("SessionStopped")[0]).not.toHaveProperty("output")
+  })
+
+  test("makes the tmux server its own before re-adopting Sessions", async () => {
+    const h = startRunner(({ tmux }) => {
+      tmux.claim = { _tag: "Refreshed", sessions: 1, changed: ["PWD was /gone"] }
+      tmux.leaveRunning(sessionId("s-old"))
+    })
+    await connected(h)
+
+    expect(h.tmux.claims).toBe(1)
   })
 
   test("pushes a running Session's WIP ref when the Hub says its Turn ended", async () => {

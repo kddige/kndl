@@ -135,6 +135,11 @@ export const SessionSummary = Schema.Struct({
   starting: Schema.optionalKey(SessionStart),
   /** Present while a restart is under way. */
   restarting: Schema.optionalKey(SessionRestart),
+  /**
+   * Present while it is Asleep because Claude Code exited on its own: the last lines its terminal
+   * showed, redacted as the terminal is, so why it exited can be read (#105).
+   */
+  lastOutput: Schema.optionalKey(Schema.String),
 })
 export type SessionSummary = typeof SessionSummary.Type
 

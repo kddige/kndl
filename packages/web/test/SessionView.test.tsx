@@ -169,6 +169,30 @@ test("an Asleep Session wakes from its banner, and an idle Active one sleeps on 
   )
 })
 
+test("a Session whose Claude Code exited on its own shows what it printed, folded (#105)", async () => {
+  const { hub, page, banner, header } = await openSession("s-readme")
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+
+  const output = "error: The current working directory was deleted, so that command didn't work."
+  await step(() => hub.claudeExits("s-readme", 1, output))
+  await eventually(() => expect(banner()).toContain("Claude Code exited with code 1."))
+  expect(header()).toContain("Asleep")
+  // Folded until asked for.
+  expect(banner()).not.toContain(output)
+  await step(() => button("Show Claude Code's last output", page).click())
+  expect(page.querySelector('[aria-label="Claude Code\'s last output"]')?.textContent).toBe(output)
+
+  // Started again, it is gone.
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+  await step(() => button("Sleep now", page).click())
+  await eventually(() => expect(banner()).toContain("Put to sleep."))
+  expect([...page.querySelectorAll("button")].map((b) => b.textContent)).not.toContain(
+    "Show Claude Code's last output",
+  )
+})
+
 test("a Session that can't start for values a secrets-reset cleared leads to its Environment", async () => {
   const { hub, page, banner, header, sent } = await openSession("s-readme", "This Session")
   hub.environments.resetSecrets()

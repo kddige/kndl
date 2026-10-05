@@ -139,6 +139,38 @@ and `claude-hub status` says the Hub doesn't accept the token.
 
 **Fix.** Start the Runner again, or fix its connection. Once it is back, each Session is Active again if its Claude Code still runs in tmux, and otherwise Asleep, woken at once if prompts are waiting. If Sessions that were running come back Asleep instead, the Runner started with a different tmux socket or sessions root than before, so it didn't find them: start it with the same `RUNNER_TMUX_SOCKET`, `RUNNER_SESSIONS_ROOT` and `CLAUDE_HUB_HOME`. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
 
+## Sessions exit at once with "The current working directory was deleted"
+
+**What you see.** Every new or woken Session goes Asleep at once with `Claude Code exited with code 1`, and its last output (see [Claude Code exited with code N](/troubleshooting/sessions/#claude-code-exited-with-code-n)) is:
+
+```
+error: The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.
+```
+
+`claude-hub doctor` warns:
+
+```
+!!  tmux server  The tmux server on socket claude-hub runs in /Users/you/claude-hub/packages/runner, which was deleted; has PWD /Users/you/claude-hub/packages/runner, which was deleted; …
+```
+
+**Why.** A Runner starts each Session in a tmux server on its socket (`RUNNER_TMUX_SOCKET`, `claude-hub` for an install). The server outlives the Runner that started it, so the next Runner on that socket reuses it, and every process the server starts gets its global environment: the directory, `PWD` and `PATH` of whatever started it. When that was a Runner run from a checkout since deleted, `PWD` names a directory that no longer exists. Claude Code trusts `PWD`, finds it gone, and exits. Before [#94](https://github.com/kddige/claude-hub/pull/94), dev Runners used socket `claude-hub` too, so a dev Runner could leave such a server for the installed one.
+
+Runners now launch Claude Code with its own `PWD` and the Runner's `PATH`, whatever the server has. At startup a Runner also claims the server: one with no sessions is stopped, and the next Session starts a fresh one; one with sessions is kept, and given the Runner's `PATH` with `PWD` and `OLDPWD` unset. The Runner logs what it changed:
+
+```
+INFO (#2): Stopped the tmux server on socket claude-hub, which had no sessions, so the next Session starts a fresh one with the Runner's environment (PATH was …; PWD was /Users/you/claude-hub/packages/runner)
+WARN (#2): Kept the tmux server on socket claude-hub, which has 2 session(s), and set its environment to the Runner's (PWD was …)
+```
+
+**Fix.** [Update](/how-to/add-a-runner/) the Runner and restart it: `claude-hub runner stop`, then `claude-hub runner start`. Then wake the Session. On an older Runner, stop the server yourself, once no Session runs in it:
+
+```sh
+tmux -L claude-hub list-sessions   # "no server running" or nothing listed: safe to stop
+tmux -L claude-hub kill-server
+```
+
+`claude-hub doctor` checks the server too: it warns when the server runs in a deleted directory, has a `PWD` other than the home, or a `PATH` other than the one in the Runner's service file. A server started elsewhere whose `PWD` is unset and `PATH` is right, as one the Runner kept and refreshed, passes. Stopping a server ends every Session in it, so neither the Runner nor doctor stops one that has any.
+
 ## Sessions from before an update are gone
 
 **What you see.** After updating your checkout, Sessions that were running before don't come back: the Runner re-adopts none of them, and waking one fails because its Workspace can't be found.

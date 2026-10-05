@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { lstatSync, mkdirSync } from "node:fs"
 import type {
   EnvironmentVersion,
   HubToRunner,
@@ -21,6 +22,7 @@ import {
   Semaphore,
   Stream,
 } from "effect"
+import { ClaudeProjectsDir, hasTranscript } from "./ClaudeConfig.ts"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
 import { ClaudeTrust } from "./ClaudeTrust.ts"
 import { HubGit } from "./HubGit.ts"
@@ -46,7 +48,10 @@ export const StopGracePeriod = Duration.seconds(10)
 export class Sessions extends Context.Service<
   Sessions,
   {
-    /** Picks up the Sessions still running in tmux, as after a Runner restart. */
+    /**
+     * Picks up the Sessions still running in tmux, as after a Runner restart, once the tmux
+     * server has the Runner's environment. Run once, at startup.
+     */
     readonly adopt: Effect.Effect<void>
     /** The Sessions whose Claude Code is running, for {@link RunnerHello}. */
     readonly running: Effect.Effect<ReadonlyArray<SessionId>>
@@ -70,6 +75,38 @@ const message = (cause: Cause.Cause<unknown>) => {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** `text` with every occurrence of `value` masked, character for character. */
+export function withoutValue(text: string, value: string | undefined): string {
+  return value === undefined || value === ""
+    ? text
+    : text.replaceAll(value, "*".repeat(value.length))
+}
+
+/**
+ * Makes sure the directory Claude Code starts in is there, right before it starts: Claude
+ * Code exits at once when its working directory is gone (#105).
+ */
+const ensureDirectory = (directory: string) =>
+  Effect.try({
+    try: () => {
+      const found = lstatSync(directory, { throwIfNoEntry: false })
+      if (found?.isDirectory() === true) return false
+      if (found !== undefined) throw new Error("it is not a directory")
+      mkdirSync(directory, { recursive: true, mode: 0o700 })
+      return true
+    },
+    catch: (cause) =>
+      new Error(
+        `${directory}, where Claude Code starts, can't be used: ${cause instanceof Error ? cause.message : String(cause)}`,
+      ),
+  }).pipe(
+    Effect.flatMap((made) =>
+      made
+        ? Effect.logWarning(`${directory}, where Claude Code starts, was missing: made it`)
+        : Effect.void,
+    ),
+  )
+
 export const SessionsLive = Layer.effect(
   Sessions,
   Effect.gen(function* () {
@@ -82,9 +119,15 @@ export const SessionsLive = Layer.effect(
     const git = yield* WorkspaceGit
     const hubGit = yield* HubGit
     const hubVariables = yield* HubVariables
+    const projectsDir = yield* ClaudeProjectsDir
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
+    /**
+     * The mod token each Session's Claude Code was started with, kept out of what it printed
+     * before it exited. Not known for a Session re-adopted after a restart.
+     */
+    const modTokens = new Map<SessionId, string>()
     /** The Environment version each started Session's Sandbox runs. */
     const environmentVersions = new Map<SessionId, EnvironmentVersion>()
     const locks = new Map<SessionId, Semaphore.Semaphore>()
@@ -155,10 +198,23 @@ export const SessionsLive = Layer.effect(
         yield* pane.snapshot
       })
 
+    // What Claude Code printed before it exited is read from its dead pane, which tmux keeps
+    // (`remain-on-exit`), before the tmux session is killed: otherwise why it exited is lost (#105).
     const exitedOnItsOwn = (sessionId: SessionId, exitCode: number | undefined) =>
       serialized(sessionId)(
         Effect.gen(function* () {
-          yield* Effect.logInfo(`Session ${sessionId} exited with ${exitCode ?? "unknown status"}`)
+          const output = withoutValue(yield* tmux.lastOutput(sessionId), modTokens.get(sessionId))
+          modTokens.delete(sessionId)
+          const exited = `Session ${sessionId} exited with ${exitCode ?? "unknown status"}`
+          const log = exitCode === 0 ? Effect.logInfo : Effect.logWarning
+          // Only the Hub knows the Environment's Sensitive values, so the output itself goes to the
+          // Hub, which redacts it, and never into the Runner's log file.
+          const lines = output === "" ? 0 : output.split("\n").length
+          yield* log(
+            lines === 0
+              ? exited
+              : `${exited}; its last ${lines} line(s) of output are on the Session's page`,
+          )
           yield* tmux.kill(sessionId)
           yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
           yield* sandboxes.stop(sessionId, "Sleep")
@@ -167,10 +223,31 @@ export const SessionsLive = Layer.effect(
               sessionId,
               reason: "Exited",
               ...(exitCode === undefined ? {} : { exitCode }),
+              ...(output === "" ? {} : { output }),
             }),
           )
         }),
       )
+
+    /**
+     * The conversation to start Claude Code with: a new one, or the one the Hub asks to resume.
+     * One Claude Code never wrote a transcript of, as when it exited before it got that far,
+     * can't be resumed: it starts new instead, with the same id, so the Hub's id stays right
+     * (#105).
+     */
+    const conversationFor = (request: StartSession, cwd: string) =>
+      Effect.gen(function* () {
+        if (request.resume === undefined) {
+          return { _tag: "New", id: randomUUID() } as const
+        }
+        const id = request.resume
+        if (hasTranscript(cwd, id, projectsDir) !== false) return { _tag: "Resume", id } as const
+        yield* Effect.logInfo(
+          `Session ${request.sessionId}: Claude Code has no transcript of conversation ${id} ` +
+            `in ${projectsDir}, so it starts a new one with that id instead of resuming it`,
+        )
+        return { _tag: "New", id } as const
+      })
 
     const start = (request: StartSession) =>
       serialized(request.sessionId)(
@@ -203,13 +280,12 @@ export const SessionsLive = Layer.effect(
               sessionId,
               modToken: request.modToken,
               toolsSocket: directories.toolsSocket,
-              conversation:
-                request.resume === undefined
-                  ? { _tag: "New", id: randomUUID() }
-                  : { _tag: "Resume", id: request.resume },
+              conversation: yield* conversationFor(request, directories.claude),
             })
             // Its trust may have been dropped since startup, and the dialog would stop the mod.
             yield* trust.ensure
+            yield* ensureDirectory(directories.claude)
+            modTokens.set(sessionId, request.modToken)
             yield* tmux.launch({
               sessionId,
               cwd: directories.claude,
@@ -225,6 +301,7 @@ export const SessionsLive = Layer.effect(
             return yield* started(environmentVersions.get(sessionId))
           }
           const reason = message(launched.cause)
+          modTokens.delete(sessionId)
           yield* Effect.logWarning(`Session ${sessionId} failed to start: ${reason}`)
           yield* tmux.kill(sessionId)
           yield* sandboxes.stop(sessionId, "Sleep")
@@ -246,6 +323,7 @@ export const SessionsLive = Layer.effect(
             )
             if (exited._tag === "Some") exitCode = exited.value
           }
+          modTokens.delete(sessionId)
           yield* tmux.kill(sessionId)
           // The Workspace's last state goes to its WIP ref before the Session sleeps, and before
           // it is archived: the archive hook. Archiving destroys the Sandbox and its volumes and
@@ -295,7 +373,38 @@ export const SessionsLive = Layer.effect(
         Effect.ensuring(Effect.sync(() => locks.delete(sessionId))),
       )
 
+    /**
+     * Makes the tmux server on the Runner's socket its own before using it (#105): one left by
+     * another process, as a Runner run from a checkout since deleted, keeps that process's `PWD`
+     * and `PATH` for every Session it starts.
+     */
+    const claimServer = tmux.claimServer.pipe(
+      Effect.flatMap((claim) => {
+        const socket = `the tmux server on socket ${config.tmuxSocket}`
+        const changed = claim._tag === "NoServer" ? [] : claim.changed
+        const how = changed.length === 0 ? "" : ` (${changed.join("; ")})`
+        switch (claim._tag) {
+          case "NoServer":
+            return Effect.void
+          case "Replaced":
+            return Effect.logInfo(
+              `Stopped ${socket}, which had no sessions, so the next Session starts a fresh one with the Runner's environment${how}`,
+            )
+          case "Refreshed":
+            return changed.length === 0
+              ? Effect.void
+              : Effect.logWarning(
+                  `Kept ${socket}, which has ${claim.sessions} session(s), and set its environment to the Runner's${how}`,
+                )
+        }
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not check the tmux server's environment", cause),
+      ),
+    )
+
     const adopt = Effect.gen(function* () {
+      yield* claimServer
       const found = yield* tmux.list.pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Could not list tmux sessions to re-adopt", cause).pipe(Effect.as([])),

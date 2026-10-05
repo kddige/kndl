@@ -28,3 +28,15 @@ describe("Participant", () => {
     ])
   })
 })
+
+describe("SessionSummary", () => {
+  test("round-trips the last output of a Claude Code that exited on its own", () => {
+    expectRoundTrips(SessionSummary, [
+      {
+        ...sessionSummary,
+        state: "Asleep",
+        lastOutput: "error: The current working directory was deleted",
+      },
+    ])
+  })
+})

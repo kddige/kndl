@@ -49,6 +49,7 @@ interface SessionRow {
   readonly purgeAt: number | null
   readonly environmentVersion: number | null
   readonly latestEnvironmentVersion: number | null
+  readonly lastOutput: string | null
 }
 
 /** Archiving a Session: who did it, when, and when it is purged unless restored first. */
@@ -98,6 +99,8 @@ const toSummary = (row: SessionRow): SessionSummary =>
         latestVersion: EnvironmentVersion.make(row.latestEnvironmentVersion),
       },
     }),
+    // Only an Asleep Session's: once it is woken, what its last Claude Code printed is history.
+    ...(row.lastOutput !== null && row.state === "Asleep" && { lastOutput: row.lastOutput }),
   })
 
 /**
@@ -161,6 +164,11 @@ export class Sessions extends Context.Service<
     readonly claudeSessionId: (
       id: SessionId,
     ) => Effect.Effect<Option.Option<ClaudeSessionId>, SqlError>
+    /**
+     * What Claude Code's terminal showed last when it exited on its own, already redacted, or
+     * null to forget it. Its summary shows it while the Session is Asleep.
+     */
+    readonly setLastOutput: (id: SessionId, output: string | null) => Effect.Effect<void, SqlError>
   }
 >()("@claude-hub/hub/Sessions") {
   static readonly layer = Layer.effect(
@@ -176,7 +184,8 @@ export class Sessions extends Context.Service<
           s.created_at AS createdAt, s.current_turn AS currentTurn,
           s.archived_by AS archivedById, a.login AS archivedByLogin, a.name AS archivedByName,
           a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt,
-          s.environment_version AS environmentVersion, e.version AS latestEnvironmentVersion
+          s.environment_version AS environmentVersion, e.version AS latestEnvironmentVersion,
+          s.last_output AS lastOutput
         FROM sessions s JOIN participants p ON p.id = s.creator_id
           LEFT JOIN participants a ON a.id = s.archived_by
           LEFT JOIN environments e ON e.repo = s.repo
@@ -249,6 +258,13 @@ export class Sessions extends Context.Service<
         )
       })
 
+      const setLastOutput = Effect.fn("Sessions.setLastOutput")(function* (
+        id: SessionId,
+        output: string | null,
+      ) {
+        yield* sql`UPDATE sessions SET last_output = ${output} WHERE id = ${id}`
+      })
+
       const archive = Effect.fn("Sessions.archive")(function* (
         id: SessionId,
         archiving: Archiving,
@@ -256,7 +272,7 @@ export class Sessions extends Context.Service<
         yield* sql`
           UPDATE sessions SET state = 'Archived', current_turn = NULL,
             archived_by = ${archiving.by}, archived_at = ${archiving.at},
-            purge_at = ${archiving.purgeAt}, archive_stopped = 0
+            purge_at = ${archiving.purgeAt}, archive_stopped = 0, last_output = NULL
           WHERE id = ${id}
         `
       })
@@ -264,7 +280,7 @@ export class Sessions extends Context.Service<
       const restore = Effect.fn("Sessions.restore")(function* (id: SessionId, state: SessionState) {
         yield* sql`
           UPDATE sessions SET state = ${state}, archived_by = NULL, archived_at = NULL,
-            purge_at = NULL, archive_stopped = 0
+            purge_at = NULL, archive_stopped = 0, last_output = NULL
           WHERE id = ${id}
         `
       })
@@ -336,6 +352,7 @@ export class Sessions extends Context.Service<
         setClaudeSessionId,
         setEnvironmentVersion,
         claudeSessionId,
+        setLastOutput,
       })
     }),
   )

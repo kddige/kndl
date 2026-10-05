@@ -18,7 +18,14 @@ import { Sandboxes } from "./Sandbox.ts"
 import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
-import { type LaunchSpec, type PaneEvent, Tmux, TmuxError } from "./Tmux.ts"
+import {
+  type LaunchSpec,
+  lastOutputOf,
+  type PaneEvent,
+  type ServerClaim,
+  Tmux,
+  TmuxError,
+} from "./Tmux.ts"
 import { WorkspaceError, Workspaces } from "./Workspace.ts"
 import { WorkspaceGit } from "./WorkspaceGit.ts"
 
@@ -107,7 +114,11 @@ export class FakePane {
     if (event._tag === "Exited") Queue.endUnsafe(this.queue)
   }
 
+  /** Everything the terminal printed, as `capture-pane` would read it back. */
+  printed = ""
+
   output(data: string): void {
+    this.printed += data
     this.emit({ _tag: "Output", data, size: this.size })
   }
 
@@ -149,6 +160,9 @@ export class FakeTmux {
   readonly panes = new Map<SessionId, FakePane>()
   readonly launched: Array<LaunchSpec> = []
   readonly killed: Array<SessionId> = []
+  /** What `claimServer` answers, and how often it was asked. */
+  claim: ServerClaim = { _tag: "NoServer" }
+  claims = 0
 
   /** Pretends a Session was left running in tmux by an earlier Runner. */
   leaveRunning(id: SessionId): FakePane {
@@ -171,7 +185,12 @@ export class FakeTmux {
 
   readonly layer = Layer.sync(Tmux, () =>
     Tmux.of({
+      claimServer: Effect.sync(() => {
+        this.claims += 1
+        return this.claim
+      }),
       list: Effect.sync(() => Array.from(this.panes.keys())),
+      lastOutput: (id) => Effect.sync(() => lastOutputOf(this.panes.get(id)?.printed ?? "")),
       launch: (spec) =>
         Effect.suspend(() => {
           if (this.panes.has(spec.sessionId)) {
