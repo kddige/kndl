@@ -30,6 +30,9 @@ import { FakeSandboxes, FakeWorkspaceGit, FakeWorkspaces } from "./testSupport.t
 import { TmuxLive } from "./Tmux.ts"
 
 const tmuxSocket = `claude-hub-mirror-test-${process.pid}`
+const tmuxMissing = Bun.which("tmux") === null
+// Bun doesn't say why a test was skipped, so this does.
+if (tmuxMissing) console.warn("Skipping the terminal mirror test: tmux isn't installed")
 const dir = mkdtempSync(join(tmpdir(), "claude-hub-mirror-"))
 
 /**
@@ -138,6 +141,8 @@ afterEach(async () => {
 })
 
 afterAll(() => {
+  rmSync(dir, { recursive: true, force: true })
+  if (tmuxMissing) return
   const socketPath = Bun.spawnSync([
     "tmux",
     "-L",
@@ -150,7 +155,6 @@ afterAll(() => {
     .trim()
   Bun.spawnSync(["tmux", "-L", tmuxSocket, "kill-server"])
   if (socketPath !== "") rmSync(socketPath, { force: true })
-  rmSync(dir, { recursive: true, force: true })
 })
 
 /** Runs the real Runner against `hub`, with real tmux and the Workspace and Sandbox faked. */
@@ -198,7 +202,7 @@ async function startRunner(hub: TestHub) {
   )
 }
 
-describe.skipIf(Bun.which("tmux") === null)("the terminal mirror", () => {
+describe.skipIf(tmuxMissing)("the terminal mirror", () => {
   test("shows a Session's terminal live, takes keystrokes and resizes, and redraws on reopening", async () => {
     const hub = await startHub({ config: { devLogin: true } })
     await startRunner(hub)

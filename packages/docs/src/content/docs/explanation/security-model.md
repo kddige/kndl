@@ -13,6 +13,7 @@ Sessions never ask for tool approval: everything inside the Sandbox is allowed (
 
 - Every file and command tool runs in the Sandbox, never on the Runner's host, and a tool whose bridge is down is refused rather than run on the host ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/)).
 - Claude Code starts with a fixed tool list, no MCP servers and no setting sources, from an empty directory, so nothing in the Repo (a `CLAUDE.md`'s `@`-mentions, hooks, `.mcp.json`) runs on the host.
+- Auto memory is off. Claude Code would write its notes with its file tools, so they would land in the Sandbox and be lost with it, while it reads memory from the Runner's host. Each Session has its own directory too, so Sessions would never share it.
 - The Sandbox has **unrestricted network access**, including your LAN and the Runner's host, so agents can install packages and reach services. Treat anything a Sandbox can reach as reachable by the agent. Tightening this is a planned, additive change.
 
 ## Where each credential lives

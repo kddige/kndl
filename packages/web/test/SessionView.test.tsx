@@ -90,10 +90,7 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   // The streamed answer arrives whole; then the queued prompt runs as its own Turn.
   await eventually(() => expect(conversation()).toContain("The tests pass."))
   await eventually(() => expect(conversation()).toContain("That's done."))
-  // (Booleans, not elements: a failed check on an element prints all of happy-dom, slowly.)
-  await eventually(() =>
-    expect(page.querySelector('[aria-label="Prompt queue"]') === null).toBe(true),
-  )
+  await eventually(() => expect(page.querySelector('[aria-label="Prompt queue"]')).toBeNull())
   await eventually(() => expect(hasButton("Stop")).toBe(false))
 
   // Tool calls and the subagent are collapsed: their summaries show, their details don't.
