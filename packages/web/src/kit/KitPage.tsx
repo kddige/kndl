@@ -158,9 +158,11 @@ const styles = stylex.create({
     borderRadius: radius.md,
     overflow: "hidden",
   },
-  // A page's top, framed like the page it heads; the narrow one is a phone's width.
+  // A page's top, framed like the page it heads; the narrow one is a phone's width. The header
+  // draws its own bottom border, so the frame leaves that edge to it.
   pageFrame: {
     borderWidth: "1px",
+    borderBottomWidth: 0,
     borderStyle: "solid",
     borderColor: color.border,
     borderRadius: radius.md,
