@@ -57,6 +57,8 @@ const styles = stylex.create({
     flexShrink: 0,
     alignSelf: "center",
   },
+  // Beside a detail that can open, it stays by the title rather than moving with the detail.
+  actionTop: { alignSelf: "flex-start" },
 })
 
 const intents = stylex.create({
@@ -114,7 +116,7 @@ export function Banner({
         {children && <p {...stylex.props(styles.description)}>{children}</p>}
         {detail && <div {...stylex.props(styles.detail)}>{detail}</div>}
       </div>
-      {action && <div {...stylex.props(styles.action)}>{action}</div>}
+      {action && <div {...stylex.props(styles.action, detail && styles.actionTop)}>{action}</div>}
     </div>
   )
 }
