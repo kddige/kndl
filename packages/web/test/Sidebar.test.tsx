@@ -295,3 +295,98 @@ test("on a narrow screen the sidebar is a drawer, closed by following a link", a
   await eventually(() => expect(router.state.location.pathname).toBe("/sessions/s-readme"))
   await eventually(() => expect(nav()).toBeNull())
 })
+
+/** The Sessions nested under a Session's row, as their links read. */
+function nestedUnder(sessionId: string): Array<string | null> {
+  const list = row(sessionId).querySelector(":scope > ul")
+  return [...(list?.querySelectorAll("a") ?? [])].map((a) => a.textContent)
+}
+
+test("Child Sessions nest under their Parent Session, which only its chevron folds", async () => {
+  const { router } = await open("/sessions/s-readme")
+  await eventually(() => expect(groups().length).toBe(2))
+
+  // In the order they were created, each with its dot and name only.
+  expect(nestedUnder("s-release")).toEqual(["API docs", "Changelog"])
+  expect(
+    ["s-api-docs", "s-changelog"].map((id) =>
+      row(id).querySelector('a [role="img"]')?.getAttribute("aria-label"),
+    ),
+  ).toEqual(["Active", "Asleep"])
+  // Only a row with children has a chevron, open to start with, naming the list it controls.
+  const chevron = button("Child Sessions of Release 0.4", nav() ?? document)
+  expect(chevron.getAttribute("aria-expanded")).toBe("true")
+  const controlled = document.getElementById(chevron.getAttribute("aria-controls") ?? "")
+  expect(controlled?.querySelectorAll("a").length).toBe(2)
+  expect(nav()?.querySelectorAll("button[aria-expanded]").length).toBe(1)
+
+  // The chevron folds them, and the fold is kept for this viewer.
+  await step(() => chevron.click())
+  expect(chevron.getAttribute("aria-expanded")).toBe("false")
+  expect(nestedUnder("s-release")).toEqual([])
+  expect(controlled?.hidden).toBe(true)
+  expect(router.state.location.pathname).toBe("/sessions/s-readme")
+  expect(JSON.parse(localStorage.getItem("claude-hub:sidebar-folded") ?? "[]")).toEqual([
+    "s-release",
+  ])
+
+  // A click on the row itself opens the Session and leaves the fold alone.
+  await step(() => row("s-release").querySelector("a")?.click())
+  await eventually(() => expect(router.state.location.pathname).toBe("/sessions/s-release"))
+  expect(nestedUnder("s-release")).toEqual([])
+
+  // Opened again, the chevron shows them.
+  await step(() => button("Child Sessions of Release 0.4", nav() ?? document).click())
+  expect(nestedUnder("s-release")).toEqual(["API docs", "Changelog"])
+  expect(JSON.parse(localStorage.getItem("claude-hub:sidebar-folded") ?? "[]")).toEqual([])
+})
+
+test("a fold lasts across reloads, and opens when one of its Child Sessions becomes current", async () => {
+  localStorage.setItem("claude-hub:sidebar-folded", JSON.stringify(["s-release"]))
+  const { router } = await open("/sessions/s-readme")
+  await eventually(() => expect(groups().length).toBe(2))
+  expect(nestedUnder("s-release")).toEqual([])
+  expect(
+    button("Child Sessions of Release 0.4", nav() ?? document).getAttribute("aria-expanded"),
+  ).toBe("false")
+
+  // Opening a child, as from a link in a transcript, opens its parent so it shows as current.
+  await step(() => router.history.push("/sessions/s-changelog"))
+  await eventually(() => expect(current()).toEqual(["Changelog"]))
+  expect(nestedUnder("s-release")).toEqual(["API docs", "Changelog"])
+  expect(localStorage.getItem("claude-hub:sidebar-folded")).toBe("[]")
+})
+
+test("a Child Session whose parent is archived stands under its Repo on its own", async () => {
+  const { client } = await open("/sessions/s-readme")
+  await eventually(() => expect(groups().length).toBe(2))
+  await step(() => client.archiveSession("s-release" as never))
+  await eventually(() =>
+    expect(groups()[0]?.sessions).toEqual(["claude/readme-run", "claude/web-client"]),
+  )
+
+  await step(() => client.restoreSession("s-api-docs" as never))
+  await eventually(() =>
+    expect(groups()[0]?.sessions).toEqual(["claude/readme-run", "claude/web-client", "API docs"]),
+  )
+  expect(row("s-api-docs").closest("ul")?.hasAttribute("aria-labelledby")).toBe(true)
+  expect(nav()?.querySelectorAll("button[aria-expanded]").length).toBe(0)
+
+  // Its parent restored, it nests again.
+  await step(() => client.restoreSession("s-release" as never))
+  await eventually(() => expect(nestedUnder("s-release")).toEqual(["API docs"]))
+})
+
+test("on a narrow screen the drawer nests and folds Child Sessions too", async () => {
+  setWidth(400)
+  const { page } = await open("/")
+  await eventually(() => expect(button("Open navigation", page)).toBeTruthy())
+  await step(() => button("Open navigation", page).click())
+  await eventually(() => expect(nav()).not.toBeNull())
+
+  expect(nestedUnder("s-release")).toEqual(["API docs", "Changelog"])
+  await step(() => button("Child Sessions of Release 0.4", nav() ?? document).click())
+  expect(nestedUnder("s-release")).toEqual([])
+  // Folding doesn't follow a link, so the drawer stays open.
+  expect(nav()).not.toBeNull()
+})

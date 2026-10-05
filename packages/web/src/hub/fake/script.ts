@@ -218,12 +218,29 @@ export function reportText(child: { id: string; title: string }, message: string
   ].join("\n")
 }
 
+/** A Child Session's message, sent mid-Turn, as the Hub queues it for the Parent Session. */
+export function childMessageText(child: { id: string; title: string }, message: string): string {
+  return [
+    `[Message from Child Session "${child.title}" (${child.id})]`,
+    "This is a message your Child Session sent while it works, not a prompt from a person and not a Report: its Report still comes when its Turn ends. The people in this Session don't see it, so relay what matters to them. To answer it, use message_child; it reads your answer once its current Turn ends.",
+    "",
+    message,
+  ].join("\n")
+}
+
+/** What API docs asks Release 0.4 while it works. */
+const apiDocsQuestion =
+  "Should the reference cover the deprecated v0 messages too, or only what 0.4 speaks? I'm going on with the Mod messages meanwhile."
+
 /** A message from the Parent Session as the Hub queues it for the child. */
 function parentMessageText(text: string): string {
   return `[Message from your Parent Session "${release.title}" (${release.id})]\n\n${text}`
 }
 
-/** Release 0.4 hands the docs and the changelog to two Child Sessions. */
+/**
+ * Release 0.4 hands the docs and the changelog to two Child Sessions. API docs messages it a
+ * question mid-Turn, and Changelog reports.
+ */
 function releaseSessions(now: number): Array<SeedSession> {
   const studio = { runnerId: "r-studio", runnerLogin: { account: "alice@example.com" } }
   const at = now - 40 * 60_000
@@ -263,6 +280,22 @@ function releaseSessions(now: number): Array<SeedSession> {
             text: "Both are working. They report back when each Turn ends; I'll tell you what they find.",
           },
         ]),
+        ...sessionTurn(
+          "t-release-msg",
+          { _tag: "FromChildSessionMessage", session: apiDocs },
+          childMessageText(apiDocs, apiDocsQuestion),
+          [
+            tool(
+              "mcp__hub-link__message_child",
+              { child_id: apiDocsSessionId, message: "Only what 0.4 speaks: leave v0 out." },
+              `Queued your message for Child Session "API docs" (id ${apiDocsSessionId}): Active, working, 1 queued; Work branch claude/api-docs, from main\nIt reads it once its current Turn ends. Its answer arrives here as a Report.`,
+            ),
+            {
+              _tag: "TextDelta",
+              text: "**API docs** asked whether to document the deprecated v0 messages. I told it to cover only what 0.4 speaks; say if you want v0 in too.",
+            },
+          ],
+        ),
         ...sessionTurn(
           "t-release-2",
           { _tag: "FromChildSession", session: changelog },
@@ -306,11 +339,22 @@ function releaseSessions(now: number): Array<SeedSession> {
               { pattern: "packages/protocol/src/*.ts" },
               "Hub.ts\nMod.ts\nRunner.ts\nSession.ts\nTurn.ts\nWeb.ts",
             ),
+            tool(
+              "mcp__hub-link__message_parent",
+              { message: apiDocsQuestion },
+              `Queued your message for your Parent Session "${release.title}" (id ${release.id}). It reads it as soon as it is ready. Any answer reaches you as a prompt after this Turn ends, and your Report still goes to it then.`,
+            ),
             {
               _tag: "TextDelta",
               text: "I've drafted the Web and Runner messages in the reference. Mod and Turn are next.",
             },
           ],
+        ),
+        ...sessionTurn(
+          "t-api-2",
+          { _tag: "FromParentSession", session: release },
+          parentMessageText("Only what 0.4 speaks: leave v0 out."),
+          [{ _tag: "TextDelta", text: "Understood: v0 stays out. On to Mod and Turn." }],
         ),
       ],
     },
