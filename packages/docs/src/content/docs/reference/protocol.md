@@ -63,6 +63,8 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 
 `RunnerHello` carries the Runner's name, its Runner login, the Sessions it still runs, and `version`: the commit its checkout is on and the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `version` is optional, so a Runner from before it still connects, listed with its version unknown. The Hub compares it with its own commit: it starts and wakes no Session on a Runner behind it, which keeps the Sessions it runs.
 
+Every commit in a message, in `version`, `target`, `hubVersion` or an update's failure, is a full commit id in lowercase: 40 hex digits, or 64 in a SHA-256 repository. A message carrying anything else, a short id or text git would read as an option, doesn't decode. A Runner hands the Hub's commit to git, so this keeps a Hub from making it run a command, and the Runner also puts `--end-of-options` before every commit it passes to git.
+
 ### Updates
 
 A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self": true}` for one installed as the claude-hub service, or `{"self": false, "reason": "…"}`, and carries `"anyCommit": true` when `RUNNER_UPDATE_ANY_COMMIT=1`. `lastUpdate` is its last update when that failed (`target`, `message`, `rolledBack`, `at`), so a Hub that restarted meanwhile still shows it. Both are optional: the Hub never asks a Runner that doesn't send `updater` to update.

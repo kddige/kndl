@@ -7,6 +7,8 @@ import {
   type ApplyUpdate,
   type BuildVersion,
   type CheckUpdate,
+  type CommitId,
+  CommitIdPattern,
   type RunnerUpdater,
   RunnerToHub,
   type UpdateFailure,
@@ -17,7 +19,7 @@ import { HomeConfig } from "@claude-hub/protocol/home"
 import { Clock, Context, Effect, Layer, Schema, Semaphore } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { HubLink } from "./HubLink.ts"
-import { type CommandFailed, hostEnvironment, runCommand } from "./Process.ts"
+import { CommandFailed, hostEnvironment, runCommand } from "./Process.ts"
 import {
   afterWelcome,
   applyPlan,
@@ -26,6 +28,9 @@ import {
   type CommitFacts,
   type FailedAt,
   failureOf,
+  fetchCommitArgs,
+  hasCommitArgs,
+  isAncestorArgs,
   LoadCheckVariable,
   lastUpdateOf,
   MainBranch,
@@ -108,6 +113,9 @@ export const makeUpdater = Effect.fn("makeUpdater")(function* (
 
   const position = Effect.gen(function* () {
     const commit = (yield* edge.git(["rev-parse", "HEAD"])).trim()
+    if (!CommitIdPattern.test(commit)) {
+      return yield* new CommandFailed({ message: `git rev-parse HEAD said ${commit}` })
+    }
     const branch = yield* edge.git(["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
       Effect.map((out) => out.trim() || undefined),
       Effect.orElseSucceed(() => undefined),
@@ -117,7 +125,7 @@ export const makeUpdater = Effect.fn("makeUpdater")(function* (
 
   /** Whether `commit` is reachable from `ref`; fails on anything but yes or no. */
   const isAncestor = (commit: string, ref: string) =>
-    edge.git(["merge-base", "--is-ancestor", commit, ref]).pipe(
+    edge.git(isAncestorArgs(commit, ref)).pipe(
       Effect.as(true),
       Effect.catchIf(
         (error) => error.exitCode === NotAncestor,
@@ -135,14 +143,14 @@ export const makeUpdater = Effect.fn("makeUpdater")(function* (
       if (fetched !== undefined) {
         return { fetchError: fetched, exists: false, onMain: false } satisfies CommitFacts
       }
-      const has = edge.git(["cat-file", "-e", `${target.commit}^{commit}`]).pipe(
+      const has = edge.git(hasCommitArgs(target.commit)).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       )
       let exists = yield* has
       // A commit on no branch, as a dev Hub's may be: origin may still hand it over by its id.
       if (!exists) {
-        yield* edge.git(["fetch", "--quiet", "origin", target.commit]).pipe(Effect.ignore)
+        yield* edge.git(fetchCommitArgs(target.commit)).pipe(Effect.ignore)
         exists = yield* has
       }
       const onMain = exists
@@ -173,7 +181,7 @@ export const makeUpdater = Effect.fn("makeUpdater")(function* (
     )
 
   /** Reports a failed update, and keeps it for the next hello while the Runner runs `from`. */
-  const fail = (from: string, failure: UpdateFailure) =>
+  const fail = (from: CommitId, failure: UpdateFailure) =>
     Effect.gen(function* () {
       yield* Effect.logError(failure.message)
       yield* edge.writeMarker({ _tag: "Failed", from, failure })
@@ -295,7 +303,7 @@ export const makeUpdater = Effect.fn("makeUpdater")(function* (
         const back = yield* position.pipe(Effect.option)
         yield* edge.writeMarker({
           _tag: "Failed",
-          from: back._tag === "Some" ? back.value.commit : "",
+          ...(back._tag === "Some" && { from: back.value.commit }),
           failure: { ...decision.failure, rolledBack },
         })
         return yield* edge.restart

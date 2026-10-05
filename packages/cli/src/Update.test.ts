@@ -67,6 +67,12 @@ describe("where update goes", () => {
   test("--ref naming nothing on origin fails", () => {
     expect(updateTarget(onMain, "no-such-branch", remote)).toBeInstanceOf(RefNotFound)
   })
+
+  test("--ref that git would read as an option fails, even if origin lists it", () => {
+    const listed = { branches: ["--upload-pack=touch pwned"], tags: ["-f"] }
+    expect(updateTarget(onMain, "--upload-pack=touch pwned", listed)).toBeInstanceOf(RefNotFound)
+    expect(updateTarget(onMain, "-f", listed)).toBeInstanceOf(RefNotFound)
+  })
 })
 
 const gitCommands = (target: Parameters<typeof gitSteps>[1]) =>
@@ -78,16 +84,16 @@ describe("the git Steps", () => {
   test("following a branch tracks origin's", () => {
     expect(gitCommands({ _tag: "Branch", name: "main" })).toEqual([
       "git fetch --prune --tags --force origin",
-      "git checkout --force -B main --track origin/main",
+      "git checkout --force -B main --track --end-of-options origin/main",
     ])
   })
 
   test("a tag or commit detaches", () => {
     expect(gitCommands({ _tag: "Tag", name: "v0.1.0" })[1]).toBe(
-      "git checkout --force --detach refs/tags/v0.1.0",
+      "git checkout --force --detach --end-of-options refs/tags/v0.1.0",
     )
     expect(gitCommands({ _tag: "Commit", sha: "abcdef1" })[1]).toBe(
-      "git checkout --force --detach abcdef1",
+      "git checkout --force --detach --end-of-options abcdef1",
     )
   })
 

@@ -1,5 +1,6 @@
 import {
   type BuildVersion,
+  CommitIdPattern,
   RunnerId,
   type RunnerLogin,
   RunnerUpdater,
@@ -46,8 +47,10 @@ const fromRow = (row: RunnerRow): KnownRunner => ({
   id: RunnerId.make(row.id),
   name: row.name,
   login: row.account === null ? null : { account: row.account },
+  // A row from a hello is a full commit id; anything else would fail the Runners list's encoding,
+  // so it reads as no version.
   version:
-    row.commit === null
+    row.commit === null || !CommitIdPattern.test(row.commit)
       ? null
       : { commit: row.commit, ...(row.branch !== null && { branch: row.branch }) },
   lastSeenAt: row.lastSeenAt,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
+import { CommitId } from "./Build.ts"
 import { HubToRunner, RunnerHello, RunnerToHub } from "./Runner.ts"
 import { runnerLogin } from "./testSupport.ts"
 import {
@@ -87,6 +88,78 @@ describe("update messages", () => {
       },
     ]) {
       expect(Schema.decodeUnknownSync(RunnerToHub)(message)).toEqual(message as never)
+    }
+  })
+})
+
+/** Every message that carries a commit, each carrying `commit`: from the Hub, and from a Runner. */
+const carrying = (commit: string) => {
+  const version = { commit, branch: "main" }
+  return {
+    hub: [
+      { _tag: "CheckUpdate", target: version },
+      { _tag: "ApplyUpdate", target: version },
+      {
+        _tag: "HandshakeRejected",
+        reason: "ProtocolVersionMismatch",
+        protocolVersion: ProtocolVersion,
+        message: "Update the peer.",
+        hubVersion: version,
+      },
+    ],
+    runner: [
+      {
+        _tag: "RunnerHello",
+        protocolVersion: ProtocolVersion,
+        name: "studio",
+        login: runnerLogin,
+        sessions: [],
+        version,
+      },
+      { _tag: "UpdateChecked", target: version },
+      { _tag: "UpdateProgress", target: version, step: "Fetching" },
+      {
+        _tag: "UpdateFailed",
+        failure: { target: version, message: "x", rolledBack: true, at: 1 },
+      },
+    ],
+  }
+}
+
+describe("a commit on the wire", () => {
+  // A Runner hands the Hub's commit to git: anything but a full commit id must not decode.
+  const hostile = [
+    "--upload-pack=touch /tmp/pwned",
+    "-c",
+    "abcdef1",
+    "A".repeat(40),
+    "a".repeat(41),
+    `${"a".repeat(39)}g`,
+    `${"a".repeat(40)}\n`,
+    "",
+  ]
+
+  test("is a full commit id: SHA-1 or SHA-256, lowercase", () => {
+    for (const commit of ["0123456789abcdef0123456789abcdef01234567", "f".repeat(64)]) {
+      expect(Schema.decodeUnknownSync(CommitId)(commit)).toBe(commit)
+      const { hub, runner } = carrying(commit)
+      for (const message of hub)
+        expect(() => Schema.decodeUnknownSync(HubToRunner)(message)).not.toThrow()
+      for (const message of runner) {
+        expect(() => Schema.decodeUnknownSync(RunnerToHub)(message)).not.toThrow()
+      }
+    }
+  })
+
+  test("refuses anything git could read as an option, a short id, or another case", () => {
+    for (const commit of hostile) {
+      expect(() => Schema.decodeUnknownSync(CommitId)(commit)).toThrow()
+      const { hub, runner } = carrying(commit)
+      for (const message of hub)
+        expect(() => Schema.decodeUnknownSync(HubToRunner)(message)).toThrow()
+      for (const message of runner) {
+        expect(() => Schema.decodeUnknownSync(RunnerToHub)(message)).toThrow()
+      }
     }
   })
 })

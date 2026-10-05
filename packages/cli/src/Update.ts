@@ -68,6 +68,10 @@ export function updateTarget(
     if (checkout.branch !== undefined) return { _tag: "Branch", name: checkout.branch }
     return { _tag: "Pinned", at: checkout.tag ?? checkout.commit.slice(0, 12) }
   }
+  // No branch, tag or commit id starts with "-": git would read such a ref as an option.
+  if (ref.startsWith("-")) {
+    return new RefNotFound({ message: `${ref} isn't a branch, tag or commit id.` })
+  }
   if (remote.branches.includes(ref)) return { _tag: "Branch", name: ref }
   if (remote.tags.includes(ref)) return { _tag: "Tag", name: ref }
   if (/^[0-9a-f]{7,40}$/i.test(ref)) return { _tag: "Commit", sha: ref.toLowerCase() }
@@ -76,7 +80,10 @@ export function updateTarget(
   })
 }
 
-/** The git Steps, in the checkout, that move it to `target`. */
+/**
+ * The git Steps, in the checkout, that move it to `target`. `--end-of-options` comes before the
+ * ref, which the person typed, so git never reads it as an option.
+ */
 export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
   const fetch = step("git", ["fetch", "--prune", "--tags", "--force", "origin"], {
     cwd: app,
@@ -88,7 +95,15 @@ export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
         fetch,
         step(
           "git",
-          ["checkout", "--force", "-B", target.name, "--track", `origin/${target.name}`],
+          [
+            "checkout",
+            "--force",
+            "-B",
+            target.name,
+            "--track",
+            "--end-of-options",
+            `origin/${target.name}`,
+          ],
           {
             cwd: app,
             why: `follow ${target.name}`,
@@ -98,15 +113,19 @@ export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
     case "Tag":
       return [
         fetch,
-        step("git", ["checkout", "--force", "--detach", `refs/tags/${target.name}`], {
-          cwd: app,
-          why: `pin to ${target.name}`,
-        }),
+        step(
+          "git",
+          ["checkout", "--force", "--detach", "--end-of-options", `refs/tags/${target.name}`],
+          {
+            cwd: app,
+            why: `pin to ${target.name}`,
+          },
+        ),
       ]
     case "Commit":
       return [
         fetch,
-        step("git", ["checkout", "--force", "--detach", target.sha], {
+        step("git", ["checkout", "--force", "--detach", "--end-of-options", target.sha], {
           cwd: app,
           why: `pin to ${target.sha}`,
         }),

@@ -4,7 +4,7 @@
 // the web UI and the mod's bundle have no use for.
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import type { BuildVersion } from "./Build.ts"
+import { type BuildVersion, CommitIdPattern } from "./Build.ts"
 
 /** The checkout this file is in: the one the Hub, Runner or CLI importing it runs from. */
 export const thisCheckout = fileURLToPath(new URL("../../..", import.meta.url))
@@ -24,7 +24,7 @@ function git(dir: string, args: ReadonlyArray<string>): string | undefined {
 /** The checkout's HEAD and branch, or `undefined` when `dir` isn't a git checkout. */
 export function readBuildVersion(dir: string = thisCheckout): BuildVersion | undefined {
   const commit = git(dir, ["rev-parse", "HEAD"])
-  if (commit === undefined || !/^[0-9a-f]{40,64}$/.test(commit)) return undefined
+  if (commit === undefined || !CommitIdPattern.test(commit)) return undefined
   const branch = git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"])
   return branch ? { commit, branch } : { commit }
 }
@@ -41,10 +41,14 @@ export function checkoutHolds(
 ): boolean | undefined {
   if (!/^[0-9a-f]{7,64}$/.test(commit)) return undefined
   try {
-    execFileSync("git", ["-C", dir, "merge-base", "--is-ancestor", commit, of], {
-      stdio: "ignore",
-      timeout: 5_000,
-    })
+    execFileSync(
+      "git",
+      ["-C", dir, "merge-base", "--is-ancestor", "--end-of-options", commit, of],
+      {
+        stdio: "ignore",
+        timeout: 5_000,
+      },
+    )
     return true
   } catch (error) {
     // 1: not an ancestor; 128: no such commit, or no checkout, which readBuildVersion tells apart.

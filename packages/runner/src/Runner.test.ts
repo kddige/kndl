@@ -289,6 +289,21 @@ describe("connecting", () => {
     ])
   })
 
+  test("never hands the Updater a commit git could read as an option", async () => {
+    const updater = new FakeUpdater()
+    const h = startRunner(undefined, updater.layer)
+    await connected(h)
+    for (const commit of ["--upload-pack=touch /tmp/pwned", "c".repeat(12), "C".repeat(40)]) {
+      h.hub.send({ _tag: "ApplyUpdate", target: { commit, branch: "main" } })
+    }
+    // A good message after them arrives, so the bad ones were read and dropped, not still queued.
+    const target = { commit: "c".repeat(40), branch: "main" }
+    h.hub.send({ _tag: "CheckUpdate", target })
+    await eventually(() => updater.handled.length === 1)
+
+    expect(updater.handled).toEqual([{ _tag: "CheckUpdate", target }])
+  })
+
   test("retries with backoff while the Hub refuses the token", async () => {
     const h = startRunner(({ hub }) => {
       hub.refuseNext = 2

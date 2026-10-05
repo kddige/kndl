@@ -6,6 +6,9 @@ import {
   checkoutArgs,
   checkRefusal,
   failureOf,
+  fetchCommitArgs,
+  hasCommitArgs,
+  isAncestorArgs,
   lastUpdateOf,
   type Marker,
   MaxBootsBeforeWelcome,
@@ -117,21 +120,44 @@ describe("moving the checkout", () => {
   test("stays on its branch when the commit is on it", () => {
     expect(applyPlan({ commit: old, branch: "main" }, target, true)).toEqual({
       _tag: "Move",
-      checkout: ["checkout", "--force", "-B", "main", target.commit],
-      back: ["checkout", "--force", "-B", "main", old],
+      checkout: ["checkout", "--force", "-B", "main", "--end-of-options", target.commit],
+      back: ["checkout", "--force", "-B", "main", "--end-of-options", old],
     })
   })
 
   test("detaches at a commit not on its branch, and goes back to the branch", () => {
     expect(applyPlan({ commit: old, branch: "main" }, target, false)).toEqual({
       _tag: "Move",
-      checkout: ["checkout", "--force", "--detach", target.commit],
-      back: ["checkout", "--force", "-B", "main", old],
+      checkout: ["checkout", "--force", "--detach", "--end-of-options", target.commit],
+      back: ["checkout", "--force", "-B", "main", "--end-of-options", old],
     })
   })
 
+  test("never lets git read the commit as an option", () => {
+    // What the protocol's CommitId refuses, should it ever get this far.
+    const hostile = "--upload-pack=touch /tmp/pwned"
+    const lists = [
+      fetchCommitArgs(hostile),
+      hasCommitArgs(hostile),
+      isAncestorArgs(hostile, "origin/main"),
+      checkoutArgs({ commit: hostile }),
+      checkoutArgs({ commit: hostile, branch: "main" }),
+    ]
+    for (const args of lists) {
+      const at = args.findIndex((arg) => arg.includes(hostile))
+      expect(args.indexOf("--end-of-options")).toBeGreaterThan(-1)
+      expect(args.indexOf("--end-of-options")).toBeLessThan(at)
+    }
+  })
+
   test("goes back to a detached commit detached", () => {
-    expect(checkoutArgs({ commit: old })).toEqual(["checkout", "--force", "--detach", old])
+    expect(checkoutArgs({ commit: old })).toEqual([
+      "checkout",
+      "--force",
+      "--detach",
+      "--end-of-options",
+      old,
+    ])
   })
 
   test("only restarts when the checkout is at the commit already, as on the Hub's machine", () => {
@@ -163,7 +189,7 @@ describe("starting after an update", () => {
 
     expect(decision).toEqual({
       _tag: "RollBack",
-      back: ["checkout", "--force", "-B", "main", old],
+      back: ["checkout", "--force", "-B", "main", "--end-of-options", old],
       failure: {
         target,
         message: `It started on ${target.commit.slice(0, 12)} 3 times without the Hub welcoming it, so it went back to ${old.slice(0, 12)}: see its log.`,
@@ -192,6 +218,12 @@ describe("starting after an update", () => {
 
   test("forgets a failure once it runs another commit, as after `claude-hub update`", () => {
     expect(bootDecision(failed, target.commit, 4)).toEqual({ _tag: "Clear" })
+  })
+
+  test("forgets a failure that doesn't say which commit it failed from", () => {
+    expect(bootDecision({ _tag: "Failed", failure: failed.failure }, old, 4)).toEqual({
+      _tag: "Clear",
+    })
   })
 
   test("has nothing to do without a marker", () => {

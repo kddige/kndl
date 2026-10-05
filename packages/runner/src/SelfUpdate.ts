@@ -22,6 +22,7 @@
 // from the installed checkout, which nothing would start again after its restart.
 import {
   BuildVersion,
+  CommitId,
   type RunnerUpdater,
   UpdateFailure,
   type UpdateRefusal,
@@ -137,7 +138,7 @@ export function checkRefusal(
 
 /** Where the checkout is: the commit, and the branch it is on (none when detached). */
 export interface Position {
-  readonly commit: string
+  readonly commit: CommitId
   readonly branch?: string | undefined
 }
 
@@ -179,25 +180,58 @@ export function applyPlan(
   }
 }
 
+// The git arguments that name a commit or ref, which may be the Hub's. Each puts `--end-of-options`
+// before it, so git never reads one as an option (`--upload-pack=<command>` would run the command
+// on the Runner's machine), should anything but a commit id ever get past the protocol's CommitId.
+
+/** Fetches `commit` from origin by its id, for one on no branch origin advertises. */
+export const fetchCommitArgs = (commit: string): ReadonlyArray<string> => [
+  "fetch",
+  "--quiet",
+  "--end-of-options",
+  "origin",
+  commit,
+]
+
+/** Exits 0 when the checkout has `commit`. */
+export const hasCommitArgs = (commit: string): ReadonlyArray<string> => [
+  "cat-file",
+  "-e",
+  "--end-of-options",
+  `${commit}^{commit}`,
+]
+
+/** Exits 0 when `commit` is reachable from `ref`, 1 when it isn't. */
+export const isAncestorArgs = (commit: string, ref: string): ReadonlyArray<string> => [
+  "merge-base",
+  "--is-ancestor",
+  "--end-of-options",
+  commit,
+  ref,
+]
+
 /** git's arguments that put the checkout at `position`, discarding changes to its files. */
 export function checkoutArgs(position: Position): ReadonlyArray<string> {
   return position.branch === undefined
-    ? ["checkout", "--force", "--detach", position.commit]
-    : ["checkout", "--force", "-B", position.branch, position.commit]
+    ? ["checkout", "--force", "--detach", "--end-of-options", position.commit]
+    : ["checkout", "--force", "-B", position.branch, "--end-of-options", position.commit]
 }
 
 /** What the Runner keeps across its restart, in `<home>/runner-update.json`. */
 export const Marker = Schema.Union([
   /** It is moving from `from` to `target`; `boots` counts its starts on `target` so far. */
   Schema.TaggedStruct("Applying", {
-    from: Schema.Struct({ commit: Schema.String, branch: Schema.optional(Schema.String) }),
+    from: Schema.Struct({ commit: CommitId, branch: Schema.optional(Schema.String) }),
     target: BuildVersion,
     boots: Schema.Int,
     at: Schema.Number,
   }),
-  /** Its last update, from `from`, failed: told to the Hub in each hello while it runs `from`. */
+  /**
+   * Its last update, from `from`, failed: told to the Hub in each hello while it runs `from`.
+   * Without `from` (it couldn't read its checkout after rolling back), the next start clears it.
+   */
   Schema.TaggedStruct("Failed", {
-    from: Schema.String,
+    from: Schema.optionalKey(CommitId),
     failure: UpdateFailure,
   }),
 ])
@@ -227,7 +261,9 @@ export function bootDecision(
   at: number,
 ): BootDecision {
   if (marker === undefined) return { _tag: "Keep" }
-  if (marker._tag === "Failed") return marker.from === head ? { _tag: "Keep" } : { _tag: "Clear" }
+  if (marker._tag === "Failed") {
+    return marker.from !== undefined && marker.from === head ? { _tag: "Keep" } : { _tag: "Clear" }
+  }
   // Moved elsewhere since: by a rollback that didn't get to write its failure, or by hand.
   if (head !== marker.target.commit) return { _tag: "Clear" }
   const boots = marker.boots + 1
