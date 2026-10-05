@@ -4,7 +4,13 @@
 import { describe, expect, test } from "bun:test"
 import { SessionId } from "@claude-hub/protocol"
 import type { ChildSummary } from "@claude-hub/protocol"
-import { childReplyText, childToolRequest, childTools, MaxListedReport } from "./ChildTools.ts"
+import {
+  childReplyText,
+  childToolRequest,
+  childTools,
+  MaxListedReport,
+  parentTools,
+} from "./ChildTools.ts"
 
 const child: ChildSummary = {
   id: SessionId.make("s-2"),
@@ -42,6 +48,10 @@ describe("a call to a Child Session tool", () => {
       _tag: "ArchiveChild",
       childId: child.id,
     })
+    expect(childToolRequest("mcp__hub-link__message_parent", { message: "A question." })).toEqual({
+      _tag: "MessageParent",
+      text: "A question.",
+    })
   })
 
   test("is no request for any other tool", () => {
@@ -56,13 +66,16 @@ describe("a call to a Child Session tool", () => {
     expect(childToolRequest("mcp__hub-link__message_child", { child_id: "s-2" })).toEqual({
       invalid: expect.any(String),
     })
+    expect(childToolRequest("mcp__hub-link__message_parent", { message: "" })).toEqual({
+      invalid: expect.stringContaining("message_parent was called with input it can't take"),
+    })
     expect(childToolRequest("mcp__hub-link__spawn", {})).toEqual({
       invalid: "mcp__hub-link__spawn is not a Child Session tool.",
     })
   })
 
   test("names every tool the mod registers", () => {
-    for (const tool of childTools)
+    for (const tool of [...childTools, ...parentTools])
       expect(childToolRequest(`mcp__hub-link__${tool.name}`, {})).not.toEqual({
         invalid: `mcp__hub-link__${tool.name} is not a Child Session tool.`,
       })
@@ -105,6 +118,13 @@ describe("the Hub's reply", () => {
   test("says when there are no children", () => {
     expect(childReplyText({ _tag: "ChildList", children: [] })).toEqual({
       text: "You have no Child Sessions that aren't archived.",
+    })
+  })
+
+  test("says when the Parent Session reads a message, and that the Report still follows", () => {
+    const parent = { id: SessionId.make("s-1"), title: "Release 0.4" }
+    expect(childReplyText({ _tag: "ParentMessaged", parent, working: false })).toEqual({
+      text: 'Queued your message for your Parent Session "Release 0.4" (id s-1). It reads it as soon as it is ready. Any answer reaches you as a prompt after this Turn ends, and your Report still goes to it then.',
     })
   })
 

@@ -18,7 +18,7 @@ The Runner clones the Repo onto the Session's Work branch, builds the Environmen
 
 ## Find and rename a Session
 
-The sidebar lists every Session that isn't Archived under its Repo's `owner/name`, in the order they were started, the oldest first. Each row's dot shows the Session's state, and a spinner shows a Turn running.
+The sidebar lists every Session that isn't Archived under its Repo's `owner/name`, in the order they were started, the oldest first. Each row's dot shows the Session's state, and a spinner shows a Turn running. [Child Sessions](/how-to/coordinate-with-child-sessions/#find-a-child-session) are listed under their Parent Session's row, whose chevron hides and shows them.
 
 A Session is shown by its [Session name](/reference/glossary/), or by its Work branch until someone names it. **New Session** doesn't ask for a name. Anyone can rename a Session, in any state:
 

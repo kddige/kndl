@@ -1,5 +1,5 @@
 // What the Hub writes for the model when Sessions talk to each other (ADR 0012): a Parent
-// Session's messages to its Child Session, and the note around each Report back. Also how a Report
+// Session's messages to its Child Session, and the note around each Report or message back. Also how a Report
 // is found in a Turn, and a Child Session's conversation as its parent reads it. SessionRelay.ts
 // does the rest.
 
@@ -15,9 +15,16 @@ import {
 export const oneLevelDeep =
   "A Child Session can't create Child Sessions of its own: Sessions nest one level deep. Do the work yourself, or report back to your Parent Session."
 
+/** Why a Session that isn't a Child Session can't message a parent. */
+export const notAChild = "This Session isn't a Child Session: it has no Parent Session to message."
+
 /** A Parent Session's message, as its Child Session's model reads it. */
 export const parentMessageText = (parent: SessionRef, text: string) =>
   `[Message from your Parent Session "${parent.title}" (${parent.id})]\n\n${text}`
+
+/** The loop guard's reminder, in a Report's or a message's note (see {@link LoopGuardExchanges}). */
+const loopGuardNote = (exchanges: number) =>
+  `You and this Child Session have gone back and forth ${exchanges} times with no person's prompt in between. Check that the work is still making progress before you message it again; if it isn't, stop and tell the people here.`
 
 /**
  * A Child Session's Report, as its Parent Session's model reads it: a note saying which child sent
@@ -30,11 +37,22 @@ export const reportText = (child: SessionRef, message: string, exchanges: number
     `[Report from Child Session "${child.title}" (${child.id})]`,
     "This is a Report, not a prompt from a person: the final message of a Turn your Child Session just ended. The people in this Session don't see Reports, so relay what matters to them. More Reports may follow while it works.",
   ]
-  if (exchanges >= LoopGuardExchanges) {
-    note.push(
-      `You and this Child Session have gone back and forth ${exchanges} times with no person's prompt in between. Check that the work is still making progress before you message it again; if it isn't, stop and tell the people here.`,
-    )
-  }
+  if (exchanges >= LoopGuardExchanges) note.push(loopGuardNote(exchanges))
+  return `${note.join("\n")}\n\n${message}`
+}
+
+/**
+ * A Child Session's message to its Parent Session, sent mid-Turn with message_parent, as the
+ * parent's model reads it: a note like a Report's, saying it is a message and not a Report, then
+ * the message. A message doesn't count for the loop guard, but while the count is at
+ * {@link LoopGuardExchanges} or more its note carries the same reminder.
+ */
+export const childMessageText = (child: SessionRef, message: string, exchanges: number) => {
+  const note = [
+    `[Message from Child Session "${child.title}" (${child.id})]`,
+    "This is a message your Child Session sent while it works, not a prompt from a person and not a Report: its Report still comes when its Turn ends. The people in this Session don't see it, so relay what matters to them. To answer it, use message_child; it reads your answer once its current Turn ends.",
+  ]
+  if (exchanges >= LoopGuardExchanges) note.push(loopGuardNote(exchanges))
   return `${note.join("\n")}\n\n${message}`
 }
 
@@ -103,6 +121,8 @@ const senderLabel = (sender: PromptSender) => {
       return "From the Parent Session"
     case "FromChildSession":
       return `Report from Child Session "${sender.session.title}"`
+    case "FromChildSessionMessage":
+      return `Message from Child Session "${sender.session.title}"`
   }
 }
 

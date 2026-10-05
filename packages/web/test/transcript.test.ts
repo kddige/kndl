@@ -268,6 +268,12 @@ describe("displayPrompt", () => {
         session,
       }),
     ).toBe("Go on.")
+    expect(
+      displayPrompt(
+        '[Message from Child Session "API docs" (s-2)]\nThis is a message.\n\nA question?',
+        { _tag: "FromChildSessionMessage", session },
+      ),
+    ).toBe("A question?")
     expect(displayPrompt("No note here.\n\nAt all.", { _tag: "FromChildSession", session })).toBe(
       "No note here.\n\nAt all.",
     )

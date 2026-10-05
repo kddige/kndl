@@ -2,14 +2,30 @@ import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 import * as stylex from "@stylexjs/stylex"
 import { type ReactElement, type ReactNode, useId } from "react"
+import { IconButton } from "./Button.tsx"
+import { ChevronRightIcon } from "./icons.tsx"
 import { navRow } from "./markers.stylex.ts"
 import { focus } from "./shared.ts"
-import { chrome, color, control, leading, radius, space, text, weight } from "./tokens.stylex.ts"
+import {
+  chrome,
+  color,
+  control,
+  leading,
+  motion,
+  radius,
+  space,
+  text,
+  weight,
+} from "./tokens.stylex.ts"
 
 const TOUCH = "@media (pointer: coarse)"
 
 // The action's room at the end of a row: its button and a little gap.
 const ACTION_ROOM = `calc(${control.sm} + ${space.s1})`
+// The room for both a nested list's toggle and the action beside it.
+const TOGGLE_AND_ACTION_ROOM = `calc(${control.sm} * 2 + ${space.s1} + ${space.s0_5})`
+// How far a nested list is indented: its rows' dots line up under the label above them.
+const NESTED_INDENT = `calc(1rem + ${space.s2})`
 
 const styles = stylex.create({
   sidebar: {
@@ -95,6 +111,16 @@ const styles = stylex.create({
     },
   },
   itemWithActionShown: { paddingInlineEnd: ACTION_ROOM },
+  // With a nested list, its toggle always has room at the end, and the action before it.
+  itemWithToggle: { paddingInlineEnd: ACTION_ROOM },
+  itemWithToggleAndAction: {
+    paddingInlineEnd: {
+      default: ACTION_ROOM,
+      [stylex.when.ancestor(":hover", navRow)]: TOGGLE_AND_ACTION_ROOM,
+      [stylex.when.ancestor(":focus-within", navRow)]: TOGGLE_AND_ACTION_ROOM,
+    },
+  },
+  itemWithToggleAndActionShown: { paddingInlineEnd: TOGGLE_AND_ACTION_ROOM },
   // Not by colour alone: a bar at the start and a heavier label as well as the fill.
   current: {
     color: { default: color.text, ":hover": color.text },
@@ -160,6 +186,33 @@ const styles = stylex.create({
     },
   },
   actionShown: { opacity: 1, pointerEvents: "auto" },
+  actionBesideToggle: { insetInlineEnd: `calc(${space.s0_5} * 2 + ${control.sm})` },
+  // A nested list's toggle, at the very end of the row and always shown.
+  toggle: {
+    position: "absolute",
+    insetInlineEnd: space.s0_5,
+    top: "50%",
+    display: "inline-flex",
+    transform: "translateY(-50%)",
+  },
+  chevron: {
+    color: color.textSubtle,
+    transitionProperty: "transform",
+    transitionDuration: motion.durationFast,
+    transitionTimingFunction: motion.easeStandard,
+  },
+  chevronOpen: { transform: "rotate(90deg)" },
+  nested: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s0_5,
+    margin: 0,
+    paddingTop: space.s0_5,
+    paddingInlineStart: NESTED_INDENT,
+    paddingInlineEnd: 0,
+    paddingBottom: 0,
+    listStyle: "none",
+  },
 })
 
 export interface SidebarProps {
@@ -237,6 +290,22 @@ export interface NavItemProps {
   action?: ReactNode
   /** Shown in place of the link and the action while set, such as an InlineEdit: the icon stays. */
   editor?: ReactNode
+  /**
+   * NavItems nested under this one, such as a Session's Child Sessions: indented under its row,
+   * which gets a chevron button at its end that shows and hides them. Only that button folds
+   * them; the link still leads to the item.
+   */
+  nested?: NestedNavItems
+}
+
+export interface NestedNavItems {
+  /** The NavItems. */
+  children: ReactNode
+  /** Whether they show. */
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** Names the chevron button, such as "Child Sessions of Release 0.4"; it says if they show. */
+  label: string
 }
 
 /**
@@ -252,7 +321,9 @@ export function NavItem({
   title,
   action,
   editor,
+  nested,
 }: NavItemProps) {
+  const nestedId = useId()
   const iconSlot = icon && <span {...stylex.props(styles.slot)}>{icon}</span>
   const link = useRender({
     defaultTagName: "a",
@@ -261,7 +332,13 @@ export function NavItem({
       {
         ...stylex.props(
           styles.item,
-          action !== undefined && (current ? styles.itemWithActionShown : styles.itemWithAction),
+          nested === undefined
+            ? action !== undefined && (current ? styles.itemWithActionShown : styles.itemWithAction)
+            : action === undefined
+              ? styles.itemWithToggle
+              : current
+                ? styles.itemWithToggleAndActionShown
+                : styles.itemWithToggleAndAction,
           current && styles.current,
           focus.ringInset,
         ),
@@ -279,6 +356,12 @@ export function NavItem({
       },
     ),
   })
+  // The list is there while folded too, empty, for the chevron's aria-controls.
+  const nestedList = nested && (
+    <ul id={nestedId} hidden={!nested.open} {...stylex.props(styles.nested)}>
+      {nested.open && nested.children}
+    </ul>
+  )
   if (editor !== undefined) {
     return (
       <li>
@@ -286,6 +369,7 @@ export function NavItem({
           {iconSlot}
           {editor}
         </div>
+        {nestedList}
       </li>
     )
   }
@@ -294,9 +378,33 @@ export function NavItem({
       <div {...stylex.props(styles.row, navRow)}>
         {link}
         {action !== undefined && (
-          <span {...stylex.props(styles.action, current && styles.actionShown)}>{action}</span>
+          <span
+            {...stylex.props(
+              styles.action,
+              current && styles.actionShown,
+              nested && styles.actionBesideToggle,
+            )}
+          >
+            {action}
+          </span>
+        )}
+        {nested && (
+          <span {...stylex.props(styles.toggle)}>
+            <IconButton
+              label={nested.label}
+              size="sm"
+              aria-expanded={nested.open}
+              aria-controls={nestedId}
+              onClick={() => nested.onOpenChange(!nested.open)}
+            >
+              <ChevronRightIcon
+                {...stylex.props(styles.chevron, nested.open && styles.chevronOpen)}
+              />
+            </IconButton>
+          </span>
         )}
       </div>
+      {nestedList}
     </li>
   )
 }

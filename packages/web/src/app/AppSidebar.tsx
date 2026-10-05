@@ -1,10 +1,11 @@
 import { MaxSessionNameLength, type SessionSummary, sessionTitle } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useParams, useRouterState } from "@tanstack/react-router"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
-import { groupByRepo } from "../sessions/groups.ts"
+import { setFolded, useFolded } from "../sessions/folds.ts"
+import { groupByRepo, nestChildren } from "../sessions/groups.ts"
 import { renameSession } from "../sessions/rename.ts"
 import {
   ArchiveIcon,
@@ -21,6 +22,7 @@ import {
   NavItem,
   NavSection,
   NavSlot,
+  type NestedNavItems,
   PencilIcon,
   PlusIcon,
   ServerIcon,
@@ -100,7 +102,8 @@ function sectionOf(pathname: string): "runners" | "environments" | "variables" |
 /**
  * The app's sidebar: New Session, the Hub-wide pages, every listed Session under its Repo's name
  * in the order they were created, and the Runners and the signed-in person at the bottom.
- * `onClose` adds a close button, for a drawer.
+ * Child Sessions are under their Parent Session's row, which folds them away; one whose parent
+ * isn't listed stands on its own. `onClose` adds a close button, for a drawer.
  */
 export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const hub = useHub()
@@ -112,9 +115,22 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const section = sectionOf(pathname)
 
   const groups = useMemo(
-    () => (sessions ? groupByRepo(sessions.filter(isListed)) : null),
+    () =>
+      sessions
+        ? groupByRepo(sessions.filter(isListed)).map((group) => ({
+            repo: group.repo,
+            nodes: nestChildren(group.sessions),
+          }))
+        : null,
     [sessions],
   )
+  const known = useMemo(() => new Set((sessions ?? []).map((session) => session.id)), [sessions])
+  const folded = useFolded()
+  // When a Child Session becomes current, its folded parent opens, so its row isn't hidden.
+  const currentParent = sessions?.find((session) => session.id === sessionId)?.parentId
+  useEffect(() => {
+    if (currentParent !== undefined) setFolded(currentParent, false)
+  }, [sessionId, currentParent])
   const online = (runners ?? []).filter((runner) => runner.isOnline).length
 
   return (
@@ -219,8 +235,26 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         // Each Repo is a section of its own, under its name.
         groups.map((group) => (
           <NavSection key={group.repo} label={group.repo}>
-            {group.sessions.map((session) => (
-              <SessionRow key={session.id} session={session} current={session.id === sessionId} />
+            {group.nodes.map(({ session, children }) => (
+              <SessionRow
+                key={session.id}
+                session={session}
+                current={session.id === sessionId}
+                {...(children.length > 0 && {
+                  nested: {
+                    open: !folded.has(session.id),
+                    onOpenChange: (open) => setFolded(session.id, !open, known),
+                    children: children.map((child) => (
+                      <SessionRow
+                        key={child.id}
+                        session={child}
+                        current={child.id === sessionId}
+                        isChild
+                      />
+                    )),
+                  },
+                })}
+              />
             ))}
           </NavSection>
         ))
@@ -231,9 +265,21 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
 
 /**
  * A Session in the sidebar: its state's dot, its Session name (or Work branch) and what it's busy
- * with, leading to it. Its Rename button turns the row into a field for the name.
+ * with, leading to it. Its Rename button turns the row into a field for the name. A Parent
+ * Session's row holds its Child Sessions' rows, `nested`; a child's row, `isChild`, shows only
+ * its dot and name.
  */
-function SessionRow({ session, current }: { session: SessionSummary; current: boolean }) {
+function SessionRow({
+  session,
+  current,
+  nested,
+  isChild = false,
+}: {
+  session: SessionSummary
+  current: boolean
+  nested?: Omit<NestedNavItems, "label">
+  isChild?: boolean
+}) {
   const hub = useHub()
   const [renaming, setRenaming] = useState(false)
   const title = sessionTitle(session)
@@ -243,7 +289,8 @@ function SessionRow({ session, current }: { session: SessionSummary; current: bo
       icon={<SessionStatus state={statusOf(session.state)} variant="dot" />}
       current={current}
       title={session.name === undefined ? title : `${title} · ${session.workBranch}`}
-      trailing={<SessionIndicators session={session} />}
+      {...(!isChild && { trailing: <SessionIndicators session={session} /> })}
+      {...(nested && { nested: { ...nested, label: `Child Sessions of ${title}` } })}
       action={
         <IconButton label={`Rename ${title}`} size="sm" onClick={() => setRenaming(true)}>
           <PencilIcon />

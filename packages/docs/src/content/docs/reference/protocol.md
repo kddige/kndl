@@ -99,7 +99,7 @@ Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `pa
 
 ### Prompts from other Sessions
 
-A prompt one Session sends another, a Parent Session's message or a Child Session's Report ([ADR 0012](/reference/decisions/0012-parent-and-child-sessions/)), goes through the Prompt queue like a person's. Its `QueuedPrompt` carries `fromSession`: `FromParentSession` or `FromChildSession`, whose `session` is the sending Session's `id` and `title`; its `sender` is the Creator the Sessions run for; and its `text` is what the model reads, a note from the Hub, then a blank line, then the message:
+A prompt one Session sends another, a Parent Session's message or a Child Session's Report or message ([ADR 0012](/reference/decisions/0012-parent-and-child-sessions/)), goes through the Prompt queue like a person's. Its `QueuedPrompt` carries `fromSession`: `FromParentSession`, `FromChildSession` (a Report) or `FromChildSessionMessage` (a Child Session's `message_parent`), whose `session` is the sending Session's `id` and `title`; its `sender` is the Creator the Sessions run for; and its `text` is what the model reads, a note from the Hub, then a blank line, then the message:
 
 ```
 [Report from Child Session "API docs" (s-2)]
@@ -108,7 +108,7 @@ This is a Report, not a prompt from a person: the final message of a Turn your C
 The reference covers every protocol message now.
 ```
 
-A Parent Session's message starts `[Message from your Parent Session "<title>" (<id>)]` instead. From the 20th Turn in a row a Child Session's Parent Session prompted, with no person's prompt to either Session in between, the Report's note has one more line, asking the parent to check that the work is still making progress. The Turn the prompt starts has the same `fromSession` as its `sender` in `TurnStarted`, and the web UI shows the message without the note.
+A Parent Session's message starts `[Message from your Parent Session "<title>" (<id>)]` instead, with no note after it. A Child Session's message starts `[Message from Child Session "<title>" (<id>)]`, and its note says it isn't a Report, that the Report still comes when the child's Turn ends, and that `message_child` answers it. From the 20th Turn in a row a Child Session's Parent Session prompted, with no person's prompt to either Session in between, the Report's note has one more line, asking the parent to check that the work is still making progress. A Child Session's message neither counts toward those Turns nor resets them, and carries the same line while they're at 20 or more. The Turn the prompt starts has the same `fromSession` as its `sender` in `TurnStarted`, and the web UI shows the message without the note.
 
 `UpdateRunner { runnerId, now }` updates a Runner from the Runners page; sent again with `now: true` while it waits for Turns, it stops them. Each Runner in `RunnerList` carries its `updater` and, while one is under way or after it ended badly, `update`: `Checking`, `Draining` (with `waitingFor`, the Sessions still Active, and `deadline`), `Applying` (with `step`), `Restarting`, `Refused` (with `refusal`) or `Failed` (with `failure`).
 
@@ -127,7 +127,7 @@ Each route answers `409` until the mod has said hello.
 
 ### Child Session tools
 
-A Session's mod registers these tools for Claude, unless the Session is a Child Session. Claude Code names each `mcp__hub-link__<tool>`. The mod sends each call to the Hub as the body of `POST /mod/children`, and gives Claude the reply as text, or as the tool's error for `ChildRefused`.
+A Session's mod registers these tools for Claude, unless the Session is a Child Session, which gets `message_parent` alone. Claude Code names each `mcp__hub-link__<tool>`. The mod sends each call to the Hub as the body of `POST /mod/children`, and gives Claude the reply as text, or as the tool's error for `ChildRefused`.
 
 | Tool | Input | Request | Reply |
 |---|---|---|---|
@@ -136,10 +136,11 @@ A Session's mod registers these tools for Claude, unless the Session is a Child 
 | `list_children` | none | `ListChildren` | `ChildList { children }`: the caller's Child Sessions that aren't Archived, oldest first. |
 | `read_child` | `child_id` | `ReadChild { childId }` | `ChildRead { child, conversation }`: its recent Turns as text, redacted as its history is, at most 24,000 characters. |
 | `archive_child` | `child_id` | `ArchiveChild { childId }` | `ChildArchived { child }` |
+| `message_parent` (a Child Session's only tool) | `message` | `MessageParent { text }` | `ParentMessaged { parent, working }`: `parent` is the Parent Session's `id` and `title`, and `working` says a Turn was running there. Queued as a prompt; wakes the parent if it is Asleep. |
 
 Each `child` is a `ChildSummary`: `id`, `title`, `baseBranch`, `workBranch`, `state`, `working` (a Turn is running), `queued` (prompts in its Prompt queue) and, once a Turn has ended, `lastReport` with its `text` and `at`.
 
-Any request can get `ChildRefused { message }` instead: from a Child Session ("A Child Session can't create Child Sessions of its own: Sessions nest one level deep. …"), for a Session that isn't one of the caller's Child Sessions, or for a Creator who can't use the Repo. The Hub checks `create_child` against the Parent Session's Creator's access to the Repo.
+Any request can get `ChildRefused { message }` instead: from a Child Session ("A Child Session can't create Child Sessions of its own: Sessions nest one level deep. …"), for a Session that isn't one of the caller's Child Sessions, or for a Creator who can't use the Repo. `MessageParent` is refused from a Session that isn't a Child Session ("This Session isn't a Child Session: it has no Parent Session to message.") and when the Parent Session is Archived or gone. When the Parent Session is Asleep and can't wake, the message stays in its Prompt queue and the reply is a `ChildRefused` that says so. The Hub checks `create_child` against the Parent Session's Creator's access to the Repo.
 
 ## Tool bridge
 

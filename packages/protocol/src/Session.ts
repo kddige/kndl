@@ -206,10 +206,24 @@ export type FromParentSession = typeof FromParentSession.Type
 export const FromChildSession = Schema.TaggedStruct("FromChildSession", { session: SessionRef })
 export type FromChildSession = typeof FromChildSession.Type
 
-/** A prompt another Session sent, not a person: a Parent Session's message or a Child's Report. */
-export const FromSession = Schema.Union([FromParentSession, FromChildSession]).pipe(
-  Schema.toTaggedUnion("_tag"),
-)
+/**
+ * A Child Session's message to its Parent Session, sent mid-Turn with its message_parent tool: a
+ * question or a progress note that can't wait for its Report (ADR 0012).
+ */
+export const FromChildSessionMessage = Schema.TaggedStruct("FromChildSessionMessage", {
+  session: SessionRef,
+})
+export type FromChildSessionMessage = typeof FromChildSessionMessage.Type
+
+/**
+ * A prompt another Session sent, not a person: a Parent Session's message, or a Child Session's
+ * Report or message.
+ */
+export const FromSession = Schema.Union([
+  FromParentSession,
+  FromChildSession,
+  FromChildSessionMessage,
+]).pipe(Schema.toTaggedUnion("_tag"))
 export type FromSession = typeof FromSession.Type
 
 /** A prompt waiting in a Session's Prompt queue. */

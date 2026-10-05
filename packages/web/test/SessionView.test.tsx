@@ -406,6 +406,18 @@ test("a Report's Turn shows the Child Session it's from, without the Hub's note"
   expect(page.textContent).not.toContain("This is a Report, not a prompt from a person")
 })
 
+test("a Child Session's message shows as from it, labelled as a message, without the Hub's note", async () => {
+  const { page } = await openApp("/sessions/s-release")
+  await eventually(() => expect(page.textContent).toContain("Message from Child Session"))
+  const turn = page.querySelector('[data-turn="t-release-msg"]')
+  expect(turn?.querySelector('a[href="/sessions/s-api-docs"]')?.textContent).toBe("API docs")
+  expect(turn?.textContent).toContain("Message from Child Session")
+  expect(turn?.textContent).not.toContain("Report from Child Session")
+  expect(turn?.textContent).toContain("Should the reference cover the deprecated v0 messages")
+  expect(page.textContent).not.toContain("This is a message your Child Session sent")
+  expect(page.textContent).not.toContain("[Message from Child Session")
+})
+
 test("in a Child Session, its Parent Session's message shows as from it", async () => {
   const { page } = await openApp("/sessions/s-api-docs")
   await eventually(() => expect(page.textContent).toContain("Parent Session"))

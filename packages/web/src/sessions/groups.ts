@@ -42,3 +42,27 @@ export function knownRepos(sessions: ReadonlyArray<SessionSummary>): ReadonlyArr
     a.localeCompare(b),
   )
 }
+
+/** A Session and the Child Sessions listed under it, in their order. */
+export interface SessionNode {
+  readonly session: SessionSummary
+  readonly children: ReadonlyArray<SessionSummary>
+}
+
+/**
+ * The given Sessions with each Child Session under its Parent Session, keeping their order (ADR
+ * 0012). A child whose parent isn't among them, as when the parent is Archived, stands on its own.
+ */
+export function nestChildren(sessions: ReadonlyArray<SessionSummary>): ReadonlyArray<SessionNode> {
+  const listed = new Set(sessions.map((session) => session.id))
+  const children = new Map<string, Array<SessionSummary>>()
+  for (const session of sessions) {
+    if (session.parentId === undefined || !listed.has(session.parentId)) continue
+    const siblings = children.get(session.parentId)
+    if (siblings) siblings.push(session)
+    else children.set(session.parentId, [session])
+  }
+  return sessions
+    .filter((session) => session.parentId === undefined || !listed.has(session.parentId))
+    .map((session) => ({ session, children: children.get(session.id) ?? [] }))
+}

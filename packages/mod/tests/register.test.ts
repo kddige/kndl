@@ -498,7 +498,7 @@ describe("Child Sessions", () => {
     ])
   })
 
-  test("a Child Session doesn't get them", async ($, on) => {
+  test("a Child Session gets only message_parent in their place", async ($, on) => {
     const registered = linkedSession(on, { CLAUDE_HUB_PARENT_SESSION_ID: "s-parent" })
     const clock = mock.clock(on)
     fakeFetch(on, (request) =>
@@ -508,7 +508,43 @@ describe("Child Sessions", () => {
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
     await clock.advance(0)
 
-    expect(registered).toEqual([])
+    expect(registered).toEqual(["message_parent"])
+  })
+
+  test("message_parent asks the Hub, and says when the parent reads it", async ($, on) => {
+    linkedSession(on, { CLAUDE_HUB_PARENT_SESSION_ID: "s-parent" })
+    const clock = mock.clock(on)
+    const requests = fakeFetch(on, (request) => {
+      if (request.url.endsWith("/mod/hello")) return welcome
+      if (request.url.endsWith("/mod/children"))
+        return {
+          status: 200,
+          text: JSON.stringify({
+            _tag: "ParentMessaged",
+            parent: { id: "s-parent", title: "Release 0.4" },
+            working: true,
+          }),
+        }
+      return new Promise(() => undefined)
+    })
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    const answer = await $.tool.call({
+      tool: "mcp__hub-link__message_parent",
+      message: "Should the reference cover the deprecated v0 messages?",
+    } as never)
+
+    const asked = requests.find((request) => request.url === `${hubUrl}/mod/children`)
+    expect(JSON.parse(asked?.body ?? "")).toEqual({
+      _tag: "MessageParent",
+      text: "Should the reference cover the deprecated v0 messages?",
+    })
+    expect(answer.isError).toBeFalsy()
+    expect(answer.result).toBe(
+      'Queued your message for your Parent Session "Release 0.4" (id s-parent). It reads it once its current Turn ends. Any answer reaches you as a prompt after this Turn ends, and your Report still goes to it then.',
+    )
   })
 
   test("create_child asks the Hub, and answers with the child's id and name", async ($, on) => {
@@ -576,49 +612,53 @@ describe("Child Sessions", () => {
     expect(answer.deny).toBe(refused)
   })
 
-  test("a Report starts a Turn as the Hub wrote it, reported as from the Child Session", async ($, on) => {
-    linkedSession(on)
-    const clock = mock.clock(on)
-    const fromSession = { _tag: "FromChildSession", session: { id: "s-2", title: "API docs" } }
-    const report = '[Report from Child Session "API docs" (s-2)]\n\nDone.'
-    let polled = 0
-    const requests = fakeFetch(on, (request) => {
-      if (request.url.endsWith("/mod/hello")) return welcome
-      if (request.url.endsWith("/mod/events")) return { status: 204, text: "" }
-      polled++
-      if (polled > 1) return new Promise(() => undefined)
-      const deliver = {
-        _tag: "DeliverPrompt",
-        sessionId: "s1",
-        promptId: "pr-1",
+  for (const { kind, tag, note } of [
+    { kind: "Report", tag: "FromChildSession", note: "Report from Child Session" },
+    { kind: "message", tag: "FromChildSessionMessage", note: "Message from Child Session" },
+  ])
+    test(`a ${kind} starts a Turn as the Hub wrote it, reported as from the Child Session`, async ($, on) => {
+      linkedSession(on)
+      const clock = mock.clock(on)
+      const fromSession = { _tag: tag, session: { id: "s-2", title: "API docs" } }
+      const report = `[${note} "API docs" (s-2)]\n\nDone.`
+      let polled = 0
+      const requests = fakeFetch(on, (request) => {
+        if (request.url.endsWith("/mod/hello")) return welcome
+        if (request.url.endsWith("/mod/events")) return { status: 204, text: "" }
+        polled++
+        if (polled > 1) return new Promise(() => undefined)
+        const deliver = {
+          _tag: "DeliverPrompt",
+          sessionId: "s1",
+          promptId: "pr-1",
+          text: report,
+          sender: { id: "p1", login: "ada", name: "Ada Lovelace" },
+          fromSession,
+        }
+        return { status: 200, text: JSON.stringify({ messages: [{ seq: 1, message: deliver }] }) }
+      })
+      const submitted: Array<string> = []
+      on("prompt.submit", (_, e) => {
+        submitted.push(e.text)
+        return { text: e.text }
+      })
+      on("turn.start", () => ({ turnId: "t1" }))
+
+      await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+      await clock.advance(0)
+      await $.turn.start({ turnId: "t1", text: report } as never)
+      await clock.advance(200)
+
+      expect(submitted).toEqual([report])
+      const posted = requests.find((request) => request.url === `${hubUrl}/mod/events`)
+      expect(JSON.parse(posted?.body ?? "").messages[0]).toEqual({
+        _tag: "TurnStarted",
+        turnId: "t1",
         text: report,
-        sender: { id: "p1", login: "ada", name: "Ada Lovelace" },
-        fromSession,
-      }
-      return { status: 200, text: JSON.stringify({ messages: [{ seq: 1, message: deliver }] }) }
+        sender: fromSession,
+        promptId: "pr-1",
+      })
     })
-    const submitted: Array<string> = []
-    on("prompt.submit", (_, e) => {
-      submitted.push(e.text)
-      return { text: e.text }
-    })
-    on("turn.start", () => ({ turnId: "t1" }))
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    await clock.advance(0)
-    await $.turn.start({ turnId: "t1", text: report } as never)
-    await clock.advance(200)
-
-    expect(submitted).toEqual([report])
-    const posted = requests.find((request) => request.url === `${hubUrl}/mod/events`)
-    expect(JSON.parse(posted?.body ?? "").messages[0]).toEqual({
-      _tag: "TurnStarted",
-      turnId: "t1",
-      text: report,
-      sender: fromSession,
-      promptId: "pr-1",
-    })
-  })
 })
 
 const sandbox = {
