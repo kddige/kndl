@@ -43,7 +43,7 @@ const announceSignIn = Layer.effectDiscard(
     }
     if (Option.isNone(config.githubApp)) {
       yield* Effect.logWarning(
-        "The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, and the pull request tools are off.",
+        "The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `claude-hub onboard --github-app create` to set one up.",
       )
     }
     if (Option.isNone(config.secretsKey)) {

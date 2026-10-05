@@ -137,7 +137,7 @@ These don't stop the Hub. Each says what is off and how to turn it on.
 | Warning | What it means |
 |---|---|
 | `GitHub sign-in is off: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are not set.` | Only dev login can sign people in. |
-| `The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, and the pull request tools are off.` | Runners clone and push with their own credentials, and Sandboxes get no GitHub token, so Claude can't push or open pull requests. The pull request tools it names were removed; see [Git from Sessions](/explanation/git-from-sessions/). |
+| `` The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `claude-hub onboard --github-app create` to set one up. `` | Runners clone and push with their own credentials, Sandboxes get no GitHub token, and GitHub sign-ins have access to no Repo. See [Set up the GitHub App](/how-to/set-up-the-github-app/) and [Git from Sessions](/explanation/git-from-sessions/). |
 | `HUB_SECRETS_KEY is not set: Environments can't hold Sensitive values. Run `bun run secrets-key` to make one.` | Plain variables still work. |
 | `Dev login is on (CLAUDE_HUB_DEV_LOGIN): anyone reaching http://127.0.0.1:7777 can sign in without GitHub.` | Expected while you try claude-hub alone. |
 | `Browsers reach the Hub over plain HTTP at … (HUB_PUBLIC_URL), so they will drop its Secure cookies and sign-in will fail. …` | See [Sign-in doesn't stick](/troubleshooting/sign-in/#sign-in-doesnt-stick). |
