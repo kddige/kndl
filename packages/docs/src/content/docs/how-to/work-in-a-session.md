@@ -22,7 +22,7 @@ The sidebar lists every Session that isn't Archived under its Repo's `owner/name
 
 A Session is shown by its [Session name](/reference/glossary/), or by its Work branch until someone names it. **New Session** doesn't ask for a name. Anyone can rename a Session, in any state:
 
-1. Press the pencil button beside the title in the Session's header, or on the Session's row in the sidebar, where it shows when you point at the row.
+1. Press the pencil button beside the title in the Session's header, or on the Session's row in the sidebar. A row shows it while it's the open Session or you point at it.
 2. Type the name and press Enter, or click elsewhere. Esc leaves the name as it was.
 
 Everyone with the Session open sees the new name at once. A name is at most 80 characters; to show the Work branch again, clear the name. Once a Session is named, its header shows the Work branch next to the Repo.
