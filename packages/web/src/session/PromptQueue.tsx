@@ -75,6 +75,8 @@ const fromWhom = (prompt: QueuedPrompt) => {
       return `the message from Parent Session ${prompt.fromSession.session.title}`
     case "FromChildSession":
       return `the Report from Child Session ${prompt.fromSession.session.title}`
+    case "FromChildSessionMessage":
+      return `the message from Child Session ${prompt.fromSession.session.title}`
   }
 }
 

@@ -18,6 +18,7 @@ import {
   readHelloReply,
   resultSummary,
   sandboxEnvironment,
+  sharedSessionNote,
   turnEndReason,
 } from "./HubMessages.ts"
 import type { ModEventEncoded } from "./HubMessages.ts"
@@ -243,6 +244,14 @@ test("a prompt from a Participant is led by their name", () => {
 test("the hooks module reads the tools socket by the protocol's name", async () => {
   const glue = await Bun.file(new URL("../hooks/register.ts", import.meta.url)).text()
   expect(glue).toContain(`$.env.get("${ToolsSocketVariable}")`)
+})
+
+test("the shared Session's note says `!` is off, and to run the command with Bash instead", () => {
+  expect(sharedSessionNote).toContain(
+    "The `! <command>` prompt shortcut would run on that machine, so it is off in this session",
+  )
+  expect(sharedSessionNote).toContain("never suggest it")
+  expect(sharedSessionNote).toContain("run a command yourself with Bash, in the sandbox")
 })
 
 test("the Sandbox's environment names its checkout, Repo, Work branch and platform", () => {

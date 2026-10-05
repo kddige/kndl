@@ -1,6 +1,11 @@
 import { Schema } from "effect"
 import { AgentId, PromptId, ToolCallId, TurnId } from "./Ids.ts"
-import { FromChildSession, FromParentSession, Participant } from "./Session.ts"
+import {
+  FromChildSession,
+  FromChildSessionMessage,
+  FromParentSession,
+  Participant,
+} from "./Session.ts"
 
 // Turn events: what happens in a Turn, as the mod reports it to the Hub. The Hub appends each to
 // the Session's event log and relays it to web clients unchanged.
@@ -25,6 +30,8 @@ export const PromptSender = Schema.Union([
   FromParentSession,
   /** A Report from one of its Child Sessions, through the Prompt queue (ADR 0012). */
   FromChildSession,
+  /** A message one of its Child Sessions sent mid-Turn, through the Prompt queue (ADR 0012). */
+  FromChildSessionMessage,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type PromptSender = typeof PromptSender.Type
 

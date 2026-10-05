@@ -251,6 +251,16 @@ const hubToWeb = [
         fromSession: { _tag: "FromChildSession", session: { id: "s-2", title: "claude/s-2" } },
         queuedAt: 1_790_000_000_300,
       },
+      {
+        id: "p-5",
+        text: "[Message from Child Session ...]",
+        sender: alice,
+        fromSession: {
+          _tag: "FromChildSessionMessage",
+          session: { id: "s-2", title: "claude/s-2" },
+        },
+        queuedAt: 1_790_000_000_400,
+      },
     ],
   },
   { _tag: "TerminalFrame", sessionId: "s-1", kind: "Snapshot", data: "> ready", size },

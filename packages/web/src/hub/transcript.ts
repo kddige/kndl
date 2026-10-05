@@ -232,7 +232,11 @@ function freeze(turn: MutableTurn): TurnView {
 }
 
 /** How the note the Hub puts before another Session's prompt starts (ADR 0012). */
-const sessionNotes = ["[Message from your Parent Session ", "[Report from Child Session "]
+const sessionNotes = [
+  "[Message from your Parent Session ",
+  "[Report from Child Session ",
+  "[Message from Child Session ",
+]
 
 /**
  * A prompt from another Session as that Session wrote it: the Hub's note for the model, which
@@ -250,7 +254,11 @@ export function withoutSessionNote(text: string): string {
  * the prefix is dropped.
  */
 export function displayPrompt(text: string, sender: PromptSender): string {
-  if (sender._tag === "FromParentSession" || sender._tag === "FromChildSession")
+  if (
+    sender._tag === "FromParentSession" ||
+    sender._tag === "FromChildSession" ||
+    sender._tag === "FromChildSessionMessage"
+  )
     return withoutSessionNote(text)
   if (sender._tag !== "FromParticipant") return text
   const { name, login } = sender.participant

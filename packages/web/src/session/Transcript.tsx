@@ -193,6 +193,13 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
   )
 })
 
+/** What another Session's prompt is, beside its link (ADR 0012). */
+const sessionSender = {
+  FromParentSession: "Parent Session",
+  FromChildSession: "Report from Child Session",
+  FromChildSessionMessage: "Message from Child Session",
+} as const
+
 /** Who prompted a Turn: a person, the terminal, or another Session, linked (ADR 0012). */
 function Sender({ sender }: { sender: PromptSender }) {
   switch (sender._tag) {
@@ -214,6 +221,7 @@ function Sender({ sender }: { sender: PromptSender }) {
       )
     case "FromParentSession":
     case "FromChildSession":
+    case "FromChildSessionMessage":
       return (
         <>
           <span aria-hidden="true" {...stylex.props(styles.sessionMark)}>
@@ -226,8 +234,8 @@ function Sender({ sender }: { sender: PromptSender }) {
           >
             {sender.session.title}
           </Link>
-          <Badge intent={sender._tag === "FromChildSession" ? "accent" : "neutral"}>
-            {sender._tag === "FromChildSession" ? "Report from Child Session" : "Parent Session"}
+          <Badge intent={sender._tag === "FromParentSession" ? "neutral" : "accent"}>
+            {sessionSender[sender._tag]}
           </Badge>
         </>
       )

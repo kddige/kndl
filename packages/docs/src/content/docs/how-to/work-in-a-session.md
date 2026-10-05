@@ -18,7 +18,7 @@ The Runner clones the Repo onto the Session's Work branch, builds the Environmen
 
 ## Find and rename a Session
 
-The sidebar lists every Session that isn't Archived under its Repo's `owner/name`, in the order they were started, the oldest first. Each row's dot shows the Session's state, and a spinner shows a Turn running.
+The sidebar lists every Session that isn't Archived under its Repo's `owner/name`, in the order they were started, the oldest first. Each row's dot shows the Session's state, and a spinner shows a Turn running. [Child Sessions](/how-to/coordinate-with-child-sessions/#find-a-child-session) are listed under their Parent Session's row, whose chevron hides and shows them.
 
 A Session is shown by its [Session name](/reference/glossary/), or by its Work branch until someone names it. **New Session** doesn't ask for a name. Anyone can rename a Session, in any state:
 
@@ -33,7 +33,7 @@ Type a prompt and send it. While a Turn is running, a prompt from anyone waits i
 
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
 
-Claude's tools are limited to Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, which run in the Sandbox; WebSearch, which runs at Anthropic; and the tools that hand work to Child Sessions, which ask the Hub (see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/)). Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host. To have Claude read a web page, ask it to fetch the page: it uses `curl` in the Sandbox, because WebFetch is denied.
+Claude's tools are limited to Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, which run in the Sandbox; WebSearch, which runs at Anthropic; and the tools that hand work to Child Sessions, which ask the Hub (see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/)). Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host. Claude is told so: to run a command, it uses Bash in the Sandbox rather than asking you to type `! <command>`. To have Claude read a web page, ask it to fetch the page: it uses `curl` in the Sandbox, because WebFetch is denied.
 
 ## Use the Repo's skills and CLAUDE.md
 

@@ -194,4 +194,11 @@ export const turnEvents = [
     sender: { _tag: "FromChildSession", session: { id: "s-2", title: "claude/s-2" } },
     promptId: "p-3",
   },
+  {
+    _tag: "TurnStarted",
+    turnId: "t-5",
+    text: "[Message from Child Session ...]",
+    sender: { _tag: "FromChildSessionMessage", session: { id: "s-2", title: "claude/s-2" } },
+    promptId: "p-4",
+  },
 ]
