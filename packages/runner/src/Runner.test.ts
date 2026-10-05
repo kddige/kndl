@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ClaudeSessionId, ProtocolVersion } from "@claude-hub/protocol"
+import { ClaudeSessionId, ProtocolVersion, TestBuildId } from "@claude-hub/protocol"
 import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
@@ -208,6 +208,8 @@ describe("connecting", () => {
       sessions: [],
       // The commit this checkout is at, when it is a git checkout (ADR 0011).
       ...(buildVersion !== undefined && { version: buildVersion }),
+      // It asks how to clone each Test build (#104).
+      asksCloneAccess: true,
     })
   })
 
@@ -689,5 +691,30 @@ describe("Sessions", () => {
 
     const answer = await asked
     expect(answer._tag === "SandboxToken" && Redacted.value(answer.token)).toBe("ghs_sandbox")
+  })
+
+  test("asks the Hub how to clone a Test build, and takes its reply", async () => {
+    const h = startRunner()
+    await connected(h)
+
+    const asked = Effect.runPromise(h.hubGit().cloneAccess(TestBuildId.make("t-1")))
+    await eventually(() => h.hub.all("FetchCloneAccess").length === 1)
+    const request = h.hub.all("FetchCloneAccess")[0]
+    expect(request).toMatchObject({ testBuildId: "t-1" })
+    h.hub.send({
+      _tag: "GitReply",
+      requestId: String(request?.["requestId"]),
+      answer: {
+        _tag: "CloneAccess",
+        credentials: { _tag: "CloneToken", token: "ghs_clone", expiresAt: 1_000 },
+      },
+    })
+
+    const answer = await asked
+    expect(
+      answer._tag === "CloneAccess" &&
+        answer.credentials._tag === "CloneToken" &&
+        Redacted.value(answer.credentials.token),
+    ).toBe("ghs_clone")
   })
 })

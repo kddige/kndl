@@ -19,11 +19,13 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { availableParallelism, tmpdir, totalmem } from "node:os"
 import { join } from "node:path"
 import type {
+  GitAnswer,
   RepoName,
   RunTestBuild,
   SandboxState,
   SessionEnvironment,
   SessionId,
+  TestBuildId,
   VariableValue,
 } from "@claude-hub/protocol"
 import { EnvironmentRecipe, EnvironmentVersion, RunnerToHub } from "@claude-hub/protocol"
@@ -44,7 +46,7 @@ import {
   variableNames,
 } from "./EnvironmentBuilds.ts"
 import type { BuildLog, ResourceLimits } from "./EnvironmentBuilds.ts"
-import { cloneDefaultBranch } from "./HostGit.ts"
+import { cloneDefaultBranch, type GitAuth } from "./HostGit.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables, variablesEnv } from "./HubVariables.ts"
@@ -108,6 +110,7 @@ export interface SessionSandboxesOptions {
   readonly cloneDefaultBranch: (
     repo: RepoName,
     directory: string,
+    testBuildId: TestBuildId,
   ) => Effect.Effect<void, { readonly message: string }>
   /** Where Test builds' clones go while they run. Defaults to the system's temporary directory. */
   readonly scratchDir?: string
@@ -725,7 +728,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           const reference = yield* snapshots.snapshot(sessionId, group, buildName(0, libc))
           yield* backend.destroy(sessionId)
           yield* log("Cloning the default branch...\n")
-          yield* options.cloneDefaultBranch(request.repo, workspace)
+          yield* options.cloneDefaultBranch(request.repo, workspace, request.testBuildId)
           const resources = capResources(recipe.resources, options.limits)
           if (resources.note !== undefined) yield* log(`${resources.note}\n`)
           yield* log("Starting a Sandbox from the build...\n")
@@ -791,6 +794,45 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
   })
 
 /**
+ * How host git authenticates a Test build's clone, from the Hub's answer to a FetchCloneAccess
+ * (#104): with the token it minted, handed to git for the one clone and kept nowhere; with the
+ * host's own credentials only when the Hub says it has no GitHub App; and not at all, failing
+ * before the clone, when the Hub says why not, such as the App not being installed on the Repo.
+ */
+export const testBuildCloneAuth = (
+  answer: GitAnswer,
+): Effect.Effect<GitAuth, { readonly message: string }> => {
+  if (answer._tag === "GitFailed") {
+    return Effect.fail({ message: `could not get access to clone the Repo: ${answer.message}` })
+  }
+  if (answer._tag !== "CloneAccess") {
+    return Effect.fail({ message: `the Hub answered ${answer._tag} to how to clone the Repo` })
+  }
+  return Effect.succeed(
+    answer.credentials._tag === "CloneToken"
+      ? { _tag: "Token", token: answer.credentials.token }
+      : { _tag: "Host" },
+  )
+}
+
+/**
+ * Clones a Test build's Repo, the tip of its default branch, into `directory`, as a Session's
+ * Workspace is cloned (#104): with a token the Hub mints for the one clone, or failing before the
+ * clone when the Hub says why not.
+ */
+export const cloneTestBuild = (options: {
+  readonly url: string
+  readonly directory: string
+  readonly testBuildId: TestBuildId
+}) =>
+  Effect.flatMap(HubGit, (hubGit) => hubGit.cloneAccess(options.testBuildId)).pipe(
+    Effect.flatMap(testBuildCloneAuth),
+    Effect.flatMap((auth) =>
+      cloneDefaultBranch({ url: options.url, auth, directory: options.directory }),
+    ),
+  )
+
+/**
  * Reads the Sandbox settings from the environment:
  *
  * | Variable | Default |
@@ -837,14 +879,15 @@ export const SessionSandboxesLive = Layer.effect(
         ),
       limits: { cpus: settings.maxCpus, memoryMib: settings.maxMemoryMib },
       keepBuilds: settings.keepBuilds,
-      // A Test build has no Session to mint a GitHub App token for: the host's own git
-      // credentials clone it.
-      cloneDefaultBranch: (repo, directory) =>
-        cloneDefaultBranch({
+      cloneDefaultBranch: (repo, directory, testBuildId) =>
+        cloneTestBuild({
           url: config.repoUrlTemplate.replaceAll("{repo}", repo),
-          auth: { _tag: "Host" },
           directory,
-        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          testBuildId,
+        }).pipe(
+          Effect.provideService(HubGit, hubGit),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
     })
   }),
 )

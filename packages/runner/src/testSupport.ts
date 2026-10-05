@@ -7,6 +7,7 @@ import {
   SessionId,
   type StartSession,
   type TerminalSize,
+  type TestBuildId,
   type VariablesFor,
   type VariableValue,
 } from "@claude-hub/protocol"
@@ -311,6 +312,11 @@ export class FakeHubGit {
   readonly sandboxTokens: Array<string> = []
   credentials: GitCredentials = GitCredentials.cases.HostCredentials.make({})
   answer: ((sessionId: SessionId, ask: GitAsk) => GitAnswer | undefined) | undefined
+  /** The Test builds asked how to clone, and what the Hub answers. */
+  readonly clonesAsked: Array<TestBuildId> = []
+  cloneAnswer: GitAnswer = GitAnswer.cases.CloneAccess.make({
+    credentials: { _tag: "HostCredentials" },
+  })
 
   constructor(readonly repo: string) {}
 
@@ -353,6 +359,11 @@ export class FakeHubGit {
         Effect.sync(() => {
           this.asked.push({ sessionId: session, ask })
           return this.reply(session, ask)
+        }),
+      cloneAccess: (testBuildId) =>
+        Effect.sync(() => {
+          this.clonesAsked.push(testBuildId)
+          return this.cloneAnswer
         }),
       receive: () => Effect.void,
       wipPushFailed: (session, message) =>

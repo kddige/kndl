@@ -132,6 +132,7 @@ const connectOnce = (login: RunnerLogin) =>
           login,
           sessions: [...(yield* sessions.running)],
           ...(buildVersion !== undefined && { version: buildVersion }),
+          asksCloneAccess: true,
         }),
       ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
 
