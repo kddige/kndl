@@ -2,7 +2,7 @@
 title: Work in a Session
 description: Start a Session, prompt it with others, use its terminal, put it to sleep, delete and restore it, and get its work out.
 sidebar:
-  order: 7
+  order: 8
 ---
 
 A Session is one Claude Code conversation working on one Repo, on its own Work branch, in its own Sandbox. Everyone signed in to the Hub can see every Session, join it and prompt it.

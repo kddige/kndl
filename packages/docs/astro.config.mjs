@@ -1,11 +1,11 @@
 // The claude-hub docs site: Astro Starlight, published to GitHub Pages under /claude-hub/.
-import { unified } from "@astrojs/markdown-remark"
-import starlight from "@astrojs/starlight"
-import { defineConfig } from "astro/config"
-import { rehypeBaseLinks } from "./src/plugins/rehypeBaseLinks.ts"
+import { unified } from "@astrojs/markdown-remark";
+import starlight from "@astrojs/starlight";
+import { defineConfig } from "astro/config";
+import { rehypeBaseLinks } from "./src/plugins/rehypeBaseLinks.ts";
 
-const site = "https://kddige.github.io"
-const base = "/claude-hub/"
+const site = "https://kddige.github.io";
+const base = "/claude-hub/";
 
 export default defineConfig({
   site,
@@ -13,7 +13,9 @@ export default defineConfig({
   trailingSlash: "always",
   // Pages link to each other root-relative (`/how-to/...`); this prefixes the base path. MDX
   // inherits the processor.
-  markdown: { processor: unified({ rehypePlugins: [[rehypeBaseLinks, { base }]] }) },
+  markdown: {
+    processor: unified({ rehypePlugins: [[rehypeBaseLinks, { base }]] }),
+  },
   integrations: [
     starlight({
       title: "claude-hub",
@@ -27,9 +29,21 @@ export default defineConfig({
       },
       favicon: "/favicon.svg",
       head: [
-        { tag: "link", attrs: { rel: "icon", href: `${base}favicon.ico`, sizes: "32x32" } },
-        { tag: "link", attrs: { rel: "apple-touch-icon", href: `${base}apple-touch-icon.png` } },
-        { tag: "meta", attrs: { property: "og:image", content: `${site}${base}og.png` } },
+        {
+          tag: "link",
+          attrs: { rel: "icon", href: `${base}favicon.ico`, sizes: "32x32" },
+        },
+        {
+          tag: "link",
+          attrs: {
+            rel: "apple-touch-icon",
+            href: `${base}apple-touch-icon.png`,
+          },
+        },
+        {
+          tag: "meta",
+          attrs: { property: "og:image", content: `${site}${base}og.png` },
+        },
         { tag: "meta", attrs: { property: "og:image:width", content: "1200" } },
         { tag: "meta", attrs: { property: "og:image:height", content: "630" } },
         {
@@ -39,8 +53,14 @@ export default defineConfig({
             content: "claude-hub: multiplayer Claude Code, self-hosted.",
           },
         },
-        { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
-        { tag: "meta", attrs: { name: "twitter:image", content: `${site}${base}og.png` } },
+        {
+          tag: "meta",
+          attrs: { name: "twitter:card", content: "summary_large_image" },
+        },
+        {
+          tag: "meta",
+          attrs: { name: "twitter:image", content: `${site}${base}og.png` },
+        },
         { tag: "meta", attrs: { name: "theme-color", content: "#3D5DCF" } },
       ],
       customCss: ["./src/styles/theme.css"],
@@ -53,16 +73,36 @@ export default defineConfig({
       pagination: true,
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       sidebar: [
-        { label: "Tutorials", items: [{ autogenerate: { directory: "tutorials" } }] },
-        { label: "How-to guides", items: [{ autogenerate: { directory: "how-to" } }] },
+        {
+          label: "Tutorials",
+          items: [{ autogenerate: { directory: "tutorials" } }],
+        },
+        {
+          label: "How-to guides",
+          items: [
+            { slug: "how-to/install" },
+            { slug: "how-to/run-the-hub" },
+            { slug: "how-to/add-a-runner" },
+            { slug: "how-to/reach-the-hub-from-other-machines" },
+            { slug: "how-to/set-up-the-github-app" },
+            { slug: "how-to/set-up-an-environment" },
+            { slug: "how-to/use-variables-and-secrets" },
+            { slug: "how-to/work-in-a-session" },
+            { slug: "how-to/develop-claude-hub" },
+          ],
+        },
+        {
+          label: "Explanation",
+          items: [{ autogenerate: { directory: "explanation" } }],
+        },
         {
           label: "Reference",
           items: [
-            { slug: "reference/configuration" },
             { slug: "reference/commands" },
+            { slug: "reference/configuration" },
             { slug: "reference/files-and-paths" },
-            { slug: "reference/protocol" },
             { slug: "reference/glossary" },
+            { slug: "reference/protocol" },
             {
               label: "Decisions (ADRs)",
               collapsed: true,
@@ -70,10 +110,12 @@ export default defineConfig({
             },
           ],
         },
-        { label: "Explanation", items: [{ autogenerate: { directory: "explanation" } }] },
-        { label: "Troubleshooting", items: [{ autogenerate: { directory: "troubleshooting" } }] },
+        {
+          label: "Troubleshooting",
+          items: [{ autogenerate: { directory: "troubleshooting" } }],
+        },
         { label: "About", slug: "about" },
       ],
     }),
   ],
-})
+});

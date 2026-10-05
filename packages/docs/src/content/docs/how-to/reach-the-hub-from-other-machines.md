@@ -2,7 +2,7 @@
 title: Reach the Hub from other machines
 description: Put the Hub behind HTTPS, an SSH tunnel or Tailscale, so teammates and Runners elsewhere can reach it and sign-in works.
 sidebar:
-  order: 8
+  order: 4
 ---
 
 The Hub listens on `127.0.0.1:7777` by default, so only its own machine can reach it. Before others can, decide which URL they open: that URL is `HUB_PUBLIC_URL`, and it must be HTTPS or `localhost`.

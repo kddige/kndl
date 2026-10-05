@@ -2,7 +2,7 @@
 title: Commands
 description: The claude-hub command for installed Hubs and Runners, and the bun run scripts at a checkout's root.
 sidebar:
-  order: 2
+  order: 1
 ---
 
 An installed Hub or Runner is run with the [`claude-hub` command](#the-claude-hub-command). A checkout, for working on claude-hub itself, is run with the [`bun run` scripts](#scripts-in-a-checkout) at its root.

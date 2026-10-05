@@ -2,7 +2,7 @@
 title: Use variables and secrets
 description: Give a Repo's Sessions environment variables, keep secrets write-only and redacted, and share values across Repos.
 sidebar:
-  order: 6
+  order: 7
 ---
 
 An Environment's variables reach every process the Runner starts in its Sandboxes: the Bootstrap script (if available at build), the Start script, and every tool Claude runs.

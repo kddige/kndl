@@ -2,7 +2,7 @@
 title: Protocol
 description: The Hub's endpoints, who may call each, and the messages the Hub, Runners, browsers and the mod exchange.
 sidebar:
-  order: 4
+  order: 5
 ---
 
 Everything goes through the Hub: Runners, browsers and each Session's mod all connect to it, and never to each other. The messages are [Effect Schemas](https://effect.website/docs/schema/introduction/) in `packages/protocol`, which every package builds against.

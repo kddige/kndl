@@ -2,7 +2,7 @@
 title: Configuration
 description: Every environment variable the Hub, a Runner and the web UI's dev server read, with its default.
 sidebar:
-  order: 1
+  order: 2
 ---
 
 The Hub and Runners are configured with environment variables. `bun run hub` and `bun run runner-token` also read `packages/hub/.env.local` when it exists; values already in the environment win.

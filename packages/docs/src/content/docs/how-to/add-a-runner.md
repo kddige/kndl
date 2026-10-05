@@ -2,7 +2,7 @@
 title: Add a Runner
 description: Connect a machine to the Hub as a Runner, on the Hub's own machine or another, and keep it running.
 sidebar:
-  order: 4
+  order: 3
 ---
 
 A Runner is a machine that runs Sessions, on its own [Runner login](/reference/glossary/): the Claude account signed in on it. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
