@@ -1,4 +1,4 @@
-import type { SessionId, SessionSummary } from "@claude-hub/protocol"
+import { type SessionId, type SessionSummary, sessionTitle } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useMemo } from "react"
@@ -234,7 +234,7 @@ function ArchivedRow({
           {...stylex.props(styles.branch, focus.ring)}
         >
           <BranchIcon />
-          {session.workBranch}
+          {sessionTitle(session)}
         </Link>
         <div {...stylex.props(styles.meta)}>
           <Avatar name={archived.by.name} src={archived.by.avatarUrl} size="sm" />
@@ -247,7 +247,7 @@ function ArchivedRow({
       </div>
       <Button
         size="sm"
-        aria-label={`Restore ${session.workBranch}`}
+        aria-label={`Restore ${sessionTitle(session)}`}
         onClick={() => restoreSession(hub, session.id)}
       >
         Restore

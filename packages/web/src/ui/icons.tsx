@@ -224,3 +224,11 @@ export function ArchiveIcon(props: IconProps) {
     </Icon>
   )
 }
+
+export function PencilIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m9.75 4 2.25 2.25M3 13l.6-2.85 6.9-6.9a1.06 1.06 0 0 1 1.5 0l.75.75a1.06 1.06 0 0 1 0 1.5l-6.9 6.9Z" />
+    </Icon>
+  )
+}

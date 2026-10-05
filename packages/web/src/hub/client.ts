@@ -223,6 +223,14 @@ export class HubClient {
     return this.#send({ _tag: "ArchiveSession", sessionId })
   }
 
+  /**
+   * Gives a Session a Session name, or clears it with an empty one, so its Work branch shows again.
+   * Every open tab gets the change, this one included, as a SessionUpdated.
+   */
+  renameSession(sessionId: SessionId, name: string): boolean {
+    return this.#send({ _tag: "RenameSession", sessionId, name })
+  }
+
   /** Brings an Archived Session back, Asleep: the next prompt wakes it. */
   restoreSession(sessionId: SessionId): boolean {
     return this.#send({ _tag: "RestoreSession", sessionId })
