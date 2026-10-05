@@ -8,6 +8,7 @@ import { join } from "node:path"
 import {
   DefaultEnvironmentDraft,
   EnvironmentVersion,
+  MaxLastOutputLength,
   type ModCommandsEncoded,
   type ModEventsEncoded,
   Participant,
@@ -914,6 +915,38 @@ describe("Runner reports", () => {
     expect((await web.take("SessionUpdated", (m) => m.session.state === "Active")).session.id).toBe(
       sessionId,
     )
+  })
+
+  test("keeps what Claude Code printed before it exited, until it starts again (#105)", async () => {
+    const { hub, runner, web, sessionId } = await sessionScene()
+    const output = "error: The current working directory was deleted"
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1, output })
+
+    const asleep = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(asleep.session.lastOutput).toBe(output)
+    // Kept on the Session: a web client connecting later sees it too.
+    const later = await openWeb(hub, "alice")
+    expect(later.sessions.sessions.find((s) => s.id === sessionId)?.lastOutput).toBe(output)
+
+    web.send({ _tag: "WakeSession", sessionId })
+    await runner.take("StartSession")
+    runner.send({ _tag: "SessionStarted", sessionId })
+    const active = await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    expect(active.session.lastOutput).toBeUndefined()
+    // Stopped on request, there is nothing of it to keep.
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    const stopped = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(stopped.session.lastOutput).toBeUndefined()
+  })
+
+  test("a SessionStopped longer than the cap keeps its end (#105)", async () => {
+    const { runner, web, sessionId } = await sessionScene()
+    const output = `${"a".repeat(MaxLastOutputLength)}\nthe end`
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1, output })
+
+    const asleep = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(asleep.session.lastOutput).toHaveLength(MaxLastOutputLength)
+    expect(asleep.session.lastOutput?.endsWith("\nthe end")).toBe(true)
   })
 
   test("a Runner can't report on another Runner's Session", async () => {

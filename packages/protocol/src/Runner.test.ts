@@ -23,7 +23,13 @@ const runnerToHub = [
   { _tag: "SessionStarted", sessionId: "s-1" },
   { _tag: "SessionStartFailed", sessionId: "s-1", message: "clone failed: repository not found" },
   { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested" },
-  { _tag: "SessionStopped", sessionId: "s-1", reason: "Exited", exitCode: 1 },
+  {
+    _tag: "SessionStopped",
+    sessionId: "s-1",
+    reason: "Exited",
+    exitCode: 1,
+    output: "error: The current working directory was deleted\n",
+  },
   { _tag: "SandboxStateReport", sessionId: "s-1", state: "Running" },
   { _tag: "SandboxStateReport", sessionId: "s-1", state: "Failed", message: "out of memory" },
   {

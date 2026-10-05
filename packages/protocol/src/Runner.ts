@@ -63,6 +63,9 @@ export const SessionStartFailed = Schema.TaggedStruct("SessionStartFailed", {
 })
 export type SessionStartFailed = typeof SessionStartFailed.Type
 
+/** The most characters of a {@link SessionStopped}'s `output` that a Runner sends and a Hub keeps. */
+export const MaxLastOutputLength = 4000
+
 /**
  * The Session's Claude Code is no longer running: `Requested` after a {@link StopSession},
  * `Exited` when the process ended on its own.
@@ -71,6 +74,12 @@ export const SessionStopped = Schema.TaggedStruct("SessionStopped", {
   sessionId: SessionId,
   reason: Schema.Literals(["Requested", "Exited"]),
   exitCode: Schema.optionalKey(Schema.Int),
+  /**
+   * For `Exited`: the last lines Claude Code's terminal showed, as plain text, so why it exited
+   * can be read (#105). At most {@link MaxLastOutputLength} characters, the end kept. Optional, so
+   * a Runner from before it was added still connects; a Hub from before ignores it.
+   */
+  output: Schema.optionalKey(Schema.String),
 })
 export type SessionStopped = typeof SessionStopped.Type
 

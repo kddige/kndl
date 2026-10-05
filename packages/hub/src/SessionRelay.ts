@@ -22,7 +22,9 @@
 //     Environment version. An Asleep one is just woken.
 //   - A start that fails, or a Claude Code that exits on its own, leaves the Session Asleep, with
 //     the reason in the logged SessionStateChanged. Prompts queued stay queued and are not retried
-//     on their own: the next prompt or WakeSession tries again.
+//     on their own: the next prompt or WakeSession tries again. A Claude Code that exited on its
+//     own also leaves the last lines its terminal showed (#105), redacted, on the Session's
+//     summary while it is Asleep.
 //   - A Session whose Environment has, or links, a variable that needs a value (#57) doesn't
 //     start: CreateSession is refused, and a wake leaves it Asleep, its prompts queued, with a
 //     SessionStateChanged naming the variables. Starting without them would be confusing.
@@ -119,6 +121,7 @@ import {
   AppPermissionsChecked,
   WipNotPushed,
   SandboxNoted,
+  MaxLastOutputLength,
 } from "@claude-hub/protocol"
 import {
   Clock,
@@ -203,6 +206,13 @@ interface StartUnderWay {
 
 /** How much of a start's output the Hub keeps for clients that join while it runs. */
 export const startLogLimit = 64 * 1024
+
+/**
+ * A SessionStopped's `output` as the Hub keeps it (#105): redacted first, so a value cut in two by
+ * the cap is still found, then its last {@link MaxLastOutputLength} characters.
+ */
+export const lastOutputText = (needles: Needles, output: string) =>
+  redactText(needles, output).slice(-MaxLastOutputLength)
 
 /** How often the Hub looks for idle Sessions to put to sleep: a tenth of the wait, 10 ms to 30 s. */
 export const idleCheckInterval = (sleepAfter: Duration.Duration) =>
@@ -1749,6 +1759,7 @@ export class SessionRelay extends Context.Service<
               if (session.value.state === "Archived" || archiving.has(message.sessionId)) return
               starts.delete(message.sessionId)
               restarts.delete(message.sessionId)
+              yield* sessions.setLastOutput(message.sessionId, null)
               yield* sessions.setEnvironmentVersion(
                 message.sessionId,
                 message.environmentVersion ?? null,
@@ -1761,6 +1772,7 @@ export class SessionRelay extends Context.Service<
               return
             case "SessionStartFailed":
               // Asleep, with why in its history; queued prompts wait for the next wake.
+              yield* sessions.setLastOutput(message.sessionId, null)
               return yield* claudeGone(session.value, {
                 message: `Claude Code could not start on ${runner.name}: ${message.message}`,
               })
@@ -1777,6 +1789,14 @@ export class SessionRelay extends Context.Service<
               }
               const asked = stopping.get(message.sessionId)
               const restartBy = asked === undefined ? undefined : restarting.get(message.sessionId)
+              // What Claude Code printed before it exited on its own (#105), redacted as its
+              // terminal is: a Sensitive value it printed must not reach the summary.
+              yield* sessions.setLastOutput(
+                message.sessionId,
+                message.reason === "Exited" && message.output !== undefined && message.output !== ""
+                  ? lastOutputText(yield* needlesFor(session.value.repo), message.output)
+                  : null,
+              )
               yield* claudeGone(
                 session.value,
                 asked ?? {

@@ -289,6 +289,13 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+
+  // What Claude Code's terminal showed last when it exited on its own (issue #105), redacted,
+  // while the Session is Asleep for it. Null otherwise.
+  "0011_session_last_output": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN last_output TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
