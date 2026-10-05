@@ -148,8 +148,9 @@ export interface SandboxFacts {
  * directory, which is no git repository, and the host's platform and OS. That is not where the
  * tools run. Claude Code also leaves it off a prompt a mod submits, as the Hub's are, and sends it
  * only with a later tool result, so a Session driven from the Hub got it late, after the model
- * had already guessed. This section replaces it, and is in the system prompt from the first request. The Sandbox is always Linux, and its tool
- * server runs commands with bash (the Runner's ToolBridge.ts).
+ * had already guessed. This section replaces it, and is in the system prompt from the first
+ * request. The Sandbox is always Linux, and its tool server runs commands with bash (the Runner's
+ * ToolBridge.ts).
  */
 export const sandboxEnvironment = (facts: SandboxFacts) =>
   [
