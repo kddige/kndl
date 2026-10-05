@@ -122,7 +122,9 @@ test("New Session checks a Repo once typing pauses, and says nothing of one in r
 test("an Environment screen says why the person can't use its Repo", async () => {
   const { page } = await open("/repos/someone-else/their-repo/environment")
   await eventually(() =>
-    expect(page.textContent).toContain("The GitHub App isn't installed on this Repo"),
+    expect(page.textContent).toContain(
+      "The GitHub App isn't installed on someone-else/their-repo, or there's no such Repo.",
+    ),
   )
   const install = 'a[href="https://github.com/apps/claude-hub/installations/new"]'
   expect(page.querySelector(install)).not.toBeNull()
@@ -133,6 +135,8 @@ test("an Environment screen goes once the person loses access to its Repo", asyn
   await eventually(() => expect(page.textContent).toContain("Version 2"))
 
   await step(() => hub.revokeRepo("kddige/claude-hub"))
-  await eventually(() => expect(page.textContent).toContain("You don't have access to this Repo"))
+  await eventually(() =>
+    expect(page.textContent).toContain("You don't have access to kddige/claude-hub on GitHub."),
+  )
   expect(page.textContent).not.toContain("Version 2")
 })

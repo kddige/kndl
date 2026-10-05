@@ -256,11 +256,7 @@ export function EnvironmentView({
             <EmptyState
               size="page"
               icon={<WarningIcon />}
-              title={
-                refusal.status === "NotInstalled"
-                  ? "The GitHub App isn't installed on this Repo"
-                  : "You don't have access to this Repo"
-              }
+              title="Can't open this Environment"
               description={
                 <RepoRefusal
                   repo={repo}
