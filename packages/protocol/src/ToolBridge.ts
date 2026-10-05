@@ -38,16 +38,11 @@ import { Schema } from "effect"
 /** The environment variable that tells the mod where the Session's tool bridge listens. */
 export const ToolsSocketVariable = "CLAUDE_HUB_TOOLS_SOCKET"
 
-/** The tools the bridge runs in the Sandbox: Claude Code's file and command tools (ADR 0001). */
-export const SandboxTools = [
-  "Bash",
-  "Read",
-  "Write",
-  "Edit",
-  "NotebookEdit",
-  "Glob",
-  "Grep",
-] as const
+/**
+ * The tools the bridge runs in the Sandbox: Claude Code's file and command tools (ADR 0001).
+ * Claude Code 2.1.287 and 2.1.289 have no Glob or Grep tool (#140): search runs through Bash.
+ */
+export const SandboxTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit"] as const
 export type SandboxTool = (typeof SandboxTools)[number]
 
 /** One tool call, with the tool's own arguments as Claude Code passed them. */

@@ -47,7 +47,7 @@ The obvious design is to run Claude Code inside the Sandbox. claude-hub doesn't,
 
 Instead Claude Code runs on the Runner's host, and only its file and command tools run in the Sandbox ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/)):
 
-- The mod intercepts Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, and sends each one to the Session's **tool bridge**, a Unix socket in the Session's directory that only the Runner's user can open.
+- The mod intercepts Bash, Read, Write, Edit and NotebookEdit, and sends each one to the Session's **tool bridge**, a Unix socket in the Session's directory that only the Runner's user can open.
 - The Runner keeps one `claude mcp serve` running inside the Sandbox and passes each call to it. That is Claude Code's own tool code, so the model keeps the tools it was trained on, with results in the shapes it expects.
 - If the bridge is down, the mod refuses the call: a tool never falls back to the host. Every other tool is denied, and so is the `!` shell shortcut in the prompt box. Claude Code's system prompt tells Claude to suggest `! <command>` when a person must run a command; the mod's section tells it the shortcut is off, and to run the command with Bash in the Sandbox instead.
 - The one exception is WebSearch, which the mod leaves to Claude Code: the search runs at Anthropic, so nothing runs on the host. WebFetch, which would fetch from the host, is denied, and its denial tells Claude to use `curl` through Bash instead. See the [security model](/explanation/security-model/#the-sandbox-is-the-boundary).
