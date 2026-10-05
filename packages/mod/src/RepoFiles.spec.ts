@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { parseRepoInstructions, skillInWorkspace, withRepoInstructions } from "./RepoFiles.ts"
+import {
+  defusedSkillNote,
+  parseRepoInstructions,
+  skillInWorkspace,
+  withRepoInstructions,
+} from "./RepoFiles.ts"
 
 describe("parseRepoInstructions", () => {
   test("reads the Runner's list of instruction files", () => {
@@ -80,5 +85,18 @@ describe("skillInWorkspace", () => {
   test("leaves a path that only starts the same alone", () => {
     const text = "See /sessions/s1/repository/x and /sessions/s1/repo"
     expect(skillInWorkspace(text, "/sessions/s1/repo", "/workspace")).toBe(text)
+  })
+
+  test("says what the Runner defused, so the model leaves it out", () => {
+    const text =
+      "Base directory for this skill: /s1/repo/.claude/skills/x\n\nRun `bun add \u200B@a/b`."
+    expect(skillInWorkspace(text, "/s1/repo", "/workspace")).toBe(
+      `Base directory for this skill: /workspace/.claude/skills/x\n\nRun \`bun add \u200B@a/b\`.\n\n${defusedSkillNote}`,
+    )
+  })
+
+  test("leaves another skill alone, zero-width spaces and all", () => {
+    const text = "Base directory for this skill: /plugins/x/skills/y\n\n\u200B@a"
+    expect(skillInWorkspace(text, "/s1/repo", "/workspace")).toBe(text)
   })
 })

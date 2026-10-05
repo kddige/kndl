@@ -519,7 +519,7 @@ describe("Sessions", () => {
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
-    expect(h.sandboxes.repoFilesRead).toEqual(["s-1"])
+    expect(h.sandboxes.repoFilesRead).toEqual([sessionId("s-1")])
     expect(readFileSync(join(repoFiles, ".claude", "skills", "deploy", "SKILL.md"), "utf8")).toBe(
       '---\nname: "deploy"\n---\nShip it.\n',
     )

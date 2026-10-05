@@ -8,13 +8,38 @@ import type {
   StopSession,
 } from "@claude-hub/protocol"
 import { Context, Data, Effect, Layer } from "effect"
-import type { RepoFiles } from "./RepoFiles.ts"
-import { noRepoFiles } from "./RepoFiles.ts"
 import type { SessionDirectories } from "./SessionNames.ts"
 
 export class SandboxError extends Data.TaggedError("SandboxError")<{
   readonly message: string
 }> {}
+
+// The Repo's skills and CLAUDE.md, as read from a Session's Workspace for Claude Code on the host
+// (RepoFiles.ts, #125).
+
+/** One instruction file, its path relative to the Workspace. */
+export interface InstructionFile {
+  readonly path: string
+  readonly content: string
+  /** The file whose `@` import brought it in. */
+  readonly parent?: string
+}
+
+export interface Skill {
+  /** Its directory's name under `.claude/skills/`. */
+  readonly name: string
+  /** The SKILL.md written for Claude Code: its frontmatter cut down, its text defused. */
+  readonly content: string
+}
+
+/** What is copied of a Repo, and what was left out and why. */
+export interface RepoFiles {
+  readonly instructions: ReadonlyArray<InstructionFile>
+  readonly skills: ReadonlyArray<Skill>
+  readonly skipped: ReadonlyArray<string>
+}
+
+export const noRepoFiles: RepoFiles = { instructions: [], skills: [], skipped: [] }
 
 /** What a Session's Sandbox is built from. */
 export interface SandboxTarget {

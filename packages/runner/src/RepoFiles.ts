@@ -13,15 +13,16 @@
 //
 // Only regular files are read: a path with a symbolic link anywhere along it is skipped, and so is
 // a file too large, not UTF-8 text, or past a limit. `@` imports are resolved here, inside the
-// Workspace, and every `@` and inline shell command left in the text is defused, so Claude Code
-// never resolves one against the host. A skill keeps only its name and the frontmatter fields that
-// describe it: never `hooks`, `allowed-tools`, `model` or any other.
+// Workspace, and the `@`s left in the instructions' prose are defused, so Claude Code never
+// resolves one against the host. A skill's whole text is defused, `@`s and inline shell commands,
+// since Claude Code looks for both everywhere in it, and it keeps only its name and the frontmatter
+// fields that describe it: never `hooks`, `allowed-tools`, `model` or any other.
 
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import { join, posix } from "node:path"
 import type { SessionId } from "@claude-hub/protocol"
 import { Effect } from "effect"
-import { SandboxError } from "./Sandbox.ts"
+import { type InstructionFile, type RepoFiles, SandboxError, type Skill } from "./Sandbox.ts"
 import type { SandboxBackendShape } from "./sandbox/SandboxBackend.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 
@@ -38,30 +39,6 @@ export const RepoFileLimits = {
   /** Skills, by name. */
   skills: 64,
 } as const
-
-/** One instruction file, its path relative to the Workspace. */
-export interface InstructionFile {
-  readonly path: string
-  readonly content: string
-  /** The file whose `@` import brought it in. */
-  readonly parent?: string
-}
-
-export interface Skill {
-  /** Its directory's name under `.claude/skills/`. */
-  readonly name: string
-  /** The SKILL.md written for Claude Code: its frontmatter cut down, its text defused. */
-  readonly content: string
-}
-
-/** What is copied of a Repo, and what was left out and why. */
-export interface RepoFiles {
-  readonly instructions: ReadonlyArray<InstructionFile>
-  readonly skills: ReadonlyArray<Skill>
-  readonly skipped: ReadonlyArray<string>
-}
-
-export const noRepoFiles: RepoFiles = { instructions: [], skills: [], skipped: [] }
 
 /** A file read from the Workspace. */
 export type FileRead =
@@ -85,7 +62,7 @@ export interface WorkspaceFiles {
 
 // --- Defusing --------------------------------------------------------------------------------
 
-const zeroWidthSpace = "​"
+const zeroWidthSpace = "\u200B"
 
 /**
  * `text` with nothing Claude Code acts on: a zero-width space goes before every `@`, which ends
@@ -99,6 +76,47 @@ export function defuse(text: string): string {
     .replaceAll("@", `${zeroWidthSpace}@`)
     .replaceAll("!`", `!${zeroWidthSpace}\``)
     .replaceAll("`!", `\`${zeroWidthSpace}!`)
+}
+
+const fence = /^ {0,3}(`{3,}|~{3,})/
+const codeSpan = /(`+)[\s\S]*?\1/g
+
+/**
+ * `markdown` with `change` made to its prose: each line's text outside code blocks and code spans,
+ * one stretch between code spans at a time. Code is left as written.
+ */
+function inProse(markdown: string, change: (prose: string) => string): string {
+  let open: string | undefined
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const fenced = fence.exec(line)?.[1]
+      if (open !== undefined) {
+        if (fenced !== undefined && fenced[0] === open[0] && fenced.length >= open.length)
+          open = undefined
+        return line
+      }
+      if (fenced !== undefined) {
+        open = fenced
+        return line
+      }
+      let changed = ""
+      let last = 0
+      for (const span of line.matchAll(codeSpan)) {
+        changed += change(line.slice(last, span.index)) + span[0]
+        last = span.index + span[0].length
+      }
+      return changed + change(line.slice(last))
+    })
+    .join("\n")
+}
+
+/**
+ * An instruction file's text with every `@` in its prose defused, where Claude Code looks for
+ * imports; its code, where it doesn't, reads as written (`bun add @scope/package`).
+ */
+export function defuseProse(markdown: string): string {
+  return inProse(markdown, (prose) => prose.replaceAll("@", `${zeroWidthSpace}@`))
 }
 
 // --- Paths -----------------------------------------------------------------------------------
@@ -122,10 +140,12 @@ export function resolveImport(from: string, reference: string): string | undefin
 
 // --- Imports ---------------------------------------------------------------------------------
 
-/** Claude Code's import syntax: `@path` at the start or after whitespace, `\ ` for a space. */
-const importPattern = /(?:^|\s)@((?:[^\s\\]|\\ )+)/g
+/**
+ * Claude Code's import syntax: `@path` at the start or after whitespace, `\ ` for a space. It
+ * looks in each run of Markdown text, so one that starts after emphasis counts too (`**x**@a.md`).
+ */
+const importPattern = /(?:^|[\s*_~])@((?:[^\s\\]|\\ )+)/g
 const importStart = /^(?:\.\/|~\/|\/|[a-zA-Z0-9._-])/
-const fence = /^ {0,3}(`{3,}|~{3,})/
 
 /**
  * The paths a CLAUDE.md imports, in order, as Claude Code finds them: not in code blocks, code
@@ -133,25 +153,13 @@ const fence = /^ {0,3}(`{3,}|~{3,})/
  */
 export function importReferences(markdown: string): ReadonlyArray<string> {
   const references: Array<string> = []
-  let open: string | undefined
-  const text = markdown.replace(/<!--[\s\S]*?-->/g, " ")
-  for (const line of text.split("\n")) {
-    const fenced = fence.exec(line)?.[1]
-    if (open !== undefined) {
-      if (fenced !== undefined && fenced[0] === open[0] && fenced.length >= open.length)
-        open = undefined
-      continue
-    }
-    if (fenced !== undefined) {
-      open = fenced
-      continue
-    }
-    const prose = line.replace(/(`+)[\s\S]*?\1/g, (span) => " ".repeat(span.length))
+  inProse(markdown.replace(/<!--[\s\S]*?-->/g, " "), (prose) => {
     for (const match of prose.matchAll(importPattern)) {
       const path = (match[1] ?? "").split("#")[0]?.replaceAll("\\ ", " ") ?? ""
       if (importStart.test(path)) references.push(path)
     }
-  }
+    return prose
+  })
   return references
 }
 
@@ -243,7 +251,7 @@ export const collectRepoFiles = (workspace: WorkspaceFiles) =>
         included.add(path)
         instructions.push({
           path,
-          content: defuse(read.text),
+          content: defuseProse(read.text),
           ...(parent === undefined ? {} : { parent }),
         })
         const references: Array<string> = []

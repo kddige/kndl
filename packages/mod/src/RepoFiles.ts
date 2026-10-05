@@ -69,10 +69,21 @@ export const withRepoInstructions = <F extends InstructionFileLike>(
   ...repo.map((file) => ({ ...file, kind: "project" as const })),
 ]
 
+const zeroWidthSpace = "\u200B"
+
+/** Said after a Repo skill the Runner defused, so the model doesn't copy what it put in. */
+export const defusedSkillNote =
+  "(Claude Hub put a zero-width space (U+200B) before each @ sign and between each ! and backtick in this skill, so that nothing in it runs or is read on the host. Leave those out of any command or file you write from it.)"
+
 /**
  * A Repo skill's prompt, pointing at the skill in the Workspace rather than at the copy on the host
  * Claude Code loaded it from: its base directory, and `${CLAUDE_SKILL_DIR}` as Claude Code
- * expanded it. The model's tools run in the Sandbox, where the skill's other files are.
+ * expanded it. The model's tools run in the Sandbox, where the skill's other files are. Any other
+ * skill's prompt is left as it is.
  */
-export const skillInWorkspace = (text: string, repoFiles: string, workspace: string): string =>
-  text.replaceAll(`${repoFiles.replace(/\/+$/, "")}/`, `${workspace.replace(/\/+$/, "")}/`)
+export const skillInWorkspace = (text: string, repoFiles: string, workspace: string): string => {
+  const copy = `${repoFiles.replace(/\/+$/, "")}/`
+  if (!text.includes(copy)) return text
+  const moved = text.replaceAll(copy, `${workspace.replace(/\/+$/, "")}/`)
+  return moved.includes(zeroWidthSpace) ? `${moved}\n\n${defusedSkillNote}` : moved
+}
