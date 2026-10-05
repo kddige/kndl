@@ -81,6 +81,14 @@ describe("Add a Runner", () => {
     const paired = await redeem(hub, created.code.toLowerCase(), "studio")
     expect(paired).toMatchObject({ name: "studio", repaired: false })
     expect(paired.token.startsWith("chr_")).toBe(true)
+    // Every web client hears which Runner the code paired, so the page that showed it can say.
+    expect(await web.take("PairingCodeRedeemed")).toEqual({
+      _tag: "PairingCodeRedeemed",
+      id: created.id,
+      runnerId: paired.runnerId,
+      name: "studio",
+      repaired: false,
+    })
     await web.take("PairingCodeList", (m) => m.codes.length === 0)
     const offline = await web.take("RunnerList", (m) => m.runners.length === 1)
     expect(offline.runners[0]).toEqual({
