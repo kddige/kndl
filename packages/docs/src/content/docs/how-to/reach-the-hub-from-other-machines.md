@@ -39,7 +39,7 @@ Add `https://hub.example.com/auth/github/callback` to the GitHub App's callback 
 
 ## Option 2: Tailscale Serve
 
-On a tailnet, [Tailscale Serve](https://tailscale.com/kb/1312/serve) gives the Hub an HTTPS URL that only your tailnet can reach, with no certificate to manage:
+On a tailnet, [Tailscale Serve](https://tailscale.com/kb/1312/serve) gives the Hub an HTTPS URL that only your tailnet can reach, with no certificate to manage. Turn on HTTPS certificates for the tailnet first, in its admin console's DNS settings:
 
 ```sh
 tailscale serve --bg 7777

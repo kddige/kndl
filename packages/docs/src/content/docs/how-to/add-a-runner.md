@@ -5,17 +5,17 @@ sidebar:
   order: 4
 ---
 
-A Runner is a machine that runs Sessions, on its own Claude login. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
+A Runner is a machine that runs Sessions, on its own [Runner login](/reference/glossary/): the Claude account signed in on it. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
 
 ## Before you start
 
 The machine needs what the [install guide](/how-to/install/#what-each-machine-needs) lists for a Runner: Bun, git, tmux, Claude Code signed in, and microsandbox on a Mac with Apple Silicon or Linux with KVM. It must reach the Hub's URL, the one in the Hub's `HUB_PUBLIC_URL`.
 
-## With a pairing code
+## With a Pairing code
 
 Nothing is done on the Hub's machine: anyone signed in to the web UI adds a Runner.
 
-1. In the web UI, open **Runners** in the sidebar and choose **Add a Runner**. It shows a command with a [pairing code](#pairing-codes) in it:
+1. In the web UI, open **Runners** in the sidebar and choose **Add a Runner**. It shows a command with a [Pairing code](#pairing-codes) in it:
 
    ```sh
    claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
@@ -42,7 +42,7 @@ claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE' --name 
 
 ## With a Runner token
 
-For a Hub from before pairing codes, or to script everything from the Hub's machine. On the **Hub's machine**, issue the Runner's token:
+For a Hub from before Pairing codes, or to script everything from the Hub's machine. On the **Hub's machine**, issue the Runner's token:
 
 ```sh
 claude-hub runner token build-box
@@ -73,7 +73,9 @@ A Runner **behind the Hub** keeps its running Sessions, but the Hub doesn't star
 
 1. The Runner checks it may: it fetches from origin, and moves only to a commit reachable from `origin/main`. A Runner whose `runner.env` sets `RUNNER_UPDATE_ANY_COMMIT=1` follows any commit origin has, such as a Hub running a branch. Otherwise its row says **refuses: not on main**, and why.
 2. The Hub drains it: no Session starts or wakes there, running Turns get up to ten minutes to end before the Hub stops them, and each Active Session is put to sleep. **Update now** stops the running Turns at once. A sleeping Session keeps its conversation, and the next prompt wakes it on the new version.
-3. The Runner checks out the commit, runs `bun install`, builds the `hub-link` mod, checks that it loads, and exits; its service starts it again on the new commit. Its row says where it is: **Checking**, **Waiting for Turns**, **Installing and building**, **Restarting**.
+3. The Runner checks out the commit, runs `bun install`, builds the `hub-link` mod, checks that it loads, and exits; its service starts it again on the new commit.
+
+Meanwhile its row is marked **updating**, then **restarting**, with a line saying where it is, such as `No new Sessions. Waiting for 2 Sessions' Turns to end (stopped in 9 min if still running)…` or `Installing and building…`.
 
 If a step fails, or the Runner starts three times on the new commit without the Hub welcoming it, the Runner goes back to the commit it ran, rebuilds it, reconnects and reports the error, which its row shows as **update failed** with git's or bun's message. It doesn't try that commit again by itself: fix the cause, then **Update** again.
 

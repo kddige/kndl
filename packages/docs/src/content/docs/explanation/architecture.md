@@ -67,7 +67,7 @@ A refused call says whether it ran. `… so it did not run at all` means the bri
 
 ### How the Sandbox gets `claude`
 
-`claude mcp serve` needs a Claude Code binary in the Sandbox. The Runner downloads the Linux build of the host's own Claude Code version from the npm registry once, checks it against the registry's integrity hash, keeps it in `~/.claude-hub-dev/claude-code`, and mounts it read-only into every Sandbox at `/opt/claude-hub/claude-code`. There is a musl build, for Alpine-like images, and a glibc build, for Debian, Ubuntu and the like; an Environment's build checks its image and records which one its Sandboxes use.
+`claude mcp serve` needs a Claude Code binary in the Sandbox. The Runner downloads the Linux build of the host's own Claude Code version from the npm registry once, checks it against the registry's integrity hash, keeps it in the home's `claude-code/` ([Files and paths](/reference/files-and-paths/)), and mounts it read-only into every Sandbox at `/opt/claude-hub/claude-code`. There is a musl build, for Alpine-like images, and a glibc build, for Debian, Ubuntu and the like; an Environment's build checks its image and records which one its Sandboxes use.
 
 The Sandbox gets no Claude credentials: `mcp serve` makes no model call.
 

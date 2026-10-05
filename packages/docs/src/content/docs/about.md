@@ -7,7 +7,7 @@ claude-hub is multiplayer Claude Code that you host yourself. One Hub keeps the 
 
 ## Status
 
-claude-hub is young and moving fast. It runs from a checkout of its repository with `bun run`. The `claude-hub` command that will install and run the Hub and Runners as services is being built ([#58](https://github.com/kddige/claude-hub/issues/58)); until it lands, expect setup to take a few manual steps, and expect them to change.
+claude-hub is young and moving fast: expect its setup and settings to change between versions. The `claude-hub` command installs a Hub, a Runner or both as services, and keeps them up to date: see [Install claude-hub](/how-to/install/). To work on claude-hub itself, run it from a checkout with `bun run`: see [Develop claude-hub](/how-to/develop-claude-hub/).
 
 ## Not affiliated with Anthropic
 
