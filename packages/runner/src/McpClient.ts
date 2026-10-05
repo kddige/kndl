@@ -11,14 +11,20 @@ export class McpRpcError extends Data.TaggedError("McpRpcError")<{
   readonly message: string
 }> {}
 
-/** The server is gone, or never answered properly. */
+/** The server is gone, or never answered properly: the request was not sent. */
 export class McpClosed extends Data.TaggedError("McpClosed")<{
   readonly message: string
 }> {}
 
-export type McpError = McpRpcError | McpClosed
+/** The server went away while the request was in flight: it may have acted on it. */
+export class McpLost extends Data.TaggedError("McpLost")<{
+  readonly message: string
+}> {}
+
+export type McpError = McpRpcError | McpClosed | McpLost
 
 export interface McpSession {
+  /** Sends a request and waits for its response; interrupted, it cancels the request. */
   readonly request: (method: string, params: unknown) => Effect.Effect<unknown, McpError>
   /** Completes, with why, once the server has exited or its output has ended. */
   readonly closed: Deferred.Deferred<string>
@@ -40,7 +46,7 @@ interface JsonRpcResponse {
 export const connectMcp = (
   command: SpawnedCommand,
   clientName: string,
-): Effect.Effect<McpSession, McpClosed | McpRpcError, Scope.Scope> =>
+): Effect.Effect<McpSession, McpError, Scope.Scope> =>
   Effect.gen(function* () {
     const pending = new Map<number, Deferred.Deferred<unknown, McpError>>()
     const closed = yield* Deferred.make<string>()
@@ -76,7 +82,7 @@ export const connectMcp = (
         yield* Deferred.succeed(closed, why)
         const waiters = [...pending.values()]
         pending.clear()
-        for (const waiter of waiters) yield* Deferred.fail(waiter, new McpClosed({ message: why }))
+        for (const waiter of waiters) yield* Deferred.fail(waiter, new McpLost({ message: why }))
       })
 
     const decoder = new TextDecoder()
@@ -127,7 +133,20 @@ export const connectMcp = (
         yield* send({ jsonrpc: "2.0", id, method, params }).pipe(
           Effect.tapError(() => Effect.sync(() => pending.delete(id))),
         )
-        return yield* Deferred.await(waiter)
+        return yield* Deferred.await(waiter).pipe(
+          // Interrupting a request cancels it on the server, which for `claude mcp serve`'s
+          // tools kills the command they run.
+          Effect.onInterrupt(() =>
+            Effect.suspend(() => {
+              if (!pending.delete(id)) return Effect.void
+              return send({
+                jsonrpc: "2.0",
+                method: "notifications/cancelled",
+                params: { requestId: id, reason: "cancelled by the Runner" },
+              }).pipe(Effect.ignore)
+            }),
+          ),
+        )
       })
 
     yield* request("initialize", {

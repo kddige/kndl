@@ -62,17 +62,85 @@ describe("tools", () => {
     expect(answer.result).toMatchObject({ stdout: "hello from the vm" })
     expect(requests).toHaveLength(1)
     expect(requests[0]).toMatchObject({
-      url: "http://tool-bridge/tools/call",
+      url: "http://tool-bridge/tools/calls?waitMs=20000",
       method: "POST",
       socketPath: socket,
     })
     expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
+      callId: expect.stringMatching(/^[A-Za-z0-9_.-]+$/),
       tool: "Bash",
       input: { command: "echo hello", description: "say hi" },
     })
   })
 
-  test("refuses a call when the bridge is unreachable, and never runs it on the host", async ($, on) => {
+  test("waits for a long call in steps, past what one fetch allows", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    let waits = 0
+    const requests = fakeFetch(on, (request) => {
+      if (request.method === "POST")
+        return {
+          status: 202,
+          text: JSON.stringify({
+            _tag: "ToolRunning",
+            callId: JSON.parse(request.body ?? "").callId,
+          }),
+        }
+      waits += 1
+      return waits < 3
+        ? { status: 202, text: JSON.stringify({ _tag: "ToolRunning", callId: "c" }) }
+        : ran({ stdout: "149 pass", stderr: "", interrupted: false })
+    })
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    const answer = await $.tool.call({ tool: "Bash", command: "bun test", timeout: 600000 })
+
+    expect(answer.result).toMatchObject({ stdout: "149 pass" })
+    const callId = JSON.parse(requests[0]?.body ?? "").callId as string
+    expect(requests.slice(1).map((request) => `${request.method} ${request.url}`)).toEqual([
+      `GET http://tool-bridge/tools/calls/${callId}?waitMs=20000`,
+      `GET http://tool-bridge/tools/calls/${callId}?waitMs=20000`,
+      `GET http://tool-bridge/tools/calls/${callId}?waitMs=20000`,
+    ])
+  })
+
+  test("says a call whose answer was lost may have run", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    fakeFetch(on, (request) => {
+      if (request.method === "POST")
+        return { status: 202, text: JSON.stringify({ _tag: "ToolRunning", callId: "c" }) }
+      throw new Error("no complete answer within 30000ms")
+    })
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    const answer = await $.tool.call({ tool: "Bash", command: "git stash && git stash pop" })
+
+    expect(answer.deny).toContain("may have run")
+    expect(answer.deny).toContain("Check before running it again")
+    expect(answer.deny).not.toContain("did not run")
+  })
+
+  test("runs a call through a Runner from before long calls", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    const requests = fakeFetch(on, (request) =>
+      request.url === "http://tool-bridge/tools/call"
+        ? ran({ stdout: "old", stderr: "", interrupted: false })
+        : { status: 404, text: "not found" },
+    )
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    const answer = await $.tool.call({ tool: "Bash", command: "echo old" })
+
+    expect(answer.result).toMatchObject({ stdout: "old" })
+    expect(requests.map((request) => request.url)).toEqual([
+      "http://tool-bridge/tools/calls?waitMs=20000",
+      "http://tool-bridge/tools/call",
+    ])
+  })
+
+  // The test runtime hides a fetch hook's throw behind "no implementation for http.fetch", so this
+  // is a failure the mod can't explain: it must not say the call didn't run. (Claude Code's own
+  // fetch names the cause, such as connect ENOENT, which ToolBridgeClient.spec.ts covers.)
+  test("refuses a call whose bridge fails unexplained as may have run, never on the host", async ($, on) => {
     mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
     fakeFetch(on, () => {
       throw new Error("connect ENOENT")
@@ -87,6 +155,7 @@ describe("tools", () => {
 
     expect(reachedCore).toBe(false)
     expect(answer.deny).toBeDefined()
+    expect(answer.deny).toContain("Check before running it again")
     expect(answer.deny).toContain("never runs on the host")
   })
 
@@ -102,6 +171,7 @@ describe("tools", () => {
 
     expect(answer.deny).toBeDefined()
     expect(answer.deny).toContain("the Sandbox is down")
+    expect(answer.deny).toContain("did not run at all")
   })
 
   test("refuses every call when no Runner gave it a bridge", async ($, on) => {

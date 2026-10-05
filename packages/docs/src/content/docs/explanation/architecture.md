@@ -54,6 +54,17 @@ Instead Claude Code runs on the Runner's host, and only its file and command too
 
 File tools must not run on the host even though the Workspace lives there: a symlink made inside the Sandbox could point a host-side Read at `~/.ssh`.
 
+### Long tool calls
+
+A mod reaches the bridge with Claude Code's own fetch, which gives up after 30 seconds, but a test run or an install can take minutes. So the mod doesn't wait for a call in one request. It starts the call under an id of its own, then asks the bridge for it again and again, each time waiting up to 20 seconds for it to end ([protocol](/reference/protocol/#tool-bridge)). A call runs for as long as its tool allows:
+
+- Bash: its own `timeout`, 2 minutes unless Claude asks for more, and at most 10 minutes, plus 30 seconds for the answer to arrive.
+- The other tools: 5 minutes.
+
+When the mod stops waiting, it tells the bridge to cancel the call, and Claude Code's tool server in the Sandbox kills the command. That happens when the call runs past its time, when someone interrupts the Turn, and when Claude Code exits. The bridge cancels a call by itself too, when nothing has asked about it for 30 seconds, and every running call when the Sandbox stops, so a command doesn't outlive the Claude Code that started it.
+
+A refused call says whether it ran. `… so it did not run at all` means the bridge never took it, so it's safe to run again. Once the bridge has taken a call, a failure says `… may have run in this Session's Sandbox, but its result was lost (…). Check before running it again.`: running a command like `git stash pop` twice can do harm. Either way, it never runs on the host. See [Claude's tools are refused](/troubleshooting/sessions/#claudes-tools-are-refused).
+
 ### How the Sandbox gets `claude`
 
 `claude mcp serve` needs a Claude Code binary in the Sandbox. The Runner downloads the Linux build of the host's own Claude Code version from the npm registry once, checks it against the registry's integrity hash, keeps it in `~/.claude-hub-dev/claude-code`, and mounts it read-only into every Sandbox at `/opt/claude-hub/claude-code`. There is a musl build, for Alpine-like images, and a glibc build, for Debian, Ubuntu and the like; an Environment's build checks its image and records which one its Sandboxes use.
