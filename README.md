@@ -47,7 +47,7 @@ bun run runner-token "$(hostname -s)"   # prints a Runner token, chr_…
 RUNNER_TOKEN=chr_… bun run runner
 ```
 
-Open <http://127.0.0.1:7777>, sign in with dev login, and create a Session. The [tutorial](https://kddige.github.io/claude-hub/tutorials/first-session/) walks through it, and the [how-to guides](https://kddige.github.io/claude-hub/how-to/install/) cover GitHub sign-in, more Runners and reaching the Hub from other machines.
+Open <http://127.0.0.1:7777>, sign in with dev login, give a Repo its Environment, and start a Session on it. The [tutorial](https://kddige.github.io/claude-hub/tutorials/first-session/) walks through it, and the [how-to guides](https://kddige.github.io/claude-hub/how-to/install/) cover GitHub sign-in, more Runners and reaching the Hub from other machines.
 
 ## Development
 
