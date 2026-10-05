@@ -2,7 +2,7 @@
 // directory: the clone stands for the installed checkout. Installing, building, checking the
 // Runner loads and restarting are faked. Skipped when git isn't installed.
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BuildVersion, RunnerToHub, RunnerUpdater } from "@claude-hub/protocol"
@@ -22,11 +22,21 @@ const testIdentity = {
 }
 
 function git(cwd: string, ...args: Array<string>): string {
+  const started = Date.now()
   const result = Bun.spawnSync(["git", "-c", "commit.gpgsign=false", ...args], {
     cwd,
-    env: { ...process.env, ...testIdentity },
+    env: { ...process.env, ...testIdentity, GIT_TERMINAL_PROMPT: "0" },
+    stdin: "ignore",
   })
-  if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+  if (result.exitCode !== 0) {
+    // Killed (by the test's timeout, say) it exits with no code and nothing on stderr.
+    const ended = result.signalCode
+      ? `was killed by ${result.signalCode}`
+      : `exited ${result.exitCode}`
+    throw new Error(
+      `git ${args[0]} ${ended} after ${Date.now() - started}ms: ${result.stderr.toString().trim()}`,
+    )
+  }
   return result.stdout.toString().trim()
 }
 
@@ -49,6 +59,8 @@ interface Harness {
   readonly clone: string
   readonly sent: Array<RunnerToHub>
   readonly calls: Array<string>
+  /** The git commands that have finished, in the order they did. */
+  readonly ran: Array<string>
   marker: Marker | undefined
   /** Make the next build, or the load checks, fail. */
   failBuild: boolean
@@ -94,11 +106,13 @@ describe.skipIf(Bun.which("git") === null)("the Runner's Updater", () => {
 
     const sent: Array<RunnerToHub> = []
     const calls: Array<string> = []
+    const ran: Array<string> = []
     const scope = Effect.runSync(Scope.make())
     const h = {
       clone,
       sent,
       calls,
+      ran,
       marker: undefined as Marker | undefined,
       failBuild: false,
       failLoad: false,
@@ -111,6 +125,7 @@ describe.skipIf(Bun.which("git") === null)("the Runner's Updater", () => {
           env: { ...hostEnvironment(), ...testIdentity },
         }).pipe(
           Effect.map((result) => result.stdout),
+          Effect.ensuring(Effect.sync(() => void ran.push(`git ${args.join(" ")}`))),
           Effect.provide(BunServices.layer),
         )
       },
@@ -186,6 +201,24 @@ describe.skipIf(Bun.which("git") === null)("the Runner's Updater", () => {
 
     expect(h.sent[0]).toMatchObject({ refusal: { reason: "NotFound" } })
     await h.close()
+  })
+
+  test("git never reads a commit as an option, even one the protocol would have refused", async () => {
+    const h = await start({ self: true, anyCommit: true })
+    const pwned = join(dir, `pwned-${counter}`)
+    // Not a CommitId: this skips the protocol's check to test the Updater's own guard.
+    const hostile = { commit: `--upload-pack=touch ${pwned}` } as unknown as BuildVersion
+    await run(h.updater.handle({ _tag: "CheckUpdate", target: hostile }))
+    // The fetch by id, the call that would run the command, has been and gone.
+    await eventually(() => h.ran.some((call) => call.startsWith("git fetch --quiet")))
+
+    expect(existsSync(pwned)).toBe(false)
+    expect(h.ran).toContain(
+      `git fetch --quiet --end-of-options origin --upload-pack=touch ${pwned}`,
+    )
+    await h.close()
+    // No reply either: UpdateChecked can't carry a target that isn't a commit id.
+    expect(h.sent).toEqual([])
   })
 
   test("a Runner that updates by hand refuses without running git", async () => {
