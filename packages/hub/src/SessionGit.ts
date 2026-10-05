@@ -2,11 +2,29 @@ import {
   GitAnswer,
   type GitAsk,
   GitCredentials,
+  type GitIdentity,
+  type Participant,
   type RepoName,
   type SessionSummary,
 } from "@claude-hub/protocol"
 import { Context, Effect, Layer } from "effect"
-import { GitHubApp } from "./GitHubApp.ts"
+import { GitHubApp, noreplyEmail } from "./GitHubApp.ts"
+
+/**
+ * Who commits made in a Session's Sandbox are by, unless its Environment sets a git identity
+ * (#110): the Session's Creator, by their GitHub name and noreply address, as GitHub's own web
+ * commits are. A dev login gets an address at `.invalid`, which GitHub ties to no one.
+ */
+export const creatorIdentity = (creator: Participant): GitIdentity => {
+  const githubId = /^github:(\d+)$/.exec(creator.id)?.[1]
+  return {
+    name: creator.name,
+    email:
+      githubId === undefined
+        ? `${creator.login}@dev-login.invalid`
+        : noreplyEmail(githubId, creator.login),
+  }
+}
 
 /**
  * What the Hub answers a Runner's git requests with, for one of its Sessions (ADR 0010): how the

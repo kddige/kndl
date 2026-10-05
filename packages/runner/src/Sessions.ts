@@ -270,6 +270,7 @@ export const SessionsLive = Layer.effect(
             const sandbox = yield* sandboxes.start(sessionId, directories, {
               repo: request.repo,
               ...(request.environment === undefined ? {} : { environment: request.environment }),
+              ...(request.gitIdentity === undefined ? {} : { gitIdentity: request.gitIdentity }),
             })
             if (sandbox.environmentVersion === undefined) environmentVersions.delete(sessionId)
             else environmentVersions.set(sessionId, sandbox.environmentVersion)

@@ -195,6 +195,8 @@ describe("CreateSession", () => {
       workBranch: `claude/${sessionId}`,
       modToken: start.modToken,
       environment: expect.any(Object),
+      // Its Creator commits in the Sandbox; a dev login, at an address that reaches no one.
+      gitIdentity: { name: "alice", email: "alice@dev-login.invalid" },
     })
     expect(start.environment?.version).toBe(1)
     expect(start.modToken).toStartWith("chm_")
@@ -610,6 +612,7 @@ describe("the Session lifecycle", () => {
       modToken: wake.modToken,
       resume: "claude-1",
       environment: expect.any(Object),
+      gitIdentity: { name: "alice", email: "alice@dev-login.invalid" },
     })
     expect(wake.modToken).not.toBe(start.modToken)
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
@@ -1825,7 +1828,18 @@ describe("Repo access", () => {
     }
     octocatWeb.send({ _tag: "CreateSession", requestId: "ok", repo, baseBranch: "main" })
     expect((await octocatWeb.take("SessionCreated")).session.creator).toMatchObject(octocat)
-    expect((await runner.untaken("StartSession")).map((start) => start.repo)).toEqual([repo])
+    // Its Creator commits in the Sandbox, by their GitHub noreply address.
+    expect(
+      (await runner.untaken("StartSession")).map((start) => ({
+        repo: start.repo,
+        gitIdentity: start.gitIdentity,
+      })),
+    ).toEqual([
+      {
+        repo,
+        gitIdentity: { name: "octocat", email: "1+octocat@users.noreply.github.com" },
+      },
+    ])
   })
 
   test("a collaborator can join, prompt and type, and GitHub is asked once", async () => {

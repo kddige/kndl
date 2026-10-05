@@ -28,7 +28,7 @@ The words are defined in the [glossary](/reference/glossary/), and the design de
 bun install
 ```
 
-You need Bun 1.4 or newer, and Claude Code (`claude`) on `PATH` for the mod's checks.
+You need Bun 1.4 or newer, and Claude Code (`claude`) on `PATH` for the mod's checks: `bun run typecheck` fails without it, since the mod is checked against the plugin API's types that Claude Code writes when it loads the mod. Install it with `curl -fsSL https://claude.ai/install.sh | bash` (see [Claude Code's setup](https://docs.anthropic.com/en/docs/claude-code)). Without tmux, `bun test` skips the Runner's tmux tests and says so.
 
 ## Checks
 

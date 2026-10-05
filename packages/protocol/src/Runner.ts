@@ -10,7 +10,7 @@ import {
   VariablesFetched,
   VariablesRefused,
 } from "./Environment.ts"
-import { GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
+import { GitIdentity, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { BranchName, RepoName, RunnerLogin } from "./Session.ts"
 import {
@@ -185,6 +185,11 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
    * Repo has none: the Runner then uses its own default image.
    */
   environment: Schema.optionalKey(SessionEnvironment),
+  /**
+   * Who commits made in the Sandbox are by, unless its Environment sets a git identity of its
+   * own: the Session's Creator (#110). Absent from a Hub older than that.
+   */
+  gitIdentity: Schema.optionalKey(GitIdentity),
 })
 export type StartSession = typeof StartSession.Type
 

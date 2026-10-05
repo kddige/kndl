@@ -8,7 +8,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if ! command -v claude >/dev/null; then
-  echo "hub-link typecheck needs Claude Code (claude) on PATH" >&2
+  cat >&2 <<'MSG'
+hub-link's typecheck needs Claude Code (claude) on PATH: it loads the mod into Claude Code,
+which writes the plugin API's types the mod is checked against. Install Claude Code with
+  curl -fsSL https://claude.ai/install.sh | bash
+(or see https://docs.anthropic.com/en/docs/claude-code), then run this again.
+MSG
   exit 1
 fi
 

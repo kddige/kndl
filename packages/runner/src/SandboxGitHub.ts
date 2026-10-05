@@ -11,8 +11,11 @@
 //
 // The Hub redacts the token, and the Session's previous one, from what the Session prints. When
 // there is none, as without a GitHub App, the Session runs without; that is logged once.
+//
+// Commits made there are by the Session's Creator (#110), set in the same system gitconfig when
+// the Sandbox starts, unless the Environment set an identity of its own.
 
-import type { GitAnswer, SessionId } from "@claude-hub/protocol"
+import type { GitAnswer, GitIdentity, SessionId } from "@claude-hub/protocol"
 import { Cause, Duration, Effect, Redacted } from "effect"
 import type { Scope } from "effect"
 import { SandboxError } from "./Sandbox.ts"
@@ -90,6 +93,48 @@ export const installSandboxToken = (
         message: `could not lock the GitHub token's files: ${locked.stderr.trim()}`,
       })
   })
+
+/**
+ * Sets git's identity (`$1`, `$2`) in the system gitconfig, where it has none, if git is
+ * installed. So one the Environment's image, Bootstrap or Start script set in the system
+ * gitconfig is kept, and one set globally, in the Repo's `.git/config` or in `GIT_AUTHOR_*` and
+ * `GIT_COMMITTER_*` wins over it, as git reads those after the system gitconfig.
+ */
+export const identityScript = `command -v git >/dev/null 2>&1 || exit 0
+git config --system --get user.name >/dev/null || git config --system user.name "$1"
+git config --system --get user.email >/dev/null || git config --system user.email "$2"
+`
+
+/**
+ * Makes `identity` the author and committer of commits in the running Sandbox, unless it has one
+ * (see {@link identityScript}). A failure is logged: commits then fail as they did before.
+ */
+export const setSandboxIdentity = (
+  backend: SandboxBackend["Service"],
+  sessionId: SessionId,
+  identity: GitIdentity,
+) =>
+  backend
+    .exec(sessionId, {
+      command: "sh",
+      args: ["-c", identityScript, "sh", identity.name, identity.email],
+    })
+    .pipe(
+      Effect.flatMap((result) =>
+        result.exitCode === 0
+          ? Effect.void
+          : Effect.fail(
+              new SandboxError({ message: result.stderr.trim() || `exit ${result.exitCode}` }),
+            ),
+      ),
+      Effect.catchCause((cause) => {
+        const error = Cause.squash(cause)
+        const message = error instanceof Error ? error.message : String(error)
+        return Effect.logWarning(
+          `Session ${sessionId}: could not set git's identity in its Sandbox: ${message}`,
+        )
+      }),
+    )
 
 /** A fresh token for the Session's Sandbox, from the Hub. */
 export type SandboxTokenSource = (sessionId: SessionId) => Effect.Effect<GitAnswer>
