@@ -2,8 +2,12 @@
 // command tools from the Session's Sandbox by calling this bridge.
 //
 // Per Session, the Runner keeps one `claude mcp serve` running inside the Sandbox, restarting it
-// whenever it exits, and serves `POST /tools/call` (see the protocol's ToolBridge.ts) on a Unix
-// socket in the Session's directory that only the Runner's user can open.
+// whenever it exits, and serves the bridge (see the protocol's ToolBridge.ts) on a Unix socket in
+// the Session's directory that only the Runner's user can open. A call runs for as long as its
+// tool does, while the mod waits for it in steps (#109); cancelling it sends the server
+// `notifications/cancelled`, on which Claude Code's tool kills its process. Closing the bridge
+// (the Session stopping) cancels every call still running: the server's stdin ending, or the
+// server being killed, would leave their processes running.
 //
 // The server in the Sandbox runs with no Claude credentials and no host configuration: it gets
 // the Sandbox's own environment, its login shell's environment and the Environment's variables
@@ -14,7 +18,15 @@
 
 import { chmod, rm } from "node:fs/promises"
 import type { SessionId } from "@claude-hub/protocol"
-import { ToolBridgeCall, ToolBridgeReply } from "@claude-hub/protocol"
+import {
+  BridgeCallId,
+  MaxToolWaitMs,
+  ToolBridgeCall,
+  ToolBridgeReply,
+  ToolCallReply,
+  ToolCallStart,
+  ToolWaitQuery,
+} from "@claude-hub/protocol"
 import { Data, Deferred, Duration, Effect, Exit, Schema } from "effect"
 import type { Scope } from "effect"
 import { connectMcp } from "./McpClient.ts"
@@ -22,6 +34,8 @@ import type { McpError, McpSession } from "./McpClient.ts"
 import { SandboxBackend, shell } from "./sandbox/SandboxBackend.ts"
 import type { SandboxError } from "./sandbox/SandboxBackend.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
+import { makeToolCalls } from "./ToolCalls.ts"
+import type { ToolCallsOptions } from "./ToolCalls.ts"
 
 export class ToolBridgeError extends Data.TaggedError("ToolBridgeError")<{
   readonly message: string
@@ -46,10 +60,28 @@ export interface ToolEngineOptions {
   readonly readyTimeout?: Duration.Input
   /** How long to wait before starting the server again after its `attempt`th failure in a row. */
   readonly restartDelay?: (attempt: number) => Duration.Input
+  /** How long a call may run with nothing waiting for it, and how long its reply is kept. */
+  readonly calls?: ToolCallsOptions
 }
 
+/** Runs tool calls in the Sandbox. Nothing here fails: problems come back as replies. */
 export interface ToolEngine {
-  /** Runs one tool call in the Sandbox. Never fails: problems come back as `BridgeUnavailable`. */
+  /**
+   * Starts a call under the mod's id (or finds the one already started under it), and waits up
+   * to `wait` for it to end.
+   */
+  readonly start: (start: ToolCallStart, wait: Duration.Input) => Effect.Effect<ToolCallReply>
+  /** Waits up to `wait` for a call to end; undefined for a call the bridge doesn't know. */
+  readonly wait: (
+    callId: BridgeCallId,
+    wait: Duration.Input,
+  ) => Effect.Effect<ToolCallReply | undefined>
+  /** Cancels a call, stopping it in the Sandbox; undefined for a call the bridge doesn't know. */
+  readonly cancel: (callId: BridgeCallId) => Effect.Effect<ToolCallReply | undefined>
+  /**
+   * Runs one call to its end, for the single `POST /tools/call` of mods from before #109. A call
+   * that may have run but lost its result is answered as `ToolFailed`, saying so.
+   */
   readonly call: (call: ToolBridgeCall) => Effect.Effect<ToolBridgeReply>
 }
 
@@ -87,6 +119,7 @@ const defaultRestartDelay = (attempt: number) =>
 const healthyAfter = Duration.seconds(30)
 
 const unavailable = (message: string) => ToolBridgeReply.cases.BridgeUnavailable.make({ message })
+const lost = (message: string) => ToolCallReply.cases.ToolLost.make({ message })
 
 /** Turns `tools/call`'s answer into the bridge's reply. */
 export const replyFromMcp = (result: unknown): ToolBridgeReply => {
@@ -186,12 +219,13 @@ export const makeToolEngine = (
     })
     yield* Effect.forkScoped(supervise)
 
-    const call = (request: ToolBridgeCall): Effect.Effect<ToolBridgeReply> =>
+    /** Runs one call in the Sandbox, to its end. */
+    const runOne = (request: ToolBridgeCall): Effect.Effect<ToolCallReply> =>
       Effect.gen(function* () {
         // Background Bash leaves its output in the Sandbox where Claude Code can't find it (spike
         // #2), so it is refused here as well as in the mod.
         if (request.tool === "Bash" && request.input["run_in_background"] === true)
-          return ToolBridgeReply.cases.ToolFailed.make({
+          return ToolCallReply.cases.ToolFailed.make({
             message:
               "Background commands are not available here. Run the command in the foreground.",
           })
@@ -206,24 +240,126 @@ export const makeToolEngine = (
             Effect.map(replyFromMcp),
             Effect.catchTags({
               McpRpcError: (error) =>
-                Effect.succeed(ToolBridgeReply.cases.ToolFailed.make({ message: error.message })),
+                Effect.succeed(ToolCallReply.cases.ToolFailed.make({ message: error.message })),
               McpClosed: (error) => Effect.succeed(unavailable(error.message)),
+              McpLost: (error) => Effect.succeed(lost(error.message)),
             }),
           )
       })
 
-    return { call }
+    // Made after the server's supervisor, so closing the scope cancels the calls while the
+    // server can still hear it.
+    const calls = yield* makeToolCalls(options.calls)
+
+    const begin = (callId: BridgeCallId, request: ToolBridgeCall) =>
+      calls.start(callId, (cancelled) =>
+        Effect.raceFirst(
+          runOne(request),
+          // Winning interrupts the request, which cancels it on the server.
+          Effect.map(cancelled, (why) => lost(`it was cancelled (${why}) and stopped`)),
+        ),
+      )
+
+    const start = (request: ToolCallStart, wait: Duration.Input) =>
+      Effect.gen(function* () {
+        yield* begin(request.callId, { tool: request.tool, input: request.input })
+        const reply = yield* calls.wait(request.callId, wait)
+        // Ended and forgotten in the moment between, which a sane keepFor never allows.
+        return reply ?? lost("the tool bridge lost the call's result")
+      })
+
+    const cancel = (callId: BridgeCallId) => calls.cancel(callId, "the mod cancelled it")
+
+    let legacyCalls = 0
+    const call = (request: ToolBridgeCall): Effect.Effect<ToolBridgeReply> =>
+      Effect.gen(function* () {
+        // A colon is outside BridgeCallId, so no call of a mod's shares this id.
+        const callId = `legacy:${++legacyCalls}`
+        yield* begin(callId, request)
+        const reply = yield* calls.wait(callId, Duration.infinity)
+        if (reply === undefined || reply._tag === "ToolRunning" || reply._tag === "ToolLost")
+          return ToolBridgeReply.cases.ToolFailed.make({
+            message:
+              `${request.tool} may have run in the Sandbox, but its result was lost` +
+              `${reply?._tag === "ToolLost" ? ` (${reply.message})` : ""}. ` +
+              "Check before running it again.",
+          })
+        return reply
+      })
+
+    return { start, wait: calls.wait, cancel, call }
   })
 
 const json = (reply: ToolBridgeReply, status: number) =>
   Response.json(Schema.encodeSync(ToolBridgeReply)(reply), { status })
 
+const statusOf = (reply: ToolCallReply) => {
+  switch (reply._tag) {
+    case "BridgeUnavailable":
+      return 503
+    case "ToolRunning":
+      return 202
+    default:
+      return 200
+  }
+}
+
+const callJson = (reply: ToolCallReply, status = statusOf(reply)) =>
+  Response.json(Schema.encodeSync(ToolCallReply)(reply), { status })
+
+const unknownCall = () =>
+  callJson(lost("the tool bridge doesn't know this call: if it ran, its result is gone"), 404)
+
 const decodeCall = Schema.decodeUnknownExit(ToolBridgeCall)
-/** Answers one HTTP request to the bridge. */
+const decodeStart = Schema.decodeUnknownExit(ToolCallStart)
+const decodeCallId = Schema.decodeUnknownExit(BridgeCallId)
+const decodeQuery = Schema.decodeUnknownExit(ToolWaitQuery)
+
+/** How long a request asks to wait, at most MaxToolWaitMs; undefined for a query that doesn't decode. */
+const waitOf = (url: URL) => {
+  const query = decodeQuery(Object.fromEntries(url.searchParams))
+  if (Exit.isFailure(query)) return undefined
+  return Duration.millis(Math.min(query.value.waitMs ?? 0, MaxToolWaitMs))
+}
+
+const callsPrefix = "/tools/calls/"
+
+const refuse = (message: string) => callJson(unavailable(message), 400)
+
+/**
+ * Answers one HTTP request to the bridge. A wait ends early when its request is aborted (the mod
+ * went away), so a call counts as waited for only while someone listens.
+ */
 export const handleBridgeRequest = async (engine: ToolEngine, request: Request) => {
   const url = new URL(request.url)
-  if (request.method !== "POST") return new Response("not found", { status: 404 })
-  if (url.pathname === "/tools/call") {
+  const listening = <A>(effect: Effect.Effect<A>) =>
+    Effect.runPromise(effect, { signal: request.signal })
+  if (request.method === "POST" && url.pathname === "/tools/calls") {
+    const wait = waitOf(url)
+    if (wait === undefined) return refuse("the query did not decode")
+    const body: unknown = await request.json().catch(() => undefined)
+    const decoded = decodeStart(body)
+    if (Exit.isFailure(decoded)) return refuse("the tool call did not decode")
+    return callJson(await listening(engine.start(decoded.value, wait)))
+  }
+
+  if (url.pathname.startsWith(callsPrefix)) {
+    const callId = decodeCallId(url.pathname.slice(callsPrefix.length))
+    if (Exit.isFailure(callId)) return refuse("the call id did not decode")
+    if (request.method === "GET") {
+      const wait = waitOf(url)
+      if (wait === undefined) return refuse("the query did not decode")
+      const reply = await listening(engine.wait(callId.value, wait))
+      return reply === undefined ? unknownCall() : callJson(reply)
+    }
+    if (request.method === "DELETE") {
+      // Not tied to the request: a cancel goes through even if the mod stops listening.
+      const reply = await Effect.runPromise(engine.cancel(callId.value))
+      return reply === undefined ? unknownCall() : callJson(reply)
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/tools/call") {
     const body: unknown = await request.json().catch(() => undefined)
     const decoded = decodeCall(body)
     if (Exit.isFailure(decoded)) return json(unavailable("the tool call did not decode"), 400)
@@ -248,7 +384,7 @@ export const serveToolBridge = (
         const server = Bun.serve({
           unix: socketPath,
           fetch: (request, self) => {
-            // A Bash call may run for up to 10 minutes; never drop the connection while it does.
+            // A mod from before #109 waits on one request for as long as its call runs.
             self.timeout(request, 0)
             return handleBridgeRequest(engine, request)
           },

@@ -11,7 +11,7 @@ import {
   type VariablesFor,
   type VariableValue,
 } from "@claude-hub/protocol"
-import { type Cause, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
+import { type Cause, Effect, Fiber, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
 import { Sandboxes } from "./Sandbox.ts"
@@ -259,35 +259,56 @@ export class FakeSandboxes {
 interface Rpc {
   readonly id?: number
   readonly method: string
-  readonly params?: { readonly name?: string; readonly arguments?: Record<string, unknown> }
+  readonly params?: {
+    readonly name?: string
+    readonly arguments?: Record<string, unknown>
+    readonly requestId?: number
+  }
 }
 
 export type ToolHandler = (name: string, args: Record<string, unknown>) => Effect.Effect<unknown>
 
-/** Plays `claude mcp serve`: answers the handshake, and each tools/call with `onTool`. */
+/**
+ * Plays `claude mcp serve`: answers the handshake, and each tools/call with `onTool`. A
+ * `notifications/cancelled` interrupts that call's `onTool`, unanswered, as the real server kills
+ * the tool's command, and is told to `onCancelled`. The fake exits once its stdin ends, ending
+ * what it runs; the real one leaves a running command's process behind.
+ */
 export const fakeMcpServer =
-  (onTool: ToolHandler) =>
+  (onTool: ToolHandler, onCancelled?: (requestId: number) => void) =>
   (io: FakeProcessIO): Effect.Effect<number> =>
-    io.stdin.pipe(
-      Stream.decodeText,
-      Stream.splitLines,
-      Stream.mapEffect(
-        (line) => {
-          const rpc = JSON.parse(line) as Rpc
-          if (rpc.id === undefined) return Effect.void
-          const answer = (result: unknown) =>
-            io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result })}\n`)
-          if (rpc.method === "initialize")
-            return answer({ serverInfo: { name: "claude/tengu", version: "2.1.287" } })
-          return onTool(rpc.params?.name ?? "", rpc.params?.arguments ?? {}).pipe(
-            Effect.flatMap(answer),
-          )
-        },
-        { concurrency: "unbounded" },
-      ),
-      Stream.runDrain,
-      Effect.as(0),
-    )
+    Effect.gen(function* () {
+      const running = new Map<number, Fiber.Fiber<void>>()
+      yield* io.stdin.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.runForEach((line) =>
+          Effect.gen(function* () {
+            const rpc = JSON.parse(line) as Rpc
+            if (rpc.method === "notifications/cancelled") {
+              const requestId = rpc.params?.requestId ?? -1
+              onCancelled?.(requestId)
+              const fiber = running.get(requestId)
+              if (fiber !== undefined) yield* Fiber.interrupt(fiber)
+              return
+            }
+            const id = rpc.id
+            if (id === undefined) return
+            const answer = (result: unknown) =>
+              io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`)
+            if (rpc.method === "initialize")
+              return yield* answer({ serverInfo: { name: "claude/tengu", version: "2.1.287" } })
+            const fiber = yield* onTool(rpc.params?.name ?? "", rpc.params?.arguments ?? {}).pipe(
+              Effect.flatMap(answer),
+              Effect.ensuring(Effect.sync(() => running.delete(id))),
+              Effect.forkScoped,
+            )
+            running.set(id, fiber)
+          }),
+        ),
+      )
+      return 0
+    }).pipe(Effect.scoped)
 
 export const mcpRecord = (value: unknown) => ({
   content: [{ type: "text", text: JSON.stringify(value) }],
