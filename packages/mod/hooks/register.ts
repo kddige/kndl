@@ -171,6 +171,15 @@ const startLink = async ($: EngineInterface) => {
     $.ui.log("hub-link: not started by a Runner, so not linked to a Hub", { to: "debug" })
     return
   }
+  // Sessions nest one level deep: a Child Session gets only the tool to message its parent, in
+  // place of the ones that make and coordinate children (the Hub refuses the wrong one too).
+  // Registered before the link starts (#139): a new Session's first prompt is already queued at
+  // the Hub, and a Turn only has the tools that were visible when it started. `$.tool.register`
+  // resolves once its tool is. The link starts even if they fail: the Session still takes prompts.
+  const tools = parentSessionId ? parentTools : childTools
+  await Promise.all(tools.map((tool) => $.tool.register(tool))).catch((error) =>
+    $.ui.log(`hub-link: registering its tools failed: ${error}`, { to: "debug" }),
+  )
   state.link?.stop()
   state.link = new HubLink({
     hubUrl,
@@ -183,10 +192,6 @@ const startLink = async ($: EngineInterface) => {
     log: (text) => $.ui.log(text, { to: "debug" }),
   })
   state.link.start()
-  // Sessions nest one level deep: a Child Session gets only the tool to message its parent, in
-  // place of the ones that make and coordinate children (the Hub refuses the wrong one too).
-  const tools = parentSessionId ? parentTools : childTools
-  await Promise.all(tools.map((tool) => $.tool.register(tool)))
 }
 
 /** Answers a call to one of the Child Session tools, or message_parent, from the Hub. */

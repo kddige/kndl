@@ -511,6 +511,43 @@ describe("Child Sessions", () => {
     expect(registered).toEqual(["message_parent"])
   })
 
+  // A new Session's first prompt is queued at the Hub before its Claude Code starts, and a Turn
+  // only has the tools that were registered when it started.
+  test("the tools are registered before the link can deliver a prompt (#139)", async ($, on) => {
+    const registered = linkedSession(on)
+    const clock = mock.clock(on)
+    const registeredAtFetch: Array<number> = []
+    let polled = 0
+    fakeFetch(on, (request) => {
+      registeredAtFetch.push(registered.length)
+      if (request.url.endsWith("/mod/hello")) return welcome
+      if (request.url.endsWith("/mod/events")) return { status: 204, text: "" }
+      polled++
+      if (polled > 1) return new Promise(() => undefined)
+      const deliver = {
+        _tag: "DeliverPrompt",
+        sessionId: "s1",
+        promptId: "pr-1",
+        text: "Split the release notes.",
+        sender: { id: "p1", login: "ada", name: "Ada Lovelace" },
+      }
+      return { status: 200, text: JSON.stringify({ messages: [{ seq: 1, message: deliver }] }) }
+    })
+    const registeredAtSubmit: Array<number> = []
+    on("prompt.submit", (_, e) => {
+      registeredAtSubmit.push(registered.length)
+      return { text: e.text }
+    })
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+
+    // All five, from the Hub's first request on.
+    expect(registeredAtSubmit).toEqual([5])
+    expect(registeredAtFetch.length).toBeGreaterThan(0)
+    expect(registeredAtFetch.every((count) => count === 5)).toBe(true)
+  })
+
   test("message_parent asks the Hub, and says when the parent reads it", async ($, on) => {
     linkedSession(on, { CLAUDE_HUB_PARENT_SESSION_ID: "s-parent" })
     const clock = mock.clock(on)
