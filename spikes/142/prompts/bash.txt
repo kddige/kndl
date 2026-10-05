@@ -1,0 +1,1 @@
+Use the Bash tool to run `uname -sr && echo hi > /workspace/hello.txt && cat /workspace/hello.txt`, then answer in one short line.

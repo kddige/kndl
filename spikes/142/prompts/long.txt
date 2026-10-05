@@ -1,0 +1,1 @@
+Use the Bash tool in the foreground (not in the background, timeout 300000) to run `sleep 150; echo slept`. After it finishes, write a 2000-word story about a lighthouse keeper.
