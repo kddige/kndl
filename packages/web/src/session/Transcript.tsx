@@ -314,7 +314,7 @@ function TurnFooter({ turn }: { turn: TurnView }) {
   return (
     <div {...stylex.props(styles.footer)}>
       <EndBadge end={turn.end} stoppers={stoppers} />
-      {otherModel !== undefined && <span>{otherModel}</span>}
+      {otherModel !== undefined && <span title="The model this Turn ran on">{otherModel}</span>}
       <span>{duration(turn.end.durationMs)}</span>
       {turn.end.usage && (
         <span title={turn.end.usage.model}>

@@ -31,7 +31,10 @@ import {
   MenuGroup,
   MenuItem,
   MenuIcon,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuSeparator,
+  MenuSubmenu,
   MoreIcon,
   NavItem,
   NavSection,
@@ -399,8 +402,17 @@ function Selects() {
   )
 }
 
+/** The radio menu's demo choices: a name and a line on each, as the model picker shows them. */
+const sizes: Record<string, { label: string; description: string }> = {
+  small: { label: "Small", description: "Quick, for light work" },
+  medium: { label: "Medium", description: "Balanced for everyday work" },
+  large: { label: "Large", description: "For the hardest, longest work" },
+}
+
 function Overlays() {
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [size, setSize] = useState("medium")
+  const [speed, setSpeed] = useState("Steady")
   return (
     <Section title="Tooltip, Menu, Popover, Dialog">
       <Row label="tooltip">
@@ -435,6 +447,34 @@ function Overlays() {
         <Menu trigger={<Button>Open menu</Button>} align="end">
           <MenuItem>Copy link</MenuItem>
           <MenuItem>Open in new tab</MenuItem>
+        </Menu>
+      </Row>
+      <Row label="radio, submenu">
+        <Menu
+          trigger={
+            <Button intent="ghost" size="sm">
+              {sizes[size]?.label} · {speed}
+            </Button>
+          }
+        >
+          <MenuRadioGroup value={size} onValueChange={setSize} label="Size">
+            {Object.entries(sizes).map(([value, option]) => (
+              <MenuRadioItem
+                key={value}
+                value={value}
+                label={option.label}
+                description={option.description}
+              />
+            ))}
+          </MenuRadioGroup>
+          <MenuSeparator />
+          <MenuSubmenu label="Speed" value={speed}>
+            <MenuRadioGroup value={speed} onValueChange={setSpeed}>
+              <MenuRadioItem value="Slow" label="Slow" />
+              <MenuRadioItem value="Steady" label="Steady" description="Recommended" />
+              <MenuRadioItem value="Fast" label="Fast" description="Uses more" />
+            </MenuRadioGroup>
+          </MenuSubmenu>
         </Menu>
       </Row>
       <Row label="popover">
