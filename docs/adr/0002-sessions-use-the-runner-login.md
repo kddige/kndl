@@ -1,6 +1,8 @@
 ---
-status: accepted
+status: superseded by 0015
 ---
+
+> Superseded by [ADR 0015](0015-each-person-brings-their-claude-credential.md): each person stores their own Claude credential on the Hub, and a Session runs on its Creator's. A Runner's own credential is the fallback.
 
 # Sessions use the Runner login; the Hub never handles Claude credentials
 
