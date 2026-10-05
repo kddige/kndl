@@ -10,7 +10,8 @@
 // passed to each process the Runner starts in the Sandbox, never set on the VM, over the login
 // environment its build kept, which each new Sandbox probes again after its start script (#67).
 //
-// Once a Session's Sandbox runs, it is kept with a GitHub token for git and gh (SandboxGitHub.ts).
+// Once a Session's Sandbox runs, it is kept with a GitHub token for git and gh, and git there
+// commits as the Session's Creator (SandboxGitHub.ts).
 //
 // The Session's directory holds `sandbox.json`, what its Sandbox was last built from, without
 // any value: the Environment version, the build it booted from and its libc, and the recipe.
@@ -77,7 +78,7 @@ import {
   workspaceGuestPath,
 } from "./sandbox/SessionLayout.ts"
 import type { SessionLayoutOptions } from "./sandbox/SessionLayout.ts"
-import { keepSandboxToken } from "./SandboxGitHub.ts"
+import { keepSandboxToken, setSandboxIdentity } from "./SandboxGitHub.ts"
 import type { SandboxTokenSource } from "./SandboxGitHub.ts"
 import type { SessionDirectories } from "./SessionNames.ts"
 import { InitialTerminalSize } from "./Sessions.ts"
@@ -659,6 +660,12 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
               false,
             )
       }).pipe(
+        // After the start script, so an identity it set is kept.
+        Effect.tap(() =>
+          target?.gitIdentity === undefined
+            ? Effect.void
+            : setSandboxIdentity(backend, sessionId, target.gitIdentity),
+        ),
         Effect.catchCause((cause) => {
           const message = failureMessage(cause)
           return Effect.andThen(

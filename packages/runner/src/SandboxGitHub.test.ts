@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { GitAnswer } from "@claude-hub/protocol"
 import { Effect, Exit, Layer, Logger, Redacted, Scope } from "effect"
 import { TestClock } from "effect/testing"
@@ -8,9 +11,11 @@ import { sessionSandboxSpec } from "./sandbox/SessionLayout.ts"
 import {
   credentialHelper,
   ghHostsPath,
+  identityScript,
   installSandboxToken,
   keepSandboxToken,
   prepareScript,
+  setSandboxIdentity,
   TokenRefreshInterval,
   TokenRetryInterval,
   tokenPath,
@@ -174,6 +179,126 @@ describe("keepSandboxToken", () => {
         yield* settle
         expect(yield* fileIn(fake, tokenPath)).toBe("ghs_back")
         expect(logs.at(-1)).toBe("Info: Session s-1: its Sandbox has a GitHub token again")
+      }),
+      logs,
+    )
+  })
+})
+
+/** Who the Repo's next commit is by, as `name <email>` for author and committer. */
+const commitBy = (git: (...args: Array<string>) => string) => {
+  git("commit", "--quiet", "--allow-empty", "--no-gpg-sign", "-m", "a change")
+  return git("log", "-1", "--format=%an <%ae>|%cn <%ce>")
+}
+
+describe.skipIf(Bun.which("git") === null)("setSandboxIdentity", () => {
+  const creator = { name: "Ada Lovelace", email: "1+ada@users.noreply.github.com" }
+
+  /**
+   * A Sandbox whose commands run on this host, in a Repo of a fresh directory, with git's system
+   * and global gitconfig in files of their own there, so the host's own are never read.
+   */
+  const withRepo = async (
+    body: (
+      git: (...args: Array<string>) => string,
+      fake: ReturnType<typeof makeFake>,
+    ) => Promise<void>,
+  ) => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-identity-"))
+    const env: Record<string, string> = {
+      PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+      HOME: dir,
+      GIT_CONFIG_SYSTEM: join(dir, "system-gitconfig"),
+      GIT_CONFIG_GLOBAL: join(dir, "global-gitconfig"),
+    }
+    const repo = join(dir, "repo")
+    const git = (...args: Array<string>) => {
+      const result = Bun.spawnSync(["git", ...args], { cwd: repo, env })
+      if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`)
+      return result.stdout.toString().trim()
+    }
+    Bun.spawnSync(["git", "init", "--quiet", repo], { env })
+    const fake = makeFake({
+      onExec: ({ request }) =>
+        Effect.sync(() => {
+          const result = Bun.spawnSync([request.command, ...(request.args ?? [])], {
+            cwd: repo,
+            env,
+          })
+          return { exitCode: result.exitCode, stderr: result.stderr.toString() }
+        }),
+    })
+    try {
+      await run(
+        Effect.gen(function* () {
+          yield* fake.backend.create(
+            sessionSandboxSpec({ sessionId: s1, image: "debian", workspaceHostPath: repo }),
+          )
+          yield* setSandboxIdentity(fake.backend, s1, creator)
+        }),
+      ).then(() => body(git, fake))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  test("commits in the Sandbox are by the Session's Creator", () =>
+    withRepo(async (git, fake) => {
+      expect(fake.world.execCalls.map((call) => call.request)).toEqual([
+        { command: "sh", args: ["-c", identityScript, "sh", creator.name, creator.email] },
+      ])
+      expect(git("config", "--system", "user.name")).toBe("Ada Lovelace")
+      expect(commitBy(git)).toBe(
+        "Ada Lovelace <1+ada@users.noreply.github.com>|Ada Lovelace <1+ada@users.noreply.github.com>",
+      )
+    }))
+
+  test("an identity the Repo sets wins", () =>
+    withRepo(async (git) => {
+      git("config", "user.name", "Repo Bot")
+      git("config", "user.email", "bot@example.com")
+      expect(commitBy(git)).toBe("Repo Bot <bot@example.com>|Repo Bot <bot@example.com>")
+    }))
+
+  test("an identity the Environment set in the system gitconfig is kept", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-identity-"))
+    const env = {
+      PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+      HOME: dir,
+      GIT_CONFIG_SYSTEM: join(dir, "system-gitconfig"),
+      GIT_CONFIG_GLOBAL: join(dir, "global-gitconfig"),
+    }
+    const config = (...args: Array<string>) =>
+      Bun.spawnSync(["git", "config", "--system", ...args], { env })
+        .stdout.toString()
+        .trim()
+    try {
+      config("user.name", "Bootstrap")
+      config("user.email", "bootstrap@example.com")
+      Bun.spawnSync(["sh", "-c", identityScript, "sh", creator.name, creator.email], { env })
+      expect([config("user.name"), config("user.email")]).toEqual([
+        "Bootstrap",
+        "bootstrap@example.com",
+      ])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("setSandboxIdentity, failing", () => {
+  test("is logged, and the Sandbox runs on", () => {
+    const logs: Array<string> = []
+    return run(
+      Effect.gen(function* () {
+        const fake = yield* running({
+          onExec: () =>
+            Effect.succeed({ exitCode: 255, stderr: "error: could not lock config file\n" }),
+        })
+        yield* setSandboxIdentity(fake.backend, s1, { name: "a", email: "a@example.com" })
+        expect(logs).toEqual([
+          "Warn: Session s-1: could not set git's identity in its Sandbox: error: could not lock config file",
+        ])
       }),
       logs,
     )

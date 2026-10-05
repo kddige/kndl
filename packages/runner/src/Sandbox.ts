@@ -1,5 +1,6 @@
 import type {
   EnvironmentVersion,
+  GitIdentity,
   RepoName,
   RunTestBuild,
   SessionEnvironment,
@@ -18,6 +19,8 @@ export interface SandboxTarget {
   readonly repo: RepoName
   /** The Repo's Environment (ADR 0009); absent for the Runner's default image. */
   readonly environment?: SessionEnvironment
+  /** Who commits in the Sandbox are by, unless the Environment sets its own (#110). */
+  readonly gitIdentity?: GitIdentity
 }
 
 /** A started Sandbox. */

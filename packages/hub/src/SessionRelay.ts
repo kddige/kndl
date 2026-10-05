@@ -163,7 +163,7 @@ import { RepoAccess } from "./RepoAccess.ts"
 import { isRunnerCommand, makeRunnerRelay } from "./RunnerRelay.ts"
 import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
-import { SessionGit } from "./SessionGit.ts"
+import { creatorIdentity, SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { Sessions } from "./Sessions.ts"
 import { randomId } from "./Tokens.ts"
@@ -925,6 +925,7 @@ export class SessionRelay extends Context.Service<
             modToken,
             ...(Option.isSome(resume) ? { resume: resume.value } : {}),
             ...environment,
+            gitIdentity: creatorIdentity(session.creator),
           }),
         )
       })
@@ -1244,6 +1245,7 @@ export class SessionRelay extends Context.Service<
                   workBranch: session.workBranch,
                   modToken,
                   ...environment,
+                  gitIdentity: creatorIdentity(session.creator),
                 }),
               )
               peer.send(HubToWeb.cases.SessionCreated.make({ requestId, session: forWeb(session) }))

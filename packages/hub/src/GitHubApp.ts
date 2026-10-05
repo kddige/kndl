@@ -47,6 +47,10 @@ export interface RepoToken {
 /** How long before it expires a cached token is replaced. */
 export const tokenRefreshMargin = Duration.minutes(5)
 
+/** A GitHub account's noreply address, which GitHub ties commits to that account by. */
+export const noreplyEmail = (userId: number | string, login: string) =>
+  `${userId}+${login}@users.noreply.github.com`
+
 /** The App JWT's lifetime: GitHub allows at most 10 minutes. */
 const jwtLifetimeSeconds = 9 * 60
 /** How far back the JWT's `iat` is set, for clock drift, as GitHub recommends. */
@@ -286,7 +290,7 @@ export class GitHubApp extends Context.Service<
         User,
         request("GET", `/users/${encodeURIComponent(login)}`, { token }),
       )
-      bot = { name: login, email: `${user.id}+${login}@users.noreply.github.com` }
+      bot = { name: login, email: noreplyEmail(user.id, login) }
       return bot
     })
 
