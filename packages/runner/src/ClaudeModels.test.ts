@@ -88,13 +88,14 @@ describe("parseEfforts", () => {
   })
 })
 
+const probe = (id: string, label: string, effort = true): ModelProbe => ({
+  id,
+  label,
+  effort,
+  aliases: [],
+})
+
 describe("runnerModels", () => {
-  const probe = (id: string, label: string, effort = true): ModelProbe => ({
-    id,
-    label,
-    effort,
-    aliases: [],
-  })
   // As Claude Code 2.1.289 resolved each alias.
   const probes = new Map([
     ["sonnet", probe("claude-sonnet-5-5", "Sonnet 5.5")],

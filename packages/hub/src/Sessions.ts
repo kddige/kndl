@@ -1,7 +1,9 @@
 import {
   type ChildReport,
   ClaudeSessionId,
+  EffortLevel,
   EnvironmentVersion,
+  ModelName,
   ParticipantId,
   RunnerId,
   SessionId,
@@ -31,6 +33,15 @@ export interface NewSession {
   readonly name?: SessionName
   /** Its Parent Session, for a Child Session (ADR 0012). */
   readonly parentId?: SessionId
+  /** Its model and effort (#128); absent for Claude Code's default. */
+  readonly model?: ModelName
+  readonly effort?: EffortLevel
+}
+
+/** A Session's model and effort (#128): absent for Claude Code's default. */
+export interface ModelSetting {
+  readonly model?: ModelName
+  readonly effort?: EffortLevel
 }
 
 /** What a Child Session's Parent Session has had from it (ADR 0012). */
@@ -66,6 +77,9 @@ interface SessionRow {
   readonly environmentVersion: number | null
   readonly latestEnvironmentVersion: number | null
   readonly lastOutput: string | null
+  readonly model: string | null
+  readonly effort: string | null
+  readonly modelPending: number
 }
 
 /** Archiving a Session: who did it, when, and when it is purged unless restored first. */
@@ -76,6 +90,18 @@ export interface Archiving {
 }
 
 const decodeState = Schema.decodeUnknownSync(SessionState)
+const decodeModel = Schema.decodeUnknownOption(ModelName)
+const decodeEffort = Schema.decodeUnknownOption(EffortLevel)
+
+/** The model and effort a row holds, without a value the Hub would no longer take. */
+const settingOf = (row: { readonly model: string | null; readonly effort: string | null }) => {
+  const model = Option.getOrUndefined(decodeModel(row.model))
+  const effort = Option.getOrUndefined(decodeEffort(row.effort))
+  return {
+    ...(model !== undefined && { model }),
+    ...(effort !== undefined && { effort }),
+  }
+}
 
 const toSummary = (row: SessionRow): SessionSummary =>
   SessionSummary.make({
@@ -119,6 +145,8 @@ const toSummary = (row: SessionRow): SessionSummary =>
     }),
     // Only an Asleep Session's: once it is woken, what its last Claude Code printed is history.
     ...(row.lastOutput !== null && row.state === "Asleep" && { lastOutput: row.lastOutput }),
+    ...settingOf(row),
+    ...(row.modelPending !== 0 && { modelPending: true }),
   })
 
 /**
@@ -159,6 +187,17 @@ export class Sessions extends Context.Service<
     readonly setState: (id: SessionId, state: SessionState) => Effect.Effect<void, SqlError>
     /** Its Session name, or null to clear it, so it is shown by its Work branch. */
     readonly setName: (id: SessionId, name: SessionName | null) => Effect.Effect<void, SqlError>
+    /**
+     * Its model and effort (#128), and whether its running Claude Code is yet to be restarted with
+     * them.
+     */
+    readonly setModel: (
+      id: SessionId,
+      setting: ModelSetting,
+      pending: boolean,
+    ) => Effect.Effect<void, SqlError>
+    /** Whether its running Claude Code is yet to be restarted with its model and effort. */
+    readonly setModelPending: (id: SessionId, pending: boolean) => Effect.Effect<void, SqlError>
     /** The Turn running now, or null once the Session is idle. */
     readonly setCurrentTurn: (id: SessionId, turn: TurnId | null) => Effect.Effect<void, SqlError>
     /** Records the Session Archived, by whom and until when; its Runner has yet to stop it. */
@@ -223,7 +262,7 @@ export class Sessions extends Context.Service<
           s.archived_by AS archivedById, a.login AS archivedByLogin, a.name AS archivedByName,
           a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt,
           s.environment_version AS environmentVersion, e.version AS latestEnvironmentVersion,
-          s.last_output AS lastOutput
+          s.last_output AS lastOutput, s.model, s.effort, s.model_pending AS modelPending
         FROM sessions s JOIN participants p ON p.id = s.creator_id
           LEFT JOIN participants a ON a.id = s.archived_by
           LEFT JOIN environments e ON e.repo = s.repo
@@ -240,12 +279,12 @@ export class Sessions extends Context.Service<
         yield* sql`
           INSERT INTO sessions (
             id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at, name, parent_id
+            creator_id, created_at, name, parent_id, model, effort
           ) VALUES (
             ${session.id}, ${session.repo}, ${session.baseBranch}, ${session.workBranch},
             ${session.state}, ${session.runnerId}, ${session.runnerLogin.account},
             ${session.creatorId}, ${session.createdAt}, ${session.name ?? null},
-            ${session.parentId ?? null}
+            ${session.parentId ?? null}, ${session.model ?? null}, ${session.effort ?? null}
           )
         `
         return Option.getOrThrow(yield* get(session.id))
@@ -319,6 +358,25 @@ export class Sessions extends Context.Service<
         name: SessionName | null,
       ) {
         yield* sql`UPDATE sessions SET name = ${name} WHERE id = ${id}`
+      })
+
+      const setModel = Effect.fn("Sessions.setModel")(function* (
+        id: SessionId,
+        setting: ModelSetting,
+        pending: boolean,
+      ) {
+        yield* sql`
+          UPDATE sessions SET model = ${setting.model ?? null}, effort = ${setting.effort ?? null},
+            model_pending = ${pending ? 1 : 0}
+          WHERE id = ${id}
+        `
+      })
+
+      const setModelPending = Effect.fn("Sessions.setModelPending")(function* (
+        id: SessionId,
+        pending: boolean,
+      ) {
+        yield* sql`UPDATE sessions SET model_pending = ${pending ? 1 : 0} WHERE id = ${id}`
       })
 
       const setCurrentTurn = Effect.fn("Sessions.setCurrentTurn")(function* (
@@ -446,6 +504,8 @@ export class Sessions extends Context.Service<
         personPrompted,
         setState,
         setName,
+        setModel,
+        setModelPending,
         setCurrentTurn,
         setClaudeSessionId,
         setEnvironmentVersion,

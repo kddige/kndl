@@ -256,14 +256,27 @@ describe("Runners", () => {
             lastSeenAt: null,
             openSessions: 0,
             updater: null,
+            models: null,
           },
         ])
 
         const version = { commit: "a".repeat(40), branch: "main" }
         const updater = { self: false, reason: "it runs from a developer's checkout" }
+        const opus = {
+          alias: "opus",
+          id: "claude-opus-5-5",
+          label: "Opus 5.5",
+          description: "Best for everyday, complex tasks",
+          effort: true,
+        }
+        const models = {
+          default: { ...opus, alias: "default" },
+          models: [opus],
+          efforts: ["low", "medium"] as const,
+        }
         yield* runners.recordHello(
           studio.runnerId,
-          { login: { account: "a@b.c" }, version, updater },
+          { login: { account: "a@b.c" }, version, updater, models },
           10,
         )
         yield* runners.recordSeen(studio.runnerId, 20)
@@ -276,18 +289,20 @@ describe("Runners", () => {
             lastSeenAt: 20,
             openSessions: 0,
             updater,
+            models,
           }),
         )
 
-        // A Runner from before the version and the updater were in the hello.
+        // A Runner from before the version and the updater were in the hello. Its models are
+        // kept: a hello without them is from a Claude Code that couldn't say this time (#128).
         yield* runners.recordHello(
           studio.runnerId,
           { login: { account: "a@b.c" }, version: undefined, updater: undefined },
           30,
         )
         expect(
-          Option.map(yield* runners.get(studio.runnerId), (r) => [r.version, r.updater]),
-        ).toEqual(Option.some([null, null]))
+          Option.map(yield* runners.get(studio.runnerId), (r) => [r.version, r.updater, r.models]),
+        ).toEqual(Option.some([null, null, models]))
       }),
     ))
 })

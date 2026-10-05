@@ -39,11 +39,22 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0014, Child Sessions: the migrator runs only the
+ * Takes the database back to before migration 0015, Session models: the migrator runs only the
  * migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeSessionModels = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  for (const column of ["model", "effort", "model_pending"]) {
+    yield* sql.unsafe(`ALTER TABLE sessions DROP COLUMN ${column}`)
+  }
+  yield* sql`ALTER TABLE runners DROP COLUMN models`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_model'`
+})
+
+/** Takes the database back to before migration 0014, Child Sessions, as above. */
 const beforeChildSessions = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeSessionModels
   yield* sql`DROP INDEX sessions_parent_id`
   for (const column of ["parent_id", "last_report", "last_report_at", "parent_exchanges"]) {
     yield* sql.unsafe(`ALTER TABLE sessions DROP COLUMN ${column}`)
@@ -184,6 +195,49 @@ describe("migration 0014, Child Sessions", () => {
     expect(sent).toEqual([
       { _tag: "FromChildSession", session: { id: SessionId.make("s-2"), title: "Docs" } },
     ])
+  })
+})
+
+describe("migration 0015, Session models", () => {
+  test("leaves the Sessions there were on Claude Code's default, and lets their model be set", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* beforeSessionModels
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
+            creator_id, created_at
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const id = SessionId.make("s-1")
+        const before = Option.getOrThrow(yield* sessions.get(id))
+        yield* sessions.setModel(id, { model: "sonnet", effort: "high" }, true)
+        const set = Option.getOrThrow(yield* sessions.get(id))
+        return {
+          before: [before.model, before.effort, before.modelPending],
+          set: [set.model, set.effort, set.modelPending],
+        }
+      }).pipe(Effect.provide(Sessions.layer)),
+    )
+    expect(after).toEqual({
+      before: [undefined, undefined, undefined],
+      set: ["sonnet", "high", true],
+    })
   })
 })
 

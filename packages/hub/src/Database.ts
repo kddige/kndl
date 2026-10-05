@@ -337,6 +337,16 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`CREATE INDEX sessions_parent_id ON sessions (parent_id)`
     yield* sql`ALTER TABLE queued_prompts ADD COLUMN from_session TEXT`
   }),
+  // A Session's model and effort (#128), NULL for Claude Code's default; `model_pending` while its
+  // running Claude Code still has the ones from before, to be restarted with these once no Turn
+  // runs. A Runner's `models`, as its last hello said, is RunnerModels JSON.
+  "0015_session_model": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN model TEXT`
+    yield* sql`ALTER TABLE sessions ADD COLUMN effort TEXT`
+    yield* sql`ALTER TABLE sessions ADD COLUMN model_pending INTEGER NOT NULL DEFAULT 0`
+    yield* sql`ALTER TABLE runners ADD COLUMN models TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

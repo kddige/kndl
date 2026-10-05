@@ -118,7 +118,7 @@ export function runnerModels(
   const ordered = [...probes.keys()]
     .filter((alias) => alias !== "default")
     .map((alias, index) => ({ alias, index, rank: tableOrder.get(alias) ?? Infinity }))
-    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .toSorted((a, b) => a.rank - b.rank || a.index - b.index)
   const models: Array<ModelOption> = []
   for (const { alias } of ordered) {
     const probe = probes.get(alias)
