@@ -31,6 +31,41 @@ The Runner logs `Session <id> failed to start: …` with the same reason.
 
 **Fix.** Open the Session and expand **Show log** on its **Starting…** banner the next time it starts, to see the full output. Fix the script or setting, in the Repo's **Environment**, then wake the Session. If a script fails only on one Runner, compare that machine's resources and network with the others.
 
+## Claude Code exited with code N
+
+**What you see.** A Session that was running, or had just started, shows **This Session is Asleep** with:
+
+```
+Claude Code exited with code 1. Its Sandbox is stopped. …
+```
+
+and, under it, **Show Claude Code's last output**.
+
+**Why.** Claude Code ended on its own rather than being put to sleep: it crashed, refused to start, or was quit from its terminal. Exit code 0 means it quit normally, as after `/exit`. What it printed before it exited says why.
+
+**Fix.** Press **Show Claude Code's last output** to read the last lines its terminal showed (up to 40), as plain text. Sensitive values of the Repo's Environment are redacted there, as in the terminal. The Runner's log only notes the exit, never the output itself, since only the Hub can redact it:
+
+```
+WARN (#2): Session <id> exited with 1; its last 3 line(s) of output are on the Session's page
+```
+
+Fix what the output names, then send a prompt or press **Wake now**: the output stays under the banner until the Session wakes. Some causes:
+
+- `The current working directory was deleted`: the Runner's tmux server was started by another process, from a directory since deleted. See [Sessions exit at once with "The current working directory was deleted"](/troubleshooting/runners/#sessions-exit-at-once-with-the-current-working-directory-was-deleted).
+- A sign-in or usage message: Claude Code's login on that Runner needs attention. Run `claude` there as the Runner's user.
+
+A Runner from before this was added sends no output: the banner has no **Show Claude Code's last output**, and its log only says `Session <id> exited with 1`. [Update it](/how-to/add-a-runner/).
+
+### Waking it after Claude Code never got going
+
+A Session whose Claude Code exited before it wrote its conversation has nothing to `--resume`. The Runner checks for the conversation's transcript in Claude Code's projects folder, `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`), and, with none, starts a new conversation with the same id instead, logging:
+
+```
+INFO (#2): Session <id>: Claude Code has no transcript of conversation <conversation id> in /Users/you/.claude/projects, so it starts a new one with that id instead of resuming it
+```
+
+The Session's Workspace is as it was; only the conversation starts over. A Runner from before this fix keeps trying `--resume` and the Session can't wake: update it.
+
 ## A Session can't start: variables need values
 
 **What you see.** A Session shows **This Session can't start**, or a new one is refused, with:

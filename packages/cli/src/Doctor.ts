@@ -53,6 +53,32 @@ export interface DoctorFacts {
   readonly runnerReachesHub: Health | undefined
   /** Linux: whether the user's services keep running while they're logged out. */
   readonly linger: boolean | undefined
+  /** The tmux server on the Runner's socket, when a Runner is set up here and one runs. */
+  readonly tmuxServer: TmuxServerFact | undefined
+}
+
+/**
+ * The tmux server the Runner starts its Sessions in. One another process started, as a Runner run
+ * from a checkout since deleted, keeps that process's working directory, `PWD` and `PATH`, and a
+ * Runner from before #105 launched Claude Code with them.
+ */
+export interface TmuxServerFact {
+  readonly socket: string
+  /** How many tmux sessions it has: the Runner never stops a server with any. */
+  readonly sessions: number
+  /** The directory it runs in, when it could be read, and whether that still exists. */
+  readonly cwd: Place | undefined
+  /** `PWD` in its global environment, and whether that directory exists; undefined when unset. */
+  readonly pwd: Place | undefined
+  /** `PATH` in its global environment. */
+  readonly path: string | undefined
+  /** The PATH the Runner's service runs with, from its service file, when it has one. */
+  readonly servicePath: string | undefined
+}
+
+export interface Place {
+  readonly path: string
+  readonly exists: boolean
 }
 
 /**
@@ -261,6 +287,8 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
     checks.push(healthCheck("Hub from the Runner", facts.runnerReachesHub))
   }
 
+  if (facts.tmuxServer !== undefined) checks.push(tmuxServerCheck(facts.tmuxServer, facts.home))
+
   if (facts.linger === false) {
     checks.push({
       name: "Linger",
@@ -310,6 +338,46 @@ function appCheck(fact: AppPermissionsFact): Check {
     name,
     status: "ok",
     detail: `${check.slug} and its ${check.installed === 1 ? "installation have" : `${check.installed} installations have`} the permissions the Hub needs`,
+  }
+}
+
+/**
+ * Whether the tmux server on the Runner's socket looks like one the Runner service runs: no `PWD`
+ * but the home, the service's PATH, and a working directory that still exists. A server that
+ * runs elsewhere but has both of those right is fine: the Runner sets each Session's own `PWD`.
+ * No fix: stopping a server is only safe with nothing in it, so the detail says what to run.
+ */
+export function tmuxServerCheck(server: TmuxServerFact, home: string): Check {
+  const name = "tmux server"
+  const sessions = `${server.sessions} session${server.sessions === 1 ? "" : "s"}`
+  const problems: Array<string> = []
+  if (server.cwd !== undefined && !server.cwd.exists) {
+    problems.push(`runs in ${server.cwd.path}, which was deleted`)
+  }
+  if (server.pwd !== undefined && server.pwd.path !== home) {
+    problems.push(`has PWD ${server.pwd.path}${server.pwd.exists ? "" : ", which was deleted"}`)
+  }
+  if (server.servicePath !== undefined && server.path !== server.servicePath) {
+    problems.push(
+      server.path === undefined
+        ? "has no PATH"
+        : `has a PATH other than the Runner service's: ${server.path}`,
+    )
+  }
+  if (problems.length === 0) {
+    const elsewhere =
+      server.cwd !== undefined && server.cwd.path !== home ? `, started in ${server.cwd.path}` : ""
+    return { name, status: "ok", detail: `socket ${server.socket}, ${sessions}${elsewhere}` }
+  }
+  const restart = "`claude-hub runner stop`, then `claude-hub runner start`"
+  const fix =
+    server.sessions === 0
+      ? `Nothing runs in it: restart the Runner (${restart}), which replaces it, or stop it with \`tmux -L ${server.socket} kill-server\`.`
+      : `It has ${sessions}, so the Runner keeps it: restarting the Runner (${restart}) gives it the Runner's PATH and unsets PWD. Once no Session runs in it, stop it with \`tmux -L ${server.socket} kill-server\` to start it fresh.`
+  return {
+    name,
+    status: "warn",
+    detail: `The tmux server on socket ${server.socket} ${problems.join("; ")}. Another process started it, as a Runner from another checkout or home, and Claude Code started with its environment can exit at once. ${fix}`,
   }
 }
 

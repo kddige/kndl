@@ -7,6 +7,7 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   statSync,
 } from "node:fs"
@@ -23,9 +24,10 @@ import {
   readClaudeConfig,
 } from "@claude-hub/runner/src/ClaudeConfig.ts"
 import { ModBundle, RunnerConfig, RunnerConfigLive } from "@claude-hub/runner/src/RunnerConfig.ts"
+import { parseServerEnvironment } from "@claude-hub/runner/src/Tmux.ts"
 import { Cause, ConfigProvider, Effect, Exit, Option } from "effect"
 import { FetchHttpClient } from "effect/http"
-import type { AppPermissionsFact, DoctorFacts, Health } from "./Doctor.ts"
+import type { AppPermissionsFact, DoctorFacts, Health, Place, TmuxServerFact } from "./Doctor.ts"
 import { type EnvFile, envValues, parseEnv, renderEnv } from "./EnvFile.ts"
 import { fail } from "./Failure.ts"
 import type { HomeFacts } from "./Guards.ts"
@@ -47,6 +49,7 @@ import {
   type ServiceState,
   type ServiceTarget,
   serviceFilePath,
+  servicePathIn,
   statusStep,
 } from "./Services.ts"
 import { Shell, step } from "./Shell.ts"
@@ -127,6 +130,57 @@ const tmuxSessionCount = (socket: string) =>
     )
     return result.exitCode === 0 ? result.stdout.split("\n").filter(Boolean).length : 0
   }).pipe(Effect.catchTag("StepFailed", () => Effect.succeed(0)))
+
+/**
+ * The tmux server on the Runner's socket, for doctor: undefined when none runs, or tmux isn't
+ * installed. Reads only: it never changes the server.
+ */
+export const tmuxServerFact = (socket: string, servicePath: string | undefined) =>
+  Effect.gen(function* () {
+    const shell = yield* Shell
+    const tmux = (...args: ReadonlyArray<string>) =>
+      shell
+        .capture(step("tmux", ["-L", socket, ...args], { mayFail: true }))
+        .pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout : undefined)))
+    const environment = yield* tmux("show-environment", "-g")
+    if (environment === undefined) return undefined
+    const variables = parseServerEnvironment(environment)
+    const sessions = (yield* tmux("list-sessions", "-F", "#{session_name}")) ?? ""
+    const pid = ((yield* tmux("display-message", "-p", "#{pid}")) ?? "").trim()
+    return {
+      socket,
+      sessions: sessions.split("\n").filter((name) => name.trim() !== "").length,
+      cwd: place(/^\d+$/.test(pid) ? yield* processCwd(pid) : undefined),
+      pwd: place(variables.PWD),
+      path: variables.PATH,
+      servicePath,
+    } satisfies TmuxServerFact
+  }).pipe(Effect.orElseSucceed(() => undefined))
+
+/** A directory and whether it still exists; undefined for none. */
+const place = (path: string | undefined): Place | undefined =>
+  path === undefined || path === "" ? undefined : { path, exists: existsSync(path) }
+
+/** A process's working directory: /proc on Linux, lsof on macOS; undefined when unreadable. */
+const processCwd = (pid: string) =>
+  Effect.gen(function* () {
+    if (process.platform === "linux") {
+      try {
+        return readlinkSync(`/proc/${pid}/cwd`).replace(/ \(deleted\)$/, "")
+      } catch {
+        return undefined
+      }
+    }
+    const result = yield* (yield* Shell).capture(
+      step("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"], { mayFail: true }),
+    )
+    return result.exitCode === 0
+      ? result.stdout
+          .split("\n")
+          .find((line) => line.startsWith("n"))
+          ?.slice(1)
+      : undefined
+  }).pipe(Effect.orElseSucceed(() => undefined))
 
 /** The renames that move the home's `entries` aside, as of now, avoiding names already taken. */
 export function planMoveAside(layout: Layout, entries: ReadonlyArray<string>) {
@@ -405,6 +459,15 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
       linger = result === undefined ? undefined : lingers(result.stdout)
     }
 
+    let tmuxServer: TmuxServerFact | undefined
+    if (runner && !shell.dryRun) {
+      const serviceFile = serviceFilePath(serviceTarget(layout, "runner", on))
+      tmuxServer = yield* tmuxServerFact(
+        runnerValues.RUNNER_TMUX_SOCKET ?? layout.home.tmuxSocket,
+        existsSync(serviceFile) ? servicePathIn(readFileSync(serviceFile, "utf8")) : undefined,
+      )
+    }
+
     return {
       home: layout.home.dir,
       installed: isInstalled(layout),
@@ -439,6 +502,7 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
       runnerReachesHub:
         runner && runnerValues.HUB_URL ? yield* health(runnerValues.HUB_URL) : undefined,
       linger,
+      tmuxServer,
     } satisfies DoctorFacts
   })
 

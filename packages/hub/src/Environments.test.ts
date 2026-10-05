@@ -982,6 +982,25 @@ describe("Redacting Sensitive values", () => {
     )
   })
 
+  test("are masked in what Claude Code printed before it exited on its own (#105)", async () => {
+    const env = await redactionScene()
+    const { runner, sessionId, web } = env
+    runner.send({
+      _tag: "SessionStopped",
+      sessionId,
+      reason: "Exited",
+      exitCode: 1,
+      output: `API_KEY=${runtimeSecret}\nerror: bad token ${sharedSecret}`,
+    })
+
+    const asleep = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(asleep.session.lastOutput).toBe(
+      `API_KEY=${stars(runtimeSecret)}\nerror: bad token ${stars(sharedSecret)}`,
+    )
+    const everywhere = [...web.texts, await databaseText(env.hub)].join("\n")
+    for (const secret of [runtimeSecret, sharedSecret]) expect(everywhere).not.toContain(secret)
+  })
+
   test("are masked in a Test build's log, split across chunks, and its result", async () => {
     const env = await scene()
     const { runner, web, runnerId } = env

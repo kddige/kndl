@@ -17,6 +17,7 @@ import { BunServices } from "@effect/platform-bun"
 import { Effect } from "effect"
 import {
   claudeConfigPath,
+  hasTranscript,
   loginFromClaudeConfig,
   resolveRunnerLogin,
   trustDirectory,
@@ -176,5 +177,42 @@ describe("Runner login", () => {
     writeFileSync(path, JSON.stringify({ oauthAccount: { emailAddress: "b@example.com" } }))
     expect(await resolve(undefined)).toMatchObject({ success: { account: "b@example.com" } })
     expect(await resolve("c@example.com")).toMatchObject({ success: { account: "c@example.com" } })
+  })
+})
+
+/** A Session's `claude` directory, also reached through a symlink, as macOS's /tmp is. */
+function setupProjects() {
+  const dir = tempDir()
+  const real = join(dir, "real", "s-1", "claude")
+  mkdirSync(real, { recursive: true })
+  symlinkSync(join(dir, "real"), join(dir, "link"))
+  return { projects: join(dir, "projects"), real, linked: join(dir, "link", "s-1", "claude") }
+}
+
+function writeTranscript(projects: string, cwd: string, id: string) {
+  const folder = join(projects, cwd.replace(/[^a-zA-Z0-9]/g, "-"))
+  mkdirSync(folder, { recursive: true })
+  writeFileSync(join(folder, `${id}.jsonl`), "{}\n")
+}
+
+describe("hasTranscript", () => {
+  test("is false until Claude Code wrote the conversation's transcript for the directory", () => {
+    const { projects, real } = setupProjects()
+    expect(hasTranscript(real, "conv-1", projects)).toBe(false)
+    writeTranscript(projects, real, "conv-2")
+    expect(hasTranscript(real, "conv-1", projects)).toBe(false)
+    writeTranscript(projects, real, "conv-1")
+    expect(hasTranscript(real, "conv-1", projects)).toBe(true)
+  })
+
+  test("finds the transcript under the directory's real path", () => {
+    const { projects, real, linked } = setupProjects()
+    writeTranscript(projects, real, "conv-1")
+    expect(hasTranscript(linked, "conv-1", projects)).toBe(true)
+  })
+
+  test("can't tell for a directory too long to name the way Claude Code does", () => {
+    const { projects } = setupProjects()
+    expect(hasTranscript(`/${"a".repeat(240)}`, "conv-1", projects)).toBeUndefined()
   })
 })

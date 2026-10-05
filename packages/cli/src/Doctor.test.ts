@@ -5,7 +5,7 @@ import {
   type InstallationFacts,
   manifestPermissions,
 } from "@claude-hub/hub/src/AppPermissions.ts"
-import { type DoctorFacts, diagnose, formatChecks } from "./Doctor.ts"
+import { type DoctorFacts, diagnose, formatChecks, type TmuxServerFact } from "./Doctor.ts"
 
 const healthy: DoctorFacts = {
   home: "/home/ada/.claude-hub",
@@ -32,7 +32,25 @@ const healthy: DoctorFacts = {
   hubHealth: { url: "http://127.0.0.1:7777", ok: true, detail: "" },
   runnerReachesHub: { url: "http://127.0.0.1:7777", ok: true, detail: "" },
   linger: undefined,
+  tmuxServer: undefined,
 }
+
+const servicePath = "/home/ada/.bun/bin:/usr/bin:/bin"
+/** The tmux server a Runner service started and keeps. */
+const ownServer: TmuxServerFact = {
+  socket: "claude-hub",
+  sessions: 2,
+  cwd: { path: "/home/ada/.claude-hub", exists: true },
+  pwd: undefined,
+  path: servicePath,
+  servicePath,
+}
+
+/** Doctor's tmux server check, for a server like {@link ownServer} but for `server`. */
+const tmuxCheck = (server: Partial<TmuxServerFact>) =>
+  diagnose({ ...healthy, tmuxServer: { ...ownServer, ...server } }).find(
+    (c) => c.name === "tmux server",
+  )
 
 const failing = (facts: DoctorFacts) => diagnose(facts).filter((c) => c.status !== "ok")
 
@@ -141,6 +159,51 @@ describe("doctor", () => {
     expect(failing({ ...healthy, linger: false })).toMatchObject([
       { name: "Linger", status: "warn", fix: { _tag: "EnableLinger" } },
     ])
+  })
+
+  describe("the tmux server on the Runner's socket", () => {
+    test("one the Runner service runs passes", () => {
+      expect(tmuxCheck({})).toMatchObject({ status: "ok", detail: "socket claude-hub, 2 sessions" })
+    })
+
+    test("one started elsewhere passes once its PWD is unset and its PATH is the service's", () => {
+      expect(tmuxCheck({ cwd: { path: "/home/ada/src/claude-hub", exists: true } })).toMatchObject({
+        status: "ok",
+      })
+    })
+
+    test("a deleted working directory and a stale PWD and PATH warn, saying each", () => {
+      const stale = "/home/ada/src/old-checkout"
+      const result = tmuxCheck({
+        sessions: 0,
+        cwd: { path: stale, exists: false },
+        pwd: { path: stale, exists: false },
+        path: "/usr/bin:/bin",
+      })
+
+      expect(result?.status).toBe("warn")
+      expect(result?.detail).toContain(`runs in ${stale}, which was deleted`)
+      expect(result?.detail).toContain(`has PWD ${stale}, which was deleted`)
+      expect(result?.detail).toContain("PATH other than the Runner service's: /usr/bin:/bin")
+      // With nothing in it, stopping it is safe.
+      expect(result?.detail).toContain("tmux -L claude-hub kill-server")
+      expect(result?.fix).toBeUndefined()
+    })
+
+    test("with Sessions in it, the warning says the Runner keeps it and refreshes it", () => {
+      const result = tmuxCheck({ pwd: { path: "/home/ada/src/gone", exists: false } })
+
+      expect(result?.status).toBe("warn")
+      expect(result?.detail).toContain("It has 2 sessions, so the Runner keeps it")
+    })
+
+    test("its PATH isn't judged without a service file to compare with", () => {
+      expect(tmuxCheck({ path: "/usr/bin", servicePath: undefined })?.status).toBe("ok")
+    })
+
+    test("is not checked when no server runs", () => {
+      expect(diagnose(healthy).some((c) => c.name === "tmux server")).toBe(false)
+    })
   })
 
   test("an untrusted sessions root warns, and --fix trusts it", () => {

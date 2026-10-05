@@ -498,6 +498,14 @@ function StateBanner({
               Wake now
             </Button>
           }
+          detail={
+            // What Claude Code printed before it exited on its own, as why it did (#105).
+            summary.lastOutput !== undefined && (
+              <Disclosure variant="plain" summary="Show Claude Code's last output">
+                <LogView label="Claude Code's last output">{summary.lastOutput}</LogView>
+              </Disclosure>
+            )
+          }
         >
           {why ? sentence(why) : ""}
           Its Sandbox is stopped. Sending a prompt wakes it, with its Workspace and conversation as
