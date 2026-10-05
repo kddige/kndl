@@ -22,6 +22,7 @@ import {
   IconButton,
   InboxIcon,
   InfoIcon,
+  InlineEdit,
   Input,
   KeyIcon,
   LogView,
@@ -32,12 +33,11 @@ import {
   MenuIcon,
   MenuSeparator,
   MoreIcon,
-  NavGroup,
-  NavIconLink,
   NavItem,
   NavSection,
   NavSlot,
   PageHeader,
+  PencilIcon,
   PlusIcon,
   Popover,
   RestartIcon,
@@ -653,6 +653,14 @@ function SidebarKit() {
     render: <KitLink onPick={() => setCurrent(id)} />,
     current: current === id,
   })
+  // Only the first row's name is kept; the others' Rename buttons just show where they sit.
+  const [names, setNames] = useState<{ fix?: string | undefined }>({})
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const rename = (id: string, title: string) => (
+    <IconButton label={`Rename ${title}`} size="sm" onClick={() => setRenaming(id)}>
+      <PencilIcon />
+    </IconButton>
+  )
   const sidebar = (
     <Sidebar
       label="Kit navigation"
@@ -677,68 +685,74 @@ function SidebarKit() {
           Archived Sessions
         </NavItem>
       </NavSection>
-      <NavSection label="Sessions">
-        <NavGroup
-          label="kddige/claude-hub"
-          action={
-            <NavIconLink href="https://github.com" label="Open kddige/claude-hub on GitHub">
-              <ExternalLinkIcon />
-            </NavIconLink>
+      <NavSection label="kddige/claude-hub">
+        <NavItem
+          {...item("fix")}
+          icon={<SessionStatus state="active" variant="dot" />}
+          action={rename("fix", "73-sandbox-token")}
+          {...(renaming === "fix" && {
+            editor: (
+              <InlineEdit
+                label="Session name"
+                defaultValue={names.fix ?? "73-sandbox-token"}
+                placeholder="73-sandbox-token"
+                onCommit={(typed) => {
+                  setNames({ ...names, fix: typed.trim() || undefined })
+                  setRenaming(null)
+                }}
+                onCancel={() => setRenaming(null)}
+              />
+            ),
+          })}
+        >
+          {names.fix ?? "73-sandbox-token"}
+        </NavItem>
+        <NavItem
+          {...item("working")}
+          icon={<SessionStatus state="active" variant="dot" />}
+          action={rename("working", "feat/sidebar")}
+          trailing={
+            <NavSlot>
+              <Spinner size="sm" label="Working" />
+            </NavSlot>
           }
         >
-          <NavItem {...item("fix")} icon={<SessionStatus state="active" variant="dot" />}>
-            73-sandbox-token
-          </NavItem>
-          <NavItem
-            {...item("working")}
-            icon={<SessionStatus state="active" variant="dot" />}
-            trailing={
-              <NavSlot>
-                <Spinner size="sm" label="Working" />
-              </NavSlot>
-            }
-          >
-            feat/sidebar
-          </NavItem>
-          <NavItem
-            {...item("long")}
-            icon={<SessionStatus state="asleep" variant="dot" />}
-            title="claude/a-very-long-work-branch-name-that-does-not-fit"
-            trailing={
-              <NavSlot>
-                <span
-                  role="img"
-                  aria-label="Environment changed"
-                  {...stylex.props(styles.warningIcon)}
-                >
-                  <WarningIcon />
-                </span>
-              </NavSlot>
-            }
-          >
-            claude/a-very-long-work-branch-name-that-does-not-fit
-          </NavItem>
-          <NavItem {...item("frozen")} icon={<SessionStatus state="frozen" variant="dot" />}>
-            fix-flaky-search
-          </NavItem>
-        </NavGroup>
-        <NavGroup label="kddige/collapsed-at-first" defaultOpen={false}>
-          <NavItem {...item("hidden")} icon={<SessionStatus state="asleep" variant="dot" />}>
-            main-fix
-          </NavItem>
-        </NavGroup>
-        <NavGroup label="an-organisation-with-a-long-name/and-a-long-repo">
-          <NavItem {...item("other")} icon={<SessionStatus state="active" variant="dot" />}>
-            main
-          </NavItem>
-        </NavGroup>
+          feat/sidebar
+        </NavItem>
+        <NavItem
+          {...item("long")}
+          icon={<SessionStatus state="asleep" variant="dot" />}
+          title="claude/a-very-long-work-branch-name-that-does-not-fit"
+          action={rename("long", "claude/a-very-long-work-branch-name-that-does-not-fit")}
+          trailing={
+            <NavSlot>
+              <span
+                role="img"
+                aria-label="Environment changed"
+                {...stylex.props(styles.warningIcon)}
+              >
+                <WarningIcon />
+              </span>
+            </NavSlot>
+          }
+        >
+          claude/a-very-long-work-branch-name-that-does-not-fit
+        </NavItem>
+        <NavItem {...item("frozen")} icon={<SessionStatus state="frozen" variant="dot" />}>
+          fix-flaky-search
+        </NavItem>
+      </NavSection>
+      <NavSection label="an-organisation-with-a-long-name/and-a-long-repo">
+        <NavItem {...item("other")} icon={<SessionStatus state="active" variant="dot" />}>
+          main
+        </NavItem>
       </NavSection>
     </Sidebar>
   )
   return (
     <Section
-      title="Sidebar, NavSection, NavGroup, NavItem, Drawer"
-      note="The current item has a bar, weight and fill, and aria-current. Hover a row; toggle a Repo; the second Repo starts collapsed."
+      title="Sidebar, NavSection, NavItem, InlineEdit, Drawer"
+      note="Each Repo is a NavSection. The current item has a bar, weight and fill, and aria-current. Hover a row for its Rename action, shown always on the current one; the first row renames in place."
     >
       <div id="sidebar" {...stylex.props(styles.sidebarFrame)}>
         {sidebar}

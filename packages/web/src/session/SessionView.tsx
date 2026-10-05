@@ -1,8 +1,10 @@
-import type {
-  SessionId,
-  SessionLogEntry,
-  SessionStateChanged,
-  SessionSummary,
+import {
+  MaxSessionNameLength,
+  type SessionId,
+  type SessionLogEntry,
+  type SessionStateChanged,
+  type SessionSummary,
+  sessionTitle,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
@@ -19,6 +21,7 @@ import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
 import { buildTranscript, runningTurn } from "../hub/transcript.ts"
 import { restoreSession } from "../sessions/ArchivedSessions.tsx"
+import { renameSession } from "../sessions/rename.ts"
 import {
   AvatarStack,
   Banner,
@@ -27,8 +30,10 @@ import {
   EmptyState,
   IconButton,
   InfoIcon,
+  InlineEdit,
   LogView,
   PageHeader,
+  PencilIcon,
   RestartIcon,
   SessionStatus,
   Spinner,
@@ -39,7 +44,7 @@ import {
   toast,
   TrashIcon,
 } from "../ui/index.ts"
-import { color, space } from "../ui/tokens.stylex.ts"
+import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import { Composer } from "./Composer.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { Transcript } from "./Transcript.tsx"
@@ -78,6 +83,14 @@ const styles = stylex.create({
   },
   centered: { display: "grid", placeItems: "center", flex: 1, padding: space.s4 },
   tabs: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
+  // The name being edited, in the title's type, as wide as a long name needs.
+  nameField: {
+    width: "24rem",
+    maxWidth: "100%",
+    fontSize: text.md,
+    fontWeight: weight.semibold,
+  },
+  badges: { display: "inline-flex", alignItems: "center", gap: space.s1 },
   tabList: {
     paddingInline: space.s4,
     backgroundColor: color.surface,
@@ -177,6 +190,9 @@ function LoadedSession({
   const scroller = useStickToBottom(items)
   const restart = useRestart(summary, () => command(hub.restartSession(summary.id)))
 
+  const [renaming, setRenaming] = useState(false)
+  const title = sessionTitle(summary)
+
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
@@ -202,7 +218,7 @@ function LoadedSession({
     if (!command(hub.archiveSession(summary.id))) return
     toast.show({
       title: "Session deleted",
-      description: `${summary.workBranch} is archived. Restore it from ${summary.repo}'s Archived Sessions.`,
+      description: `${title} is archived. Restore it from ${summary.repo}'s Archived Sessions.`,
       action: { label: "Undo", onAction: () => command(hub.restoreSession(summary.id)) },
     })
     void navigate({ to: "/" })
@@ -211,11 +227,40 @@ function LoadedSession({
   return (
     <main {...stylex.props(styles.view)}>
       <PageHeader
-        title={summary.workBranch}
-        badge={<SessionStatus state={statusOf(state)} />}
+        // Its name, edited in place: anyone with access may rename it, whatever its state.
+        title={
+          renaming ? (
+            <InlineEdit
+              label="Session name"
+              defaultValue={title}
+              placeholder={summary.workBranch}
+              maxLength={MaxSessionNameLength}
+              onCommit={(typed) => {
+                setRenaming(false)
+                renameSession(hub, summary, typed)
+              }}
+              onCancel={() => setRenaming(false)}
+              sx={styles.nameField}
+            />
+          ) : (
+            title
+          )
+        }
+        badge={
+          <span {...stylex.props(styles.badges)}>
+            {!renaming && (
+              <IconButton label="Rename Session" size="sm" onClick={() => setRenaming(true)}>
+                <PencilIcon />
+              </IconButton>
+            )}
+            <SessionStatus state={statusOf(state)} />
+          </span>
+        }
         description={
           <>
-            {summary.repo} <span aria-hidden="true">·</span> from {summary.baseBranch}{" "}
+            {summary.repo} <span aria-hidden="true">·</span>{" "}
+            {/* Named, the title no longer says which branch it works on. */}
+            {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}{" "}
             <span aria-hidden="true">·</span> on {summary.runnerLogin.account}
           </>
         }

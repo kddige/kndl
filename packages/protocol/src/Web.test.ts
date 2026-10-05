@@ -52,6 +52,8 @@ const webToHub = [
   { _tag: "RestartSession", sessionId: "s-1" },
   { _tag: "ArchiveSession", sessionId: "s-1" },
   { _tag: "RestoreSession", sessionId: "s-1" },
+  { _tag: "RenameSession", sessionId: "s-1", name: "Health check" },
+  { _tag: "RenameSession", sessionId: "s-1", name: "" },
   { _tag: "OpenTerminal", sessionId: "s-1" },
   { _tag: "CloseTerminal", sessionId: "s-1" },
   { _tag: "TerminalInput", sessionId: "s-1", data: "\u001b[A" },

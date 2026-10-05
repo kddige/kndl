@@ -4,6 +4,7 @@ import {
   ParticipantId,
   RunnerId,
   SessionId,
+  type SessionName,
   SessionState,
   SessionSummary,
   TurnId,
@@ -32,6 +33,7 @@ interface SessionRow {
   readonly repo: string
   readonly baseBranch: string
   readonly workBranch: string
+  readonly name: string | null
   readonly state: string
   readonly runnerId: string
   readonly runnerLoginAccount: string
@@ -67,6 +69,7 @@ const toSummary = (row: SessionRow): SessionSummary =>
     repo: row.repo,
     baseBranch: row.baseBranch,
     workBranch: row.workBranch,
+    ...(row.name !== null && { name: row.name }),
     state: decodeState(row.state),
     runnerId: RunnerId.make(row.runnerId),
     runnerLogin: { account: row.runnerLoginAccount },
@@ -122,6 +125,8 @@ export class Sessions extends Context.Service<
       runnerId: RunnerId,
     ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
     readonly setState: (id: SessionId, state: SessionState) => Effect.Effect<void, SqlError>
+    /** Its Session name, or null to clear it, so it is shown by its Work branch. */
+    readonly setName: (id: SessionId, name: SessionName | null) => Effect.Effect<void, SqlError>
     /** The Turn running now, or null once the Session is idle. */
     readonly setCurrentTurn: (id: SessionId, turn: TurnId | null) => Effect.Effect<void, SqlError>
     /** Records the Session Archived, by whom and until when; its Runner has yet to stop it. */
@@ -177,7 +182,8 @@ export class Sessions extends Context.Service<
       const sql = yield* SqlClient.SqlClient
 
       const select = (where: Fragment) => sql<SessionRow>`
-        SELECT s.id, s.repo, s.base_branch AS baseBranch, s.work_branch AS workBranch, s.state,
+        SELECT s.id, s.repo, s.base_branch AS baseBranch, s.work_branch AS workBranch, s.name,
+          s.state,
           s.runner_id AS runnerId, s.runner_login_account AS runnerLoginAccount,
           s.creator_id AS creatorId, p.login AS creatorLogin, p.name AS creatorName,
           p.avatar_url AS creatorAvatarUrl,
@@ -226,6 +232,13 @@ export class Sessions extends Context.Service<
         state: SessionState,
       ) {
         yield* sql`UPDATE sessions SET state = ${state} WHERE id = ${id}`
+      })
+
+      const setName = Effect.fn("Sessions.setName")(function* (
+        id: SessionId,
+        name: SessionName | null,
+      ) {
+        yield* sql`UPDATE sessions SET name = ${name} WHERE id = ${id}`
       })
 
       const setCurrentTurn = Effect.fn("Sessions.setCurrentTurn")(function* (
@@ -348,6 +361,7 @@ export class Sessions extends Context.Service<
         list,
         listByRunner,
         setState,
+        setName,
         setCurrentTurn,
         setClaudeSessionId,
         setEnvironmentVersion,

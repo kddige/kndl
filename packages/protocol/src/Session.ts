@@ -17,6 +17,38 @@ export type RepoName = typeof RepoName.Type
 export const BranchName = Schema.NonEmptyString
 export type BranchName = typeof BranchName.Type
 
+/** The longest a Session name may be, in characters. */
+export const MaxSessionNameLength = 80
+
+/**
+ * A Session's editable display name (GLOSSARY.md): trimmed, not empty, at most
+ * {@link MaxSessionNameLength} characters. A Session without one is shown by its Work branch.
+ */
+export const SessionName = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(MaxSessionNameLength),
+)
+export type SessionName = typeof SessionName.Type
+
+/**
+ * The Session name a rename asks for, as the Hub stores it: trimmed, or null when nothing is left,
+ * which clears the name so the Work branch shows again. A string when the name can't be used: why.
+ */
+export function sessionNameFrom(text: string): { readonly name: SessionName | null } | string {
+  const name = text.trim()
+  if (name.length > MaxSessionNameLength) {
+    return `A Session name can be at most ${MaxSessionNameLength} characters; this one is ${name.length}.`
+  }
+  return { name: name === "" ? null : name }
+}
+
+/** What the web UI calls a Session: its name, or its Work branch while it has none. */
+export const sessionTitle = (session: {
+  readonly name?: SessionName
+  readonly workBranch: BranchName
+}): string => session.name ?? session.workBranch
+
 /**
  * Where a Session is in its lifecycle (see GLOSSARY.md):
  * - `Active`: its Sandbox is running, or starting.
@@ -120,6 +152,8 @@ export const SessionSummary = Schema.Struct({
   repo: RepoName,
   baseBranch: BranchName,
   workBranch: BranchName,
+  /** Its Session name; absent until someone names it, when it is shown by its Work branch. */
+  name: Schema.optionalKey(SessionName),
   state: SessionState,
   runnerId: RunnerId,
   /** The Runner login every Turn of this Session runs on. */

@@ -1,33 +1,27 @@
-import type { SessionSummary } from "@claude-hub/protocol"
+import { MaxSessionNameLength, type SessionSummary, sessionTitle } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useParams, useRouterState } from "@tanstack/react-router"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
-import {
-  gitHubUrl,
-  groupByRepo,
-  loadCollapsed,
-  type RepoGroup,
-  storeCollapsed,
-} from "../sessions/groups.ts"
+import { groupByRepo } from "../sessions/groups.ts"
+import { renameSession } from "../sessions/rename.ts"
 import {
   ArchiveIcon,
   Avatar,
   BoxIcon,
   CloseIcon,
-  ExternalLinkIcon,
   IconButton,
+  InlineEdit,
   KeyIcon,
   Menu,
   MenuGroup,
   MenuItem,
   MoreIcon,
-  NavGroup,
-  NavIconLink,
   NavItem,
   NavSection,
   NavSlot,
+  PencilIcon,
   PlusIcon,
   ServerIcon,
   SessionStatus,
@@ -104,8 +98,9 @@ function sectionOf(pathname: string): "runners" | "environments" | "variables" |
 }
 
 /**
- * The app's sidebar: New Session, the Hub-wide pages, every listed Session grouped by Repo, and
- * the Runners and the signed-in person at the bottom. `onClose` adds a close button, for a drawer.
+ * The app's sidebar: New Session, the Hub-wide pages, every listed Session under its Repo's name
+ * in the order they were created, and the Runners and the signed-in person at the bottom.
+ * `onClose` adds a close button, for a drawer.
  */
 export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const hub = useHub()
@@ -119,9 +114,6 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const groups = useMemo(
     () => (sessions ? groupByRepo(sessions.filter(isListed)) : null),
     [sessions],
-  )
-  const collapsed = useCollapsedRepos(
-    sessions?.find((session) => session.id === sessionId && isListed(session)),
   )
   const online = (runners ?? []).filter((runner) => runner.isOnline).length
 
@@ -213,64 +205,68 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
           Archived Sessions
         </NavItem>
       </NavSection>
-      <NavSection label="Sessions">
-        {groups === null ? (
+      {groups === null ? (
+        <NavSection>
           <li {...stylex.props(styles.note)}>
             <Spinner size="sm" label="Loading Sessions" />
           </li>
-        ) : groups.length === 0 ? (
+        </NavSection>
+      ) : groups.length === 0 ? (
+        <NavSection>
           <li {...stylex.props(styles.note)}>No Sessions yet</li>
-        ) : (
-          groups.map((group) => (
-            <RepoSessions
-              key={group.repo}
-              group={group}
-              open={!collapsed.has(group.repo)}
-              onOpenChange={(open) => collapsed.set(group.repo, !open)}
-              currentId={sessionId}
-            />
-          ))
-        )}
-      </NavSection>
+        </NavSection>
+      ) : (
+        // Each Repo is a section of its own, under its name.
+        groups.map((group) => (
+          <NavSection key={group.repo} label={group.repo}>
+            {group.sessions.map((session) => (
+              <SessionRow key={session.id} session={session} current={session.id === sessionId} />
+            ))}
+          </NavSection>
+        ))
+      )}
     </Sidebar>
   )
 }
 
-function RepoSessions({
-  group,
-  open,
-  onOpenChange,
-  currentId,
-}: {
-  group: RepoGroup
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  currentId: string | undefined
-}) {
+/**
+ * A Session in the sidebar: its state's dot, its Session name (or Work branch) and what it's busy
+ * with, leading to it. Its Rename button turns the row into a field for the name.
+ */
+function SessionRow({ session, current }: { session: SessionSummary; current: boolean }) {
+  const hub = useHub()
+  const [renaming, setRenaming] = useState(false)
+  const title = sessionTitle(session)
   return (
-    <NavGroup
-      label={group.repo}
-      open={open}
-      onOpenChange={onOpenChange}
+    <NavItem
+      render={<Link to="/sessions/$sessionId" params={{ sessionId: session.id }} />}
+      icon={<SessionStatus state={statusOf(session.state)} variant="dot" />}
+      current={current}
+      title={session.name === undefined ? title : `${title} · ${session.workBranch}`}
+      trailing={<SessionIndicators session={session} />}
       action={
-        <NavIconLink href={gitHubUrl(group.repo)} label={`Open ${group.repo} on GitHub`}>
-          <ExternalLinkIcon />
-        </NavIconLink>
+        <IconButton label={`Rename ${title}`} size="sm" onClick={() => setRenaming(true)}>
+          <PencilIcon />
+        </IconButton>
       }
+      {...(renaming && {
+        editor: (
+          <InlineEdit
+            label="Session name"
+            defaultValue={title}
+            placeholder={session.workBranch}
+            maxLength={MaxSessionNameLength}
+            onCommit={(typed) => {
+              setRenaming(false)
+              renameSession(hub, session, typed)
+            }}
+            onCancel={() => setRenaming(false)}
+          />
+        ),
+      })}
     >
-      {group.sessions.map((session) => (
-        <NavItem
-          key={session.id}
-          render={<Link to="/sessions/$sessionId" params={{ sessionId: session.id }} />}
-          icon={<SessionStatus state={statusOf(session.state)} variant="dot" />}
-          current={session.id === currentId}
-          title={session.workBranch}
-          trailing={<SessionIndicators session={session} />}
-        >
-          {session.workBranch}
-        </NavItem>
-      ))}
-    </NavGroup>
+      {title}
+    </NavItem>
   )
 }
 
@@ -309,32 +305,4 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
       )}
     </>
   )
-}
-
-/**
- * Which Repo groups this viewer has collapsed, kept in this browser. A collapsed group opens when
- * one of its Sessions becomes the current one, so the current Session is never hidden.
- */
-function useCollapsedRepos(current: SessionSummary | undefined) {
-  const [collapsed, setCollapsed] = useState(loadCollapsed)
-  // The Session last revealed, so collapsing its group afterwards sticks until the next one.
-  const [revealed, setRevealed] = useState<string | undefined>(undefined)
-  if (current?.id !== revealed) {
-    setRevealed(current?.id)
-    if (current && collapsed.has(current.repo)) setCollapsed(without(collapsed, current.repo))
-  }
-  useEffect(() => storeCollapsed(collapsed), [collapsed])
-  return {
-    has: (repo: string) => collapsed.has(repo),
-    set: (repo: string, isCollapsed: boolean) =>
-      setCollapsed((previous) =>
-        isCollapsed ? new Set([...previous, repo]) : without(previous, repo),
-      ),
-  }
-}
-
-function without(set: ReadonlySet<string>, item: string): ReadonlySet<string> {
-  const next = new Set(set)
-  next.delete(item)
-  return next
 }

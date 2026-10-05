@@ -1,5 +1,4 @@
-// Sessions arranged by Repo, as the sidebar and the Hub-wide pages show them, and which of the
-// sidebar's Repo groups this viewer has collapsed.
+// Sessions arranged by Repo, as the sidebar and the Hub-wide pages show them.
 
 import type { SessionSummary } from "@claude-hub/protocol"
 
@@ -11,16 +10,16 @@ export interface RepoGroup {
 
 type Order = (a: SessionSummary, b: SessionSummary) => number
 
-/** The most recently started first. */
-export const newestFirst: Order = (a, b) => b.createdAt - a.createdAt
+/** In the order they were created, the oldest first, so a Session keeps its place. */
+export const oldestFirst: Order = (a, b) => a.createdAt - b.createdAt
 
 /**
  * The given Sessions by Repo: Repos in alphabetical order, so a group stays put as activity
- * changes, and each Repo's Sessions in `order`, newest first unless given.
+ * changes, and each Repo's Sessions in `order`, oldest first unless given.
  */
 export function groupByRepo(
   sessions: ReadonlyArray<SessionSummary>,
-  order: Order = newestFirst,
+  order: Order = oldestFirst,
 ): ReadonlyArray<RepoGroup> {
   const byRepo = new Map<string, Array<SessionSummary>>()
   for (const session of sessions) {
@@ -42,31 +41,4 @@ export function knownRepos(sessions: ReadonlyArray<SessionSummary>): ReadonlyArr
   return [...new Set(sessions.map((session) => session.repo))].toSorted((a, b) =>
     a.localeCompare(b),
   )
-}
-
-/** The Repo's page on GitHub. */
-export function gitHubUrl(repo: string): string {
-  return `https://github.com/${repo}`
-}
-
-const collapsedKey = "claude-hub:sidebar-collapsed"
-
-/** The Repo groups this viewer collapsed in the sidebar, kept in this browser. */
-export function loadCollapsed(): ReadonlySet<string> {
-  try {
-    const raw: unknown = JSON.parse(localStorage.getItem(collapsedKey) ?? "[]")
-    return new Set(
-      Array.isArray(raw) ? raw.filter((repo): repo is string => typeof repo === "string") : [],
-    )
-  } catch {
-    return new Set()
-  }
-}
-
-export function storeCollapsed(collapsed: ReadonlySet<string>): void {
-  try {
-    localStorage.setItem(collapsedKey, JSON.stringify([...collapsed]))
-  } catch {
-    // Storage is full or off: the groups stay as they are until the page is closed.
-  }
 }

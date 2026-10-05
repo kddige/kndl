@@ -1,6 +1,6 @@
 ---
 title: Work in a Session
-description: Start a Session, prompt it with others, use its terminal, put it to sleep, delete and restore it, and get its work out.
+description: Start, find and rename a Session, prompt it with others, use its terminal, put it to sleep, delete and restore it, and get its work out.
 sidebar:
   order: 8
 ---
@@ -15,6 +15,17 @@ A Session is one Claude Code conversation working on one Repo, on its own Work b
 4. Press **Start Session**.
 
 The Runner clones the Repo onto the Session's Work branch, builds the Environment if it hasn't yet, makes the Session's Sandbox and starts Claude Code. **Show log** on the **Starting…** banner follows along. If the Repo has no Environment yet, you set one up first: see [Set up an Environment](/how-to/set-up-an-environment/).
+
+## Find and rename a Session
+
+The sidebar lists every Session that isn't Archived under its Repo's `owner/name`, in the order they were started, the oldest first. Each row's dot shows the Session's state, and a spinner shows a Turn running.
+
+A Session is shown by its [Session name](/reference/glossary/), or by its Work branch until someone names it. **New Session** doesn't ask for a name. Anyone can rename a Session, in any state:
+
+1. Press the pencil button beside the title in the Session's header, or on the Session's row in the sidebar. A row shows it while it's the open Session or you point at it.
+2. Type the name and press Enter, or click elsewhere. Esc leaves the name as it was.
+
+Everyone with the Session open sees the new name at once. A name is at most 80 characters; to show the Work branch again, clear the name. Once a Session is named, its header shows the Work branch next to the Repo.
 
 ## Prompt it together
 

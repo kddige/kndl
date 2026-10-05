@@ -1235,6 +1235,94 @@ describe("archive, restore and purge", () => {
   })
 })
 
+describe("Session names", () => {
+  test("anyone with access can rename a Session, and every client sees it live", async () => {
+    const { hub, web, sessionId, session } = await sessionScene()
+    expect(session.name).toBeUndefined()
+    const bobWeb = await openWeb(hub, "bob")
+
+    // Bob didn't create it, and may rename it all the same; the name is trimmed.
+    bobWeb.send({ _tag: "RenameSession", sessionId, name: "  Health check " })
+    for (const client of [web, bobWeb]) {
+      const renamed = await client.take("SessionUpdated", (m) => m.session.name !== undefined)
+      expect(renamed.session).toEqual({ ...session, name: "Health check" })
+    }
+    const later = await openWeb(hub, "carol")
+    expect(later.sessions.sessions).toEqual([{ ...session, name: "Health check" }])
+
+    // The same name again changes nothing.
+    web.send({ _tag: "RenameSession", sessionId, name: "Health check" })
+    expect(await bobWeb.untaken("SessionUpdated")).toEqual([])
+
+    // Clearing it goes back to the Work branch.
+    web.send({ _tag: "RenameSession", sessionId, name: "   " })
+    for (const client of [bobWeb, later]) {
+      expect((await client.take("SessionUpdated")).session).toEqual(session)
+    }
+    expect((await web.untaken("SessionUpdated")).at(-1)?.session).toEqual(session)
+  })
+
+  test("a name over the maximum length is refused, and the name stays", async () => {
+    const { hub, web, sessionId } = await sessionScene()
+    web.send({ _tag: "RenameSession", sessionId, name: "Health check" })
+    await web.take("SessionUpdated", (m) => m.session.name === "Health check")
+
+    web.send({ _tag: "RenameSession", sessionId, name: "x".repeat(81) })
+    expect(await web.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "RenameSession",
+      sessionId,
+      message: "A Session name can be at most 80 characters; this one is 81.",
+    })
+    expect((await openWeb(hub, "bob")).sessions.sessions).toEqual([
+      expect.objectContaining({ id: sessionId, name: "Health check" }),
+    ])
+
+    web.send({ _tag: "RenameSession", sessionId: "no-such-session", name: "x" })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "RenameSession",
+      message: "There is no such Session.",
+    })
+  })
+
+  test("an Archived Session can be renamed, and keeps its name through a restore", async () => {
+    const scene = await sessionScene()
+    const { web, sessionId } = scene
+    await archived(scene)
+    web.send({ _tag: "RenameSession", sessionId, name: "Spike" })
+    expect(
+      (await web.take("SessionUpdated", (m) => m.session.name === "Spike")).session.state,
+    ).toBe("Archived")
+    web.send({ _tag: "RestoreSession", sessionId })
+    expect(
+      (await web.take("SessionUpdated", (m) => m.session.state === "Asleep")).session.name,
+    ).toBe("Spike")
+  })
+
+  test("a name outlives a Hub restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const first = await startHub({ config: { devLogin: true }, database })
+      const { runner, web, sessionId } = await sessionScene(first)
+      web.send({ _tag: "RenameSession", sessionId, name: "Health check" })
+      await web.take("SessionUpdated", (m) => m.session.name === "Health check")
+      await web.close()
+      await runner.close()
+      await first.stop()
+
+      const second = await startHub({ config: { devLogin: true }, database })
+      const back = await openWeb(second, "alice", web.cookie)
+      expect(back.sessions.sessions).toEqual([
+        expect.objectContaining({ id: sessionId, name: "Health check" }),
+      ])
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe("the terminal relay", () => {
   test("relays frames to the clients that opened the terminal, and keystrokes to the Runner", async () => {
     const { hub, runner, web, sessionId } = await sessionScene()
@@ -1788,6 +1876,7 @@ describe("Repo access", () => {
       { _tag: "RestartSession" },
       { _tag: "ArchiveSession" },
       { _tag: "RestoreSession" },
+      { _tag: "RenameSession", name: "mine now" },
       { _tag: "OpenTerminal" },
       { _tag: "TerminalInput", data: "ls\r" },
       { _tag: "TerminalResize", size: { cols: 80, rows: 24 } },

@@ -65,17 +65,34 @@ function nav(): HTMLElement | null {
   return document.querySelector<HTMLElement>('nav[aria-label="Main"]')
 }
 
-/** The Sessions section's Repo groups: each one's name, whether it's open, and its Sessions. */
+/** The sidebar's Repo sections: each one's name, and its Sessions' rows as their links read. */
 function groups() {
-  const label = [...(nav()?.querySelectorAll("div[id]") ?? [])].find(
-    (el) => el.textContent === "Sessions",
-  )
-  const list = nav()?.querySelector(`ul[aria-labelledby="${label?.id}"]`)
-  return [...(list?.children ?? [])].map((group) => ({
-    repo: group.querySelector("button")?.textContent ?? "",
-    open: group.querySelector("button")?.getAttribute("aria-expanded") === "true",
-    branches: [...group.querySelectorAll("a[href^='/sessions/']")].map((a) => a.textContent),
+  return [...(nav()?.querySelectorAll("ul[aria-labelledby]") ?? [])].map((list) => ({
+    repo: document.getElementById(list.getAttribute("aria-labelledby") ?? "")?.textContent ?? "",
+    sessions: [...list.querySelectorAll("a[href^='/sessions/']")].map((a) => a.textContent),
   }))
+}
+
+/** A Session's row in the sidebar, by its link. */
+function row(sessionId: string): HTMLElement {
+  const link = nav()?.querySelector(`a[href="/sessions/${sessionId}"]`)
+  const item = link?.closest("li")
+  if (!item) throw new Error(`no sidebar row for ${sessionId}`)
+  return item
+}
+
+/** Types into a field as a person does, past React's record of its value. */
+function typeInto(field: HTMLInputElement, value: string): void {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(field, value)
+  field.dispatchEvent(new Event("input", { bubbles: true }))
+}
+
+function press(field: HTMLElement, key: string): void {
+  field.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))
+}
+
+function nameField(within: ParentNode = document): HTMLInputElement | null {
+  return within.querySelector<HTMLInputElement>('input[aria-label="Session name"]')
 }
 
 /** The labels of the sidebar's items marked as the current page. */
@@ -83,23 +100,29 @@ function current(): Array<string | null> {
   return [...(nav()?.querySelectorAll('[aria-current="page"]') ?? [])].map((el) => el.textContent)
 }
 
-test("the sidebar lists the listed Sessions by Repo, newest first, and marks the current one", async () => {
+test("the sidebar lists the listed Sessions under their Repo, oldest first, and marks the current one", async () => {
   await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
 
-  // Archived Sessions aren't listed; each Repo is a group, in alphabetical order.
+  // Archived Sessions aren't listed; each Repo is a section under its name, in alphabetical order.
   expect(groups()).toEqual([
-    { repo: "kddige/claude-hub", open: true, branches: ["claude/web-client", "claude/readme-run"] },
-    { repo: "kddige/dotfiles", open: true, branches: ["claude/zsh-prompt"] },
+    { repo: "kddige/claude-hub", sessions: ["claude/readme-run", "claude/web-client"] },
+    { repo: "kddige/dotfiles", sessions: ["claude/zsh-prompt"] },
   ])
   expect(current()).toEqual(["claude/readme-run"])
+  // No single "Sessions" heading over them, and no links out to GitHub.
+  expect([...(nav()?.querySelectorAll("div[id]") ?? [])].map((el) => el.textContent)).toEqual([
+    "kddige/claude-hub",
+    "kddige/dotfiles",
+  ])
+  expect(nav()?.querySelector("a[target='_blank']")).toBeNull()
 
-  // Each Repo links to GitHub in a new tab, apart from its toggle.
-  const github = nav()?.querySelector<HTMLAnchorElement>(
-    'a[aria-label="Open kddige/dotfiles on GitHub"]',
-  )
-  expect(github?.href).toBe("https://github.com/kddige/dotfiles")
-  expect(github?.target).toBe("_blank")
+  // Every row has its state's dot.
+  expect(
+    ["s-readme", "s-demo", "s-dotfiles"].map(
+      (id) => row(id).querySelector('a [role="img"]')?.getAttribute("aria-label") ?? null,
+    ),
+  ).toEqual(["Asleep", "Active", "Frozen"])
 
   // The general nav and the footer.
   const links = [...(nav()?.querySelectorAll("a") ?? [])].map((a) => a.getAttribute("href"))
@@ -110,30 +133,80 @@ test("the sidebar lists the listed Sessions by Repo, newest first, and marks the
   expect(button("Signed in as Alice Kim", document).getAttribute("aria-haspopup")).toBe("menu")
 })
 
-test("a collapsed Repo stays collapsed, and opens when one of its Sessions becomes current", async () => {
-  await open("/")
+test("a Session is renamed from its sidebar row, and every open tab sees the name", async () => {
+  const { hub } = await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
-  await step(() => button("kddige/dotfiles", nav() ?? document).click())
-  await eventually(() => expect(groups()[1]).toMatchObject({ open: false, branches: [] }))
-  expect(groups()[0]?.open).toBe(true)
-  await cleanup?.()
-  cleanup = undefined
+  // Another tab, on the same Hub.
+  const other = new HubClient(hub, { retryDelay: () => 1 })
+  other.start()
+  const otherName = () => other.getState().sessions?.find((s) => s.id === "s-dotfiles")?.name
+  try {
+    // The row's Rename turns it into a field holding its Work branch.
+    await step(() => button("Rename claude/zsh-prompt", row("s-dotfiles")).click())
+    const field = nameField(nav() ?? document)
+    expect(field?.value).toBe("claude/zsh-prompt")
+    expect(field?.placeholder).toBe("claude/zsh-prompt")
+    expect(field?.maxLength).toBe(80)
 
-  // Remembered in this browser.
-  const second = await open("/")
-  await eventually(() => expect(groups().length).toBe(2))
-  expect(groups()[1]).toMatchObject({ open: false, branches: [] })
+    // Escape drops the edit.
+    await step(() => field && press(field, "Escape"))
+    expect(nameField()).toBeNull()
+    expect(hub.received.some((m) => m._tag === "RenameSession")).toBe(false)
 
-  // Going to one of its Sessions opens it, so the current one is in view.
-  await step(
-    () =>
-      void second.router.navigate({
-        to: "/sessions/$sessionId",
-        params: { sessionId: "s-dotfiles" },
-      }),
+    // Enter renames it, trimmed, here and in the other tab.
+    await step(() => button("Rename claude/zsh-prompt", row("s-dotfiles")).click())
+    const again = nameField(nav() ?? document)
+    await step(() => again && typeInto(again, "  Prompt colours "))
+    await step(() => again && press(again, "Enter"))
+    await eventually(() =>
+      expect(groups()[1]).toEqual({ repo: "kddige/dotfiles", sessions: ["Prompt colours"] }),
+    )
+    await eventually(() => expect(otherName()).toBe("Prompt colours"))
+    expect(row("s-dotfiles").querySelector("a")?.title).toBe("Prompt colours · claude/zsh-prompt")
+
+    // Leaving it unchanged sends nothing; clearing it goes back to the Work branch.
+    const renames = () => hub.received.filter((m) => m._tag === "RenameSession").length
+    await step(() => button("Rename Prompt colours", row("s-dotfiles")).click())
+    await step(() => nameField()?.blur())
+    expect(renames()).toBe(1)
+    await step(() => button("Rename Prompt colours", row("s-dotfiles")).click())
+    const cleared = nameField(nav() ?? document)
+    await step(() => cleared && typeInto(cleared, ""))
+    await step(() => cleared && press(cleared, "Enter"))
+    await eventually(() => expect(groups()[1]?.sessions).toEqual(["claude/zsh-prompt"]))
+    await eventually(() => expect(otherName()).toBeUndefined())
+  } finally {
+    other.stop()
+  }
+})
+
+test("a Session is renamed in place from its header, and New Session doesn't ask for a name", async () => {
+  const { page, hub } = await open("/sessions/s-readme")
+  const title = () => page.querySelector("main > header h1")?.textContent
+  const description = () => page.querySelector("main > header p")?.textContent ?? ""
+  await eventually(() => expect(title()).toBe("claude/readme-run"))
+  expect(description()).not.toContain("claude/readme-run")
+
+  await step(() => button("Rename Session", page).click())
+  const field = nameField(page.querySelector("main > header") ?? page)
+  expect(field?.value).toBe("claude/readme-run")
+  await step(() => field && typeInto(field, "README: how to run it"))
+  await step(() => field && press(field, "Enter"))
+
+  // The header and the sidebar both show it; the header keeps the Work branch in its description.
+  await eventually(() => expect(title()).toBe("README: how to run it"))
+  expect(description()).toContain("claude/readme-run from main")
+  expect(current()).toEqual(["README: how to run it"])
+  const renames = hub.received.flatMap((m) =>
+    m._tag === "RenameSession" ? [{ sessionId: String(m.sessionId), name: m.name }] : [],
   )
-  await eventually(() => expect(groups()[1]?.open).toBe(true))
-  await eventually(() => expect(current()).toEqual(["claude/zsh-prompt"]))
+  expect(renames).toEqual([{ sessionId: "s-readme", name: "README: how to run it" }])
+
+  // New Session has no name field: a Session is named once it exists.
+  await step(() => button("New Session", document).click())
+  await eventually(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull())
+  const labels = [...(document.querySelector('[role="dialog"]')?.querySelectorAll("label") ?? [])]
+  expect(labels.map((label) => label.textContent).join(" ")).not.toMatch(/name/i)
 })
 
 test("the start page points at the sidebar, and the general nav marks its page", async () => {

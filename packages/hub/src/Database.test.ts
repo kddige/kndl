@@ -2,9 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ConfigProvider, Effect } from "effect"
+import { SessionId } from "@claude-hub/protocol"
+import { ConfigProvider, Effect, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { DatabaseFile, databaseAt } from "./Database.ts"
+import { Sessions } from "./Sessions.ts"
 
 const dirs: Array<string> = []
 
@@ -34,6 +36,47 @@ describe("the Hub's database", () => {
 
 const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient.SqlClient>) =>
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
+
+describe("migration 0013, Session names", () => {
+  test("leaves the Sessions there were unnamed, shown by their Work branch, and lets them be named", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        // A database from before it: no name column, and the migration not yet run.
+        yield* sql`ALTER TABLE sessions DROP COLUMN name`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
+            creator_id, created_at
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
+        `
+        const deleted =
+          yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_name' RETURNING name`
+        expect(deleted).toHaveLength(1)
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const id = SessionId.make("s-1")
+        const before = Option.getOrThrow(yield* sessions.get(id))
+        yield* sessions.setName(id, "Health check")
+        const named = Option.getOrThrow(yield* sessions.get(id))
+        return { before: [before.workBranch, before.name], named: named.name }
+      }).pipe(Effect.provide(Sessions.layer)),
+    )
+    expect(after).toEqual({ before: ["claude/s-1", undefined], named: "Health check" })
+  })
+})
 
 describe("migration 0009, Sensitive values that need a value", () => {
   test("keeps the variables and links, and lets only a Sensitive value be null", async () => {

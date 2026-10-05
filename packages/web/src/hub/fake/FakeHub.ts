@@ -19,6 +19,7 @@ import {
   ProtocolVersion,
   type RepoStatus,
   runnerRemovalRefusal,
+  sessionNameFrom,
   UpdateDrainMillis,
   WebToHub,
 } from "@claude-hub/protocol"
@@ -777,6 +778,24 @@ export class FakeHub implements HubTransport {
         session.summary = summary
         this.#setState(session, "Asleep", "Restored from the archive", this.#you)
         this.#toAll(this.#runnerList())
+        break
+      }
+      // As the Hub does: anyone may, in any state; trimmed, empty clears it, too long is refused.
+      case "RenameSession": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) {
+          this.#fail(socket, "RenameSession", "There is no such Session.", message.sessionId)
+          break
+        }
+        const renamed = sessionNameFrom(message.name)
+        if (typeof renamed === "string") {
+          this.#fail(socket, "RenameSession", renamed, message.sessionId)
+          break
+        }
+        if ((session.summary.name ?? null) === renamed.name) break
+        const { name: _, ...summary } = session.summary
+        session.summary = renamed.name === null ? summary : { ...summary, name: renamed.name }
+        this.#summaryChanged(session)
         break
       }
       // The terminal, as the real Hub relays it: watching needs no running terminal, but
