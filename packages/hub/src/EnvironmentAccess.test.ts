@@ -106,7 +106,12 @@ describe("Environment commands", () => {
         { _tag: "GetEnvironment", repo: about },
         { _tag: "CheckEnvironmentDraft", repo: about, draft: DefaultEnvironmentDraft },
         { _tag: "StartTestBuild", repo: about, runnerId, draft: DefaultEnvironmentDraft },
-        { _tag: "ApplyEnvironment", repo: about, baseVersion: null, draft: DefaultEnvironmentDraft },
+        {
+          _tag: "ApplyEnvironment",
+          repo: about,
+          baseVersion: null,
+          draft: DefaultEnvironmentDraft,
+        },
       ]
       for (const command of commands) {
         expect(await ask(web, command)).toEqual(noAccess(command._tag, about))
@@ -249,7 +254,12 @@ describe("Test builds", () => {
     expect(await runner.untaken("RunTestBuild")).toEqual([])
 
     // And, uninstalled once it has, when the Runner asks to clone.
-    await ask(web, { _tag: "StartTestBuild", repo: secret, runnerId, draft: DefaultEnvironmentDraft })
+    await ask(web, {
+      _tag: "StartTestBuild",
+      repo: secret,
+      runnerId,
+      draft: DefaultEnvironmentDraft,
+    })
     const run = await runner.take("RunTestBuild")
     github.installedOn.delete(secret)
     expect(await cloneAccess(runner, run.testBuildId)).toEqual({

@@ -139,6 +139,7 @@ import {
   makeEnvironmentRelay,
 } from "./EnvironmentRelay.ts"
 import { Environments } from "./Environments.ts"
+import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { ModOutbox } from "./ModOutbox.ts"
@@ -156,7 +157,6 @@ import {
   StreamRedactor,
 } from "./Redaction.ts"
 import { RepoAccess } from "./RepoAccess.ts"
-import { GitHubApp } from "./GitHubApp.ts"
 import { isRunnerCommand, makeRunnerRelay } from "./RunnerRelay.ts"
 import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
@@ -1143,11 +1143,13 @@ export class SessionRelay extends Context.Service<
         const authorizeTestBuild = Effect.fn("SessionRelay.authorizeTestBuild")(function* (
           repo: RepoName,
         ): Effect.fn.Return<AccessVerdict> {
-          const status = yield* access.status(you, repo).pipe(
-            Effect.catchTag("RepoAccessUnknown", (error) =>
-              Effect.as(Effect.logWarning(error.message), { unknown: error.message }),
-            ),
-          )
+          const status = yield* access
+            .status(you, repo)
+            .pipe(
+              Effect.catchTag("RepoAccessUnknown", (error) =>
+                Effect.as(Effect.logWarning(error.message), { unknown: error.message }),
+              ),
+            )
           if (status === "Allowed") return { learned: { repo, allowed: true } }
           if (status === "NotInstalled" && you.id.startsWith("dev:")) {
             return { learned: { repo, allowed: true }, refusal: notInstalledForTestBuild(repo) }
@@ -1602,25 +1604,25 @@ export class SessionRelay extends Context.Service<
                   ),
                 )
               : authorize(message).pipe(
-                Effect.flatMap((verdict) =>
-                  serialized(
-                    Effect.gen(function* () {
-                      const { learned, refusal } = verdict
-                      if (learned !== undefined)
-                        yield* accessKnown(you, learned.repo, learned.allowed)
-                      if (refusal !== undefined) return refuse(message, refusal)
-                      return yield* handle(message)
-                    }),
-                  ),
-                ),
-                Effect.catchTag("SqlError", (error) =>
-                  Effect.logError("A web command failed", error).pipe(
-                    Effect.andThen(
-                      Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                  Effect.flatMap((verdict) =>
+                    serialized(
+                      Effect.gen(function* () {
+                        const { learned, refusal } = verdict
+                        if (learned !== undefined)
+                          yield* accessKnown(you, learned.repo, learned.allowed)
+                        if (refusal !== undefined) return refuse(message, refusal)
+                        return yield* handle(message)
+                      }),
                     ),
                   ),
-                ),
-              )
+                  Effect.catchTag("SqlError", (error) =>
+                    Effect.logError("A web command failed", error).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                      ),
+                    ),
+                  ),
+                )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>

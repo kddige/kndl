@@ -17,6 +17,7 @@ import {
   PairingCodeLifetimeMs,
   pairingLink,
   ProtocolVersion,
+  type RepoStatus,
   runnerRemovalRefusal,
   WebToHub,
 } from "@claude-hub/protocol"
@@ -123,6 +124,14 @@ export class FakeHub implements HubTransport {
   /** Pairing codes not yet redeemed or revoked; one may have expired. */
   readonly pairingCodes: Array<PendingPairingCodeWire> = []
   readonly environments = new FakeEnvironments()
+  /**
+   * What GitHub says of the signed-in person and each Repo (#104); any Repo not here is Allowed.
+   * Seeded with one of each refusal for the demo.
+   */
+  readonly repoAccess = new Map<string, RepoStatus>([
+    ["kddige/secret", "NoAccess"],
+    ["someone-else/their-repo", "NotInstalled"],
+  ])
   /** Every message each client sent, decoded, for tests to inspect. */
   readonly received: Array<WebToHub> = []
   #signedIn: boolean
@@ -296,6 +305,33 @@ export class FakeHub implements HubTransport {
     }
   }
 
+  /**
+   * Takes the signed-in person's access to `repo` away, as the real Hub does when GitHub says so
+   * at its next check: its Sessions and Environment are gone from them. In the browser,
+   * `fakeHub.revokeRepo("kddige/claude-hub")` in the console.
+   */
+  revokeRepo(repo: string): void {
+    this.repoAccess.set(repo, "NoAccess")
+    for (const session of this.sessions.values()) {
+      if (session.summary.repo !== repo) continue
+      this.sessions.delete(session.summary.id)
+      this.#toAll({ _tag: "SessionRemoved", sessionId: session.summary.id })
+    }
+    this.#toAll({ _tag: "RepoAccessLost", repo })
+  }
+
+  /** Refuses a command about a Repo out of reach, as the real Hub does; whether it did. */
+  #refusedRepo(socket: FakeSocket, command: string, requestId: string, repo: string): boolean {
+    if ((this.repoAccess.get(repo) ?? "Allowed") === "Allowed") return false
+    this.#refuse(
+      socket,
+      command,
+      requestId,
+      `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`,
+    )
+    return true
+  }
+
   /** Starts the demo Session's script now, rather than on the first join. */
   play(): void {
     if (this.#scriptStarted) return
@@ -367,7 +403,21 @@ export class FakeHub implements HubTransport {
           check: { ...this.#appPermissions, checkedAt: Date.now() },
         })
         break
+      case "CheckRepo": {
+        const status = this.repoAccess.get(message.repo) ?? "Allowed"
+        socket.deliver({
+          _tag: "RepoChecked",
+          requestId: message.requestId,
+          repo: message.repo,
+          status,
+          ...(status === "NotInstalled" && {
+            installUrl: "https://github.com/apps/claude-hub/installations/new",
+          }),
+        })
+        break
+      }
       case "CreateSession":
+        if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         this.#create(socket, message.requestId, message.repo, message.baseBranch, message.runnerId)
         break
       case "JoinSession": {
@@ -477,9 +527,11 @@ export class FakeHub implements HubTransport {
         this.#restart(socket, message.sessionId)
         break
       case "GetEnvironment":
+        if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         socket.deliver({ ...this.environments.state(message.repo), requestId: message.requestId })
         break
       case "CheckEnvironmentDraft": {
+        if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         const prepared = this.environments.prepare(message.repo, message.draft)
         if (typeof prepared === "string") {
           this.#refuse(socket, message._tag, message.requestId, prepared)
@@ -495,6 +547,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "StartTestBuild": {
+        if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         const runner = this.runners.find((candidate) => candidate.id === message.runnerId)
         if (!runner?.isOnline) {
           const reason = `Runner ${message.runnerId} is not online.`
@@ -538,6 +591,7 @@ export class FakeHub implements HubTransport {
       }
       case "ApplyEnvironment": {
         const { repo } = message
+        if (this.#refusedRepo(socket, message._tag, message.requestId, repo)) break
         const refused = this.environments.apply(repo, message.baseVersion, message.draft, this.#you)
         if (refused !== undefined) {
           this.#refuse(socket, message._tag, message.requestId, refused)

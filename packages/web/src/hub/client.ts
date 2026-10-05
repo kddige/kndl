@@ -19,6 +19,7 @@ import {
   RequestId,
   type RunnerId,
   type PromptId,
+  type RepoChecked,
   type SessionId,
   type SessionSummary,
   type SharedVariable,
@@ -288,6 +289,14 @@ export class HubClient {
     return (await this.#request({ _tag: "CheckAppPermissions" }, "AppPermissionsChecked")).check
   }
 
+  /**
+   * Whether the signed-in person has access to `repo`, and if not, why (#104): asked as a Repo is
+   * entered. With `fresh`, the Hub asks GitHub again rather than answering from its cache.
+   */
+  checkRepo(repo: string, fresh = false): Promise<RepoChecked> {
+    return this.#request({ _tag: "CheckRepo", repo, ...(fresh && { fresh }) }, "RepoChecked")
+  }
+
   /** Every shared variable, which the store then keeps current. */
   async getSharedVariables(): Promise<ReadonlyArray<SharedVariable>> {
     return (await this.#request({ _tag: "GetSharedVariables" }, "SharedVariables")).variables
@@ -422,6 +431,7 @@ export class HubClient {
       case "TestBuildStarted":
       case "SharedVariables":
       case "AppPermissionsChecked":
+      case "RepoChecked":
       case "PairingCodeCreated":
       case "PairingCodeList":
       case "RunnerRemoved": {

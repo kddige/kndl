@@ -15,6 +15,7 @@ import { Link, useNavigate } from "@tanstack/react-router"
 import { type ReactNode, useEffect, useMemo, useState } from "react"
 import { repoParams, runnerLabel, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
+import { isRefused, type RepoCheck, RepoRefusal } from "../app/repoAccess.tsx"
 import type { RepoEnvironment, TestBuildRun } from "../hub/store.ts"
 import {
   Avatar,
@@ -190,19 +191,44 @@ export function EnvironmentView({
   const saved = useHubState((state) => state.environments[repo])
   const sharedVariables = useHubState((state) => state.sharedVariables)
   const online = useHubState((state) => state.connection.status === "online")
+  const lost = useHubState((state) => state.lostRepos[repo] === true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  /** Why the person can't use the Repo, when the Hub refused its Environment for that (#104). */
+  const [refusal, setRefusal] = useState<RepoCheck | null>(null)
+  /** Bumped by "Check again", which asks GitHub afresh. */
+  const [attempt, setAttempt] = useState(0)
 
-  // Again after a reconnect: a version may have been applied meanwhile.
+  // Again after a reconnect, as a version may have been applied meanwhile; and on losing access.
   useEffect(() => {
     if (!online) return
-    hub.getEnvironment(repo).then(
-      () => setLoadError(null),
-      (error: unknown) => setLoadError(messageOf(error)),
-    )
+    let current = true
+    const load = async () => {
+      if (attempt > 0) await hub.checkRepo(repo, true).catch(() => undefined)
+      try {
+        await hub.getEnvironment(repo)
+        if (!current) return
+        setLoadError(null)
+        setRefusal(null)
+      } catch (error) {
+        // Refused: ask why, to say so rather than the bare refusal.
+        const checked = await hub.checkRepo(repo).catch(() => null)
+        if (!current) return
+        if (checked !== null && checked.status !== "Allowed") {
+          setRefusal({ status: checked.status, installUrl: checked.installUrl ?? null })
+        } else {
+          setRefusal(null)
+          setLoadError(messageOf(error))
+        }
+      }
+    }
+    void load()
     hub.getSharedVariables().catch(() => {
       // Links then can't be checked here; the Hub still checks them.
     })
-  }, [hub, repo, online])
+    return () => {
+      current = false
+    }
+  }, [hub, repo, online, lost, attempt])
 
   const environment = saved?.environment
   return (
@@ -226,7 +252,24 @@ export function EnvironmentView({
       />
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.page)}>
-          {saved ? (
+          {refusal !== null && isRefused(refusal) ? (
+            <EmptyState
+              size="page"
+              icon={<WarningIcon />}
+              title={
+                refusal.status === "NotInstalled"
+                  ? "The GitHub App isn't installed on this Repo"
+                  : "You don't have access to this Repo"
+              }
+              description={
+                <RepoRefusal
+                  repo={repo}
+                  check={refusal}
+                  onRecheck={() => setAttempt((count) => count + 1)}
+                />
+              }
+            />
+          ) : saved ? (
             <EnvironmentEditor
               key={repo}
               repo={repo}

@@ -52,6 +52,21 @@ const lookupTimeout = Duration.seconds(10)
  */
 export const refusedAnswerTtl = Duration.seconds(30)
 
+/** What GitHub answers, or why it couldn't, within `lookupTimeout`. */
+const askGitHub = <A>(asked: Effect.Effect<A, GitHubAppError>) =>
+  asked.pipe(
+    Effect.mapError((error) => new RepoAccessUnknown({ message: error.message })),
+    Effect.timeoutOrElse({
+      duration: lookupTimeout,
+      orElse: () =>
+        Effect.fail(
+          new RepoAccessUnknown({
+            message: `GitHub didn't answer within ${Duration.format(lookupTimeout)}`,
+          }),
+        ),
+    }),
+  )
+
 export class RepoAccess extends Context.Service<
   RepoAccess,
   {
@@ -91,20 +106,6 @@ export class RepoAccess extends Context.Service<
           : Duration.min(refusedAnswerTtl, config.repoAccessTtl)
       }
 
-      const askGitHub = <A>(asked: Effect.Effect<A, GitHubAppError>) =>
-        asked.pipe(
-          Effect.mapError((error) => new RepoAccessUnknown({ message: error.message })),
-          Effect.timeoutOrElse({
-            duration: lookupTimeout,
-            orElse: () =>
-              Effect.fail(
-                new RepoAccessUnknown({
-                  message: `GitHub didn't answer within ${Duration.format(lookupTimeout)}`,
-                }),
-              ),
-          }),
-        )
-
       // By login and Repo, as GitHub answers: a login is kept current at each sign-in.
       const answers = yield* Cache.makeWith(
         (key: string) => {
@@ -125,10 +126,10 @@ export class RepoAccess extends Context.Service<
       )
 
       // By Repo: whether the App is installed on it, for a dev login, which has no GitHub login.
-      const installed = yield* Cache.makeWith(
-        (repo: string) => askGitHub(app.isInstalled(repo)),
-        { capacity: cacheCapacity, timeToLive },
-      )
+      const installed = yield* Cache.makeWith((repo: string) => askGitHub(app.isInstalled(repo)), {
+        capacity: cacheCapacity,
+        timeToLive,
+      })
 
       const status = Effect.fn("RepoAccess.status")(function* (
         participant: Participant,

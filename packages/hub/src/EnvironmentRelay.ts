@@ -110,6 +110,9 @@ export interface EnvironmentRelayHost {
   readonly afterHold: (effect: Effect.Effect<void>) => Effect.Effect<void>
 }
 
+/** Whether the connection's person has access to the Repo, as last asked. */
+const maySee = (client: EnvironmentWebClient, repo: string) => client.repos.get(repo) === true
+
 export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: EnvironmentRelayHost) {
   const environments = yield* Environments
   const sessions = yield* Sessions
@@ -117,9 +120,6 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
 
   // A Hub that restarted lost the Test builds it was running, and their drafts' values.
   yield* environments.failUnfinishedTestBuilds(yield* Clock.currentTimeMillis)
-
-  /** Whether the connection's person has access to the Repo, as last asked. */
-  const maySee = (client: EnvironmentWebClient, repo: string) => client.repos.get(repo) === true
 
   const toStarter = (build: RunningTestBuild, message: HubToWeb) =>
     host.toWeb(

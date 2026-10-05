@@ -1,4 +1,5 @@
 import { Redacted, Schema } from "effect"
+import { GitRequestId } from "./Git.ts"
 import {
   EnvironmentVersion,
   RequestId,
@@ -7,7 +8,6 @@ import {
   TestBuildId,
   VariablesRequestId,
 } from "./Ids.ts"
-import { GitRequestId } from "./Git.ts"
 import { EpochMillis, Participant, RepoName } from "./Session.ts"
 
 // Environments (ADR 0009): each Repo's recipe for its Sandboxes, versioned on the Hub and built

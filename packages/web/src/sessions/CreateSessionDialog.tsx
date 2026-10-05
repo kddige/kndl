@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router"
 import { type FormEvent, type ReactElement, useState } from "react"
 import { repoParams, runnerLabel } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
+import { isRefused, RepoRefusal, repoPattern, useRepoCheck } from "../app/repoAccess.tsx"
 import { Button, Dialog, DialogClose, Field, Input, PlusIcon, Select } from "../ui/index.ts"
 import { color, space, text } from "../ui/tokens.stylex.ts"
 
@@ -11,9 +12,6 @@ const styles = stylex.create({
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
   error: { color: color.dangerSubtleText, fontSize: text.sm },
 })
-
-/** `owner/name`, as the protocol's RepoName takes it. */
-const repoPattern = /^[^/\s]+\/[^/\s]+$/
 
 const anyRunner = "any"
 
@@ -35,7 +33,11 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
 
   const repoValue = repo.trim()
   const branchValue = baseBranch.trim()
-  const repoInvalid = touched && !repoPattern.test(repoValue)
+  // Checked as it's entered, so a Repo out of reach is said before the setup (#104).
+  const { check: repoCheck, recheck } = useRepoCheck(repoValue)
+  const repoMalformed = touched && !repoPattern.test(repoValue)
+  const repoRefused = isRefused(repoCheck)
+  const repoInvalid = repoMalformed || repoRefused
   const branchInvalid = touched && branchValue === ""
   const online = (runners ?? []).filter((candidate) => candidate.isOnline)
 
@@ -51,7 +53,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setTouched(true)
-    if (!repoPattern.test(repoValue) || branchValue === "") return
+    if (!repoPattern.test(repoValue) || repoRefused || branchValue === "") return
     setBusy(true)
     setError(null)
     try {
@@ -112,7 +114,13 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
           label="Repo"
           description="The GitHub repository, as owner/name."
           invalid={repoInvalid}
-          error={repoInvalid ? "Enter the Repo as owner/name." : undefined}
+          error={
+            repoMalformed ? (
+              "Enter the Repo as owner/name."
+            ) : repoRefused && repoCheck !== null ? (
+              <RepoRefusal repo={repoValue} check={repoCheck} onRecheck={recheck} />
+            ) : undefined
+          }
         >
           <Input
             value={repo}
