@@ -19,6 +19,7 @@ import {
   Effect,
   Exit,
   Layer,
+  Redacted,
   Scope,
   Semaphore,
   Stream,
@@ -29,6 +30,7 @@ import { ClaudeTrust } from "./ClaudeTrust.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
+import { CredentialProxy } from "./proxy/CredentialProxy.ts"
 import { writeRepoFiles } from "./RepoFiles.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { noRepoFiles, Sandboxes } from "./Sandbox.ts"
@@ -122,6 +124,7 @@ export const SessionsLive = Layer.effect(
     const hubGit = yield* HubGit
     const hubVariables = yield* HubVariables
     const projectsDir = yield* ClaudeProjectsDir
+    const proxy = yield* CredentialProxy
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
@@ -133,6 +136,22 @@ export const SessionsLive = Layer.effect(
     /** The Environment version each started Session's Sandbox runs. */
     const environmentVersions = new Map<SessionId, EnvironmentVersion>()
     const locks = new Map<SessionId, Semaphore.Semaphore>()
+
+    /**
+     * Gives the Session a Session token for the credential proxy, standing for its mod token, as
+     * it starts or wakes. Claude Code on the host doesn't use it yet: in the Sandbox (#146), it
+     * holds the token in place of the mod token and any Claude credential.
+     */
+    const admit = (sessionId: SessionId, modToken: string) => {
+      modTokens.set(sessionId, modToken)
+      return proxy.admit({ sessionId, modToken: Redacted.make(modToken) })
+    }
+
+    /** Forgets the Session's mod token and revokes its Session token, as it stops. */
+    const forget = (sessionId: SessionId) => {
+      modTokens.delete(sessionId)
+      return proxy.revoke(sessionId)
+    }
 
     /** Starting and stopping one Session happen one at a time. */
     const serialized =
@@ -206,7 +225,7 @@ export const SessionsLive = Layer.effect(
       serialized(sessionId)(
         Effect.gen(function* () {
           const output = withoutValue(yield* tmux.lastOutput(sessionId), modTokens.get(sessionId))
-          modTokens.delete(sessionId)
+          yield* forget(sessionId)
           const exited = `Session ${sessionId} exited with ${exitCode ?? "unknown status"}`
           const log = exitCode === 0 ? Effect.logInfo : Effect.logWarning
           // Only the Hub knows the Environment's Sensitive values, so the output itself goes to the
@@ -322,7 +341,7 @@ export const SessionsLive = Layer.effect(
             // Its trust may have been dropped since startup, and the dialog would stop the mod.
             yield* trust.ensure
             yield* ensureDirectory(directories.claude)
-            modTokens.set(sessionId, request.modToken)
+            yield* admit(sessionId, request.modToken)
             yield* tmux.launch({
               sessionId,
               cwd: directories.claude,
@@ -338,7 +357,7 @@ export const SessionsLive = Layer.effect(
             return yield* started(environmentVersions.get(sessionId))
           }
           const reason = message(launched.cause)
-          modTokens.delete(sessionId)
+          yield* forget(sessionId)
           yield* Effect.logWarning(`Session ${sessionId} failed to start: ${reason}`)
           yield* tmux.kill(sessionId)
           yield* sandboxes.stop(sessionId, "Sleep")
@@ -370,7 +389,7 @@ export const SessionsLive = Layer.effect(
           yield* session.pane.terminate
           yield* Deferred.await(session.exited).pipe(Effect.timeoutOption(StopGracePeriod))
           yield* tmux.kill(sessionId)
-          modTokens.delete(sessionId)
+          yield* forget(sessionId)
           const launched = yield* Effect.gen(function* () {
             const directories = sessionDirectories(config.sessionsRoot, sessionId)
             const launch = claudeLaunch({
@@ -390,7 +409,7 @@ export const SessionsLive = Layer.effect(
             })
             yield* trust.ensure
             yield* ensureDirectory(directories.claude)
-            modTokens.set(sessionId, request.modToken)
+            yield* admit(sessionId, request.modToken)
             yield* tmux.launch({
               sessionId,
               cwd: directories.claude,
@@ -413,7 +432,7 @@ export const SessionsLive = Layer.effect(
             )
           }
           const reason = message(launched.cause)
-          modTokens.delete(sessionId)
+          yield* forget(sessionId)
           yield* Effect.logWarning(`Session ${sessionId} failed to restart: ${reason}`)
           yield* tmux.kill(sessionId)
           yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
@@ -436,7 +455,7 @@ export const SessionsLive = Layer.effect(
             )
             if (exited._tag === "Some") exitCode = exited.value
           }
-          modTokens.delete(sessionId)
+          yield* forget(sessionId)
           yield* tmux.kill(sessionId)
           // The Workspace's last state goes to its WIP ref before the Session sleeps, and before
           // it is archived: the archive hook. Archiving destroys the Sandbox and its volumes and
@@ -474,6 +493,7 @@ export const SessionsLive = Layer.effect(
             yield* Deferred.await(session.exited).pipe(Effect.timeoutOption(StopGracePeriod))
           }
           yield* tmux.kill(sessionId)
+          yield* forget(sessionId)
           yield* sandboxes.purge(sessionId)
           yield* workspaces.remove(sessionId)
           yield* Effect.logInfo(`Session ${sessionId} purged`)
