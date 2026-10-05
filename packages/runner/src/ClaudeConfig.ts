@@ -11,7 +11,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import type { RunnerLogin } from "@claude-hub/protocol"
+import type { ClaudePlan, ClaudeSubscriptionType, RunnerLogin } from "@claude-hub/protocol"
 import { Context, Data, Effect, FileSystem } from "effect"
 
 // Claude Code's own config file, `.claude.json`: the Runner reads the account signed in from it
@@ -55,6 +55,32 @@ export const readClaudeConfig = (path: string) =>
 export function loginFromClaudeConfig(config: unknown): RunnerLogin | undefined {
   const account = field(field(config, "oauthAccount"), "emailAddress")
   return typeof account === "string" && account.length > 0 ? { account } : undefined
+}
+
+/** Claude Code's `organizationType`s, by the plan Claude Code 2.1.289 takes each for. */
+const plansByOrganization: Record<string, ClaudeSubscriptionType> = {
+  claude_pro: "pro",
+  claude_max: "max",
+  claude_team: "team",
+  claude_enterprise: "enterprise",
+}
+
+/**
+ * The plan of the signed-in account, from `oauthAccount.organizationType` and
+ * `organizationRateLimitTier`, which Claude Code refreshes as it starts.
+ */
+export function planFromClaudeConfig(config: unknown): ClaudePlan | undefined {
+  const account = field(config, "oauthAccount")
+  const organization = field(account, "organizationType")
+  const subscriptionType =
+    typeof organization === "string" && Object.hasOwn(plansByOrganization, organization)
+      ? plansByOrganization[organization]
+      : undefined
+  if (subscriptionType === undefined) return undefined
+  const tier = field(account, "organizationRateLimitTier")
+  return typeof tier === "string" && tier !== ""
+    ? { subscriptionType, rateLimitTier: tier }
+    : { subscriptionType }
 }
 
 /**

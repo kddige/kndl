@@ -6,6 +6,9 @@ import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
+import { CredentialProxyLive } from "./proxy/CredentialProxy.ts"
+import { RunnerCredentialLive } from "./proxy/RunnerCredential.ts"
+import { SessionTokensLive } from "./proxy/SessionTokens.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { Sessions, SessionsLive } from "./Sessions.ts"
@@ -40,9 +43,17 @@ export const runRunner = (
   })
 
 /**
+ * The credential proxy and mod relay for Sessions in Sandboxes, serving from the Runner's start,
+ * over the Session tokens and the Runner's own Claude credential.
+ */
+export const CredentialProxyHost = CredentialProxyLive.pipe(
+  Layer.provide([SessionTokensLive, RunnerCredentialLive]),
+)
+
+/**
  * Sessions on this host: Claude Code in tmux, Workspaces cloned and committed to with host git,
  * and each Session's tools run in its own microsandbox VM. The sessions root is kept trusted in
- * Claude Code's config file.
+ * Claude Code's config file. Each Session is given a Session token for the credential proxy.
  */
 export const SessionsHost = SessionsLive.pipe(
   Layer.provide([
@@ -56,4 +67,5 @@ export const SessionsHost = SessionsLive.pipe(
   Layer.provideMerge(ClaudeTrustLive(claudeConfigPath())),
   Layer.provideMerge(ClaudeModelsLive),
   Layer.provideMerge(HubLinkLive),
+  Layer.provideMerge(CredentialProxyHost),
 )

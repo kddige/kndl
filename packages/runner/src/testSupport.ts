@@ -14,6 +14,9 @@ import {
 import { type Cause, Effect, Fiber, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
+import { CredentialProxy, makeCredentialProxy } from "./proxy/CredentialProxy.ts"
+import { NoClaudeCredential, RunnerCredential } from "./proxy/RunnerCredential.ts"
+import { makeSessionTokens } from "./proxy/SessionTokens.ts"
 import { noRepoFiles, type RepoFiles, Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
@@ -30,6 +33,43 @@ import { WorkspaceError, Workspaces } from "./Workspace.ts"
 import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 export const sessionId = (id: string) => Schema.decodeSync(SessionId)(id)
+
+/** A Runner with no Claude credential of its own. */
+export const NoRunnerCredential = RunnerCredential.of({
+  current: Effect.fail(new NoClaudeCredential({ message: "none in this test" })),
+  reread: Effect.fail(new NoClaudeCredential({ message: "none in this test" })),
+  describe: Effect.fail(new NoClaudeCredential({ message: "none in this test" })),
+})
+
+/**
+ * The credential proxy without its server: real Session tokens, and a record of the Sessions
+ * admitted and revoked, in order.
+ */
+export class FakeCredentialProxy {
+  readonly tokens = makeSessionTokens()
+  readonly calls: Array<string> = []
+  readonly layer: Layer.Layer<CredentialProxy>
+
+  constructor() {
+    const proxy = makeCredentialProxy({
+      port: 7778,
+      tokens: this.tokens,
+      runnerCredential: NoRunnerCredential,
+    })
+    this.layer = Layer.succeed(
+      CredentialProxy,
+      CredentialProxy.of({
+        ...proxy,
+        admit: (grant) =>
+          Effect.tap(proxy.admit(grant), () =>
+            Effect.sync(() => this.calls.push(`admit ${grant.sessionId}`)),
+          ),
+        revoke: (id) =>
+          Effect.tap(proxy.revoke(id), () => Effect.sync(() => this.calls.push(`revoke ${id}`))),
+      }),
+    )
+  }
+}
 
 /** A variable value, as the Hub sends it. */
 export const variable = (name: string, value: string, availableAtBuild = false): VariableValue => ({

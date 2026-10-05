@@ -27,7 +27,12 @@ import { HubVariablesLive } from "./HubVariables.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { SessionsLive } from "./Sessions.ts"
-import { FakeSandboxes, FakeWorkspaceGit, FakeWorkspaces } from "./testSupport.ts"
+import {
+  FakeCredentialProxy,
+  FakeSandboxes,
+  FakeWorkspaceGit,
+  FakeWorkspaces,
+} from "./testSupport.ts"
 import { TmuxLive } from "./Tmux.ts"
 import { Updater } from "./Updater.ts"
 
@@ -176,6 +181,7 @@ async function startRunner(hub: TestHub) {
       new FakeWorkspaces(sessionsRoot).layer,
       new FakeSandboxes().layer,
       new FakeWorkspaceGit().layer,
+      new FakeCredentialProxy().layer,
     ]),
     Layer.provideMerge(
       Layer.succeed(

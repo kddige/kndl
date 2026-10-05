@@ -5,6 +5,7 @@ import { existsSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { BunRuntime, BunServices, BunSocket } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
+import { ProxyConfigLive } from "./proxy/ProxyConfig.ts"
 import { runRunner, SessionsHost } from "./Runner.ts"
 import { ModBundle, RunnerConfigLive } from "./RunnerConfig.ts"
 import { LoadCheckVariable } from "./SelfUpdate.ts"
@@ -12,7 +13,7 @@ import { UpdaterLive } from "./Updater.ts"
 
 const RunnerLive = UpdaterLive.pipe(
   Layer.provideMerge(SessionsHost),
-  Layer.provideMerge(RunnerConfigLive),
+  Layer.provideMerge(Layer.mergeAll(RunnerConfigLive, ProxyConfigLive)),
   Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
 )
 

@@ -19,6 +19,7 @@ import {
   claudeConfigPath,
   hasTranscript,
   loginFromClaudeConfig,
+  planFromClaudeConfig,
   resolveRunnerLogin,
   trustDirectory,
 } from "./ClaudeConfig.ts"
@@ -154,6 +155,30 @@ describe("Claude Code's config file", () => {
         none,
       ),
     ).toBe("/cfg/.claude-custom-oauth.json")
+  })
+})
+
+describe("planFromClaudeConfig", () => {
+  test("is the signed-in account's plan, with its rate-limit tier", () => {
+    expect(
+      planFromClaudeConfig({
+        oauthAccount: {
+          organizationType: "claude_max",
+          organizationRateLimitTier: "default_claude_max_20x",
+        },
+      }),
+    ).toEqual({ subscriptionType: "max", rateLimitTier: "default_claude_max_20x" })
+    expect(planFromClaudeConfig({ oauthAccount: { organizationType: "claude_pro" } })).toEqual({
+      subscriptionType: "pro",
+    })
+  })
+
+  test("is unknown without a subscription", () => {
+    expect(planFromClaudeConfig({})).toBeUndefined()
+    expect(planFromClaudeConfig({ oauthAccount: { organizationType: "api" } })).toBeUndefined()
+    expect(
+      planFromClaudeConfig({ oauthAccount: { organizationType: "constructor" } }),
+    ).toBeUndefined()
   })
 })
 
