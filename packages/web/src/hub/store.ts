@@ -121,6 +121,11 @@ export interface HubState {
   readonly terminals: Readonly<Record<SessionId, OpenTerminal>>
   /** The Environments of the Repos the client asked about, kept current as versions are applied. */
   readonly environments: Readonly<Record<string, RepoEnvironment>>
+  /**
+   * The Repos the person lost access to while connected (#104), until the Hub sends their
+   * Environment again: a screen of one asks why.
+   */
+  readonly lostRepos: Readonly<Record<string, true>>
   /** Null until the client first asks for them; then kept current. */
   readonly sharedVariables: ReadonlyArray<SharedVariable> | null
   /** The Test builds this client started since it loaded. */
@@ -153,6 +158,7 @@ export const initialState: HubState = {
   joined: {},
   terminals: {},
   environments: {},
+  lostRepos: {},
   sharedVariables: null,
   testBuilds: {},
   appPermissions: null,
@@ -281,14 +287,17 @@ export function reduce(state: HubState, action: HubAction): HubState {
     case "CommandFailed":
       // Refusals are the client's to report.
       return state
-    case "EnvironmentState":
+    case "EnvironmentState": {
+      const { [action.repo]: _, ...lostRepos } = state.lostRepos
       return {
         ...state,
         environments: {
           ...state.environments,
           [action.repo]: { environment: action.environment, versions: action.versions },
         },
+        lostRepos: action.repo in state.lostRepos ? lostRepos : state.lostRepos,
       }
+    }
     case "EnvironmentDraftChecked":
       // An answer for whoever asked: it says nothing that lasts.
       return state
@@ -317,6 +326,30 @@ export function reduce(state: HubState, action: HubAction): HubState {
       }))
     case "AppPermissionsChecked":
       return { ...state, appPermissions: action.check }
+    case "RepoChecked":
+      // An answer for whoever asked: it says nothing that lasts.
+      return state
+    case "RepoAccessLost":
+      return forgetRepo(state, action.repo)
+  }
+}
+
+/**
+ * Drops what the client knows of a Repo it lost access to (#104), its Environment and the Test
+ * builds of it, and notes the loss. Its Sessions go with a SessionRemoved each.
+ */
+function forgetRepo(state: HubState, repo: string): HubState {
+  const { [repo]: _, ...environments } = state.environments
+  const builds = Object.entries(state.testBuilds) as Array<[TestBuildId, TestBuildRun]>
+  const kept = builds.filter(([, run]) => run.testBuild.repo !== repo)
+  return {
+    ...state,
+    environments,
+    lostRepos: { ...state.lostRepos, [repo]: true },
+    testBuilds:
+      kept.length === builds.length
+        ? state.testBuilds
+        : (Object.fromEntries(kept) as Record<TestBuildId, TestBuildRun>),
   }
 }
 

@@ -61,6 +61,11 @@
 //   person who lost access is taken out of the Repo's Sessions (and their presence) within about
 //   twice that, or at their next command once their cached answer expires, whichever is first.
 //   When GitHub can't say, a person keeps what they had.
+//   Environments follow Repo access too (#104, ADR 0009): every Environment command about a Repo,
+//   reading it, checking or applying a draft or starting a Test build, is checked the same way and
+//   refused alike whether the Repo exists or not. A person who loses access is told the Repo's
+//   Environment is gone from them with a RepoAccessLost. CheckRepo asks for a Repo as it is
+//   entered, before a new Session or Environment is set up. Shared variables aren't any Repo's.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -71,6 +76,7 @@ import {
   CommandFailed,
   DeliverPrompt,
   type EnvironmentVersion,
+  GitAnswer,
   GitReply,
   type HubToRunner,
   HubToWeb,
@@ -104,6 +110,9 @@ import {
   StopSession,
   StopTurn,
   PurgeSession,
+  type RepoName,
+  RepoAccessLost,
+  RepoChecked,
   TurnStopRequested,
   type WebToHub,
   cantStartText,
@@ -130,6 +139,7 @@ import {
   makeEnvironmentRelay,
 } from "./EnvironmentRelay.ts"
 import { Environments } from "./Environments.ts"
+import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { ModOutbox } from "./ModOutbox.ts"
@@ -213,6 +223,14 @@ interface AccessVerdict {
   readonly refusal?: string
 }
 
+/** Why a command about a Repo is refused: alike whether the Repo exists or not (ADR 0003). */
+const noRepoAccess = (repo: string) =>
+  `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`
+
+/** Why a dev login's Test build is refused: the App can't mint a token to clone it with. */
+const notInstalledForTestBuild = (repo: string) =>
+  `The GitHub App isn't installed on ${repo}, so a Test build can't clone it: install the App on the Repo, then try again.`
+
 /** The work branch a new Session commits to. */
 export const workBranchFor = (sessionId: SessionId) => `claude/${sessionId}`
 
@@ -268,6 +286,7 @@ export class SessionRelay extends Context.Service<
       const sessionGit = yield* SessionGit
       const environments = yield* Environments
       const access = yield* RepoAccess
+      const app = yield* GitHubApp
       const drift = yield* PermissionDrift
       const hubVersion = yield* HubVersion
       const layerScope = yield* Effect.scope
@@ -292,6 +311,8 @@ export class SessionRelay extends Context.Service<
         readonly name: string
         readonly login: RunnerLogin
         readonly peer: Peer<HubToRunner>
+        /** Whether it asks how to clone a Test build (#104). */
+        readonly asksCloneAccess: boolean
       }
 
       const webClients = new Set<WebClient>()
@@ -630,6 +651,7 @@ export class SessionRelay extends Context.Service<
 
       /** Moves the Session to `state`, if it isn't there, logging why. */
       const environmentRelay = yield* makeEnvironmentRelay({
+        hasGitHubApp: app.isConfigured,
         onlineRunner: (id) => onlineRunners.get(id),
         toWeb: (message, to: (client: EnvironmentWebClient) => boolean) => toWeb(message, to),
         repoSessionsUpdated: Effect.fn("SessionRelay.repoSessionsUpdated")(function* (repo) {
@@ -725,7 +747,10 @@ export class SessionRelay extends Context.Service<
             continue
           }
           if (before !== true) continue
-          yield* Effect.logInfo(`${who.login} no longer has access to ${repo}: out of its Sessions`)
+          yield* Effect.logInfo(
+            `${who.login} no longer has access to ${repo}: out of its Sessions and Environment`,
+          )
+          client.peer.send(RepoAccessLost.make({ repo }))
           for (const session of ofRepo) {
             client.terminals.delete(session.id)
             if (client.joined.has(session.id)) {
@@ -758,12 +783,17 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
-       * Checks everyone connected against every Repo with Sessions again, as the cache lets it:
-       * a person who lost access is taken out of the Repo's Sessions. Off the lock but for the
+       * Checks everyone connected against every Repo with Sessions, or that they were let into,
+       * again, as the cache lets it: a person who lost access is taken out of the Repo's Sessions
+       * and Environment. Off the lock but for the
        * changes, since it may wait on GitHub. When GitHub can't say, a person keeps what they had.
        */
       const recheckAccess = Effect.gen(function* () {
         const repos = new Set((yield* sessions.list).map((session) => session.repo))
+        // And those someone was let into without a Session, such as an Environment being set up.
+        for (const client of webClients) {
+          for (const [repo, allowed] of client.repos) if (allowed) repos.add(repo)
+        }
         const people = new Map([...webClients].map((client) => [client.you.id, client.you]))
         const failures: Array<string> = []
         const answers = yield* Effect.forEach(
@@ -1027,7 +1057,10 @@ export class SessionRelay extends Context.Service<
       // ── The web channel ──────────────────────────────────────────────────
 
       /** A web command the relay handles under its lock, once Repo access allows it. */
-      type RelayedCommand = Exclude<WebToHub, { readonly _tag: "CheckAppPermissions" }>
+      type RelayedCommand = Exclude<
+        WebToHub,
+        { readonly _tag: "CheckAppPermissions" | "CheckRepo" }
+      >
 
       const receiveWeb = (client: WebClient): Receive<WebToHub> => {
         const { you, peer } = client
@@ -1043,24 +1076,33 @@ export class SessionRelay extends Context.Service<
         /**
          * What Repo access says of a command (ADR 0003), asked off the lock: what GitHub said, to
          * record under it, and why the command is refused, if it is. A Session in a Repo the
-         * person has no access to is refused as if there were no such Session. Leaving a Session
-         * or closing its terminal needs no access, nor do Environment commands: there are no
-         * roles yet (ADR 0009).
+         * person has no access to is refused as if there were no such Session, and a command about
+         * a Repo, creating a Session or about its Environment (#104), alike whether the Repo
+         * exists or not. Leaving a Session or closing its terminal needs no access, nor do Runner
+         * commands or shared variables, which are no Repo's: there are no roles (ADR 0009).
          */
         const authorize = Effect.fn("SessionRelay.authorize")(function* (
           message: RelayedCommand,
         ): Effect.fn.Return<AccessVerdict, SqlError> {
-          if (isEnvironmentCommand(message) || isRunnerCommand(message)) return {}
+          if (isRunnerCommand(message)) return {}
           let repo: string
           let refusal: string
           switch (message._tag) {
             case "WebHello":
             case "LeaveSession":
             case "CloseTerminal":
+            case "GetSharedVariables":
+            case "SetSharedVariable":
+            case "DeleteSharedVariable":
               return {}
+            case "StartTestBuild":
+              return yield* authorizeTestBuild(message.repo)
             case "CreateSession":
+            case "GetEnvironment":
+            case "CheckEnvironmentDraft":
+            case "ApplyEnvironment":
               repo = message.repo
-              refusal = `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`
+              refusal = noRepoAccess(repo)
               break
             default: {
               const session = yield* sessions.get(message.sessionId)
@@ -1087,10 +1129,37 @@ export class SessionRelay extends Context.Service<
           yield* Effect.logWarning(checked.unknown)
           return {
             refusal:
-              message._tag === "CreateSession"
-                ? checked.unknown
-                : "Could not check your access on GitHub; try again.",
+              "sessionId" in message
+                ? "Could not check your access on GitHub; try again."
+                : checked.unknown,
           }
+        })
+
+        /**
+         * Repo access for a Test build; and, for a dev login, which has access whatever GitHub
+         * says, that the GitHub App is installed on the Repo to clone it with (a GitHub sign-in
+         * has access only where it is).
+         */
+        const authorizeTestBuild = Effect.fn("SessionRelay.authorizeTestBuild")(function* (
+          repo: RepoName,
+        ): Effect.fn.Return<AccessVerdict> {
+          const status = yield* access
+            .status(you, repo)
+            .pipe(
+              Effect.catchTag("RepoAccessUnknown", (error) =>
+                Effect.as(Effect.logWarning(error.message), { unknown: error.message }),
+              ),
+            )
+          if (status === "Allowed") return { learned: { repo, allowed: true } }
+          if (status === "NotInstalled" && you.id.startsWith("dev:")) {
+            return { learned: { repo, allowed: true }, refusal: notInstalledForTestBuild(repo) }
+          }
+          if (typeof status === "string") {
+            return { learned: { repo, allowed: false }, refusal: noRepoAccess(repo) }
+          }
+          // When GitHub can't say, the person keeps what they had.
+          if (client.repos.get(repo) === true) return {}
+          return { refusal: status.unknown }
         })
 
         /** The Session a command names, or none, having refused the command. */
@@ -1483,29 +1552,77 @@ export class SessionRelay extends Context.Service<
             }),
           )
 
+        /**
+         * Checks a Repo as it is entered (#104), off the lock since it waits on GitHub: whether the
+         * person has access, recorded as any check is, and if not, why.
+         */
+        const checkRepo = Effect.fn("SessionRelay.checkRepo")(function* (
+          message: Extract<WebToHub, { readonly _tag: "CheckRepo" }>,
+        ) {
+          const { requestId, repo } = message
+          if (message.fresh === true) yield* access.forget(you, repo)
+          const checked = yield* Effect.result(access.status(you, repo))
+          if (checked._tag === "Failure") {
+            yield* Effect.logWarning(checked.failure.message)
+            return refuse(message, checked.failure.message)
+          }
+          const status = checked.success
+          // A dev login's access doesn't hang on the App being installed.
+          const allowed =
+            status === "Allowed" || (you.id.startsWith("dev:") && status === "NotInstalled")
+          yield* serialized(accessKnown(you, repo, allowed))
+          const installUrl =
+            status === "NotInstalled" && app.isConfigured
+              ? yield* app.installUrl.pipe(
+                  Effect.map(Option.some),
+                  Effect.catchTag("GitHubAppError", (error) =>
+                    Effect.as(Effect.logWarning(error.message), Option.none<string>()),
+                  ),
+                )
+              : Option.none<string>()
+          peer.send(
+            RepoChecked.make({
+              requestId,
+              repo,
+              status,
+              ...(Option.isSome(installUrl) && { installUrl: installUrl.value }),
+            }),
+          )
+        })
+
         return (message) =>
           message._tag === "CheckAppPermissions"
             ? checkAppPermissions(message.requestId)
-            : authorize(message).pipe(
-                Effect.flatMap((verdict) =>
-                  serialized(
-                    Effect.gen(function* () {
-                      const { learned, refusal } = verdict
-                      if (learned !== undefined)
-                        yield* accessKnown(you, learned.repo, learned.allowed)
-                      if (refusal !== undefined) return refuse(message, refusal)
-                      return yield* handle(message)
-                    }),
-                  ),
-                ),
-                Effect.catchTag("SqlError", (error) =>
-                  Effect.logError("A web command failed", error).pipe(
-                    Effect.andThen(
-                      Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+            : message._tag === "CheckRepo"
+              ? checkRepo(message).pipe(
+                  Effect.catchTag("SqlError", (error) =>
+                    Effect.logError("A Repo check failed", error).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                      ),
                     ),
                   ),
-                ),
-              )
+                )
+              : authorize(message).pipe(
+                  Effect.flatMap((verdict) =>
+                    serialized(
+                      Effect.gen(function* () {
+                        const { learned, refusal } = verdict
+                        if (learned !== undefined)
+                          yield* accessKnown(you, learned.repo, learned.allowed)
+                        if (refusal !== undefined) return refuse(message, refusal)
+                        return yield* handle(message)
+                      }),
+                    ),
+                  ),
+                  Effect.catchTag("SqlError", (error) =>
+                    Effect.logError("A web command failed", error).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                      ),
+                    ),
+                  ),
+                )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
@@ -1587,6 +1704,32 @@ export class SessionRelay extends Context.Service<
             message._tag === "TestBuildFinished"
           ) {
             return yield* environmentRelay.receiveRunner(runner, message)
+          }
+          if (message._tag === "FetchCloneAccess") {
+            const { requestId } = message
+            const repo = environmentRelay.testBuildRepo(runner, message.testBuildId)
+            if (repo === undefined) {
+              yield* Effect.logWarning(
+                `Runner ${runner.name} asked to clone a Test build not its own`,
+                message.testBuildId,
+              )
+              return runner.peer.send(
+                GitReply.make({
+                  requestId,
+                  answer: GitAnswer.cases.GitFailed.make({
+                    message: "Not a Test build this Runner runs.",
+                  }),
+                }),
+              )
+            }
+            // Answered off the lock: it may wait on GitHub.
+            yield* sessionGit.cloneAccess(repo).pipe(
+              Effect.flatMap((answer) =>
+                Effect.sync(() => runner.peer.send(GitReply.make({ requestId, answer }))),
+              ),
+              Effect.forkIn(layerScope),
+            )
+            return
           }
           if (message._tag === "SessionPurged") {
             // The Session is gone from the Hub by now; only the note to purge it is left.
@@ -1718,6 +1861,7 @@ export class SessionRelay extends Context.Service<
             name: identity.name,
             login: hello.login,
             peer,
+            asksCloneAccess: hello.asksCloneAccess === true,
           }
           yield* serialized(
             Effect.gen(function* () {

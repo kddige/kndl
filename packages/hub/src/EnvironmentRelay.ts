@@ -10,6 +10,13 @@
 //   database in plaintext.
 // - A Test build's log and result are redacted (Redaction.ts) of its draft's Sensitive values
 //   before they reach the web.
+// - Environments follow Repo access (ADR 0003, ADR 0009, #104): the Session relay lets through only
+//   the commands about a Repo the person has access to, and an Environment, a Test build's log or
+//   its result goes only to connections whose person has access to its Repo. Shared variables
+//   aren't any Repo's: everyone signed in may manage them, as before.
+// - A Test build clones its Repo with a token the Hub mints for the one clone (SessionGit.ts), the
+//   Runner asking for it with a FetchCloneAccess just before. A Runner from before that would clone
+//   with its host's credentials, so with the GitHub App it gets no Test builds.
 //
 // It runs under the Session relay's lock, as part of it.
 
@@ -18,6 +25,7 @@ import {
   type HubToRunner,
   HubToWeb,
   type Participant,
+  type RepoName,
   type RunnerId,
   RunTestBuild,
   type RunnerToHub,
@@ -61,6 +69,8 @@ export type EnvironmentReport = Extract<
 export interface EnvironmentWebClient {
   readonly you: Participant
   readonly peer: Peer<HubToWeb>
+  /** Whether its person has access to each Repo, as last asked (ADR 0003). */
+  readonly repos: ReadonlyMap<string, boolean>
 }
 
 /** A Runner online, as the relay knows it. */
@@ -68,11 +78,13 @@ export interface EnvironmentRunner {
   readonly id: RunnerId
   readonly name: string
   readonly peer: Peer<HubToRunner>
+  /** Whether it asks how to clone a Test build (RunnerHello.asksCloneAccess). */
+  readonly asksCloneAccess: boolean
 }
 
 interface RunningTestBuild {
   readonly id: TestBuildId
-  readonly repo: string
+  readonly repo: RepoName
   readonly runnerId: RunnerId
   readonly startedBy: Participant
   readonly values: ReadonlyArray<VariableValue>
@@ -86,6 +98,8 @@ interface RunningTestBuild {
 
 /** What the Environment relay needs of the Session relay. */
 export interface EnvironmentRelayHost {
+  /** Whether the Hub has the GitHub App, to mint a Test build's clone token with. */
+  readonly hasGitHubApp: boolean
   readonly onlineRunner: (id: RunnerId) => EnvironmentRunner | undefined
   readonly toWeb: (message: HubToWeb, to: (client: EnvironmentWebClient) => boolean) => void
   /** Tells web clients the Repo's Sessions changed, as when its Environment has a new version. */
@@ -96,6 +110,9 @@ export interface EnvironmentRelayHost {
   readonly afterHold: (effect: Effect.Effect<void>) => Effect.Effect<void>
 }
 
+/** Whether the connection's person has access to the Repo, as last asked. */
+const maySee = (client: EnvironmentWebClient, repo: string) => client.repos.get(repo) === true
+
 export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: EnvironmentRelayHost) {
   const environments = yield* Environments
   const sessions = yield* Sessions
@@ -105,7 +122,10 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
   yield* environments.failUnfinishedTestBuilds(yield* Clock.currentTimeMillis)
 
   const toStarter = (build: RunningTestBuild, message: HubToWeb) =>
-    host.toWeb(message, (client) => client.you.id === build.startedBy.id)
+    host.toWeb(
+      message,
+      (client) => client.you.id === build.startedBy.id && maySee(client, build.repo),
+    )
 
   const endTestBuild = Effect.fn("EnvironmentRelay.endTestBuild")(function* (
     build: RunningTestBuild,
@@ -145,6 +165,8 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
     const { you, peer } = client
     const { requestId } = message
     const others = (other: EnvironmentWebClient) => other.peer !== peer
+    const othersWithAccess = (repo: string) => (other: EnvironmentWebClient) =>
+      others(other) && maySee(other, repo)
     const at = yield* Clock.currentTimeMillis
     switch (message._tag) {
       case "GetEnvironment":
@@ -167,6 +189,11 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
         if (runner === undefined) {
           return yield* new EnvironmentRefused({
             message: `Runner ${message.runnerId} is not online.`,
+          })
+        }
+        if (host.hasGitHubApp && !runner.asksCloneAccess) {
+          return yield* new EnvironmentRefused({
+            message: `${runner.name} runs an older claude-hub, which would clone the Repo with its machine's own git credentials: update it to run Test builds on it.`,
           })
         }
         const prepared = yield* environments.prepare(message.repo, message.draft)
@@ -212,7 +239,7 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
         const state = yield* environmentState(message.repo)
         host.sensitiveValuesChanged(message.repo)
         peer.send({ ...state, requestId })
-        host.toWeb(state, others)
+        host.toWeb(state, othersWithAccess(message.repo))
         return yield* host.repoSessionsUpdated(message.repo)
       }
 
@@ -356,5 +383,11 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
     return `${repo} has no Environment yet: set one up before its first Session.`
   })
 
-  return { receiveWeb, receiveRunner, runnerGone, missingEnvironment }
+  /** The Repo of a Test build the Runner runs, to clone it with; none for any other. */
+  const testBuildRepo = (runner: EnvironmentRunner, testBuildId: TestBuildId) => {
+    const build = running.get(testBuildId)
+    return build === undefined || build.runnerId !== runner.id ? undefined : build.repo
+  }
+
+  return { receiveWeb, receiveRunner, runnerGone, missingEnvironment, testBuildRepo }
 })

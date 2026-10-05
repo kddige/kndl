@@ -539,4 +539,33 @@ describe("Environments", () => {
     })
     expect(reduce(initialState, checked)).toBe(initialState)
   })
+
+  test("losing access to a Repo drops its Environment and Test builds, until it is sent again", () => {
+    const lost = run(
+      hub({ _tag: "EnvironmentState", repo: "acme/app", environment, versions }),
+      hub({ _tag: "EnvironmentState", repo: "acme/other", environment: null, versions: [] }),
+      hub({ _tag: "TestBuildStarted", requestId: "q-2", testBuild }),
+      hub({ _tag: "RepoAccessLost", repo: "acme/app" }),
+    )
+    expect(Object.keys(lost.environments)).toEqual(["acme/other"])
+    expect(lost.testBuilds).toEqual({})
+    expect(lost.lostRepos).toEqual({ "acme/app": true })
+
+    const back = reduce(
+      lost,
+      hub({ _tag: "EnvironmentState", repo: "acme/app", environment, versions }),
+    )
+    expect(back.lostRepos).toEqual({})
+    expect(back.environments["acme/app"]?.environment?.version).toBe(2 as never)
+  })
+
+  test("a Repo check is an answer for whoever asked", () => {
+    const checked = hub({
+      _tag: "RepoChecked",
+      requestId: "q-4",
+      repo: "acme/app",
+      status: "NoAccess",
+    })
+    expect(reduce(initialState, checked)).toBe(initialState)
+  })
 })

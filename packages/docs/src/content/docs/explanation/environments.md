@@ -29,7 +29,7 @@ Builds are keyed by the version that last changed the Build, so a change to reso
 
 ## Test builds
 
-A draft that changes the Build can only be applied once a **Test build** of exactly that draft has passed. That covers the image, either script, Docker, the dependency folders, and any Variable available at build, its value included. You pick a Runner; it runs the Bootstrap script, then the Start script on a fresh clone of the Repo's default branch, streams the log to the web UI, and leaves nothing behind.
+A draft that changes the Build can only be applied once a **Test build** of exactly that draft has passed. That covers the image, either script, Docker, the dependency folders, and any Variable available at build, its value included. You pick a Runner; it runs the Bootstrap script, then the Start script on a fresh clone of the Repo's default branch, streams the log to the web UI, and leaves nothing behind. The clone uses a read-only token for that Repo from the Hub's GitHub App, so the Runner host's own git credentials are never involved; if the App isn't installed on the Repo, the Test build fails before cloning.
 
 The Hub records each result against a keyed digest of the draft's build inputs, so changing anything that affects the Build after a Test build needs another one. Changes that don't affect the Build, such as resources or rotating a Sensitive value not available at build, apply at once.
 
@@ -67,4 +67,6 @@ The Hub never sends values with a Session's start: a Runner fetches them over it
 - **Not a Dockerfile.** Runners would need an image builder. A script run against a chosen image gives most of the flexibility with what microsandbox already provides.
 - **Not a bootstrap on every boot.** Installing Docker alone took about 33 seconds, against about a quarter of a second to boot from a Build. A second Session on the same Build costs only its own writes on disk.
 
-Anyone signed in can change an Environment today, since claude-hub has no roles yet. That is a known gap.
+## Who can change an Environment
+
+An Environment follows its Repo's access, as the Repo's Sessions do. Anyone with access to the Repo on GitHub can open its Environment, run Test builds and apply versions, and everyone who can has the same rights: there are no roles. Someone who loses access loses the Environment screen too. Shared variables belong to no Repo, so anyone signed in can manage them. See the [security model](/explanation/security-model/#who-can-do-what).

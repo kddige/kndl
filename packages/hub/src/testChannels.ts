@@ -146,6 +146,8 @@ export async function openRunner(
   token: string,
   sessions: ReadonlyArray<string> = [],
   version?: BuildVersion,
+  /** Whether it asks how to clone a Test build, as Runners do since #104. */
+  asksCloneAccess = true,
 ) {
   const runner = await Connection.open<ToRunner>(hub, "/ws/runner", bearer(token), {
     _tag: "RunnerHello",
@@ -154,6 +156,7 @@ export async function openRunner(
     login: runnerLogin,
     sessions,
     ...(version !== undefined && { version }),
+    ...(asksCloneAccess && { asksCloneAccess: true }),
   })
   await runner.take("RunnerWelcome")
   return runner

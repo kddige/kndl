@@ -73,6 +73,20 @@ export const GitAnswer = Schema.Union([
     token: Schema.RedactedFromValue(Schema.NonEmptyString),
     expiresAt: EpochMillis,
   }),
+  /**
+   * How the Runner's host git clones a Test build's Repo (#104): with a fresh installation token,
+   * `contents:read` and scoped to the Repo, handed to git for the one clone and never stored; or,
+   * when the Hub has no GitHub App (dev mode), with the host's own credentials.
+   */
+  Schema.TaggedStruct("CloneAccess", {
+    credentials: Schema.Union([
+      Schema.TaggedStruct("CloneToken", {
+        token: Schema.RedactedFromValue(Schema.NonEmptyString),
+        expiresAt: EpochMillis,
+      }),
+      Schema.TaggedStruct("HostCredentials", {}),
+    ]).pipe(Schema.toTaggedUnion("_tag")),
+  }),
   /** The Hub couldn't answer; `message` says why. */
   Schema.TaggedStruct("GitFailed", { message: Schema.String }),
 ]).pipe(Schema.toTaggedUnion("_tag"))

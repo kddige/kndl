@@ -1,6 +1,6 @@
 ---
 title: Sessions and Sandboxes
-description: A Session won't start or wake, its Sandbox fails, an Environment's Test build fails, or the web UI refuses an action.
+description: A Session won't start or wake, its Sandbox fails, an Environment won't open or its Test build fails, or the web UI refuses an action.
 sidebar:
   order: 5
 ---
@@ -101,7 +101,36 @@ bash: line 3: pnpm: command not found
 
 **Why.** A Test build runs the Bootstrap script on the image, then the Start script on a fresh clone of the Repo, exactly as a Session's Build would. Whatever fails there would fail every new Session, so the Environment can't be applied.
 
-**Fix.** Read the full Test build log, fix the draft and run the Test build again. **Apply** turns on once a Test build of exactly that draft passes. Install tools in the Bootstrap script, which runs once per Build without the Repo; set up the clone, such as its dependencies or a database, in the Start script. See [Set up an Environment](/how-to/set-up-an-environment/).
+A Test build can also fail before it starts, or before it clones, with one of:
+
+```
+The GitHub App isn't installed on owner/name, so a Test build can't clone it: install the App on the Repo, then try again.
+```
+
+```
+build-box runs an older claude-hub, which would clone the Repo with its machine's own git credentials: update it to run Test builds on it.
+```
+
+```
+could not get access to clone the Repo: The GitHub App is not installed on owner/name, or can't see it: …
+```
+
+The first is for a Dev login, which has access to every Repo but still needs the App to clone one. The second means the Runner predates Test builds cloning with a token from the Hub. The third means the App was taken off the Repo while the Test build ran.
+
+**Fix.** Read the full Test build log, fix the draft and run the Test build again. **Apply** turns on once a Test build of exactly that draft passes. Install tools in the Bootstrap script, which runs once per Build without the Repo; set up the clone, such as its dependencies or a database, in the Start script. See [Set up an Environment](/how-to/set-up-an-environment/). If the App isn't installed on the Repo, install it there or add the Repo to its installation; see [the GitHub App can't see the Repo](/troubleshooting/github-and-git/#the-github-app-cant-see-the-repo). If the Runner is older, [update it](/how-to/add-a-runner/), or pick another Runner.
+
+## The Environment won't open, or New Session refuses the Repo
+
+**What you see.** Entering a Repo in **New Session**, or opening its Environment page, says one of:
+
+- **The GitHub App isn't installed on owner/name, or there's no such Repo.** With an **Install the App** link.
+- **You don't have access to owner/name on GitHub.**
+
+An Environment page you had open can switch to the second once you lose access, and the Repo leaves **Environments**. Applying, checking a draft or starting a Test build is refused with `You have no access to owner/name on GitHub, or the GitHub App isn't installed on it.`
+
+**Why.** A Repo's Environment follows the Repo's access, like its Sessions: only people with access to the Repo on GitHub can see or change it, and only on Repos the GitHub App is installed on. The Hub doesn't say whether a Repo you can't use exists, so a Repo that doesn't exist reads like one without the App. See [Who can do what](/explanation/security-model/#who-can-do-what).
+
+**Fix.** Check the Repo's name. For the first, follow **Install the App** and install it on the Repo, or add the Repo to its installation, then press **check again**: that asks GitHub afresh rather than the Hub's cache. For the second, have the Repo's owner add you as a collaborator, then press **Check again**. A refusal is remembered for at most 30 seconds. Shared variables belong to no Repo, so they stay open to everyone signed in.
 
 ## A Sensitive variable can't be saved
 
