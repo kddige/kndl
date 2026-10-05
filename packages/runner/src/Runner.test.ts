@@ -451,7 +451,7 @@ describe("Sessions", () => {
       "--plugin-dir",
       "/opt/claude-hub/packages/mod",
       "--tools",
-      "Bash,Read,Write,Edit,NotebookEdit,Glob,Grep",
+      "Bash,Read,Write,Edit,NotebookEdit,Glob,Grep,WebSearch",
       "--strict-mcp-config",
       "--setting-sources",
       "",
@@ -466,6 +466,9 @@ describe("Sessions", () => {
       CLAUDE_HUB_SESSION_ID: "s-1",
       CLAUDE_HUB_MOD_TOKEN: "chm_mod.secret",
       CLAUDE_HUB_TOOLS_SOCKET: join(h.settings.sessionsRoot, "s-1", "tools.sock"),
+      CLAUDE_HUB_WORKSPACE: "/workspace",
+      CLAUDE_HUB_REPO: "acme/app",
+      CLAUDE_HUB_WORK_BRANCH: "claude/s-1",
     })
     expect(h.workspaces.prepared).toMatchObject([{ sessionId: "s-1", workBranch: "claude/s-1" }])
     expect(h.sandboxes.calls).toEqual(["start s-1"])

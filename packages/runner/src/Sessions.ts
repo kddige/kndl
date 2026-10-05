@@ -281,6 +281,8 @@ export const SessionsLive = Layer.effect(
               sessionId,
               modToken: request.modToken,
               toolsSocket: directories.toolsSocket,
+              repo: request.repo,
+              workBranch: request.workBranch,
               conversation: yield* conversationFor(request, directories.claude),
               ...(request.parent === undefined ? {} : { parent: request.parent }),
             })

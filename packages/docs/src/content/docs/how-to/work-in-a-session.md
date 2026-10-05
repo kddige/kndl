@@ -33,7 +33,7 @@ Type a prompt and send it. While a Turn is running, a prompt from anyone waits i
 
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
 
-Claude's tools are limited to Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, and run in the Sandbox. Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host. The exception is the tools that hand work to Child Sessions, which ask the Hub: see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/).
+Claude's tools are limited to Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, which run in the Sandbox; WebSearch, which runs at Anthropic; and the tools that hand work to Child Sessions, which ask the Hub (see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/)). Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host. To have Claude read a web page, ask it to fetch the page: it uses `curl` in the Sandbox, because WebFetch is denied.
 
 ## Use the terminal
 

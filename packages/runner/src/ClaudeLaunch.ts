@@ -1,14 +1,31 @@
-import type { ClaudeSessionId, SessionId, SessionRef } from "@claude-hub/protocol"
+import type {
+  BranchName,
+  ClaudeSessionId,
+  RepoName,
+  SessionId,
+  SessionRef,
+} from "@claude-hub/protocol"
 import { ToolsSocketVariable } from "@claude-hub/protocol"
+import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 
 /**
  * The tools Claude Code keeps (ADR 0001): the file and command tools, which the mod answers from
- * the Sandbox through the tool bridge (#11). Claude Code 2.1.287 has no Glob or Grep tool (its
- * search runs through Bash), so those two only matter to builds that still have them. Leaving
- * ToolSearch out also turns tool search off, so the mod's own tools are listed directly
+ * the Sandbox through the tool bridge (#11), and WebSearch, which the mod leaves to Claude Code:
+ * the search runs at Anthropic, not on the host (#126). Claude Code 2.1.287 has no Glob or Grep
+ * tool (its search runs through Bash), so those two only matter to builds that still have them.
+ * Leaving ToolSearch out also turns tool search off, so the mod's own tools are listed directly
  * (spike #4). Never pass an empty list: that breaks `$.tool.register`.
  */
-export const ClaudeTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"]
+export const ClaudeTools = [
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "NotebookEdit",
+  "Glob",
+  "Grep",
+  "WebSearch",
+]
 
 /**
  * Settings passed with `--settings`, which `--setting-sources ""` still honours (spike #4).
@@ -18,7 +35,7 @@ export const ClaudeTools = ["Bash", "Read", "Write", "Edit", "NotebookEdit", "Gl
  */
 export const ClaudeFlagSettings = { disableSkillShellExecution: true, autoMemoryEnabled: false }
 
-/** The environment variables the mod reads to reach the Hub. */
+/** The environment variables the mod reads to reach the Hub, and to tell the model about the Sandbox. */
 export const ModEnvironment = {
   hubUrl: "CLAUDE_HUB_URL",
   sessionId: "CLAUDE_HUB_SESSION_ID",
@@ -30,6 +47,13 @@ export const ModEnvironment = {
    * Child Session tools when it is set: Sessions nest one level deep.
    */
   parentSessionId: "CLAUDE_HUB_PARENT_SESSION_ID",
+  /**
+   * Where the Workspace is in the Sandbox, the Repo and the Work branch: the model is told these,
+   * not the host's directory and platform, which Claude Code would tell it (#127).
+   */
+  workspace: "CLAUDE_HUB_WORKSPACE",
+  repo: "CLAUDE_HUB_REPO",
+  workBranch: "CLAUDE_HUB_WORK_BRANCH",
 } as const
 
 /**
@@ -47,6 +71,8 @@ export interface ClaudeLaunchOptions {
   readonly modToken: string
   /** The Session's tool bridge socket. */
   readonly toolsSocket: string
+  readonly repo: RepoName
+  readonly workBranch: BranchName
   /** Start a new conversation with this id, or resume an existing one (waking an Asleep Session). */
   readonly conversation:
     | { readonly _tag: "New"; readonly id: string }
@@ -105,6 +131,9 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       ...(options.parent === undefined
         ? {}
         : { [ModEnvironment.parentSessionId]: options.parent.id }),
+      [ModEnvironment.workspace]: workspaceGuestPath,
+      [ModEnvironment.repo]: options.repo,
+      [ModEnvironment.workBranch]: options.workBranch,
     },
   }
 }

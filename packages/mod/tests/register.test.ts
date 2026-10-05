@@ -1,7 +1,7 @@
 // hub-link in Claude Code's own mod runtime (`claude plugin test`): the hooks module, loading the
 // bundle (`bun run build` first), with the world beneath it faked.
 
-import type { On, PromptEditInput, PromptEditResult } from "claude-code"
+import type { On, PromptComposeInput, PromptEditInput, PromptEditResult } from "claude-code"
 import { describe, expect, mock, test } from "claude-code/testing"
 
 const socket = "/sessions/s1/tools.sock"
@@ -210,6 +210,29 @@ describe("tools", () => {
       expect(answer.deny).toBeDefined()
       expect(answer.deny).toContain("not available in this Claude Hub Session")
     }
+    expect(fetched.deny).toContain("curl through Bash")
+  })
+
+  test("leaves WebSearch to Claude Code, without asking (#126)", async ($, on) => {
+    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
+    const requests = fakeFetch(on, () => ran({}))
+    let reachedCore = 0
+    on("tool.call", () => {
+      reachedCore++
+      return { result: { query: "bun", results: [], durationSeconds: 1 } } as never
+    })
+    on("tool.check", () => ({ decision: "ask", reason: "WebSearchTool requires permission." }))
+
+    const answer = await $.tool.call({ tool: "WebSearch", query: "bun" })
+    const checked = await $.tool.check({ tool: "WebSearch", input: { query: "bun" } })
+    const other = await $.tool.check({ tool: "WebFetch", input: { url: "https://example.com" } })
+
+    expect(reachedCore).toBe(1)
+    expect(requests).toHaveLength(0)
+    expect(answer.deny).toBeUndefined()
+    expect(answer.result).toMatchObject({ query: "bun" })
+    expect(checked.decision).toBe("allow")
+    expect(other.decision).toBe("ask")
   })
 
   test("refuses a background command", async ($, on) => {
@@ -595,5 +618,95 @@ describe("Child Sessions", () => {
       sender: fromSession,
       promptId: "pr-1",
     })
+
+const sandbox = {
+  CLAUDE_HUB_WORKSPACE: "/workspace",
+  CLAUDE_HUB_REPO: "acme/app",
+  CLAUDE_HUB_WORK_BRANCH: "claude/fix-login",
+}
+
+/** Claude Code's own environment block, as it describes the host. */
+const hostEnvironment = [
+  "# Environment",
+  "You have been invoked in the following environment: ",
+  " - Primary working directory: /Users/ada/.claude-hub/sessions/s1/claude",
+  " - Is a git repository: false",
+  " - Platform: darwin",
+  " - Shell: zsh",
+  " - OS Version: Darwin 27.0.0",
+].join("\n")
+
+const composeInput = {
+  model: "claude-test",
+  promptModel: "claude-test",
+  surfaces: [],
+  tools: ["Bash", "Read"],
+  outputStyle: null,
+  traits: ["lean"],
+} satisfies PromptComposeInput
+
+/** Claude Code's own system prompt, as one section. */
+const engineSections = (on: On) =>
+  on("prompt.compose", () => ({
+    sections: [{ id: "env_info_simple", text: "# Environment", scope: "session" }],
+  }))
+
+describe("what the model is told about its environment", () => {
+  test("the system prompt describes the Sandbox, from the first request", async ($, on) => {
+    mock.env(on, sandbox)
+    engineSections(on)
+
+    const { sections } = await $.prompt.compose(composeInput)
+
+    const environment = sections.find((section) => section.id === "hub-link:sandbox-environment")
+    expect(environment?.scope).toBe("session")
+    expect(environment?.text).toContain("Primary working directory: /workspace")
+    expect(environment?.text).toContain("Is a git repository: true")
+    expect(environment?.text).toContain("Repository: acme/app")
+    expect(environment?.text).toContain("Work branch: claude/fix-login")
+    expect(environment?.text).toContain("Platform: linux")
+    expect(sections.map((section) => section.id)).toEqual([
+      "env_info_simple",
+      "hub-link:shared-session",
+      "hub-link:sandbox-environment",
+    ])
+  })
+
+  test("Claude Code's description of the host is left out", async ($, on) => {
+    mock.env(on, sandbox)
+    on("prompt.attachment", (_, e) => ({ text: e.text }))
+
+    const environment = await $.prompt.attachment({
+      type: "environment",
+      text: hostEnvironment,
+      origin: { kind: "engine" },
+    })
+    const date = await $.prompt.attachment({
+      type: "date_change",
+      text: "The date is now 2026-10-05.",
+      origin: { kind: "engine" },
+    })
+
+    expect(environment.text).toBeNull()
+    expect(date.text).toBe("The date is now 2026-10-05.")
+  })
+
+  test("outside a Runner, Claude Code's own environment stands", async ($, on) => {
+    mock.env(on, {})
+    engineSections(on)
+    on("prompt.attachment", (_, e) => ({ text: e.text }))
+
+    const { sections } = await $.prompt.compose(composeInput)
+    const environment = await $.prompt.attachment({
+      type: "environment",
+      text: hostEnvironment,
+      origin: { kind: "engine" },
+    })
+
+    expect(sections.map((section) => section.id)).toEqual([
+      "env_info_simple",
+      "hub-link:shared-session",
+    ])
+    expect(environment.text).toBe(hostEnvironment)
   })
 })

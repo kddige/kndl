@@ -73,6 +73,9 @@ Each Session's Claude Code starts with the hardened flags of [ADR 0001](/referen
 | `CLAUDE_HUB_MOD_TOKEN` | The Session's mod token. |
 | `CLAUDE_HUB_SESSION_ID` | The Session's id. |
 | `CLAUDE_HUB_TOOLS_SOCKET` | The Session's tool bridge: `<sessions root>/<session id>/tools.sock`. |
+| `CLAUDE_HUB_WORKSPACE` | Where the Workspace is in the Sandbox: `/workspace`. Claude is told this as its working directory. |
+| `CLAUDE_HUB_REPO` | The Session's Repo, such as `acme/app`, for Claude's environment. |
+| `CLAUDE_HUB_WORK_BRANCH` | The Session's Work branch, for Claude's environment. |
 | `CLAUDE_HUB_PARENT_SESSION_ID` | Its Parent Session's id, for a Child Session only. The mod offers the [Child Session tools](/reference/protocol/#child-session-tools) only without it. |
 | `CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS` | `1`, since git runs in the Sandbox rather than beside Claude Code. |
 | `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` | `1`, because a background command's output would stay in the Sandbox. |
