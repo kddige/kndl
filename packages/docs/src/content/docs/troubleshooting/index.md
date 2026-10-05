@@ -19,6 +19,7 @@ Each entry on these pages starts with what you see, quotes the message where cla
 | A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`, and notes about its Sandbox and WIP ref. |
 | A Session's **Starting…** banner | While a Session starts, **Show log** holds the output of its Build, Bootstrap script and Start script. |
 | A Session's **Terminal** tab | Claude Code's own screen, as it runs in tmux on the Runner. |
+| A Session's **Asleep** banner | When Claude Code exited on its own, **Show Claude Code's last output** holds the last lines its terminal showed. |
 | `/health` on the Hub | `{"status":"ok"}` when the Hub is up. It needs no sign-in. |
 
 For a closer look on a Runner's machine, list its tmux sessions with `tmux -L claude-hub-dev ls` (`tmux -L claude-hub ls` installed) and its Sandboxes with `bun x msb list` from `packages/runner`. See [Files and paths](/reference/files-and-paths/) for what each is named.
@@ -67,6 +68,7 @@ For a closer look on a Runner's machine, list its tmux sessions with `tmux -L cl
 - The Runner exits with `The hub-link mod isn't built: …`.
 - The Runner keeps logging `Hub connection: could not connect to …`.
 - A Runner on another machine never shows up.
+- Sessions exit at once with `The current working directory was deleted`, or doctor warns about the `tmux server`.
 - A Session is Frozen.
 - Sessions from before an update are gone.
 - The Runner warns about Sandboxes it doesn't know.
@@ -74,6 +76,7 @@ For a closer look on a Runner's machine, list its tmux sessions with `tmux -L cl
 ### [Sessions and Sandboxes](/troubleshooting/sessions/)
 
 - A new Session goes straight to Asleep: `Claude Code could not start on …`.
+- A Session is Asleep with `Claude Code exited with code N`: reading why.
 - A Session can't start: `… need values`.
 - `The Sandbox failed: host path … is not a directory`.
 - Claude's tools are refused: `… could not run in this Session's Sandbox (…), so it did not run at all.`
