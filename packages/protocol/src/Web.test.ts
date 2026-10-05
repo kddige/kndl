@@ -189,6 +189,7 @@ const hubToWeb = [
       archived: { by: bob, at: 1_790_000_000_000, purgeAt: 1_792_592_000_000 },
     },
   },
+  { _tag: "SessionUpdated", session: { ...sessionSummary, id: "s-2", parentId: "s-1" } },
   { _tag: "SessionRemoved", sessionId: "s-1" },
   { _tag: "SessionCreated", requestId: "q-1", session: sessionSummary },
   {
@@ -208,6 +209,13 @@ const hubToWeb = [
     queue: [
       { id: "p-2", text: "then run the tests", sender: bob, queuedAt: 1_790_000_000_100 },
       { id: "p-3", text: "and commit", sender: alice, queuedAt: 1_790_000_000_200 },
+      {
+        id: "p-4",
+        text: "[Report from Child Session ...]",
+        sender: alice,
+        fromSession: { _tag: "FromChildSession", session: { id: "s-2", title: "claude/s-2" } },
+        queuedAt: 1_790_000_000_300,
+      },
     ],
   },
   { _tag: "TerminalFrame", sessionId: "s-1", kind: "Snapshot", data: "> ready", size },

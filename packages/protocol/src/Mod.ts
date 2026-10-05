@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { ClaudeSessionId, ModCommandSeq, PromptId, SessionId } from "./Ids.ts"
-import { Participant, PresenceChanged, StopTurn } from "./Session.ts"
+import { FromSession, Participant, PresenceChanged, StopTurn } from "./Session.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 
@@ -74,13 +74,16 @@ export type ModWelcome = typeof ModWelcome.Type
 
 /**
  * The next prompt from the Prompt queue, sent when the Session is idle. The mod submits it with
- * the sender's name, and reports the Turn it starts with this `promptId`.
+ * the sender's name, or as it is when another Session sent it (the Hub wrote it for the model),
+ * and reports the Turn it starts with this `promptId`.
  */
 export const DeliverPrompt = Schema.TaggedStruct("DeliverPrompt", {
   sessionId: SessionId,
   promptId: PromptId,
   text: Schema.NonEmptyString,
   sender: Participant,
+  /** Present when another Session sent it: the Turn it starts is reported as from that Session. */
+  fromSession: Schema.optionalKey(FromSession),
 })
 export type DeliverPrompt = typeof DeliverPrompt.Type
 

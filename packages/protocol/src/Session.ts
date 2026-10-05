@@ -158,8 +158,16 @@ export const SessionSummary = Schema.Struct({
   runnerId: RunnerId,
   /** The Runner login every Turn of this Session runs on. */
   runnerLogin: RunnerLogin,
-  /** Recorded for history only; grants no rights (ADR 0003). */
+  /**
+   * Recorded for history only; grants no rights (ADR 0003). A Child Session's is its Parent
+   * Session's Creator, on whose behalf it runs (ADR 0012).
+   */
   creator: Participant,
+  /**
+   * Its Parent Session, when it is a Child Session (ADR 0012): the Session that created it, and
+   * gets its Reports. Kept after the Parent Session is purged.
+   */
+  parentId: Schema.optionalKey(SessionId),
   createdAt: EpochMillis,
   /** The Turn running now, or null when the Session is idle. */
   currentTurn: Schema.NullOr(TurnId),
@@ -182,11 +190,40 @@ export const SessionSummary = Schema.Struct({
 })
 export type SessionSummary = typeof SessionSummary.Type
 
+/** Another Session, as a prompt it sent names it: its id, and its title when it sent it. */
+export const SessionRef = Schema.Struct({
+  id: SessionId,
+  /** Its Session name, or its Work branch while it had none (see {@link sessionTitle}). */
+  title: Schema.NonEmptyString,
+})
+export type SessionRef = typeof SessionRef.Type
+
+/** A Parent Session's message to its Child Session (ADR 0012). */
+export const FromParentSession = Schema.TaggedStruct("FromParentSession", { session: SessionRef })
+export type FromParentSession = typeof FromParentSession.Type
+
+/** A Child Session's Report to its Parent Session: its final message of a Turn (ADR 0012). */
+export const FromChildSession = Schema.TaggedStruct("FromChildSession", { session: SessionRef })
+export type FromChildSession = typeof FromChildSession.Type
+
+/** A prompt another Session sent, not a person: a Parent Session's message or a Child's Report. */
+export const FromSession = Schema.Union([FromParentSession, FromChildSession]).pipe(
+  Schema.toTaggedUnion("_tag"),
+)
+export type FromSession = typeof FromSession.Type
+
 /** A prompt waiting in a Session's Prompt queue. */
 export const QueuedPrompt = Schema.Struct({
   id: PromptId,
+  /** As typed, for a person's; as the model reads it, for one from another Session. */
   text: Schema.NonEmptyString,
+  /**
+   * The Participant who sent it; for one from another Session, the Creator on whose behalf that
+   * Session runs.
+   */
   sender: Participant,
+  /** Present when another Session sent it (ADR 0012). */
+  fromSession: Schema.optionalKey(FromSession),
   queuedAt: EpochMillis,
 })
 export type QueuedPrompt = typeof QueuedPrompt.Type
