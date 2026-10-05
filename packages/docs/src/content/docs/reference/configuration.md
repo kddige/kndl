@@ -65,7 +65,7 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 
 ## What a Runner gives Claude Code
 
-Each Session's Claude Code starts with the hardened flags of [ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) (`--setting-sources ""`, `--strict-mcp-config`, a fixed `--tools` list, and `--settings` with `disableSkillShellExecution` on and `autoMemoryEnabled` off), `--plugin-dir` for the mod and again for the Repo's skills, with `--session-id` for a new Session or `--resume` to wake one, and these variables, which the mod uses. A Child Session's also gets `--append-system-prompt` with a paragraph saying whose child it is and that its final message of each Turn goes to its Parent Session as a Report ([ADR 0012](/reference/decisions/0012-parent-and-child-sessions/)).
+Each Session's Claude Code starts with the hardened flags of [ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) (`--setting-sources ""`, `--strict-mcp-config`, a fixed `--tools` list, and `--settings` with `disableSkillShellExecution` on and `autoMemoryEnabled` off), `--plugin-dir` for the mod and again for the Repo's skills, with `--session-id` for a new Session or `--resume` to wake one, `--model` and `--effort` when the Session's [model and effort](/how-to/work-in-a-session/#choose-the-model-and-effort) are set (neither is written to the host's `~/.claude/settings.json`), and these variables, which the mod uses. A Child Session's also gets `--append-system-prompt` with a paragraph saying whose child it is and that its final message of each Turn goes to its Parent Session as a Report ([ADR 0012](/reference/decisions/0012-parent-and-child-sessions/)).
 
 | Variable | What it is |
 |---|---|

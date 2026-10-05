@@ -59,7 +59,7 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 | Direction | Messages |
 |---|---|
 | Runner to Hub | `RunnerHello`; `SessionStarted`, `SessionStartFailed`, `SessionStopped`, `SessionPurged`; `SandboxStateReport`, `SandboxNote`; terminal frames; git requests and `WipPushFailed`; `FetchVariables`, `FetchCloneAccess`; Test build logs and results; `UpdateChecked`, `UpdateProgress`, `UpdateFailed` |
-| Hub to Runner | `RunnerWelcome` or `HandshakeRejected`; `StartSession`, `StopSession`, `PurgeSession`; terminal input, resizes and snapshot requests; git replies; `SessionTurnEnded`; `RunTestBuild`; `VariablesFetched` or `VariablesRefused`; `CheckUpdate`, `ApplyUpdate` |
+| Hub to Runner | `RunnerWelcome` or `HandshakeRejected`; `StartSession`, `RelaunchSession`, `StopSession`, `PurgeSession`; terminal input, resizes and snapshot requests; git replies; `SessionTurnEnded`; `RunTestBuild`; `VariablesFetched` or `VariablesRefused`; `CheckUpdate`, `ApplyUpdate` |
 
 `RunnerHello` carries the Runner's name, its Runner login, the Sessions it still runs, and `version`: the commit its checkout is on and the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `version` is optional, so a Runner from before it still connects, listed with its version unknown. The Hub compares it with its own commit: it starts and wakes no Session on a Runner behind it, which keeps the Sessions it runs.
 
@@ -86,16 +86,38 @@ A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self":
 
 Before it clones a Test build's Repo, the Runner asks how with `FetchCloneAccess`. The git reply is a `CloneToken`, a read-only installation token for that one Repo that the Runner hands to git for the clone and never stores; `HostCredentials` when the Hub has no GitHub App, to clone with the host's own; or `GitFailed` with why, such as the App not being installed on the Repo, which fails the Test build before cloning. A Runner that asks says so with `asksCloneAccess` in `RunnerHello`. A Hub with the GitHub App refuses a Test build on a Runner that doesn't, since it would clone with its host's credentials.
 
+### Models and effort
+
+`RunnerHello` carries `models`, what the Runner's Claude Code takes: `default`, the model it runs when given none; `models`, the other aliases `--model` takes, most capable first; and `efforts`, the effort levels `--effort` takes, lowest first. Each model has its `alias` (`sonnet`), the `id` Claude Code resolves it to now (`claude-sonnet-5-5`), its `label` (`Sonnet 5.5`), a one-line `description`, and `effort`, whether it takes an effort level. Both fields are optional: the Hub runs a Runner's Sessions on Claude Code's defaults only when it doesn't send `models`.
+
+Claude Code has no command that lists its models. The Runner runs `claude -p /model` once without `--model`, for the default and the aliases, then once per alias with `--model`, and `claude -p /effort` for the levels. None of these calls the API or saves a conversation. It does this when it connects, and again after an hour. `-p /model` doesn't print the line Claude Code's own `/model` picker shows for each model, so the Runner keeps those lines in a table by alias (`ModelDescriptions` in `packages/runner/src/ClaudeModels.ts`, copied from Claude Code 2.1.289's picker). An alias missing from the table is still offered, without a line.
+
+`StartSession` carries the Session's `model` and `effort` when they are set, which the Runner passes as `--model` and `--effort`. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which the Hub sends once the setting changed while Claude Code ran and no Turn runs: the Runner stops Claude Code and starts it again with `--resume` and the new flags, in the same Sandbox, with the fresh mod token the message carries. It answers as it does a `StartSession`, with `SessionStarted` or `SessionStartFailed`, and the Hub delivers the next prompt once the new mod has said hello. Restarting between Turns is the one way that is sure to switch: `--model` and `--effort` are fixed for the life of the process, and typing `/model` into a running Claude Code would write the choice to the host's `~/.claude/settings.json`, for every other Session on the Runner. A Runner without `relaunches` gets the setting when the Session next wakes.
+
 ## Web channel: `/ws/web`
 
 A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo` |
-| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; terminal frames; `CommandFailed` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo` |
+| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `parentId` when it is a Child Session: its Parent Session's id. No message creates a Child Session from the browser.
+
+### Model and effort
+
+Each Runner in `RunnerList` carries the `models` its hello said ([Models and effort](#models-and-effort)). `CreateSession` takes an optional `model` and `effort`, and `SetSessionModel { sessionId, model?, effort? }` sets both at once; an absent one is Claude Code's default, and the `default` alias is stored as no model. The Hub checks them against the Session's Runner and refuses with a `CommandFailed`:
+
+| Refused | Message |
+|---|---|
+| A model the Runner's Claude Code doesn't have | `Model '<model>' not found`, as Claude Code's `/model` says it |
+| An effort level for a model that takes none | `<model> takes no effort level.` |
+| A level the Runner's Claude Code doesn't have | `Claude Code on <runner> has no effort level '<level>'.` |
+| A model or level on a Runner that sent no `models` | `<runner> hasn't said which models its Claude Code has: only Claude Code's default model can be used there.` |
+| `SetSessionModel` on an Archived Session | `The Session is archived: restore it to change its model.` |
+
+Each Session carries its `model` and `effort` when set, and `modelPending: true` while its Claude Code still runs the setting from before a change. Each change is logged as `ModelSwitched { by, model?, modelLabel?, effort? }`, where `modelLabel` is the Runner's name for the model then, such as `Sonnet 5.5`, or for no model the default's. A Turn's `TurnEnded.usage.model` is the model it ran.
 
 ### Prompts from other Sessions
 

@@ -1,6 +1,6 @@
 ---
 title: Work in a Session
-description: Start, find and rename a Session, prompt it with others, use the Repo's skills and CLAUDE.md, use its terminal, put it to sleep, delete and restore it, and get its work out.
+description: Start, find and rename a Session, prompt it with others, choose its model and effort, use the Repo's skills and CLAUDE.md, use its terminal, put it to sleep, delete and restore it, and get its work out.
 sidebar:
   order: 8
 ---
@@ -12,7 +12,8 @@ A Session is one Claude Code conversation working on one Repo, on its own Work b
 1. Press **New Session**, at the top of the sidebar.
 2. Enter the **Repo** as `owner/name` and the **Base branch** to start from.
 3. Leave **Runner** on **Any online Runner**, or pick one. The Session runs on that Runner's machine, with its Claude login, for its whole life.
-4. Press **Start Session**.
+4. Leave **Model** on Claude Code's default, or pick a model and effort level: see [Choose the model and effort](#choose-the-model-and-effort). With **Any online Runner**, it offers only the models and levels every online Runner has.
+5. Press **Start Session**.
 
 The Runner clones the Repo onto the Session's Work branch, builds the Environment if it hasn't yet, makes the Session's Sandbox and starts Claude Code. **Show log** on the **Starting…** banner follows along. If the Repo has no Environment yet, you set one up first: see [Set up an Environment](/how-to/set-up-an-environment/).
 
@@ -34,6 +35,19 @@ Type a prompt and send it. While a Turn is running, a prompt from anyone waits i
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
 
 Claude's tools are limited to Bash, Read, Write, Edit, NotebookEdit, Glob and Grep, which run in the Sandbox; WebSearch, which runs at Anthropic; and the tools that hand work to Child Sessions, which ask the Hub (see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/)). Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host. Claude is told so: to run a command, it uses Bash in the Sandbox rather than asking you to type `! <command>`. To have Claude read a web page, ask it to fetch the page: it uses `curl` in the Sandbox, because WebFetch is denied.
+
+## Choose the model and effort
+
+A Session's model and effort level are one setting for everyone in it. The button at the left of the prompt box shows it, such as **Sonnet 5.5 · High**; it shows only the model while the effort is Claude Code's default.
+
+1. Press the button. It lists the models the Session's Runner's Claude Code has, each with a line on what it's for. **Default (recommended)** is Claude Code's own default model, named under it.
+2. Pick a model, or open **Effort** and pick a level: **Low**, **Medium**, **High**, **Extra** or **Max**. The menu lists only the levels the Runner's Claude Code has. A model that takes no effort level shows **None** and drops the level that was set.
+
+Anyone in the Session can change it, in any state but Archived. Each change shows in the transcript for everyone, such as "Alice Kim switched to Sonnet 5.5, High".
+
+A change applies from the next Turn, never in the middle of one. While a Turn runs, the prompt box says "Sonnet 5.5 takes over when this Turn ends."; once it ends, the Runner starts Claude Code again with the new setting, resuming the same conversation in the same Sandbox, and the next prompt waits until it's back. An Asleep Session starts with the new setting when it next wakes, and a Frozen one once its Runner is back. A Turn that ran on another model than the one set now, such as one before a change, names its model in its footer.
+
+The Runner passes the setting to Claude Code as `--model` and `--effort`, which last only for that Session's Claude Code: they never change the Runner's own `~/.claude/settings.json`. A Child Session starts on Claude Code's default.
 
 ## Use the Repo's skills and CLAUDE.md
 
