@@ -428,3 +428,172 @@ describe("the Hub link", () => {
     })
   })
 })
+
+const welcome = { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 1 }) }
+
+/**
+ * A session a Runner started, linked to the Hub; `env` adds to the Runner's variables. Returns
+ * the names of the tools the mod registers.
+ */
+const linkedSession = (on: On, env: Record<string, string> = {}) => {
+  mock.env(on, {
+    CLAUDE_HUB_URL: hubUrl,
+    CLAUDE_HUB_SESSION_ID: "s1",
+    CLAUDE_HUB_MOD_TOKEN: "secret",
+    CLAUDE_HUB_TOOLS_SOCKET: socket,
+    ...env,
+  })
+  on("session.id", () => ({ value: "claude-1" }))
+  on("session.model", () => ({ value: "claude-test" }))
+  on("ui.log", () => ({ value: undefined }))
+  on("session.start", (_, e) => ({ cwd: e.cwd }))
+  const registered: Array<string> = []
+  on("tool.register", (_, e) => {
+    registered.push(e.name)
+    return { value: { tool: `mcp__hub-link__${e.name}` } }
+  })
+  return registered
+}
+
+describe("Child Sessions", () => {
+  test("a Parent Session gets the tools", async ($, on) => {
+    const registered = linkedSession(on)
+    const clock = mock.clock(on)
+    fakeFetch(on, (request) =>
+      request.url.endsWith("/mod/hello") ? welcome : new Promise(() => undefined),
+    )
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+
+    expect(registered).toEqual([
+      "create_child",
+      "message_child",
+      "list_children",
+      "read_child",
+      "archive_child",
+    ])
+  })
+
+  test("a Child Session doesn't get them", async ($, on) => {
+    const registered = linkedSession(on, { CLAUDE_HUB_PARENT_SESSION_ID: "s-parent" })
+    const clock = mock.clock(on)
+    fakeFetch(on, (request) =>
+      request.url.endsWith("/mod/hello") ? welcome : new Promise(() => undefined),
+    )
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+
+    expect(registered).toEqual([])
+  })
+
+  test("create_child asks the Hub, and answers with the child's id and name", async ($, on) => {
+    linkedSession(on)
+    const clock = mock.clock(on)
+    const child = {
+      id: "s-2",
+      title: "API docs",
+      baseBranch: "main",
+      workBranch: "claude/s-2",
+      state: "Active",
+      working: true,
+      queued: 1,
+    }
+    const requests = fakeFetch(on, (request) => {
+      if (request.url.endsWith("/mod/hello")) return welcome
+      if (request.url.endsWith("/mod/children"))
+        return { status: 200, text: JSON.stringify({ _tag: "ChildCreated", child }) }
+      return new Promise(() => undefined)
+    })
+    let reachedCore = false
+    on("tool.call", () => {
+      reachedCore = true
+      return { deny: "core ran it" }
+    })
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    const answer = await $.tool.call({
+      tool: "mcp__hub-link__create_child",
+      task: "Document the API.",
+      name: " API docs ",
+    } as never)
+
+    expect(reachedCore).toBe(false)
+    const asked = requests.find((request) => request.url === `${hubUrl}/mod/children`)
+    expect(JSON.parse(asked?.body ?? "")).toEqual({
+      _tag: "CreateChild",
+      prompt: "Document the API.",
+      name: "API docs",
+    })
+    expect(answer.isError).toBeFalsy()
+    expect(answer.result).toContain('Created Child Session "API docs" (id s-2): Active, working')
+  })
+
+  test("a refused request is an error result", async ($, on) => {
+    linkedSession(on)
+    const clock = mock.clock(on)
+    const refused = "Session s-9 is not one of your Child Sessions."
+    fakeFetch(on, (request) => {
+      if (request.url.endsWith("/mod/hello")) return welcome
+      if (request.url.endsWith("/mod/children"))
+        return { status: 200, text: JSON.stringify({ _tag: "ChildRefused", message: refused }) }
+      return new Promise(() => undefined)
+    })
+    on("tool.call", () => ({ deny: "core ran it" }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    const answer = await $.tool.call({
+      tool: "mcp__hub-link__archive_child",
+      child_id: "s-9",
+    } as never)
+
+    expect(answer.deny).toBe(refused)
+  })
+
+  test("a Report starts a Turn as the Hub wrote it, reported as from the Child Session", async ($, on) => {
+    linkedSession(on)
+    const clock = mock.clock(on)
+    const fromSession = { _tag: "FromChildSession", session: { id: "s-2", title: "API docs" } }
+    const report = '[Report from Child Session "API docs" (s-2)]\n\nDone.'
+    let polled = 0
+    const requests = fakeFetch(on, (request) => {
+      if (request.url.endsWith("/mod/hello")) return welcome
+      if (request.url.endsWith("/mod/events")) return { status: 204, text: "" }
+      polled++
+      if (polled > 1) return new Promise(() => undefined)
+      const deliver = {
+        _tag: "DeliverPrompt",
+        sessionId: "s1",
+        promptId: "pr-1",
+        text: report,
+        sender: { id: "p1", login: "ada", name: "Ada Lovelace" },
+        fromSession,
+      }
+      return { status: 200, text: JSON.stringify({ messages: [{ seq: 1, message: deliver }] }) }
+    })
+    const submitted: Array<string> = []
+    on("prompt.submit", (_, e) => {
+      submitted.push(e.text)
+      return { text: e.text }
+    })
+    on("turn.start", () => ({ turnId: "t1" }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: report } as never)
+    await clock.advance(200)
+
+    expect(submitted).toEqual([report])
+    const posted = requests.find((request) => request.url === `${hubUrl}/mod/events`)
+    expect(JSON.parse(posted?.body ?? "").messages[0]).toEqual({
+      _tag: "TurnStarted",
+      turnId: "t1",
+      text: report,
+      sender: fromSession,
+      promptId: "pr-1",
+    })
+  })
+})
