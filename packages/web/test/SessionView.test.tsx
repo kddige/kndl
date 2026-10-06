@@ -78,6 +78,20 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
       page.querySelector('[role="group"][aria-label^="Here now"]')?.getAttribute("aria-label"),
     ).toContain("Bob Lee"),
   )
+  // Bob forwards its ports too (#180): the list of who's here says from where.
+  const here = page.querySelector<HTMLButtonElement>('button[aria-label^="Here now"]')
+  expect(here?.getAttribute("aria-label")).toBe(
+    "Here now: Alice Kim, Bob Lee · forwarding from bob-mbp",
+  )
+  await step(() => here?.click())
+  await eventually(() =>
+    expect(
+      [...document.querySelectorAll('ul[aria-label="Here now"] li')].map((li) => li.textContent),
+    ).toEqual(["AKAlice Kim", "BLBob Leeforwarding from bob-mbp"]),
+  )
+  await step(() =>
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  )
   await eventually(() => expect(conversation()).toContain("Can you make tool calls collapse"))
   expect(conversation()).toContain("Bob Lee")
 

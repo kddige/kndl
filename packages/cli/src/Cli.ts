@@ -16,6 +16,7 @@ import {
 import { AppSetupChoices } from "./AppManifest.ts"
 import { cliConfigPath } from "./CliConfig.ts"
 import { fail } from "./Failure.ts"
+import { forward } from "./Forward.ts"
 import { configuredRoles, platform, serviceState, serviceTarget } from "./Host.ts"
 import { requireCheckoutCli } from "./InstallGate.ts"
 import { resolveLayout, type Role, Roles } from "./Layout.ts"
@@ -419,6 +420,36 @@ const whoamiCommand = Command.make("whoami", {}, () => whoami(signedIn())).pipe(
   Command.withDescription("Which Hub the CLI is signed in to, and as whom"),
 )
 
+// Forwarding a Session's Open ports here (Forward.ts, #180), as the CLI is signed in.
+const forwardCommand = Command.make(
+  "forward",
+  {
+    session: Argument.String("session").pipe(
+      Argument.withDescription(
+        "The Session: its id, the start of it (the short id) or its URL; by default, pick one",
+      ),
+      Argument.optional,
+      Argument.map(Option.getOrUndefined),
+    ),
+    ports: Argument.String("ports").pipe(
+      Argument.withDescription(
+        "Only these of its ports: 3000, or 3000:3100 for its port 3000 at port 3100 here",
+      ),
+      Argument.variadic(),
+    ),
+    bind: optional(
+      Flag.String("bind").pipe(
+        Flag.withDescription("The address to listen on; by default 127.0.0.1 and ::1"),
+      ),
+    ),
+  },
+  (options) => forward(options, signedIn()),
+).pipe(
+  Command.withDescription(
+    "Forward a Session's Open ports to localhost here, as they open and close; wakes it if Asleep",
+  ),
+)
+
 export const cli = Command.make("claude-hub").pipe(
   Command.withSubcommands([
     onboardCommand,
@@ -433,6 +464,7 @@ export const cli = Command.make("claude-hub").pipe(
     loginCommand,
     logoutCommand,
     whoamiCommand,
+    forwardCommand,
   ]),
   Command.withDescription(
     "Install, run and look after a claude-hub Hub and Runner; sign the CLI in to a Hub",

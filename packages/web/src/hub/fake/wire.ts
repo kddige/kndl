@@ -12,6 +12,7 @@ import type {
   OpenPort,
   Participant,
   PendingPairingCode,
+  PresentParticipant,
   QueuedPrompt,
   RunnerSummary,
   SessionEvent,
@@ -22,6 +23,7 @@ import type {
 
 export type HubMessage = (typeof HubToWeb)["Encoded"]
 export type ParticipantWire = (typeof Participant)["Encoded"]
+export type PresentParticipantWire = (typeof PresentParticipant)["Encoded"]
 export type AgentSummaryWire = (typeof AgentSummary)["Encoded"]
 export type SessionSummaryWire = (typeof SessionSummary)["Encoded"]
 export type OpenPortWire = (typeof OpenPort)["Encoded"]

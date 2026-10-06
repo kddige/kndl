@@ -21,6 +21,7 @@ import type {
   HubToWeb,
   PairingCodeId,
   Participant,
+  PresentParticipant,
   PendingPairingCode,
   QueuedPrompt,
   RunnerId,
@@ -56,7 +57,7 @@ export interface JoinedSession {
   readonly historyLoaded: boolean
   /** The event log, in `seq` order, without gaps the Hub didn't leave. */
   readonly log: ReadonlyArray<SessionLogEntry>
-  readonly presence: ReadonlyArray<Participant>
+  readonly presence: ReadonlyArray<PresentParticipant>
   readonly queue: ReadonlyArray<QueuedPrompt>
   /** The output of its latest start the client has seen, or null before any. */
   readonly startLog: StartLog | null

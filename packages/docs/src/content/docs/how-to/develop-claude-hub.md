@@ -2,7 +2,7 @@
 title: Develop claude-hub
 description: The repository's layout, its checks, and how to work on the web UI, the mod and this site.
 sidebar:
-  order: 12
+  order: 13
 ---
 
 claude-hub is one Bun workspace in TypeScript, on [Effect](https://effect.website). Every command here runs from the repository's root.

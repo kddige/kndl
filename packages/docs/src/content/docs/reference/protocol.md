@@ -18,6 +18,8 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `POST /auth/cli/approve` | the `/cli-login` page | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin |
 | `POST /auth/cli/token` | `claude-hub login` | none: the Login code and its PKCE verifier in the body are the credential ([Signing in the CLI](#signing-in-the-cli)). |
 | `GET /auth/cli/me`, `POST /auth/cli/sign-out` | `claude-hub whoami`, `claude-hub logout` | `Authorization: Bearer <CLI token>` |
+| `GET /auth/cli/sessions` | `claude-hub forward`, to pick a Session ([Forwards](#forwards)) | `Authorization: Bearer <CLI token>` |
+| `GET /ws/forward/<session id>` | `claude-hub forward` ([Forwards](#forwards)) | `Authorization: Bearer <CLI token>` |
 | `GET /ws/web` | a browser | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin |
 | `GET /ws/runner` | a Runner | `Authorization: Bearer <Runner token>` |
 | `POST /runner/pair` | `claude-hub runner join` | none: the [Pairing code](#pairing) in the body is the credential. |
@@ -50,7 +52,7 @@ The Hub mints four kinds of token, each `<kind>_<id>.<secret>`, and stores only 
 
 A Login code is held in the Hub's memory, for 10 minutes, and spent by its first trade, right or wrong. Only the verifier whose SHA-256 is the challenge it was approved with can trade it, so a code read off the screen is no use without the CLI that asked for it. A code that is unknown, expired, already spent, or traded with the wrong verifier gets the same `400`: `That code isn't valid: it may have expired or been used. Run claude-hub login again.`
 
-The Hub keeps a SHA-256 of each CLI token, with its machine, when it was made, and when it was last used, to the minute. `GET /auth/cli/me` answers `{ you, id, machine, createdAt }`, and `POST /auth/cli/sign-out` revokes the token it is sent with, answering `204`. The Hub checks a CLI token against its database on every request, so one revoked, by either, or on the Account page, is refused from the next request on, `401`. CLI tokens act only on the CLI's own endpoints and on [tunnels](#tunnels): the web channel, the Runner channel and the mod channel don't take them. No token is logged, only its id and machine.
+The Hub keeps a SHA-256 of each CLI token, with its machine, when it was made, and when it was last used, to the minute. `GET /auth/cli/me` answers `{ you, id, machine, createdAt }`, and `POST /auth/cli/sign-out` revokes the token it is sent with, answering `204`. The Hub checks a CLI token against its database on every request, so one revoked, by either, or on the Account page, is refused from the next request on, `401`. CLI tokens act only on the CLI's own endpoints, [forwards](#forwards) and [tunnels](#tunnels): the web channel, the Runner channel and the mod channel don't take them. No token is logged, only its id and machine.
 
 ## Handshake
 
@@ -119,6 +121,30 @@ Before it clones a Test build's Repo, the Runner asks how with `FetchCloneAccess
 Claude Code's models are fixed for a version, so the Runner sends a table of the pinned version's, `PinnedClaudeModels` in `packages/runner/src/ClaudeModels.ts`, beside `PinnedClaudeVersion` ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). A Runner told to run another version (`RUNNER_SANDBOX_CLAUDE_VERSION`) sends no `models`. Claude Code has no command that lists its models, so the pinned version's smoke test checks the table in a real Sandbox: it runs `claude -p /model` once without `--model`, for the default and the aliases, then once per alias with `--model`, and `claude -p /effort` for the levels, none of which calls the API or saves a conversation. `-p /model` doesn't print the line Claude Code's own `/model` picker shows for each model, so those lines are copied from the picker by hand.
 
 `StartSession` carries the Session's `model` and `effort` when they are set, which the Runner passes as `--model` and `--effort`. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which the Hub sends once the setting changed while Claude Code ran and no Turn runs: the Runner stops Claude Code and starts it again with `--resume` and the new flags, in the same Sandbox, with the fresh mod token the message carries. It answers as it does a `StartSession`, with `SessionStarted` or `SessionStartFailed`, and the Hub delivers the next prompt once the new mod has said hello. Restarting between Turns is the one way that is sure to switch: `--model` and `--effort` are fixed for the life of the process, and typing `/model` into a running Claude Code would write the choice to the host's `~/.claude/settings.json`, for every other Session on the Runner. A Runner without `relaunches` gets the setting when the Session next wakes.
+
+## Forwards
+
+`claude-hub forward` ([Forward a Session's ports](/how-to/forward-a-sessions-ports/)) keeps one WebSocket to the Hub for the Session it forwards, at `/ws/forward/<session id>`. It carries no traffic: each connection to a forwarded port is a [tunnel](#tunnels) of its own.
+
+1. The CLI opens it with a CLI token as `Authorization: Bearer`; the sign-in cookie won't do. A request that isn't a WebSocket upgrade gets `426`, and a missing or wrong token `401`, before the upgrade.
+2. The Hub checks the caller's access to the Session's Repo, as for a tunnel. A refusal comes after the upgrade, as a close with a code and a message.
+3. The CLI sends `ForwardHello { protocolVersion }`. The Hub answers `ForwardWelcome { protocolVersion }`, or `HandshakeRejected` ([Handshake](#handshake)).
+4. The Hub wakes an Asleep Session, then sends `ForwardSession { session }`, the Session as the web channel has it, and another whenever it changes. Its `openPorts` are the ports to forward. A Frozen Session's forward stays open, and is sent the Session again once its Runner is back. The CLI sends nothing more.
+
+While it is connected, a forward is presence: the Hub doesn't put the Session to sleep for being idle, and lists the forward's person in the Session's `PresenceChanged`, to the web UI and the mod, even without the Session open in a browser. `forwardingFrom` on that person lists the machines their forwards come from, each named after its CLI token. Closing the forward takes it out.
+
+The Hub closes a forward with one of these codes, and a message saying why. The CLI reconnects after `1001` or a dropped connection, and stops after the rest.
+
+| Code | Meaning |
+|---|---|
+| `1001` | The Hub is shutting down. |
+| `4401` | The CLI token was revoked, on the **Account** page or by `claude-hub logout`: `This machine's CLI token was revoked: run claude-hub login to sign in again.` |
+| `4404` | No such Session, or one the caller has no access to: the two get the same answer. Also when the caller loses access to the Session's Repo: `You no longer have access to <repo>.` |
+| `4409` | The Session went asleep, the message saying why, such as `Put to sleep by <login>`; or it was Asleep and couldn't be woken, the message saying why not. |
+| `4410` | The Session was archived. |
+| `4424` | GitHub couldn't say whether the caller has access to the Session's Repo; try again. |
+
+`GET /auth/cli/sessions`, with a CLI token, answers `{ sessions }`: the Sessions that aren't Archived in the Repos the caller has access to, newest first, each as the web channel has it. `claude-hub forward` picks a Session from it.
 
 ## Tunnels
 

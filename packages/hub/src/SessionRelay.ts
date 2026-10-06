@@ -112,6 +112,11 @@
 //   says TunnelFailed, or goes offline first, fails the tunnel.
 // - CLI tokens (CliTokens.ts): each person is sent their own (CliTokenList) after the welcome and
 //   whenever one is made or revoked, and may revoke them from any of their web clients.
+// - Forwards (#180, ADR 0016): `claude-hub forward` keeps a connection per Session it forwards
+//   (ForwardRoutes.ts), sent the Session whenever it changes. A forward is presence, named with
+//   the machine its CLI token is named after, so it keeps the Session from being idle. One to an
+//   Asleep Session wakes it. When the Session goes to sleep anyway, or is archived or purged, or
+//   its person loses access or revokes the CLI token, the forward is closed, saying why.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -126,12 +131,16 @@ import {
   ClaudeCredentialRefused,
   ClaudeCredentialState,
   CliTokenList,
+  type CliTokenId,
   CommandFailed,
   DeliverAgentMessage,
   DeliverPrompt,
   type EnvironmentVersion,
+  ForwardCloseCode,
+  ForwardSession,
   GitAnswer,
   GitReply,
+  type HubToForward,
   type HubToRunner,
   HubToWeb,
   type ModEvent,
@@ -140,6 +149,7 @@ import {
   type Participant,
   type ParticipantId,
   PresenceChanged,
+  type PresentParticipant,
   PromptId,
   PromptQueueChanged,
   QueuedPrompt,
@@ -206,7 +216,8 @@ import {
 } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
-import { CliTokens } from "./CliTokens.ts"
+import { type CliIdentity, CliTokens } from "./CliTokens.ts"
+import { closeReason } from "./CloseReason.ts"
 import {
   type EnvironmentWebClient,
   isEnvironmentCommand,
@@ -264,6 +275,12 @@ interface Why {
   readonly message?: string
 }
 
+/** Why, as one line: "Put to sleep by alice". */
+const whyText = (why: Why) => {
+  const by = why.by === undefined ? "" : ` by ${why.by.login}`
+  return `${why.message ?? (by === "" ? "" : "Changed")}${by}`
+}
+
 /** A StartSession its Runner hasn't answered yet (#70). */
 interface StartUnderWay {
   readonly since: number
@@ -300,6 +317,10 @@ const samePorts = (a: ReadonlyArray<OpenPort>, b: ReadonlyArray<OpenPort>) =>
       port.addresses.join(" ") === other.addresses.join(" ")
     )
   })
+
+/** What presence shows of a Participant, to tell whether it changed. */
+const presenceKey = (person: PresentParticipant) =>
+  [person.id, ...(person.forwardingFrom ?? [])].join("\n")
 
 /** How often the Hub looks for idle Sessions to put to sleep: a tenth of the wait, 10 ms to 30 s. */
 /** How often draining Runners are checked for Turns past their deadline (RunnerUpdates.ts). */
@@ -378,8 +399,25 @@ export class SessionRelay extends Context.Service<
     ) => Effect.Effect<Redeemed, SqlError | PairingRefused>
     /** Whether a Runner is connected now. */
     readonly runnerOnline: (id: RunnerId) => boolean
-    /** A person's CLI tokens changed, as at `claude-hub login`: their web clients are sent them. */
+    /**
+     * A person's CLI tokens changed, as at `claude-hub login`: their web clients are sent them,
+     * and the forwards of a token revoked are closed.
+     */
     readonly cliTokensChanged: (participantId: ParticipantId) => Effect.Effect<void>
+    /**
+     * A `claude-hub forward`, once welcomed, by a caller already checked for access (#180): sends
+     * it the Session, now and whenever it changes, and counts it as presence until the scope
+     * closes. An Asleep Session is woken; one that can't be is closed, saying why.
+     */
+    readonly connectForward: (
+      cli: CliIdentity,
+      sessionId: SessionId,
+      peer: Peer<HubToForward>,
+    ) => Effect.Effect<Receive<never>, never, Scope.Scope>
+    /** The Sessions `claude-hub forward` can pick from: the caller's that aren't Archived. */
+    readonly forwardableSessions: (
+      you: Participant,
+    ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
     /** The Session's mod said hello. */
     readonly modHello: (sessionId: SessionId, hello: ModHello) => Effect.Effect<void, SqlError>
     /** The Session's mod reported Turn events and failed deliveries, oldest first. */
@@ -455,7 +493,21 @@ export class SessionRelay extends Context.Service<
         readonly forwardsPorts: boolean
       }
 
+      /** A `claude-hub forward` of one Session (#180), by a CLI token. */
+      interface ForwardClient {
+        readonly you: Participant
+        readonly tokenId: CliTokenId
+        /** The machine its CLI token is named after, as presence shows it. */
+        readonly machine: string
+        readonly sessionId: SessionId
+        readonly repo: string
+        readonly peer: Peer<HubToForward>
+      }
+
       const webClients = new Set<WebClient>()
+      const forwards = new Set<ForwardClient>()
+      /** Why each Session last went Asleep, said to its forwards as they are closed. */
+      const asleepWhy = new Map<SessionId, Why>()
       const onlineRunners = new Map<RunnerId, OnlineRunner>()
       /**
        * The prompt each Session's mod has been sent and not yet started a Turn with or failed.
@@ -655,6 +707,51 @@ export class SessionRelay extends Context.Service<
           if (known === true) client.peer.send(message)
           else if (known === undefined) yield* learnAccess(client.you, session.repo)
         }
+        yield* sessionToForwards(session)
+      })
+
+      /**
+       * Sends the Session to its forwards. Once it is Asleep, but for the moment of a restart, or
+       * Archived, closes them instead.
+       */
+      const sessionToForwards = Effect.fn("SessionRelay.sessionToForwards")(function* (
+        session: SessionSummary,
+      ) {
+        const ofSession = (forward: ForwardClient) => forward.sessionId === session.id
+        if (session.state === "Archived") {
+          return yield* endForwards(
+            ofSession,
+            ForwardCloseCode.Archived,
+            "The Session was archived.",
+          )
+        }
+        if (session.state === "Asleep" && !restarts.has(session.id)) {
+          const why = asleepWhy.get(session.id)
+          return yield* endForwards(
+            ofSession,
+            ForwardCloseCode.WentAsleep,
+            why === undefined ? "" : whyText(why),
+          )
+        }
+        const message = ForwardSession.make({ session: forWeb(session) })
+        for (const forward of forwards) if (ofSession(forward)) forward.peer.send(message)
+      })
+
+      /** Closes the forwards `which` picks, saying why, and updates their Sessions' presence. */
+      const endForwards = Effect.fn("SessionRelay.endForwards")(function* (
+        which: (forward: ForwardClient) => boolean,
+        code: number,
+        reason: string,
+      ) {
+        const ended = [...forwards].filter(which)
+        if (ended.length === 0) return
+        const ofSessions = new Set(ended.map((forward) => forward.sessionId))
+        const before = new Map([...ofSessions].map((id) => [id, presenceOf(id)] as const))
+        for (const forward of ended) {
+          forwards.delete(forward)
+          forward.peer.close(code, closeReason(reason))
+        }
+        for (const id of ofSessions) yield* presenceChanged(id, before.get(id) ?? [])
       })
 
       const sessionUpdated = Effect.fn("SessionRelay.sessionUpdated")(function* (id: SessionId) {
@@ -908,6 +1005,7 @@ export class SessionRelay extends Context.Service<
         if (session.state === state) return
         // Nothing listens in a Sandbox whose Claude Code isn't known to run.
         if (state !== "Active") openPorts.delete(session.id)
+        if (state === "Asleep") asleepWhy.set(session.id, why)
         yield* sessions.setState(session.id, state)
         yield* logEvent(session.id, SessionStateChanged.make({ state, ...why }))
         yield* sessionUpdated(session.id)
@@ -919,15 +1017,30 @@ export class SessionRelay extends Context.Service<
         yield* markBusy(sessionId)
       })
 
-      /** The Participants who have joined the Session, each once, in the order they connected. */
-      const presenceOf = (sessionId: SessionId): ReadonlyArray<Participant> => {
+      /**
+       * The Participants who have joined the Session or forward it, each once, in the order they
+       * connected: those in it in the web first, then those only forwarding it. Each one
+       * forwarding it says from which machines.
+       */
+      const presenceOf = (sessionId: SessionId): ReadonlyArray<PresentParticipant> => {
         const present = new Map<ParticipantId, Participant>()
         for (const client of webClients) {
           if (client.joined.has(sessionId) && !present.has(client.you.id)) {
             present.set(client.you.id, client.you)
           }
         }
-        return [...present.values()]
+        const machines = new Map<ParticipantId, Array<string>>()
+        for (const forward of forwards) {
+          if (forward.sessionId !== sessionId) continue
+          if (!present.has(forward.you.id)) present.set(forward.you.id, forward.you)
+          const from = machines.get(forward.you.id) ?? []
+          if (!from.includes(forward.machine)) from.push(forward.machine)
+          machines.set(forward.you.id, from)
+        }
+        return [...present.values()].map((person) => {
+          const from = machines.get(person.id)
+          return from === undefined ? person : { ...person, forwardingFrom: from }
+        })
       }
 
       /** Tells the Session's mod who is present, if Claude Code may be running to hear it. */
@@ -945,10 +1058,15 @@ export class SessionRelay extends Context.Service<
       /** Announces the Session's presence if it differs from `before`. */
       const presenceChanged = Effect.fn("SessionRelay.presenceChanged")(function* (
         sessionId: SessionId,
-        before: ReadonlyArray<Participant>,
+        before: ReadonlyArray<PresentParticipant>,
       ) {
         const after = presenceOf(sessionId)
-        const same = before.length === after.length && before.every((p, i) => p.id === after[i]?.id)
+        const same =
+          before.length === after.length &&
+          before.every((p, i) => {
+            const now = after[i]
+            return now !== undefined && presenceKey(p) === presenceKey(now)
+          })
         if (same) return false
         toJoined(sessionId, PresenceChanged.make({ sessionId, participants: after }))
         yield* markBusy(sessionId)
@@ -968,6 +1086,13 @@ export class SessionRelay extends Context.Service<
         repo: string,
         allowed: boolean,
       ) {
+        if (!allowed) {
+          yield* endForwards(
+            (forward) => forward.you.id === who.id && forward.repo === repo,
+            ForwardCloseCode.NoSuchSession,
+            `You no longer have access to ${repo}.`,
+          )
+        }
         const changed = [...webClients].filter(
           (client) => client.you.id === who.id && client.repos.get(repo) !== allowed,
         )
@@ -1031,6 +1156,11 @@ export class SessionRelay extends Context.Service<
           for (const [repo, allowed] of client.repos) if (allowed) repos.add(repo)
         }
         const people = new Map([...webClients].map((client) => [client.you.id, client.you]))
+        // And everyone forwarding a Session, who may have no web client.
+        for (const forward of forwards) {
+          people.set(forward.you.id, forward.you)
+          repos.add(forward.repo)
+        }
         const failures: Array<string> = []
         const answers = yield* Effect.forEach(
           [...people.values()].flatMap((who) => [...repos].map((repo) => ({ who, repo }))),
@@ -1185,30 +1315,16 @@ export class SessionRelay extends Context.Service<
         // Its prompts wait in its queue, and wake it once its Runner is updated.
         const refusal = runnerRefusal(runner)
         if (refusal !== undefined) return refusal
-        const needed = yield* environments.valuesNeeded(session.repo)
-        if (needed.length > 0) {
+        const cantStart = yield* cantStartOn(session, runner, why.by)
+        if (cantStart !== undefined) {
           restarts.delete(session.id)
           yield* logEvent(
             session.id,
             SessionStateChanged.make({
               state: "Asleep",
               ...why,
-              message: `Claude Code could not start: ${cantStartText(session.repo, needed)}`,
-              valuesNeeded: true,
-            }),
-          )
-          yield* sessionUpdated(session.id)
-          return undefined
-        }
-        const noCredential = noClaudeCredential(session.creator, runner, why.by)
-        if (noCredential !== undefined) {
-          restarts.delete(session.id)
-          yield* logEvent(
-            session.id,
-            SessionStateChanged.make({
-              state: "Asleep",
-              ...why,
-              message: `Claude Code could not start: ${noCredential}`,
+              message: cantStart.message,
+              ...(cantStart.valuesNeeded && { valuesNeeded: true }),
             }),
           )
           yield* sessionUpdated(session.id)
@@ -1241,6 +1357,29 @@ export class SessionRelay extends Context.Service<
             ...modelFlags(session),
           }),
         )
+        return undefined
+      })
+
+      /**
+       * Why the Session's Claude Code can't start on `runner`: values its Environment needs are
+       * unset, or there is no Claude credential to run it on. `you` is who is told.
+       */
+      const cantStartOn = Effect.fn("SessionRelay.cantStartOn")(function* (
+        session: SessionSummary,
+        runner: OnlineRunner,
+        you: Participant | undefined,
+      ) {
+        const needed = yield* environments.valuesNeeded(session.repo)
+        if (needed.length > 0) {
+          return {
+            message: `Claude Code could not start: ${cantStartText(session.repo, needed)}`,
+            valuesNeeded: true,
+          }
+        }
+        const noCredential = noClaudeCredential(session.creator, runner, you)
+        if (noCredential !== undefined) {
+          return { message: `Claude Code could not start: ${noCredential}`, valuesNeeded: false }
+        }
         return undefined
       })
 
@@ -1304,6 +1443,7 @@ export class SessionRelay extends Context.Service<
         if (stopping.has(session.id) || inFlight.has(session.id)) return false
         // A start can take minutes to build its Environment: it isn't idle until it's over.
         if (starts.has(session.id)) return false
+        // Someone is in it, in the web or forwarding its ports (#180).
         if (presenceOf(session.id).length > 0) return false
         // Someone asked for it to stay up, as for a dev server (ADR 0016).
         if (session.keepAwake !== undefined) return false
@@ -1401,6 +1541,7 @@ export class SessionRelay extends Context.Service<
           yield* sessions.purge(session, now)
           archiving.delete(session.id)
           lastBusy.delete(session.id)
+          asleepWhy.delete(session.id)
           openPorts.delete(session.id)
           sandboxTokens.delete(session.id)
           yield* outbox.clear(session.id)
@@ -2218,6 +2359,7 @@ export class SessionRelay extends Context.Service<
                     other.peer.send(CliTokenList.make({ tokens }))
                 }
                 peer.send(CliTokenList.make({ requestId: message.requestId, tokens }))
+                yield* forwardsSignedOut(you.id, tokens)
               }),
             )
           }).pipe(
@@ -2971,6 +3113,7 @@ export class SessionRelay extends Context.Service<
             for (const client of webClients) {
               if (client.you.id === participantId) client.peer.send(CliTokenList.make({ tokens }))
             }
+            yield* forwardsSignedOut(participantId, tokens)
           }),
         ).pipe(
           Effect.catchTag("SqlError", (error) =>
@@ -2978,7 +3121,120 @@ export class SessionRelay extends Context.Service<
           ),
         )
 
+      // ── Forwards (#180) ──────────────────────────────────────────────────
+
+      /**
+       * A forward to the Session, from a caller ForwardRoutes.ts has checked for access. An Asleep
+       * Session is woken first: one that can't be is closed with why, and never counted present.
+       */
+      const connectForward = (cli: CliIdentity, sessionId: SessionId, peer: Peer<HubToForward>) =>
+        Effect.gen(function* () {
+          const forward = yield* serialized(
+            Effect.gen(function* () {
+              const found = yield* sessions.get(sessionId)
+              if (Option.isNone(found)) {
+                peer.close(ForwardCloseCode.NoSuchSession, "There is no such Session.")
+                return undefined
+              }
+              let session = found.value
+              if (session.state === "Archived") {
+                peer.close(ForwardCloseCode.Archived, "The Session is archived.")
+                return undefined
+              }
+              if (session.state === "Asleep") {
+                const refused = yield* wake(session, { by: cli.participant })
+                const woken = Option.getOrUndefined(yield* sessions.get(sessionId))
+                if (refused !== undefined || woken === undefined || woken.state !== "Active") {
+                  const runner = onlineRunners.get(session.runnerId)
+                  const cantStart =
+                    runner === undefined
+                      ? undefined
+                      : yield* cantStartOn(session, runner, cli.participant)
+                  peer.close(
+                    ForwardCloseCode.WentAsleep,
+                    closeReason(
+                      refused ?? cantStart?.message ?? "The Session is Asleep and could not wake.",
+                    ),
+                  )
+                  return undefined
+                }
+                session = woken
+              }
+              const client: ForwardClient = {
+                you: cli.participant,
+                tokenId: cli.id,
+                machine: cli.machine,
+                sessionId,
+                repo: session.repo,
+                peer,
+              }
+              const before = presenceOf(sessionId)
+              forwards.add(client)
+              peer.send(ForwardSession.make({ session: forWeb(session) }))
+              yield* Effect.logInfo(
+                `${cli.participant.login} forwards Session ${sessionId} to ${cli.machine}`,
+              )
+              yield* presenceChanged(sessionId, before)
+              return client
+            }),
+          ).pipe(Effect.orDie)
+          yield* Effect.addFinalizer(() =>
+            forward === undefined
+              ? Effect.void
+              : serialized(
+                  Effect.gen(function* () {
+                    const before = presenceOf(forward.sessionId)
+                    forwards.delete(forward)
+                    yield* presenceChanged(forward.sessionId, before)
+                  }),
+                ).pipe(Effect.catchCause(Effect.logError)),
+          )
+          return (_message: never) => Effect.void
+        })
+
+      /** Closes the person's forwards by a CLI token that is no longer one of `tokens`. */
+      const forwardsSignedOut = (
+        participantId: ParticipantId,
+        tokens: ReadonlyArray<{ readonly id: CliTokenId }>,
+      ) => {
+        const current = new Set(tokens.map((token) => token.id))
+        return endForwards(
+          (forward) => forward.you.id === participantId && !current.has(forward.tokenId),
+          ForwardCloseCode.SignedOut,
+          "This machine's CLI token was revoked: run claude-hub login to sign in again.",
+        )
+      }
+
+      const forwardableSessions = (you: Participant) =>
+        Effect.gen(function* () {
+          const listed = (yield* sessions.list).filter((session) => session.state !== "Archived")
+          const repos = new Set(listed.map((session) => session.repo))
+          const allowed = new Set<string>()
+          yield* Effect.forEach(
+            repos,
+            (repo) =>
+              access.check(you, repo).pipe(
+                Effect.map((yes) => {
+                  if (yes) allowed.add(repo)
+                }),
+                // Left out, as one they have no access to; `forward` says so if it is named.
+                Effect.catchTag("RepoAccessUnknown", (error) => Effect.logWarning(error.message)),
+              ),
+            { concurrency: accessCheckConcurrency, discard: true },
+          )
+          return yield* serialized(
+            Effect.sync(() =>
+              listed
+                .filter((session) => allowed.has(session.repo))
+                .toSorted((a, b) => b.createdAt - a.createdAt)
+                .map(forWeb),
+            ),
+          )
+        })
+
       return SessionRelay.of({
+        connectForward,
+        forwardableSessions,
         connectWeb,
         connectRunner,
         redeemPairing,
