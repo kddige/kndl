@@ -22,7 +22,6 @@ import {
   webOrigin,
 } from "../../hub/src/testSupport.ts"
 import { StaticClaudeModels } from "./ClaudeModels.ts"
-import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -180,7 +179,6 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
     Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(HubLinkLive),
-    Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provideMerge(StaticClaudeModels(undefined)),
     Layer.provide([
       Layer.succeed(

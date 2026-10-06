@@ -9,7 +9,7 @@ A Runner is a machine that runs Sessions. Each runs on its Creator's [Claude cre
 
 ## Before you start
 
-The machine needs what the [install guide](/how-to/install/#what-each-machine-needs) lists for a Runner: Bun, git, tmux, Claude Code signed in, and microsandbox on a Mac with Apple Silicon or Linux with KVM. It must reach the Hub's URL, the one in the Hub's `HUB_PUBLIC_URL`.
+The machine needs what the [install guide](/how-to/install/#what-each-machine-needs) lists for a Runner: Bun, git, Claude Code signed in, and microsandbox on a Mac with Apple Silicon or Linux with KVM. It must reach the Hub's URL, the one in the Hub's `HUB_PUBLIC_URL`.
 
 ## With a Pairing code
 
@@ -140,7 +140,6 @@ Every Runner setting is in the [configuration reference](/reference/configuratio
 
 ## What the Runner does on start
 
-- **Trusts its sessions root** in Claude Code's config file (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`), so Sessions skip Claude Code's folder-trust dialog. It sets one entry, for the root, and never creates the file: if Claude Code has never run on the machine, it warns and each Session asks.
 - **Puts its Sessions to sleep.** It stops (never destroys) every Sandbox of its own, with the Claude Code in it: the Session tokens it ran on went with the old process. The Hub records them Asleep, and wakes those with prompts waiting. Sandboxes of other Runners on the same machine it only logs.
 
 If the Hub goes away, the Runner reconnects with backoff, from half a second doubling up to 30 seconds.

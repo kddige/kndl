@@ -21,7 +21,7 @@ export interface ServiceSpec {
   readonly bun: string
   /**
    * The PATH the service runs with: the one onboard ran with. A launchd agent otherwise gets only
-   * `/usr/bin:/bin:/usr/sbin:/sbin`, and the Runner needs tmux, git, gh and claude.
+   * `/usr/bin:/bin:/usr/sbin:/sbin`, and the Runner needs git, gh and claude.
    */
   readonly path: string
 }
@@ -352,29 +352,4 @@ export function systemdWord(word: string): string {
   const escaped = word.replaceAll("%", "%%").replaceAll("$", "$$$$")
   if (!/[\s"'\\]/.test(escaped)) return escaped
   return `"${escaped.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
-}
-
-/**
- * The PATH a service file written by {@link serviceFile} runs its service with, read back: the
- * plist's `PATH` string or the unit's `Environment=PATH=…`. Undefined when it has none.
- */
-export function servicePathIn(text: string): string | undefined {
-  const plist = /<key>PATH<\/key>\s*<string>([^<]*)<\/string>/.exec(text)
-  if (plist) {
-    return (plist[1] ?? "")
-      .replaceAll("&quot;", '"')
-      .replaceAll("&gt;", ">")
-      .replaceAll("&lt;", "<")
-      .replaceAll("&amp;", "&")
-  }
-  for (const line of text.split("\n")) {
-    if (!line.startsWith("Environment=")) continue
-    let word = line.slice("Environment=".length).trim()
-    if (word.startsWith('"') && word.endsWith('"')) {
-      word = word.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
-    }
-    word = word.replaceAll("$$", "$").replaceAll("%%", "%")
-    if (word.startsWith("PATH=")) return word.slice("PATH=".length)
-  }
-  return undefined
 }

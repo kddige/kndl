@@ -18,7 +18,7 @@ This tutorial runs claude-hub from a checkout of its repository with `bun run`, 
 - **A Mac with Apple Silicon, or Linux with KVM.** Sandboxes are [microsandbox](https://github.com/microsandbox/microsandbox) microVMs, which need one of the two. microsandbox itself comes with `bun install`.
 - **[Bun](https://bun.sh) 1.4 or newer.**
 - **Claude Code**, as `claude` on your `PATH`, signed in. Run `claude` once and sign in if you never have: every Session on this machine uses that login.
-- **tmux** and **git**.
+- **git**.
 - **A GitHub repository to work on** that this machine's own git can clone over HTTPS, such as one of yours. Without the GitHub App, the Runner clones with your host's git credentials.
 
 ## Start the Hub
@@ -67,7 +67,7 @@ This tutorial runs claude-hub from a checkout of its repository with `bun run`, 
    RUNNER_TOKEN=chr_… bun run runner
    ```
 
-   `bun run runner` builds the `hub-link` mod first, then connects to the Hub at `http://127.0.0.1:7777`. On its first start it marks its sessions root as trusted in Claude Code's config file, so Sessions skip Claude Code's folder-trust dialog.
+   `bun run runner` builds the `hub-link` mod first, then connects to the Hub at `http://127.0.0.1:7777`.
 
 </Steps>
 

@@ -23,7 +23,6 @@ test("Claude Code runs in the Sandbox with the mod, never asking for a permissio
     "3c1f6f0e-claude",
     "--plugin-dir",
     "/opt/claude-hub/hub-link",
-    "--strict-mcp-config",
     "--dangerously-skip-permissions",
   ])
   expect(env[ModEnvironment.sessionId]).toBe("s-1")

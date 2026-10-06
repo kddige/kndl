@@ -1,5 +1,5 @@
 // Onboard's questions and the env files they write, driven by a script of answers in a throwaway
-// home. Nothing here runs a command: Shell is a stand-in that says tmux has no server.
+// home. Nothing here runs a command: Shell is a stand-in.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -50,18 +50,12 @@ afterEach(async () => {
   await rm(scratch, { recursive: true, force: true })
 })
 
-/** A Shell that runs nothing: tmux answers that it has `tmuxSessions` sessions, or no server. */
-const fakeShell = (tmuxSessions = 0) =>
-  Shell.of({
-    dryRun: true,
-    capture: () =>
-      Effect.succeed(
-        tmuxSessions > 0
-          ? { exitCode: 0, stdout: "s\n".repeat(tmuxSessions), stderr: "" }
-          : { exitCode: 1, stdout: "", stderr: "no server running" },
-      ),
-    attached: () => Effect.succeed(0),
-  })
+/** A Shell that runs nothing: every command it is asked to capture fails. */
+const fakeShell = Shell.of({
+  dryRun: true,
+  capture: () => Effect.succeed({ exitCode: 1, stdout: "", stderr: "not run" }),
+  attached: () => Effect.succeed(0),
+})
 
 /** The redemptions the stand-in Hub was asked for, in order. */
 let redemptions: Array<{ readonly target: PairingTarget; readonly name: string }> = []
@@ -92,7 +86,6 @@ function run(
   options: Partial<OnboardOptions> = {},
   settings: {
     readonly interactive?: boolean
-    readonly tmuxSessions?: number
     readonly hub?: (name: string) => PairOutcome
   } = {},
 ) {
@@ -100,7 +93,7 @@ function run(
   return Effect.runPromiseExit(
     configure(layout, { ...none, ...options }).pipe(
       Effect.provideService(Ui, ui),
-      Effect.provideService(Shell, fakeShell(settings.tmuxSessions)),
+      Effect.provideService(Shell, fakeShell),
       Effect.provideService(HubClient, standInHub(settings.hub ?? paired)),
     ),
   ).then((exit) => ({ exit, transcript }))
@@ -381,17 +374,5 @@ describe("onboard on a home with old data", () => {
 
     expect(Exit.isSuccess(exit)).toBe(true)
     expect(existsSync(join(layout.home.dir, `sessions.old-${stamp}`, "s1", "work.txt"))).toBe(true)
-  })
-
-  test("live tmux sessions on socket claude-hub stop it, even with --move-old-data", async () => {
-    oldHome()
-    const { exit } = await run(
-      [],
-      { role: "runner", moveOldData: true },
-      { interactive: false, tmuxSessions: 2 },
-    )
-
-    expect(String((failure(exit) as { message: string }).message)).toContain("has 2 sessions")
-    expect(existsSync(join(layout.sessions, "s1", "work.txt"))).toBe(true)
   })
 })

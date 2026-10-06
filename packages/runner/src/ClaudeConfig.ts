@@ -103,15 +103,6 @@ export const resolveRunnerLogin = (configured: string | undefined, configPath: s
         }),
       )
 
-/**
- * What {@link trustDirectory} did: wrote the flag, found it already set, or found no config file
- * to write it to.
- */
-export type TrustOutcome =
-  | { readonly _tag: "Trusted"; readonly directory: string }
-  | { readonly _tag: "AlreadyTrusted"; readonly directory: string }
-  | { readonly _tag: "NoConfigFile" }
-
 /** How often a write lost to a Claude Code process rewriting the file is tried again. */
 const rewriteAttempts = 5
 
@@ -150,31 +141,6 @@ function rewriteConfig(
 }
 
 const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
-
-/**
- * Marks `directory`, resolved with realpath, as trusted in Claude Code's config file:
- * `projects[<directory>].hasTrustDialogAccepted: true`. Claude Code inherits trust from parent
- * directories (spike #4), so trusting the sessions root once covers every Session under it.
- *
- * Writes only when the flag is missing, and never creates the file. See {@link rewriteConfig}
- * for how it writes without losing a Claude Code process's own write.
- */
-export const trustDirectory = (configPath: string, directory: string) =>
-  Effect.try({
-    try: (): TrustOutcome => {
-      const target = realpathSync(directory)
-      if (!existsSync(configPath)) return { _tag: "NoConfigFile" }
-      // Write next to the real file, so a symlinked config stays a symlink.
-      const outcome = rewriteConfig(realpathSync(configPath), (config) =>
-        hasTrust(config, target) ? undefined : withTrust(config, target),
-      )
-      return { _tag: outcome === "Unchanged" ? "AlreadyTrusted" : "Trusted", directory: target }
-    },
-    catch: (cause) =>
-      new ClaudeConfigError({
-        message: `Could not mark ${directory} as trusted in ${configPath}: ${causeMessage(cause)}`,
-      }),
-  })
 
 /**
  * Removes `directories` from the `projects` of Claude Code's config file, where Claude Code keeps
@@ -254,22 +220,6 @@ function parseConfig(text: string, path: string): Record<string, unknown> {
     throw new Error(`${path} does not hold a JSON object`)
   }
   return config as Record<string, unknown>
-}
-
-/** Whether `directory` (already resolved with realpath) is marked trusted in the config. */
-export function hasTrust(config: unknown, directory: string): boolean {
-  return field(field(field(config, "projects"), directory), "hasTrustDialogAccepted") === true
-}
-
-function withTrust(config: Record<string, unknown>, directory: string): Record<string, unknown> {
-  const projects = objectOrEmpty(config.projects)
-  return {
-    ...config,
-    projects: {
-      ...projects,
-      [directory]: { ...objectOrEmpty(projects[directory]), hasTrustDialogAccepted: true },
-    },
-  }
 }
 
 /** JSON indented the way Claude Code writes it, keeping a trailing newline if there was one. */

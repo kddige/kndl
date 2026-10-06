@@ -5,7 +5,6 @@ import {
   launchdPlist,
   parseServiceState,
   serviceFilePath,
-  servicePathIn,
   type ServiceTarget,
   startSteps,
   stopSteps,
@@ -146,19 +145,6 @@ describe("the systemd user unit", () => {
     expect(spaced).toContain("WorkingDirectory=/srv/claude hub\n")
     expect(spaced).toContain("StandardOutput=append:/srv/claude hub/logs/hub.log\n")
     expect(spaced).toContain('Environment="CLAUDE_HUB_HOME=/srv/claude hub"')
-  })
-})
-
-describe("the PATH a service file runs with, read back", () => {
-  test("from either platform's file, however it was escaped", () => {
-    for (const path of ["/home/ada/.bun/bin:/usr/bin:/bin", "/odd dir/$HOME/100%/a&b<c>:/bin"]) {
-      expect(servicePathIn(launchdPlist({ ...spec("runner"), path }))).toBe(path)
-      expect(servicePathIn(systemdUnitFile({ ...spec("runner"), path }))).toBe(path)
-    }
-  })
-
-  test("is undefined for a file without one", () => {
-    expect(servicePathIn("[Service]\nExecStart=/bin/true\n")).toBeUndefined()
   })
 })
 

@@ -13,7 +13,6 @@ import {
   secretsResetDoneText,
   secretsResetPlanText,
 } from "@claude-hub/hub/src/SecretsReset.ts"
-import { claudeConfigPath, trustDirectory } from "@claude-hub/runner/src/ClaudeConfig.ts"
 import { Cause, ConfigProvider, Console, Effect } from "effect"
 import { fail } from "./Failure.ts"
 import {
@@ -258,20 +257,6 @@ export const enableLinger = Effect.gen(function* () {
 
 /** Restricts an env file to this user: it holds secrets. */
 export const restrictEnvFile = (path: string) => Effect.promise(() => chmod(path, 0o600))
-
-/** Trusts the Runner's sessions root in Claude Code's config file, as the Runner does on start. */
-export const trustSessionsRoot = (layout: Layout) =>
-  Effect.gen(function* () {
-    const root = readEnvValues(layout.envFile("runner")).RUNNER_SESSIONS_ROOT ?? layout.sessions
-    yield* Effect.promise(() => mkdir(root, { recursive: true }))
-    const outcome = yield* trustDirectory(claudeConfigPath(), root)
-    if (outcome._tag === "NoConfigFile") {
-      yield* (yield* Ui).log(
-        "warn",
-        "Claude Code's config file doesn't exist: run `claude` once and sign in.",
-      )
-    }
-  }).pipe(Effect.mapError((error) => fail(error.message)))
 
 /**
  * Issues a Runner's token in this home's Hub database, the one the Hub's service opens. Refuses

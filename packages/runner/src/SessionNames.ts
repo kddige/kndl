@@ -20,26 +20,20 @@ export function tmuxSessionName(id: SessionId): string {
 export interface SessionDirectories {
   /** `<root>/<session id>`, which holds the others. */
   readonly session: string
-  /** The empty directory Claude Code runs in (ADR 0001). */
+  /**
+   * The empty directory Claude Code ran in on the host, before it moved into the Sandbox (ADR
+   * 0013). Never made now: its name finds the transcripts a Session has from then, to copy in
+   * when it wakes, and purging a Session forgets them.
+   */
   readonly claude: string
   /** The Workspace: the Repo's checkout on the Work branch, mounted into the Sandbox. */
   readonly workspace: string
-  /**
-   * The Unix socket the Session's tool bridge listens on, which the mod finds through
-   * `CLAUDE_HUB_TOOLS_SOCKET`. A socket path must stay under 104 bytes on macOS.
-   */
-  readonly toolsSocket: string
   /**
    * The Runner's own git directory for the Workspace, never mounted into the Sandbox. Host git
    * runs with it as `GIT_DIR`, so it reads the Runner's config and hooks, not the Workspace's
    * `.git/config` and `.git/hooks`, which the Sandbox can write (HostGit.ts).
    */
   readonly hostGit: string
-  /**
-   * The Repo's skills and CLAUDE.md, as the Runner copied them out of the Sandbox when the Session
-   * last started (RepoFiles.ts). Rewritten at each start; never the Workspace's own files.
-   */
-  readonly repoFiles: string
 }
 
 export function sessionDirectories(sessionsRoot: string, id: SessionId): SessionDirectories {
@@ -48,8 +42,6 @@ export function sessionDirectories(sessionsRoot: string, id: SessionId): Session
     session,
     claude: join(session, "claude"),
     workspace: join(session, "workspace"),
-    toolsSocket: join(session, "tools.sock"),
     hostGit: join(session, "host-git"),
-    repoFiles: join(session, "repo"),
   }
 }

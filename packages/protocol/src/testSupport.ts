@@ -162,9 +162,9 @@ export const turnEvents = [
     turnId: "t-1",
     agentId: "a-1",
     toolCallId: "toolu_2",
-    tool: "WebFetch",
+    tool: "Bash",
     outcome: "Denied",
-    output: "WebFetch is not available in a claude-hub Session",
+    output: "Blocked by a PreToolUse hook: no force pushes",
   },
   {
     _tag: "TurnEnded",

@@ -61,7 +61,7 @@ onboard can't ask, so it needs --role hub|runner|both.
 
 and `claude-hub doctor` warns `!!  Old data`.
 
-**Why.** Before checkouts got the dev home `~/.claude-hub-dev`, a checkout's Runner kept its Session Workspaces in `~/.claude-hub/sessions` and used tmux server `claude-hub`: exactly what an installed Runner uses. A Runner installed over that data would carry the old Runner's mark, so it would take over the old Sessions' tmux sessions and Sandboxes, while its new Hub database knows none of those Sessions. A Hub's `hub.db` without `hub.env` is old data in the same way. Once onboard has written a role's env file, that role's data is the install's own, and none of this applies.
+**Why.** Before checkouts got the dev home `~/.claude-hub-dev`, a checkout's Runner kept its Session Workspaces in `~/.claude-hub/sessions` and used tmux socket `claude-hub`: exactly what an installed Runner uses. A Runner installed over that data would carry the old Runner's mark, so it would take over the old Sessions' Sandboxes, while its new Hub database knows none of those Sessions. A Hub's `hub.db` without `hub.env` is old data in the same way. Once onboard has written a role's env file, that role's data is the install's own, and none of this applies.
 
 **Fix.** Choose one:
 
@@ -69,8 +69,6 @@ and `claude-hub doctor` warns `!!  Old data`.
 - **Install somewhere else.** Set `CLAUDE_HUB_HOME` to another directory, and install and onboard there.
 
 Other files in the home, such as a `github-app.pem`, stay where they are.
-
-If onboard also says that tmux server `claude-hub` has sessions, those would be re-adopted however the data is named: archive those Sessions on the Hub that started them, or stop the server with `tmux -L claude-hub kill-server`, then onboard again.
 
 ## Onboard can't create the GitHub App
 

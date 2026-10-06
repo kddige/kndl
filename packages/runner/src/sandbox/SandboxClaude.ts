@@ -57,34 +57,6 @@ export const detectLibcScript =
 
 const Version = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
-/** Reads the version out of `claude --version` output, such as `2.1.287 (Claude Code)`. */
-export const parseClaudeVersion = (output: string): string | undefined => {
-  const version = output.trim().split(/\s+/)[0]
-  return version !== undefined && Version.test(version) ? version : undefined
-}
-
-/** Asks the host's Claude Code for its version. Makes no model call. */
-export const hostClaudeVersion = (claudeBin: string) =>
-  Effect.tryPromise({
-    try: async () => {
-      const child = Bun.spawn([claudeBin, "--version"], { stdout: "pipe", stderr: "pipe" })
-      const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited])
-      if (code !== 0) throw new Error(`exited with ${code}`)
-      return output
-    },
-    catch: (error) =>
-      new SandboxClaudeError({ message: `could not run ${claudeBin} --version: ${String(error)}` }),
-  }).pipe(
-    Effect.flatMap((output) => {
-      const version = parseClaudeVersion(output)
-      return version === undefined
-        ? Effect.fail(
-            new SandboxClaudeError({ message: `unexpected ${claudeBin} --version: ${output}` }),
-          )
-        : Effect.succeed(version)
-    }),
-  )
-
 export interface EnsureOptions {
   /** The cache directory, mounted into Sandboxes at {@link sandboxClaudeGuestDir}. */
   readonly cacheDir: string

@@ -33,11 +33,11 @@ import {
   turnUsage,
 } from "./hub-link-lib.js"
 import type {
+  ChildToolAnswer,
   FromSession,
   LinkStatus,
   ModCommand,
   Participant,
-  ToolAnswer,
   ToolCallOutcome,
 } from "./hub-link-lib.js"
 
@@ -166,7 +166,7 @@ const startLink = async ($: EngineInterface) => {
 /** Answers a call to one of the Child Session tools, or message_parent, from the Hub. */
 const answerChildTool = async (
   request: Exclude<ReturnType<typeof childToolRequest>, undefined>,
-): Promise<ToolAnswer> => {
+): Promise<ChildToolAnswer> => {
   if ("invalid" in request) return { _tag: "Failed", message: request.invalid }
   if (state.link === undefined)
     return { _tag: "Refused", message: "This Session isn't linked to a Claude Hub." }
@@ -179,11 +179,10 @@ const answerChildTool = async (
     : { _tag: "Failed", message: answer.refused }
 }
 
-const outcomes: Record<ToolAnswer["_tag"], ToolCallOutcome> = {
+const outcomes: Record<ChildToolAnswer["_tag"], ToolCallOutcome> = {
   Ran: "Succeeded",
   Failed: "Failed",
   Refused: "Denied",
-  Lost: "Failed",
 }
 
 export function register(on: On) {

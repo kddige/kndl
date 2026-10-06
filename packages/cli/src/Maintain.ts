@@ -16,7 +16,6 @@ import {
   serviceFileChanged,
   serviceInstalled,
   startService,
-  trustSessionsRoot,
   waitForHub,
 } from "./Actions.ts"
 import { type Check, diagnose, type Fix, formatChecks } from "./Doctor.ts"
@@ -117,10 +116,6 @@ const applyFix = (
         yield* runSteps([
           step(bunPath(), ["run", "web:build"], { cwd: layout.app, why: "build the web UI" }),
         ])
-        return
-      case "TrustSessionsRoot":
-        yield* trustSessionsRoot(layout)
-        yield* ui.log("step", "trusted the sessions root in Claude Code's config file")
         return
       case "InstallService":
         yield* installService(layout, fix.role, on)
@@ -288,7 +283,7 @@ export const uninstall = (
     yield* Console.log(`This removes:\n${plan.map((line) => `  - ${line}`).join("\n")}`)
     if (options.purge) {
       yield* Console.log(
-        "Including the Hub's database (hub.db) and its HUB_SECRETS_KEY, and the Runner's Session workspaces: this can't be undone. Archive or finish your Sessions first: Sessions still running keep their tmux sessions and Sandboxes.",
+        "Including the Hub's database (hub.db) and its HUB_SECRETS_KEY, and the Runner's Session workspaces: this can't be undone. Archive or finish your Sessions first: Sessions still running keep their Sandboxes.",
       )
     } else {
       yield* Console.log(

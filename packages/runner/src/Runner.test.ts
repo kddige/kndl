@@ -1,6 +1,6 @@
 // The Runner against a fake Hub WebSocket server, with tmux, the Workspace and the Sandbox faked.
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@claude-hub/protocol"
@@ -10,7 +10,6 @@ import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
 import { childSystemPrompt } from "./ClaudeLaunch.ts"
 import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
-import { ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
@@ -204,7 +203,6 @@ function startRunner(
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(updater),
     Layer.provideMerge(HubLinkLive),
-    Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provideMerge(claudeModels),
     Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, git.layer, proxy.layer]),
     Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
@@ -416,15 +414,12 @@ const projects = (h: Harness) =>
   (JSON.parse(readFileSync(h.claudeConfig, "utf8")) as { projects: Record<string, unknown> })
     .projects
 
-describe("trust", () => {
-  test("trusts the sessions root, by its real path, at startup", async () => {
+describe("the host's Claude Code", () => {
+  test("keeps its config as it was: Sessions trust their Workspace in the Sandbox", async () => {
     const h = startRunner()
     await connected(h)
 
-    expect(projects(h)).toEqual({
-      "/elsewhere": { allowedTools: [] },
-      [realpathSync(h.settings.sessionsRoot)]: { hasTrustDialogAccepted: true },
-    })
+    expect(projects(h)).toEqual({ "/elsewhere": { allowedTools: [] } })
   })
 })
 
@@ -452,7 +447,6 @@ describe("Sessions", () => {
       expect.stringMatching(/^[0-9a-f-]{36}$/),
       "--plugin-dir",
       modGuestPath,
-      "--strict-mcp-config",
       "--dangerously-skip-permissions",
     ])
     const sessionToken = spec?.env["CLAUDE_HUB_MOD_TOKEN"] ?? ""
