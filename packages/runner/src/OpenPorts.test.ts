@@ -158,13 +158,10 @@ describe("naming owners", () => {
   })
 })
 
-describe("openPortsOf", () => {
-  const report = (tcp: string, tcp6: string, owners: string) =>
-    openPortsOf(
-      [...parseProcNetTcp(tcp, 4), ...parseProcNetTcp(tcp6, 6)],
-      parseSocketOwners(owners),
-    )
+const report = (tcp: string, tcp6: string, owners: string) =>
+  openPortsOf([...parseProcNetTcp(tcp, 4), ...parseProcNetTcp(tcp6, 6)], parseSocketOwners(owners))
 
+describe("openPortsOf", () => {
   test("lists each port once, by port, with all its addresses", () => {
     expect(report(dindTcp, dindTcp6, dindOwners)).toEqual([
       { port: 3000, addresses: ["127.0.0.1"], process: "nc" },
@@ -215,56 +212,59 @@ describe("openPortsOf", () => {
   })
 })
 
-describe("OpenPorts", () => {
-  const s1 = sessionId("s-1")
+const s1 = sessionId("s-1")
 
-  /** A fake Sandbox for s-1, its /proc set by the test, and what the Hub was sent. */
-  const setup = (onExec: (call: FakeExecCall) => FakeExecReply) => {
-    const sent: Array<RunnerToHub> = []
-    const hub = Layer.succeed(
-      HubLink,
-      HubLink.of({
-        send: (message) => Effect.sync(() => void sent.push(message)),
-        connect: () => Effect.void,
-        disconnect: Effect.void,
+/** Sets s-1's /proc/net/tcp and tcp6. */
+const proc = (tcp: string, tcp6: string) =>
+  Effect.gen(function* () {
+    const backend = yield* SandboxBackend
+    yield* backend.writeFile(s1, "/proc/net/tcp", tcp)
+    yield* backend.writeFile(s1, "/proc/net/tcp6", tcp6)
+  })
+
+/** The execs that looked up the owners of sockets. */
+const ownersCalls = (world: { execCalls: ReadonlyArray<FakeExecCall> }) =>
+  world.execCalls.filter((call) => call.request.args?.[2] === "owners")
+
+/** A fake Sandbox for s-1, its /proc set by the test, and what the Hub was sent. */
+const setup = (onExec: (call: FakeExecCall) => FakeExecReply) => {
+  const sent: Array<RunnerToHub> = []
+  const hub = Layer.succeed(
+    HubLink,
+    HubLink.of({
+      send: (message) => Effect.sync(() => void sent.push(message)),
+      connect: () => Effect.void,
+      disconnect: Effect.void,
+    }),
+  )
+  const layer = Layer.effect(OpenPorts, makeOpenPorts("20 millis")).pipe(
+    Layer.provideMerge(
+      FakeSandboxBackend.layer({ onExec: (call) => Effect.succeed(onExec(call)) }),
+    ),
+    Layer.provide(hub),
+  )
+  const reports = () =>
+    sent.filter((m): m is SessionPorts => m._tag === "SessionPorts").map((m) => m.ports)
+  const boot = Effect.gen(function* () {
+    const backend = yield* SandboxBackend
+    yield* backend.create(
+      sessionSandboxSpec({
+        sessionId: s1,
+        image: "docker:dind",
+        workspaceHostPath: "/host/s-1",
+        env: {},
       }),
     )
-    const layer = Layer.effect(OpenPorts, makeOpenPorts("20 millis")).pipe(
-      Layer.provideMerge(
-        FakeSandboxBackend.layer({ onExec: (call) => Effect.succeed(onExec(call)) }),
-      ),
-      Layer.provide(hub),
-    )
-    const reports = () =>
-      sent.filter((m): m is SessionPorts => m._tag === "SessionPorts").map((m) => m.ports)
-    const proc = (tcp: string, tcp6: string) =>
-      Effect.gen(function* () {
-        const backend = yield* SandboxBackend
-        yield* backend.writeFile(s1, "/proc/net/tcp", tcp)
-        yield* backend.writeFile(s1, "/proc/net/tcp6", tcp6)
-      })
-    const boot = Effect.gen(function* () {
-      const backend = yield* SandboxBackend
-      yield* backend.create(
-        sessionSandboxSpec({
-          sessionId: s1,
-          image: "docker:dind",
-          workspaceHostPath: "/host/s-1",
-          env: {},
-        }),
-      )
-    })
-    const run = <A, E>(
-      effect: Effect.Effect<A, E, OpenPorts | SandboxBackend | FakeSandboxBackend>,
-    ) => Effect.runPromise(Effect.scoped(effect.pipe(Effect.provide(layer))))
-    return { sent, reports, proc, boot, run }
-  }
+  })
+  const run = <A, E>(
+    effect: Effect.Effect<A, E, OpenPorts | SandboxBackend | FakeSandboxBackend>,
+  ) => Effect.runPromise(Effect.scoped(effect.pipe(Effect.provide(layer))))
+  return { sent, reports, boot, run }
+}
 
-  const ownersCalls = (world: { execCalls: ReadonlyArray<FakeExecCall> }) =>
-    world.execCalls.filter((call) => call.request.args?.[2] === "owners")
-
+describe("OpenPorts", () => {
   test("reports the ports, names owners only when the sockets change, and sends only changes", async () => {
-    const { reports, proc, boot, run } = setup(({ request }) => ({
+    const { reports, boot, run } = setup(({ request }) => ({
       stdout: request.args?.includes("2148")
         ? dindOwners
         : dindOwners.split("\n").slice(0, 3).join("\n"),
@@ -311,7 +311,7 @@ describe("OpenPorts", () => {
   })
 
   test("never reports Claude Code's own port", async () => {
-    const { reports, proc, boot, run } = setup(() => ({ stdout: nodeOwners }))
+    const { reports, boot, run } = setup(() => ({ stdout: nodeOwners }))
     await run(
       Effect.gen(function* () {
         const ports = yield* OpenPorts
@@ -325,7 +325,7 @@ describe("OpenPorts", () => {
   })
 
   test("sends nothing while it can't tell who owns the sockets", async () => {
-    const { reports, proc, boot, run } = setup(() => ({ exitCode: 1, stderr: "ls: not found" }))
+    const { reports, boot, run } = setup(() => ({ exitCode: 1, stderr: "ls: not found" }))
     await run(
       Effect.gen(function* () {
         const world = yield* FakeSandboxBackend
@@ -340,7 +340,7 @@ describe("OpenPorts", () => {
   })
 
   test("an empty Sandbox reports no ports once; unwatching says so only if it had some", async () => {
-    const { reports, proc, boot, run } = setup(() => ({ stdout: dindOwners }))
+    const { reports, boot, run } = setup(() => ({ stdout: dindOwners }))
     await run(
       Effect.gen(function* () {
         const world = yield* FakeSandboxBackend
@@ -375,7 +375,7 @@ describe("OpenPorts", () => {
   })
 
   test("resends what each watched Session last reported", async () => {
-    const { reports, proc, boot, run } = setup(() => ({ stdout: dindOwners }))
+    const { reports, boot, run } = setup(() => ({ stdout: dindOwners }))
     await run(
       Effect.gen(function* () {
         const ports = yield* OpenPorts
@@ -387,7 +387,7 @@ describe("OpenPorts", () => {
         yield* waitFor(Effect.sync(() => reports().length === 1))
         yield* ports.resendAll
         expect(reports()).toHaveLength(2)
-        expect(reports()[1]).toEqual(reports()[0]!)
+        expect(reports()[1]).toEqual(reports()[0] ?? [])
       }),
     )
   })

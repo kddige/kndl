@@ -42,6 +42,7 @@ import {
   NavSlot,
   PageHeader,
   PencilIcon,
+  PlugIcon,
   PlusIcon,
   Popover,
   RestartIcon,
@@ -670,6 +671,7 @@ function Toggles() {
         <ArchiveIcon aria-label="Archive" />
         <ServerIcon aria-label="Server" />
         <CopyIcon aria-label="Copy" />
+        <PlugIcon aria-label="Plug" />
       </Row>
     </Section>
   )

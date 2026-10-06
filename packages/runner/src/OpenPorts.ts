@@ -51,7 +51,7 @@ export const ipv6FromHex = (hex: string): string => {
   if (bytes.slice(0, 10).every((b) => b === 0) && bytes[10] === 0xff && bytes[11] === 0xff)
     return `::ffff:${bytes.slice(12).join(".")}`
   const groups = Array.from({ length: 8 }, (_, g) =>
-    ((bytes[2 * g]! << 8) | bytes[2 * g + 1]!).toString(16),
+    (((bytes[2 * g] ?? 0) << 8) | (bytes[2 * g + 1] ?? 0)).toString(16),
   )
   let best = { start: -1, length: 0 }
   for (let i = 0; i < 8;) {
@@ -77,9 +77,9 @@ export const parseProcNetTcp = (text: string, family: 4 | 6): Array<ListeningSoc
     // sl local_address rem_address st tx:rx tr:when retrnsmt uid timeout inode ...
     const fields = line.trim().split(/\s+/)
     if (fields.length < 10 || fields[3] !== Listen) continue
-    const [addressHex = "", portHex = ""] = fields[1]!.split(":")
+    const [addressHex = "", portHex = ""] = (fields[1] ?? "").split(":")
     const port = Number.parseInt(portHex, 16)
-    const inode = fields[9]!
+    const inode = fields[9] ?? ""
     if (!/^[0-9a-fA-F]+$/.test(portHex) || !(port > 0 && port <= 65535)) continue
     if (addressHex.length !== (family === 4 ? 8 : 32) || !/^\d+$/.test(inode)) continue
     const address = family === 4 ? ipv4FromHex(addressHex) : ipv6FromHex(addressHex)
@@ -178,7 +178,8 @@ export const openPortsOf = (
   for (const socket of sockets) {
     const held = owners.get(socket.inode) ?? []
     if (held.some(isClaudeCode)) continue
-    const process = held.length === 0 ? undefined : processName(held[0]!)
+    const owner = held[0]
+    const process = owner === undefined ? undefined : processName(owner)
     if (process !== undefined && sandboxOwn.has(process)) continue
     const entry = byPort.get(socket.port) ?? { addresses: [], process }
     if (!entry.addresses.includes(socket.address)) entry.addresses.push(socket.address)
@@ -323,9 +324,10 @@ export const makeOpenPorts = (interval: Duration.Input = OpenPortsInterval) =>
     const resendAll = sending.withPermit(
       Effect.suspend(() =>
         Effect.forEach(
-          [...watched].filter(([, entry]) => entry.sent !== undefined),
-          ([sessionId, entry]) =>
-            hub.send(RunnerToHub.cases.SessionPorts.make({ sessionId, ports: entry.sent! })),
+          [...watched].flatMap(([sessionId, entry]) =>
+            entry.sent === undefined ? [] : [{ sessionId, ports: entry.sent }],
+          ),
+          (report) => hub.send(RunnerToHub.cases.SessionPorts.make(report)),
           { discard: true },
         ),
       ),

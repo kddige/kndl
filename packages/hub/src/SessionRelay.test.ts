@@ -1012,8 +1012,8 @@ describe("Runner reports", () => {
     expect((await web.untaken("SessionUpdated")).filter((m) => m.session.openPorts)).toEqual([])
 
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
-    const asleep = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
-    expect(asleep.session.openPorts).toBeUndefined()
+    const slept = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(slept.session.openPorts).toBeUndefined()
     // A list that raced the stop is dropped.
     runner.send({ _tag: "SessionPorts", sessionId, ports })
     runner.send({ _tag: "SandboxNote", sessionId, message: "after the stop" })

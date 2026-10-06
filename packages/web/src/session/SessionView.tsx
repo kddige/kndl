@@ -52,6 +52,7 @@ import { AgentPanel } from "./AgentPanel.tsx"
 import { Composer } from "./Composer.tsx"
 import { ModelPicker } from "./ModelPicker.tsx"
 import { modelName, otherTurnModel } from "./models.ts"
+import { OpenPorts } from "./OpenPorts.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { Transcript } from "./Transcript.tsx"
@@ -318,6 +319,7 @@ function LoadedSession({
         }
         actions={
           <>
+            <OpenPorts summary={summary} />
             {state === "Active" && (
               <Button
                 size="sm"

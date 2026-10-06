@@ -448,35 +448,33 @@ export class FakeOpenPorts {
   readonly ports = new Map<SessionId, ReadonlyArray<OpenPort>>()
   readonly watched = new Set<SessionId>()
 
-  private has(sessionId: SessionId) {
-    return (this.ports.get(sessionId)?.length ?? 0) > 0
+  private has(id: SessionId) {
+    return (this.ports.get(id)?.length ?? 0) > 0
   }
 
   readonly layer = Layer.effect(
     OpenPorts,
     Effect.map(HubLink, (hub) => {
-      const report = (sessionId: SessionId, ports: ReadonlyArray<OpenPort>) =>
-        hub.send(RunnerToHub.cases.SessionPorts.make({ sessionId, ports }))
+      const report = (id: SessionId, ports: ReadonlyArray<OpenPort>) =>
+        hub.send(RunnerToHub.cases.SessionPorts.make({ sessionId: id, ports }))
       return OpenPorts.of({
-        watch: (sessionId) =>
+        watch: (id) =>
           Effect.suspend(() => {
-            this.calls.push(`watch ${sessionId}`)
-            if (this.watched.has(sessionId)) return Effect.void
-            this.watched.add(sessionId)
-            return this.has(sessionId)
-              ? report(sessionId, this.ports.get(sessionId) ?? [])
-              : Effect.void
+            this.calls.push(`watch ${id}`)
+            if (this.watched.has(id)) return Effect.void
+            this.watched.add(id)
+            return this.has(id) ? report(id, this.ports.get(id) ?? []) : Effect.void
           }),
-        unwatch: (sessionId) =>
+        unwatch: (id) =>
           Effect.suspend(() => {
-            this.calls.push(`unwatch ${sessionId}`)
-            if (!this.watched.delete(sessionId)) return Effect.void
-            return this.has(sessionId) ? report(sessionId, []) : Effect.void
+            this.calls.push(`unwatch ${id}`)
+            if (!this.watched.delete(id)) return Effect.void
+            return this.has(id) ? report(id, []) : Effect.void
           }),
         resendAll: Effect.suspend(() =>
           Effect.forEach(
-            [...this.watched].filter((sessionId) => this.has(sessionId)),
-            (sessionId) => report(sessionId, this.ports.get(sessionId) ?? []),
+            [...this.watched].filter((id) => this.has(id)),
+            (id) => report(id, this.ports.get(id) ?? []),
             { discard: true },
           ),
         ),
