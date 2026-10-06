@@ -26,6 +26,8 @@ import { SessionLog } from "./SessionLog.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 import { SignIns } from "./SignIns.ts"
+import { TunnelRoutes } from "./TunnelRoutes.ts"
+import { Tunnels } from "./Tunnels.ts"
 import { WebUiRoutes } from "./WebUi.ts"
 
 /** Every route the Hub serves: its own, and the web UI's build on every other GET path. */
@@ -37,13 +39,14 @@ export const HubRoutes = Layer.mergeAll(
   CliRoutes,
   ModRoutes,
   PairingRoutes,
+  TunnelRoutes,
   WebUiRoutes,
 )
 
 /**
  * The credential stores, each person's Claude credential, the mod outbox, Environments, Repo
- * access, the GitHub App's permission check, the Pairing codes, the Session relay and the
- * shutdown signal the routes use, given a database, the GitHub App (GitHubApp.ts), the check of
+ * access, the GitHub App's permission check, the Pairing codes, the Session relay, the tunnels
+ * waiting for their Runner and the shutdown signal the routes use, given a database, the GitHub App (GitHubApp.ts), the check of
  * Claude credentials (ClaudeCheck) and the Hub's version (HubVersion.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
@@ -64,6 +67,7 @@ export const HubServices = SessionRelay.layer.pipe(
       Environments.layer,
       RunnerUpdatePush.layer,
       ClaudeCredentials.layer,
+      Tunnels.layer,
     ),
   ),
   // Checks HUB_SECRETS_KEY against the Sensitive values stored, so a Hub with the wrong key
@@ -76,3 +80,10 @@ export const HubServices = SessionRelay.layer.pipe(
  * mod's long poll of `GET /mod/commands`, which can be quiet for MaxCommandWaitMs.
  */
 export const idleTimeoutSeconds = Math.ceil(MaxCommandWaitMs / 1000) + 10
+
+/**
+ * The Hub's WebSockets, its channels and tunnels (#177): one quiet for `idleTimeout` seconds is
+ * pinged, and closed only if the peer doesn't answer, so a tunnel to a quiet connection, such as
+ * a WebSocket served in the Sandbox, stays up. Said here, not left to Bun's defaults.
+ */
+export const websocketOptions = { idleTimeout: 120, sendPings: true } as const
