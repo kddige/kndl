@@ -1,6 +1,8 @@
 import { createPrivateKey } from "node:crypto"
 import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { HomeConfig } from "@claude-hub/protocol/home"
 import { Config, Context, Duration, Effect, Layer, Option, Redacted, Schema } from "effect"
 
 /** The GitHub App's user sign-in credentials (issue #1). */
@@ -56,6 +58,8 @@ export interface HubConfigInput {
   readonly secretsKey: Option.Option<Redacted.Redacted<string>>
   /** The web UI's build: the directory holding its `index.html`. */
   readonly webDir: string
+  /** Where the Hub keeps the CLI binaries it builds, by commit (CliBuilds.ts). */
+  readonly cliDir: string
 }
 
 /**
@@ -183,6 +187,8 @@ export class HubConfig extends Context.Service<
     readonly secretsKey: Option.Option<Redacted.Redacted<Uint8Array>>
     /** The web UI's build, which the Hub serves (WebUi.ts). It may not exist. */
     readonly webDir: string
+    /** Where the CLI binaries the Hub serves are built and kept: `cli/` in its home (CliBuilds.ts). */
+    readonly cliDir: string
   }
 >()("@claude-hub/hub/HubConfig") {
   /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
@@ -271,6 +277,7 @@ export class HubConfig extends Context.Service<
       repoAccessTtl: Duration.millis(input.repoAccessTtlMs),
       secretsKey,
       webDir: input.webDir,
+      cliDir: input.cliDir,
     })
   })
 
@@ -281,6 +288,7 @@ export class HubConfig extends Context.Service<
    * git credentials, and the Sandbox gets no GitHub token), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_INSECURE_COOKIES` (off), `HUB_SLEEP_AFTER_MS`
    * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days), `HUB_REPO_ACCESS_TTL_MS` (5 minutes),
    * `HUB_SECRETS_KEY` (unset: Sensitive values can't be saved) and `HUB_WEB_DIR` (DefaultWebDir).
+   * The CLI binaries go in `cli/` in the home (`CLAUDE_HUB_HOME`, or the dev home).
    */
   static readonly layer = Layer.effect(
     HubConfig,
@@ -321,6 +329,7 @@ export class HubConfig extends Context.Service<
         ),
         secretsKey: Config.option(Config.Redacted("HUB_SECRETS_KEY")),
         webDir: Config.NonEmptyString("HUB_WEB_DIR").pipe(Config.withDefault(DefaultWebDir)),
+        cliDir: HomeConfig.pipe(Config.map((home) => join(home.dir, "cli"))),
       })
       return yield* HubConfig.make({ ...input, githubAppPrivateKey })
     }),
