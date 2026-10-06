@@ -1,12 +1,9 @@
 // The mod channel, over plain HTTP: Claude Code's mod runtime can `fetch`, with headers, but has
 // no WebSockets and no streaming. Every route authenticates with the Session's mod token as
 // `Authorization: Bearer` and acts only for that Session. See the protocol's Mod.ts for the
-// contract. What the mod reports goes to the SessionRelay, which also fills the outbox. A Session's
-// Child Session tools ask at `POST /mod/children` (the protocol's Children.ts, ADR 0012).
+// contract. What the mod reports goes to the SessionRelay, which also fills the outbox.
 
 import {
-  ChildReply,
-  ChildRequest,
   checkHandshake,
   HandshakeRejected,
   MaxCommandWaitMs,
@@ -51,7 +48,6 @@ const badRequest = Effect.catchTags({
 })
 
 const replyToHello = HttpServerResponse.schemaJson(ModHelloReply)
-const replyToChildRequest = HttpServerResponse.schemaJson(ChildReply)
 
 export const ModRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
@@ -104,18 +100,6 @@ export const ModRoutes = HttpRouter.use(
         const events = yield* HttpServerRequest.schemaBodyJson(ModEvents)
         yield* relay.modEvents(grant.sessionId, events.messages).pipe(Effect.orDie)
         return HttpServerResponse.empty({ status: 204 })
-      }).pipe(badRequest),
-    )
-
-    yield* router.add(
-      "POST",
-      "/mod/children",
-      Effect.gen(function* () {
-        const grant = yield* authenticateMod
-        yield* requireHello(grant.sessionId)
-        const request = yield* HttpServerRequest.schemaBodyJson(ChildRequest)
-        const reply = yield* relay.childRequest(grant.sessionId, request).pipe(Effect.orDie)
-        return yield* replyToChildRequest(reply)
       }).pipe(badRequest),
     )
 

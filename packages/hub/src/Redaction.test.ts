@@ -1,7 +1,7 @@
 // Redacting Sensitive values from text and streams (issue #48), on made-up values.
 
 import { describe, expect, test } from "bun:test"
-import { type SessionEvent, ToolCallId, TurnId } from "@claude-hub/protocol"
+import { AgentId, ParticipantId, type SessionEvent, ToolCallId, TurnId } from "@claude-hub/protocol"
 import { everything, needlesOf, redactEvent, redactText, StreamRedactor } from "./Redaction.ts"
 
 const secret = "sk_TEST_9f3a2b"
@@ -72,6 +72,17 @@ describe("Redacting a text", () => {
   test("redacts an event's free text, and nothing else", () => {
     const turnId = TurnId.make("turn-1")
     const toolCallId = ToolCallId.make("call-1")
+    const agentId = AgentId.make("agent-1")
+    const sender = { id: ParticipantId.make("dev:alice"), login: "alice", name: "alice" }
+    const agentStarted = {
+      _tag: "AgentStarted",
+      turnId,
+      agentId,
+      toolCallId,
+      agentType: "general-purpose",
+      model: "claude-haiku-4-5",
+      background: true,
+    } as const
     const events: ReadonlyArray<[SessionEvent, SessionEvent]> = [
       [
         {
@@ -114,6 +125,14 @@ describe("Redacting a text", () => {
       [
         { _tag: "TurnStarted", turnId, text: secret, sender: { _tag: "FromTerminal" } },
         { _tag: "TurnStarted", turnId, text: masked, sender: { _tag: "FromTerminal" } },
+      ],
+      [
+        { ...agentStarted, description: `use ${secret}` },
+        { ...agentStarted, description: `use ${masked}` },
+      ],
+      [
+        { _tag: "AgentMessaged", agentId, sender, text: `try ${secret}` },
+        { _tag: "AgentMessaged", agentId, sender, text: `try ${masked}` },
       ],
       [
         { _tag: "WipNotPushed", message: `bad url ${secret}` },

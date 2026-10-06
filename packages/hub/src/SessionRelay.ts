@@ -53,25 +53,17 @@
 //   them as `--model` and `--effort` when it starts; a running one never switches mid-Turn: once
 //   no Turn runs, the Hub sends RelaunchSession, and the Runner starts Claude Code again,
 //   resuming its conversation, in the same Sandbox. The queued prompts wait for its new mod.
-// - Child Sessions (#121, ADR 0012): a Session's Claude Code creates, messages, lists, reads and
-//   archives its Child Sessions with the mod's tools (`POST /mod/children`, `childRequest`).
-//   - One level deep: a Child Session is refused. A child runs in its parent's Repo, for its
-//     parent's Creator, whose Repo access is checked first, off the lock. Its base is the one
-//     named, else the Repo's default branch as the GitHub App says, else its parent's base. It
-//     goes on its parent's Runner when that can take it, else on another online Runner.
-//   - Its task is its first prompt, and every message from its parent is queued like a person's
-//     prompt, sent as from the Parent Session, and wakes it if it is Asleep.
-//   - Reports: every main-loop TurnEnded of a child, whoever prompted it, queues its final
-//     message (ChildSessions.ts) to the parent, sent as from the Child Session, waking an Asleep
-//     parent. An Archived parent gets none. The loop guard counts a child's Turns in a row that
-//     its parent prompted; a person's prompt to either starts it again. From LoopGuardExchanges
-//     on, each Report's note asks the parent to check it is still making progress.
-//   - A child messages its parent mid-Turn (MessageParent, #122): queued like a Report, sent as
-//     from the Child Session's message, waking an Asleep parent. It neither counts for the loop
-//     guard nor starts it again (the Turn it is sent from ends in a Report, which counts), but
-//     its note carries the reminder while the count is at LoopGuardExchanges. Refused for a
-//     Session that isn't a child, and when its parent is Archived or gone.
-//   - Archiving a parent archives its children; restoring it restores only the parent.
+// - Subagents (#152, ADR 0014): a Session's Claude Code starts subagents with its Agent tool, and
+//   its mod reports each one. AgentStarted and AgentStatusChanged are logged and kept with the
+//   Session (Sessions.ts), whose summary lists the Running and Interrupted ones; a status for an
+//   agent the Hub never saw start is dropped. A Session with a Running agent is working: it isn't
+//   idle, so it doesn't sleep under the agent, and a draining Runner waits for it as for a Turn.
+//   When its Claude Code stops (sleep, exit, a lost Runner, a relaunch for a new model), its
+//   Running agents are Interrupted.
+//   - Any Participant can message an agent (MessageAgent): logged as AgentMessaged and sent to
+//     the mod, which resumes one that has stopped. An Asleep Session is woken for it first. A
+//     Running agent can be stopped (StopAgent). A mod that can't do either says so with
+//     AgentCommandFailed, passed on to the person as a CommandFailed.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
 // - Git (ADR 0010): the Runner's GitRequests are answered by SessionGit, off the lock, since
 //   they may wait on GitHub. When a Turn ends the Runner is told, to push the WIP ref.
@@ -99,11 +91,10 @@
 //   entered, before a new Session or Environment is set up. Shared variables aren't any Repo's.
 // - Claude credentials (ADR 0015, ClaudeCredentials.ts): each person stores their own, checked
 //   with Anthropic off the lock, and is sent what they can see of it (ClaudeCredentialState)
-//   after the welcome and whenever it changes. A Session runs on its Creator's (a Child
-//   Session's Creator is its parent's), else on its Runner's own: a Runner asks for it just
-//   before it starts Claude Code, and only for a Session it runs. A Session neither has a
-//   credential for doesn't start: CreateSession is refused, and a wake leaves it Asleep. Every
-//   credential is redacted from every Session.
+//   after the welcome and whenever it changes. A Session runs on its Creator's, else on its
+//   Runner's own: a Runner asks for it just before it starts Claude Code, and only for a Session
+//   it runs. A Session neither has a credential for doesn't start: CreateSession is refused, and
+//   a wake leaves it Asleep. Every credential is redacted from every Session.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -111,18 +102,15 @@
 // no one else.
 
 import {
+  AgentMessaged,
+  AgentStatusChanged,
   type BranchName,
-  ChildReply,
-  type ChildRequest,
   ClaudeCredentialFetched,
   ClaudeCredentialRefused,
   ClaudeCredentialState,
-  type ChildSummary,
   CommandFailed,
+  DeliverAgentMessage,
   DeliverPrompt,
-  FromChildSession,
-  FromChildSessionMessage,
-  FromParentSession,
   type EnvironmentVersion,
   GitAnswer,
   GitReply,
@@ -161,6 +149,7 @@ import {
   type SessionSummary,
   SessionTurnEnded,
   StartSession,
+  StopAgent,
   StopSession,
   StopTurn,
   PurgeSession,
@@ -175,9 +164,6 @@ import {
   SandboxNoted,
   MaxLastOutputLength,
   sessionNameFrom,
-  type SessionName,
-  type SessionRef,
-  sessionTitle,
   findModel,
   modelNotFoundText,
   ModelSwitched,
@@ -193,21 +179,10 @@ import {
   Option,
   PubSub,
   Redacted,
-  Schema,
   type Scope,
   Semaphore,
 } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
-import {
-  conversationText,
-  finalMessage,
-  isPerson,
-  oneLevelDeep,
-  childMessageText,
-  notAChild,
-  parentMessageText,
-  reportText,
-} from "./ChildSessions.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
 import {
   type EnvironmentWebClient,
@@ -328,18 +303,9 @@ const modelFlags = (setting: ModelSetting): ModelSetting => ({
 /** The work branch a new Session commits to. */
 export const workBranchFor = (sessionId: SessionId) => `claude/${sessionId}`
 
-/** A Session as a prompt it sends names it. */
-const sessionRef = (session: SessionSummary): SessionRef => ({
-  id: session.id,
-  title: sessionTitle(session),
-})
-
-/** How many of a Child Session's latest log entries its parent reads (see `conversationText`). */
-const readChildEntries = 2_000
-
-const isBranchName = Schema.is(Schema.NonEmptyString)
-
-const childRefused = (message: string) => ChildReply.cases.ChildRefused.make({ message })
+/** Whether a subagent of the Session is running (ADR 0014): it is working, Turn or not. */
+const hasRunningAgents = (session: SessionSummary) =>
+  session.agents?.some((agent) => agent.status === "Running") === true
 
 export class SessionRelay extends Context.Service<
   SessionRelay,
@@ -378,11 +344,6 @@ export class SessionRelay extends Context.Service<
       sessionId: SessionId,
       events: ReadonlyArray<ModEvent>,
     ) => Effect.Effect<void, SqlError>
-    /** The Session's Claude Code asks about its Child Sessions (`POST /mod/children`, ADR 0012). */
-    readonly childRequest: (
-      sessionId: SessionId,
-      request: ChildRequest,
-    ) => Effect.Effect<ChildReply, SqlError>
   }
 >()("@claude-hub/hub/SessionRelay") {
   static readonly layer = Layer.effect(
@@ -533,7 +494,10 @@ export class SessionRelay extends Context.Service<
             list.map((session) => ({
               id: session.id,
               state: session.state,
-              turn: session.currentTurn !== null || inFlight.has(session.id),
+              turn:
+                session.currentTurn !== null ||
+                inFlight.has(session.id) ||
+                hasRunningAgents(session),
               settling: starts.has(session.id) || stopping.has(session.id),
             })),
           ),
@@ -1041,7 +1005,6 @@ export class SessionRelay extends Context.Service<
             promptId: head.id,
             text: head.text,
             sender: head.sender,
-            ...(head.fromSession !== undefined && { fromSession: head.fromSession }),
           }),
         )
       })
@@ -1072,10 +1035,11 @@ export class SessionRelay extends Context.Service<
             workBranch: session.workBranch,
             resume: resume.value,
             modToken,
-            ...(yield* parentOf(session)),
             ...modelFlags(session),
           }),
         )
+        // Its agents stop with the old Claude Code.
+        yield* agentsInterrupted(session.id)
         yield* sessionUpdated(session.id)
         return true
       })
@@ -1101,22 +1065,37 @@ export class SessionRelay extends Context.Service<
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
         // Its next start takes its model and effort as set then.
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
-        if (session.state === "Archived") return
+        const interrupted = yield* agentsInterrupted(session.id)
+        if (session.state === "Archived") {
+          if (interrupted) yield* sessionUpdated(session.id)
+          return
+        }
         if (session.state === "Asleep") return yield* sessionUpdated(session.id)
         yield* changeState(session, "Asleep", why)
+      })
+
+      /**
+       * The Session's Claude Code stopped: its Running agents are Interrupted (ADR 0014), each
+       * logged. Whether there were any; the caller sends the SessionUpdated.
+       */
+      const agentsInterrupted = Effect.fn("SessionRelay.agentsInterrupted")(function* (
+        sessionId: SessionId,
+      ) {
+        const agents = yield* sessions.interruptAgents(sessionId)
+        for (const agentId of agents) {
+          yield* logEvent(sessionId, AgentStatusChanged.make({ agentId, status: "Interrupted" }))
+        }
+        return agents.length > 0
       })
 
       /**
        * Wakes an Asleep Session on its online Runner: records it Active and starts its Claude
        * Code again, resuming the conversation its mod last said hello from, on the same
        * Workspace and Sandbox volumes. Queued prompts are delivered once the new mod says hello.
-       * `cause`, such as `for a Report from Child Session "Docs"`, follows "Woken on <Runner>" in
-       * its history.
        */
       const wake = Effect.fn("SessionRelay.wake")(function* (
         session: SessionSummary,
         why: Why,
-        cause?: string,
       ): Effect.fn.Return<string | undefined, SqlError> {
         const runner = onlineRunners.get(session.runnerId)
         // A restored Session still being stopped for its archive wakes once it is stopped.
@@ -1157,14 +1136,12 @@ export class SessionRelay extends Context.Service<
         }
         const resume = yield* sessions.claudeSessionId(session.id)
         const environment = yield* sessionEnvironment(session.repo)
-        const parent = yield* parentOf(session)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         starting.add(session.id)
         yield* startSent(session.id, environment)
         // It starts with its model and effort as set now (#128).
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
-        const woken =
-          cause === undefined ? `Woken on ${runner.name}` : `Woken on ${runner.name} ${cause}`
+        const woken = `Woken on ${runner.name}`
         yield* changeState(session, "Active", {
           ...why,
           message: Option.isSome(resume)
@@ -1181,22 +1158,10 @@ export class SessionRelay extends Context.Service<
             ...(Option.isSome(resume) ? { resume: resume.value } : {}),
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
-            ...parent,
             ...modelFlags(session),
           }),
         )
         return undefined
-      })
-
-      /** StartSession's `parent`, for a Child Session: its Parent Session as it is now. */
-      const parentOf = Effect.fn("SessionRelay.parentOf")(function* (session: SessionSummary) {
-        if (session.parentId === undefined) return {}
-        const parent = yield* sessions.get(session.parentId)
-        return {
-          parent: Option.isSome(parent)
-            ? sessionRef(parent.value)
-            : { id: session.parentId, title: session.parentId },
-        }
       })
 
       /** Wakes the Session if it is Asleep with prompts waiting, as ones queued while Frozen. */
@@ -1227,6 +1192,8 @@ export class SessionRelay extends Context.Service<
       /** Whether the Session is Active with nothing going on and no one there. */
       const isIdle = Effect.fn("SessionRelay.isIdle")(function* (session: SessionSummary) {
         if (session.state !== "Active" || session.currentTurn !== null) return false
+        // Its agents work on after the Turn that started them (ADR 0014).
+        if (hasRunningAgents(session)) return false
         if (!onlineRunners.has(session.runnerId)) return false
         if (stopping.has(session.id) || inFlight.has(session.id)) return false
         // A start can take minutes to build its Environment: it isn't idle until it's over.
@@ -1300,11 +1267,6 @@ export class SessionRelay extends Context.Service<
         toWeb(yield* runnerList)
         const runner = onlineRunners.get(session.runnerId)
         if (runner !== undefined) stopForArchive(runner, session.id)
-        // Its Child Sessions go with it (ADR 0012); a restore brings back only the parent.
-        for (const child of yield* sessions.children(session.id)) {
-          if (child.state === "Archived") continue
-          yield* archive(child, by, `Archived with its Parent Session "${sessionTitle(session)}"`)
-        }
       })
 
       /** Brings an Archived Session back Asleep, or Frozen while its Runner is offline. */
@@ -1349,19 +1311,15 @@ export class SessionRelay extends Context.Service<
 
       // ── New Sessions ─────────────────────────────────────────────────────
 
-      /** A Session to create and start: from New Session, or a Child Session (ADR 0012). */
+      /** A Session to create and start, from New Session. */
       interface NewSessionPlan {
         readonly repo: RepoName
         readonly baseBranch: BranchName
         readonly runner: OnlineRunner
-        /** Whom it runs for: who created it, or its Parent Session's Creator. */
+        /** Whom it runs for: who created it. */
         readonly creator: Participant
         /** Why it is Active, as its first SessionStateChanged says. */
         readonly why: Why
-        readonly name?: SessionName
-        readonly parent?: SessionSummary
-        /** Its first prompt, queued before it starts: a Child Session's task. */
-        readonly firstPrompt?: QueuedPrompt
         /** Called once it is created and starting, before every client is sent it. */
         readonly created?: (session: SessionSummary) => void
         /** Its model and effort (#128), checked with `checkModel`; Claude Code's default if absent. */
@@ -1438,12 +1396,8 @@ export class SessionRelay extends Context.Service<
           runnerLogin: runner.login,
           creatorId: plan.creator.id,
           createdAt: yield* Clock.currentTimeMillis,
-          ...(plan.name !== undefined && { name: plan.name }),
-          ...(plan.parent !== undefined && { parentId: plan.parent.id }),
           ...modelFlags(plan.model ?? {}),
         })
-        // Delivered once its mod says hello.
-        if (plan.firstPrompt !== undefined) yield* prompts.add(id, plan.firstPrompt)
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
         starting.add(id)
         yield* startSent(id, environment)
@@ -1457,7 +1411,6 @@ export class SessionRelay extends Context.Service<
             modToken,
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
-            ...(plan.parent !== undefined && { parent: sessionRef(plan.parent) }),
             ...modelFlags(session),
           }),
         )
@@ -1465,333 +1418,6 @@ export class SessionRelay extends Context.Service<
         toWeb(yield* runnerList)
         yield* sessionToWeb(session)
         return session
-      })
-
-      // ── Child Sessions (ADR 0012) ────────────────────────────────────────
-
-      /** A Child Session as its parent's tools show it. */
-      const childSummary = Effect.fn("SessionRelay.childSummary")(function* (
-        session: SessionSummary,
-      ): Effect.fn.Return<ChildSummary, SqlError> {
-        const queued = (yield* prompts.list(session.id)).length
-        const record = yield* sessions.childRecord(session.id)
-        return {
-          id: session.id,
-          title: sessionTitle(session),
-          baseBranch: session.baseBranch,
-          workBranch: session.workBranch,
-          state: session.state,
-          working:
-            session.currentTurn !== null ||
-            inFlight.has(session.id) ||
-            (starting.has(session.id) && queued > 0),
-          queued,
-          ...(record.lastReport !== undefined && { lastReport: record.lastReport }),
-        }
-      })
-
-      /**
-       * Where a Child Session goes (ADR 0012): its parent's Runner if it can start Sessions now,
-       * else another online one that can. Else why none can.
-       */
-      const childRunner = (parent: SessionSummary): OnlineRunner | string => {
-        const own = onlineRunners.get(parent.runnerId)
-        const candidates = [
-          ...(own === undefined ? [] : [own]),
-          ...[...onlineRunners.values()].filter((runner) => runner !== own),
-        ]
-        const able = candidates.find((runner) => runnerRefusal(runner) === undefined)
-        if (able !== undefined) return able
-        if (own !== undefined) return runnerRefusal(own) ?? "No Runner is online."
-        return "No Runner is online to start a Child Session on."
-      }
-
-      /**
-       * The base a Child Session starts from when its parent names none: the Repo's default
-       * branch, as the GitHub App says. Without the App, or when GitHub can't say, its parent's
-       * base. Off the lock, since it waits on GitHub.
-       */
-      const childBase = Effect.fn("SessionRelay.childBase")(function* (parent: SessionSummary) {
-        if (!app.isConfigured) return parent.baseBranch
-        return yield* app.defaultBranch(parent.repo).pipe(
-          Effect.map((branch): BranchName => (isBranchName(branch) ? branch : parent.baseBranch)),
-          Effect.catchTag("GitHubAppError", (error) =>
-            Effect.as(
-              Effect.logWarning(
-                `Could not look up ${parent.repo}'s default branch; the Child Session starts from its parent's base`,
-                error.message,
-              ),
-              parent.baseBranch,
-            ),
-          ),
-        )
-      })
-
-      /** Creates a Child Session of `parent`, under the lock, once its Creator's access is checked. */
-      const createChild = Effect.fn("SessionRelay.createChild")(function* (
-        parentId: SessionId,
-        request: Extract<ChildRequest, { readonly _tag: "CreateChild" }>,
-        baseBranch: BranchName,
-      ): Effect.fn.Return<ChildReply, SqlError> {
-        const found = yield* sessions.get(parentId)
-        if (Option.isNone(found) || found.value.state === "Archived") {
-          return childRefused("This Session is archived: it can't create Child Sessions.")
-        }
-        const parent = found.value
-        const runner = childRunner(parent)
-        if (typeof runner === "string") return childRefused(runner)
-        const ref = sessionRef(parent)
-        const created = yield* startNew({
-          repo: parent.repo,
-          baseBranch,
-          runner,
-          creator: parent.creator,
-          why: {
-            message: `Created by its Parent Session "${ref.title}"; started on ${runner.name} from ${baseBranch}`,
-          },
-          ...(request.name !== undefined && { name: request.name }),
-          parent,
-          firstPrompt: QueuedPrompt.make({
-            id: PromptId.make(randomId()),
-            text: parentMessageText(ref, request.prompt),
-            sender: parent.creator,
-            fromSession: FromParentSession.make({ session: ref }),
-            queuedAt: yield* Clock.currentTimeMillis,
-          }),
-        })
-        if (typeof created === "string") return childRefused(created)
-        return ChildReply.cases.ChildCreated.make({ child: yield* childSummary(created) })
-      })
-
-      /** The caller's Child Session `childId`, or why it isn't one. */
-      const ownChild = Effect.fn("SessionRelay.ownChild")(function* (
-        parentId: SessionId,
-        childId: SessionId,
-      ) {
-        const child = yield* sessions.get(childId)
-        if (Option.isNone(child) || child.value.parentId !== parentId) {
-          return `Session ${childId} is not one of your Child Sessions.`
-        }
-        return child.value
-      })
-
-      /** A Parent Session's request other than CreateChild, under the lock. */
-      const childCommand = Effect.fn("SessionRelay.childCommand")(function* (
-        parentId: SessionId,
-        request: Exclude<ChildRequest, { readonly _tag: "CreateChild" | "MessageParent" }>,
-      ): Effect.fn.Return<ChildReply, SqlError> {
-        const found = yield* sessions.get(parentId)
-        if (Option.isNone(found)) return childRefused("There is no such Session.")
-        const parent = found.value
-        if (request._tag === "ListChildren") {
-          const children = (yield* sessions.children(parentId)).filter(
-            (child) => child.state !== "Archived",
-          )
-          return ChildReply.cases.ChildList.make({
-            children: yield* Effect.forEach(children, childSummary),
-          })
-        }
-        const child = yield* ownChild(parentId, request.childId)
-        if (typeof child === "string") return childRefused(child)
-        switch (request._tag) {
-          case "ReadChild":
-            return ChildReply.cases.ChildRead.make({
-              child: yield* childSummary(child),
-              conversation: conversationText(yield* log.recent(child.id, readChildEntries)),
-            })
-          case "ArchiveChild": {
-            if (child.state === "Archived") {
-              return childRefused(`Child Session ${child.id} is already archived.`)
-            }
-            // On its Creator's behalf, as every prompt the parent sends is.
-            yield* archive(
-              child,
-              parent.creator,
-              `Archived by its Parent Session "${sessionTitle(parent)}"`,
-            )
-            const archived = yield* sessions.get(child.id)
-            return ChildReply.cases.ChildArchived.make({
-              child: yield* childSummary(Option.getOrElse(archived, () => child)),
-            })
-          }
-          case "MessageChild": {
-            if (child.state === "Archived") {
-              return childRefused(
-                `Child Session ${child.id} is archived: it takes no messages. Create a new one instead.`,
-              )
-            }
-            const ref = sessionRef(parent)
-            yield* prompts.add(
-              child.id,
-              QueuedPrompt.make({
-                id: PromptId.make(randomId()),
-                text: parentMessageText(ref, request.text),
-                sender: parent.creator,
-                fromSession: FromParentSession.make({ session: ref }),
-                queuedAt: yield* Clock.currentTimeMillis,
-              }),
-            )
-            yield* queueChanged(child.id)
-            if (child.state === "Asleep") {
-              const refused = yield* wake(
-                child,
-                {},
-                `for a message from its Parent Session "${ref.title}"`,
-              )
-              if (refused !== undefined) {
-                return childRefused(
-                  `Your message waits in its queue, but it can't wake now. ${refused}`,
-                )
-              }
-            } else {
-              yield* deliverNext(child.id)
-            }
-            const after = yield* sessions.get(child.id)
-            return ChildReply.cases.ChildMessaged.make({
-              child: yield* childSummary(Option.getOrElse(after, () => child)),
-            })
-          }
-        }
-      })
-
-      /**
-       * A Child Session's message to its parent, mid-Turn, under the lock: queued as a prompt,
-       * waking the parent if it is Asleep, as a Report is. Refused for a Session that isn't a
-       * child, and when its parent is Archived or gone.
-       */
-      const messageParent = Effect.fn("SessionRelay.messageParent")(function* (
-        childId: SessionId,
-        request: Extract<ChildRequest, { readonly _tag: "MessageParent" }>,
-      ): Effect.fn.Return<ChildReply, SqlError> {
-        const found = yield* sessions.get(childId)
-        if (Option.isNone(found)) return childRefused("There is no such Session.")
-        const child = found.value
-        if (child.parentId === undefined) return childRefused(notAChild)
-        const parent = yield* sessions.get(child.parentId)
-        if (Option.isNone(parent)) {
-          return childRefused("Your Parent Session no longer exists: the message can't be sent.")
-        }
-        const parentRef = sessionRef(parent.value)
-        if (parent.value.state === "Archived") {
-          return childRefused(
-            `Your Parent Session "${parentRef.title}" is archived: it takes no messages.`,
-          )
-        }
-        const ref = sessionRef(child)
-        // Mid-Turn or with a prompt on its way, the parent reads the message after that Turn.
-        const working = parent.value.currentTurn !== null || inFlight.has(parent.value.id)
-        // The loop guard's count as of the child's last Report: a message doesn't change it.
-        const { exchanges } = yield* sessions.childRecord(childId)
-        yield* prompts.add(
-          parent.value.id,
-          QueuedPrompt.make({
-            id: PromptId.make(randomId()),
-            text: childMessageText(ref, request.text, exchanges),
-            sender: parent.value.creator,
-            fromSession: FromChildSessionMessage.make({ session: ref }),
-            queuedAt: yield* Clock.currentTimeMillis,
-          }),
-        )
-        yield* queueChanged(parent.value.id)
-        if (parent.value.state === "Asleep") {
-          const refused = yield* wake(
-            parent.value,
-            {},
-            `for a message from Child Session "${ref.title}"`,
-          )
-          if (refused !== undefined) {
-            return childRefused(
-              `Your message waits in its queue, but your Parent Session can't wake now. ${refused}`,
-            )
-          }
-        } else {
-          yield* deliverNext(parent.value.id)
-        }
-        return ChildReply.cases.ParentMessaged.make({ parent: parentRef, working })
-      })
-
-      const childRequest = Effect.fn("SessionRelay.childRequest")(function* (
-        sessionId: SessionId,
-        request: ChildRequest,
-      ): Effect.fn.Return<ChildReply, SqlError> {
-        if (request._tag === "MessageParent")
-          return yield* serialized(messageParent(sessionId, request))
-        if (request._tag !== "CreateChild")
-          return yield* serialized(childCommand(sessionId, request))
-        const found = yield* sessions.get(sessionId)
-        if (Option.isNone(found)) return childRefused("There is no such Session.")
-        const parent = found.value
-        if (parent.parentId !== undefined) return childRefused(oneLevelDeep)
-        // As its Creator, off the lock: a coordinator starts nothing its Creator couldn't.
-        const allowed = yield* access
-          .check(parent.creator, parent.repo)
-          .pipe(
-            Effect.catchTag("RepoAccessUnknown", (error) =>
-              Effect.as(Effect.logWarning(error.message), undefined),
-            ),
-          )
-        if (allowed === undefined) {
-          return childRefused(
-            `Could not check ${parent.creator.login}'s access to ${parent.repo} on GitHub; try again.`,
-          )
-        }
-        if (!allowed) {
-          return childRefused(
-            `${parent.creator.login}, who this Session runs for, has no access to ${parent.repo} on GitHub, or the GitHub App isn't installed on it.`,
-          )
-        }
-        const baseBranch = request.baseBranch ?? (yield* childBase(parent))
-        return yield* serialized(createChild(sessionId, request, baseBranch))
-      })
-
-      /**
-       * A Child Session's Turn ended: its final message goes to its parent as a Report, queued
-       * as a prompt, waking the parent if it is Asleep. An Archived parent gets none.
-       */
-      const reportToParent = Effect.fn("SessionRelay.reportToParent")(function* (
-        childId: SessionId,
-      ) {
-        const found = yield* sessions.get(childId)
-        if (Option.isNone(found) || found.value.parentId === undefined) return
-        const child = found.value
-        const { text, sender } = finalMessage(yield* log.lastTurn(childId))
-        // The loop guard counts Turns in a row its parent prompted.
-        const exchanges =
-          sender?._tag === "FromParentSession"
-            ? (yield* sessions.childRecord(childId)).exchanges + 1
-            : 0
-        const at = yield* Clock.currentTimeMillis
-        yield* sessions.recordReport(childId, { text, at }, exchanges)
-        const parent = yield* sessions.get(found.value.parentId)
-        if (Option.isNone(parent) || parent.value.state === "Archived") {
-          return yield* Effect.logInfo(
-            `A Report from Child Session ${childId} has no Parent Session to go to`,
-          )
-        }
-        const ref = sessionRef(child)
-        yield* prompts.add(
-          parent.value.id,
-          QueuedPrompt.make({
-            id: PromptId.make(randomId()),
-            text: reportText(ref, text, exchanges),
-            sender: parent.value.creator,
-            fromSession: FromChildSession.make({ session: ref }),
-            queuedAt: at,
-          }),
-        )
-        yield* queueChanged(parent.value.id)
-        if (parent.value.state === "Asleep") {
-          const refused = yield* wake(
-            parent.value,
-            {},
-            `for a Report from Child Session "${ref.title}"`,
-          )
-          if (refused !== undefined) {
-            yield* Effect.logInfo(`A Report waits for Session ${parent.value.id}: ${refused}`)
-          }
-        } else {
-          yield* deliverNext(parent.value.id)
-        }
       })
 
       // ── The web channel ──────────────────────────────────────────────────
@@ -2272,6 +1898,72 @@ export class SessionRelay extends Context.Service<
               }
               yield* logEvent(sessionId, TurnStopRequested.make({ by: you }))
               yield* outbox.enqueue(sessionId, StopTurn.make({ sessionId }))
+              return
+            }
+
+            case "MessageAgent": {
+              const { sessionId, agentId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              if (Option.isNone(yield* sessions.agentStatus(sessionId, agentId))) {
+                return refuse(message, "The Session has no such agent.", { sessionId })
+              }
+              switch (session.value.state) {
+                case "Archived":
+                  return refuse(message, "The Session is archived: restore it to message agents.", {
+                    sessionId,
+                  })
+                case "Frozen":
+                  return refuse(
+                    message,
+                    "The Session's Runner is offline: message the agent once it is back.",
+                    { sessionId },
+                  )
+                case "Active":
+                  if (stopping.has(sessionId)) {
+                    return refuse(
+                      message,
+                      "The Session is going to sleep: message the agent once it is Asleep.",
+                      {
+                        sessionId,
+                      },
+                    )
+                  }
+                  break
+                case "Asleep": {
+                  // Its new Claude Code resumes the agent from its transcript.
+                  const refused = yield* wake(session.value, { by: you })
+                  if (refused !== undefined) return refuse(message, refused, { sessionId })
+                  if (!starting.has(sessionId)) {
+                    return refuse(message, "The Session could not be woken: see its history.", {
+                      sessionId,
+                    })
+                  }
+                }
+              }
+              yield* logEvent(
+                sessionId,
+                AgentMessaged.make({ agentId, sender: you, text: message.text }),
+              )
+              yield* outbox.enqueue(
+                sessionId,
+                DeliverAgentMessage.make({ sessionId, agentId, text: message.text, sender: you }),
+              )
+              return
+            }
+
+            case "StopAgent": {
+              const { sessionId, agentId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              const status = yield* sessions.agentStatus(sessionId, agentId)
+              if (Option.isNone(status)) {
+                return refuse(message, "The Session has no such agent.", { sessionId })
+              }
+              if (status.value !== "Running" || session.value.state !== "Active") {
+                return refuse(message, "The agent isn't running.", { sessionId })
+              }
+              yield* outbox.enqueue(sessionId, StopAgent.make({ sessionId, agentId }))
               return
             }
 
@@ -2877,13 +2569,6 @@ export class SessionRelay extends Context.Service<
           if (inFlight.get(sessionId) === event.promptId) inFlight.delete(sessionId)
           const failed = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isNone(failed)) return
-          // Sent by another Session (ADR 0012): no person to tell.
-          if (failed.value.fromSession !== undefined) {
-            yield* Effect.logWarning(
-              `A prompt from another Session could not be delivered to ${sessionId}: ${event.message}`,
-            )
-            return yield* queueChanged(sessionId)
-          }
           toWeb(
             CommandFailed.make({
               command: "SendPrompt",
@@ -2895,11 +2580,44 @@ export class SessionRelay extends Context.Service<
           return yield* queueChanged(sessionId)
         }
 
+        if (event._tag === "AgentCommandFailed") {
+          // Nothing to log: the agent is as it was. Told to whoever sent it, else to everyone there.
+          const what =
+            event.command === "MessageAgent"
+              ? "Your message could not be delivered to the agent"
+              : "The agent could not be stopped"
+          return toWeb(
+            CommandFailed.make({
+              command: event.command,
+              sessionId,
+              message: `${what}: ${event.message}`,
+            }),
+            (client) =>
+              event.senderId !== undefined
+                ? client.you.id === event.senderId
+                : client.joined.has(sessionId),
+          )
+        }
+
+        if (event._tag === "AgentStatusChanged") {
+          // An agent the Hub never saw start is none of the Session's, as one Claude Code started
+          // for itself: its status is dropped, not logged.
+          if (!(yield* sessions.setAgentStatus(sessionId, event.agentId, event.status))) return
+          yield* logEvent(sessionId, event)
+          return yield* sessionUpdated(sessionId)
+        }
+
         yield* logEvent(sessionId, event)
-        if (event._tag === "TurnStarted") {
+        if (event._tag === "AgentStarted") {
+          // Its summary shows the description too, redacted as the log has it.
+          yield* sessions.agentStarted(sessionId, {
+            id: event.agentId,
+            description: redactText(yield* needlesForSession(sessionId), event.description),
+            startedAt: yield* Clock.currentTimeMillis,
+          })
+          yield* sessionUpdated(sessionId)
+        } else if (event._tag === "TurnStarted") {
           yield* sessions.setCurrentTurn(sessionId, event.turnId)
-          // A person stepped in: the loop guard counts afresh (ADR 0012).
-          if (isPerson(event.sender)) yield* sessions.personPrompted(sessionId)
           if (event.promptId !== undefined) {
             if (inFlight.get(sessionId) === event.promptId) inFlight.delete(sessionId)
             const started = yield* prompts.remove(sessionId, event.promptId)
@@ -2910,7 +2628,6 @@ export class SessionRelay extends Context.Service<
           yield* sessions.setCurrentTurn(sessionId, null)
           yield* sessionUpdated(sessionId)
           yield* turnEnded(sessionId)
-          yield* reportToParent(sessionId)
         }
       })
 
@@ -2995,7 +2712,6 @@ export class SessionRelay extends Context.Service<
         runnerOnline: (id) => onlineRunners.has(id),
         modHello,
         modEvents,
-        childRequest,
       })
     }),
   )

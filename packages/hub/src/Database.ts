@@ -361,6 +361,37 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+  // Subagents replace Child Sessions (ADR 0014). A former Child Session is an ordinary Session,
+  // and history from another Session keeps one legacy sender, FromSession; a queued Report is an
+  // ordinary prompt. `agents` holds each Session's subagents the mod reported, by Claude Code's
+  // `agentId`, with their status: what the Session's summary and the Hub's own decisions need.
+  // Everything else about them is in the event log.
+  "0017_agents": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      UPDATE session_events
+      SET event = json_set(event, '$.sender._tag', 'FromSession')
+      WHERE json_extract(event, '$._tag') = 'TurnStarted'
+        AND json_extract(event, '$.sender._tag')
+          IN ('FromParentSession', 'FromChildSession', 'FromChildSessionMessage')
+    `
+    yield* sql`DROP INDEX sessions_parent_id`
+    yield* sql`ALTER TABLE sessions DROP COLUMN parent_id`
+    yield* sql`ALTER TABLE sessions DROP COLUMN last_report`
+    yield* sql`ALTER TABLE sessions DROP COLUMN last_report_at`
+    yield* sql`ALTER TABLE sessions DROP COLUMN parent_exchanges`
+    yield* sql`ALTER TABLE queued_prompts DROP COLUMN from_session`
+    yield* sql`
+      CREATE TABLE agents (
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL,
+        description TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, agent_id)
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

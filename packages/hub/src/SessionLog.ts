@@ -26,18 +26,6 @@ export class SessionLog extends Context.Service<
       sessionId: SessionId,
       afterSeq?: EventSeq,
     ) => Effect.Effect<ReadonlyArray<SessionLogEntry>, SqlError>
-    /** The Session's last `limit` entries, oldest first. */
-    readonly recent: (
-      sessionId: SessionId,
-      limit: number,
-    ) => Effect.Effect<ReadonlyArray<SessionLogEntry>, SqlError>
-    /**
-     * The main loop's entries of the Session's last Turn, oldest first, from its TurnStarted on:
-     * none of its subagents'. Empty if no Turn has started.
-     */
-    readonly lastTurn: (
-      sessionId: SessionId,
-    ) => Effect.Effect<ReadonlyArray<SessionLogEntry>, SqlError>
   }
 >()("@claude-hub/hub/SessionLog") {
   static readonly layer = Layer.effect(
@@ -86,33 +74,7 @@ export class SessionLog extends Context.Service<
         return rows.map(toEntry)
       })
 
-      const recent = Effect.fn("SessionLog.recent")(function* (
-        sessionId: SessionId,
-        limit: number,
-      ) {
-        const rows = yield* sql<Row>`
-          SELECT seq, at, event FROM session_events
-          WHERE session_id = ${sessionId}
-          ORDER BY seq DESC LIMIT ${limit}
-        `
-        return rows.map(toEntry).toReversed()
-      })
-
-      const lastTurn = Effect.fn("SessionLog.lastTurn")(function* (sessionId: SessionId) {
-        const rows = yield* sql<Row>`
-          SELECT seq, at, event FROM session_events
-          WHERE session_id = ${sessionId}
-            AND json_extract(event, '$.agentId') IS NULL
-            AND seq >= (
-              SELECT MAX(seq) FROM session_events
-              WHERE session_id = ${sessionId} AND json_extract(event, '$._tag') = 'TurnStarted'
-            )
-          ORDER BY seq
-        `
-        return rows.map(toEntry)
-      })
-
-      return SessionLog.of({ append, history, recent, lastTurn })
+      return SessionLog.of({ append, history })
     }),
   )
 }
