@@ -25,8 +25,17 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. |
 | `HUB_ARCHIVE_RETENTION_MS` | `2592000000` (30 days) | How long an Archived Session can be restored before the Hub purges it. |
 | `HUB_REPO_ACCESS_TTL_MS` | `300000` (5 minutes) | How long the Hub trusts what GitHub said about a person's access to a Repo, and how often it checks everyone connected again. Someone who loses access is out of the Repo's Sessions within twice this. See [Who can do what](/explanation/security-model/#who-can-do-what). |
-| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values are encrypted with. Unset, Sensitive values can't be saved; once any are saved, the Hub refuses to start without the same key. If it is lost, [`bun run secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes) clears those values so a new key can be used. |
+| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values and people's [Claude credentials](#peoples-claude-credentials) are encrypted with. Unset, neither can be saved; once any are saved, the Hub refuses to start without the same key. If it is lost, [`bun run secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes) clears those values so a new key can be used. |
 | `CLAUDE_HUB_HOME` | unset | See [Homes](#homes). |
+
+### People's Claude credentials
+
+Each person can store one Claude credential on the Hub, on their **Account** page: a subscription token from `claude setup-token`, with the plan it is on, or an Anthropic API key ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). The Sessions they start run on it, on any Runner. It needs `HUB_SECRETS_KEY`, and nothing else to configure:
+
+- The Hub checks it as it is saved with one `POST https://api.anthropic.com/v1/messages/count_tokens`, which costs nothing. One Anthropic rejects is refused. When Anthropic can't be reached, or doesn't answer in time, it is saved anyway, with a warning to its owner.
+- The plan picked for a token is what Claude Code is told, as `CLAUDE_CODE_SUBSCRIPTION_TYPE` and its rate-limit tier, since it can't ask Anthropic through the credential proxy. An API key has no plan.
+- A Runner fetches a Session's credential over its connection each time the Session starts or wakes, and keeps it in memory. A Session whose Creator has none runs on [the Runner's own](#the-runners-claude-credential); the Hub refuses to create one when neither has a credential.
+- `bun run secrets-reset` clears every stored credential with the other Sensitive values.
 
 ## Runner
 

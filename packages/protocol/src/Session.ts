@@ -80,6 +80,10 @@ export const RunnerLogin = Schema.Struct({
 })
 export type RunnerLogin = typeof RunnerLogin.Type
 
+/** Whose Claude credential a Session runs on: its Creator's, or its Runner's own (ADR 0015). */
+export const ClaudeAccount = Schema.Literals(["Creator", "Runner"])
+export type ClaudeAccount = typeof ClaudeAccount.Type
+
 /** A Runner as the web UI lists it: every Runner paired with the Hub and not removed. */
 export const RunnerSummary = Schema.Struct({
   id: RunnerId,
@@ -164,6 +168,11 @@ export const SessionSummary = Schema.Struct({
   runnerId: RunnerId,
   /** The Runner login every Turn of this Session runs on. */
   runnerLogin: RunnerLogin,
+  /**
+   * Whose Claude account its Claude Code runs on (ADR 0015): its Creator's own credential, or the
+   * Runner's, when the Creator has stored none. Absent from a Hub from before.
+   */
+  claudeAccount: Schema.optionalKey(ClaudeAccount),
   /**
    * Recorded for history only; grants no rights (ADR 0003). A Child Session's is its Parent
    * Session's Creator, on whose behalf it runs (ADR 0012).

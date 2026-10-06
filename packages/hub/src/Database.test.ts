@@ -39,11 +39,19 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0015, Session models: the migrator runs only the
- * migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0016, Claude credentials: the migrator runs only
+ * the migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeClaudeCredentials = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP TABLE claude_credentials`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'claude_credentials'`
+})
+
+/** Takes the database back to before migration 0015, Session models, as above. */
 const beforeSessionModels = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeClaudeCredentials
   for (const column of ["model", "effort", "model_pending"]) {
     yield* sql.unsafe(`ALTER TABLE sessions DROP COLUMN ${column}`)
   }

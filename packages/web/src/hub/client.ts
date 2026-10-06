@@ -7,6 +7,8 @@
 import {
   type AppPermissionsCheck,
   checkHandshake,
+  type ClaudeCredentialState,
+  type ClaudePlanChoice,
   type CommandFailed,
   type EnvironmentDraft,
   type EffortLevel,
@@ -31,7 +33,7 @@ import {
   type TestBuild,
   WebToHub,
 } from "@claude-hub/protocol"
-import { Schema } from "effect"
+import { Redacted, Schema } from "effect"
 import {
   acceptsFrame,
   type HubAction,
@@ -377,6 +379,29 @@ export class HubClient {
     await this.#request({ _tag: "UpdateRunner", runnerId, now }, "RunnerUpdateRequested")
   }
 
+  // ── The person's Claude credential (ADR 0015) ────────────────────────────
+
+  /**
+   * Stores the signed-in person's Claude credential, a token on `plan` or an API key, in place of
+   * any before. The Hub checks it with Anthropic, and refuses one Anthropic rejects; the answer
+   * carries a warning when it was stored without that check. The store then holds what it shows.
+   */
+  setClaudeCredential(secret: string, plan?: ClaudePlanChoice): Promise<ClaudeCredentialState> {
+    return this.#request(
+      {
+        _tag: "SetClaudeCredential",
+        secret: Redacted.make(secret),
+        ...(plan !== undefined && { plan }),
+      },
+      "ClaudeCredentialState",
+    )
+  }
+
+  /** Removes the signed-in person's Claude credential. */
+  async removeClaudeCredential(): Promise<void> {
+    await this.#request({ _tag: "RemoveClaudeCredential" }, "ClaudeCredentialState")
+  }
+
   /** Sends `command` with a new request id; resolves with the Hub's `answer` to it. */
   #request<Tag extends AnswerTag>(
     command: Request,
@@ -476,7 +501,8 @@ export class HubClient {
       case "PairingCodeCreated":
       case "PairingCodeList":
       case "RunnerRemoved":
-      case "RunnerUpdateRequested": {
+      case "RunnerUpdateRequested":
+      case "ClaudeCredentialState": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break

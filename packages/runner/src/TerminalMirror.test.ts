@@ -8,8 +8,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type HubToWeb, ProtocolVersion } from "@claude-hub/protocol"
 import { BunServices, BunSocket } from "@effect/platform-bun"
-import { Effect, Fiber, Layer, Redacted, References } from "effect"
+import { Effect, Fiber, Layer, Option, Redacted, References } from "effect"
 import { RunnerTokens } from "../../hub/src/RunnerTokens.ts"
+import { generateSecretsKey } from "../../hub/src/Secrets.ts"
 import {
   cookieFrom,
   devSignIn,
@@ -21,6 +22,7 @@ import {
 } from "../../hub/src/testSupport.ts"
 import { StaticClaudeModels } from "./ClaudeModels.ts"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
+import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
@@ -165,7 +167,7 @@ afterAll(() => {
 })
 
 /** Runs the real Runner against `hub`, with real tmux and the Workspace and Sandbox faked. */
-async function startRunner(hub: TestHub) {
+async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
   const { token } = await hub.run(Effect.flatMap(RunnerTokens, (tokens) => tokens.issue("mac")))
   const claudeConfig = join(dir, ".claude.json")
   writeFileSync(claudeConfig, JSON.stringify({ oauthAccount: { emailAddress: "a@example.com" } }))
@@ -173,6 +175,7 @@ async function startRunner(hub: TestHub) {
   const layer = SessionsLive.pipe(
     Layer.provideMerge(HubGitLive),
     Layer.provideMerge(HubVariablesLive),
+    Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provideMerge(StaticClaudeModels(undefined)),
@@ -181,7 +184,7 @@ async function startRunner(hub: TestHub) {
       new FakeWorkspaces(sessionsRoot).layer,
       new FakeSandboxes().layer,
       new FakeWorkspaceGit().layer,
-      new FakeCredentialProxy().layer,
+      proxy.layer,
     ]),
     Layer.provideMerge(
       Layer.succeed(
@@ -214,8 +217,12 @@ async function startRunner(hub: TestHub) {
 
 describe.skipIf(tmuxMissing)("the terminal mirror", () => {
   test("shows a Session's terminal live, takes keystrokes and resizes, and redraws on reopening", async () => {
-    const hub = await startHub({ config: { devLogin: true } })
-    await startRunner(hub)
+    const hub = await startHub({
+      config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
+    })
+    // A Runner with no Claude credential of its own.
+    const proxy = new FakeCredentialProxy()
+    await startRunner(hub, proxy)
     const cookie = cookieFrom(await devSignIn(hub, "alice"))
     await seedEnvironment(hub, "acme/app", "dev:alice")
     const web = await Web.open(hub, cookie)
@@ -225,6 +232,10 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
       (message) => Array.isArray(message["runners"]) && message["runners"].length > 0,
     )
 
+    // alice's Claude credential, a fake one, which her Session's Runner is given (#150).
+    const fake = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
+    web.send({ _tag: "SetClaudeCredential", requestId: "r-0", secret: fake, plan: "max5x" })
+    await web.next("ClaudeCredentialState", (message) => message["requestId"] === "r-0")
     web.send({ _tag: "CreateSession", requestId: "r-1", repo: "acme/app", baseBranch: "main" })
     const created = await web.next("SessionCreated")
     const sessionId = (created["session"] as { id: string }).id
@@ -236,6 +247,9 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
     // Opening it gets a snapshot of the screen as it is, then what it prints.
     web.send({ _tag: "OpenTerminal", sessionId })
     const opened = await framesUntil(web, "fake claude ready")
+    // It was started on alice's Claude credential, fetched from the Hub.
+    const credential = proxy.grants[0]?.credential
+    expect(credential?._tag === "OAuthToken" && Redacted.value(credential.token)).toBe(fake)
     expect(opened.some((frame) => frame.kind === "Snapshot")).toBe(true)
     web.send({ _tag: "CloseTerminal", sessionId })
     web.send({ _tag: "OpenTerminal", sessionId })

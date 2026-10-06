@@ -62,6 +62,10 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   // Connected and joined: the Session's header, named by its work branch, with its Repo.
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/web-client"))
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("kddige/claude-hub")
+  // Its Creator has stored no Claude credential, so it runs on the Runner's (ADR 0015).
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain(
+    "on the Runner's Claude account",
+  )
   expect(hub.received.map((message) => message._tag)).toContain("JoinSession")
 
   // A second Participant joins, and their prompt starts a Turn under their name.

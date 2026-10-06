@@ -1,6 +1,11 @@
 import { Schema } from "effect"
 import { BuildVersion } from "./Build.ts"
 import {
+  ClaudeCredentialFetched,
+  ClaudeCredentialRefused,
+  FetchClaudeCredential,
+} from "./ClaudeCredential.ts"
+import {
   FetchCloneAccess,
   FetchVariables,
   RunTestBuild,
@@ -72,6 +77,11 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * new model then takes effect when it next wakes.
    */
   relaunches: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * Whether it has a Claude credential of its own, which a Session runs on when its Creator has
+   * stored none (ADR 0015). A Runner from before doesn't say: it is taken to have one.
+   */
+  ownClaudeCredential: Schema.optionalKey(Schema.Boolean),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
@@ -156,6 +166,7 @@ export const RunnerToHub = Schema.Union([
   WipPushFailed,
   SandboxNote,
   FetchVariables,
+  FetchClaudeCredential,
   FetchCloneAccess,
   TestBuildLog,
   TestBuildFinished,
@@ -271,6 +282,8 @@ export const HubToRunner = Schema.Union([
   RunTestBuild,
   VariablesFetched,
   VariablesRefused,
+  ClaudeCredentialFetched,
+  ClaudeCredentialRefused,
   CheckUpdate,
   ApplyUpdate,
 ]).pipe(Schema.toTaggedUnion("_tag"))

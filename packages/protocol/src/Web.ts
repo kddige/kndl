@@ -1,6 +1,11 @@
 import { Schema } from "effect"
 import { BuildVersion } from "./Build.ts"
 import {
+  ClaudeCredentialState,
+  RemoveClaudeCredential,
+  SetClaudeCredential,
+} from "./ClaudeCredential.ts"
+import {
   ApplyEnvironment,
   CheckEnvironmentDraft,
   DeleteSharedVariable,
@@ -345,6 +350,8 @@ export const WebToHub = Schema.Union([
   GetSharedVariables,
   SetSharedVariable,
   DeleteSharedVariable,
+  SetClaudeCredential,
+  RemoveClaudeCredential,
   CheckAppPermissions,
   CheckRepo,
   CreatePairingCode,
@@ -559,6 +566,7 @@ export const HubToWeb = Schema.Union([
   TestBuildLogged,
   TestBuildEnded,
   SharedVariables,
+  ClaudeCredentialState,
   AppPermissionsChecked,
   RepoChecked,
   RepoAccessLost,

@@ -3,8 +3,8 @@ import { Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import { HubConfig, HubConfigError, SecretsKeyBytes } from "./HubConfig.ts"
 
-// Sensitive variable values at rest (ADR 0009): AES-256-GCM under HUB_SECRETS_KEY, with a fresh
-// 12-byte IV per value and what the value belongs to as additional data, so a ciphertext can't
+// Sensitive variable values and Claude credentials at rest (ADR 0009, ADR 0015): AES-256-GCM
+// under HUB_SECRETS_KEY, with a fresh 12-byte IV per value and what the value belongs to as additional data, so a ciphertext can't
 // be moved to another variable. Stored as `v1:<iv>:<ciphertext>:<tag>`, each part base64url.
 //
 // A check value, the encryption of a known text, is stored with them, so a wrong key is caught
@@ -103,7 +103,8 @@ export class Secrets extends Context.Service<
           (SELECT COUNT(*) FROM environment_variables
             WHERE kind = 'Sensitive' AND value IS NOT NULL) +
           (SELECT COUNT(*) FROM shared_variables WHERE kind = 'Sensitive' AND value IS NOT NULL) +
-          (SELECT COUNT(*) FROM retired_values) AS count
+          (SELECT COUNT(*) FROM retired_values) +
+          (SELECT COUNT(*) FROM claude_credentials) AS count
       `.pipe(Effect.orDie)
       const stored = counted[0]?.count ?? 0
       const checks = yield* sql<{ readonly ciphertext: string }>`
@@ -114,7 +115,7 @@ export class Secrets extends Context.Service<
       if (Option.isNone(key)) {
         if (stored > 0) {
           return yield* new HubConfigError({
-            message: `The Hub stores ${stored} Sensitive variable value${stored === 1 ? "" : "s"}, encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with. ${lostKey}`,
+            message: `The Hub stores ${stored} secret value${stored === 1 ? "" : "s"} (Sensitive variable values and Claude credentials), encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with. ${lostKey}`,
           })
         }
       } else {
@@ -122,7 +123,7 @@ export class Secrets extends Context.Service<
           check !== undefined && decryptValue(key.value, check, checkContext) === checkText
         if (!matches && stored > 0) {
           return yield* new HubConfigError({
-            message: `HUB_SECRETS_KEY is not the key the Hub's ${stored} Sensitive variable value${stored === 1 ? " was" : "s were"} saved with. Set it to that key. ${lostKey}`,
+            message: `HUB_SECRETS_KEY is not the key the Hub's ${stored} secret value${stored === 1 ? " was" : "s were"} (Sensitive variable values and Claude credentials) saved with. Set it to that key. ${lostKey}`,
           })
         }
         if (!matches) {

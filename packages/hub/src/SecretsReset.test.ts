@@ -39,7 +39,16 @@ const buildSecret = "npm_BUILD_SECRET_4f1c"
 const runtimeSecret = "sk_RUNTIME_SECRET_9a2e"
 const sharedSecret = "ghp_SHARED_SECRET_77b0"
 const signingSecret = "sig_SIGNING_SECRET_31d8"
-const secrets = [buildSecret, runtimeSecret, sharedSecret, signingSecret, "ghp_rotated_5e6f"]
+// A fake: ClaudeCheck.layerTest takes it without asking Anthropic.
+const claudeSecret = "sk-ant-oat01-FAKE_CLAUDE_TOKEN_0000c1a7"
+const secrets = [
+  buildSecret,
+  runtimeSecret,
+  sharedSecret,
+  signingSecret,
+  "ghp_rotated_5e6f",
+  claudeSecret,
+]
 const lostKey = generateSecretsKey()
 const newKey = generateSecretsKey()
 
@@ -108,6 +117,9 @@ async function seededDatabase() {
   await env.setShared({ _tag: "Sensitive", name: "GITHUB_TOKEN", value: sharedSecret })
   await env.setShared({ _tag: "Sensitive", name: "SIGNING_KEY", value: signingSecret })
   await env.setShared({ _tag: "Sensitive", name: "UNUSED_TOKEN", value: sharedSecret })
+  expect(
+    await env.request({ _tag: "SetClaudeCredential", secret: claudeSecret, plan: "max5x" }),
+  ).toMatchObject({ _tag: "ClaudeCredentialState", credential: { kind: "OAuthToken" } })
   const draft = { ...recipe, variables: variables({ build: buildSecret, runtime: runtimeSecret }) }
   expect((await env.testBuild(draft))._tag).toBe("TestBuildEnded")
   expect((await env.apply(draft, null))._tag).toBe("EnvironmentState")
@@ -138,6 +150,7 @@ const expectedPlan: SecretsResetPlan = {
   sharedVariables: ["GITHUB_TOKEN", "SIGNING_KEY", "UNUSED_TOKEN"],
   retiredValues: 1,
   testBuilds: 1,
+  claudeCredentials: ["alice"],
 }
 
 /** Every row of every table in the database, as text. */
@@ -207,6 +220,8 @@ describe("secrets-reset", () => {
     expect(plan).toContain("  - shared variables: GITHUB_TOKEN, SIGNING_KEY, UNUSED_TOKEN")
     expect(plan).toContain("1 retired value")
     expect(plan).toContain("the record of 1 Test build")
+    expect(plan).toContain("It removes the Claude credential of alice")
+    expect(done).toContain("It removes the Claude credential of alice")
     expect(done).toContain("Cleared 5 Sensitive values")
     expect(done).toContain("`bun run secrets-key`")
     for (const secret of secrets) expect(plan + done).not.toContain(secret)
@@ -227,6 +242,8 @@ describe("secrets-reset", () => {
 
     const hub = await startHub({ config: withKey(newKey), database: databaseAt(file) })
     const env = await scene(hub)
+    // alice's Claude credential is gone too: she adds it again.
+    expect(env.web.claudeCredential.credential).toBeNull()
     const state = await env.request({ _tag: "GetEnvironment", repo })
     expect(state).toMatchObject({
       _tag: "EnvironmentState",

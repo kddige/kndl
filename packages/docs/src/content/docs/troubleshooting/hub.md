@@ -61,14 +61,14 @@ HubConfigError: HUB_SECRETS_KEY must be 32 random bytes in base64, as `bun run s
 ```
 
 ```
-HubConfigError: The Hub stores 3 Sensitive variable values, encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with. If that key is lost, `bun run secrets-reset` (or `claude-hub secrets reset`) clears those values, keeping their variables, so a new key can be used.
+HubConfigError: The Hub stores 3 secret values (Sensitive variable values and Claude credentials), encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with. If that key is lost, `bun run secrets-reset` (or `claude-hub secrets reset`) clears those values, keeping their variables, so a new key can be used.
 ```
 
 ```
-HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 Sensitive variable values were saved with. Set it to that key. If that key is lost, `bun run secrets-reset` (or `claude-hub secrets reset`) clears those values, keeping their variables, so a new key can be used.
+HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 secret values were (Sensitive variable values and Claude credentials) saved with. Set it to that key. If that key is lost, `bun run secrets-reset` (or `claude-hub secrets reset`) clears those values, keeping their variables, so a new key can be used.
 ```
 
-**Why.** Sensitive values are encrypted with `HUB_SECRETS_KEY`. Once any are saved, the Hub won't start without the same key, because it couldn't decrypt them for Sessions.
+**Why.** Sensitive values and people's Claude credentials are encrypted with `HUB_SECRETS_KEY`. Once any are saved, the Hub won't start without the same key, because it couldn't decrypt them for Sessions. After `secrets-reset`, everyone who had stored a Claude credential pastes it again on their **Account** page.
 
 **Fix.**
 

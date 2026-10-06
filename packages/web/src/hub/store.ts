@@ -3,8 +3,9 @@
 // terminal whether it is live and its size; the Environments and shared variables the client
 // asked for (ADR 0009), the Test builds it started, with their logs, and what the GitHub App's
 // permissions lack (issue #86); the Pairing codes waiting to be redeemed and the Hub's own commit,
-// for the Runners page (issue #85). The terminal's output itself goes straight to the view that draws
-// it (HubClient.openTerminal), not through here.
+// for the Runners page (issue #85); and the signed-in person's Claude credential, write-only (ADR
+// 0015). The terminal's output itself goes straight to the view that draws it
+// (HubClient.openTerminal), not through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
 // events, and React reads the result.
@@ -12,6 +13,7 @@
 import type {
   AppPermissionsCheck,
   BuildVersion,
+  ClaudeCredentialInfo,
   Environment,
   EnvironmentVersionInfo,
   EventSeq,
@@ -132,6 +134,11 @@ export interface HubState {
   readonly testBuilds: Readonly<Record<TestBuildId, TestBuildRun>>
   /** The Hub's last check of the GitHub App's permissions; null without the App, or before one. */
   readonly appPermissions: AppPermissionsCheck | null
+  /**
+   * The signed-in person's Claude credential, as the Hub shows it, write-only (ADR 0015): null
+   * when they have stored none, undefined until the Hub says.
+   */
+  readonly claudeCredential: ClaudeCredentialInfo | null | undefined
 }
 
 /** Events the client adds to the Hub's messages. */
@@ -162,6 +169,7 @@ export const initialState: HubState = {
   sharedVariables: null,
   testBuilds: {},
   appPermissions: null,
+  claudeCredential: undefined,
 }
 
 const emptyJoined: JoinedSession = {
@@ -334,6 +342,8 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return state
     case "RepoAccessLost":
       return forgetRepo(state, action.repo)
+    case "ClaudeCredentialState":
+      return { ...state, claudeCredential: action.credential }
   }
 }
 

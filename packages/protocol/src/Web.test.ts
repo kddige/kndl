@@ -124,6 +124,18 @@ const webToHub = [
   },
   { _tag: "SetSessionModel", sessionId: "s-1", model: "sonnet", effort: "xhigh" },
   { _tag: "SetSessionModel", sessionId: "s-1", model: "claude-sonnet-4-5" },
+  {
+    _tag: "SetClaudeCredential",
+    requestId: "q-19",
+    secret: "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY",
+    plan: "max5x",
+  },
+  {
+    _tag: "SetClaudeCredential",
+    requestId: "q-20",
+    secret: "sk-ant-api03-FAKE_KEY_FOR_TESTS_ONLY",
+  },
+  { _tag: "RemoveClaudeCredential", requestId: "q-21" },
   { _tag: "SetSessionModel", sessionId: "s-1" },
 ]
 
@@ -358,6 +370,13 @@ const hubToWeb = [
     ],
   },
   { _tag: "SharedVariables", variables: [] },
+  { _tag: "ClaudeCredentialState", credential: null },
+  {
+    _tag: "ClaudeCredentialState",
+    requestId: "q-19",
+    credential: { kind: "OAuthToken", last4: "ONLY", plan: "max5x", addedAt: 1_700_000_000_000 },
+    warning: "Saved without checking it: Anthropic couldn't be reached.",
+  },
   { _tag: "RepoChecked", requestId: "q-13", repo: "kddige/claude-hub", status: "Allowed" },
   { _tag: "RepoChecked", requestId: "q-13", repo: "kddige/claude-hub", status: "NoAccess" },
   {

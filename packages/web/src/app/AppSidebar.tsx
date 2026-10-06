@@ -1,6 +1,6 @@
 import { MaxSessionNameLength, type SessionSummary, sessionTitle } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Link, useParams, useRouterState } from "@tanstack/react-router"
+import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
@@ -107,6 +107,7 @@ function sectionOf(pathname: string): "runners" | "environments" | "variables" |
  */
 export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const hub = useHub()
+  const navigate = useNavigate()
   const sessions = useHubState((state) => state.sessions)
   const runners = useHubState((state) => state.runners)
   const you = useHubState((state) => state.you)
@@ -178,6 +179,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
               }
             >
               <MenuGroup label={`${you.name} (@${you.login})`}>
+                <MenuItem onClick={() => void navigate({ to: "/account" })}>Account</MenuItem>
                 <MenuItem
                   onClick={() => {
                     void hub.transport.signOut().finally(() => hub.retry())
