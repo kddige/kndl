@@ -2752,3 +2752,268 @@ describe("subagents (ADR 0014)", () => {
     })
   })
 })
+
+describe("Open questions (#193)", () => {
+  const library = "Which date library?"
+  const questionAsked = (turnId = "t-1", toolCallId = "toolu_ask"): ModEvent => ({
+    _tag: "QuestionAsked",
+    turnId,
+    toolCallId,
+    questions: [
+      {
+        question: library,
+        header: "Library",
+        options: [{ label: "date-fns", description: "Small" }, { label: "Temporal" }],
+        multiSelect: false,
+      },
+    ],
+  })
+  type Updated = Extract<Web, { _tag: "SessionUpdated" }>
+  const hasQuestion = (m: Updated) => m.session.openQuestion !== undefined
+  const noQuestion = (m: Updated) => m.session.openQuestion === undefined
+  const closed = (m: Extract<Web, { _tag: "SessionEventLogged" }>) =>
+    m.entry.event._tag === "QuestionClosed"
+
+  /** A Session whose Turn t-1 asks a question, with alice and bob in it. */
+  async function questionScene() {
+    const scene = await sessionScene()
+    const { hub, web, sessionId, mod } = scene
+    const bobWeb = await openWeb(hub, "bob")
+    for (const client of [web, bobWeb]) {
+      joinSession(client, sessionId)
+      await client.take("SessionHistory")
+    }
+    await mod.poll()
+    await mod.post(turnStarted("t-1"), questionAsked())
+    const asked = await bobWeb.take("SessionUpdated", hasQuestion)
+    return { ...scene, bobWeb, asked }
+  }
+
+  test("is the Session's until answered from the web, which the mod is sent", async () => {
+    const { hub, web, bobWeb, sessionId, mod, asked } = await questionScene()
+    expect(asked.session.openQuestion).toMatchObject({
+      turnId: "t-1",
+      toolCallId: "toolu_ask",
+      questions: [{ question: library, options: [{ label: "date-fns" }, { label: "Temporal" }] }],
+    })
+    const logged = await web.take(
+      "SessionEventLogged",
+      (m) => m.entry.event._tag === "QuestionAsked",
+    )
+    expect(logged.entry.event).toMatchObject({ toolCallId: "toolu_ask" })
+    // A client that connects later, as after a reload, sees it with the Session.
+    const later = await openWeb(hub, "alice", web.cookie)
+    expect(later.sessions.sessions).toEqual([
+      expect.objectContaining({ id: sessionId, openQuestion: asked.session.openQuestion }),
+    ])
+
+    const answer = { _tag: "Answered", answers: { [library]: "Temporal" } } as const
+    bobWeb.send({ _tag: "AnswerQuestion", sessionId, toolCallId: "toolu_ask", answer })
+    expect(await mod.poll(500)).toEqual([
+      { _tag: "DeliverAnswer", sessionId, toolCallId: "toolu_ask", answer, sender: bob },
+    ])
+    const outcome: ModEvent = {
+      _tag: "QuestionClosed",
+      turnId: "t-1",
+      toolCallId: "toolu_ask",
+      outcome: answer,
+      by: bob,
+    }
+    await mod.post(outcome)
+    await web.take("SessionUpdated", noQuestion)
+    expect((await web.take("SessionEventLogged", closed)).entry.event).toEqual(outcome)
+
+    // Too late: alice is told who answered first, and what, and the mod is sent nothing.
+    web.send({ _tag: "AnswerQuestion", sessionId, toolCallId: "toolu_ask", answer })
+    expect(await web.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "AnswerQuestion",
+      sessionId,
+      message: "bob answered first: Temporal.",
+    })
+    expect(await mod.poll()).toEqual([])
+  })
+
+  test("an answer the mod got after another is refused, saying who answered first", async () => {
+    const { web, bobWeb, sessionId, mod } = await questionScene()
+    web.send({
+      _tag: "AnswerQuestion",
+      sessionId,
+      toolCallId: "toolu_ask",
+      answer: { _tag: "Dismissed" },
+    })
+    bobWeb.send({
+      _tag: "AnswerQuestion",
+      sessionId,
+      toolCallId: "toolu_ask",
+      answer: { _tag: "Replied", text: "Use the platform" },
+    })
+    const commands = await mod.poll(500)
+    if (commands.length < 2) commands.push(...(await mod.poll(500)))
+    expect(commands.map((command) => command._tag)).toEqual(["DeliverAnswer", "DeliverAnswer"])
+    await mod.post(
+      {
+        _tag: "QuestionClosed",
+        turnId: "t-1",
+        toolCallId: "toolu_ask",
+        outcome: { _tag: "Dismissed" },
+        by: alice,
+      },
+      { _tag: "AnswerFailed", toolCallId: "toolu_ask", senderId: bob.id, message: "closed" },
+    )
+    expect(await bobWeb.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "AnswerQuestion",
+      sessionId,
+      message: "alice dismissed the question first.",
+    })
+    expect(await web.untaken("CommandFailed")).toEqual([])
+
+    // One the Hub knows nothing of says only that it came too late.
+    await mod.post({
+      _tag: "AnswerFailed",
+      toolCallId: "toolu_other",
+      senderId: bob.id,
+      message: "No question is waiting on this answer.",
+    })
+    expect((await bobWeb.take("CommandFailed")).message).toBe(
+      "Your answer came too late: No question is waiting on this answer.",
+    )
+  })
+
+  test("picks are shown to everyone in the Session, and to those who join, until it closes", async () => {
+    const { hub, web, bobWeb, sessionId, mod } = await questionScene()
+    const pick = (answer: string, toolCallId = "toolu_ask") =>
+      bobWeb.send({ _tag: "PickAnswer", sessionId, toolCallId, question: library, answer })
+    pick("date-fns")
+    expect(await web.take("QuestionPicks")).toEqual({
+      _tag: "QuestionPicks",
+      sessionId,
+      toolCallId: "toolu_ask",
+      picks: [{ participant: bob, question: library, answer: "date-fns" }],
+    })
+    pick("Temporal")
+    await web.take("QuestionPicks", (m) => m.picks[0]?.answer === "Temporal")
+    const another = await openWeb(hub, "alice", web.cookie)
+    joinSession(another, sessionId)
+    expect((await another.take("QuestionPicks")).picks).toEqual([
+      { participant: bob, question: library, answer: "Temporal" },
+    ])
+    pick("")
+    await web.take("QuestionPicks", (m) => m.picks.length === 0)
+
+    // A pick for another question, or once it has closed, is moot.
+    pick("date-fns", "toolu_other")
+    await mod.post(turnEnded("t-1"))
+    await web.take("SessionUpdated", noQuestion)
+    pick("date-fns")
+    await Bun.sleep(100)
+    expect(await web.untaken("QuestionPicks")).toEqual([])
+  })
+
+  test("is Cancelled when its Turn ends or its Claude Code stops first", async () => {
+    const scene = await questionScene()
+    const { web, sessionId, mod } = scene
+    await mod.post(turnEnded("t-1"))
+    await web.take("SessionUpdated", noQuestion)
+    expect((await web.take("SessionEventLogged", closed)).entry.event).toEqual({
+      _tag: "QuestionClosed",
+      turnId: "t-1",
+      toolCallId: "toolu_ask",
+      outcome: { _tag: "Cancelled" },
+    })
+    // The mod's own close, after, changes nothing.
+    await mod.post({
+      _tag: "QuestionClosed",
+      turnId: "t-1",
+      toolCallId: "toolu_ask",
+      outcome: { _tag: "Cancelled" },
+    })
+    web.send({
+      _tag: "AnswerQuestion",
+      sessionId,
+      toolCallId: "toolu_ask",
+      answer: { _tag: "Dismissed" },
+    })
+    expect((await web.take("CommandFailed")).message).toBe("The question was cancelled first.")
+    expect((await web.untaken("SessionEventLogged")).filter(closed)).toEqual([])
+
+    await mod.post(turnStarted("t-2"), questionAsked("t-2", "toolu_again"))
+    await web.take("SessionUpdated", hasQuestion)
+    scene.runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    const stopped = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(stopped.session.openQuestion).toBeUndefined()
+    expect((await web.take("SessionEventLogged", closed)).entry.event).toMatchObject({
+      toolCallId: "toolu_again",
+      outcome: { _tag: "Cancelled" },
+    })
+  })
+
+  test("a new question closes one left open, and an archived Session has none", async () => {
+    const { web, sessionId, mod } = await questionScene()
+    await mod.post(questionAsked("t-1", "toolu_next"))
+    expect((await web.take("SessionEventLogged", closed)).entry.event).toMatchObject({
+      toolCallId: "toolu_ask",
+      outcome: { _tag: "Cancelled" },
+    })
+    const next = await web.take(
+      "SessionUpdated",
+      (m) => m.session.openQuestion?.toolCallId === "toolu_next",
+    )
+    expect(next.session.openQuestion?.turnId).toBe("t-1")
+
+    web.send({ _tag: "ArchiveSession", sessionId })
+    const archived = await web.take("SessionUpdated", (m) => m.session.state === "Archived")
+    expect(archived.session.openQuestion).toBeUndefined()
+  })
+
+  test("an answer to a question that was never asked is refused, and the mod sent nothing", async () => {
+    const { web, sessionId, mod } = await sessionScene()
+    await mod.poll()
+    web.send({
+      _tag: "AnswerQuestion",
+      sessionId,
+      toolCallId: "toolu_nothing",
+      answer: { _tag: "Dismissed" },
+    })
+    expect(await web.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "AnswerQuestion",
+      sessionId,
+      message: "The question is no longer open.",
+    })
+    expect(await mod.poll()).toEqual([])
+  })
+
+  test("keeps an otherwise idle Session awake", async () => {
+    const scene = await sessionScene(await hubSleepingAfter(150))
+    const { runner, mod } = scene
+    // As though its Turn's end were lost: the question alone holds it up.
+    await mod.post(questionAsked())
+    await Bun.sleep(400)
+    expect(await runner.untaken("StopSession")).toEqual([])
+  })
+
+  test("outlives a Hub restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const first = await startHub({ config: { devLogin: true }, database })
+      const { runner, web, sessionId, mod } = await sessionScene(first)
+      await mod.post(turnStarted("t-1"), questionAsked())
+      const asked = await web.take("SessionUpdated", hasQuestion)
+      await web.close()
+      await runner.close()
+      await first.stop()
+
+      const second = await startHub({ config: { devLogin: true }, database })
+      const back = await openWeb(second, "alice", web.cookie)
+      expect(back.sessions.sessions).toEqual([
+        expect.objectContaining({ id: sessionId, openQuestion: asked.session.openQuestion }),
+      ])
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

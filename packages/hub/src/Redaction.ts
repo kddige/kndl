@@ -26,7 +26,12 @@
 // program printing it), and a value Claude Code's TUI wraps onto a new line itself, with
 // indentation, in the terminal. The transcript is redacted either way.
 
-import { MinSensitiveValueLength, type SessionEvent } from "@kndl/protocol"
+import {
+  MinSensitiveValueLength,
+  type Question,
+  type QuestionOutcome,
+  type SessionEvent,
+} from "@kndl/protocol"
 
 /** The longest a stream holds text back that could start a value, in milliseconds. */
 export const holdMillis = 100
@@ -261,9 +266,51 @@ export function redactText(needles: Needles, text: string): string {
   return stream.push(text) + stream.flush()
 }
 
+/** An Open question's questions, redacted: their text, headers and options (#193). */
+export function redactQuestions(
+  needles: Needles,
+  questions: ReadonlyArray<Question>,
+): ReadonlyArray<Question> {
+  if (isEmpty(needles)) return questions
+  const redact = (text: string) => redactText(needles, text)
+  return questions.map((question) => ({
+    ...question,
+    question: redact(question.question),
+    header: redact(question.header),
+    options: question.options.map((option) => ({
+      ...option,
+      label: redact(option.label),
+      ...(option.description !== undefined && { description: redact(option.description) }),
+    })),
+  }))
+}
+
+/** How an Open question closed, redacted: the answers, keyed by their redacted questions. */
+export function redactOutcome(needles: Needles, outcome: QuestionOutcome): QuestionOutcome {
+  if (isEmpty(needles)) return outcome
+  const redact = (text: string) => redactText(needles, text)
+  switch (outcome._tag) {
+    case "Answered":
+      return {
+        ...outcome,
+        answers: Object.fromEntries(
+          Object.entries(outcome.answers).map(([question, answer]) => [
+            redact(question),
+            redact(answer),
+          ]),
+        ),
+      }
+    case "Replied":
+      return { ...outcome, text: redact(outcome.text) }
+    case "Dismissed":
+    case "Cancelled":
+      return outcome
+  }
+}
+
 /**
  * A Session event with its free text redacted: the prompt, Claude's text, tool input and output,
- * an agent's description and the messages people send it.
+ * an agent's description, the messages people send it, and questions and their answers.
  */
 export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent {
   if (isEmpty(needles)) return event
@@ -284,6 +331,10 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
     case "WipNotPushed":
     case "SandboxNoted":
       return { ...event, message: redact(event.message) }
+    case "QuestionAsked":
+      return { ...event, questions: redactQuestions(needles, event.questions) }
+    case "QuestionClosed":
+      return { ...event, outcome: redactOutcome(needles, event.outcome) }
     case "TurnEnded":
     case "TurnStopRequested":
     case "ModelSwitched":

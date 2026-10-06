@@ -425,6 +425,12 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`DROP INDEX retired_values_repo`
     yield* sql`CREATE INDEX retired_values_repo ON retired_values (repo COLLATE NOCASE)`
   }),
+  // A Session's Open question (#193), as JSON, null while there is none: kept, so a Hub that
+  // restarts still shows the question its Claude Code waits on.
+  "0021_open_question": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN open_question TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

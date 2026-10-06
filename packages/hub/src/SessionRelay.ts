@@ -70,6 +70,16 @@
 //     the mod, which resumes one that has stopped. An Asleep Session is woken for it first. A
 //     Running agent can be stopped (StopAgent). A mod that can't do either says so with
 //     AgentCommandFailed, passed on to the person as a CommandFailed.
+// - Open questions (#193): when Claude asks with AskUserQuestion on the main loop, the mod reports
+//   QuestionAsked. The Hub logs it and keeps it as the Session's Open question (Sessions.ts), so
+//   a client that reloads, or a Hub that restarts, still shows it; while it is open the Session
+//   isn't idle. Any Participant may answer it (AnswerQuestion): the Hub sends the mod a
+//   DeliverAnswer for the question it reported only, and the mod settles which answer came first,
+//   there or at the terminal, and reports QuestionClosed, which closes it. A later answer is
+//   refused, by the Hub or by the mod (AnswerFailed), saying who answered first and what. A
+//   question still open when its Turn ends, or its Claude Code stops, or it is archived, is
+//   closed Cancelled. What Participants pick before answering (PickAnswer) is passed to everyone
+//   in the Session (QuestionPicks), in memory only.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
 // - Open ports (#175, ADR 0016): while a Session is Active its Runner reports what listens in its
 //   Sandbox whenever that changes, the whole list each time. The Hub keeps the latest list in
@@ -134,6 +144,7 @@ import {
   type CliTokenId,
   CommandFailed,
   DeliverAgentMessage,
+  DeliverAnswer,
   DeliverPrompt,
   type EnvironmentVersion,
   ForwardCloseCode,
@@ -145,7 +156,8 @@ import {
   HubToWeb,
   type ModEvent,
   type ModHello,
-  type OpenPort,
+  OpenPort,
+  OpenQuestion,
   type Participant,
   type ParticipantId,
   PresenceChanged,
@@ -153,6 +165,10 @@ import {
   PromptId,
   PromptQueueChanged,
   QueuedPrompt,
+  QuestionClosed,
+  QuestionPick,
+  QuestionPicks,
+  questionClosedText,
   type RequestId,
   RequestTerminalSnapshot,
   type BuildVersion,
@@ -178,6 +194,7 @@ import {
   type SessionSummary,
   SessionTurnEnded,
   StartSession,
+  type ToolCallId,
   StopAgent,
   StopSession,
   StopTurn,
@@ -240,6 +257,8 @@ import {
   type Needles,
   needlesOf,
   redactEvent,
+  redactOutcome,
+  redactQuestions,
   redactText,
   StreamRedactor,
 } from "./Redaction.ts"
@@ -552,6 +571,19 @@ export class SessionRelay extends Context.Service<
       const openPorts = new Map<SessionId, ReadonlyArray<OpenPort>>()
       /** When each Session was last seen busy: an event logged, its queue or presence changing. */
       const lastBusy = new Map<SessionId, number>()
+      /**
+       * What the Participants have picked for each Session's Open question so far (#193), before
+       * answering it. In memory only: cleared when the question closes.
+       */
+      const questionPicks = new Map<
+        SessionId,
+        { readonly toolCallId: ToolCallId; readonly picks: ReadonlyArray<QuestionPick> }
+      >()
+      /**
+       * How each Session's last Open question closed, redacted, so an answer that comes after is
+       * told who answered first, and what. In memory only.
+       */
+      const closedQuestions = new Map<SessionId, QuestionClosed>()
 
       const markBusy = (sessionId: SessionId) =>
         Effect.map(Clock.currentTimeMillis, (now) => void lastBusy.set(sessionId, now))
@@ -1282,9 +1314,11 @@ export class SessionRelay extends Context.Service<
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
         // Its next start takes its model and effort as set then.
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
+        // No one can answer its question now: the next Claude Code doesn't ask it again.
+        const cancelled = yield* cancelQuestion(session)
         const interrupted = yield* agentsInterrupted(session.id)
         if (session.state === "Archived") {
-          if (interrupted) yield* sessionUpdated(session.id)
+          if (interrupted || cancelled) yield* sessionUpdated(session.id)
           return
         }
         if (session.state === "Asleep") return yield* sessionUpdated(session.id)
@@ -1446,6 +1480,8 @@ export class SessionRelay extends Context.Service<
         if (session.state !== "Active" || session.currentTurn !== null) return false
         // Its agents work on after the Turn that started them (ADR 0014).
         if (hasRunningAgents(session)) return false
+        // Claude waits on its question (#193), as its Turn does.
+        if (session.openQuestion !== undefined) return false
         if (!onlineRunners.has(session.runnerId)) return false
         if (stopping.has(session.id) || inFlight.has(session.id)) return false
         // A start can take minutes to build its Environment: it isn't idle until it's over.
@@ -1504,6 +1540,7 @@ export class SessionRelay extends Context.Service<
         // Its Claude Code is being stopped for good: its mod has nothing more to say.
         yield* modTokens.revoke(session.id)
         for (const client of webClients) client.terminals.delete(session.id)
+        yield* cancelQuestion(session)
         yield* sessions.archive(session.id, {
           by: by.id,
           at,
@@ -1902,6 +1939,10 @@ export class SessionRelay extends Context.Service<
               peer.send(
                 PromptQueueChanged.make({ sessionId, queue: yield* prompts.list(sessionId) }),
               )
+              const picked = questionPicks.get(sessionId)
+              if (picked !== undefined && picked.picks.length > 0) {
+                peer.send(QuestionPicks.make({ sessionId, ...picked }))
+              }
               if (!(yield* presenceChanged(sessionId, before))) {
                 peer.send(PresenceChanged.make({ sessionId, participants: before }))
               }
@@ -2255,6 +2296,48 @@ export class SessionRelay extends Context.Service<
                 sessionId,
                 DeliverAgentMessage.make({ sessionId, agentId, text: message.text, sender: you }),
               )
+              return
+            }
+
+            case "AnswerQuestion": {
+              const { sessionId, toolCallId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              // Only the question the mod reported is sent on: a mod from before #193 asks none.
+              if (session.value.openQuestion?.toolCallId !== toolCallId) {
+                return refuse(message, closedText(sessionId, toolCallId), { sessionId })
+              }
+              // The mod settles which answer came first, this one or another, or the terminal's.
+              yield* outbox.enqueue(
+                sessionId,
+                DeliverAnswer.make({ sessionId, toolCallId, answer: message.answer, sender: you }),
+              )
+              return
+            }
+
+            case "PickAnswer": {
+              const { sessionId, toolCallId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              // A pick for a question that has closed meanwhile is moot.
+              if (session.value.openQuestion?.toolCallId !== toolCallId) return
+              const before = questionPicks.get(sessionId)
+              const others = (before?.toolCallId === toolCallId ? before.picks : []).filter(
+                (pick) => pick.participant.id !== you.id || pick.question !== message.question,
+              )
+              const picks =
+                message.answer === ""
+                  ? others
+                  : [
+                      ...others,
+                      QuestionPick.make({
+                        participant: you,
+                        question: message.question,
+                        answer: message.answer,
+                      }),
+                    ]
+              questionPicks.set(sessionId, { toolCallId, picks })
+              toJoined(sessionId, QuestionPicks.make({ sessionId, toolCallId, picks }))
               return
             }
 
@@ -2980,6 +3063,52 @@ export class SessionRelay extends Context.Service<
           )
         }
 
+        if (event._tag === "AnswerFailed") {
+          // The question is as it was: closed. Told to whoever sent the answer.
+          const known = closedQuestions.get(sessionId)
+          return toWeb(
+            CommandFailed.make({
+              command: "AnswerQuestion",
+              sessionId,
+              message:
+                known?.toolCallId === event.toolCallId
+                  ? `${questionClosedText(known, true)}.`
+                  : `Your answer came too late: ${event.message}`,
+            }),
+            (client) => client.you.id === event.senderId,
+          )
+        }
+
+        if (event._tag === "QuestionAsked") {
+          const session = yield* sessions.get(sessionId)
+          if (Option.isNone(session)) return
+          // The mod asks one at a time; one left open was cut short.
+          const before = session.value.openQuestion
+          if (before !== undefined && before.toolCallId !== event.toolCallId) {
+            yield* cancelQuestion(session.value)
+          }
+          yield* logEvent(sessionId, event)
+          yield* sessions.setOpenQuestion(
+            sessionId,
+            OpenQuestion.make({
+              turnId: event.turnId,
+              toolCallId: event.toolCallId,
+              questions: redactQuestions(yield* needlesForSession(sessionId), event.questions),
+              askedAt: yield* Clock.currentTimeMillis,
+            }),
+          )
+          questionPicks.delete(sessionId)
+          return yield* sessionUpdated(sessionId)
+        }
+
+        if (event._tag === "QuestionClosed") {
+          const session = yield* sessions.get(sessionId)
+          // One closed already, as Cancelled when its Turn ended first, stays as it closed.
+          if (Option.getOrUndefined(session)?.openQuestion?.toolCallId !== event.toolCallId) return
+          yield* closeQuestion(sessionId, event)
+          return yield* sessionUpdated(sessionId)
+        }
+
         if (event._tag === "AgentStatusChanged") {
           // An agent the Hub never saw start is none of the Session's, as one Claude Code started
           // for itself: its status is dropped, not logged.
@@ -3007,10 +3136,59 @@ export class SessionRelay extends Context.Service<
           yield* sessionUpdated(sessionId)
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {
           yield* sessions.setCurrentTurn(sessionId, null)
+          // Its question can't be answered once it has ended.
+          const session = yield* sessions.get(sessionId)
+          if (Option.isSome(session)) yield* cancelQuestion(session.value)
           yield* sessionUpdated(sessionId)
           yield* turnEnded(sessionId)
         }
       })
+
+      /**
+       * Closes the Session's Open question (#193): logged, taken off its summary, and remembered,
+       * so an answer that comes after is told how it closed. The caller sends the SessionUpdated.
+       */
+      const closeQuestion = Effect.fn("SessionRelay.closeQuestion")(function* (
+        sessionId: SessionId,
+        closed: QuestionClosed,
+      ) {
+        yield* logEvent(sessionId, closed)
+        const needles = yield* needlesForSession(sessionId)
+        closedQuestions.set(sessionId, {
+          ...closed,
+          outcome: redactOutcome(needles, closed.outcome),
+        })
+        questionPicks.delete(sessionId)
+        yield* sessions.setOpenQuestion(sessionId, null)
+      })
+
+      /**
+       * Closes the Session's Open question as Cancelled, if it has one: its Turn ended, or its
+       * Claude Code stopped, before anyone answered. Whether it had one.
+       */
+      const cancelQuestion = Effect.fn("SessionRelay.cancelQuestion")(function* (
+        session: SessionSummary,
+      ) {
+        const open = session.openQuestion
+        if (open === undefined) return false
+        yield* closeQuestion(
+          session.id,
+          QuestionClosed.make({
+            turnId: open.turnId,
+            toolCallId: open.toolCallId,
+            outcome: { _tag: "Cancelled" },
+          }),
+        )
+        return true
+      })
+
+      /** Why an answer to a question that isn't open is refused: how it closed, if it did. */
+      const closedText = (sessionId: SessionId, toolCallId: ToolCallId): string => {
+        const closed = closedQuestions.get(sessionId)
+        return closed?.toolCallId === toolCallId
+          ? `${questionClosedText(closed, true)}.`
+          : "The question is no longer open."
+      }
 
       /** Tells the Session's Runner its Turn ended, so it pushes the WIP ref if anything changed. */
       const turnEnded = Effect.fn("SessionRelay.turnEnded")(function* (sessionId: SessionId) {
