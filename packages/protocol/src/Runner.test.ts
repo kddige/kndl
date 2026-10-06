@@ -266,7 +266,8 @@ const hubToRunner = [
     parent: { id: "s-1", title: "Release" },
     model: "opus[1m]",
     effort: "max",
-  },  // A Runner kept s-1 running across its restart: a new mod token for it (#157).
+  },
+  // A Runner kept s-1 running across its restart: a new mod token for it (#157).
   { _tag: "ModTokenReissued", sessionId: "s-1", modToken: "mod-4" },
 ]
 

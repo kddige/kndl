@@ -586,6 +586,7 @@ describe("Sessions", () => {
       // What the Sandbox says Claude Code runs with.
       CLAUDE_CONFIG_DIR: "/claude",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+      DISABLE_INSTALLATION_CHECKS: "1",
       CLAUDE_HUB_SESSION_ID: "s-1",
       // The credential proxy, for Anthropic's API and the Hub alike, and the Session token for
       // both: never the mod token, nor a Claude credential (ADR 0013).

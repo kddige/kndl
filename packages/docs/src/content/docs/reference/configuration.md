@@ -119,6 +119,8 @@ Its environment is what the Start script gets: the package cache variables and, 
 | `CLAUDE_CONFIG_DIR` | `/var/lib/claude-hub/claude`, Claude Code's state, on a disk of the Session's own. The Runner seeds it so Claude Code asks nothing before the conversation. |
 | `IS_SANDBOX` | `1`, which lets `--dangerously-skip-permissions` run as root. |
 | `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | `1`, since each Session would keep notes only for itself. It wins over any setting. |
+| `DISABLE_INSTALLATION_CHECKS` | `1`: the Runner installs Claude Code, so `/status` doesn't ask for the native installer's `claude` command and install method. |
+| `TZ` | The Runner's time zone, such as `Europe/Copenhagen`, so the times Claude Code and its tools show are yours. |
 
 Claude Code and its mod reach Anthropic and the Hub through the [credential proxy](/explanation/security-model/#the-credential-proxy), holding the Session token alone. These variables are the proxy's, set for each process, and the credential's kind decides the rest.
 

@@ -85,6 +85,9 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
     env: {
       // Auto memory stays off (#111): each Session would keep notes only for itself.
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+      // The Runner installs Claude Code, from its own cache: /status has no ~/.local/bin, PATH or
+      // install method to warn about (#157).
+      DISABLE_INSTALLATION_CHECKS: "1",
       [ModEnvironment.sessionId]: options.sessionId,
       ...(options.parent === undefined
         ? {}

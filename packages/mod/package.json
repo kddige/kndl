@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/lib.ts --target browser --format esm --minify --outfile hooks/hub-link-lib.js",
+    "build": "bun scripts/build.ts",
     "check": "bun run build && claude plugin validate . && claude plugin test .",
     "typecheck": "bash scripts/typecheck.sh"
   },
