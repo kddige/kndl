@@ -40,16 +40,20 @@ import {
   RestartIcon,
   SessionStatus,
   Spinner,
+  SunIcon,
+  Switch,
   Tab,
   TabList,
   TabPanel,
   Tabs,
   toast,
+  Tooltip,
   TrashIcon,
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import { AgentPanel } from "./AgentPanel.tsx"
 import { Composer } from "./Composer.tsx"
+import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker } from "./ModelPicker.tsx"
 import { modelName, otherTurnModel } from "./models.ts"
 import { PromptQueue } from "./PromptQueue.tsx"
@@ -98,6 +102,10 @@ const styles = stylex.create({
     fontWeight: weight.semibold,
   },
   badges: { display: "inline-flex", alignItems: "center", gap: space.s1 },
+  // Who keeps it awake, in the description line: the sun lines up with the text.
+  keptAwake: { display: "inline-flex", alignItems: "center", gap: space.s1, whiteSpace: "nowrap" },
+  sun: { flexShrink: 0, width: "0.875rem", height: "0.875rem" },
+  keepAwake: { alignItems: "center" },
   tabList: {
     paddingInline: space.s4,
     backgroundColor: color.surface,
@@ -241,6 +249,7 @@ function LoadedSession({
     [models, setting],
   )
 
+  const you = useHubState((hubState) => hubState.you)
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
@@ -314,10 +323,33 @@ function LoadedSession({
             {/* Named, the title no longer says which branch it works on. */}
             {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}{" "}
             <span aria-hidden="true">·</span> {claudeAccountText(summary)}
+            {summary.keepAwake !== undefined && (
+              <>
+                {" "}
+                <span aria-hidden="true">·</span>{" "}
+                <span {...stylex.props(styles.keptAwake)}>
+                  <SunIcon {...stylex.props(styles.sun)} />
+                  {keptAwakeText(summary.keepAwake, you?.id)}
+                </span>
+              </>
+            )}
           </>
         }
         actions={
           <>
+            {state !== "Archived" && (
+              // Anyone with access may turn it on or off (ADR 0016); Sleep now turns it off.
+              <Tooltip content="While it's on, the Session doesn't go to sleep when idle. Sleep now turns it off.">
+                <span>
+                  <Switch
+                    label="Keep awake"
+                    checked={summary.keepAwake !== undefined}
+                    onCheckedChange={(on) => command(hub.setKeepAwake(summary.id, on))}
+                    sx={styles.keepAwake}
+                  />
+                </span>
+              </Tooltip>
+            )}
             {state === "Active" && (
               <Button
                 size="sm"

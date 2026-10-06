@@ -46,6 +46,7 @@ import {
   Popover,
   RestartIcon,
   ServerIcon,
+  SunIcon,
   Select,
   SessionStatus,
   setTheme,
@@ -670,6 +671,7 @@ function Toggles() {
         <ArchiveIcon aria-label="Archive" />
         <ServerIcon aria-label="Server" />
         <CopyIcon aria-label="Copy" />
+        <SunIcon aria-label="Sun" />
       </Row>
     </Section>
   )
