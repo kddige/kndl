@@ -118,6 +118,29 @@ describe("the Hub link", () => {
     expect(lines).toEqual(["hub-link: not started by a Runner, so not linked to a Hub"])
   })
 
+  test("is off in a background job of Claude Code's, which inherits the mod token (#191)", async ($, on) => {
+    mock.env(on, {
+      CLAUDE_HUB_URL: hubUrl,
+      CLAUDE_HUB_SESSION_ID: "s1",
+      CLAUDE_HUB_MOD_TOKEN: "secret",
+      CLAUDE_CODE_SESSION_KIND: "bg",
+    })
+    const lines: Array<string> = []
+    on("ui.log", (_, e) => {
+      lines.push(e.text)
+      return { value: undefined }
+    })
+    on("session.start", (_, e) => ({ cwd: e.cwd }))
+    const requests = fakeFetch(on, () => welcome)
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: false })
+    await clock.advance(1000)
+
+    expect(requests).toEqual([])
+    expect(lines).toEqual(["hub-link: a Claude Code bg process, so not linked to the Hub"])
+  })
+
   test("says hello with the mod token, and polls for no commands", async ($, on) => {
     const { requests } = linkedSession(on)
     const clock = mock.clock(on)

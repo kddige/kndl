@@ -271,7 +271,8 @@ export const SessionsLive = Layer.effect(
      * The conversation to start Claude Code with: a new one, or the one the Hub asks to resume.
      * One Claude Code never wrote a transcript of, as when it exited before it got that far,
      * can't be resumed: it starts new instead, with the same id, so the Hub's id stays right
-     * (#105).
+     * (#105). The Session's history still shows the old conversation, so a note there says
+     * Claude Code doesn't remember it (#191).
      */
     const conversationFor = (
       request: StartSession | RelaunchSession,
@@ -284,9 +285,17 @@ export const SessionsLive = Layer.effect(
         const id = request.resume
         if (yield* sandboxes.hasTranscript(request.sessionId, directories, id))
           return { _tag: "Resume", id } as const
-        yield* Effect.logInfo(
+        yield* Effect.logWarning(
           `Session ${request.sessionId}: Claude Code has no transcript of conversation ${id}, ` +
             "so it starts a new one with that id instead of resuming it",
+        )
+        yield* hub.send(
+          RunnerToHub.cases.SandboxNote.make({
+            sessionId: request.sessionId,
+            message:
+              "Claude Code couldn't resume its conversation, which it has no transcript of, so it " +
+              "started a new one: it doesn't remember what was said above.",
+          }),
         )
         return { _tag: "New", id } as const
       })

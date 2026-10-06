@@ -579,6 +579,7 @@ describe("Sessions", () => {
       // What the Sandbox says Claude Code runs with.
       CLAUDE_CONFIG_DIR: "/claude",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+      CLAUDE_CODE_DISABLE_AGENT_VIEW: "1",
       DISABLE_INSTALLATION_CHECKS: "1",
       CLAUDE_HUB_SESSION_ID: "s-1",
       // The credential proxy, for Anthropic's API and the Hub alike, and the Session token for
@@ -709,6 +710,7 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+    expect(h.hub.all("SandboxNote")).toEqual([])
   })
 
   test("admits a Session with its Creator's Claude credential, asked of the Hub as it starts (#150)", async () => {
@@ -756,6 +758,14 @@ describe("Sessions", () => {
 
     // The same id, so the Hub's stays right for the next wake.
     expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--session-id", "3c1f6f0e-claude"])
+    // The Session's history still shows the conversation, so it says Claude Code forgot it (#191).
+    expect(h.hub.all("SandboxNote")).toEqual([
+      {
+        _tag: "SandboxNote",
+        sessionId: "s-1",
+        message: expect.stringContaining("couldn't resume its conversation"),
+      },
+    ])
   })
 
   test("reports a start that failed and leaves nothing running", async () => {

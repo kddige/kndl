@@ -81,13 +81,20 @@ const stoppedTask = (result: unknown): string | undefined =>
     : undefined
 
 const startLink = async ($: EngineInterface) => {
-  const [hubUrl, sessionId, modToken] = await Promise.all([
+  const [hubUrl, sessionId, modToken, kind] = await Promise.all([
     $.env.get("CLAUDE_HUB_URL"),
     $.env.get("CLAUDE_HUB_SESSION_ID"),
     $.env.get("CLAUDE_HUB_MOD_TOKEN"),
+    $.env.get("CLAUDE_CODE_SESSION_KIND"),
   ])
   if (!hubUrl || !sessionId || !modToken) {
     $.ui.log("hub-link: not started by a Runner, so not linked to a Hub", { to: "debug" })
+    return
+  }
+  // A background job or daemon of Claude Code's inherits the Session's mod token, but isn't the
+  // Session's Claude Code: linked too, it would run each prompt again (#191).
+  if (kind) {
+    $.ui.log(`hub-link: a Claude Code ${kind} process, so not linked to the Hub`, { to: "debug" })
     return
   }
   state.link?.stop()

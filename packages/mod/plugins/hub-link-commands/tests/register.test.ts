@@ -24,11 +24,13 @@ const linkedSession = (
   on: On,
   commands: Array<Record<string, unknown>> = [],
   ready: Promise<void> = Promise.resolve(),
+  env: Record<string, string> = {},
 ) => {
   mock.env(on, {
     CLAUDE_HUB_URL: hubUrl,
     CLAUDE_HUB_SESSION_ID: "s1",
     CLAUDE_HUB_MOD_TOKEN: "secret",
+    ...env,
   })
   on("session.id", () => ({ value: "claude-1" }))
   on("session.model", () => ({ value: "claude-test" }))
@@ -85,6 +87,19 @@ describe("the Hub link", () => {
       model: "claude-test",
     })
     expect(requests[1]?.url).toBe(`${hubUrl}/mod/commands?after=0&waitMs=25000`)
+  })
+
+  test("runs no commands in a background job of Claude Code's (#191)", async ($, on) => {
+    const prompt = { _tag: "DeliverPrompt", promptId: "q1", sender: ada, text: "hi" }
+    const { requests } = linkedSession(on, [prompt], undefined, {
+      CLAUDE_CODE_SESSION_KIND: "bg",
+    })
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: false })
+    await clock.advance(1000)
+
+    expect(requests).toEqual([])
   })
 
   test("shows the Participants the Hub reports in the band above the prompt", async ($, on) => {

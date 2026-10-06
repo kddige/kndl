@@ -91,7 +91,8 @@ export type WipNotPushed = typeof WipNotPushed.Type
 
 /**
  * Something the Runner wants the Session's Participants to know about its Sandbox, such as its
- * CPU or memory being capped below what the Environment asks for (ADR 0009).
+ * CPU or memory being capped below what the Environment asks for (ADR 0009), or about the Claude
+ * Code in it, such as a wake that couldn't resume the conversation (#191).
  */
 export const SandboxNoted = Schema.TaggedStruct("SandboxNoted", {
   message: Schema.String,
