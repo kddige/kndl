@@ -45,10 +45,18 @@ export const ModHello = Schema.TaggedStruct("ModHello", {
   claudeSessionId: ClaudeSessionId,
   /** The model Claude Code runs, as it names it. */
   model: Schema.NonEmptyString,
+  /**
+   * It takes a {@link DeliverIntoTurn} (#195). A mod from before doesn't say so, and the Hub
+   * refuses to steer a prompt to it.
+   */
+  steers: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModHello = typeof ModHello.Type
 
-/** A {@link DeliverPrompt} could not be submitted to Claude Code, so it never started a Turn. */
+/**
+ * A {@link DeliverPrompt} could not be submitted to Claude Code, so it never started a Turn; or a
+ * {@link DeliverIntoTurn} could not join the running Turn, as when that Turn had ended.
+ */
 export const PromptFailed = Schema.TaggedStruct("PromptFailed", {
   promptId: PromptId,
   message: Schema.String,
@@ -106,6 +114,20 @@ export const DeliverPrompt = Schema.TaggedStruct("DeliverPrompt", {
 export type DeliverPrompt = typeof DeliverPrompt.Type
 
 /**
+ * A prompt from the Prompt queue a Participant steered (web SteerPrompt, #195), sent while a Turn
+ * runs, and only to a mod whose hello says it `steers`. The mod adds it to the running Turn with
+ * the sender's name, as Claude Code adds a prompt typed while it works, and reports PromptSteered;
+ * or PromptFailed, when no Turn runs to take it.
+ */
+export const DeliverIntoTurn = Schema.TaggedStruct("DeliverIntoTurn", {
+  sessionId: SessionId,
+  promptId: PromptId,
+  text: Schema.NonEmptyString,
+  sender: Participant,
+})
+export type DeliverIntoTurn = typeof DeliverIntoTurn.Type
+
+/**
  * A Participant's message to one of the Session's subagents (web MessageAgent, ADR 0014). The mod
  * sends it with the sender's name, as a prompt; a running agent reads it at its next tool call, and
  * one that has stopped resumes with it.
@@ -123,6 +145,7 @@ export const HubToMod = Schema.Union([
   ModWelcome,
   HandshakeRejected,
   DeliverPrompt,
+  DeliverIntoTurn,
   StopTurn,
   DeliverAgentMessage,
   StopAgent,
@@ -141,6 +164,7 @@ export type ModHelloReplyEncoded = typeof ModHelloReply.Encoded
 /** What the Hub queues for a Session's mod, which the mod collects from `GET /mod/commands`. */
 export const ModCommand = Schema.Union([
   DeliverPrompt,
+  DeliverIntoTurn,
   StopTurn,
   DeliverAgentMessage,
   StopAgent,
