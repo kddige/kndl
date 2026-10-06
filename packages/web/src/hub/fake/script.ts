@@ -235,6 +235,13 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
       },
       at: now - 26 * hour,
       events: [
+        // From before subagents replaced Child Sessions (ADR 0014): its Parent Session's message.
+        ...sessionTurn(
+          "t-seed-2a",
+          { _tag: "FromSession", session: { id: demoSessionId, title: "claude/web-client" } },
+          "Find out how the web UI runs against the fake Hub.",
+          [{ _tag: "TextDelta", text: "`VITE_FAKE_HUB=1 bun run web` serves it on the fake Hub." }],
+        ),
         ...turn("t-seed-2", bob, "Document how to run the web UI against the fake Hub", [
           {
             _tag: "TextDelta",

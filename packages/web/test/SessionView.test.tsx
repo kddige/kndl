@@ -411,6 +411,16 @@ test("an agent's view resumes it, messages it while it runs, and stops it", asyn
   await eventually(() => expect(heading()).toContain("Stopped"))
 })
 
+test("a Turn from another Session, from before subagents, shows that Session", async () => {
+  const { page } = await openApp("/sessions/s-readme")
+  const conversation = () => page.querySelector('[aria-label="Conversation"]')
+  await eventually(() => expect(conversation()?.textContent).toContain("VITE_FAKE_HUB=1"))
+  const from = [...(conversation()?.querySelectorAll("a") ?? [])].find(
+    (link) => link.textContent === "claude/web-client",
+  )
+  expect(from?.getAttribute("href")).toBe(`/sessions/${demoSessionId}`)
+})
+
 test("an Interrupted agent's tool call that never ended was cut short, not running", async () => {
   const { page } = await openApp("/sessions/s-release?agent=a-docs")
   const agent = () => page.querySelector('section[aria-label="Agent"]')
