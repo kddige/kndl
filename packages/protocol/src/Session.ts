@@ -144,6 +144,16 @@ export const ArchiveInfo = Schema.Struct({
 export type ArchiveInfo = typeof ArchiveInfo.Type
 
 /**
+ * Who turned Keep awake on for a Session, and when (ADR 0016): while it is on, the Session doesn't
+ * go Asleep for being idle. Pressing Sleep turns it off; a Runner drain or restart leaves it on.
+ */
+export const KeepAwake = Schema.Struct({
+  by: Participant,
+  at: EpochMillis,
+})
+export type KeepAwake = typeof KeepAwake.Type
+
+/**
  * The Environment version a Session's Sandbox runs on, against its Repo's latest: on an older one,
  * the Session picks up the latest on its next wake, or straight away through a restart.
  */
@@ -252,6 +262,11 @@ export const SessionSummary = Schema.Struct({
    * they apply once no Turn runs, when the Hub restarts Claude Code with them.
    */
   modelPending: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * Present while Keep awake is on (ADR 0016): it doesn't go Asleep for being idle. Anyone with
+   * access to its Repo may turn it on or off; pressing Sleep turns it off.
+   */
+  keepAwake: Schema.optionalKey(KeepAwake),
 })
 export type SessionSummary = typeof SessionSummary.Type
 

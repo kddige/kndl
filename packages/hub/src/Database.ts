@@ -392,6 +392,13 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+  // Keep awake (ADR 0016): who turned it on and when, null while it is off. While it is on, the
+  // Session doesn't go Asleep for being idle, and is woken again when its Runner comes back.
+  "0018_keep_awake": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions ADD COLUMN keep_awake_by TEXT REFERENCES participants (id)`
+    yield* sql`ALTER TABLE sessions ADD COLUMN keep_awake_at INTEGER`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

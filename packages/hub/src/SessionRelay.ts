@@ -17,6 +17,12 @@
 //   - Wake: a prompt to an Asleep Session (or WakeSession) wakes it. The Hub records it Active and
 //     sends StartSession with `resume`, the Claude Code session id from the mod's last hello. The
 //     prompt waits in the queue until the new mod says hello.
+//   - Keep awake (SetKeepAwake, ADR 0016): anyone with access to the Repo can turn it on, and it
+//     stays on, recorded with who turned it on, until someone turns it off or presses Sleep, or
+//     the Session is archived. While it is on the Session is never idle, so never put to sleep
+//     for it; an Asleep one is woken when it is turned on, and again whenever its Runner is back
+//     from a drain or a restart (or the Hub's). A Claude Code that exits on its own leaves it
+//     Asleep, as without Keep awake, rather than starting it again and again.
 //   - Restart (RestartSession, ADR 0009): an Active Session with no Turn running is put to sleep
 //     and woken as soon as it is Asleep, so its Sandbox is recreated from the Repo's latest
 //     Environment version. An Asleep one is just woken.
@@ -1189,6 +1195,32 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
+       * Wakes the Session if it is Asleep with Keep awake on (ADR 0016), as once its Runner is back
+       * from a drain or a restart. A wake its Runner refuses, as while it is Behind, waits for the
+       * next time it is back.
+       */
+      const wakeKeptAwake = Effect.fn("SessionRelay.wakeKeptAwake")(function* (
+        sessionId: SessionId,
+      ) {
+        const session = yield* sessions.get(sessionId)
+        if (Option.isNone(session) || session.value.state !== "Asleep") return
+        if (session.value.keepAwake === undefined) return
+        const refused = yield* wake(session.value, { message: "Woken: Keep awake is on" })
+        if (refused !== undefined) {
+          yield* Effect.logInfo(`Session ${sessionId} is kept awake but can't wake: ${refused}`)
+        }
+      })
+
+      /** Turns the Session's Keep awake off, as pressing Sleep does (ADR 0016). */
+      const stopKeepingAwake = Effect.fn("SessionRelay.stopKeepingAwake")(function* (
+        session: SessionSummary,
+      ) {
+        if (session.keepAwake === undefined) return
+        yield* sessions.setKeepAwake(session.id, null)
+        yield* sessionUpdated(session.id)
+      })
+
+      /**
        * Asks the Session's Runner to stop its Claude Code and Sandbox, keeping the Workspace and
        * the Sandbox's volumes. It stays Active, taking no deliveries, until SessionStopped.
        */
@@ -1213,6 +1245,8 @@ export class SessionRelay extends Context.Service<
         // A start can take minutes to build its Environment: it isn't idle until it's over.
         if (starts.has(session.id)) return false
         if (presenceOf(session.id).length > 0) return false
+        // Someone asked for it to stay up, as for a dev server (ADR 0016).
+        if (session.keepAwake !== undefined) return false
         return (yield* prompts.list(session.id)).length === 0
       })
 
@@ -1685,7 +1719,8 @@ export class SessionRelay extends Context.Service<
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              if (stopping.has(sessionId)) return
+              // Pressing Sleep turns Keep awake off (ADR 0016), even while it is going to sleep.
+              if (stopping.has(sessionId)) return yield* stopKeepingAwake(session.value)
               if (session.value.state !== "Active") {
                 return refuse(
                   message,
@@ -1708,7 +1743,31 @@ export class SessionRelay extends Context.Service<
                   sessionId,
                 })
               }
+              yield* stopKeepingAwake(session.value)
               return yield* putToSleep(session.value, { by: you, message: "Put to sleep" })
+            }
+
+            case "SetKeepAwake": {
+              // Anyone with access to the Session's Repo may, in any state but Archived (ADR 0016).
+              const { sessionId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              if (session.value.state === "Archived") {
+                return refuse(message, "The Session is archived.", { sessionId })
+              }
+              if (!message.on) return yield* stopKeepingAwake(session.value)
+              if (session.value.keepAwake === undefined) {
+                yield* sessions.setKeepAwake(sessionId, {
+                  by: you.id,
+                  at: yield* Clock.currentTimeMillis,
+                })
+                yield* sessionUpdated(sessionId)
+              }
+              // Kept awake from now: an Asleep one is woken; a Frozen one when its Runner is back.
+              if (session.value.state !== "Asleep") return
+              const refused = yield* wake(session.value, { by: you })
+              if (refused !== undefined) return refuse(message, refused, { sessionId })
+              return
             }
 
             case "WakeSession": {
@@ -2391,8 +2450,12 @@ export class SessionRelay extends Context.Service<
                 }
                 return
               }
-              // A prompt sent while it was going to sleep wakes it again.
-              if (asked !== undefined) yield* wakeIfWaiting(message.sessionId)
+              // A prompt sent while it was going to sleep wakes it again, as Keep awake turned on
+              // meanwhile does.
+              if (asked !== undefined) {
+                yield* wakeIfWaiting(message.sessionId)
+                yield* wakeKeptAwake(message.sessionId)
+              }
               return
             }
             case "SandboxStateReport":
@@ -2498,6 +2561,7 @@ export class SessionRelay extends Context.Service<
                 peer.send(PurgeSession.make({ sessionId }))
               }
               const unstopped = new Set(yield* sessions.unstoppedArchives(runner.id))
+              const keptAwake: Array<SessionId> = []
               for (const session of yield* sessions.listByRunner(runner.id)) {
                 if (session.state === "Archived") {
                   if (unstopped.has(session.id) || running.has(session.id)) {
@@ -2524,10 +2588,14 @@ export class SessionRelay extends Context.Service<
                   }
                   // Prompts queued while it was Frozen wake it.
                   yield* wakeIfWaiting(session.id)
+                  if (session.keepAwake !== undefined) keptAwake.push(session.id)
                 }
               }
               // A push `claude-hub update` left drains it, now its Sessions are settled.
               yield* runnerUpdates.drain(runner.id)
+              // Back from a drain or a restart, its Sessions with Keep awake on wake (ADR 0016),
+              // unless that drain has just begun: then they wake once it is back from it.
+              for (const sessionId of keptAwake) yield* wakeKeptAwake(sessionId)
             }),
           ).pipe(Effect.orDie)
           yield* Effect.addFinalizer(() =>
