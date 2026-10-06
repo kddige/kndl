@@ -1,6 +1,6 @@
 // Who may reach a Session from outside the web channel, such as through a tunnel to one of its
-// ports (#177, ADR 0016): anyone with access to its Repo, as for joining it (ADR 0003), checked on
-// every connection. This is the one place that says who the caller is and whether they may: a
+// ports (#177, ADR 0016) or forwarding them (#180): anyone with access to its Repo, as for joining
+// it (ADR 0003), checked on every connection. This is the one place that says who the caller is and whether they may: a
 // new kind of credential is added to `identifyCaller` alone.
 
 import type { Participant, SessionId, SessionSummary } from "@claude-hub/protocol"
@@ -43,7 +43,17 @@ const identifyCaller = Effect.gen(function* () {
 export const authorizeSessionAccess = Effect.fn("authorizeSessionAccess")(function* (
   sessionId: SessionId,
 ) {
-  const you = yield* identifyCaller
+  return yield* authorizeAccessFor(yield* identifyCaller, sessionId)
+})
+
+/**
+ * Whether `you`, already identified, may reach the Session: fails with
+ * {@link SessionAccessRefused} if not.
+ */
+export const authorizeAccessFor = Effect.fn("authorizeAccessFor")(function* (
+  you: Participant,
+  sessionId: SessionId,
+) {
   const session = yield* (yield* Sessions).get(sessionId)
   const noSuchSession = new SessionAccessRefused({
     reason: "NoSuchSession",

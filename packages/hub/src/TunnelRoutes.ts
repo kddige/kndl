@@ -31,6 +31,7 @@ import { Deferred, Duration, Effect, Fiber, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"
 import { authenticateRunner } from "./Auth.ts"
+import { closeReason } from "./CloseReason.ts"
 import { HubShutdown } from "./HubShutdown.ts"
 import { authorizeSessionAccess } from "./SessionAccess.ts"
 import { SessionRelay } from "./SessionRelay.ts"
@@ -40,13 +41,6 @@ import { TunnelRefused, Tunnels } from "./Tunnels.ts"
 interface Close {
   readonly code: number
   readonly reason: string
-}
-
-/** A close frame's reason is at most 123 bytes. */
-const closeReason = (reason: string) => {
-  const bytes = new TextEncoder().encode(reason)
-  if (bytes.byteLength <= 123) return reason
-  return new TextDecoder().decode(bytes.slice(0, 120)).replace(/�$/, "") + "..."
 }
 
 const closeWith = (socket: Socket.Socket, close: Close) =>

@@ -7,6 +7,7 @@ import { CliLoginRoutes } from "./CliLoginRoutes.ts"
 import { CliRoutes } from "./CliRoutes.ts"
 import { CliTokens } from "./CliTokens.ts"
 import { Environments } from "./Environments.ts"
+import { ForwardRoutes } from "./ForwardRoutes.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
 import { ModOutbox } from "./ModOutbox.ts"
@@ -37,6 +38,7 @@ export const HubRoutes = Layer.mergeAll(
   CliLoginRoutes,
   ChannelRoutes,
   CliRoutes,
+  ForwardRoutes,
   ModRoutes,
   PairingRoutes,
   TunnelRoutes,

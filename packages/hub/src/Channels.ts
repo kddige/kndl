@@ -45,7 +45,7 @@ export const CloseCode = {
  * Messages to the peer are queued and written by a fiber of their own, so sending never waits
  * on the peer.
  */
-const serveChannel = <Hello, In, Out>(options: {
+export const serveChannel = <Hello, In, Out>(options: {
   readonly hello: Schema.Codec<Hello, unknown>
   readonly incoming: Schema.Codec<In, unknown>
   readonly outgoing: Schema.Codec<Out, unknown>
