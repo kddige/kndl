@@ -7,6 +7,8 @@ sidebar:
 
 An install keeps everything in its home, `~/.kndl` (or `KNDL_HOME`): see [An installed home](#an-installed-home). The rest of this page is for a checkout, which uses the dev home `~/.kndl-dev`; an installed Hub and Runner keep the same files in their home instead, as [Homes](/reference/configuration/#homes) lists.
 
+An install made under kndl's former name, in `~/.claude-hub` with `CLAUDE_HUB_*` variables, moves to these names with its next update: see [From claude-hub](/how-to/install/#from-claude-hub).
+
 ## An installed home
 
 | Path | What it is |

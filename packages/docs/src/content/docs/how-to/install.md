@@ -102,6 +102,27 @@ It fetches, moves to the latest commit of the branch the install follows (`main`
 
 On the Hub's machine, the Hub's Runners follow it to the new commit: each stops taking Sessions, lets running Turns end (up to ten minutes; `--now` stops them at once), puts its Sessions to sleep, updates and restarts. `--no-update-runners` leaves Runners on other machines where they are, to update one at a time from the Runners page. See [Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit).
 
+### From claude-hub
+
+kndl was called claude-hub ([ADR 0017](/reference/decisions/0017-the-name-is-kndl/)). An install made under that name moves to kndl's names with its next update, which you run with the old command:
+
+```sh
+claude-hub update
+```
+
+The update restarts the services on kndl's code. Instead of starting, they move the install, once the update has finished:
+
+1. The services of the old name stop, and the Runner's Sessions go to sleep: their Sandboxes stop, and their Workspaces stay on disk.
+2. The home moves from `~/.claude-hub` to `~/.kndl`. A home `CLAUDE_HUB_HOME` put somewhere of its own stays where it is; set `KNDL_HOME` in your shell instead.
+3. The `CLAUDE_HUB_*` variables in `hub.env` and `runner.env` become `KNDL_*`, and paths in the old home point to the new one. Nothing else in them changes.
+4. The services start under kndl's names, `io.github.kddige.kndl.<role>` on macOS and `kndl-<role>.service` on Linux, and the `claude-hub` command becomes `kndl`.
+
+The update's own checks at the end run before the move, so they may say the Runner isn't connected. Run `kndl doctor` a minute later. Sessions wake under kndl's names when someone opens them. Claude Code in them starts afresh, with the conversation from the Hub's history, since their Sandboxes and volumes of the old name stay behind, stopped. Remove those once you don't need them: see [Troubleshooting](/troubleshooting/install/#sandboxes-of-the-old-name-are-left).
+
+Runners on other machines move the same way, when they follow the Hub to the new commit. An install without services moves when you run `claude-hub update` a second time, which runs kndl's update. Everyone signs in to the web UI again once, and a `kndl` command installed from a Hub renames itself from `claude-hub` when it next updates itself. GitHub Apps keep their names; onboard names new ones `kndl-<machine>`.
+
+If both `~/.claude-hub` and `~/.kndl` hold something, the move leaves both alone and says so. Move one of them away, or set `KNDL_HOME` to the one to keep, and run `claude-hub update` again.
+
 ## Uninstall
 
 ```sh

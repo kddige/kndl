@@ -29,6 +29,10 @@ The docs follow [Diátaxis](https://diataxis.fr), with troubleshooting alongside
 
 The [glossary](/reference/glossary/) and the [decision records](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) are rendered from `GLOSSARY.md` and `docs/adr/` in the repository at build time, so they always match it.
 
+## The name
+
+kndl is said "kindle" and always written lowercase, even at the start of a sentence; the command is `kndl` too. It is short for kindling, the small things that get a fire going. It was called claude-hub until it was renamed, as a product's name can't use "Claude": see [ADR 0017](/reference/decisions/0017-the-name-is-kndl/). An install made under the old name moves to the new one with its next update: see [Update from claude-hub](/how-to/install/#from-claude-hub).
+
 ## The mark
 
 The kndl mark is a terminal prompt whose two strokes meet at a node, followed by a cursor: several lines of work joining at one Hub, ready for the next prompt. It is drawn from scratch for this project, set in the indigo of the web UI's accent, and the wordmark is set in JetBrains Mono. The source files are in `brand/` in the repository.

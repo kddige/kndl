@@ -37,6 +37,14 @@ Browsers reach the Hub over plain HTTP at http://192.168.1.10:7777 (HUB_PUBLIC_U
 
 **Fix.** Give the Hub an HTTPS URL, or reach it through an SSH tunnel to `localhost`. [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/) walks through each option, and the last resort, `HUB_INSECURE_COOKIES=1`, with its trade-off.
 
+## Signed out after the move from claude-hub
+
+**What you see.** After the Hub moved from claude-hub to kndl's names, the web UI shows the sign-in page to everyone.
+
+**Why.** The web UI's sign-in cookie is named after kndl now, so the browser's cookie of the old name no longer counts.
+
+**Fix.** Sign in again, once. CLI tokens are kept, so a signed-in `kndl` command stays signed in.
+
 ## "The sign-in expired or came from elsewhere"
 
 **What you see.** After GitHub, the browser shows:

@@ -39,6 +39,47 @@ kndl install: Could not clone kddige/kndl: it's private, so install gh and run  
 
 **Fix.** Install with [install.sh](/how-to/install/#install), or set `KNDL_HOME` to the home you installed into.
 
+## The install is still claude-hub's
+
+**What you see.** `kndl` isn't found, or says:
+
+```
+The install in /Users/ada/.claude-hub is still under kndl's former name, claude-hub. Move it to kndl's names with `claude-hub update`, then use `kndl`.
+```
+
+**Why.** kndl was called claude-hub, and an install made under that name moves to kndl's names with its next update.
+
+**Fix.** Run `claude-hub update`. If it has no services, run it a second time. See [From claude-hub](/how-to/install/#from-claude-hub).
+
+## The move from claude-hub leaves both homes alone
+
+**What you see.** The update says:
+
+```
+claude-hub is now kndl, but its install in /Users/ada/.claude-hub can't move to /Users/ada/.kndl, which is in use. …
+```
+
+and the Hub and Runner aren't running.
+
+**Why.** Both homes hold something, and the move never merges two homes or deletes either.
+
+**Fix.** Look at what `~/.kndl` holds. Move whichever you don't want away, or set `KNDL_HOME` to the one to keep, and run `claude-hub update` again.
+
+## Sandboxes of the old name are left
+
+**What you see.** After the move from claude-hub, `bun x msb list`, run in `~/.kndl/app/packages/runner`, lists stopped Sandboxes named `claude-hub-<session>`, and `bun x msb volume list` their volumes, named `claude-hub-<session>.<what it holds>`. The move listed them at the end.
+
+**Why.** The move stopped the Sessions' Sandboxes under the old name, and kept them and their volumes rather than delete anything. Woken Sessions get new Sandboxes, named `kndl-<session>`, and Claude Code in them starts afresh with the conversation from the Hub's history. Environments' snapshots are rebuilt under the new name the same way.
+
+**Fix.** Once you no longer need them, remove each Sandbox and then its volumes, in `~/.kndl/app/packages/runner`:
+
+```sh
+bun x msb remove claude-hub-<session>
+bun x msb volume remove claude-hub-<session>.<what it holds>
+```
+
+If the move couldn't list them, it said so. A Sandbox of the old name still running then keeps running: stop it with `bun x msb stop claude-hub-<session>` first.
+
 ## Onboard needs a flag
 
 **What you see.**
