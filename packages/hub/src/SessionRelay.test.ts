@@ -1361,12 +1361,11 @@ describe("Session names", () => {
   })
 })
 
-describe("Keep awake (ADR 0016)", () => {
-  const keptAwake = (m: Extract<Web, { _tag: "SessionUpdated" }>) =>
-    m.session.keepAwake !== undefined
-  const notKeptAwake = (m: Extract<Web, { _tag: "SessionUpdated" }>) =>
-    m.session.keepAwake === undefined
+const keptAwake = (m: Extract<Web, { _tag: "SessionUpdated" }>) => m.session.keepAwake !== undefined
+const notKeptAwake = (m: Extract<Web, { _tag: "SessionUpdated" }>) =>
+  m.session.keepAwake === undefined
 
+describe("Keep awake (ADR 0016)", () => {
   test("anyone with access can turn it on, every client sees who, and an idle Session stays up", async () => {
     const hub = await hubSleepingAfter(400)
     const bobWeb = await openWeb(hub, "bob")

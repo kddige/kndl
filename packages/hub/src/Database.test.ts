@@ -314,9 +314,9 @@ describe("migration 0018, Keep awake", () => {
       file,
       Effect.gen(function* () {
         const sessions = yield* Sessions
-        const before = Option.getOrThrow(yield* sessions.get(id))
+        const old = Option.getOrThrow(yield* sessions.get(id))
         yield* sessions.setKeepAwake(id, { by: ParticipantId.make("p-2"), at: 5 })
-        return before.keepAwake
+        return old.keepAwake
       }).pipe(Effect.provide(Sessions.layer)),
     )
     expect(before).toBeUndefined()

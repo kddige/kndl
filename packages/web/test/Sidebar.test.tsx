@@ -2,6 +2,7 @@
 // there, against the fake Hub with its script not playing.
 
 import { afterEach, expect, test } from "bun:test"
+import { SessionId } from "@claude-hub/protocol"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
 
@@ -137,11 +138,16 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
   expect(button("Signed in as Alice Kim", document).getAttribute("aria-haspopup")).toBe("menu")
 })
 
+/** Who keeps a Session awake, as its sidebar row's sun says, or null without one. */
+function keptAwake(sessionId: string): string | null {
+  return (
+    row(sessionId).querySelector('[aria-label^="Kept awake by"]')?.getAttribute("title") ?? null
+  )
+}
+
 test("a Session kept awake is marked in its sidebar row, with who keeps it awake", async () => {
   const { client } = await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
-  const keptAwake = (id: string) =>
-    row(id).querySelector('[aria-label^="Kept awake by"]')?.getAttribute("title") ?? null
   expect(["s-readme", "s-demo", "s-dotfiles"].map(keptAwake)).toEqual([
     null,
     "Kept awake by Bob Lee",
@@ -149,9 +155,9 @@ test("a Session kept awake is marked in its sidebar row, with who keeps it awake
   ])
 
   // Turned on anywhere, every open tab marks it; turned off, the mark goes.
-  await step(() => client.setKeepAwake("s-readme", true))
+  await step(() => client.setKeepAwake(SessionId.make("s-readme"), true))
   await eventually(() => expect(keptAwake("s-readme")).toBe("Kept awake by you"))
-  await step(() => client.setKeepAwake("s-demo", false))
+  await step(() => client.setKeepAwake(SessionId.make("s-demo"), false))
   await eventually(() => expect(keptAwake("s-demo")).toBeNull())
 })
 

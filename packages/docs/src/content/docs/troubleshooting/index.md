@@ -86,6 +86,7 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 - `… may have run in this Session's Sandbox, but its result was lost (…). Check before running it again.`
 - Tool calls over 30 seconds fail: `… aborted: no complete answer within 30000ms`.
 - Claude doesn't follow the Repo's `CLAUDE.md`, or a skill is missing: `… left out of the Repo's skills and CLAUDE.md: …`.
+- A Session doesn't go to sleep.
 - **Restart** or **Sleep now** is refused.
 - The Test build fails.
 - A Sensitive variable can't be saved.
