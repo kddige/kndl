@@ -3,7 +3,8 @@
 // token (SessionTokens.ts). The proxy:
 //
 // - answers 401 to a request without a live Session token, the only identity a guest has: every
-//   guest's connection arrives from 127.0.0.1;
+//   guest's connection arrives from 127.0.0.1. A token held after a Runner restart (#157) is
+//   answered 503 until it is let in again, which Claude Code and the mod both retry;
 // - forwards the three requests Claude Code sends Anthropic (spike #142) to Anthropic with the
 //   Session's Claude credential, or the Runner's (RunnerCredential.ts), in the token's place, and
 //   answers 404 to anything else;
@@ -55,9 +56,15 @@ export class CredentialProxy extends Context.Service<
     /**
      * Issues the Session a new token, standing for its mod token and, when it has one, its
      * Creator's Claude credential, kept in memory alone. Any token it had before is revoked. Run
-     * as it starts or wakes.
+     * as it starts or wakes, and for a Session kept running across a Runner restart, which is let
+     * in again on the token it holds.
      */
     readonly admit: (grant: SessionGrant) => Effect.Effect<SessionPass>
+    /**
+     * Holds the token a Session's Claude Code was started with, read back after a Runner restart,
+     * until {@link admit} lets it in again. False for one that isn't a Session token, or is another's.
+     */
+    readonly hold: (sessionId: SessionId, token: string) => Effect.Effect<boolean>
     /**
      * Revokes the Session's token and forgets what it stood for. Run as it sleeps, is archived or
      * exits. A response already streaming runs to its end.
@@ -320,6 +327,11 @@ export const makeProxyHandler = (options: ProxyHandlerOptions) =>
           yield* Effect.logWarning(`Refused ${method} ${path}: no live Session token`)
           return apiError(401, "authentication_error", "no live Session token")
         }
+        if (grant === "Held") {
+          const answer = apiError(503, "api_error", "the Runner restarted; try again in a moment")
+          answer.headers.set("retry-after", "1")
+          return answer
+        }
         if (isModCall(method, path)) return yield* toHub(request, url, grant)
         if (!isAllowed(method, path)) {
           yield* Effect.logWarning(`Session ${grant.sessionId}: refused ${method} ${path}`)
@@ -417,6 +429,7 @@ export const makeCredentialProxy = (options: {
           env: sandboxClaudeEnvironment({ proxyUrl: guestUrl, token, credential }),
         } satisfies SessionPass
       }),
+    hold: options.tokens.hold,
     revoke: options.tokens.revoke,
     hasRunnerCredential: options.runnerCredential.current.pipe(
       Effect.as(true),

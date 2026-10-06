@@ -30,7 +30,8 @@
 //     SessionStateChanged naming the variables. Starting without them would be confusing.
 //   - Frozen: while its Runner is offline. Prompts queue up. When the Runner is back the Session is
 //     Active if its Claude Code is still running in tmux, otherwise Asleep, and woken if prompts
-//     are waiting.
+//     are waiting. A Runner that restarted under it says it has no mod token for it, and is sent
+//     a new one (ModTokenReissued, #157).
 //   - Archive (#18, ADR 0003): any Participant can delete a Session, which archives it at once.
 //     The Hub records it Archived, with who did it and when, and sends StopSession `Archive`: the
 //     Runner pushes the WIP ref, then destroys the Sandbox and its volumes, keeping the Workspace.
@@ -180,6 +181,7 @@ import {
   findModel,
   modelNotFoundText,
   ModelSwitched,
+  ModTokenReissued,
   RelaunchSession,
 } from "@claude-hub/protocol"
 import {
@@ -2784,6 +2786,7 @@ export class SessionRelay extends Context.Service<
               yield* runnerUpdates.hello(runner, hello.lastUpdate)
               toWeb(yield* runnerList)
               const running = new Set(hello.sessions)
+              const withoutModToken = new Set(hello.withoutModToken)
               // Sessions purged while it was away, and archived ones it hasn't stopped yet.
               for (const sessionId of yield* sessions.pendingPurges(runner.id)) {
                 peer.send(PurgeSession.make({ sessionId }))
@@ -2797,6 +2800,14 @@ export class SessionRelay extends Context.Service<
                   continue
                 }
                 if (running.has(session.id)) {
+                  // Kept running across its restart, its mod token lost with its memory.
+                  if (withoutModToken.has(session.id)) {
+                    const modToken = yield* modTokens.issue({
+                      sessionId: session.id,
+                      runnerId: runner.id,
+                    })
+                    peer.send(ModTokenReissued.make({ sessionId: session.id, modToken }))
+                  }
                   yield* changeState(session, "Active", { message: `${runner.name} is back` })
                   yield* deliverNext(session.id)
                 } else {

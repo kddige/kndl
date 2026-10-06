@@ -140,13 +140,13 @@ Every Runner setting is in the [configuration reference](/reference/configuratio
 
 ## What the Runner does on start
 
-- **Puts its Sessions to sleep.** It stops (never destroys) every Sandbox of its own, with the Claude Code in it: the Session tokens it ran on went with the old process. The Hub records them Asleep, and wakes those with prompts waiting. Sandboxes of other Runners on the same machine it only logs.
+- **Takes back its running Sessions.** Each Sandbox of its own whose Claude Code still runs keeps running, its terminal streamed again: the Runner reads the Session token back from that Claude Code, and the Hub sends a new mod token for it. It stops (never destroys) every other Sandbox of its own, and the Hub records those Sessions Asleep, waking those with prompts waiting. Sandboxes of other Runners on the same machine it only logs.
 
 If the Hub goes away, the Runner reconnects with backoff, from half a second doubling up to 30 seconds.
 
 ## Stop or restart it
 
-Ctrl-C (SIGINT) or SIGTERM stops the Runner at once; `claude-hub runner stop` stops an installed one. While it is offline its Sessions are Frozen: readable, with prompts waiting in their queues. When it starts again it puts them to sleep, and the next prompt wakes each one with its conversation, in the same Sandbox.
+Ctrl-C (SIGINT) or SIGTERM stops the Runner at once; `claude-hub runner stop` stops an installed one. While it is offline its Sessions are Frozen: readable, with prompts waiting in their queues. Their Claude Code keeps running in their Sandboxes, so when the Runner starts again they are Active as they were, and the prompts that waited go out. A Session whose Claude Code stopped meanwhile is Asleep, and the next prompt wakes it with its conversation, in the same Sandbox.
 
 To look at a Session's Claude Code by hand, open its **Terminal** tab. It runs in tmux in the Session's Sandbox, on server `claude-hub`, as session `hub-<session id>`.
 

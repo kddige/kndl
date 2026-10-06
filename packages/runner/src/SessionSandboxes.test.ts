@@ -353,6 +353,31 @@ describe("SessionSandboxes", () => {
       }),
     ))
 
+  test("lists the Sandboxes running, and takes one back as it runs, after a restart (#157)", () =>
+    withSandboxes((root) =>
+      Effect.gen(function* () {
+        const sandboxes = yield* Sandboxes
+        const world = yield* FakeSandboxBackend
+        const directories = yield* directoriesIn(root)
+        expect(yield* sandboxes.running).toEqual([])
+
+        const started = yield* sandboxes.start(s1, directories, target)
+        expect(yield* sandboxes.running).toEqual([s1])
+        const sandbox = world.sandboxes.get(s1)
+
+        // What Claude Code runs as, the same as at its start; the Sandbox is left as it is.
+        expect(yield* sandboxes.keep(s1, directories)).toEqual(started)
+        expect(started.claude.env).toMatchObject({
+          TZ: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        })
+        expect(world.sandboxes.get(s1)).toBe(sandbox)
+        expect(sandbox?.state).toBe("Running")
+
+        yield* sandboxes.stop(s1, "Sleep")
+        expect(yield* sandboxes.running).toEqual([])
+      }),
+    ))
+
   test("keeps a running Sandbox with its own GitHub token, fresh at each start and wake", () => {
     const hubGit = new FakeHubGit("acme/app")
     hubGit.useToken("ghs_HOSTonly", {

@@ -128,8 +128,21 @@ export interface SessionSandboxesOptions {
 /** The most a Sandbox may write to a read-only mount: nothing, but it needs a quota. */
 const readOnlyQuotaMib = 1
 
-/** Claude Code's home in every Sandbox, and a UTF-8 locale for its terminal. */
-const claudeBaseEnv: Readonly<Record<string, string>> = { HOME: "/root", LANG: "C.UTF-8" }
+/** The host's time zone, such as `Europe/Copenhagen`, when it has one. */
+const hostTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+
+/**
+ * Claude Code's home in every Sandbox, a UTF-8 locale for its terminal, and the host's time zone,
+ * so the times it shows are those of the people watching (#157).
+ */
+const claudeBaseEnv: Readonly<Record<string, string>> = {
+  HOME: "/root",
+  LANG: "C.UTF-8",
+  ...(hostTimeZone === undefined || hostTimeZone === "" ? {} : { TZ: hostTimeZone }),
+}
+
+/** Claude Code's environment in a Sandbox on the Runner's default image. */
+const plainClaudeEnv = { ...claudeBaseEnv, ...cacheEnv, ...claudeStateEnv }
 
 /** Tells a Sandbox made before Claude Code ran in Sandboxes (ADR 0013): it lacks these mounts. */
 const claudeMountsScript = `test -d ${modGuestPath} && test -d ${claudeStateGuestPath}`
@@ -540,7 +553,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           sessionLog(sessionId),
         )
         yield* seedClaudeState(backend, sessionId)
-        return { path: claudePath, env: { ...env, ...claudeStateEnv } } satisfies SandboxClaude
+        return { path: claudePath, env } satisfies SandboxClaude
       })
 
     /** A Sandbox on the Runner's default image, for a Repo without an Environment. */
@@ -570,10 +583,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         if (!running) yield* report(sessionId, "Running")
         yield* keepToken(sessionId)
         return {
-          claude: yield* readyClaude(sessionId, sandboxClaudePath(version, "musl"), {
-            ...claudeBaseEnv,
-            ...cacheEnv,
-          }),
+          claude: yield* readyClaude(sessionId, sandboxClaudePath(version, "musl"), plainClaudeEnv),
         }
       })
 
@@ -636,18 +646,29 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
             recipe,
           })
         }
-        const login = yield* readLoginEnv(backend, sessionId)
         return {
           environmentVersion: environment.version,
-          claude: yield* readyClaude(sessionId, sandboxClaudePath(version, libc), {
-            ...claudeBaseEnv,
-            ...processEnv(
-              Option.getOrElse(login, () => ({})),
-              values,
-            ),
-          }),
+          claude: yield* readyClaude(
+            sessionId,
+            sandboxClaudePath(version, libc),
+            yield* environmentClaudeEnv(sessionId, values),
+          ),
         }
       })
+
+    /**
+     * Claude Code's environment in an Environment's Sandbox: its login environment and the
+     * variables, as every process the Runner starts there gets.
+     */
+    const environmentClaudeEnv = (sessionId: SessionId, values: ReadonlyArray<VariableValue>) =>
+      Effect.map(readLoginEnv(backend, sessionId), (login) => ({
+        ...claudeBaseEnv,
+        ...processEnv(
+          Option.getOrElse(login, () => ({})),
+          values,
+        ),
+        ...claudeStateEnv,
+      }))
 
     const start = (sessionId: SessionId, directories: SessionDirectories, target: SandboxTarget) =>
       Effect.gen(function* () {
@@ -677,6 +698,43 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
             Effect.fail(new SandboxError({ message: `the Sandbox did not start: ${message}` })),
           )
         }),
+      )
+
+    const runningSandboxes = backend.list.pipe(
+      Effect.map((listings) =>
+        listings
+          .filter(
+            (listing) =>
+              listing.runner === backend.runner &&
+              listing.state === "Running" &&
+              !isBuildSandboxId(listing.sessionId),
+          )
+          .map((listing) => listing.sessionId),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.as(Effect.logWarning("Could not list the running Sandboxes", cause), []),
+      ),
+    )
+
+    // What it runs is worked out again, as nothing of it outlives the Runner but the
+    // Environment's record. The Claude Code this Runner would start is in the Sandbox already,
+    // through the mount of the host's builds.
+    const keep = (sessionId: SessionId, directories: SessionDirectories) =>
+      Effect.gen(function* () {
+        const record = yield* readRecord(directories)
+        yield* keepToken(sessionId)
+        const libc = record?.libc ?? "musl"
+        const path = sandboxClaudePath(yield* sandboxClaude(libc), libc)
+        if (record === undefined) return { claude: { path, env: plainClaudeEnv } }
+        const values = yield* sessionVariables(sessionId)
+        return {
+          environmentVersion: record.version,
+          claude: { path, env: yield* environmentClaudeEnv(sessionId, values) },
+        }
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.fail(new SandboxError({ message: failureMessage(cause) })),
+        ),
       )
 
     const hasTranscript = (sessionId: SessionId, directories: SessionDirectories, id: string) =>
@@ -810,7 +868,16 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         Effect.catchCause((cause) => Effect.logWarning("Could not reconcile Sandboxes", cause)),
       )
 
-    return Sandboxes.of({ start, hasTranscript, stop, purge, reconcile, testBuild })
+    return Sandboxes.of({
+      start,
+      running: runningSandboxes,
+      keep,
+      hasTranscript,
+      stop,
+      purge,
+      reconcile,
+      testBuild,
+    })
   })
 
 /**

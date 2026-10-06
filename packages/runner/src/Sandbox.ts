@@ -63,6 +63,20 @@ export class Sandboxes extends Context.Service<
       target: SandboxTarget,
     ) => Effect.Effect<SandboxStarted, SandboxError>
     /**
+     * The Sessions whose Sandbox of this Runner's is running, as after a Runner restart, which
+     * leaves them running with their Claude Code in them (#157).
+     */
+    readonly running: Effect.Effect<ReadonlyArray<SessionId>>
+    /**
+     * Takes back the Session's running Sandbox after a Runner restart, its Claude Code still
+     * running in it (#157): keeps its GitHub token fresh again, and says what it runs, as
+     * {@link start} would, for Claude Code to start again in it with a new model.
+     */
+    readonly keep: (
+      sessionId: SessionId,
+      directories: SessionDirectories,
+    ) => Effect.Effect<SandboxStarted, SandboxError>
+    /**
      * Whether Claude Code in the Session's started Sandbox has a transcript of conversation `id`
      * to resume. One Claude Code wrote on the host, before it moved into the Sandbox, is copied
      * in first (ADR 0013).

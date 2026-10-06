@@ -56,7 +56,7 @@ A conversation Claude Code never wrote down, because it exited before it got tha
 
 While its Runner is offline, a Session is Frozen: still readable, with prompts waiting in its queue. Sessions belong to their Runner, because they run on its Runner login, so they wait for it rather than moving elsewhere.
 
-When the Runner is back, the Session is Active if its Claude Code is still running, as it is when only the Runner's connection dropped, and otherwise Asleep, woken at once if prompts are waiting. A Runner that restarts puts its Sessions to sleep as it starts: their Session tokens went with the old process, so their Claude Code could reach neither Anthropic nor the Hub.
+When the Runner is back, the Session is Active if its Claude Code is still running, and otherwise Asleep, woken at once if prompts are waiting. Claude Code keeps running both when only the Runner's connection dropped and when the Runner itself restarted, after a crash or a `claude-hub runner stop` and `start`: it runs in the Session's Sandbox, not in the Runner. A restarted Runner reads each Session token back from the Claude Code it was given to, and the Hub gives the Session a new mod token, since the old one went with the old process. Until then the credential proxy asks that Claude Code to retry in a moment; a Turn that was running carries on once it can. A Session whose Claude Code stopped while the Runner was down is Asleep.
 
 ## Deleting and restoring
 

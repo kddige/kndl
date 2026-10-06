@@ -166,6 +166,9 @@ const connectOnce = (login: RunnerLogin) =>
           name: config.name,
           login,
           sessions: [...(yield* sessions.running)],
+          ...(yield* Effect.map(sessions.withoutModToken, (ids) =>
+            ids.length === 0 ? {} : { withoutModToken: [...ids] },
+          )),
           ...(buildVersion !== undefined && { version: buildVersion }),
           asksCloneAccess: true,
           updater: hello.updater,
