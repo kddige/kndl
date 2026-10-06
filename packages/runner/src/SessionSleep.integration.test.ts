@@ -40,9 +40,6 @@ const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
     }),
   )
 
-/** The mod in this checkout, which every Sandbox mounts. */
-const modDir = join(import.meta.dir, "..", "..", "mod")
-
 const target = { repo: "acme/app" as RepoName }
 
 /** Runs `command` in the Session's Sandbox with Claude Code's environment, in the Workspace. */
@@ -177,7 +174,6 @@ test.skipIf(!enabled)(
           ensureSandboxClaude({ cacheDir, version: PinnedClaudeVersion }).pipe(
             Effect.as(PinnedClaudeVersion),
           ),
-        modDir,
         ...sandboxesDefaults,
         layout: {
           cpus: 2,

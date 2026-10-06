@@ -1,9 +1,10 @@
 // Sessions' Sandboxes on a SandboxBackend (#9): each Session's Sandbox is created or started
 // around its Workspace before Claude Code launches in it (ADR 0013), and stopped or destroyed when
-// the Session stops. Every Sandbox mounts the Claude Code builds and the mod read-only, and keeps
-// Claude Code's state on a volume of its own; each start makes sure it has tmux and seeds that
-// state (ClaudeState.ts). A Sandbox made before Claude Code ran in Sandboxes lacks those mounts,
-// and is made anew on its volumes at its next start.
+// the Session stops. Every Sandbox mounts the Claude Code builds and the Session's copy of the mod
+// (SessionMod.ts) read-only, and keeps Claude Code's state on a volume of its own; each start makes
+// sure it has tmux and seeds that state (ClaudeState.ts). A Sandbox made before Claude Code ran in
+// Sandboxes, or before each Session had its own copy of the mod (#159), lacks those mounts, and is
+// made anew on its volumes at its next start.
 //
 // A Session of a Repo with an Environment (ADR 0009) boots from that Environment's build, built
 // on this Runner the first time a Session needs it, with the build's output shown in the Session.
@@ -103,8 +104,6 @@ export interface SessionSandboxesOptions {
    * returns its version. Run on the first Session start needing that libc until it succeeds.
    */
   readonly sandboxClaude: (libc: Libc) => Effect.Effect<string, SandboxClaudeError>
-  /** The mod's directory on the host, mounted read-only into every Sandbox for Claude Code. */
-  readonly modDir: string
   /** Size overrides for the Session layout. */
   readonly layout?: Partial<
     Omit<SessionLayoutOptions, "sessionId" | "image" | "workspaceHostPath" | "env">
@@ -144,7 +143,10 @@ const claudeBaseEnv: Readonly<Record<string, string>> = {
 /** Claude Code's environment in a Sandbox on the Runner's default image. */
 const plainClaudeEnv = { ...claudeBaseEnv, ...cacheEnv, ...claudeStateEnv }
 
-/** Tells a Sandbox made before Claude Code ran in Sandboxes (ADR 0013): it lacks these mounts. */
+/**
+ * Tells a Sandbox made before Claude Code ran in Sandboxes (ADR 0013), or before each Session had
+ * its own copy of the mod (#159): it lacks these mounts.
+ */
 const claudeMountsScript = `test -d ${modGuestPath} && test -d ${claudeStateGuestPath}`
 
 /** What a Session's Sandbox was last started from, kept in its directory. Holds no values. */
@@ -188,6 +190,26 @@ const errorMessage = (error: unknown) =>
 
 const failureMessage = (cause: Cause.Cause<unknown>) =>
   errorMessage(Option.getOrElse(Exit.findErrorOption(Exit.failCause(cause)), () => cause))
+
+/**
+ * The Session's copy of the mod, whose plugins Claude Code loads with `--plugin-dir` (ADR 0013,
+ * ADR 0014), made each time Claude Code starts (SessionMod.ts).
+ */
+const modMount = (directories: SessionDirectories): HostMount => ({
+  _tag: "Host",
+  hostPath: directories.mod,
+  guestPath: modGuestPath,
+  quotaMib: readOnlyQuotaMib,
+  readOnly: true,
+})
+
+/** Makes the directory of the Session's copy of the mod, as a Sandbox can't mount a missing one. */
+const modMountReady = (directories: SessionDirectories) =>
+  Effect.tryPromise({
+    try: () => mkdir(directories.mod, { recursive: true }),
+    catch: (error) =>
+      new SandboxError({ message: `could not create ${directories.mod}: ${errorMessage(error)}` }),
+  })
 
 /** The values the bootstrap gets: only those available at build. */
 const buildEnv = (values: ReadonlyArray<VariableValue>) =>
@@ -486,15 +508,6 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       readOnly: true,
     }
 
-    /** The mod, whose plugins Claude Code loads with `--plugin-dir` (ADR 0013, ADR 0014). */
-    const modMount: HostMount = {
-      _tag: "Host",
-      hostPath: options.modDir,
-      guestPath: modGuestPath,
-      quotaMib: readOnlyQuotaMib,
-      readOnly: true,
-    }
-
     /**
      * Makes the Claude Code cache directory if it isn't there, as a Sandbox can't mount a missing
      * host directory: an Environment's Sandbox mounts it before its build's libc, and so the
@@ -515,8 +528,8 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         .pipe(Effect.map((result) => result.exitCode === 0))
 
     /**
-     * Destroys the Session's Sandbox, keeping its volumes, when it was made before Claude Code ran
-     * in Sandboxes: it boots it to tell. Says whether it did.
+     * Destroys the Session's Sandbox, keeping its volumes, when it lacks the mounts Claude Code
+     * runs from: it boots it to tell. Says whether it did.
      */
     const replaceOutdated = (sessionId: SessionId, state: SandboxState) =>
       Effect.gen(function* () {
@@ -524,7 +537,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         if (state !== "Running") yield* backend.start(sessionId)
         if (yield* hasClaudeMounts(sessionId)) return false
         yield* Effect.logInfo(
-          `Session ${sessionId}: its Sandbox was made before Claude Code ran in Sandboxes, so it is made anew, keeping its volumes`,
+          `Session ${sessionId}: its Sandbox lacks the mounts Claude Code runs from, so it is made anew, keeping its volumes`,
         )
         yield* release(sessionId)
         yield* backend.destroy(sessionId, { keepVolumes: true })
@@ -578,7 +591,11 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
             workspaceHostPath: directories.workspace,
           })
           yield* claudeMountReady
-          yield* backend.create({ ...spec, mounts: [...spec.mounts, claudeMount, modMount] })
+          yield* modMountReady(directories)
+          yield* backend.create({
+            ...spec,
+            mounts: [...spec.mounts, claudeMount, modMount(directories)],
+          })
         }
         if (!running) yield* report(sessionId, "Running")
         yield* keepToken(sessionId)
@@ -618,6 +635,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           const resources = capResources(recipe.resources, options.limits)
           if (resources.note !== undefined) yield* note(sessionId, resources.note)
           yield* claudeMountReady
+          yield* modMountReady(directories)
           yield* snapshots.restore(
             environmentSpec({
               sessionId,
@@ -625,7 +643,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
               workspaceHostPath: directories.workspace,
               resources,
               layout: options.layout,
-              mounts: [claudeMount, modMount],
+              mounts: [claudeMount, modMount(directories)],
             }),
             build.reference,
           )
@@ -718,11 +736,17 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
 
     // What it runs is worked out again, as nothing of it outlives the Runner but the
     // Environment's record. The Claude Code this Runner would start is in the Sandbox already,
-    // through the mount of the host's builds.
+    // through the mount of the host's builds. A Sandbox made before each Session had its own copy
+    // of the mod (#159) has none to start Claude Code with, so that waits for the Session to sleep.
     const keep = (sessionId: SessionId, directories: SessionDirectories) =>
       Effect.gen(function* () {
         const record = yield* readRecord(directories)
         yield* keepToken(sessionId)
+        if (!(yield* hasClaudeMounts(sessionId))) {
+          return yield* new SandboxError({
+            message: "its Sandbox was made before each Session had its own copy of the mod",
+          })
+        }
         const libc = record?.libc ?? "musl"
         const path = sandboxClaudePath(yield* sandboxClaude(libc), libc)
         if (record === undefined) return { claude: { path, env: plainClaudeEnv } }
@@ -958,7 +982,6 @@ export const SessionSandboxesLive = Layer.effect(
       githubToken: (sessionId) => hubGit.ask(sessionId, { _tag: "SandboxToken" }),
       image: settings.image,
       claudeCacheDir: settings.cacheDir,
-      modDir: config.modDir,
       sandboxClaude: (libc) =>
         ensureSandboxClaude({ cacheDir: settings.cacheDir, version: settings.version, libc }).pipe(
           Effect.as(settings.version),

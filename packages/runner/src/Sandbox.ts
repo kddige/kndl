@@ -54,7 +54,7 @@ export class Sandboxes extends Context.Service<
   {
     /**
      * Creates the Session's Sandbox, or reuses its stopped one, and starts it. A Sandbox of
-     * another Environment version, or one made before Claude Code ran in Sandboxes, is recreated,
+     * another Environment version, or one without the mounts Claude Code runs from, is recreated,
      * keeping its volumes.
      */
     readonly start: (
@@ -70,7 +70,8 @@ export class Sandboxes extends Context.Service<
     /**
      * Takes back the Session's running Sandbox after a Runner restart, its Claude Code still
      * running in it (#157): keeps its GitHub token fresh again, and says what it runs, as
-     * {@link start} would, for Claude Code to start again in it with a new model.
+     * {@link start} would, for Claude Code to start again in it with a new model. Fails for one
+     * without the mounts Claude Code runs from, which only its next start makes anew.
      */
     readonly keep: (
       sessionId: SessionId,

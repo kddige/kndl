@@ -46,7 +46,6 @@ const withSandboxes = async (
   } = {},
 ) => {
   const root = await mkdtemp(join(tmpdir(), "claude-hub-sandboxes-"))
-  await mkdir(join(root, "mod"))
   const sent: Array<RunnerToHub> = []
   const hub = Layer.succeed(
     HubLink,
@@ -62,7 +61,6 @@ const withSandboxes = async (
       image: "docker:dind",
       claudeCacheDir: join(root, "claude-code"),
       sandboxClaude: () => options.sandboxClaude ?? Effect.succeed("2.1.287"),
-      modDir: join(root, "mod"),
       ...sandboxesDefaults,
       ...(options.githubToken === undefined ? {} : { githubToken: options.githubToken }),
     }),
@@ -124,8 +122,8 @@ describe("SessionSandboxes", () => {
             guestPath: workspaceGuestPath,
           }),
         )
-        // Claude Code and the mod, read-only; its state on a volume of the Session's; and nothing
-        // of the host's Claude configuration.
+        // Claude Code and the Session's copy of the mod, read-only; its state on a volume of the
+        // Session's; and nothing of the host's Claude configuration.
         expect(spec?.mounts).toContainEqual(
           expect.objectContaining({
             hostPath: join(root, "claude-code"),
@@ -135,7 +133,7 @@ describe("SessionSandboxes", () => {
         )
         expect(spec?.mounts).toContainEqual(
           expect.objectContaining({
-            hostPath: join(root, "mod"),
+            hostPath: directories.mod,
             guestPath: modGuestPath,
             readOnly: true,
           }),
@@ -201,7 +199,7 @@ describe("SessionSandboxes", () => {
       }),
     ))
 
-  test("makes a Sandbox from before Claude Code ran in Sandboxes anew, keeping its volumes", () => {
+  test("makes a Sandbox without the mod's mount anew, keeping its volumes", () => {
     let probes = 0
     return withSandboxes(
       (root) =>
@@ -225,6 +223,30 @@ describe("SessionSandboxes", () => {
           probes += 1
           return Effect.succeed({ exitCode: 1 })
         },
+      },
+    )
+  })
+
+  test("won't take back a running Sandbox without the mod's mount after a restart (#159)", () => {
+    let mounted = true
+    return withSandboxes(
+      (root) =>
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes
+          const directories = yield* directoriesIn(root)
+          yield* sandboxes.start(s1, directories, target)
+
+          // As an older Runner made it: Claude Code there has no copy of the mod to start again
+          // with, so its Session can't change model until it sleeps.
+          mounted = false
+          const failed = yield* Effect.flip(sandboxes.keep(s1, directories))
+          expect(failed.message).toContain("its own copy of the mod")
+        }),
+      {
+        onExec: ({ request }) =>
+          Effect.succeed(
+            !mounted && request.args?.[1]?.startsWith("test -d") === true ? { exitCode: 1 } : {},
+          ),
       },
     )
   })

@@ -36,6 +36,7 @@ import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
 import { ensureSandboxClaude, PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 import { claudeStateGuestPath, workspaceGuestPath } from "./sandbox/SessionLayout.ts"
+import { copySessionMod } from "./SessionMod.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { FakeHubVariables, sandboxesDefaults } from "./testSupport.ts"
@@ -43,7 +44,7 @@ import { makeTmux } from "./Tmux.ts"
 
 const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
 
-/** The mod in this checkout, which every Sandbox mounts. */
+/** The mod in this checkout, which the Session's Claude Code loads a copy of. */
 const modDir = join(import.meta.dir, "..", "..", "mod")
 
 /** How the banner names each plan. */
@@ -100,6 +101,7 @@ test.skipIf(!enabled)(
       const launch = claudeLaunch({
         claudePath: started.claude.path,
         sessionId,
+        mod: yield* copySessionMod(modDir, directories),
         conversation: { _tag: "New", id: conversation },
         model: "haiku",
       })
@@ -219,7 +221,6 @@ test.skipIf(!enabled)(
           ensureSandboxClaude({ cacheDir, version: PinnedClaudeVersion }).pipe(
             Effect.as(PinnedClaudeVersion),
           ),
-        modDir,
         ...sandboxesDefaults,
         layout: {
           cpus: 2,

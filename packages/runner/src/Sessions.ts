@@ -31,6 +31,7 @@ import { CredentialProxy } from "./proxy/CredentialProxy.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes, type SandboxStarted } from "./Sandbox.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
+import { copySessionMod } from "./SessionMod.ts"
 import { isSafeSessionId, type SessionDirectories, sessionDirectories } from "./SessionNames.ts"
 import { type Pane, Tmux } from "./Tmux.ts"
 import { Workspaces } from "./Workspace.ts"
@@ -281,7 +282,8 @@ export const SessionsLive = Layer.effect(
 
     /**
      * Starts the Session's Claude Code in a new tmux session in its running Sandbox, and watches
-     * it. It holds a new Session token, given to it alone, never set on the Sandbox.
+     * it. It holds a new Session token, given to it alone, never set on the Sandbox, and loads a
+     * new copy of the Runner's mod, which nothing changes while it runs (#159).
      */
     const launchClaude = (
       request: StartSession | RelaunchSession,
@@ -293,6 +295,7 @@ export const SessionsLive = Layer.effect(
         const launch = claudeLaunch({
           claudePath: sandbox.claude.path,
           sessionId,
+          mod: yield* copySessionMod(config.modDir, directories),
           conversation: yield* conversationFor(request, directories),
           ...(request.model === undefined ? {} : { model: request.model }),
           ...(request.effort === undefined ? {} : { effort: request.effort }),

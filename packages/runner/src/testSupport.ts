@@ -1,4 +1,6 @@
 // Helpers for the Runner's tests. Not used by the Runner itself.
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import {
   GitAnswer,
   type GitAsk,
@@ -20,6 +22,7 @@ import { makeSessionTokens, type SessionGrant } from "./proxy/SessionTokens.ts"
 import { Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import { SandboxBackendError } from "./sandbox/SandboxBackend.ts"
 import type { ExecEvent, ExecRequest, SpawnedCommand } from "./sandbox/SandboxBackend.ts"
+import { modPlugins } from "./sandbox/SessionLayout.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
 import {
@@ -352,6 +355,18 @@ export function hostTmuxBackend(options: {
         })),
       ),
   }
+}
+
+/**
+ * Builds a stand-in for the Runner's mod into `modDir`, as `bun run mod:build` would, each plugin
+ * with a hook that says `build`.
+ */
+export function writeFakeMod(modDir: string, build = "built") {
+  for (const plugin of modPlugins) {
+    mkdirSync(join(modDir, "plugins", plugin, "hooks"), { recursive: true })
+    writeFileSync(join(modDir, "plugins", plugin, "hooks", "hook.js"), `// ${build}\n`)
+  }
+  return modDir
 }
 
 /** The Claude Code {@link FakeSandboxes} says each Sandbox runs. */
