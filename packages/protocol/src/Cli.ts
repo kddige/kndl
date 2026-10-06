@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { CommitId } from "./Build.ts"
 
-// The `claude-hub` CLI the Hub serves (issue #178, ADR 0016): `GET /cli` is the install script,
+// The `claude-hub` CLI the Hub serves (issue #178): `GET /cli` is the install script,
 // `GET /cli/version` the commit the Hub serves it at, and `GET /cli/<target>` the binary, built
 // with `bun build --compile` from the Hub's own commit. The CLI follows that commit, as Runners
 // follow the Hub's (ADR 0011).
