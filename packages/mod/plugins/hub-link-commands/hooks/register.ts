@@ -123,7 +123,14 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
       if (state.mainTurn !== undefined) await $.turn.abort({ turnId: state.mainTurn })
       return
     case "PresenceChanged":
-      await setBand($, { participants: command.participants.map((person) => person.name) })
+      // Someone forwarding a port is here too, from a machine (#180).
+      await setBand($, {
+        participants: command.participants.map((person) =>
+          person.forwardingFrom === undefined
+            ? person.name
+            : `${person.name} (forwarding from ${person.forwardingFrom.join(", ")})`,
+        ),
+      })
       return
   }
 }

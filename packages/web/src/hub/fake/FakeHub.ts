@@ -63,6 +63,7 @@ import type {
   LogEntryWire,
   OpenPortWire,
   ParticipantWire,
+  PresentParticipantWire,
   PendingPairingCodeWire,
   QueuedPromptWire,
   RunnerSummaryWire,
@@ -101,7 +102,7 @@ interface FakeSession {
   log: Array<LogEntryWire>
   queue: Array<QueuedPromptWire>
   /** People the script puts in the Session, besides whoever is connected. */
-  guests: Array<ParticipantWire>
+  guests: Array<PresentParticipantWire>
   /** Cancels the running Turn's remaining steps. */
   stopTurn: (() => void) | null
   /** Its Claude Code terminal, made when first opened. */
@@ -472,7 +473,8 @@ export class FakeHub implements HubTransport {
     const session = this.sessions.get(demoSessionId)
     if (!session) return
     this.#after(4, () => {
-      session.guests.push(bob)
+      // Bob forwards its dev servers to his laptop, too (#180).
+      session.guests.push({ ...bob, forwardingFrom: ["bob-mbp"] })
       this.#presence(session)
     })
     this.#after(6, () =>
@@ -1881,7 +1883,7 @@ export class FakeHub implements HubTransport {
   #presence(session: FakeSession): void {
     // Every connection is the one signed-in person, so they're here if any of theirs joined.
     const sockets = this.#joinedSockets(session)
-    const participants = new Map<string, ParticipantWire>()
+    const participants = new Map<string, PresentParticipantWire>()
     if (sockets.length > 0) participants.set(this.#you.id, this.#you)
     for (const guest of session.guests) participants.set(guest.id, guest)
     for (const socket of sockets) {

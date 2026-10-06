@@ -24,7 +24,6 @@ import { buildTranscript, runningTurn } from "../hub/transcript.ts"
 import { restoreSession } from "../sessions/ArchivedSessions.tsx"
 import { renameSession } from "../sessions/rename.ts"
 import {
-  AvatarStack,
   Banner,
   Button,
   Dialog,
@@ -57,6 +56,7 @@ import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker } from "./ModelPicker.tsx"
 import { modelName, otherTurnModel } from "./models.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
+import { Presence } from "./Presence.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { Transcript } from "./Transcript.tsx"
@@ -381,11 +381,7 @@ function LoadedSession({
                 <TrashIcon />
               </IconButton>
             )}
-            <AvatarStack
-              label="Here now"
-              people={presence.map((p) => ({ id: p.id, name: p.name, src: p.avatarUrl }))}
-              size="sm"
-            />
+            <Presence presence={presence} />
           </>
         }
       />

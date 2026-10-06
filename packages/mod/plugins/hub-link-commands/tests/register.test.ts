@@ -92,7 +92,10 @@ describe("the Hub link", () => {
       {
         _tag: "PresenceChanged",
         sessionId: "s1",
-        participants: [ada, { id: "p2", login: "alan", name: "Alan Turing" }],
+        participants: [
+          ada,
+          { id: "p2", login: "alan", name: "Alan Turing", forwardingFrom: ["macbook"] },
+        ],
       },
     ])
     const clock = mock.clock(on)
@@ -113,7 +116,9 @@ describe("the Hub link", () => {
       },
     })
 
-    expect(await band.find({ text: /Ada Lovelace, Alan Turing/ })).toBeDefined()
+    expect(
+      await band.find({ text: /Ada Lovelace, Alan Turing \(forwarding from macbook\)/ }),
+    ).toBeDefined()
   })
 })
 
