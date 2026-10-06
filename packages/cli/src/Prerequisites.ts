@@ -22,10 +22,6 @@ export interface HostFacts {
   readonly packageManager: PackageManager | undefined
   /** Which tools are on PATH. */
   readonly tools: Readonly<Record<Tool, boolean>>
-  /** Whether Claude Code (`claude`) is on PATH. */
-  readonly claude: boolean
-  /** Whether Claude Code's config file names a signed-in account. */
-  readonly claudeSignedIn: boolean
   /** A complete microsandbox runtime: the one in `~/.microsandbox`, or the app's bundled one. */
   readonly microsandbox: boolean
   /** Linux only: `/dev/kvm`, and whether this user can open it. */
@@ -52,7 +48,7 @@ export interface PrerequisitePlan {
 
 /**
  * The tools a Hub and a Runner need: gh is how claude-hub itself is installed and updated. A
- * Runner's Sessions run in their Sandboxes, which bring their own tmux (ADR 0013).
+ * Runner's Sessions run in their Sandboxes, which bring their own tmux and Claude Code (ADR 0013).
  */
 const Tools: ReadonlyArray<Tool> = ["git", "gh"]
 
@@ -134,21 +130,6 @@ export function prerequisitePlan(facts: HostFacts, roles: ReadonlyArray<Role>): 
         `Reboot so ${facts.user}'s new kvm group reaches the Runner's service (logging out isn't enough while the services linger), then run \`claude-hub doctor\`.`,
       )
     }
-  }
-
-  if (runner && !facts.claude) {
-    missing.push({
-      name: "Claude Code",
-      fixable: false,
-      detail:
-        "Claude Code isn't installed: install it (https://docs.anthropic.com/en/docs/claude-code), then run `claude` and sign in.",
-    })
-  } else if (runner && !facts.claudeSignedIn) {
-    missing.push({
-      name: "Claude Code sign-in",
-      fixable: false,
-      detail: "No Claude account is signed in: run `claude` and sign in, as this user.",
-    })
   }
 
   const neededSudo = steps.some((s) => s.sudo === true) && !facts.root
