@@ -9,6 +9,11 @@
 // - The Prompt queue (PromptQueue.ts): prompts wait in order, and the head is delivered to the
 //   mod when the Session is idle, one at a time. A prompt the mod reports as PromptFailed is
 //   dropped, and its sender gets a CommandFailed, rather than put back to fail again.
+// - Steering (#195, ADR 0018): while a Turn runs, any Participant can hand a queued prompt to it
+//   (SteerPrompt), if the Session's mod said in its hello that it steers. The prompt keeps its
+//   place in the queue until the mod reports it joined the Turn (PromptSteered), and nothing else
+//   is delivered meanwhile. A steer the mod reports as PromptFailed leaves the prompt where it
+//   was, and whoever pressed Steer gets a CommandFailed.
 // - The Session lifecycle (#12; archiving is #18):
 //   - CreateSession starts a Session on a Runner, Active.
 //   - Sleep: an Active Session with no Turn running, no prompt queued and no Participant present
@@ -134,6 +139,7 @@ import {
   type CliTokenId,
   CommandFailed,
   DeliverAgentMessage,
+  DeliverIntoTurn,
   DeliverPrompt,
   type EnvironmentVersion,
   ForwardCloseCode,
@@ -516,6 +522,14 @@ export class SessionRelay extends Context.Service<
        * README.md).
        */
       const inFlight = new Map<SessionId, PromptId>()
+      /**
+       * The prompts each Session's mod has been sent to join the running Turn (DeliverIntoTurn),
+       * with who steered each, until the mod says it joined or failed. In memory only, as
+       * `inFlight` is.
+       */
+      const steering = new Map<SessionId, Map<PromptId, ParticipantId>>()
+      /** Sessions whose mod said in its hello that it steers (#195). */
+      const steers = new Set<SessionId>()
       /**
        * Sessions whose Claude Code was started or woken and whose new mod hasn't said hello yet.
        * Prompts wait for that hello.
@@ -1202,6 +1216,8 @@ export class SessionRelay extends Context.Service<
        */
       const deliverNext = Effect.fn("SessionRelay.deliverNext")(function* (sessionId: SessionId) {
         if (inFlight.has(sessionId) || starting.has(sessionId) || stopping.has(sessionId)) return
+        // A steer's answer first: the prompt it is about may be the head.
+        if (steering.has(sessionId)) return
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         if (session.value.state !== "Active" || session.value.currentTurn !== null) return
@@ -1239,6 +1255,7 @@ export class SessionRelay extends Context.Service<
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         // Commands the old mod didn't collect are stale, as when it sleeps.
         yield* outbox.clear(session.id)
+        steering.delete(session.id)
         starting.add(session.id)
         yield* sessions.setModelPending(session.id, false)
         yield* Effect.logInfo(`Restarting Claude Code of ${session.id} for its new model`)
@@ -1269,6 +1286,8 @@ export class SessionRelay extends Context.Service<
         restartGoesOn = false,
       ) {
         inFlight.delete(session.id)
+        steering.delete(session.id)
+        steers.delete(session.id)
         starting.delete(session.id)
         starts.delete(session.id)
         openPorts.delete(session.id)
@@ -2183,11 +2202,54 @@ export class SessionRelay extends Context.Service<
                   sessionId,
                 })
               }
+              if (steering.get(sessionId)?.has(promptId) === true) {
+                return refuse(message, "The prompt is being handed to the running Turn.", {
+                  sessionId,
+                })
+              }
               const removed = yield* prompts.remove(sessionId, promptId)
               if (Option.isNone(removed)) {
                 return refuse(message, "The prompt is not in the Prompt queue.", { sessionId })
               }
               yield* queueChanged(sessionId)
+              return
+            }
+
+            case "SteerPrompt": {
+              const { sessionId, promptId } = message
+              const session = yield* sessionFor(message)
+              if (Option.isNone(session)) return
+              const why = (text: string) => refuse(message, text, { sessionId })
+              if (
+                session.value.state !== "Active" ||
+                session.value.currentTurn === null ||
+                stopping.has(sessionId)
+              ) {
+                return why("No Turn is running to steer the prompt into: it goes next.")
+              }
+              if (inFlight.get(sessionId) === promptId) {
+                return why("The prompt was already delivered to Claude Code.")
+              }
+              if (steering.get(sessionId)?.has(promptId) === true) return
+              if (!steers.has(sessionId)) {
+                return why(
+                  "This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.",
+                )
+              }
+              const prompt = (yield* prompts.list(sessionId)).find(({ id }) => id === promptId)
+              if (prompt === undefined) return why("The prompt is not in the Prompt queue.")
+              // It stays in its place until the mod says it joined the Turn.
+              const steered = steering.get(sessionId) ?? new Map<PromptId, ParticipantId>()
+              steering.set(sessionId, steered.set(promptId, you.id))
+              yield* outbox.enqueue(
+                sessionId,
+                DeliverIntoTurn.make({
+                  sessionId,
+                  promptId,
+                  text: prompt.text,
+                  sender: prompt.sender,
+                }),
+              )
               return
             }
 
@@ -2925,16 +2987,38 @@ export class SessionRelay extends Context.Service<
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         yield* sessions.setClaudeSessionId(sessionId, hello.claudeSessionId)
+        if (hello.steers === true) steers.add(sessionId)
+        else steers.delete(sessionId)
         starting.delete(sessionId)
         yield* presenceToMod(sessionId)
         yield* deliverNext(sessionId)
       }, serialized)
+
+      /** The mod answered a DeliverIntoTurn. */
+      const steerAnswered = (sessionId: SessionId, promptId: PromptId) => {
+        const steered = steering.get(sessionId)
+        steered?.delete(promptId)
+        if (steered?.size === 0) steering.delete(sessionId)
+      }
 
       const modEvent = Effect.fn("SessionRelay.modEvent")(function* (
         sessionId: SessionId,
         event: ModEvent,
       ) {
         if (event._tag === "PromptFailed") {
+          const steeredBy = steering.get(sessionId)?.get(event.promptId)
+          if (steeredBy !== undefined) {
+            // A steer that failed leaves the prompt in its place, to wait for the Turn to end.
+            steerAnswered(sessionId, event.promptId)
+            return toWeb(
+              CommandFailed.make({
+                command: "SteerPrompt",
+                sessionId,
+                message: `The prompt could not join the running Turn, so it waits in the queue: ${event.message}`,
+              }),
+              (client) => client.you.id === steeredBy,
+            )
+          }
           // The prompt is dropped, and its sender told: put back, it would most likely fail
           // again at once, and hold up the rest of the queue.
           if (inFlight.get(sessionId) === event.promptId) inFlight.delete(sessionId)
@@ -2995,6 +3079,11 @@ export class SessionRelay extends Context.Service<
             if (Option.isSome(started)) yield* queueChanged(sessionId)
           }
           yield* sessionUpdated(sessionId)
+        } else if (event._tag === "PromptSteered") {
+          // It joined the Turn: out of the queue, and shown in the Turn instead.
+          steerAnswered(sessionId, event.promptId)
+          const steered = yield* prompts.remove(sessionId, event.promptId)
+          if (Option.isSome(steered)) yield* queueChanged(sessionId)
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {
           yield* sessions.setCurrentTurn(sessionId, null)
           yield* sessionUpdated(sessionId)

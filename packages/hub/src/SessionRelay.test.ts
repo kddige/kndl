@@ -61,13 +61,15 @@ class Mod {
     })
   }
 
-  async hello() {
+  /** Says hello, with `more` of it, such as that it steers (#195). */
+  async hello(more: Record<string, unknown> = {}) {
     const response = await this.request("/mod/hello", {
       _tag: "ModHello",
       protocolVersion: ProtocolVersion,
       sessionId: this.sessionId,
       claudeSessionId: "claude-1",
       model: "claude-opus",
+      ...more,
     })
     this.after = 0
     return response
@@ -435,6 +437,121 @@ describe("the Prompt queue", () => {
       defined(two).id,
     ])
     expect(await bobWeb.untaken("CommandFailed")).toEqual([])
+  })
+})
+
+describe("steering (#195)", () => {
+  /** The prompts sent to join the running Turn since the last poll. */
+  const steers = async (mod: Mod, waitMs = 0) =>
+    (await mod.poll(waitMs)).filter((command) => command._tag === "DeliverIntoTurn")
+
+  test("hands a queued prompt to the running Turn, where it leaves the queue once it joined", async () => {
+    const { hub, web, sessionId, mod } = await sessionScene()
+    expect((await mod.hello({ steers: true })).status).toBe(200)
+    await mod.post(turnStarted("t-0"))
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(web, sessionId)
+    joinSession(bobWeb, sessionId)
+    await bobWeb.take("SessionHistory")
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    const [one, two] = (await bobWeb.take("PromptQueueChanged", queueIs("one", "two"))).queue
+
+    // Any Participant may steer anyone's prompt.
+    bobWeb.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
+    expect(await steers(mod, 500)).toEqual([
+      { _tag: "DeliverIntoTurn", sessionId, promptId: defined(two).id, text: "two", sender: alice },
+    ])
+    // On its way into the Turn, it can't be cancelled, and is steered once.
+    web.send({ _tag: "CancelPrompt", sessionId, promptId: defined(two).id })
+    expect(await web.take("CommandFailed")).toMatchObject({ command: "CancelPrompt", sessionId })
+    bobWeb.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
+    expect(await steers(mod, 200)).toEqual([])
+
+    const steered: ModEvent = {
+      _tag: "PromptSteered",
+      turnId: "t-0",
+      promptId: defined(two).id,
+      text: "two",
+      sender: alice,
+    }
+    await mod.post(steered)
+    await web.take("PromptQueueChanged", queueIs("one"))
+    expect((await bobWeb.take("SessionEventLogged")).entry.event).toEqual(steered)
+    const read: ModEvent = { _tag: "SteeredPromptRead", turnId: "t-0", promptId: defined(two).id }
+    await mod.post(read)
+    expect((await bobWeb.take("SessionEventLogged")).entry.event).toEqual(read)
+
+    // The Turn goes on as it was, and the rest of the queue waits for it to end.
+    expect(await mod.deliveries(200)).toEqual([])
+    await mod.post(turnEnded("t-0"))
+    expect((await mod.deliveries(500)).map((command) => command.promptId)).toEqual([
+      defined(one).id,
+    ])
+  })
+
+  test("is refused without a running Turn, and by a mod from before steering", async () => {
+    const { web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    const [one] = (await web.take("PromptQueueChanged", queueIs("one"))).queue
+    expect(await mod.deliveries(500)).toHaveLength(1)
+
+    // Idle, the prompt goes next anyway; here it is already delivered.
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: defined(one).id })
+    expect((await web.take("CommandFailed")).message).toContain("No Turn is running")
+
+    await mod.post(turnStarted("t-1", one?.id, { _tag: "FromParticipant", participant: alice }))
+    await web.take("PromptQueueChanged", queueIs())
+    web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    const [two] = (await web.take("PromptQueueChanged", queueIs("two"))).queue
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "SteerPrompt",
+      sessionId,
+      message: expect.stringContaining("a mod from before steering"),
+    })
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: "p-gone" })
+    expect((await web.take("CommandFailed")).message).toContain("a mod from before steering")
+    expect(await steers(mod, 200)).toEqual([])
+  })
+
+  test("a steer that fails leaves the prompt in its place, and tells whoever steered it", async () => {
+    const { hub, web, sessionId, mod } = await sessionScene()
+    expect((await mod.hello({ steers: true })).status).toBe(200)
+    await mod.post(turnStarted("t-0"))
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(web, sessionId)
+    joinSession(bobWeb, sessionId)
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    const [one] = (await bobWeb.take("PromptQueueChanged", queueIs("one", "two"))).queue
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: "p-gone" })
+    expect((await web.take("CommandFailed")).message).toContain("not in the Prompt queue")
+
+    bobWeb.send({ _tag: "SteerPrompt", sessionId, promptId: defined(one).id })
+    expect(await steers(mod, 500)).toHaveLength(1)
+    // The Turn ends before the mod answers: nothing is delivered until it does.
+    await mod.post(turnEnded("t-0"))
+    expect(await mod.deliveries(200)).toEqual([])
+
+    await mod.post({
+      _tag: "PromptFailed",
+      promptId: defined(one).id,
+      message: "the Turn ended before it could join",
+    })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({
+      command: "SteerPrompt",
+      sessionId,
+      message: expect.stringContaining("the Turn ended before it could join"),
+    })
+    expect(await web.untaken("CommandFailed")).toEqual([])
+    // Still first in the queue, it is delivered as prompts are.
+    expect((await mod.deliveries(500)).map((command) => command.promptId)).toEqual([
+      defined(one).id,
+    ])
+    // Nobody saw it leave the queue.
+    expect((await web.untaken("PromptQueueChanged")).map(queueTexts)).not.toContainEqual(["two"])
   })
 })
 
@@ -2347,6 +2464,7 @@ describe("Repo access", () => {
       { _tag: "JoinSession" },
       { _tag: "SendPrompt", text: "hi" },
       { _tag: "CancelPrompt", promptId: "p-1" },
+      { _tag: "SteerPrompt", promptId: "p-1" },
       { _tag: "StopTurn" },
       { _tag: "MessageAgent", agentId: "a-1", text: "hi" },
       { _tag: "StopAgent", agentId: "a-1" },
