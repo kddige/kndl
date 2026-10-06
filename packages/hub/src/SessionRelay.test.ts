@@ -990,6 +990,55 @@ describe("Runner reports", () => {
     expect(slept.session.lastOutput?.endsWith("\nthe end")).toBe(true)
   })
 
+  test("keeps an Active Session's Open ports with it, until it sleeps (#175)", async () => {
+    const { hub, runner, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    const ports = [
+      { port: 3000, addresses: ["0.0.0.0", "::"], process: "node server" },
+      { port: 5432, addresses: ["0.0.0.0"], process: "docker-proxy" },
+    ]
+    runner.send({ _tag: "SessionPorts", sessionId, ports })
+
+    const listed = await web.take("SessionUpdated", (m) => m.session.openPorts !== undefined)
+    expect(listed.session.openPorts).toEqual(ports)
+    // Kept on the Session: a web client connecting later sees it too.
+    const later = await openWeb(hub, "alice")
+    expect(later.sessions.sessions.find((s) => s.id === sessionId)?.openPorts).toEqual(ports)
+    // The same list again changes nothing.
+    runner.send({ _tag: "SessionPorts", sessionId, ports })
+    runner.send({ _tag: "SandboxNote", sessionId, message: "after the ports" })
+    await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SandboxNoted")
+    expect((await web.untaken("SessionUpdated")).filter((m) => m.session.openPorts)).toEqual([])
+
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    const asleep = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(asleep.session.openPorts).toBeUndefined()
+    // A list that raced the stop is dropped.
+    runner.send({ _tag: "SessionPorts", sessionId, ports })
+    runner.send({ _tag: "SandboxNote", sessionId, message: "after the stop" })
+    await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SandboxNoted")
+    expect((await web.untaken("SessionUpdated")).filter((m) => m.session.openPorts)).toEqual([])
+    const after = await openWeb(hub, "alice")
+    expect(after.sessions.sessions.find((s) => s.id === sessionId)?.openPorts).toBeUndefined()
+  })
+
+  test("drops a Session's Open ports when they close, and when its Runner goes offline (#175)", async () => {
+    const { runner, web, sessionId } = await sessionScene()
+    const ports = [{ port: 8080, addresses: ["::1"], process: "python3 -m" }]
+    runner.send({ _tag: "SessionPorts", sessionId, ports })
+    await web.take("SessionUpdated", (m) => m.session.openPorts !== undefined)
+    runner.send({ _tag: "SessionPorts", sessionId, ports: [] })
+    const closed = await web.take("SessionUpdated")
+    expect(closed.session.openPorts).toBeUndefined()
+
+    runner.send({ _tag: "SessionPorts", sessionId, ports })
+    await web.take("SessionUpdated", (m) => m.session.openPorts !== undefined)
+    await runner.close()
+    const frozen = await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    expect(frozen.session.openPorts).toBeUndefined()
+  })
+
   test("a Runner can't report on another Runner's Session", async () => {
     const { hub, web, sessionId } = await sessionScene()
     const other = await openRunner(hub, (await issueRunnerToken(hub, "linux")).token)
@@ -2004,6 +2053,22 @@ describe("git", () => {
       const again = await ask(runner, sessionId, { _tag: "SandboxToken" })
       expect((again as { token: string }).token).toBe(github.mintedTokens[1] ?? "")
       expect(github.mintedTokens[1]).not.toBe(github.mintedTokens[0])
+    })
+
+    test("a Sandbox token is redacted from the name of a process listening on a port (#175)", async () => {
+      const { runner, web, sessionId } = await sessionScene(await appHub())
+      await ask(runner, sessionId, { _tag: "SandboxToken" })
+      const [token = ""] = github.mintedTokens
+
+      runner.send({
+        _tag: "SessionPorts",
+        sessionId,
+        ports: [{ port: 3000, addresses: ["0.0.0.0"], process: `node ${token}` }],
+      })
+      const listed = await web.take("SessionUpdated", (m) => m.session.openPorts !== undefined)
+      expect(listed.session.openPorts).toEqual([
+        { port: 3000, addresses: ["0.0.0.0"], process: `node ${stars(token)}` },
+      ])
     })
 
     test("the Session's current and previous Sandbox tokens are redacted from all it prints", async () => {

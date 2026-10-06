@@ -65,6 +65,10 @@
 //     Running agent can be stopped (StopAgent). A mod that can't do either says so with
 //     AgentCommandFailed, passed on to the person as a CommandFailed.
 // - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
+// - Open ports (#175, ADR 0016): while a Session is Active its Runner reports what listens in its
+//   Sandbox whenever that changes, the whole list each time. The Hub keeps the latest list in
+//   memory only, process names redacted, and sends it with the Session to the web. It is cleared
+//   as soon as the Session is no longer Active: asleep, Frozen or Archived.
 // - Git (ADR 0010): the Runner's GitRequests are answered by SessionGit, off the lock, since
 //   they may wait on GitHub. When a Turn ends the Runner is told, to push the WIP ref.
 // - Environments (#47, ADR 0009): StartSession carries the Repo's Environment as last applied,
@@ -118,6 +122,7 @@ import {
   HubToWeb,
   type ModEvent,
   type ModHello,
+  type OpenPort,
   type Participant,
   type ParticipantId,
   PresenceChanged,
@@ -263,6 +268,19 @@ export const startLogLimit = 64 * 1024
  */
 export const lastOutputText = (needles: Needles, output: string) =>
   redactText(needles, output).slice(-MaxLastOutputLength)
+
+/** Whether two lists of Open ports say the same. */
+const samePorts = (a: ReadonlyArray<OpenPort>, b: ReadonlyArray<OpenPort>) =>
+  a.length === b.length &&
+  a.every((port, i) => {
+    const other = b[i]
+    return (
+      other !== undefined &&
+      port.port === other.port &&
+      port.process === other.process &&
+      port.addresses.join(" ") === other.addresses.join(" ")
+    )
+  })
 
 /** How often the Hub looks for idle Sessions to put to sleep: a tenth of the wait, 10 ms to 30 s. */
 /** How often draining Runners are checked for Turns past their deadline (RunnerUpdates.ts). */
@@ -434,6 +452,11 @@ export class SessionRelay extends Context.Service<
        * stop is recorded done only then, so a Runner that drops off first is asked again.
        */
       const archiving = new Set<SessionId>()
+      /**
+       * What listens in each Active Session's Sandbox, as its Runner last said (#175). In memory
+       * only: a Runner that reconnects sends it again.
+       */
+      const openPorts = new Map<SessionId, ReadonlyArray<OpenPort>>()
       /** When each Session was last seen busy: an event logged, its queue or presence changing. */
       const lastBusy = new Map<SessionId, number>()
 
@@ -563,8 +586,10 @@ export class SessionRelay extends Context.Service<
       const forWeb = (session: SessionSummary): SessionSummary => {
         const start = starts.get(session.id)
         const restart = restarts.get(session.id)
+        const ports = session.state === "Active" ? openPorts.get(session.id) : undefined
         return {
           ...session,
+          ...(ports !== undefined && ports.length > 0 && { openPorts: ports }),
           claudeAccount:
             claudeCredentials.info(session.creator.id) === undefined ? "Runner" : "Creator",
           ...(start !== undefined && {
@@ -843,6 +868,8 @@ export class SessionRelay extends Context.Service<
         why: Why,
       ) {
         if (session.state === state) return
+        // Nothing listens in a Sandbox whose Claude Code isn't known to run.
+        if (state !== "Active") openPorts.delete(session.id)
         yield* sessions.setState(session.id, state)
         yield* logEvent(session.id, SessionStateChanged.make({ state, ...why }))
         yield* sessionUpdated(session.id)
@@ -1071,6 +1098,7 @@ export class SessionRelay extends Context.Service<
         inFlight.delete(session.id)
         starting.delete(session.id)
         starts.delete(session.id)
+        openPorts.delete(session.id)
         stopping.delete(session.id)
         restarting.delete(session.id)
         if (!restartGoesOn) restarts.delete(session.id)
@@ -1307,6 +1335,7 @@ export class SessionRelay extends Context.Service<
           yield* sessions.purge(session, now)
           archiving.delete(session.id)
           lastBusy.delete(session.id)
+          openPorts.delete(session.id)
           sandboxTokens.delete(session.id)
           yield* outbox.clear(session.id)
           for (const client of webClients) {
@@ -2434,6 +2463,21 @@ export class SessionRelay extends Context.Service<
                 message.sessionId,
                 SandboxNoted.make({ message: message.message }),
               )
+            case "SessionPorts": {
+              // A list that raced the Session's stop: it has none now.
+              if (session.value.state !== "Active") return
+              const needles = yield* needlesFor(session.value.repo)
+              const ports = message.ports.map((port) =>
+                port.process === undefined
+                  ? port
+                  : { ...port, process: redactText(needles, port.process) },
+              )
+              const before = openPorts.get(message.sessionId) ?? []
+              if (ports.length === 0) openPorts.delete(message.sessionId)
+              else openPorts.set(message.sessionId, ports)
+              if (!samePorts(before, ports)) yield* sessionUpdated(message.sessionId)
+              return
+            }
           }
         })
 
