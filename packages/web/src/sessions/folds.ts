@@ -1,5 +1,5 @@
-// Which Parent Sessions' rows in the sidebar are folded, hiding their Child Sessions (#122). Per
-// viewer, in localStorage, so a reload keeps them; every sidebar on the page shares them, and
+// Which Sessions' rows in the sidebar are folded, hiding their subagents (ADR 0014). Per viewer,
+// in localStorage, so a reload keeps them; every sidebar on the page shares them, and
 // another tab's change shows here too. A row is open unless folded.
 
 import { useSyncExternalStore } from "react"

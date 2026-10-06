@@ -1,10 +1,10 @@
-// What the fake Hub knows and plays: two Runners, one behind the Hub's commit, a few Sessions with some history, and the
-// Turns it streams. All made up; the people are Alice (you) and Bob. One Session is a Parent
-// Session with two Child Sessions, and gets their Reports (ADR 0012).
+// What the fake Hub knows and plays: two Runners, one behind the Hub's commit, a few Sessions with
+// some history, and the Turns it streams. All made up; the people are Alice (you) and Bob. The
+// demo's Turn starts a subagent in the foreground and one in the background that outlives it, and
+// Release 0.4 has subagents that finished, were stopped and were interrupted (ADR 0014).
 
 import type {
   AppPermissionsCheckWire,
-  FromSessionWire,
   ParticipantWire,
   RunnerSummaryWire,
   SessionEventWire,
@@ -15,38 +15,61 @@ export const you: ParticipantWire = { id: "u-alice", login: "alice", name: "Alic
 export const bob: ParticipantWire = { id: "u-bob", login: "bob", name: "Bob Lee" }
 
 export const demoSessionId = "s-demo"
-/** The Parent Session, and its two Child Sessions. */
+/** A Session whose subagents finished, were stopped and were interrupted. */
 export const releaseSessionId = "s-release"
-export const apiDocsSessionId = "s-api-docs"
-export const changelogSessionId = "s-changelog"
 
-/** One thing a scripted Turn does. Steps with an `agentId` are a subagent's. */
+/** One thing a scripted Turn, or a subagent's run, does. */
 export type ReplyStep =
-  | { readonly kind: "text"; readonly text: string; readonly agentId?: string }
+  | { readonly kind: "text"; readonly text: string }
   | {
       readonly kind: "tool"
       readonly tool: string
       readonly input: Readonly<Record<string, unknown>>
       readonly output: string
       readonly outcome?: "Succeeded" | "Failed" | "Denied"
-      readonly agentId?: string
       /** How many steps the tool runs for. Default 4. */
       readonly steps?: number
-      /** What a subagent does while this tool call (its Task) runs. */
-      readonly during?: ReadonlyArray<ReplyStep>
     }
-  | { readonly kind: "agentEnd"; readonly agentId: string }
-  /**
-   * Someone else queues a prompt while the Turn runs. With `fromSession` it's another Session's,
-   * `text` with the Hub's note, and `sender` the Session's Creator.
-   */
+  /** The Agent tool starts a subagent, which does `steps` and answers `result`. */
   | {
-      readonly kind: "queue"
-      readonly sender: ParticipantWire
-      readonly text: string
-      readonly fromSession?: FromSessionWire
+      readonly kind: "agent"
+      readonly agentId: string
+      readonly agentType: string
+      readonly description: string
+      readonly prompt: string
+      readonly model: string
+      /**
+       * It runs on its own while the Turn goes on, past its end, and when done Claude Code starts
+       * a Turn from it, which says `relay`.
+       */
+      readonly background?: boolean
+      readonly worktree?: { readonly path: string; readonly branch: string }
+      readonly steps: ReadonlyArray<ReplyStep>
+      readonly result: string
+      readonly relay?: string
     }
+  /** Someone else queues a prompt while the Turn runs. */
+  | { readonly kind: "queue"; readonly sender: ParticipantWire; readonly text: string }
   | { readonly kind: "pause"; readonly steps: number }
+
+/**
+ * Claude Code's prompt to itself when a background agent is done, which starts a Turn from the
+ * agent (ADR 0014), as Claude Code 2.1.289 writes it.
+ */
+export function taskNotification(agentId: string, description: string, result: string): string {
+  return [
+    "<task-notification>",
+    `<task-id>${agentId}</task-id>`,
+    `<tool-use-id>toolu_${agentId}</tool-use-id>`,
+    `<output-file>/tmp/claude-0/-workspace/tasks/${agentId}.output</output-file>`,
+    "<status>completed</status>",
+    `<summary>Agent "${description}" finished</summary>`,
+    "<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>",
+    `<result>${result}</result>`,
+    "<usage><subagent_tokens>12388</subagent_tokens><tool_uses>3</tool_uses><duration_ms>17036</duration_ms></usage>",
+    "</task-notification>",
+  ].join("\n")
+}
 
 /** The commit the fake Hub runs. */
 export const hubVersion = { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", branch: "main" }
@@ -268,227 +291,185 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
   ]
 }
 
-const release = { id: releaseSessionId, title: "Release 0.4" }
-const apiDocs = { id: apiDocsSessionId, title: "API docs" }
-const changelog = { id: changelogSessionId, title: "Changelog" }
-
-/** A Report as the Hub queues it for the Parent Session: its note, then the child's message. */
-export function reportText(child: { id: string; title: string }, message: string): string {
-  return [
-    `[Report from Child Session "${child.title}" (${child.id})]`,
-    "This is a Report, not a prompt from a person: the final message of a Turn your Child Session just ended. The people in this Session don't see Reports, so relay what matters to them. More Reports may follow while it works.",
-    "",
-    message,
-  ].join("\n")
-}
-
-/** A Child Session's message, sent mid-Turn, as the Hub queues it for the Parent Session. */
-export function childMessageText(child: { id: string; title: string }, message: string): string {
-  return [
-    `[Message from Child Session "${child.title}" (${child.id})]`,
-    "This is a message your Child Session sent while it works, not a prompt from a person and not a Report: its Report still comes when its Turn ends. The people in this Session don't see it, so relay what matters to them. To answer it, use message_child; it reads your answer once its current Turn ends.",
-    "",
-    message,
-  ].join("\n")
-}
-
-/** What API docs asks Release 0.4 while it works. */
-const apiDocsQuestion =
-  "Should the reference cover the deprecated v0 messages too, or only what 0.4 speaks? I'm going on with the Mod messages meanwhile."
-
-/** A message from the Parent Session as the Hub queues it for the child. */
-function parentMessageText(text: string): string {
-  return `[Message from your Parent Session "${release.title}" (${release.id})]\n\n${text}`
-}
-
 /**
- * Release 0.4 hands the docs and the changelog to two Child Sessions. API docs messages it a
- * question mid-Turn, and Changelog reports.
+ * Release 0.4 handed the changelog, the docs and the version bump to background agents. The
+ * changelog's is done and told it so; Alice messaged and stopped the bump's; the docs' was
+ * interrupted when Bob put the Session to sleep, in its worktree.
  */
 function releaseSessions(now: number): Array<SeedSession> {
   const studio = { runnerId: "r-studio", runnerLogin: { account: "alice@example.com" } }
   const at = now - 40 * 60_000
-  const environment = { version: 2, latestVersion: 2 }
-  const created = (child: { id: string; title: string }, task: string) =>
-    tool(
-      "mcp__hub-link__create_child",
-      { task, name: child.title },
-      `Created Child Session "${child.title}" (id ${child.id}): Active, idle; Work branch claude/${child.id.slice(2)}, from main`,
-    )
+  const haiku = "claude-haiku-4-5-20251001"
+  const changelog = { agentId: "a-changelog", description: "Write the 0.4 changelog" }
+  const docs = { agentId: "a-docs", description: "Document the protocol" }
+  const bump = { agentId: "a-bump", description: "Bump the package versions" }
+  const changelogResult = "The changelog is in CHANGELOG.md: 14 entries, grouped by package."
   return [
     {
       summary: {
         id: releaseSessionId,
-        name: release.title,
+        name: "Release 0.4",
         repo: "kddige/claude-hub",
         baseBranch: "main",
         workBranch: "claude/release-0-4",
-        state: "Active",
+        state: "Asleep",
         ...studio,
         creator: you,
         createdAt: at,
         currentTurn: null,
-        environment,
+        environment: { version: 2, latestVersion: 2 },
       },
       at,
       events: [
-        ...turn("t-release-1", you, "Get 0.4 ready: the API docs and the changelog", [
+        ...turn("t-release-1", you, "Get 0.4 ready: the changelog, the docs and the versions", [
           {
             _tag: "TextDelta",
-            text: "These two don't touch each other, so I'll hand each to a Child Session and keep an eye on them.",
+            text: "These don't touch each other, so I'll hand each to a subagent in the background.",
           },
-          created(apiDocs, "Document every message in packages/protocol for the 0.4 reference."),
-          created(changelog, "Write the 0.4 changelog from the merged pull requests since 0.3."),
+          agentCall("t-release-1", changelog, "general-purpose", haiku),
+          agentCall("t-release-1", docs, "general-purpose", "claude-sonnet-5-5"),
+          agentCall("t-release-1", bump, "general-purpose", haiku),
           {
             _tag: "TextDelta",
-            text: "Both are working. They report back when each Turn ends; I'll tell you what they find.",
+            text: "All three are working. I'll tell you what each finds when it's done.",
           },
         ]),
-        ...sessionTurn(
-          "t-release-msg",
-          { _tag: "FromChildSessionMessage", session: apiDocs },
-          childMessageText(apiDocs, apiDocsQuestion),
-          [
-            tool(
-              "mcp__hub-link__message_child",
-              { child_id: apiDocsSessionId, message: "Only what 0.4 speaks: leave v0 out." },
-              `Queued your message for Child Session "API docs" (id ${apiDocsSessionId}): Active, working, 1 queued; Work branch claude/api-docs, from main\nIt reads it once its current Turn ends. Its answer arrives here as a Report.`,
-            ),
-            {
-              _tag: "TextDelta",
-              text: "**API docs** asked whether to document the deprecated v0 messages. I told it to cover only what 0.4 speaks; say if you want v0 in too.",
-            },
-          ],
-        ),
+        {
+          _tag: "AgentStatusChanged",
+          agentId: docs.agentId,
+          status: "Running",
+          worktree: {
+            path: "/workspace/claude-hub/.claude/worktrees/agent-docs",
+            branch: "worktree-agent-docs",
+          },
+        },
+        ...agentRun("t-release-a1", changelog.agentId, [
+          tool(
+            "Bash",
+            { command: "gh pr list --state merged --search 'merged:>2026-09-01'" },
+            "#141 …\n#142 …\n…",
+          ),
+          { _tag: "TextDelta", text: changelogResult },
+        ]),
+        { _tag: "AgentStatusChanged", agentId: changelog.agentId, status: "Done" },
+        ...agentRun("t-release-a2", bump.agentId, [
+          tool("Glob", { pattern: "packages/*/package.json" }, "packages/cli/package.json\n…"),
+        ]),
+        {
+          _tag: "AgentMessaged",
+          agentId: bump.agentId,
+          sender: you,
+          text: "Hold off: we bump once the docs land.",
+        },
+        { _tag: "AgentStatusChanged", agentId: bump.agentId, status: "Stopped" },
         ...sessionTurn(
           "t-release-2",
-          { _tag: "FromChildSession", session: changelog },
-          reportText(
-            changelog,
-            "The changelog is in CHANGELOG.md: 14 entries, grouped by package.",
+          { _tag: "FromAgent", agentId: changelog.agentId },
+          taskNotification(changelog.agentId, changelog.description, changelogResult),
+          [
+            {
+              _tag: "TextDelta",
+              text: "**The changelog** is done: 14 entries in CHANGELOG.md, grouped by package. The docs are still being written.",
+            },
+          ],
+        ),
+        ...agentRun("t-release-a3", docs.agentId, [
+          tool(
+            "Glob",
+            { pattern: "packages/protocol/src/*.ts" },
+            "Hub.ts\nMod.ts\nRunner.ts\nSession.ts\nTurn.ts\nWeb.ts",
           ),
-          [
-            {
-              _tag: "TextDelta",
-              text: "**Changelog** is done: 14 entries in CHANGELOG.md, grouped by package. API docs is still working.",
-            },
-          ],
-        ),
-      ],
-    },
-    {
-      summary: {
-        id: apiDocsSessionId,
-        name: apiDocs.title,
-        repo: "kddige/claude-hub",
-        baseBranch: "main",
-        workBranch: "claude/api-docs",
-        state: "Active",
-        ...studio,
-        creator: you,
-        createdAt: at + 60_000,
-        currentTurn: null,
-        environment,
-        parentId: releaseSessionId,
-      },
-      at: at + 60_000,
-      events: [
-        ...sessionTurn(
-          "t-api-1",
-          { _tag: "FromParentSession", session: release },
-          parentMessageText("Document every message in packages/protocol for the 0.4 reference."),
-          [
-            tool(
-              "Glob",
-              { pattern: "packages/protocol/src/*.ts" },
-              "Hub.ts\nMod.ts\nRunner.ts\nSession.ts\nTurn.ts\nWeb.ts",
-            ),
-            tool(
-              "mcp__hub-link__message_parent",
-              { message: apiDocsQuestion },
-              `Queued your message for your Parent Session "${release.title}" (id ${release.id}). It reads it as soon as it is ready. Any answer reaches you as a prompt after this Turn ends, and your Report still goes to it then.`,
-            ),
-            {
-              _tag: "TextDelta",
-              text: "I've drafted the Web and Runner messages in the reference. Mod and Turn are next.",
-            },
-          ],
-        ),
-        ...sessionTurn(
-          "t-api-2",
-          { _tag: "FromParentSession", session: release },
-          parentMessageText("Only what 0.4 speaks: leave v0 out."),
-          [{ _tag: "TextDelta", text: "Understood: v0 stays out. On to Mod and Turn." }],
-        ),
-      ],
-    },
-    {
-      summary: {
-        id: changelogSessionId,
-        name: changelog.title,
-        repo: "kddige/claude-hub",
-        baseBranch: "main",
-        workBranch: "claude/changelog",
-        state: "Asleep",
-        ...studio,
-        creator: you,
-        createdAt: at + 2 * 60_000,
-        currentTurn: null,
-        environment,
-        parentId: releaseSessionId,
-      },
-      at: at + 2 * 60_000,
-      events: [
-        ...sessionTurn(
-          "t-changelog-1",
-          { _tag: "FromParentSession", session: release },
-          parentMessageText("Write the 0.4 changelog from the merged pull requests since 0.3."),
-          [
-            {
-              _tag: "TextDelta",
-              text: "The changelog is in CHANGELOG.md: 14 entries, grouped by package.",
-            },
-          ],
-        ),
-        { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 15m" },
+          {
+            _tag: "TextDelta",
+            text: "I've drafted the Web and Runner messages in the reference. Mod and Turn are next.",
+          },
+        ]),
+        // Its Claude Code stopped while this Read ran: it never ended.
+        {
+          _tag: "ToolCallStarted",
+          turnId: "t-release-a3",
+          agentId: docs.agentId,
+          toolCallId: "t-release-a3-tool-2",
+          tool: "Read",
+          input: JSON.stringify({
+            file_path: "/workspace/claude-hub/packages/protocol/src/Mod.ts",
+          }),
+        },
+        { _tag: "AgentStatusChanged", agentId: docs.agentId, status: "Interrupted" },
+        { _tag: "SessionStateChanged", state: "Asleep", message: "Put to sleep", by: bob },
       ],
     },
   ]
 }
 
-/** API docs' next Report, which wakes Release 0.4; Changelog's follows while it's answered. */
-export const releaseReport = {
-  from: apiDocs,
-  text: reportText(
-    apiDocs,
-    "The reference covers every protocol message now, Mod and Turn included.",
-  ),
+/** The Agent tool starting a background agent, as its Turn's body shows it. */
+function agentCall(
+  turnId: string,
+  agent: { agentId: string; description: string },
+  agentType: string,
+  model: string,
+): TurnBody[number] {
+  return {
+    _tag: "Agent",
+    tool: "Agent",
+    input: JSON.stringify({
+      description: agent.description,
+      prompt: agent.description,
+      subagent_type: agentType,
+      run_in_background: true,
+    }),
+    output: `Async agent launched successfully. agentId: ${agent.agentId}`,
+    started: {
+      _tag: "AgentStarted",
+      turnId,
+      agentId: agent.agentId,
+      toolCallId: "",
+      agentType,
+      description: agent.description,
+      model,
+      background: true,
+    },
+  }
 }
 
-export const releaseReply: ReadonlyArray<ReplyStep> = [
-  {
-    kind: "tool",
-    tool: "mcp__hub-link__read_child",
-    input: { child_id: apiDocsSessionId },
-    output: `"API docs" (id ${apiDocsSessionId}): Active, idle; Work branch claude/api-docs, from main`,
-    steps: 3,
-  },
-  {
-    kind: "queue",
-    sender: you,
-    text: reportText(changelog, "I added the two fixes merged this morning to CHANGELOG.md."),
-    fromSession: { _tag: "FromChildSession", session: changelog },
-  },
-  { kind: "pause", steps: 30 },
-  {
-    kind: "text",
-    text: "**API docs** is done: the reference now covers every protocol message. Both Child Sessions have finished, so 0.4 is ready to review.",
-  },
-]
+/** A subagent's run, for seeding history: its text and tool calls, then its end. */
+function agentRun(turnId: string, agentId: string, body: TurnBody): Array<SessionEventWire> {
+  const events: Array<SessionEventWire> = []
+  let count = 0
+  for (const part of body) {
+    if (part._tag === "TextDelta") {
+      events.push({ _tag: "TextDelta", turnId, agentId, text: part.text })
+      continue
+    }
+    const toolCallId = `${turnId}-tool-${++count}`
+    events.push(
+      { _tag: "ToolCallStarted", turnId, agentId, toolCallId, tool: part.tool, input: part.input },
+      {
+        _tag: "ToolCallEnded",
+        turnId,
+        agentId,
+        toolCallId,
+        tool: part.tool,
+        outcome: "Succeeded",
+        output: part.output,
+      },
+    )
+  }
+  events.push({ _tag: "TurnEnded", turnId, agentId, reason: "Answered", durationMs: 41_000 })
+  return events
+}
 
 type TurnBody = ReadonlyArray<
   | { _tag: "TextDelta"; text: string }
   | { _tag: "Tool"; tool: string; input: string; output: string }
+  /** An Agent call and the subagent it started, whose toolCallId is filled in. */
+  | {
+      _tag: "Agent"
+      tool: string
+      input: string
+      output: string
+      started: Extract<SessionEventWire, { _tag: "AgentStarted" }>
+    }
 >
 
 /** A finished Turn a person prompted, for seeding history. */
@@ -523,6 +504,7 @@ function sessionTurn(
     const toolCallId = `${turnId}-tool-${++count}`
     events.push(
       { _tag: "ToolCallStarted", turnId, toolCallId, tool: part.tool, input: part.input },
+      ...(part._tag === "Agent" ? [{ ...part.started, toolCallId }] : []),
       {
         _tag: "ToolCallEnded",
         turnId,
@@ -568,19 +550,16 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
       "packages/web/src/session/ToolCall.tsx\npackages/web/src/hub/transcript.ts\npackages/web/src/session/Transcript.tsx",
   },
   {
-    kind: "tool",
-    tool: "Task",
-    input: {
-      description: "Survey the UI kit",
-      prompt: "List the kit components that can collapse content, and how they're styled.",
-    },
-    output: "The kit has Disclosure for collapsible rows; it's styled with the shared tokens.",
-    steps: 3,
-    during: [
-      { kind: "text", agentId: "agent-kit", text: "Looking through the kit's components." },
+    kind: "agent",
+    agentId: "agent-kit",
+    agentType: "Explore",
+    description: "Survey the UI kit",
+    prompt: "List the kit components that can collapse content, and how they're styled.",
+    model: "claude-haiku-4-5-20251001",
+    steps: [
+      { kind: "text", text: "Looking through the kit's components." },
       {
         kind: "tool",
-        agentId: "agent-kit",
         tool: "Glob",
         input: { pattern: "packages/web/src/ui/*.tsx" },
         output: "Avatar.tsx\nBadge.tsx\nButton.tsx\nDialog.tsx\nDisclosure.tsx\n…",
@@ -588,19 +567,42 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
       },
       {
         kind: "tool",
-        agentId: "agent-kit",
         tool: "Read",
         input: { file_path: "packages/web/src/ui/Disclosure.tsx" },
         output: "export function Disclosure({ summary, children, defaultOpen = false }) { … }",
         steps: 2,
       },
-      {
-        kind: "text",
-        agentId: "agent-kit",
-        text: "Disclosure is the one: closed by default, with a summary row.",
-      },
-      { kind: "agentEnd", agentId: "agent-kit" },
+      { kind: "text", text: "Disclosure is the one: closed by default, with a summary row." },
     ],
+    result: "The kit has Disclosure for collapsible rows; it's styled with the shared tokens.",
+  },
+  {
+    kind: "agent",
+    agentId: "agent-docs",
+    agentType: "general-purpose",
+    description: "Find docs that mention tool calls",
+    prompt: "Find the docs pages that describe how the chat shows tool calls.",
+    model: "claude-haiku-4-5-20251001",
+    background: true,
+    worktree: {
+      path: "/workspace/claude-hub/.claude/worktrees/agent-docs",
+      branch: "worktree-agent-docs",
+    },
+    steps: [
+      { kind: "text", text: "Searching the docs for tool calls." },
+      {
+        kind: "tool",
+        tool: "Grep",
+        input: { pattern: "tool call", path: "packages/docs/src/content" },
+        output: "packages/docs/src/content/docs/how-to/work-in-a-session.md",
+        steps: 20,
+      },
+      { kind: "pause", steps: 30 },
+      { kind: "text", text: "Only work-in-a-session.md says how tool calls show." },
+    ],
+    result: "Only how-to/work-in-a-session.md describes tool calls in the chat.",
+    relay:
+      "The docs agent found one page that describes tool calls: **work-in-a-session.md**. I'll update it with the README.",
   },
   { kind: "queue", sender: bob, text: "Then add a line about it to the README" },
   {

@@ -291,7 +291,7 @@ export interface NavItemProps {
   /** Shown in place of the link and the action while set, such as an InlineEdit: the icon stays. */
   editor?: ReactNode
   /**
-   * NavItems nested under this one, such as a Session's Child Sessions: indented under its row,
+   * NavItems nested under this one, such as a Session's subagents: indented under its row,
    * which gets a chevron button at its end that shows and hides them. Only that button folds
    * them; the link still leads to the item.
    */
@@ -304,7 +304,7 @@ export interface NestedNavItems {
   /** Whether they show. */
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Names the chevron button, such as "Child Sessions of Release 0.4"; it says if they show. */
+  /** Names the chevron button, such as "Agents of Release 0.4"; it says if they show. */
   label: string
 }
 

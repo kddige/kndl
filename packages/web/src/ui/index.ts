@@ -3,6 +3,7 @@
  * tokens.stylex.ts. Build screens from these rather than one-off styled elements. /kit shows
  * every component in every state.
  */
+export { AgentStatus } from "./AgentStatus.tsx"
 export { Avatar, AvatarStack, type AvatarPerson, type AvatarSize } from "./Avatar.tsx"
 export { Badge, type BadgeIntent } from "./Badge.tsx"
 export { Banner, type BannerIntent } from "./Banner.tsx"

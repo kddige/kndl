@@ -45,10 +45,38 @@ export interface ComposerProps {
   hint?: string | undefined
   /** The model picker, at the start of the bar under the prompt (#128). */
   picker?: ReactNode
+  /** What is written, for one that isn't a prompt: a message to an agent (ADR 0014). */
+  copy?: ComposerCopy
 }
 
-/** Where a Participant writes prompts. A prompt always goes through the Prompt queue. */
-export function Composer({ onSend, onStop, running, disabledReason, hint, picker }: ComposerProps) {
+/** The words of a composer for something other than prompts. */
+export interface ComposerCopy {
+  readonly field: string
+  readonly placeholder: string
+  readonly send: string
+  readonly stop: string
+}
+
+const promptCopy = (running: boolean): ComposerCopy => ({
+  field: "Prompt",
+  placeholder: running ? "Queue a prompt for after this Turn" : "Ask Claude",
+  send: running ? "Queue prompt" : "Send prompt",
+  stop: "Stop",
+})
+
+/**
+ * Where a Participant writes prompts. A prompt always goes through the Prompt queue. With `copy`,
+ * it writes something else, such as a message to an agent.
+ */
+export function Composer({
+  onSend,
+  onStop,
+  running,
+  disabledReason,
+  hint,
+  picker,
+  copy = promptCopy(running),
+}: ComposerProps) {
   const [draft, setDraft] = useState("")
   const disabled = disabledReason !== undefined
   const empty = draft.trim() === ""
@@ -74,13 +102,11 @@ export function Composer({ onSend, onStop, running, disabledReason, hint, picker
   return (
     <form onSubmit={submit} {...stylex.props(styles.form)}>
       <Textarea
-        aria-label="Prompt"
+        aria-label={copy.field}
         value={draft}
         onValueChange={setDraft}
         onKeyDown={keyDown}
-        placeholder={
-          disabledReason ?? (running ? "Queue a prompt for after this Turn" : "Ask Claude")
-        }
+        placeholder={disabledReason ?? copy.placeholder}
         rows={2}
         autoResize
         disabled={disabled}
@@ -98,14 +124,14 @@ export function Composer({ onSend, onStop, running, disabledReason, hint, picker
         </span>
         {running && (
           <Button size="sm" intent="secondary" icon={<StopIcon />} onClick={onStop}>
-            Stop
+            {copy.stop}
           </Button>
         )}
         <IconButton
           type="submit"
           size="sm"
           intent="primary"
-          label={running ? "Queue prompt" : "Send prompt"}
+          label={copy.send}
           disabled={disabled || empty}
         >
           <ArrowUpIcon />
