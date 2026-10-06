@@ -19,7 +19,7 @@ The token is scoped to the Session's one Repo, so a Session can't reach the App'
 - **git.** A credential helper in the system gitconfig answers for `https://github.com` from that file, so it works in `/workspace` and every other directory, with username `x-access-token`.
 - **gh.** `~/.config/gh/hosts.yml` links to a file beside the token that names it as `github.com`'s `oauth_token`, with `git_protocol: https`. `GH_HOST` and `GH_PROMPT_DISABLED` aren't needed. claude-hub doesn't install gh: an Environment's bootstrap script should, for example from Debian's archive or GitHub's own apt repository.
 - **Redaction.** The Hub minted the token, so it knows it. It masks the Session's current token and the one before it, which a process may still hold, from the transcript, terminal frames and logs, with the Repo's Sensitive values (#48).
-- **Host git stays.** The Runner still clones and pushes the WIP ref on the host (after a Turn that changed files, before sleep, before archive), with its own token minted with `contents:write` only, passed to git per command. That works whether or not the Sandbox has a token, and never runs anything the Sandbox configured in `.git`.
+- **Host git stays.** The Runner still clones and pushes the WIP ref on the host (after a Turn that changed files, before sleep, before archive), with its own token minted with `contents:write` only, passed to git per command. Since #194 it only clones, with a read-only token: see the amendment below. That works whether or not the Sandbox has a token, and never runs anything the Sandbox configured in `.git`.
 - **Commits.** They're authored by whatever the Sandbox's git is configured with. The `Co-authored-by` trailers ADR 0005 guaranteed are gone with the tools.
 
 ## Considered options
@@ -29,3 +29,12 @@ The token is scoped to the Session's one Repo, so a Session can't reach the App'
 - **The token in a file on the root filesystem, or a mounted host file.** Either way it lands on the Runner's disk.
 - **A Runner-side credential proxy.** Holds the token out of the Sandbox, but anything in the Sandbox can use the proxy for the same effect, so it only adds code.
 - **The session user's OAuth token.** Puts a full user token, for every Repo the user can reach, in the Sandbox.
+
+## Amendment: host git only clones (2026-10-07, #194)
+
+The Runner no longer pushes a WIP ref: not after a Turn, not before sleep, not before archive. It read as though the work were on GitHub, when it was on no branch anyone sees, and it guarded only against losing the Runner's host, which ADR 0006 now accepts.
+
+- **Host git only clones** the Repo into a new Workspace, before any Sandbox has it. Everything that reaches GitHub goes through git in the Sandbox.
+- **Its token is read-only:** minted with `contents:read`, plus `members:read` where the installation has it, for the Hub's checks of Repo access. It is still passed to git for the one command and never stored.
+- **The App's permissions don't change.** The Sandbox token still needs Contents: read and write to push branches.
+- **The Workspace's `.git/info/exclude`** still gets `.claude/worktrees/` at the clone (ADR 0014), now for git in the Sandbox alone.

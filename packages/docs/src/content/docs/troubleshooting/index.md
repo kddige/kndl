@@ -16,7 +16,7 @@ Each entry on these pages starts with what you see, quotes the message where knd
 | `kndl status` | Whether the services run, the Hub answers and the Runner is connected. |
 | The Hub's terminal, or `kndl logs hub` | Startup warnings and refusals, sign-in failures and refused Runner connections. |
 | The Runner's terminal, or `kndl logs runner` | Why it won't start, whether it reached the Hub, and what happened to Sandboxes. |
-| A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`, and notes about its Sandbox and WIP ref. |
+| A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`, and notes about its Sandbox. |
 | A Session's **Starting…** banner | While a Session starts, **Show log** holds the output of its Build, Bootstrap script and Start script. |
 | A Session's **Terminal** tab | Claude Code's own screen, as it runs in tmux in the Session's Sandbox. |
 | A Session's **Asleep** banner | When Claude Code exited on its own, **Show Claude Code's last output** holds the last lines its terminal showed. |
@@ -100,7 +100,6 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 - The Runner can't clone a Repo.
 - `The GitHub App is not installed on owner/name, or can't see it: …`
 - `git push` or `gh` in a Session fails: the Sandbox has no GitHub token.
-- `The WIP ref could not be pushed: host git refused the Workspace: …`.
 - Claude pushed to the default branch.
 
 ## Still stuck

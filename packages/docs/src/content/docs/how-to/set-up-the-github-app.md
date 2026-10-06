@@ -8,7 +8,7 @@ sidebar:
 One GitHub App does two jobs for the Hub:
 
 - **Sign-in.** With its client id and secret, people sign in with GitHub.
-- **Tokens.** With its App id and private key, the Hub mints short-lived installation tokens: for Runners to clone Repos and push WIP refs, and for `git` and `gh` in each Session's Sandbox ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)).
+- **Tokens.** With its App id and private key, the Hub mints short-lived installation tokens: for Runners to clone Repos, and for `git` and `gh` in each Session's Sandbox ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)).
 
 Without it, use dev login on one machine, and Runners use their host's own git credentials. Sandboxes then get no GitHub token.
 
@@ -52,7 +52,7 @@ Members matters only where the App is installed on an organization. There, GitHu
 <!-- permissions:start -->
 | Permission | Access | Why |
 |---|---|---|
-| Contents | read and write | Runners clone Repos and push WIP refs; git in the Sandbox pushes branches. |
+| Contents | read and write | Runners clone Repos; git in the Sandbox pushes branches. |
 | Pull requests | read and write | gh pr in the Sandbox: opening, reviewing and merging pull requests. |
 | Issues | read and write | gh issue in the Sandbox: reading and commenting on issues. |
 | Metadata | read-only | Repo access: the Hub asks GitHub who is a Repo's collaborator. GitHub gives every App this one. |

@@ -36,7 +36,7 @@ Each Session starts from a base branch onto its own Work branch, `claude/<sessio
 
 An Active Session with no Turn or [subagent](/how-to/work-with-subagents/) running, no prompt queued, no Participant present, no [`kndl forward`](/how-to/forward-a-sessions-ports/) connected and Keep awake off for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**, and each of a Runner's Sessions before it [updates](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit), once its running Turn ends (or is stopped, after ten minutes or with **Update now**).
 
-The Runner stops Claude Code, runs `docker stop` on the Sandbox's containers so databases shut down cleanly, and stops the Sandbox, keeping its disks, Claude Code's state among them, and the Workspace. It pushes the [WIP ref](/explanation/git-from-sessions/#the-wip-ref) first. Only when the Runner reports the Session stopped does the Hub record it Asleep; prompts sent meanwhile wait, and wake it once it is.
+The Runner stops Claude Code, runs `docker stop` on the Sandbox's containers so databases shut down cleanly, and stops the Sandbox, keeping its disks, Claude Code's state among them, and the Workspace. Only when the Runner reports the Session stopped does the Hub record it Asleep; prompts sent meanwhile wait, and wake it once it is.
 
 ### Keep awake
 
@@ -76,7 +76,7 @@ When the Runner is back, the Session is Active if its Claude Code is still runni
 
 ## Deleting and restoring
 
-Any Participant can delete a Session, from the trash button in its header ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Deleting archives it at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox with its disks, keeping the Workspace and the disk with Claude Code's state. If the WIP push fails, the archive still completes, with the failure in the Session's history.
+Any Participant can delete a Session, from the trash button in its header ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Deleting archives it at once: the Runner stops Claude Code and destroys the Sandbox with its disks, keeping the Workspace and the disk with Claude Code's state.
 
 An Archived Session is hidden from the sidebar, refuses prompts, and its terminal can't be opened.
 
@@ -87,9 +87,9 @@ A restored Session is Asleep (Frozen while its Runner is offline), and the next 
 
 ## Purging
 
-30 days after it was archived (the Hub's `HUB_ARCHIVE_RETENTION_MS`), a Session is purged. The Hub deletes its log, Prompt queue and records, and tells its Runner, which deletes the Session's directory (the Workspace, the host git directory) and anything left in microsandbox, the disk with Claude Code's state among it. A Runner that is offline is told when it is back, on every connection until it confirms.
+30 days after it was archived (the Hub's `HUB_ARCHIVE_RETENTION_MS`), a Session is purged. The Hub deletes its log, Prompt queue and records, and tells its Runner, which deletes the Session's directory, with the Workspace, and anything left in microsandbox, the disk with Claude Code's state among it. A Runner that is offline is told when it is back, on every connection until it confirms.
 
-The WIP ref on GitHub is not deleted, so `git fetch origin refs/kndl/wip/<session id>` still recovers the Session's last pushed work.
+Work the Session never pushed to a branch goes with the Workspace.
 
 ## History
 

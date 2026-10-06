@@ -68,7 +68,7 @@ Claude Code also needs tmux 3.2 or later and bash in the Sandbox. Every Environm
 
 A Session's Workspace, its dependency folders and Docker's data live on disks that outlive the Sandbox ([ADR 0006](/reference/decisions/0006-workspace-on-host-sandbox-disposable/)). So the Runner can stop a Sandbox when the Session goes to sleep, or destroy it and make a new one from a newer Environment build, and nothing is lost:
 
-- **Source** stays in the Workspace, a directory on the Runner mounted at `/workspace`, so the Runner's own git sees every change and can push it as a [WIP ref](/explanation/git-from-sessions/#the-wip-ref).
+- **Source** stays in the Workspace, a directory on the Runner mounted at `/workspace`, so it outlives every Sandbox the Session has. Only what git in the Sandbox pushes leaves the Runner.
 - **Dependency folders** such as `node_modules`, and package caches, sit on the Session's own disk volumes inside the Sandbox, because many small files are several times slower on a host mount than on a disk.
 - **Docker's data**, when the Environment turns Docker on, has its own disk too.
 - **Claude Code's state**, its conversations and settings, has its own disk, so a woken Session resumes its conversation.
