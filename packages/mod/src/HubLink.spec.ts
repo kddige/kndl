@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { ProtocolVersion } from "@claude-hub/protocol"
 import type { ModCommand } from "@claude-hub/protocol"
-import { HubLink, retryDelay } from "./HubLink.ts"
+import { HubLink, LostTimerMs, retryDelay } from "./HubLink.ts"
 import type { HubFetch, LinkStatus } from "./HubLink.ts"
 
 type Request = { readonly method: string; readonly path: string; readonly body?: string }
@@ -17,22 +18,55 @@ const commands = (...messages: Array<{ seq: number; message: unknown }>): Reply 
 })
 const stop = { _tag: "StopTurn", sessionId: "s1" }
 
+/** A Hub that welcomes the mod, takes its events and holds its polls. */
+const hub = (request: Request): Reply | undefined => {
+  if (request.path === "/mod/hello") return welcome
+  if (request.path === "/mod/events") return { status: 204, text: "" }
+  return undefined
+}
+const delta = (text: string) => ({ _tag: "TextDelta", turnId: "t1", text })
+/** The text of each batch posted. */
+const posted = (requests: ReadonlyArray<Request>) =>
+  requests
+    .filter((r) => r.path === "/mod/events")
+    .map((r) =>
+      (JSON.parse(r.body ?? "").messages as Array<{ text: string }>).map((m) => m.text).join(""),
+    )
+
 /** Lets every pending promise callback run. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5))
 
 /**
+ * Which hook's dispatch the code running now belongs to, as Claude Code tracks it: a `$` call made
+ * in the dispatch of a Turn a Stop aborted is refused (#165), and a timer's callback runs in none.
+ */
+const dispatch = new AsyncLocalStorage<"Aborted">()
+/** Runs `fn` as a hook of a Turn a Stop aborted. */
+const inAbortedHook = (fn: () => void) => dispatch.run("Aborted", fn)
+const turnAbort = () => new Error("HooksError: turn-abort")
+
+/**
  * A link over a scripted Hub: `answer` replies to each request, or holds it (undefined) as a long
- * poll would. `sleep` resolves at once and is recorded.
+ * poll would. Each timer fires at once, and its wait is recorded. `timers` loses a timer (it never
+ * fires) or refuses one (setting it throws), by its index; `now` is the time the link reads.
  */
 const harness = (
   answer: (request: Request, index: number) => Reply | Error | undefined,
-  options: { readonly runsCommands?: boolean } = {},
+  options: {
+    readonly runsCommands?: boolean
+    readonly timers?: Record<number, "Lost" | "Refused">
+    readonly now?: () => number
+  } = {},
 ) => {
   const requests: Array<Request> = []
-  const sleeps: Array<number> = []
+  const waits: Array<number> = []
   const statuses: Array<LinkStatus["_tag"]> = []
   const handled: Array<ModCommand["_tag"]> = []
+  let fetches = 0
   const fetch: HubFetch = (url, init) => {
+    // Timers fire at once here, so a link retrying without end would spin: hold it instead.
+    if (++fetches > 100) return new Promise(() => undefined)
+    if (dispatch.getStore() === "Aborted") return Promise.reject(turnAbort())
     const request = {
       method: init.method,
       path: url.replace("http://hub.test", ""),
@@ -48,9 +82,13 @@ const harness = (
     modToken: "secret",
     hello: { sessionId: "s1", claudeSessionId: "c1", model: "claude-test" },
     fetch,
-    sleep: async (ms) => {
-      sleeps.push(ms)
+    after: (ms, fn) => {
+      const fate = options.timers?.[waits.length]
+      waits.push(ms)
+      if (fate === "Refused") throw turnAbort()
+      if (fate !== "Lost") queueMicrotask(() => dispatch.exit(fn))
     },
+    ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.runsCommands === false
       ? {}
       : {
@@ -62,7 +100,7 @@ const harness = (
     log: () => undefined,
     flushDelayMs: 0,
   })
-  return { link, requests, sleeps, statuses, handled }
+  return { link, requests, waits, statuses, handled }
 }
 
 const paths = (requests: ReadonlyArray<Request>) => requests.map((r) => `${r.method} ${r.path}`)
@@ -120,20 +158,20 @@ describe("HubLink", () => {
 
   test("backs off while the Hub is unreachable, then links", async () => {
     let failures = 4
-    const { link, sleeps, statuses } = harness((request) => {
+    const { link, waits, statuses } = harness((request) => {
       if (request.path === "/mod/hello") return failures-- > 0 ? new Error("ECONNREFUSED") : welcome
       return undefined
     })
     link.start()
     await settle()
     link.stop()
-    expect(sleeps).toEqual([1_000, 2_000, 4_000, 8_000])
+    expect(waits.filter((ms) => ms > 0)).toEqual([1_000, 2_000, 4_000, 8_000])
     expect(statuses.at(-1)).toBe("Linked")
     expect(statuses).toContain("Offline")
   })
 
   test("backs off when polling fails", async () => {
-    const { link, sleeps } = harness((request, index) => {
+    const { link, waits } = harness((request, index) => {
       if (request.path === "/mod/hello") return welcome
       if (index < 4) return { status: 502, text: "bad gateway" }
       return undefined
@@ -141,7 +179,7 @@ describe("HubLink", () => {
     link.start()
     await settle()
     link.stop()
-    expect(sleeps).toEqual([1_000, 2_000, 4_000])
+    expect(waits.filter((ms) => ms > 0)).toEqual([1_000, 2_000, 4_000])
   })
 
   test("stops when the Hub refuses the token", async () => {
@@ -200,7 +238,7 @@ describe("HubLink", () => {
 
   test("retries a failed post with backoff, keeping the order", async () => {
     let eventPosts = 0
-    const { link, requests, sleeps } = harness((request) => {
+    const { link, requests, waits } = harness((request) => {
       if (request.path === "/mod/hello") return welcome
       if (request.path === "/mod/events")
         return eventPosts++ < 2 ? new Error("ECONNRESET") : { status: 204, text: "" }
@@ -212,8 +250,75 @@ describe("HubLink", () => {
     const bodies = requests.filter((r) => r.path === "/mod/events").map((r) => r.body)
     expect(bodies).toHaveLength(3)
     expect(new Set(bodies).size).toBe(1)
-    expect(sleeps).toContain(1_000)
-    expect(sleeps).toContain(2_000)
+    expect(waits).toContain(1_000)
+    expect(waits).toContain(2_000)
+  })
+
+  describe("after a Stop (#165)", () => {
+    test("posts what a Stopped Turn's hooks report, and all after it", async () => {
+      const { link, requests } = harness(hub, { runsCommands: false })
+      link.start()
+      await settle()
+      inAbortedHook(() => link.report(delta("a")))
+      await settle()
+      link.report(delta("b"))
+      await settle()
+      link.stop()
+      expect(posted(requests)).toEqual(["a", "b"])
+    })
+
+    test("a flush timer that never fires holds events back only until it is overdue", async () => {
+      let now = 0
+      const { link, requests } = harness(hub, {
+        runsCommands: false,
+        timers: { 1: "Lost" },
+        now: () => now,
+      })
+      link.start()
+      await settle()
+      link.report(delta("a"))
+      await settle()
+      link.report(delta("b"))
+      await settle()
+      expect(posted(requests)).toEqual([])
+      now += LostTimerMs + 1
+      link.report(delta("c"))
+      await settle()
+      link.report(delta("d"))
+      await settle()
+      link.stop()
+      expect(posted(requests)).toEqual(["abc", "d"])
+    })
+
+    test("a flush timer refused at once posts the events then, and later ones after", async () => {
+      const { link, requests } = harness(hub, { runsCommands: false, timers: { 1: "Refused" } })
+      link.start()
+      await settle()
+      link.report(delta("a"))
+      await settle()
+      link.report(delta("b"))
+      await settle()
+      link.stop()
+      expect(posted(requests)).toEqual(["a", "b"])
+    })
+
+    test("polls on after running a Stop, and posts what follows", async () => {
+      let polls = 0
+      const { link, requests, handled } = harness((request) => {
+        if (!request.path.startsWith("/mod/commands")) return hub(request)
+        polls++
+        if (polls === 1) return commands({ seq: 1, message: stop })
+        if (polls === 2) return commands({ seq: 2, message: stop })
+        return undefined
+      })
+      link.start()
+      await settle()
+      inAbortedHook(() => link.report(delta("a")))
+      await settle()
+      link.stop()
+      expect(handled).toEqual(["StopTurn", "StopTurn"])
+      expect(posted(requests)).toEqual(["a"])
+    })
   })
 })
 

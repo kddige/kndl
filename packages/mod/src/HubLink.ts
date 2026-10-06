@@ -3,8 +3,14 @@
 // mod says hello again and polls from `after=0`, the Hub's numbering having started over. Other
 // failures are retried with a growing delay.
 //
-// It runs on what it is given (`fetch`, `sleep`), so the same code runs in Claude Code's mod
+// It runs on what it is given (`fetch`, `after`), so the same code runs in Claude Code's mod
 // runtime, which has no timers of its own, and under `bun test`.
+//
+// All of its work runs from its own timers, never inside the hook that reported an event. In
+// Claude Code a `$` call belongs to the hook's dispatch it was made in, wherever its `$` came from,
+// and once a Stop aborts the Turn, each wait or fetch made in that dispatch is refused at once
+// ("turn-abort"). A `tool.call` hook reports its call's end after the abort, so a flush waited
+// for there was refused, and the link never posted again (#165).
 
 import { MaxCommandWaitMs } from "@claude-hub/protocol"
 import type { ModCommand } from "@claude-hub/protocol"
@@ -45,7 +51,13 @@ export interface HubLinkOptions {
     readonly model: string
   }
   readonly fetch: HubFetch
-  readonly sleep: (ms: number) => Promise<void>
+  /**
+   * Calls `fn` once, `ms` from now, on its own: not in the dispatch of the hook that asked, which a
+   * Turn abort cuts short. In Claude Code, `$.clock.after`.
+   */
+  readonly after: (ms: number, fn: () => void) => void
+  /** Milliseconds since the epoch; `Date.now` by default. */
+  readonly now?: () => number
   /**
    * Runs a command from the Hub. Commands run one at a time, in order. Without it the link only
    * reports, and never polls: one plugin of the two runs the commands (ADR 0014).
@@ -60,6 +72,9 @@ export interface HubLinkOptions {
 /** How long to wait after the `attempt`th failure in a row: 1 s, doubling, at most 30 s. */
 export const retryDelay = (attempt: number) => Math.min(1_000 * 2 ** Math.min(attempt, 5), 30_000)
 
+/** A flush timer this long past its time never fired, so the next event schedules another. */
+export const LostTimerMs = 10_000
+
 type HelloOutcome = "Welcomed" | "Retry" | { readonly rejected: string }
 
 export class HubLink {
@@ -70,7 +85,8 @@ export class HubLink {
   private isGreeted = false
   private isStopped = false
   private isFlushing = false
-  private isFlushScheduled = false
+  /** The flush timer set and not yet fired, and when it is due. */
+  private flushTimer: { readonly dueAt: number } | undefined
   private flushFailures = 0
   /** The seq of the last command handled. */
   private after = 0
@@ -83,10 +99,12 @@ export class HubLink {
     }
   }
 
-  /** Says hello and starts polling for commands, if it runs them. */
+  /** Says hello and starts polling for commands, if it runs them, from a timer of its own. */
   start() {
     this.options.onStatus({ _tag: "Linking" })
-    void (this.options.onCommand === undefined ? this.sayHello() : this.pollLoop())
+    const begin = () =>
+      void (this.options.onCommand === undefined ? this.sayHello() : this.pollLoop())
+    if (!this.later(0, begin)) begin()
   }
 
   /** Stops polling and posting. */
@@ -156,7 +174,7 @@ export class HubLink {
           return false
         }
         this.options.onStatus({ _tag: "Offline" })
-        await this.options.sleep(retryDelay(attempt++))
+        await this.wait(retryDelay(attempt++))
       }
       return false
     })().finally(() => {
@@ -172,7 +190,7 @@ export class HubLink {
     const failed = async (why: string) => {
       if (failures === 0) this.options.log(`hub-link: polling for commands failed: ${why}`)
       this.options.onStatus({ _tag: "Offline" })
-      await this.options.sleep(retryDelay(failures++))
+      await this.wait(retryDelay(failures++))
     }
     while (!this.isStopped) {
       if (!this.isGreeted && !(await this.sayHello())) return
@@ -216,14 +234,41 @@ export class HubLink {
     }
   }
 
-  private scheduleFlush(delayMs = this.options.flushDelayMs ?? 100) {
-    if (this.isFlushScheduled || this.isStopped) return
-    this.isFlushScheduled = true
-    void (async () => {
-      await this.options.sleep(delayMs)
-      this.isFlushScheduled = false
-      await this.flush()
-    })()
+  /** Runs `fn` from a timer, `ms` from now; false if the timer couldn't be set. */
+  private later(ms: number, fn: () => void): boolean {
+    try {
+      this.options.after(ms, fn)
+      return true
+    } catch (error) {
+      this.options.log(`hub-link: couldn't set a timer: ${error}`)
+      return false
+    }
+  }
+
+  /** Waits `ms`; at once if the timer couldn't be set. */
+  private wait(ms: number) {
+    return new Promise<void>((resolve) => {
+      if (!this.later(ms, resolve)) resolve()
+    })
+  }
+
+  private scheduleFlush(delayMs = this.options.flushDelayMs ?? 100, isRetry = false) {
+    if (this.isStopped) return
+    const now = (this.options.now ?? Date.now)()
+    // One flush timer at a time, unless it never fired.
+    if (this.flushTimer !== undefined && now < this.flushTimer.dueAt + LostTimerMs) return
+    const timer = { dueAt: now + delayMs }
+    this.flushTimer = timer
+    const fire = () => {
+      // A timer replaced as lost does nothing if it fires after all.
+      if (this.flushTimer !== timer) return
+      this.flushTimer = undefined
+      void this.flush()
+    }
+    if (this.later(delayMs, fire)) return
+    // Post now instead, but not as a retry: one that failed would only fail again, at once.
+    this.flushTimer = undefined
+    if (!isRetry) void this.flush()
   }
 
   private async flush() {
@@ -265,6 +310,6 @@ export class HubLink {
     } finally {
       this.isFlushing = false
     }
-    if (this.outbox.size > 0) this.scheduleFlush(retryIn || undefined)
+    if (this.outbox.size > 0) this.scheduleFlush(retryIn || undefined, true)
   }
 }

@@ -95,7 +95,8 @@ const startLink = async ($: EngineInterface) => {
     modToken,
     hello: { sessionId, claudeSessionId: await $.session.id(), model: await $.session.model() },
     fetch: (url, init) => $.http.fetch(url, init),
-    sleep: (ms) => $.clock.sleep(ms),
+    // Its own timers, so a Stop can't cut what it does short (#165).
+    after: (ms, fn) => void $.clock.after(ms, fn),
     // hub-link-commands draws the link in the band; this one only reports.
     onStatus: () => undefined,
     log: (text) => $.ui.log(text, { to: "debug" }),
