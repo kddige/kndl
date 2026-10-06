@@ -26,6 +26,9 @@ Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-
 | `claude-hub runner install\|start\|stop\|status` | The same for the Runner's service. |
 | `claude-hub runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. For a Runner the Hub has, it replaces that Runner's token. Run it on the Hub's machine. A [pairing link](#claude-hub-runner-join) needs no access to it. |
 | `claude-hub secrets key` | Prints a new `HUB_SECRETS_KEY`, as [`bun run secrets-key`](#bun-run-secrets-key) does. It changes nothing. |
+| `claude-hub login [<hub>] [--no-browser]` | Signs the CLI in to a Hub as you, approving it in a browser. See [below](#claude-hub-login). |
+| `claude-hub logout` | Signs the CLI out: the Hub revokes its CLI token, and the CLI forgets it. |
+| `claude-hub whoami` | Which Hub the CLI is signed in to, as whom, and on which machine. Exits 1 when it isn't signed in, or the Hub refuses or doesn't answer. |
 | `claude-hub secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `claude-hub hub stop` first. Asks first; without a terminal it needs `--yes`. |
 
 `--help` on any command lists its flags, and `--version` prints the commit the CLI runs from, as `claude-hub v<commit>`.
@@ -92,6 +95,21 @@ The install's checkout belongs to the CLI: `update` discards changes made in it.
 
 On the Hub's machine, `update` leaves the Hub a note of its new commit before restarting it, and the restarted Hub asks each connected Runner that updates itself to follow ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)): the Runner checks the commit is on `origin/main`, the Hub puts its Sessions to sleep, and it moves, builds and restarts. The Runner on the Hub's machine is drained the same way rather than restarted under its Sessions; `update` restarts it at once instead when it can't follow (it's from before Runners followed the Hub, or its service file changed). Its running Sessions keep the copy of the mod each started with, so the mod `update` has already rebuilt in the checkout doesn't reach a Turn still running. On a machine with only a Runner, `update` moves that Runner and restarts it.
 
+### `claude-hub login`
+
+Signs the CLI in to a Hub, as the person who approves it there; see [Sign in the CLI](/how-to/sign-in-the-cli/). It works on any machine, with or without an install, and for any account on the Hub.
+
+| Argument or flag | What it does |
+|---|---|
+| `<hub>` | The Hub's URL, its `HUB_PUBLIC_URL`. A URL without a scheme is read as `https://`. Default: the Hub in `cli.json`, the one a `claude-hub` [installed from a Hub](#the-claude-hub-command-from-a-hub) came from. |
+| `--no-browser` | Doesn't wait for a browser on this machine: prints the sign-in page's address, and asks for the code the page shows. Needs a terminal. Over SSH (`SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` set), it does this anyway. |
+
+Without `--no-browser`, it opens the Hub's `/cli-login` page in the browser (`open` on macOS, `xdg-open` on Linux with a display) and waits on a free port on `127.0.0.1` for the page to send the browser back with a Login code. In a terminal, it also asks for the code, in case the browser can't come back. It waits up to 10 minutes, as long as a Login code lasts.
+
+It trades the code for a CLI token, named after the machine's short hostname, and writes the Hub's URL and the token to [`cli.json`](/reference/files-and-paths/), readable only by you. The CLI is signed in to one Hub at a time: signing in again replaces the token, and the Hub revokes the one before. The token is never printed.
+
+`claude-hub logout` asks the Hub to revoke the token, and removes it from `cli.json`, keeping the Hub's URL. When the Hub can't be reached, it removes the token anyway and says to revoke the machine under **CLI tokens** on your **Account** page.
+
 ## The `claude-hub` command from a Hub
 
 A Hub serves the same CLI, built from the commit it runs with `bun build --compile` into one binary, for macOS and Linux on arm64 and x64. Install it with the Hub's install script; see [Install the CLI from a Hub](/how-to/install-the-cli-from-a-hub/).
@@ -100,7 +118,7 @@ A Hub serves the same CLI, built from the commit it runs with `bun build --compi
 curl -fsSL https://hub.example.com/cli | sh
 ```
 
-It has the same commands, but runs none of the ones above: they set up and run a Hub or a Runner from an install's checkout. Each says it needs a claude-hub install and how to get one, or, on a machine with an install, which command runs it, and exits 1. `--help` and `--version` work.
+It has the same commands, but runs none of the ones above that set up and run a Hub or a Runner from an install's checkout: only `login`, `logout` and `whoami`. Each says it needs a claude-hub install and how to get one, or, on a machine with an install, which command runs it, and exits 1. `--help` and `--version` work.
 
 Each run first asks the Hub it was installed from for its commit, waiting up to two seconds. When the Hub runs another commit, it downloads that commit's binary, checks that it runs, renames it over itself and runs the command again. [`CLAUDE_HUB_NO_SELF_UPDATE`](/reference/configuration/#the-claude-hub-command-from-a-hub) turns that off. The CLI from an install never updates itself: `claude-hub update` updates it with the install.
 

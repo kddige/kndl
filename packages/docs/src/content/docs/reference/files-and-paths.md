@@ -29,7 +29,7 @@ Outside the home:
 | Path | What it is |
 |---|---|
 | `~/.local/bin/claude-hub` | The `claude-hub` command: a small script that runs the install's CLI. On a machine with no install, it can be the binary [installed from a Hub](/how-to/install-the-cli-from-a-hub/) instead (`CLAUDE_HUB_BIN_DIR` moves it). |
-| `~/.config/claude-hub/cli.json` | For the binary installed from a Hub: the Hub it updates from, as `{"hub":"https://hub.example.com"}`. Readable only by you. `$XDG_CONFIG_HOME/claude-hub/cli.json` when that is set. |
+| `~/.config/claude-hub/cli.json` | The Hub the CLI is signed in to or was installed from, as `{"hub":"https://hub.example.com"}`, and after [`claude-hub login`](/how-to/sign-in-the-cli/), its CLI token, `"token":"chc_…"`. A binary installed from a Hub updates itself from that Hub. Readable only by you (`0600`, in a `0700` directory). `$XDG_CONFIG_HOME/claude-hub/cli.json` when that is set. |
 | `~/Library/LaunchAgents/io.github.kddige.claude-hub.hub.plist`, `….runner.plist` | macOS: the services, as launchd agents. |
 | `~/.config/systemd/user/claude-hub-hub.service`, `claude-hub-runner.service` | Linux: the services, as systemd user units (`$XDG_CONFIG_HOME/systemd/user` when that is set). |
 

@@ -365,7 +365,10 @@ export const login = (
         `Signed in to ${hub} as ${signedIn.you.login}, on ${signedIn.machine}. The CLI token is in ${on.configPath}, readable only by you.`,
       )
       if (before.hub !== undefined && before.hub !== hub) {
-        yield* ui.log("info", `The CLI now updates itself from ${hub}, not ${before.hub}.`)
+        yield* ui.log(
+          "info",
+          `The CLI's Hub is now ${hub}, not ${before.hub}: a claude-hub installed from a Hub updates itself from it.`,
+        )
       }
     }),
   )

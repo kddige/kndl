@@ -1,6 +1,6 @@
 ---
 title: Signing in
-description: Sign-in fails, doesn't stick, or isn't offered, with GitHub or with dev login.
+description: Sign-in fails, doesn't stick, or isn't offered, with GitHub, with dev login, or for the claude-hub CLI.
 sidebar:
   order: 3
 ---
@@ -84,3 +84,35 @@ This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on 
 **Why.** Dev login is for one person on one machine, so the Hub only accepts it from `127.0.0.1` or `::1`. A proxy or tunnel in front of the Hub can make the request arrive from elsewhere.
 
 **Fix.** Open the web UI on the Hub's own machine, without a proxy, or use GitHub sign-in.
+
+## After Approve, the browser can't connect to `127.0.0.1`
+
+**What you see.** You ran `claude-hub login` and pressed **Approve**, and the browser says it can't reach `127.0.0.1` or that the connection was refused.
+
+**Why.** The page sends the browser back to the CLI on the machine the browser runs on. When the CLI runs on another machine, such as over a remote desktop or a shell the CLI doesn't know is SSH, nothing listens there.
+
+**Fix.** Go back a page in the browser: the sign-in page shows the Login code. Paste it in the terminal, where the CLI asks `Waiting for the browser. Or paste the code the page shows`. To go straight to the code next time, run `claude-hub login --no-browser`. See [Sign in the CLI](/how-to/sign-in-the-cli/#sign-in-over-ssh).
+
+## "That code isn't valid"
+
+**What you see.** `claude-hub login` says:
+
+```
+That code isn't valid: it may have expired or been used. Run claude-hub login again.
+```
+
+**Why.** The Hub has no Login code that the CLI can trade. A code lasts 10 minutes and works once; restarting the Hub forgets every code; and a code only works for the `claude-hub login` that opened its page, so one approved on a page another run opened is refused, and spent.
+
+**Fix.** Run `claude-hub login` again, open the address this run prints, and approve within 10 minutes.
+
+## "doesn't accept this machine's CLI token"
+
+**What you see.** `claude-hub whoami` says:
+
+```
+https://hub.example.com doesn't accept this machine's CLI token: it was revoked. Run claude-hub login to sign in again.
+```
+
+**Why.** The Hub has no CLI token like the one in `cli.json`: someone revoked it on the **Account** page, under **CLI tokens**, or the Hub was set up again with a new database. The Hub refuses a revoked token from its next request on.
+
+**Fix.** Run `claude-hub login` to sign the CLI in again. See [Sign in the CLI](/how-to/sign-in-the-cli/).

@@ -106,7 +106,7 @@ The install script a Hub serves at `/cli`, and the binary it installs ([Install 
 |---|---|---|
 | `CLAUDE_HUB_BIN_DIR` | `~/.local/bin` | Where the install script puts `claude-hub`. |
 | `CLAUDE_HUB_URL` | the Hub's `HUB_PUBLIC_URL` origin | The Hub the install script downloads from and records, when your machine reaches it at another URL. |
-| `XDG_CONFIG_HOME` | `~/.config` | Where the install script records the Hub, in `claude-hub/cli.json`, and where the binary reads it. |
+| `XDG_CONFIG_HOME` | `~/.config` | Where the install script records the Hub, in `claude-hub/cli.json`, and where the binary reads it. `claude-hub login` keeps its CLI token there too, from either CLI. |
 | `CLAUDE_HUB_NO_SELF_UPDATE` | unset | Set to anything, the binary never updates itself to the Hub's commit. |
 
 ## What a Runner gives Claude Code

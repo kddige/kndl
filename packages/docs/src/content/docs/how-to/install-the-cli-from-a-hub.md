@@ -90,11 +90,15 @@ On a machine with an install, it names the install's own command to run instead.
 
 ## Remove it
 
+If you [signed it in](/how-to/sign-in-the-cli/), sign it out first, so the Hub revokes its CLI token:
+
 ```sh
+claude-hub logout
 rm ~/.local/bin/claude-hub ~/.config/claude-hub/cli.json
 ```
 
 ## Next steps
 
+- [Sign in the CLI](/how-to/sign-in-the-cli/): sign it in to the Hub as you.
 - [Commands](/reference/commands/#the-claude-hub-command-from-a-hub): what the command from a Hub does, and the Hub's `/cli` routes.
 - [Install](/how-to/install/): make a machine a Hub or a Runner.
