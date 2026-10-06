@@ -14,10 +14,12 @@ import {
   stopService,
 } from "./Actions.ts"
 import { AppSetupChoices } from "./AppManifest.ts"
+import { cliConfigPath } from "./CliConfig.ts"
 import { fail } from "./Failure.ts"
 import { configuredRoles, platform, serviceState, serviceTarget } from "./Host.ts"
 import { requireCheckoutCli } from "./InstallGate.ts"
 import { resolveLayout, type Role, Roles } from "./Layout.ts"
+import { login, loginContext, logout, whoami } from "./Login.ts"
 import { doctor, uninstall, update } from "./Maintain.ts"
 import { type RoleChoice, RoleChoices, type Reach, Reaches } from "./Onboard.ts"
 import { onboard } from "./OnboardFlow.ts"
@@ -387,6 +389,36 @@ const secretsCommand = Command.make("secrets").pipe(
   Command.withDescription("The Hub's secrets key, and starting over without it"),
 )
 
+// Signing the CLI in to a Hub (Login.ts): anyone with an account there, on any machine.
+const signedIn = () => loginContext(cliConfigPath())
+
+const loginCommand = Command.make(
+  "login",
+  {
+    hub: Argument.String("hub").pipe(
+      Argument.withDescription("The Hub's URL; by default the one the CLI was installed from"),
+      Argument.optional,
+      Argument.map(Option.getOrUndefined),
+    ),
+    noBrowser: off("no-browser").pipe(
+      Flag.withDescription("Don't wait for a browser here: paste the code the Hub's page shows"),
+    ),
+  },
+  (options) => login(options, signedIn()),
+).pipe(
+  Command.withDescription(
+    "Sign the CLI in to a Hub, approving it in a browser; replaces any earlier sign-in",
+  ),
+)
+
+const logoutCommand = Command.make("logout", {}, () => logout(signedIn())).pipe(
+  Command.withDescription("Sign the CLI out: revoke its CLI token, and forget it"),
+)
+
+const whoamiCommand = Command.make("whoami", {}, () => whoami(signedIn())).pipe(
+  Command.withDescription("Which Hub the CLI is signed in to, and as whom"),
+)
+
 export const cli = Command.make("claude-hub").pipe(
   Command.withSubcommands([
     onboardCommand,
@@ -398,6 +430,11 @@ export const cli = Command.make("claude-hub").pipe(
     hubCommand,
     runnerCommand,
     secretsCommand,
+    loginCommand,
+    logoutCommand,
+    whoamiCommand,
   ]),
-  Command.withDescription("Install, run and look after a claude-hub Hub and Runner"),
+  Command.withDescription(
+    "Install, run and look after a claude-hub Hub and Runner; sign the CLI in to a Hub",
+  ),
 )
