@@ -25,6 +25,7 @@ import {
   TerminalInput,
   TerminalResize,
 } from "./Terminal.ts"
+import { TunnelId } from "./Tunnel.ts"
 import {
   ApplyUpdate,
   CheckUpdate,
@@ -89,6 +90,11 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * stored none (ADR 0015). A Runner from before doesn't say: it is taken to have one.
    */
   ownClaudeCredential: Schema.optionalKey(Schema.Boolean),
+  /**
+   * It takes an {@link OpenTunnel} (#177). A Runner from before doesn't say so: the Hub opens no
+   * tunnel to its Sessions.
+   */
+  forwardsPorts: Schema.optionalKey(Schema.Literal(true)),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
@@ -171,6 +177,16 @@ export const SessionPurged = Schema.TaggedStruct("SessionPurged", {
 })
 export type SessionPurged = typeof SessionPurged.Type
 
+/**
+ * An {@link OpenTunnel} the Runner couldn't open: the Session doesn't run here, the address isn't
+ * loopback, or nothing in the Sandbox took the connection. Sent instead of dialing back.
+ */
+export const TunnelFailed = Schema.TaggedStruct("TunnelFailed", {
+  tunnelId: TunnelId,
+  message: Schema.String,
+})
+export type TunnelFailed = typeof TunnelFailed.Type
+
 /** Every message a Runner sends the Hub. */
 export const RunnerToHub = Schema.Union([
   RunnerHello,
@@ -192,6 +208,7 @@ export const RunnerToHub = Schema.Union([
   UpdateChecked,
   UpdateProgress,
   UpdateFailed,
+  TunnelFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type RunnerToHub = typeof RunnerToHub.Type
 
@@ -290,6 +307,22 @@ export const PurgeSession = Schema.TaggedStruct("PurgeSession", {
 })
 export type PurgeSession = typeof PurgeSession.Type
 
+/**
+ * Open one connection to a port in a Session's Sandbox, for a client of the Hub (#177, ADR 0016):
+ * the Runner connects to `address` and `port` in the Sandbox, then dials the Hub back at
+ * `/runner/tunnel/<tunnelId>` with its Runner token and carries the connection's bytes over that
+ * WebSocket (Tunnel.ts). Answered with {@link TunnelFailed} when it can't. Sent only to a Runner
+ * whose hello says it `forwardsPorts`. `address` is `127.0.0.1` or `::1`, in the family the port
+ * listens on; a Runner refuses any other.
+ */
+export const OpenTunnel = Schema.TaggedStruct("OpenTunnel", {
+  tunnelId: TunnelId,
+  sessionId: SessionId,
+  port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+  address: Schema.String,
+})
+export type OpenTunnel = typeof OpenTunnel.Type
+
 /** Every message the Hub sends a Runner. */
 export const HubToRunner = Schema.Union([
   RunnerWelcome,
@@ -311,5 +344,6 @@ export const HubToRunner = Schema.Union([
   ClaudeCredentialRefused,
   CheckUpdate,
   ApplyUpdate,
+  OpenTunnel,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToRunner = typeof HubToRunner.Type

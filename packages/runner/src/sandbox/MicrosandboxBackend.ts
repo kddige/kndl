@@ -22,6 +22,8 @@
 // - microsandbox writes every command's output to the Sandbox's `logs/exec.log` on the host, so
 //   that file is linked to /dev/null right after create or restore, before the first command:
 //   output may hold variable values (ADR 0009, spike #46).
+// - TCP connections into the guest, for tunnels (#177), go through agentd's `core.tcp` streams on
+//   an AgentClient of their own per Sandbox: see AgentTcp.ts. It is dropped when the Sandbox stops.
 //
 // Snapshots (ADR 0009, spike #46): disk snapshots of a stopped Sandbox, kept in a group per
 // Runner and Environment. A restored Sandbox comes back with no labels, workdir or env: labels
@@ -42,6 +44,7 @@ import type {
 
 type MountBuilder = InstanceType<typeof MountBuilderClass>
 import { RunnerConfig } from "../RunnerConfig.ts"
+import { makeAgentTcp } from "./AgentTcp.ts"
 import {
   isSnapshotGroup,
   isSnapshotName,
@@ -288,6 +291,12 @@ export const make = Effect.fnUntraced(function* ({
     Effect.forEach([...connections.keys()], forget, { discard: true }),
   )
 
+  // Forwarded TCP connections, on an AgentClient per Sandbox of their own (#177).
+  const agentTcp = makeAgentTcp()
+  const dropTcp = (sessionId: SessionId) =>
+    Effect.promise(() => agentTcp.drop(sandboxName(sessionId)))
+  yield* Effect.addFinalizer(() => Effect.promise(() => agentTcp.dropAll()))
+
   const remember = (sessionId: SessionId, sandbox: MsbSandbox) =>
     Effect.gen(function* () {
       yield* forget(sessionId)
@@ -452,6 +461,7 @@ export const make = Effect.fnUntraced(function* ({
     sessionId: SessionId,
   ) {
     const h = yield* handle(sessionId)
+    yield* dropTcp(sessionId)
     if (!isRunning(h.status)) return yield* forget(sessionId)
     yield* stopDocker(sessionId)
     yield* call("stop Sandbox", sessionId, () => h.stop())
@@ -473,6 +483,7 @@ export const make = Effect.fnUntraced(function* ({
         yield* stopDocker(sessionId)
       }
       yield* forget(sessionId)
+      yield* dropTcp(sessionId)
       yield* call("destroy Sandbox", sessionId, () => h.value.destroy())
     }
     if (keep === true) return
@@ -737,6 +748,22 @@ export const make = Effect.fnUntraced(function* ({
     execStream,
     spawn,
     exec: (sessionId, request) => collectExec(execStream(sessionId, request)),
+    connectTcp: (sessionId, address, port, events) =>
+      Effect.gen(function* () {
+        const h = yield* handle(sessionId)
+        if (!isRunning(h.status)) {
+          return yield* new SandboxNotRunning({ sessionId, state: stateOf(h.status) })
+        }
+        const connection = yield* call(`connect to port ${port}`, sessionId, () =>
+          agentTcp.connect(sandboxName(sessionId), address, port, events),
+        )
+        return {
+          write: (data: Uint8Array) =>
+            call(`write to port ${port}`, sessionId, () => connection.write(data)),
+          end: Effect.promise(() => connection.end()),
+          close: Effect.promise(() => connection.close()),
+        }
+      }),
     readFile: (sessionId, path) =>
       withSandbox(sessionId, "read file", (sandbox) => sandbox.fs().read(path)),
     readTextFile: (sessionId, path) =>

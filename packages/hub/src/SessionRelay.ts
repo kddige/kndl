@@ -105,6 +105,11 @@
 //   Runner's own: a Runner asks for it just before it starts Claude Code, and only for a Session
 //   it runs. A Session neither has a credential for doesn't start: CreateSession is refused, and
 //   a wake leaves it Asleep. Every credential is redacted from every Session.
+// - Tunnels (#177, ADR 0016): a connection to one of an Active Session's Open ports. Once
+//   TunnelRoutes.ts has checked the caller's access, `openTunnel` checks the Session can take
+//   one, picks the loopback address in the port's address family, and sends its Runner an
+//   OpenTunnel; Tunnels.ts pairs the client with the socket the Runner dials back. A Runner that
+//   says TunnelFailed, or goes offline first, fails the tunnel.
 // - CLI tokens (CliTokens.ts): each person is sent their own (CliTokenList) after the welcome and
 //   whenever one is made or revoked, and may revoke them from any of their web clients.
 //
@@ -182,7 +187,10 @@ import {
   modelNotFoundText,
   ModelSwitched,
   ModTokenReissued,
+  loopbackFor,
+  OpenTunnel,
   RelaunchSession,
+  TunnelCloseCode,
 } from "@claude-hub/protocol"
 import {
   Clock,
@@ -232,6 +240,7 @@ import { creatorIdentity, SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { type ModelSetting, Sessions } from "./Sessions.ts"
 import { randomId } from "./Tokens.ts"
+import { type PendingTunnel, TunnelRefused, Tunnels } from "./Tunnels.ts"
 
 /** A connection to a peer, as its channel gives it: sending never waits. */
 export interface Peer<Out> {
@@ -314,6 +323,10 @@ interface AccessVerdict {
   readonly refusal?: string
 }
 
+/** Fails opening a tunnel, with the close code its client gets (ADR 0016). */
+const refuseTunnel = (code: TunnelCloseCode, message: string) =>
+  Effect.fail(new TunnelRefused({ code, message }))
+
 /** Why a command about a Repo is refused: alike whether the Repo exists or not (ADR 0003). */
 const noRepoAccess = (repo: string) =>
   `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`
@@ -374,6 +387,15 @@ export class SessionRelay extends Context.Service<
       sessionId: SessionId,
       events: ReadonlyArray<ModEvent>,
     ) => Effect.Effect<void, SqlError>
+    /**
+     * Asks the Session's Runner to open a tunnel to one of its Open ports (#177), for a caller
+     * already checked for access: refused unless the Session is Active, its Runner online and
+     * new enough, and something listens on the port.
+     */
+    readonly openTunnel: (
+      sessionId: SessionId,
+      port: number,
+    ) => Effect.Effect<PendingTunnel, TunnelRefused | SqlError>
   }
 >()("@claude-hub/hub/SessionRelay") {
   static readonly layer = Layer.effect(
@@ -394,6 +416,7 @@ export class SessionRelay extends Context.Service<
       const hubVersion = yield* HubVersion
       const updatePush = yield* RunnerUpdatePush
       const claudeCredentials = yield* ClaudeCredentials
+      const tunnels = yield* Tunnels
       const cliTokens = yield* CliTokens
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
@@ -428,6 +451,8 @@ export class SessionRelay extends Context.Service<
         readonly login: RunnerAccount
         /** Whether it has a Claude credential of its own for Sessions whose Creator has none. */
         readonly ownClaudeCredential: boolean
+        /** Whether it takes an OpenTunnel (#177). */
+        readonly forwardsPorts: boolean
       }
 
       const webClients = new Set<WebClient>()
@@ -2444,6 +2469,16 @@ export class SessionRelay extends Context.Service<
             )
             return
           }
+          if (message._tag === "TunnelFailed") {
+            return yield* tunnels.fail(
+              message.tunnelId,
+              runner.id,
+              new TunnelRefused({
+                code: TunnelCloseCode.PortUnreachable,
+                message: message.message,
+              }),
+            )
+          }
           if (message._tag === "SessionPurged") {
             // The Session is gone from the Hub by now; only the note to purge it is left.
             if (!(yield* sessions.purgeDone(message.sessionId, runner.id))) {
@@ -2618,6 +2653,7 @@ export class SessionRelay extends Context.Service<
             updater: hello.updater,
             relaunches: hello.relaunches === true,
             ownClaudeCredential: hello.ownClaudeCredential !== false,
+            forwardsPorts: hello.forwardsPorts === true,
           }
           yield* serialized(
             Effect.gen(function* () {
@@ -2687,6 +2723,7 @@ export class SessionRelay extends Context.Service<
               Effect.gen(function* () {
                 if (onlineRunners.get(runner.id) !== runner) return
                 onlineRunners.delete(runner.id)
+                yield* tunnels.runnerGone(runner.id)
                 yield* runnerUpdates.gone(runner.id)
                 yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
                 yield* environmentRelay.runnerGone(runner)
@@ -2871,6 +2908,62 @@ export class SessionRelay extends Context.Service<
       const redeemPairing = (code: string, name: string) =>
         serialized(runnerRelay.redeem(code, name))
 
+      const openTunnel = (sessionId: SessionId, port: number) =>
+        serialized(
+          Effect.gen(function* () {
+            const session = yield* sessions.get(sessionId)
+            if (Option.isNone(session)) {
+              return yield* refuseTunnel(TunnelCloseCode.NoSuchSession, "There is no such Session.")
+            }
+            const offline = "The Session's Runner is offline."
+            switch (session.value.state) {
+              case "Asleep":
+                return yield* refuseTunnel(
+                  TunnelCloseCode.NotActive,
+                  "The Session is Asleep: wake it first.",
+                )
+              case "Archived":
+                return yield* refuseTunnel(TunnelCloseCode.NotActive, "The Session is archived.")
+              case "Frozen":
+                return yield* refuseTunnel(TunnelCloseCode.RunnerOffline, offline)
+              case "Active":
+                break
+            }
+            if (stopping.has(sessionId)) {
+              return yield* refuseTunnel(
+                TunnelCloseCode.NotActive,
+                "The Session is going to sleep.",
+              )
+            }
+            const runner = onlineRunners.get(session.value.runnerId)
+            if (runner === undefined)
+              return yield* refuseTunnel(TunnelCloseCode.RunnerOffline, offline)
+            if (!runner.forwardsPorts) {
+              return yield* refuseTunnel(
+                TunnelCloseCode.RunnerTooOld,
+                `${runner.name} runs a version from before forwarding ports: update it.`,
+              )
+            }
+            const open = openPorts.get(sessionId)?.find((listening) => listening.port === port)
+            if (open === undefined) {
+              return yield* refuseTunnel(
+                TunnelCloseCode.PortNotOpen,
+                `Nothing listens on port ${port} in the Session's Sandbox.`,
+              )
+            }
+            const tunnel = yield* tunnels.register(runner.id)
+            runner.peer.send(
+              OpenTunnel.make({
+                tunnelId: tunnel.tunnelId,
+                sessionId,
+                port,
+                address: loopbackFor(open.addresses),
+              }),
+            )
+            return tunnel
+          }),
+        )
+
       const cliTokensChanged = (participantId: ParticipantId) =>
         serialized(
           Effect.gen(function* () {
@@ -2893,6 +2986,7 @@ export class SessionRelay extends Context.Service<
         cliTokensChanged,
         modHello,
         modEvents,
+        openTunnel,
       })
     }),
   )

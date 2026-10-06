@@ -16,7 +16,7 @@ import { CliBuilds } from "./CliBuilds.ts"
 import { DatabaseFile, DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
-import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
+import { HubRoutes, HubServices, idleTimeoutSeconds, websocketOptions } from "./Hub.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { holdHubLock } from "./HubLock.ts"
 import { drainFirst } from "./HubShutdown.ts"
@@ -31,7 +31,12 @@ import { announceWebUi } from "./WebUi.ts"
 
 const ServerLive = Layer.unwrap(
   Effect.map(HubConfig, ({ host, port }) =>
-    BunHttpServer.layer({ hostname: host, port, idleTimeout: idleTimeoutSeconds }),
+    BunHttpServer.layer({
+      hostname: host,
+      port,
+      idleTimeout: idleTimeoutSeconds,
+      websocket: websocketOptions,
+    }),
   ),
 )
 

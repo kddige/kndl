@@ -622,7 +622,8 @@ export const SessionsLive = Layer.effect(
           return Effect.logWarning(`Ignored a ${incoming._tag} after the handshake`)
         case "CheckUpdate":
         case "ApplyUpdate":
-          // The connection hands these to the Updater.
+        case "OpenTunnel":
+          // The connection hands these to the Updater, and tunnels to Tunnels.ts.
           return Effect.void
       }
     }

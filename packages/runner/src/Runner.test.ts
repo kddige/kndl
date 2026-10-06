@@ -29,6 +29,7 @@ import {
   sessionId,
   writeFakeMod,
 } from "./testSupport.ts"
+import { Tunnels } from "./Tunnels.ts"
 import { Updater } from "./Updater.ts"
 
 const token = "chr_test.secret"
@@ -222,6 +223,7 @@ function runOn(
   let hubGit: HubGit["Service"] | undefined
   const layer = SessionsLive.pipe(
     Layer.provide(openPorts.layer),
+    Layer.provideMerge(Tunnels.refusing),
     Layer.provideMerge(
       HubGitLive.pipe(
         Layer.tap((context) => Effect.sync(() => void (hubGit = Context.get(context, HubGit)))),
@@ -304,6 +306,8 @@ describe("connecting", () => {
       relaunches: true,
       // Whether it has a Claude credential of its own, for Sessions whose Creator has none (#150).
       ownClaudeCredential: false,
+      // It opens tunnels to a Session's Open ports (#177).
+      forwardsPorts: true,
     })
   })
 

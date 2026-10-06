@@ -40,6 +40,7 @@ import {
   writeFakeMod,
 } from "./testSupport.ts"
 import { makeTmux, Tmux } from "./Tmux.ts"
+import { Tunnels } from "./Tunnels.ts"
 import { Updater } from "./Updater.ts"
 
 const tmuxSocket = `claude-hub-mirror-test-${process.pid}`
@@ -176,6 +177,7 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
   const sessionsRoot = join(dir, "sessions")
   const layer = SessionsLive.pipe(
     Layer.provide(new FakeOpenPorts().layer),
+    Layer.provideMerge(Tunnels.refusing),
     Layer.provideMerge(HubGitLive),
     Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubClaudeCredentialLive),

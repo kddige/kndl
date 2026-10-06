@@ -20,7 +20,7 @@ import { DatabaseTest } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
-import { HubRoutes, HubServices, idleTimeoutSeconds } from "./Hub.ts"
+import { HubRoutes, HubServices, idleTimeoutSeconds, websocketOptions } from "./Hub.ts"
 import {
   DefaultArchiveRetention,
   DefaultRepoAccessTtl,
@@ -95,7 +95,12 @@ export async function startHub(
     HttpRouter.serve(HubRoutes, { disableLogger: true, disableListenLog: true }),
   ).pipe(
     Layer.provideMerge(
-      BunHttpServer.layer({ hostname: "127.0.0.1", port: 0, idleTimeout: idleTimeoutSeconds }),
+      BunHttpServer.layer({
+        hostname: "127.0.0.1",
+        port: 0,
+        idleTimeout: idleTimeoutSeconds,
+        websocket: websocketOptions,
+      }),
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),

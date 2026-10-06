@@ -123,6 +123,36 @@ export interface ExecResult {
   readonly stderr: string
 }
 
+// ── Connecting to a port ───────────────────────────────────────────────────
+
+/**
+ * What a TCP connection into the guest hands on (#177), as it comes.
+ *
+ * - `data` can't hold the connection back: agentd's can't be without holding up every other
+ *   connection into the Sandbox (AgentTcp.ts), so the backend hands on everything as it comes,
+ *   and the consumer bounds what it keeps itself.
+ * - `closed` comes once, last. `lost` says the connection broke rather than either side closing
+ *   it, as when the Sandbox stops.
+ */
+export interface GuestTcpEvents {
+  /** Bytes from the guest's side, in order. */
+  readonly data: (bytes: Uint8Array) => void
+  /** The guest's side sends no more; it may still read. */
+  readonly eof: () => void
+  /** The connection is over. */
+  readonly closed: (lost: boolean) => void
+}
+
+/** A TCP connection the Runner opened to a port in a Sandbox. */
+export interface GuestTcpConnection {
+  /** Sends bytes to the guest's side; done once the backend has taken them. */
+  readonly write: (data: Uint8Array) => Effect.Effect<void, SandboxError>
+  /** Sends no more: a half-close. */
+  readonly end: Effect.Effect<void>
+  /** Closes the connection. Does nothing the second time. */
+  readonly close: Effect.Effect<void>
+}
+
 // ── Observing Sandboxes ────────────────────────────────────────────────────
 
 /** A Session's Sandbox and volumes as the backend finds them. */
@@ -292,6 +322,17 @@ export interface SandboxBackendShape {
     path: string,
     data: string | Uint8Array,
   ) => Effect.Effect<void, SandboxError>
+  /**
+   * Opens a TCP connection to `address`:`port` inside the running Sandbox, from the guest's own
+   * side, so it reaches a server bound to loopback (#177, ADR 0016). Fails if nothing listens
+   * there.
+   */
+  readonly connectTcp: (
+    sessionId: SessionId,
+    address: string,
+    port: number,
+    events: GuestTcpEvents,
+  ) => Effect.Effect<GuestTcpConnection, SandboxError>
   /** Current usage, or none while the Sandbox is not running or its metrics aren't ready yet. */
   readonly metrics: (
     sessionId: SessionId,

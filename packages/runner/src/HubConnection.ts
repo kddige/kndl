@@ -12,6 +12,7 @@ import { ClaudeModels } from "./ClaudeModels.ts"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig, runnerConnectionUrl, runnerSocketUrl } from "./RunnerConfig.ts"
 import { Sessions } from "./Sessions.ts"
+import { Tunnels } from "./Tunnels.ts"
 import { Updater } from "./Updater.ts"
 
 /**
@@ -87,7 +88,8 @@ function parseJson(text: string): unknown {
 
 /**
  * Stays connected to the Hub: connects with the Runner token, says hello, and on the welcome
- * hands the Hub's messages to {@link Sessions}, and those about updating to the {@link Updater}.
+ * hands the Hub's messages to {@link Sessions}, those about updating to the {@link Updater}, and
+ * those opening tunnels to {@link Tunnels}.
  * Reconnects with exponential backoff, which starts over after every welcome. Never ends: when the
  * Hub turns it away, it says what to do, updates itself if it can, and retries slowly.
  */
@@ -136,6 +138,7 @@ const connectOnce = Effect.scoped(
     const config = yield* RunnerConfig
     const sessions = yield* Sessions
     const updater = yield* Updater
+    const tunnels = yield* Tunnels
     const hub = yield* HubLink
     const makeWebSocket = yield* Socket.WebSocketConstructor
     const url = runnerSocketUrl(config.hubUrl)
@@ -178,6 +181,7 @@ const connectOnce = Effect.scoped(
         ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
         ...(models !== undefined && { models }),
         relaunches: true,
+        forwardsPorts: true,
         ownClaudeCredential: ownAccount !== undefined,
       }),
     ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
@@ -215,7 +219,7 @@ const connectOnce = Effect.scoped(
     yield* sessions.snapshotAll
 
     // Messages from the rest of the batch the welcome came in, then everything after it.
-    const route = (text: string) => dispatch(sessions, updater, text)
+    const route = (text: string) => dispatch(sessions, updater, tunnels, text)
     yield* Effect.forEach(first.slice(1), route, { discard: true })
     return yield* Effect.forever(
       pull.pipe(Effect.flatMap((batch) => Effect.forEach(batch, route, { discard: true }))),
@@ -223,13 +227,20 @@ const connectOnce = Effect.scoped(
   }),
 )
 
-const dispatch = (sessions: Sessions["Service"], updater: Updater["Service"], text: string) => {
+const dispatch = (
+  sessions: Sessions["Service"],
+  updater: Updater["Service"],
+  tunnels: Tunnels["Service"],
+  text: string,
+) => {
   const message = decodeIncoming(parseJson(text))
   if (message._tag === "Failure") {
     return Effect.logWarning("Ignored a message from the Hub the Runner could not decode")
   }
   const incoming = message.value
-  return incoming._tag === "CheckUpdate" || incoming._tag === "ApplyUpdate"
-    ? updater.handle(incoming)
-    : sessions.handle(incoming)
+  if (incoming._tag === "CheckUpdate" || incoming._tag === "ApplyUpdate") {
+    return updater.handle(incoming)
+  }
+  if (incoming._tag === "OpenTunnel") return tunnels.open(incoming)
+  return sessions.handle(incoming)
 }

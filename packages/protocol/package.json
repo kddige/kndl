@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./home": "./src/Home.ts",
-    "./checkout": "./src/Checkout.ts"
+    "./checkout": "./src/Checkout.ts",
+    "./tunnel-end": "./src/TunnelEnd.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
