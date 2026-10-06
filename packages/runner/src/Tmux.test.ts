@@ -138,6 +138,27 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
   }, 15_000)
 
+  test("gives the process the launch's PATH, which tmux takes from its client", async () => {
+    const id = sessionId("tmux-path")
+    const path = `/claude-hub-test-bin:${process.env.PATH ?? "/usr/bin:/bin"}`
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      yield* tmux.launch({
+        sessionId: id,
+        cwd: tmpdir(),
+        argv: ["sh", "-c", 'echo "path=$PATH"'],
+        env: { PATH: path },
+        size: { cols: 400, rows: 5 },
+      })
+      yield* Effect.sleep("300 millis")
+      const printed = yield* tmux.lastOutput(id)
+      expect(printed).toContain(`path=${path}`)
+      yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.provide(TestTmux)))
+  }, 15_000)
+
   test("terminates the process with SIGTERM, in the terminal's own Sandbox", async () => {
     const id = sessionId("tmux-3")
     const program = Effect.gen(function* () {

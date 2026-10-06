@@ -147,8 +147,14 @@ const sandboxMessage = (error: SandboxError) =>
  */
 export const makeTmux = (backend: TmuxBackend) => {
   // A failure's message is tmux's own, never its arguments: a launch's carry the Session token.
-  const tmux = (sessionId: SessionId, args: ReadonlyArray<string>) =>
-    backend.exec(sessionId, { command: "tmux", args: [...guestServer, ...args] }).pipe(
+  // `env` is the tmux client's, over the Sandbox's.
+  const tmux = (
+    sessionId: SessionId,
+    args: ReadonlyArray<string>,
+    env?: Readonly<Record<string, string>>,
+  ) => {
+    const command = { command: "tmux", args: [...guestServer, ...args] }
+    return backend.exec(sessionId, env === undefined ? command : { ...command, env }).pipe(
       Effect.mapError((error) => new TmuxError({ message: sandboxMessage(error) })),
       Effect.flatMap((result) =>
         result.exitCode === 0
@@ -162,12 +168,17 @@ export const makeTmux = (backend: TmuxBackend) => {
             ),
       ),
     )
+  }
 
   // The server stays up with no sessions, keeps a dead pane so its exit status can be read, sizes
   // windows only when told to, and has no status line taking a row from the terminal. Focus events
   // pass through, or Claude Code prints a hint to turn them on in a tmux.conf. Window size is the
   // window's own, never the server's: tmux 3.3 (Debian 12's) crashes when the global option is
   // manual and there is no session, which is what a relaunch starts from.
+  //
+  // tmux gives a new session's process the PATH of the client that made it, over `-e PATH=`
+  // (tmux's spawn.c), so the client runs with the launch's PATH: Claude Code and its tools get
+  // the login PATH, not the Sandbox's default one.
   const launch = (spec: LaunchSpec) =>
     tmux(
       spec.sessionId,
@@ -194,6 +205,7 @@ export const makeTmux = (backend: TmuxBackend) => {
         ],
         ["set-option", "-w", "-t", `=${tmuxSessionName(spec.sessionId)}:`, "window-size", "manual"],
       ]),
+      spec.env.PATH === undefined ? undefined : { PATH: spec.env.PATH },
     ).pipe(Effect.asVoid)
 
   // `-J` joins the lines tmux wrapped; without `-e` the text comes without colours.
