@@ -1,4 +1,4 @@
-// The `claude-hub` CLI binaries the Hub serves (issue #178): built with
+// The `claude-hub` CLI binaries the Hub serves (issue #178, ADR 0016): built with
 // `bun build --compile` from the checkout the Hub runs from, at its commit, so the CLI follows the
 // Hub's commit as Runners do (ADR 0011).
 //

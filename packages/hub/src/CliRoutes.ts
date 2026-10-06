@@ -1,4 +1,4 @@
-// The `claude-hub` CLI, served by the Hub (issue #178):
+// The `claude-hub` CLI, served by the Hub (issue #178, ADR 0016):
 //
 // - `GET /cli` is the install script, for `curl https://<hub>/cli | sh` (cli-install.sh), with
 //   the Hub's public URL filled in.
