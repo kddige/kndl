@@ -1,0 +1,1 @@
+{ "mcpServers": { "e2e": { "command": "sh", "args": ["/workspace/.e2e-mcp.sh"] } } }
