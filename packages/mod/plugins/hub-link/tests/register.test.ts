@@ -179,6 +179,40 @@ describe("the Hub link", () => {
       { _tag: "TurnEnded", turnId: "t1", reason: "Answered", durationMs: 1200 },
     ])
   })
+
+  test("a Bash call a Stop moved to the background has no outcome (#165)", async ($, on) => {
+    const { posted } = linkedSession(on)
+    const clock = mock.clock(on)
+    on("turn.start", () => ({ turnId: "t1" }))
+    on("turn.complete", () => ({ text: "" }))
+    on(
+      "tool.call",
+      () =>
+        ({
+          result: {
+            stdout: "",
+            stderr: "",
+            interrupted: false,
+            backgroundTaskId: "b1",
+            backgroundedByTurnAbort: true,
+          },
+        }) as never,
+    )
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "sleep a minute" } as never)
+    await $.tool.call({ tool: "Bash", command: "sleep 60", tool_use_id: "toolu_1" } as never)
+    await $.turn.complete(turnEnded("t1", { reason: "aborted", isAborted: true }))
+    await clock.advance(200)
+
+    expect(posted().map((event) => event._tag)).toEqual([
+      "TurnStarted",
+      "ToolCallStarted",
+      "TurnEnded",
+    ])
+    expect(posted().at(-1)).toMatchObject({ reason: "Stopped" })
+  })
 })
 
 describe("who a Turn is from", () => {

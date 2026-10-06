@@ -8,6 +8,7 @@ export { HubLink } from "./HubLink.ts"
 export type { LinkStatus } from "./HubLink.ts"
 export {
   agentWorktree,
+  backgroundedByStop,
   clip,
   promptFromParticipant,
   resultSummary,
