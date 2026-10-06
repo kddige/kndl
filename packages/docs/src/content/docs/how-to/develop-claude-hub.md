@@ -59,7 +59,7 @@ The UI kit, every component in its states, is at `/kit`.
 
 | Command | What it does |
 |---|---|
-| `bun run mod:build` | Bundles the mod's logic, with Effect and the protocol, into each plugin's `hooks/hub-link-lib.js` (git-ignored). `bun run runner` runs it first. It writes the bundle only when it changed: running Sessions reload the mod when its files change, and a reload in the middle of a Turn loses that Turn's end. |
+| `bun run mod:build` | Bundles the mod's logic, with Effect and the protocol, into each plugin's `hooks/hub-link-lib.js` (git-ignored). `bun run runner` runs it first. Running Sessions keep the copy of the mod they started with: a Session picks up a new build at its next start, wake or change of model. |
 | `bun run mod:check` | Builds the mod, then runs `claude plugin validate` and `claude plugin test` on each plugin. |
 | `claude --plugin-dir packages/mod/plugins/hub-link --plugin-dir packages/mod/plugins/hub-link-commands` | Claude Code with the mod loaded, after `bun run mod:build`. |
 

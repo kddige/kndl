@@ -2,9 +2,10 @@
 // Claude Code's mod runtime loads no package but its own (spike #4), and a plugin reads only its
 // own directory. hub-link and hub-link-commands share the one bundle (ADR 0014).
 //
-// A bundle is written only when it changed. Claude Code reloads the mod in every running Session
-// whose Sandbox mounts it when its files change, and a reload in the middle of a Turn loses the end
-// of that Turn; `bun run runner` builds the mod each time it starts, under running Sessions (#157).
+// A bundle is written only when it changed. Each Session's Claude Code loads a copy of the mod made
+// as it starts (#159), but a Sandbox made before then mounts this one, and Claude Code there
+// reloads it when its files change, losing the end of a Turn running then; `bun run runner` builds
+// the mod each time it starts, under running Sessions (#157).
 
 import { join } from "node:path"
 

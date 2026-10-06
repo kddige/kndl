@@ -34,6 +34,11 @@ export interface SessionDirectories {
    * `.git/config` and `.git/hooks`, which the Sandbox can write (HostGit.ts).
    */
   readonly hostGit: string
+  /**
+   * The mod as the Session's Claude Code last started with it, copied from the Runner's at each
+   * start (SessionMod.ts), and mounted read-only into the Sandbox.
+   */
+  readonly mod: string
 }
 
 export function sessionDirectories(sessionsRoot: string, id: SessionId): SessionDirectories {
@@ -43,5 +48,6 @@ export function sessionDirectories(sessionsRoot: string, id: SessionId): Session
     claude: join(session, "claude"),
     workspace: join(session, "workspace"),
     hostGit: join(session, "host-git"),
+    mod: join(session, "mod"),
   }
 }

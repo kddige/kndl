@@ -36,6 +36,7 @@ import {
   FakeWorkspaceGit,
   FakeWorkspaces,
   hostTmuxBackend,
+  writeFakeMod,
 } from "./testSupport.ts"
 import { makeTmux, Tmux } from "./Tmux.ts"
 import { Updater } from "./Updater.ts"
@@ -201,7 +202,7 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
           name: "mac",
           token: Redacted.make(token),
           sessionsRoot,
-          modDir: dir,
+          modDir: writeFakeMod(join(dir, "mod")),
           tmuxSocket,
           repoUrlTemplate: "unused",
         }),

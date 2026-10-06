@@ -15,7 +15,10 @@ export interface RunnerSettings {
   readonly token: Redacted.Redacted<string>
   /** The directory holding one directory per Session, with its Workspace. */
   readonly sessionsRoot: string
-  /** The mod package, whose plugins each Session's Claude Code loads with `--plugin-dir`. */
+  /**
+   * The mod package, whose plugins each Session's Claude Code loads with `--plugin-dir`, from a
+   * copy made as it starts (SessionMod.ts).
+   */
   readonly modDir: string
   /** The tmux server (`tmux -L <name>`) that holds the Sessions, kept apart from the user's own. */
   readonly tmuxSocket: string

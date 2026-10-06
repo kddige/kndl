@@ -46,8 +46,6 @@ const repo = "acme/it-49" as RepoName
 const version = (n: number) => Schema.decodeSync(EnvironmentVersion)(n)
 const buildValue = "it49-build-made-up-1f3a"
 const runtimeValue = "it49-runtime-made-up-9c2e"
-/** The mod in this checkout, which every Sandbox mounts. */
-const modDir = join(import.meta.dir, "..", "..", "mod")
 
 const timings: Array<[string, number]> = []
 const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
@@ -275,7 +273,6 @@ test.skipIf(!enabled)(
               Effect.as(PinnedClaudeVersion),
             ),
           ),
-        modDir,
         limits: { cpus: 2, memoryMib: 2048 },
         keepBuilds: 2,
         cloneDefaultBranch: (_repo, directory) =>

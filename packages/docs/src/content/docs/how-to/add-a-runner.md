@@ -90,6 +90,8 @@ Meanwhile its row is marked **updating**, then **restarting**, with a line sayin
 
 If a step fails, or the Runner starts three times on the new commit without the Hub welcoming it, the Runner goes back to the commit it ran, rebuilds it, reconnects and reports the error, which its row shows as **update failed** with git's or bun's message. It doesn't try that commit again by itself: fix the cause, then **Update** again.
 
+Some Sessions are still running when the code changes under them: on the Hub's own machine, `claude-hub update` moves the checkout before the Hub drains its Runner, and a Runner run from a checkout is pulled and restarted by hand. Each such Session keeps the copy of the mod it started with, so its Turn ends as it would have. The new mod reaches it at its next start, wake or change of model.
+
 Only a Runner installed as the claude-hub service updates itself, since only a service manager starts it again. Its row has no **Update**, and says why, when it:
 
 - runs from a checkout (`bun run runner`): it never rewrites a developer's checkout. Pull the checkout to the Hub's commit and restart it.

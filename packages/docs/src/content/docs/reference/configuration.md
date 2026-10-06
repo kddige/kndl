@@ -46,7 +46,7 @@ Each person can store one Claude credential on the Hub, on their **Account** pag
 | `RUNNER_NAME` | the short hostname | The name it said hello with. The web UI shows the name the Runner was paired or issued its token with. |
 | `RUNNER_SESSIONS_ROOT` | `~/.claude-hub-dev/sessions` | Where each Session's directory goes. |
 | `RUNNER_TMUX_SOCKET` | `claude-hub-dev` | With `RUNNER_SESSIONS_ROOT`, marks the Sandboxes this Runner makes, so Runners sharing a machine keep to their own. A tmux server of that name on the host, left from when Sessions ran there, is stopped as the Runner starts. |
-| `RUNNER_MOD_DIR` | `packages/mod` in the checkout | The mod, mounted read-only in each Sandbox, whose two plugins, `hub-link` and `hub-link-commands`, Claude Code loads with `--plugin-dir`. The Runner refuses to start if it isn't built. |
+| `RUNNER_MOD_DIR` | `packages/mod` in the checkout | The mod, whose two plugins, `hub-link` and `hub-link-commands`, Claude Code loads with `--plugin-dir`, from a copy in the Session's directory made each time it starts. The Runner refuses to start if it isn't built. |
 | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` | Where Repos are cloned from; `{repo}` is `owner/name`. |
 | `RUNNER_SANDBOX_IMAGE` | `docker:dind` | The image of a Session whose Repo has no Environment. Every new Session needs one today, so this only matters for older Sessions. |
 | `RUNNER_SANDBOX_CLAUDE_VERSION` | the version this claude-hub is tested with | The Claude Code version Sessions run in their Sandboxes. Another may not work with the mod. |
@@ -103,7 +103,7 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Claude Code's normal setting sources, so the Repo's `CLAUDE.md`, skills, hooks, settings and `.mcp.json` apply as they would on a developer's machine ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Its command line is `claude` with:
 
 - `--session-id` for a new Session, or `--resume` to wake one.
-- `--plugin-dir /opt/claude-hub/hub-link/plugins/hub-link` and `--plugin-dir /opt/claude-hub/hub-link/plugins/hub-link-commands`, the mod's plugins, mounted read-only from `RUNNER_MOD_DIR` ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)).
+- `--plugin-dir /opt/claude-hub/mod/<copy>/hub-link` and `--plugin-dir /opt/claude-hub/mod/<copy>/hub-link-commands`, the mod's plugins ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)), from the copy of `RUNNER_MOD_DIR` made for this start, mounted read-only.
 - `--dangerously-skip-permissions`: the Sandbox is the boundary ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)).
 - `--model` and `--effort` when the Session's [model and effort](/how-to/work-in-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
 

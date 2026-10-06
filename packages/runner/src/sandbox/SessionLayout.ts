@@ -34,8 +34,12 @@ export const claudeStateGuestPath = "/var/lib/claude-hub/claude"
  */
 export const claudeStateVolumeKey = "claude"
 
-/** Where the mod package is mounted read-only in the Sandbox, its plugins under `plugins/`. */
-export const modGuestPath = "/opt/claude-hub/hub-link"
+/**
+ * Where the Session's copy of the mod is mounted read-only in the Sandbox, its plugins under
+ * `<copy>/` (SessionMod.ts). Not where a Sandbox made before #159 mounted the Runner's own mod, so such a
+ * Sandbox is made anew at its next start.
+ */
+export const modGuestPath = "/opt/claude-hub/mod"
 
 /**
  * The mod's plugins, each loaded with its own `--plugin-dir`: hub-link reports the Session to the
