@@ -415,6 +415,16 @@ const migrations = SqliteMigrator.fromRecord({
     `
     yield* sql`CREATE INDEX cli_tokens_participant_id ON cli_tokens (participant_id)`
   }),
+  // GitHub's names ignore case, so the Hub looks a Repo up by its name ignoring case (#197). The
+  // indexes it looks up by follow; no row changes, so two spellings stored before stay apart.
+  "0020_repo_nocase": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE INDEX environments_repo_nocase ON environments (repo COLLATE NOCASE)`
+    yield* sql`DROP INDEX test_builds_digest`
+    yield* sql`CREATE INDEX test_builds_digest ON test_builds (repo COLLATE NOCASE, digest)`
+    yield* sql`DROP INDEX retired_values_repo`
+    yield* sql`CREATE INDEX retired_values_repo ON retired_values (repo COLLATE NOCASE)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

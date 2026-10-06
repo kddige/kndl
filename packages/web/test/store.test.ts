@@ -559,6 +559,28 @@ describe("Environments", () => {
     expect(back.environments["acme/app"]?.environment?.version).toBe(2 as never)
   })
 
+  test("a Repo's Environment and its loss are one, however its name is spelled (#197)", () => {
+    const state = run(
+      hub({ _tag: "EnvironmentState", repo: "Acme/App", environment, versions }),
+      hub({ _tag: "EnvironmentState", repo: "acme/app", environment, versions }),
+    )
+    expect(Object.keys(state.environments)).toEqual(["acme/app"])
+
+    const lost = run(
+      hub({ _tag: "EnvironmentState", repo: "acme/app", environment, versions }),
+      hub({ _tag: "TestBuildStarted", requestId: "q-2", testBuild }),
+      hub({ _tag: "RepoAccessLost", repo: "ACME/app" }),
+    )
+    expect(lost.environments).toEqual({})
+    expect(lost.testBuilds).toEqual({})
+    expect(lost.lostRepos).toEqual({ "acme/app": true })
+    const back = reduce(
+      lost,
+      hub({ _tag: "EnvironmentState", repo: "Acme/App", environment, versions }),
+    )
+    expect(back.lostRepos).toEqual({})
+  })
+
   test("a Repo check is an answer for whoever asked", () => {
     const checked = hub({
       _tag: "RepoChecked",

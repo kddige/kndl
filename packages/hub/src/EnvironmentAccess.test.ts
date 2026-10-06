@@ -344,3 +344,96 @@ describe("Checking a Repo", () => {
     })
   })
 })
+
+/** Gives `about` its first Environment, applied by alice, who signs in to do so. */
+async function seed(hub: TestHub, about: string) {
+  const alice = await openWeb(hub, "alice")
+  await seedEnvironment(hub, about, "dev:alice")
+  return alice
+}
+
+describe("Repo names ignoring case (#197)", () => {
+  const pep = "Entria-io/PEP"
+  const typed = "entria-io/pep"
+
+  /** accessHub, with the App on `pep` too, as GitHub spells it, octocat a collaborator on it. */
+  async function pepHub() {
+    const scene = await accessHub()
+    github.installedOn.add(pep)
+    github.grant(pep, "octocat")
+    return scene
+  }
+
+  test("another spelling finds the Repo's Environment, and its access", async () => {
+    const { hub } = await pepHub()
+    await seed(hub, pep)
+    const web = await openOctocat(hub)
+    expect(await ask(web, { _tag: "GetEnvironment", repo: typed })).toMatchObject({
+      _tag: "EnvironmentState",
+      environment: { repo: pep, version: 1 },
+    })
+    expect(await ask(web, { _tag: "GetEnvironment", repo: pep })).toMatchObject({
+      environment: { repo: pep, version: 1 },
+    })
+    // Asked of GitHub once for both spellings.
+    expect(github.collaboratorChecks("octocat")).toBe(1)
+  })
+
+  test("a Session is created under GitHub's spelling, on the Repo's Environment", async () => {
+    const { hub, runner } = await pepHub()
+    await seed(hub, pep)
+    const web = await openOctocat(hub)
+    const created = await ask(web, { _tag: "CreateSession", repo: typed, baseBranch: "main" })
+    expect(created).toMatchObject({ _tag: "SessionCreated", session: { repo: pep } })
+    expect(await runner.take("StartSession")).toMatchObject({
+      repo: pep,
+      environment: { version: 1 },
+    })
+  })
+
+  test("an Environment applied by another spelling is the Repo's one, under the spelling it is stored by", async () => {
+    const { hub } = await pepHub()
+    // From before #197: stored as it was typed.
+    await seed(hub, typed)
+    const web = await openOctocat(hub)
+    const applied = await ask(web, {
+      _tag: "ApplyEnvironment",
+      repo: "ENTRIA-IO/Pep",
+      baseVersion: 1,
+      draft: { ...DefaultEnvironmentDraft, resources: { cpus: 3, memoryMib: 4096 } },
+    })
+    expect(applied).toMatchObject({
+      _tag: "EnvironmentState",
+      environment: { repo: typed, version: 2 },
+    })
+  })
+
+  test("without the App, a Session is created under the spelling its Environment is stored by", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const issued = await issueRunnerToken(hub)
+    const runner = await openRunner(hub, issued.token)
+    const web = await seed(hub, pep)
+    const created = await ask(web, { _tag: "CreateSession", repo: typed, baseBranch: "main" })
+    expect(created).toMatchObject({ _tag: "SessionCreated", session: { repo: pep } })
+    expect(await runner.take("StartSession")).toMatchObject({ repo: pep })
+    // A Repo with no Environment keeps the name as typed.
+    expect(
+      await ask(web, { _tag: "CreateSession", repo: "Octo/Unseen", baseBranch: "main" }),
+    ).toMatchObject({
+      _tag: "CommandFailed",
+      message: "Octo/Unseen has no Environment yet: set one up before its first Session.",
+    })
+  })
+
+  test("access learned by one spelling lets a person see the Sessions of another", async () => {
+    const { hub } = await pepHub()
+    const alice = await seed(hub, pep)
+    const web = await openOctocat(hub)
+    expect(await ask(web, { _tag: "CheckRepo", repo: typed })).toMatchObject({
+      status: "Allowed",
+    })
+    await ask(alice, { _tag: "CreateSession", repo: pep, baseBranch: "main" })
+    expect((await web.take("SessionUpdated")).session.repo).toBe(pep)
+    expect(github.collaboratorChecks("octocat")).toBe(1)
+  })
+})

@@ -91,7 +91,7 @@ A short-lived GitHub App installation token for one Session's Repo, kept in that
 _Avoid_: GitHub credentials, PAT, git tools
 
 **Repo**:
-A GitHub repository the platform is installed on. Access to a Repo decides who can see and join its Sessions.
+A GitHub repository the platform is installed on. Access to a Repo decides who can see and join its Sessions. Its `owner/name` is one Repo however it is spelled, as on GitHub: the Hub keeps the spelling GitHub gives it, and finds a Repo's Sessions, Environment and access by any spelling.
 _Avoid_: project, codebase
 
 ## Environments

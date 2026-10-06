@@ -1,6 +1,7 @@
 // A stand-in for GitHub's REST API, as the GitHub App uses it, for the Hub's and the CLI's tests:
 // an in-process HTTP server on 127.0.0.1 that checks the App JWT's signature, mints installation
-// tokens and, with one of them, says who is a Repo's collaborator. It also describes the App and
+// tokens and, with one of them, says who is a Repo's collaborator and how the Repo's name is
+// spelled, matching names ignoring case as GitHub does. It also describes the App and
 // its installations, stands in for GitHub's web page that registers an App from a manifest, and
 // hands out the new App's credentials for the code it redirects back with. Not part of the Hub.
 
@@ -146,6 +147,19 @@ export class StandInGitHub {
     this.collaborators.get(repo)?.delete(login)
   }
 
+  /** How `installedOn` spells `repo`, matched ignoring case, as GitHub's names are. */
+  private spelling(repo: string): string | undefined {
+    return [...this.installedOn].find((known) => known.toLowerCase() === repo.toLowerCase())
+  }
+
+  /** The logins `of` has for `repo`, matched ignoring case. */
+  private loginsOn(of: ReadonlyMap<string, ReadonlySet<string>>, repo: string) {
+    for (const [known, logins] of of) {
+      if (known.toLowerCase() === repo.toLowerCase()) return logins
+    }
+    return undefined
+  }
+
   /** How many collaborator checks it has answered, for `login` if given. */
   collaboratorChecks(login?: string) {
     return this.requests.filter((request) => {
@@ -266,8 +280,17 @@ export class StandInGitHub {
       (match = /^\/repos\/([^/]+\/[^/]+)\/installation$/.exec(path))
     ) {
       if (!this.isApp(authorization)) return unauthorized
-      if (!this.installedOn.has(match[1] ?? "")) return this.json(404, { message: "Not Found" })
+      if (this.spelling(match[1] ?? "") === undefined) {
+        return this.json(404, { message: "Not Found" })
+      }
       return this.json(200, { id: installationId, permissions: this.installation.permissions })
+    }
+    if (request.method === "GET" && (match = /^\/repos\/([^/]+\/[^/]+)$/.exec(path))) {
+      // As an installation, with a token it minted: the Repo, its name as it was installed on.
+      if (!this.tokens.has(authorization?.replace(/^Bearer /, "") ?? "")) return unauthorized
+      const fullName = this.spelling(match[1] ?? "")
+      if (fullName === undefined) return this.json(404, { message: "Not Found" })
+      return this.json(200, { full_name: fullName, name: fullName.split("/")[1] })
     }
     if (
       request.method === "POST" &&
@@ -305,8 +328,9 @@ export class StandInGitHub {
       if (this.collaboratorsDown) return this.json(503, { message: "Service Unavailable" })
       const [repo = "", login = ""] = [match[1], match[2]]
       const isCollaborator =
-        (this.collaborators.get(repo)?.has(login) ?? false) ||
-        (this.membersTokens.has(token) && (this.throughOrganization.get(repo)?.has(login) ?? false))
+        (this.loginsOn(this.collaborators, repo)?.has(login) ?? false) ||
+        (this.membersTokens.has(token) &&
+          (this.loginsOn(this.throughOrganization, repo)?.has(login) ?? false))
       return isCollaborator ? new Response(null, { status: 204 }) : this.json(404, {})
     }
     if (request.method === "GET" && path === "/app") {

@@ -10,7 +10,7 @@ A Session is one Claude Code conversation working on one Repo, on its own Work b
 ## Start a Session
 
 1. Press **New Session**, at the top of the sidebar.
-2. Enter the **Repo** as `owner/name` and the **Base branch** to start from.
+2. Enter the **Repo** as `owner/name` and the **Base branch** to start from. Case doesn't matter, as on GitHub: the Session is kept under the Repo's name as GitHub spells it.
 3. Leave **Runner** on **Any online Runner**, or pick one. The Session runs on that Runner's machine for its whole life, on your Claude credential, or on the Runner's own if you have none.
 4. Leave **Model** on Claude Code's default, or pick a model and effort level: see [Choose the model and effort](#choose-the-model-and-effort). With **Any online Runner**, it offers only the models and levels every online Runner has.
 5. Press **Start Session**.
