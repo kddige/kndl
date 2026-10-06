@@ -27,6 +27,7 @@ import { HubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
+import { OpenPorts } from "./OpenPorts.ts"
 import { CredentialProxy } from "./proxy/CredentialProxy.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes, type SandboxStarted } from "./Sandbox.ts"
@@ -65,7 +66,10 @@ export class Sessions extends Context.Service<
     readonly withoutModToken: Effect.Effect<ReadonlyArray<SessionId>>
     /** Acts on a message from the Hub. Starting and stopping go on in the background. */
     readonly handle: (message: HubToRunner) => Effect.Effect<void>
-    /** Sends a `Snapshot` frame of every running Session, as after reconnecting. */
+    /**
+     * Sends a `Snapshot` frame of every running Session, and its Open ports, as after
+     * reconnecting.
+     */
     readonly snapshotAll: Effect.Effect<void>
     /**
      * How the Runner's own Claude credential is shown, for {@link RunnerHello}; undefined when it
@@ -108,6 +112,7 @@ export const SessionsLive = Layer.effect(
     const hubVariables = yield* HubVariables
     const hubClaudeCredential = yield* HubClaudeCredential
     const proxy = yield* CredentialProxy
+    const ports = yield* OpenPorts
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
@@ -180,7 +185,8 @@ export const SessionsLive = Layer.effect(
 
     /**
      * Attaches to the Session's tmux session, streams its terminal to the Hub, and starts with a
-     * snapshot. When Claude Code exits on its own, reports it and cleans up.
+     * snapshot. When Claude Code exits on its own, reports it and cleans up. Watches its
+     * Sandbox's Open ports too, until it stops (ADR 0016).
      */
     const watch = (sessionId: SessionId) =>
       Effect.gen(function* () {
@@ -223,6 +229,7 @@ export const SessionsLive = Layer.effect(
           Effect.forkIn(layerScope),
         )
         yield* pane.snapshot
+        yield* ports.watch(sessionId)
       })
 
     // What Claude Code printed before it exited is read from its dead pane, which tmux keeps
@@ -246,6 +253,7 @@ export const SessionsLive = Layer.effect(
               : `${exited}; its last ${lines} line(s) of output are on the Session's page`,
           )
           yield* tmux.kill(sessionId)
+          yield* ports.unwatch(sessionId)
           yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
           yield* sandboxes.stop(sessionId, "Sleep")
           yield* hub.send(
@@ -353,6 +361,7 @@ export const SessionsLive = Layer.effect(
           yield* forget(sessionId)
           yield* Effect.logWarning(`Session ${sessionId} failed to start: ${reason}`)
           yield* tmux.kill(sessionId)
+          yield* ports.unwatch(sessionId)
           yield* sandboxes.stop(sessionId, "Sleep")
           yield* hub.send(RunnerToHub.cases.SessionStartFailed.make({ sessionId, message: reason }))
         }),
@@ -399,6 +408,7 @@ export const SessionsLive = Layer.effect(
           yield* forget(sessionId)
           yield* Effect.logWarning(`Session ${sessionId} failed to restart: ${reason}`)
           yield* tmux.kill(sessionId)
+          yield* ports.unwatch(sessionId)
           yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
           yield* sandboxes.stop(sessionId, "Sleep")
           yield* hub.send(RunnerToHub.cases.SessionStartFailed.make({ sessionId, message: reason }))
@@ -421,6 +431,7 @@ export const SessionsLive = Layer.effect(
           }
           yield* forget(sessionId)
           yield* tmux.kill(sessionId)
+          yield* ports.unwatch(sessionId)
           // The Workspace's last state goes to its WIP ref before the Session sleeps, and before
           // it is archived: the archive hook. Archiving destroys the Sandbox and its volumes and
           // keeps the Workspace, for a restore; purging removes the Workspace later.
@@ -458,6 +469,7 @@ export const SessionsLive = Layer.effect(
           }
           yield* tmux.kill(sessionId)
           yield* forget(sessionId)
+          yield* ports.unwatch(sessionId)
           yield* sandboxes.purge(sessionId)
           yield* workspaces.remove(sessionId)
           yield* Effect.logInfo(`Session ${sessionId} purged`)
@@ -622,7 +634,7 @@ export const SessionsLive = Layer.effect(
       handle,
       snapshotAll: Effect.suspend(() =>
         Effect.forEach(running.values(), (session) => session.pane.snapshot, { discard: true }),
-      ),
+      ).pipe(Effect.andThen(ports.resendAll)),
       ownClaudeAccount: proxy.runnerAccount,
     })
   }),
