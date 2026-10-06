@@ -38,11 +38,18 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0020, Repo names ignoring case: the migrator runs
- * only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0021, no WIP ref: the migrator runs only the
+ * migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeNoWipRef = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'no_wip_ref'`
+})
+
+/** Takes the database back to before migration 0020, Repo names ignoring case, as above. */
 const beforeRepoNocase = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeNoWipRef
   yield* sql`DROP INDEX environments_repo_nocase`
   yield* sql`DROP INDEX test_builds_digest`
   yield* sql`CREATE INDEX test_builds_digest ON test_builds (repo, digest)`
@@ -362,6 +369,54 @@ describe("migration 0018, Keep awake", () => {
       },
       off: undefined,
     })
+  })
+})
+
+describe("migration 0021, no WIP ref", () => {
+  test("drops the failed WIP pushes from a Session's history, and keeps the rest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
+            creator_id, created_at
+          ) VALUES ('s-1', 'acme/web', 'main', 'claude/s-1', 'Asleep', 'r-1',
+            'a@example.com', 'p-1', 1)
+        `
+        yield* beforeNoWipRef
+        // From before #194: a failed WIP push between two notes.
+        for (const [seq, event] of [
+          [0, { _tag: "SandboxNoted", message: "Capped at 4 CPUs" }],
+          [1, { _tag: "WipNotPushed", message: "git push exited with 128" }],
+          [2, { _tag: "SandboxNoted", message: "Capped at 8 GiB" }],
+        ] as const) {
+          yield* sql`
+            INSERT INTO session_events (session_id, seq, at, event)
+            VALUES ('s-1', ${seq}, 2, ${JSON.stringify(event)})
+          `
+        }
+      }),
+    )
+    const history = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const log = yield* SessionLog
+        return yield* log.history(SessionId.make("s-1"))
+      }).pipe(Effect.provide(SessionLog.layer)),
+    )
+    expect(history.map((entry): Array<unknown> => [entry.seq, entry.event])).toEqual([
+      [0, { _tag: "SandboxNoted", message: "Capped at 4 CPUs" }],
+      [2, { _tag: "SandboxNoted", message: "Capped at 8 GiB" }],
+    ])
   })
 })
 

@@ -425,6 +425,12 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`DROP INDEX retired_values_repo`
     yield* sql`CREATE INDEX retired_values_repo ON retired_values (repo COLLATE NOCASE)`
   }),
+  // The Runner no longer pushes a WIP ref (#194), so a Session's history has no failed push in it
+  // any more: the events that said so go, and the rest of the history reads as before.
+  "0021_no_wip_ref": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`DELETE FROM session_events WHERE json_extract(event, '$._tag') = 'WipNotPushed'`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

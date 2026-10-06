@@ -38,7 +38,6 @@ import {
   TmuxError,
 } from "./Tmux.ts"
 import { WorkspaceError, Workspaces } from "./Workspace.ts"
-import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 export const sessionId = (id: string) => Schema.decodeSync(SessionId)(id)
 
@@ -486,11 +485,10 @@ export class FakeOpenPorts {
 /**
  * The Hub's side of the git conversation, in memory: Repo access with the credentials a test
  * sets (a fake token, or the host's), Sandbox tokens while it has a token to give (`sandbox-1`,
- * `sandbox-2`, ...), and a record of what was asked and reported. `answer` overrides any answer.
+ * `sandbox-2`, ...), and a record of what was asked. `answer` overrides any answer.
  */
 export class FakeHubGit {
   readonly asked: Array<{ readonly sessionId: SessionId; readonly ask: GitAsk }> = []
-  readonly wipFailures: Array<{ readonly sessionId: SessionId; readonly message: string }> = []
   /** The Sandbox tokens handed out, oldest first. */
   readonly sandboxTokens: Array<string> = []
   credentials: GitCredentials = GitCredentials.cases.HostCredentials.make({})
@@ -549,23 +547,6 @@ export class FakeHubGit {
           return this.cloneAnswer
         }),
       receive: () => Effect.void,
-      wipPushFailed: (session, message) =>
-        Effect.sync(() => void this.wipFailures.push({ sessionId: session, message })),
-    }),
-  )
-}
-
-/**
- * Git that only records calls, `pushWip <id> <reason>`, into `calls`: pass another fake's record
- * to see the order they ran in.
- */
-export class FakeWorkspaceGit {
-  constructor(readonly calls: Array<string> = []) {}
-
-  readonly layer = Layer.sync(WorkspaceGit, () =>
-    WorkspaceGit.of({
-      pushWip: (session, _directories, reason) =>
-        Effect.sync(() => void this.calls.push(`pushWip ${session} ${reason}`)),
     }),
   )
 }

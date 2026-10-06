@@ -135,8 +135,8 @@ describe("Redacting a text", () => {
         { _tag: "AgentMessaged", agentId, sender, text: `try ${masked}` },
       ],
       [
-        { _tag: "WipNotPushed", message: `bad url ${secret}` },
-        { _tag: "WipNotPushed", message: `bad url ${masked}` },
+        { _tag: "SandboxNoted", message: `bad url ${secret}` },
+        { _tag: "SandboxNoted", message: `bad url ${masked}` },
       ],
     ]
     for (const [event, redacted] of events) expect(redactEvent(needles, event)).toEqual(redacted)

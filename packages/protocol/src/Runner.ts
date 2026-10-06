@@ -15,7 +15,7 @@ import {
   VariablesFetched,
   VariablesRefused,
 } from "./Environment.ts"
-import { GitIdentity, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
+import { GitIdentity, GitReply, GitRequest } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
 import { BranchName, OpenPort, RepoName, RunnerAccount } from "./Session.ts"
@@ -200,7 +200,6 @@ export const RunnerToHub = Schema.Union([
   SessionPurged,
   TerminalFrame,
   GitRequest,
-  WipPushFailed,
   SandboxNote,
   SessionPorts,
   FetchVariables,
@@ -339,7 +338,6 @@ export const HubToRunner = Schema.Union([
   TerminalResize,
   RequestTerminalSnapshot,
   GitReply,
-  SessionTurnEnded,
   RunTestBuild,
   VariablesFetched,
   VariablesRefused,

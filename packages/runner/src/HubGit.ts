@@ -9,7 +9,6 @@ import {
   type RunnerToHub,
   type SessionId,
   type TestBuildId,
-  WipPushFailed,
 } from "@kndl/protocol"
 import { Context, Deferred, Duration, Effect, Layer, Schema } from "effect"
 import { HubLink } from "./HubLink.ts"
@@ -21,8 +20,7 @@ const newRequestId = () => Schema.decodeSync(GitRequestId)(randomUUID())
 
 /**
  * The Runner's side of the git conversation with the Hub (issues #13, #73, #104). Only the Hub
- * holds the GitHub App's key, so the Runner asks it for tokens per Session and per Test build, and
- * tells it about failed WIP pushes.
+ * holds the GitHub App's key, so the Runner asks it for tokens per Session and per Test build.
  */
 export class HubGit extends Context.Service<
   HubGit,
@@ -36,8 +34,6 @@ export class HubGit extends Context.Service<
     readonly cloneAccess: (testBuildId: TestBuildId) => Effect.Effect<GitAnswer>
     /** Hands the Hub's GitReply to the request waiting for it. */
     readonly receive: (reply: GitReply) => Effect.Effect<void>
-    /** Pushing the WIP ref failed; the Hub records it in the Session's log. */
-    readonly wipPushFailed: (sessionId: SessionId, message: string) => Effect.Effect<void>
   }
 >()("@kndl/runner/HubGit") {}
 
@@ -93,7 +89,6 @@ export const HubGitLive = Layer.effect(
               )
             : Deferred.succeed(waiting, reply.answer)
         }),
-      wipPushFailed: (sessionId, message) => hub.send(WipPushFailed.make({ sessionId, message })),
     })
   }),
 )

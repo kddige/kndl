@@ -2,8 +2,7 @@
 // streamed text merged into blocks, and each tool call's start and end joined. A subagent (ADR
 // 0014) is a card at the Agent call that started it: its events are grouped by agentId, whichever
 // run they come in, so a background agent keeps filling its card after its Turn ended. State
-// changes between Turns, a WIP ref the Runner could not push, and a change of model (#128) become
-// notices.
+// changes between Turns, notes about the Sandbox, and a change of model (#128) become notices.
 
 import type {
   AgentId,
@@ -20,7 +19,6 @@ import type {
   ToolCallOutcome,
   TurnEnded,
   TurnId,
-  WipNotPushed,
   SandboxNoted,
   ModelSwitched,
 } from "@kndl/protocol"
@@ -84,7 +82,7 @@ export interface TurnView {
 }
 
 /** What happened between Turns, shown as a line of its own. */
-export type NoticeEvent = SessionStateChanged | WipNotPushed | SandboxNoted | ModelSwitched
+export type NoticeEvent = SessionStateChanged | SandboxNoted | ModelSwitched
 
 export type TranscriptItem =
   | { readonly kind: "turn"; readonly key: string; readonly turn: TurnView }
@@ -283,7 +281,6 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
         if (latest && latest.end === null) latest.stopRequests.push(event.by)
         break
       case "SessionStateChanged":
-      case "WipNotPushed":
       case "SandboxNoted":
       case "ModelSwitched":
         items.push({ kind: "notice", key: `notice-${entry.seq}`, at: entry.at, event })

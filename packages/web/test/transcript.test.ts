@@ -289,11 +289,10 @@ describe("buildTranscript", () => {
     })
   })
 
-  test("a WIP ref that could not be pushed becomes a notice", () => {
-    const items = build(entries([{ _tag: "WipNotPushed", message: "remote rejected" }]))
-    expect(items).toMatchObject([
-      { kind: "notice", event: { _tag: "WipNotPushed", message: "remote rejected" } },
-    ])
+  test("a note about the Sandbox becomes a notice", () => {
+    const message = "Memory capped at 8192 MiB by the Runner"
+    const items = build(entries([{ _tag: "SandboxNoted", message }]))
+    expect(items).toMatchObject([{ kind: "notice", event: { _tag: "SandboxNoted", message } }])
   })
 
   test("events for a Turn whose start is missing get an unattributed Turn", () => {

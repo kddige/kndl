@@ -3,8 +3,7 @@ import { SessionId } from "./Ids.ts"
 import { EpochMillis, RepoName } from "./Session.ts"
 
 // Git from Sessions (issue #73, ADR 0010). `git` and `gh` run in the Sandbox with a short-lived
-// GitHub App installation token the Runner keeps there. The Runner's host runs only the clone and
-// the automatic WIP ref pushes.
+// GitHub App installation token the Runner keeps there. The Runner's host runs only the clone.
 //
 // The Runner asks the Hub for what it needs over its WebSocket, with a GitRequest the Hub answers
 // with a GitReply of the same `requestId`. Only the Hub holds the GitHub App's key: it mints the
@@ -47,7 +46,10 @@ export const GitCredentials = Schema.Union([
   Schema.TaggedStruct("AppToken", {
     token: Schema.RedactedFromValue(Schema.NonEmptyString),
     expiresAt: EpochMillis,
-    /** The App's bot, which WIP commits are authored by. */
+    /**
+     * The App's bot. Nothing reads it since #194, but a Runner from before #194 needs it to
+     * decode Repo access, so the Hub still sends it.
+     */
     author: GitIdentity,
   }),
   /**
@@ -98,22 +100,3 @@ export const GitReply = Schema.TaggedStruct("GitReply", {
   answer: GitAnswer,
 })
 export type GitReply = typeof GitReply.Type
-
-/** Runner to Hub: pushing the WIP ref failed. The Hub records it in the Session's log. */
-export const WipPushFailed = Schema.TaggedStruct("WipPushFailed", {
-  sessionId: SessionId,
-  message: Schema.String,
-})
-export type WipPushFailed = typeof WipPushFailed.Type
-
-/**
- * Hub to Runner: the Session's Turn ended, so its Workspace may have changed. The Runner pushes
- * the WIP ref if it did.
- */
-export const SessionTurnEnded = Schema.TaggedStruct("SessionTurnEnded", {
-  sessionId: SessionId,
-})
-export type SessionTurnEnded = typeof SessionTurnEnded.Type
-
-/** The ref a Session's WIP snapshot is force-pushed to on origin. */
-export const wipRef = (sessionId: SessionId | string) => `refs/kndl/wip/${sessionId}`

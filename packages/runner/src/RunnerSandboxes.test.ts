@@ -24,7 +24,6 @@ import {
   FakeTmux,
   FakeCredentialProxy,
   FakeOpenPorts,
-  FakeWorkspaceGit,
   FakeWorkspaces,
   sandboxesDefaults,
   sessionId,
@@ -99,7 +98,6 @@ const runProcess = <A>(
     Layer.provide([
       host.tmux.layer,
       new FakeWorkspaces(host.sessionsRoot).layer,
-      new FakeWorkspaceGit().layer,
       new FakeCredentialProxy().layer,
       new FakeOpenPorts().layer,
       HubGitLive,

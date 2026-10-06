@@ -17,7 +17,6 @@ import { TmuxLive } from "./Tmux.ts"
 import { TunnelsLive } from "./Tunnels.ts"
 import { Updater } from "./Updater.ts"
 import { WorkspacesGitClone } from "./Workspace.ts"
-import { WorkspaceGitLive } from "./WorkspaceGit.ts"
 
 /**
  * The Runner: settles an update it restarted for (see Updater.ts), takes up the Sessions an
@@ -44,8 +43,7 @@ export const CredentialProxyHost = CredentialProxyLive.pipe(
 
 /**
  * Sessions on this host: each Session's Claude Code runs in tmux in its own microsandbox VM, with
- * a Session token for the credential proxy, and its Workspace is cloned and committed to with host
- * git. Tunnels into those Sandboxes (#177) share the Sessions' sandbox backend.
+ * a Session token for the credential proxy, and its Workspace is cloned with host git. Tunnels into those Sandboxes (#177) share the Sessions' sandbox backend.
  */
 export const SessionsHost = TunnelsLive.pipe(
   Layer.provideMerge(
@@ -54,7 +52,6 @@ export const SessionsHost = TunnelsLive.pipe(
     ),
   ),
   Layer.provide(MicrosandboxBackend.layer),
-  Layer.provideMerge(WorkspaceGitLive),
   Layer.provideMerge(HubGitLive),
   Layer.provideMerge(HubVariablesLive),
   Layer.provideMerge(HubClaudeCredentialLive),

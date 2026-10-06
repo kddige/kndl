@@ -578,8 +578,8 @@ function Toasts() {
         <Button
           onClick={() =>
             toast.show({
-              title: "Couldn't push the WIP ref",
-              description: "The remote rejected it. Retrying in 30s.",
+              title: "Couldn't wake the Session",
+              description: "Its Runner is offline. Try again once it's back.",
               intent: "danger",
             })
           }

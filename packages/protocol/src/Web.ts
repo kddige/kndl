@@ -81,15 +81,6 @@ export const AgentMessaged = Schema.TaggedStruct("AgentMessaged", {
 export type AgentMessaged = typeof AgentMessaged.Type
 
 /**
- * The Runner could not push the Session's WIP ref (GLOSSARY.md), the snapshot of its Workspace
- * on origin. Nothing waits for it: the Session went on, or to sleep, regardless.
- */
-export const WipNotPushed = Schema.TaggedStruct("WipNotPushed", {
-  message: Schema.String,
-})
-export type WipNotPushed = typeof WipNotPushed.Type
-
-/**
  * Something the Runner wants the Session's Participants to know about its Sandbox, such as its
  * CPU or memory being capped below what the Environment asks for (ADR 0009), or about the Claude
  * Code in it, such as a wake that couldn't resume the conversation (#191).
@@ -124,7 +115,6 @@ export const SessionEvent = Schema.Union([
   SessionStateChanged,
   TurnStopRequested,
   AgentMessaged,
-  WipNotPushed,
   SandboxNoted,
   ModelSwitched,
 ]).pipe(Schema.toTaggedUnion("_tag"))
@@ -243,8 +233,8 @@ export const RestartSession = Schema.TaggedStruct("RestartSession", {
 export type RestartSession = typeof RestartSession.Type
 
 /**
- * Delete a Session, which archives it (ADR 0003): its Sandbox is destroyed after the Runner
- * pushes its WIP ref, and anyone may restore it until it is purged. Any Participant may.
+ * Delete a Session, which archives it (ADR 0003): its Sandbox is destroyed, its Workspace kept,
+ * and anyone may restore it until it is purged. Any Participant may.
  */
 export const ArchiveSession = Schema.TaggedStruct("ArchiveSession", {
   sessionId: SessionId,
