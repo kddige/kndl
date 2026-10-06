@@ -105,6 +105,8 @@
 //   Runner's own: a Runner asks for it just before it starts Claude Code, and only for a Session
 //   it runs. A Session neither has a credential for doesn't start: CreateSession is refused, and
 //   a wake leaves it Asleep. Every credential is redacted from every Session.
+// - CLI tokens (CliTokens.ts): each person is sent their own (CliTokenList) after the welcome and
+//   whenever one is made or revoked, and may revoke them from any of their web clients.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -118,6 +120,7 @@ import {
   ClaudeCredentialFetched,
   ClaudeCredentialRefused,
   ClaudeCredentialState,
+  CliTokenList,
   CommandFailed,
   DeliverAgentMessage,
   DeliverPrompt,
@@ -195,6 +198,7 @@ import {
 } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
+import { CliTokens } from "./CliTokens.ts"
 import {
   type EnvironmentWebClient,
   isEnvironmentCommand,
@@ -361,6 +365,8 @@ export class SessionRelay extends Context.Service<
     ) => Effect.Effect<Redeemed, SqlError | PairingRefused>
     /** Whether a Runner is connected now. */
     readonly runnerOnline: (id: RunnerId) => boolean
+    /** A person's CLI tokens changed, as at `claude-hub login`: their web clients are sent them. */
+    readonly cliTokensChanged: (participantId: ParticipantId) => Effect.Effect<void>
     /** The Session's mod said hello. */
     readonly modHello: (sessionId: SessionId, hello: ModHello) => Effect.Effect<void, SqlError>
     /** The Session's mod reported Turn events and failed deliveries, oldest first. */
@@ -388,6 +394,7 @@ export class SessionRelay extends Context.Service<
       const hubVersion = yield* HubVersion
       const updatePush = yield* RunnerUpdatePush
       const claudeCredentials = yield* ClaudeCredentials
+      const cliTokens = yield* CliTokens
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
@@ -1508,6 +1515,7 @@ export class SessionRelay extends Context.Service<
             | "CheckRepo"
             | "SetClaudeCredential"
             | "RemoveClaudeCredential"
+            | "RevokeCliToken"
         }
       >
 
@@ -2169,6 +2177,35 @@ export class SessionRelay extends Context.Service<
           )
 
         /**
+         * Revokes one of the person's CLI tokens. The asker gets the tokens left with its
+         * `requestId`, their other web clients just the tokens.
+         */
+        const revokeCliToken = (message: Extract<WebToHub, { readonly _tag: "RevokeCliToken" }>) =>
+          Effect.gen(function* () {
+            const revoked = yield* cliTokens.revoke(you.id, message.cliTokenId)
+            if (!revoked) return refuse(message, "You have no such CLI token.")
+            yield* Effect.logInfo(`${you.login} revoked a CLI token (${message.cliTokenId})`)
+            yield* serialized(
+              Effect.gen(function* () {
+                const tokens = yield* cliTokens.list(you.id)
+                for (const other of webClients) {
+                  if (other.you.id === you.id && other !== client)
+                    other.peer.send(CliTokenList.make({ tokens }))
+                }
+                peer.send(CliTokenList.make({ requestId: message.requestId, tokens }))
+              }),
+            )
+          }).pipe(
+            Effect.catchTag("SqlError", (error) =>
+              Effect.logError("A CLI token command failed", error).pipe(
+                Effect.andThen(
+                  Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                ),
+              ),
+            ),
+          )
+
+        /**
          * Checks the GitHub App's permissions now, off the lock since it waits on GitHub. Anyone
          * signed in may ask: it changes nothing, and checks no more often than checkSpacing.
          */
@@ -2228,42 +2265,44 @@ export class SessionRelay extends Context.Service<
         return (message) =>
           message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
             ? claudeCredentialCommand(message)
-            : message._tag === "CheckAppPermissions"
-              ? checkAppPermissions(message.requestId)
-              : message._tag === "CheckRepo"
-                ? checkRepo(message).pipe(
-                    Effect.catchTag("SqlError", (error) =>
-                      Effect.logError("A Repo check failed", error).pipe(
-                        Effect.andThen(
-                          Effect.sync(() =>
-                            refuse(message, "The Hub could not do that; try again."),
+            : message._tag === "RevokeCliToken"
+              ? revokeCliToken(message)
+              : message._tag === "CheckAppPermissions"
+                ? checkAppPermissions(message.requestId)
+                : message._tag === "CheckRepo"
+                  ? checkRepo(message).pipe(
+                      Effect.catchTag("SqlError", (error) =>
+                        Effect.logError("A Repo check failed", error).pipe(
+                          Effect.andThen(
+                            Effect.sync(() =>
+                              refuse(message, "The Hub could not do that; try again."),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  )
-                : authorize(message).pipe(
-                    Effect.flatMap((verdict) =>
-                      serialized(
-                        Effect.gen(function* () {
-                          const { learned, refusal } = verdict
-                          if (learned !== undefined)
-                            yield* accessKnown(you, learned.repo, learned.allowed)
-                          if (refusal !== undefined) return refuse(message, refusal)
-                          return yield* handle(message)
-                        }),
+                    )
+                  : authorize(message).pipe(
+                      Effect.flatMap((verdict) =>
+                        serialized(
+                          Effect.gen(function* () {
+                            const { learned, refusal } = verdict
+                            if (learned !== undefined)
+                              yield* accessKnown(you, learned.repo, learned.allowed)
+                            if (refusal !== undefined) return refuse(message, refusal)
+                            return yield* handle(message)
+                          }),
+                        ),
                       ),
-                    ),
-                    Effect.catchTag("SqlError", (error) =>
-                      Effect.logError("A web command failed", error).pipe(
-                        Effect.andThen(
-                          Effect.sync(() =>
-                            refuse(message, "The Hub could not do that; try again."),
+                      Effect.catchTag("SqlError", (error) =>
+                        Effect.logError("A web command failed", error).pipe(
+                          Effect.andThen(
+                            Effect.sync(() =>
+                              refuse(message, "The Hub could not do that; try again."),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  )
+                    )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
@@ -2308,6 +2347,7 @@ export class SessionRelay extends Context.Service<
                     credential: claudeCredentials.info(you.id) ?? null,
                   }),
                 )
+                peer.send(CliTokenList.make({ tokens: yield* cliTokens.list(you.id) }))
                 const checked = yield* drift.latest
                 if (Option.isSome(checked)) {
                   peer.send(AppPermissionsChecked.make({ check: checked.value }))
@@ -2831,11 +2871,26 @@ export class SessionRelay extends Context.Service<
       const redeemPairing = (code: string, name: string) =>
         serialized(runnerRelay.redeem(code, name))
 
+      const cliTokensChanged = (participantId: ParticipantId) =>
+        serialized(
+          Effect.gen(function* () {
+            const tokens = yield* cliTokens.list(participantId)
+            for (const client of webClients) {
+              if (client.you.id === participantId) client.peer.send(CliTokenList.make({ tokens }))
+            }
+          }),
+        ).pipe(
+          Effect.catchTag("SqlError", (error) =>
+            Effect.logError("Could not send a person their CLI tokens", error),
+          ),
+        )
+
       return SessionRelay.of({
         connectWeb,
         connectRunner,
         redeemPairing,
         runnerOnline: (id) => onlineRunners.has(id),
+        cliTokensChanged,
         modHello,
         modEvents,
       })

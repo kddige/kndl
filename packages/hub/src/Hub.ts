@@ -3,7 +3,9 @@ import { Layer } from "effect"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
+import { CliLoginRoutes } from "./CliLoginRoutes.ts"
 import { CliRoutes } from "./CliRoutes.ts"
+import { CliTokens } from "./CliTokens.ts"
 import { Environments } from "./Environments.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
@@ -30,6 +32,7 @@ import { WebUiRoutes } from "./WebUi.ts"
 export const HubRoutes = Layer.mergeAll(
   HealthRoute,
   AuthRoutes,
+  CliLoginRoutes,
   ChannelRoutes,
   CliRoutes,
   ModRoutes,
@@ -50,6 +53,7 @@ export const HubServices = SessionRelay.layer.pipe(
       SignIns.layer,
       RunnerTokens.layer,
       ModTokens.layer,
+      CliTokens.layer,
       ModOutbox.layer,
       Sessions.layer,
       SessionLog.layer,

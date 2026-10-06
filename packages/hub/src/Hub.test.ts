@@ -416,7 +416,7 @@ describe("mod channel", () => {
 })
 
 describe("web channel", () => {
-  test("welcomes the signed-in person from the web UI's origin, then lists Runners, Pairing codes and Sessions, and their Claude credential", async () => {
+  test("welcomes the signed-in person from the web UI's origin, then lists Runners, Pairing codes and Sessions, their Claude credential and CLI tokens", async () => {
     const hubVersion = { commit: "c".repeat(40), branch: "main" }
     const hub = await startHub({
       config: { devLogin: true },
@@ -439,6 +439,7 @@ describe("web channel", () => {
       { _tag: "PairingCodeList", codes: [] },
       { _tag: "SessionList", sessions: [] },
       { _tag: "ClaudeCredentialState", credential: null },
+      { _tag: "CliTokenList", tokens: [] },
     ])
   })
 

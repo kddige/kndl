@@ -399,6 +399,22 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE sessions ADD COLUMN keep_awake_by TEXT REFERENCES participants (id)`
     yield* sql`ALTER TABLE sessions ADD COLUMN keep_awake_at INTEGER`
   }),
+  // CLI tokens (ADR 0016): what `claude-hub login` leaves on a machine, named after it. Only the
+  // secret's hash is kept; revoking one deletes its row.
+  "0019_cli_tokens": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE cli_tokens (
+        id TEXT PRIMARY KEY,
+        participant_id TEXT NOT NULL REFERENCES participants (id),
+        machine TEXT NOT NULL,
+        secret_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER
+      )
+    `
+    yield* sql`CREATE INDEX cli_tokens_participant_id ON cli_tokens (participant_id)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

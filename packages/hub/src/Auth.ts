@@ -1,12 +1,15 @@
 // Who is making a request. Every Hub route but sign-in and /health authenticates with one of:
 // - a sign-in cookie, for people in a browser;
 // - a Runner token, as `Authorization: Bearer`, for a Runner;
-// - a mod token, as `Authorization: Bearer`, for one Session's mod.
+// - a mod token, as `Authorization: Bearer`, for one Session's mod;
+// - a CLI token, as `Authorization: Bearer`, for the `claude-hub` CLI of a person signed in with
+//   `claude-hub login`: on the CLI's own endpoints, the tunnel endpoint among them.
 // Sandboxes can reach the Hub (ADR 0004), so nothing is open without one.
 
 import type { Participant } from "@claude-hub/protocol"
 import { Duration, Effect, Option, Schema } from "effect"
 import { HttpServerRequest, HttpServerRespondable, HttpServerResponse } from "effect/http"
+import { type CliIdentity, CliTokens } from "./CliTokens.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { type ModGrant, ModTokens } from "./ModTokens.ts"
 import { type RunnerIdentity, RunnerTokens } from "./RunnerTokens.ts"
@@ -91,6 +94,21 @@ export const authenticateMod = Effect.gen(function* () {
     return yield* new Unauthorized({ message: "Expected a mod token" })
   }
   return grant.value
+})
+
+/**
+ * The CLI whose token the request carries, and the person it acts for. Checked against the
+ * database on every request, so a revoked token is refused from the next one on.
+ */
+export const authenticateCli = Effect.gen(function* () {
+  const token = bearerToken(yield* HttpServerRequest.HttpServerRequest)
+  const cli = Option.isNone(token)
+    ? Option.none<CliIdentity>()
+    : yield* (yield* CliTokens).authenticate(token.value)
+  if (Option.isNone(cli)) {
+    return yield* new Unauthorized({ message: "Expected a CLI token: run claude-hub login" })
+  }
+  return cli.value
 })
 
 /** Sets the sign-in cookie: HttpOnly, SameSite=Lax, host-only, and Secure as HubConfig says. */
