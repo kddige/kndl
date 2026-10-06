@@ -22,7 +22,7 @@ import {
   Semaphore,
   Stream,
 } from "effect"
-import { claudeLaunch } from "./ClaudeLaunch.ts"
+import { claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
 import { HubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
@@ -50,14 +50,18 @@ export class Sessions extends Context.Service<
   Sessions,
   {
     /**
-     * Puts to sleep the Sessions left running by an earlier Runner, as after a restart: their
-     * Session tokens were held only by that Runner, so their Claude Code can no longer reach
-     * Anthropic or the Hub. The Hub has them Asleep once the Runner says hello without them, and
-     * wakes them with their conversations resumed. Run once, at startup.
+     * Takes back the Sessions an earlier Runner left running, as after a restart (#157). Each
+     * one whose Claude Code still runs in its Sandbox keeps running, its terminal streamed again.
+     * The Session token its Claude Code holds, read back from it, is held for it alone at the
+     * proxy until the Hub gives it a new mod token (ModTokenReissued). Any other Sandbox left
+     * running is stopped: the Hub has its Session Asleep once the Runner says hello without it.
+     * Run once, at startup, before the hello.
      */
     readonly adopt: Effect.Effect<void>
     /** The Sessions whose Claude Code is running, for {@link RunnerHello}. */
     readonly running: Effect.Effect<ReadonlyArray<SessionId>>
+    /** Those kept running across a restart, waiting for a new mod token, for the hello. */
+    readonly withoutModToken: Effect.Effect<ReadonlyArray<SessionId>>
     /** Acts on a message from the Hub. Starting and stopping go on in the background. */
     readonly handle: (message: HubToRunner) => Effect.Effect<void>
     /** Sends a `Snapshot` frame of every running Session, as after reconnecting. */
@@ -110,6 +114,8 @@ export const SessionsLive = Layer.effect(
     const sessionTokens = new Map<SessionId, string>()
     /** What each started Session's Sandbox runs: its Environment version and Claude Code. */
     const sandboxStarts = new Map<SessionId, SandboxStarted>()
+    /** Sessions kept running across a restart, whose Session token waits for a mod token. */
+    const held = new Set<SessionId>()
     const locks = new Map<SessionId, Semaphore.Semaphore>()
 
     /**
@@ -142,9 +148,10 @@ export const SessionsLive = Layer.effect(
         return pass
       })
 
-    /** Revokes the Session's Session token, as it stops. */
+    /** Revokes the Session's Session token, held or live, as it stops. */
     const forget = (sessionId: SessionId) => {
       sessionTokens.delete(sessionId)
+      held.delete(sessionId)
       return proxy.revoke(sessionId)
     }
 
@@ -203,8 +210,8 @@ export const SessionsLive = Layer.effect(
               running.delete(sessionId)
               yield* Scope.close(paneScope, Exit.void)
               yield* Deferred.succeed(exited, exitCode)
-              // Interrupted means the Runner is shutting down: the Session is put to sleep when
-              // it comes back (adopt).
+              // Interrupted means the Runner is shutting down: Claude Code runs on, and is taken
+              // back when the Runner comes back (adopt).
               if (Exit.hasInterrupts(exit) || session.stopping) return
               yield* background(exitedOnItsOwn(sessionId, exitCode))
             }),
@@ -458,10 +465,67 @@ export const SessionsLive = Layer.effect(
         Effect.ensuring(Effect.sync(() => locks.delete(sessionId))),
       )
 
+    // Its Session token is read back from Claude Code's environment, where the launch put it for
+    // the mod (ModEnvironment.modToken). It lets only this Session in, so a guest that changed it
+    // gains nothing. Anything missing, and the Session sleeps, as its Sandbox is stopped.
     const adopt = Effect.gen(function* () {
       yield* tmux.retireHostServer
-      yield* sandboxes.reconcile([])
+      const kept: Array<SessionId> = []
+      for (const sessionId of yield* sandboxes.running) {
+        if (!isSafeSessionId(sessionId)) continue
+        const token = yield* tmux.variable(sessionId, ModEnvironment.modToken)
+        if (token === undefined || !(yield* proxy.hold(sessionId, token))) {
+          yield* Effect.logInfo(
+            `Session ${sessionId}: Claude Code is no longer running, so it sleeps`,
+          )
+          continue
+        }
+        sessionTokens.set(sessionId, token)
+        held.add(sessionId)
+        const watched = yield* watch(sessionId).pipe(Effect.exit)
+        if (Exit.isFailure(watched)) {
+          yield* forget(sessionId)
+          yield* Effect.logWarning(
+            `Session ${sessionId}: could not attach to its terminal, so it sleeps: ${message(watched.cause)}`,
+          )
+          continue
+        }
+        kept.push(sessionId)
+        yield* Effect.logInfo(`Session ${sessionId}: Claude Code kept running across the restart`)
+      }
+      yield* sandboxes.reconcile(kept)
     })
+
+    /**
+     * Lets a Session kept running across a restart in again, now the Hub has given it a new mod
+     * token: the proxy takes its held Session token back, standing for the new mod token and its
+     * Creator's Claude credential, and its Sandbox is taken back, so Claude Code can start again
+     * in it with a new model.
+     */
+    const readmit = (sessionId: SessionId, modToken: string) =>
+      serialized(sessionId)(
+        Effect.gen(function* () {
+          if (!held.has(sessionId)) {
+            return yield* Effect.logWarning(
+              `Ignored a new mod token for Session ${sessionId}, which wasn't waiting for one`,
+            )
+          }
+          yield* admit(sessionId, modToken)
+          held.delete(sessionId)
+          const sandbox = yield* sandboxes
+            .keep(sessionId, sessionDirectories(config.sessionsRoot, sessionId))
+            .pipe(
+              Effect.tapError((error) =>
+                Effect.logWarning(
+                  `Session ${sessionId}: could not take back its Sandbox, so it can't change model until it sleeps: ${error.message}`,
+                ),
+              ),
+              Effect.option,
+            )
+          if (sandbox._tag === "Some") sandboxStarts.set(sessionId, sandbox.value)
+          yield* Effect.logInfo(`Session ${sessionId} is back on a new mod token`)
+        }),
+      )
 
     /** Runs a Test build, streaming its output to the Hub, and reports how it ended. */
     const testBuild = (request: RunTestBuild) => {
@@ -501,6 +565,8 @@ export const SessionsLive = Layer.effect(
             return Effect.logWarning(`Ignored a RelaunchSession for ${incoming.sessionId}`)
           }
           return background(relaunch(incoming))
+        case "ModTokenReissued":
+          return background(readmit(incoming.sessionId, incoming.modToken))
         case "StopSession":
           return background(stop(incoming))
         case "PurgeSession":
@@ -547,6 +613,7 @@ export const SessionsLive = Layer.effect(
     return Sessions.of({
       adopt,
       running: Effect.sync(() => Array.from(running.keys())),
+      withoutModToken: Effect.sync(() => Array.from(held)),
       handle,
       snapshotAll: Effect.suspend(() =>
         Effect.forEach(running.values(), (session) => session.pane.snapshot, { discard: true }),

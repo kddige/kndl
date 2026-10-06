@@ -76,6 +76,12 @@ export class Tmux extends Context.Service<
      * Empty when there is nothing, or no such tmux session or running Sandbox.
      */
     readonly lastOutput: (sessionId: SessionId) => Effect.Effect<string>
+    /**
+     * The variable `name` of the environment the Session's process was launched with, while it
+     * runs, as read back after a Runner restart (#157). Undefined once the process has exited, or
+     * with no such variable, tmux session or running Sandbox.
+     */
+    readonly variable: (sessionId: SessionId, name: string) => Effect.Effect<string | undefined>
     /** Ends the Session's tmux session and anything still running in it. */
     readonly kill: (sessionId: SessionId) => Effect.Effect<void>
     /**
@@ -205,6 +211,25 @@ export const makeTmux = (backend: TmuxBackend) => {
       Effect.orElseSucceed(() => ""),
     )
 
+  // The tmux session's environment is the one `new-session -e` launched the process with. The
+  // value is read last, so a failure's output never holds it.
+  const variable = (sessionId: SessionId, name: string) => {
+    const target = `=${tmuxSessionName(sessionId)}`
+    return tmux(
+      sessionId,
+      sequence([
+        ["display-message", "-p", "-t", `${target}:`, "#{pane_dead}"],
+        ["show-environment", "-t", target, name],
+      ]),
+    ).pipe(
+      Effect.map((stdout) => {
+        const [dead, line = ""] = stdout.split("\n")
+        return dead === "0" && line.startsWith(`${name}=`) ? line.slice(name.length + 1) : undefined
+      }),
+      Effect.orElseSucceed(() => undefined),
+    )
+  }
+
   const kill = (sessionId: SessionId) =>
     tmux(sessionId, ["kill-session", "-t", `=${tmuxSessionName(sessionId)}`]).pipe(Effect.ignore)
 
@@ -244,7 +269,7 @@ export const makeTmux = (backend: TmuxBackend) => {
       )
     })
 
-  return { launch, attach, lastOutput, kill }
+  return { launch, attach, lastOutput, variable, kill }
 }
 
 /** tmux in the Sandboxes of the Runner's backend. */

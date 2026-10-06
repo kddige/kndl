@@ -47,8 +47,14 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
   /** The Runner's name, such as its short hostname. */
   name: Schema.NonEmptyString,
   login: RunnerLogin,
-  /** Sessions whose Claude Code is still running here, re-adopted after a Runner restart. */
+  /** Sessions whose Claude Code is running here, including those it kept across a restart. */
   sessions: Schema.Array(SessionId),
+  /**
+   * Those of `sessions` it kept running across its own restart (#157). It holds no mod token for
+   * them, as mod tokens live in its memory alone, so the Hub sends each a {@link ModTokenReissued}.
+   * Absent when there are none, and from a Runner from before, which kept none.
+   */
+  withoutModToken: Schema.optionalKey(Schema.Array(SessionId)),
   /**
    * The commit the Runner runs (ADR 0011). Optional, so a Runner from before it was added still
    * connects, and is listed with its version unknown.
@@ -199,7 +205,8 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
   resume: Schema.optionalKey(ClaudeSessionId),
   /**
    * The token the Session's mod authenticates to the Hub with, scoped to this Session (issue #7).
-   * Passed to Claude Code's environment on the host; never into the Sandbox (ADR 0004).
+   * Kept in the Runner's memory, for its credential proxy to relay the mod's calls with; never
+   * passed into the Sandbox (ADR 0004, 0013).
    */
   modToken: Schema.NonEmptyString,
   /**
@@ -247,6 +254,17 @@ export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
 export type RelaunchSession = typeof RelaunchSession.Type
 
 /**
+ * A new mod token for a Session whose Claude Code the Runner kept running across its restart
+ * (#157), in place of the one its memory lost, which the Hub revoked as it sent this. Sent to a
+ * Runner whose hello lists the Session as `withoutModToken`.
+ */
+export const ModTokenReissued = Schema.TaggedStruct("ModTokenReissued", {
+  sessionId: SessionId,
+  modToken: Schema.NonEmptyString,
+})
+export type ModTokenReissued = typeof ModTokenReissued.Type
+
+/**
  * Stop a Session's Claude Code and its Sandbox: `Sleep` keeps the Sandbox's volumes to wake on,
  * `Archive` destroys the Sandbox (ADR 0003, 0006).
  */
@@ -272,6 +290,7 @@ export const HubToRunner = Schema.Union([
   HandshakeRejected,
   StartSession,
   RelaunchSession,
+  ModTokenReissued,
   StopSession,
   PurgeSession,
   TerminalInput,

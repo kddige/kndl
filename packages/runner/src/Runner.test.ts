@@ -176,11 +176,7 @@ function startRunner(
   const hub = new FakeHub()
   const tmux = new FakeTmux()
   setup({ hub, tmux })
-  const workspaces = new FakeWorkspaces(sessionsRoot)
   const sandboxes = new FakeSandboxes()
-  // One record of Sandbox and git calls, in the order they ran.
-  const git = new FakeWorkspaceGit(sandboxes.calls)
-  const proxy = new FakeCredentialProxy()
   const settings: RunnerSettings = {
     hubUrl: hub.url,
     name: "mac",
@@ -192,6 +188,38 @@ function startRunner(
     tmuxSocket: "unused",
     repoUrlTemplate: "unused",
   }
+  return runOn(
+    { hub, tmux, sandboxes, workspaces: new FakeWorkspaces(sessionsRoot), settings, claudeConfig },
+    updater,
+    claudeModels,
+  )
+}
+
+/**
+ * Restarts the Runner on the same machine, as `claude-hub restart` or a crash would: what runs in
+ * tmux and the Sandboxes runs on, and the Hub is the same. The new Runner has a new credential
+ * proxy: only the old one's memory held its Session tokens.
+ */
+async function restartRunner(h: Harness): Promise<Harness> {
+  await Effect.runPromise(Fiber.interrupt(h.runner))
+  const connections = h.hub.connections.length
+  const next = runOn(h)
+  await eventually(
+    () => h.hub.connections.length > connections && h.hub.current.received.length > 0,
+  )
+  return next
+}
+
+/** Runs a Runner on `machine`, with a credential proxy of its own. */
+function runOn(
+  machine: Pick<Harness, "hub" | "tmux" | "sandboxes" | "workspaces" | "settings" | "claudeConfig">,
+  updater: Layer.Layer<Updater> = Updater.manual(),
+  claudeModels: Layer.Layer<ClaudeModels> = StaticClaudeModels(models),
+): Harness {
+  const { hub, tmux, sandboxes, workspaces, settings, claudeConfig } = machine
+  // One record of Sandbox and git calls, in the order they ran.
+  const git = new FakeWorkspaceGit(sandboxes.calls)
+  const proxy = new FakeCredentialProxy()
   let hubGit: HubGit["Service"] | undefined
   const layer = SessionsLive.pipe(
     Layer.provideMerge(
@@ -374,14 +402,14 @@ describe("connecting", () => {
     expect(h.runner.pollUnsafe()).toBeUndefined()
   })
 
-  test("puts to sleep the Sessions an earlier Runner left running, then says it runs none", async () => {
+  test("starts with nothing running when no Sandbox is", async () => {
     const h = startRunner()
     await connected(h)
 
-    // Their Session tokens went with that Runner: the Hub wakes each again when it is wanted.
     expect(h.tmux.retired).toBe(1)
     expect(h.sandboxes.reconciled).toEqual([[]])
     expect(h.hub.current.received[0]).toMatchObject({ sessions: [] })
+    expect(h.hub.current.received[0]).not.toHaveProperty("withoutModToken")
   })
 
   test("after a reconnect, lists running Sessions, snapshots them and sends what waited", async () => {
@@ -407,6 +435,109 @@ describe("connecting", () => {
       exitCode: 0,
       output: "lost while disconnected",
     })
+  })
+})
+
+/** A Runner running Session s-1, and the Session token its Claude Code holds. */
+const withSession = async () => {
+  const h = startRunner()
+  await connected(h)
+  h.hub.send(startSession("s-1"))
+  await eventually(() => h.hub.all("SessionStarted").length === 1)
+  const kept = h.tmux.launched[0]?.env["CLAUDE_HUB_MOD_TOKEN"] as string
+  return { h, kept }
+}
+
+describe("restarting under running Sessions (#157)", () => {
+  test("keeps a running Session running, holding its Session token until the Hub sends a mod token", async () => {
+    const { h, kept } = await withSession()
+    const after = await restartRunner(h)
+
+    // Claude Code runs on: nothing is started or stopped, and its terminal streams again.
+    expect(h.hub.current.received[0]).toMatchObject({
+      _tag: "RunnerHello",
+      sessions: ["s-1"],
+      withoutModToken: ["s-1"],
+    })
+    expect(h.sandboxes.reconciled.at(-1)).toEqual([sessionId("s-1")])
+    expect(h.sandboxes.calls).toEqual(["start s-1"])
+    expect(h.tmux.launched).toHaveLength(1)
+    await eventually(() =>
+      h.hub.current.received.some((m) => m._tag === "TerminalFrame" && m.kind === "Snapshot"),
+    )
+    h.tmux.pane("s-1").output("still here")
+    await eventually(() => h.hub.current.received.some((m) => m.data === "still here"))
+
+    // The token is held for s-1 alone: Claude Code is asked to retry, and nothing is relayed.
+    const find = (presented: string) => Effect.runSync(after.proxy.tokens.find(presented))
+    expect(find(kept)).toBe("Held")
+    expect(after.proxy.grants).toEqual([])
+
+    h.hub.send({ _tag: "ModTokenReissued", sessionId: "s-1", modToken: "chm_mod.reissued" })
+    await eventually(() => h.sandboxes.calls.includes("keep s-1"))
+
+    // The same token now stands for the new mod token, and no other token gets in.
+    expect(find(kept)).toMatchObject({ sessionId: "s-1" })
+    expect(Redacted.value(after.proxy.grants[0]?.modToken as Redacted.Redacted)).toBe(
+      "chm_mod.reissued",
+    )
+    expect(find(`${kept.slice(0, -1)}x`)).toBeUndefined()
+    expect(h.tmux.launched).toHaveLength(1)
+    expect(h.hub.all("SessionStopped")).toEqual([])
+
+    // The next hello asks for nothing more.
+    h.hub.current.socket.close(1001, "Hub restarting")
+    await eventually(() => h.hub.connections.length === 3 && h.hub.current.received.length > 0)
+    expect(h.hub.current.received[0]).toMatchObject({ sessions: ["s-1"] })
+    expect(h.hub.current.received[0]).not.toHaveProperty("withoutModToken")
+  })
+
+  test("restarts a kept Session's Claude Code on a new model in the Sandbox it took back", async () => {
+    const { h } = await withSession()
+    await restartRunner(h)
+    h.hub.send({ _tag: "ModTokenReissued", sessionId: "s-1", modToken: "chm_mod.reissued" })
+    await eventually(() => h.sandboxes.calls.includes("keep s-1"))
+    writeTranscript(h, "3c1f6f0e-claude")
+
+    h.hub.send({
+      _tag: "RelaunchSession",
+      sessionId: "s-1",
+      repo: "acme/app",
+      workBranch: "claude/s-1",
+      resume: "3c1f6f0e-claude",
+      modToken: "chm_mod.third",
+      model: "opus[1m]",
+    })
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    expect(h.tmux.launched[1]?.argv).toContain("opus[1m]")
+    expect(h.sandboxes.calls).toEqual(["start s-1", "keep s-1"])
+  })
+
+  test("puts to sleep a Session whose Claude Code exited while the Runner was down", async () => {
+    const { h } = await withSession()
+    await Effect.runPromise(Fiber.interrupt(h.runner))
+    h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 0 })
+    await restartRunner(h)
+
+    // Its Sandbox is stopped, and the Hub has the Session Asleep once the hello leaves it out.
+    expect(h.sandboxes.reconciled.at(-1)).toEqual([])
+    expect(h.sandboxes.running.size).toBe(0)
+    expect(h.hub.current.received[0]).toMatchObject({ sessions: [] })
+    expect(h.hub.current.received[0]).not.toHaveProperty("withoutModToken")
+  })
+
+  test("ignores a mod token for a Session that wasn't waiting for one", async () => {
+    const { h } = await withSession()
+    h.hub.send({ _tag: "ModTokenReissued", sessionId: "s-1", modToken: "chm_mod.reissued" })
+    h.hub.send({ _tag: "ModTokenReissued", sessionId: "s-2", modToken: "chm_mod.reissued" })
+    h.hub.send({ _tag: "RequestTerminalSnapshot", sessionId: "s-1" })
+    await eventually(() => h.hub.all("TerminalFrame").length === 2)
+
+    expect(h.sandboxes.calls).toEqual(["start s-1"])
+    expect(h.proxy.grants.map((grant) => Redacted.value(grant.modToken))).toEqual([
+      "chm_mod.secret",
+    ])
   })
 })
 
@@ -455,6 +586,7 @@ describe("Sessions", () => {
       // What the Sandbox says Claude Code runs with.
       CLAUDE_CONFIG_DIR: "/claude",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+      DISABLE_INSTALLATION_CHECKS: "1",
       CLAUDE_HUB_SESSION_ID: "s-1",
       // The credential proxy, for Anthropic's API and the Hub alike, and the Session token for
       // both: never the mod token, nor a Claude credential (ADR 0013).

@@ -59,6 +59,14 @@ const runnerToHub = [
     sessions: [],
     asksCloneAccess: true,
   },
+  {
+    _tag: "RunnerHello",
+    protocolVersion: ProtocolVersion,
+    name: "studio",
+    login: runnerLogin,
+    sessions: ["s-1", "s-2"],
+    withoutModToken: ["s-1"],
+  },
   { _tag: "TestBuildLog", testBuildId: "b-1", data: "Reading package lists...\n" },
   { _tag: "TestBuildFinished", testBuildId: "b-1", result: "Passed" },
   {
@@ -259,6 +267,8 @@ const hubToRunner = [
     model: "opus[1m]",
     effort: "max",
   },
+  // A Runner kept s-1 running across its restart: a new mod token for it (#157).
+  { _tag: "ModTokenReissued", sessionId: "s-1", modToken: "mod-4" },
 ]
 
 describe("RunnerToHub", () => {
@@ -309,6 +319,7 @@ describe("HubToRunner", () => {
 
   test("rejects malformed messages", () => {
     expectRejected(HubToRunner, { ...hubToRunner[2], repo: "claude-hub" })
+    expectRejected(HubToRunner, { _tag: "ModTokenReissued", sessionId: "s-1", modToken: "" })
     expectRejected(HubToRunner, { ...hubToRunner[2], workBranch: "" })
     expectRejected(HubToRunner, { ...hubToRunner[2], modToken: undefined })
     expectRejected(HubToRunner, { _tag: "StopSession", sessionId: "s-1", reason: "Delete" })

@@ -181,7 +181,7 @@ or, for a Runner that doesn't update itself:
 To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f on main): run `claude-hub update` on this machine. Retrying meanwhile.
 ```
 
-**Why.** The Hub and the Runner speak different protocol versions. The Hub's answer always says which commit it runs, whatever the version, so a Runner that updates itself moves to it, as it would for **Update**, and restarts, which puts its Sessions to sleep. Until then they keep running; the Hub can't put them to sleep while it turns the Runner away.
+**Why.** The Hub and the Runner speak different protocol versions. The Hub's answer always says which commit it runs, whatever the version, so a Runner that updates itself moves to it, as it would for **Update**, and restarts under its Sessions, which keep running: the Hub can't put them to sleep first while it turns the Runner away.
 
 **Fix.** Usually nothing: the Runner connects again on the Hub's commit. If it can't follow (the log says it failed to update to that commit, or how to update it), run `claude-hub update` on its machine, or for a checkout, pull it to the Hub's commit and restart `bun run runner`.
 
@@ -191,7 +191,7 @@ To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f
 
 **Why.** Its Runner isn't connected to the Hub: it was stopped, its machine is asleep or offline, or it can't reconnect (see above). A Session runs on its Runner's Claude Code login, so it waits for that Runner rather than moving to another.
 
-**Fix.** Start the Runner again, or fix its connection. Once it is back, each Session is Active again if its Claude Code still runs, as when only the connection dropped, and otherwise Asleep, woken at once if prompts are waiting. A Runner that restarted puts all its Sessions to sleep as it starts, since their Session tokens went with the old process. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
+**Fix.** Start the Runner again, or fix its connection. Once it is back, each Session is Active again if its Claude Code still runs, whether only the connection dropped or the Runner restarted, and otherwise Asleep, woken at once if prompts are waiting. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
 
 ## Running Sessions went to sleep after an update
 

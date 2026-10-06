@@ -499,6 +499,35 @@ describe("a Runner going offline", () => {
     expect((await mod.deliveries(500)).map((command) => command.text)).toEqual(["anyone there?"])
   })
 
+  test("gives a Session a Runner kept across its restart a new mod token, and no wake (#157)", async () => {
+    const { hub, runner, runnerToken, web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    web.send({ _tag: "SendPrompt", sessionId, text: "after the restart?" })
+    await web.take("PromptQueueChanged", queueIs("after the restart?"))
+
+    // Its mod token went with the old Runner's memory: the Hub only has its hash.
+    const back = await openRunner(hub, runnerToken, [sessionId], undefined, true, {
+      withoutModToken: [sessionId],
+    })
+    const reissued = await back.take("ModTokenReissued")
+    expect(reissued.sessionId).toBe(sessionId)
+    expect(reissued.modToken).not.toBe(mod.token)
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+
+    // The old token is refused, and the new one gets the prompt that waited.
+    expect((await mod.hello()).status).toBe(401)
+    const renewed = new Mod(hub, sessionId, reissued.modToken)
+    expect((await renewed.hello()).status).toBe(200)
+    expect((await renewed.deliveries(500)).map((command) => command.text)).toEqual([
+      "after the restart?",
+    ])
+    expect(await back.untaken("StartSession")).toEqual([])
+    expect(await back.untaken("StopSession")).toEqual([])
+  })
+
   test("wakes a Session whose Claude Code stopped while it was away, if prompts wait", async () => {
     const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
     joinSession(web, sessionId)

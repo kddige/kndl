@@ -4,7 +4,7 @@ import { Cause, Effect, Exit, Logger, Redacted, Scope } from "effect"
 import { sessionId } from "../testSupport.ts"
 import { OAuthBeta, serveCredentialProxy, upstreamHeaders } from "./CredentialProxy.ts"
 import { NoClaudeCredential, RunnerCredential } from "./RunnerCredential.ts"
-import { makeSessionTokens, SessionTokens } from "./SessionTokens.ts"
+import { makeSessionTokens, SessionTokenPrefix, SessionTokens } from "./SessionTokens.ts"
 
 // Fake credentials only: none of these is a real one.
 const sessionOAuth = "sk-ant-oat01-session-FAKE-0001"
@@ -475,6 +475,30 @@ describe("mod relay", () => {
       expect(await response.json()).toEqual({ messages: [] })
       expect(Date.now() - started).toBeGreaterThanOrEqual(290)
       expect(hub.seen[0]?.search).toBe("?after=3&waitMs=300")
+    }))
+
+  test("asks a held token to retry, and relays it once the Hub sends a mod token (#157)", () =>
+    withProxy(async ({ url, tokens, issue }) => {
+      const kept = `${SessionTokenPrefix}${"k".repeat(43)}`
+      expect(await Effect.runPromise(tokens.hold(sessionId("s-1"), kept))).toBe(true)
+      const hello = () =>
+        fetch(`${url}/mod/hello`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${kept}`, "content-type": "application/json" },
+          body: '{"protocolVersion":1}',
+        })
+
+      const retry = await hello()
+      expect(retry.status).toBe(503)
+      expect(retry.headers.get("retry-after")).toBe("1")
+      expect((await messages(url, kept)).status).toBe(503)
+      expect(hub.seen).toEqual([])
+      expect(anthropic.seen).toEqual([])
+
+      expect(await issue("s-1")).toBe(kept)
+      expect((await hello()).status).toBe(200)
+      expect(hub.seen[0]?.headers.authorization).toBe(`Bearer ${modToken}`)
+      expect((await messages(url, kept)).status).toBe(200)
     }))
 
   test("refuses the mod without a live token, and methods the mod doesn't use", () =>

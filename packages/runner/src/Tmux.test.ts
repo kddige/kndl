@@ -196,6 +196,33 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
   }, 15_000)
 
+  test("reads back a variable the process was launched with, while it runs (#157)", async () => {
+    const id = sessionId("tmux-6")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      yield* tmux.launch({
+        sessionId: id,
+        cwd: tmpdir(),
+        argv: ["sh", "-c", "read line; exit 0"],
+        env: { CLAUDE_HUB_MOD_TOKEN: "chp_kept=1" },
+        size: { cols: 40, rows: 5 },
+      })
+      expect(yield* tmux.variable(id, "CLAUDE_HUB_MOD_TOKEN")).toBe("chp_kept=1")
+      expect(yield* tmux.variable(id, "CLAUDE_HUB_MOD")).toBeUndefined()
+      expect(yield* tmux.variable(sessionId("tmux-none"), "CLAUDE_HUB_MOD_TOKEN")).toBeUndefined()
+
+      // Not once the process has exited.
+      const pane = yield* tmux.attach(id)
+      yield* pane.input("\r")
+      const events = yield* pane.events.pipe(Stream.runCollect)
+      expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 0 })
+      expect(yield* tmux.variable(id, "CLAUDE_HUB_MOD_TOKEN")).toBeUndefined()
+      yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
+
   test("says what tmux said when a launch fails, never what it was given", async () => {
     const id = sessionId("tmux-5")
     const launch = (secret: string) =>

@@ -146,6 +146,8 @@ export class FakePane {
   snapshots = 0
   terminated = false
   attached = false
+  /** Its process exited: tmux keeps the dead pane. */
+  exited = false
   private queue: Queue.Queue<PaneEvent, Cause.Done> | undefined
 
   constructor(
@@ -157,7 +159,10 @@ export class FakePane {
   emit(event: PaneEvent): void {
     if (this.queue === undefined) throw new Error("not attached")
     Queue.offerUnsafe(this.queue, event)
-    if (event._tag === "Exited") Queue.endUnsafe(this.queue)
+    if (event._tag === "Exited") {
+      this.exited = true
+      Queue.endUnsafe(this.queue)
+    }
   }
 
   /** Everything the terminal printed, as `capture-pane` would read it back. */
@@ -221,6 +226,11 @@ export class FakeTmux {
         this.retired += 1
       }),
       lastOutput: (id) => Effect.sync(() => lastOutputOf(this.panes.get(id)?.printed ?? "")),
+      variable: (id, name) =>
+        Effect.sync(() => {
+          const pane = this.panes.get(id)
+          return pane === undefined || pane.exited ? undefined : pane.spec.env[name]
+        }),
       launch: (spec) =>
         Effect.suspend(() => {
           if (this.panes.has(spec.sessionId)) {
@@ -356,6 +366,8 @@ export class FakeSandboxes {
   readonly targets: Array<SandboxTarget> = []
   /** The conversations Claude Code has a transcript of, to resume. */
   readonly transcripts = new Set<string>()
+  /** The Sessions whose Sandbox runs: started, and not stopped since. */
+  readonly running = new Set<SessionId>()
 
   /** `claudePath`: the Claude Code each Sandbox runs. */
   constructor(readonly claudePath: string = fakeSandboxClaudePath) {}
@@ -366,6 +378,7 @@ export class FakeSandboxes {
         Effect.sync(() => {
           this.calls.push(`start ${id}`)
           this.targets.push(target)
+          this.running.add(id)
           return {
             ...(target.environment === undefined
               ? {}
@@ -373,11 +386,30 @@ export class FakeSandboxes {
             claude: { path: this.claudePath, env: { CLAUDE_CONFIG_DIR: "/claude" } },
           }
         }),
+      running: Effect.sync(() => [...this.running]),
+      keep: (id) =>
+        Effect.sync(() => {
+          this.calls.push(`keep ${id}`)
+          return { claude: { path: this.claudePath, env: { CLAUDE_CONFIG_DIR: "/claude" } } }
+        }),
       hasTranscript: (_id, _directories, conversation) =>
         Effect.sync(() => this.transcripts.has(conversation)),
-      stop: (id, reason) => Effect.sync(() => void this.calls.push(`stop ${id} ${reason}`)),
-      purge: (id) => Effect.sync(() => void this.calls.push(`purge ${id}`)),
-      reconcile: (running) => Effect.sync(() => void this.reconciled.push([...running])),
+      stop: (id, reason) =>
+        Effect.sync(() => {
+          this.calls.push(`stop ${id} ${reason}`)
+          this.running.delete(id)
+        }),
+      purge: (id) =>
+        Effect.sync(() => {
+          this.calls.push(`purge ${id}`)
+          this.running.delete(id)
+        }),
+      reconcile: (running) =>
+        Effect.sync(() => {
+          const known = [...running]
+          this.reconciled.push(known)
+          for (const id of this.running) if (!known.includes(id)) this.running.delete(id)
+        }),
       testBuild: (request, log) =>
         Effect.andThen(
           Effect.sync(() => void this.calls.push(`testBuild ${request.testBuildId}`)),
