@@ -8,6 +8,7 @@
 // the environment: see HubConfig.ts and Database.ts.
 
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
+import { formerServiceRole, moveFromFormerService } from "@kndl/protocol/former-name"
 import { Console, Effect, Layer, Option } from "effect"
 import { HttpRouter } from "effect/http"
 import { issueRunnerToken, runnerTokenNotice, secretsKeyNotice } from "./Admin.ts"
@@ -138,6 +139,8 @@ const secretsReset = (yes: boolean) =>
 
 const [command, ...args] = process.argv.slice(2)
 if (command === undefined) {
+  // Started by a service of the former name, the Hub moves the install to kndl's names first.
+  if (formerServiceRole(process.env) === "hub") moveFromFormerService("hub")
   BunRuntime.runMain(Layer.launch(HubLive))
 } else if (command === "runner-token" && args.length === 1 && args[0]) {
   BunRuntime.runMain(

@@ -6,6 +6,7 @@
     ".": "./src/index.ts",
     "./home": "./src/Home.ts",
     "./checkout": "./src/Checkout.ts",
+    "./former-name": "./src/FormerName.ts",
     "./tunnel-end": "./src/TunnelEnd.ts"
   },
   "scripts": {

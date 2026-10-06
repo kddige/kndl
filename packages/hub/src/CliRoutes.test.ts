@@ -6,6 +6,7 @@ import { existsSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { CliCommitHeader } from "@kndl/protocol"
+import { FormerName } from "@kndl/protocol/former-name"
 import { installScript } from "./CliRoutes.ts"
 import { commit, fakeBinary, fakeBuilds, removeTempDirs, tempDir } from "./cliTestSupport.ts"
 import { startHub, stopHubs } from "./testSupport.ts"
@@ -55,6 +56,8 @@ describe("GET /cli/<target>", () => {
       expect(response.status).toBe(200)
       expect(response.headers.get("content-type")).toBe("application/octet-stream")
       expect(response.headers.get(CliCommitHeader)).toBe(commit)
+      // For a CLI of the former name, which reads this one, to update itself to kndl.
+      expect(response.headers.get(FormerName.cliCommitHeader)).toBe(commit)
       expect(await response.text()).toBe(fakeBinary(target, commit))
       expect(existsSync(join(dir, commit, `kndl-${target}`))).toBe(true)
     }

@@ -1,6 +1,7 @@
 // Looking after an install: `doctor [--fix]`, `update` and `uninstall [--purge]`.
 import { existsSync, realpathSync } from "node:fs"
 import { rm } from "node:fs/promises"
+import { HomeVariable } from "@kndl/protocol/home"
 import { Console, Effect } from "effect"
 import {
   enableLinger,
@@ -34,7 +35,8 @@ import {
   serviceTarget,
   writeWrapper,
 } from "./Host.ts"
-import { type Layout, Roles } from "./Layout.ts"
+import { type Layout, resolveLayout, Roles } from "./Layout.ts"
+import { machineEdges, moveFromFormerName, thisMachine } from "./Rename.ts"
 import { afterUninstallSteps, type Platform, serviceFilePath, uninstallSteps } from "./Services.ts"
 import { Shell, step } from "./Shell.ts"
 import { Ui } from "./Ui.ts"
@@ -175,10 +177,24 @@ export interface UpdateOptions {
  * installed services and runs doctor. On the Hub's machine, it leaves the Hub the commit for its
  * Runners to follow (issue #87); the Runner here, when it updates itself, is drained by the Hub
  * and restarts itself, rather than restarting under its Sessions.
+ *
+ * An install made under kndl's former name is moved to kndl's names first (Rename.ts), and then
+ * updated where it moved to.
  */
-export const update = (layout: Layout, options: UpdateOptions) =>
+export const update = (installed: Layout, options: UpdateOptions) =>
   Effect.gen(function* () {
     const ref = options.ref
+    const setting = thisMachine()
+    let layout = installed
+    if (setting !== undefined) {
+      const moved = yield* moveFromFormerName(setting, machineEdges(setting))
+      if (moved.plan._tag === "Move" || moved.plan._tag === "InPlace") {
+        // A dry run moved nothing, so has nothing to update.
+        if (moved.home === undefined) return true
+        layout = resolveLayout({ [HomeVariable]: moved.home }, setting.userHome)
+        yield* Console.log("")
+      }
+    }
     yield* requireInstall(layout)
     const on = yield* requirePlatform(platform())
     const shell = yield* Shell

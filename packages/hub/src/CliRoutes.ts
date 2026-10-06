@@ -4,7 +4,9 @@
 //   the Hub's public URL filled in.
 // - `GET /cli/version` says the commit the Hub serves the CLI at: its own.
 // - `GET /cli/<os>-<arch>` is the binary for that platform, built at that commit (CliBuilds.ts),
-//   with the commit in its `x-kndl-commit` header.
+//   with the commit in its `x-kndl-commit` header. A CLI of kndl's former name reads the commit
+//   from a header of that name (ADR 0017), so it is sent too: without it, such a CLI could never
+//   update itself to kndl.
 //
 // All three are open, with no sign-in: the binary is kndl's own code at the Hub's commit,
 // and holds no setting, token or key of the Hub's. What the CLI does with a Hub afterwards is
@@ -12,6 +14,7 @@
 
 import { readFileSync } from "node:fs"
 import { CliCommitHeader, CliTargets, CliVersion, isCliTarget } from "@kndl/protocol"
+import { FormerName } from "@kndl/protocol/former-name"
 import { Effect } from "effect"
 import { HttpRouter, HttpServerResponse } from "effect/http"
 import { CliBuilds } from "./CliBuilds.ts"
@@ -82,6 +85,7 @@ export const CliRoutes = HttpRouter.use(
           contentType: "application/octet-stream",
           headers: {
             [CliCommitHeader]: builds.commit ?? "",
+            [FormerName.cliCommitHeader]: builds.commit ?? "",
             "cache-control": "no-store",
           },
         }).pipe(Effect.orDie)

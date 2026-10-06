@@ -3,6 +3,7 @@
 // checkout, `bun packages/cli/src/main.ts <command>`. Either way it manages the installed home,
 // `KNDL_HOME` or `~/.kndl`, never a checkout's dev home. A Hub also serves it as one
 // binary (issue #178), which first updates itself to the Hub's commit (SelfUpdate.ts).
+import { homedir } from "node:os"
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"
 import { Command } from "effect/cli"
@@ -10,6 +11,7 @@ import { build } from "./BuildInfo.ts"
 import { cli } from "./Cli.ts"
 import { readCliConfig } from "./CliConfig.ts"
 import { HubClient } from "./HubClient.ts"
+import { moveFormerCliConfig, renameFormerBinary } from "./Rename.ts"
 import { selfUpdate } from "./SelfUpdate.ts"
 import { Shell } from "./Shell.ts"
 import { Ui } from "./Ui.ts"
@@ -23,6 +25,14 @@ function version(): string {
     stderr: "ignore",
   })
   return git.exitCode === 0 ? git.stdout.toString().trim() : "unknown"
+}
+
+// A binary a Hub served under kndl's former name, which just updated itself to this, takes kndl's
+// names: its config moves to kndl's directory, and the binary to `kndl` (ADR 0017).
+if (build !== undefined) {
+  await moveFormerCliConfig(process.env, homedir())
+  const renamed = await renameFormerBinary(process.execPath)
+  if (renamed !== undefined) console.error(`kndl: ${renamed}`)
 }
 
 selfUpdate({ build, env: process.env, config: readCliConfig() }).pipe(

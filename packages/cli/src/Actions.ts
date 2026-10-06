@@ -3,8 +3,8 @@
 // the decisions are made in the pure modules, and the Steps run through Shell.
 import { existsSync } from "node:fs"
 import { chmod, mkdir, readFile } from "node:fs/promises"
-import { userInfo } from "node:os"
-import { delimiter, dirname } from "node:path"
+import { homedir, userInfo } from "node:os"
+import { delimiter, dirname, join } from "node:path"
 import { issueRunnerToken } from "@kndl/hub/src/Admin.ts"
 import { requestRunnerUpdates } from "@kndl/hub/src/RunnerUpdatePush.ts"
 import {
@@ -13,6 +13,7 @@ import {
   secretsResetDoneText,
   secretsResetPlanText,
 } from "@kndl/hub/src/SecretsReset.ts"
+import { FormerName, formerHomeDir } from "@kndl/protocol/former-name"
 import { Cause, ConfigProvider, Console, Effect } from "effect"
 import { fail } from "./Failure.ts"
 import {
@@ -49,15 +50,26 @@ export const RoleTitle: Record<Role, string> = { hub: "Hub", runner: "Runner" }
 export const InstallLine =
   "gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh"
 
-/** Fails unless the home holds an installed checkout. */
-export const requireInstall = (layout: Layout) =>
-  isInstalled(layout)
-    ? Effect.void
-    : Effect.fail(
-        fail(
-          `No kndl install in ${layout.home.dir} (no ${layout.app}). Install it with:\n\n  ${InstallLine}\n\nor set KNDL_HOME to the home you installed.`,
-        ),
-      )
+/**
+ * Fails unless the home holds an installed checkout. An install made under kndl's former name,
+ * which `update` moves to kndl's names, is pointed out.
+ */
+export const requireInstall = (layout: Layout) => {
+  if (isInstalled(layout)) return Effect.void
+  const former = formerHomeDir(process.env, homedir())
+  if (existsSync(join(former, "app", ".git"))) {
+    return Effect.fail(
+      fail(
+        `The install in ${former} is still under kndl's former name, ${FormerName.name}. Move it to kndl's names with \`${FormerName.command} update\`, then use \`kndl\`.`,
+      ),
+    )
+  }
+  return Effect.fail(
+    fail(
+      `No kndl install in ${layout.home.dir} (no ${layout.app}). Install it with:\n\n  ${InstallLine}\n\nor set KNDL_HOME to the home you installed.`,
+    ),
+  )
+}
 
 /** Fails on a platform kndl doesn't run services on. */
 export const requirePlatform = (on: Platform | undefined) =>
