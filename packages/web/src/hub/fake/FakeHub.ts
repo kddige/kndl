@@ -729,7 +729,23 @@ export class FakeHub implements HubTransport {
           )
           break
         }
+        // Pressing Sleep turns Keep awake off, as on the Hub (ADR 0016).
+        this.#setKeepAwake(session, false)
         this.#setState(session, "Asleep", "Put to sleep", this.#you)
+        break
+      }
+      case "SetKeepAwake": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        if (session.summary.state === "Archived") {
+          this.#fail(socket, message._tag, "The Session is archived.", message.sessionId)
+          break
+        }
+        this.#setKeepAwake(session, message.on)
+        if (message.on && session.summary.state === "Asleep") {
+          this.#wake(session, "Woken on studio", this.#you)
+          this.#next(session)
+        }
         break
       }
       case "WakeSession": {
@@ -1284,10 +1300,19 @@ export class FakeHub implements HubTransport {
     this.#start(session, { message, ...(by !== undefined && { by }) })
   }
 
+  /** Turns the Session's Keep awake on, by you, or off (ADR 0016); a change reaches every tab. */
+  #setKeepAwake(session: FakeSession, on: boolean): void {
+    if ((session.summary.keepAwake !== undefined) === on) return
+    const { keepAwake: _, ...summary } = session.summary
+    session.summary = on ? { ...summary, keepAwake: { by: this.#you, at: Date.now() } } : summary
+    this.#summaryChanged(session)
+  }
+
   #archive(session: FakeSession): void {
     const at = Date.now()
-    // A start or restart under way is over: its Claude Code is stopped for good.
-    const { starting: _, restarting: __, ...summary } = session.summary
+    // A start or restart under way is over, and Keep awake goes off: its Claude Code is stopped
+    // for good.
+    const { starting: _, restarting: __, keepAwake: ___, ...summary } = session.summary
     session.summary = {
       ...summary,
       archived: { by: this.#you, at, purgeAt: at + archiveRetentionMs },

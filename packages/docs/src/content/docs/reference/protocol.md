@@ -104,10 +104,14 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential` |
 | Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)).
+
+### Keep awake
+
+`SetKeepAwake { sessionId, on }` turns a Session's Keep awake on or off ([ADR 0016](/reference/decisions/0016-forwarding-a-sessions-ports/)). It takes the same Repo access as acting in the Session. Each Session carries `keepAwake: { by, at }` while it is on: the Participant who turned it on, and when. Turned on for an Asleep Session, it wakes it, and a refused wake comes back as a `CommandFailed` with Keep awake left on. `SetKeepAwake` on an Archived Session is refused with `The Session is archived.` `SleepSession` and `ArchiveSession` turn it off.
 
 ### Claude credentials
 

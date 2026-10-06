@@ -242,3 +242,13 @@ export function PencilIcon(props: IconProps) {
     </Icon>
   )
 }
+
+/** Awake: a Session kept awake, which doesn't go to sleep when it's idle (ADR 0016). */
+export function SunIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="2.5" />
+      <path d="M8 1.75v1.5M8 12.75v1.5M1.75 8h1.5M12.75 8h1.5M3.58 3.58l1.06 1.06M11.36 11.36l1.06 1.06M3.58 12.42l1.06-1.06M11.36 4.64l1.06-1.06" />
+    </Icon>
+  )
+}

@@ -67,6 +67,10 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
     "on the Runner's Claude account",
   )
   expect(hub.received.map((message) => message._tag)).toContain("JoinSession")
+  // Bob keeps it awake (ADR 0016).
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain(
+    "Kept awake by Bob Lee",
+  )
 
   // A second Participant joins, and their prompt starts a Turn under their name.
   await eventually(() =>
@@ -174,6 +178,40 @@ test("an Asleep Session wakes from its banner, and an idle Active one sleeps on 
   expect([...page.querySelectorAll("button")].some((b) => b.textContent === "Sleep now")).toBe(
     false,
   )
+})
+
+test("Keep awake wakes an Asleep Session, says who keeps it awake, and Sleep now turns it off", async () => {
+  const { hub, page, banner, header, sent } = await openSession("s-readme")
+  const keepAwake = () => {
+    const toggle = page.querySelector<HTMLElement>("header [role=switch]")
+    if (!toggle) throw new Error("no Keep awake switch")
+    return toggle
+  }
+  expect(header()).toContain("Keep awake")
+  expect(header()).not.toContain("Kept awake by")
+  expect(keepAwake().getAttribute("aria-checked")).toBe("false")
+
+  // On, it says who, and the Asleep Session wakes.
+  await step(() => keepAwake().click())
+  expect(sent()).toContain("SetKeepAwake")
+  await eventually(() => expect(header()).toContain("Kept awake by you"))
+  expect(keepAwake().getAttribute("aria-checked")).toBe("true")
+  await eventually(() => expect(banner()).toBe(""))
+
+  // Sleep now turns it off.
+  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+  await step(() => button("Sleep now", page).click())
+  await eventually(() => expect(banner()).toContain("Put to sleep."))
+  expect(header()).not.toContain("Kept awake by")
+  expect(keepAwake().getAttribute("aria-checked")).toBe("false")
+
+  // And off by the switch, it stays Asleep.
+  await step(() => keepAwake().click())
+  await eventually(() => expect(header()).toContain("Kept awake by you"))
+  await step(() => keepAwake().click())
+  await eventually(() => expect(header()).not.toContain("Kept awake by"))
+  const last = hub.received.findLast((message) => message._tag === "SetKeepAwake")
+  expect(last?._tag === "SetKeepAwake" && last.on).toBe(false)
 })
 
 test("a Session whose Claude Code exited on its own shows what it printed, folded (#105)", async () => {
@@ -454,6 +492,8 @@ test("an Archived Session can't take prompts or open its terminal, and offers a 
   expect(prompt?.disabled).toBe(true)
   const labels = [...page.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))
   expect(labels).not.toContain("Delete Session")
+  // Nor can it be kept awake (ADR 0016).
+  expect(page.querySelector("header [role=switch]")).toBeNull()
   // Even asked for in the URL, the terminal stays shut: its tab is disabled.
   const terminalTab = [...page.querySelectorAll('[role="tab"]')].find(
     (tab) => tab.textContent === "Terminal",

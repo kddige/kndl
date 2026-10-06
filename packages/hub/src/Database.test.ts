@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { AgentId, SessionId } from "@claude-hub/protocol"
+import { AgentId, ParticipantId, SessionId } from "@claude-hub/protocol"
 import { ConfigProvider, Effect, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { DatabaseFile, databaseAt } from "./Database.ts"
@@ -40,11 +40,20 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0017, subagents: the migrator runs only the
+ * Takes the database back to before migration 0018, Keep awake: the migrator runs only the
  * migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeKeepAwake = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE sessions DROP COLUMN keep_awake_by`
+  yield* sql`ALTER TABLE sessions DROP COLUMN keep_awake_at`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'keep_awake'`
+})
+
+/** Takes the database back to before migration 0017, subagents, as above. */
 const beforeAgents = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeKeepAwake
   yield* sql`DROP TABLE agents`
   yield* sql`ALTER TABLE sessions ADD COLUMN parent_id TEXT`
   yield* sql`ALTER TABLE sessions ADD COLUMN last_report TEXT`
@@ -272,6 +281,68 @@ describe("migration 0017, subagents", () => {
         { id: AgentId.make("a-3"), description: "Task 3", status: "Running" },
       ],
       done: Option.some("Done"),
+    })
+  })
+})
+
+describe("migration 0018, Keep awake", () => {
+  test("leaves the Sessions there were with it off, and keeps who turned it on", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO participants (id, login, name, avatar_url, created_at, updated_at)
+          VALUES ('p-2', 'bob', 'Bob', 'https://avatars.githubusercontent.com/u/2', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* beforeKeepAwake
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
+            creator_id, created_at
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
+        `
+      }),
+    )
+    const id = SessionId.make("s-1")
+    const before = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const old = Option.getOrThrow(yield* sessions.get(id))
+        yield* sessions.setKeepAwake(id, { by: ParticipantId.make("p-2"), at: 5 })
+        return old.keepAwake
+      }).pipe(Effect.provide(Sessions.layer)),
+    )
+    expect(before).toBeUndefined()
+
+    // It stays on through a Hub restart, until turned off.
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sessions = yield* Sessions
+        const on = Option.getOrThrow(yield* sessions.get(id)).keepAwake
+        yield* sessions.setKeepAwake(id, null)
+        const off = Option.getOrThrow(yield* sessions.get(id)).keepAwake
+        return { on, off }
+      }).pipe(Effect.provide(Sessions.layer)),
+    )
+    expect(after).toEqual({
+      on: {
+        by: {
+          id: ParticipantId.make("p-2"),
+          login: "bob",
+          name: "Bob",
+          avatarUrl: "https://avatars.githubusercontent.com/u/2",
+        },
+        at: 5,
+      },
+      off: undefined,
     })
   })
 })

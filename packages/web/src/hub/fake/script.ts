@@ -189,6 +189,8 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         // Bob switched it after the first Turn, which ran on Claude Code's default (#128).
         model: "sonnet",
         effort: "high",
+        // Bob keeps it up while he tries its dev server (ADR 0016).
+        keepAwake: { by: bob, at: now - 30 * 60_000 },
       },
       at: now - 2 * hour,
       events: [
@@ -264,6 +266,8 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         creator: you,
         createdAt: now - 50 * hour,
         currentTurn: null,
+        // Kept awake: it wakes again once ci-box is back.
+        keepAwake: { by: you, at: now - 49 * hour },
       },
       at: now - 50 * hour,
       events: [

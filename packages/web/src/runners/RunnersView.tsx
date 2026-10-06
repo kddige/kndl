@@ -15,11 +15,14 @@ import {
   type PendingPairingCode,
   type RunnerSummary,
   runnerRemovalRefusal,
+  type SessionSummary,
+  sessionTitle,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useState } from "react"
 import { timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
+import { keptAwakeText } from "../session/keepAwake.ts"
 import {
   Badge,
   Banner,
@@ -34,6 +37,7 @@ import {
   PlusIcon,
   ServerIcon,
   Spinner,
+  SunIcon,
   toast,
   Tooltip,
   WarningIcon,
@@ -110,6 +114,14 @@ const styles = stylex.create({
   },
   fact: { display: "inline-flex", alignItems: "center", gap: space.s1_5, minWidth: 0 },
   mono: { fontFamily: font.mono },
+  keptAwakeList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s0_5,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  },
   actions: { display: "flex", gap: space.s2 },
   dot: { width: "0.5rem", height: "0.5rem", borderRadius: "50%", flexShrink: 0 },
   online: { backgroundColor: color.success },
@@ -213,6 +225,7 @@ export function RunnersView() {
   const runners = useHubState((state) => state.runners)
   const codes = useHubState((state) => state.pairingCodes)
   const hubVersion = useHubState((state) => state.hubVersion)
+  const sessions = useHubState((state) => state.sessions)
   const now = useNow(15_000)
   const pairing = usePairing()
   const [removing, setRemoving] = useState<RunnerSummary | null>(null)
@@ -268,6 +281,9 @@ export function RunnersView() {
                   key={runner.id}
                   runner={runner}
                   first={index === 0}
+                  keptAwake={(sessions ?? []).filter(
+                    (session) => session.runnerId === runner.id && session.keepAwake !== undefined,
+                  )}
                   now={now}
                   onUpdate={() => setUpdating(runner)}
                   onRepair={() => pairing.open({ _tag: "Repair", runner })}
@@ -306,6 +322,7 @@ export function RunnersView() {
 function RunnerRow({
   runner,
   first,
+  keptAwake,
   now,
   onUpdate,
   onRepair,
@@ -313,6 +330,8 @@ function RunnerRow({
 }: {
   runner: RunnerSummary
   first: boolean
+  /** Its Sessions the viewer can see that have Keep awake on (ADR 0016). */
+  keptAwake: ReadonlyArray<SessionSummary>
   now: number
   onUpdate: () => void
   onRepair: () => void
@@ -324,6 +343,7 @@ function RunnerRow({
   const note = underWay ? undefined : versionNote(runner.versionStatus, runner.updater)
   const action = updateAction(runner)
   const manual = manualUpdateText(runner)
+  const you = useHubState((state) => state.you)
   return (
     <li aria-label={runner.name} {...stylex.props(styles.row, first && styles.firstRow)}>
       <div {...stylex.props(styles.main)}>
@@ -370,6 +390,26 @@ function RunnerRow({
               ? "No Sessions"
               : `${runner.openSessions} ${runner.openSessions === 1 ? "Session" : "Sessions"}`}
           </span>
+          {keptAwake.length > 0 && (
+            // Which ones, and who keeps them awake (ADR 0016).
+            <Tooltip
+              content={
+                <ul {...stylex.props(styles.keptAwakeList)}>
+                  {keptAwake.map((session) => (
+                    <li key={session.id}>
+                      {sessionTitle(session)}
+                      {session.keepAwake && `: ${keptAwakeText(session.keepAwake, you?.id)}`}
+                    </li>
+                  ))}
+                </ul>
+              }
+            >
+              <span tabIndex={0} {...stylex.props(styles.fact)}>
+                <SunIcon />
+                {keptAwake.length} kept awake
+              </span>
+            </Tooltip>
+          )}
         </p>
         {update && (
           <p

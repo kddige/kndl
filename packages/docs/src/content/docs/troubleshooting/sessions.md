@@ -196,6 +196,14 @@ Neither you nor build-box has a Claude credential: add yours on the Account page
 
 **Fix.** Have the Repo's owner add you on GitHub, or install the App on it. Its Sessions show up within twice `HUB_REPO_ACCESS_TTL_MS` (5 minutes by default), with no reload. Without `GITHUB_APP_ID` on the Hub, GitHub sign-ins see no Sessions at all, and `claude-hub doctor` fails its `GitHub App` check: [set up the GitHub App](/how-to/set-up-the-github-app/).
 
+## A Session doesn't go to sleep
+
+**What you see.** A Session nobody uses stays Active long after `HUB_SLEEP_AFTER_MS` (15 minutes by default).
+
+**Why.** Something keeps it busy: a Turn or subagent running, a prompt queued, a Participant with the Session open in a tab, or **Keep awake**, which the header shows as "Kept awake by …" and the sidebar marks with a sun. See [Going to sleep](/explanation/session-lifecycle/#going-to-sleep).
+
+**Fix.** Turn **Keep awake** off, or press **Sleep now**, which turns it off and puts the Session to sleep at once. Anyone with access to the Repo can do either.
+
 ## Restart or Sleep now is refused
 
 **What you see.** Pressing **Restart** or **Sleep now** shows a refusal, such as:
