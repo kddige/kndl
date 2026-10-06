@@ -21,7 +21,11 @@ import {
   loginFromClaudeConfig,
   readClaudeConfig,
 } from "@claude-hub/runner/src/ClaudeConfig.ts"
-import { ModBundle, RunnerConfig, RunnerConfigLive } from "@claude-hub/runner/src/RunnerConfig.ts"
+import {
+  missingModBundle,
+  RunnerConfig,
+  RunnerConfigLive,
+} from "@claude-hub/runner/src/RunnerConfig.ts"
 import { Cause, ConfigProvider, Effect, Exit, Option } from "effect"
 import { FetchHttpClient } from "effect/http"
 import type { AppPermissionsFact, DoctorFacts, Health } from "./Doctor.ts"
@@ -358,7 +362,7 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
     const hubValues = readEnvValues(layout.envFile("hub"))
     const runnerValues = readEnvValues(layout.envFile("runner"))
 
-    const modBuilt = existsSync(join(layout.app, "packages", "mod", ModBundle))
+    const modBuilt = missingModBundle(join(layout.app, "packages", "mod")) === undefined
     const services: Array<{ readonly role: Role; readonly state: ServiceState }> = []
     for (const role of roles) {
       services.push({ role, state: yield* serviceState(serviceTarget(layout, role, on)) })

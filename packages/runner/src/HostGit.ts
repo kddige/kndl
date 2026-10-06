@@ -19,7 +19,8 @@
 //   an `http.<url>.extraHeader` set through `GIT_CONFIG_COUNT`. It is never written to disk, to a
 //   remote URL or to any config file, and never logged.
 
-import { lstat, readdir } from "node:fs/promises"
+import { constants } from "node:fs"
+import { lstat, mkdir, open, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { Data, Effect, Redacted } from "effect"
 import { hostEnvironment, runCommand } from "./Process.ts"
@@ -218,10 +219,45 @@ const checkGitDir = (paths: WorkspacePaths) =>
     }
   })
 
+/** Where subagents' worktrees are, as an exclude pattern (ADR 0014). */
+export const AgentWorktreesPattern = "/.claude/worktrees/"
+
+/**
+ * Has the Workspace's `info/exclude` ignore subagents' worktrees (ADR 0014), so neither a WIP
+ * snapshot nor a `git add -A` in the Sandbox takes one in: their `.git` files point at guest
+ * paths. The line is appended once, through no link at the file. Answers the exclude, with it.
+ */
+const excludeAgentWorktrees = (paths: WorkspacePaths) =>
+  Effect.gen(function* () {
+    const path = join(gitDir(paths), "info", "exclude")
+    const exclude = yield* Effect.promise(() =>
+      Bun.file(path)
+        .text()
+        .catch(() => ""),
+    )
+    if (exclude.split("\n").includes(AgentWorktreesPattern)) return exclude
+    const line = `${exclude === "" || exclude.endsWith("\n") ? "" : "\n"}${AgentWorktreesPattern}\n`
+    yield* Effect.tryPromise({
+      try: async () => {
+        await mkdir(join(gitDir(paths), "info"), { recursive: true })
+        const flags = constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT
+        const file = await open(path, flags | constants.O_NOFOLLOW, 0o644)
+        try {
+          await file.write(line)
+        } finally {
+          await file.close()
+        }
+      },
+      catch: (error) =>
+        new GitError({ message: `couldn't exclude agents' worktrees in the Workspace: ${error}` }),
+    })
+    return `${exclude}${line}`
+  })
+
 /**
  * Makes the Runner's own git directory for the Workspace if it isn't there yet, and copies the
- * Workspace's `info/exclude` into it, so untracked files the Workspace ignores stay out of WIP
- * snapshots. Exclude patterns are only data.
+ * Workspace's `info/exclude` into it, agents' worktrees excluded, so untracked files the Workspace
+ * ignores stay out of WIP snapshots. Exclude patterns are only data.
  */
 const prepareHostGit = (paths: WorkspacePaths) =>
   Effect.gen(function* () {
@@ -230,11 +266,7 @@ const prepareHostGit = (paths: WorkspacePaths) =>
       yield* git(["init", "--quiet", "--bare", paths.hostGit])
       yield* git(["config", "core.bare", "false"], { variables: { GIT_DIR: paths.hostGit } })
     }
-    const exclude = yield* Effect.promise(() =>
-      Bun.file(join(gitDir(paths), "info", "exclude"))
-        .text()
-        .catch(() => ""),
-    )
+    const exclude = yield* excludeAgentWorktrees(paths)
     yield* Effect.promise(() => Bun.write(join(paths.hostGit, "info", "exclude"), exclude))
   })
 

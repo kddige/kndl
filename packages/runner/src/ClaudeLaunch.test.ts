@@ -1,12 +1,16 @@
 import { expect, test } from "bun:test"
 import type { SessionId } from "@claude-hub/protocol"
 import { claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
+import { modPlugins } from "./sandbox/SessionLayout.ts"
 
-test("the mod reads every variable the Runner sets for it, by the same name", async () => {
+test("the mod's plugins read every variable the Runner sets for them, by the same name", async () => {
   // The loader lists a hooks module's variables from its literal `$.env.get` calls, so the mod
   // can't share these names as constants.
-  const glue = await Bun.file(new URL("../../mod/hooks/register.ts", import.meta.url)).text()
-  for (const name of Object.values(ModEnvironment)) expect(glue).toContain(`$.env.get("${name}")`)
+  for (const plugin of modPlugins) {
+    const hooks = new URL(`../../mod/plugins/${plugin}/hooks/register.ts`, import.meta.url)
+    const glue = await Bun.file(hooks).text()
+    for (const name of Object.values(ModEnvironment)) expect(glue).toContain(`$.env.get("${name}")`)
+  }
 })
 
 const options = {
@@ -15,14 +19,16 @@ const options = {
   conversation: { _tag: "New", id: "3c1f6f0e-claude" },
 } as const
 
-test("Claude Code runs in the Sandbox with the mod, never asking for a permission (ADR 0013)", () => {
+test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a permission (ADR 0013)", () => {
   const { argv, env } = claudeLaunch(options)
   expect(argv).toEqual([
     "/opt/claude-code/2.1.289-musl/claude",
     "--session-id",
     "3c1f6f0e-claude",
     "--plugin-dir",
-    "/opt/claude-hub/hub-link",
+    "/opt/claude-hub/hub-link/plugins/hub-link",
+    "--plugin-dir",
+    "/opt/claude-hub/hub-link/plugins/hub-link-commands",
     "--dangerously-skip-permissions",
   ])
   expect(env[ModEnvironment.sessionId]).toBe("s-1")

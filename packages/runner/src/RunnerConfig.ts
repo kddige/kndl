@@ -3,6 +3,7 @@ import { hostname } from "node:os"
 import { join, resolve } from "node:path"
 import { HomeConfig } from "@claude-hub/protocol/home"
 import { Config, Context, Effect, Layer, type Redacted } from "effect"
+import { modPlugins } from "./sandbox/SessionLayout.ts"
 
 /** What a Runner is configured with. Read from the environment by {@link RunnerConfigLive}. */
 export interface RunnerSettings {
@@ -19,7 +20,7 @@ export interface RunnerSettings {
    * parent directories, so trusting this one once covers every Session under it (spike #4).
    */
   readonly sessionsRoot: string
-  /** The `hub-link` mod, loaded into each Session's Claude Code with `--plugin-dir`. */
+  /** The mod package, whose plugins each Session's Claude Code loads with `--plugin-dir`. */
   readonly modDir: string
   /** The Claude Code executable. */
   readonly claudeBin: string
@@ -80,12 +81,13 @@ export const RunnerConfigLive = Layer.effect(
       ),
     })
     const modDir = resolve(settings.modDir)
-    // A mod that doesn't load answers no tool call, and Claude Code would run its tools on the
-    // host: refuse to run without the built bundle.
-    if (!existsSync(join(modDir, ModBundle))) {
+    // Without the mod a Session is never linked to the Hub: refuse to run without the built
+    // bundles.
+    const missing = missingModBundle(modDir)
+    if (missing !== undefined) {
       return yield* Effect.die(
         new Error(
-          `The hub-link mod isn't built: ${join(modDir, ModBundle)} is missing. Run \`bun run mod:build\`.`,
+          `The hub-link mod isn't built: ${missing} is missing. Run \`bun run mod:build\`.`,
         ),
       )
     }
@@ -98,8 +100,12 @@ export const RunnerConfigLive = Layer.effect(
   }),
 )
 
-/** The hub-link mod's bundle, which `bun run mod:build` writes; the mod doesn't load without it. */
-export const ModBundle = "hooks/hub-link-lib.js"
+/** Each of the mod's plugins' bundle, which `bun run mod:build` writes; none loads without it. */
+export const ModBundles = modPlugins.map((plugin) => `plugins/${plugin}/hooks/hub-link-lib.js`)
+
+/** The first of the mod's bundles missing under `modDir`, if any. */
+export const missingModBundle = (modDir: string) =>
+  ModBundles.map((bundle) => join(modDir, bundle)).find((path) => !existsSync(path))
 
 /** The Hub's WebSocket endpoint for Runners: `/ws/runner`, over `ws:` or `wss:`. */
 /** Where the Runner asks whether the Hub has it connected, and still takes its token. */

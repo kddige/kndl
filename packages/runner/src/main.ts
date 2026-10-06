@@ -1,13 +1,12 @@
 // The Runner: a host machine connected to the Hub that runs Sessions on its own Runner login.
 // Configured from the environment; see RunnerConfig.ts and the README.
 
-import { existsSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { resolve } from "node:path"
 import { BunRuntime, BunServices, BunSocket } from "@effect/platform-bun"
 import { Effect, Layer } from "effect"
 import { ProxyConfigLive } from "./proxy/ProxyConfig.ts"
 import { runRunner, SessionsHost } from "./Runner.ts"
-import { ModBundle, RunnerConfigLive } from "./RunnerConfig.ts"
+import { missingModBundle, RunnerConfigLive } from "./RunnerConfig.ts"
 import { LoadCheckVariable } from "./SelfUpdate.ts"
 import { UpdaterLive } from "./Updater.ts"
 
@@ -20,9 +19,9 @@ const RunnerLive = UpdaterLive.pipe(
 if (process.env[LoadCheckVariable] === "1") {
   // Started by an update, on the commit it moves to, only to check the Runner loads: every module
   // above was imported. The mod must be built too, which the Runner refuses to start without.
-  const bundle = join(resolve(import.meta.dir, "../../mod"), ModBundle)
-  if (!existsSync(bundle)) {
-    console.error(`The hub-link mod isn't built: ${bundle} is missing.`)
+  const missing = missingModBundle(resolve(import.meta.dir, "../../mod"))
+  if (missing !== undefined) {
+    console.error(`The hub-link mod isn't built: ${missing} is missing.`)
     process.exit(1)
   }
   console.log("The Runner loads.")

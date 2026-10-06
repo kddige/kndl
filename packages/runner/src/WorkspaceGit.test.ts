@@ -17,7 +17,7 @@ import { join } from "node:path"
 import { type SessionId, wipRef } from "@claude-hub/protocol"
 import { BunServices } from "@effect/platform-bun"
 import { Effect, Layer, Redacted, References } from "effect"
-import { gitEnvironment, WipIdentity } from "./HostGit.ts"
+import { AgentWorktreesPattern, gitEnvironment, WipIdentity } from "./HostGit.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { FakeHubGit, sessionId } from "./testSupport.ts"
@@ -197,6 +197,37 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     expect(git(origin, "rev-parse", "main")).toBe(head)
     expect(hubGit.wipFailures).toEqual([])
     expectNoTokenOnDisk()
+  })
+
+  test("subagents' worktrees stay out of the WIP ref and the Workspace's git status (ADR 0014)", async () => {
+    await prepare()
+    git(
+      workspace(),
+      "worktree",
+      "add",
+      "--quiet",
+      "-b",
+      "worktree-agent-a1",
+      ".claude/worktrees/agent-a1",
+    )
+    writeFileSync(join(workspace(), ".claude", "worktrees", "agent-a1", "draft.md"), "draft\n")
+    writeFileSync(join(workspace(), "notes.txt"), "notes\n")
+
+    await pushWip("Sleep")
+    writeFileSync(join(workspace(), "notes.txt"), "more notes\n")
+    await pushWip("Sleep")
+
+    const wip = git(origin, "rev-parse", wipRef(id))
+    expect(git(origin, "ls-tree", "-r", "--name-only", wip).split("\n").toSorted()).toEqual([
+      ".gitignore",
+      "README.md",
+      "notes.txt",
+    ])
+    // A `git add -A` in the Sandbox leaves them out too.
+    expect(git(workspace(), "status", "--porcelain")).toBe("?? notes.txt")
+    const exclude = readFileSync(join(workspace(), ".git", "info", "exclude"), "utf8")
+    expect(exclude.split("\n").filter((line) => line === AgentWorktreesPattern)).toHaveLength(1)
+    expect(hubGit.wipFailures).toEqual([])
   })
 
   test("a WIP push is skipped while nothing changed, and force-pushes the ref when it did", async () => {

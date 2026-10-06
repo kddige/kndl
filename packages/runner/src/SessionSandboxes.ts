@@ -486,7 +486,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       readOnly: true,
     }
 
-    /** hub-link, which Claude Code loads with `--plugin-dir` (ADR 0013). */
+    /** The mod, whose plugins Claude Code loads with `--plugin-dir` (ADR 0013, ADR 0014). */
     const modMount: HostMount = {
       _tag: "Host",
       hostPath: options.modDir,
