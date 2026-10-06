@@ -8,6 +8,7 @@ import type {
   Environment,
   EnvironmentVersionInfo,
   HubToWeb,
+  OpenPort,
   Participant,
   PendingPairingCode,
   QueuedPrompt,
@@ -22,6 +23,7 @@ export type HubMessage = (typeof HubToWeb)["Encoded"]
 export type ParticipantWire = (typeof Participant)["Encoded"]
 export type AgentSummaryWire = (typeof AgentSummary)["Encoded"]
 export type SessionSummaryWire = (typeof SessionSummary)["Encoded"]
+export type OpenPortWire = (typeof OpenPort)["Encoded"]
 export type SessionEventWire = (typeof SessionEvent)["Encoded"]
 export type LogEntryWire = (typeof SessionLogEntry)["Encoded"]
 export type QueuedPromptWire = (typeof QueuedPrompt)["Encoded"]

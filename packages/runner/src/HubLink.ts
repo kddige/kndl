@@ -8,8 +8,8 @@ export type HubWriter = (message: RunnerToHub) => Effect.Effect<void, unknown>
  * The Runner's way to send the Hub a message, whether or not it is connected right now.
  *
  * While disconnected, Session lifecycle messages wait and are sent, in order, right after the
- * next welcome. Terminal frames are dropped instead, because every reconnect sends a fresh
- * snapshot of each terminal.
+ * next welcome. Terminal frames and Open ports are dropped instead, because every reconnect sends
+ * a fresh snapshot of each terminal, and each Session's Open ports again.
  */
 export class HubLink extends Context.Service<
   HubLink,
@@ -20,6 +20,10 @@ export class HubLink extends Context.Service<
     readonly disconnect: Effect.Effect<void>
   }
 >()("@claude-hub/runner/HubLink") {}
+
+/** Messages sent again after every reconnect, so not kept while disconnected. */
+const resentOnConnect = (message: RunnerToHub) =>
+  message._tag === "TerminalFrame" || message._tag === "SessionPorts"
 
 export const HubLinkLive = Layer.effect(
   HubLink,
@@ -33,14 +37,14 @@ export const HubLinkLive = Layer.effect(
     const deliver = (message: RunnerToHub) =>
       Effect.suspend(() => {
         if (writer === undefined) {
-          if (message._tag !== "TerminalFrame") waiting.push(message)
+          if (!resentOnConnect(message)) waiting.push(message)
           return Effect.void
         }
         return writer(message).pipe(
           Effect.catchCause(() =>
             Effect.sync(() => {
               writer = undefined
-              if (message._tag !== "TerminalFrame") waiting.push(message)
+              if (!resentOnConnect(message)) waiting.push(message)
             }),
           ),
         )

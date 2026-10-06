@@ -32,6 +32,7 @@ import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { SessionsLive } from "./Sessions.ts"
 import {
   FakeCredentialProxy,
+  FakeOpenPorts,
   FakeSandboxes,
   FakeWorkspaceGit,
   FakeWorkspaces,
@@ -174,6 +175,7 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
   const { token } = await hub.run(Effect.flatMap(RunnerTokens, (tokens) => tokens.issue("mac")))
   const sessionsRoot = join(dir, "sessions")
   const layer = SessionsLive.pipe(
+    Layer.provide(new FakeOpenPorts().layer),
     Layer.provideMerge(HubGitLive),
     Layer.provideMerge(HubVariablesLive),
     Layer.provideMerge(HubClaudeCredentialLive),

@@ -56,6 +56,7 @@ import { Composer } from "./Composer.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker } from "./ModelPicker.tsx"
 import { modelName, otherTurnModel } from "./models.ts"
+import { OpenPorts } from "./OpenPorts.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { Transcript } from "./Transcript.tsx"
@@ -344,6 +345,7 @@ function LoadedSession({
         }
         actions={
           <>
+            <OpenPorts summary={summary} />
             {state !== "Archived" && (
               // Anyone with access may turn it on or off (ADR 0016); Sleep now turns it off.
               <Tooltip content="While it's on, the Session doesn't go to sleep when idle. Sleep now turns it off.">

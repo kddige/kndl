@@ -6,6 +6,8 @@ import {
   type GitAsk,
   GitCredentials,
   type GitIdentity,
+  type OpenPort,
+  RunnerToHub,
   SessionId,
   type StartSession,
   type TerminalSize,
@@ -15,7 +17,9 @@ import {
 } from "@claude-hub/protocol"
 import { type Cause, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
+import { HubLink } from "./HubLink.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
+import { OpenPorts } from "./OpenPorts.ts"
 import { CredentialProxy, makeCredentialProxy } from "./proxy/CredentialProxy.ts"
 import { NoClaudeCredential, RunnerCredential } from "./proxy/RunnerCredential.ts"
 import { makeSessionTokens, type SessionGrant } from "./proxy/SessionTokens.ts"
@@ -430,6 +434,51 @@ export class FakeSandboxes {
           Effect.sync(() => void this.calls.push(`testBuild ${request.testBuildId}`)),
           log("built\n"),
         ),
+    }),
+  )
+}
+
+/**
+ * Open ports without a Sandbox: a watched Session reports the ports a test gives it in `ports`,
+ * if any, and an empty list when it is unwatched after reporting some. Records each call.
+ */
+export class FakeOpenPorts {
+  readonly calls: Array<string> = []
+  /** The Open ports each Session's Sandbox has, by Session. */
+  readonly ports = new Map<SessionId, ReadonlyArray<OpenPort>>()
+  readonly watched = new Set<SessionId>()
+
+  private has(id: SessionId) {
+    return (this.ports.get(id)?.length ?? 0) > 0
+  }
+
+  readonly layer = Layer.effect(
+    OpenPorts,
+    Effect.map(HubLink, (hub) => {
+      const report = (id: SessionId, ports: ReadonlyArray<OpenPort>) =>
+        hub.send(RunnerToHub.cases.SessionPorts.make({ sessionId: id, ports }))
+      return OpenPorts.of({
+        watch: (id) =>
+          Effect.suspend(() => {
+            this.calls.push(`watch ${id}`)
+            if (this.watched.has(id)) return Effect.void
+            this.watched.add(id)
+            return this.has(id) ? report(id, this.ports.get(id) ?? []) : Effect.void
+          }),
+        unwatch: (id) =>
+          Effect.suspend(() => {
+            this.calls.push(`unwatch ${id}`)
+            if (!this.watched.delete(id)) return Effect.void
+            return this.has(id) ? report(id, []) : Effect.void
+          }),
+        resendAll: Effect.suspend(() =>
+          Effect.forEach(
+            [...this.watched].filter((id) => this.has(id)),
+            (id) => report(id, this.ports.get(id) ?? []),
+            { discard: true },
+          ),
+        ),
+      })
     }),
   )
 }

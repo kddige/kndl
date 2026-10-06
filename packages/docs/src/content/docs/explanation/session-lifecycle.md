@@ -56,6 +56,12 @@ A Session doesn't wake while its Runner is behind the Hub or updating: its promp
 
 If the Repo's Environment has a newer version, waking makes the Sandbox afresh from the new build instead, on the same Workspace and disks. **Restart** on a Session's **Environment changed** banner does that at once: it puts the Session to sleep as soon as no Turn is running, and wakes it.
 
+## Open ports
+
+While a Session is Active, its Runner watches what listens in its Sandbox. Every 2 seconds it reads the guest's `/proc/net/tcp` and `/proc/net/tcp6`, and when the set of listening sockets changes it looks up the process holding each new one, then sends the Hub the Session's whole list. Each port is listed once, with every address it listens on: `0.0.0.0`, `::`, `127.0.0.1` or `::1`. Ports Docker publishes are held by `docker-proxy`. Claude Code's own login callback port is left out, while the processes Claude Code starts are not.
+
+The Hub keeps the latest list in memory only, with the Session's other state, and sends it to the web UI ([Work in a Session](/how-to/work-in-a-session/#see-its-open-ports)). When Claude Code stops, for sleep, an exit or an archive, the Runner stops watching and sends an empty list if it had sent any, and the Hub drops the list as soon as the Session is no longer Active, Frozen included. A Runner that reconnects sends its lists again. Open ports don't keep a Session awake: see [ADR 0016](/reference/decisions/0016-forwarding-a-sessions-ports/).
+
 ## When a start fails
 
 If Claude Code can't start, for a new Session or a wake, the Session is Asleep, with the Runner's reason in its history. Its queued prompts stay queued and nothing retries on its own: the next prompt, or **Wake now**, tries again. A Claude Code that exits on its own leaves the Session Asleep too, with the last lines its terminal showed folded under the banner until it wakes: see [Claude Code exited with code N](/troubleshooting/sessions/#claude-code-exited-with-code-n).

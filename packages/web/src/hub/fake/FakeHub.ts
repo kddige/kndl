@@ -53,6 +53,7 @@ import type {
   ClaudeCredentialInfoWire,
   HubMessage,
   LogEntryWire,
+  OpenPortWire,
   ParticipantWire,
   PendingPairingCodeWire,
   QueuedPromptWire,
@@ -96,6 +97,8 @@ interface FakeSession {
   startLog: string
   /** Its subagents, in the order they started. */
   agents: Map<string, FakeAgent>
+  /** What listens in its Sandbox once Claude Code is up (#175); none while it isn't Active. */
+  ports: ReadonlyArray<OpenPortWire>
 }
 
 interface FakeAgent {
@@ -222,6 +225,8 @@ export class FakeHub implements HubTransport {
           claudeAccount:
             seed.summary.creator.id === this.#you.id ? this.#claudeAccount() : "Creator",
           ...(listed.length > 0 && { agents: listed }),
+          ...(seed.summary.state === "Active" &&
+            seed.ports !== undefined && { openPorts: seed.ports }),
         },
         log,
         queue: [],
@@ -230,6 +235,7 @@ export class FakeHub implements HubTransport {
         terminal: null,
         startLog: "",
         agents,
+        ports: seed.ports ?? [],
       })
     }
   }
@@ -1154,6 +1160,7 @@ export class FakeHub implements HubTransport {
       terminal: null,
       startLog: "",
       agents: new Map(),
+      ports: [],
     }
     this.sessions.set(id, session)
     this.#start(session)
@@ -1198,7 +1205,9 @@ export class FakeHub implements HubTransport {
     )
     this.#after(2 * lines.length + 1, () => {
       if (!stillStarting()) return
-      const { starting: _, restarting: __, ...summary } = session.summary
+      const { starting: _, restarting: __, ...started } = session.summary
+      // Its dev servers come up with it, and its Runner reports them.
+      const summary = session.ports.length > 0 ? { ...started, openPorts: session.ports } : started
       session.summary =
         environment === null
           ? summary
@@ -1784,7 +1793,9 @@ export class FakeHub implements HubTransport {
   ): void {
     const wasActive = session.summary.state === "Active"
     if (wasActive && (state === "Asleep" || state === "Archived")) this.#interruptAgents(session)
-    session.summary = { ...session.summary, state }
+    // As on the Hub, a Session that isn't Active has no Open ports (#175).
+    const { openPorts: _openPorts, ...summary } = session.summary
+    session.summary = { ...(state === "Active" ? session.summary : summary), state }
     this.#append(session, {
       _tag: "SessionStateChanged",
       state,

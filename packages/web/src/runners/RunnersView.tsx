@@ -20,6 +20,7 @@ import {
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useState } from "react"
+import { copyCommand } from "../app/copy.ts"
 import { timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { keptAwakeText } from "../session/keepAwake.ts"
@@ -613,7 +614,7 @@ function MintedCode({ minted }: { minted: PairingCodeCreated }) {
         <code aria-label="Pairing command" {...stylex.props(styles.commandText)}>
           {command}
         </code>
-        <IconButton label="Copy command" size="sm" onClick={() => void copy(command)}>
+        <IconButton label="Copy command" size="sm" onClick={() => void copyCommand(command)}>
           <CopyIcon />
         </IconButton>
       </div>
@@ -794,19 +795,6 @@ function UpdateDialog({
       )}
     </Dialog>
   )
-}
-
-async function copy(command: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(command)
-    toast.show({ title: "Copied the command" })
-  } catch {
-    toast.show({
-      title: "Couldn't copy",
-      description: "Select the command and copy it yourself.",
-      intent: "warning",
-    })
-  }
 }
 
 /** The time, updated every `ms`. */

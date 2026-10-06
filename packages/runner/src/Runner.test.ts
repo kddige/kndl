@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, posix } from "node:path"
-import { ClaudeSessionId, ProtocolVersion, TestBuildId } from "@claude-hub/protocol"
+import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@claude-hub/protocol"
 import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
@@ -21,6 +21,7 @@ import {
   eventually,
   FakeCredentialProxy,
   fakeSandboxClaudePath,
+  FakeOpenPorts,
   FakeSandboxes,
   FakeTmux,
   FakeWorkspaceGit,
@@ -116,6 +117,7 @@ interface Harness {
   readonly sandboxes: FakeSandboxes
   readonly git: FakeWorkspaceGit
   readonly proxy: FakeCredentialProxy
+  readonly openPorts: FakeOpenPorts
   /** The Runner's HubGit, once its layer is built. */
   readonly hubGit: () => HubGit["Service"]
   readonly runner: Fiber.Fiber<never, unknown>
@@ -216,8 +218,10 @@ function runOn(
   // One record of Sandbox and git calls, in the order they ran.
   const git = new FakeWorkspaceGit(sandboxes.calls)
   const proxy = new FakeCredentialProxy()
+  const openPorts = new FakeOpenPorts()
   let hubGit: HubGit["Service"] | undefined
   const layer = SessionsLive.pipe(
+    Layer.provide(openPorts.layer),
     Layer.provideMerge(
       HubGitLive.pipe(
         Layer.tap((context) => Effect.sync(() => void (hubGit = Context.get(context, HubGit)))),
@@ -245,6 +249,7 @@ function runOn(
     sandboxes,
     git,
     proxy,
+    openPorts,
     hubGit: () => {
       if (hubGit === undefined) throw new Error("the Runner's layer isn't built yet")
       return hubGit
@@ -872,6 +877,28 @@ describe("Sessions", () => {
     expect(h.tmux.panes.size).toBe(0)
     // The Workspace's WIP ref is pushed before the Sandbox goes: the archive hook.
     expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Archive", "stop s-1 Archive"])
+  })
+
+  test("reports a running Session's Open ports, and none before it says it stopped (#175)", async () => {
+    const h = startRunner()
+    await connected(h)
+    const ports = [{ port: 3000, addresses: ["0.0.0.0"], process: "node server" }]
+    h.openPorts.ports.set(SessionId.make("s-1"), ports)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionPorts").length === 1)
+    expect(h.hub.all("SessionPorts")[0]).toEqual({ _tag: "SessionPorts", sessionId: "s-1", ports })
+
+    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Sleep" })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+
+    const tags = h.hub.current.received.map((m) => m._tag)
+    expect(tags.lastIndexOf("SessionPorts")).toBeLessThan(tags.indexOf("SessionStopped"))
+    expect(h.hub.all("SessionPorts").at(-1)).toEqual({
+      _tag: "SessionPorts",
+      sessionId: "s-1",
+      ports: [],
+    })
+    expect(h.openPorts.calls).toEqual(["watch s-1", "unwatch s-1"])
   })
 
   test("archives a stopped Session too, destroying what is left of its Sandbox", async () => {

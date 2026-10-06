@@ -46,6 +46,16 @@ const runnerToHub = [
   { _tag: "WipPushFailed", sessionId: "s-1", message: "git push exited with 128" },
   { _tag: "SessionPurged", sessionId: "s-1" },
   { _tag: "SandboxNote", sessionId: "s-1", message: "Memory capped at 8192 MiB by the Runner" },
+  {
+    _tag: "SessionPorts",
+    sessionId: "s-1",
+    ports: [
+      { port: 3000, addresses: ["0.0.0.0", "::"], process: "node server" },
+      { port: 5432, addresses: ["::1"] },
+      { port: 8080, addresses: ["0.0.0.0"], process: "docker-proxy" },
+    ],
+  },
+  { _tag: "SessionPorts", sessionId: "s-1", ports: [] },
   { _tag: "SessionStarted", sessionId: "s-1", environmentVersion: 3 },
   { _tag: "FetchVariables", requestId: "v-1", for: { _tag: "Session", sessionId: "s-1" } },
   { _tag: "FetchVariables", requestId: "v-2", for: { _tag: "TestBuild", testBuildId: "b-1" } },
@@ -306,6 +316,17 @@ describe("RunnerToHub", () => {
     expectRejected(RunnerToHub, { _tag: "SessionStarted", sessionId: "s-1", environmentVersion: 0 })
     expectRejected(RunnerToHub, { _tag: "FetchVariables", requestId: "v-1", for: { _tag: "Repo" } })
     expectRejected(RunnerToHub, { _tag: "TestBuildFinished", testBuildId: "b-1", result: "Ok" })
+    expectRejected(RunnerToHub, {
+      _tag: "SessionPorts",
+      sessionId: "s-1",
+      ports: [{ port: 0, addresses: ["0.0.0.0"] }],
+    })
+    expectRejected(RunnerToHub, {
+      _tag: "SessionPorts",
+      sessionId: "s-1",
+      ports: [{ port: 65536, addresses: ["0.0.0.0"] }],
+    })
+    expectRejected(RunnerToHub, { _tag: "SessionPorts", sessionId: "s-1", ports: [{ port: 80 }] })
   })
 })
 

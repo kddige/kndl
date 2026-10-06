@@ -65,6 +65,12 @@ The **Terminal** tab shows the Session's Claude Code screen, live, and everyone 
 
 The terminal has one size. Whoever last typed into it, or pressed **Fit to my window**, sets it; everyone else sees it scaled down to fit. Only an Active Session has a terminal to type into.
 
+## See its Open ports
+
+While something listens on a TCP port in an Active Session's Sandbox, such as a dev server Claude started, the Session's header shows how many ports are open (**3 ports**). Press it for the list: each port with the addresses it listens on and the process holding it. A port a Docker container publishes shows the process `docker-proxy` and a **Docker** label.
+
+A port shows within about 2 seconds of a server starting to listen, and goes as soon after it stops. Claude Code's own login callback port is never listed. A Session that isn't Active has no Open ports: the list empties when it goes to sleep, and fills again once it wakes and its servers are running.
+
 ## Sleep and wake
 
 A Session with no Turn or subagent running, no prompt queued and no one present goes to sleep after 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`). **Sleep now** in the Session's header does it at once, after asking while subagents are running. Sleeping stops Claude Code and the Sandbox, and keeps the Workspace and the Sandbox's disks; the subagents that were running are Interrupted, and resume when messaged (see [After sleep or a restart](/how-to/work-with-subagents/#after-sleep-or-a-restart)).

@@ -235,6 +235,15 @@ export function ArchiveIcon(props: IconProps) {
   )
 }
 
+/** A plug: a port something listens on. */
+export function PlugIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5.75 2.25v3M10.25 2.25v3M3.75 5.25h8.5v2.5a4.25 4.25 0 0 1-8.5 0v-2.5ZM8 12v1.75" />
+    </Icon>
+  )
+}
+
 export function PencilIcon(props: IconProps) {
   return (
     <Icon {...props}>

@@ -5,6 +5,7 @@ import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
+import { OpenPortsLive } from "./OpenPorts.ts"
 import { CredentialProxyLive } from "./proxy/CredentialProxy.ts"
 import { RunnerCredentialLive } from "./proxy/RunnerCredential.ts"
 import { SessionTokensLive } from "./proxy/SessionTokens.ts"
@@ -46,7 +47,7 @@ export const CredentialProxyHost = CredentialProxyLive.pipe(
  * git.
  */
 export const SessionsHost = SessionsLive.pipe(
-  Layer.provide([TmuxLive, WorkspacesGitClone, SessionSandboxesLive]),
+  Layer.provide([TmuxLive, WorkspacesGitClone, SessionSandboxesLive, OpenPortsLive]),
   Layer.provide(MicrosandboxBackend.layer),
   Layer.provideMerge(WorkspaceGitLive),
   Layer.provideMerge(HubGitLive),

@@ -1,10 +1,12 @@
 // What the fake Hub knows and plays: two Runners, one behind the Hub's commit, a few Sessions with
 // some history, and the Turns it streams. All made up; the people are Alice (you) and Bob. The
 // demo's Turn starts a subagent in the foreground and one in the background that outlives it, and
-// Release 0.4 has subagents that finished, were stopped and were interrupted (ADR 0014).
+// Release 0.4 has subagents that finished, were stopped and were interrupted (ADR 0014). The demo
+// has dev servers listening in its Sandbox: a Docker one, and one on `::1` only (#175).
 
 import type {
   AppPermissionsCheckWire,
+  OpenPortWire,
   ParticipantWire,
   RunnerSummaryWire,
   SessionEventWire,
@@ -160,6 +162,8 @@ export function seedRunners(): Array<RunnerSummaryWire> {
 
 interface SeedSession {
   readonly summary: SessionSummaryWire
+  /** What listens in its Sandbox while it is Active (#175). */
+  readonly ports?: ReadonlyArray<OpenPortWire>
   /** When its history starts. */
   readonly at: number
   readonly events: ReadonlyArray<SessionEventWire>
@@ -192,6 +196,12 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         // Bob keeps it up while he tries its dev server (ADR 0016).
         keepAwake: { by: bob, at: now - 30 * 60_000 },
       },
+      // Vite on Node 22 listens on `localhost`, which is `::1` only; Postgres runs in Docker.
+      ports: [
+        { port: 3000, addresses: ["0.0.0.0", "::"], process: "bun server" },
+        { port: 5173, addresses: ["::1"], process: "node vite" },
+        { port: 5432, addresses: ["0.0.0.0", "::"], process: "docker-proxy" },
+      ],
       at: now - 2 * hour,
       events: [
         ...turn("t-seed-1", you, "Add a test that the web client reconnects after a drop", [
