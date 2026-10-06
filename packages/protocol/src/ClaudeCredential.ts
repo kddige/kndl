@@ -228,9 +228,8 @@ export type FetchClaudeCredential = typeof FetchClaudeCredential.Type
 // ── Hub to Runner ──────────────────────────────────────────────────────────
 
 /**
- * Answers {@link FetchClaudeCredential}: the Session's Creator's credential, or for a Child
- * Session its Parent Session's Creator's. Absent when they have stored none: the Runner then
- * uses its own.
+ * Answers {@link FetchClaudeCredential}: the Session's Creator's credential. Absent when they
+ * have stored none: the Runner then uses its own.
  */
 export const ClaudeCredentialFetched = Schema.TaggedStruct("ClaudeCredentialFetched", {
   requestId: CredentialRequestId,

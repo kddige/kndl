@@ -1,16 +1,13 @@
 import { Schema } from "effect"
 import { AgentId, PromptId, ToolCallId, TurnId } from "./Ids.ts"
-import {
-  FromChildSession,
-  FromChildSessionMessage,
-  FromParentSession,
-  Participant,
-} from "./Session.ts"
+import { AgentStatus, BranchName, FromSession, Participant } from "./Session.ts"
 
 // Turn events: what happens in a Turn, as the mod reports it to the Hub. The Hub appends each to
 // the Session's event log and relays it to web clients unchanged.
 //
-// Events from a subagent carry its `agentId`; events from the main loop have none.
+// Events from a subagent (ADR 0014) carry its `agentId`; events from the main loop have none. A
+// subagent's TextDelta, ToolCallStarted, ToolCallEnded and TurnEnded have its own run's `turnId`,
+// new each time it runs or is resumed, never its parent's: they belong together by `agentId`.
 
 /**
  * The longest tool input or output summary, in characters. The mod clips to this (the prototype
@@ -26,12 +23,13 @@ export const PromptSender = Schema.Union([
   Schema.TaggedStruct("FromParticipant", { participant: Participant }),
   /** Typed at the Session's terminal, so the person is unknown. */
   Schema.TaggedStruct("FromTerminal", {}),
-  /** Its Parent Session, through the Prompt queue (ADR 0012). */
-  FromParentSession,
-  /** A Report from one of its Child Sessions, through the Prompt queue (ADR 0012). */
-  FromChildSession,
-  /** A message one of its Child Sessions sent mid-Turn, through the Prompt queue (ADR 0012). */
-  FromChildSessionMessage,
+  /**
+   * Claude Code's note that a background subagent finished or was stopped (its
+   * `<task-notification>`), which starts a Turn on the main loop.
+   */
+  Schema.TaggedStruct("FromAgent", { agentId: AgentId }),
+  /** Another Session, before ADR 0014: history only. */
+  FromSession,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type PromptSender = typeof PromptSender.Type
 
@@ -116,6 +114,47 @@ export const TurnEnded = Schema.TaggedStruct("TurnEnded", {
 })
 export type TurnEnded = typeof TurnEnded.Type
 
+/**
+ * The main loop started a subagent with its Agent tool (ADR 0014). Only agents started that way
+ * are reported: Claude Code's own, such as its progress summaries, never are.
+ */
+export const AgentStarted = Schema.TaggedStruct("AgentStarted", {
+  /** The main loop's Turn that started it. */
+  turnId: TurnId,
+  agentId: AgentId,
+  /** The Agent call that started it. */
+  toolCallId: ToolCallId,
+  /** Its subagent type, such as `general-purpose`. */
+  agentType: Schema.String,
+  /** What it is for, as the Agent call described it. */
+  description: Schema.String,
+  /** The model it runs, as Claude Code names it. */
+  model: Schema.String,
+  /** Whether it runs in the background, past the Turn that started it. */
+  background: Schema.Boolean,
+})
+export type AgentStarted = typeof AgentStarted.Type
+
+/** The git worktree a subagent works in, given `isolation: "worktree"`. */
+export const AgentWorktree = Schema.Struct({
+  /** Its path in the Sandbox, under `/workspace/.claude/worktrees/`. */
+  path: Schema.NonEmptyString,
+  branch: BranchName,
+})
+export type AgentWorktree = typeof AgentWorktree.Type
+
+/**
+ * A subagent's status changed: Running when it starts or resumes, Done when it finishes, Stopped
+ * by TaskStop. The Hub reports Interrupted when its Session's Claude Code stops with it Running.
+ */
+export const AgentStatusChanged = Schema.TaggedStruct("AgentStatusChanged", {
+  agentId: AgentId,
+  status: AgentStatus,
+  /** Present once it has a worktree. */
+  worktree: Schema.optionalKey(AgentWorktree),
+})
+export type AgentStatusChanged = typeof AgentStatusChanged.Type
+
 /** Every Turn event. New kinds of event are added here as members. */
 export const TurnEvent = Schema.Union([
   TurnStarted,
@@ -123,5 +162,7 @@ export const TurnEvent = Schema.Union([
   ToolCallStarted,
   ToolCallEnded,
   TurnEnded,
+  AgentStarted,
+  AgentStatusChanged,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type TurnEvent = typeof TurnEvent.Type

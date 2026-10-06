@@ -31,6 +31,14 @@ const modToHub = [
   },
   ...turnEvents,
   { _tag: "PromptFailed", promptId: "p-1", message: "prompt dropped by a hook" },
+  {
+    _tag: "AgentCommandFailed",
+    agentId: "a-1",
+    command: "MessageAgent",
+    senderId: "u-1",
+    message: "No agent a-1",
+  },
+  { _tag: "AgentCommandFailed", agentId: "a-1", command: "StopAgent", message: "No task a-1" },
 ]
 
 const hubToMod = [
@@ -42,26 +50,15 @@ const hubToMod = [
     message: "update",
   },
   { _tag: "DeliverPrompt", sessionId: "s-1", promptId: "p-1", text: "add tests", sender: alice },
-  {
-    _tag: "DeliverPrompt",
-    sessionId: "s-1",
-    promptId: "p-2",
-    text: "[Report from Child Session ...]",
-    sender: alice,
-    fromSession: { _tag: "FromChildSession", session: { id: "s-2", title: "claude/s-2" } },
-  },
-  {
-    _tag: "DeliverPrompt",
-    sessionId: "s-1",
-    promptId: "p-3",
-    text: "[Message from Child Session ...]",
-    sender: alice,
-    fromSession: {
-      _tag: "FromChildSessionMessage",
-      session: { id: "s-2", title: "claude/s-2" },
-    },
-  },
   { _tag: "StopTurn", sessionId: "s-1" },
+  {
+    _tag: "DeliverAgentMessage",
+    sessionId: "s-1",
+    agentId: "a-1",
+    text: "also cover the edge cases",
+    sender: alice,
+  },
+  { _tag: "StopAgent", sessionId: "s-1", agentId: "a-1" },
   { _tag: "PresenceChanged", sessionId: "s-1", participants: [alice, bob] },
   { _tag: "PresenceChanged", sessionId: "s-1", participants: [] },
 ]

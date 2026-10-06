@@ -9,7 +9,7 @@ import { BuildVersion } from "./Build.ts"
  * the Hub answers with a welcome or a {@link HandshakeRejected}. Peers check the welcome the same
  * way, so a mismatch is caught on whichever side is newer.
  */
-export const ProtocolVersion = 1 as const
+export const ProtocolVersion = 2 as const
 export type ProtocolVersion = typeof ProtocolVersion
 
 /** The `protocolVersion` field of every hello and welcome: only this build's version decodes. */

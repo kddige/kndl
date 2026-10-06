@@ -28,6 +28,7 @@ const sessionEvents = [
     message: "Claude Code could not start: API_KEY needs a value",
   },
   { _tag: "TurnStopRequested", by: alice },
+  { _tag: "AgentMessaged", agentId: "a-1", sender: alice, text: "also cover the edge cases" },
   { _tag: "WipNotPushed", message: "git push exited with 128: could not read from remote" },
   { _tag: "SandboxNoted", message: "Memory capped at 8192 MiB by the Runner" },
   { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", effort: "high" },
@@ -51,6 +52,8 @@ const webToHub = [
   { _tag: "SendPrompt", sessionId: "s-1", text: "add a health check" },
   { _tag: "CancelPrompt", sessionId: "s-1", promptId: "p-2" },
   { _tag: "StopTurn", sessionId: "s-1" },
+  { _tag: "MessageAgent", sessionId: "s-1", agentId: "a-1", text: "also cover the edge cases" },
+  { _tag: "StopAgent", sessionId: "s-1", agentId: "a-1" },
   { _tag: "SleepSession", sessionId: "s-1" },
   { _tag: "WakeSession", sessionId: "s-1" },
   { _tag: "RestartSession", sessionId: "s-1" },
@@ -216,7 +219,17 @@ const hubToWeb = [
       archived: { by: bob, at: 1_790_000_000_000, purgeAt: 1_792_592_000_000 },
     },
   },
-  { _tag: "SessionUpdated", session: { ...sessionSummary, id: "s-2", parentId: "s-1" } },
+  {
+    _tag: "SessionUpdated",
+    session: {
+      ...sessionSummary,
+      currentTurn: null,
+      agents: [
+        { id: "a-1", description: "Survey the docs", status: "Running" },
+        { id: "a-2", description: "Fix the flaky test", status: "Interrupted" },
+      ],
+    },
+  },
   {
     _tag: "SessionUpdated",
     session: { ...sessionSummary, model: "sonnet", effort: "high", modelPending: true },
@@ -256,23 +269,6 @@ const hubToWeb = [
     queue: [
       { id: "p-2", text: "then run the tests", sender: bob, queuedAt: 1_790_000_000_100 },
       { id: "p-3", text: "and commit", sender: alice, queuedAt: 1_790_000_000_200 },
-      {
-        id: "p-4",
-        text: "[Report from Child Session ...]",
-        sender: alice,
-        fromSession: { _tag: "FromChildSession", session: { id: "s-2", title: "claude/s-2" } },
-        queuedAt: 1_790_000_000_300,
-      },
-      {
-        id: "p-5",
-        text: "[Message from Child Session ...]",
-        sender: alice,
-        fromSession: {
-          _tag: "FromChildSessionMessage",
-          session: { id: "s-2", title: "claude/s-2" },
-        },
-        queuedAt: 1_790_000_000_400,
-      },
     ],
   },
   { _tag: "TerminalFrame", sessionId: "s-1", kind: "Snapshot", data: "> ready", size },

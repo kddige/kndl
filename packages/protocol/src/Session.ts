@@ -1,6 +1,14 @@
 import { Schema } from "effect"
 import { BuildVersion, RunnerVersionStatus } from "./Build.ts"
-import { EnvironmentVersion, ParticipantId, PromptId, RunnerId, SessionId, TurnId } from "./Ids.ts"
+import {
+  AgentId,
+  EnvironmentVersion,
+  ParticipantId,
+  PromptId,
+  RunnerId,
+  SessionId,
+  TurnId,
+} from "./Ids.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
 import { RunnerUpdater, RunnerUpdateState } from "./Update.ts"
 
@@ -156,6 +164,23 @@ export const SessionRestart = Schema.Struct({
 })
 export type SessionRestart = typeof SessionRestart.Type
 
+/**
+ * Where one of a Session's subagents is (ADR 0014): running, finished, stopped by TaskStop, or cut
+ * off when its Session's Claude Code stopped (sleep, a restart, a lost Runner). Any but Running can
+ * be resumed with a message.
+ */
+export const AgentStatus = Schema.Literals(["Running", "Done", "Stopped", "Interrupted"])
+export type AgentStatus = typeof AgentStatus.Type
+
+/** One of a Session's subagents, as the sidebar lists it under the Session. */
+export const AgentSummary = Schema.Struct({
+  id: AgentId,
+  /** What it was started for, as the Agent call described it. */
+  description: Schema.String,
+  status: AgentStatus,
+})
+export type AgentSummary = typeof AgentSummary.Type
+
 /** A Session as the web UI lists it. */
 export const SessionSummary = Schema.Struct({
   id: SessionId,
@@ -173,19 +198,16 @@ export const SessionSummary = Schema.Struct({
    * Runner's, when the Creator has stored none. Absent from a Hub from before.
    */
   claudeAccount: Schema.optionalKey(ClaudeAccount),
-  /**
-   * Recorded for history only; grants no rights (ADR 0003). A Child Session's is its Parent
-   * Session's Creator, on whose behalf it runs (ADR 0012).
-   */
+  /** Recorded for history only; grants no rights (ADR 0003). */
   creator: Participant,
-  /**
-   * Its Parent Session, when it is a Child Session (ADR 0012): the Session that created it, and
-   * gets its Reports. Kept after the Parent Session is purged.
-   */
-  parentId: Schema.optionalKey(SessionId),
   createdAt: EpochMillis,
   /** The Turn running now, or null when the Session is idle. */
   currentTurn: Schema.NullOr(TurnId),
+  /**
+   * Its Running and Interrupted subagents, oldest first (ADR 0014); absent when it has none. A
+   * Running one keeps the Session working, as a Turn does.
+   */
+  agents: Schema.optionalKey(Schema.Array(AgentSummary)),
   /** Present while the Session is Archived. */
   archived: Schema.optionalKey(ArchiveInfo),
   /** Present once its Repo has an Environment. */
@@ -225,46 +247,20 @@ export const SessionRef = Schema.Struct({
 })
 export type SessionRef = typeof SessionRef.Type
 
-/** A Parent Session's message to its Child Session (ADR 0012). */
-export const FromParentSession = Schema.TaggedStruct("FromParentSession", { session: SessionRef })
-export type FromParentSession = typeof FromParentSession.Type
-
-/** A Child Session's Report to its Parent Session: its final message of a Turn (ADR 0012). */
-export const FromChildSession = Schema.TaggedStruct("FromChildSession", { session: SessionRef })
-export type FromChildSession = typeof FromChildSession.Type
-
 /**
- * A Child Session's message to its Parent Session, sent mid-Turn with its message_parent tool: a
- * question or a progress note that can't wait for its Report (ADR 0012).
+ * A prompt another Session sent: a Child Session's Report or message, or its Parent Session's
+ * message, from before ADR 0014 removed Child Sessions. Only history has it: nothing sends one
+ * any more, and the Hub's migration rewrote the three senders of ADR 0012 to this one.
  */
-export const FromChildSessionMessage = Schema.TaggedStruct("FromChildSessionMessage", {
-  session: SessionRef,
-})
-export type FromChildSessionMessage = typeof FromChildSessionMessage.Type
-
-/**
- * A prompt another Session sent, not a person: a Parent Session's message, or a Child Session's
- * Report or message.
- */
-export const FromSession = Schema.Union([
-  FromParentSession,
-  FromChildSession,
-  FromChildSessionMessage,
-]).pipe(Schema.toTaggedUnion("_tag"))
+export const FromSession = Schema.TaggedStruct("FromSession", { session: SessionRef })
 export type FromSession = typeof FromSession.Type
 
 /** A prompt waiting in a Session's Prompt queue. */
 export const QueuedPrompt = Schema.Struct({
   id: PromptId,
-  /** As typed, for a person's; as the model reads it, for one from another Session. */
+  /** As typed. */
   text: Schema.NonEmptyString,
-  /**
-   * The Participant who sent it; for one from another Session, the Creator on whose behalf that
-   * Session runs.
-   */
   sender: Participant,
-  /** Present when another Session sent it (ADR 0012). */
-  fromSession: Schema.optionalKey(FromSession),
   queuedAt: EpochMillis,
 })
 export type QueuedPrompt = typeof QueuedPrompt.Type
@@ -281,3 +277,13 @@ export const StopTurn = Schema.TaggedStruct("StopTurn", {
   sessionId: SessionId,
 })
 export type StopTurn = typeof StopTurn.Type
+
+/**
+ * Web to Hub, then Hub to mod: stop one of the Session's subagents (ADR 0014), as Claude Code's
+ * TaskStop does. Any Participant may.
+ */
+export const StopAgent = Schema.TaggedStruct("StopAgent", {
+  sessionId: SessionId,
+  agentId: AgentId,
+})
+export type StopAgent = typeof StopAgent.Type

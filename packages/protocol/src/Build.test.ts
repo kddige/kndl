@@ -3,6 +3,7 @@ import { Schema } from "effect"
 import { describeBuild, runnerVersionStatus } from "./Build.ts"
 import { checkoutHolds, readBuildVersion, thisCheckout } from "./Checkout.ts"
 import { RunnerHello } from "./Runner.ts"
+import { ProtocolVersion } from "./Version.ts"
 
 const hub = { commit: "a".repeat(40), branch: "main" }
 const older = { commit: "b".repeat(40) }
@@ -55,7 +56,7 @@ describe("the checkout's own version", () => {
 describe("RunnerHello", () => {
   const hello = {
     _tag: "RunnerHello",
-    protocolVersion: 1,
+    protocolVersion: ProtocolVersion,
     name: "mac",
     login: { account: "alice@example.com" },
     sessions: [],

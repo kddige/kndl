@@ -1,6 +1,13 @@
 import { Schema } from "effect"
-import { ClaudeSessionId, ModCommandSeq, PromptId, SessionId } from "./Ids.ts"
-import { FromSession, Participant, PresenceChanged, StopTurn } from "./Session.ts"
+import {
+  AgentId,
+  ClaudeSessionId,
+  ModCommandSeq,
+  ParticipantId,
+  PromptId,
+  SessionId,
+} from "./Ids.ts"
+import { Participant, PresenceChanged, StopAgent, StopTurn } from "./Session.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 
@@ -48,15 +55,29 @@ export const PromptFailed = Schema.TaggedStruct("PromptFailed", {
 })
 export type PromptFailed = typeof PromptFailed.Type
 
-/** Every message the mod sends the Hub: its hello, Turn events, and failed deliveries. */
-export const ModToHub = Schema.Union([ModHello, TurnEvent, PromptFailed]).pipe(
+/**
+ * A {@link DeliverAgentMessage} or {@link StopAgent} failed, as when the agent is unknown to
+ * Claude Code: named by the web command it came from, with who sent the message, if anyone did.
+ */
+export const AgentCommandFailed = Schema.TaggedStruct("AgentCommandFailed", {
+  agentId: AgentId,
+  command: Schema.Literals(["MessageAgent", "StopAgent"]),
+  senderId: Schema.optionalKey(ParticipantId),
+  message: Schema.String,
+})
+export type AgentCommandFailed = typeof AgentCommandFailed.Type
+
+/** Every message the mod sends the Hub: its hello, Turn events, and failed commands. */
+export const ModToHub = Schema.Union([ModHello, TurnEvent, PromptFailed, AgentCommandFailed]).pipe(
   Schema.toTaggedUnion("_tag"),
 )
 export type ModToHub = typeof ModToHub.Type
 export type ModToHubEncoded = typeof ModToHub.Encoded
 
-/** What the mod reports after its hello: Turn events and failed deliveries. */
-export const ModEvent = Schema.Union([TurnEvent, PromptFailed]).pipe(Schema.toTaggedUnion("_tag"))
+/** What the mod reports after its hello: Turn events and failed commands. */
+export const ModEvent = Schema.Union([TurnEvent, PromptFailed, AgentCommandFailed]).pipe(
+  Schema.toTaggedUnion("_tag"),
+)
 export type ModEvent = typeof ModEvent.Type
 
 /** The body of `POST /mod/events`: the mod's events since its last post, oldest first. */
@@ -74,18 +95,28 @@ export type ModWelcome = typeof ModWelcome.Type
 
 /**
  * The next prompt from the Prompt queue, sent when the Session is idle. The mod submits it with
- * the sender's name, or as it is when another Session sent it (the Hub wrote it for the model),
- * and reports the Turn it starts with this `promptId`.
+ * the sender's name and reports the Turn it starts with this `promptId`.
  */
 export const DeliverPrompt = Schema.TaggedStruct("DeliverPrompt", {
   sessionId: SessionId,
   promptId: PromptId,
   text: Schema.NonEmptyString,
   sender: Participant,
-  /** Present when another Session sent it: the Turn it starts is reported as from that Session. */
-  fromSession: Schema.optionalKey(FromSession),
 })
 export type DeliverPrompt = typeof DeliverPrompt.Type
+
+/**
+ * A Participant's message to one of the Session's subagents (web MessageAgent, ADR 0014). The mod
+ * sends it with the sender's name, as a prompt; a running agent reads it at its next tool call, and
+ * one that has stopped resumes with it.
+ */
+export const DeliverAgentMessage = Schema.TaggedStruct("DeliverAgentMessage", {
+  sessionId: SessionId,
+  agentId: AgentId,
+  text: Schema.NonEmptyString,
+  sender: Participant,
+})
+export type DeliverAgentMessage = typeof DeliverAgentMessage.Type
 
 /** Every message the Hub sends the mod. `PresenceChanged` feeds the Participants band. */
 export const HubToMod = Schema.Union([
@@ -93,6 +124,8 @@ export const HubToMod = Schema.Union([
   HandshakeRejected,
   DeliverPrompt,
   StopTurn,
+  DeliverAgentMessage,
+  StopAgent,
   PresenceChanged,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToMod = typeof HubToMod.Type
@@ -106,9 +139,13 @@ export type ModHelloReply = typeof ModHelloReply.Type
 export type ModHelloReplyEncoded = typeof ModHelloReply.Encoded
 
 /** What the Hub queues for a Session's mod, which the mod collects from `GET /mod/commands`. */
-export const ModCommand = Schema.Union([DeliverPrompt, StopTurn, PresenceChanged]).pipe(
-  Schema.toTaggedUnion("_tag"),
-)
+export const ModCommand = Schema.Union([
+  DeliverPrompt,
+  StopTurn,
+  DeliverAgentMessage,
+  StopAgent,
+  PresenceChanged,
+]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModCommand = typeof ModCommand.Type
 
 /** The longest the Hub holds `GET /mod/commands` open before answering with no commands. */

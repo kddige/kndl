@@ -21,7 +21,7 @@ import {
   TestBuildStarted,
 } from "./Environment.ts"
 import { AppPermissionsCheck } from "./GitHubApp.ts"
-import { EventSeq, PromptId, RequestId, RunnerId, SessionId } from "./Ids.ts"
+import { AgentId, EventSeq, PromptId, RequestId, RunnerId, SessionId } from "./Ids.ts"
 import { EffortLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
@@ -34,6 +34,7 @@ import {
   RunnerSummary,
   SessionState,
   SessionSummary,
+  StopAgent,
   StopTurn,
 } from "./Session.ts"
 import { TerminalFrame, TerminalInput, TerminalResize } from "./Terminal.ts"
@@ -66,6 +67,17 @@ export const TurnStopRequested = Schema.TaggedStruct("TurnStopRequested", {
   by: Participant,
 })
 export type TurnStopRequested = typeof TurnStopRequested.Type
+
+/**
+ * A Participant messaged one of the Session's subagents (ADR 0014). Claude Code doesn't keep the
+ * message among the agent's own, so the log does.
+ */
+export const AgentMessaged = Schema.TaggedStruct("AgentMessaged", {
+  agentId: AgentId,
+  sender: Participant,
+  text: Schema.NonEmptyString,
+})
+export type AgentMessaged = typeof AgentMessaged.Type
 
 /**
  * The Runner could not push the Session's WIP ref (GLOSSARY.md), the snapshot of its Workspace
@@ -109,6 +121,7 @@ export const SessionEvent = Schema.Union([
   TurnEvent,
   SessionStateChanged,
   TurnStopRequested,
+  AgentMessaged,
   WipNotPushed,
   SandboxNoted,
   ModelSwitched,
@@ -175,6 +188,18 @@ export const CancelPrompt = Schema.TaggedStruct("CancelPrompt", {
   promptId: PromptId,
 })
 export type CancelPrompt = typeof CancelPrompt.Type
+
+/**
+ * Message one of the Session's subagents (ADR 0014): a running one reads it at its next tool call,
+ * and one that has stopped resumes with it. Any Participant may; an Asleep Session is woken first.
+ * The message carries the sender's name, as a prompt does.
+ */
+export const MessageAgent = Schema.TaggedStruct("MessageAgent", {
+  sessionId: SessionId,
+  agentId: AgentId,
+  text: Schema.NonEmptyString,
+})
+export type MessageAgent = typeof MessageAgent.Type
 
 /**
  * Put an Active Session to sleep now, rather than after it has been idle a while: its Claude
@@ -332,6 +357,8 @@ export const WebToHub = Schema.Union([
   SendPrompt,
   CancelPrompt,
   StopTurn,
+  MessageAgent,
+  StopAgent,
   SleepSession,
   WakeSession,
   RestartSession,
