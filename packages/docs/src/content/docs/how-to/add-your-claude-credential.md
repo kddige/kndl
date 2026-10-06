@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-The Sessions you start run on your own Claude account, on whichever Runner they are on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). You paste a credential once, on your **Account** page, and every Runner fetches it for your Sessions. Without one, your Sessions run on their Runner's own credential, where it has one.
+The Sessions you start run on your own Claude account, on whichever Runner they are on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). You paste a credential once, on your **Account** page, and every Runner fetches it for your Sessions. Without one, your Sessions run on their Runner's own credential, where it has one: **New Session** then picks such a Runner when you leave the choice to it, and if no online Runner has one, it asks you to add yours first.
 
 ## Before you start
 

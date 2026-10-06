@@ -141,6 +141,7 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       openSessions: 0,
       updater: { self: true },
       models: fakeModels,
+      ownClaudeCredential: true,
     },
     {
       id: "r-ci",

@@ -258,6 +258,23 @@ describe("a Session's Claude credential", () => {
     expect(session.claudeAccount).toBe("Runner")
   })
 
+  test("any Runner, for a Creator with none, is one with its own; the web is told which have one", async () => {
+    const { hub, runner: without, web } = await scene({ ownClaudeCredential: false })
+    const other = await issueRunnerToken(hub, "linux")
+    const withOwn = await openRunner(hub, other.token)
+    const list = await web.take("RunnerList", (m) => m.runners.every((each) => each.isOnline))
+    expect(list.runners.map((each) => [each.name, each.ownClaudeCredential])).toEqual(
+      expect.arrayContaining([
+        ["mac", false],
+        ["linux", true],
+      ]),
+    )
+
+    const session = await createSession(web, withOwn)
+    expect(session.claudeAccount).toBe("Runner")
+    expect(await without.untaken("StartSession")).toEqual([])
+  })
+
   test("is redacted from what its Sessions print", async () => {
     const { web, runner } = await scene()
     await save(web, token, "pro")

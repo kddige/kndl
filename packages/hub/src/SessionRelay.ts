@@ -460,7 +460,8 @@ export class SessionRelay extends Context.Service<
         const now = yield* Clock.currentTimeMillis
         return HubToWeb.cases.RunnerList.make({
           runners: (yield* runners.list).map(({ updater, models, ...runner }) => {
-            const isOnline = onlineRunners.has(runner.id)
+            const online = onlineRunners.get(runner.id)
+            const isOnline = online !== undefined
             const update = runnerUpdates.stateOf(runner.id)
             return {
               ...runner,
@@ -470,6 +471,7 @@ export class SessionRelay extends Context.Service<
               ...(updater !== null && { updater }),
               ...(models !== null && { models }),
               ...(update !== undefined && { update }),
+              ...(online !== undefined && { ownClaudeCredential: online.ownClaudeCredential }),
             }
           }),
         })
@@ -541,6 +543,17 @@ export class SessionRelay extends Context.Service<
         return you?.id === creator.id
           ? `Neither you nor ${runner.name} has a Claude credential: add yours on the Account page.`
           : `Neither ${creator.login}, whom this Session runs for, nor ${runner.name} has a Claude credential: ${creator.login} can add theirs on the Account page.`
+      }
+
+      /**
+       * The online Runner a Session goes to when its Creator picked none: one that can run it on
+       * a Claude credential, its Creator's or its own (ADR 0015), if any can.
+       */
+      const anyRunnerFor = (creator: Participant): OnlineRunner | undefined => {
+        const online = [...onlineRunners.values()]
+        return (
+          online.find((runner) => noClaudeCredential(creator, runner) === undefined) ?? online[0]
+        )
       }
 
       /**
@@ -1567,7 +1580,7 @@ export class SessionRelay extends Context.Service<
               const { requestId } = message
               const runner =
                 message.runnerId === undefined
-                  ? onlineRunners.values().next().value
+                  ? anyRunnerFor(you)
                   : onlineRunners.get(message.runnerId)
               if (runner === undefined) {
                 return refuse(
