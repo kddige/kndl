@@ -32,6 +32,8 @@ Everyone with the Session open sees the new name at once. A name is at most 80 c
 
 Type a prompt and send it. While a Turn is running, a prompt from anyone waits in the Prompt queue, and Claude takes the queue in order. Each prompt in the transcript shows who sent it.
 
+**Stop** in the prompt box stops the running Turn, for anyone in the Session. A tool call it was in the middle of shows as cut short. A Bash command isn't killed: Claude Code moves it to the background, where it runs to its end, and then starts a Turn of its own to read its output, as it does for any background command.
+
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
 
 Claude Code runs in the Session's Sandbox, so Claude has its usual tools, and all of them run there: Bash, with background commands, file edits, WebFetch, subagents and the rest. It never asks for a permission ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). The `! <command>` shortcut in the **Terminal** runs in the Sandbox too. Its subagents show live in the transcript and the sidebar, and anyone can message or stop them: see [Work with subagents](/how-to/work-with-subagents/).

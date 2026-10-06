@@ -100,7 +100,7 @@ const linkTo = (current: { hub: TestHub }, modToken: string) => {
     hello: { sessionId, claudeSessionId: "claude-1", model: "claude-test" },
     fetch,
     // Short, so a restart is noticed at once.
-    sleep: (ms) => Bun.sleep(Math.min(ms, 20)),
+    after: (ms, fn) => void setTimeout(fn, Math.min(ms, 20)),
     onCommand: async (command) => {
       commands.push(command)
     },

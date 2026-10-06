@@ -3,6 +3,7 @@ import { MaxToolSummaryLength, ModEvents, ModHello, ProtocolVersion } from "@cla
 import { Schema } from "effect"
 import {
   agentWorktree,
+  backgroundedByStop,
   checkEvent,
   clip,
   eventsBody,
@@ -253,6 +254,15 @@ test("resultSummary shows a command's output", () => {
   expect(resultSummary("Write", { type: "create", filePath: "/workspace/a" })).toBe(
     '{"type":"create","filePath":"/workspace/a"}',
   )
+})
+
+test("backgroundedByStop is a command a Stop moved to the background, still running", () => {
+  const result = { stdout: "", stderr: "", interrupted: false, backgroundTaskId: "b1" }
+  expect(backgroundedByStop({ ...result, backgroundedByTurnAbort: true })).toBe(true)
+  expect(backgroundedByStop({ ...result, backgroundedByUser: true })).toBe(false)
+  expect(backgroundedByStop(result)).toBe(false)
+  expect(backgroundedByStop("done")).toBe(false)
+  expect(backgroundedByStop(null)).toBe(false)
 })
 
 test("turnEndReason names every way a Turn ends", () => {

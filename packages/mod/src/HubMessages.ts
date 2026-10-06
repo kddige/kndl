@@ -128,6 +128,16 @@ export const resultSummary = (tool: string, result: unknown) => {
 }
 
 /**
+ * Whether a Stop moved this call to the background instead of ending it. Claude Code does that to a
+ * running Bash command when its Turn is aborted: the result says the command still runs, not how it
+ * ended (#165). That end comes later, in a task-notification Turn of its own.
+ */
+export const backgroundedByStop = (result: unknown) =>
+  typeof result === "object" &&
+  result !== null &&
+  (result as { backgroundedByTurnAbort?: unknown }).backgroundedByTurnAbort === true
+
+/**
  * A prompt from a Participant, or their message to a subagent, as the model reads it: led by the
  * sender's name.
  */

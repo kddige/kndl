@@ -15,6 +15,7 @@
 import type { EngineInterface, On } from "claude-code"
 import {
   agentWorktree,
+  backgroundedByStop,
   clip,
   HubLink,
   resultSummary,
@@ -95,7 +96,8 @@ const startLink = async ($: EngineInterface) => {
     modToken,
     hello: { sessionId, claudeSessionId: await $.session.id(), model: await $.session.model() },
     fetch: (url, init) => $.http.fetch(url, init),
-    sleep: (ms) => $.clock.sleep(ms),
+    // Its own timers, so a Stop can't cut what it does short (#165).
+    after: (ms, fn) => void $.clock.after(ms, fn),
     // hub-link-commands draws the link in the band; this one only reports.
     onStatus: () => undefined,
     log: (text) => $.ui.log(text, { to: "debug" }),
@@ -146,6 +148,9 @@ export function register(on: On) {
     }
     const done = await next(e)
     if (done.deny !== undefined) ended("Denied", clip(done.deny))
+    // It didn't end: a Stop moved it to the background, so it stays without an outcome, and the
+    // web shows it cut short once its Turn ends. Its own end comes in a task-notification Turn.
+    else if (backgroundedByStop(done.result)) return done
     else ended(done.isError ? "Failed" : "Succeeded", resultSummary(tool, done.result))
     // A stopped background agent's run ends with no hook of its own, whoever called TaskStop: the
     // model, or hub-link-commands (#152). The result names the task, called by id or by name.
