@@ -67,6 +67,7 @@ export default defineConfig({
             { slug: "how-to/use-variables-and-secrets" },
             { slug: "how-to/work-in-a-session" },
             { slug: "how-to/work-with-subagents" },
+            { slug: "how-to/install-the-cli-from-a-hub" },
             { slug: "how-to/develop-claude-hub" },
           ],
         },

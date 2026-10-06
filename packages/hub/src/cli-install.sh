@@ -95,7 +95,7 @@ main() {
   # The command install.sh writes runs a claude-hub install's own CLI, which has every command
   # this one has, and updates with the install.
   if [ -f "$dest" ] && sed -n 2p "$dest" 2>/dev/null | grep -q '^# claude-hub: written by install.sh.'; then
-    die "$dest is the command of the claude-hub install on this machine, which has every command this one has: keep it up to date with  claude-hub update. To install this one elsewhere, set CLAUDE_HUB_BIN_DIR."
+    die "$dest is the command of the claude-hub install on this machine, which has every command this one has and updates with the install. To install this one elsewhere, set CLAUDE_HUB_BIN_DIR."
   fi
 
   mkdir -p "$bin_dir"

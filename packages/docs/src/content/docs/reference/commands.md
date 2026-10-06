@@ -5,13 +5,13 @@ sidebar:
   order: 1
 ---
 
-An installed Hub or Runner is run with the [`claude-hub` command](#the-claude-hub-command). A checkout, for working on claude-hub itself, is run with the [`bun run` scripts](#scripts-in-a-checkout) at its root.
+An installed Hub or Runner is run with the [`claude-hub` command](#the-claude-hub-command). A Hub also serves the command, as one binary, to [install from it](#the-claude-hub-command-from-a-hub) on machines that run neither. A checkout, for working on claude-hub itself, is run with the [`bun run` scripts](#scripts-in-a-checkout) at its root.
 
 ## The `claude-hub` command
 
 [install.sh](/how-to/install/#install) writes it to `~/.local/bin/claude-hub`. It runs the CLI from the install, `~/.claude-hub/app`. From a checkout, `bun run cli <command>` runs the same CLI.
 
-Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-hub`. It never touches a checkout's dev home. Where there's no install in that home, `status`, `doctor`, `update`, `onboard` and `hub|runner install` say so and how to install, and exit 1, without creating anything.
+Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-hub`. It never touches a checkout's dev home. Where there's no install in that home, `status`, `doctor`, `update`, `onboard`, `logs` and `hub|runner install` say so and how to install, and exit 1, without creating anything.
 
 | Command | What it does |
 |---|---|
@@ -28,7 +28,7 @@ Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-
 | `claude-hub secrets key` | Prints a new `HUB_SECRETS_KEY`, as [`bun run secrets-key`](#bun-run-secrets-key) does. It changes nothing. |
 | `claude-hub secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `claude-hub hub stop` first. Asks first; without a terminal it needs `--yes`. |
 
-`--help` on any command lists its flags, and `--version` prints the commit the CLI runs from.
+`--help` on any command lists its flags, and `--version` prints the commit the CLI runs from, as `claude-hub v<commit>`.
 
 ### `claude-hub onboard`
 
@@ -91,6 +91,28 @@ The code is redeemed before anything is installed or built, so a later step that
 The install's checkout belongs to the CLI: `update` discards changes made in it.
 
 On the Hub's machine, `update` leaves the Hub a note of its new commit before restarting it, and the restarted Hub asks each connected Runner that updates itself to follow ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)): the Runner checks the commit is on `origin/main`, the Hub puts its Sessions to sleep, and it moves, builds and restarts. The Runner on the Hub's machine is drained the same way rather than restarted under its Sessions; `update` restarts it at once instead when it can't follow (it's from before Runners followed the Hub, or its service file changed). Its running Sessions keep the copy of the mod each started with, so the mod `update` has already rebuilt in the checkout doesn't reach a Turn still running. On a machine with only a Runner, `update` moves that Runner and restarts it.
+
+## The `claude-hub` command from a Hub
+
+A Hub serves the same CLI, built from the commit it runs with `bun build --compile` into one binary, for macOS and Linux on arm64 and x64. Install it with the Hub's install script; see [Install the CLI from a Hub](/how-to/install-the-cli-from-a-hub/).
+
+```sh
+curl -fsSL https://hub.example.com/cli | sh
+```
+
+It has the same commands, but runs none of the ones above: they set up and run a Hub or a Runner from an install's checkout. Each says it needs a claude-hub install and how to get one, or, on a machine with an install, which command runs it, and exits 1. `--help` and `--version` work.
+
+Each run first asks the Hub it was installed from for its commit, waiting up to two seconds. When the Hub runs another commit, it downloads that commit's binary, checks that it runs, renames it over itself and runs the command again. [`CLAUDE_HUB_NO_SELF_UPDATE`](/reference/configuration/#the-claude-hub-command-from-a-hub) turns that off. The CLI from an install never updates itself: `claude-hub update` updates it with the install.
+
+The Hub serves it on these routes, with no sign-in:
+
+| Route | What it answers |
+|---|---|
+| `GET /cli` | The install script, with the Hub's `HUB_PUBLIC_URL` origin in it. |
+| `GET /cli/version` | `{"commit":"<commit>"}`: the commit the Hub serves the CLI at, its own. `503` when the Hub doesn't run from a git checkout. |
+| `GET /cli/<os>-<arch>` | The binary, for `darwin-arm64`, `darwin-x64`, `linux-x64` or `linux-arm64`, with its commit in the `x-claude-hub-commit` header. Any other platform is a `404`. The Hub builds a platform's binary the first time it's asked for, one build at a time, and keeps it in `<home>/cli/<commit>/`. |
+
+The install script and the binary read [their own variables](/reference/configuration/#the-claude-hub-command-from-a-hub).
 
 ## Scripts in a checkout
 

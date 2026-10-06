@@ -51,7 +51,7 @@ Anything in a Sandbox can read its Session token, and spend its Session's creden
 
 ## Every endpoint needs a credential
 
-Code in a Sandbox can reach the Hub's address, so every Hub route but sign-in, `/health` and the web UI's files needs a credential: a sign-in cookie for people, a Runner token for Runners, a mod token for one Session's mod. The Hub keeps only SHA-256 hashes of them and compares in constant time. See the [protocol reference](/reference/protocol/#endpoints).
+Code in a Sandbox can reach the Hub's address, so every Hub route but sign-in, `/health`, the [`claude-hub` command it serves](/how-to/install-the-cli-from-a-hub/) and the web UI's files needs a credential: a sign-in cookie for people, a Runner token for Runners, a mod token for one Session's mod. The Hub keeps only SHA-256 hashes of them and compares in constant time. See the [protocol reference](/reference/protocol/#endpoints).
 
 Cookie-authenticated requests must come from `HUB_PUBLIC_URL`'s origin, and the cookie is `HttpOnly`, `SameSite=Lax`, host-only and `Secure` unless the Hub is on loopback over HTTP. Dev login only works with the Hub bound to loopback, and only answers loopback callers.
 
