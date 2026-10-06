@@ -327,10 +327,24 @@ export const QueuedPrompt = Schema.Struct({
 })
 export type QueuedPrompt = typeof QueuedPrompt.Type
 
+/**
+ * A Participant present in a Session: in it in the web UI, forwarding its ports with
+ * `claude-hub forward` (ADR 0016), or both.
+ */
+export const PresentParticipant = Schema.Struct({
+  ...Participant.fields,
+  /**
+   * The machines they forward the Session's ports from, by the names of their CLI tokens, as
+   * "Alice · forwarding from macbook" shows it; absent when they forward from none.
+   */
+  forwardingFrom: Schema.optionalKey(Schema.Array(Schema.NonEmptyString)),
+})
+export type PresentParticipant = typeof PresentParticipant.Type
+
 /** Hub to web and Hub to mod: the Participants connected to a Session now, in full. */
 export const PresenceChanged = Schema.TaggedStruct("PresenceChanged", {
   sessionId: SessionId,
-  participants: Schema.Array(Participant),
+  participants: Schema.Array(PresentParticipant),
 })
 export type PresenceChanged = typeof PresenceChanged.Type
 
