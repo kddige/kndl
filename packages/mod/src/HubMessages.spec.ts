@@ -15,6 +15,7 @@ import {
   resultSummary,
   sharedSessionNote,
   startsDelivered,
+  steeredPrompt,
   taskNotificationAgent,
   toolArguments,
   turnEndReason,
@@ -98,6 +99,14 @@ const events: Array<Record<string, unknown>> = [
   { _tag: "AgentStatusChanged", agentId: "a1", status: "Stopped" },
   { _tag: "PromptFailed", promptId: "pr1", message: "a hook dropped the prompt" },
   {
+    _tag: "PromptSteered",
+    turnId: "t1",
+    promptId: "pr2",
+    text: "and the docs",
+    sender: participant,
+  },
+  { _tag: "SteeredPromptRead", turnId: "t1", promptId: "pr2" },
+  {
     _tag: "AgentCommandFailed",
     agentId: "a1",
     command: "MessageAgent",
@@ -142,7 +151,7 @@ describe("checkEvent", () => {
   })
 })
 
-test("helloBody says hello in the protocol's shape", () => {
+test("helloBody says hello in the protocol's shape, and that this mod steers (#195)", () => {
   const body = helloBody({ sessionId: "s1", claudeSessionId: "c1", model: "claude-test" })
   expect(Schema.decodeUnknownSync(Schema.fromJsonString(ModHello))(body)).toEqual({
     _tag: "ModHello",
@@ -150,6 +159,7 @@ test("helloBody says hello in the protocol's shape", () => {
     sessionId: "s1",
     claudeSessionId: "c1",
     model: "claude-test",
+    steers: true,
   } as never)
 })
 
@@ -276,6 +286,19 @@ test("turnEndReason names every way a Turn ends", () => {
 
 test("a prompt from a Participant is led by their name", () => {
   expect(promptFromParticipant(participant as never, "fix it")).toBe("[Ada Lovelace] fix it")
+})
+
+test("a steered prompt is framed as Claude Code frames one typed while it works (#195)", () => {
+  expect(steeredPrompt(participant, "and the docs")).toBe(
+    [
+      "<system-reminder>",
+      "Ada Lovelace sent a new message while you were working:",
+      "[Ada Lovelace] and the docs",
+      "",
+      "Address the message above as you continue this turn.",
+      "</system-reminder>",
+    ].join("\n"),
+  )
 })
 
 test("the shared Session's note says where the model runs, and leaves `!` alone (ADR 0013)", () => {

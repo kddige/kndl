@@ -2,7 +2,8 @@
 // hub-link-commands beside it, into each Session's Claude Code, which runs in the Session's
 // Sandbox (ADR 0013).
 //
-// - The Hub: says hello and reports the Turns, their tool calls and the subagents (ADR 0014). It
+// - The Hub: says hello and reports the Turns, their tool calls, the prompts steered into them
+//   (#195) and the subagents (ADR 0014). It
 //   runs none of the Hub's commands: a plugin's hooks don't see the work it causes, such as an
 //   agent it resumes, so hub-link-commands runs them, and this plugin sees what follows.
 // - Tools: Claude Code runs them, in the Sandbox, without asking (ADR 0004).
@@ -21,6 +22,7 @@ import {
   resultSummary,
   sharedSessionNote,
   startsDelivered,
+  steeredPrompt,
   taskNotificationAgent,
   toolArguments,
   turnEndReason,
@@ -46,6 +48,8 @@ const state = {
   stopped: new Set<string>(),
   /** The last prompt from the Hub a Turn started with, so no other Turn claims it. */
   claimed: undefined as string | undefined,
+  /** The prompts steered into the main loop's Turn that no step has read yet, by id. */
+  unread: new Map<string, string>(),
   minted: 0,
 }
 
@@ -203,8 +207,44 @@ export function register(on: On) {
     return next(e)
   })
 
+  // A prompt hub-link-commands steers into the running Turn (#195, ADR 0018) is a row it appends:
+  // reported as joining the Turn when it is kept. Once the Turn has ended, it is refused, so it
+  // waits in the queue rather than in the conversation for whatever prompt comes next.
+  on("session.append", { door: "note" }, async ($, e, next) => {
+    if (e.agentId !== undefined) return next(e)
+    const { value: steered } = await $.state.get({ plugin: "hub-link-commands", key: "steering" })
+    const block = e.message.content[0]
+    if (
+      steered === undefined ||
+      steered === null ||
+      block?.type !== "text" ||
+      block.text !== steeredPrompt(steered.sender, steered.text)
+    )
+      return next(e)
+    const turnId = state.mainTurn
+    if (turnId === undefined) return { deny: "the Turn ended before the prompt could join it" }
+    const appended = await next(e)
+    if (appended.deny !== undefined) return appended
+    state.unread.set(steered.promptId, turnId)
+    report({
+      _tag: "PromptSteered",
+      turnId,
+      promptId: steered.promptId,
+      text: steered.text,
+      sender: steered.sender,
+    })
+    return appended
+  })
+
   on("turn.step", async function* ($, e, next) {
     if (e.agentId !== undefined) state.agentTurns.set(e.agentId, e.turnId)
+    // The main loop's next request after a steered prompt joined carries it: Claude reads it now.
+    else
+      for (const [promptId, turnId] of state.unread) {
+        if (turnId !== e.turnId) continue
+        state.unread.delete(promptId)
+        report({ _tag: "SteeredPromptRead", turnId, promptId })
+      }
     const loop = e.agentId === undefined ? {} : { agentId: e.agentId }
     const stream = next(e)
     while (true) {
@@ -226,8 +266,11 @@ export function register(on: On) {
       durationMs: Math.max(0, Math.round(e.durationMs)),
       ...(e.usage === undefined ? {} : { usage: turnUsage(e.usage) }),
     })
-    if (e.agentId === undefined) state.mainTurn = undefined
-    else {
+    if (e.agentId === undefined) {
+      state.mainTurn = undefined
+      // Left unread, Claude Code keeps it in the conversation for the next prompt (spike #195).
+      state.unread.clear()
+    } else {
       state.agentTurns.delete(e.agentId)
       // A foreground agent's run ends as aborted when it is stopped, with no SubagentStop (spike
       // #148).

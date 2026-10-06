@@ -25,7 +25,7 @@ export const clip = (text: string, max = MaxToolSummaryLength) => {
   return `${text.slice(0, Math.max(0, kept))}${clipNote(text.length - Math.max(0, kept))}`
 }
 
-/** The body of `POST /mod/hello`. */
+/** The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195). */
 export const helloBody = (hello: {
   readonly sessionId: string
   readonly claudeSessionId: string
@@ -37,6 +37,7 @@ export const helloBody = (hello: {
         _tag: "ModHello",
         protocolVersion: ProtocolVersion,
         ...hello,
+        steers: true,
       }),
     ),
   )
@@ -141,8 +142,22 @@ export const backgroundedByStop = (result: unknown) =>
  * A prompt from a Participant, or their message to a subagent, as the model reads it: led by the
  * sender's name.
  */
-export const promptFromParticipant = (sender: Participant, text: string) =>
+export const promptFromParticipant = (sender: Pick<Participant, "name">, text: string) =>
   `[${sender.name}] ${text}`
+
+/**
+ * A prompt a Participant steered into the running Turn (#195, ADR 0018), as the model reads it: as
+ * Claude Code frames a prompt typed while it works, with the sender's name.
+ */
+export const steeredPrompt = (sender: Pick<Participant, "name">, text: string) =>
+  [
+    "<system-reminder>",
+    `${sender.name} sent a new message while you were working:`,
+    promptFromParticipant(sender, text),
+    "",
+    "Address the message above as you continue this turn.",
+    "</system-reminder>",
+  ].join("\n")
 
 /** What the model is told about the Session being shared, in the system prompt. */
 export const sharedSessionNote = [
