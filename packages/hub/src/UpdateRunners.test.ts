@@ -284,6 +284,28 @@ describe("updating a Runner", () => {
     await runner.take("ApplyUpdate")
   })
 
+  test("puts a Session kept awake to sleep, leaves Keep awake on, and wakes it once back", async () => {
+    const { hub, web, token, runner, sessions, runnerId } = await behindScene(1)
+    const [kept] = sessions as [(typeof sessions)[number]]
+    web.send({ _tag: "SetKeepAwake", sessionId: kept.sessionId, on: true })
+    await web.take("SessionUpdated", (m) => m.session.keepAwake !== undefined)
+
+    web.send({ _tag: "UpdateRunner", requestId: "u-1", runnerId, now: false })
+    await runner.take("CheckUpdate")
+    runner.send({ _tag: "UpdateChecked", target: hubCommit })
+    expect(await runner.take("StopSession")).toMatchObject({ sessionId: kept.sessionId })
+    runner.send({ _tag: "SessionStopped", sessionId: kept.sessionId, reason: "Requested" })
+    const asleep = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(asleep.session.keepAwake?.by).toEqual(alice)
+    await runner.take("ApplyUpdate")
+    // Not woken while it updates.
+    expect(await runner.untaken("StartSession")).toEqual([])
+
+    await runner.close()
+    const back = await openRunner(hub, token, [], hubCommit, true, selfUpdating)
+    expect(await back.take("StartSession")).toMatchObject({ sessionId: kept.sessionId })
+  })
+
   test("shows a Runner's refusal, and drains nothing", async () => {
     const { web, runner, runnerId } = await behindScene(1)
     web.send({ _tag: "UpdateRunner", requestId: "u-1", runnerId, now: false })
