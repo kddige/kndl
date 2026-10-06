@@ -5,6 +5,6 @@
     "verbatimModuleSyntax": true,
     "exactOptionalPropertyTypes": true
   },
-  "include": [".claude-plugin/types", "hooks", "src", "types", "tests"],
-  "exclude": ["hooks/hub-link-lib.js", "src/**/*.spec.ts", "tests/**/*.spec.ts"]
+  "include": [".claude-plugin/types", "hooks", "types", "tests"],
+  "exclude": ["hooks/hub-link-lib.js"]
 }

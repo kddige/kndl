@@ -10,7 +10,7 @@ dist/
 *.db.lock
 
 # The mod's bundle, built by `bun run mod:build`
-packages/mod/hooks/hub-link-lib.js
+packages/mod/plugins/*/hooks/hub-link-lib.js
 
 # Laid by Claude Code beside a mod each time it loads one
 .claude-plugin/types/

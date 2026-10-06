@@ -1,0 +1,34 @@
+// hub-link-commands' contract: the state its band draws from, and the prompt it delivered last,
+// which hub-link reads.
+
+/** What the band above the prompt shows. */
+export type HubLinkBand = {
+  /** Where the link to the Hub stands. */
+  status: "Linking" | "Linked" | "Offline" | "Rejected" | "Unlinked"
+  /** Why the Hub refused the link, when `status` is `Rejected`. */
+  detail: string
+  /** The names of the Participants connected to the Session now. */
+  participants: string[]
+}
+
+/** A Participant, as the protocol has them. */
+export type HubLinkParticipant = {
+  id: string
+  login: string
+  name: string
+  avatarUrl?: string
+}
+
+/** The prompt from the Prompt queue submitted last: the Turn it starts is reported as theirs. */
+export type HubLinkDelivered = {
+  promptId: string
+  sender: HubLinkParticipant
+  /** As submitted, led by the sender's name. */
+  text: string
+}
+
+declare module "claude-code" {
+  interface PluginState {
+    "hub-link-commands": { band: HubLinkBand; delivered: HubLinkDelivered | null }
+  }
+}

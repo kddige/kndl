@@ -1,4 +1,8 @@
 [test]
 # The mod's *.test.ts files run in Claude Code's own runtime (`claude plugin test`), not Bun's;
 # its Bun tests are named *.spec.ts. The prototype is reference material.
-pathIgnorePatterns = ["packages/mod/**/*.test.ts", "packages/mod/.claude-plugin/**", "prototype/**"]
+pathIgnorePatterns = [
+  "packages/mod/**/*.test.ts",
+  "packages/mod/plugins/*/.claude-plugin/**",
+  "prototype/**",
+]

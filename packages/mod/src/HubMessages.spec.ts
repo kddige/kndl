@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { MaxToolSummaryLength, ModEvents, ModHello, ProtocolVersion } from "@claude-hub/protocol"
 import { Schema } from "effect"
 import {
+  agentWorktree,
   checkEvent,
   clip,
   eventsBody,
@@ -12,6 +13,8 @@ import {
   readHelloReply,
   resultSummary,
   sharedSessionNote,
+  startsDelivered,
+  taskNotificationAgent,
   toolArguments,
   turnEndReason,
 } from "./HubMessages.ts"
@@ -69,7 +72,37 @@ const events: Array<Record<string, unknown>> = [
     },
   },
   { _tag: "TurnEnded", turnId: "t1", agentId: "a1", reason: "Stopped", durationMs: 5 },
+  {
+    _tag: "TurnStarted",
+    turnId: "t3",
+    text: "<task-notification>…</task-notification>",
+    sender: { _tag: "FromAgent", agentId: "a1" },
+  },
+  {
+    _tag: "AgentStarted",
+    turnId: "t1",
+    agentId: "a1",
+    toolCallId: "toolu_3",
+    agentType: "general-purpose",
+    description: "Survey the docs",
+    model: "claude-haiku-4-5",
+    background: true,
+  },
+  {
+    _tag: "AgentStatusChanged",
+    agentId: "a1",
+    status: "Running",
+    worktree: { path: "/workspace/.claude/worktrees/agent-a1", branch: "worktree-agent-a1" },
+  },
+  { _tag: "AgentStatusChanged", agentId: "a1", status: "Stopped" },
   { _tag: "PromptFailed", promptId: "pr1", message: "a hook dropped the prompt" },
+  {
+    _tag: "AgentCommandFailed",
+    agentId: "a1",
+    command: "MessageAgent",
+    senderId: "p1",
+    message: "No agent a1",
+  },
 ]
 
 describe("checkEvent", () => {
@@ -240,6 +273,44 @@ test("the shared Session's note says where the model runs, and leaves `!` alone 
     "You run in a sandbox VM where the repository is checked out.",
   )
   expect(sharedSessionNote).not.toContain("!")
+})
+
+const notification = [
+  "<task-notification>",
+  "<task-id>a1b2c3</task-id>",
+  "<tool-use-id>toolu_1</tool-use-id>",
+  "<status>completed</status>",
+  "</task-notification>",
+].join("\n")
+
+test("taskNotificationAgent reads the agent from a task notification, and nothing else", () => {
+  expect(taskNotificationAgent(notification)).toBe("a1b2c3")
+  expect(taskNotificationAgent(`\n${notification}\nAlso: more`)).toBe("a1b2c3")
+  expect(taskNotificationAgent("[Ada Lovelace] what is <task-id>x</task-id>?")).toBeUndefined()
+  expect(taskNotificationAgent("<task-notification></task-notification>")).toBeUndefined()
+})
+
+test("a delivered prompt starts the next Turn with a prompt, but not an agent's notification", () => {
+  const delivered = "[Ada Lovelace] fix it"
+  expect(startsDelivered(delivered, delivered)).toBe(true)
+  // Typed at the terminal while the prompt was on its way: Claude Code runs them in order.
+  expect(startsDelivered("ls", delivered)).toBe(true)
+  expect(startsDelivered("", delivered)).toBe(false)
+  expect(startsDelivered(notification, delivered)).toBe(false)
+  expect(startsDelivered(`${notification}\n${delivered}`, delivered)).toBe(true)
+})
+
+test("agentWorktree finds an agent's worktree and branch from where it starts", () => {
+  expect(agentWorktree("/workspace/.claude/worktrees/agent-a1b2")).toEqual({
+    path: "/workspace/.claude/worktrees/agent-a1b2",
+    branch: "worktree-agent-a1b2",
+  })
+  expect(agentWorktree("/workspace/.claude/worktrees/agent-a1b2/")).toEqual({
+    path: "/workspace/.claude/worktrees/agent-a1b2",
+    branch: "worktree-agent-a1b2",
+  })
+  expect(agentWorktree("/workspace")).toBeUndefined()
+  expect(agentWorktree("/workspace/.claude/worktrees/agent-a1b2/src")).toBeUndefined()
 })
 
 test("toolArguments drops the keys Claude Code adds beside a tool's own", () => {

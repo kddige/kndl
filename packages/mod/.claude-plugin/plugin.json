@@ -1,7 +1,0 @@
-{
-  "name": "hub-link",
-  "version": "0.2.0",
-  "description": "Links a Claude Code Session to its Claude Hub.",
-  "author": { "name": "kddige" },
-  "types": "./types/index.d.ts"
-}

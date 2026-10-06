@@ -24,7 +24,10 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 5))
  * A link over a scripted Hub: `answer` replies to each request, or holds it (undefined) as a long
  * poll would. `sleep` resolves at once and is recorded.
  */
-const harness = (answer: (request: Request, index: number) => Reply | Error | undefined) => {
+const harness = (
+  answer: (request: Request, index: number) => Reply | Error | undefined,
+  options: { readonly runsCommands?: boolean } = {},
+) => {
   const requests: Array<Request> = []
   const sleeps: Array<number> = []
   const statuses: Array<LinkStatus["_tag"]> = []
@@ -48,9 +51,13 @@ const harness = (answer: (request: Request, index: number) => Reply | Error | un
     sleep: async (ms) => {
       sleeps.push(ms)
     },
-    onCommand: async (command) => {
-      handled.push(command._tag)
-    },
+    ...(options.runsCommands === false
+      ? {}
+      : {
+          onCommand: async (command: ModCommand) => {
+            handled.push(command._tag)
+          },
+        }),
     onStatus: (status) => statuses.push(status._tag),
     log: () => undefined,
     flushDelayMs: 0,
@@ -76,6 +83,17 @@ describe("HubLink", () => {
       "GET /mod/commands?after=2&waitMs=25000",
     ])
     expect(handled).toEqual(["StopTurn", "StopTurn"])
+  })
+
+  test("without onCommand only says hello, and never polls", async () => {
+    const { link, requests, statuses } = harness(() => welcome, { runsCommands: false })
+    link.start()
+    await settle()
+    link.report({ _tag: "TextDelta", turnId: "t1", text: "hi" })
+    await settle()
+    link.stop()
+    expect(paths(requests)).toEqual(["POST /mod/hello", "POST /mod/events"])
+    expect(statuses).toEqual(["Linking", "Linked"])
   })
 
   test("on 409 says hello again and polls from after=0", async () => {
