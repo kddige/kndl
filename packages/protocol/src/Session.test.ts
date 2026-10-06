@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import {
+  isDockerPort,
   MaxSessionNameLength,
+  OpenPort,
   Participant,
   SessionName,
   SessionSummary,
@@ -45,6 +47,38 @@ describe("SessionSummary", () => {
         lastOutput: "error: The current working directory was deleted",
       },
     ])
+  })
+})
+
+describe("Open ports", () => {
+  test("a summary round-trips with them, and without", () => {
+    expectRoundTrips(SessionSummary, [
+      sessionSummary,
+      {
+        ...sessionSummary,
+        openPorts: [
+          { port: 3000, addresses: ["0.0.0.0", "::"], process: "node server" },
+          { port: 5173, addresses: ["::1"] },
+        ],
+      },
+    ])
+  })
+
+  test("a port is between 1 and 65535 and has its addresses", () => {
+    expectRoundTrips(OpenPort, [
+      { port: 1, addresses: ["127.0.0.1"] },
+      { port: 65535, addresses: [] },
+    ])
+    expectRejected(OpenPort, { port: 0, addresses: [] })
+    expectRejected(OpenPort, { port: 65536, addresses: [] })
+    expectRejected(OpenPort, { port: 80.5, addresses: [] })
+    expectRejected(OpenPort, { port: 80 })
+  })
+
+  test("a port Docker publishes is one docker-proxy listens on", () => {
+    expect(isDockerPort({ port: 8080, addresses: ["0.0.0.0"], process: "docker-proxy" })).toBe(true)
+    expect(isDockerPort({ port: 3000, addresses: ["0.0.0.0"], process: "node server" })).toBe(false)
+    expect(isDockerPort({ port: 3000, addresses: ["0.0.0.0"] })).toBe(false)
   })
 })
 

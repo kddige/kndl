@@ -194,6 +194,32 @@ export const AgentSummary = Schema.Struct({
 })
 export type AgentSummary = typeof AgentSummary.Type
 
+/**
+ * An Open port (GLOSSARY.md): a TCP port something in a Session's Sandbox listens on, as its Runner
+ * last saw it (ADR 0016). Forwarding it reaches it through the Hub.
+ */
+export const OpenPort = Schema.Struct({
+  port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+  /**
+   * The addresses it listens on, such as `0.0.0.0`, `127.0.0.1`, `::` or `::1`; one port can listen
+   * on an IPv4 and an IPv6 address at once.
+   */
+  addresses: Schema.Array(Schema.String),
+  /**
+   * What listens on it, shortened: the program's name, or a runtime and its script, such as
+   * `node server` or `python3 -m`. `docker-proxy` for a port a Docker container publishes. Absent
+   * when the Runner couldn't tell.
+   */
+  process: Schema.optionalKey(Schema.String),
+})
+export type OpenPort = typeof OpenPort.Type
+
+/** What listens on a port Docker publishes for a container in the Sandbox. */
+export const DockerProxy = "docker-proxy"
+
+/** Whether an Open port is one a Docker container publishes, which the web UI labels Docker. */
+export const isDockerPort = (port: OpenPort): boolean => port.process === DockerProxy
+
 /** A Session as the web UI lists it. */
 export const SessionSummary = Schema.Struct({
   id: SessionId,
@@ -252,6 +278,11 @@ export const SessionSummary = Schema.Struct({
    * they apply once no Turn runs, when the Hub restarts Claude Code with them.
    */
   modelPending: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * Its Open ports, by port, as its Runner last reported them (ADR 0016): present while it is
+   * Active and something in its Sandbox listens. Kept in the Hub's memory only.
+   */
+  openPorts: Schema.optionalKey(Schema.Array(OpenPort)),
 })
 export type SessionSummary = typeof SessionSummary.Type
 

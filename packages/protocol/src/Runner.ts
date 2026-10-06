@@ -18,7 +18,7 @@ import {
 import { GitIdentity, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
-import { BranchName, RepoName, RunnerAccount } from "./Session.ts"
+import { BranchName, OpenPort, RepoName, RunnerAccount } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
   TerminalFrame,
@@ -154,6 +154,17 @@ export const SandboxNote = Schema.TaggedStruct("SandboxNote", {
 })
 export type SandboxNote = typeof SandboxNote.Type
 
+/**
+ * The Open ports of an awake Session's Sandbox (ADR 0016), sent whenever they change: the whole
+ * list each time, and an empty one when the Session goes to sleep. Leaves out the port Claude Code
+ * itself listens on for a login.
+ */
+export const SessionPorts = Schema.TaggedStruct("SessionPorts", {
+  sessionId: SessionId,
+  ports: Schema.Array(OpenPort),
+})
+export type SessionPorts = typeof SessionPorts.Type
+
 /** A {@link PurgeSession} is done: nothing of the Session is left on the Runner. */
 export const SessionPurged = Schema.TaggedStruct("SessionPurged", {
   sessionId: SessionId,
@@ -172,6 +183,7 @@ export const RunnerToHub = Schema.Union([
   GitRequest,
   WipPushFailed,
   SandboxNote,
+  SessionPorts,
   FetchVariables,
   FetchClaudeCredential,
   FetchCloneAccess,
