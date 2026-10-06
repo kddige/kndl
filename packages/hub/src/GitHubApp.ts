@@ -83,10 +83,11 @@ const splitRepo = (repo: RepoName) => {
   return { owner, name }
 }
 
-const Installation = Schema.Struct({ id: Schema.Int })
+const Grants = Schema.Record(Schema.String, Schema.String)
+/** `GET /repos/{owner}/{repo}/installation`: which installation, and what it was granted. */
+const Installation = Schema.Struct({ id: Schema.Int, permissions: Schema.optional(Grants) })
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString, expires_at: Schema.String })
 const App = Schema.Struct({ slug: Schema.NonEmptyString, html_url: Schema.String })
-const Grants = Schema.Record(Schema.String, Schema.String)
 /** `GET /app`, as the permission check reads it. An enterprise's App has no owner login. */
 const AppDetails = Schema.Struct({
   slug: Schema.NonEmptyString,
@@ -104,10 +105,23 @@ const InstallationDetails = Schema.Struct({
     Schema.Struct({ login: Schema.optional(Schema.String), name: Schema.optional(Schema.String) }),
   ),
   html_url: Schema.String,
+  target_type: Schema.optional(Schema.String),
   permissions: Grants,
   events: Schema.Array(Schema.String),
   suspended_at: Schema.optional(Schema.NullOr(Schema.String)),
 })
+/**
+ * What the Hub's own token for a Repo may do: push its WIP refs and branches and, where the
+ * installation has it, read the organization's members. Without that, GitHub leaves out of a
+ * Repo's collaborators everyone with access through its organization (owners, the base
+ * permission, teams), so `isCollaborator` says no to them (#189). Asked for only where granted,
+ * since GitHub refuses a token a permission its installation lacks, as on a personal account.
+ */
+export const hostTokenPermissions = (
+  granted: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> =>
+  granted.members === undefined ? { contents: "write" } : { contents: "write", members: "read" }
+
 /** The most installations GitHub lists on one page. */
 const installationsPerPage = 100
 
@@ -155,8 +169,9 @@ export class GitHubApp extends Context.Service<
     /**
      * Whether the GitHub account `login` is a collaborator on the Repo: an outside collaborator,
      * an organization member with access through a team or the organization's base permission,
-     * or an owner. Asked as the Repo's installation, which needs only the Metadata permission
-     * every App has. Fails with status 404 when the App isn't installed on the Repo.
+     * or an owner. Asked as the Repo's installation, with the Metadata permission every App has;
+     * on an organization, GitHub counts access through it only with Members (read) as well
+     * (`hostTokenPermissions`). Fails with status 404 when the App isn't installed on the Repo.
      */
     readonly isCollaborator: (
       repo: RepoName,
@@ -227,10 +242,15 @@ export class GitHubApp extends Context.Service<
       made: Effect.Effect<HttpClientRequest.HttpClientRequest>,
     ) => Effect.flatMap(made, (built) => callWith(http, what, schema, built))
 
-    /** Mints a token for the Repo only; with `permissions`, only those, else the installation's. */
+    /**
+     * Mints a token for the Repo only; with `scoped`, only those permissions, else the
+     * installation's. `scoped` may pick them from what the installation was granted.
+     */
     const mint = Effect.fn("GitHubApp.mint")(function* (
       repo: RepoName,
-      permissions?: Readonly<Record<string, string>>,
+      scoped?:
+        | Readonly<Record<string, string>>
+        | ((granted: Readonly<Record<string, string>>) => Readonly<Record<string, string>>),
     ) {
       const { owner, name } = splitRepo(repo)
       const installation = yield* call(
@@ -238,6 +258,8 @@ export class GitHubApp extends Context.Service<
         Installation,
         request("GET", `/repos/${owner}/${name}/installation`, { jwt: true }),
       )
+      const permissions =
+        typeof scoped === "function" ? scoped(installation.permissions ?? {}) : scoped
       const minted = yield* call(
         `Could not get a token for ${repo}`,
         AccessToken,
@@ -269,7 +291,7 @@ export class GitHubApp extends Context.Service<
           ) {
             return cached
           }
-          const fresh = yield* mint(repo, { contents: "write" })
+          const fresh = yield* mint(repo, hostTokenPermissions)
           tokens.set(repo, fresh)
           return fresh
         }),
@@ -385,6 +407,7 @@ export class GitHubApp extends Context.Service<
             permissions: installation.permissions,
             events: installation.events,
             suspended: installation.suspended_at != null,
+            organization: installation.target_type === "Organization",
           })
         }
         if (listed.length < installationsPerPage) break

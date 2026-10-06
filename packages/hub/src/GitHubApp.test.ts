@@ -8,6 +8,7 @@ import { createPrivateKey } from "node:crypto"
 import { RepoName } from "@claude-hub/protocol"
 import { Duration, Effect, Layer, Option, Redacted } from "effect"
 import { FetchHttpClient } from "effect/http"
+import { manifestPermissions, requiredOn } from "./AppPermissions.ts"
 import { appJwt, convertManifest, GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import {
@@ -38,6 +39,18 @@ const appConfig = {
   githubApiUrl: github.url,
 }
 
+/** Moves the Repos' installation to an organization, with `permissions`. */
+const onOrganization = (permissions: Readonly<Record<string, string>>) => {
+  const [installation] = github.installations
+  if (installation === undefined) throw new Error("the stand-in has no installation")
+  github.installations[0] = {
+    ...installation,
+    account: "octo",
+    accountType: "Organization",
+    permissions: { ...permissions },
+  }
+}
+
 /** Runs against one GitHubApp, as one Hub would hold it: its cache lasts for the whole effect. */
 const withApp = <A, E>(effect: Effect.Effect<A, E, GitHubApp>) =>
   Effect.runPromise(
@@ -59,7 +72,7 @@ describe("the App JWT", () => {
 })
 
 describe("installation tokens", () => {
-  test("for host git are minted for the Repo alone, with contents write only", async () => {
+  test("for host git are minted for the Repo alone, with contents write only on a personal account", async () => {
     const token = await withApp(Effect.flatMap(GitHubApp, (app) => app.repoToken(repo)))
 
     expect(github.mintedTokens).toEqual([Redacted.value(token.token)])
@@ -76,6 +89,17 @@ describe("installation tokens", () => {
       const jwt = request?.authorization?.replace(/^Bearer /, "") ?? ""
       expect(verifiedJwt(jwt, keys.publicKey)).toMatchObject({ iss: appId })
     }
+  })
+
+  test("for host git on an organization can read its members too, where granted", async () => {
+    onOrganization(manifestPermissions())
+    await withApp(Effect.flatMap(GitHubApp, (app) => app.repoToken(repo)))
+
+    const mint = github.requests.find((request) => request.path.endsWith("/access_tokens"))
+    expect(mint?.body).toEqual({
+      repositories: ["widgets"],
+      permissions: { contents: "write", members: "read" },
+    })
   })
 
   test("are cached until five minutes before they expire", async () => {
@@ -176,6 +200,20 @@ describe("collaborators", () => {
     expect(error.status).toBe(404)
   })
 
+  test("on an organization include those with access through it, given Members (#189)", async () => {
+    onOrganization(manifestPermissions())
+    github.throughOrganization.set(repo, new Set(["owner", "teammate"]))
+    expect(await isCollaborator("owner")).toBe(true)
+    expect(await isCollaborator("teammate")).toBe(true)
+    expect(await isCollaborator("hubot")).toBe(false)
+  })
+
+  test("on an organization whose installation lacks Members leave them out", async () => {
+    onOrganization(manifestPermissions(requiredOn(false)))
+    github.throughOrganization.set(repo, new Set(["owner"]))
+    expect(await isCollaborator("owner")).toBe(false)
+  })
+
   test("are unknown when GitHub can't say, with its status", async () => {
     github.collaboratorsDown = true
     const error = await withApp(
@@ -253,7 +291,11 @@ describe("the permission check", () => {
       suspended: false,
     })
     const check = await checkPermissions()
-    expect(check.missing).toEqual([{ name: "issues", title: "Issues", access: "write" }])
+    // An installation on an organization: the App needs Members too.
+    expect(check.missing).toEqual([
+      { name: "issues", title: "Issues", access: "write" },
+      { name: "members", title: "Members", access: "read" },
+    ])
     expect(check.installed).toBe(2)
     expect(check.installations).toEqual([
       {
@@ -265,6 +307,7 @@ describe("the permission check", () => {
           { name: "contents", title: "Contents", access: "write" },
           { name: "pull_requests", title: "Pull requests", access: "write" },
           { name: "issues", title: "Issues", access: "write" },
+          { name: "members", title: "Members", access: "read" },
         ],
         missingEvents: [],
       },

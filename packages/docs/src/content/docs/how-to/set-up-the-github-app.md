@@ -45,7 +45,9 @@ Without the tunnel, the page doesn't load on your machine, and neither does the 
 
 ## The permissions
 
-The App needs these repository permissions, and no webhook.
+The App needs these repository permissions, the organization permission Members, and no webhook.
+
+Members matters only where the App is installed on an organization. There, GitHub tells the Hub about people who reach a Repo through the organization (its owners, its base permission, its teams) only if the App can read the organization's members. Without it, the Hub says those people don't have access to the Repo, even though they do. On a personal account, everyone with access is a direct collaborator, so the Hub doesn't ask for it there.
 
 <!-- permissions:start -->
 | Permission | Access | Why |
@@ -54,10 +56,11 @@ The App needs these repository permissions, and no webhook.
 | Pull requests | read and write | gh pr in the Sandbox: opening, reviewing and merging pull requests. |
 | Issues | read and write | gh issue in the Sandbox: reading and commenting on issues. |
 | Metadata | read-only | Repo access: the Hub asks GitHub who is a Repo's collaborator. GitHub gives every App this one. |
+| Members | read-only | Repo access on an organization: without it, GitHub hides access through the organization (owners, its base permission, teams), and the Hub refuses those people. An organization permission. |
 <!-- permissions:end -->
 
 :::caution[The Sandbox token gets all of these]
-Each Session's Sandbox gets a token with every one of these permissions, on its own Repo ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)). This list is what Claude, and anything else running in a Sandbox, can do there. Issues, for example, lets a Sandbox open, edit, comment on and close its Repo's issues, as well as read them. Every permission you add beyond the list, such as **Workflows: read and write** so Sessions can change `.github/workflows`, every Sandbox gets too.
+Each Session's Sandbox gets a token with every one of these permissions, on its own Repo ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)). This list is what Claude, and anything else running in a Sandbox, can do there. Issues, for example, lets a Sandbox open, edit, comment on and close its Repo's issues, as well as read them. Every permission you add beyond the list, such as **Workflows: read and write** so Sessions can change `.github/workflows`, every Sandbox gets too. On an organization, that includes Members, so a Sandbox can list the organization's members.
 :::
 
 ## Install the App
@@ -90,6 +93,7 @@ To use an App you made on GitHub yourself, create it at <https://github.com/sett
 | Expire user authorization tokens | Ticked |
 | Webhook, Active | Unticked |
 | Repository permissions | [The permissions](#the-permissions) |
+| Organization permissions | Members: read-only |
 | Where can this GitHub App be installed? | Only on this account |
 
 Then note its **App ID** and **Client ID**, and generate a **client secret** and a **private key**, which GitHub downloads as a `.pem` file. Move the key somewhere only you can read, such as the home, and `chmod 600` it.

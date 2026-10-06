@@ -36,6 +36,7 @@ describe("the App's manifest", () => {
         pull_requests: "write",
         issues: "write",
         metadata: "read",
+        members: "read",
       },
       default_events: [],
     })

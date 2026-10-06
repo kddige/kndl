@@ -13,9 +13,12 @@ import {
   manifestPermissions,
   missingPermissions,
   RequiredPermissions,
+  requiredOn,
 } from "./AppPermissions.ts"
 
 const all = manifestPermissions()
+/** All a personal account's installation can have: no organization permissions. */
+const personal = manifestPermissions(requiredOn(false))
 
 const app: AppFacts = {
   slug: "claude-hub-ada",
@@ -29,9 +32,10 @@ const installation = (overrides: Partial<InstallationFacts> = {}): InstallationF
   id: 7,
   account: "ada",
   htmlUrl: "https://github.com/settings/installations/7",
-  permissions: all,
+  permissions: personal,
   events: [],
   suspended: false,
+  organization: false,
   ...overrides,
 })
 
@@ -42,8 +46,19 @@ describe("the required permissions", () => {
       pull_requests: "write",
       issues: "write",
       metadata: "read",
+      members: "read",
     })
     for (const permission of RequiredPermissions) expect(permission.why).not.toBe("")
+  })
+
+  test("on a personal account leave out the organization's", () => {
+    expect(requiredOn(false).map((permission) => permission.name)).toEqual([
+      "contents",
+      "pull_requests",
+      "issues",
+      "metadata",
+    ])
+    expect(requiredOn(true)).toEqual(RequiredPermissions)
   })
 })
 
@@ -65,6 +80,7 @@ describe("missingPermissions", () => {
     ).toEqual([
       { name: "contents", title: "Contents", access: "write" },
       { name: "pull_requests", title: "Pull requests", access: "write" },
+      { name: "members", title: "Members", access: "read" },
     ])
   })
 })
@@ -134,6 +150,43 @@ describe("checkAppPermissions", () => {
     ])
     expect(describeDrift(check)).toEqual([
       "Its installation on octo lacks Pull requests: read and write, Issues: read and write. Accept it at https://github.com/organizations/octo/settings/installations/8/permissions/update",
+    ])
+  })
+
+  test("asks Members of an installation on an organization, and of the App once it has one", () => {
+    // On personal accounts only, neither needs it.
+    const personalOnly = checkAppPermissions(
+      { ...app, permissions: personal },
+      [installation()],
+      1000,
+    )
+    expect(personalOnly.missing).toEqual([])
+    expect(personalOnly.installations).toEqual([])
+
+    const members = { name: "members", title: "Members", access: "read" } as const
+    const check = checkAppPermissions(
+      { ...app, permissions: personal },
+      [
+        installation(),
+        installation({
+          id: 8,
+          account: "octo",
+          htmlUrl: "https://github.com/organizations/octo/settings/installations/8",
+          organization: true,
+        }),
+      ],
+      1000,
+    )
+    expect(check.missing).toEqual([members])
+    expect(check.installations).toEqual([
+      {
+        id: 8,
+        account: "octo",
+        reviewUrl:
+          "https://github.com/organizations/octo/settings/installations/8/permissions/update",
+        missing: [members],
+        missingEvents: [],
+      },
     ])
   })
 
