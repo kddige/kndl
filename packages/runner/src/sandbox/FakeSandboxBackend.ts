@@ -8,10 +8,14 @@
 //   const layer = FakeSandboxBackend.layer({ onExec: ({ request }) => Effect.succeed({ stdout: "ok" }) })
 //   program.pipe(Effect.provide(layer))  // provides SandboxBackend and FakeSandboxBackend
 //
+// A TCP connection into a fake Sandbox (connectTcp) is a real one to the same address on the host,
+// at the port `tcpPort` maps the guest's to, so a test serves the "guest" with Bun.serve.
+//
 // Each fake works for one Runner, by its mark. Two fakes given the same `world` are two Runners
 // on one host, sharing one microsandbox.
 
 import { stat } from "node:fs/promises"
+import { createConnection } from "node:net"
 import { posix } from "node:path"
 import type { SandboxState, SessionId } from "@claude-hub/protocol"
 import { Context, Effect, Fiber, Layer, Option, Queue, Stream } from "effect"
@@ -29,6 +33,8 @@ import {
 import type {
   ExecEvent,
   ExecRequest,
+  GuestTcpConnection,
+  GuestTcpEvents,
   SandboxBackendShape,
   SandboxError,
   SandboxSpec,
@@ -79,6 +85,12 @@ export interface FakeSandboxWorld {
   readonly restores: Array<{ readonly sessionId: SessionId; readonly reference: string }>
   readonly execCalls: Array<FakeExecCall>
   readonly spawnCalls: Array<FakeExecCall>
+  /** Every TCP connection asked for, in order. */
+  readonly tcpConnects: Array<{
+    readonly sessionId: SessionId
+    readonly address: string
+    readonly port: number
+  }>
 }
 
 export interface FakeOptions {
@@ -98,6 +110,8 @@ export interface FakeOptions {
    * isn't a directory on the real disk. Off by default, so tests may mount made-up paths.
    */
   readonly checkHostPaths?: boolean
+  /** The host port a connection to a guest port reaches. The same port by default. */
+  readonly tcpPort?: (guestPort: number) => number
 }
 
 /** The mark of a fake's Runner, unless the test names one. */
@@ -113,6 +127,7 @@ export const makeFakeWorld = (): FakeSandboxWorld => ({
   restores: [],
   execCalls: [],
   spawnCalls: [],
+  tcpConnects: [],
 })
 
 /** The exit code a spawned command reports when its Sandbox stops under it. */
@@ -343,6 +358,11 @@ export const makeFake = (options: FakeOptions = {}) => {
     execStream,
     spawn,
     exec: (sessionId, request) => collectExec(execStream(sessionId, request)),
+    connectTcp: (sessionId, address, port, events) =>
+      Effect.flatMap(running(sessionId), () => {
+        world.tcpConnects.push({ sessionId, address, port })
+        return connectHostTcp(address, options.tcpPort?.(port) ?? port, events)
+      }),
     readFile,
     readTextFile: (sessionId, path) =>
       Effect.map(readFile(sessionId, path), (data) => new TextDecoder().decode(data)),
@@ -405,6 +425,74 @@ export const makeFake = (options: FakeOptions = {}) => {
   }
   return { backend, world }
 }
+
+/**
+ * A real TCP connection to `address`:`port` on the host, as a guest connection: what the fake's
+ * connectTcp makes, and what tests stand in for a Sandbox's with. Like agentd's (AgentTcp.ts), it
+ * reads the socket as fast as it comes and hands everything on; a write is done once the socket
+ * has taken it.
+ */
+export const connectHostTcp = (
+  address: string,
+  port: number,
+  events: GuestTcpEvents,
+): Effect.Effect<GuestTcpConnection, SandboxError> =>
+  Effect.callback<GuestTcpConnection, SandboxError>((resume) => {
+    const socket = createConnection({ host: address, port, allowHalfOpen: true })
+    let connected = false
+    let over = false
+    const finish = () => {
+      if (over) return
+      over = true
+      events.closed(false)
+    }
+    socket.on("error", (error) => {
+      if (connected) return
+      resume(
+        Effect.fail(
+          new SandboxBackendError({ operation: `connect to port ${port}`, message: error.message }),
+        ),
+      )
+    })
+    socket.on("data", (data: Buffer) => events.data(new Uint8Array(data)))
+    socket.on("end", () => events.eof())
+    socket.on("close", () => {
+      if (connected) finish()
+    })
+    socket.on("connect", () => {
+      connected = true
+      resume(
+        Effect.succeed({
+          write: (data) =>
+            Effect.callback<void, SandboxError>((done) => {
+              if (socket.destroyed || socket.writableEnded) {
+                return done(
+                  Effect.fail(
+                    new SandboxBackendError({
+                      operation: `write to port ${port}`,
+                      message: "the connection is closed",
+                    }),
+                  ),
+                )
+              }
+              if (socket.write(data)) return done(Effect.void)
+              const settle = () => {
+                socket.off("drain", settle)
+                socket.off("close", settle)
+                done(Effect.void)
+              }
+              socket.on("drain", settle)
+              socket.on("close", settle)
+            }),
+          end: Effect.sync(() => void socket.end()),
+          close: Effect.sync(() => {
+            socket.destroy()
+            finish()
+          }),
+        }),
+      )
+    })
+  })
 
 /** The fake's state, provided next to the SandboxBackend by {@link layer}. */
 export class FakeSandboxBackend extends Context.Service<FakeSandboxBackend, FakeSandboxWorld>()(

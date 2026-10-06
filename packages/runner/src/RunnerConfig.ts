@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs"
 import { hostname } from "node:os"
 import { join, resolve } from "node:path"
+import { runnerTunnelPath, type TunnelId } from "@claude-hub/protocol"
 import { HomeConfig } from "@claude-hub/protocol/home"
 import { Config, Context, Effect, Layer, type Redacted } from "effect"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
@@ -106,6 +107,13 @@ export function runnerConnectionUrl(hubUrl: URL): string {
 
 export function runnerSocketUrl(hubUrl: URL): string {
   const url = new URL("/ws/runner", hubUrl)
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+  return url.href
+}
+
+/** Where the Runner dials back for a tunnel the Hub asked it to open (#177). */
+export function runnerTunnelUrl(hubUrl: URL, tunnelId: TunnelId): string {
+  const url = new URL(runnerTunnelPath(tunnelId), hubUrl)
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
   return url.href
 }
