@@ -142,6 +142,7 @@ const webToHub = [
   },
   { _tag: "RemoveClaudeCredential", requestId: "q-21" },
   { _tag: "SetSessionModel", sessionId: "s-1" },
+  { _tag: "RevokeCliToken", requestId: "q-22", cliTokenId: "ct-1" },
 ]
 
 const hubToWeb = [
@@ -436,6 +437,20 @@ const hubToWeb = [
   { _tag: "RunnerRemoved", requestId: "q-16", runnerId: "r-1" },
   { _tag: "PairingCodeRedeemed", id: "pc-1", runnerId: "r-1", name: "studio", repaired: true },
   { _tag: "RunnerUpdateRequested", requestId: "q-17", runnerId: "r-1" },
+  { _tag: "CliTokenList", tokens: [] },
+  {
+    _tag: "CliTokenList",
+    requestId: "q-22",
+    tokens: [
+      {
+        id: "ct-1",
+        machine: "laptop",
+        createdAt: 1_700_000_000_000,
+        lastUsedAt: 1_700_000_060_000,
+      },
+      { id: "ct-2", machine: "build-box", createdAt: 1_700_000_000_000 },
+    ],
+  },
 ]
 
 describe("SessionEvent", () => {

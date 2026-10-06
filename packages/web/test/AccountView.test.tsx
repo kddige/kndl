@@ -1,5 +1,6 @@
 // The Account page against the fake Hub: pasting a Claude credential, which the fake checks as the
-// Hub does, seeing it write-only once saved, and removing it (ADR 0015). Every secret is made up.
+// Hub does, seeing it write-only once saved, and removing it (ADR 0015); and listing and revoking
+// the CLI tokens `claude-hub login` made (issue #179). Every secret is made up.
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -124,4 +125,50 @@ test("shows a saved credential, replaces it, and removes it after asking", async
   await step(() => button("Remove", dialog).click())
   await eventually(() => expect(secretField()).not.toBeNull())
   expect(saved()).toBeNull()
+})
+
+const tokensSection = () => document.querySelector('section[aria-labelledby="cli-tokens"]')
+const tokenList = () => tokensSection()?.querySelector('[aria-label="Your CLI tokens"]')
+const listedMachines = () =>
+  [...(tokenList()?.querySelectorAll("li") ?? [])].map(
+    (row) => row.querySelector("[title]")?.textContent,
+  )
+
+test("lists the machines the CLI is signed in on, newest first", async () => {
+  const now = Date.now()
+  await openAccount({
+    cliTokens: [
+      { id: "ct-1", machine: "laptop", createdAt: now - 86_400_000, lastUsedAt: now - 120_000 },
+      { id: "ct-2", machine: "build-box", createdAt: now - 30 * 86_400_000 },
+    ],
+  })
+  await eventually(() => expect(tokenList()).not.toBeNull())
+  expect(listedMachines()).toEqual(["laptop", "build-box"])
+  const rows = [...(tokenList()?.querySelectorAll("li") ?? [])].map((row) => row.textContent)
+  expect(rows[0]).toContain("last used 2m ago")
+  expect(rows[1]).toContain("never used")
+})
+
+test("revokes a CLI token after asking", async () => {
+  const now = Date.now()
+  await openAccount({
+    cliTokens: [
+      { id: "ct-1", machine: "laptop", createdAt: now },
+      { id: "ct-2", machine: "build-box", createdAt: now },
+    ],
+  })
+  await eventually(() => expect(tokenList()).not.toBeNull())
+  await step(() => button("Revoke build-box").click())
+  const dialog = document.querySelector('[role="dialog"]') as HTMLElement
+  expect(dialog.textContent).toContain("Revoke the CLI token for build-box?")
+  await step(() => button("Revoke", dialog).click())
+  await eventually(() => expect(listedMachines()).toEqual(["laptop"]))
+})
+
+test("without CLI tokens, shows the command that signs the CLI in", async () => {
+  await openAccount({ cliTokens: [] })
+  await eventually(() => expect(tokensSection()?.textContent).toContain("None yet"))
+  const command = tokensSection()?.querySelector('[aria-label="Sign-in command"]')
+  expect(command?.textContent).toBe(`claude-hub login ${window.location.origin}`)
+  expect(tokenList()).toBeNull()
 })

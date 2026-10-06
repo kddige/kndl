@@ -7,13 +7,27 @@ export const hubPaths = {
   webSocket: "/ws/web",
   /** `GET`: the signed-in Participant, or 401 with the {@link SignInOptions} that are on. */
   me: "/auth/me",
-  /** `GET`: redirects to GitHub to sign in, and back to `/` afterwards. */
+  /**
+   * `GET`: redirects to GitHub to sign in, and back to `/` afterwards, or to the Hub path in
+   * `?return=` ({@link githubSignInUrl}).
+   */
   githubSignIn: "/auth/github",
   /** `POST` with `{ login? }`: dev login, only when the Hub runs on loopback with it turned on. */
   devSignIn: "/auth/dev",
   /** `POST`: signs out and clears the cookie. */
   signOut: "/auth/sign-out",
+  /**
+   * `POST` with `{ machine, challenge }`, from the `/cli-login` page: approves `claude-hub login`
+   * on that machine, answering a Login code for it (issue #179).
+   */
+  cliApprove: "/auth/cli/approve",
 } as const
+
+/** GitHub sign-in that comes back to `returnTo`, a path on the Hub, such as the page it's on. */
+export function githubSignInUrl(returnTo?: string): string {
+  if (returnTo === undefined || returnTo === "/") return hubPaths.githubSignIn
+  return `${hubPaths.githubSignIn}?return=${encodeURIComponent(returnTo)}`
+}
 
 /** The ways to sign in that the Hub has turned on, from its 401 answer to `GET /auth/me`. */
 export interface SignInOptions {

@@ -12,9 +12,12 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | Endpoint | Caller | Credential |
 |---|---|---|
 | `GET /health` | anyone | none. Answers `{"status":"ok"}` once the database does. |
-| `GET /auth/github`, `GET /auth/github/callback` | a browser | none: GitHub sign-in. |
+| `GET /auth/github`, `GET /auth/github/callback` | a browser | none: GitHub sign-in. `?return=<path>` comes back to that path on the Hub once signed in, rather than to the web UI's start. |
 | `POST /auth/dev` | a browser on loopback | none: dev login, only with `CLAUDE_HUB_DEV_LOGIN`. |
 | `GET /auth/me`, `POST /auth/sign-out` | a browser | the sign-in cookie |
+| `POST /auth/cli/approve` | the `/cli-login` page | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin |
+| `POST /auth/cli/token` | `claude-hub login` | none: the Login code and its PKCE verifier in the body are the credential ([Signing in the CLI](#signing-in-the-cli)). |
+| `GET /auth/cli/me`, `POST /auth/cli/sign-out` | `claude-hub whoami`, `claude-hub logout` | `Authorization: Bearer <CLI token>` |
 | `GET /ws/web` | a browser | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin |
 | `GET /ws/runner` | a Runner | `Authorization: Bearer <Runner token>` |
 | `POST /runner/pair` | `claude-hub runner join` | none: the [Pairing code](#pairing) in the body is the credential. |
@@ -23,15 +26,29 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `GET /cli`, `GET /cli/version`, `GET /cli/<os>-<arch>` | `curl … \| sh`, the [`claude-hub` command from a Hub](/reference/commands/#the-claude-hub-command-from-a-hub) | none: the install script, the Hub's commit, and the binary built from it. |
 | anything else | a browser | none: the web UI's build. |
 
-Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair`, `/cli` and the web UI needs a credential. `/cli` serves only what the Hub's checkout already holds, built; a request for a platform can start a build, one at a time. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
+Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair`, `/auth/cli/token`, `/cli` and the web UI needs a credential. `/cli` serves only what the Hub's checkout already holds, built; a request for a platform can start a build, one at a time. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
 
-The Hub mints three kinds of token, each `<kind>_<id>.<secret>`, and stores only a SHA-256 of the secret:
+The Hub mints four kinds of token, each `<kind>_<id>.<secret>`, and stores only a SHA-256 of the secret:
 
 | Prefix | Token | Issued |
 |---|---|---|
 | `chr_` | Runner token | when a Pairing code is redeemed, or by `claude-hub runner token`; one per Runner |
 | `chm_` | mod token | by the Hub for each run of a Session's Claude Code, and kept by its Runner's [credential proxy](/explanation/security-model/#the-credential-proxy), which relays the mod's calls with it |
 | `chs_` | sign-in token | at sign-in, in the `claude_hub_sign_in` cookie |
+| `chc_` | CLI token | by `claude-hub login`, one per sign-in, named after the machine; it lasts until it is revoked |
+
+## Signing in the CLI
+
+`claude-hub login` ([Sign in the CLI](/how-to/sign-in-the-cli/)) gets a CLI token with a Login code, approved by a signed-in person in the browser, and PKCE ([RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), `S256`):
+
+1. The CLI makes a random verifier, and opens the web UI's `/cli-login` page with its SHA-256, the challenge: `/cli-login?machine=<machine>&challenge=<challenge>`, and `&port=<port>&state=<state>` when it waits for the browser on `127.0.0.1:<port>`.
+2. The person approves it there. The page sends `POST /auth/cli/approve { machine, challenge }` with the sign-in cookie, and the Hub answers `{ code, expiresAt }`: a Login code of 16 characters of [Crockford's base 32](https://www.crockford.com/base32.html), shown as `ABCD-EFGH-JKMN-PQRS`. Any account may approve, not only the Hub's operators.
+3. With a `port`, the page sends the browser to `http://127.0.0.1:<port>/callback?code=<code>&state=<state>`. The CLI checks the `state` and the `Host`, and once signed in answers with a redirect to `/cli-login/done?machine=<machine>`. Without a `port`, or when the browser can't reach the CLI, the page shows the code to paste.
+4. The CLI sends `POST /auth/cli/token { code, verifier }`, and the Hub answers `{ you, id, machine, createdAt, token }`.
+
+A Login code is held in the Hub's memory, for 10 minutes, and spent by its first trade, right or wrong. Only the verifier whose SHA-256 is the challenge it was approved with can trade it, so a code read off the screen is no use without the CLI that asked for it. A code that is unknown, expired, already spent, or traded with the wrong verifier gets the same `400`: `That code isn't valid: it may have expired or been used. Run claude-hub login again.`
+
+The Hub keeps a SHA-256 of each CLI token, with its machine, when it was made, and when it was last used, to the minute. `GET /auth/cli/me` answers `{ you, id, machine, createdAt }`, and `POST /auth/cli/sign-out` revokes the token it is sent with, answering `204`. The Hub checks a CLI token against its database on every request, so one revoked, by either, or on the Account page, is refused from the next request on, `401`. CLI tokens act only on the CLI's own endpoints: the web channel, the Runner channel and the mod channel don't take them. No token is logged, only its id and machine.
 
 ## Handshake
 
@@ -107,8 +124,8 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential` |
-| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; terminal frames; `CommandFailed` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken` |
+| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
 
@@ -119,6 +136,10 @@ Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `ag
 ### Claude credentials
 
 `SetClaudeCredential { secret, plan? }` stores the signed-in person's Claude credential, a token on a `plan` (`pro`, `max5x`, `max20x`, `team` or `enterprise`) or an API key, after the Hub checks it with Anthropic; one Anthropic rejects is refused with a `CommandFailed`. `RemoveClaudeCredential` removes it. Both are answered with `ClaudeCredentialState { credential, warning? }`, which also follows `WebWelcome` and goes to the person's other tabs when it changes, to them alone. `credential` is `null` or `{ kind, last4, plan?, addedAt }`, never the secret; `warning` says it was stored without Anthropic confirming it. Each Session carries `claudeAccount`, `Creator` or `Runner`: whose credential it runs on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)).
+
+### CLI tokens
+
+`CliTokenList { requestId?, tokens }` lists the signed-in person's [CLI tokens](#signing-in-the-cli), newest first, each `{ id, machine, createdAt, lastUsedAt? }`, never the token. It follows `WebWelcome`, and goes to the person's tabs, to them alone, whenever one is made or revoked. `RevokeCliToken { requestId, cliTokenId }` revokes one of their own, and is answered with a `CliTokenList` carrying its `requestId`; any other id gets a `CommandFailed`.
 
 ### Model and effort
 

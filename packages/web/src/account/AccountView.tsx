@@ -1,6 +1,7 @@
 // The signed-in person's own settings: their Claude credential (ADR 0015), which the Sessions they
 // start run on. It is pasted once and checked with Anthropic as it is saved; after that it is
-// write-only, so the page shows only its kind, its last 4 characters and its plan.
+// write-only, so the page shows only its kind, its last 4 characters and its plan. And their CLI
+// tokens (issue #179): a machine each that `claude-hub login` signed in, to revoke.
 
 import {
   type ClaudeCredentialInfo,
@@ -9,20 +10,26 @@ import {
   claudeCredentialProblem,
   claudePlanChoices,
   claudePlanLabel,
+  type CliTokenInfo,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, type ReactNode, useState } from "react"
+import { copyCommand } from "../app/copy.ts"
+import { day, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import {
   Banner,
   Button,
+  CopyIcon,
   Dialog,
   DialogClose,
   Field,
+  IconButton,
   Input,
   KeyIcon,
   PageHeader,
   Select,
+  ServerIcon,
   Spinner,
   toast,
   WarningIcon,
@@ -88,6 +95,61 @@ const styles = stylex.create({
   actions: { display: "flex", flexWrap: "wrap", gap: space.s2 },
   error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s8 },
+  tokens: {
+    display: "flex",
+    flexDirection: "column",
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    borderRadius: radius.md,
+  },
+  token: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.s3,
+    paddingBlock: space.s2_5,
+    paddingInline: space.s3,
+    borderTopWidth: { default: "1px", ":first-child": 0 },
+    borderTopStyle: "solid",
+    borderTopColor: color.border,
+  },
+  tokenIcon: { flexShrink: 0, display: "flex", color: color.textMuted },
+  tokenText: { display: "flex", flexDirection: "column", gap: space.s0_5, flex: 1, minWidth: 0 },
+  machine: {
+    fontFamily: font.mono,
+    fontSize: text.base,
+    fontWeight: weight.medium,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  tokenMeta: { color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
+  tokenAction: { flexShrink: 0 },
+  commandRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: space.s2,
+    paddingBlock: space.s1,
+    paddingInlineStart: space.s3,
+    paddingInlineEnd: space.s1,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    borderRadius: radius.md,
+    backgroundColor: color.surfaceMuted,
+  },
+  commandText: {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: font.mono,
+    fontSize: text.sm,
+    lineHeight: leading.snug,
+    overflowWrap: "anywhere",
+    userSelect: "all",
+  },
 })
 
 export function AccountView() {
@@ -103,6 +165,7 @@ export function AccountView() {
       <div {...stylex.props(styles.scroll)}>
         <div {...stylex.props(styles.page)}>
           <ClaudeSection />
+          <CliTokensSection />
         </div>
       </div>
     </main>
@@ -369,6 +432,136 @@ function RemoveDialog({
           <DialogClose>Cancel</DialogClose>
           <Button intent="danger" loading={busy} onClick={() => void remove()}>
             Remove
+          </Button>
+        </>
+      }
+    >
+      {error && (
+        <p role="alert" {...stylex.props(styles.error)}>
+          {error}
+        </p>
+      )}
+    </Dialog>
+  )
+}
+
+/** The machines `claude-hub login` signed in as this person, newest first, to revoke. */
+function CliTokensSection() {
+  const tokens = useHubState((state) => state.cliTokens)
+  const [revoking, setRevoking] = useState<CliTokenInfo | null>(null)
+  const command = `claude-hub login ${window.location.origin}`
+
+  return (
+    <section aria-labelledby="cli-tokens" {...stylex.props(styles.section)}>
+      <div {...stylex.props(styles.sectionHead)}>
+        <h2 id="cli-tokens" {...stylex.props(styles.sectionTitle)}>
+          CLI tokens
+        </h2>
+        <p {...stylex.props(styles.note)}>
+          Each machine where you signed the claude-hub CLI in to this Hub, to act as you. Revoking
+          one signs that machine out at once.
+        </p>
+      </div>
+      {tokens === null ? (
+        <div {...stylex.props(styles.loading)}>
+          <Spinner label="Loading your CLI tokens" />
+        </div>
+      ) : tokens.length === 0 ? (
+        <p {...stylex.props(styles.note)}>
+          None yet. To sign the CLI in on a machine, run this there and approve it in the browser:
+        </p>
+      ) : (
+        <ul aria-label="Your CLI tokens" {...stylex.props(styles.tokens)}>
+          {tokens.map((token) => (
+            <li key={token.id} {...stylex.props(styles.token)}>
+              <span aria-hidden {...stylex.props(styles.tokenIcon)}>
+                <ServerIcon />
+              </span>
+              <div {...stylex.props(styles.tokenText)}>
+                <span title={token.machine} {...stylex.props(styles.machine)}>
+                  {token.machine}
+                </span>
+                <span {...stylex.props(styles.tokenMeta)}>
+                  Signed in {day(token.createdAt)} ·{" "}
+                  {token.lastUsedAt === undefined
+                    ? "never used"
+                    : `last used ${timeAgo(token.lastUsedAt)}`}
+                </span>
+              </div>
+              <Button
+                size="sm"
+                intent="ghost"
+                onClick={() => setRevoking(token)}
+                sx={styles.tokenAction}
+                aria-label={`Revoke ${token.machine}`}
+              >
+                Revoke
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {tokens !== null && tokens.length === 0 && (
+        <div {...stylex.props(styles.commandRow)}>
+          <code aria-label="Sign-in command" {...stylex.props(styles.commandText)}>
+            {command}
+          </code>
+          <IconButton label="Copy command" size="sm" onClick={() => void copyCommand(command)}>
+            <CopyIcon />
+          </IconButton>
+        </div>
+      )}
+      <RevokeCliTokenDialog token={revoking} onClose={() => setRevoking(null)} />
+    </section>
+  )
+}
+
+function RevokeCliTokenDialog({
+  token,
+  onClose,
+}: {
+  token: CliTokenInfo | null
+  onClose: () => void
+}) {
+  const hub = useHub()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // Kept while the dialog closes, so its text doesn't empty as it fades.
+  const [shown, setShown] = useState<CliTokenInfo | null>(token)
+  if (token !== null && token !== shown) setShown(token)
+
+  const revoke = async () => {
+    if (token === null) return
+    setBusy(true)
+    setError(null)
+    try {
+      await hub.revokeCliToken(token.id)
+      toast.show({ title: `Revoked the CLI token for ${token.machine}` })
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog
+      size="sm"
+      open={token !== null}
+      onOpenChange={(next) => {
+        if (!next) {
+          setError(null)
+          onClose()
+        }
+      }}
+      title={`Revoke the CLI token for ${shown?.machine ?? "this machine"}?`}
+      description="claude-hub there is signed out at once: its next request is refused, a forwarded port's next connection too. Run claude-hub login there to sign it in again."
+      footer={
+        <>
+          <DialogClose>Cancel</DialogClose>
+          <Button intent="danger" loading={busy} onClick={() => void revoke()}>
+            Revoke
           </Button>
         </>
       }

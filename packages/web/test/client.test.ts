@@ -3,12 +3,13 @@ import {
   type CommandFailed,
   DefaultEnvironmentDraft,
   type EnvironmentDraft,
+  Participant,
   ProtocolVersion,
   RunnerId,
   SessionId,
   type TerminalFrame,
 } from "@claude-hub/protocol"
-import { Redacted } from "effect"
+import { Redacted, Schema } from "effect"
 import { editFrom, toDraft } from "../src/environment/draft.ts"
 import { HubClient } from "../src/hub/client.ts"
 import { FakeHub } from "../src/hub/fake/FakeHub.ts"
@@ -18,6 +19,11 @@ import type { HubTransport, SocketHandlers } from "../src/hub/transport.ts"
 import { alice } from "./fixtures.ts"
 
 const demo = SessionId.make(demoSessionId)
+const decodedAlice = Schema.decodeUnknownSync(Participant)(alice)
+/** A transport's CLI approval, which these tests never use. */
+const unused = async (): Promise<never> => {
+  throw new Error("unused")
+}
 const cleanups: Array<() => void> = []
 
 afterEach(() => {
@@ -100,9 +106,10 @@ describe("connecting", () => {
           close: () => setTimeout(() => handlers.onClose(), 0),
         }
       },
-      signInStatus: async () => ({ signedIn: true }),
+      signInStatus: async () => ({ signedIn: true, you: decodedAlice }),
       devSignIn: async () => {},
       signOut: async () => {},
+      approveCli: unused,
     }
     const client = new HubClient(transport, { retryDelay: () => 1 })
     cleanups.push(() => client.stop())
@@ -131,9 +138,10 @@ describe("connecting", () => {
           close: () => setTimeout(() => handlers.onClose(), 0),
         }
       },
-      signInStatus: async () => ({ signedIn: true }),
+      signInStatus: async () => ({ signedIn: true, you: decodedAlice }),
       devSignIn: async () => {},
       signOut: async () => {},
+      approveCli: unused,
     }
     const client = new HubClient(transport)
     cleanups.push(() => client.stop())
@@ -154,6 +162,7 @@ describe("connecting", () => {
       },
       devSignIn: async () => {},
       signOut: async () => {},
+      approveCli: unused,
     }
     const client = new HubClient(transport, { retryDelay: () => 1 })
     cleanups.push(() => client.stop())
@@ -465,9 +474,10 @@ describe("the terminal", () => {
           close: () => setTimeout(() => handlers.onClose(), 0),
         }
       },
-      signInStatus: async () => ({ signedIn: true }),
+      signInStatus: async () => ({ signedIn: true, you: decodedAlice }),
       devSignIn: async () => {},
       signOut: async () => {},
+      approveCli: unused,
     }
     const client = new HubClient(transport, { retryDelay: () => 1 })
     cleanups.push(() => client.stop())

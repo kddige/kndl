@@ -1,4 +1,5 @@
-// Signing in and out. These are the only routes, with /health, that answer without a credential.
+// Signing in and out. These are the only routes, with /health, /cli and the CLI's trade of a Login
+// code (CliLoginRoutes.ts), that answer without a credential.
 
 import { Participant, ParticipantId } from "@claude-hub/protocol"
 import { Duration, Effect, Option, Schema } from "effect"
@@ -20,6 +21,24 @@ import { constantTimeEqual, hashSecret, randomSecret } from "./Tokens.ts"
  * prefix, which browsers refuse without `Secure`: see `cookieSecurity`.
  */
 const stateCookie = "claude_hub_oauth_state"
+
+/**
+ * Holds where to go once signed in with GitHub, when not to the web UI's start: `GET /auth/github`
+ * takes it as `?return=`, such as the `/cli-login` page asking to come back to itself.
+ */
+const returnCookie = "claude_hub_oauth_return"
+
+/**
+ * A path on the Hub to come back to after signing in, or undefined for anything else: it must start
+ * with one `/`, so no `//host` or `/\host` sends the person to another site.
+ */
+export function returnPath(text: string | null | undefined): string | undefined {
+  if (text === null || text === undefined || text.length > 2048) return undefined
+  if (!/^\/(?![/\\])/.test(text) || text.includes("\\")) return undefined
+  // No control characters, which a browser might drop to read `/\t/host` as `//host`.
+  for (const char of text) if (char.charCodeAt(0) < 0x20 || char === "\u007f") return undefined
+  return text
+}
 
 /** What `GET /auth/me` answers with 401: the ways to sign in that are on. */
 export const SignInOptions = Schema.Struct({
@@ -80,16 +99,26 @@ export const AuthRoutes = HttpRouter.use(
         const state = randomSecret()
         const url = github.authorizeUrl({ state, redirectUri })
         if (Option.isNone(url)) return notFound
-        return yield* HttpServerResponse.redirect(url.value, { status: 302 }).pipe(
-          HttpServerResponse.setCookie(stateCookie, state, {
-            httpOnly: true,
-            sameSite: "lax",
-            secure: config.secureCookies,
-            path: "/auth/github",
-            maxAge: Duration.minutes(10),
-          }),
+        const request = yield* HttpServerRequest.HttpServerRequest
+        const back = returnPath(new URL(request.url, config.publicUrl).searchParams.get("return"))
+        const cookie = {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: config.secureCookies,
+          path: "/auth/github",
+          maxAge: Duration.minutes(10),
+        } as const
+        const response = yield* HttpServerResponse.redirect(url.value, { status: 302 }).pipe(
+          HttpServerResponse.setCookie(stateCookie, state, cookie),
           Effect.orDie,
         )
+        return back === undefined
+          ? yield* HttpServerResponse.expireCookie(response, returnCookie, {
+              path: "/auth/github",
+            }).pipe(Effect.orDie)
+          : yield* HttpServerResponse.setCookie(response, returnCookie, back, cookie).pipe(
+              Effect.orDie,
+            )
       }),
     )
 
@@ -122,10 +151,15 @@ export const AuthRoutes = HttpRouter.use(
           }),
         )
         const response = yield* setSignInCookie(
-          HttpServerResponse.redirect("/", { status: 302 }),
+          HttpServerResponse.redirect(returnPath(request.cookies[returnCookie]) ?? "/", {
+            status: 302,
+          }),
           signIn,
         )
-        return yield* HttpServerResponse.expireCookie(response, stateCookie, {
+        const expired = yield* HttpServerResponse.expireCookie(response, stateCookie, {
+          path: "/auth/github",
+        }).pipe(Effect.orDie)
+        return yield* HttpServerResponse.expireCookie(expired, returnCookie, {
           path: "/auth/github",
         }).pipe(Effect.orDie)
       }).pipe(

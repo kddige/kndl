@@ -40,11 +40,19 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0018, Keep awake: the migrator runs only the
+ * Takes the database back to before migration 0019, CLI tokens: the migrator runs only the
  * migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeCliTokens = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP TABLE cli_tokens`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'cli_tokens'`
+})
+
+/** Takes the database back to before migration 0018, Keep awake, as above. */
 const beforeKeepAwake = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeCliTokens
   yield* sql`ALTER TABLE sessions DROP COLUMN keep_awake_by`
   yield* sql`ALTER TABLE sessions DROP COLUMN keep_awake_at`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'keep_awake'`

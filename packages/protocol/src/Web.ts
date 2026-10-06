@@ -5,6 +5,7 @@ import {
   RemoveClaudeCredential,
   SetClaudeCredential,
 } from "./ClaudeCredential.ts"
+import { CliTokenId, CliTokenInfo } from "./Cli.ts"
 import {
   ApplyEnvironment,
   CheckEnvironmentDraft,
@@ -340,6 +341,16 @@ export const RevokePairingCode = Schema.TaggedStruct("RevokePairingCode", {
 export type RevokePairingCode = typeof RevokePairingCode.Type
 
 /**
+ * Revoke one of your own CLI tokens: the CLI holding it is refused from its next request on.
+ * Answered with a {@link CliTokenList}, or a CommandFailed for a token that isn't yours.
+ */
+export const RevokeCliToken = Schema.TaggedStruct("RevokeCliToken", {
+  requestId: RequestId,
+  cliTokenId: CliTokenId,
+})
+export type RevokeCliToken = typeof RevokeCliToken.Type
+
+/**
  * Remove a Runner: its token stops working, and a connected Runner is disconnected. Refused while
  * it has Sessions that aren't Archived. Answered with a {@link RunnerRemoved}.
  */
@@ -400,6 +411,7 @@ export const WebToHub = Schema.Union([
   RevokePairingCode,
   RemoveRunner,
   UpdateRunner,
+  RevokeCliToken,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type WebToHub = typeof WebToHub.Type
 
@@ -572,6 +584,16 @@ export const PairingCodeRedeemed = Schema.TaggedStruct("PairingCodeRedeemed", {
 })
 export type PairingCodeRedeemed = typeof PairingCodeRedeemed.Type
 
+/**
+ * Your CLI tokens, newest first: sent to your web clients alone, after the welcome, whenever one is
+ * made or revoked, and in answer to a {@link RevokeCliToken}.
+ */
+export const CliTokenList = Schema.TaggedStruct("CliTokenList", {
+  requestId: Schema.optionalKey(RequestId),
+  tokens: Schema.Array(CliTokenInfo),
+})
+export type CliTokenList = typeof CliTokenList.Type
+
 /** Answers a {@link RemoveRunner}; the RunnerList that follows leaves the Runner out. */
 export const RunnerRemoved = Schema.TaggedStruct("RunnerRemoved", {
   requestId: RequestId,
@@ -617,5 +639,6 @@ export const HubToWeb = Schema.Union([
   PairingCodeRedeemed,
   RunnerRemoved,
   RunnerUpdateRequested,
+  CliTokenList,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToWeb = typeof HubToWeb.Type

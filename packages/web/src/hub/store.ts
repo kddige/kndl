@@ -4,8 +4,8 @@
 // asked for (ADR 0009), the Test builds it started, with their logs, and what the GitHub App's
 // permissions lack (issue #86); the Pairing codes waiting to be redeemed and the Hub's own commit,
 // for the Runners page (issue #85); and the signed-in person's Claude credential, write-only (ADR
-// 0015). The terminal's output itself goes straight to the view that draws it
-// (HubClient.openTerminal), not through here.
+// 0015), and the CLI tokens they signed the CLI in with (issue #179). The terminal's output itself
+// goes straight to the view that draws it (HubClient.openTerminal), not through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
 // events, and React reads the result.
@@ -14,6 +14,7 @@ import type {
   AppPermissionsCheck,
   BuildVersion,
   ClaudeCredentialInfo,
+  CliTokenInfo,
   Environment,
   EnvironmentVersionInfo,
   EventSeq,
@@ -139,6 +140,8 @@ export interface HubState {
    * when they have stored none, undefined until the Hub says.
    */
   readonly claudeCredential: ClaudeCredentialInfo | null | undefined
+  /** The signed-in person's CLI tokens, newest first (issue #179); null until the Hub says. */
+  readonly cliTokens: ReadonlyArray<CliTokenInfo> | null
 }
 
 /** Events the client adds to the Hub's messages. */
@@ -170,6 +173,7 @@ export const initialState: HubState = {
   testBuilds: {},
   appPermissions: null,
   claudeCredential: undefined,
+  cliTokens: null,
 }
 
 const emptyJoined: JoinedSession = {
@@ -344,6 +348,8 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return forgetRepo(state, action.repo)
     case "ClaudeCredentialState":
       return { ...state, claudeCredential: action.credential }
+    case "CliTokenList":
+      return { ...state, cliTokens: action.tokens }
   }
 }
 

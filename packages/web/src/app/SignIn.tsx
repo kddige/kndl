@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex"
-import { type FormEvent, useState } from "react"
-import { hubPaths, type SignInOptions } from "../hub/config.ts"
+import { type FormEvent, type ReactNode, useState } from "react"
+import { githubSignInUrl, type SignInOptions } from "../hub/config.ts"
 import { Button, Field, Input } from "../ui/index.ts"
 import {
   color,
@@ -34,14 +34,17 @@ const styles = stylex.create({
     backgroundColor: color.surface,
     boxShadow: shadow.sm,
   },
+  wide: { width: "min(26rem, 100%)" },
   heading: { display: "flex", flexDirection: "column", gap: space.s1 },
   title: {
+    margin: 0,
     fontSize: text.lg,
     fontWeight: weight.semibold,
     letterSpacing: tracking.tight,
     lineHeight: leading.tight,
+    overflowWrap: "anywhere",
   },
-  lede: { color: color.textMuted, lineHeight: leading.snug },
+  lede: { margin: 0, color: color.textMuted, lineHeight: leading.snug },
   divider: {
     display: "flex",
     alignItems: "center",
@@ -53,11 +56,50 @@ const styles = stylex.create({
   },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
   full: { width: "100%" },
-  error: { color: color.dangerSubtleText, fontSize: text.sm },
+  error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm },
 })
 
-/** What the web UI shows when the Hub turned the socket away because no one is signed in. */
-export function SignIn({ options }: { options: SignInOptions }) {
+/** A card alone in the middle of the page: signing in, and approving the CLI. */
+export function AuthCard({
+  title,
+  lede,
+  wide = false,
+  children,
+}: {
+  title: ReactNode
+  lede?: ReactNode
+  /** A little wider, for a card with a code or a warning in it. */
+  wide?: boolean
+  children?: ReactNode
+}) {
+  return (
+    <main {...stylex.props(styles.page)}>
+      <div {...stylex.props(styles.card, wide && styles.wide)}>
+        <div {...stylex.props(styles.heading)}>
+          <h1 {...stylex.props(styles.title)}>{title}</h1>
+          {lede !== undefined && <p {...stylex.props(styles.lede)}>{lede}</p>}
+        </div>
+        {children}
+      </div>
+    </main>
+  )
+}
+
+/**
+ * What the web UI shows when no one is signed in. GitHub sign-in comes back to `returnTo`, a path
+ * on the Hub (`/` by default); a dev sign-in calls `onSignedIn`, which connects again by default.
+ */
+export function SignIn({
+  options,
+  lede,
+  returnTo,
+  onSignedIn,
+}: {
+  options: SignInOptions
+  lede?: string
+  returnTo?: string
+  onSignedIn?: () => void
+}) {
   const hub = useHub()
   const [login, setLogin] = useState("")
   const [busy, setBusy] = useState(false)
@@ -69,7 +111,8 @@ export function SignIn({ options }: { options: SignInOptions }) {
     setError(null)
     try {
       await hub.transport.devSignIn(login.trim() || undefined)
-      hub.retry()
+      if (onSignedIn) onSignedIn()
+      else hub.retry()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
       setBusy(false)
@@ -77,54 +120,51 @@ export function SignIn({ options }: { options: SignInOptions }) {
   }
 
   return (
-    <main {...stylex.props(styles.page)}>
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.heading)}>
-          <h1 {...stylex.props(styles.title)}>Sign in to Claude Hub</h1>
-          <p {...stylex.props(styles.lede)}>
-            {options.github || options.dev
-              ? "Sign in to see the Sessions on the Repos you can access."
-              : "This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with CLAUDE_HUB_DEV_LOGIN=1."}
-          </p>
-        </div>
-        {options.github && (
+    <AuthCard
+      title="Sign in to Claude Hub"
+      lede={
+        options.github || options.dev
+          ? (lede ?? "Sign in to see the Sessions on the Repos you can access.")
+          : "This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with CLAUDE_HUB_DEV_LOGIN=1."
+      }
+    >
+      {options.github && (
+        <Button
+          intent="primary"
+          size="lg"
+          nativeButton={false}
+          render={<a href={githubSignInUrl(returnTo)} />}
+          sx={styles.full}
+        >
+          Sign in with GitHub
+        </Button>
+      )}
+      {options.github && options.dev && <div {...stylex.props(styles.divider)}>or</div>}
+      {options.dev && (
+        <form onSubmit={devSignIn} {...stylex.props(styles.form)}>
+          <Field label="Dev login" description="Any login; only on a Hub running locally.">
+            <Input
+              value={login}
+              onValueChange={(value: string) => setLogin(value)}
+              placeholder="alice"
+              autoComplete="username"
+            />
+          </Field>
           <Button
-            intent="primary"
-            size="lg"
-            nativeButton={false}
-            render={<a href={hubPaths.githubSignIn} />}
+            type="submit"
+            intent={options.github ? "secondary" : "primary"}
+            loading={busy}
             sx={styles.full}
           >
-            Sign in with GitHub
+            Sign in as dev
           </Button>
-        )}
-        {options.github && options.dev && <div {...stylex.props(styles.divider)}>or</div>}
-        {options.dev && (
-          <form onSubmit={devSignIn} {...stylex.props(styles.form)}>
-            <Field label="Dev login" description="Any login; only on a Hub running locally.">
-              <Input
-                value={login}
-                onValueChange={(value: string) => setLogin(value)}
-                placeholder="alice"
-                autoComplete="username"
-              />
-            </Field>
-            <Button
-              type="submit"
-              intent={options.github ? "secondary" : "primary"}
-              loading={busy}
-              sx={styles.full}
-            >
-              Sign in as dev
-            </Button>
-            {error && (
-              <p role="alert" {...stylex.props(styles.error)}>
-                {error}
-              </p>
-            )}
-          </form>
-        )}
-      </div>
-    </main>
+          {error && (
+            <p role="alert" {...stylex.props(styles.error)}>
+              {error}
+            </p>
+          )}
+        </form>
+      )}
+    </AuthCard>
   )
 }

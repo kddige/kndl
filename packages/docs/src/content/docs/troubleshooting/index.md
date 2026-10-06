@@ -60,6 +60,9 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 - There's no **Sign in with GitHub** button.
 - Requests fail with `Only the web UI at … may make this request`.
 - **Sign in as dev** answers `Dev login only answers on loopback`.
+- After **Approve** for `claude-hub login`, the browser can't connect to `127.0.0.1`.
+- `claude-hub login` says `That code isn't valid: …`
+- `claude-hub whoami` says `… doesn't accept this machine's CLI token: it was revoked. …`
 
 ### [Runners](/troubleshooting/runners/)
 
