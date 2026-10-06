@@ -39,6 +39,7 @@ const modToHub = [
     message: "No agent a-1",
   },
   { _tag: "AgentCommandFailed", agentId: "a-1", command: "StopAgent", message: "No task a-1" },
+  { _tag: "AnswerFailed", toolCallId: "toolu_ask", senderId: "u-2", message: "already answered" },
 ]
 
 const hubToMod = [
@@ -61,6 +62,27 @@ const hubToMod = [
   { _tag: "StopAgent", sessionId: "s-1", agentId: "a-1" },
   { _tag: "PresenceChanged", sessionId: "s-1", participants: [alice, bob] },
   { _tag: "PresenceChanged", sessionId: "s-1", participants: [] },
+  {
+    _tag: "DeliverAnswer",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    answer: { _tag: "Answered", answers: { "Which date library?": "date-fns, Temporal" } },
+    sender: alice,
+  },
+  {
+    _tag: "DeliverAnswer",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    answer: { _tag: "Replied", text: "let me explain" },
+    sender: bob,
+  },
+  {
+    _tag: "DeliverAnswer",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    answer: { _tag: "Dismissed" },
+    sender: bob,
+  },
 ]
 
 describe("ModToHub", () => {
@@ -105,6 +127,11 @@ describe("HubToMod", () => {
     expectRejected(HubToMod, { _tag: "StopTurn" })
     expectRejected(HubToMod, { _tag: "PresenceChanged", sessionId: "s-1", participants: [{}] })
     expectRejected(HubToMod, { _tag: "SendPrompt", sessionId: "s-1", text: "web-only message" })
+    const answer = hubToMod.find((message) => message._tag === "DeliverAnswer")
+    expectRejected(HubToMod, { ...answer, toolCallId: "" })
+    expectRejected(HubToMod, { ...answer, answer: { _tag: "Replied", text: "" } })
+    expectRejected(HubToMod, { ...answer, answer: { _tag: "Cancelled" } })
+    expectRejected(HubToMod, { ...answer, answer: { _tag: "Answered", answers: { q: 1 } } })
   })
 })
 

@@ -6,8 +6,9 @@ import {
   ParticipantId,
   PromptId,
   SessionId,
+  ToolCallId,
 } from "./Ids.ts"
-import { Participant, PresenceChanged, StopAgent, StopTurn } from "./Session.ts"
+import { Participant, PresenceChanged, QuestionAnswer, StopAgent, StopTurn } from "./Session.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 
@@ -67,17 +68,35 @@ export const AgentCommandFailed = Schema.TaggedStruct("AgentCommandFailed", {
 })
 export type AgentCommandFailed = typeof AgentCommandFailed.Type
 
+/**
+ * A {@link DeliverAnswer} came too late (#193): the question had closed, answered first at the
+ * terminal or by another Participant, or cancelled. The sender is told so.
+ */
+export const AnswerFailed = Schema.TaggedStruct("AnswerFailed", {
+  toolCallId: ToolCallId,
+  senderId: ParticipantId,
+  message: Schema.String,
+})
+export type AnswerFailed = typeof AnswerFailed.Type
+
 /** Every message the mod sends the Hub: its hello, Turn events, and failed commands. */
-export const ModToHub = Schema.Union([ModHello, TurnEvent, PromptFailed, AgentCommandFailed]).pipe(
-  Schema.toTaggedUnion("_tag"),
-)
+export const ModToHub = Schema.Union([
+  ModHello,
+  TurnEvent,
+  PromptFailed,
+  AgentCommandFailed,
+  AnswerFailed,
+]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModToHub = typeof ModToHub.Type
 export type ModToHubEncoded = typeof ModToHub.Encoded
 
 /** What the mod reports after its hello: Turn events and failed commands. */
-export const ModEvent = Schema.Union([TurnEvent, PromptFailed, AgentCommandFailed]).pipe(
-  Schema.toTaggedUnion("_tag"),
-)
+export const ModEvent = Schema.Union([
+  TurnEvent,
+  PromptFailed,
+  AgentCommandFailed,
+  AnswerFailed,
+]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModEvent = typeof ModEvent.Type
 
 /** The body of `POST /mod/events`: the mod's events since its last post, oldest first. */
@@ -118,6 +137,20 @@ export const DeliverAgentMessage = Schema.TaggedStruct("DeliverAgentMessage", {
 })
 export type DeliverAgentMessage = typeof DeliverAgentMessage.Type
 
+/**
+ * A Participant's answer to the Session's Open question (web AnswerQuestion, #193), which the Hub
+ * sends only for a question the mod reported asked. The mod answers the AskUserQuestion call with
+ * it, closing Claude Code's dialog, unless the call was answered first; then it reports
+ * {@link AnswerFailed}.
+ */
+export const DeliverAnswer = Schema.TaggedStruct("DeliverAnswer", {
+  sessionId: SessionId,
+  toolCallId: ToolCallId,
+  answer: QuestionAnswer,
+  sender: Participant,
+})
+export type DeliverAnswer = typeof DeliverAnswer.Type
+
 /** Every message the Hub sends the mod. `PresenceChanged` feeds the Participants band. */
 export const HubToMod = Schema.Union([
   ModWelcome,
@@ -127,6 +160,7 @@ export const HubToMod = Schema.Union([
   DeliverAgentMessage,
   StopAgent,
   PresenceChanged,
+  DeliverAnswer,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToMod = typeof HubToMod.Type
 export type HubToModEncoded = typeof HubToMod.Encoded
@@ -145,6 +179,7 @@ export const ModCommand = Schema.Union([
   DeliverAgentMessage,
   StopAgent,
   PresenceChanged,
+  DeliverAnswer,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ModCommand = typeof ModCommand.Type
 

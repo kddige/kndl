@@ -22,7 +22,7 @@ import {
   TestBuildStarted,
 } from "./Environment.ts"
 import { AppPermissionsCheck } from "./GitHubApp.ts"
-import { AgentId, EventSeq, PromptId, RequestId, RunnerId, SessionId } from "./Ids.ts"
+import { AgentId, EventSeq, PromptId, RequestId, RunnerId, SessionId, ToolCallId } from "./Ids.ts"
 import { EffortLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
@@ -31,6 +31,7 @@ import {
   Participant,
   PresenceChanged,
   QueuedPrompt,
+  QuestionAnswer,
   RepoName,
   RunnerSummary,
   SessionState,
@@ -202,6 +203,33 @@ export const MessageAgent = Schema.TaggedStruct("MessageAgent", {
   text: Schema.NonEmptyString,
 })
 export type MessageAgent = typeof MessageAgent.Type
+
+/**
+ * Answer the Session's Open question (#193): with options or typed text, by replying in your own
+ * words, or by dismissing it. Any Participant may. The first answer to reach Claude Code, from
+ * here or its terminal, is the one Claude reads; a later one is refused with a CommandFailed
+ * saying who answered first, and what.
+ */
+export const AnswerQuestion = Schema.TaggedStruct("AnswerQuestion", {
+  sessionId: SessionId,
+  /** The Open question's call, so an answer meant for another question is refused. */
+  toolCallId: ToolCallId,
+  answer: QuestionAnswer,
+})
+export type AnswerQuestion = typeof AnswerQuestion.Type
+
+/**
+ * Show the other Participants what you have picked for one of the Open question's questions,
+ * before answering (#193): an option's label, several joined with ", ", or typed text. Empty
+ * takes your pick back. Nothing reaches Claude.
+ */
+export const PickAnswer = Schema.TaggedStruct("PickAnswer", {
+  sessionId: SessionId,
+  toolCallId: ToolCallId,
+  question: Schema.String,
+  answer: Schema.String,
+})
+export type PickAnswer = typeof PickAnswer.Type
 
 /**
  * Put an Active Session to sleep now, rather than after it has been idle a while: its Claude
@@ -385,6 +413,8 @@ export const WebToHub = Schema.Union([
   StopTurn,
   MessageAgent,
   StopAgent,
+  AnswerQuestion,
+  PickAnswer,
   SleepSession,
   WakeSession,
   SetKeepAwake,
@@ -498,6 +528,25 @@ export const PromptQueueChanged = Schema.TaggedStruct("PromptQueueChanged", {
   queue: Schema.Array(QueuedPrompt),
 })
 export type PromptQueueChanged = typeof PromptQueueChanged.Type
+
+/** One Participant's pick for one question of an Open question, as PickAnswer shared it. */
+export const QuestionPick = Schema.Struct({
+  participant: Participant,
+  question: Schema.String,
+  answer: Schema.NonEmptyString,
+})
+export type QuestionPick = typeof QuestionPick.Type
+
+/**
+ * What the Participants have picked for a joined Session's Open question so far, in full: sent on
+ * join while a question is open, and whenever a pick changes. The Hub keeps them in memory only.
+ */
+export const QuestionPicks = Schema.TaggedStruct("QuestionPicks", {
+  sessionId: SessionId,
+  toolCallId: ToolCallId,
+  picks: Schema.Array(QuestionPick),
+})
+export type QuestionPicks = typeof QuestionPicks.Type
 
 /**
  * A command was refused, such as a prompt to a Frozen Session. Names the command's `_tag`, and
@@ -622,6 +671,7 @@ export const HubToWeb = Schema.Union([
   SessionEventLogged,
   PresenceChanged,
   PromptQueueChanged,
+  QuestionPicks,
   SessionStartLogged,
   TerminalFrame,
   CommandFailed,
