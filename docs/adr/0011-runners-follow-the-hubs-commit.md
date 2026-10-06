@@ -26,6 +26,14 @@ Two cases can't drain the Runner first, and restart it under its running Session
 
 The Hub hears of a push from `claude-hub update` through its database, written before the CLI restarts it, rather than through a running Hub: the CLI works the same whether the Hub is up or not.
 
+## What a running Session's Claude Code loads (amended in #159)
+
+"The old mod reconnects" held only while nothing changed the mod under it. Every Sandbox mounted the Runner's own mod, and Claude Code reloads a plugin whenever its files change, so an update that moved the checkout and built the mod, as `claude-hub update` does on the Hub's own machine before the Hub drains its Runner, reloaded the mod in every running Session. A reload in the middle of a Turn loses that Turn's end: the web was left at Working, and Stop at Stopping.
+
+So a Session's Claude Code loads a copy of the mod, in the Session's directory, made each time it starts: at the Session's start, its wake, and a new model's restart. Nothing changes that copy while Claude Code runs. An update, a `bun run mod:build` or a Runner restart leaves each running Session on the mod it started with, and the new mod reaches it at its next start, when Claude Code starts fresh anyway. The copy goes with the Session's directory when it is purged. A Sandbox made before this mounts the Runner's mod instead, and is made anew, keeping its volumes, at its next start.
+
+Considered: one copy per mod version, shared by the Sessions started on it, makes fewer copies, but the Runner would track which Session runs which version to know when to delete one. The Hub ending a Turn whose Session's mod reloaded cleans up after the problem instead of preventing it, and can't tell whether Claude Code is still working.
+
 ## Considered options
 
 - **Each machine updates by hand.** No Hub reaching into Runners, but Runners drift behind the Hub, and a Runner missing a new tool fails in confusing ways.
