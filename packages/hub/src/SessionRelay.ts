@@ -156,7 +156,7 @@ import {
   HubToWeb,
   type ModEvent,
   type ModHello,
-  OpenPort,
+  type OpenPort,
   OpenQuestion,
   type Participant,
   type ParticipantId,

@@ -2753,6 +2753,9 @@ describe("subagents (ADR 0014)", () => {
   })
 })
 
+const closed = (m: Extract<Web, { _tag: "SessionEventLogged" }>) =>
+  m.entry.event._tag === "QuestionClosed"
+
 describe("Open questions (#193)", () => {
   const library = "Which date library?"
   const questionAsked = (turnId = "t-1", toolCallId = "toolu_ask"): ModEvent => ({
@@ -2771,8 +2774,6 @@ describe("Open questions (#193)", () => {
   type Updated = Extract<Web, { _tag: "SessionUpdated" }>
   const hasQuestion = (m: Updated) => m.session.openQuestion !== undefined
   const noQuestion = (m: Updated) => m.session.openQuestion === undefined
-  const closed = (m: Extract<Web, { _tag: "SessionEventLogged" }>) =>
-    m.entry.event._tag === "QuestionClosed"
 
   /** A Session whose Turn t-1 asks a question, with alice and bob in it. */
   async function questionScene() {
@@ -2963,8 +2964,8 @@ describe("Open questions (#193)", () => {
     expect(next.session.openQuestion?.turnId).toBe("t-1")
 
     web.send({ _tag: "ArchiveSession", sessionId })
-    const archived = await web.take("SessionUpdated", (m) => m.session.state === "Archived")
-    expect(archived.session.openQuestion).toBeUndefined()
+    const gone = await web.take("SessionUpdated", (m) => m.session.state === "Archived")
+    expect(gone.session.openQuestion).toBeUndefined()
   })
 
   test("an answer to a question that was never asked is refused, and the mod sent nothing", async () => {
