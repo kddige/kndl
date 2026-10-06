@@ -90,7 +90,7 @@ Other files in the home, such as a `github-app.pem`, stay where they are.
 
 **What you see.** `claude-hub status` or `doctor` shows the Hub's or Runner's service as not running, or `XX  Hub service … its log: claude-hub logs hub`.
 
-**Why.** The Hub or Runner exits, and its service starts it again a few seconds later, and again. The reason is at the end of its log, as it would be in a terminal: a setting it refuses, a port in use, no Claude sign-in, a mod that isn't built.
+**Why.** The Hub or Runner exits, and its service starts it again a few seconds later, and again. The reason is at the end of its log, as it would be in a terminal: a setting it refuses, a port in use, a mod that isn't built.
 
 **Fix.** Read the log with `claude-hub logs hub` (or `runner`), then find the message on [The Hub](/troubleshooting/hub/) or [Runners](/troubleshooting/runners/). Change the setting in `~/.claude-hub/hub.env` or `runner.env`, then `claude-hub hub start` (or `runner start`). `claude-hub doctor` also checks each env file with the Hub's and Runner's own configuration checks, without starting them.
 

@@ -5,11 +5,11 @@ sidebar:
   order: 3
 ---
 
-A Runner is a machine that runs Sessions. Each runs on its Creator's [Claude credential](/how-to/add-your-claude-credential/), or else on the Runner's own [Runner login](/reference/glossary/): the Claude account signed in on it. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
+A Runner is a machine that runs Sessions. Each runs on its Creator's [Claude credential](/how-to/add-your-claude-credential/), or else on the Runner's own, if it has one: see [The Runner's Claude credential](/reference/configuration/#the-runners-claude-credential). A Runner needs no Claude Code and no Claude sign-in of its own. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
 
 ## Before you start
 
-The machine needs what the [install guide](/how-to/install/#what-each-machine-needs) lists for a Runner: Bun, git, Claude Code signed in, and microsandbox on a Mac with Apple Silicon or Linux with KVM. It must reach the Hub's URL, the one in the Hub's `HUB_PUBLIC_URL`.
+The machine needs what the [install guide](/how-to/install/#what-each-machine-needs) lists for a Runner: Bun, git, and microsandbox on a Mac with Apple Silicon or Linux with KVM. It must reach the Hub's URL, the one in the Hub's `HUB_PUBLIC_URL`.
 
 ## With a Pairing code
 
@@ -58,7 +58,7 @@ Onboard writes `~/.claude-hub/runner.env`, installs the Runner's service and wai
 
 ## The Runners page
 
-**Runners** in the sidebar lists every Runner paired with the Hub: whether it's online, the Claude login it runs Sessions on, the commit it runs (and its branch), when it was last seen, and how many of its Sessions aren't Archived. A Runner on an older commit than the Hub is marked **behind the Hub**; see [Keep Runners on the Hub's commit](#keep-runners-on-the-hubs-commit). The header says which commit the Hub runs.
+**Runners** in the sidebar lists every Runner paired with the Hub: whether it's online, its own Claude credential (or **No Claude credential**), the commit it runs (and its branch), when it was last seen, and how many of its Sessions aren't Archived. A Runner on an older commit than the Hub is marked **behind the Hub**; see [Keep Runners on the Hub's commit](#keep-runners-on-the-hubs-commit). The header says which commit the Hub runs.
 
 - **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place: it keeps the Runner's name, id and Sessions, and gets a new token. The old token stops working, and a machine still connected with it is disconnected. Use it to put a reinstalled machine back in its own place, when a Runner's token is lost, or to move a Runner to a new machine. `--name` is ignored for a Re-pair.
 - **Remove** revokes the Runner's token, and disconnects it if it's connected. It's refused while the Runner has Sessions that aren't Archived (Active, Asleep or Frozen): archive them first. The Runner's name is then free, and a machine paired later under it takes the removed Runner's place: see [Runner names](#runner-names).
@@ -120,7 +120,7 @@ On the **Runner's machine**, in its checkout:
 HUB_URL=https://hub.example.com RUNNER_TOKEN=chr_… bun run runner
 ```
 
-`bun run runner` builds the `hub-link` mod, then connects to the Hub's `/ws/runner` WebSocket (`wss:` for an `https:` Hub). It appears in the **Runner** list of **New Session** under its name, with its Claude login.
+`bun run runner` builds the `hub-link` mod, then connects to the Hub's `/ws/runner` WebSocket (`wss:` for an `https:` Hub). It appears in the **Runner** list of **New Session** under its name.
 
 On the Hub's own machine, `HUB_URL` can stay at its default, `http://127.0.0.1:7777`.
 

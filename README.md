@@ -33,7 +33,7 @@ gh api repos/kddige/claude-hub/contents/install.sh -H 'Accept: application/vnd.g
 
 It installs into `~/.claude-hub` and starts `claude-hub onboard`; then `claude-hub status`, `doctor`, `logs` and `update` look after it. See [Install claude-hub](https://kddige.github.io/claude-hub/how-to/install/).
 
-To run it from this checkout instead, on one machine and without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, Claude Code (`claude`) signed in, `git`, and a Mac with Apple Silicon or Linux with KVM for the Sandboxes.
+To run it from this checkout instead, on one machine and without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, `git`, a Claude account (Claude Code signed in here, which the Runner then uses, or your own token on your Account page), and a Mac with Apple Silicon or Linux with KVM for the Sandboxes.
 
 ```sh
 bun install
@@ -82,4 +82,4 @@ See [Develop claude-hub](https://kddige.github.io/claude-hub/how-to/develop-clau
 
 ## Not affiliated with Anthropic
 
-claude-hub is an independent project. It is not affiliated with, endorsed by or sponsored by Anthropic. Claude and Claude Code are Anthropic's trademarks; claude-hub runs the Claude Code you install, signed in with your own account.
+claude-hub is an independent project. It is not affiliated with, endorsed by or sponsored by Anthropic. Claude and Claude Code are Anthropic's trademarks; claude-hub runs Claude Code as Anthropic publishes it, on your own Claude account.

@@ -20,7 +20,6 @@ Sessions never ask for tool approval: everything inside the Sandbox is allowed (
 
 | Credential | Lives on | Reaches a Sandbox? |
 |---|---|---|
-| The Runner login (Claude credentials) | each Runner | Never |
 | A person's Claude credential, a subscription token or API key | encrypted on the Hub with `HUB_SECRETS_KEY`; the credential proxy's memory while one of their Sessions is awake | Never ([The credential proxy](#the-credential-proxy)) |
 | The Runner's own Claude credential, for Sessions without their Creator's | the Runner owner's Keychain or a private file; the credential proxy's memory | Never ([The credential proxy](#the-credential-proxy)) |
 | Session tokens, one per run of a Session | the credential proxy's memory, as SHA-256 hashes | Yes, by design: they stand in for the Claude credential and the mod token |
@@ -78,7 +77,7 @@ There are no roles: everyone with access to a Repo can do everything with its Se
 
 ## Whose Claude account a Session spends
 
-A Session runs on its Creator's Claude account, whoever prompts it, on whichever Runner it is on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). So do its subagents, which run in its Claude Code. A Session whose Creator has stored no credential runs on its Runner's own login instead ([ADR 0002](/reference/decisions/0002-sessions-use-the-runner-login/)), and the Hub refuses to start a Session when neither has one. Each Session's header says whose account it runs on, so everyone knows whose account a prompt spends. Only connect a Runner with its own login if its owner is happy for the team to use that account.
+A Session runs on its Creator's Claude account, whoever prompts it, on whichever Runner it is on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). So do its subagents, which run in its Claude Code. A Session whose Creator has stored no credential runs on its Runner's own instead, if it has one, and the Hub refuses to start a Session when neither has one. Each Session's header says whose account it runs on, so everyone knows whose account a prompt spends. Only give a Runner a credential of its own if its owner is happy for the team to use that account; a Runner needs none.
 
 A person's credential is write-only. The Hub checks it with Anthropic as it is saved, encrypts it with `HUB_SECRETS_KEY`, and never sends it back to a browser: its owner sees only its kind, its last 4 characters and its plan. It goes to one place, a Runner asking for it for a Session of that person's that runs on that Runner, over the Runner's authenticated connection. The Runner keeps it in memory for as long as the Session is awake and never writes it to disk. `secrets-reset` clears every stored credential with the other Sensitive values.
 

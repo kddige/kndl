@@ -15,13 +15,12 @@ To work on claude-hub itself, run it from a checkout instead: see [From a checko
 |---|---|---|
 | macOS or Linux, with git | Yes | Yes |
 | [Bun](https://bun.sh) 1.4 or newer | Yes: the installer adds it if it's missing | Yes |
-| Claude Code (`claude`), signed in | | Yes: every Session on the Runner uses its login |
 | A Mac with Apple Silicon, or Linux with KVM | | Yes: each Session's Sandbox is a [microsandbox](https://github.com/microsandbox/microsandbox) microVM |
 | A port browsers and Runners can reach | Yes, `7777` by default | |
 
 The Hub is light: one Bun process with a SQLite database. Runners do the heavy work, one microVM per Active Session, so give them the CPU, memory and disk.
 
-`claude-hub onboard` installs what's missing that a package manager can (git, gh, curl with Homebrew, apt or dnf, and microsandbox's runtime), after asking once. Claude Code and its sign-in are yours to do: install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and run `claude` once to sign in, as the user that runs the Runner.
+`claude-hub onboard` installs what's missing that a package manager can (git, gh, curl with Homebrew, apt or dnf, and microsandbox's runtime), after asking once. A Runner needs no Claude Code and no Claude sign-in: its Sessions run Claude Code in their Sandboxes, on their Creator's [Claude credential](/how-to/add-your-claude-credential/). To let it run Sessions for people without one, give it [a credential of its own](/reference/configuration/#the-runners-claude-credential).
 
 ## Install
 
@@ -128,9 +127,8 @@ bun test
 
 Then prepare the machine by hand:
 
-1. Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and run `claude` once to sign in. The Runner shows that account on every Session as its Runner login, and refuses to start if none is signed in, unless you set `RUNNER_LOGIN`.
-2. Install git with your package manager, for example `brew install git` or `apt-get install -y git`.
-3. On Linux, give the user that runs the Runner access to `/dev/kvm`, for example by adding it to the `kvm` group.
+1. Install git with your package manager, for example `brew install git` or `apt-get install -y git`.
+2. On Linux, give the user that runs the Runner access to `/dev/kvm`, for example by adding it to the `kvm` group.
 
 microsandbox needs no separate install: `bun install` brings its SDK, with the runtime (`msb` and `libkrunfw`) for your platform. A complete runtime in `~/.microsandbox` (or `MSB_HOME`), from [microsandbox's own installer](https://docs.microsandbox.dev/getting-started/quickstart), takes precedence over the bundled one. To look at Sandboxes by hand, run its CLI from the Runner's package:
 
