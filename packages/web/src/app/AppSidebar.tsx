@@ -9,7 +9,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
-import { agentsOf } from "../hub/transcript.ts"
+import { agentsOf, recentAgents } from "../hub/transcript.ts"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
 import { setFolded, useFolded } from "../sessions/folds.ts"
 import { groupByRepo } from "../sessions/groups.ts"
@@ -111,7 +111,7 @@ function sectionOf(pathname: string): "runners" | "environments" | "variables" |
  * The app's sidebar: New Session, the Hub-wide pages, every listed Session under its Repo's name
  * in the order they were created, and the Runners and the signed-in person at the bottom. A
  * Session's subagents are under its row, which folds them away (ADR 0014): the Running and
- * Interrupted ones, and for the open Session the finished ones too. `onClose` adds a close button,
+ * Interrupted ones, and for the open Session its latest finished ones too. `onClose` adds a close button,
  * for a drawer.
  */
 export function AppSidebar({ onClose }: { onClose?: () => void }) {
@@ -250,7 +250,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
               // The open Session's log, once it has come, has every agent the summary lists.
               const agents =
                 current && openAgents !== undefined && openAgents.length > 0
-                  ? openAgents
+                  ? recentAgents(openAgents, agentId)
                   : (session.agents ?? [])
               return (
                 <SessionRow

@@ -360,6 +360,24 @@ export function agentsOf(log: ReadonlyArray<SessionLogEntry>): ReadonlyArray<Age
   return [...agents.values()]
 }
 
+/** How many finished agents the open Session lists; the rest are in its transcript. */
+const recentFinished = 3
+
+/**
+ * The open Session's agents for the sidebar: every Running and Interrupted one, the latest
+ * finished ones, and the one whose view is open, in the order they started.
+ */
+export function recentAgents(
+  agents: ReadonlyArray<AgentSummary>,
+  open: string | undefined,
+): ReadonlyArray<AgentSummary> {
+  const finished = agents.filter((agent) => agent.status === "Done" || agent.status === "Stopped")
+  const shown = new Set(finished.slice(-recentFinished))
+  return agents.filter(
+    (agent) => !finished.includes(agent) || shown.has(agent) || agent.id === open,
+  )
+}
+
 /**
  * What a task notification says, for its Turn: Claude Code prompts the main loop with one, as XML
  * for the model, when a background agent ends or is stopped (ADR 0014). Its summary and result,

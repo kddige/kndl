@@ -3,6 +3,7 @@ import type { SessionLogEntry } from "@claude-hub/protocol"
 import {
   agentsOf,
   buildTranscript,
+  recentAgents,
   displayPrompt,
   prettyInput,
   runningTurn,
@@ -395,6 +396,30 @@ describe("agentsOf", () => {
       { id: "a-1", description: "Search the code", status: "Stopped" },
       { id: "a-2", description: "Search the code", status: "Running" },
     ] as never)
+  })
+})
+
+/** An agent's summary in the sidebar, described by its id. */
+const agent = (id: string, status: string) => ({ id, description: id, status }) as never
+const ids = (list: ReadonlyArray<{ id: string }>) => list.map((each) => each.id)
+
+describe("recentAgents", () => {
+  const agents = [
+    agent("a-1", "Done"),
+    agent("a-2", "Interrupted"),
+    agent("a-3", "Stopped"),
+    agent("a-4", "Done"),
+    agent("a-5", "Running"),
+    agent("a-6", "Done"),
+    agent("a-7", "Done"),
+  ]
+
+  test("keeps the unfinished agents and the latest three finished, in order", () => {
+    expect(ids(recentAgents(agents, undefined))).toEqual(["a-2", "a-4", "a-5", "a-6", "a-7"])
+  })
+
+  test("keeps an older finished agent whose view is open", () => {
+    expect(ids(recentAgents(agents, "a-1"))).toEqual(["a-1", "a-2", "a-4", "a-5", "a-6", "a-7"])
   })
 })
 
