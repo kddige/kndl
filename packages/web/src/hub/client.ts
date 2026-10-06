@@ -227,9 +227,20 @@ export class HubClient {
     return this.#send({ _tag: "StopAgent", sessionId, agentId })
   }
 
-  /** Puts an Active Session to sleep now, rather than when it has been idle long enough. */
+  /**
+   * Puts an Active Session to sleep now, rather than when it has been idle long enough. It turns
+   * Keep awake off.
+   */
   sleepSession(sessionId: SessionId): boolean {
     return this.#send({ _tag: "SleepSession", sessionId })
+  }
+
+  /**
+   * Turns a Session's Keep awake on or off (ADR 0016): while on, it doesn't go to sleep when idle.
+   * Turning it on wakes an Asleep Session. Every open tab gets the change as a SessionUpdated.
+   */
+  setKeepAwake(sessionId: SessionId, on: boolean): boolean {
+    return this.#send({ _tag: "SetKeepAwake", sessionId, on })
   }
 
   /** Wakes an Asleep Session without sending it a prompt. */

@@ -16,6 +16,7 @@ import {
 import { AppSetupChoices } from "./AppManifest.ts"
 import { fail } from "./Failure.ts"
 import { configuredRoles, platform, serviceState, serviceTarget } from "./Host.ts"
+import { requireCheckoutCli } from "./InstallGate.ts"
 import { resolveLayout, type Role, Roles } from "./Layout.ts"
 import { doctor, uninstall, update } from "./Maintain.ts"
 import { type RoleChoice, RoleChoices, type Reach, Reaches } from "./Onboard.ts"
@@ -34,6 +35,17 @@ const layout = () => resolveLayout()
 
 const optional = <A>(flag: Flag.Flag<A>) =>
   flag.pipe(Flag.optional, Flag.map(Option.getOrUndefined))
+
+/**
+ * For a command that sets up or runs a Hub or a Runner: a binary installed from a Hub refuses it,
+ * saying it needs a claude-hub install (InstallGate.ts).
+ */
+const operator =
+  (command: string) =>
+  <const Name extends string, Input, ContextInput, E, R>(
+    self: Command.Command<Name, Input, ContextInput, E, R>,
+  ) =>
+    Command.provideEffectDiscard(self, requireCheckoutCli(command))
 
 /** A switch: off unless given. */
 const off = (name: string) => Flag.Boolean(name).pipe(Flag.withDefault(false))
@@ -131,11 +143,17 @@ const onboardCommand = Command.make(
       role: options.role as RoleChoice | undefined,
       reach: options.reach as Reach | undefined,
     }),
-).pipe(Command.withDescription("Set up a Hub, a Runner, or both on this machine, as services"))
+).pipe(
+  operator("onboard"),
+  Command.withDescription("Set up a Hub, a Runner, or both on this machine, as services"),
+)
 
 const statusCommand = Command.make("status", {}, () =>
   Effect.flatMap(status(layout()), exitWith),
-).pipe(Command.withDescription("What's installed, which services run, and the Hub and Runner"))
+).pipe(
+  operator("status"),
+  Command.withDescription("What's installed, which services run, and the Hub and Runner"),
+)
 
 /** The role a command acts on: the one given, or the only one set up here. */
 const pickRole = (given: Role | undefined) =>
@@ -165,18 +183,22 @@ const logsCommand = Command.make(
   },
   ({ role, follow, lines }) =>
     Effect.gen(function* () {
+      yield* requireInstall(layout())
       const which = yield* pickRole(role)
       const file = layout().logFile(which)
       const args = ["-n", String(lines), ...(follow ? ["-F"] : []), file]
       yield* (yield* Shell).attached(step("tail", args, { mayFail: true }))
     }),
-).pipe(Command.withDescription("Print the Hub's or Runner's log"))
+).pipe(operator("logs"), Command.withDescription("Print the Hub's or Runner's log"))
 
 const doctorCommand = Command.make(
   "doctor",
   { fix: off("fix").pipe(Flag.withDescription("Repair what can be repaired")), yes },
   (options) => Effect.flatMap(doctor(layout(), options), exitWith),
-).pipe(Command.withDescription("Check the install, its configuration and its services"))
+).pipe(
+  operator("doctor"),
+  Command.withDescription("Check the install, its configuration and its services"),
+)
 
 const updateCommand = Command.make(
   "update",
@@ -201,6 +223,7 @@ const updateCommand = Command.make(
   ({ ref, noUpdateRunners, now }) =>
     Effect.flatMap(update(layout(), { ref, updateRunners: !noUpdateRunners, now }), exitWith),
 ).pipe(
+  operator("update"),
   Command.withAlias("upgrade"),
   Command.withDescription("Update the install, rebuild, and restart its services"),
 )
@@ -217,6 +240,7 @@ const uninstallCommand = Command.make(
   },
   (options) => Effect.flatMap(uninstall(layout(), options), exitWith),
 ).pipe(
+  operator("uninstall"),
   Command.withDescription("Remove the services, the command and the install, keeping the data"),
 )
 
@@ -230,24 +254,33 @@ const serviceCommands = (role: Role) => {
         yield* requireInstall(layout())
         yield* installService(layout(), role, yield* onPlatform)
       }),
-    ).pipe(Command.withDescription(`Install the ${title}'s service, and start it`)),
+    ).pipe(
+      operator(`${role} install`),
+      Command.withDescription(`Install the ${title}'s service, and start it`),
+    ),
     Command.make("start", {}, () =>
       Effect.gen(function* () {
         yield* startService(layout(), role, yield* onPlatform)
       }),
-    ).pipe(Command.withDescription(`Start the ${title}'s service`)),
+    ).pipe(operator(`${role} start`), Command.withDescription(`Start the ${title}'s service`)),
     Command.make("stop", {}, () =>
       Effect.gen(function* () {
         yield* stopService(layout(), role, yield* onPlatform)
       }),
-    ).pipe(Command.withDescription(`Stop the ${title}'s service, until the next login or start`)),
+    ).pipe(
+      operator(`${role} stop`),
+      Command.withDescription(`Stop the ${title}'s service, until the next login or start`),
+    ),
     Command.make("status", {}, () =>
       Effect.gen(function* () {
         const state = yield* serviceState(serviceTarget(layout(), role, yield* onPlatform))
         yield* Console.log(`${title} service: ${describeServiceState(state)}`)
         yield* exitWith(state._tag === "Running")
       }),
-    ).pipe(Command.withDescription(`Whether the ${title}'s service runs`)),
+    ).pipe(
+      operator(`${role} status`),
+      Command.withDescription(`Whether the ${title}'s service runs`),
+    ),
   ] as const
 }
 
@@ -257,6 +290,7 @@ const tokenCommand = Command.make("token", { name: Argument.String("name") }, ({
     yield* Console.log(runnerTokenNotice(issued))
   }),
 ).pipe(
+  operator("runner token"),
   Command.withDescription("Issue a Runner's token, on the Hub's machine; rotates any earlier one"),
 )
 
@@ -321,6 +355,7 @@ const joinCommand = Command.make(
       moveOldData: options.moveOldData,
     }),
 ).pipe(
+  operator("runner join"),
   Command.withDescription(
     "Make this machine a Runner, with a pairing link from the Hub's Runners page; installs and starts its service",
   ),
@@ -339,9 +374,11 @@ const runnerCommand = Command.make("runner").pipe(
 const secretsCommand = Command.make("secrets").pipe(
   Command.withSubcommands([
     Command.make("key", {}, () => Console.log(secretsKeyNotice(layout().envFile("hub")))).pipe(
+      operator("secrets key"),
       Command.withDescription("Print a new HUB_SECRETS_KEY"),
     ),
     Command.make("reset", { yes }, (options) => resetHubSecrets(layout(), options)).pipe(
+      operator("secrets reset"),
       Command.withDescription(
         "After losing HUB_SECRETS_KEY: clear the Sensitive values it encrypted, with the Hub stopped",
       ),

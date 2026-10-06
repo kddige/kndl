@@ -75,6 +75,8 @@ A port shows within about 2 seconds of a server starting to listen, and goes as 
 
 A Session with no Turn or subagent running, no prompt queued and no one present goes to sleep after 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`). **Sleep now** in the Session's header does it at once, after asking while subagents are running. Sleeping stops Claude Code and the Sandbox, and keeps the Workspace and the Sandbox's disks; the subagents that were running are Interrupted, and resume when messaged (see [After sleep or a restart](/how-to/work-with-subagents/#after-sleep-or-a-restart)).
 
+To keep a Session up while nobody is in it, for a dev server or a long background command, turn on **Keep awake** in its header. The header then says who turned it on, such as "Kept awake by Bob Lee", and the sidebar and the Runners page mark the Session with a sun. Anyone with access to the Repo can turn it off again, and **Sleep now** turns it off too. Turning it on wakes an Asleep Session. See [Keep awake](/explanation/session-lifecycle/#keep-awake) for what it outlives.
+
 Any prompt wakes an Asleep Session, as does **Wake now** on its banner. Claude Code resumes the same conversation, with `node_modules`, caches and Docker's data as they were.
 
 ## When its Runner is offline

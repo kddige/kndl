@@ -15,6 +15,7 @@ import { HttpRouter, HttpServer } from "effect/http"
 import type { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { ClaudeCheck } from "./ClaudeCredentials.ts"
+import { CliBuilds } from "./CliBuilds.ts"
 import { DatabaseTest } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { GitHub } from "./GitHub.ts"
@@ -49,6 +50,8 @@ export const baseConfig: HubConfigInput = {
   secretsKey: Option.none(),
   // No web UI build: WebUi.test.ts makes its own.
   webDir: "/nonexistent/claude-hub/web",
+  // No CLI builds: CliRoutes.test.ts gives its own.
+  cliDir: "/nonexistent/claude-hub/cli",
 }
 
 /** The Hub's stores and services, and its database, which tests can reach into. */
@@ -84,6 +87,8 @@ export async function startHub(
     readonly hubVersion?: Layer.Layer<HubVersion>
     /** How Claude credentials are checked; by default as ClaudeCheck.layerTest, asking no one. */
     readonly claudeCheck?: Layer.Layer<ClaudeCheck>
+    /** The CLI binaries the Hub serves; by default ones it never builds. */
+    readonly cliBuilds?: Layer.Layer<CliBuilds>
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -96,6 +101,7 @@ export async function startHub(
     Layer.provideMerge(HubServices),
     Layer.provideMerge(options.claudeCheck ?? ClaudeCheck.layerTest),
     Layer.provideMerge(options.githubApp ?? GitHubApp.layer),
+    Layer.provideMerge(options.cliBuilds ?? CliBuilds.unused),
     Layer.provideMerge(options.hubVersion ?? HubVersion.layer),
     Layer.provideMerge(options.database ?? DatabaseTest),
     Layer.provideMerge(HubConfig.layerFrom({ ...baseConfig, ...options.config })),

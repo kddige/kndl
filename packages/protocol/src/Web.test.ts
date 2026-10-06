@@ -56,6 +56,8 @@ const webToHub = [
   { _tag: "StopAgent", sessionId: "s-1", agentId: "a-1" },
   { _tag: "SleepSession", sessionId: "s-1" },
   { _tag: "WakeSession", sessionId: "s-1" },
+  { _tag: "SetKeepAwake", sessionId: "s-1", on: true },
+  { _tag: "SetKeepAwake", sessionId: "s-1", on: false },
   { _tag: "RestartSession", sessionId: "s-1" },
   { _tag: "ArchiveSession", sessionId: "s-1" },
   { _tag: "RestoreSession", sessionId: "s-1" },
@@ -233,6 +235,10 @@ const hubToWeb = [
   {
     _tag: "SessionUpdated",
     session: { ...sessionSummary, model: "sonnet", effort: "high", modelPending: true },
+  },
+  {
+    _tag: "SessionUpdated",
+    session: { ...sessionSummary, keepAwake: { by: bob, at: 1_790_000_000_000 } },
   },
   {
     _tag: "RunnerList",

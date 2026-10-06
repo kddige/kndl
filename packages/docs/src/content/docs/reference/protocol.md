@@ -20,9 +20,10 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `POST /runner/pair` | `claude-hub runner join` | none: the [Pairing code](#pairing) in the body is the credential. |
 | `GET /runner/connection` | `claude-hub runner join`, onboard | `Authorization: Bearer <Runner token>` |
 | `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands` | one Session's mod | `Authorization: Bearer <mod token>` |
+| `GET /cli`, `GET /cli/version`, `GET /cli/<os>-<arch>` | `curl … \| sh`, the [`claude-hub` command from a Hub](/reference/commands/#the-claude-hub-command-from-a-hub) | none: the install script, the Hub's commit, and the binary built from it. |
 | anything else | a browser | none: the web UI's build. |
 
-Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair` and the web UI needs a credential. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
+Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair`, `/cli` and the web UI needs a credential. `/cli` serves only what the Hub's checkout already holds, built; a request for a platform can start a build, one at a time. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
 
 The Hub mints three kinds of token, each `<kind>_<id>.<secret>`, and stores only a SHA-256 of the secret:
 
@@ -106,10 +107,14 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential` |
 | Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
+
+### Keep awake
+
+`SetKeepAwake { sessionId, on }` turns a Session's Keep awake on or off ([ADR 0016](/reference/decisions/0016-forwarding-a-sessions-ports/)). It takes the same Repo access as acting in the Session. Each Session carries `keepAwake: { by, at }` while it is on: the Participant who turned it on, and when. Turned on for an Asleep Session, it wakes it, and a refused wake comes back as a `CommandFailed` with Keep awake left on. `SetKeepAwake` on an Archived Session is refused with `The Session is archived.` `SleepSession` and `ArchiveSession` turn it off.
 
 ### Claude credentials
 

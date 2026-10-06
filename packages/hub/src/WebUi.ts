@@ -21,7 +21,7 @@ import { HubConfig } from "./HubConfig.ts"
  * The Hub's own path prefixes. A path under one that no route answers is a 404, never the web UI,
  * so a mistyped call to the Hub fails as one. Keep in step with the routes in Hub.ts.
  */
-const hubPrefixes = ["/auth", "/health", "/mod", "/ws"]
+const hubPrefixes = ["/auth", "/cli", "/health", "/mod", "/ws"]
 
 /** Where Vite puts the files it names by a hash of their contents, so they never change. */
 const assetsPrefix = "/assets/"

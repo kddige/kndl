@@ -1410,6 +1410,127 @@ describe("Session names", () => {
   })
 })
 
+const keptAwake = (m: Extract<Web, { _tag: "SessionUpdated" }>) => m.session.keepAwake !== undefined
+const notKeptAwake = (m: Extract<Web, { _tag: "SessionUpdated" }>) =>
+  m.session.keepAwake === undefined
+
+describe("Keep awake (ADR 0016)", () => {
+  test("anyone with access can turn it on, every client sees who, and an idle Session stays up", async () => {
+    const hub = await hubSleepingAfter(400)
+    const bobWeb = await openWeb(hub, "bob")
+    const { runner, web, sessionId } = await sessionScene(hub)
+    bobWeb.send({ _tag: "SetKeepAwake", sessionId, on: true })
+    for (const client of [web, bobWeb]) {
+      const on = await client.take("SessionUpdated", keptAwake)
+      expect(on.session.keepAwake?.by).toEqual(bob)
+      expect(on.session.keepAwake?.at).toBeGreaterThan(0)
+    }
+    expect((await openWeb(hub, "carol")).sessions.sessions[0]?.keepAwake?.by).toEqual(bob)
+
+    // Idle well past its wait, it isn't put to sleep.
+    await Bun.sleep(1_000)
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    // Turning it on again changes nothing; off, it is idle again, and sleeps.
+    web.send({ _tag: "SetKeepAwake", sessionId, on: true })
+    expect((await bobWeb.untaken("SessionUpdated")).filter(keptAwake)).toEqual([])
+    web.send({ _tag: "SetKeepAwake", sessionId, on: false })
+    await bobWeb.take("SessionUpdated", notKeptAwake)
+    expect(await runner.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+  })
+
+  test("pressing Sleep turns it off, unless Sleep is refused", async () => {
+    const scene = await sessionScene()
+    const { web, sessionId, mod } = scene
+    web.send({ _tag: "SetKeepAwake", sessionId, on: true })
+    await web.take("SessionUpdated", keptAwake)
+
+    await mod.post(turnStarted("t-1"))
+    web.send({ _tag: "SleepSession", sessionId })
+    expect((await web.take("CommandFailed")).command).toBe("SleepSession")
+    expect((await openWeb(scene.hub, "bob")).sessions.sessions[0]?.keepAwake?.by).toEqual(alice)
+    await mod.post(turnEnded("t-1"))
+
+    await asleep(scene)
+    const [after] = (await openWeb(scene.hub, "carol")).sessions.sessions
+    expect(after?.state).toBe("Asleep")
+    expect(after?.keepAwake).toBeUndefined()
+  })
+
+  test("turning it on wakes an Asleep Session", async () => {
+    const scene = await sessionScene()
+    const { runner, web, sessionId } = scene
+    await asleep(scene)
+    web.send({ _tag: "SetKeepAwake", sessionId, on: true })
+    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    const active = await web.take(
+      "SessionUpdated",
+      (m) => m.session.state === "Active" && m.session.keepAwake !== undefined,
+    )
+    expect(active.session.keepAwake?.by).toEqual(alice)
+    expect(active.session.starting).toBeDefined()
+  })
+
+  test("its Runner back from a restart wakes it, and it outlives a Hub restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const first = await startHub({ config: { devLogin: true }, database })
+      const { runner, runnerToken, web, sessionId } = await sessionScene(first)
+      web.send({ _tag: "SetKeepAwake", sessionId, on: true })
+      await web.take("SessionUpdated", keptAwake)
+
+      // The Runner restarted, and its Claude Code with it: the Session is woken.
+      await runner.close()
+      await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+      const back = await openRunner(first, runnerToken, [])
+      expect(await back.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+      back.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+      await web.take("SessionUpdated", (m) => m.session.state === "Active" && !m.session.starting)
+      await web.close()
+      await back.close()
+      await first.stop()
+
+      const second = await startHub({ config: { devLogin: true }, database })
+      const again = await openWeb(second, "alice", web.cookie)
+      expect(again.sessions.sessions[0]?.keepAwake?.by).toEqual(alice)
+      const runnerAgain = await openRunner(second, runnerToken, [])
+      expect(await runnerAgain.take("StartSession")).toMatchObject({ sessionId })
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a Session without it stays Asleep when its Runner is back", async () => {
+    const { hub, runner, runnerToken, web } = await sessionScene()
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    const back = await openRunner(hub, runnerToken, [])
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(await back.untaken("StartSession")).toEqual([])
+  })
+
+  test("archiving turns it off, and an Archived Session can't be kept awake", async () => {
+    const scene = await sessionScene()
+    const { web, sessionId } = scene
+    web.send({ _tag: "SetKeepAwake", sessionId, on: true })
+    await web.take("SessionUpdated", keptAwake)
+    expect((await archived(scene)).keepAwake).toBeUndefined()
+
+    web.send({ _tag: "SetKeepAwake", sessionId, on: true })
+    expect(await web.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "SetKeepAwake",
+      sessionId,
+      message: "The Session is archived.",
+    })
+    web.send({ _tag: "RestoreSession", sessionId })
+    const restored = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(restored.session.keepAwake).toBeUndefined()
+  })
+})
+
 // What a Runner's Claude Code says it has (#128), as Claude Code 2.1.289 resolves its aliases.
 const opus = {
   alias: "opus",
@@ -2241,6 +2362,7 @@ describe("Repo access", () => {
       { _tag: "ArchiveSession" },
       { _tag: "RestoreSession" },
       { _tag: "RenameSession", name: "mine now" },
+      { _tag: "SetKeepAwake", on: true },
       { _tag: "OpenTerminal" },
       { _tag: "TerminalInput", data: "ls\r" },
       { _tag: "TerminalResize", size: { cols: 80, rows: 24 } },
@@ -2310,6 +2432,9 @@ describe("Repo access", () => {
     await runner.take("RequestTerminalSnapshot")
     octocatWeb.send({ _tag: "TerminalInput", sessionId, data: "ls\r" })
     await runner.take("TerminalInput")
+    octocatWeb.send({ _tag: "SetKeepAwake", sessionId, on: true })
+    const kept = await octocatWeb.take("SessionUpdated", (m) => m.session.keepAwake !== undefined)
+    expect(kept.session.keepAwake?.by).toMatchObject(octocat)
 
     // As the list was made; the answer was cached for everything since.
     expect(github.collaboratorChecks("octocat")).toBe(1)

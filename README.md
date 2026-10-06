@@ -33,6 +33,8 @@ gh api repos/kddige/claude-hub/contents/install.sh -H 'Accept: application/vnd.g
 
 It installs into `~/.claude-hub` and starts `claude-hub onboard`; then `claude-hub status`, `doctor`, `logs` and `update` look after it. See [Install claude-hub](https://kddige.github.io/claude-hub/how-to/install/).
 
+On a machine that runs no Hub or Runner, `curl -fsSL https://<your Hub>/cli | sh` installs the `claude-hub` command from a Hub, and it keeps itself on the Hub's commit. See [Install the CLI from a Hub](https://kddige.github.io/claude-hub/how-to/install-the-cli-from-a-hub/).
+
 To run it from this checkout instead, on one machine and without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, `git`, a Claude account (Claude Code signed in here, which the Runner then uses, or your own token on your Account page), and a Mac with Apple Silicon or Linux with KVM for the Sandboxes.
 
 ```sh

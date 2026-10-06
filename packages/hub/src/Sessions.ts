@@ -76,6 +76,17 @@ interface SessionRow {
   readonly model: string | null
   readonly effort: string | null
   readonly modelPending: number
+  readonly keepAwakeById: string | null
+  readonly keepAwakeByLogin: string | null
+  readonly keepAwakeByName: string | null
+  readonly keepAwakeByAvatarUrl: string | null
+  readonly keepAwakeAt: number | null
+}
+
+/** Turning a Session's Keep awake on (ADR 0016): who did it, and when. */
+export interface KeepingAwake {
+  readonly by: ParticipantId
+  readonly at: number
 }
 
 /** Archiving a Session: who did it, when, and when it is purged unless restored first. */
@@ -144,6 +155,18 @@ const toSummary = (row: SessionRow, agents: ReadonlyArray<AgentSummary> = []): S
     ...(row.lastOutput !== null && row.state === "Asleep" && { lastOutput: row.lastOutput }),
     ...settingOf(row),
     ...(row.modelPending !== 0 && { modelPending: true }),
+    ...(row.keepAwakeById !== null &&
+      row.keepAwakeAt !== null && {
+        keepAwake: {
+          by: {
+            id: ParticipantId.make(row.keepAwakeById),
+            login: row.keepAwakeByLogin ?? row.keepAwakeById,
+            name: row.keepAwakeByName ?? row.keepAwakeById,
+            ...(row.keepAwakeByAvatarUrl !== null && { avatarUrl: row.keepAwakeByAvatarUrl }),
+          },
+          at: row.keepAwakeAt,
+        },
+      }),
   })
 
 /**
@@ -194,9 +217,17 @@ export class Sessions extends Context.Service<
     ) => Effect.Effect<void, SqlError>
     /** Whether its running Claude Code is yet to be restarted with its model and effort. */
     readonly setModelPending: (id: SessionId, pending: boolean) => Effect.Effect<void, SqlError>
+    /** Turns its Keep awake on, by whom and when (ADR 0016), or off with null. */
+    readonly setKeepAwake: (
+      id: SessionId,
+      keepingAwake: KeepingAwake | null,
+    ) => Effect.Effect<void, SqlError>
     /** The Turn running now, or null once the Session is idle. */
     readonly setCurrentTurn: (id: SessionId, turn: TurnId | null) => Effect.Effect<void, SqlError>
-    /** Records the Session Archived, by whom and until when; its Runner has yet to stop it. */
+    /**
+     * Records the Session Archived, by whom and until when, and turns its Keep awake off; its
+     * Runner has yet to stop it.
+     */
     readonly archive: (id: SessionId, archiving: Archiving) => Effect.Effect<void, SqlError>
     /** Brings an Archived Session back, in `state`. */
     readonly restore: (id: SessionId, state: SessionState) => Effect.Effect<void, SqlError>
@@ -286,9 +317,13 @@ export class Sessions extends Context.Service<
           s.archived_by AS archivedById, a.login AS archivedByLogin, a.name AS archivedByName,
           a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt,
           s.environment_version AS environmentVersion, e.version AS latestEnvironmentVersion,
-          s.last_output AS lastOutput, s.model, s.effort, s.model_pending AS modelPending
+          s.last_output AS lastOutput, s.model, s.effort, s.model_pending AS modelPending,
+          s.keep_awake_by AS keepAwakeById, k.login AS keepAwakeByLogin,
+          k.name AS keepAwakeByName, k.avatar_url AS keepAwakeByAvatarUrl,
+          s.keep_awake_at AS keepAwakeAt
         FROM sessions s JOIN participants p ON p.id = s.creator_id
           LEFT JOIN participants a ON a.id = s.archived_by
+          LEFT JOIN participants k ON k.id = s.keep_awake_by
           LEFT JOIN environments e ON e.repo = s.repo
         ${where}
         ORDER BY s.created_at, s.id
@@ -439,6 +474,17 @@ export class Sessions extends Context.Service<
         yield* sql`UPDATE sessions SET last_output = ${output} WHERE id = ${id}`
       })
 
+      const setKeepAwake = Effect.fn("Sessions.setKeepAwake")(function* (
+        id: SessionId,
+        keepingAwake: KeepingAwake | null,
+      ) {
+        yield* sql`
+          UPDATE sessions SET keep_awake_by = ${keepingAwake?.by ?? null},
+            keep_awake_at = ${keepingAwake?.at ?? null}
+          WHERE id = ${id}
+        `
+      })
+
       const archive = Effect.fn("Sessions.archive")(function* (
         id: SessionId,
         archiving: Archiving,
@@ -446,7 +492,8 @@ export class Sessions extends Context.Service<
         yield* sql`
           UPDATE sessions SET state = 'Archived', current_turn = NULL,
             archived_by = ${archiving.by}, archived_at = ${archiving.at},
-            purge_at = ${archiving.purgeAt}, archive_stopped = 0, last_output = NULL
+            purge_at = ${archiving.purgeAt}, archive_stopped = 0, last_output = NULL,
+            keep_awake_by = NULL, keep_awake_at = NULL
           WHERE id = ${id}
         `
       })
@@ -528,6 +575,7 @@ export class Sessions extends Context.Service<
         setName,
         setModel,
         setModelPending,
+        setKeepAwake,
         setCurrentTurn,
         setClaudeSessionId,
         setEnvironmentVersion,

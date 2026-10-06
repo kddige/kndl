@@ -12,6 +12,7 @@ import { Console, Effect, Layer, Option } from "effect"
 import { HttpRouter } from "effect/http"
 import { issueRunnerToken, runnerTokenNotice, secretsKeyNotice } from "./Admin.ts"
 import { ClaudeCheck } from "./ClaudeCredentials.ts"
+import { CliBuilds } from "./CliBuilds.ts"
 import { DatabaseFile, DatabaseLive } from "./Database.ts"
 import { GitHub } from "./GitHub.ts"
 import { GitHubApp } from "./GitHubApp.ts"
@@ -84,6 +85,7 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(HubServices),
   Layer.provide(ClaudeCheck.layer),
   Layer.provide(GitHubApp.layer),
+  Layer.provide(CliBuilds.layer),
   Layer.provide(HubVersion.layer),
   Layer.provide(HeldDatabase),
   Layer.provide(HubConfig.layer),

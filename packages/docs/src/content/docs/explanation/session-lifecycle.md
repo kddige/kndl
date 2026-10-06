@@ -34,9 +34,17 @@ Each Session starts from a base branch onto its own Work branch, `claude/<sessio
 
 ## Going to sleep
 
-An Active Session with no Turn or [subagent](/how-to/work-with-subagents/) running, no prompt queued and no Participant present for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**, and each of a Runner's Sessions before it [updates](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit), once its running Turn ends (or is stopped, after ten minutes or with **Update now**).
+An Active Session with no Turn or [subagent](/how-to/work-with-subagents/) running, no prompt queued, no Participant present and Keep awake off for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**, and each of a Runner's Sessions before it [updates](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit), once its running Turn ends (or is stopped, after ten minutes or with **Update now**).
 
 The Runner stops Claude Code, runs `docker stop` on the Sandbox's containers so databases shut down cleanly, and stops the Sandbox, keeping its disks, Claude Code's state among them, and the Workspace. It pushes the [WIP ref](/explanation/git-from-sessions/#the-wip-ref) first. Only when the Runner reports the Session stopped does the Hub record it Asleep; prompts sent meanwhile wait, and wake it once it is.
+
+### Keep awake
+
+**Keep awake** in a Session's header stops it going to sleep when idle, for work that runs on with nobody watching, such as a dev server or a long background command. Background commands and the ports a Session listens on don't keep it awake by themselves: Keep awake does ([ADR 0016](/reference/decisions/0016-forwarding-a-sessions-ports/)).
+
+Anyone with access to the Session's Repo can turn it on or off, and everyone sees who turned it on, in the header, the sidebar and the Runners page. It is kept in the Hub's database, so it outlives a Hub restart. Turning it on wakes an Asleep Session. It stays on until someone turns it off, presses **Sleep now**, or deletes the Session; a restore doesn't turn it back on.
+
+A Runner update or restart still stops the Session, and leaves Keep awake on: the Hub wakes the Session once the Runner is back on the Hub's commit. So does a Claude Code that exits on its own: the Session stays Asleep, so that a Claude Code that keeps crashing isn't started over and over, and wakes the next time its Runner connects, or on the next prompt.
 
 Subagents run inside the Session's Claude Code, so they stop with it, and the Hub marks the ones that were running Interrupted ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)). That's why **Sleep now**, a restart and a change of model or effort ask first while agents are running. Their transcripts are part of Claude Code's state, so a message resumes one later.
 

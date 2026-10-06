@@ -40,16 +40,20 @@ import {
   RestartIcon,
   SessionStatus,
   Spinner,
+  SunIcon,
+  Switch,
   Tab,
   TabList,
   TabPanel,
   Tabs,
   toast,
+  Tooltip,
   TrashIcon,
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import { AgentPanel } from "./AgentPanel.tsx"
 import { Composer } from "./Composer.tsx"
+import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker } from "./ModelPicker.tsx"
 import { modelName, otherTurnModel } from "./models.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
@@ -99,6 +103,15 @@ const styles = stylex.create({
     fontWeight: weight.semibold,
   },
   badges: { display: "inline-flex", alignItems: "center", gap: space.s1 },
+  // Who keeps it awake, in the description line: the sun lines up with the text.
+  keptAwake: { whiteSpace: "nowrap" },
+  sun: {
+    width: "0.875rem",
+    height: "0.875rem",
+    marginRight: space.s1,
+    verticalAlign: "-0.125em",
+  },
+  keepAwake: { alignItems: "center" },
   tabList: {
     paddingInline: space.s4,
     backgroundColor: color.surface,
@@ -242,6 +255,7 @@ function LoadedSession({
     [models, setting],
   )
 
+  const you = useHubState((hubState) => hubState.you)
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
@@ -280,6 +294,8 @@ function LoadedSession({
   return (
     <main {...stylex.props(styles.view)}>
       <PageHeader
+        // On a phone the name keeps its row, and the toggle and buttons go on one of their own.
+        stackActions
         // Its name, edited in place: anyone with access may rename it, whatever its state.
         title={
           renaming ? (
@@ -315,11 +331,34 @@ function LoadedSession({
             {/* Named, the title no longer says which branch it works on. */}
             {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}{" "}
             <span aria-hidden="true">·</span> {claudeAccountText(summary)}
+            {summary.keepAwake !== undefined && (
+              <>
+                {" "}
+                <span aria-hidden="true">·</span>{" "}
+                <span {...stylex.props(styles.keptAwake)}>
+                  <SunIcon {...stylex.props(styles.sun)} />
+                  {keptAwakeText(summary.keepAwake, you?.id)}
+                </span>
+              </>
+            )}
           </>
         }
         actions={
           <>
             <OpenPorts summary={summary} />
+            {state !== "Archived" && (
+              // Anyone with access may turn it on or off (ADR 0016); Sleep now turns it off.
+              <Tooltip content="While it's on, the Session doesn't go to sleep when idle. Sleep now turns it off.">
+                <span>
+                  <Switch
+                    label="Keep awake"
+                    checked={summary.keepAwake !== undefined}
+                    onCheckedChange={(on) => command(hub.setKeepAwake(summary.id, on))}
+                    sx={styles.keepAwake}
+                  />
+                </span>
+              </Tooltip>
+            )}
             {state === "Active" && (
               <Button
                 size="sm"

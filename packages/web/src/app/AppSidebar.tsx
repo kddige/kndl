@@ -10,6 +10,7 @@ import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tansta
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
 import { agentsOf, recentAgents } from "../hub/transcript.ts"
+import { keptAwakeText } from "../session/keepAwake.ts"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
 import { setFolded, useFolded } from "../sessions/folds.ts"
 import { groupByRepo } from "../sessions/groups.ts"
@@ -37,6 +38,7 @@ import {
   SessionStatus,
   Sidebar,
   Spinner,
+  SunIcon,
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
@@ -94,6 +96,7 @@ const styles = stylex.create({
   more: { flexShrink: 0, color: color.textSubtle },
   warning: { display: "inline-flex", color: color.warning },
   busy: { display: "inline-flex", color: color.textMuted },
+  keptAwake: { display: "inline-flex", color: color.textMuted },
 })
 
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
@@ -372,6 +375,7 @@ function AgentRow({
  * with a Running agent is working even between Turns.
  */
 function SessionIndicators({ session }: { session: SessionSummary }) {
+  const you = useHubState((state) => state.you)
   const busy =
     session.restarting !== undefined
       ? "Restarting"
@@ -383,9 +387,23 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
             ? "Agents working"
             : null
   const changed = environmentChanged(session)
-  if (busy === null && !changed) return null
+  const keptAwake =
+    session.keepAwake === undefined ? null : keptAwakeText(session.keepAwake, you?.id)
+  if (busy === null && !changed && keptAwake === null) return null
   return (
     <>
+      {keptAwake && (
+        <NavSlot>
+          <span
+            role="img"
+            aria-label={keptAwake}
+            title={keptAwake}
+            {...stylex.props(styles.keptAwake)}
+          >
+            <SunIcon />
+          </span>
+        </NavSlot>
+      )}
       {busy && (
         <NavSlot>
           <span role="img" aria-label={busy} title={busy} {...stylex.props(styles.busy)}>

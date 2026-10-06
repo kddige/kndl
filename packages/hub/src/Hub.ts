@@ -3,6 +3,7 @@ import { Layer } from "effect"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
+import { CliRoutes } from "./CliRoutes.ts"
 import { Environments } from "./Environments.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
@@ -30,6 +31,7 @@ export const HubRoutes = Layer.mergeAll(
   HealthRoute,
   AuthRoutes,
   ChannelRoutes,
+  CliRoutes,
   ModRoutes,
   PairingRoutes,
   WebUiRoutes,

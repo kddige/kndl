@@ -12,6 +12,7 @@ const installed = [
   "sessions",
   "claude-code",
   "logs",
+  "cli",
 ]
 
 describe("purging the home", () => {

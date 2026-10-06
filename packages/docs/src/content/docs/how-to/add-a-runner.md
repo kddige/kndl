@@ -83,7 +83,7 @@ A Runner **behind the Hub** keeps its running Sessions, but the Hub doesn't star
 **Update** on its row moves it to the Hub's commit:
 
 1. The Runner checks it may: it fetches from origin, and moves only to a commit reachable from `origin/main`. A Runner whose `runner.env` sets `RUNNER_UPDATE_ANY_COMMIT=1` follows any commit origin has, such as a Hub running a branch. Otherwise its row says **refuses: not on main**, and why.
-2. The Hub drains it: no Session starts or wakes there, running Turns get up to ten minutes to end before the Hub stops them, and each Active Session is put to sleep. **Update now** stops the running Turns at once. A sleeping Session keeps its conversation, and the next prompt wakes it on the new version.
+2. The Hub drains it: no Session starts or wakes there, running Turns get up to ten minutes to end before the Hub stops them, and each Active Session is put to sleep. **Update now** stops the running Turns at once. A sleeping Session keeps its conversation, and the next prompt wakes it on the new version. A Session with [Keep awake](/explanation/session-lifecycle/#keep-awake) on is woken as soon as the Runner is back.
 3. The Runner checks out the commit, runs `bun install`, builds the `hub-link` mod, checks that it loads, and exits; its service starts it again on the new commit.
 
 Meanwhile its row is marked **updating**, then **restarting**, with a line saying where it is, such as `No new Sessions. Waiting for 2 Sessions' Turns to end (stopped in 9 min if still running)…` or `Installing and building…`.

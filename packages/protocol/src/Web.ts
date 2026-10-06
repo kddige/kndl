@@ -204,6 +204,7 @@ export type MessageAgent = typeof MessageAgent.Type
 /**
  * Put an Active Session to sleep now, rather than after it has been idle a while: its Claude
  * Code and Sandbox stop, and its next prompt wakes it. Refused while a Turn runs or prompts wait.
+ * It turns Keep awake off (ADR 0016).
  */
 export const SleepSession = Schema.TaggedStruct("SleepSession", {
   sessionId: SessionId,
@@ -215,6 +216,19 @@ export const WakeSession = Schema.TaggedStruct("WakeSession", {
   sessionId: SessionId,
 })
 export type WakeSession = typeof WakeSession.Type
+
+/**
+ * Turn the Session's Keep awake on or off (ADR 0016): while it is on, the Session doesn't go
+ * Asleep for being idle, and an Asleep one is woken when its Runner comes back. Anyone with access
+ * to its Repo may, in any state but Archived. Turning it on also wakes an Asleep Session. Every
+ * client that can see the Session gets a SessionUpdated. Pressing Sleep (SleepSession) turns it
+ * off.
+ */
+export const SetKeepAwake = Schema.TaggedStruct("SetKeepAwake", {
+  sessionId: SessionId,
+  on: Schema.Boolean,
+})
+export type SetKeepAwake = typeof SetKeepAwake.Type
 
 /**
  * Restart a Session now: put it to sleep, then wake it, so its Sandbox is recreated from its
@@ -361,6 +375,7 @@ export const WebToHub = Schema.Union([
   StopAgent,
   SleepSession,
   WakeSession,
+  SetKeepAwake,
   RestartSession,
   ArchiveSession,
   RestoreSession,

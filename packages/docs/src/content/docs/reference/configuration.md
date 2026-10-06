@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Every environment variable the Hub, a Runner and the web UI's dev server read, with its default.
+description: Every environment variable the Hub, a Runner, the claude-hub command from a Hub and the web UI's dev server read, with its default.
 sidebar:
   order: 2
 ---
@@ -97,6 +97,17 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 | `RUNNER_TMUX_SOCKET` | `claude-hub-dev` | `claude-hub` |
 | `RUNNER_PROXY_PORT` | `7779` | `7778` |
 | `HUB_DATABASE` | `hub.db` in `packages/hub`, beside the `.env.local` holding its `HUB_SECRETS_KEY` | `<home>/hub.db` |
+
+## The `claude-hub` command from a Hub
+
+The install script a Hub serves at `/cli`, and the binary it installs ([Install the CLI from a Hub](/how-to/install-the-cli-from-a-hub/)), read these. The CLI from an install reads none of them.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `CLAUDE_HUB_BIN_DIR` | `~/.local/bin` | Where the install script puts `claude-hub`. |
+| `CLAUDE_HUB_URL` | the Hub's `HUB_PUBLIC_URL` origin | The Hub the install script downloads from and records, when your machine reaches it at another URL. |
+| `XDG_CONFIG_HOME` | `~/.config` | Where the install script records the Hub, in `claude-hub/cli.json`, and where the binary reads it. |
+| `CLAUDE_HUB_NO_SELF_UPDATE` | unset | Set to anything, the binary never updates itself to the Hub's commit. |
 
 ## What a Runner gives Claude Code
 
