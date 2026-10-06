@@ -14,14 +14,20 @@ import {
   checkHandshake,
   claudeCredentialKindOf,
   claudeCredentialProblem,
+  CliLoginApproval,
+  type CliLoginApproved,
+  CliLoginCodeLength,
+  CliLoginCodeLifetimeMs,
   type EffortLevel,
   findModel,
+  formatCliLoginCode,
   formatPairingCode,
   modelNotFoundText,
   PairingAlphabet,
   PairingCodeLength,
   PairingCodeLifetimeMs,
   pairingLink,
+  Participant,
   ProtocolVersion,
   type RepoStatus,
   runnerRemovalRefusal,
@@ -41,6 +47,7 @@ import {
   type ReplyStep,
   replyTo,
   scriptedTurn,
+  seedCliTokens,
   seedRunners,
   seedSessions,
   taskNotification,
@@ -51,6 +58,7 @@ import type {
   AgentSummaryWire,
   AppPermissionsCheckWire,
   ClaudeCredentialInfoWire,
+  CliTokenInfoWire,
   HubMessage,
   LogEntryWire,
   OpenPortWire,
@@ -61,6 +69,9 @@ import type {
   SessionEventWire,
   SessionSummaryWire,
 } from "./wire.ts"
+
+const decodeParticipant = Schema.decodeUnknownSync(Participant)
+const decodeApproval = Schema.decodeUnknownSync(CliLoginApproval)
 
 export interface FakeHubOptions {
   /** Milliseconds per step of the script; text streams a few words a step. Default 120. */
@@ -81,6 +92,8 @@ export interface FakeHubOptions {
    * Default null.
    */
   claudeCredential?: ClaudeCredentialInfoWire | null
+  /** The signed-in person's CLI tokens (issue #179), newest first. Default two, on two machines. */
+  cliTokens?: ReadonlyArray<CliTokenInfoWire>
 }
 
 interface FakeSession {
@@ -199,6 +212,7 @@ export class FakeHub implements HubTransport {
   #autoplay: boolean
   #appPermissions: AppPermissionsCheckWire | null
   #claudeCredential: ClaudeCredentialInfoWire | null
+  #cliTokens: Array<CliTokenInfoWire>
   #scriptStarted = false
   readonly #sockets = new Set<FakeSocket>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
@@ -213,6 +227,7 @@ export class FakeHub implements HubTransport {
     this.#autoplay = options.autoplay ?? true
     this.#appPermissions = options.appPermissions ?? null
     this.#claudeCredential = options.claudeCredential ?? null
+    this.#cliTokens = [...(options.cliTokens ?? seedCliTokens())]
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       const log = seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event }))
@@ -258,7 +273,26 @@ export class FakeHub implements HubTransport {
   }
 
   async signInStatus(): Promise<SignInStatus> {
-    return this.#signedIn ? { signedIn: true } : { signedIn: false, options: this.#signInOptions }
+    return this.#signedIn
+      ? { signedIn: true, you: decodeParticipant(this.#you) }
+      : { signedIn: false, options: this.#signInOptions }
+  }
+
+  /**
+   * As the Hub does: a Login code for the machine. The fake then plays the CLI trading it at once,
+   * so the Account page lists a CLI token for the machine.
+   */
+  async approveCli(request: CliLoginApproval): Promise<CliLoginApproved> {
+    if (!this.#signedIn) throw new Error("Sign in first.")
+    const approval = decodeApproval(request)
+    let code = ""
+    for (let i = 0; i < CliLoginCodeLength; i++) {
+      code += PairingAlphabet[Math.floor(Math.random() * PairingAlphabet.length)]
+    }
+    const now = Date.now()
+    this.#cliTokens.unshift({ id: `ct-${++this.#ids}`, machine: approval.machine, createdAt: now })
+    this.#toAll({ _tag: "CliTokenList", tokens: this.#cliTokens })
+    return { code: formatCliLoginCode(code), expiresAt: now + CliLoginCodeLifetimeMs }
   }
 
   async devSignIn(login?: string): Promise<void> {
@@ -483,6 +517,7 @@ export class FakeHub implements HubTransport {
           sessions: [...this.sessions.values()].map((session) => session.summary),
         })
         socket.deliver({ _tag: "ClaudeCredentialState", credential: this.#claudeCredential })
+        socket.deliver({ _tag: "CliTokenList", tokens: this.#cliTokens })
         if (this.#appPermissions !== null) {
           socket.deliver({ _tag: "AppPermissionsChecked", check: this.#appPermissions })
         }
@@ -526,6 +561,17 @@ export class FakeHub implements HubTransport {
       case "RemoveClaudeCredential":
         this.#setClaudeCredential(socket, message.requestId, null)
         break
+      case "RevokeCliToken": {
+        const kept = this.#cliTokens.filter((token) => token.id !== message.cliTokenId)
+        if (kept.length === this.#cliTokens.length) {
+          this.#refuse(socket, message._tag, message.requestId, "You have no such CLI token.")
+          break
+        }
+        this.#cliTokens = kept
+        socket.deliver({ _tag: "CliTokenList", requestId: message.requestId, tokens: kept })
+        this.#toOthers(socket, { _tag: "CliTokenList", tokens: kept })
+        break
+      }
       case "CheckAppPermissions":
         if (this.#appPermissions === null) {
           this.#refuse(

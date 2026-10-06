@@ -5,6 +5,7 @@ import type {
   AgentSummary,
   AppPermissionsCheck,
   ClaudeCredentialInfo,
+  CliTokenInfo,
   Environment,
   EnvironmentVersionInfo,
   HubToWeb,
@@ -34,3 +35,4 @@ export type SharedVariableWire = (typeof SharedVariable)["Encoded"]
 export type AppPermissionsCheckWire = (typeof AppPermissionsCheck)["Encoded"]
 export type PendingPairingCodeWire = (typeof PendingPairingCode)["Encoded"]
 export type ClaudeCredentialInfoWire = (typeof ClaudeCredentialInfo)["Encoded"]
+export type CliTokenInfoWire = (typeof CliTokenInfo)["Encoded"]

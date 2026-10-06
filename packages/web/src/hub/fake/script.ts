@@ -6,6 +6,7 @@
 
 import type {
   AppPermissionsCheckWire,
+  CliTokenInfoWire,
   OpenPortWire,
   ParticipantWire,
   RunnerSummaryWire,
@@ -71,6 +72,20 @@ export function taskNotification(agentId: string, description: string, result: s
     "<usage><subagent_tokens>12388</subagent_tokens><tool_uses>3</tool_uses><duration_ms>17036</duration_ms></usage>",
     "</task-notification>",
   ].join("\n")
+}
+
+/** The CLI tokens the signed-in person has, as `claude-hub login` on two machines left them. */
+export function seedCliTokens(): Array<CliTokenInfoWire> {
+  const now = Date.now()
+  return [
+    {
+      id: "ct-laptop",
+      machine: "alices-laptop",
+      createdAt: now - 3 * 86_400_000,
+      lastUsedAt: now - 4 * 60_000,
+    },
+    { id: "ct-devbox", machine: "devbox", createdAt: now - 40 * 86_400_000 },
+  ]
 }
 
 /** The commit the fake Hub runs. */

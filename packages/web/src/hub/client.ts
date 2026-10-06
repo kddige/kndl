@@ -10,6 +10,7 @@ import {
   checkHandshake,
   type ClaudeCredentialState,
   type ClaudePlanChoice,
+  type CliTokenId,
   type CommandFailed,
   type EnvironmentDraft,
   type EffortLevel,
@@ -428,6 +429,13 @@ export class HubClient {
     await this.#request({ _tag: "RemoveClaudeCredential" }, "ClaudeCredentialState")
   }
 
+  // ── The person's CLI tokens (issue #179) ─────────────────────────────────
+
+  /** Revokes one of the signed-in person's CLI tokens: the CLI it was for is refused at once. */
+  async revokeCliToken(cliTokenId: CliTokenId): Promise<void> {
+    await this.#request({ _tag: "RevokeCliToken", cliTokenId }, "CliTokenList")
+  }
+
   /** Sends `command` with a new request id; resolves with the Hub's `answer` to it. */
   #request<Tag extends AnswerTag>(
     command: Request,
@@ -528,7 +536,8 @@ export class HubClient {
       case "PairingCodeList":
       case "RunnerRemoved":
       case "RunnerUpdateRequested":
-      case "ClaudeCredentialState": {
+      case "ClaudeCredentialState":
+      case "CliTokenList": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break

@@ -14,6 +14,7 @@ import {
   type RouterHistory,
 } from "@tanstack/react-router"
 import { AccountView } from "./account/AccountView.tsx"
+import { CliLoginDonePage, CliLoginPage, readCliLoginSearch } from "./account/CliLogin.tsx"
 import { HubShell } from "./app/HubShell.tsx"
 import { EnvironmentList } from "./environment/EnvironmentList.tsx"
 import { EnvironmentView } from "./environment/EnvironmentView.tsx"
@@ -193,6 +194,31 @@ const kitRoute = createRoute({
   component: lazyRouteComponent(() => import("./kit/KitPage.tsx"), "KitPage"),
 })
 
+/**
+ * Approving `claude-hub login` on a machine (issue #179): on its own, without the sidebar, and
+ * signed in or not.
+ */
+const cliLoginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/cli-login",
+  validateSearch: readCliLoginSearch,
+  component: function CliLoginRoute() {
+    return <CliLoginPage search={cliLoginRoute.useSearch()} />
+  },
+})
+
+/** Where the CLI sends the browser once it is signed in. */
+const cliLoginDoneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/cli-login/done",
+  validateSearch: (search: Record<string, unknown>): { machine?: string } =>
+    nonEmpty(search["machine"]) ? { machine: search["machine"] } : {},
+  component: function CliLoginDoneRoute() {
+    const { machine } = cliLoginDoneRoute.useSearch()
+    return <CliLoginDonePage {...(machine !== undefined && { machine })} />
+  },
+})
+
 const routeTree = rootRoute.addChildren([
   hubRoute.addChildren([
     homeRoute,
@@ -205,6 +231,8 @@ const routeTree = rootRoute.addChildren([
     accountRoute,
     runnersRoute,
   ]),
+  cliLoginRoute,
+  cliLoginDoneRoute,
   kitRoute,
 ])
 
