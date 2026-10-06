@@ -18,9 +18,18 @@ import { RunnerUpdater, RunnerUpdateState } from "./Update.ts"
 export const EpochMillis = Schema.Natural
 export type EpochMillis = typeof EpochMillis.Type
 
-/** A Repo by its GitHub full name, `owner/name`. */
+/**
+ * A Repo by its GitHub full name, `owner/name`. GitHub's names ignore case, so two spellings of
+ * one name are the same Repo (#197): compare them with {@link sameRepo}, or by {@link repoKey}.
+ */
 export const RepoName = Schema.String.check(Schema.isPattern(/^[^/\s]+\/[^/\s]+$/))
 export type RepoName = typeof RepoName.Type
+
+/** What every spelling of a Repo's name has in common, to key or compare it by. */
+export const repoKey = (repo: string): string => repo.toLowerCase()
+
+/** Whether two names are the same Repo: GitHub's names ignore case. */
+export const sameRepo = (a: string, b: string): boolean => repoKey(a) === repoKey(b)
 
 /** A git branch name: a Session's base branch or its Work branch. */
 export const BranchName = Schema.NonEmptyString

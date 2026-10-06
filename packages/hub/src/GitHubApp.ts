@@ -10,7 +10,7 @@
 // manifest, and trades the code GitHub hands back for its credentials (convertManifest).
 
 import { createPrivateKey, type KeyObject, sign } from "node:crypto"
-import type { AppPermissionsCheck, GitIdentity, RepoName } from "@claude-hub/protocol"
+import { type AppPermissionsCheck, type GitIdentity, RepoName, repoKey } from "@claude-hub/protocol"
 import {
   Clock,
   Context,
@@ -87,6 +87,8 @@ const Grants = Schema.Record(Schema.String, Schema.String)
 /** `GET /repos/{owner}/{repo}/installation`: which installation, and what it was granted. */
 const Installation = Schema.Struct({ id: Schema.Int, permissions: Schema.optional(Grants) })
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString, expires_at: Schema.String })
+/** `GET /repos/{owner}/{repo}`, as far as the Hub reads it: the Repo's name as GitHub spells it. */
+const Repository = Schema.Struct({ full_name: RepoName })
 const App = Schema.Struct({ slug: Schema.NonEmptyString, html_url: Schema.String })
 /** `GET /app`, as the permission check reads it. An enterprise's App has no owner login. */
 const AppDetails = Schema.Struct({
@@ -160,6 +162,12 @@ export class GitHubApp extends Context.Service<
      */
     readonly cloneToken: (repo: RepoName) => Effect.Effect<RepoToken, GitHubAppError>
     /**
+     * The Repo's name as GitHub spells it, its `full_name`, whatever spelling it was asked by:
+     * GitHub's names ignore case (#197). Asked as the Repo's installation, so it fails, with
+     * status 404, where the App isn't installed.
+     */
+    readonly fullName: (repo: RepoName) => Effect.Effect<RepoName, GitHubAppError>
+    /**
      * Whether the App is installed on the Repo and can see it, asked as the App. A Repo that
      * doesn't exist, or that the App can't see, is not installed.
      */
@@ -201,6 +209,7 @@ export class GitHubApp extends Context.Service<
     botIdentity: () => Effect.fail(notConfigured),
     sandboxToken: () => Effect.fail(notConfigured),
     cloneToken: () => Effect.fail(notConfigured),
+    fullName: () => Effect.fail(notConfigured),
     isInstalled: () => Effect.fail(notConfigured),
     installUrl: Effect.fail(notConfigured),
     isCollaborator: () => Effect.fail(notConfigured),
@@ -210,7 +219,8 @@ export class GitHubApp extends Context.Service<
   static readonly make = Effect.fnUntraced(function* (config: GitHubAppConfig) {
     const key = createPrivateKey(Redacted.value(config.privateKey))
     const http = yield* HttpClient.HttpClient
-    const tokens = new Map<RepoName, RepoToken>()
+    // By `repoKey`, so every spelling of a Repo shares its token.
+    const tokens = new Map<string, RepoToken>()
     const minting = yield* Semaphore.make(1)
     let bot: GitIdentity | undefined
     let appHtmlUrl: string | undefined
@@ -284,7 +294,7 @@ export class GitHubApp extends Context.Service<
       return yield* minting.withPermits(1)(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis
-          const cached = tokens.get(repo)
+          const cached = tokens.get(repoKey(repo))
           if (
             cached !== undefined &&
             cached.expiresAt - Duration.toMillis(tokenRefreshMargin) > now
@@ -292,7 +302,7 @@ export class GitHubApp extends Context.Service<
             return cached
           }
           const fresh = yield* mint(repo, hostTokenPermissions)
-          tokens.set(repo, fresh)
+          tokens.set(repoKey(repo), fresh)
           return fresh
         }),
       )
@@ -322,6 +332,17 @@ export class GitHubApp extends Context.Service<
 
     const cloneToken = Effect.fn("GitHubApp.cloneToken")(function* (repo: RepoName) {
       return yield* mint(repo, { contents: "read" })
+    })
+
+    const fullName = Effect.fn("GitHubApp.fullName")(function* (repo: RepoName) {
+      const { owner, name } = splitRepo(repo)
+      const { token } = yield* repoToken(repo)
+      const found = yield* call(
+        `Could not look up ${repo}`,
+        Repository,
+        request("GET", `/repos/${owner}/${name}`, { token }),
+      )
+      return found.full_name
     })
 
     const isInstalled = Effect.fn("GitHubApp.isInstalled")(
@@ -428,6 +449,7 @@ export class GitHubApp extends Context.Service<
       botIdentity,
       sandboxToken,
       cloneToken,
+      fullName,
       isInstalled,
       installUrl,
       isCollaborator,

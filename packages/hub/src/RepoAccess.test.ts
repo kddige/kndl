@@ -158,3 +158,66 @@ describe("Repo access", () => {
     expect(answers).toEqual({ down: "RepoAccessUnknown", up: true })
   })
 })
+
+describe("Repo names ignoring case (#197)", () => {
+  const typed = RepoName.make("OCTO/Widgets")
+
+  test("every spelling of a Repo's name gets the same answer, asked of GitHub once", async () => {
+    github.installedOn.add(repo)
+    github.grant(repo, "octocat")
+    const answers = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        const first = yield* access.check(octocat, typed)
+        github.revoke(repo, "octocat")
+        return { first, again: yield* access.check(octocat, repo) }
+      }),
+    )
+    expect(answers).toEqual({ first: true, again: true })
+    expect(github.collaboratorChecks("octocat")).toBe(1)
+  })
+
+  test("forgetting one spelling forgets them all", async () => {
+    github.installedOn.add(repo)
+    const answers = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        const before = yield* access.status(octocat, repo)
+        github.grant(repo, "octocat")
+        yield* access.forget(octocat, typed)
+        return { before, after: yield* access.status(octocat, repo) }
+      }),
+    )
+    expect(answers).toEqual({ before: "NoAccess", after: "Allowed" })
+  })
+
+  test("fullName is the Repo's name as GitHub spells it, whatever spelling it is asked by", async () => {
+    github.installedOn.add(repo)
+    const names = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        return [yield* access.fullName(typed), yield* access.fullName(repo)]
+      }),
+    )
+    expect(names).toEqual([Option.some(repo), Option.some(repo)])
+    // Asked once: the answer is kept.
+    expect(
+      github.requests.filter((request) => request.path === "/repos/OCTO/Widgets"),
+    ).toHaveLength(1)
+    expect(
+      github.requests.filter((request) => request.path === "/repos/octo/widgets"),
+    ).toHaveLength(0)
+  })
+
+  test("fullName is none where the App isn't installed, or without the App", async () => {
+    const notInstalled = await withAccess(
+      Effect.flatMap(RepoAccess, (access) => access.fullName(typed)),
+    )
+    expect(notInstalled).toEqual(Option.none())
+    const withoutApp = await withAccess(
+      Effect.flatMap(RepoAccess, (access) => access.fullName(typed)),
+      { ...baseConfig, devLogin: true },
+    )
+    expect(withoutApp).toEqual(Option.none())
+  })
+})

@@ -17,6 +17,9 @@
 //   cleared the one a lost key encrypted (#57). The Repo's Sessions don't start, and no draft
 //   keeping it can be applied or Test built, until a value is entered. Entering one restores it,
 //   so it applies with no Test build, even at build.
+// - GitHub's names ignore case, so any spelling of a Repo's name finds its Environment (#197):
+//   each command takes the spelling the Environment is stored under, and keeps to it, so the
+//   values encrypted under it still decrypt. A new Environment is stored as it is applied.
 
 import {
   type DependencyFolder,
@@ -207,6 +210,11 @@ export class Environments extends Context.Service<
     >
     /** Whether the Repo has an applied Environment. */
     readonly exists: (repo: string) => Effect.Effect<boolean, SqlError>
+    /**
+     * The Repo's name as its Environment is stored, whatever spelling it is given by; as given
+     * when it has none.
+     */
+    readonly storedName: (repo: string) => Effect.Effect<string, SqlError>
     /** Checks a draft and resolves its variables, against the Repo's Environment as applied. */
     readonly prepare: (
       repo: string,
@@ -278,6 +286,16 @@ export class Environments extends Context.Service<
         secrets
           .decrypt(ciphertext, context)
           .pipe(Effect.mapError((error) => new EnvironmentRefused({ message: error.message })))
+
+      const storedName = Effect.fn("Environments.storedName")(function* (repo: string) {
+        // GitHub's names ignore case (#197). Should two spellings be stored from before, the
+        // one asked for wins.
+        const rows = yield* sql<{ readonly repo: string }>`
+          SELECT repo FROM environments WHERE repo = ${repo} COLLATE NOCASE
+          ORDER BY repo = ${repo} DESC, repo LIMIT 1
+        `
+        return rows[0]?.repo ?? repo
+      })
 
       const environmentRow = Effect.fn("Environments.environmentRow")(function* (repo: string) {
         const rows = yield* sql<EnvironmentRow>`
@@ -400,9 +418,10 @@ export class Environments extends Context.Service<
         )
 
       const prepare = Effect.fn("Environments.prepare")(function* (
-        repo: string,
+        asked: string,
         draft: EnvironmentDraft,
       ) {
+        const repo = yield* storedName(asked)
         const problems = environmentDraftProblems(draft)
         if (problems.length > 0) return yield* refuse(problems.join(" "))
 
@@ -523,19 +542,22 @@ export class Environments extends Context.Service<
       ) {
         const rows = yield* sql<{ readonly id: string }>`
           SELECT id FROM test_builds
-          WHERE repo = ${repo} AND digest = ${digest} AND result = 'Passed' LIMIT 1
+          WHERE repo = ${repo} COLLATE NOCASE AND digest = ${digest} AND result = 'Passed'
+          LIMIT 1
         `
         return rows.length > 0
       })
 
       const apply = Effect.fn("Environments.apply")(
         function* (
-          repo: string,
+          asked: string,
           baseVersion: EnvironmentVersion | null,
           draft: EnvironmentDraft,
           by: ParticipantId,
           at: number,
         ) {
+          // Under the spelling stored, so another spelling changes the Repo's one Environment.
+          const repo = yield* storedName(asked)
           const current = yield* environmentRow(repo)
           const currentVersion = Option.isSome(current) ? current.value.version : null
           if (currentVersion !== baseVersion) {
@@ -611,7 +633,8 @@ export class Environments extends Context.Service<
         (effect) => sql.withTransaction(effect),
       )
 
-      const state = Effect.fn("Environments.state")(function* (repo: string) {
+      const state = Effect.fn("Environments.state")(function* (asked: string) {
+        const repo = yield* storedName(asked)
         const versions = (yield* sql<{
           readonly version: number
           readonly id: string
@@ -663,11 +686,13 @@ export class Environments extends Context.Service<
         return { environment, versions }
       })
 
-      const exists = Effect.fn("Environments.exists")(function* (repo: string) {
+      const exists = Effect.fn("Environments.exists")(function* (asked: string) {
+        const repo = yield* storedName(asked)
         return Option.isSome(yield* environmentRow(repo))
       })
 
-      const forSession = Effect.fn("Environments.forSession")(function* (repo: string) {
+      const forSession = Effect.fn("Environments.forSession")(function* (asked: string) {
+        const repo = yield* storedName(asked)
         const row = yield* environmentRow(repo)
         if (Option.isNone(row)) return Option.none<SessionEnvironment>()
         const variables = (yield* variableRows(repo)).map((variable) => ({
@@ -681,7 +706,8 @@ export class Environments extends Context.Service<
         })
       })
 
-      const valuesNeeded = Effect.fn("Environments.valuesNeeded")(function* (repo: string) {
+      const valuesNeeded = Effect.fn("Environments.valuesNeeded")(function* (asked: string) {
+        const repo = yield* storedName(asked)
         const rows = yield* sql<{
           readonly name: string
           readonly availableAtBuild: number
@@ -703,29 +729,34 @@ export class Environments extends Context.Service<
         }))
       })
 
-      const values = Effect.fn("Environments.values")(function* (repo: string) {
+      const values = Effect.fn("Environments.values")(function* (asked: string) {
+        const repo = yield* storedName(asked)
         const { resolved, needed } = yield* storedVariables(repo)
         if (needed.length > 0) return yield* refuse(`${valuesNeededText(needed)}.`)
         return valuesOf(resolved)
       })
 
-      const sensitiveValues = Effect.fn("Environments.sensitiveValues")(function* (repo: string) {
+      const sensitiveValues = Effect.fn("Environments.sensitiveValues")(function* (asked: string) {
+        const repo = yield* storedName(asked)
         // Retired values no Session can still have are dropped: only a running Claude Code
         // keeps the values it started with, as one woken or started anew fetches them again.
         yield* sql`
-          DELETE FROM retired_values WHERE repo = ${repo} AND NOT EXISTS (
+          DELETE FROM retired_values WHERE repo = ${repo} COLLATE NOCASE AND NOT EXISTS (
             SELECT 1 FROM sessions s
-            WHERE s.repo = retired_values.repo AND s.state IN ('Active', 'Frozen')
+            WHERE s.repo = retired_values.repo COLLATE NOCASE AND s.state IN ('Active', 'Frozen')
               AND (s.environment_version IS NULL
                 OR s.environment_version < retired_values.until_version)
           )
         `
-        const retired = yield* sql<{ readonly value: string }>`
-          SELECT value FROM retired_values WHERE repo = ${repo}
+        // Each under the spelling it was retired with.
+        const retired = yield* sql<{ readonly repo: string; readonly value: string }>`
+          SELECT repo, value FROM retired_values WHERE repo = ${repo} COLLATE NOCASE
         `
         // A variable that needs a value has none to redact.
         const sensitive = sensitiveOf((yield* storedVariables(repo)).resolved)
-        for (const row of retired) sensitive.push(yield* decrypt(row.value, retiredContext(repo)))
+        for (const row of retired) {
+          sensitive.push(yield* decrypt(row.value, retiredContext(row.repo)))
+        }
         return sensitive
       })
 
@@ -890,6 +921,7 @@ export class Environments extends Context.Service<
       return Environments.of({
         state,
         exists,
+        storedName,
         prepare,
         apply,
         forSession,

@@ -182,7 +182,7 @@ import {
   StopSession,
   StopTurn,
   PurgeSession,
-  type RepoName,
+  RepoName,
   RepoAccessLost,
   RepoChecked,
   TurnStopRequested,
@@ -201,6 +201,8 @@ import {
   OpenTunnel,
   RelaunchSession,
   TunnelCloseCode,
+  repoKey,
+  sameRepo,
 } from "@claude-hub/protocol"
 import {
   Clock,
@@ -242,6 +244,7 @@ import {
   StreamRedactor,
 } from "./Redaction.ts"
 import { RepoAccess } from "./RepoAccess.ts"
+import { RepoMap, uniqueRepos } from "./RepoMap.ts"
 import { isRunnerCommand, makeRunnerRelay } from "./RunnerRelay.ts"
 import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
@@ -469,9 +472,9 @@ export class SessionRelay extends Context.Service<
         readonly terminals: Set<SessionId>
         /**
          * Whether its person has access to each Repo, as last asked (ADR 0003). It is sent the
-         * Sessions of a Repo only once this says so.
+         * Sessions of a Repo only once this says so. Any spelling of a Repo's name finds it.
          */
-        readonly repos: Map<string, boolean>
+        readonly repos: RepoMap<boolean>
       }
       interface OnlineRunner {
         readonly id: RunnerId
@@ -778,7 +781,7 @@ export class SessionRelay extends Context.Service<
        * What to redact from each Repo's Sessions, until its Sensitive values or the Sandbox tokens
        * of its Sessions change.
        */
-      const needlesByRepo = new Map<string, Needles>()
+      const needlesByRepo = new RepoMap<Needles>()
 
       /**
        * Each Session's Sandbox tokens (#73): the current one and the one before it, which a
@@ -797,7 +800,9 @@ export class SessionRelay extends Context.Service<
       }
 
       const tokensOfRepo = (repo: string) =>
-        [...sandboxTokens.values()].flatMap((known) => (known.repo === repo ? known.tokens : []))
+        [...sandboxTokens.values()].flatMap((known) =>
+          sameRepo(known.repo, repo) ? known.tokens : [],
+        )
 
       const needlesFor = Effect.fn("SessionRelay.needlesFor")(function* (repo: string) {
         const known = needlesByRepo.get(repo)
@@ -987,7 +992,7 @@ export class SessionRelay extends Context.Service<
         toWeb: (message, to: (client: EnvironmentWebClient) => boolean) => toWeb(message, to),
         repoSessionsUpdated: Effect.fn("SessionRelay.repoSessionsUpdated")(function* (repo) {
           for (const session of yield* sessions.list) {
-            if (session.repo === repo) yield* sessionToWeb(session)
+            if (sameRepo(session.repo, repo)) yield* sessionToWeb(session)
           }
         }),
         sensitiveValuesChanged: (repo) => {
@@ -1088,7 +1093,7 @@ export class SessionRelay extends Context.Service<
       ) {
         if (!allowed) {
           yield* endForwards(
-            (forward) => forward.you.id === who.id && forward.repo === repo,
+            (forward) => forward.you.id === who.id && sameRepo(forward.repo, repo),
             ForwardCloseCode.NoSuchSession,
             `You no longer have access to ${repo}.`,
           )
@@ -1097,7 +1102,7 @@ export class SessionRelay extends Context.Service<
           (client) => client.you.id === who.id && client.repos.get(repo) !== allowed,
         )
         if (changed.length === 0) return
-        const ofRepo = (yield* sessions.list).filter((session) => session.repo === repo)
+        const ofRepo = (yield* sessions.list).filter((session) => sameRepo(session.repo, repo))
         for (const client of changed) {
           const before = client.repos.get(repo)
           client.repos.set(repo, allowed)
@@ -1130,7 +1135,7 @@ export class SessionRelay extends Context.Service<
         who: Participant,
         repo: string,
       ) {
-        const key = `${who.id}\n${repo}`
+        const key = `${who.id}\n${repoKey(repo)}`
         if (learning.has(key)) return
         learning.add(key)
         yield* access.check(who, repo).pipe(
@@ -1150,20 +1155,22 @@ export class SessionRelay extends Context.Service<
        * changes, since it may wait on GitHub. When GitHub can't say, a person keeps what they had.
        */
       const recheckAccess = Effect.gen(function* () {
-        const repos = new Set((yield* sessions.list).map((session) => session.repo))
+        // Each Repo once, whatever spellings it goes by.
+        const repos = (yield* sessions.list).map((session) => session.repo)
         // And those someone was let into without a Session, such as an Environment being set up.
         for (const client of webClients) {
-          for (const [repo, allowed] of client.repos) if (allowed) repos.add(repo)
+          for (const [repo, allowed] of client.repos) if (allowed) repos.push(repo)
         }
         const people = new Map([...webClients].map((client) => [client.you.id, client.you]))
         // And everyone forwarding a Session, who may have no web client.
         for (const forward of forwards) {
           people.set(forward.you.id, forward.you)
-          repos.add(forward.repo)
+          repos.push(forward.repo)
         }
+        const unique = uniqueRepos(repos)
         const failures: Array<string> = []
         const answers = yield* Effect.forEach(
-          [...people.values()].flatMap((who) => [...repos].map((repo) => ({ who, repo }))),
+          [...people.values()].flatMap((who) => unique.map((repo) => ({ who, repo }))),
           ({ who, repo }) =>
             access.check(who, repo).pipe(
               Effect.map((allowed) => ({ who, repo, allowed })),
@@ -1784,6 +1791,29 @@ export class SessionRelay extends Context.Service<
           // When GitHub can't say, the person keeps what they had.
           if (client.repos.get(repo) === true) return {}
           return { refusal: status.unknown }
+        })
+
+        /**
+         * A command that stores a Repo's name, under the one spelling the Hub keeps of it (#197):
+         * GitHub's, or without the GitHub App the spelling its Environment is stored under, or as
+         * typed. Asked once access lets the command through, so that a refusal reads the same
+         * whatever GitHub calls the Repo (ADR 0009); and off the lock, since it may wait on GitHub.
+         */
+        const respelled = Effect.fn("SessionRelay.respelled")(function* (
+          message: RelayedCommand,
+        ): Effect.fn.Return<RelayedCommand, SqlError> {
+          if (
+            message._tag !== "CreateSession" &&
+            message._tag !== "ApplyEnvironment" &&
+            message._tag !== "StartTestBuild"
+          ) {
+            return message
+          }
+          const github = yield* access.fullName(message.repo)
+          const repo = Option.isSome(github)
+            ? github.value
+            : RepoName.make(yield* environments.storedName(message.repo))
+          return repo === message.repo ? message : { ...message, repo }
         })
 
         /** The Session a command names, or none, having refused the command. */
@@ -2450,15 +2480,19 @@ export class SessionRelay extends Context.Service<
                     )
                   : authorize(message).pipe(
                       Effect.flatMap((verdict) =>
-                        serialized(
-                          Effect.gen(function* () {
-                            const { learned, refusal } = verdict
-                            if (learned !== undefined)
-                              yield* accessKnown(you, learned.repo, learned.allowed)
-                            if (refusal !== undefined) return refuse(message, refusal)
-                            return yield* handle(message)
-                          }),
-                        ),
+                        Effect.gen(function* () {
+                          const command =
+                            verdict.refusal === undefined ? yield* respelled(message) : message
+                          return yield* serialized(
+                            Effect.gen(function* () {
+                              const { learned, refusal } = verdict
+                              if (learned !== undefined)
+                                yield* accessKnown(you, learned.repo, learned.allowed)
+                              if (refusal !== undefined) return refuse(message, refusal)
+                              return yield* handle(command)
+                            }),
+                          )
+                        }),
                       ),
                       Effect.catchTag("SqlError", (error) =>
                         Effect.logError("A web command failed", error).pipe(
@@ -2479,14 +2513,16 @@ export class SessionRelay extends Context.Service<
             peer,
             joined: new Set(),
             terminals: new Set(),
-            repos: new Map(),
+            repos: new RepoMap(),
           }
           yield* Effect.gen(function* () {
             // Off the lock, since it may wait on GitHub. A Repo GitHub can't say about now is
             // asked about again at the next recheck.
-            const asked = new Set((yield* sessions.list).map((session) => session.repo))
+            const asked = new RepoMap(
+              (yield* sessions.list).map((session) => [session.repo, true] as const),
+            )
             yield* Effect.forEach(
-              asked,
+              asked.keys(),
               (repo) =>
                 access.check(you, repo).pipe(
                   Effect.map((allowed) => void client.repos.set(repo, allowed)),
@@ -3208,14 +3244,13 @@ export class SessionRelay extends Context.Service<
       const forwardableSessions = (you: Participant) =>
         Effect.gen(function* () {
           const listed = (yield* sessions.list).filter((session) => session.state !== "Archived")
-          const repos = new Set(listed.map((session) => session.repo))
-          const allowed = new Set<string>()
+          const allowed = new RepoMap<boolean>()
           yield* Effect.forEach(
-            repos,
+            uniqueRepos(listed.map((session) => session.repo)),
             (repo) =>
               access.check(you, repo).pipe(
                 Effect.map((yes) => {
-                  if (yes) allowed.add(repo)
+                  if (yes) allowed.set(repo, true)
                 }),
                 // Left out, as one they have no access to; `forward` says so if it is named.
                 Effect.catchTag("RepoAccessUnknown", (error) => Effect.logWarning(error.message)),

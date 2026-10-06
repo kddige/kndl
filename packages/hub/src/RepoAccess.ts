@@ -19,9 +19,12 @@
 //   if that is shorter). A failure to ask isn't cached, nor an answer slower than
 //   `lookupTimeout`: the next check asks again.
 //   `forget` drops what is cached for a person and a Repo, for a check asked again by hand.
+// - GitHub's names ignore case, so every spelling of a Repo's name gets the same answer, cached
+//   once (#197); GitHub is asked by the spelling first asked about. `fullName` says how GitHub
+//   spells it, for the Hub to keep that spelling.
 
-import type { Participant, RepoName } from "@claude-hub/protocol"
-import { Cache, Context, Duration, Effect, Exit, Layer, Option, Schema } from "effect"
+import { type Participant, type RepoName, repoKey, sameRepo } from "@claude-hub/protocol"
+import { Cache, Context, Duration, Effect, Equal, Exit, Hash, Layer, Option, Schema } from "effect"
 import { GitHubApp, type GitHubAppError } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 
@@ -67,6 +70,25 @@ const askGitHub = <A>(asked: Effect.Effect<A, GitHubAppError>) =>
     }),
   )
 
+/**
+ * What a cache keeps an answer by: a Repo, for a login or for none. Equal to the same Repo by any
+ * spelling, so all of them share the answer, which GitHub is asked for by the spelling it holds.
+ */
+class Asked implements Equal.Equal {
+  constructor(
+    readonly login: string,
+    readonly repo: RepoName,
+  ) {}
+
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof Asked && that.login === this.login && sameRepo(that.repo, this.repo)
+  }
+
+  [Hash.symbol](): number {
+    return Hash.string(`${this.login}\n${repoKey(this.repo)}`)
+  }
+}
+
 export class RepoAccess extends Context.Service<
   RepoAccess,
   {
@@ -86,6 +108,11 @@ export class RepoAccess extends Context.Service<
     ) => Effect.Effect<RepoStatus, RepoAccessUnknown>
     /** Forgets what GitHub said of the person and the Repo: the next check asks again. */
     readonly forget: (participant: Participant, repo: RepoName) => Effect.Effect<void>
+    /**
+     * The Repo's name as GitHub spells it, its `full_name` (#197); none without the App, where
+     * it isn't installed, or when GitHub can't say. Kept for the TTL, as a yes is.
+     */
+    readonly fullName: (repo: RepoName) => Effect.Effect<Option.Option<RepoName>>
   }
 >()("@claude-hub/hub/RepoAccess") {
   static readonly layer = Layer.effect(
@@ -108,9 +135,8 @@ export class RepoAccess extends Context.Service<
 
       // By login and Repo, as GitHub answers: a login is kept current at each sign-in.
       const answers = yield* Cache.makeWith(
-        (key: string) => {
-          const [login = "", repo = ""] = key.split("\n")
-          return askGitHub(
+        ({ login, repo }: Asked) =>
+          askGitHub(
             app.isCollaborator(repo, login).pipe(
               Effect.map((allowed): RepoStatus => (allowed ? "Allowed" : "NoAccess")),
               Effect.catchTag("GitHubAppError", (error) =>
@@ -120,16 +146,15 @@ export class RepoAccess extends Context.Service<
                   : Effect.fail(error),
               ),
             ),
-          )
-        },
+          ),
         { capacity: cacheCapacity, timeToLive },
       )
 
       // By Repo: whether the App is installed on it, for a dev login, which has no GitHub login.
-      const installed = yield* Cache.makeWith((repo: string) => askGitHub(app.isInstalled(repo)), {
-        capacity: cacheCapacity,
-        timeToLive,
-      })
+      const installed = yield* Cache.makeWith(
+        ({ repo }: Asked) => askGitHub(app.isInstalled(repo)),
+        { capacity: cacheCapacity, timeToLive },
+      )
 
       const status = Effect.fn("RepoAccess.status")(function* (
         participant: Participant,
@@ -138,10 +163,10 @@ export class RepoAccess extends Context.Service<
         if (participant.id.startsWith("dev:")) {
           if (Option.isNone(config.devLogin)) return "NoAccess"
           if (!app.isConfigured) return "Allowed"
-          return (yield* Cache.get(installed, repo)) ? "Allowed" : "NotInstalled"
+          return (yield* Cache.get(installed, new Asked("", repo))) ? "Allowed" : "NotInstalled"
         }
         if (!participant.id.startsWith("github:") || !app.isConfigured) return "NoAccess"
-        return yield* Cache.get(answers, `${participant.login}\n${repo}`)
+        return yield* Cache.get(answers, new Asked(participant.login, repo))
       })
 
       const check = Effect.fn("RepoAccess.check")(function* (
@@ -155,10 +180,29 @@ export class RepoAccess extends Context.Service<
 
       const forget = (participant: Participant, repo: RepoName) =>
         participant.id.startsWith("dev:")
-          ? Cache.invalidate(installed, repo)
-          : Cache.invalidate(answers, `${participant.login}\n${repo}`)
+          ? Cache.invalidate(installed, new Asked("", repo))
+          : Cache.invalidate(answers, new Asked(participant.login, repo))
 
-      return RepoAccess.of({ check, status, forget })
+      // By Repo: how GitHub spells its name. Only an answer is kept.
+      const fullNames = yield* Cache.makeWith(({ repo }: Asked) => askGitHub(app.fullName(repo)), {
+        capacity: cacheCapacity,
+        timeToLive: (exit) => (Exit.isSuccess(exit) ? config.repoAccessTtl : Duration.zero),
+      })
+
+      const fullName = (repo: RepoName) =>
+        app.isConfigured
+          ? Cache.get(fullNames, new Asked("", repo)).pipe(
+              Effect.map(Option.some),
+              Effect.catchTag("RepoAccessUnknown", (error) =>
+                Effect.as(
+                  Effect.logDebug(`Kept ${repo} as it was typed: ${error.message}`),
+                  Option.none<RepoName>(),
+                ),
+              ),
+            )
+          : Effect.succeed(Option.none<RepoName>())
+
+      return RepoAccess.of({ check, status, forget, fullName })
     }),
   )
 }

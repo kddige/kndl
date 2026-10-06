@@ -248,6 +248,7 @@ describe("without the App configured", () => {
         "botIdentity",
         "checkPermissions",
         "cloneToken",
+        "fullName",
         "installUrl",
         "isCollaborator",
         "isConfigured",

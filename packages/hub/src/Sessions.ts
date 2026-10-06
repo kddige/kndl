@@ -316,7 +316,9 @@ export class Sessions extends Context.Service<
           s.created_at AS createdAt, s.current_turn AS currentTurn,
           s.archived_by AS archivedById, a.login AS archivedByLogin, a.name AS archivedByName,
           a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt,
-          s.environment_version AS environmentVersion, e.version AS latestEnvironmentVersion,
+          s.environment_version AS environmentVersion,
+          (SELECT e.version FROM environments e WHERE e.repo = s.repo COLLATE NOCASE
+            ORDER BY e.repo = s.repo DESC, e.repo LIMIT 1) AS latestEnvironmentVersion,
           s.last_output AS lastOutput, s.model, s.effort, s.model_pending AS modelPending,
           s.keep_awake_by AS keepAwakeById, k.login AS keepAwakeByLogin,
           k.name AS keepAwakeByName, k.avatar_url AS keepAwakeByAvatarUrl,
@@ -324,7 +326,6 @@ export class Sessions extends Context.Service<
         FROM sessions s JOIN participants p ON p.id = s.creator_id
           LEFT JOIN participants a ON a.id = s.archived_by
           LEFT JOIN participants k ON k.id = s.keep_awake_by
-          LEFT JOIN environments e ON e.repo = s.repo
         ${where}
         ORDER BY s.created_at, s.id
       `

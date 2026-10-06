@@ -2,7 +2,7 @@
 // not, why, before they set up a Session or an Environment for it. The Hub answers from its cache
 // of what GitHub said; "Check again" asks GitHub afresh, as after installing the GitHub App.
 
-import type { RepoStatus } from "@claude-hub/protocol"
+import { type RepoStatus, sameRepo } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useCallback, useEffect, useState } from "react"
 import { ExternalLinkIcon } from "../ui/index.ts"
@@ -82,7 +82,8 @@ export function useRepoCheck(repo: string): {
   const recheck = useCallback(() => setAsked({ repo, fresh: true }), [repo])
   if (!valid) return { check: null, recheck }
   return {
-    check: checked?.repo === repo ? checked.check : { status: "Checking" },
+    check:
+      checked !== null && sameRepo(checked.repo, repo) ? checked.check : { status: "Checking" },
     recheck,
   }
 }
