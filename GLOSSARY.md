@@ -24,9 +24,21 @@ _Avoid_: join code, invite, enrollment token
 The isolated, disposable virtual machine in which all of a Session's file and command work happens. It is booted from a Build of its Repo's Environment.
 _Avoid_: container, VM
 
+**Open port**:
+A TCP port listening inside a Session's Sandbox, which its Runner notices while the Session is awake and reports with the process holding it.
+_Avoid_: service, endpoint
+
+**Forward**:
+A `claude-hub forward` connection from someone's machine to a Session, which makes each of its Open ports reachable on that machine's `localhost`, 1:1, through the Hub. A connected Forward counts as presence in the Session.
+_Avoid_: tunnel, port mapping, proxy
+
 **Preview**:
-A port served from inside a Sandbox, made reachable in the browser for Participants.
+An Open port made reachable in the browser on its own domain, for Participants.
 _Avoid_: port forward, tunnel
+
+**CLI token**:
+The long-lived credential the `claude-hub` CLI signs in to a Hub with, made by `claude-hub login` and listed and revocable on its owner's Account page.
+_Avoid_: API key, access token, session cookie
 
 ## Sessions
 
@@ -130,8 +142,12 @@ _Avoid_: reference, import, binding
 A Session whose Sandbox is running.
 
 **Asleep**:
-A Session whose Sandbox was stopped after being idle; it wakes on the next prompt with its Workspace and service data intact.
+A Session whose Sandbox was stopped after being idle; it wakes on the next prompt, or a Forward, with its Workspace and service data intact. A Session is idle when it has no Turn or Running agent, nobody present, no connected Forward, and Keep awake off. Background commands and Open ports don't keep it awake.
 _Avoid_: paused, suspended, stopped
+
+**Keep awake**:
+A Session's toggle that stops it going Asleep when idle, until someone turns it off or puts the Session to sleep. Anyone with access to its Repo can set it, and it shows who did.
+_Avoid_: pin, pinned, always on
 
 **Frozen**:
 A Session whose Runner is offline. It stays readable, and prompts sent to it wait in its queue until the Runner returns.
