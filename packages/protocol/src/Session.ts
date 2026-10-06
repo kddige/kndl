@@ -127,6 +127,11 @@ export const RunnerSummary = Schema.Struct({
    * from a Runner too old to say, or that couldn't find out.
    */
   models: Schema.optionalKey(RunnerModels),
+  /**
+   * Whether it has a Claude credential of its own, which runs the Sessions of a Creator who has
+   * stored none (ADR 0015); absent while it is offline.
+   */
+  ownClaudeCredential: Schema.optionalKey(Schema.Boolean),
 })
 export type RunnerSummary = typeof RunnerSummary.Type
 

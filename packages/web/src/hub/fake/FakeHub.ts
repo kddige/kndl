@@ -294,6 +294,7 @@ export class FakeHub implements HubTransport {
       version: hubVersion,
       versionStatus: "Current" as const,
       lastSeenAt: Date.now(),
+      ownClaudeCredential: true,
     }
     const runnerId = code.runnerId ?? `r-${++this.#ids}`
     const repaired = this.runners.find((runner) => runner.id === runnerId)

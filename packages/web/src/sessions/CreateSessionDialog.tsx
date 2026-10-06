@@ -65,6 +65,14 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
       : runners?.find((candidate) => candidate.id === runner)?.models
   // A choice the Runner picked since doesn't have is dropped, not sent to be refused.
   const modelSetting = fitSetting(models, modelChoice)
+  // Without a credential of their own, a Session runs on its Runner's, if it has one (ADR 0015);
+  // with neither, it can't start, and the dialog says so before the form is filled in.
+  const chosen = runner === anyRunner ? undefined : online.find((each) => each.id === runner)
+  const runsOnRunner = claudeCredential === null
+  const needsCredential =
+    runsOnRunner &&
+    online.length > 0 &&
+    !(chosen === undefined ? online : [chosen]).some((each) => each.ownClaudeCredential === true)
 
   const reset = () => {
     setRepo("")
@@ -130,16 +138,27 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
       footer={
         <>
           <DialogClose>Cancel</DialogClose>
-          <Button intent="primary" type="submit" form="create-session" loading={busy}>
+          <Button
+            intent="primary"
+            type="submit"
+            form="create-session"
+            loading={busy}
+            disabled={needsCredential}
+          >
             Start Session
           </Button>
         </>
       }
     >
       <form id="create-session" onSubmit={submit} noValidate {...stylex.props(styles.form)}>
-        {claudeCredential === null && (
-          // Not a refusal: the Runner may have its own credential to run it on (ADR 0015).
-          <Banner intent="accent" icon={<KeyIcon />} title="Add your Claude credential">
+        {runsOnRunner && (
+          <Banner
+            intent={needsCredential ? "warning" : "accent"}
+            icon={<KeyIcon />}
+            title={
+              needsCredential ? "Add your Claude credential first" : "Add your Claude credential"
+            }
+          >
             Sessions you start run on your own Claude account once you add a token or API key on
             your{" "}
             <Link
@@ -152,7 +171,12 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
             >
               Account
             </Link>{" "}
-            page. Until then, this one runs on its Runner's own, if it has one.
+            page.{" "}
+            {needsCredential
+              ? chosen === undefined
+                ? "No online Runner has a Claude credential of its own to run this one on."
+                : `${chosen.name} has no Claude credential of its own to run this one on.`
+              : "Until then, this one runs on its Runner's own."}
           </Banner>
         )}
         <Field
@@ -193,8 +217,8 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
           description={
             online.length === 0
               ? "No Runner is online, so the Session can't start yet."
-              : claudeCredential === null
-                ? "Whose machine it runs on: on its own Claude credential, without yours."
+              : runsOnRunner
+                ? "Whose machine it runs on, and on whose Claude credential, until you add yours."
                 : "Whose machine it runs on: on your own Claude account."
           }
         >
