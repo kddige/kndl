@@ -1,5 +1,4 @@
 import { Effect, Layer } from "effect"
-import { claudeConfigPath, resolveRunnerLogin } from "./ClaudeConfig.ts"
 import { ClaudeModelsLive } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.ts"
@@ -19,24 +18,18 @@ import { WorkspacesGitClone } from "./Workspace.ts"
 import { WorkspaceGitLive } from "./WorkspaceGit.ts"
 
 /**
- * The Runner: settles an update it restarted for (see Updater.ts), reads its Runner login, puts
- * to sleep the Sessions an earlier Runner left running, and stays connected to the Hub. Never ends on its own.
+ * The Runner: settles an update it restarted for (see Updater.ts), takes up the Sessions an
+ * earlier Runner left running, and stays connected to the Hub. Never ends on its own.
  */
-export const runRunner = (
-  options: { readonly claudeConfigPath?: string; readonly backoff?: Backoff } = {},
-) =>
+export const runRunner = (options: { readonly backoff?: Backoff } = {}) =>
   Effect.gen(function* () {
     const config = yield* RunnerConfig
     const sessions = yield* Sessions
-    const configPath = options.claudeConfigPath ?? claudeConfigPath()
     yield* (yield* Updater).boot
 
-    const login = yield* resolveRunnerLogin(config.login, configPath)
-    yield* Effect.logInfo(
-      `Runner ${config.name} (${login.account}) starting; Hub at ${config.hubUrl.href}`,
-    )
+    yield* Effect.logInfo(`Runner ${config.name} starting; Hub at ${config.hubUrl.href}`)
     yield* sessions.adopt
-    return yield* runHubConnection(login, options.backoff ?? DefaultBackoff)
+    return yield* runHubConnection(options.backoff ?? DefaultBackoff)
   })
 
 /**

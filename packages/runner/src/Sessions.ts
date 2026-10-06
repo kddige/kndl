@@ -66,8 +66,11 @@ export class Sessions extends Context.Service<
     readonly handle: (message: HubToRunner) => Effect.Effect<void>
     /** Sends a `Snapshot` frame of every running Session, as after reconnecting. */
     readonly snapshotAll: Effect.Effect<void>
-    /** Whether the Runner has a Claude credential of its own, for {@link RunnerHello}. */
-    readonly ownClaudeCredential: Effect.Effect<boolean>
+    /**
+     * How the Runner's own Claude credential is shown, for {@link RunnerHello}; undefined when it
+     * has none.
+     */
+    readonly ownClaudeAccount: Effect.Effect<string | undefined>
   }
 >()("@claude-hub/runner/Sessions") {}
 
@@ -617,7 +620,7 @@ export const SessionsLive = Layer.effect(
       snapshotAll: Effect.suspend(() =>
         Effect.forEach(running.values(), (session) => session.pane.snapshot, { discard: true }),
       ),
-      ownClaudeCredential: proxy.hasRunnerCredential,
+      ownClaudeAccount: proxy.runnerAccount,
     })
   }),
 )

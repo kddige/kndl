@@ -99,7 +99,7 @@ test.skipIf(!enabled)(
     const runnerCredential = RunnerCredential.of({
       current: Effect.succeed(credential),
       reread: Effect.succeed(credential),
-      describe: Effect.succeed({ credential, from: "a test" }),
+      describe: Effect.succeed({ credential, account: "Subscription token …test", from: "a test" }),
     })
 
     const program = Effect.gen(function* () {

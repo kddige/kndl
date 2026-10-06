@@ -1,4 +1,5 @@
-// The Runner: a host machine connected to the Hub that runs Sessions on its own Runner login.
+// The Runner: a host machine connected to the Hub that runs Sessions in Sandboxes, each on its
+// Creator's Claude credential or else on the Runner's own, if it has one.
 // Configured from the environment; see RunnerConfig.ts and the README.
 
 import { resolve } from "node:path"
