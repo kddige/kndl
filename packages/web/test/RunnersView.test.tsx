@@ -69,6 +69,9 @@ test("lists each Runner with its login, version, last connection and Sessions", 
   expect(ci).toContain("behind the Hub")
   expect(ci).toContain("Last seen 3h ago")
   expect(ci).toContain("1 Session")
+  // Each marks its Sessions kept awake (ADR 0016).
+  expect(studio).toContain("1 kept awake")
+  expect(ci).toContain("1 kept awake")
   // The sidebar's general nav marks the page.
   expect(document.querySelector('a[aria-current="page"]')?.textContent).toContain("Runners")
 })

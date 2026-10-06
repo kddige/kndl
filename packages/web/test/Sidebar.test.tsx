@@ -137,6 +137,24 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
   expect(button("Signed in as Alice Kim", document).getAttribute("aria-haspopup")).toBe("menu")
 })
 
+test("a Session kept awake is marked in its sidebar row, with who keeps it awake", async () => {
+  const { client } = await open("/sessions/s-readme")
+  await eventually(() => expect(groups().length).toBe(2))
+  const keptAwake = (id: string) =>
+    row(id).querySelector('[aria-label^="Kept awake by"]')?.getAttribute("title") ?? null
+  expect(["s-readme", "s-demo", "s-dotfiles"].map(keptAwake)).toEqual([
+    null,
+    "Kept awake by Bob Lee",
+    "Kept awake by you",
+  ])
+
+  // Turned on anywhere, every open tab marks it; turned off, the mark goes.
+  await step(() => client.setKeepAwake("s-readme", true))
+  await eventually(() => expect(keptAwake("s-readme")).toBe("Kept awake by you"))
+  await step(() => client.setKeepAwake("s-demo", false))
+  await eventually(() => expect(keptAwake("s-demo")).toBeNull())
+})
+
 test("a Session is renamed from its sidebar row, and every open tab sees the name", async () => {
   const { hub } = await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
