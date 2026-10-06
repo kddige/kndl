@@ -5,7 +5,7 @@
 // hands out the new App's credentials for the code it redirects back with. Not part of the Hub.
 
 import { generateKeyPairSync, type KeyObject, verify } from "node:crypto"
-import { manifestPermissions, RequiredEvents } from "./AppPermissions.ts"
+import { grants, manifestPermissions, RequiredEvents, requiredOn } from "./AppPermissions.ts"
 
 export const appId = "123456"
 export const appSlug = "claude-hub-test"
@@ -75,6 +75,11 @@ export class StandInGitHub {
   readonly installedOn = new Set<string>()
   /** The collaborators (logins) of each Repo (`owner/name`). */
   readonly collaborators = new Map<string, Set<string>>()
+  /**
+   * Those with access to a Repo through its organization: an owner, its base permission or a team.
+   * As on GitHub, only a token that can read the organization's members counts them.
+   */
+  readonly throughOrganization = new Map<string, Set<string>>()
   /** While set, collaborator checks answer 503, as in an outage. */
   collaboratorsDown = false
   /** While set, `GET /app` answers 503, as in an outage. */
@@ -91,6 +96,13 @@ export class StandInGitHub {
   }
   /** The App's installations; by default one on kddige with all it needs. */
   readonly installations: Array<StandInInstallation> = [defaultInstallation()]
+  /** The installation the Repos in `installedOn` are on, and tokens are minted from. */
+  private get installation(): StandInInstallation {
+    return (
+      this.installations.find((installation) => installation.id === installationId) ??
+      defaultInstallation()
+    )
+  }
   /** The codes GitHub would redirect back with, each for the App it registered. */
   readonly manifestCodes = new Map<string, StandInConversion>()
   /** The manifests POSTed to its "new App" page, and the organization each was for, if any. */
@@ -100,6 +112,8 @@ export class StandInGitHub {
   }> = []
   private minted = 0
   private readonly tokens = new Set<string>()
+  /** Those of `tokens` with Members (read). */
+  private readonly membersTokens = new Set<string>()
 
   private constructor(
     private readonly server: ReturnType<typeof Bun.serve>,
@@ -171,6 +185,7 @@ export class StandInGitHub {
     this.requests.length = 0
     this.installedOn.clear()
     this.collaborators.clear()
+    this.throughOrganization.clear()
     this.collaboratorsDown = false
     this.appDown = false
     this.tokenLifetimeMs = 60 * 60 * 1000
@@ -182,6 +197,7 @@ export class StandInGitHub {
     this.manifests.length = 0
     this.minted = 0
     this.tokens.clear()
+    this.membersTokens.clear()
   }
 
   stop() {
@@ -251,16 +267,29 @@ export class StandInGitHub {
     ) {
       if (!this.isApp(authorization)) return unauthorized
       if (!this.installedOn.has(match[1] ?? "")) return this.json(404, { message: "Not Found" })
-      return this.json(200, { id: installationId })
+      return this.json(200, { id: installationId, permissions: this.installation.permissions })
     }
     if (
       request.method === "POST" &&
       path === `/app/installations/${installationId}/access_tokens`
     ) {
       if (!this.isApp(authorization)) return unauthorized
+      // A token can't have a permission its installation lacks.
+      const asked = (body as { permissions?: Record<string, string> } | undefined)?.permissions
+      for (const [name, access] of Object.entries(asked ?? {})) {
+        if (!grants(this.installation.permissions[name], access as "read" | "write")) {
+          return this.json(422, {
+            message: "The permissions requested are not granted to this installation.",
+          })
+        }
+      }
       this.minted += 1
       const token = `ghs_standin${this.minted}x${Math.random().toString(36).slice(2)}`
       this.tokens.add(token)
+      // Without a permissions list, a token has all its installation's.
+      if (grants((asked ?? this.installation.permissions).members, "read")) {
+        this.membersTokens.add(token)
+      }
       return this.json(201, {
         token,
         expires_at: new Date(Date.now() + this.tokenLifetimeMs).toISOString(),
@@ -271,9 +300,13 @@ export class StandInGitHub {
       (match = /^\/repos\/([^/]+\/[^/]+)\/collaborators\/([^/]+)$/.exec(path))
     ) {
       // As an installation, with a token it minted.
-      if (!this.tokens.has(authorization?.replace(/^Bearer /, "") ?? "")) return unauthorized
+      const token = authorization?.replace(/^Bearer /, "") ?? ""
+      if (!this.tokens.has(token)) return unauthorized
       if (this.collaboratorsDown) return this.json(503, { message: "Service Unavailable" })
-      const isCollaborator = this.collaborators.get(match[1] ?? "")?.has(match[2] ?? "") ?? false
+      const [repo = "", login = ""] = [match[1], match[2]]
+      const isCollaborator =
+        (this.collaborators.get(repo)?.has(login) ?? false) ||
+        (this.membersTokens.has(token) && (this.throughOrganization.get(repo)?.has(login) ?? false))
       return isCollaborator ? new Response(null, { status: 204 }) : this.json(404, {})
     }
     if (request.method === "GET" && path === "/app") {
@@ -360,7 +393,8 @@ function defaultInstallation(): StandInInstallation {
     id: installationId,
     account: "kddige",
     accountType: "User",
-    permissions: { ...manifestPermissions() },
+    // A personal account has no organization permissions.
+    permissions: { ...manifestPermissions(requiredOn(false)) },
     events: [...RequiredEvents],
     suspended: false,
   }

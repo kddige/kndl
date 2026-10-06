@@ -186,6 +186,7 @@ describe("doctor and the GitHub App", () => {
     permissions: manifestPermissions(),
     events: [],
     suspended: false,
+    organization: false,
   }
   const withApp = (
     app_: AppFacts,

@@ -18,6 +18,11 @@ import {
 /** A permission the App needs, and the feature that needs it. */
 export interface RequiredPermission extends AppPermission {
   readonly why: string
+  /**
+   * An organization permission, which an installation on a personal account never has: needed
+   * only where the App is installed on an organization.
+   */
+  readonly organization?: true
 }
 
 /**
@@ -55,7 +60,22 @@ export const RequiredPermissions: ReadonlyArray<RequiredPermission> = [
     access: "read",
     why: "Repo access: the Hub asks GitHub who is a Repo's collaborator. GitHub gives every App this one.",
   },
+  // Repo access on an organization: without it, GitHub leaves out of a Repo's collaborators
+  // everyone with access through the organization (#189). GitHubApp.ts's repoToken asks for it.
+  {
+    name: "members",
+    title: "Members",
+    access: "read",
+    why: "Repo access on an organization: without it, GitHub hides access through the organization (owners, its base permission, teams), and the Hub refuses those people. An organization permission.",
+    organization: true,
+  },
 ]
+
+/** The required permissions an account needs: on a personal account, no organization ones. */
+export const requiredOn = (organization: boolean): ReadonlyArray<RequiredPermission> =>
+  organization
+    ? RequiredPermissions
+    : RequiredPermissions.filter((permission) => permission.organization !== true)
 
 /**
  * The webhook events the App subscribes to: none, since the Hub has no webhook. Listed so that one
@@ -106,6 +126,8 @@ export interface InstallationFacts {
   readonly permissions: Readonly<Record<string, string>>
   readonly events: ReadonlyArray<string>
   readonly suspended: boolean
+  /** Whether it is on an organization, rather than a personal account. */
+  readonly organization: boolean
 }
 
 /** The App's "Permissions & events" settings page, on its owner's settings. */
@@ -126,7 +148,8 @@ export const installationReviewUrl = (installation: Pick<InstallationFacts, "htm
 
 /**
  * What the App and its installations lack of the required permissions and events. A suspended
- * installation is left out: it gets no tokens either way.
+ * installation is left out: it gets no tokens either way. Organization permissions are required
+ * of an installation on an organization, and of the App once it has one.
  */
 export function checkAppPermissions(
   app: AppFacts,
@@ -136,7 +159,10 @@ export function checkAppPermissions(
   const active = installations.filter((installation) => !installation.suspended)
   const drifted: Array<InstallationDrift> = []
   for (const installation of active) {
-    const missing = missingPermissions(installation.permissions)
+    const missing = missingPermissions(
+      installation.permissions,
+      requiredOn(installation.organization),
+    )
     const events = missingEvents(installation.events)
     if (missing.length === 0 && events.length === 0) continue
     drifted.push({
@@ -151,7 +177,10 @@ export function checkAppPermissions(
     slug: app.slug,
     settingsUrl: appSettingsUrl(app),
     installUrl: appInstallUrl(app),
-    missing: missingPermissions(app.permissions),
+    missing: missingPermissions(
+      app.permissions,
+      requiredOn(active.some((installation) => installation.organization)),
+    ),
     missingEvents: missingEvents(app.events),
     installed: active.length,
     installations: drifted,
