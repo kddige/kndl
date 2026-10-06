@@ -69,6 +69,7 @@ export default defineConfig({
             { slug: "how-to/work-with-subagents" },
             { slug: "how-to/install-the-cli-from-a-hub" },
             { slug: "how-to/sign-in-the-cli" },
+            { slug: "how-to/forward-a-sessions-ports" },
             { slug: "how-to/develop-claude-hub" },
           ],
         },

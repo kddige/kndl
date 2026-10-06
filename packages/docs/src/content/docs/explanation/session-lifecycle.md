@@ -12,7 +12,7 @@ stateDiagram-v2
   direction LR
   [*] --> Active: start
   Active --> Asleep: idle 15 min, or Sleep now
-  Asleep --> Active: a prompt, or Wake now
+  Asleep --> Active: a prompt, Wake now, or a forward
   Active --> Frozen: Runner goes offline
   Asleep --> Frozen: Runner goes offline
   Frozen --> Active: Runner back, Claude Code still running
@@ -34,7 +34,7 @@ Each Session starts from a base branch onto its own Work branch, `claude/<sessio
 
 ## Going to sleep
 
-An Active Session with no Turn or [subagent](/how-to/work-with-subagents/) running, no prompt queued, no Participant present and Keep awake off for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**, and each of a Runner's Sessions before it [updates](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit), once its running Turn ends (or is stopped, after ten minutes or with **Update now**).
+An Active Session with no Turn or [subagent](/how-to/work-with-subagents/) running, no prompt queued, no Participant present, no [`claude-hub forward`](/how-to/forward-a-sessions-ports/) connected and Keep awake off for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**, and each of a Runner's Sessions before it [updates](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit), once its running Turn ends (or is stopped, after ten minutes or with **Update now**).
 
 The Runner stops Claude Code, runs `docker stop` on the Sandbox's containers so databases shut down cleanly, and stops the Sandbox, keeping its disks, Claude Code's state among them, and the Workspace. It pushes the [WIP ref](/explanation/git-from-sessions/#the-wip-ref) first. Only when the Runner reports the Session stopped does the Hub record it Asleep; prompts sent meanwhile wait, and wake it once it is.
 
@@ -50,7 +50,7 @@ Subagents run inside the Session's Claude Code, so they stop with it, and the Hu
 
 ## Waking
 
-A prompt to an Asleep Session wakes it, as does **Wake now** on its banner. The Runner starts the same Sandbox again, so `node_modules`, package caches, Docker's data and Claude Code's state are as they were, and starts Claude Code in it with `--resume`, which keeps the conversation. Changing a Session's model or effort restarts its Claude Code the same way. Queued prompts are delivered once the mod has said hello. Interrupted subagents don't resume on their own: Claude Code tells Claude which ones can be, and a message to one, from its view, resumes it, waking the Session first if it's Asleep.
+A prompt to an Asleep Session wakes it, as do **Wake now** on its banner and a [`claude-hub forward`](/how-to/forward-a-sessions-ports/) of it. The Runner starts the same Sandbox again, so `node_modules`, package caches, Docker's data and Claude Code's state are as they were, and starts Claude Code in it with `--resume`, which keeps the conversation. Changing a Session's model or effort restarts its Claude Code the same way. Queued prompts are delivered once the mod has said hello. Interrupted subagents don't resume on their own: Claude Code tells Claude which ones can be, and a message to one, from its view, resumes it, waking the Session first if it's Asleep.
 
 A Session doesn't wake while its Runner is behind the Hub or updating: its prompts wait in the queue, and wake it once the Runner runs the Hub's commit.
 

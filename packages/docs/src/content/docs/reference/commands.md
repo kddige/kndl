@@ -29,6 +29,7 @@ Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-
 | `claude-hub login [<hub>] [--no-browser]` | Signs the CLI in to a Hub as you, approving it in a browser. See [below](#claude-hub-login). |
 | `claude-hub logout` | Signs the CLI out: the Hub revokes its CLI token, and the CLI forgets it. |
 | `claude-hub whoami` | Which Hub the CLI is signed in to, as whom, and on which machine. Exits 1 when it isn't signed in, or the Hub refuses or doesn't answer. |
+| `claude-hub forward [<session>] [<port>...] [--bind <address>]` | Opens a Session's Open ports on `localhost` here, as they open and close, until stopped. See [below](#claude-hub-forward). |
 | `claude-hub secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `claude-hub hub stop` first. Asks first; without a terminal it needs `--yes`. |
 
 `--help` on any command lists its flags, and `--version` prints the commit the CLI runs from, as `claude-hub v<commit>`.
@@ -110,6 +111,20 @@ It trades the code for a CLI token, named after the machine's short hostname, an
 
 `claude-hub logout` asks the Hub to revoke the token, and removes it from `cli.json`, keeping the Hub's URL. When the Hub can't be reached, it removes the token anyway and says to revoke the machine under **CLI tokens** on your **Account** page.
 
+### `claude-hub forward`
+
+Forwards a Session's Open ports to this machine, as the person the CLI is signed in as; see [Forward a Session's ports](/how-to/forward-a-sessions-ports/). It runs in the foreground until stopped. It works on any machine where the CLI is signed in, with or without an install.
+
+| Argument or flag | What it does |
+|---|---|
+| `<session>` | The Session: its id, the start of it, such as the 6-character short id the web UI shows, or its URL, `https://hub.example.com/sessions/<session id>`. The start of more than one Session's id is refused, listing them. Default: a picker of your Active Sessions in a terminal; without one, it prints that list and exits. |
+| `<port>...` | Only these of the Session's ports, each to the same port here, or `<port>:<local port>` to another. Default: every Open port, as they open and close. |
+| `--bind <address>` | The IP address to listen on, such as `0.0.0.0` for every interface. Default: `127.0.0.1` and `::1`, which `localhost` resolves to. |
+
+Each connection to a forwarded port is a [tunnel](/reference/protocol/#tunnels) of its own, through the Hub. A port taken here is skipped, naming the process `lsof` says holds it, and tried again every 2 seconds. A port the system refuses, below 1024 without privileges, is skipped. The CLI keeps one connection to the Hub for the Session, [a forward](/reference/protocol/#forwards), which counts as presence: it keeps the Session awake and wakes it if it is Asleep.
+
+In a terminal, it redraws the list as it changes. Esc closes the Session's forward and goes back to the picker, and Ctrl-C stops, exiting 0. Without a terminal it prints a line for each change. It exits 1, saying why, when the Session goes to sleep, is archived or can't be woken, when the CLI token is revoked, or when you lose access to the Session's Repo. When the Hub restarts or can't be reached, it keeps the ports open and reconnects.
+
 ## The `claude-hub` command from a Hub
 
 A Hub serves the same CLI, built from the commit it runs with `bun build --compile` into one binary, for macOS and Linux on arm64 and x64. Install it with the Hub's install script; see [Install the CLI from a Hub](/how-to/install-the-cli-from-a-hub/).
@@ -118,7 +133,7 @@ A Hub serves the same CLI, built from the commit it runs with `bun build --compi
 curl -fsSL https://hub.example.com/cli | sh
 ```
 
-It has the same commands, but runs none of the ones above that set up and run a Hub or a Runner from an install's checkout: only `login`, `logout` and `whoami`. Each says it needs a claude-hub install and how to get one, or, on a machine with an install, which command runs it, and exits 1. `--help` and `--version` work.
+It has the same commands, but runs none of the ones above that set up and run a Hub or a Runner from an install's checkout: only `login`, `logout`, `whoami` and `forward`. Each says it needs a claude-hub install and how to get one, or, on a machine with an install, which command runs it, and exits 1. `--help` and `--version` work.
 
 Each run first asks the Hub it was installed from for its commit, waiting up to two seconds. When the Hub runs another commit, it downloads that commit's binary, checks that it runs, renames it over itself and runs the command again. [`CLAUDE_HUB_NO_SELF_UPDATE`](/reference/configuration/#the-claude-hub-command-from-a-hub) turns that off. The CLI from an install never updates itself: `claude-hub update` updates it with the install.
 
