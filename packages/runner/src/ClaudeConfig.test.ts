@@ -17,7 +17,7 @@ import { BunServices } from "@effect/platform-bun"
 import { Effect } from "effect"
 import {
   claudeConfigPath,
-  hasTranscript,
+  hostTranscriptPath,
   loginFromClaudeConfig,
   planFromClaudeConfig,
   resolveRunnerLogin,
@@ -220,24 +220,28 @@ function writeTranscript(projects: string, cwd: string, id: string) {
   writeFileSync(join(folder, `${id}.jsonl`), "{}\n")
 }
 
-describe("hasTranscript", () => {
-  test("is false until Claude Code wrote the conversation's transcript for the directory", () => {
+describe("hostTranscriptPath", () => {
+  test("is undefined until Claude Code wrote the conversation's transcript for the directory", () => {
     const { projects, real } = setupProjects()
-    expect(hasTranscript(real, "conv-1", projects)).toBe(false)
+    expect(hostTranscriptPath(real, "conv-1", projects)).toBeUndefined()
     writeTranscript(projects, real, "conv-2")
-    expect(hasTranscript(real, "conv-1", projects)).toBe(false)
+    expect(hostTranscriptPath(real, "conv-1", projects)).toBeUndefined()
     writeTranscript(projects, real, "conv-1")
-    expect(hasTranscript(real, "conv-1", projects)).toBe(true)
+    expect(hostTranscriptPath(real, "conv-1", projects)).toBe(
+      join(projects, real.replace(/[^a-zA-Z0-9]/g, "-"), "conv-1.jsonl"),
+    )
   })
 
   test("finds the transcript under the directory's real path", () => {
     const { projects, real, linked } = setupProjects()
     writeTranscript(projects, real, "conv-1")
-    expect(hasTranscript(linked, "conv-1", projects)).toBe(true)
+    expect(hostTranscriptPath(linked, "conv-1", projects)).toBe(
+      join(projects, real.replace(/[^a-zA-Z0-9]/g, "-"), "conv-1.jsonl"),
+    )
   })
 
-  test("can't tell for a directory too long to name the way Claude Code does", () => {
+  test("finds none for a directory too long to name the way Claude Code does", () => {
     const { projects } = setupProjects()
-    expect(hasTranscript(`/${"a".repeat(240)}`, "conv-1", projects)).toBeUndefined()
+    expect(hostTranscriptPath(`/${"a".repeat(240)}`, "conv-1", projects)).toBeUndefined()
   })
 })

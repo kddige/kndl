@@ -21,8 +21,8 @@ import { WorkspaceGitLive } from "./WorkspaceGit.ts"
 
 /**
  * The Runner: settles an update it restarted for (see Updater.ts), reads its Runner login, trusts
- * its sessions root, re-adopts the Sessions still running in tmux, and stays connected to the Hub.
- * Never ends on its own.
+ * its sessions root, puts to sleep the Sessions an earlier Runner left running, and stays
+ * connected to the Hub. Never ends on its own.
  */
 export const runRunner = (
   options: { readonly claudeConfigPath?: string; readonly backoff?: Backoff } = {},
@@ -52,16 +52,13 @@ export const CredentialProxyHost = CredentialProxyLive.pipe(
 )
 
 /**
- * Sessions on this host: Claude Code in tmux, Workspaces cloned and committed to with host git,
- * and each Session's tools run in its own microsandbox VM. The sessions root is kept trusted in
- * Claude Code's config file. Each Session is given a Session token for the credential proxy.
+ * Sessions on this host: each Session's Claude Code runs in tmux in its own microsandbox VM, with
+ * a Session token for the credential proxy, and its Workspace is cloned and committed to with host
+ * git. The sessions root is kept trusted in Claude Code's config file.
  */
 export const SessionsHost = SessionsLive.pipe(
-  Layer.provide([
-    TmuxLive,
-    WorkspacesGitClone,
-    SessionSandboxesLive.pipe(Layer.provide(MicrosandboxBackend.layer)),
-  ]),
+  Layer.provide([TmuxLive, WorkspacesGitClone, SessionSandboxesLive]),
+  Layer.provide(MicrosandboxBackend.layer),
   Layer.provideMerge(WorkspaceGitLive),
   Layer.provideMerge(HubGitLive),
   Layer.provideMerge(HubVariablesLive),

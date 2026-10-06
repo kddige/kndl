@@ -84,6 +84,15 @@ test("parseCursorState reads display-message's answer", () => {
 test("renderSnapshot redraws the screen and puts the cursor back", () => {
   const cursor = { x: 2, y: 1, isVisible: true, size: { cols: 10, rows: 2 } }
   expect(renderSnapshot(["\x1b[1mab", "cd", "extra"], cursor)).toBe(
-    "\x1b[0m\x1b[H\x1b[2J\x1b[1mab\x1b[0m\r\ncd\x1b[0m\x1b[2;3H\x1b[?25h",
+    "\x1b[0m\x1b[H\x1b[2J\x1b[1mab\r\ncd\x1b[0m\x1b[2;3H\x1b[?25h",
+  )
+})
+
+// tmux's capture of Claude Code's prompt: the second line's text is white on the grey set on the
+// first, which a reset between them would leave white on the terminal's own background.
+test("renderSnapshot keeps attributes running from one line into the next", () => {
+  const cursor = { x: 0, y: 0, isVisible: false, size: { cols: 10, rows: 2 } }
+  expect(renderSnapshot(["\x1b[48;5;237mab\x1b[39m", "  \x1b[38;5;231mcd"], cursor)).toBe(
+    "\x1b[0m\x1b[H\x1b[2J\x1b[48;5;237mab\x1b[39m\r\n  \x1b[38;5;231mcd\x1b[0m\x1b[1;1H\x1b[?25l",
   )
 })

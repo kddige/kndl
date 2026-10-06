@@ -3,8 +3,8 @@
 // it, a variable reaching the Session's processes but not the VM's stored environment, a wake, a
 // recreate on a new version, and a Test build. It needs `msb` installed for the current user,
 // network access to Docker Hub and Alpine's packages, and to npm the first time a Claude Code
-// version is cached. It runs only `claude mcp serve` in the VM: no model calls, no credentials;
-// the variables are made up. Everything it creates is named it-49-… and removed at the end,
+// version is cached. It runs no Claude Code, only shell commands with the environment Claude Code
+// would get: no model calls, no credentials; the variables are made up. Everything it creates is named it-49-… and removed at the end,
 // pass or fail.
 //
 //   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/Environments.integration.test.ts
@@ -19,7 +19,6 @@ import type {
   RunnerToHub,
   SessionId,
   TestBuildId,
-  ToolBridgeReply,
 } from "@claude-hub/protocol"
 import { EnvironmentVersion } from "@claude-hub/protocol"
 import { devHome } from "@claude-hub/protocol/home"
@@ -28,9 +27,11 @@ import { Sandbox, Snapshot, Volume } from "microsandbox"
 import { buildGroup } from "./EnvironmentBuilds.ts"
 import { HubLink } from "./HubLink.ts"
 import { Sandboxes } from "./Sandbox.ts"
+import type { SandboxClaude } from "./Sandbox.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
-import { ensureSandboxClaude, hostClaudeVersion } from "./sandbox/SandboxClaude.ts"
+import { ensureSandboxClaude, PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
+import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { FakeHubVariables, variable } from "./testSupport.ts"
@@ -45,6 +46,8 @@ const repo = "acme/it-49" as RepoName
 const version = (n: number) => Schema.decodeSync(EnvironmentVersion)(n)
 const buildValue = "it49-build-made-up-1f3a"
 const runtimeValue = "it49-runtime-made-up-9c2e"
+/** The mod in this checkout, which every Sandbox mounts. */
+const modDir = join(import.meta.dir, "..", "..", "mod")
 
 const timings: Array<[string, number]> = []
 const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
@@ -56,22 +59,18 @@ const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
     }),
   )
 
-/** Runs `command` with the Session's Bash tool, through its bridge, as Claude Code would. */
-const bash = (socket: string, command: string) =>
+/** Runs `command` in the Session's Sandbox as Claude Code's Bash tool would: in the Workspace,
+ * with Claude Code's environment. */
+const bash = (sessionId: SessionId, claude: SandboxClaude, command: string) =>
   Effect.gen(function* () {
-    for (let attempt = 0; attempt < 50; attempt++) {
-      const reply = yield* Effect.promise(async () => {
-        const response = await fetch("http://bridge/tools/call", {
-          method: "POST",
-          unix: socket,
-          body: JSON.stringify({ tool: "Bash", input: { command } }),
-        })
-        return (await response.json()) as ToolBridgeReply
-      })
-      if (reply._tag === "ToolRan") return JSON.stringify(reply.result)
-      yield* Effect.sleep("200 millis")
-    }
-    return yield* Effect.die(new Error(`Bash never ran: ${command}`))
+    const backend = yield* SandboxBackend
+    const ran = yield* backend.exec(sessionId, {
+      command: "sh",
+      args: ["-c", command],
+      cwd: workspaceGuestPath,
+      env: claude.env,
+    })
+    return ran.stdout + ran.stderr
   })
 
 /** Every file under `path` holding `needle`, not following links. */
@@ -139,7 +138,6 @@ test.skipIf(!enabled)(
     const root = await mkdtemp(join(tmpdir(), "claude-hub-it-49-"))
     const directories = sessionDirectories(root, sessionId)
     await mkdir(directories.workspace, { recursive: true })
-    await mkdir(directories.claude, { recursive: true })
     await writeFile(join(directories.workspace, "package.json"), '{"name":"app"}\n')
     const cacheDir = process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(devHome.dir, "claude-code")
     const sent: Array<RunnerToHub> = []
@@ -153,16 +151,14 @@ test.skipIf(!enabled)(
       const sandboxes = yield* Sandboxes
       const backend = yield* SandboxBackend
       const snapshots = Option.getOrThrow(backend.snapshots)
-      const socket = directories.toolsSocket
       const v1 = { version: version(1), buildVersion: version(1), recipe }
 
       // The first start builds version 1, boots from it and runs the start script.
-      expect(
-        yield* timed(
-          "first start (build + restore + start script)",
-          sandboxes.start(sessionId, directories, { repo, environment: v1 }),
-        ),
-      ).toEqual({ environmentVersion: version(1) })
+      const started = yield* timed(
+        "first start (build + restore + start script)",
+        sandboxes.start(sessionId, directories, { repo, environment: v1 }),
+      )
+      expect(started.environmentVersion).toBe(version(1))
       const terminal = sent.flatMap((m) => (m._tag === "TerminalFrame" ? [m.data] : [])).join("")
       expect(terminal).toContain("bootstrapped")
       expect(terminal).toContain("started")
@@ -171,7 +167,8 @@ test.skipIf(!enabled)(
       const seen = yield* timed(
         "Bash: variables, build, folders, docker",
         bash(
-          socket,
+          sessionId,
+          started.claude,
           'echo "tool saw [$RUNTIME_ONLY]"; cat /root/build-saw /root/start-saw; ' +
             "command -v jq; grep -c RUNTIME_ONLY /proc/1/environ; " +
             "mkdir -p node_modules/dep && echo dependency > node_modules/dep/index.js; " +
@@ -211,23 +208,29 @@ test.skipIf(!enabled)(
 
       // A wake on the same version starts the same VM and binds the folders again.
       yield* timed("sleep", sandboxes.stop(sessionId, "Sleep"))
-      yield* timed(
+      const woken = yield* timed(
         "wake, same version",
         sandboxes.start(sessionId, directories, { repo, environment: v1 }),
       )
-      expect(yield* bash(socket, "cat node_modules/dep/index.js")).toContain("dependency")
+      expect(yield* bash(sessionId, woken.claude, "cat node_modules/dep/index.js")).toContain(
+        "dependency",
+      )
 
       // Version 2 changed no build input, so it keeps build 1: the Sandbox is recreated from it,
       // on the same disks, and the start script runs again.
       yield* sandboxes.stop(sessionId, "Sleep")
-      yield* timed(
+      const remade = yield* timed(
         "wake, new version (recreate)",
         sandboxes.start(sessionId, directories, {
           repo,
           environment: { ...v1, version: version(2) },
         }),
       )
-      const recreated = yield* bash(socket, "cat node_modules/dep/index.js /root/start-saw")
+      const recreated = yield* bash(
+        sessionId,
+        remade.claude,
+        "cat node_modules/dep/index.js /root/start-saw",
+      )
       expect(recreated).toContain("dependency")
       expect(recreated).toContain(`start saw [${runtimeValue}]`)
       expect((yield* snapshots.list(buildGroup(repo))).map((s) => s.name)).toEqual(["b1-musl"])
@@ -268,10 +271,11 @@ test.skipIf(!enabled)(
         sandboxClaude: (libc) =>
           timed(
             `find or cache Claude Code (${libc})`,
-            hostClaudeVersion("claude").pipe(
-              Effect.tap((v) => ensureSandboxClaude({ cacheDir, version: v, libc })),
+            ensureSandboxClaude({ cacheDir, version: PinnedClaudeVersion, libc }).pipe(
+              Effect.as(PinnedClaudeVersion),
             ),
           ),
+        modDir,
         limits: { cpus: 2, memoryMib: 2048 },
         keepBuilds: 2,
         cloneDefaultBranch: (_repo, directory) =>

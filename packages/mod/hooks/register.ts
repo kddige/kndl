@@ -1,23 +1,15 @@
-// hub-link: the mod a Runner loads into each Session's Claude Code (ADR 0001).
+// hub-link: the mod a Runner loads into each Session's Claude Code, which runs in the Session's
+// Sandbox (ADR 0013).
 //
-// - Tools: the file and command tools run in the Session's Sandbox through the Runner's tool
-//   bridge; WebSearch, a server tool that runs at Anthropic, is passed on to Claude Code without
-//   asking; every other tool is denied. Nothing else is passed on to Claude Code to run, so a
-//   tool can't reach the host even when the bridge is down: the call is refused instead. A call
-//   runs for as long as its tool allows; the mod cancels it in the Sandbox when the Turn is
-//   interrupted or the session ends (see src/ToolBridgeClient.ts).
+// - Tools: Claude Code runs them, in the Sandbox, without asking (ADR 0004). The mod reports each
+//   call to the Hub, and answers the Child Session tools from the Hub.
 // - The Hub: says hello, reports the Turn's events, and takes prompts, stops and presence from
 //   the Hub (see HubLink.ts).
 // - Child Sessions (ADR 0012): a Session that isn't a Child Session gets the tools that create
 //   and coordinate them; a Child Session gets one, to message its parent. The Hub answers both
 //   (see src/ChildTools.ts).
-// - The person at the terminal: a band above the prompt shows the Participants, and the `!`
-//   shell shortcut, which would run a command on the host, is refused.
-// - The model: the system prompt says the Session is shared, and describes the Sandbox, where its
-//   tools run, in place of Claude Code's description of the host.
-// - The Repo: its CLAUDE.md and skills, which the Runner copied out of the Sandbox, stand in for
-//   any instruction files from the host, and its skills point at the Workspace (see
-//   src/RepoFiles.ts).
+// - The person at the terminal: a band above the prompt shows the Participants.
+// - The model: the system prompt says the Session is shared.
 //
 // The rest of the mod, with Effect and the protocol, is bundled from src/ into
 // hooks/hub-link-lib.js (`bun run build`): Claude Code's mod runtime loads no package but its
@@ -31,43 +23,28 @@ import {
   childToolRequest,
   childTools,
   clip,
-  decideTool,
   HubLink,
-  isClaudeCodeTool,
-  newCallId,
   parentTools,
-  parseRepoInstructions,
   promptFromParticipant,
-  ReadBeforeEdit,
-  repoInstructionsFile,
   resultSummary,
-  runInSandbox,
-  sandboxEnvironment,
   sharedSessionNote,
-  skillInWorkspace,
-  startsShellMode,
   toolArguments,
   turnEndReason,
   turnUsage,
-  withRepoInstructions,
 } from "./hub-link-lib.js"
 import type {
-  BridgeExchange,
   FromSession,
   LinkStatus,
   ModCommand,
   Participant,
-  SandboxFacts,
   ToolAnswer,
   ToolCallOutcome,
-  ToolDecision,
 } from "./hub-link-lib.js"
 
 const plugin = "hub-link"
 
 // The environment variables the Runner sets (the Runner's ClaudeLaunch.ts) are read by literal
-// name: the loader lists a module's variables from its `$.env.get` calls. The tools socket's name
-// is the protocol's ToolsSocketVariable (src/HubMessages.spec.ts checks they match).
+// name: the loader lists a module's variables from its `$.env.get` calls.
 
 const band = atom(
   { plugin: "hub-link", key: "band" } as const,
@@ -81,11 +58,6 @@ const band = atom(
 /** The module's own state; a reload starts it over, and fires `session.start` again. */
 const state = {
   link: undefined as HubLink | undefined,
-  toolsSocket: undefined as string | undefined,
-  /** What the Runner said about the Sandbox; null when no Runner started this Claude Code. */
-  sandbox: undefined as SandboxFacts | null | undefined,
-  /** Where the Runner copied the Repo's skills and CLAUDE.md; null when it copied none. */
-  repoFiles: undefined as string | null | undefined,
   /** The Turn running on the main loop. */
   mainTurn: undefined as string | undefined,
   /** The Turn each subagent's loop is in, from its steps; tool calls carry only the agent. */
@@ -101,10 +73,7 @@ const state = {
         readonly fromSession: FromSession | undefined
       }
     | undefined,
-  readBeforeEdit: new ReadBeforeEdit(),
   minted: 0,
-  /** The calls running in the Sandbox, by the id the bridge knows each by. */
-  running: new Set<string>(),
 }
 
 const report = (event: Record<string, unknown>) => state.link?.report(event)
@@ -210,90 +179,6 @@ const answerChildTool = async (
     : { _tag: "Failed", message: answer.refused }
 }
 
-const sandboxFacts = async ($: EngineInterface) => {
-  if (state.sandbox !== undefined) return state.sandbox
-  const [workspace, repo, workBranch] = await Promise.all([
-    $.env.get("CLAUDE_HUB_WORKSPACE"),
-    $.env.get("CLAUDE_HUB_REPO"),
-    $.env.get("CLAUDE_HUB_WORK_BRANCH"),
-  ])
-  state.sandbox = workspace
-    ? { workspace, repo: repo || undefined, workBranch: workBranch || undefined }
-    : null
-  return state.sandbox
-}
-
-const repoFilesDirectory = async ($: EngineInterface) => {
-  if (state.repoFiles !== undefined) return state.repoFiles
-  state.repoFiles = (await $.env.get("CLAUDE_HUB_REPO_FILES"))?.replace(/\/+$/, "") || null
-  return state.repoFiles
-}
-
-/** The Repo's instruction files, as the Runner copied them; none when it copied none. */
-const repoInstructions = async ($: EngineInterface, directory: string) => {
-  try {
-    return parseRepoInstructions(String(await $.fs.read(`${directory}/${repoInstructionsFile}`)))
-  } catch (error) {
-    $.ui.log(`hub-link: no Repo instructions: ${error}`, { to: "debug" })
-    return []
-  }
-}
-
-/** One exchange with the tool bridge, through Claude Code's fetch. */
-const bridgeExchange =
-  ($: EngineInterface): BridgeExchange =>
-  (socketPath, request) =>
-    $.http.fetch(`http://tool-bridge${request.path}`, {
-      method: request.method,
-      socketPath,
-      ...(request.body === undefined
-        ? {}
-        : { headers: { "content-type": "application/json" }, body: request.body }),
-    })
-
-/** Answers a tool call the mod doesn't leave to Claude Code: from the Sandbox, or refused. */
-const answerToolCall = async (
-  $: EngineInterface,
-  decision: Exclude<ToolDecision, { readonly _tag: "LeaveToClaudeCode" }>,
-  input: Record<string, unknown>,
-  toolUseId: string | undefined,
-  signal: AbortSignal,
-): Promise<ToolAnswer> => {
-  if (decision._tag === "Deny") return { _tag: "Refused", message: decision.reason }
-  const unread = state.readBeforeEdit.check(decision.tool, input)
-  if (unread !== undefined) return { _tag: "Failed", message: unread }
-  state.toolsSocket ??= (await $.env.get("CLAUDE_HUB_TOOLS_SOCKET")) || undefined
-  const callId = newCallId(toolUseId)
-  state.running.add(callId)
-  try {
-    const answer = await runInSandbox(bridgeExchange($), state.toolsSocket, decision.tool, input, {
-      callId,
-      signal,
-    })
-    if (answer._tag === "Ran") state.readBeforeEdit.record(decision.tool, input, answer.result)
-    return answer
-  } finally {
-    state.running.delete(callId)
-  }
-}
-
-/** Cancels the calls still running in the Sandbox, as the session ends. */
-const cancelRunning = async ($: EngineInterface) => {
-  const socketPath = state.toolsSocket
-  const running = [...state.running]
-  state.running.clear()
-  if (socketPath === undefined) return
-  const exchange = bridgeExchange($)
-  await Promise.all(
-    running.map((callId) =>
-      exchange(socketPath, {
-        method: "DELETE",
-        path: `/tools/calls/${encodeURIComponent(callId)}`,
-      }).catch(() => undefined),
-    ),
-  )
-}
-
 const outcomes: Record<ToolAnswer["_tag"], ToolCallOutcome> = {
   Ran: "Succeeded",
   Failed: "Failed",
@@ -310,13 +195,12 @@ export function register(on: On) {
 
   on("session.end", async ($, e, next) => {
     const ended = await next(e)
-    await Promise.all([cancelRunning($), state.link?.flushNow()])
+    await state.link?.flushNow()
     return ended
   })
 
-  // Every tool call is answered here: from the Sandbox, from the Hub (the Child Session tools), or
-  // refused. Only WebSearch, which runs at Anthropic rather than on the host (#126), is passed on to
-  // Claude Code.
+  // Every tool call is reported to the Hub. The Child Session tools are answered from the Hub;
+  // Claude Code runs every other, in the Sandbox.
   on("tool.call", async ($, e, next) => {
     const tool = String(e.tool)
     const input = toolArguments(e as unknown as Record<string, unknown>)
@@ -338,20 +222,13 @@ export function register(on: On) {
         report({ _tag: "ToolCallEnded", turnId, ...loop, toolCallId, tool, outcome, output })
     }
     const childRequest = childToolRequest(tool, input)
-    let answer: ToolAnswer
-    if (childRequest !== undefined) answer = await answerChildTool(childRequest)
-    else {
-      const decision = decideTool(tool, input)
-      if (decision._tag === "LeaveToClaudeCode") {
-        const done = await next(e)
-        if (done.deny !== undefined) ended("Denied", clip(done.deny))
-        else ended(done.isError ? "Failed" : "Succeeded", resultSummary(tool, done.result))
-        return done
-      }
-      // Waiting on the bridge is `$` calls, which the hook's budget doesn't count, so a call may
-      // run for as long as its tool allows. `next.signal` aborts when the Turn is interrupted.
-      answer = await answerToolCall($, decision, input, e.tool_use_id || undefined, next.signal)
+    if (childRequest === undefined) {
+      const done = await next(e)
+      if (done.deny !== undefined) ended("Denied", clip(done.deny))
+      else ended(done.isError ? "Failed" : "Succeeded", resultSummary(tool, done.result))
+      return done
     }
+    const answer = await answerChildTool(childRequest)
     ended(
       outcomes[answer._tag],
       answer._tag === "Ran" ? resultSummary(tool, answer.result) : clip(answer.message),
@@ -359,16 +236,11 @@ export function register(on: On) {
     // A hook's `{ isError, result }` fails Claude Code's output check (spike #2), so a tool that
     // reported an error is answered as a deny: the model reads the same text as an error result.
     return answer._tag === "Ran" ? ({ result: answer.result } as never) : { deny: answer.message }
-  }).catch((_$, e) => ({
-    // A hook that throws or overruns would let Claude Code run the tool on the host.
-    deny: `${String(e.tool)} was refused: hub-link failed while answering it. It never runs on the host.`,
-  }))
+  })
 
-  // Sessions never ask for approval (ADR 0004): a tool left to Claude Code runs without asking.
-  // Every other tool is answered or refused at `tool.call`, before Claude Code would decide.
-  on("tool.check", async ($, e, next) =>
-    isClaudeCodeTool(e.tool) ? { decision: "allow" as const } : next(e),
-  )
+  // Sessions never ask for approval (ADR 0004): Claude Code runs with its permission prompts
+  // bypassed, and a mode switched to at the terminal asks for none either.
+  on("tool.check", async () => ({ decision: "allow" as const }))
 
   on("turn.start", async ($, e, next) => {
     state.mainTurn = e.turnId
@@ -419,62 +291,12 @@ export function register(on: On) {
 
   on("prompt.compose", async ($, e, next) => {
     const composed = await next(e)
-    const sandbox = await sandboxFacts($)
     return {
       sections: [
         ...composed.sections,
         { id: `${plugin}:shared-session`, text: sharedSessionNote, scope: "session" },
-        ...(sandbox === null
-          ? []
-          : [
-              {
-                id: `${plugin}:sandbox-environment`,
-                text: sandboxEnvironment(sandbox),
-                scope: "session" as const,
-              },
-            ]),
       ],
     }
-  })
-
-  // Claude Code's environment block describes the host (its directory, platform and OS), and comes
-  // only with a prompt typed at the terminal, so late in a Session driven from the Hub (#127). The
-  // Sandbox's is in the system prompt instead, so the host's is left out.
-  on("prompt.attachment", { type: "environment" }, async ($, e, next) =>
-    (await sandboxFacts($)) === null ? next(e) : { text: null },
-  )
-
-  // The Repo's CLAUDE.md, read in the Sandbox by the Runner, is the Session's project instructions
-  // (#125). Claude Code loads no project's from the host (`--setting-sources ""`); any other file
-  // it found there, but the organization's managed policy, is left out too. A hook above that
-  // rewrote the instructions' text leaves their files unknown, and then none is added.
-  on("prompt.context", async ($, e, next) => {
-    const context = await next(e)
-    const directory = await repoFilesDirectory($)
-    if (directory === null || context.instructionFiles === undefined) return context
-    return {
-      blocks: context.blocks,
-      instructionFiles: withRepoInstructions(
-        context.instructionFiles,
-        await repoInstructions($, directory),
-      ),
-    }
-  })
-
-  // A Repo skill's directory is the copy on the host Claude Code loaded it from; the model's tools
-  // run in the Sandbox, where the skill's own files are, so its prompt points there.
-  on("skill.prompt", async ($, e, next) => {
-    const prompt = await next(e)
-    const [directory, sandbox] = await Promise.all([repoFilesDirectory($), sandboxFacts($)])
-    if (directory === null || sandbox === null) return prompt
-    return { text: skillInWorkspace(prompt.text, directory, sandbox.workspace) }
-  })
-
-  // `!` runs a shell command on the host, outside every tool hook (spike #2): refuse the key.
-  on("prompt.edit", async ($, e, next) => {
-    if (!startsShellMode(e)) return next(e)
-    $.ui.toast("Shell commands (!) are off in a Claude Hub Session: ask Claude to run them.")
-    return { text: e.text, cursor: e.cursor }
   })
 
   on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {

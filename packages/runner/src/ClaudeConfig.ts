@@ -222,30 +222,30 @@ export function claudeProjectDirName(cwd: string): string | undefined {
 }
 
 /**
- * Whether Claude Code keeps a transcript of conversation `id` begun in `cwd`, the directory it
- * ran in: `<projects>/<cwd's name>/<id>.jsonl`, looked for under `cwd` as given and as its real
- * path. `--resume` of a conversation without one fails, as when Claude Code exited before it
- * wrote any (#105). Undefined when it can't tell: a path too long to name the way Claude Code
- * does.
+ * Where Claude Code on the host kept the transcript of conversation `id` begun in `cwd`, the
+ * directory it ran in: `<projects>/<cwd's name>/<id>.jsonl`, looked for under `cwd` as given and
+ * as its real path. Undefined when there is none, as for a conversation Claude Code never wrote
+ * to, or a path too long to name the way Claude Code does. Sessions ran Claude Code on the host
+ * before it moved into their Sandboxes (ADR 0013), whose first wake copies it from here.
  */
-export function hasTranscript(
+export function hostTranscriptPath(
   cwd: string,
   id: string,
   projectsDir: string = claudeProjectsDir(),
   exists: (path: string) => boolean = existsSync,
-): boolean | undefined {
+): string | undefined {
   let real = cwd
   try {
     real = realpathSync(cwd)
   } catch {
-    // It doesn't exist (yet): the path as given is all there is.
+    // It doesn't exist (any more): the path as given is all there is.
   }
-  const names = [...new Set([cwd, real])].map(claudeProjectDirName)
-  const found = names.some(
-    (name) => name !== undefined && exists(join(projectsDir, name, `${id}.jsonl`)),
-  )
-  if (found) return true
-  return names.includes(undefined) ? undefined : false
+  for (const name of new Set([cwd, real].map(claudeProjectDirName))) {
+    if (name === undefined) continue
+    const path = join(projectsDir, name, `${id}.jsonl`)
+    if (exists(path)) return path
+  }
+  return undefined
 }
 
 function parseConfig(text: string, path: string): Record<string, unknown> {

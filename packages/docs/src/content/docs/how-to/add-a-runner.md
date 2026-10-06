@@ -141,21 +141,16 @@ Every Runner setting is in the [configuration reference](/reference/configuratio
 ## What the Runner does on start
 
 - **Trusts its sessions root** in Claude Code's config file (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`), so Sessions skip Claude Code's folder-trust dialog. It sets one entry, for the root, and never creates the file: if Claude Code has never run on the machine, it warns and each Session asks.
-- **Re-adopts its Sessions** still running in tmux from before, restarting each one's Sandbox if it stopped.
-- **Reconciles its Sandboxes.** It stops (never destroys) a Sandbox of its own whose Session it doesn't run, and only logs Sandboxes of other Runners on the same machine.
+- **Puts its Sessions to sleep.** It stops (never destroys) every Sandbox of its own, with the Claude Code in it: the Session tokens it ran on went with the old process. The Hub records them Asleep, and wakes those with prompts waiting. Sandboxes of other Runners on the same machine it only logs.
 
 If the Hub goes away, the Runner reconnects with backoff, from half a second doubling up to 30 seconds.
 
 ## Stop or restart it
 
-Ctrl-C (SIGINT) or SIGTERM stops the Runner at once; `claude-hub runner stop` stops an installed one. Its Sessions keep running in tmux, on its own tmux server (`tmux -L claude-hub-dev` from a checkout, `tmux -L claude-hub` installed), and it re-adopts them when it starts again. While it is offline its Sessions are Frozen: readable, with prompts waiting in their queues.
+Ctrl-C (SIGINT) or SIGTERM stops the Runner at once; `claude-hub runner stop` stops an installed one. While it is offline its Sessions are Frozen: readable, with prompts waiting in their queues. When it starts again it puts them to sleep, and the next prompt wakes each one with its conversation, in the same Sandbox.
 
-To look at a Session's Claude Code by hand:
-
-```sh
-tmux -L claude-hub-dev attach -t hub-<session id>
-```
+To look at a Session's Claude Code by hand, open its **Terminal** tab. It runs in tmux in the Session's Sandbox, on server `claude-hub`, as session `hub-<session id>`.
 
 ## Run two Runners on one machine
 
-Two Runners can share a machine, and so its microsandbox, for example a dev Runner from a checkout and an installed one. Give them different tmux sockets and sessions roots (`RUNNER_TMUX_SOCKET`, `RUNNER_SESSIONS_ROOT`): those two settings make up each Runner's mark, which decides which Sessions it re-adopts and which Sandboxes it reconciles. A Runner never touches another's.
+Two Runners can share a machine, and so its microsandbox, for example a dev Runner from a checkout and an installed one. Give them different tmux sockets and sessions roots (`RUNNER_TMUX_SOCKET`, `RUNNER_SESSIONS_ROOT`): those two settings make up each Runner's mark, which decides which Sandboxes it reconciles. A Runner never touches another's.

@@ -1,6 +1,11 @@
+// The terminals Sessions run in: one tmux session per Session, on a tmux server inside the
+// Session's Sandbox (ADR 0013). tmux runs through the backend's exec, never the `msb` command
+// line, which returns output only once a command exits. The server dies with the VM, so a
+// Session's terminal lasts as long as its Sandbox runs.
+
 import { MaxLastOutputLength, type SessionId, type TerminalSize } from "@claude-hub/protocol"
 import { Context, Data, Effect, Layer, Queue, type Scope, Stream } from "effect"
-import { ChildProcess, ChildProcessSpawner } from "effect/process"
+import { ChildProcessSpawner } from "effect/process"
 import {
   type ControlEvent,
   ControlModeParser,
@@ -9,9 +14,11 @@ import {
   parseCursorState,
   renderSnapshot,
 } from "./ControlMode.ts"
-import { hostEnvironment, runCommand } from "./Process.ts"
+import { runCommand } from "./Process.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
-import { sessionIdOfTmuxName, tmuxSessionName } from "./SessionNames.ts"
+import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
+import type { SandboxBackendShape, SandboxError } from "./sandbox/SandboxBackend.ts"
+import { tmuxSessionName } from "./SessionNames.ts"
 
 export class TmuxError extends Data.TaggedError("TmuxError")<{
   readonly message: string
@@ -30,7 +37,7 @@ export type PaneEvent =
 export interface Pane {
   /**
    * Everything the terminal does from now on. Ends after `Exited`, or without it when the tmux
-   * session is gone. Consume it once.
+   * session or its Sandbox is gone. Consume it once.
    */
   readonly events: Stream.Stream<PaneEvent>
   /** Types `data` into the terminal, byte for byte. */
@@ -45,113 +52,39 @@ export interface Pane {
 
 export interface LaunchSpec {
   readonly sessionId: SessionId
+  /** The directory it starts in, in the Sandbox. */
   readonly cwd: string
   readonly argv: ReadonlyArray<string>
   /**
-   * Added to the tmux server's environment for this process. `PWD` (the cwd) and the Runner's
-   * own `PATH` are always added too: see {@link paneEnvironment}.
+   * Its environment, over the tmux server's. Given to this process alone (`new-session -e`),
+   * never to the server or the Sandbox, so it may hold the Session token (ADR 0013).
    */
   readonly env: Readonly<Record<string, string>>
   readonly size: TerminalSize
 }
 
-/** The variables of a tmux server's global environment that matter to a launch (#105). */
-export interface ServerEnvironment {
-  readonly PWD?: string
-  readonly OLDPWD?: string
-  readonly PATH?: string
-}
-
-/** What {@link Tmux}'s `claimServer` found on the Runner's tmux socket, and did about it. */
-export type ServerClaim =
-  /** No server runs on the socket: the first launch starts one with the Runner's environment. */
-  | { readonly _tag: "NoServer" }
-  /**
-   * A server with no sessions, perhaps left by another Runner (as one run from a checkout since
-   * deleted): it was killed, so the first launch starts a fresh one. `changed` says how its
-   * environment differed from the Runner's, as for `Refreshed`.
-   */
-  | { readonly _tag: "Replaced"; readonly changed: ReadonlyArray<string> }
-  /**
-   * A server with sessions, which is never killed: its global `PATH` was set to the Runner's, and
-   * `PWD` and `OLDPWD` unset. `changed` says what was different, empty when nothing was.
-   */
-  | {
-      readonly _tag: "Refreshed"
-      readonly sessions: number
-      readonly changed: ReadonlyArray<string>
-    }
-
-/**
- * The terminals Sessions run in: one tmux session per Session, on the Runner's own tmux server,
- * so they outlive the Runner and are re-adopted when it restarts.
- */
+/** The terminals Sessions run in: one tmux session per Session, in the Session's Sandbox. */
 export class Tmux extends Context.Service<
   Tmux,
   {
-    /**
-     * Makes the server on the Runner's socket one with the Runner's environment, at startup: one
-     * with no sessions is killed, one with sessions has its environment refreshed (#105).
-     */
-    readonly claimServer: Effect.Effect<ServerClaim, TmuxError>
-    /** The Sessions whose tmux session exists, whether or not its process still runs. */
-    readonly list: Effect.Effect<ReadonlyArray<SessionId>, TmuxError>
-    /** Starts `argv` in a new detached tmux session for the Session. */
+    /** Starts `argv` in a new detached tmux session in the Session's running Sandbox. */
     readonly launch: (spec: LaunchSpec) => Effect.Effect<void, TmuxError>
     readonly attach: (sessionId: SessionId) => Effect.Effect<Pane, TmuxError, Scope.Scope>
     /**
      * The last lines the Session's terminal shows, as plain text: see {@link lastOutputOf}. Read
      * from a dead pane, before {@link kill}, it is what Claude Code printed before it exited.
-     * Empty when there is nothing, or no such tmux session.
+     * Empty when there is nothing, or no such tmux session or running Sandbox.
      */
     readonly lastOutput: (sessionId: SessionId) => Effect.Effect<string>
     /** Ends the Session's tmux session and anything still running in it. */
     readonly kill: (sessionId: SessionId) => Effect.Effect<void>
+    /**
+     * Stops the Runner's tmux server on the host, where Sessions ran Claude Code before it moved
+     * into their Sandboxes (ADR 0013), if one is left from before the upgrade. Run once, at startup.
+     */
+    readonly retireHostServer: Effect.Effect<void>
   }
 >()("@claude-hub/runner/Tmux") {}
-
-/**
- * The environment a Session's process gets on top of the tmux server's: `env`, with `PWD` set to
- * the directory it starts in and `PATH` to the Runner's own. Never what the server had: a server
- * started by another process (a Runner run from a checkout since deleted, say) keeps that
- * process's `PWD` and `PATH` in its global environment, and Claude Code trusts `PWD`, exiting
- * with "The current working directory was deleted" when it is gone (#105).
- */
-export function paneEnvironment(
-  spec: Pick<LaunchSpec, "cwd" | "env">,
-  runnerPath: string | undefined,
-): Record<string, string> {
-  return {
-    ...(runnerPath === undefined ? {} : { PATH: runnerPath }),
-    ...spec.env,
-    PWD: spec.cwd,
-  }
-}
-
-/** `show-environment -g`'s answer, as the variables set: a `-NAME` line is one unset. */
-export function parseServerEnvironment(stdout: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const line of stdout.split("\n")) {
-    const at = line.indexOf("=")
-    if (line.startsWith("-") || at <= 0) continue
-    out[line.slice(0, at)] = line.slice(at + 1)
-  }
-  return out
-}
-
-/** What refreshing a server's environment to the Runner's changes, said for the Runner's log. */
-export function environmentChanges(
-  before: ServerEnvironment,
-  runnerPath: string | undefined,
-): ReadonlyArray<string> {
-  const changes: Array<string> = []
-  if (runnerPath !== undefined && before.PATH !== runnerPath) {
-    changes.push(`PATH was ${before.PATH ?? "unset"}`)
-  }
-  if (before.PWD !== undefined) changes.push(`PWD was ${before.PWD}`)
-  if (before.OLDPWD !== undefined) changes.push(`OLDPWD was ${before.OLDPWD}`)
-  return changes
-}
 
 /** How many lines of a dead pane {@link lastOutputOf} keeps. */
 export const LastOutputLines = 40
@@ -188,169 +121,156 @@ export function lastOutputOf(
 }
 
 /**
- * tmux through its command line, and one control-mode client (`tmux -C`) per attached Session,
- * which streams the pane's output and takes commands whose replies arrive in order with it.
+ * The tmux server in each Sandbox, `tmux -L claude-hub`: apart from any tmux the agent starts
+ * there itself. `-f /dev/null`: an image's tmux.conf must not change how Sessions behave.
  */
-export const TmuxLive = Layer.effect(
-  Tmux,
-  Effect.gen(function* () {
-    const config = yield* RunnerConfig
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-    // `-f /dev/null`: the user's tmux.conf must not change how Sessions behave.
-    const server = ["-L", config.tmuxSocket, "-f", "/dev/null"]
+const guestServer = ["-L", "claude-hub", "-f", "/dev/null"]
 
-    const tmux = (args: ReadonlyArray<string>) =>
-      runCommand("tmux", [...server, ...args]).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.mapError((error) => new TmuxError({ message: error.message })),
-      )
+/** What the Tmux service needs of a Sandbox backend: running commands. */
+export type TmuxBackend = Pick<SandboxBackendShape, "exec" | "spawn">
 
-    const runnerPath = hostEnvironment().PATH
+const sandboxMessage = (error: SandboxError) =>
+  error._tag === "InvalidSandboxSpec" || error._tag === "SandboxBackendError"
+    ? error.message
+    : `${error._tag} (${error.sessionId})`
 
-    // The server stays up with no sessions, keeps a dead pane so its exit status can be read,
-    // sizes windows only when told to, and has no status line taking a row from the terminal.
-    // It outlives the Runner, so it does not keep the Runner's working directory as `PWD`: that
-    // directory may be deleted by the time the server next starts a Session (#105).
-    const configureServer = tmux(
+/**
+ * tmux in Sessions' Sandboxes through `backend`: its command line for each command, and one
+ * control-mode client (`tmux -C`) per attached Session, which streams the pane's output and takes
+ * commands whose replies arrive in order with it.
+ */
+export const makeTmux = (backend: TmuxBackend) => {
+  // A failure's message is tmux's own, never its arguments: a launch's carry the Session token.
+  const tmux = (sessionId: SessionId, args: ReadonlyArray<string>) =>
+    backend.exec(sessionId, { command: "tmux", args: [...guestServer, ...args] }).pipe(
+      Effect.mapError((error) => new TmuxError({ message: sandboxMessage(error) })),
+      Effect.flatMap((result) =>
+        result.exitCode === 0
+          ? Effect.succeed(result.stdout)
+          : Effect.fail(
+              new TmuxError({
+                message: `tmux ${args[0] ?? ""} exited with ${result.exitCode}: ${
+                  result.stderr.trim() || result.stdout.trim() || "no output"
+                }`,
+              }),
+            ),
+      ),
+    )
+
+  // The server stays up with no sessions, keeps a dead pane so its exit status can be read, sizes
+  // windows only when told to, and has no status line taking a row from the terminal. Focus events
+  // pass through, or Claude Code prints a hint to turn them on in a tmux.conf. Window size is the
+  // window's own, never the server's: tmux 3.3 (Debian 12's) crashes when the global option is
+  // manual and there is no session, which is what a relaunch starts from.
+  const launch = (spec: LaunchSpec) =>
+    tmux(
+      spec.sessionId,
       sequence([
         ["start-server"],
         ["set-option", "-g", "exit-empty", "off"],
         ["set-option", "-g", "remain-on-exit", "on"],
-        ["set-option", "-g", "window-size", "manual"],
         ["set-option", "-g", "status", "off"],
-        ["set-environment", "-gu", "PWD"],
-        ["set-environment", "-gu", "OLDPWD"],
+        ["set-option", "-g", "focus-events", "on"],
+        [
+          "new-session",
+          "-d",
+          "-s",
+          tmuxSessionName(spec.sessionId),
+          "-x",
+          String(spec.size.cols),
+          "-y",
+          String(spec.size.rows),
+          "-c",
+          spec.cwd,
+          ...Object.entries(spec.env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
+          "--",
+          ...spec.argv,
+        ],
+        ["set-option", "-w", "-t", `=${tmuxSessionName(spec.sessionId)}:`, "window-size", "manual"],
       ]),
+    ).pipe(Effect.asVoid)
+
+  // `-J` joins the lines tmux wrapped; without `-e` the text comes without colours.
+  const lastOutput = (sessionId: SessionId) =>
+    tmux(sessionId, [
+      "capture-pane",
+      "-p",
+      "-J",
+      "-S",
+      String(-LastOutputScrollback),
+      "-t",
+      `=${tmuxSessionName(sessionId)}:`,
+    ]).pipe(
+      Effect.map(lastOutputOf),
+      Effect.orElseSucceed(() => ""),
     )
 
-    const sessionNames = tmux(["list-sessions", "-F", "#{session_name}"]).pipe(
-      Effect.map(({ stdout }) =>
-        stdout
-          .split("\n")
-          .map((name) => name.trim())
-          .filter((name) => name !== ""),
-      ),
-      // No server yet means no sessions; some tmux versions say so for a server without any.
-      Effect.catchIf(
-        (error) => noServer(error) || /no sessions/.test(error.message),
-        () => Effect.succeed([]),
-      ),
-    )
+  const kill = (sessionId: SessionId) =>
+    tmux(sessionId, ["kill-session", "-t", `=${tmuxSessionName(sessionId)}`]).pipe(Effect.ignore)
 
-    const list = sessionNames.pipe(
-      Effect.map((names) =>
-        names.flatMap((name) => {
-          const id = sessionIdOfTmuxName(name)
-          return id === undefined ? [] : [id]
-        }),
-      ),
-    )
-
-    const claimServer: Effect.Effect<ServerClaim, TmuxError> = Effect.gen(function* () {
-      const shown = yield* tmux(["show-environment", "-g"]).pipe(
-        Effect.map(({ stdout }) => parseServerEnvironment(stdout)),
-        Effect.catchIf(noServer, () => Effect.succeed(undefined)),
+  const attach = (sessionId: SessionId) =>
+    Effect.gen(function* () {
+      const target = `=${tmuxSessionName(sessionId)}`
+      const stdout = yield* tmux(sessionId, [
+        "display-message",
+        "-p",
+        "-t",
+        `${target}:`,
+        "#{window_width} #{window_height}",
+      ])
+      const [cols = 0, rows = 0] = stdout.trim().split(" ").map(Number)
+      const client = yield* backend
+        .spawn(sessionId, {
+          command: "tmux",
+          args: [...guestServer, "-u", "-C", "attach-session", "-t", target],
+        })
+        .pipe(Effect.mapError((error) => new TmuxError({ message: sandboxMessage(error) })))
+      const commands = yield* Queue.unbounded<string>()
+      yield* Stream.fromQueue(commands).pipe(
+        Stream.runForEach((command) => client.write(command)),
+        Effect.ignore,
+        Effect.forkScoped,
       )
-      if (shown === undefined) return { _tag: "NoServer" } as const
-      const environment: ServerEnvironment = {
-        ...(shown.PWD === undefined ? {} : { PWD: shown.PWD }),
-        ...(shown.OLDPWD === undefined ? {} : { OLDPWD: shown.OLDPWD }),
-        ...(shown.PATH === undefined ? {} : { PATH: shown.PATH }),
-      }
-      const changed = environmentChanges(environment, runnerPath)
-      const sessions = (yield* sessionNames).length
-      if (sessions === 0) {
-        yield* tmux(["kill-server"]).pipe(Effect.catchIf(noServer, () => Effect.void))
-        return { _tag: "Replaced", changed } as const
-      }
-      yield* tmux(
-        sequence([
-          ...(runnerPath === undefined ? [] : [["set-environment", "-g", "PATH", runnerPath]]),
-          ["set-environment", "-gu", "PWD"],
-          ["set-environment", "-gu", "OLDPWD"],
-        ]),
+      const pane = new ControlPane(commands, `${target}:`, {
+        cols: Math.max(cols, 1),
+        rows: Math.max(rows, 1),
+      })
+      yield* pane.issue(`refresh-client -B '${ExitSubscription}::#{pane_dead} #{pane_dead_status}'`)
+      return pane.toPane(
+        client.events.pipe(
+          Stream.filter((event) => event._tag === "Stdout"),
+          Stream.map((event) => event.data),
+        ),
       )
-      return { _tag: "Refreshed", sessions, changed } as const
     })
 
-    const launch = (spec: LaunchSpec) =>
-      Effect.gen(function* () {
-        yield* configureServer
-        yield* tmux(
-          [
-            "new-session",
-            "-d",
-            "-s",
-            tmuxSessionName(spec.sessionId),
-            "-x",
-            String(spec.size.cols),
-            "-y",
-            String(spec.size.rows),
-            "-c",
-            spec.cwd,
-            ...Object.entries(paneEnvironment(spec, runnerPath)).flatMap(([key, value]) => [
-              "-e",
-              `${key}=${value}`,
-            ]),
-            "--",
-            ...spec.argv,
-          ].map(literalArgument),
-        )
-      })
+  return { launch, attach, lastOutput, kill }
+}
 
-    // `-J` joins the lines tmux wrapped; without `-e` the text comes without colours.
-    const lastOutput = (sessionId: SessionId) =>
-      tmux([
-        "capture-pane",
-        "-p",
-        "-J",
-        "-S",
-        String(-LastOutputScrollback),
-        "-t",
-        `=${tmuxSessionName(sessionId)}:`,
-      ]).pipe(
-        Effect.map(({ stdout }) => lastOutputOf(stdout)),
-        Effect.orElseSucceed(() => ""),
-      )
+/** tmux in the Sandboxes of the Runner's backend. */
+export const TmuxLive = Layer.effect(
+  Tmux,
+  Effect.gen(function* () {
+    const backend = yield* SandboxBackend
+    const config = yield* RunnerConfig
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
 
-    const kill = (sessionId: SessionId) =>
-      tmux(["kill-session", "-t", `=${tmuxSessionName(sessionId)}`]).pipe(Effect.ignore)
+    // A server is left only when the Runner ran its Sessions on the host before this version:
+    // their Claude Code would run on, with its tools pointed at a bridge that is gone.
+    const retireHostServer = runCommand("tmux", ["-L", config.tmuxSocket, "kill-server"]).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.andThen(
+        Effect.logWarning(
+          `Stopped the tmux server ${config.tmuxSocket} on the host, where Sessions ran before ` +
+            "Claude Code moved into their Sandboxes: each wakes in its Sandbox on its next prompt",
+        ),
+      ),
+      Effect.ignore,
+    )
 
-    const attach = (sessionId: SessionId) =>
-      Effect.gen(function* () {
-        const target = `=${tmuxSessionName(sessionId)}`
-        const { stdout } = yield* tmux([
-          "display-message",
-          "-p",
-          "-t",
-          `${target}:`,
-          "#{window_width} #{window_height}",
-        ])
-        const [cols = 0, rows = 0] = stdout.trim().split(" ").map(Number)
-        const commands = yield* Queue.unbounded<string>()
-        const client = yield* spawner
-          .spawn(
-            ChildProcess.make("tmux", [...server, "-u", "-C", "attach-session", "-t", target], {
-              env: hostEnvironment(),
-              extendEnv: false,
-              stdin: Stream.fromQueue(commands).pipe(Stream.encodeText),
-              stderr: "ignore",
-            }),
-          )
-          .pipe(Effect.mapError((error) => new TmuxError({ message: error.message })))
-        const pane = new ControlPane(commands, { cols: Math.max(cols, 1), rows: Math.max(rows, 1) })
-        yield* pane.issue(
-          `refresh-client -B '${ExitSubscription}::#{pane_dead} #{pane_dead_status}'`,
-        )
-        return pane.toPane(client.stdout)
-      })
-
-    return Tmux.of({ claimServer, list, launch, attach, lastOutput, kill })
+    return Tmux.of({ ...makeTmux(backend), retireHostServer })
   }),
 )
-
-/** No tmux server runs on the socket. */
-const noServer = (error: TmuxError) => /no server running|error connecting to/.test(error.message)
 
 /** tmux commands run as one, separated by `;`. */
 function sequence(commands: ReadonlyArray<ReadonlyArray<string>>): Array<string> {
@@ -385,6 +305,8 @@ class ControlPane {
 
   constructor(
     private readonly commands: Queue.Queue<string>,
+    /** The pane, as a tmux target. */
+    private readonly pane: string,
     private size: TerminalSize,
   ) {
     this.target = size
@@ -443,17 +365,10 @@ class ControlPane {
       )
     })
 
-    const terminate = this.issue("display-message -p '#{pane_pid} #{pane_dead}'", (reply) => {
-      const [pid = 0, dead = 1] = (reply.lines[0] ?? "").split(" ").map(Number)
-      if (!reply.isError && pid > 0 && dead === 0) {
-        try {
-          process.kill(pid, "SIGTERM")
-        } catch {
-          // It already exited.
-        }
-      }
-      return undefined
-    })
+    // The process runs in the Sandbox, so the signal is sent there, by tmux's own shell.
+    const terminate = this.issue(
+      `run-shell -t ${this.pane} '[ #{pane_dead} = 1 ] || kill -TERM #{pane_pid}'`,
+    )
 
     return { events, input, resize, snapshot, terminate }
   }

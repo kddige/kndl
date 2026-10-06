@@ -1,13 +1,6 @@
 // The Runner against a fake Hub WebSocket server, with tmux, the Workspace and the Sandbox faked.
 import { afterEach, describe, expect, test } from "bun:test"
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from "node:fs"
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@claude-hub/protocol"
@@ -15,7 +8,6 @@ import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
-import { ClaudeProjectsDir, claudeProjectDirName } from "./ClaudeConfig.ts"
 import { childSystemPrompt } from "./ClaudeLaunch.ts"
 import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
@@ -25,10 +17,12 @@ import { HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig, type RunnerSettings } from "./RunnerConfig.ts"
+import { modGuestPath } from "./sandbox/SessionLayout.ts"
 import { SessionsLive } from "./Sessions.ts"
 import {
   eventually,
   FakeCredentialProxy,
+  fakeSandboxClaudePath,
   FakeSandboxes,
   FakeTmux,
   FakeWorkspaceGit,
@@ -129,8 +123,6 @@ interface Harness {
   readonly settings: RunnerSettings
   /** Claude Code's config file, which the Runner trusts its sessions root in. */
   readonly claudeConfig: string
-  /** Where Claude Code keeps its transcripts, for the Runner to tell whether one exists. */
-  readonly projectsDir: string
 }
 
 const running: Array<{ hub: FakeHub; runner: Fiber.Fiber<never, unknown> }> = []
@@ -175,7 +167,6 @@ function startRunner(
   const dir = mkdtempSync(join(tmpdir(), "claude-hub-runner-"))
   const sessionsRoot = join(dir, "sessions")
   const claudeConfig = join(dir, ".claude.json")
-  const projectsDir = join(dir, "projects")
   writeFileSync(
     claudeConfig,
     JSON.stringify({
@@ -223,11 +214,7 @@ function startRunner(
     runRunner({
       claudeConfigPath: claudeConfig,
       backoff: { initial: "20 millis", max: "100 millis", rejected: "50 millis" },
-    }).pipe(
-      Effect.provide(layer),
-      Effect.provideService(ClaudeProjectsDir, projectsDir),
-      Effect.provideService(References.MinimumLogLevel, "None"),
-    ),
+    }).pipe(Effect.provide(layer), Effect.provideService(References.MinimumLogLevel, "None")),
   )
   running.push({ hub, runner })
   return {
@@ -244,16 +231,12 @@ function startRunner(
     runner,
     settings,
     claudeConfig,
-    projectsDir,
   }
 }
 
-/** Gives Session `id` a transcript of Claude Code's conversation `conversation`, as once it ran. */
-function writeTranscript(h: Harness, id: string, conversation: string): void {
-  const name = claudeProjectDirName(join(h.settings.sessionsRoot, id, "claude"))
-  if (name === undefined) throw new Error("the sessions root is too long to name")
-  mkdirSync(join(h.projectsDir, name), { recursive: true })
-  writeFileSync(join(h.projectsDir, name, `${conversation}.jsonl`), "{}\n")
+/** Gives the Session a transcript of Claude Code's conversation `conversation`, as once it ran. */
+function writeTranscript(h: Harness, conversation: string): void {
+  h.sandboxes.transcripts.add(conversation)
 }
 
 const startSession = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -393,23 +376,14 @@ describe("connecting", () => {
     expect(h.runner.pollUnsafe()).toBeUndefined()
   })
 
-  test("re-adopts Sessions left running in tmux and snapshots them once welcomed", async () => {
-    const h = startRunner(({ tmux }) => {
-      tmux.leaveRunning(sessionId("s-old"))
-    })
-    await eventually(() => h.hub.all("TerminalFrame").length > 0)
+  test("puts to sleep the Sessions an earlier Runner left running, then says it runs none", async () => {
+    const h = startRunner()
+    await connected(h)
 
-    expect(h.hub.current.received[0]).toMatchObject({ sessions: ["s-old"] })
-    expect(h.hub.all("TerminalFrame")[0]).toEqual({
-      _tag: "TerminalFrame",
-      sessionId: "s-old",
-      kind: "Snapshot",
-      data: "screen of s-old",
-      size: { cols: 80, rows: 24 },
-    })
-    // Its Sandbox and tool bridge come back, and Sandboxes of no running Session are reconciled.
-    expect(h.sandboxes.calls).toEqual(["start s-old"])
-    expect(h.sandboxes.reconciled).toEqual([[sessionId("s-old")]])
+    // Their Session tokens went with that Runner: the Hub wakes each again when it is wanted.
+    expect(h.tmux.retired).toBe(1)
+    expect(h.sandboxes.reconciled).toEqual([[]])
+    expect(h.hub.current.received[0]).toMatchObject({ sessions: [] })
   })
 
   test("after a reconnect, lists running Sessions, snapshots them and sends what waited", async () => {
@@ -452,21 +426,6 @@ describe("trust", () => {
       [realpathSync(h.settings.sessionsRoot)]: { hasTrustDialogAccepted: true },
     })
   })
-
-  test("trusts it again before launching Claude Code if the flag was dropped", async () => {
-    const h = startRunner()
-    await connected(h)
-    writeFileSync(
-      h.claudeConfig,
-      JSON.stringify({ oauthAccount: { emailAddress: "alice@example.com" }, projects: {} }),
-    )
-    h.hub.send(startSession("s-1"))
-    await eventually(() => h.hub.all("SessionStarted").length === 1)
-
-    expect(projects(h)).toEqual({
-      [realpathSync(h.settings.sessionsRoot)]: { hasTrustDialogAccepted: true },
-    })
-  })
 })
 
 describe("Sessions", () => {
@@ -479,43 +438,42 @@ describe("Sessions", () => {
     expect(h.sandboxes.targets).toEqual([{ repo: "acme/app", gitIdentity }])
   })
 
-  test("starts Claude Code in tmux with the hardened flags and the mod, then streams it", async () => {
+  test("starts Claude Code in its Sandbox's tmux with the mod and a Session token, then streams it", async () => {
     const h = startRunner()
     await connected(h)
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     const [spec] = h.tmux.launched
-    expect(spec?.cwd).toBe(join(h.settings.sessionsRoot, "s-1", "claude"))
+    expect(spec?.cwd).toBe("/workspace")
     expect(spec?.argv).toEqual([
-      "/usr/local/bin/claude",
+      fakeSandboxClaudePath,
       "--session-id",
       expect.stringMatching(/^[0-9a-f-]{36}$/),
       "--plugin-dir",
-      "/opt/claude-hub/packages/mod",
-      "--plugin-dir",
-      join(h.settings.sessionsRoot, "s-1", "repo", ".claude"),
-      "--tools",
-      "Bash,Read,Write,Edit,NotebookEdit,WebSearch",
+      modGuestPath,
       "--strict-mcp-config",
-      "--setting-sources",
-      "",
-      "--settings",
-      '{"disableSkillShellExecution":true,"autoMemoryEnabled":false}',
+      "--dangerously-skip-permissions",
     ])
+    const sessionToken = spec?.env["CLAUDE_HUB_MOD_TOKEN"] ?? ""
+    expect(sessionToken).toStartWith("chp_")
     expect(spec?.env).toEqual({
-      CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1",
-      CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+      // What the Sandbox says Claude Code runs with.
+      CLAUDE_CONFIG_DIR: "/claude",
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-      CLAUDE_HUB_URL: h.hub.url.href,
       CLAUDE_HUB_SESSION_ID: "s-1",
-      CLAUDE_HUB_MOD_TOKEN: "chm_mod.secret",
-      CLAUDE_HUB_TOOLS_SOCKET: join(h.settings.sessionsRoot, "s-1", "tools.sock"),
-      CLAUDE_HUB_WORKSPACE: "/workspace",
-      CLAUDE_HUB_REPO: "acme/app",
-      CLAUDE_HUB_WORK_BRANCH: "claude/s-1",
-      CLAUDE_HUB_REPO_FILES: join(h.settings.sessionsRoot, "s-1", "repo"),
+      // The credential proxy, for Anthropic's API and the Hub alike, and the Session token for
+      // both: never the mod token, nor a Claude credential (ADR 0013).
+      ANTHROPIC_BASE_URL: "http://host.microsandbox.internal:7778",
+      CLAUDE_HUB_URL: "http://host.microsandbox.internal:7778",
+      CLAUDE_HUB_MOD_TOKEN: sessionToken,
+      CLAUDE_CODE_OAUTH_TOKEN: sessionToken,
+      CLAUDE_CODE_OAUTH_SCOPES: expect.any(String),
+      _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      DISABLE_AUTOUPDATER: "1",
     })
+    expect(JSON.stringify(spec)).not.toContain("chm_mod.secret")
     expect(h.workspaces.prepared).toMatchObject([{ sessionId: "s-1", workBranch: "claude/s-1" }])
     expect(h.sandboxes.calls).toEqual(["start s-1"])
 
@@ -557,7 +515,7 @@ describe("Sessions", () => {
     h.hub.send(startSession("s-1", { parent }))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
     const first = h.tmux.pane("s-1")
-    writeTranscript(h, "s-1", "3c1f6f0e-claude")
+    writeTranscript(h, "3c1f6f0e-claude")
 
     h.hub.send({
       _tag: "RelaunchSession",
@@ -583,16 +541,19 @@ describe("Sessions", () => {
       "--effort",
       "max",
     ])
+    expect(relaunched?.cwd).toBe("/workspace")
     expect(relaunched?.env).toMatchObject({
-      CLAUDE_HUB_MOD_TOKEN: "chm_mod.second",
-      CLAUDE_HUB_REPO: "acme/app",
-      CLAUDE_HUB_WORK_BRANCH: "claude/s-1",
+      CLAUDE_CONFIG_DIR: "/claude",
       CLAUDE_HUB_PARENT_SESSION_ID: "s-parent",
     })
-    // The Sandbox, the Workspace and the Repo files are left as they are.
+    // A new Session token, for the new mod token.
+    expect(relaunched?.env["CLAUDE_HUB_MOD_TOKEN"]).toStartWith("chp_")
+    expect(relaunched?.env["CLAUDE_HUB_MOD_TOKEN"]).not.toBe(
+      h.tmux.launched[0]?.env["CLAUDE_HUB_MOD_TOKEN"],
+    )
+    // The Sandbox and the Workspace are left as they are.
     expect(h.sandboxes.calls).toEqual(["start s-1"])
     expect(h.workspaces.prepared).toHaveLength(1)
-    expect(h.sandboxes.repoFilesRead).toHaveLength(1)
     // Its exit was asked for, so it isn't reported as Claude Code exiting on its own.
     expect(h.hub.all("SessionStopped")).toEqual([])
 
@@ -620,7 +581,7 @@ describe("Sessions", () => {
   test("resumes Claude Code's conversation when waking a Session", async () => {
     const h = startRunner()
     await connected(h)
-    writeTranscript(h, "s-1", "3c1f6f0e-claude")
+    writeTranscript(h, "3c1f6f0e-claude")
     h.hub.send(startSession("s-1", { resume: "3c1f6f0e-claude" }))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
@@ -661,40 +622,6 @@ describe("Sessions", () => {
       "s-1: undefined",
       "s-2: undefined",
     ])
-  })
-
-  test("copies the Repo's skills and CLAUDE.md for Claude Code at each start, over the last ones", async () => {
-    const h = startRunner()
-    await connected(h)
-    const repoFiles = join(h.settings.sessionsRoot, "s-1", "repo")
-    // Left by an earlier start, or by anything else: it goes.
-    mkdirSync(join(repoFiles, ".claude", "skills", "old"), { recursive: true })
-    writeFileSync(join(repoFiles, ".claude", "skills", "old", "SKILL.md"), "stale")
-    h.sandboxes.repo = {
-      instructions: [
-        { path: "CLAUDE.md", content: "Use bun.\n" },
-        { path: "AGENTS.md", content: "Be brief.\n", parent: "CLAUDE.md" },
-      ],
-      skills: [{ name: "deploy", content: '---\nname: "deploy"\n---\nShip it.\n' }],
-      skipped: [],
-    }
-    h.hub.send(startSession("s-1"))
-    await eventually(() => h.hub.all("SessionStarted").length === 1)
-
-    expect(h.sandboxes.repoFilesRead).toEqual([sessionId("s-1")])
-    expect(readFileSync(join(repoFiles, ".claude", "skills", "deploy", "SKILL.md"), "utf8")).toBe(
-      '---\nname: "deploy"\n---\nShip it.\n',
-    )
-    expect(existsSync(join(repoFiles, ".claude", "skills", "old"))).toBe(false)
-    expect(
-      JSON.parse(readFileSync(join(repoFiles, ".claude", ".claude-plugin", "plugin.json"), "utf8")),
-    ).toMatchObject({ name: "repo" })
-    expect(JSON.parse(readFileSync(join(repoFiles, "instructions.json"), "utf8"))).toEqual({
-      instructions: [
-        { path: "/workspace/CLAUDE.md", content: "Use bun.\n" },
-        { path: "/workspace/AGENTS.md", content: "Be brief.\n", parent: "/workspace/CLAUDE.md" },
-      ],
-    })
   })
 
   test("starts a new conversation with the same id when Claude Code never wrote one to resume", async () => {
@@ -931,7 +858,7 @@ describe("Sessions", () => {
     // for the wake.
     expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Sleep", "stop s-1 Sleep"])
 
-    writeTranscript(h, "s-1", "3c1f6f0e-claude")
+    writeTranscript(h, "3c1f6f0e-claude")
     h.hub.send(startSession("s-1", { modToken: "chm_woken.secret", resume: "3c1f6f0e-claude" }))
     await eventually(() => h.hub.all("SessionStarted").length === 2)
     expect(h.sandboxes.calls).toEqual([
@@ -945,9 +872,9 @@ describe("Sessions", () => {
       ClaudeSessionId.make("3c1f6f0e-claude"),
     ])
     const woken = h.tmux.launched[1]
-    expect(woken?.cwd).toBe(join(h.settings.sessionsRoot, "s-1", "claude"))
+    expect(woken?.cwd).toBe("/workspace")
     expect(woken?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
-    expect(woken?.env["CLAUDE_HUB_MOD_TOKEN"]).toBe("chm_woken.secret")
+    expect(woken?.env["CLAUDE_HUB_MOD_TOKEN"]).toStartWith("chp_")
   })
 
   test("leaves Sessions running in tmux when the Runner stops", async () => {
@@ -970,11 +897,13 @@ describe("Sessions", () => {
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
-    // What it printed goes with it, read before its tmux session is killed, without its mod token.
+    // What it printed goes with it, read before its tmux session is killed, without its Session
+    // token.
+    const sessionToken = h.tmux.launched[0]?.env["CLAUDE_HUB_MOD_TOKEN"] ?? ""
     h.tmux
       .pane("s-1")
       .output("\u001b[31mError:\u001b[0m The current working directory was deleted\r\n")
-    h.tmux.pane("s-1").output("token chm_mod.secret\r\n")
+    h.tmux.pane("s-1").output(`token ${sessionToken}\r\n`)
     h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 1 })
     await eventually(() => h.hub.all("SessionStopped").length === 1)
 
@@ -983,7 +912,7 @@ describe("Sessions", () => {
       sessionId: "s-1",
       reason: "Exited",
       exitCode: 1,
-      output: "Error: The current working directory was deleted\ntoken **************",
+      output: `Error: The current working directory was deleted\ntoken ${"*".repeat(sessionToken.length)}`,
     })
     expect(h.tmux.panes.size).toBe(0)
     expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Sleep", "stop s-1 Sleep"])
@@ -999,16 +928,6 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionStopped").length === 1)
 
     expect(h.hub.all("SessionStopped")[0]).not.toHaveProperty("output")
-  })
-
-  test("makes the tmux server its own before re-adopting Sessions", async () => {
-    const h = startRunner(({ tmux }) => {
-      tmux.claim = { _tag: "Refreshed", sessions: 1, changed: ["PWD was /gone"] }
-      tmux.leaveRunning(sessionId("s-old"))
-    })
-    await connected(h)
-
-    expect(h.tmux.claims).toBe(1)
   })
 
   test("pushes a running Session's WIP ref when the Hub says its Turn ended", async () => {

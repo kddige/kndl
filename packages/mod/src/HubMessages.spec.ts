@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import {
-  MaxToolSummaryLength,
-  ModEvents,
-  ModHello,
-  ProtocolVersion,
-  ToolsSocketVariable,
-} from "@claude-hub/protocol"
+import { MaxToolSummaryLength, ModEvents, ModHello, ProtocolVersion } from "@claude-hub/protocol"
 import { Schema } from "effect"
 import {
   checkEvent,
@@ -241,17 +235,11 @@ test("a prompt from a Participant is led by their name", () => {
   expect(promptFromParticipant(participant as never, "fix it")).toBe("[Ada Lovelace] fix it")
 })
 
-test("the hooks module reads the tools socket by the protocol's name", async () => {
-  const glue = await Bun.file(new URL("../hooks/register.ts", import.meta.url)).text()
-  expect(glue).toContain(`$.env.get("${ToolsSocketVariable}")`)
-})
-
-test("the shared Session's note says `!` is off, and to run the command with Bash instead", () => {
+test("the shared Session's note says where the model runs, and leaves `!` alone (ADR 0013)", () => {
   expect(sharedSessionNote).toContain(
-    "The `! <command>` prompt shortcut would run on that machine, so it is off in this session",
+    "You run in a sandbox VM where the repository is checked out.",
   )
-  expect(sharedSessionNote).toContain("never suggest it")
-  expect(sharedSessionNote).toContain("run a command yourself with Bash, in the sandbox")
+  expect(sharedSessionNote).not.toContain("!")
 })
 
 test("the Sandbox's environment names its checkout, Repo, Work branch and platform", () => {

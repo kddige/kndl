@@ -80,7 +80,7 @@ describe("naming", () => {
 })
 
 describe("Session layout", () => {
-  test("puts the Workspace on the host and dependencies, caches and Docker on volumes", async () => {
+  test("puts the Workspace on the host and dependencies, caches, Claude Code's state and Docker on volumes", async () => {
     const spec = layout(s1)
     expect(spec.mounts).toEqual([
       {
@@ -96,6 +96,7 @@ describe("Session layout", () => {
         sizeMib: 16384,
       },
       { _tag: "Volume", key: "cache", guestPath: "/var/cache/claude-hub", sizeMib: 16384 },
+      { _tag: "Volume", key: "claude", guestPath: "/var/lib/claude-hub/claude", sizeMib: 8192 },
     ])
     expect(spec.docker).toEqual({ sizeMib: 32768 })
     expect(spec.env).toMatchObject({
@@ -171,7 +172,7 @@ describe("fake backend", () => {
         yield* backend.destroy(s1, { keepVolumes: true })
         expect(yield* backend.state(s1)).toBe("Destroyed")
         expect((yield* backend.list).map((l) => [l.sessionId, l.state, l.volumes.length])).toEqual([
-          [s1, "Destroyed", 3],
+          [s1, "Destroyed", 4],
         ])
 
         yield* backend.create(layout(s1))

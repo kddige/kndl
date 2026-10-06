@@ -7,25 +7,32 @@ import { Effect, Layer, Schedule } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { Sandboxes } from "./Sandbox.ts"
+import type { SandboxTarget } from "./Sandbox.ts"
 import { FakeSandboxBackend } from "./sandbox/FakeSandboxBackend.ts"
 import type { FakeOptions } from "./sandbox/FakeSandboxBackend.ts"
+import { volumeName } from "./sandbox/Naming.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
-import { SandboxClaudeError, sandboxClaudeGuestDir } from "./sandbox/SandboxClaude.ts"
-import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
+import {
+  SandboxClaudeError,
+  sandboxClaudeGuestDir,
+  sandboxClaudePath,
+} from "./sandbox/SandboxClaude.ts"
+import {
+  claudeStateGuestPath,
+  claudeStateVolumeKey,
+  modGuestPath,
+  workspaceGuestPath,
+} from "./sandbox/SessionLayout.ts"
 import { ghHostsPath, identityScript, tokenPath } from "./SandboxGitHub.ts"
 import type { SandboxTokenSource } from "./SandboxGitHub.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
-import {
-  echoTools,
-  FakeHubGit,
-  FakeHubVariables,
-  fakeMcpServer,
-  sandboxesDefaults,
-  sessionId,
-} from "./testSupport.ts"
+import { FakeHubGit, FakeHubVariables, sandboxesDefaults, sessionId } from "./testSupport.ts"
 
 const s1 = sessionId("s-1")
+
+/** What a Session of a Repo without an Environment starts its Sandbox for. */
+const target: SandboxTarget = { repo: "acme/app" as RepoName }
 
 /** Runs `body` with live Sandboxes on the fake backend, recording what goes to the Hub. */
 const withSandboxes = async (
@@ -36,11 +43,10 @@ const withSandboxes = async (
   options: FakeOptions & {
     readonly sandboxClaude?: Effect.Effect<string, SandboxClaudeError>
     readonly githubToken?: SandboxTokenSource
-  } = {
-    onSpawn: (_call, io) => fakeMcpServer(echoTools)(io),
-  },
+  } = {},
 ) => {
   const root = await mkdtemp(join(tmpdir(), "claude-hub-sandboxes-"))
+  await mkdir(join(root, "mod"))
   const sent: Array<RunnerToHub> = []
   const hub = Layer.succeed(
     HubLink,
@@ -56,8 +62,8 @@ const withSandboxes = async (
       image: "docker:dind",
       claudeCacheDir: join(root, "claude-code"),
       sandboxClaude: () => options.sandboxClaude ?? Effect.succeed("2.1.287"),
+      modDir: join(root, "mod"),
       ...sandboxesDefaults,
-      bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
       ...(options.githubToken === undefined ? {} : { githubToken: options.githubToken }),
     }),
   )
@@ -89,16 +95,6 @@ const directoriesIn = (root: string) =>
     return directories
   })
 
-const callTool = (socket: string, body: unknown) =>
-  Effect.promise(async () => {
-    const response = await fetch("http://bridge/tools/call", {
-      method: "POST",
-      unix: socket,
-      body: JSON.stringify(body),
-    })
-    return (await response.json()) as unknown
-  })
-
 /** Asks the Hub for a Sandbox token. */
 const hubGitAsk = (id: SessionId) =>
   Effect.flatMap(HubGit, (hubGit) => hubGit.ask(id, { _tag: "SandboxToken" }))
@@ -110,23 +106,16 @@ const eventually = (check: Effect.Effect<boolean, unknown>) =>
     Effect.retry({ schedule: Schedule.spaced("5 millis"), times: 200 }),
   )
 
-const exists = (path: string) =>
-  Effect.promise(() =>
-    stat(path).then(
-      () => true,
-      () => false,
-    ),
-  )
-
 describe("SessionSandboxes", () => {
-  test("boots the Session's Sandbox around its Workspace and serves its tools, then stops it", () =>
+  test("boots the Session's Sandbox around its Workspace, readies Claude Code there, then stops it", () =>
     withSandboxes((root, sent) =>
       Effect.gen(function* () {
         const sandboxes = yield* Sandboxes
         const world = yield* FakeSandboxBackend
+        const backend = yield* SandboxBackend
         const directories = yield* directoriesIn(root)
 
-        yield* sandboxes.start(s1, directories)
+        const started = yield* sandboxes.start(s1, directories, target)
         const spec = world.sandboxes.get(s1)?.spec
         expect(spec?.mounts).toContainEqual(
           expect.objectContaining({
@@ -135,7 +124,8 @@ describe("SessionSandboxes", () => {
             guestPath: workspaceGuestPath,
           }),
         )
-        // Claude Code for `mcp serve`, read-only; and nothing of the host's Claude configuration.
+        // Claude Code and the mod, read-only; its state on a volume of the Session's; and nothing
+        // of the host's Claude configuration.
         expect(spec?.mounts).toContainEqual(
           expect.objectContaining({
             hostPath: join(root, "claude-code"),
@@ -143,31 +133,58 @@ describe("SessionSandboxes", () => {
             readOnly: true,
           }),
         )
+        expect(spec?.mounts).toContainEqual(
+          expect.objectContaining({
+            hostPath: join(root, "mod"),
+            guestPath: modGuestPath,
+            readOnly: true,
+          }),
+        )
+        expect(spec?.mounts).toContainEqual(
+          expect.objectContaining({
+            _tag: "Volume",
+            key: "claude",
+            guestPath: claudeStateGuestPath,
+          }),
+        )
         expect(JSON.stringify(spec)).not.toContain(".claude.json")
         expect(states(sent)).toEqual(["Starting", "Running"])
         expect((yield* Effect.promise(() => stat(directories.session))).mode & 0o777).toBe(0o700)
 
-        const reply = yield* callTool(directories.toolsSocket, {
-          tool: "Bash",
-          input: { command: "ls" },
+        // What Claude Code runs as in it, and with.
+        expect(started.claude).toEqual({
+          path: sandboxClaudePath("2.1.287", "musl"),
+          env: expect.objectContaining({
+            HOME: "/root",
+            LANG: "C.UTF-8",
+            CLAUDE_CONFIG_DIR: claudeStateGuestPath,
+            IS_SANDBOX: "1",
+          }),
         })
-        expect(reply).toEqual({
-          _tag: "ToolRan",
-          result: { tool: "Bash", args: { command: "ls" } },
+        // tmux and bash, installed if the image lacks them, and Claude Code's state seeded.
+        const needs = new TextDecoder().decode(
+          yield* backend.readFile(s1, "/tmp/claude-hub-claude-needs.sh"),
+        )
+        expect(needs).toContain("command -v tmux")
+        expect(needs).toContain("command -v bash")
+        const config = JSON.parse(
+          new TextDecoder().decode(
+            yield* backend.readFile(s1, `${claudeStateGuestPath}/.claude.json`),
+          ),
+        ) as unknown
+        expect(config).toMatchObject({
+          hasCompletedOnboarding: true,
+          projects: { [workspaceGuestPath]: { hasTrustDialogAccepted: true } },
         })
-        // The model's paths, under the directory Claude Code runs in, lead to the Workspace.
-        expect(world.execCalls[0]?.request.env?.["CLAUDE_HUB_ALIAS"]).toBe(directories.claude)
 
         yield* sandboxes.stop(s1, "Sleep")
         expect(world.sandboxes.get(s1)?.state).toBe("Stopped")
-        expect(yield* exists(directories.toolsSocket)).toBe(false)
 
         // Waking starts the same Sandbox again rather than creating another.
-        yield* sandboxes.start(s1, directories)
+        yield* sandboxes.start(s1, directories, target)
         expect(world.sandboxes.get(s1)?.state).toBe("Running")
-        expect(yield* exists(directories.toolsSocket)).toBe(true)
         // Starting a running one changes nothing.
-        yield* sandboxes.start(s1, directories)
+        yield* sandboxes.start(s1, directories, target)
 
         yield* sandboxes.stop(s1, "Archive")
         expect(world.sandboxes.has(s1)).toBe(false)
@@ -184,6 +201,60 @@ describe("SessionSandboxes", () => {
       }),
     ))
 
+  test("makes a Sandbox from before Claude Code ran in Sandboxes anew, keeping its volumes", () => {
+    let probes = 0
+    return withSandboxes(
+      (root) =>
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes
+          const world = yield* FakeSandboxBackend
+          const directories = yield* directoriesIn(root)
+          yield* sandboxes.start(s1, directories, target)
+          yield* sandboxes.stop(s1, "Sleep")
+          for (const files of world.volumes.values()) files.set("/kept", new Uint8Array([1]))
+
+          // Its next start finds it without the mod's mount, as an older Runner made it.
+          yield* sandboxes.start(s1, directories, target)
+          expect(probes).toBe(1)
+          expect(world.sandboxes.get(s1)?.state).toBe("Running")
+          expect([...world.volumes.values()].every((files) => files.has("/kept"))).toBe(true)
+        }),
+      {
+        onExec: ({ request }) => {
+          if (request.args?.[1]?.startsWith("test -d") !== true) return Effect.succeed({})
+          probes += 1
+          return Effect.succeed({ exitCode: 1 })
+        },
+      },
+    )
+  })
+
+  test("a Sandbox whose image can't get tmux or bash fails to start, saying why", () =>
+    withSandboxes(
+      (root, sent) =>
+        Effect.gen(function* () {
+          const sandboxes = yield* Sandboxes
+          const directories = yield* directoriesIn(root)
+          const failed = yield* Effect.flip(sandboxes.start(s1, directories, target))
+          expect(failed.message).toContain("no package manager")
+          expect(sent).toContainEqual(
+            expect.objectContaining({ _tag: "SandboxStateReport", state: "Failed" }),
+          )
+        }),
+      {
+        onExec: ({ request }) =>
+          Effect.succeed(
+            request.args?.at(-1) === "/tmp/claude-hub-claude-needs.sh"
+              ? {
+                  exitCode: 1,
+                  stderr:
+                    "The image has no tmux bash, and no package manager to install it with.\n",
+                }
+              : {},
+          ),
+      },
+    ))
+
   test("a Sandbox that can't get Claude Code fails to start, and the next start tries again", () => {
     let attempts = 0
     return withSandboxes(
@@ -193,19 +264,18 @@ describe("SessionSandboxes", () => {
           const world = yield* FakeSandboxBackend
           const directories = yield* directoriesIn(root)
 
-          const failed = yield* Effect.flip(sandboxes.start(s1, directories))
+          const failed = yield* Effect.flip(sandboxes.start(s1, directories, target))
           expect(failed.message).toContain("registry said 404")
           expect(sent).toContainEqual(
             expect.objectContaining({ _tag: "SandboxStateReport", state: "Failed" }),
           )
           expect(world.sandboxes.size).toBe(0)
 
-          yield* sandboxes.start(s1, directories)
+          yield* sandboxes.start(s1, directories, target)
           expect(attempts).toBe(2)
           expect(world.sandboxes.get(s1)?.state).toBe("Running")
         }),
       {
-        onSpawn: (_call, io) => fakeMcpServer(echoTools)(io),
         sandboxClaude: Effect.suspend(() => {
           attempts += 1
           return attempts === 1
@@ -216,29 +286,33 @@ describe("SessionSandboxes", () => {
     )
   })
 
-  test("archiving destroys the Sandbox and its volumes; a restored Session wakes on fresh ones", () =>
+  test("archiving destroys the Sandbox and its volumes but Claude Code's state; a restored Session wakes on it", () =>
     withSandboxes((root) =>
       Effect.gen(function* () {
         const sandboxes = yield* Sandboxes
         const world = yield* FakeSandboxBackend
         const directories = yield* directoriesIn(root)
-        yield* sandboxes.start(s1, directories)
+        yield* sandboxes.start(s1, directories, target)
         const volumes = [...world.volumes.keys()]
-        expect(volumes.length).toBeGreaterThan(0)
+        expect(volumes.length).toBeGreaterThan(1)
         for (const name of volumes) world.volumes.get(name)?.set("/kept", new Uint8Array([1]))
+        const claudeVolume = volumeName(s1, claudeStateVolumeKey)
 
         yield* sandboxes.stop(s1, "Archive")
         expect(world.sandboxes.has(s1)).toBe(false)
-        expect(world.volumes.size).toBe(0)
+        expect([...world.volumes.keys()]).toEqual([claudeVolume])
 
-        // Woken after a restore: a new Sandbox on the kept Workspace, with empty volumes.
-        yield* sandboxes.start(s1, directories)
+        // Woken after a restore: a new Sandbox on the kept Workspace and Claude Code's state, with
+        // its other volumes empty.
+        yield* sandboxes.start(s1, directories, target)
         expect(world.sandboxes.get(s1)?.state).toBe("Running")
         expect(world.sandboxes.get(s1)?.spec.mounts).toContainEqual(
           expect.objectContaining({ _tag: "Host", hostPath: directories.workspace }),
         )
         expect([...world.volumes.keys()].toSorted()).toEqual([...volumes].toSorted())
-        for (const files of world.volumes.values()) expect(files.has("/kept")).toBe(false)
+        for (const [name, files] of world.volumes) {
+          expect(files.has("/kept")).toBe(name === claudeVolume)
+        }
       }),
     ))
 
@@ -248,14 +322,13 @@ describe("SessionSandboxes", () => {
         const sandboxes = yield* Sandboxes
         const world = yield* FakeSandboxBackend
         const directories = yield* directoriesIn(root)
-        yield* sandboxes.start(s1, directories)
+        yield* sandboxes.start(s1, directories, target)
         yield* sandboxes.purge(s1)
         expect(world.sandboxes.has(s1)).toBe(false)
         expect(world.volumes.size).toBe(0)
-        expect(yield* exists(directories.toolsSocket)).toBe(false)
 
         // Volumes left over from a Sandbox destroyed while keeping them.
-        yield* sandboxes.start(s1, directories)
+        yield* sandboxes.start(s1, directories, target)
         const backend = yield* SandboxBackend
         yield* backend.destroy(s1, { keepVolumes: true })
         expect(world.volumes.size).toBeGreaterThan(0)
@@ -274,7 +347,7 @@ describe("SessionSandboxes", () => {
       Effect.gen(function* () {
         const sandboxes = yield* Sandboxes
         const world = yield* FakeSandboxBackend
-        yield* sandboxes.start(s1, yield* directoriesIn(root))
+        yield* sandboxes.start(s1, yield* directoriesIn(root), target)
         yield* sandboxes.reconcile([])
         expect(world.sandboxes.get(s1)?.state).toBe("Stopped")
       }),
@@ -298,14 +371,14 @@ describe("SessionSandboxes", () => {
           )
           const directories = yield* directoriesIn(root)
 
-          yield* sandboxes.start(s1, directories)
+          yield* sandboxes.start(s1, directories, target)
           yield* eventually(Effect.map(tokenFile, (token) => token === "sandbox-1"))
           expect(new TextDecoder().decode(yield* backend.readFile(s1, ghHostsPath))).toContain(
             'oauth_token: "sandbox-1"',
           )
 
           yield* sandboxes.stop(s1, "Sleep")
-          yield* sandboxes.start(s1, directories)
+          yield* sandboxes.start(s1, directories, target)
           yield* eventually(Effect.map(tokenFile, (token) => token === "sandbox-2"))
           expect(hubGit.asked.map((asked) => asked.ask._tag)).toEqual([
             "SandboxToken",
@@ -323,7 +396,6 @@ describe("SessionSandboxes", () => {
           }
         }),
       {
-        onSpawn: (_call, io) => fakeMcpServer(echoTools)(io),
         githubToken: (id) => Effect.provide(hubGitAsk(id), hubGit.layer),
       },
     )
@@ -339,16 +411,14 @@ describe("SessionSandboxes", () => {
         const identitySets = () =>
           world.execCalls.filter((call) => call.request.args?.[1] === identityScript)
 
-        yield* sandboxes.start(s1, directories, { repo: "acme/app" as RepoName, gitIdentity })
+        yield* sandboxes.start(s1, directories, { ...target, gitIdentity })
         expect(identitySets().map((call) => call.request.args?.slice(3))).toEqual([
           ["Ada Lovelace", "1+ada@users.noreply.github.com"],
         ])
 
-        // A Runner restart brings it back without one, and from an older Hub there is none.
+        // From an older Hub there is none.
         yield* sandboxes.stop(s1, "Sleep")
-        yield* sandboxes.start(s1, directories)
-        yield* sandboxes.stop(s1, "Sleep")
-        yield* sandboxes.start(s1, directories, { repo: "acme/app" as RepoName })
+        yield* sandboxes.start(s1, directories, target)
         expect(identitySets()).toHaveLength(1)
       }),
     ))
@@ -360,7 +430,7 @@ describe("SessionSandboxes", () => {
         Effect.gen(function* () {
           const sandboxes = yield* Sandboxes
           const backend = yield* SandboxBackend
-          yield* sandboxes.start(s1, yield* directoriesIn(root))
+          yield* sandboxes.start(s1, yield* directoriesIn(root), target)
           yield* eventually(Effect.sync(() => hubGit.asked.length === 1))
           expect(states(sent)).toEqual(["Starting", "Running"])
           expect(
@@ -371,7 +441,6 @@ describe("SessionSandboxes", () => {
           ).toBe(false)
         }),
       {
-        onSpawn: (_call, io) => fakeMcpServer(echoTools)(io),
         githubToken: (id) => Effect.provide(hubGitAsk(id), hubGit.layer),
       },
     )

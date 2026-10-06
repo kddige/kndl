@@ -1,10 +1,11 @@
-// An Environment's builds on this Runner (ADR 0009): the bootstrap run on the Environment's image,
-// without the Workspace, and the login shell's environment read and kept (#67, below), then the
-// disk snapshotted. Sessions boot from the snapshot.
+// An Environment's builds on this Runner (ADR 0009): tmux and bash installed for Claude Code, the
+// bootstrap run on the Environment's image, without the Workspace, and the login shell's
+// environment read and kept (#67, below), then the disk snapshotted. Sessions boot from the
+// snapshot.
 //
 // Builds are keyed by the Environment's build version, the version that last changed the build,
 // and kept in one snapshot group per Repo. Each is named `b<build version>-<libc>`, recording which
-// Claude Code build its Sandboxes run the tool bridge from (spike #46). A Runner builds a version
+// Claude Code build its Sandboxes run (spike #46). A Runner builds a version
 // the first time a Session needs it, and keeps the last few per Repo.
 //
 // What the scripts print goes to a log the caller shows, and is never written to the Runner's
@@ -101,6 +102,32 @@ else
   rm -f /tmp/get-docker.sh
 fi
 dockerd --version`
+
+/**
+ * Installs what Claude Code needs in the Sandbox (ADR 0013) and the image lacks, from the image's
+ * own packages: tmux, which it runs in, and bash, which its Bash tool runs commands with (the
+ * default `docker:dind` is Alpine, with neither). Fails on a tmux older than 3.2, whose control
+ * mode can't report the pane's exit. Prints nothing when both are there.
+ */
+export const claudeNeedsScript = `set -e
+missing=""
+command -v tmux >/dev/null 2>&1 || missing="tmux"
+command -v bash >/dev/null 2>&1 || missing="$missing bash"
+if [ -n "$missing" ]; then
+  echo "Installing$missing..."
+  if command -v apk >/dev/null 2>&1; then apk add --no-cache -q $missing
+  elif command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends $missing
+  elif command -v dnf >/dev/null 2>&1; then dnf install -y -q $missing
+  elif command -v yum >/dev/null 2>&1; then yum install -y -q $missing
+  else echo "The image has no$missing, and no package manager to install it with." >&2; exit 1
+  fi
+fi
+tmux -V | awk '{ version = $2; sub(/^[^0-9]*/, "", version); split(version, v, ".")
+  if (version != "" && (v[1] < 3 || (v[1] == 3 && v[2] + 0 < 2))) {
+    print "Claude Code runs in tmux 3.2 or later, and the image has " $0 > "/dev/stderr"; exit 1 } }'`
 
 /** Where a script is written in the guest while it runs. */
 const scriptPath = (name: string) => `/tmp/claude-hub-${name}.sh`
@@ -298,7 +325,7 @@ export const variableNames = (recipe: EnvironmentRecipe): ReadonlySet<string> =>
 
 /**
  * Builds a recipe in a new Sandbox of its own, `sessionId`, and leaves it stopped for a
- * snapshot: Docker if toggled, then the bootstrap with the variables available at build, then
+ * snapshot: Docker if toggled and tmux, then the bootstrap with the variables available at build, then
  * the login environment's probe, without them. Returns the libc the image needs. Any Sandbox
  * already there under that id is destroyed first.
  */
@@ -342,6 +369,17 @@ export const buildInSandbox = (
         log,
       )
     }
+    yield* runScript(
+      backend,
+      sessionId,
+      {
+        label: "Installing tmux and bash",
+        name: "claude-needs",
+        script: claudeNeedsScript,
+        cwd: "/",
+      },
+      log,
+    )
     if (recipe.bootstrapScript.trim() !== "") {
       yield* log("Running the bootstrap script...\n")
       yield* runScript(

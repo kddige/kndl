@@ -1,14 +1,13 @@
-// Runners restarting next to each other on one host, sharing one Sandbox backend (#38): each
-// re-adopts its own Sessions, with their Sandboxes and tool bridges, and leaves the others alone.
-// tmux and the Workspace are faked; the Sandboxes are the live ones on the fake backend.
+// Runners restarting next to each other on one host, sharing one Sandbox backend (#38): each puts
+// its own Sessions to sleep, stopping their Sandboxes, and leaves the others alone. tmux and the
+// Workspace are faked; the Sandboxes are the live ones on the fake backend.
 
 import { afterEach, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { RunnerToHub, SandboxStateReport, SessionId } from "@claude-hub/protocol"
+import type { RepoName, RunnerToHub, SessionId } from "@claude-hub/protocol"
 import { Effect, Layer, Redacted, References } from "effect"
-import { NoClaudeTrust } from "./ClaudeTrust.ts"
 import { NoHubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
@@ -21,13 +20,11 @@ import { sessionDirectories } from "./SessionNames.ts"
 import { Sessions, SessionsLive } from "./Sessions.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import {
-  echoTools,
   FakeHubVariables,
   FakeTmux,
   FakeCredentialProxy,
   FakeWorkspaceGit,
   FakeWorkspaces,
-  fakeMcpServer,
   sandboxesDefaults,
   sessionId,
 } from "./testSupport.ts"
@@ -56,7 +53,6 @@ async function runnerHost(tmuxSocket: string): Promise<RunnerHost> {
 const directories = async (host: RunnerHost, id: SessionId) => {
   const found = sessionDirectories(host.sessionsRoot, id)
   await mkdir(found.workspace, { recursive: true })
-  await mkdir(found.claude, { recursive: true })
   return found
 }
 
@@ -88,11 +84,7 @@ const runProcess = <A>(
       repoUrlTemplate: "unused",
     }),
   )
-  const backend = FakeSandboxBackend.layer({
-    world,
-    runner: runnerMark(host),
-    onSpawn: (_call, io) => fakeMcpServer(echoTools)(io),
-  })
+  const backend = FakeSandboxBackend.layer({ world, runner: runnerMark(host) })
   const variables = new FakeHubVariables().layer
   const sandboxes = Layer.effect(
     Sandboxes,
@@ -100,8 +92,8 @@ const runProcess = <A>(
       image: "docker:dind",
       claudeCacheDir: join(host.sessionsRoot, "claude-code"),
       sandboxClaude: () => Effect.succeed("2.1.287"),
+      modDir: host.sessionsRoot,
       ...sandboxesDefaults,
-      bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
     }),
   ).pipe(Layer.provide([backend, variables]))
   const layer = SessionsLive.pipe(
@@ -109,7 +101,6 @@ const runProcess = <A>(
     Layer.provide([
       host.tmux.layer,
       new FakeWorkspaces(host.sessionsRoot).layer,
-      NoClaudeTrust,
       new FakeWorkspaceGit().layer,
       new FakeCredentialProxy().layer,
       HubGitLive,
@@ -135,56 +126,10 @@ const withSandboxes = <A, E>(f: (sandboxes: Sandboxes["Service"]) => Effect.Effe
     return yield* f(yield* Sandboxes)
   })
 
-/** Asks the Session's tool bridge to run a tool, as the mod does. */
-const callTool = async (socket: string) => {
-  const response = await fetch("http://bridge/tools/call", {
-    method: "POST",
-    unix: socket,
-    body: JSON.stringify({ tool: "Bash", input: { command: "ls" } }),
-  })
-  return (await response.json()) as unknown
-}
-
-const sandboxStates = (host: RunnerHost, id: SessionId) =>
-  host.sent
-    .filter((m): m is SandboxStateReport => m._tag === "SandboxStateReport" && m.sessionId === id)
-    .map((m) => m.state)
+/** What each Session's Sandbox is started for. */
+const target = { repo: "acme/app" as RepoName }
 
 const stateIn = (world: FakeSandboxWorld, id: SessionId) => world.sandboxes.get(id)?.state
-
-test("a re-adopted Session whose Sandbox was stopped gets it started again, and its tools back", async () => {
-  const world = makeFakeWorld()
-  const host = await runnerHost("claude-hub-dev")
-  const s1 = sessionId("s-1")
-  const dirs1 = await directories(host, s1)
-
-  // The Runner started the Session's Sandbox, then went away leaving Claude Code in tmux; since
-  // then the Sandbox was stopped, as another Runner's reconcile did before #38.
-  await runProcess(
-    world,
-    host,
-    withSandboxes((s) => s.start(s1, dirs1)),
-  )
-  host.tmux.leaveRunning(s1)
-  const stopped = world.sandboxes.get(s1)
-  if (stopped === undefined) throw new Error("no Sandbox")
-  stopped.state = "Stopped"
-  host.sent.length = 0
-
-  await runProcess(
-    world,
-    host,
-    Effect.gen(function* () {
-      yield* adopt
-      expect(stateIn(world, s1)).toBe("Running")
-      expect(sandboxStates(host, s1)).toEqual(["Starting", "Running"])
-      expect(yield* Effect.promise(() => callTool(dirs1.toolsSocket))).toEqual({
-        _tag: "ToolRan",
-        result: { tool: "Bash", args: { command: "ls" } },
-      })
-    }),
-  )
-})
 
 test("Runners restarting side by side on one host each keep to their own Sandboxes", async () => {
   const world = makeFakeWorld()
@@ -198,46 +143,38 @@ test("Runners restarting side by side on one host each keep to their own Sandbox
   const dirsB = await directories(b, sb)
   const dirsAsleep = await directories(b, asleep)
 
-  // Runner a runs s-a. Runner b runs s-b, and had s-asleep running when it crashed, though its
-  // Claude Code has since gone.
+  // Runner a ran s-a. Runner b ran s-b, and s-asleep, whose Claude Code has since gone.
   await runProcess(
     world,
     a,
-    withSandboxes((s) => s.start(sa, dirsA)),
+    withSandboxes((s) => s.start(sa, dirsA, target)),
   )
   await runProcess(
     world,
     b,
-    withSandboxes((s) => Effect.andThen(s.start(sb, dirsB), s.start(asleep, dirsAsleep))),
+    withSandboxes((s) =>
+      Effect.andThen(s.start(sb, dirsB, target), s.start(asleep, dirsAsleep, target)),
+    ),
   )
-  a.tmux.leaveRunning(sa)
-  b.tmux.leaveRunning(sb)
   // And one Sandbox from before Runner marks, whose Session no Runner here knows.
   const legacy = sessionId("s-legacy")
   const template = world.sandboxes.get(sa)
   if (template === undefined) throw new Error("no Sandbox")
   world.sandboxes.set(legacy, { ...template, runner: undefined, rootfs: new Map() })
 
-  // Runner b restarts: it stops only its own Sandbox of no running Session.
+  // Runner b restarts: it puts its own Sessions to sleep, and stops only their Sandboxes, as no
+  // Session runs on it until the Hub wakes one.
   await runProcess(world, b, adopt)
-  expect(stateIn(world, sb)).toBe("Running")
+  expect(b.tmux.retired).toBe(1)
+  expect(stateIn(world, sb)).toBe("Stopped")
   expect(stateIn(world, asleep)).toBe("Stopped")
   expect(stateIn(world, sa)).toBe("Running")
   expect(stateIn(world, legacy)).toBe("Running")
 
   // Runner a restarts too, and leaves b's Sessions as b left them.
-  await runProcess(
-    world,
-    a,
-    Effect.gen(function* () {
-      yield* adopt
-      expect(yield* Effect.promise(() => callTool(dirsA.toolsSocket))).toMatchObject({
-        _tag: "ToolRan",
-      })
-    }),
-  )
-  expect(stateIn(world, sa)).toBe("Running")
-  expect(stateIn(world, sb)).toBe("Running")
+  await runProcess(world, a, adopt)
+  expect(stateIn(world, sa)).toBe("Stopped")
+  expect(stateIn(world, sb)).toBe("Stopped")
   expect(stateIn(world, asleep)).toBe("Stopped")
   expect(stateIn(world, legacy)).toBe("Running")
 })

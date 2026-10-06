@@ -11,8 +11,8 @@
 //   boot.
 // - Memory: set per VM, and the cap. Freed guest memory isn't returned to the host until stop.
 // - metrics() throws for about 2 s after boot; that reads as "no metrics yet".
-// - Sandboxes are detached, so they outlive the Runner process: Claude Code keeps running in tmux
-//   across a Runner restart, and Reconcile.ts finds any the Runner no longer knows.
+// - Sandboxes are detached, so they outlive the Runner process, with Claude Code in tmux in them;
+//   Reconcile.ts stops those the Runner no longer knows, as after a restart.
 // - Sandboxes and volumes carry labels: their Session, and the mark of the Runner that made them
 //   (Naming.ts). A Sandbox's labels are read back from its config.
 //
@@ -147,17 +147,21 @@ fi
 docker start $(cat ${runningListPath}) >/dev/null && rm -f ${runningListPath}`
 
 // Stopping containers by hand means Docker won't restart them on the next boot, whatever their
-// restart policy, so the ones running are listed for startDockerScript.
+// restart policy, so the ones running are listed for startDockerScript. Everything is written out
+// to the volumes last, Docker or not: Claude Code's state is on one.
 const stopDockerScript = `
-command -v docker >/dev/null && docker info >/dev/null 2>&1 || exit 0
-ids=$(docker ps -q)
-if [ -n "$ids" ]; then
-  echo $ids > ${runningListPath}
-  docker stop -t ${containerStopSeconds} $ids >/dev/null
-fi
-pid=$(cat /var/run/docker.pid 2>/dev/null) || exit 0
-kill "$pid" 2>/dev/null || exit 0
-while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+stop_docker() {
+  command -v docker >/dev/null && docker info >/dev/null 2>&1 || return 0
+  ids=$(docker ps -q)
+  if [ -n "$ids" ]; then
+    echo $ids > ${runningListPath}
+    docker stop -t ${containerStopSeconds} $ids >/dev/null
+  fi
+  pid=$(cat /var/run/docker.pid 2>/dev/null) || return 0
+  kill "$pid" 2>/dev/null || return 0
+  while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+}
+stop_docker
 sync`
 
 /** The directories on the host that volumes mounted inside host mounts need as mount points. */
@@ -451,23 +455,26 @@ export const make = Effect.fnUntraced(function* ({
 
   const destroy: SandboxBackendShape["destroy"] = Effect.fn("SandboxBackend.destroy")(function* (
     sessionId: SessionId,
-    options?: { readonly keepVolumes?: boolean },
+    options?: { readonly keepVolumes?: true | ReadonlyArray<string> },
   ) {
-    const keepVolumes = options?.keepVolumes === true
+    const keep = options?.keepVolumes ?? []
     const h = yield* handle(sessionId).pipe(
       Effect.map(Option.some),
       Effect.catchTag("SandboxNotFound", () => Effect.succeedNone),
     )
     if (Option.isSome(h)) {
       // Kept volumes must be left consistent; doomed ones needn't be.
-      if (keepVolumes && isRunning(h.value.status)) yield* stopDocker(sessionId)
+      if ((keep === true || keep.length > 0) && isRunning(h.value.status)) {
+        yield* stopDocker(sessionId)
+      }
       yield* forget(sessionId)
       yield* call("destroy Sandbox", sessionId, () => h.value.destroy())
     }
-    if (keepVolumes) return
+    if (keep === true) return
     const volumes = yield* call("list volumes", sessionId, () => Volume.list())
     for (const volume of volumes) {
-      if (parseVolumeName(volume.name)?.sessionId !== sessionId) continue
+      const parsed = parseVolumeName(volume.name)
+      if (parsed?.sessionId !== sessionId || keep.includes(parsed.key)) continue
       yield* call("remove volume", sessionId, () => Volume.remove(volume.name)).pipe(
         Effect.catchIf(
           (error) => error._tag === "SandboxBackendError" && isCode("volumeNotFound")(error.cause),

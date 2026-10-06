@@ -1,22 +1,31 @@
-// The Claude Code binary a Sandbox runs `claude mcp serve` from (the tool bridge, ADR 0001).
+// The Claude Code a Session runs, in its Sandbox (ADR 0013).
 //
 // The Runner keeps Linux builds of Claude Code in a cache directory on its host, one directory
 // per version and libc, and mounts that directory read-only into every Sandbox. The version is
-// the host's own Claude Code version, so the records `mcp serve` returns have the shapes the
-// host's Claude Code expects (spike #2). A build is downloaded from the npm registry the first
-// time it is needed, checked against the registry's integrity hash, and kept.
+// pinned ({@link PinnedClaudeVersion}), so every Session runs the Claude Code the mod and the
+// launch were tested with; `RUNNER_SANDBOX_CLAUDE_VERSION` overrides it. A build is downloaded
+// from the npm registry the first time it is needed, checked against the registry's integrity
+// hash, and kept.
 //
 // There are two Linux builds, and each needs its own libc: the musl build runs only where the
 // image has musl's loader (`/lib/ld-musl-*`, as on Alpine and the default `docker:dind`), and the
 // glibc build everywhere else, such as on Debian (spike #46). An Environment's build checks its
 // image and records which one its Sandboxes use; Sandboxes without an Environment boot the
-// default Alpine image and use the musl build. Nothing here gives the Sandbox Claude credentials,
-// and `mcp serve` needs none.
+// default Alpine image and use the musl build. Nothing here gives the Sandbox Claude credentials:
+// Claude Code reaches Anthropic through the credential proxy, with a Session token.
 
 import { createHash } from "node:crypto"
 import { chmod, mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Data, Effect } from "effect"
+
+/**
+ * The Claude Code version Sessions run. Upgrading it: change it here, then run the smoke test,
+ * `CLAUDE_HUB_SANDBOX_IT=1 bun test src/SandboxClaude.integration.test.ts` in packages/runner,
+ * which runs it in a Sandbox through the credential proxy: its banner, `/status`, and a Turn
+ * with Bash.
+ */
+export const PinnedClaudeVersion = "2.1.289"
 
 /** Where the cache directory is mounted in every Sandbox. */
 export const sandboxClaudeGuestDir = "/opt/claude-hub/claude-code"

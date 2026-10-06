@@ -24,7 +24,6 @@ import {
   readClaudeConfig,
 } from "@claude-hub/runner/src/ClaudeConfig.ts"
 import { ModBundle, RunnerConfig, RunnerConfigLive } from "@claude-hub/runner/src/RunnerConfig.ts"
-import { parseServerEnvironment } from "@claude-hub/runner/src/Tmux.ts"
 import { Cause, ConfigProvider, Effect, Exit, Option } from "effect"
 import { FetchHttpClient } from "effect/http"
 import type { AppPermissionsFact, DoctorFacts, Health, Place, TmuxServerFact } from "./Doctor.ts"
@@ -156,6 +155,17 @@ export const tmuxServerFact = (socket: string, servicePath: string | undefined) 
       servicePath,
     } satisfies TmuxServerFact
   }).pipe(Effect.orElseSucceed(() => undefined))
+
+/** `show-environment -g`'s answer, as the variables set: a `-NAME` line is one unset. */
+function parseServerEnvironment(stdout: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of stdout.split("\n")) {
+    const at = line.indexOf("=")
+    if (line.startsWith("-") || at <= 0) continue
+    out[line.slice(0, at)] = line.slice(at + 1)
+  }
+  return out
+}
 
 /** A directory and whether it still exists; undefined for none. */
 const place = (path: string | undefined): Place | undefined =>

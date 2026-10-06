@@ -6,6 +6,8 @@
 //   volumes mounted over those paths, because many small files are 3-12x slower on the host
 //   mount than on a disk.
 // - Docker's data has its own disk volume.
+// - Claude Code's state, its `CLAUDE_CONFIG_DIR` with the Session's transcripts, has its own disk
+//   volume too (ADR 0013), so it survives the Sandbox being made anew.
 
 import { posix } from "node:path"
 import type { SessionId } from "@claude-hub/protocol"
@@ -18,6 +20,22 @@ export const workspaceGuestPath = "/workspace"
  * guest's connection arrives there from 127.0.0.1.
  */
 export const hostFromGuest = "host.microsandbox.internal"
+
+/**
+ * Claude Code's state in the Sandbox, its `CLAUDE_CONFIG_DIR`, on the Session's `claude` volume:
+ * its config, settings and transcripts. Not under ~/.claude, as microsandbox can't put a volume at
+ * a path with a dot in it.
+ */
+export const claudeStateGuestPath = "/var/lib/claude-hub/claude"
+
+/**
+ * The key of the volume holding Claude Code's state. Archiving keeps it, as it keeps the
+ * Workspace, so a restored Session resumes its conversation; purging removes it.
+ */
+export const claudeStateVolumeKey = "claude"
+
+/** Where the mod, hub-link, is mounted read-only in the Sandbox, as Claude Code's `--plugin-dir`. */
+export const modGuestPath = "/opt/claude-hub/hub-link"
 
 export interface SessionLayoutOptions {
   readonly sessionId: SessionId
@@ -36,6 +54,7 @@ export interface SessionLayoutOptions {
   readonly dependencyDirs?: ReadonlyArray<string>
   readonly dependencySizeMib?: number
   readonly cacheSizeMib?: number
+  readonly claudeSizeMib?: number
   /** Docker's data volume, or `false` for a Sandbox without Docker. */
   readonly dockerSizeMib?: number | false
 }
@@ -48,6 +67,7 @@ export const defaults = {
   dependencyDirs: ["node_modules"],
   dependencySizeMib: 16384,
   cacheSizeMib: 16384,
+  claudeSizeMib: 8192,
   dockerSizeMib: 32768,
 } as const
 
@@ -100,6 +120,12 @@ export const sessionSandboxSpec = (options: SessionLayoutOptions): SandboxSpec =
       key: "cache",
       guestPath: cache,
       sizeMib: options.cacheSizeMib ?? defaults.cacheSizeMib,
+    },
+    {
+      _tag: "Volume",
+      key: claudeStateVolumeKey,
+      guestPath: claudeStateGuestPath,
+      sizeMib: options.claudeSizeMib ?? defaults.claudeSizeMib,
     },
   ]
 

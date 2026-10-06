@@ -114,7 +114,7 @@ It stops and removes the services, the `claude-hub` command and the install (`~/
 
 The line install.sh added to your shell's startup file (`~/.zshrc`, `~/.bashrc` or `~/.profile`, marked `# claude-hub: PATH`) stays. Delete it by hand if you don't install again.
 
-`--purge` removes the whole home too. That deletes the database, its secrets key and every Session's Workspace, and can't be undone. Sessions still running keep their tmux sessions and Sandboxes, so archive or finish them first.
+`--purge` removes the whole home too. That deletes the database, its secrets key and every Session's Workspace, and can't be undone. Sessions still running keep their Sandboxes, so archive or finish them first.
 
 ## From a checkout
 

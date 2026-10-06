@@ -103,7 +103,7 @@ The Session opens with a **Starting…** banner. The Runner clones your Repo ont
 
    > List the files in this repository and tell me what it does.
 
-   Claude's reply streams into the transcript, with each tool call it makes. Those tools run in the Sandbox, on the Workspace mounted at `/workspace`, not on your machine.
+   Claude's reply streams into the transcript, with each tool call it makes. Claude Code and its tools run in the Sandbox, on the Workspace mounted at `/workspace`, not on your machine.
 
 2. Open the **Terminal** tab. It mirrors Claude Code's own screen, live. You can type into it, which is how you answer a dialog the chat doesn't show.
 
@@ -113,7 +113,7 @@ The Session opens with a **Starting…** banner. The Runner clones your Repo ont
 
 ## Stop
 
-Press Ctrl-C in the Runner's terminal, then in the Hub's. The Session's Claude Code keeps running in tmux, and the Runner re-adopts it when it comes back. Left alone, an idle Session goes to sleep after 15 minutes and wakes on the next prompt.
+Press Ctrl-C in the Runner's terminal, then in the Hub's. The Session is Frozen while the Runner is gone, and Asleep once it is back; the next prompt wakes it with its conversation. Left alone, an idle Session goes to sleep after 15 minutes and wakes on the next prompt.
 
 ## What you did
 

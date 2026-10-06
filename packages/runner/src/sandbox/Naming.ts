@@ -30,9 +30,9 @@ export const runnerLabel = "claude-hub.runner"
 /**
  * This Runner's mark: a digest of its tmux socket name and sessions root. Both are fixed by its
  * configuration, so the mark survives restarts and is known before the Hub's welcome. They are
- * also exactly what decides which Sessions the Runner re-adopts: two Runners sharing both would
- * share their tmux sessions and directories too, so can't be told apart anyway, while Runners
- * that differ in either never adopt each other's Sessions. The Hub's RunnerId would do as well
+ * also exactly what decides which Sessions are the Runner's own: two Runners sharing both would
+ * share their Session directories too, so can't be told apart anyway, while Runners that differ
+ * in either never reconcile each other's Sandboxes. The Hub's RunnerId would do as well
  * once welcomed, but reconciling happens before connecting, and a Runner keeps its Sessions
  * across a new token.
  */

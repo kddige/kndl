@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { lstatSync, mkdirSync } from "node:fs"
 import type {
-  EnvironmentVersion,
   HubToRunner,
   RelaunchSession,
   RunTestBuild,
@@ -24,18 +22,16 @@ import {
   Semaphore,
   Stream,
 } from "effect"
-import { ClaudeProjectsDir, hasTranscript } from "./ClaudeConfig.ts"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
-import { ClaudeTrust } from "./ClaudeTrust.ts"
 import { HubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
 import { CredentialProxy } from "./proxy/CredentialProxy.ts"
-import { writeRepoFiles } from "./RepoFiles.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
-import { noRepoFiles, Sandboxes } from "./Sandbox.ts"
-import { isSafeSessionId, sessionDirectories } from "./SessionNames.ts"
+import { Sandboxes, type SandboxStarted } from "./Sandbox.ts"
+import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
+import { isSafeSessionId, type SessionDirectories, sessionDirectories } from "./SessionNames.ts"
 import { type Pane, Tmux } from "./Tmux.ts"
 import { Workspaces } from "./Workspace.ts"
 import { WorkspaceGit } from "./WorkspaceGit.ts"
@@ -47,15 +43,17 @@ export const InitialTerminalSize: TerminalSize = { cols: 120, rows: 40 }
 export const StopGracePeriod = Duration.seconds(10)
 
 /**
- * The Sessions running on this Runner: each one Claude Code in its own tmux session, whose
- * terminal is streamed to the Hub.
+ * The Sessions running on this Runner: each one Claude Code in a tmux session in its Sandbox
+ * (ADR 0013), whose terminal is streamed to the Hub.
  */
 export class Sessions extends Context.Service<
   Sessions,
   {
     /**
-     * Picks up the Sessions still running in tmux, as after a Runner restart, once the tmux
-     * server has the Runner's environment. Run once, at startup.
+     * Puts to sleep the Sessions left running by an earlier Runner, as after a restart: their
+     * Session tokens were held only by that Runner, so their Claude Code can no longer reach
+     * Anthropic or the Hub. The Hub has them Asleep once the Runner says hello without them, and
+     * wakes them with their conversations resumed. Run once, at startup.
      */
     readonly adopt: Effect.Effect<void>
     /** The Sessions whose Claude Code is running, for {@link RunnerHello}. */
@@ -89,31 +87,6 @@ export function withoutValue(text: string, value: string | undefined): string {
     : text.replaceAll(value, "*".repeat(value.length))
 }
 
-/**
- * Makes sure the directory Claude Code starts in is there, right before it starts: Claude
- * Code exits at once when its working directory is gone (#105).
- */
-const ensureDirectory = (directory: string) =>
-  Effect.try({
-    try: () => {
-      const found = lstatSync(directory, { throwIfNoEntry: false })
-      if (found?.isDirectory() === true) return false
-      if (found !== undefined) throw new Error("it is not a directory")
-      mkdirSync(directory, { recursive: true, mode: 0o700 })
-      return true
-    },
-    catch: (cause) =>
-      new Error(
-        `${directory}, where Claude Code starts, can't be used: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ),
-  }).pipe(
-    Effect.flatMap((made) =>
-      made
-        ? Effect.logWarning(`${directory}, where Claude Code starts, was missing: made it`)
-        : Effect.void,
-    ),
-  )
-
 export const SessionsLive = Layer.effect(
   Sessions,
   Effect.gen(function* () {
@@ -122,35 +95,32 @@ export const SessionsLive = Layer.effect(
     const workspaces = yield* Workspaces
     const sandboxes = yield* Sandboxes
     const hub = yield* HubLink
-    const trust = yield* ClaudeTrust
     const git = yield* WorkspaceGit
     const hubGit = yield* HubGit
     const hubVariables = yield* HubVariables
     const hubClaudeCredential = yield* HubClaudeCredential
-    const projectsDir = yield* ClaudeProjectsDir
     const proxy = yield* CredentialProxy
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
     /**
-     * The mod token each Session's Claude Code was started with, kept out of what it printed
-     * before it exited. Not known for a Session re-adopted after a restart.
+     * The Session token each Session's Claude Code was started with, kept out of what it printed
+     * before it exited.
      */
-    const modTokens = new Map<SessionId, string>()
-    /** The Environment version each started Session's Sandbox runs. */
-    const environmentVersions = new Map<SessionId, EnvironmentVersion>()
+    const sessionTokens = new Map<SessionId, string>()
+    /** What each started Session's Sandbox runs: its Environment version and Claude Code. */
+    const sandboxStarts = new Map<SessionId, SandboxStarted>()
     const locks = new Map<SessionId, Semaphore.Semaphore>()
 
     /**
      * Gives the Session a Session token for the credential proxy, standing for its mod token and
      * its Creator's Claude credential, fetched from the Hub as it starts or wakes (ADR 0015) and
      * kept in memory only. Without one, or when the Hub can't be asked, the proxy uses the
-     * Runner's own. Claude Code on the host doesn't use the token yet: in the Sandbox (#146), it
-     * holds it in place of the mod token and any Claude credential.
+     * Runner's own. Its Claude Code holds the token in place of the mod token and any Claude
+     * credential (ADR 0013).
      */
     const admit = (sessionId: SessionId, modToken: string) =>
       Effect.gen(function* () {
-        modTokens.set(sessionId, modToken)
         const credential = yield* hubClaudeCredential
           .fetch(sessionId)
           .pipe(
@@ -163,16 +133,18 @@ export const SessionsLive = Layer.effect(
               ),
             ),
           )
-        return yield* proxy.admit({
+        const pass = yield* proxy.admit({
           sessionId,
           modToken: Redacted.make(modToken),
           ...(credential !== undefined && { credential }),
         })
+        sessionTokens.set(sessionId, Redacted.value(pass.token))
+        return pass
       })
 
-    /** Forgets the Session's mod token and revokes its Session token, as it stops. */
+    /** Revokes the Session's Session token, as it stops. */
     const forget = (sessionId: SessionId) => {
-      modTokens.delete(sessionId)
+      sessionTokens.delete(sessionId)
       return proxy.revoke(sessionId)
     }
 
@@ -231,8 +203,8 @@ export const SessionsLive = Layer.effect(
               running.delete(sessionId)
               yield* Scope.close(paneScope, Exit.void)
               yield* Deferred.succeed(exited, exitCode)
-              // Interrupted means the Runner is shutting down: Claude Code keeps running in tmux,
-              // to be re-adopted when the Runner comes back.
+              // Interrupted means the Runner is shutting down: the Session is put to sleep when
+              // it comes back (adopt).
               if (Exit.hasInterrupts(exit) || session.stopping) return
               yield* background(exitedOnItsOwn(sessionId, exitCode))
             }),
@@ -247,7 +219,10 @@ export const SessionsLive = Layer.effect(
     const exitedOnItsOwn = (sessionId: SessionId, exitCode: number | undefined) =>
       serialized(sessionId)(
         Effect.gen(function* () {
-          const output = withoutValue(yield* tmux.lastOutput(sessionId), modTokens.get(sessionId))
+          const output = withoutValue(
+            yield* tmux.lastOutput(sessionId),
+            sessionTokens.get(sessionId),
+          )
           yield* forget(sessionId)
           const exited = `Session ${sessionId} exited with ${exitCode ?? "unknown status"}`
           const log = exitCode === 0 ? Effect.logInfo : Effect.logWarning
@@ -279,59 +254,70 @@ export const SessionsLive = Layer.effect(
      * can't be resumed: it starts new instead, with the same id, so the Hub's id stays right
      * (#105).
      */
-    const conversationFor = (request: StartSession | RelaunchSession, cwd: string) =>
+    const conversationFor = (
+      request: StartSession | RelaunchSession,
+      directories: SessionDirectories,
+    ) =>
       Effect.gen(function* () {
         if (request.resume === undefined) {
           return { _tag: "New", id: randomUUID() } as const
         }
         const id = request.resume
-        if (hasTranscript(cwd, id, projectsDir) !== false) return { _tag: "Resume", id } as const
+        if (yield* sandboxes.hasTranscript(request.sessionId, directories, id))
+          return { _tag: "Resume", id } as const
         yield* Effect.logInfo(
-          `Session ${request.sessionId}: Claude Code has no transcript of conversation ${id} ` +
-            `in ${projectsDir}, so it starts a new one with that id instead of resuming it`,
+          `Session ${request.sessionId}: Claude Code has no transcript of conversation ${id}, ` +
+            "so it starts a new one with that id instead of resuming it",
         )
         return { _tag: "New", id } as const
       })
 
     /**
-     * Reads the Repo's skills and CLAUDE.md from the Workspace through the Sandbox, and writes them
-     * for Claude Code over what an earlier start wrote, at every start and wake (#125). A Session
-     * whose files can't be read starts without them.
+     * Starts the Session's Claude Code in a new tmux session in its running Sandbox, and watches
+     * it. It holds a new Session token, given to it alone, never set on the Sandbox.
      */
-    const copyRepoFiles = (sessionId: SessionId, directory: string) =>
+    const launchClaude = (
+      request: StartSession | RelaunchSession,
+      directories: SessionDirectories,
+      sandbox: SandboxStarted,
+    ) =>
       Effect.gen(function* () {
-        const files = yield* sandboxes
-          .repoFiles(sessionId)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.as(
-                Effect.logWarning(
-                  `Session ${sessionId}: the Repo's skills and CLAUDE.md were not read`,
-                  cause,
-                ),
-                noRepoFiles,
-              ),
-            ),
-          )
-        if (files.skipped.length > 0)
-          yield* Effect.logInfo(
-            `Session ${sessionId}: left out of the Repo's skills and CLAUDE.md: ${files.skipped.slice(0, 20).join("; ")}`,
-          )
-        yield* writeRepoFiles(directory, files)
+        const { sessionId } = request
+        const launch = claudeLaunch({
+          claudePath: sandbox.claude.path,
+          sessionId,
+          conversation: yield* conversationFor(request, directories),
+          ...(request.parent === undefined ? {} : { parent: request.parent }),
+          ...(request.model === undefined ? {} : { model: request.model }),
+          ...(request.effort === undefined ? {} : { effort: request.effort }),
+        })
+        const pass = yield* admit(sessionId, request.modToken)
+        yield* tmux.launch({
+          sessionId,
+          cwd: workspaceGuestPath,
+          argv: launch.argv,
+          env: { ...sandbox.claude.env, ...launch.env, ...pass.env },
+          size: InitialTerminalSize,
+        })
+        yield* watch(sessionId)
       })
+
+    /** Tells the Hub the Session's Claude Code started, with the Environment version it runs. */
+    const started = (sessionId: SessionId) => {
+      const environmentVersion = sandboxStarts.get(sessionId)?.environmentVersion
+      return hub.send(
+        RunnerToHub.cases.SessionStarted.make({
+          sessionId,
+          ...(environmentVersion === undefined ? {} : { environmentVersion }),
+        }),
+      )
+    }
 
     const start = (request: StartSession) =>
       serialized(request.sessionId)(
         Effect.gen(function* () {
           const { sessionId } = request
-          const started = (environmentVersion: EnvironmentVersion | undefined) =>
-            hub.send(
-              RunnerToHub.cases.SessionStarted.make({
-                sessionId,
-                ...(environmentVersion === undefined ? {} : { environmentVersion }),
-              }),
-            )
-          if (running.has(sessionId)) return yield* started(environmentVersions.get(sessionId))
+          if (running.has(sessionId)) return yield* started(sessionId)
           // Whatever is left of an earlier run, such as a tmux session whose process exited.
           yield* tmux.kill(sessionId)
           const launched = yield* Effect.gen(function* () {
@@ -343,41 +329,13 @@ export const SessionsLive = Layer.effect(
               ...(request.environment === undefined ? {} : { environment: request.environment }),
               ...(request.gitIdentity === undefined ? {} : { gitIdentity: request.gitIdentity }),
             })
-            if (sandbox.environmentVersion === undefined) environmentVersions.delete(sessionId)
-            else environmentVersions.set(sessionId, sandbox.environmentVersion)
-            yield* copyRepoFiles(sessionId, directories.repoFiles)
-            const launch = claudeLaunch({
-              claudeBin: config.claudeBin,
-              modDir: config.modDir,
-              hubUrl: config.hubUrl,
-              sessionId,
-              modToken: request.modToken,
-              toolsSocket: directories.toolsSocket,
-              repoFiles: directories.repoFiles,
-              repo: request.repo,
-              workBranch: request.workBranch,
-              conversation: yield* conversationFor(request, directories.claude),
-              ...(request.parent === undefined ? {} : { parent: request.parent }),
-              ...(request.model === undefined ? {} : { model: request.model }),
-              ...(request.effort === undefined ? {} : { effort: request.effort }),
-            })
-            // Its trust may have been dropped since startup, and the dialog would stop the mod.
-            yield* trust.ensure
-            yield* ensureDirectory(directories.claude)
-            yield* admit(sessionId, request.modToken)
-            yield* tmux.launch({
-              sessionId,
-              cwd: directories.claude,
-              argv: launch.argv,
-              env: launch.env,
-              size: InitialTerminalSize,
-            })
-            yield* watch(sessionId)
+            sandboxStarts.set(sessionId, sandbox)
+            yield* launchClaude(request, directories, sandbox)
           }).pipe(Effect.exit)
 
           if (Exit.isSuccess(launched)) {
             yield* Effect.logInfo(`Session ${sessionId} started`)
-            return yield* started(environmentVersions.get(sessionId))
+            return yield* started(sessionId)
           }
           const reason = message(launched.cause)
           yield* forget(sessionId)
@@ -391,7 +349,7 @@ export const SessionsLive = Layer.effect(
     /**
      * Starts a running Session's Claude Code again with the model and effort the Hub sends (#128),
      * resuming its conversation: Claude Code exits as on a stop and starts in a new tmux session,
-     * while its Sandbox, tool bridge and Repo files stay as they are. The Hub sends it only while
+     * while its Sandbox stays as it is. The Hub sends it only while
      * no Turn runs. A Claude Code that won't start again leaves the Session as a failed start does,
      * asleep.
      */
@@ -400,7 +358,8 @@ export const SessionsLive = Layer.effect(
         Effect.gen(function* () {
           const { sessionId } = request
           const session = running.get(sessionId)
-          if (session === undefined) {
+          const sandbox = sandboxStarts.get(sessionId)
+          if (session === undefined || sandbox === undefined) {
             return yield* hub.send(
               RunnerToHub.cases.SessionStartFailed.make({
                 sessionId,
@@ -413,46 +372,16 @@ export const SessionsLive = Layer.effect(
           yield* Deferred.await(session.exited).pipe(Effect.timeoutOption(StopGracePeriod))
           yield* tmux.kill(sessionId)
           yield* forget(sessionId)
-          const launched = yield* Effect.gen(function* () {
-            const directories = sessionDirectories(config.sessionsRoot, sessionId)
-            const launch = claudeLaunch({
-              claudeBin: config.claudeBin,
-              modDir: config.modDir,
-              hubUrl: config.hubUrl,
-              sessionId,
-              modToken: request.modToken,
-              toolsSocket: directories.toolsSocket,
-              repoFiles: directories.repoFiles,
-              repo: request.repo,
-              workBranch: request.workBranch,
-              conversation: yield* conversationFor(request, directories.claude),
-              ...(request.parent === undefined ? {} : { parent: request.parent }),
-              ...(request.model === undefined ? {} : { model: request.model }),
-              ...(request.effort === undefined ? {} : { effort: request.effort }),
-            })
-            yield* trust.ensure
-            yield* ensureDirectory(directories.claude)
-            yield* admit(sessionId, request.modToken)
-            yield* tmux.launch({
-              sessionId,
-              cwd: directories.claude,
-              argv: launch.argv,
-              env: launch.env,
-              size: InitialTerminalSize,
-            })
-            yield* watch(sessionId)
-          }).pipe(Effect.exit)
+          const launched = yield* launchClaude(
+            request,
+            sessionDirectories(config.sessionsRoot, sessionId),
+            sandbox,
+          ).pipe(Effect.exit)
 
           if (Exit.isSuccess(launched)) {
             const model = [request.model ?? "default model", request.effort ?? "default effort"]
             yield* Effect.logInfo(`Session ${sessionId} restarted on ${model.join(", ")}`)
-            const environmentVersion = environmentVersions.get(sessionId)
-            return yield* hub.send(
-              RunnerToHub.cases.SessionStarted.make({
-                sessionId,
-                ...(environmentVersion === undefined ? {} : { environmentVersion }),
-              }),
-            )
+            return yield* started(sessionId)
           }
           const reason = message(launched.cause)
           yield* forget(sessionId)
@@ -529,71 +458,9 @@ export const SessionsLive = Layer.effect(
         Effect.ensuring(Effect.sync(() => locks.delete(sessionId))),
       )
 
-    /**
-     * Makes the tmux server on the Runner's socket its own before using it (#105): one left by
-     * another process, as a Runner run from a checkout since deleted, keeps that process's `PWD`
-     * and `PATH` for every Session it starts.
-     */
-    const claimServer = tmux.claimServer.pipe(
-      Effect.flatMap((claim) => {
-        const socket = `the tmux server on socket ${config.tmuxSocket}`
-        const changed = claim._tag === "NoServer" ? [] : claim.changed
-        const how = changed.length === 0 ? "" : ` (${changed.join("; ")})`
-        switch (claim._tag) {
-          case "NoServer":
-            return Effect.void
-          case "Replaced":
-            return Effect.logInfo(
-              `Stopped ${socket}, which had no sessions, so the next Session starts a fresh one with the Runner's environment${how}`,
-            )
-          case "Refreshed":
-            return changed.length === 0
-              ? Effect.void
-              : Effect.logWarning(
-                  `Kept ${socket}, which has ${claim.sessions} session(s), and set its environment to the Runner's${how}`,
-                )
-        }
-      }),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not check the tmux server's environment", cause),
-      ),
-    )
-
     const adopt = Effect.gen(function* () {
-      yield* claimServer
-      const found = yield* tmux.list.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Could not list tmux sessions to re-adopt", cause).pipe(Effect.as([])),
-        ),
-      )
-      for (const sessionId of found) {
-        if (running.has(sessionId)) continue
-        const adopted = yield* watch(sessionId).pipe(
-          Effect.tap(() => Effect.logInfo(`Re-adopted Session ${sessionId}`)),
-          Effect.as(true),
-          Effect.catchCause((cause) =>
-            Effect.logWarning(`Could not re-adopt Session ${sessionId}`, cause).pipe(
-              Effect.as(false),
-            ),
-          ),
-        )
-        // Its Sandbox may have kept running or not; either way its tool bridge must come back.
-        if (adopted)
-          yield* sandboxes
-            .start(sessionId, sessionDirectories(config.sessionsRoot, sessionId))
-            .pipe(
-              Effect.tap((sandbox) =>
-                Effect.sync(() => {
-                  if (sandbox.environmentVersion !== undefined)
-                    environmentVersions.set(sessionId, sandbox.environmentVersion)
-                }),
-              ),
-              Effect.catchCause((cause) =>
-                Effect.logWarning(`Session ${sessionId}: its Sandbox did not come back`, cause),
-              ),
-            )
-      }
-      yield* sandboxes.reconcile(running.keys())
+      yield* tmux.retireHostServer
+      yield* sandboxes.reconcile([])
     })
 
     /** Runs a Test build, streaming its output to the Hub, and reports how it ended. */

@@ -19,7 +19,7 @@ An install keeps everything in its home, `~/.claude-hub` (or `CLAUDE_HUB_HOME`):
 | `~/.claude-hub/runner-update.json` | The Runner's update under way, or its last failed one: what it moved from, so it can go back, and the error it reports to the Hub. An update is done once the Hub welcomes the Runner on the new commit; a failed one is kept until the checkout moves again, so a restarted Hub still hears of it. |
 | `~/.claude-hub/hub.db.lock` | The lock the running Hub holds, so a second Hub or a `secrets reset` on the same database is refused. The operating system drops it when the Hub ends. |
 | `~/.claude-hub/sessions/` | The Runner's sessions root, one directory per Session. |
-| `~/.claude-hub/claude-code/` | Linux builds of Claude Code, for Sandboxes' tool bridges. |
+| `~/.claude-hub/claude-code/` | Linux builds of Claude Code, which Sessions run in their Sandboxes. |
 | `~/.claude-hub/claude-token` | Off macOS, the Runner's [Claude credential](/reference/configuration/#the-runners-claude-credential) for Sessions without their own, if you put one there: a setup-token or API key. It must be readable only by you (`600`). |
 | `~/.claude-hub/logs/hub.log`, `runner.log` | Each service's output. `claude-hub logs hub` prints it. |
 
@@ -32,8 +32,6 @@ Outside the home:
 | `~/.config/systemd/user/claude-hub-hub.service`, `claude-hub-runner.service` | Linux: the services, as systemd user units (`$XDG_CONFIG_HOME/systemd/user` when that is set). |
 
 Each service runs the install's Hub or Runner with its env file and `CLAUDE_HUB_HOME` set, logs to `logs/`, starts at login and restarts if it crashes. `claude-hub uninstall` removes the install, the command and the services, and keeps the rest of the home; `--purge` removes the home too.
-
-An installed Runner's tmux server is `tmux -L claude-hub`.
 
 ## The Hub
 
@@ -51,8 +49,8 @@ Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the databa
 | Path | What it is |
 |---|---|
 | `~/.claude-hub-dev/sessions/` | The sessions root (`RUNNER_SESSIONS_ROOT`), with one directory per Session. |
-| `~/.claude-hub-dev/claude-code/` | Linux builds of Claude Code, which Sandboxes run the tool bridge from (`RUNNER_SANDBOX_CLAUDE_CACHE`). |
-| `packages/mod/` | The `hub-link` mod, loaded into each Session's Claude Code (`RUNNER_MOD_DIR`). |
+| `~/.claude-hub-dev/claude-code/` | Linux builds of Claude Code, mounted read-only into every Sandbox, which Sessions run (`RUNNER_SANDBOX_CLAUDE_CACHE`). |
+| `packages/mod/` | The `hub-link` mod, mounted read-only into every Sandbox and loaded into its Claude Code (`RUNNER_MOD_DIR`). |
 | `~/.claude.json` | Claude Code's config file. The Runner reads the signed-in account and its plan from it and adds one folder-trust entry, for its sessions root. `$CLAUDE_CONFIG_DIR/.claude.json` when that is set. |
 | `~/.microsandbox/` | microsandbox's home (`MSB_HOME`), with its Sandboxes, volumes, snapshots and their logs. |
 
@@ -65,19 +63,17 @@ Under the sessions root, `<session id>/` holds:
 | `claude/` | An empty directory that Claude Code runs in, so it reads no project files from the host ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/)). |
 | `workspace/` | The Workspace: the Repo's checkout on the Session's Work branch, mounted into the Sandbox at `/workspace`. |
 | `host-git/` | The Runner's own git directory for the Workspace. Never mounted into the Sandbox, so nothing in the Sandbox can change the config or hooks the Runner's git runs with. |
-| `tools.sock` | The Unix socket of the Session's tool bridge, which the mod sends tool calls to. |
-| `repo/` | The Repo's `CLAUDE.md` and skills, copied from the Workspace at each start and wake, over the last copy: `instructions.json`, which the mod adds to Claude's context, and `.claude/`, a plugin of the Repo's skills ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/#repo-skills-and-claudemd-amended-in-125)). |
 
-Archiving a Session keeps its directory; purging it deletes the directory and what Claude Code kept for it.
+Archiving a Session keeps its directory, and the volume with Claude Code's state; purging it deletes both.
 
 ## Names
 
 | What | Name |
 |---|---|
-| The Runner's tmux server | `tmux -L claude-hub-dev` (`RUNNER_TMUX_SOCKET`) |
+| The tmux server in a Sandbox | `tmux -L claude-hub` |
 | A Session's tmux session | `hub-<session id>` |
 | A Session's Sandbox | `claude-hub-<session id>` |
-| A Sandbox's volumes | `claude-hub-<session id>.<key>`, such as `.deps-node-modules` or `.docker` |
+| A Sandbox's volumes | `claude-hub-<session id>.<key>`, such as `.deps-node-modules`, `.docker` or `.claude` |
 | A Repo's Environment builds | snapshots `b<build version>-<libc>`, in a group per Runner and Repo |
 
 Everything a Runner makes in microsandbox is labelled `claude-hub.runner` with the Runner's mark, a digest of its tmux socket and sessions root. A Runner only stops or removes what carries its own mark.
@@ -89,3 +85,6 @@ Everything a Runner makes in microsandbox is labelled `claude-hub.runner` with t
 | `/workspace` | The Workspace, mounted from the Runner. |
 | `/workspace/node_modules` and other dependency folders | Each on a volume of its own, since many small files are slow on the host mount. |
 | `/var/cache/claude-hub` | Package caches, on a volume. |
+| `/var/lib/claude-hub/claude` | Claude Code's state, its `CLAUDE_CONFIG_DIR`, with the Session's transcripts: on a volume, kept when the Session is archived. |
+| `/opt/claude-hub/claude-code` | The Runner's Linux builds of Claude Code, read-only. |
+| `/opt/claude-hub/hub-link` | The mod, read-only. |

@@ -1,6 +1,6 @@
 ---
-// The landing page's diagram: people on the web, the Hub, and Runners that each keep Claude Code
-// on the host and its tools in a Sandbox. Built from HTML rather than one SVG, so it reflows into
+// The landing page's diagram: people on the web, the Hub, and Runners that each run Claude Code
+// in a Sandbox, behind a credential proxy on the host. Built from HTML rather than one SVG, so it reflows into
 // a column on a phone and its text stays readable at every width.
 ---
 
@@ -37,16 +37,16 @@
             <div class="host">
               <span class="dot" aria-hidden="true" />
               <span>
-                <b>Claude Code</b> in tmux, on the Runner login
+                <b>Credential proxy</b>, holding the Claude credential
               </span>
             </div>
             <div class="arrow" aria-hidden="true">
-              tools <span>↓</span>
+              Session token <span>↑</span>
             </div>
             <div class="sandbox">
               <span class="dot" aria-hidden="true" />
               <span>
-                <b>Sandbox</b> microVM with <code>/workspace</code>: every file and command tool runs here
+                <b>Sandbox</b> microVM with <code>/workspace</code>: Claude Code and every tool it runs
               </span>
             </div>
           </section>
@@ -55,8 +55,8 @@
     </div>
   </div>
   <figcaption id="how-caption">
-    Claude Code runs on the Runner with the Runner's credentials. Its tools run in the Session's
-    Sandbox, which never sees them.
+    Claude Code and its tools run in the Session's Sandbox with only a Session token. The Runner's
+    credential proxy sends its requests on with the real credential, which the Sandbox never sees.
   </figcaption>
 </figure>
 

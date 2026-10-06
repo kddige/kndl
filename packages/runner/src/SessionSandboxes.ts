@@ -1,14 +1,18 @@
-// Sessions' Sandboxes on a SandboxBackend (#9, #11): each Session's Sandbox is created or started
-// around its Workspace before Claude Code launches, with the tool bridge serving it on the
-// Session's socket, and stopped or destroyed when the Session stops.
+// Sessions' Sandboxes on a SandboxBackend (#9): each Session's Sandbox is created or started
+// around its Workspace before Claude Code launches in it (ADR 0013), and stopped or destroyed when
+// the Session stops. Every Sandbox mounts the Claude Code builds and the mod read-only, and keeps
+// Claude Code's state on a volume of its own; each start makes sure it has tmux and seeds that
+// state (ClaudeState.ts). A Sandbox made before Claude Code ran in Sandboxes lacks those mounts,
+// and is made anew on its volumes at its next start.
 //
 // A Session of a Repo with an Environment (ADR 0009) boots from that Environment's build, built
 // on this Runner the first time a Session needs it, with the build's output shown in the Session.
 // Each new Sandbox then gets its dependency folders bound and runs the start script; each later
 // boot binds the folders again. A Sandbox of an older version is recreated at its next start,
 // keeping its volumes. The Environment's variables are fetched from the Hub, kept in memory, and
-// passed to each process the Runner starts in the Sandbox, never set on the VM, over the login
-// environment its build kept, which each new Sandbox probes again after its start script (#67).
+// passed to each process the Runner starts in the Sandbox, Claude Code included, never set on the
+// VM, over the login environment its build kept, which each new Sandbox probes again after its
+// start script (#67).
 //
 // Once a Session's Sandbox runs, it is kept with a GitHub token for git and gh, and git there
 // commits as the Session's Creator (SandboxGitHub.ts).
@@ -34,6 +38,7 @@ import { HomeConfig } from "@claude-hub/protocol/home"
 import { Config, Effect, Exit, Layer, Option, Schema, Scope, Semaphore } from "effect"
 import type { Cause } from "effect"
 import { ChildProcessSpawner } from "effect/process"
+import { ClaudeProjectsDir } from "./ClaudeConfig.ts"
 import {
   buildGroup,
   buildInSandbox,
@@ -44,6 +49,7 @@ import {
   readLoginEnv,
   runScript,
   testBuildGroup,
+  claudeNeedsScript,
   variableNames,
 } from "./EnvironmentBuilds.ts"
 import type { BuildLog, ResourceLimits } from "./EnvironmentBuilds.ts"
@@ -54,7 +60,8 @@ import { HubVariables, variablesEnv } from "./HubVariables.ts"
 import { collectRepoFiles, sandboxWorkspace } from "./RepoFiles.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { SandboxError, Sandboxes } from "./Sandbox.ts"
-import type { SandboxTarget } from "./Sandbox.ts"
+import type { SandboxClaude, SandboxTarget } from "./Sandbox.ts"
+import { claudeStateEnv, ensureTranscript, seedClaudeState } from "./sandbox/ClaudeState.ts"
 import {
   bindDependencyFoldersScript,
   dependencyDiskGuestPath,
@@ -67,14 +74,17 @@ import type { HostMount, SandboxSnapshots, SandboxSpec } from "./sandbox/Sandbox
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
 import {
   ensureSandboxClaude,
-  hostClaudeVersion,
+  PinnedClaudeVersion,
   sandboxClaudeGuestDir,
   sandboxClaudePath,
 } from "./sandbox/SandboxClaude.ts"
 import type { Libc, SandboxClaudeError } from "./sandbox/SandboxClaude.ts"
 import {
   cacheEnv,
+  claudeStateGuestPath,
+  claudeStateVolumeKey,
   defaults,
+  modGuestPath,
   sessionSandboxSpec,
   workspaceGuestPath,
 } from "./sandbox/SessionLayout.ts"
@@ -83,8 +93,6 @@ import { keepSandboxToken, setSandboxIdentity } from "./SandboxGitHub.ts"
 import type { SandboxTokenSource } from "./SandboxGitHub.ts"
 import type { SessionDirectories } from "./SessionNames.ts"
 import { InitialTerminalSize } from "./Sessions.ts"
-import { makeToolEngine, serveToolBridge, ToolBridgeError } from "./ToolBridge.ts"
-import type { ToolEngineOptions } from "./ToolBridge.ts"
 
 export interface SessionSandboxesOptions {
   /** The OCI image Sandboxes boot when their Repo has no Environment. */
@@ -92,16 +100,16 @@ export interface SessionSandboxesOptions {
   /** The host directory of Linux Claude Code builds, mounted read-only into every Sandbox. */
   readonly claudeCacheDir: string
   /**
-   * Finds, and downloads if needed, the Claude Code build for `libc` that Sandboxes run
-   * `mcp serve` from, and returns its version. Run on the first Session start needing that libc
-   * until it succeeds.
+   * Finds, and downloads if needed, the Claude Code build for `libc` that Sessions run, and
+   * returns its version. Run on the first Session start needing that libc until it succeeds.
    */
   readonly sandboxClaude: (libc: Libc) => Effect.Effect<string, SandboxClaudeError>
+  /** The mod's directory on the host, mounted read-only into every Sandbox for Claude Code. */
+  readonly modDir: string
   /** Size overrides for the Session layout. */
   readonly layout?: Partial<
     Omit<SessionLayoutOptions, "sessionId" | "image" | "workspaceHostPath" | "env">
   >
-  readonly bridge?: Pick<ToolEngineOptions, "readyTimeout" | "restartDelay">
   /** Fresh GitHub tokens for Sessions' Sandboxes. Without it, Sandboxes get none. */
   readonly githubToken?: SandboxTokenSource
   /** The most CPUs and memory an Environment's Sandbox gets, whatever it asks for. */
@@ -118,8 +126,14 @@ export interface SessionSandboxesOptions {
   readonly scratchDir?: string
 }
 
-/** The most a Sandbox may write to the read-only Claude Code mount: nothing, but it needs a quota. */
-const claudeMountQuotaMib = 1
+/** The most a Sandbox may write to a read-only mount: nothing, but it needs a quota. */
+const readOnlyQuotaMib = 1
+
+/** Claude Code's home in every Sandbox, and a UTF-8 locale for its terminal. */
+const claudeBaseEnv: Readonly<Record<string, string>> = { HOME: "/root", LANG: "C.UTF-8" }
+
+/** Tells a Sandbox made before Claude Code ran in Sandboxes (ADR 0013): it lacks these mounts. */
+const claudeMountsScript = `test -d ${modGuestPath} && test -d ${claudeStateGuestPath}`
 
 /** What a Session's Sandbox was last started from, kept in its directory. Holds no values. */
 const SandboxRecord = Schema.Struct({
@@ -224,10 +238,9 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
     const backend = yield* SandboxBackend
     const hub = yield* HubLink
     const hubVariables = yield* HubVariables
+    const projectsDir = yield* ClaudeProjectsDir
     const layerScope = yield* Effect.scope
 
-    /** Each Session's open tool bridge, closed when its Sandbox stops. */
-    const bridges = new Map<SessionId, Scope.Closeable>()
     /** What keeps each running Session's Sandbox with a GitHub token, closed when it stops. */
     const tokenKeepers = new Map<SessionId, Scope.Closeable>()
     /** Each running Environment Session's variable values: in memory only. */
@@ -296,13 +309,6 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           .pipe(Effect.tap((values) => Effect.sync(() => variables.set(sessionId, values))))
       })
 
-    const closeBridge = (sessionId: SessionId) =>
-      Effect.suspend(() => {
-        const scope = bridges.get(sessionId)
-        bridges.delete(sessionId)
-        return scope === undefined ? Effect.void : Scope.close(scope, Exit.void)
-      })
-
     const closeTokenKeeper = (sessionId: SessionId) =>
       Effect.suspend(() => {
         const scope = tokenKeepers.get(sessionId)
@@ -310,9 +316,8 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         return scope === undefined ? Effect.void : Scope.close(scope, Exit.void)
       })
 
-    /** Closes what runs beside the Session's Sandbox: its tool bridge and its token keeper. */
-    const release = (sessionId: SessionId) =>
-      Effect.andThen(closeBridge(sessionId), closeTokenKeeper(sessionId))
+    /** Closes what runs beside the Session's Sandbox: its token keeper. */
+    const release = closeTokenKeeper
 
     /** Gets the running Sandbox a GitHub token, in the background, and keeps it fresh. */
     const keepToken = (sessionId: SessionId) =>
@@ -324,52 +329,10 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         tokenKeepers.set(sessionId, scope)
       })
 
-    const openBridge = (
-      sessionId: SessionId,
-      directories: SessionDirectories,
-      claudePath: string,
-      withEnvironment: boolean,
-    ) =>
-      Effect.gen(function* () {
-        if (bridges.has(sessionId)) return
-        const scope = yield* Scope.fork(layerScope)
-        yield* Effect.gen(function* () {
-          const engine = yield* makeToolEngine({
-            sessionId,
-            claudePath,
-            // Claude Code runs in the Session's empty directory, so that is where the model
-            // thinks its files are.
-            workspaceAlias: directories.claude,
-            ...(withEnvironment
-              ? {
-                  env: Effect.all([
-                    readLoginEnv(backend, sessionId).pipe(
-                      Effect.map(Option.getOrElse(() => ({}))),
-                      Effect.mapError(
-                        (error) => new ToolBridgeError({ message: errorMessage(error) }),
-                      ),
-                    ),
-                    sessionVariables(sessionId).pipe(
-                      Effect.mapError((error) => new ToolBridgeError({ message: error.message })),
-                    ),
-                  ]).pipe(Effect.map(([login, values]) => processEnv(login, values))),
-                }
-              : {}),
-            ...options.bridge,
-          })
-          yield* serveToolBridge(directories.toolsSocket, engine)
-        }).pipe(
-          Effect.provideService(SandboxBackend, backend),
-          Scope.provide(scope),
-          Effect.onError(() => Scope.close(scope, Exit.void)),
-        )
-        bridges.set(sessionId, scope)
-      })
-
     /**
      * Readies a new Sandbox once its folders are bound: runs the start script, if the recipe has
      * one, in the Workspace with the build's login environment and the variables, then probes the
-     * login environment again there, so the tool bridge also gets what the start script set up.
+     * login environment again there, so Claude Code also gets what the start script set up.
      */
     const runStart = (
       sessionId: SessionId,
@@ -507,7 +470,16 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       _tag: "Host",
       hostPath: options.claudeCacheDir,
       guestPath: sandboxClaudeGuestDir,
-      quotaMib: claudeMountQuotaMib,
+      quotaMib: readOnlyQuotaMib,
+      readOnly: true,
+    }
+
+    /** hub-link, which Claude Code loads with `--plugin-dir` (ADR 0013). */
+    const modMount: HostMount = {
+      _tag: "Host",
+      hostPath: options.modDir,
+      guestPath: modGuestPath,
+      quotaMib: readOnlyQuotaMib,
       readOnly: true,
     }
 
@@ -524,11 +496,61 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         }),
     })
 
+    /** Whether the running Sandbox has the mounts Claude Code runs from. */
+    const hasClaudeMounts = (sessionId: SessionId) =>
+      backend
+        .exec(sessionId, { command: "sh", args: ["-c", claudeMountsScript] })
+        .pipe(Effect.map((result) => result.exitCode === 0))
+
+    /**
+     * Destroys the Session's Sandbox, keeping its volumes, when it was made before Claude Code ran
+     * in Sandboxes: it boots it to tell. Says whether it did.
+     */
+    const replaceOutdated = (sessionId: SessionId, state: SandboxState) =>
+      Effect.gen(function* () {
+        if (state === "Destroyed") return false
+        if (state !== "Running") yield* backend.start(sessionId)
+        if (yield* hasClaudeMounts(sessionId)) return false
+        yield* Effect.logInfo(
+          `Session ${sessionId}: its Sandbox was made before Claude Code ran in Sandboxes, so it is made anew, keeping its volumes`,
+        )
+        yield* release(sessionId)
+        yield* backend.destroy(sessionId, { keepVolumes: true })
+        return true
+      })
+
+    /**
+     * Readies the running Sandbox for Claude Code: tmux and bash, installed if the image lacks
+     * them, with what that prints shown in the Session, and Claude Code's state seeded.
+     */
+    const readyClaude = (
+      sessionId: SessionId,
+      claudePath: string,
+      env: Readonly<Record<string, string>>,
+    ) =>
+      Effect.gen(function* () {
+        yield* runScript(
+          backend,
+          sessionId,
+          {
+            label: "Installing tmux and bash",
+            name: "claude-needs",
+            script: claudeNeedsScript,
+            cwd: "/",
+          },
+          sessionLog(sessionId),
+        )
+        yield* seedClaudeState(backend, sessionId)
+        return { path: claudePath, env: { ...env, ...claudeStateEnv } } satisfies SandboxClaude
+      })
+
     /** A Sandbox on the Runner's default image, for a Repo without an Environment. */
     const startPlain = (sessionId: SessionId, directories: SessionDirectories, replace: boolean) =>
       Effect.gen(function* () {
         const version = yield* sandboxClaude("musl")
         let state = yield* backend.state(sessionId)
+        const running = state === "Running"
+        if (!running) yield* report(sessionId, "Starting")
         if (replace && state !== "Destroyed") {
           // Its Environment's Sandbox: the default one is made anew on the same volumes.
           yield* release(sessionId)
@@ -536,25 +558,24 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
           state = "Destroyed"
         }
         yield* removeRecord(directories)
-        if (state !== "Running") {
-          yield* report(sessionId, "Starting")
-          if (state === "Destroyed") {
-            const spec = sessionSandboxSpec({
-              ...options.layout,
-              sessionId,
-              image: options.image,
-              workspaceHostPath: directories.workspace,
-            })
-            yield* claudeMountReady
-            yield* backend.create({ ...spec, mounts: [...spec.mounts, claudeMount] })
-          } else {
-            yield* backend.start(sessionId)
-          }
-          yield* report(sessionId, "Running")
+        if (state === "Destroyed" || (yield* replaceOutdated(sessionId, state))) {
+          const spec = sessionSandboxSpec({
+            ...options.layout,
+            sessionId,
+            image: options.image,
+            workspaceHostPath: directories.workspace,
+          })
+          yield* claudeMountReady
+          yield* backend.create({ ...spec, mounts: [...spec.mounts, claudeMount, modMount] })
         }
+        if (!running) yield* report(sessionId, "Running")
         yield* keepToken(sessionId)
-        yield* openBridge(sessionId, directories, sandboxClaudePath(version, "musl"), false)
-        return {}
+        return {
+          claude: yield* readyClaude(sessionId, sandboxClaudePath(version, "musl"), {
+            ...claudeBaseEnv,
+            ...cacheEnv,
+          }),
+        }
       })
 
     const startWithEnvironment = (
@@ -563,31 +584,24 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       repo: string,
       environment: SessionEnvironment,
       record: SandboxRecord | undefined,
-      adopting: boolean,
     ) =>
       Effect.gen(function* () {
         const snapshots = yield* snapshotsOrFail
         const log = sessionLog(sessionId)
         const { recipe } = environment
         let state = yield* backend.state(sessionId)
-        if (adopting && state === "Destroyed")
-          // Making it again takes its variables, which the Hub sends only once the Runner is
-          // connected, after adopting.
-          return yield* new SandboxError({
-            message: "its Sandbox is gone; it is made again when the Session next starts",
-          })
+        if (state !== "Running") yield* report(sessionId, "Starting")
         if (state !== "Destroyed" && record?.version !== environment.version) {
           // Another version's, or one whose start never finished: made anew on its volumes.
           yield* release(sessionId)
           yield* backend.destroy(sessionId, { keepVolumes: true })
           state = "Destroyed"
         }
-        if (state !== "Running") yield* report(sessionId, "Starting")
-        // Asked for again at each start, as they may have changed. Only a new Sandbox needs them
-        // now, for its build and start script, and a refusal stops it here; on a wake the tool
-        // bridge asks when it first starts a process.
+        if (yield* replaceOutdated(sessionId, state)) state = "Destroyed"
+        // Asked for again at each start, as they may have changed. Claude Code gets them, and a
+        // new Sandbox's build and start script; a refusal stops the start here.
         variables.delete(sessionId)
-        const values = state === "Destroyed" ? yield* sessionVariables(sessionId) : []
+        const values = yield* sessionVariables(sessionId)
         let libc: Libc
         if (state === "Destroyed") {
           const build = yield* ensureBuild(repo, environment, Effect.succeed(values), log)
@@ -602,13 +616,12 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
               workspaceHostPath: directories.workspace,
               resources,
               layout: options.layout,
-              mounts: [claudeMount],
+              mounts: [claudeMount, modMount],
             }),
             build.reference,
           )
         } else {
           libc = record?.libc ?? "musl"
-          if (state !== "Running") yield* backend.start(sessionId)
         }
         const version = yield* sandboxClaude(libc)
         yield* report(sessionId, "Running")
@@ -624,32 +637,24 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
             recipe,
           })
         }
-        yield* openBridge(sessionId, directories, sandboxClaudePath(version, libc), true)
-        return { environmentVersion: environment.version }
+        const login = yield* readLoginEnv(backend, sessionId)
+        return {
+          environmentVersion: environment.version,
+          claude: yield* readyClaude(sessionId, sandboxClaudePath(version, libc), {
+            ...claudeBaseEnv,
+            ...processEnv(
+              Option.getOrElse(login, () => ({})),
+              values,
+            ),
+          }),
+        }
       })
 
-    const start = (sessionId: SessionId, directories: SessionDirectories, target?: SandboxTarget) =>
+    const start = (sessionId: SessionId, directories: SessionDirectories, target: SandboxTarget) =>
       Effect.gen(function* () {
-        // Only the Runner's user may reach into the Session's directory, and so its socket.
+        // Only the Runner's user may reach into the Session's directory.
         yield* Effect.tryPromise(() => chmod(directories.session, 0o700))
         const record = yield* readRecord(directories)
-        if (target === undefined) {
-          // Brought back as it was, as after a Runner restart.
-          return record === undefined
-            ? yield* startPlain(sessionId, directories, false)
-            : yield* startWithEnvironment(
-                sessionId,
-                directories,
-                record.repo,
-                {
-                  version: record.version,
-                  buildVersion: record.buildVersion,
-                  recipe: record.recipe,
-                },
-                record,
-                true,
-              )
-        }
         return target.environment === undefined
           ? yield* startPlain(sessionId, directories, record !== undefined)
           : yield* startWithEnvironment(
@@ -658,12 +663,11 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
               target.repo,
               target.environment,
               record,
-              false,
             )
       }).pipe(
         // After the start script, so an identity it set is kept.
         Effect.tap(() =>
-          target?.gitIdentity === undefined
+          target.gitIdentity === undefined
             ? Effect.void
             : setSandboxIdentity(backend, sessionId, target.gitIdentity),
         ),
@@ -676,6 +680,16 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         }),
       )
 
+    const hasTranscript = (sessionId: SessionId, directories: SessionDirectories, id: string) =>
+      ensureTranscript(backend, sessionId, id, { cwd: directories.claude, projectsDir }).pipe(
+        Effect.mapError(
+          (error) =>
+            new SandboxError({
+              message: `could not look for the conversation's transcript: ${errorMessage(error)}`,
+            }),
+        ),
+      )
+
     const stop = (sessionId: SessionId, reason: "Sleep" | "Archive") =>
       Effect.gen(function* () {
         yield* release(sessionId)
@@ -683,7 +697,8 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         if ((yield* backend.state(sessionId)) === "Destroyed" && reason === "Sleep") return
         yield* report(sessionId, "Stopping")
         if (reason === "Archive") {
-          yield* backend.destroy(sessionId)
+          // Claude Code's state stays, like the Workspace, for a restore to resume.
+          yield* backend.destroy(sessionId, { keepVolumes: [claudeStateVolumeKey] })
           yield* report(sessionId, "Destroyed")
         } else {
           yield* backend.stop(sessionId)
@@ -772,9 +787,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       )
 
     yield* Effect.addFinalizer(() =>
-      Effect.forEach(new Set([...bridges.keys(), ...tokenKeepers.keys()]), release, {
-        discard: true,
-      }),
+      Effect.forEach([...tokenKeepers.keys()], release, { discard: true }),
     )
 
     const reconcile = (running: Iterable<SessionId>) =>
@@ -801,7 +814,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
     const repoFiles = (sessionId: SessionId) =>
       collectRepoFiles(sandboxWorkspace(backend, sessionId))
 
-    return Sandboxes.of({ start, repoFiles, stop, purge, reconcile, testBuild })
+    return Sandboxes.of({ start, hasTranscript, repoFiles, stop, purge, reconcile, testBuild })
   })
 
 /**
@@ -849,7 +862,7 @@ export const cloneTestBuild = (options: {
  * | Variable | Default |
  * |---|---|
  * | `RUNNER_SANDBOX_IMAGE` | `docker:dind` |
- * | `RUNNER_SANDBOX_CLAUDE_VERSION` | the host's `claude --version` |
+ * | `RUNNER_SANDBOX_CLAUDE_VERSION` | {@link PinnedClaudeVersion} |
  * | `RUNNER_SANDBOX_CLAUDE_CACHE` | `claude-code` in the home: `~/.claude-hub-dev/claude-code` |
  * | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count |
  * | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory |
@@ -864,7 +877,9 @@ export const SessionSandboxesLive = Layer.effect(
     const home = yield* HomeConfig
     const settings = yield* Config.all({
       image: Config.String("RUNNER_SANDBOX_IMAGE").pipe(Config.withDefault("docker:dind")),
-      version: Config.option(Config.NonEmptyString("RUNNER_SANDBOX_CLAUDE_VERSION")),
+      version: Config.NonEmptyString("RUNNER_SANDBOX_CLAUDE_VERSION").pipe(
+        Config.withDefault(PinnedClaudeVersion),
+      ),
       cacheDir: Config.String("RUNNER_SANDBOX_CLAUDE_CACHE").pipe(
         Config.withDefault(join(home.dir, "claude-code")),
       ),
@@ -876,17 +891,14 @@ export const SessionSandboxesLive = Layer.effect(
       ),
       keepBuilds: Config.Int("RUNNER_SANDBOX_KEEP_BUILDS").pipe(Config.withDefault(3)),
     })
-    const version = Option.match(settings.version, {
-      onNone: () => hostClaudeVersion(config.claudeBin),
-      onSome: Effect.succeed,
-    })
     return yield* makeSessionSandboxes({
       githubToken: (sessionId) => hubGit.ask(sessionId, { _tag: "SandboxToken" }),
       image: settings.image,
       claudeCacheDir: settings.cacheDir,
+      modDir: config.modDir,
       sandboxClaude: (libc) =>
-        version.pipe(
-          Effect.tap((v) => ensureSandboxClaude({ cacheDir: settings.cacheDir, version: v, libc })),
+        ensureSandboxClaude({ cacheDir: settings.cacheDir, version: settings.version, libc }).pipe(
+          Effect.as(settings.version),
         ),
       limits: { cpus: settings.maxCpus, memoryMib: settings.maxMemoryMib },
       keepBuilds: settings.keepBuilds,
