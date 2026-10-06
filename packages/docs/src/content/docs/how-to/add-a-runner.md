@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-A Runner is a machine that runs Sessions, on its own [Runner login](/reference/glossary/): the Claude account signed in on it. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
+A Runner is a machine that runs Sessions. Each runs on its Creator's [Claude credential](/how-to/add-your-claude-credential/), or else on the Runner's own [Runner login](/reference/glossary/): the Claude account signed in on it. Add as many as you like: each connects out to the Hub, so the Hub never needs to reach it.
 
 ## Before you start
 

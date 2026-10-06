@@ -14,6 +14,7 @@ import { Context, Duration, Effect, Exit, Layer, Option, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
 import type { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
+import { ClaudeCheck } from "./ClaudeCredentials.ts"
 import { DatabaseTest } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { GitHub } from "./GitHub.ts"
@@ -81,6 +82,8 @@ export async function startHub(
     readonly database?: Layer.Layer<SqlClient.SqlClient, unknown>
     /** The Hub's own version; this checkout's by default. */
     readonly hubVersion?: Layer.Layer<HubVersion>
+    /** How Claude credentials are checked; by default as ClaudeCheck.layerTest, asking no one. */
+    readonly claudeCheck?: Layer.Layer<ClaudeCheck>
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -91,6 +94,7 @@ export async function startHub(
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
+    Layer.provideMerge(options.claudeCheck ?? ClaudeCheck.layerTest),
     Layer.provideMerge(options.githubApp ?? GitHubApp.layer),
     Layer.provideMerge(options.hubVersion ?? HubVersion.layer),
     Layer.provideMerge(options.database ?? DatabaseTest),

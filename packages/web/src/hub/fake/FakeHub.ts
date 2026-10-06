@@ -11,6 +11,8 @@
 import {
   cantStartText,
   checkHandshake,
+  claudeCredentialKindOf,
+  claudeCredentialProblem,
   type EffortLevel,
   findModel,
   formatPairingCode,
@@ -26,7 +28,7 @@ import {
   UpdateDrainMillis,
   WebToHub,
 } from "@claude-hub/protocol"
-import { Schema } from "effect"
+import { Redacted, Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
 import { FakeEnvironments, sessionStartScript, testBuildScript } from "./environments.ts"
@@ -48,6 +50,7 @@ import {
 import { FakeTerminal } from "./terminal.ts"
 import type {
   AppPermissionsCheckWire,
+  ClaudeCredentialInfoWire,
   FromSessionWire,
   HubMessage,
   LogEntryWire,
@@ -73,6 +76,11 @@ export interface FakeHubOptions {
    * Hub without the App. Default null.
    */
   appPermissions?: AppPermissionsCheckWire | null
+  /**
+   * The signed-in person's Claude credential (ADR 0015), as the Hub shows it; null for none.
+   * Default null.
+   */
+  claudeCredential?: ClaudeCredentialInfoWire | null
 }
 
 interface FakeSession {
@@ -148,6 +156,7 @@ export class FakeHub implements HubTransport {
   #you: ParticipantWire = defaultYou
   #autoplay: boolean
   #appPermissions: AppPermissionsCheckWire | null
+  #claudeCredential: ClaudeCredentialInfoWire | null
   #scriptStarted = false
   #releaseStarted = false
   readonly #sockets = new Set<FakeSocket>()
@@ -162,10 +171,16 @@ export class FakeHub implements HubTransport {
     this.#signInOptions = options.signInOptions ?? { github: true, dev: true }
     this.#autoplay = options.autoplay ?? true
     this.#appPermissions = options.appPermissions ?? null
+    this.#claudeCredential = options.claudeCredential ?? null
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       this.sessions.set(seed.summary.id, {
-        summary: seed.summary,
+        // Bob has stored his Claude credential; whether the signed-in person has is an option.
+        summary: {
+          ...seed.summary,
+          claudeAccount:
+            seed.summary.creator.id === this.#you.id ? this.#claudeAccount() : "Creator",
+        },
         log: seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event })),
         queue: [],
         guests: [],
@@ -431,9 +446,49 @@ export class FakeHub implements HubTransport {
           _tag: "SessionList",
           sessions: [...this.sessions.values()].map((session) => session.summary),
         })
+        socket.deliver({ _tag: "ClaudeCredentialState", credential: this.#claudeCredential })
         if (this.#appPermissions !== null) {
           socket.deliver({ _tag: "AppPermissionsChecked", check: this.#appPermissions })
         }
+        break
+      // As the Hub does (ADR 0015), with Anthropic played by the secret: one with REJECTED in it
+      // is refused, one with UNREACHABLE in it stored with a warning. Every value here is fake.
+      case "SetClaudeCredential": {
+        const secret = Redacted.value(message.secret).trim()
+        const kind = claudeCredentialKindOf(secret)
+        const plan = kind === "OAuthToken" ? message.plan : undefined
+        const problem = claudeCredentialProblem(secret, plan)
+        if (problem !== undefined || kind === undefined) {
+          this.#refuse(socket, message._tag, message.requestId, problem ?? "")
+          break
+        }
+        const what = kind === "ApiKey" ? "API key" : "token"
+        if (secret.includes("REJECTED")) {
+          this.#refuse(
+            socket,
+            message._tag,
+            message.requestId,
+            `Anthropic rejected this ${what}: it is invalid.`,
+          )
+          break
+        }
+        this.#setClaudeCredential(
+          socket,
+          message.requestId,
+          {
+            kind,
+            last4: secret.slice(-4),
+            ...(plan !== undefined && { plan }),
+            addedAt: Date.now(),
+          },
+          secret.includes("UNREACHABLE")
+            ? "Saved without checking it: Anthropic couldn't be reached. If it is wrong, Sessions on it can't run a Turn; replace it here."
+            : undefined,
+        )
+        break
+      }
+      case "RemoveClaudeCredential":
+        this.#setClaudeCredential(socket, message.requestId, null)
         break
       case "CheckAppPermissions":
         if (this.#appPermissions === null) {
@@ -998,6 +1053,7 @@ export class FakeHub implements HubTransport {
       runnerId: runner.id,
       runnerLogin: runner.login,
       creator: this.#you,
+      claudeAccount: this.#claudeAccount(),
       createdAt: Date.now(),
       currentTurn: null,
       // Not started on any version until its Runner says so: it is being started on `version`.
@@ -1575,6 +1631,32 @@ export class FakeHub implements HubTransport {
   }
 
   /** Tells every other client, as the Hub broadcasts an applied version or changed variables. */
+  /**
+   * Stores or removes the signed-in person's Claude credential: tells whoever asked, their other
+   * connections, and everyone whose account their Sessions now run on.
+   */
+  #setClaudeCredential(
+    socket: FakeSocket,
+    requestId: string,
+    credential: ClaudeCredentialInfoWire | null,
+    warning?: string,
+  ): void {
+    this.#claudeCredential = credential
+    const state = { _tag: "ClaudeCredentialState" as const, credential }
+    socket.deliver({ ...state, requestId, ...(warning !== undefined && { warning }) })
+    this.#toOthers(socket, state)
+    for (const session of this.sessions.values()) {
+      if (session.summary.creator.id !== this.#you.id) continue
+      session.summary = { ...session.summary, claudeAccount: this.#claudeAccount() }
+      this.#summaryChanged(session)
+    }
+  }
+
+  /** Whose account the signed-in person's Sessions run on. */
+  #claudeAccount(): "Creator" | "Runner" {
+    return this.#claudeCredential === null ? "Runner" : "Creator"
+  }
+
   #toOthers(socket: FakeSocket, message: HubMessage): void {
     for (const other of this.#sockets) {
       if (other !== socket && other.welcomed) other.deliver(message)

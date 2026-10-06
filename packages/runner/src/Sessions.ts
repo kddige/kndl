@@ -27,6 +27,7 @@ import {
 import { ClaudeProjectsDir, hasTranscript } from "./ClaudeConfig.ts"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
 import { ClaudeTrust } from "./ClaudeTrust.ts"
+import { HubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
@@ -63,6 +64,8 @@ export class Sessions extends Context.Service<
     readonly handle: (message: HubToRunner) => Effect.Effect<void>
     /** Sends a `Snapshot` frame of every running Session, as after reconnecting. */
     readonly snapshotAll: Effect.Effect<void>
+    /** Whether the Runner has a Claude credential of its own, for {@link RunnerHello}. */
+    readonly ownClaudeCredential: Effect.Effect<boolean>
   }
 >()("@claude-hub/runner/Sessions") {}
 
@@ -123,6 +126,7 @@ export const SessionsLive = Layer.effect(
     const git = yield* WorkspaceGit
     const hubGit = yield* HubGit
     const hubVariables = yield* HubVariables
+    const hubClaudeCredential = yield* HubClaudeCredential
     const projectsDir = yield* ClaudeProjectsDir
     const proxy = yield* CredentialProxy
     const layerScope = yield* Effect.scope
@@ -138,14 +142,33 @@ export const SessionsLive = Layer.effect(
     const locks = new Map<SessionId, Semaphore.Semaphore>()
 
     /**
-     * Gives the Session a Session token for the credential proxy, standing for its mod token, as
-     * it starts or wakes. Claude Code on the host doesn't use it yet: in the Sandbox (#146), it
-     * holds the token in place of the mod token and any Claude credential.
+     * Gives the Session a Session token for the credential proxy, standing for its mod token and
+     * its Creator's Claude credential, fetched from the Hub as it starts or wakes (ADR 0015) and
+     * kept in memory only. Without one, or when the Hub can't be asked, the proxy uses the
+     * Runner's own. Claude Code on the host doesn't use the token yet: in the Sandbox (#146), it
+     * holds it in place of the mod token and any Claude credential.
      */
-    const admit = (sessionId: SessionId, modToken: string) => {
-      modTokens.set(sessionId, modToken)
-      return proxy.admit({ sessionId, modToken: Redacted.make(modToken) })
-    }
+    const admit = (sessionId: SessionId, modToken: string) =>
+      Effect.gen(function* () {
+        modTokens.set(sessionId, modToken)
+        const credential = yield* hubClaudeCredential
+          .fetch(sessionId)
+          .pipe(
+            Effect.catch((error) =>
+              Effect.as(
+                Effect.logWarning(
+                  `Session ${sessionId} runs on this Runner's Claude credential: ${error.message}`,
+                ),
+                undefined,
+              ),
+            ),
+          )
+        return yield* proxy.admit({
+          sessionId,
+          modToken: Redacted.make(modToken),
+          ...(credential !== undefined && { credential }),
+        })
+      })
 
     /** Forgets the Session's mod token and revokes its Session token, as it stops. */
     const forget = (sessionId: SessionId) => {
@@ -641,6 +664,9 @@ export const SessionsLive = Layer.effect(
         case "VariablesFetched":
         case "VariablesRefused":
           return hubVariables.receive(incoming)
+        case "ClaudeCredentialFetched":
+        case "ClaudeCredentialRefused":
+          return hubClaudeCredential.receive(incoming)
         case "RunnerWelcome":
         case "HandshakeRejected":
           return Effect.logWarning(`Ignored a ${incoming._tag} after the handshake`)
@@ -658,6 +684,7 @@ export const SessionsLive = Layer.effect(
       snapshotAll: Effect.suspend(() =>
         Effect.forEach(running.values(), (session) => session.pane.snapshot, { discard: true }),
       ),
+      ownClaudeCredential: proxy.hasRunnerCredential,
     })
   }),
 )

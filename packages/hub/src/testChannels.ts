@@ -134,7 +134,8 @@ export async function openWeb(hub: TestHub, login: string, cookie?: string) {
   const runners = await web.take("RunnerList")
   const pairingCodes = await web.take("PairingCodeList")
   const sessions = await web.take("SessionList")
-  return Object.assign(web, { cookie: signIn, runners, pairingCodes, sessions })
+  const claudeCredential = await web.take("ClaudeCredentialState")
+  return Object.assign(web, { cookie: signIn, runners, pairingCodes, sessions, claudeCredential })
 }
 
 export const issueRunnerToken = (hub: TestHub, name = "mac") =>

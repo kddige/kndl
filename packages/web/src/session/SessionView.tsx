@@ -332,7 +332,7 @@ function LoadedSession({
             {summary.repo} <span aria-hidden="true">·</span>{" "}
             {/* Named, the title no longer says which branch it works on. */}
             {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}{" "}
-            <span aria-hidden="true">·</span> on {summary.runnerLogin.account}
+            <span aria-hidden="true">·</span> {claudeAccountText(summary)}
           </>
         }
         actions={
@@ -478,6 +478,21 @@ function LoadedSession({
       </Tabs>
     </main>
   )
+}
+
+/**
+ * Whose Claude account a Session runs on (ADR 0015): its Creator's own credential, or else its
+ * Runner's login. A Hub from before says only the Runner's.
+ */
+function claudeAccountText(summary: SessionSummary): string {
+  switch (summary.claudeAccount) {
+    case "Creator":
+      return `on ${summary.creator.name}'s Claude account`
+    case "Runner":
+      return `on the Runner's Claude account, ${summary.runnerLogin.account}`
+    default:
+      return `on ${summary.runnerLogin.account}`
+  }
 }
 
 /** Says so when a command couldn't be sent for want of a connection to the Hub. */

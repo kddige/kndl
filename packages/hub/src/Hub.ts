@@ -2,6 +2,7 @@ import { MaxCommandWaitMs } from "@claude-hub/protocol"
 import { Layer } from "effect"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"
+import { ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { Environments } from "./Environments.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
@@ -35,9 +36,10 @@ export const HubRoutes = Layer.mergeAll(
 )
 
 /**
- * The credential stores, the mod outbox, Environments, Repo access, the GitHub App's permission
- * check, the Pairing codes, the Session relay and the shutdown signal the routes use, given a
- * database, the GitHub App (GitHubApp.ts) and the Hub's version (HubVersion.ts).
+ * The credential stores, each person's Claude credential, the mod outbox, Environments, Repo
+ * access, the GitHub App's permission check, the Pairing codes, the Session relay and the
+ * shutdown signal the routes use, given a database, the GitHub App (GitHubApp.ts), the check of
+ * Claude credentials (ClaudeCheck) and the Hub's version (HubVersion.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SessionGit.layer, RepoAccess.layer, PermissionDrift.layer)),
@@ -55,6 +57,7 @@ export const HubServices = SessionRelay.layer.pipe(
       HubShutdown.layer,
       Environments.layer,
       RunnerUpdatePush.layer,
+      ClaudeCredentials.layer,
     ),
   ),
   // Checks HUB_SECRETS_KEY against the Sensitive values stored, so a Hub with the wrong key

@@ -50,6 +50,7 @@ const runnerToHub = [
   { _tag: "FetchVariables", requestId: "v-1", for: { _tag: "Session", sessionId: "s-1" } },
   { _tag: "FetchVariables", requestId: "v-2", for: { _tag: "TestBuild", testBuildId: "b-1" } },
   { _tag: "FetchCloneAccess", requestId: "g-3", testBuildId: "b-1" },
+  { _tag: "FetchClaudeCredential", requestId: "c-1", sessionId: "s-1" },
   {
     _tag: "RunnerHello",
     protocolVersion: ProtocolVersion,
@@ -211,6 +212,22 @@ const hubToRunner = [
     ],
   },
   { _tag: "VariablesRefused", requestId: "v-2", message: "Not a Test build this Runner runs" },
+  {
+    _tag: "ClaudeCredentialFetched",
+    requestId: "c-1",
+    credential: {
+      _tag: "OAuthToken",
+      token: "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY",
+      plan: { subscriptionType: "max", rateLimitTier: "default_claude_max_5x" },
+    },
+  },
+  {
+    _tag: "ClaudeCredentialFetched",
+    requestId: "c-2",
+    credential: { _tag: "ApiKey", key: "sk-ant-api03-FAKE_KEY_FOR_TESTS_ONLY" },
+  },
+  { _tag: "ClaudeCredentialFetched", requestId: "c-3" },
+  { _tag: "ClaudeCredentialRefused", requestId: "c-4", message: "Not a Session this Runner runs" },
   { _tag: "CheckUpdate", target: { commit: "a".repeat(40), branch: "main" } },
   { _tag: "ApplyUpdate", target: { commit: "a".repeat(40) } },
   {

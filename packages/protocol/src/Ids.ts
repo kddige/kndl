@@ -60,3 +60,7 @@ export const EnvironmentVersion = Schema.Int.check(Schema.isGreaterThanOrEqualTo
   Schema.brand("EnvironmentVersion"),
 )
 export type EnvironmentVersion = typeof EnvironmentVersion.Type
+
+/** A Runner's request for a Session's Claude credential, minted by the Runner (ADR 0015). */
+export const CredentialRequestId = Schema.NonEmptyString.pipe(Schema.brand("CredentialRequestId"))
+export type CredentialRequestId = typeof CredentialRequestId.Type

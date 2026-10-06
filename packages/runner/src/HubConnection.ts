@@ -172,6 +172,7 @@ const connectOnce = (login: RunnerLogin) =>
           ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
           ...(models !== undefined && { models }),
           relaunches: true,
+          ownClaudeCredential: yield* sessions.ownClaudeCredential,
         }),
       ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
 

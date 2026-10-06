@@ -245,6 +245,28 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 
 **Fix.** For the first, run `bun run secrets-key`, add the line it prints to `packages/hub/.env.local` and restart the Hub. For the second, make the variable Plain, or use the real, longer value. See [Use variables and secrets](/how-to/use-variables-and-secrets/).
 
+## New Session refuses: no Claude credential
+
+**What you see.** New Session says:
+
+```
+Neither you nor build-box has a Claude credential: add yours on the Account page.
+```
+
+**Why.** A Session runs on its Creator's Claude credential, or else on its Runner's own login, and neither you nor that Runner has one ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)).
+
+**Fix.** [Add your Claude credential](/how-to/add-your-claude-credential/) on your **Account** page, then start the Session again. Or pick a Runner with its own [Claude credential](/reference/configuration/#the-runners-claude-credential).
+
+## A Claude credential can't be saved
+
+**What you see.** Saving on the **Account** page says one of:
+
+- `Anthropic rejected this token: …` or `Anthropic rejected this API key: …`. The token was revoked or has expired, or it was copied only in part. Run `claude setup-token` again and paste the new one, all on one line.
+- `That isn't a Claude token or API key: …`. A token starts with `sk-ant-oat`, a key with `sk-ant-api`.
+- `This Hub can't store a Claude credential: it needs HUB_SECRETS_KEY …`. Whoever runs the Hub sets it, as for [Sensitive variables](#a-sensitive-variable-cant-be-saved).
+
+**Saved, with a warning.** `Saved without checking it: Anthropic couldn't be reached.` The Hub couldn't reach `api.anthropic.com` and stored it anyway. If it is wrong, your Sessions start but their Turns fail; replace it once the Hub can reach Anthropic.
+
 ## A Session is missing, or `There is no such Session.`
 
 **What you see.** A teammate's Session isn't in your list, a link to it says `There is no such Session.`, or a Session you were in disappears. Starting a Session says `You have no access to owner/name on GitHub, or the GitHub App isn't installed on it.`

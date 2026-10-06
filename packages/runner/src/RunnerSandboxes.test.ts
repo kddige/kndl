@@ -9,6 +9,7 @@ import { join } from "node:path"
 import type { RunnerToHub, SandboxStateReport, SessionId } from "@claude-hub/protocol"
 import { Effect, Layer, Redacted, References } from "effect"
 import { NoClaudeTrust } from "./ClaudeTrust.ts"
+import { NoHubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
@@ -112,6 +113,7 @@ const runProcess = <A>(
       new FakeWorkspaceGit().layer,
       new FakeCredentialProxy().layer,
       HubGitLive,
+      NoHubClaudeCredential,
     ]),
     Layer.provide([hub, config, variables]),
   )

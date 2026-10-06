@@ -60,6 +60,7 @@ export default defineConfig({
             { slug: "how-to/install" },
             { slug: "how-to/run-the-hub" },
             { slug: "how-to/add-a-runner" },
+            { slug: "how-to/add-your-claude-credential" },
             { slug: "how-to/reach-the-hub-from-other-machines" },
             { slug: "how-to/set-up-the-github-app" },
             { slug: "how-to/set-up-an-environment" },

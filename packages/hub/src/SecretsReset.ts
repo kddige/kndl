@@ -11,6 +11,8 @@
 // - What else the lost key protects goes too: the check value, the retired values kept for
 //   redaction (a Session still running may print those unredacted), and the Test builds, whose
 //   digests are keyed from it, so none could match again.
+// - Each person's Claude credential goes too (ADR 0015): they add theirs again on the Account
+//   page, and until then their Sessions run on their Runner's own credential, if it has one.
 // - Plain variables, Environments, versions, Sessions and builds already on Runners stay.
 import { existsSync } from "node:fs"
 import { Effect, Schema } from "effect"
@@ -36,6 +38,8 @@ export interface SecretsResetPlan {
   /** How many replaced values were kept, encrypted, for redaction. */
   readonly retiredValues: number
   readonly testBuilds: number
+  /** Who stored a Claude credential, by GitHub login, in order. */
+  readonly claudeCredentials: ReadonlyArray<string>
 }
 
 /** How many Sensitive values the reset clears. */
@@ -45,7 +49,7 @@ export const clearedCount = (plan: SecretsResetPlan) =>
 
 /** Whether there is anything the lost key protects: if not, a new key just works. */
 export const resetNeeded = (plan: SecretsResetPlan) =>
-  clearedCount(plan) > 0 || plan.retiredValues > 0
+  clearedCount(plan) > 0 || plan.retiredValues > 0 || plan.claudeCredentials.length > 0
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`
@@ -82,8 +86,18 @@ export function secretsResetPlanText(plan: SecretsResetPlan): string {
     ...(also.length > 0
       ? [`It also drops ${also.join(" and ")}: the lost key protects them.`]
       : []),
+    ...claudeCredentialLines(plan),
     "Plain variables, Environments, Sessions and the builds on Runners stay.",
   ].join("\n")
+}
+
+/** The Claude credentials removed, by whose they were. */
+function claudeCredentialLines(plan: SecretsResetPlan): ReadonlyArray<string> {
+  const people = plan.claudeCredentials
+  if (people.length === 0) return []
+  return [
+    `It removes the Claude credential${people.length === 1 ? "" : "s"} of ${people.join(", ")}: until each adds theirs again on the Account page, their Sessions run on their Runner's own.`,
+  ]
 }
 
 /**
@@ -97,6 +111,7 @@ export function secretsResetDoneText(plan: SecretsResetPlan, newKey: string): st
       ? `Cleared ${plural(values, "Sensitive value")}. These need a value:`
       : "Cleared what the lost key protected.",
     ...clearedLines(plan),
+    ...claudeCredentialLines(plan),
     "",
     `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen.`,
   ].join("\n")
@@ -117,6 +132,11 @@ const planOf = Effect.gen(function* () {
     SELECT (SELECT COUNT(*) FROM retired_values) AS retired,
       (SELECT COUNT(*) FROM test_builds) AS builds
   `
+  const credentials = yield* sql<{ readonly login: string }>`
+    SELECT participants.login FROM claude_credentials
+    JOIN participants ON participants.id = claude_credentials.participant_id
+    ORDER BY participants.login
+  `
   const byRepo = new Map<string, Array<string>>()
   for (const row of own) byRepo.set(row.repo, [...(byRepo.get(row.repo) ?? []), row.name])
   return {
@@ -124,6 +144,7 @@ const planOf = Effect.gen(function* () {
     sharedVariables: shared.map((row) => row.name),
     retiredValues: counts?.retired ?? 0,
     testBuilds: counts?.builds ?? 0,
+    claudeCredentials: credentials.map((row) => row.login),
   } satisfies SecretsResetPlan
 })
 
@@ -137,6 +158,7 @@ const clear = Effect.gen(function* () {
       yield* sql`UPDATE shared_variables SET value = NULL WHERE kind = 'Sensitive'`
       yield* sql`DELETE FROM retired_values`
       yield* sql`DELETE FROM test_builds`
+      yield* sql`DELETE FROM claude_credentials`
     }),
   )
 })

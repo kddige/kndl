@@ -1,18 +1,30 @@
 import type { RunnerId } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { useNavigate } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { type FormEvent, type ReactElement, useState } from "react"
 import { repoParams, runnerLabel } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, RepoRefusal, repoPattern, useRepoCheck } from "../app/repoAccess.tsx"
 import { ModelPicker } from "../session/ModelPicker.tsx"
 import { fitSetting, type ModelSetting, sharedModels } from "../session/models.ts"
-import { Button, Dialog, DialogClose, Field, Input, PlusIcon, Select } from "../ui/index.ts"
-import { color, space, text } from "../ui/tokens.stylex.ts"
+import {
+  Banner,
+  Button,
+  Dialog,
+  DialogClose,
+  Field,
+  Input,
+  KeyIcon,
+  PlusIcon,
+  Select,
+} from "../ui/index.ts"
+import { focus } from "../ui/shared.ts"
+import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
   error: { color: color.dangerSubtleText, fontSize: text.sm },
+  link: { color: "inherit", fontWeight: weight.semibold, borderRadius: radius.sm },
 })
 
 const anyRunner = "any"
@@ -24,6 +36,8 @@ const anyRunner = "any"
 export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const hub = useHub()
   const runners = useHubState((state) => state.runners)
+  // Null once the Hub says they have stored none; undefined until it says.
+  const claudeCredential = useHubState((state) => state.claudeCredential)
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [repo, setRepo] = useState("")
@@ -123,6 +137,24 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
       }
     >
       <form id="create-session" onSubmit={submit} noValidate {...stylex.props(styles.form)}>
+        {claudeCredential === null && (
+          // Not a refusal: the Runner may have its own login to run it on (ADR 0015).
+          <Banner intent="accent" icon={<KeyIcon />} title="Add your Claude credential">
+            Sessions you start run on your own Claude account once you add a token or API key on
+            your{" "}
+            <Link
+              to="/account"
+              onClick={() => {
+                setOpen(false)
+                reset()
+              }}
+              {...stylex.props(styles.link, focus.ring)}
+            >
+              Account
+            </Link>{" "}
+            page. Until then, this one runs on its Runner's own, if it has one.
+          </Banner>
+        )}
         <Field
           label="Repo"
           description="The GitHub repository, as owner/name."
@@ -161,7 +193,9 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
           description={
             online.length === 0
               ? "No Runner is online, so the Session can't start yet."
-              : "Whose machine and Claude login it runs on."
+              : claudeCredential === null
+                ? "Whose machine and Claude login it runs on."
+                : "Whose machine it runs on: on your own Claude account."
           }
         >
           <Select

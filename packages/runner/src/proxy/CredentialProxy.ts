@@ -63,6 +63,11 @@ export class CredentialProxy extends Context.Service<
      * exits. A response already streaming runs to its end.
      */
     readonly revoke: (sessionId: SessionId) => Effect.Effect<void>
+    /**
+     * Whether the Runner has a Claude credential of its own, for Sessions whose Creator has none
+     * (ADR 0015). The Hub is told, so it can refuse a Session neither has one for.
+     */
+    readonly hasRunnerCredential: Effect.Effect<boolean>
   }
 >()("@claude-hub/runner/CredentialProxy") {}
 
@@ -413,5 +418,9 @@ export const makeCredentialProxy = (options: {
         } satisfies SessionPass
       }),
     revoke: options.tokens.revoke,
+    hasRunnerCredential: options.runnerCredential.current.pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    ),
   })
 }

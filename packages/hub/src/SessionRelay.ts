@@ -96,6 +96,13 @@
 //   refused alike whether the Repo exists or not. A person who loses access is told the Repo's
 //   Environment is gone from them with a RepoAccessLost. CheckRepo asks for a Repo as it is
 //   entered, before a new Session or Environment is set up. Shared variables aren't any Repo's.
+// - Claude credentials (ADR 0015, ClaudeCredentials.ts): each person stores their own, checked
+//   with Anthropic off the lock, and is sent what they can see of it (ClaudeCredentialState)
+//   after the welcome and whenever it changes. A Session runs on its Creator's (a Child
+//   Session's Creator is its parent's), else on its Runner's own: a Runner asks for it just
+//   before it starts Claude Code, and only for a Session it runs. A Session neither has a
+//   credential for doesn't start: CreateSession is refused, and a wake leaves it Asleep. Every
+//   credential is redacted from every Session.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
 // neither overlap nor leave a gap, and the queue's one-delivery-at-a-time rule holds. Messages to
@@ -106,6 +113,9 @@ import {
   type BranchName,
   ChildReply,
   type ChildRequest,
+  ClaudeCredentialFetched,
+  ClaudeCredentialRefused,
+  ClaudeCredentialState,
   type ChildSummary,
   CommandFailed,
   DeliverPrompt,
@@ -196,6 +206,7 @@ import {
   parentMessageText,
   reportText,
 } from "./ChildSessions.ts"
+import { ClaudeCredentials } from "./ClaudeCredentials.ts"
 import {
   type EnvironmentWebClient,
   isEnvironmentCommand,
@@ -389,6 +400,7 @@ export class SessionRelay extends Context.Service<
       const drift = yield* PermissionDrift
       const hubVersion = yield* HubVersion
       const updatePush = yield* RunnerUpdatePush
+      const claudeCredentials = yield* ClaudeCredentials
       const layerScope = yield* Effect.scope
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
@@ -419,6 +431,8 @@ export class SessionRelay extends Context.Service<
         readonly updater: RunnerUpdater | undefined
         /** Whether it takes a RelaunchSession (#128). */
         readonly relaunches: boolean
+        /** Whether it has a Claude credential of its own for Sessions whose Creator has none. */
+        readonly ownClaudeCredential: boolean
       }
 
       const webClients = new Set<WebClient>()
@@ -545,13 +559,34 @@ export class SessionRelay extends Context.Service<
           : `${runner.name}: ${why}. Sessions start and wake there again once it is back.`
       }
 
-      /** The Session as the web sees it: what is stored, and whether it is starting or restarting. */
+      /**
+       * Why a Session for `creator` can't start on `runner`: neither has a Claude credential
+       * (ADR 0015). `you` is who is told, when it is the Creator.
+       */
+      const noClaudeCredential = (
+        creator: Participant,
+        runner: OnlineRunner,
+        you?: Participant,
+      ): string | undefined => {
+        if (runner.ownClaudeCredential || claudeCredentials.info(creator.id) !== undefined) {
+          return undefined
+        }
+        return you?.id === creator.id
+          ? `Neither you nor ${runner.name} has a Claude credential: add yours on the Account page.`
+          : `Neither ${creator.login}, whom this Session runs for, nor ${runner.name} has a Claude credential: ${creator.login} can add theirs on the Account page.`
+      }
+
+      /**
+       * The Session as the web sees it: what is stored, whose Claude account it runs on, and
+       * whether it is starting or restarting.
+       */
       const forWeb = (session: SessionSummary): SessionSummary => {
         const start = starts.get(session.id)
         const restart = restarts.get(session.id)
-        if (start === undefined && restart === undefined) return session
         return {
           ...session,
+          claudeAccount:
+            claudeCredentials.info(session.creator.id) === undefined ? "Runner" : "Creator",
           ...(start !== undefined && {
             starting: {
               since: start.since,
@@ -638,7 +673,11 @@ export class SessionRelay extends Context.Service<
         )
         // Values that can't be read are tried again next time.
         if (Option.isNone(values)) return everything
-        const needles = needlesOf([...values.value.map(Redacted.value), ...tokensOfRepo(repo)])
+        const needles = needlesOf([
+          ...values.value.map(Redacted.value),
+          ...tokensOfRepo(repo),
+          ...claudeCredentials.values(),
+        ])
         needlesByRepo.set(repo, needles)
         return needles
       })
@@ -1100,6 +1139,20 @@ export class SessionRelay extends Context.Service<
           yield* sessionUpdated(session.id)
           return undefined
         }
+        const noCredential = noClaudeCredential(session.creator, runner, why.by)
+        if (noCredential !== undefined) {
+          restarts.delete(session.id)
+          yield* logEvent(
+            session.id,
+            SessionStateChanged.make({
+              state: "Asleep",
+              ...why,
+              message: `Claude Code could not start: ${noCredential}`,
+            }),
+          )
+          yield* sessionUpdated(session.id)
+          return undefined
+        }
         const resume = yield* sessions.claudeSessionId(session.id)
         const environment = yield* sessionEnvironment(session.repo)
         const parent = yield* parentOf(session)
@@ -1365,6 +1418,8 @@ export class SessionRelay extends Context.Service<
         plan: NewSessionPlan,
       ): Effect.fn.Return<SessionSummary | string, SqlError> {
         const { repo, runner } = plan
+        const noCredential = noClaudeCredential(plan.creator, runner, plan.why.by)
+        if (noCredential !== undefined) return noCredential
         const missing = yield* environmentRelay.missingEnvironment(repo)
         if (missing !== undefined) return missing
         const needed = yield* environments.valuesNeeded(repo)
@@ -1742,7 +1797,13 @@ export class SessionRelay extends Context.Service<
       /** A web command the relay handles under its lock, once Repo access allows it. */
       type RelayedCommand = Exclude<
         WebToHub,
-        { readonly _tag: "CheckAppPermissions" | "CheckRepo" }
+        {
+          readonly _tag:
+            | "CheckAppPermissions"
+            | "CheckRepo"
+            | "SetClaudeCredential"
+            | "RemoveClaudeCredential"
+        }
       >
 
       const receiveWeb = (client: WebClient): Receive<WebToHub> => {
@@ -2259,6 +2320,59 @@ export class SessionRelay extends Context.Service<
         })
 
         /**
+         * Stores or removes the person's Claude credential (ADR 0015), off the lock since a check
+         * waits on Anthropic. Then, under it, every connection of theirs is sent what they can
+         * see of it, the asker with its `requestId`, and their Sessions with whose account they
+         * run on; and what Sessions print is redacted of it from now on.
+         */
+        const claudeCredentialCommand = (
+          message: Extract<
+            WebToHub,
+            { readonly _tag: "SetClaudeCredential" | "RemoveClaudeCredential" }
+          >,
+        ) =>
+          Effect.gen(function* () {
+            const { requestId } = message
+            const changed =
+              message._tag === "SetClaudeCredential"
+                ? yield* claudeCredentials.set(you.id, message.secret, message.plan)
+                : yield* Effect.as(claudeCredentials.remove(you.id), { info: undefined })
+            yield* serialized(
+              Effect.gen(function* () {
+                needlesByRepo.clear()
+                // The asker gets its answer, with any warning; their other tabs, just the change.
+                const credential = changed.info ?? null
+                for (const other of webClients) {
+                  if (other.you.id === you.id && other !== client)
+                    other.peer.send(ClaudeCredentialState.make({ credential }))
+                }
+                peer.send(
+                  ClaudeCredentialState.make({
+                    requestId,
+                    credential,
+                    ...("warning" in changed && changed.warning !== undefined
+                      ? { warning: changed.warning }
+                      : {}),
+                  }),
+                )
+                for (const session of yield* sessions.list) {
+                  if (session.creator.id === you.id) yield* sessionToWeb(session)
+                }
+              }),
+            )
+          }).pipe(
+            Effect.catchTags({
+              ClaudeCredentialRefusal: (error) => Effect.sync(() => refuse(message, error.message)),
+              SqlError: (error) =>
+                Effect.logError("A Claude credential command failed", error).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                  ),
+                ),
+            }),
+          )
+
+        /**
          * Checks the GitHub App's permissions now, off the lock since it waits on GitHub. Anyone
          * signed in may ask: it changes nothing, and checks no more often than checkSpacing.
          */
@@ -2316,38 +2430,44 @@ export class SessionRelay extends Context.Service<
         })
 
         return (message) =>
-          message._tag === "CheckAppPermissions"
-            ? checkAppPermissions(message.requestId)
-            : message._tag === "CheckRepo"
-              ? checkRepo(message).pipe(
-                  Effect.catchTag("SqlError", (error) =>
-                    Effect.logError("A Repo check failed", error).pipe(
-                      Effect.andThen(
-                        Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+          message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
+            ? claudeCredentialCommand(message)
+            : message._tag === "CheckAppPermissions"
+              ? checkAppPermissions(message.requestId)
+              : message._tag === "CheckRepo"
+                ? checkRepo(message).pipe(
+                    Effect.catchTag("SqlError", (error) =>
+                      Effect.logError("A Repo check failed", error).pipe(
+                        Effect.andThen(
+                          Effect.sync(() =>
+                            refuse(message, "The Hub could not do that; try again."),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                )
-              : authorize(message).pipe(
-                  Effect.flatMap((verdict) =>
-                    serialized(
-                      Effect.gen(function* () {
-                        const { learned, refusal } = verdict
-                        if (learned !== undefined)
-                          yield* accessKnown(you, learned.repo, learned.allowed)
-                        if (refusal !== undefined) return refuse(message, refusal)
-                        return yield* handle(message)
-                      }),
-                    ),
-                  ),
-                  Effect.catchTag("SqlError", (error) =>
-                    Effect.logError("A web command failed", error).pipe(
-                      Effect.andThen(
-                        Effect.sync(() => refuse(message, "The Hub could not do that; try again.")),
+                  )
+                : authorize(message).pipe(
+                    Effect.flatMap((verdict) =>
+                      serialized(
+                        Effect.gen(function* () {
+                          const { learned, refusal } = verdict
+                          if (learned !== undefined)
+                            yield* accessKnown(you, learned.repo, learned.allowed)
+                          if (refusal !== undefined) return refuse(message, refusal)
+                          return yield* handle(message)
+                        }),
                       ),
                     ),
-                  ),
-                )
+                    Effect.catchTag("SqlError", (error) =>
+                      Effect.logError("A web command failed", error).pipe(
+                        Effect.andThen(
+                          Effect.sync(() =>
+                            refuse(message, "The Hub could not do that; try again."),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
@@ -2387,6 +2507,11 @@ export class SessionRelay extends Context.Service<
                   else if (!asked.has(session.repo)) yield* learnAccess(you, session.repo)
                 }
                 peer.send(HubToWeb.cases.SessionList.make({ sessions: listed }))
+                peer.send(
+                  ClaudeCredentialState.make({
+                    credential: claudeCredentials.info(you.id) ?? null,
+                  }),
+                )
                 const checked = yield* drift.latest
                 if (Option.isSome(checked)) {
                   peer.send(AppPermissionsChecked.make({ check: checked.value }))
@@ -2436,6 +2561,26 @@ export class SessionRelay extends Context.Service<
             message._tag === "TestBuildFinished"
           ) {
             return yield* environmentRelay.receiveRunner(runner, message)
+          }
+          if (message._tag === "FetchClaudeCredential") {
+            // Only for a Session this Runner runs (ADR 0015): its Creator's credential, if any.
+            const { requestId } = message
+            const session = yield* ownSession(message.sessionId)
+            if (Option.isNone(session) || session.value.state === "Archived") {
+              return runner.peer.send(
+                ClaudeCredentialRefused.make({
+                  requestId,
+                  message: "Not a Session this Runner runs.",
+                }),
+              )
+            }
+            const credential = claudeCredentials.credentialOf(session.value.creator.id)
+            return runner.peer.send(
+              ClaudeCredentialFetched.make({
+                requestId,
+                ...(credential !== undefined && { credential }),
+              }),
+            )
           }
           if (message._tag === "FetchCloneAccess") {
             const { requestId } = message
@@ -2617,6 +2762,7 @@ export class SessionRelay extends Context.Service<
             version: hello.version,
             updater: hello.updater,
             relaunches: hello.relaunches === true,
+            ownClaudeCredential: hello.ownClaudeCredential !== false,
           }
           yield* serialized(
             Effect.gen(function* () {

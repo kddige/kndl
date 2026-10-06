@@ -7,6 +7,7 @@ import {
   Outlet,
   type RouterHistory,
 } from "@tanstack/react-router"
+import { AccountView } from "./account/AccountView.tsx"
 import { HubShell } from "./app/HubShell.tsx"
 import { EnvironmentList } from "./environment/EnvironmentList.tsx"
 import { EnvironmentView } from "./environment/EnvironmentView.tsx"
@@ -139,6 +140,13 @@ const environmentRoute = createRoute({
   },
 })
 
+/** The signed-in person's own settings: their Claude credential (ADR 0015). */
+const accountRoute = createRoute({
+  getParentRoute: () => hubRoute,
+  path: "/account",
+  component: AccountView,
+})
+
 /** The Hub-wide shared variables that Environments link. */
 const variablesRoute = createRoute({
   getParentRoute: () => hubRoute,
@@ -172,6 +180,7 @@ const routeTree = rootRoute.addChildren([
     environmentsRoute,
     environmentRoute,
     variablesRoute,
+    accountRoute,
     runnersRoute,
   ]),
   kitRoute,

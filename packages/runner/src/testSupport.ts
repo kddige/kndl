@@ -16,7 +16,7 @@ import { HubGit } from "./HubGit.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
 import { CredentialProxy, makeCredentialProxy } from "./proxy/CredentialProxy.ts"
 import { NoClaudeCredential, RunnerCredential } from "./proxy/RunnerCredential.ts"
-import { makeSessionTokens } from "./proxy/SessionTokens.ts"
+import { makeSessionTokens, type SessionGrant } from "./proxy/SessionTokens.ts"
 import { noRepoFiles, type RepoFiles, Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
@@ -48,6 +48,8 @@ export const NoRunnerCredential = RunnerCredential.of({
 export class FakeCredentialProxy {
   readonly tokens = makeSessionTokens()
   readonly calls: Array<string> = []
+  /** What each Session was admitted with, in order. */
+  readonly grants: Array<SessionGrant> = []
   readonly layer: Layer.Layer<CredentialProxy>
 
   constructor() {
@@ -62,7 +64,10 @@ export class FakeCredentialProxy {
         ...proxy,
         admit: (grant) =>
           Effect.tap(proxy.admit(grant), () =>
-            Effect.sync(() => this.calls.push(`admit ${grant.sessionId}`)),
+            Effect.sync(() => {
+              this.calls.push(`admit ${grant.sessionId}`)
+              this.grants.push(grant)
+            }),
           ),
         revoke: (id) =>
           Effect.tap(proxy.revoke(id), () => Effect.sync(() => this.calls.push(`revoke ${id}`))),

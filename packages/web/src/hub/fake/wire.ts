@@ -3,6 +3,7 @@
 
 import type {
   AppPermissionsCheck,
+  ClaudeCredentialInfo,
   Environment,
   EnvironmentVersionInfo,
   FromSession,
@@ -30,3 +31,4 @@ export type EnvironmentVersionInfoWire = (typeof EnvironmentVersionInfo)["Encode
 export type SharedVariableWire = (typeof SharedVariable)["Encoded"]
 export type AppPermissionsCheckWire = (typeof AppPermissionsCheck)["Encoded"]
 export type PendingPairingCodeWire = (typeof PendingPairingCode)["Encoded"]
+export type ClaudeCredentialInfoWire = (typeof ClaudeCredentialInfo)["Encoded"]

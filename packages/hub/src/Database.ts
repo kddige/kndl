@@ -347,6 +347,20 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE sessions ADD COLUMN model_pending INTEGER NOT NULL DEFAULT 0`
     yield* sql`ALTER TABLE runners ADD COLUMN models TEXT`
   }),
+  // Each person's own Claude credential (ADR 0015), encrypted as Sensitive values are.
+  "0016_claude_credentials": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE claude_credentials (
+        participant_id TEXT PRIMARY KEY REFERENCES participants (id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        ciphertext TEXT NOT NULL,
+        last4 TEXT NOT NULL,
+        plan TEXT,
+        added_at INTEGER NOT NULL
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

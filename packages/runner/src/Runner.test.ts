@@ -19,6 +19,7 @@ import { ClaudeProjectsDir, claudeProjectDirName } from "./ClaudeConfig.ts"
 import { childSystemPrompt } from "./ClaudeLaunch.ts"
 import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
 import { ClaudeTrustLive } from "./ClaudeTrust.ts"
+import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
@@ -57,6 +58,11 @@ class FakeHub {
   readonly authorizations: Array<string | null> = []
   /** Answers the next upgrades with 401, as for a bad token. */
   refuseNext = 0
+  /**
+   * What the Hub answers a FetchClaudeCredential with, but for its requestId: by default, that
+   * the Session's Creator has no Claude credential, so it runs on the Runner's own.
+   */
+  claudeCredential: Record<string, unknown> = { _tag: "ClaudeCredentialFetched" }
   /** What the Hub answers a hello with. */
   answer: (hello: Received) => unknown = () => ({
     _tag: "RunnerWelcome",
@@ -84,6 +90,8 @@ class FakeHub {
         const message = JSON.parse(String(data)) as Received
         connection?.received.push(message)
         if (message._tag === "RunnerHello") socket.send(JSON.stringify(this.answer(message)))
+        if (message._tag === "FetchClaudeCredential")
+          socket.send(JSON.stringify({ ...this.claudeCredential, requestId: message["requestId"] }))
       },
     },
   })
@@ -114,6 +122,7 @@ interface Harness {
   readonly workspaces: FakeWorkspaces
   readonly sandboxes: FakeSandboxes
   readonly git: FakeWorkspaceGit
+  readonly proxy: FakeCredentialProxy
   /** The Runner's HubGit, once its layer is built. */
   readonly hubGit: () => HubGit["Service"]
   readonly runner: Fiber.Fiber<never, unknown>
@@ -201,6 +210,7 @@ function startRunner(
       ),
     ),
     Layer.provideMerge(HubVariablesLive),
+    Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(updater),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
@@ -226,6 +236,7 @@ function startRunner(
     workspaces,
     sandboxes,
     git,
+    proxy,
     hubGit: () => {
       if (hubGit === undefined) throw new Error("the Runner's layer isn't built yet")
       return hubGit
@@ -282,6 +293,8 @@ describe("connecting", () => {
       // What its Claude Code takes, and that it restarts Claude Code on a new model (#128).
       models,
       relaunches: true,
+      // Whether it has a Claude credential of its own, for Sessions whose Creator has none (#150).
+      ownClaudeCredential: false,
     })
   })
 
@@ -612,6 +625,42 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+  })
+
+  test("admits a Session with its Creator's Claude credential, asked of the Hub as it starts (#150)", async () => {
+    const h = startRunner()
+    await connected(h)
+    const fake = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
+    h.hub.claudeCredential = {
+      _tag: "ClaudeCredentialFetched",
+      credential: { _tag: "OAuthToken", token: fake, plan: { subscriptionType: "pro" } },
+    }
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    expect(h.hub.all("FetchClaudeCredential")).toEqual([
+      { _tag: "FetchClaudeCredential", requestId: expect.any(String), sessionId: "s-1" },
+    ])
+    const credential = h.proxy.grants[0]?.credential
+    expect(credential?._tag === "OAuthToken" && Redacted.value(credential.token)).toBe(fake)
+    expect(credential?._tag === "OAuthToken" && credential.plan).toEqual({
+      subscriptionType: "pro",
+    })
+  })
+
+  test("runs a Session on the Runner's own Claude credential when its Creator has none, or the Hub refuses", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    h.hub.claudeCredential = { _tag: "ClaudeCredentialRefused", message: "no" }
+    h.hub.send(startSession("s-2", { workBranch: "claude/s-2" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+
+    expect(h.proxy.grants.map((grant) => `${grant.sessionId}: ${grant.credential?._tag}`)).toEqual([
+      "s-1: undefined",
+      "s-2: undefined",
+    ])
   })
 
   test("copies the Repo's skills and CLAUDE.md for Claude Code at each start, over the last ones", async () => {
