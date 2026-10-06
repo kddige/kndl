@@ -21,7 +21,7 @@ ADR 0001 kept Claude Code on the host to keep the login out of the VM. The price
 
 ## What goes away
 
-The tool bridge (`claude mcp serve` in the VM, the tool socket and the mod's routing), the hardened launch (`--tools`, `--setting-sources ""`, `disableSkillShellExecution`, the empty host directory), the Repo files copy of #125, the WebFetch denial of #126, and the `!` note of #136. Claude Code's own subagents run in the Sandbox too, and replace Child Sessions (ADR 0014).
+The tool bridge (`claude mcp serve` in the VM, the tool socket and the mod's routing), the hardened launch (`--tools`, `--setting-sources ""`, `disableSkillShellExecution`, the empty host directory), the Repo files copy of #125, the WebFetch denial of #126, and the `!` note of #136. `--strict-mcp-config` goes too (#147): a Repo's `.mcp.json` is one more Repo file, and its servers run in the VM like its hooks, so there is nothing left for opting in to guard. With `--dangerously-skip-permissions`, Claude Code 2.1.289 starts them without asking. Claude Code's own subagents run in the Sandbox too, and replace Child Sessions (ADR 0014).
 
 ## Considered options
 

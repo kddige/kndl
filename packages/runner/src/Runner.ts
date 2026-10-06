@@ -1,7 +1,6 @@
 import { Effect, Layer } from "effect"
 import { claudeConfigPath, resolveRunnerLogin } from "./ClaudeConfig.ts"
 import { ClaudeModelsLive } from "./ClaudeModels.ts"
-import { ClaudeTrust, ClaudeTrustLive } from "./ClaudeTrust.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { type Backoff, DefaultBackoff, runHubConnection } from "./HubConnection.ts"
 import { HubGitLive } from "./HubGit.ts"
@@ -20,9 +19,8 @@ import { WorkspacesGitClone } from "./Workspace.ts"
 import { WorkspaceGitLive } from "./WorkspaceGit.ts"
 
 /**
- * The Runner: settles an update it restarted for (see Updater.ts), reads its Runner login, trusts
- * its sessions root, puts to sleep the Sessions an earlier Runner left running, and stays
- * connected to the Hub. Never ends on its own.
+ * The Runner: settles an update it restarted for (see Updater.ts), reads its Runner login, puts
+ * to sleep the Sessions an earlier Runner left running, and stays connected to the Hub. Never ends on its own.
  */
 export const runRunner = (
   options: { readonly claudeConfigPath?: string; readonly backoff?: Backoff } = {},
@@ -30,12 +28,10 @@ export const runRunner = (
   Effect.gen(function* () {
     const config = yield* RunnerConfig
     const sessions = yield* Sessions
-    const trust = yield* ClaudeTrust
     const configPath = options.claudeConfigPath ?? claudeConfigPath()
     yield* (yield* Updater).boot
 
     const login = yield* resolveRunnerLogin(config.login, configPath)
-    yield* trust.ensure
     yield* Effect.logInfo(
       `Runner ${config.name} (${login.account}) starting; Hub at ${config.hubUrl.href}`,
     )
@@ -54,7 +50,7 @@ export const CredentialProxyHost = CredentialProxyLive.pipe(
 /**
  * Sessions on this host: each Session's Claude Code runs in tmux in its own microsandbox VM, with
  * a Session token for the credential proxy, and its Workspace is cloned and committed to with host
- * git. The sessions root is kept trusted in Claude Code's config file.
+ * git.
  */
 export const SessionsHost = SessionsLive.pipe(
   Layer.provide([TmuxLive, WorkspacesGitClone, SessionSandboxesLive]),
@@ -63,7 +59,6 @@ export const SessionsHost = SessionsLive.pipe(
   Layer.provideMerge(HubGitLive),
   Layer.provideMerge(HubVariablesLive),
   Layer.provideMerge(HubClaudeCredentialLive),
-  Layer.provideMerge(ClaudeTrustLive(claudeConfigPath())),
   Layer.provideMerge(ClaudeModelsLive),
   Layer.provideMerge(HubLinkLive),
   Layer.provideMerge(CredentialProxyHost),

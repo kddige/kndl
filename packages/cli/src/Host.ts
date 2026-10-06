@@ -7,7 +7,6 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   realpathSync,
   statSync,
 } from "node:fs"
@@ -19,14 +18,13 @@ import { GitHubApp } from "@claude-hub/hub/src/GitHubApp.ts"
 import { HubConfig, cookieSecurity } from "@claude-hub/hub/src/HubConfig.ts"
 import {
   claudeConfigPath,
-  hasTrust,
   loginFromClaudeConfig,
   readClaudeConfig,
 } from "@claude-hub/runner/src/ClaudeConfig.ts"
 import { ModBundle, RunnerConfig, RunnerConfigLive } from "@claude-hub/runner/src/RunnerConfig.ts"
 import { Cause, ConfigProvider, Effect, Exit, Option } from "effect"
 import { FetchHttpClient } from "effect/http"
-import type { AppPermissionsFact, DoctorFacts, Health, Place, TmuxServerFact } from "./Doctor.ts"
+import type { AppPermissionsFact, DoctorFacts, Health } from "./Doctor.ts"
 import { type EnvFile, envValues, parseEnv, renderEnv } from "./EnvFile.ts"
 import { fail } from "./Failure.ts"
 import type { HomeFacts } from "./Guards.ts"
@@ -48,7 +46,6 @@ import {
   type ServiceState,
   type ServiceTarget,
   serviceFilePath,
-  servicePathIn,
   statusStep,
 } from "./Services.ts"
 import { Shell, step } from "./Shell.ts"
@@ -100,97 +97,18 @@ export const writeFileWhole = (path: string, text: string, mode: number) =>
 export const writeEnvFile = (path: string, file: EnvFile) =>
   writeFileWhole(path, renderEnv(file), 0o600)
 
-/**
- * What HomeData.ts decides from. `tmux` asks tmux server `claude-hub` for its sessions, which
- * matters only when a Runner is about to be set up.
- */
-export const homeDataFacts = (layout: Layout, options: { readonly tmux: boolean }) =>
-  Effect.gen(function* () {
-    const data = Object.keys(DataEntries).filter((entry) => {
-      const path = join(layout.home.dir, entry)
-      try {
-        return statSync(path).isDirectory() ? readdirSync(path).length > 0 : true
-      } catch {
-        return false
-      }
-    })
-    return {
-      data,
-      envFiles: configuredRoles(layout),
-      tmuxSessions: options.tmux ? yield* tmuxSessionCount(layout.home.tmuxSocket) : 0,
-    } satisfies HomeDataFacts
-  })
-
-/** How many sessions a tmux server has: 0 when it isn't running, or tmux isn't installed. */
-const tmuxSessionCount = (socket: string) =>
-  Effect.gen(function* () {
-    const result = yield* (yield* Shell).capture(
-      step("tmux", ["-L", socket, "list-sessions", "-F", "#{session_name}"], { mayFail: true }),
-    )
-    return result.exitCode === 0 ? result.stdout.split("\n").filter(Boolean).length : 0
-  }).pipe(Effect.catchTag("StepFailed", () => Effect.succeed(0)))
-
-/**
- * The tmux server on the Runner's socket, for doctor: undefined when none runs, or tmux isn't
- * installed. Reads only: it never changes the server.
- */
-export const tmuxServerFact = (socket: string, servicePath: string | undefined) =>
-  Effect.gen(function* () {
-    const shell = yield* Shell
-    const tmux = (...args: ReadonlyArray<string>) =>
-      shell
-        .capture(step("tmux", ["-L", socket, ...args], { mayFail: true }))
-        .pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout : undefined)))
-    const environment = yield* tmux("show-environment", "-g")
-    if (environment === undefined) return undefined
-    const variables = parseServerEnvironment(environment)
-    const sessions = (yield* tmux("list-sessions", "-F", "#{session_name}")) ?? ""
-    const pid = ((yield* tmux("display-message", "-p", "#{pid}")) ?? "").trim()
-    return {
-      socket,
-      sessions: sessions.split("\n").filter((name) => name.trim() !== "").length,
-      cwd: place(/^\d+$/.test(pid) ? yield* processCwd(pid) : undefined),
-      pwd: place(variables.PWD),
-      path: variables.PATH,
-      servicePath,
-    } satisfies TmuxServerFact
-  }).pipe(Effect.orElseSucceed(() => undefined))
-
-/** `show-environment -g`'s answer, as the variables set: a `-NAME` line is one unset. */
-function parseServerEnvironment(stdout: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const line of stdout.split("\n")) {
-    const at = line.indexOf("=")
-    if (line.startsWith("-") || at <= 0) continue
-    out[line.slice(0, at)] = line.slice(at + 1)
-  }
-  return out
-}
-
-/** A directory and whether it still exists; undefined for none. */
-const place = (path: string | undefined): Place | undefined =>
-  path === undefined || path === "" ? undefined : { path, exists: existsSync(path) }
-
-/** A process's working directory: /proc on Linux, lsof on macOS; undefined when unreadable. */
-const processCwd = (pid: string) =>
-  Effect.gen(function* () {
-    if (process.platform === "linux") {
-      try {
-        return readlinkSync(`/proc/${pid}/cwd`).replace(/ \(deleted\)$/, "")
-      } catch {
-        return undefined
-      }
+/** What HomeData.ts decides from. */
+export function homeDataFacts(layout: Layout): HomeDataFacts {
+  const data = Object.keys(DataEntries).filter((entry) => {
+    const path = join(layout.home.dir, entry)
+    try {
+      return statSync(path).isDirectory() ? readdirSync(path).length > 0 : true
+    } catch {
+      return false
     }
-    const result = yield* (yield* Shell).capture(
-      step("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"], { mayFail: true }),
-    )
-    return result.exitCode === 0
-      ? result.stdout
-          .split("\n")
-          .find((line) => line.startsWith("n"))
-          ?.slice(1)
-      : undefined
-  }).pipe(Effect.orElseSucceed(() => undefined))
+  })
+  return { data, envFiles: configuredRoles(layout) }
+}
 
 /** The renames that move the home's `entries` aside, as of now, avoiding names already taken. */
 export function planMoveAside(layout: Layout, entries: ReadonlyArray<string>) {
@@ -315,7 +233,7 @@ export const hostFacts = (layout: Layout) =>
       root: process.getuid?.() === 0,
       user: userInfo().username,
       packageManager: managers.find((manager) => has(manager === "apt" ? "apt-get" : manager)),
-      tools: { git: has("git"), gh: has("gh"), tmux: has("tmux"), curl: has("curl") },
+      tools: { git: has("git"), gh: has("gh"), curl: has("curl") },
       claude: has("claude"),
       claudeSignedIn: loginFromClaudeConfig(config) !== undefined,
       microsandbox: microsandboxRuntime(layout),
@@ -469,15 +387,6 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
       linger = result === undefined ? undefined : lingers(result.stdout)
     }
 
-    let tmuxServer: TmuxServerFact | undefined
-    if (runner && !shell.dryRun) {
-      const serviceFile = serviceFilePath(serviceTarget(layout, "runner", on))
-      tmuxServer = yield* tmuxServerFact(
-        runnerValues.RUNNER_TMUX_SOCKET ?? layout.home.tmuxSocket,
-        existsSync(serviceFile) ? servicePathIn(readFileSync(serviceFile, "utf8")) : undefined,
-      )
-    }
-
     return {
       home: layout.home.dir,
       installed: isInstalled(layout),
@@ -488,7 +397,7 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
         onPath: onPath !== null && samePath(onPath, layout.wrapper),
       },
       roles,
-      oldData: findOldData(yield* homeDataFacts(layout, { tmux: false }), roles),
+      oldData: findOldData(homeDataFacts(layout)),
       prerequisites: prerequisitePlan(yield* hostFacts(layout), roles),
       envFiles: roles.map((role) => ({
         role,
@@ -504,31 +413,12 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
       webBuilt: existsSync(
         join(hubValues.HUB_WEB_DIR ?? join(layout.app, "packages", "web", "dist"), "index.html"),
       ),
-      trust: runner
-        ? yield* trustState(runnerValues.RUNNER_SESSIONS_ROOT ?? layout.sessions)
-        : undefined,
       cookieWarning,
       hubHealth: hub ? yield* health(hubLocalUrl(layout)) : undefined,
       runnerReachesHub:
         runner && runnerValues.HUB_URL ? yield* health(runnerValues.HUB_URL) : undefined,
       linger,
-      tmuxServer,
     } satisfies DoctorFacts
-  })
-
-/** Whether Claude Code's config file trusts the sessions root, which the Runner sets on start. */
-const trustState = (sessionsRoot: string) =>
-  Effect.gen(function* () {
-    const path = claudeConfigPath()
-    if (!existsSync(path)) return "no-config" as const
-    const config = yield* readClaudeConfig(path)
-    let resolved = sessionsRoot
-    try {
-      resolved = realpathSync(sessionsRoot)
-    } catch {
-      return "untrusted" as const
-    }
-    return hasTrust(config, resolved) ? ("trusted" as const) : ("untrusted" as const)
   })
 
 function samePath(a: string, b: string): boolean {

@@ -102,12 +102,11 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 
 ## What a Runner gives Claude Code
 
-Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Claude Code's normal setting sources, so the Repo's `CLAUDE.md`, skills, hooks and settings apply as they would on a developer's machine ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Its command line is `claude` with:
+Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Claude Code's normal setting sources, so the Repo's `CLAUDE.md`, skills, hooks, settings and `.mcp.json` apply as they would on a developer's machine ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Its command line is `claude` with:
 
 - `--session-id` for a new Session, or `--resume` to wake one.
 - `--plugin-dir /opt/claude-hub/hub-link`, the mod, mounted read-only from `RUNNER_MOD_DIR`.
 - `--dangerously-skip-permissions`: the Sandbox is the boundary ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)).
-- `--strict-mcp-config`, so no MCP server loads.
 - `--model` and `--effort` when the Session's [model and effort](/how-to/work-in-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
 - For a Child Session, `--append-system-prompt` with a paragraph saying whose child it is and that its final message of each Turn goes to its Parent Session as a Report ([ADR 0012](/reference/decisions/0012-parent-and-child-sessions/)).
 

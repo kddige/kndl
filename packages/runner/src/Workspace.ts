@@ -143,7 +143,7 @@ export const WorkspacesGitClone = Layer.effect(
         Effect.gen(function* () {
           const directories = sessionDirectories(config.sessionsRoot, start.sessionId)
           yield* fs
-            .makeDirectory(directories.claude, { recursive: true })
+            .makeDirectory(directories.session, { recursive: true })
             .pipe(Effect.mapError(fileError))
           const hasWorkspace = yield* fs
             .exists(`${directories.workspace}/.git`)

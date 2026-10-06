@@ -11,8 +11,8 @@ import {
   readCommands,
   readHelloReply,
   resultSummary,
-  sandboxEnvironment,
   sharedSessionNote,
+  toolArguments,
   turnEndReason,
 } from "./HubMessages.ts"
 import type { ModEventEncoded } from "./HubMessages.ts"
@@ -242,28 +242,15 @@ test("the shared Session's note says where the model runs, and leaves `!` alone 
   expect(sharedSessionNote).not.toContain("!")
 })
 
-test("the Sandbox's environment names its checkout, Repo, Work branch and platform", () => {
-  const text = sandboxEnvironment({
-    workspace: "/workspace",
-    repo: "acme/app",
-    workBranch: "claude/fix-login",
-  })
-  expect(text).toContain(" - Primary working directory: /workspace\n")
-  expect(text).toContain(" - Is a git repository: true\n")
-  expect(text).toContain(" - Repository: acme/app, checked out at /workspace\n")
-  expect(text).toContain(" - Work branch: claude/fix-login")
-  expect(text).toContain(" - Platform: linux\n")
-  expect(text).toContain(" - Shell: bash\n")
-  expect(text).not.toMatch(/darwin|zsh|\/Users\//i)
-})
-
-test("the Sandbox's environment leaves out what the Runner didn't say", () => {
-  const text = sandboxEnvironment({
-    workspace: "/workspace",
-    repo: undefined,
-    workBranch: undefined,
-  })
-  expect(text).toContain("Primary working directory: /workspace")
-  expect(text).not.toContain("Repository:")
-  expect(text).not.toContain("Work branch:")
+test("toolArguments drops the keys Claude Code adds beside a tool's own", () => {
+  expect(
+    toolArguments({
+      tool: "Bash",
+      tool_use_id: "toolu_1",
+      agentId: "a1",
+      consent: "yes",
+      command: "ls",
+      timeout: 5,
+    }),
+  ).toEqual({ command: "ls", timeout: 5 })
 })

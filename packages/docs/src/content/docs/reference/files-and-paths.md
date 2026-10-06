@@ -51,7 +51,7 @@ Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the databa
 | `~/.claude-hub-dev/sessions/` | The sessions root (`RUNNER_SESSIONS_ROOT`), with one directory per Session. |
 | `~/.claude-hub-dev/claude-code/` | Linux builds of Claude Code, mounted read-only into every Sandbox, which Sessions run (`RUNNER_SANDBOX_CLAUDE_CACHE`). |
 | `packages/mod/` | The `hub-link` mod, mounted read-only into every Sandbox and loaded into its Claude Code (`RUNNER_MOD_DIR`). |
-| `~/.claude.json` | Claude Code's config file. The Runner reads the signed-in account and its plan from it and adds one folder-trust entry, for its sessions root. `$CLAUDE_CONFIG_DIR/.claude.json` when that is set. |
+| `~/.claude.json` | Claude Code's config file. The Runner reads the signed-in account and its plan from it, and drops the entries of a Session that ran on the host when it purges that Session. `$CLAUDE_CONFIG_DIR/.claude.json` when that is set. |
 | `~/.microsandbox/` | microsandbox's home (`MSB_HOME`), with its Sandboxes, volumes, snapshots and their logs. |
 
 ### One Session's directory
@@ -60,7 +60,7 @@ Under the sessions root, `<session id>/` holds:
 
 | Path | What it is |
 |---|---|
-| `claude/` | An empty directory that Claude Code runs in, so it reads no project files from the host ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/)). |
+| `claude/` | Only in a Session from before Claude Code ran in its Sandbox: the empty directory it ran in on the host. The Session's first wake copies its conversation from there into the Sandbox. |
 | `workspace/` | The Workspace: the Repo's checkout on the Session's Work branch, mounted into the Sandbox at `/workspace`. |
 | `host-git/` | The Runner's own git directory for the Workspace. Never mounted into the Sandbox, so nothing in the Sandbox can change the config or hooks the Runner's git runs with. |
 

@@ -32,7 +32,7 @@ gh api repos/kddige/claude-hub/contents/install.sh -H 'Accept: application/vnd.g
 
 It installs into `~/.claude-hub` and starts `claude-hub onboard`; then `claude-hub status`, `doctor`, `logs` and `update` look after it. See [Install claude-hub](https://kddige.github.io/claude-hub/how-to/install/).
 
-To run it from this checkout instead, on one machine and without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, Claude Code (`claude`) signed in, `tmux` and `git`, and a Mac with Apple Silicon or Linux with KVM for the Sandboxes.
+To run it from this checkout instead, on one machine and without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, Claude Code (`claude`) signed in, `git`, and a Mac with Apple Silicon or Linux with KVM for the Sandboxes.
 
 ```sh
 bun install

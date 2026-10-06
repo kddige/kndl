@@ -54,8 +54,8 @@ export interface ClaudeLaunch {
 /**
  * The command line that runs a Session's Claude Code in its Sandbox (ADR 0013), in the Workspace,
  * with the mod loaded from its read-only mount. Claude Code runs as it would on a developer's
- * machine, with its usual tools and the Repo's settings, but never asks for a permission
- * (ADR 0004), and loads no MCP server but those of `--mcp-config`, of which it gets none.
+ * machine, with its usual tools and the Repo's settings, hooks, skills and MCP servers, all in the
+ * Sandbox, but never asks for a permission (ADR 0004).
  *
  * A new conversation gets `--session-id`, chosen by the Runner, so its id is known up front; waking
  * uses `--resume`, which restores the conversation and keeps the id (spike #4). A Child Session
@@ -75,7 +75,6 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       ...conversation,
       "--plugin-dir",
       modGuestPath,
-      "--strict-mcp-config",
       "--dangerously-skip-permissions",
       ...(options.parent === undefined
         ? []

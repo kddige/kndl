@@ -17,114 +17,91 @@ import { BunServices } from "@effect/platform-bun"
 import { Effect } from "effect"
 import {
   claudeConfigPath,
+  forgetDirectories,
   hostTranscriptPath,
   loginFromClaudeConfig,
   planFromClaudeConfig,
   resolveRunnerLogin,
-  trustDirectory,
 } from "./ClaudeConfig.ts"
 
 const tempDir = () => realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-config-")))
 
-const trust = (configPath: string, directory: string) =>
-  Effect.runPromise(trustDirectory(configPath, directory))
+const forget = (configPath: string, directories: ReadonlyArray<string>) =>
+  Effect.runPromise(forgetDirectories(configPath, directories))
 
 const readJson = (path: string) => JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
 
-/** A config file shaped like Claude Code's, and a sessions root to trust. */
-const setup = (config: (sessionsRoot: string) => Record<string, unknown>) => {
+/** A config file shaped like Claude Code's. */
+const setup = (config: Record<string, unknown>) => {
   const dir = tempDir()
   const path = join(dir, ".claude.json")
-  const root = join(dir, "sessions")
-  mkdirSync(root)
-  writeFileSync(path, `${JSON.stringify(config(root), null, 2)}\n`, { mode: 0o600 })
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
   chmodSync(path, 0o600)
-  return { dir, path, root }
+  return { dir, path }
 }
 
-describe("trusting a directory", () => {
-  test("adds the flag, keeping other projects, top-level keys, the mode and the format", async () => {
-    const { dir, path, root } = setup((sessionsRoot) => ({
+describe("forgetting directories", () => {
+  test("removes their entries, keeping other projects, top-level keys, the mode and the format", async () => {
+    const { dir, path } = setup({
       numStartups: 107,
       oauthAccount: { emailAddress: "a@example.com" },
       projects: {
         "/home/a/app": { allowedTools: ["Bash"], hasTrustDialogAccepted: true },
-        [sessionsRoot]: { allowedTools: [], lastCost: 1.5 },
+        "/sessions/s-1/claude": { allowedTools: [], lastCost: 1.5 },
       },
-    }))
+    })
 
-    expect(await trust(path, root)).toEqual({ _tag: "Trusted", directory: root })
+    await forget(path, ["/sessions/s-1/claude", "/sessions/s-2/claude"])
+
     expect(readJson(path)).toEqual({
       numStartups: 107,
       oauthAccount: { emailAddress: "a@example.com" },
-      projects: {
-        "/home/a/app": { allowedTools: ["Bash"], hasTrustDialogAccepted: true },
-        [root]: { allowedTools: [], lastCost: 1.5, hasTrustDialogAccepted: true },
-      },
+      projects: { "/home/a/app": { allowedTools: ["Bash"], hasTrustDialogAccepted: true } },
     })
     expect(statSync(path).mode & 0o777).toBe(0o600)
     expect(readFileSync(path, "utf8")).toStartWith('{\n  "numStartups": 107,')
     expect(readFileSync(path, "utf8")).toEndWith("}\n")
     // The temp file is gone.
-    expect(readdirSync(dir).toSorted()).toEqual([".claude.json", "sessions"])
+    expect(readdirSync(dir)).toEqual([".claude.json"])
   })
 
-  test("adds a projects map when there is none", async () => {
-    const { path, root } = setup(() => ({ numStartups: 1 }))
-
-    await trust(path, root)
-
-    expect(readJson(path)).toEqual({
-      numStartups: 1,
-      projects: { [root]: { hasTrustDialogAccepted: true } },
-    })
-  })
-
-  test("does nothing when the flag is already set", async () => {
-    const { path, root } = setup((sessionsRoot) => ({
-      projects: { [sessionsRoot]: { hasTrustDialogAccepted: true } },
-    }))
+  test("does nothing when none of them is there", async () => {
+    const { path } = setup({ projects: { "/home/a/app": {} } })
     // Written compactly, so any rewrite would show.
     writeFileSync(path, JSON.stringify(readJson(path)))
     const before = readFileSync(path, "utf8")
 
-    expect(await trust(path, root)).toEqual({ _tag: "AlreadyTrusted", directory: root })
+    await forget(path, ["/sessions/s-1/claude"])
+
     expect(readFileSync(path, "utf8")).toBe(before)
   })
 
   test("never creates a missing config file", async () => {
-    const dir = tempDir()
-    const path = join(dir, ".claude.json")
+    const path = join(tempDir(), ".claude.json")
 
-    expect(await trust(path, dir)).toEqual({ _tag: "NoConfigFile" })
+    await forget(path, ["/sessions/s-1/claude"])
+
     expect(existsSync(path)).toBe(false)
   })
 
-  test("trusts the real path of a symlinked root", async () => {
-    const { dir, path, root } = setup(() => ({ projects: {} }))
-    const link = join(dir, "link-to-sessions")
-    symlinkSync(root, link)
-
-    expect(await trust(path, link)).toEqual({ _tag: "Trusted", directory: root })
-    expect(readJson(path)).toEqual({ projects: { [root]: { hasTrustDialogAccepted: true } } })
-  })
-
   test("writes through a symlinked config file, keeping the link", async () => {
-    const { dir, path, root } = setup(() => ({ projects: {} }))
+    const { dir, path } = setup({ projects: { "/sessions/s-1/claude": {} } })
     const link = join(dir, "linked.json")
     symlinkSync(path, link)
 
-    await trust(link, root)
+    await forget(link, ["/sessions/s-1/claude"])
 
     expect(realpathSync(link)).toBe(path)
-    expect(readJson(path)).toEqual({ projects: { [root]: { hasTrustDialogAccepted: true } } })
+    expect(readJson(path)).toEqual({ projects: {} })
   })
 
   test("refuses a config file that isn't a JSON object, leaving it alone", async () => {
-    const { path, root } = setup(() => ({}))
+    const { path } = setup({})
     writeFileSync(path, "[1, 2")
 
-    const result = await Effect.runPromise(Effect.result(trustDirectory(path, root)))
+    const result = await Effect.runPromise(
+      Effect.result(forgetDirectories(path, ["/sessions/s-1/claude"])),
+    )
 
     expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "ClaudeConfigError" } })
     expect(readFileSync(path, "utf8")).toBe("[1, 2")

@@ -72,7 +72,7 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 - A Runner's row says **refuses: not on main**.
 - A Runner's row says **update failed**.
 - The Runner logs `The Hub turned this Runner away: …`.
-- Sessions exit at once with `The current working directory was deleted`, or doctor warns about the `tmux server`.
+- Running Sessions went to sleep after an update.
 - A Session is Frozen.
 - Sessions from before an update are gone.
 - The Runner warns about Sandboxes it doesn't know.

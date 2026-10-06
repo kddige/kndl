@@ -122,6 +122,13 @@ export const turnUsage = (usage: {
   cacheCreationInputTokens: usage.cache_creation_input_tokens,
 })
 
+/** The keys Claude Code adds to a tool call's input that the tool itself never sees. */
+const reservedKeys: ReadonlySet<string> = new Set(["tool", "tool_use_id", "agentId", "consent"])
+
+/** A tool call's own arguments, without the keys Claude Code adds beside them. */
+export const toolArguments = (input: Readonly<Record<string, unknown>>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(input).filter(([key]) => !reservedKeys.has(key)))
+
 /** A tool's result as the web UI shows it: a command's output, or the record as JSON. */
 export const resultSummary = (tool: string, result: unknown) => {
   if (tool === "Bash" && typeof result === "object" && result !== null) {
@@ -147,42 +154,6 @@ export const sharedSessionNote = [
   '..." came from another Claude Hub Session, not a person. When it matters who asked for what,',
   "address people by name. You run in a sandbox VM where the repository is checked out.",
 ].join(" ")
-
-/** What the Runner tells the mod about the Session's Sandbox (the Runner's ClaudeLaunch.ts). */
-export interface SandboxFacts {
-  /** Where the Workspace, the Repo's checkout, is mounted in the Sandbox. */
-  readonly workspace: string
-  readonly repo: string | undefined
-  readonly workBranch: string | undefined
-}
-
-/**
- * What the model is told about where its tools run, in the system prompt (#127).
- *
- * Claude Code's own environment block describes the host it runs on: its empty per-Session
- * directory, which is no git repository, and the host's platform and OS. That is not where the
- * tools run. Claude Code also leaves it off a prompt a mod submits, as the Hub's are, and sends it
- * only with a later tool result, so a Session driven from the Hub got it late, after the model
- * had already guessed. This section replaces it, and is in the system prompt from the first
- * request. The Sandbox is always Linux, and its tool server runs commands with bash (the Runner's
- * ToolBridge.ts).
- */
-export const sandboxEnvironment = (facts: SandboxFacts) =>
-  [
-    "# Sandbox environment",
-    "Your file and command tools run in this Session's sandbox, a Linux machine of its own:",
-    ` - Primary working directory: ${facts.workspace}`,
-    " - Is a git repository: true",
-    ...(facts.repo === undefined
-      ? []
-      : [` - Repository: ${facts.repo}, checked out at ${facts.workspace}`]),
-    ...(facts.workBranch === undefined
-      ? []
-      : [` - Work branch: ${facts.workBranch}, the branch this Session was started on`]),
-    " - Platform: linux",
-    " - Shell: bash",
-    "Claude Code itself runs on another machine, which your tools never reach: use the paths above, not a path or platform you see for that machine.",
-  ].join("\n")
 
 const maxQueued = 5_000
 

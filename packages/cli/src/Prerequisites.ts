@@ -9,7 +9,7 @@ import { type Step, step } from "./Shell.ts"
 export type PackageManager = "brew" | "apt" | "dnf"
 
 /** A command-line tool a package manager installs. */
-export type Tool = "git" | "gh" | "tmux" | "curl"
+export type Tool = "git" | "gh" | "curl"
 
 /** What Host.ts found on this machine. */
 export interface HostFacts {
@@ -50,12 +50,11 @@ export interface PrerequisitePlan {
   readonly afterwards: ReadonlyArray<string>
 }
 
-/** The tools each role needs. gh is how claude-hub itself is installed and updated. */
-export function toolsFor(roles: ReadonlyArray<Role>): ReadonlyArray<Tool> {
-  const tools: Array<Tool> = ["git", "gh"]
-  if (roles.includes("runner")) tools.push("tmux")
-  return tools
-}
+/**
+ * The tools a Hub and a Runner need: gh is how claude-hub itself is installed and updated. A
+ * Runner's Sessions run in their Sandboxes, which bring their own tmux (ADR 0013).
+ */
+const Tools: ReadonlyArray<Tool> = ["git", "gh"]
 
 /** microsandbox's own installer, for when no runtime is found. */
 export const MicrosandboxInstaller = "curl -fsSL https://install.microsandbox.dev | sh"
@@ -67,7 +66,7 @@ export function prerequisitePlan(facts: HostFacts, roles: ReadonlyArray<Role>): 
   const steps: Array<Step> = []
   const afterwards: Array<string> = []
 
-  const tools = toolsFor(roles).filter((tool) => !facts.tools[tool])
+  const tools = Tools.filter((tool) => !facts.tools[tool])
   const installer = runner && !facts.microsandbox
   if (installer && !facts.tools.curl) tools.push("curl")
   if (tools.length > 0) {

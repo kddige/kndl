@@ -222,6 +222,15 @@ const indent = (block: string) =>
     .map((line) => (line === "" ? line : `  ${line}`))
     .join("\n")
 
+/** How a call to one of these tools went, as hooks/register.ts answers it. */
+export type ChildToolAnswer =
+  /** The Hub answered; `result` is the text the model reads. */
+  | { readonly _tag: "Ran"; readonly result: string }
+  /** The call was invalid, or the Hub refused it or didn't answer; the model reads `message`. */
+  | { readonly _tag: "Failed"; readonly message: string }
+  /** The Session isn't linked to a Hub, so nothing was asked. */
+  | { readonly _tag: "Refused"; readonly message: string }
+
 /**
  * The Hub's reply, as the model reads it: `{ text }` for a tool result, `{ refused }` for an error
  * result.

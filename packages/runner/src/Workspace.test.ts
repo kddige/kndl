@@ -89,17 +89,16 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
       ),
     )
 
-  test("clones the Repo onto a new Work branch, next to an empty directory for Claude Code", async () => {
+  test("clones the Repo onto a new Work branch", async () => {
     const result = await run(start("w-1"))
 
     expect(result).toMatchObject({
       success: {
-        claude: join(sessionsRoot, "w-1", "claude"),
+        session: join(sessionsRoot, "w-1"),
         workspace: join(sessionsRoot, "w-1", "workspace"),
-        toolsSocket: join(sessionsRoot, "w-1", "tools.sock"),
       },
     })
-    expect(existsSync(join(sessionsRoot, "w-1", "claude"))).toBe(true)
+    expect(existsSync(join(sessionsRoot, "w-1", "claude"))).toBe(false)
     expect(git(join(sessionsRoot, "w-1", "workspace"), "branch", "--show-current")).toBe(
       "claude/w-1",
     )

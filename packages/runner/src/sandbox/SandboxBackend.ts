@@ -105,7 +105,7 @@ export type ExecEvent =
 
 /**
  * A command started with its stdin left open, for a long-lived server the Runner talks to, such
- * as `claude mcp serve` (the tool bridge).
+ * as `tmux -C` for the terminal mirror (Tmux.ts).
  */
 export interface SpawnedCommand {
   /** The command's output as it comes, ending with `Exit`. Run it once. */

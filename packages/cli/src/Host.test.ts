@@ -1,16 +1,13 @@
-// Doctor's check of the GitHub App, with hub.env's App, against the stand-in GitHub; and its read
-// of a tmux server, on a socket of the test's own.
+// Doctor's check of the GitHub App, with hub.env's App, against the stand-in GitHub.
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appId, appKeyPair, StandInGitHub } from "@claude-hub/hub/src/testGitHubApi.ts"
-import { BunServices } from "@effect/platform-bun"
 import { Effect } from "effect"
-import { appPermissionsFact, tmuxServerFact } from "./Host.ts"
+import { appPermissionsFact } from "./Host.ts"
 import { type Layout, resolveLayout } from "./Layout.ts"
-import { Shell } from "./Shell.ts"
 
 const keys = appKeyPair()
 const github = StandInGitHub.start(keys.publicKey)
@@ -97,49 +94,4 @@ describe("doctor's GitHub App check", () => {
     expect(await fact()).toEqual({ _tag: "SignInWithoutApp" })
     expect(github.requests).toEqual([])
   })
-})
-
-describe.skipIf(Bun.which("tmux") === null)("doctor's read of the Runner's tmux server", () => {
-  const socket = `claude-hub-test-${process.pid}-doctor`
-  afterAll(() => {
-    Bun.spawnSync(["tmux", "-L", socket, "kill-server"])
-  })
-
-  const read = (servicePath: string | undefined) =>
-    Effect.runPromise(
-      tmuxServerFact(socket, servicePath).pipe(
-        Effect.provide(Shell.layer),
-        Effect.provide(BunServices.layer),
-      ),
-    )
-
-  test("finds none when no server runs on the socket", async () => {
-    expect(await read(undefined)).toBeUndefined()
-  })
-
-  test("a server started from a checkout since deleted: its directory, PWD and PATH (#105)", async () => {
-    const deleted = realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-deleted-checkout-")))
-    const env: Record<string, string | undefined> = {
-      ...process.env,
-      PWD: deleted,
-      PATH: `${deleted}/bin:/usr/bin:/bin`,
-    }
-    delete env.TMUX
-    const tmux = Bun.which("tmux") ?? "tmux"
-    const started = Bun.spawnSync(
-      [tmux, "-L", socket, "-f", "/dev/null", "new-session", "-d", "sleep 600"],
-      { cwd: deleted, env },
-    )
-    expect(started.exitCode).toBe(0)
-    rmSync(deleted, { recursive: true })
-
-    expect(await read("/usr/bin:/bin")).toEqual({
-      socket,
-      sessions: 1,
-      cwd: { path: deleted, exists: false },
-      pwd: { path: deleted, exists: false },
-      path: `${deleted}/bin:/usr/bin:/bin`,
-      servicePath: "/usr/bin:/bin",
-    })
-  }, 15_000)
 })

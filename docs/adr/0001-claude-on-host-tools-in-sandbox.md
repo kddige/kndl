@@ -23,15 +23,21 @@ The Claude Code process for a Session runs on the Runner host, but its file and 
 
 ## Glob and Grep (amended in #140)
 
+> Obsolete: retired with the tool bridge by [ADR 0013](0013-claude-code-runs-in-the-sandbox.md) (#147). Claude Code runs in the Sandbox with its usual tools and the Repo's own setting sources.
+
 The list first had Glob and Grep too. Claude Code 2.1.287 and 2.1.289 have no such tools: search runs through Bash. Given in `--tools`, the names were still offered to the model, and each call failed with `Tool Grep not found` or `Tool Glob not found`. Claude Code 2.1.289 lists neither without `--tools`. Both are gone from the Runner's `--tools` list and from the tools the bridge runs.
 
 ## Web search (amended in #126)
+
+> Obsolete: retired with the tool bridge by [ADR 0013](0013-claude-code-runs-in-the-sandbox.md) (#147). Claude Code runs in the Sandbox with its usual tools and the Repo's own setting sources.
 
 The tool list has one tool that doesn't run in the Sandbox: WebSearch. The mod passes it on to Claude Code and allows it without asking. It is a server tool: Claude Code sends the query to the Anthropic API it already talks to, as a request carrying the API's web search tool, and the search runs at Anthropic. Only titles, URLs and text come back, so nothing on the host fetches a page or runs a command. Claude Code 2.1.289's debug log shows a WebSearch call as one more `/v1/messages` request and nothing else.
 
 WebFetch stays denied. It fetches the URL from the host, which can reach the Runner's local network and the Hub, the boundary ADR 0004 draws around the Sandbox. Its denial tells Claude to fetch the page with `curl` through Bash, which runs in the Sandbox.
 
 ## Repo skills and CLAUDE.md (amended in #125)
+
+> Obsolete: retired with the tool bridge by [ADR 0013](0013-claude-code-runs-in-the-sandbox.md) (#147). Claude Code runs in the Sandbox with its usual tools and the Repo's own setting sources.
 
 A Session loads the Repo's own instructions and skills, read in the Sandbox. Claude Code still loads nothing from a project on the host.
 

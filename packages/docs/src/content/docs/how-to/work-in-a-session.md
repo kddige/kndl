@@ -53,7 +53,7 @@ The Runner passes the setting to Claude Code as `--model` and `--effort`, which 
 
 Claude Code runs in `/workspace`, the Repo's checkout, with its normal setting sources, so the Repo's own Claude Code files apply as they would in a checkout on your machine: `CLAUDE.md` files and their imports, `.claude/rules/`, skills, agents, commands, hooks and `.claude/settings.json`. Hooks and a skill's inline shell commands run in the Sandbox. Settings of yours on the Runner's machine never apply.
 
-The Repo's `.mcp.json` doesn't: Claude Code starts with `--strict-mcp-config`, so it loads no MCP server.
+So does the Repo's `.mcp.json`: Claude Code starts its MCP servers without asking, and they run in the Sandbox too.
 
 To change them, edit them in the Repo like any other file. Claude Code reads them as it always does: a `CLAUDE.md` at the start of a conversation, so a changed one reaches Claude once the conversation is cleared (`/clear` in the **Terminal**) or compacted.
 

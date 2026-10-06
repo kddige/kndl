@@ -4,12 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import {
-  ensureSandboxClaude,
-  linuxPackage,
-  parseClaudeVersion,
-  sandboxClaudePath,
-} from "./SandboxClaude.ts"
+import { ensureSandboxClaude, linuxPackage, sandboxClaudePath } from "./SandboxClaude.ts"
 
 let dir = ""
 beforeEach(async () => {
@@ -120,9 +115,7 @@ describe("the Sandbox's Claude Code", () => {
     expect(error.message).toContain("not a version")
   })
 
-  test("reads the host's version and names the package for its CPU", () => {
-    expect(parseClaudeVersion("2.1.287 (Claude Code)\n")).toBe("2.1.287")
-    expect(parseClaudeVersion("command not found")).toBeUndefined()
+  test("names the package for its CPU", () => {
     expect(linuxPackage("arm64")).toBe("@anthropic-ai/claude-code-linux-arm64-musl")
     expect(linuxPackage("x64")).toBe("@anthropic-ai/claude-code-linux-x64-musl")
     expect(linuxPackage("ia32")).toBeUndefined()

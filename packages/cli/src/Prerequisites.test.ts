@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { type HostFacts, MicrosandboxInstaller, prerequisitePlan } from "./Prerequisites.ts"
 import { describeStep } from "./Shell.ts"
 
-const everything = { git: true, gh: true, tmux: true, curl: true }
+const everything = { git: true, gh: true, curl: true }
 
 const mac: HostFacts = {
   platform: "darwin",
@@ -39,18 +39,18 @@ describe("the prerequisite plan", () => {
   })
 
   test("macOS: installs with Homebrew, without sudo", () => {
-    const facts = { ...mac, tools: { ...everything, tmux: false, gh: false } }
+    const facts = { ...mac, tools: { ...everything, git: false, gh: false } }
 
-    expect(commands(facts, ["runner"])).toEqual(["brew install gh tmux"])
+    expect(commands(facts, ["runner"])).toEqual(["brew install git gh"])
     expect(prerequisitePlan(facts, ["runner"]).needsSudo).toBe(false)
   })
 
   test("apt: refreshes the lists, then installs, with sudo", () => {
-    const facts = { ...linux, tools: { ...everything, tmux: false } }
+    const facts = { ...linux, tools: { ...everything, gh: false } }
 
     expect(commands(facts, ["runner"])).toEqual([
       "sudo apt-get update",
-      "sudo apt-get install -y tmux",
+      "sudo apt-get install -y gh",
     ])
     expect(prerequisitePlan(facts, ["runner"]).needsSudo).toBe(true)
   })
@@ -59,21 +59,21 @@ describe("the prerequisite plan", () => {
     const facts: HostFacts = {
       ...linux,
       packageManager: "dnf",
-      tools: { ...everything, git: false, tmux: false },
+      tools: { ...everything, git: false, gh: false },
     }
 
-    expect(commands(facts, ["runner"])).toEqual(["sudo dnf install -y git tmux"])
+    expect(commands(facts, ["runner"])).toEqual(["sudo dnf install -y git gh"])
   })
 
   test("as root, runs without sudo", () => {
-    const facts = { ...linux, root: true, tools: { ...everything, tmux: false } }
+    const facts = { ...linux, root: true, tools: { ...everything, gh: false } }
 
-    expect(commands(facts, ["runner"])).toEqual(["apt-get update", "apt-get install -y tmux"])
+    expect(commands(facts, ["runner"])).toEqual(["apt-get update", "apt-get install -y gh"])
     expect(prerequisitePlan(facts, ["runner"]).needsSudo).toBe(false)
   })
 
-  test("a Hub needs no tmux and no microsandbox", () => {
-    const facts = { ...linux, tools: { ...everything, tmux: false }, microsandbox: false }
+  test("a Hub needs no microsandbox", () => {
+    const facts = { ...linux, microsandbox: false }
 
     expect(prerequisitePlan(facts, ["hub"]).steps).toEqual([])
   })
@@ -138,7 +138,7 @@ describe("the prerequisite plan", () => {
     const facts: HostFacts = {
       ...linux,
       microsandbox: false,
-      tools: { git: false, gh: false, tmux: false, curl: false },
+      tools: { git: false, gh: false, curl: false },
       kvm: { device: true, accessible: false },
     }
 

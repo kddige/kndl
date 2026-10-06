@@ -11,14 +11,13 @@ import {
   type VariablesFor,
   type VariableValue,
 } from "@claude-hub/protocol"
-import { type Cause, Effect, Fiber, Layer, Queue, Redacted, Schema, Stream } from "effect"
+import { type Cause, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
 import { CredentialProxy, makeCredentialProxy } from "./proxy/CredentialProxy.ts"
 import { NoClaudeCredential, RunnerCredential } from "./proxy/RunnerCredential.ts"
 import { makeSessionTokens, type SessionGrant } from "./proxy/SessionTokens.ts"
-import { noRepoFiles, type RepoFiles, Sandboxes, type SandboxTarget } from "./Sandbox.ts"
-import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
+import { Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import { SandboxBackendError } from "./sandbox/SandboxBackend.ts"
 import type { ExecEvent, ExecRequest, SpawnedCommand } from "./sandbox/SandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
@@ -355,10 +354,6 @@ export class FakeSandboxes {
   readonly reconciled: Array<Array<SessionId>> = []
   /** What each `start` was given to start the Sandbox from. */
   readonly targets: Array<SandboxTarget> = []
-  /** What `repoFiles` reads from every Session's Workspace. */
-  repo: RepoFiles = noRepoFiles
-  /** The Sessions whose Repo files were read, in order. */
-  readonly repoFilesRead: Array<SessionId> = []
   /** The conversations Claude Code has a transcript of, to resume. */
   readonly transcripts = new Set<string>()
 
@@ -380,11 +375,6 @@ export class FakeSandboxes {
         }),
       hasTranscript: (_id, _directories, conversation) =>
         Effect.sync(() => this.transcripts.has(conversation)),
-      repoFiles: (id) =>
-        Effect.sync(() => {
-          this.repoFilesRead.push(id)
-          return this.repo
-        }),
       stop: (id, reason) => Effect.sync(() => void this.calls.push(`stop ${id} ${reason}`)),
       purge: (id) => Effect.sync(() => void this.calls.push(`purge ${id}`)),
       reconcile: (running) => Effect.sync(() => void this.reconciled.push([...running])),
@@ -396,71 +386,6 @@ export class FakeSandboxes {
     }),
   )
 }
-
-interface Rpc {
-  readonly id?: number
-  readonly method: string
-  readonly params?: {
-    readonly name?: string
-    readonly arguments?: Record<string, unknown>
-    readonly requestId?: number
-  }
-}
-
-export type ToolHandler = (name: string, args: Record<string, unknown>) => Effect.Effect<unknown>
-
-/**
- * Plays `claude mcp serve`: answers the handshake, and each tools/call with `onTool`. A
- * `notifications/cancelled` interrupts that call's `onTool`, unanswered, as the real server kills
- * the tool's command, and is told to `onCancelled`. The fake exits once its stdin ends, ending
- * what it runs; the real one leaves a running command's process behind.
- */
-export const fakeMcpServer =
-  (onTool: ToolHandler, onCancelled?: (requestId: number) => void) =>
-  (io: FakeProcessIO): Effect.Effect<number> =>
-    Effect.gen(function* () {
-      const running = new Map<number, Fiber.Fiber<void>>()
-      yield* io.stdin.pipe(
-        Stream.decodeText,
-        Stream.splitLines,
-        Stream.runForEach((line) =>
-          Effect.gen(function* () {
-            const rpc = JSON.parse(line) as Rpc
-            if (rpc.method === "notifications/cancelled") {
-              const requestId = rpc.params?.requestId ?? -1
-              onCancelled?.(requestId)
-              const fiber = running.get(requestId)
-              if (fiber !== undefined) yield* Fiber.interrupt(fiber)
-              return
-            }
-            const id = rpc.id
-            if (id === undefined) return
-            const answer = (result: unknown) =>
-              io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`)
-            if (rpc.method === "initialize")
-              return yield* answer({ serverInfo: { name: "claude/tengu", version: "2.1.287" } })
-            const fiber = yield* onTool(rpc.params?.name ?? "", rpc.params?.arguments ?? {}).pipe(
-              Effect.flatMap(answer),
-              Effect.ensuring(Effect.sync(() => running.delete(id))),
-              Effect.forkScoped,
-            )
-            running.set(id, fiber)
-          }),
-        ),
-      )
-      return 0
-    }).pipe(Effect.scoped)
-
-export const mcpRecord = (value: unknown) => ({
-  content: [{ type: "text", text: JSON.stringify(value) }],
-})
-
-export const echoTools: ToolHandler = (name, args) =>
-  Effect.succeed(
-    name === "Bash" && args["command"] === "exit 2"
-      ? { content: [{ type: "text", text: "Exit code 2" }], isError: true }
-      : mcpRecord({ tool: name, args }),
-  )
 
 /**
  * The Hub's side of the git conversation, in memory: Repo access with the credentials a test

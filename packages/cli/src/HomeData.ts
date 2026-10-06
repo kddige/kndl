@@ -2,11 +2,10 @@
 // anything.
 //
 // Before checkouts got a dev home of their own (`~/.claude-hub-dev`), a checkout's Runner kept its
-// Session Workspaces in `~/.claude-hub/sessions`, on tmux socket `claude-hub`: exactly where an
+// Session Workspaces in `~/.claude-hub/sessions`, with tmux socket `claude-hub`: exactly where an
 // installed Runner keeps them now. A Runner installed over that data would carry the old Runner's
 // mark (a digest of its tmux socket and sessions root, see the Runner's Naming.ts), so it would
-// re-adopt the old tmux sessions and reconcile the old Sandboxes, against a new Hub database that
-// has never heard of them. A role's data is the install's own once onboard has written that role's
+// reconcile the old Sandboxes against a new Hub database that has never heard of them. A role's data is the install's own once onboard has written that role's
 // env file; before that, it is old. Onboard stops on old data and offers to move it aside (never to
 // delete it); doctor reports it.
 import type { Role } from "./Layout.ts"
@@ -27,60 +26,36 @@ export interface HomeDataFacts {
   readonly data: ReadonlyArray<string>
   /** The roles whose env file (`hub.env`, `runner.env`) exists. */
   readonly envFiles: ReadonlyArray<Role>
-  /** How many sessions tmux server `claude-hub` has: 0 when it isn't running, or wasn't asked. */
-  readonly tmuxSessions: number
 }
 
 /** The data in a home that isn't this install's. */
 export interface OldData {
   /** Entries whose role has no env file here, in {@link DataEntries}' order. */
   readonly entries: ReadonlyArray<string>
-  /** Sessions on tmux socket `claude-hub` that a Runner set up here would re-adopt. */
-  readonly tmuxSessions: number
 }
 
 /**
- * The home's old data, for setting up `roles`; `undefined` when there's none. Data is old when its
- * role's env file doesn't exist. Live tmux sessions count only when a Runner is being set up for
- * the first time here: an installed Runner's are its own.
+ * The home's old data; `undefined` when there's none. Data is old when its role's env file doesn't
+ * exist.
  */
-export function findOldData(facts: HomeDataFacts, roles: ReadonlyArray<Role>): OldData | undefined {
+export function findOldData(facts: HomeDataFacts): OldData | undefined {
   const entries = facts.data.filter((entry) => {
     const owner = DataEntries[entry]
     return owner !== undefined && !facts.envFiles.includes(owner)
   })
-  const tmuxSessions =
-    roles.includes("runner") && !facts.envFiles.includes("runner") ? facts.tmuxSessions : 0
-  return entries.length === 0 && tmuxSessions === 0 ? undefined : { entries, tmuxSessions }
-}
-
-/** Whether moving the old data aside settles it: there is some, and no live tmux session. */
-export function canMoveAside(old: OldData): boolean {
-  return old.entries.length > 0 && old.tmuxSessions === 0
+  return entries.length === 0 ? undefined : { entries }
 }
 
 /** Why onboard stops on the home, and what the person can do: onboard and doctor say the same. */
 export function explainOldData(old: OldData, home: string, renames: ReadonlyArray<Rename>): string {
-  const lines: Array<string> = []
-  if (old.entries.length > 0) {
-    lines.push(
-      `${home} holds claude-hub data that wasn't set up here by \`claude-hub onboard\`: ${old.entries.join(", ")}, with no ${[...new Set(old.entries.map((entry) => `${DataEntries[entry]}.env`))].join(" or ")}. It is likely a checkout's, from before checkouts kept theirs in ~/.claude-hub-dev. A Runner or Hub set up over it would take over its Sessions and Sandboxes, with a new Hub database that doesn't know them.`,
-    )
-  }
-  if (old.tmuxSessions > 0) {
-    lines.push(
-      `tmux server \`claude-hub\` has ${old.tmuxSessions} session${old.tmuxSessions === 1 ? "" : "s"}, which a Runner set up here would re-adopt. Archive them on the Hub that started them, or stop that server yourself (\`tmux -L claude-hub kill-server\`), then onboard again.`,
-    )
-  }
-  const choices: Array<string> = []
-  if (canMoveAside(old)) {
-    choices.push(
-      `Move it aside, keeping it: ${renames.map((rename) => `${rename.from} → ${rename.to}`).join(", ")}. Nothing is deleted. (\`claude-hub onboard --move-old-data\`)`,
-    )
-  }
-  choices.push("Install somewhere else: set CLAUDE_HUB_HOME to another directory.")
-  lines.push(`You can:\n${choices.map((choice) => `  - ${choice}`).join("\n")}`)
-  return lines.join("\n\n")
+  const choices = [
+    `Move it aside, keeping it: ${renames.map((rename) => `${rename.from} → ${rename.to}`).join(", ")}. Nothing is deleted. (\`claude-hub onboard --move-old-data\`)`,
+    "Install somewhere else: set CLAUDE_HUB_HOME to another directory.",
+  ]
+  return [
+    `${home} holds claude-hub data that wasn't set up here by \`claude-hub onboard\`: ${old.entries.join(", ")}, with no ${[...new Set(old.entries.map((entry) => `${DataEntries[entry]}.env`))].join(" or ")}. It is likely a checkout's, from before checkouts kept theirs in ~/.claude-hub-dev. A Runner or Hub set up over it would take over its Sessions and Sandboxes, with a new Hub database that doesn't know them.`,
+    `You can:\n${choices.map((choice) => `  - ${choice}`).join("\n")}`,
+  ].join("\n\n")
 }
 
 /** One entry moved aside, within the home. */

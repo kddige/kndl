@@ -26,9 +26,8 @@ import { type AppPlan, AppSetupTitles, askAppPlan, createApp } from "./AppSetup.
 import { updateEnv } from "./EnvFile.ts"
 import { fail } from "./Failure.ts"
 import { refuseHome } from "./Guards.ts"
-import { canMoveAside, explainOldData, findOldData } from "./HomeData.ts"
+import { explainOldData, findOldData } from "./HomeData.ts"
 import {
-  configuredRoles,
   homeDataFacts,
   homeFacts,
   hostFacts,
@@ -221,7 +220,7 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
     yield* ui.log("info", `Setting up: ${roles.map((role) => RoleTitle[role]).join(" and ")}`)
 
     // 2. Data in the home that isn't this install's: what to move aside, once all is answered.
-    const renames = yield* protectHome(layout, roles, options.moveOldData)
+    const renames = yield* protectHome(layout, options.moveOldData)
 
     // 3. The Hub's questions.
     let hub: (HubChoices & { readonly app: AppPlan }) | undefined
@@ -526,18 +525,13 @@ const askPairing = (options: OnboardOptions, runnerValues: Readonly<Record<strin
  * renames for configure to make once every question is answered, or `undefined` when there's no
  * old data. Nothing is ever deleted.
  */
-const protectHome = (layout: Layout, roles: ReadonlyArray<Role>, moveOldData: boolean) =>
+const protectHome = (layout: Layout, moveOldData: boolean) =>
   Effect.gen(function* () {
     const ui = yield* Ui
-    const setUp = configuredRoles(layout)
-    const facts = yield* homeDataFacts(layout, {
-      tmux: roles.includes("runner") && !setUp.includes("runner"),
-    })
-    const old = findOldData(facts, roles)
+    const old = findOldData(homeDataFacts(layout))
     if (old === undefined) return undefined
     const renames = planMoveAside(layout, old.entries)
     const explanation = explainOldData(old, layout.home.dir, renames)
-    if (!canMoveAside(old)) return yield* fail(explanation)
     const listed = renames.map((rename) => `${rename.from} → ${rename.to}`).join(", ")
     if (!moveOldData) {
       if (!ui.interactive) {
