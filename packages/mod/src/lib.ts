@@ -3,11 +3,14 @@
 // plugin's files and "claude-code", and the loader checks the hooks module's own source, so the
 // glue stays hand-written beside this bundle (spike #4).
 
-export type { ModCommand, Participant, ToolCallOutcome } from "@kndl/protocol"
+export type { ModCommand, Participant, QuestionAnswer, ToolCallOutcome } from "@kndl/protocol"
 export { HubLink } from "./HubLink.ts"
 export type { LinkStatus } from "./HubLink.ts"
+export type { AnswerResult } from "./HubMessages.ts"
 export {
   agentWorktree,
+  answerResult,
+  askedQuestions,
   backgroundedByStop,
   clip,
   promptFromParticipant,
@@ -15,6 +18,7 @@ export {
   sharedSessionNote,
   startsDelivered,
   taskNotificationAgent,
+  terminalOutcome,
   toolArguments,
   turnEndReason,
   turnUsage,

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import {
   isDockerPort,
+  joinAnswers,
   MaxSessionNameLength,
   OpenPort,
   Participant,
@@ -121,5 +122,16 @@ describe("Repo names (#197)", () => {
     expect(sameRepo("Entria-io/PEP", "entria-io/pep")).toBe(true)
     expect(sameRepo("entria-io/pep", "entria-io/pep2")).toBe(false)
     expect(repoKey("Entria-io/PEP")).toBe(repoKey("ENTRIA-IO/pep"))
+  })
+})
+
+describe("Open questions (#193)", () => {
+  test("several picks join as Claude Code's dialog joins them", () => {
+    expect(joinAnswers(["Fast"])).toBe("Fast")
+    expect(joinAnswers(["Fast", "Cheap"])).toBe("Fast, Cheap")
+    expect(joinAnswers(["Red, green", 'Say "hi"', "Blue"])).toBe(
+      '"Red, green", "Say \\"hi\\"", Blue',
+    )
+    expect(joinAnswers([])).toBe("")
   })
 })

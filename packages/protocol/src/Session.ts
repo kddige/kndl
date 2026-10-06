@@ -272,6 +272,15 @@ export type Question = typeof Question.Type
 export const QuestionAnswers = Schema.Record(Schema.String, Schema.String)
 export type QuestionAnswers = typeof QuestionAnswers.Type
 
+/**
+ * Several options picked for a multi-select question, as one answer the way Claude Code's dialog
+ * joins them: with ", ", a label that holds ", " or a quote written as a JSON string.
+ */
+export const joinAnswers = (labels: ReadonlyArray<string>): string =>
+  labels
+    .map((label) => (label.includes(", ") || label.includes('"') ? JSON.stringify(label) : label))
+    .join(", ")
+
 /** The question was answered: Claude reads the answers, keyed by question. */
 export const QuestionAnswered = Schema.TaggedStruct("Answered", { answers: QuestionAnswers })
 export type QuestionAnswered = typeof QuestionAnswered.Type
