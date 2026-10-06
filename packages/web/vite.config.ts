@@ -13,6 +13,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/auth": hub,
+      "^/cli(?:/|$)": hub,
       "/health": hub,
       "/runner/": hub,
       "/ws": { target: hub, ws: true },

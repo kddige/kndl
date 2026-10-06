@@ -45,6 +45,8 @@ export const HomeEntries = [
   "sessions",
   "claude-code",
   "logs",
+  // The claude-hub CLI binaries the Hub builds and serves, by commit (the Hub's CliBuilds.ts).
+  "cli",
 ] as const
 
 /**

@@ -22,12 +22,14 @@ An install keeps everything in its home, `~/.claude-hub` (or `CLAUDE_HUB_HOME`):
 | `~/.claude-hub/claude-code/` | Linux builds of Claude Code, which Sessions run in their Sandboxes. |
 | `~/.claude-hub/claude-token` | Off macOS, the Runner's [Claude credential](/reference/configuration/#the-runners-claude-credential) for Sessions without their own, if you put one there: a setup-token or API key. It must be readable only by you (`600`). |
 | `~/.claude-hub/logs/hub.log`, `runner.log` | Each service's output. `claude-hub logs hub` prints it. |
+| `~/.claude-hub/cli/<commit>/claude-hub-<os>-<arch>` | The [`claude-hub` binaries the Hub serves](/reference/commands/#the-claude-hub-command-from-a-hub), each built the first time it's asked for. The Hub removes other commits' when it builds one. |
 
 Outside the home:
 
 | Path | What it is |
 |---|---|
-| `~/.local/bin/claude-hub` | The `claude-hub` command: a small script that runs the install's CLI. |
+| `~/.local/bin/claude-hub` | The `claude-hub` command: a small script that runs the install's CLI. On a machine with no install, it can be the binary [installed from a Hub](/how-to/install-the-cli-from-a-hub/) instead (`CLAUDE_HUB_BIN_DIR` moves it). |
+| `~/.config/claude-hub/cli.json` | For the binary installed from a Hub: the Hub it updates from, as `{"hub":"https://hub.example.com"}`. Readable only by you. `$XDG_CONFIG_HOME/claude-hub/cli.json` when that is set. |
 | `~/Library/LaunchAgents/io.github.kddige.claude-hub.hub.plist`, `….runner.plist` | macOS: the services, as launchd agents. |
 | `~/.config/systemd/user/claude-hub-hub.service`, `claude-hub-runner.service` | Linux: the services, as systemd user units (`$XDG_CONFIG_HOME/systemd/user` when that is set). |
 
@@ -41,6 +43,7 @@ Each service runs the install's Hub or Runner with its env file and `CLAUDE_HUB_
 | `packages/hub/hub.db.lock` | The lock the running Hub holds, beside its database wherever `HUB_DATABASE` puts it. |
 | `packages/hub/.env.local` | The Hub's settings, read by `bun run hub` and `bun run runner-token`. git ignores it. |
 | `packages/web/dist` | The web UI's build, which the Hub serves. `HUB_WEB_DIR` moves it. |
+| `~/.claude-hub-dev/cli/` | The `claude-hub` binaries the Hub serves, by commit, as in [an installed home](#an-installed-home). |
 
 Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the database can't be read without the key. If it is lost, see [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
 

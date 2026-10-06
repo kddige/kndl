@@ -20,9 +20,10 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `POST /runner/pair` | `claude-hub runner join` | none: the [Pairing code](#pairing) in the body is the credential. |
 | `GET /runner/connection` | `claude-hub runner join`, onboard | `Authorization: Bearer <Runner token>` |
 | `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands` | one Session's mod | `Authorization: Bearer <mod token>` |
+| `GET /cli`, `GET /cli/version`, `GET /cli/<os>-<arch>` | `curl … \| sh`, the [`claude-hub` command from a Hub](/reference/commands/#the-claude-hub-command-from-a-hub) | none: the install script, the Hub's commit, and the binary built from it. |
 | anything else | a browser | none: the web UI's build. |
 
-Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair` and the web UI needs a credential. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
+Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair`, `/cli` and the web UI needs a credential. `/cli` serves only what the Hub's checkout already holds, built; a request for a platform can start a build, one at a time. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
 
 The Hub mints three kinds of token, each `<kind>_<id>.<secret>`, and stores only a SHA-256 of the secret:
 

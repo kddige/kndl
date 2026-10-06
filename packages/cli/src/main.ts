@@ -1,17 +1,22 @@
 #!/usr/bin/env bun
 // The `claude-hub` CLI. Installed, the wrapper install.sh writes runs it from `<home>/app`; in a
 // checkout, `bun packages/cli/src/main.ts <command>`. Either way it manages the installed home,
-// `CLAUDE_HUB_HOME` or `~/.claude-hub`, never a checkout's dev home.
+// `CLAUDE_HUB_HOME` or `~/.claude-hub`, never a checkout's dev home. A Hub also serves it as one
+// binary (issue #178), which first updates itself to the Hub's commit (SelfUpdate.ts).
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"
 import { Command } from "effect/cli"
+import { build } from "./BuildInfo.ts"
 import { cli } from "./Cli.ts"
+import { readCliConfig } from "./CliConfig.ts"
 import { HubClient } from "./HubClient.ts"
+import { selfUpdate } from "./SelfUpdate.ts"
 import { Shell } from "./Shell.ts"
 import { Ui } from "./Ui.ts"
 
-/** The commit the CLI runs from, as its version. */
+/** The commit the CLI runs from, as its version: the one it was built at, or the checkout's. */
 function version(): string {
+  if (build !== undefined) return build.commit.slice(0, 12)
   const git = Bun.spawnSync(["git", "rev-parse", "--short=12", "HEAD"], {
     cwd: import.meta.dir,
     stdout: "pipe",
@@ -20,7 +25,8 @@ function version(): string {
   return git.exitCode === 0 ? git.stdout.toString().trim() : "unknown"
 }
 
-Command.run(cli, { version: version() }).pipe(
+selfUpdate({ build, env: process.env, config: readCliConfig() }).pipe(
+  Effect.andThen(Command.run(cli, { version: version() })),
   // A command that can't go on says why, and exits 1. A question left with Ctrl-C or Esc exits 130,
   // as Ctrl-C anywhere else does (BunRuntime interrupts the command): no stack trace either way.
   Effect.catchTag("CliFailure", (error) =>
