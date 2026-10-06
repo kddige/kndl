@@ -22,6 +22,8 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `GET /ws/runner` | a Runner | `Authorization: Bearer <Runner token>` |
 | `POST /runner/pair` | `claude-hub runner join` | none: the [Pairing code](#pairing) in the body is the credential. |
 | `GET /runner/connection` | `claude-hub runner join`, onboard | `Authorization: Bearer <Runner token>` |
+| `GET /tunnel/<session id>/<port>` | a client reaching an Open port ([Tunnels](#tunnels)) | `Authorization: Bearer <CLI token>`, or the sign-in cookie from `HUB_PUBLIC_URL`'s origin |
+| `GET /runner/tunnel/<tunnel id>` | a Runner, dialing back for a tunnel | `Authorization: Bearer <Runner token>` |
 | `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands` | one Session's mod | `Authorization: Bearer <mod token>` |
 | `GET /cli`, `GET /cli/version`, `GET /cli/<os>-<arch>` | `curl … \| sh`, the [`claude-hub` command from a Hub](/reference/commands/#the-claude-hub-command-from-a-hub) | none: the install script, the Hub's commit, and the binary built from it. |
 | anything else | a browser | none: the web UI's build. |
@@ -48,7 +50,7 @@ The Hub mints four kinds of token, each `<kind>_<id>.<secret>`, and stores only 
 
 A Login code is held in the Hub's memory, for 10 minutes, and spent by its first trade, right or wrong. Only the verifier whose SHA-256 is the challenge it was approved with can trade it, so a code read off the screen is no use without the CLI that asked for it. A code that is unknown, expired, already spent, or traded with the wrong verifier gets the same `400`: `That code isn't valid: it may have expired or been used. Run claude-hub login again.`
 
-The Hub keeps a SHA-256 of each CLI token, with its machine, when it was made, and when it was last used, to the minute. `GET /auth/cli/me` answers `{ you, id, machine, createdAt }`, and `POST /auth/cli/sign-out` revokes the token it is sent with, answering `204`. The Hub checks a CLI token against its database on every request, so one revoked, by either, or on the Account page, is refused from the next request on, `401`. CLI tokens act only on the CLI's own endpoints: the web channel, the Runner channel and the mod channel don't take them. No token is logged, only its id and machine.
+The Hub keeps a SHA-256 of each CLI token, with its machine, when it was made, and when it was last used, to the minute. `GET /auth/cli/me` answers `{ you, id, machine, createdAt }`, and `POST /auth/cli/sign-out` revokes the token it is sent with, answering `204`. The Hub checks a CLI token against its database on every request, so one revoked, by either, or on the Account page, is refused from the next request on, `401`. CLI tokens act only on the CLI's own endpoints and on [tunnels](#tunnels): the web channel, the Runner channel and the mod channel don't take them. No token is logged, only its id and machine.
 
 ## Handshake
 
@@ -76,8 +78,8 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 
 | Direction | Messages |
 |---|---|
-| Runner to Hub | `RunnerHello`; `SessionStarted`, `SessionStartFailed`, `SessionStopped`, `SessionPurged`; `SandboxStateReport`, `SandboxNote`; `SessionPorts`; terminal frames; git requests and `WipPushFailed`; `FetchVariables`, `FetchCloneAccess`, `FetchClaudeCredential`; Test build logs and results; `UpdateChecked`, `UpdateProgress`, `UpdateFailed` |
-| Hub to Runner | `RunnerWelcome` or `HandshakeRejected`; `StartSession`, `RelaunchSession`, `ModTokenReissued`, `StopSession`, `PurgeSession`; terminal input, resizes and snapshot requests; git replies; `SessionTurnEnded`; `RunTestBuild`; `VariablesFetched` or `VariablesRefused`; `ClaudeCredentialFetched` or `ClaudeCredentialRefused`; `CheckUpdate`, `ApplyUpdate` |
+| Runner to Hub | `RunnerHello`; `SessionStarted`, `SessionStartFailed`, `SessionStopped`, `SessionPurged`; `SandboxStateReport`, `SandboxNote`; `SessionPorts`, `TunnelFailed`; terminal frames; git requests and `WipPushFailed`; `FetchVariables`, `FetchCloneAccess`, `FetchClaudeCredential`; Test build logs and results; `UpdateChecked`, `UpdateProgress`, `UpdateFailed` |
+| Hub to Runner | `RunnerWelcome` or `HandshakeRejected`; `StartSession`, `RelaunchSession`, `ModTokenReissued`, `StopSession`, `PurgeSession`; `OpenTunnel`; terminal input, resizes and snapshot requests; git replies; `SessionTurnEnded`; `RunTestBuild`; `VariablesFetched` or `VariablesRefused`; `ClaudeCredentialFetched` or `ClaudeCredentialRefused`; `CheckUpdate`, `ApplyUpdate` |
 
 `RunnerHello` carries the Runner's name, `login`, the Sessions it still runs, and `version`: the commit its checkout is on and the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `version` is optional, so a Runner from before it still connects, listed with its version unknown. The Hub compares it with its own commit: it starts and wakes no Session on a Runner behind it, which keeps the Sessions it runs.
 
@@ -117,6 +119,54 @@ Before it clones a Test build's Repo, the Runner asks how with `FetchCloneAccess
 Claude Code's models are fixed for a version, so the Runner sends a table of the pinned version's, `PinnedClaudeModels` in `packages/runner/src/ClaudeModels.ts`, beside `PinnedClaudeVersion` ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). A Runner told to run another version (`RUNNER_SANDBOX_CLAUDE_VERSION`) sends no `models`. Claude Code has no command that lists its models, so the pinned version's smoke test checks the table in a real Sandbox: it runs `claude -p /model` once without `--model`, for the default and the aliases, then once per alias with `--model`, and `claude -p /effort` for the levels, none of which calls the API or saves a conversation. `-p /model` doesn't print the line Claude Code's own `/model` picker shows for each model, so those lines are copied from the picker by hand.
 
 `StartSession` carries the Session's `model` and `effort` when they are set, which the Runner passes as `--model` and `--effort`. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which the Hub sends once the setting changed while Claude Code ran and no Turn runs: the Runner stops Claude Code and starts it again with `--resume` and the new flags, in the same Sandbox, with the fresh mod token the message carries. It answers as it does a `StartSession`, with `SessionStarted` or `SessionStartFailed`, and the Hub delivers the next prompt once the new mod has said hello. Restarting between Turns is the one way that is sure to switch: `--model` and `--effort` are fixed for the life of the process, and typing `/model` into a running Claude Code would write the choice to the host's `~/.claude/settings.json`, for every other Session on the Runner. A Runner without `relaunches` gets the setting when the Session next wakes.
+
+## Tunnels
+
+A tunnel carries one TCP connection to an Open port of a Session: from a client, through the Hub and the Session's Runner, to the port in the Session's Sandbox ([ADR 0016](/reference/decisions/0016-forwarding-a-sessions-ports/)). Each connection is a pair of WebSockets of its own, never the Runner channel, so a large download doesn't hold up terminal frames or Turns.
+
+1. The client opens a WebSocket at `/tunnel/<session id>/<port>`, with a CLI token as `Authorization: Bearer`, or with the sign-in cookie from `HUB_PUBLIC_URL`'s origin. A missing or wrong credential gets `401` and a cookie from another origin `403`, before the upgrade; a request that isn't a WebSocket upgrade gets `426`.
+2. The Hub checks the caller's access to the Session's Repo, as for joining the Session ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)), and checks the credential against its database. It does both on every connection, so a revoked CLI token, or access taken away on GitHub, is refused from the next connection on. Someone without access is refused before the Runner is asked anything.
+3. The Hub sends the Session's Runner `OpenTunnel { tunnelId, sessionId, port, address }`. `address` is `127.0.0.1` when the port listens on any IPv4 address, `0.0.0.0` included, and `::1` otherwise. Only a Runner that says `"forwardsPorts": true` in `RunnerHello` is sent one.
+4. The Runner connects to `address`:`port` from inside the Sandbox, then dials the Hub back at `/runner/tunnel/<tunnel id>` with its Runner token. It connects to `127.0.0.1` or `::1` only, and only in a Sandbox of a Session it runs. When it can't connect it answers `TunnelFailed { tunnelId, message }` instead, such as `Could not connect to port 3000: …`. A tunnel id is claimed once, by the Runner it was sent to: any other dial-back gets `404`.
+5. The Hub waits 10 seconds for the dial-back, then pipes the two sockets together.
+
+Every other refusal comes after the upgrade, as a close with a code and a message, so any WebSocket client can read why.
+
+### Framing
+
+The same on both sockets of a tunnel:
+
+- A binary message is the connection's bytes, at most 64 KiB.
+- A text message is JSON: `{"_tag":"Ack","bytes":<n>}` once a side has delivered `<n>` bytes it received, and `{"_tag":"Eof"}` when it sends no more, a TCP half-close. It still reads after an `Eof`.
+- Neither side has more than 1 MiB sent and not acknowledged. The Hub counts what it passes toward each side, and closes both sockets with `4400` for a side past that, a binary message over 64 KiB, or text that isn't an `Ack` or `Eof`. So the Hub holds at most 1 MiB for each direction of a tunnel, and a slow reader slows its own sender alone.
+- The Hub pings tunnel sockets, and closes one only after 120 seconds without a message or an answer to a ping, so an idle connection, such as a quiet WebSocket, stays open.
+- When one side closes, the Hub closes the other with the same code: `1000`, `1001` and `1005` as `1000`, `3000` to `4999` as they are, and any other as `4500`.
+
+### Close codes
+
+| Code | Meaning |
+|---|---|
+| `1000` | The connection ended: the server or the client closed it. |
+| `1001` | The Hub or the Runner is shutting down. |
+| `4400` | A side broke the framing above. |
+| `4404` | No such Session, or one the caller has no access to: the two get the same answer. |
+| `4409` | The Session isn't Active: it is Asleep, Archived, or going to sleep. |
+| `4410` | Nothing listens on the port in the Session's Sandbox, or the path's port isn't a port. |
+| `4424` | GitHub couldn't say whether the caller has access to the Session's Repo; try again. |
+| `4426` | The Session's Runner runs a version from before tunnels. |
+| `4429` | The client read too slowly ([below](#on-the-runner)). |
+| `4500` | The other side went away without closing, such as the connection into the Sandbox being lost. |
+| `4502` | The Runner couldn't connect to the port: the close's message is its `TunnelFailed` message. |
+| `4503` | The Session's Runner is offline, or went offline before dialing back. |
+| `4504` | The Runner didn't dial back within 10 seconds. |
+
+### On the Runner
+
+The Runner connects into the Sandbox through microsandbox's guest agent, agentd, the way microsandbox forwards SSH, so it reaches a server bound to loopback with nothing installed in the guest. A Sandbox's connections share one agentd client, apart from the Runner's commands, and a Sandbox has at most 128 connections at once.
+
+agentd can't hold one connection back without holding up every other into the Sandbox, new ones too. So the Runner never holds the guest's server back: it reads every connection as fast as the server writes, and keeps what the client hasn't taken yet, past the 1 MiB in flight. It closes a connection with `4429` once it keeps more than 8 MiB for it, `The client read too slowly: the Runner held too much for it.`, or once the client has taken nothing for 30 seconds while bytes wait for it, `The client took nothing for 30 s.` Other connections, and the Session's terminal and Turns, don't wait on it.
+
+So a client that reads more slowly than the guest's server writes, such as one far away fetching a large file, loses the connection once it falls more than 8 MiB behind.
 
 ## Web channel: `/ws/web`
 
