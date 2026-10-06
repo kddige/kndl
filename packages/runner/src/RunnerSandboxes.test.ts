@@ -92,7 +92,6 @@ const runProcess = <A>(
       image: "docker:dind",
       claudeCacheDir: join(host.sessionsRoot, "claude-code"),
       sandboxClaude: () => Effect.succeed("2.1.287"),
-      modDir: host.sessionsRoot,
       ...sandboxesDefaults,
     }),
   ).pipe(Layer.provide([backend, variables]))

@@ -123,7 +123,6 @@ const withEnvironments = async (
   } = {},
 ) => {
   const root = await mkdtemp(join(tmpdir(), "claude-hub-environments-"))
-  await mkdir(join(root, "mod"))
   const sent: Array<RunnerToHub> = []
   const variables =
     options.variables ??
@@ -142,7 +141,6 @@ const withEnvironments = async (
       image: "docker:dind",
       claudeCacheDir: join(root, "claude-code"),
       sandboxClaude: () => Effect.succeed("2.1.287"),
-      modDir: join(root, "mod"),
       ...sandboxesDefaults,
       scratchDir: join(root, "scratch"),
       ...options.sandboxes,

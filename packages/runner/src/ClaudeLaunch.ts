@@ -1,6 +1,6 @@
 import { posix } from "node:path"
 import type { ClaudeSessionId, EffortLevel, ModelName, SessionId } from "@claude-hub/protocol"
-import { modGuestPath, modPlugins } from "./sandbox/SessionLayout.ts"
+import { modPlugins } from "./sandbox/SessionLayout.ts"
 
 /**
  * The environment variables the mod reads to reach the Hub. The Hub's URL and the mod token are
@@ -16,6 +16,8 @@ export interface ClaudeLaunchOptions {
   /** Claude Code's executable in the Sandbox. */
   readonly claudePath: string
   readonly sessionId: SessionId
+  /** The Session's copy of the mod in the Sandbox, a directory per plugin (SessionMod.ts). */
+  readonly mod: string
   /** Start a new conversation with this id, or resume an existing one (waking an Asleep Session). */
   readonly conversation:
     | { readonly _tag: "New"; readonly id: string }
@@ -34,9 +36,9 @@ export interface ClaudeLaunch {
 
 /**
  * The command line that runs a Session's Claude Code in its Sandbox (ADR 0013), in the Workspace,
- * with the mod's plugins loaded from its read-only mount. Claude Code runs as it would on a developer's
- * machine, with its usual tools and the Repo's settings, hooks, skills and MCP servers, all in the
- * Sandbox, but never asks for a permission (ADR 0004).
+ * with the mod's plugins loaded from the Session's read-only copy (SessionMod.ts). Claude Code runs
+ * as it would on a developer's machine, with its usual tools and the Repo's settings, hooks,
+ * skills and MCP servers, all in the Sandbox, but never asks for a permission (ADR 0004).
  *
  * A new conversation gets `--session-id`, chosen by the Runner, so its id is known up front; waking
  * uses `--resume`, which restores the conversation and keeps the id (spike #4).
@@ -53,10 +55,7 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
     argv: [
       options.claudePath,
       ...conversation,
-      ...modPlugins.flatMap((plugin) => [
-        "--plugin-dir",
-        posix.join(modGuestPath, "plugins", plugin),
-      ]),
+      ...modPlugins.flatMap((plugin) => ["--plugin-dir", posix.join(options.mod, plugin)]),
       "--dangerously-skip-permissions",
       ...(options.model === undefined ? [] : ["--model", options.model]),
       ...(options.effort === undefined ? [] : ["--effort", options.effort]),

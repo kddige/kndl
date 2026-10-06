@@ -20,7 +20,10 @@ export interface RunnerSettings {
    * parent directories, so trusting this one once covers every Session under it (spike #4).
    */
   readonly sessionsRoot: string
-  /** The mod package, whose plugins each Session's Claude Code loads with `--plugin-dir`. */
+  /**
+   * The mod package, whose plugins each Session's Claude Code loads with `--plugin-dir`, from a
+   * copy made as it starts (SessionMod.ts).
+   */
   readonly modDir: string
   /** The Claude Code executable. */
   readonly claudeBin: string

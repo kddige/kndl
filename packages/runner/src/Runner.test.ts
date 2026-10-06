@@ -1,8 +1,8 @@
 // The Runner against a fake Hub WebSocket server, with tmux, the Workspace and the Sandbox faked.
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, posix } from "node:path"
 import { ClaudeSessionId, ProtocolVersion, TestBuildId } from "@claude-hub/protocol"
 import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
@@ -26,6 +26,7 @@ import {
   FakeWorkspaceGit,
   FakeWorkspaces,
   sessionId,
+  writeFakeMod,
 } from "./testSupport.ts"
 import { Updater } from "./Updater.ts"
 
@@ -157,6 +158,14 @@ class FakeUpdater {
   )
 }
 
+/** What the Session's copy of the mod that its Claude Code was `launched` with says. */
+function sessionMod(h: Harness, launched: number) {
+  const pluginDir = h.tmux.launched[launched]?.argv[4] ?? ""
+  const copy = posix.relative(modGuestPath, posix.dirname(pluginDir))
+  const hook = join(h.settings.sessionsRoot, "s-1", "mod", copy, "hub-link", "hooks", "hook.js")
+  return readFileSync(hook, "utf8")
+}
+
 function startRunner(
   setup: (h: { hub: FakeHub; tmux: FakeTmux }) => void = () => {},
   updater: Layer.Layer<Updater> = Updater.manual(),
@@ -182,7 +191,7 @@ function startRunner(
     token: Redacted.make(token),
     login: undefined,
     sessionsRoot,
-    modDir: "/opt/claude-hub/packages/mod",
+    modDir: writeFakeMod(join(dir, "mod"), "built 1"),
     claudeBin: "/usr/local/bin/claude",
     tmuxSocket: "unused",
     repoUrlTemplate: "unused",
@@ -576,9 +585,9 @@ describe("Sessions", () => {
       "--session-id",
       expect.stringMatching(/^[0-9a-f-]{36}$/),
       "--plugin-dir",
-      `${modGuestPath}/plugins/hub-link`,
+      expect.stringMatching(new RegExp(`^${modGuestPath}/[0-9a-z]+/hub-link$`)),
       "--plugin-dir",
-      `${modGuestPath}/plugins/hub-link-commands`,
+      expect.stringMatching(new RegExp(`^${modGuestPath}/[0-9a-z]+/hub-link-commands$`)),
       "--dangerously-skip-permissions",
     ])
     const sessionToken = spec?.env["CLAUDE_HUB_MOD_TOKEN"] ?? ""
@@ -662,6 +671,35 @@ describe("Sessions", () => {
     // The new Claude Code streams as the first did.
     h.tmux.pane("s-1").output("on opus")
     await eventually(() => h.hub.all("TerminalFrame").some((frame) => frame.data === "on opus"))
+  })
+
+  test("keeps the mod a Session's Claude Code started with until it starts again (#159)", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+    expect(sessionMod(h, 0)).toBe("// built 1\n")
+
+    // An update builds the Runner's mod anew while Claude Code runs: its copy is left alone.
+    writeFakeMod(h.settings.modDir, "built 2")
+    expect(sessionMod(h, 0)).toBe("// built 1\n")
+
+    // Claude Code starts again on a new copy, of the new mod, under a new name.
+    writeTranscript(h, "3c1f6f0e-claude")
+    h.hub.send({
+      _tag: "RelaunchSession",
+      sessionId: "s-1",
+      repo: "acme/app",
+      workBranch: "claude/s-1",
+      resume: "3c1f6f0e-claude",
+      modToken: "chm_mod.second",
+      model: "sonnet",
+    })
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+    expect(h.tmux.launched[1]?.argv[4]).not.toBe(h.tmux.launched[0]?.argv[4])
+    expect(sessionMod(h, 1)).toBe("// built 2\n")
+    // The old copy is gone.
+    expect(readdirSync(join(h.settings.sessionsRoot, "s-1", "mod"))).toHaveLength(1)
   })
 
   test("says a relaunch failed when Claude Code wasn't running", async () => {
