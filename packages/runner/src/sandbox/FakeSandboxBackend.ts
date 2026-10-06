@@ -209,6 +209,17 @@ export const makeFake = (options: FakeOptions = {}) => {
     world.sandboxes.set(spec.sessionId, { spec, runner, state, rootfs })
   }
 
+  const readFile: SandboxBackendShape["readFile"] = (sessionId, path) =>
+    Effect.flatMap(running(sessionId), (sandbox): Effect.Effect<Uint8Array, SandboxError> => {
+      const { files, key } = locate(sandbox, path)
+      const data = files.get(key)
+      return data === undefined
+        ? Effect.fail(
+            new SandboxBackendError({ operation: "read file", message: `no such file: ${path}` }),
+          )
+        : Effect.succeed(data)
+    })
+
   const execStream: SandboxBackendShape["execStream"] = (sessionId, request) =>
     Stream.unwrap(
       Effect.gen(function* () {
@@ -332,16 +343,9 @@ export const makeFake = (options: FakeOptions = {}) => {
     execStream,
     spawn,
     exec: (sessionId, request) => collectExec(execStream(sessionId, request)),
-    readFile: (sessionId, path) =>
-      Effect.flatMap(running(sessionId), (sandbox): Effect.Effect<Uint8Array, SandboxError> => {
-        const { files, key } = locate(sandbox, path)
-        const data = files.get(key)
-        return data === undefined
-          ? Effect.fail(
-              new SandboxBackendError({ operation: "read file", message: `no such file: ${path}` }),
-            )
-          : Effect.succeed(data)
-      }),
+    readFile,
+    readTextFile: (sessionId, path) =>
+      Effect.map(readFile(sessionId, path), (data) => new TextDecoder().decode(data)),
     writeFile: (sessionId, path, data) =>
       Effect.map(running(sessionId), (sandbox) => {
         const { files, key } = locate(sandbox, path)

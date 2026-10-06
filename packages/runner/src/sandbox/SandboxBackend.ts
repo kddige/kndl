@@ -284,6 +284,8 @@ export interface SandboxBackendShape {
     request: ExecRequest,
   ) => Effect.Effect<ExecResult, SandboxError>
   readonly readFile: (sessionId: SessionId, path: string) => Effect.Effect<Uint8Array, SandboxError>
+  /** Reads a whole file as UTF-8 text, without starting a process in the guest. */
+  readonly readTextFile: (sessionId: SessionId, path: string) => Effect.Effect<string, SandboxError>
   /** Writes a whole file, replacing it, and makes any missing parent directories. */
   readonly writeFile: (
     sessionId: SessionId,

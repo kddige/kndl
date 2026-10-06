@@ -16,6 +16,9 @@
 // - Sandboxes and volumes carry labels: their Session, and the mark of the Runner that made them
 //   (Naming.ts). A Sandbox's labels are read back from its config.
 //
+// - Log level warn (spike #170): at the default level every exec or fs call from the host writes a
+//   line to the Sandbox's `logs/runtime.log`, which polling for Open ports would grow by tens of
+//   MB a day.
 // - microsandbox writes every command's output to the Sandbox's `logs/exec.log` on the host, so
 //   that file is linked to /dev/null right after create or restore, before the first command:
 //   output may hold variable values (ADR 0009, spike #46).
@@ -242,6 +245,7 @@ export const make = Effect.fnUntraced(function* ({
       .label(sessionLabel, spec.sessionId)
       .label(runnerLabel, runner)
       .envs({ ...spec.env })
+      .logLevel("warn")
       .detached(true)
     if (spec.rootDiskMib !== undefined) builder = builder.rootDisk(spec.rootDiskMib)
     if (spec.workdir !== undefined) builder = builder.workdir(spec.workdir)
@@ -257,6 +261,7 @@ export const make = Effect.fnUntraced(function* ({
       .cpus(spec.cpus)
       .memory(spec.memoryMib)
       .networkPolicy(NetworkPolicy.allowAll())
+      .logLevel("warn")
     for (const mount of sortedMounts(spec))
       builder = builder.volume(mount.guestPath, (m) => configureMount(spec, mount, m))
     return builder.restore()
@@ -734,6 +739,8 @@ export const make = Effect.fnUntraced(function* ({
     exec: (sessionId, request) => collectExec(execStream(sessionId, request)),
     readFile: (sessionId, path) =>
       withSandbox(sessionId, "read file", (sandbox) => sandbox.fs().read(path)),
+    readTextFile: (sessionId, path) =>
+      withSandbox(sessionId, "read file", (sandbox) => sandbox.fs().readToString(path)),
     writeFile: (sessionId, path, data) =>
       withSandbox(sessionId, "write file", async (sandbox) => {
         const fs = sandbox.fs()
