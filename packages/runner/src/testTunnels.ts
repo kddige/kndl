@@ -1,7 +1,8 @@
 // Tunnels end to end, for tests (#177): a real Hub and a real Runner, whose Session runs in real
-// tmux with its Workspace and Sandbox faked, and whose "guest" ports are servers on the host. Also
-// the client's side: a tunnel's socket, and a local listener that carries each connection through
-// one, as `claude-hub forward` will (#180). Not part of the Runner.
+// tmux with its Workspace and Sandbox faked, and whose "guest" ports are servers on the host, which
+// a test may open and close as it goes. Also the client's side: a tunnel's socket, a local listener
+// that carries each connection through one, as `claude-hub forward` does (#180), and the CLI token
+// it does it with. Not part of the Runner.
 
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
@@ -9,6 +10,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   type OpenPort,
+  Participant,
+  ParticipantId,
   ProtocolVersion,
   RunnerToHub,
   type SessionId,
@@ -17,6 +20,7 @@ import {
 import { TunnelEnd } from "@claude-hub/protocol/tunnel-end"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import { Effect, Fiber, Layer, Option, Redacted, References } from "effect"
+import { CliTokens, pkceChallenge } from "../../hub/src/CliTokens.ts"
 import { RunnerTokens } from "../../hub/src/RunnerTokens.ts"
 import { generateSecretsKey } from "../../hub/src/Secrets.ts"
 import {
@@ -167,6 +171,10 @@ export interface TunnelScene {
   readonly tunnelUrl: (port: number) => string
   /** The headers a signed-in client opens it with. */
   readonly headers: Record<string, string>
+  /** Opens and closes ports in the Sandbox: the Runner reports these as its Open ports now. */
+  readonly setPorts: (ports: ReadonlyArray<GuestPort>) => Promise<void>
+  /** A CLI token for `login`, signed in on the web already, as `claude-hub login` on `machine` gets. */
+  readonly cliToken: (login: string, machine: string) => Promise<string>
 }
 
 const runners: Array<Fiber.Fiber<never, unknown>> = []
@@ -195,9 +203,15 @@ export function removeTunnelScenes() {
 export async function tunnelScene(options: {
   readonly ports: ReadonlyArray<GuestPort>
   readonly connectTcp?: SandboxBackendShape["connectTcp"]
+  /** How long the Hub lets an idle Session be before it puts it to sleep. */
+  readonly sleepAfterMs?: number
 }): Promise<TunnelScene> {
   const hub = await startHub({
-    config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
+    config: {
+      devLogin: true,
+      secretsKey: Option.some(Redacted.make(generateSecretsKey())),
+      ...(options.sleepAfterMs !== undefined && { sleepAfterMs: options.sleepAfterMs }),
+    },
   })
   const { token } = await hub.run(Effect.flatMap(RunnerTokens, (tokens) => tokens.issue("mac")))
   const connects: Array<GuestConnect> = []
@@ -209,22 +223,27 @@ export async function tunnelScene(options: {
       connectHostTcp(address, hostPorts.get(port) ?? port, events)
     )
   }
-  const reported: ReadonlyArray<OpenPort> = options.ports.map(({ port, addresses }) => ({
-    port,
-    addresses: [...addresses],
-    process: "bun server",
-  }))
+  const reportOf = (ports: ReadonlyArray<GuestPort>): ReadonlyArray<OpenPort> =>
+    ports.map(({ port, addresses }) => ({ port, addresses: [...addresses], process: "bun server" }))
+  let reported = reportOf(options.ports)
+  /** Reports the ports of each Session watched, on its Runner's link. */
+  const watched = new Map<SessionId, () => Promise<void>>()
   // Every Session's Sandbox has the ports open as it starts.
   const openPorts = Layer.effect(
     OpenPorts,
-    Effect.map(HubLink, (hubLink) =>
-      OpenPorts.of({
+    Effect.map(HubLink, (hubLink) => {
+      const report = (sessionId: SessionId) =>
+        hubLink.send(RunnerToHub.cases.SessionPorts.make({ sessionId, ports: [...reported] }))
+      return OpenPorts.of({
         watch: (sessionId) =>
-          hubLink.send(RunnerToHub.cases.SessionPorts.make({ sessionId, ports: [...reported] })),
-        unwatch: () => Effect.void,
+          Effect.andThen(
+            Effect.sync(() => watched.set(sessionId, () => Effect.runPromise(report(sessionId)))),
+            report(sessionId),
+          ),
+        unwatch: (sessionId) => Effect.sync(() => void watched.delete(sessionId)),
         resendAll: Effect.void,
-      }),
-    ),
+      })
+    }),
   )
   const dir = sceneDir()
   const fakeClaude = join(dir, "fake-claude")
@@ -312,6 +331,28 @@ export async function tunnelScene(options: {
     connects,
     tunnelUrl: (port) => `${hub.url.replace(/^http/, "ws")}${tunnelPath(sessionId, port)}`,
     headers: { cookie },
+    setPorts: async (ports) => {
+      hostPorts.clear()
+      for (const port of ports) hostPorts.set(port.port, port.hostPort)
+      reported = reportOf(ports)
+      await Promise.all([...watched.values()].map((report) => report()))
+    },
+    cliToken: async (login, machine) => {
+      const signedIn = await hub.run(
+        Effect.gen(function* () {
+          const cli = yield* CliTokens
+          const verifier = "v".repeat(43)
+          const who = Participant.make({
+            id: ParticipantId.make(`dev:${login}`),
+            login,
+            name: login,
+          })
+          const { code } = yield* cli.approve(who, machine, pkceChallenge(verifier))
+          return yield* cli.redeem(code, verifier)
+        }),
+      )
+      return signedIn.token
+    },
   }
 }
 
