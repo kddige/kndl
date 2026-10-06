@@ -125,7 +125,7 @@ function ClaudeSection() {
         </h2>
         <p {...stylex.props(styles.note)}>
           The Sessions you start run on your own Claude account, on whichever Runner they are on.
-          Without one, they run on the Runner's own login, where it has one.
+          Without one, they run on the Runner's own credential, where it has one.
         </p>
       </div>
       {credential === undefined ? (
@@ -363,7 +363,7 @@ function RemoveDialog({
         }
       }}
       title="Remove your Claude credential?"
-      description="Sessions you start from now on run on their Runner's own login, and don't start on a Runner without one. Sessions already running keep theirs until they next start."
+      description="Sessions you start from now on run on their Runner's own credential, and don't start on a Runner without one. Sessions already running keep theirs until they next start."
       footer={
         <>
           <DialogClose>Cancel</DialogClose>

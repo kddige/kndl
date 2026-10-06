@@ -479,7 +479,7 @@ function LoadedSession({
 
 /**
  * Whose Claude account a Session runs on (ADR 0015): its Creator's own credential, or else its
- * Runner's login. A Hub from before says only the Runner's.
+ * Runner's own, shown as its Runner showed it then. A Hub from before says only the Runner's.
  */
 function claudeAccountText(summary: SessionSummary): string {
   switch (summary.claudeAccount) {

@@ -112,7 +112,10 @@ const terminalEscapes =
 // oxlint-disable-next-line eslint/no-control-regex -- removing them is the point
 const controlCharacters = /[\u0000-\u0008\u000b-\u001f\u007f]/g
 
-/** A Runner as a picker names it: "studio · alice@example.com", or its name until it connects. */
+/**
+ * A Runner as a picker names it, with its own Claude credential: "studio · Subscription token …x7Qa",
+ * or its name until it connects.
+ */
 export function runnerLabel(runner: RunnerSummary): string {
   return runner.login === null ? runner.name : `${runner.name} · ${runner.login.account}`
 }
