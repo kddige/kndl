@@ -49,8 +49,6 @@ import {
   toast,
   Tooltip,
   TrashIcon,
-  useMediaQuery,
-  WIDE,
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import { AgentPanel } from "./AgentPanel.tsx"
@@ -113,8 +111,6 @@ const styles = stylex.create({
     verticalAlign: "-0.125em",
   },
   keepAwake: { alignItems: "center" },
-  // On a narrow screen the sun stands for the switch's label, so the Session's name keeps room.
-  keepAwakeIcon: { display: "inline-flex" },
   tabList: {
     paddingInline: space.s4,
     backgroundColor: color.surface,
@@ -259,7 +255,6 @@ function LoadedSession({
   )
 
   const you = useHubState((hubState) => hubState.you)
-  const wide = useMediaQuery(WIDE)
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
@@ -298,6 +293,8 @@ function LoadedSession({
   return (
     <main {...stylex.props(styles.view)}>
       <PageHeader
+        // On a phone the name keeps its row, and the toggle and buttons go on one of their own.
+        stackActions
         // Its name, edited in place: anyone with access may rename it, whatever its state.
         title={
           renaming ? (
@@ -352,19 +349,7 @@ function LoadedSession({
               <Tooltip content="While it's on, the Session doesn't go to sleep when idle. Sleep now turns it off.">
                 <span>
                   <Switch
-                    label={
-                      wide ? (
-                        "Keep awake"
-                      ) : (
-                        <span
-                          role="img"
-                          aria-label="Keep awake"
-                          {...stylex.props(styles.keepAwakeIcon)}
-                        >
-                          <SunIcon />
-                        </span>
-                      )
-                    }
+                    label="Keep awake"
                     checked={summary.keepAwake !== undefined}
                     onCheckedChange={(on) => command(hub.setKeepAwake(summary.id, on))}
                     sx={styles.keepAwake}
