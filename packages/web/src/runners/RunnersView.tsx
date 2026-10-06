@@ -1,5 +1,6 @@
-// The Runners page (issue #85): every Runner paired with the Hub, whether it's online, its Runner
-// login and version against the Hub's own, when it was last seen and how many Sessions it has.
+// The Runners page (issue #85): every Runner paired with the Hub, whether it's online, its own
+// Claude credential, its version against the Hub's own, when it was last seen and how many
+// Sessions it has.
 // Anyone signed in adds a Runner here with a Pairing code, Re-pairs one (a new token, same RunnerId
 // and Sessions) or removes one, once its Sessions are all Archived. Codes still waiting are listed
 // so they can be revoked. A Runner behind the Hub that updates itself has Update (#87): it moves
@@ -226,7 +227,7 @@ export function RunnersView() {
         title="Runners"
         description={
           <>
-            The machines Sessions run on, each with its own Claude login.
+            The machines Sessions run on, each with its own Claude credential, if any.
             {hubVersion && (
               <>
                 {" "}

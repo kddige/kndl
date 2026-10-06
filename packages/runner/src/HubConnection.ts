@@ -3,7 +3,6 @@ import {
   checkHandshake,
   HubToRunner,
   ProtocolVersion,
-  type RunnerLogin,
   RunnerToHub,
 } from "@claude-hub/protocol"
 import { readBuildVersion } from "@claude-hub/protocol/checkout"
@@ -92,7 +91,7 @@ function parseJson(text: string): unknown {
  * Reconnects with exponential backoff, which starts over after every welcome. Never ends: when the
  * Hub turns it away, it says what to do, updates itself if it can, and retries slowly.
  */
-export const runHubConnection = (login: RunnerLogin, backoff: Backoff = DefaultBackoff) =>
+export const runHubConnection = (backoff: Backoff = DefaultBackoff) =>
   Effect.gen(function* () {
     const updater = yield* Updater
     const initial = Duration.toMillis(Duration.fromInputUnsafe(backoff.initial))
@@ -100,7 +99,7 @@ export const runHubConnection = (login: RunnerLogin, backoff: Backoff = DefaultB
     const rejectedWait = Duration.fromInputUnsafe(backoff.rejected ?? "1 minute")
     let delay = initial
     for (;;) {
-      const welcomed = yield* connectOnce(login).pipe(
+      const welcomed = yield* connectOnce.pipe(
         Effect.catchTag("ConnectionLost", (lost) =>
           Effect.gen(function* () {
             yield* Effect.logWarning(`Hub connection: ${lost.message}`)
@@ -129,96 +128,100 @@ export const runHubConnection = (login: RunnerLogin, backoff: Backoff = DefaultB
     }
   })
 
-const connectOnce = (login: RunnerLogin) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const config = yield* RunnerConfig
-      const sessions = yield* Sessions
-      const updater = yield* Updater
-      const hub = yield* HubLink
-      const makeWebSocket = yield* Socket.WebSocketConstructor
-      const url = runnerSocketUrl(config.hubUrl)
-      let welcomed = false
-      const lost = (message: string) => new ConnectionLost({ message, welcomed })
+/** What the hello shows for a Runner with no Claude credential of its own. */
+export const NoClaudeCredentialText = "No Claude credential"
 
-      const socket = yield* Socket.fromWebSocket(
-        Effect.acquireRelease(
-          Effect.sync(() =>
-            makeWebSocket(url, {
-              headers: { authorization: `Bearer ${Redacted.value(config.token)}` },
-            }),
-          ),
-          (ws) => Effect.sync(() => ws.close(1000)),
+const connectOnce = Effect.scoped(
+  Effect.gen(function* () {
+    const config = yield* RunnerConfig
+    const sessions = yield* Sessions
+    const updater = yield* Updater
+    const hub = yield* HubLink
+    const makeWebSocket = yield* Socket.WebSocketConstructor
+    const url = runnerSocketUrl(config.hubUrl)
+    let welcomed = false
+    const lost = (message: string) => new ConnectionLost({ message, welcomed })
+
+    const socket = yield* Socket.fromWebSocket(
+      Effect.acquireRelease(
+        Effect.sync(() =>
+          makeWebSocket(url, {
+            headers: { authorization: `Bearer ${Redacted.value(config.token)}` },
+          }),
         ),
-        { openTimeout: "10 seconds" },
-      )
-      const pull = yield* Socket.readerString(socket).pipe(
-        Effect.mapError((error) => lost(`could not connect to ${url}: ${error.message}`)),
-      )
-      const writer = yield* socket.writer
-      const hello = yield* updater.hello
-      const models = yield* (yield* ClaudeModels).current
-      const write = (message: RunnerToHub) => writer.write(JSON.stringify(encodeOutgoing(message)))
+        (ws) => Effect.sync(() => ws.close(1000)),
+      ),
+      { openTimeout: "10 seconds" },
+    )
+    const pull = yield* Socket.readerString(socket).pipe(
+      Effect.mapError((error) => lost(`could not connect to ${url}: ${error.message}`)),
+    )
+    const writer = yield* socket.writer
+    const hello = yield* updater.hello
+    const models = yield* (yield* ClaudeModels).current
+    const ownAccount = yield* sessions.ownClaudeAccount
+    const write = (message: RunnerToHub) => writer.write(JSON.stringify(encodeOutgoing(message)))
 
-      yield* write(
-        RunnerToHub.cases.RunnerHello.make({
-          protocolVersion: ProtocolVersion,
-          name: config.name,
-          login,
-          sessions: [...(yield* sessions.running)],
-          ...(yield* Effect.map(sessions.withoutModToken, (ids) =>
-            ids.length === 0 ? {} : { withoutModToken: [...ids] },
-          )),
-          ...(buildVersion !== undefined && { version: buildVersion }),
-          asksCloneAccess: true,
-          updater: hello.updater,
-          ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
-          ...(models !== undefined && { models }),
-          relaunches: true,
-          ownClaudeCredential: yield* sessions.ownClaudeCredential,
-        }),
-      ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
+    yield* write(
+      RunnerToHub.cases.RunnerHello.make({
+        protocolVersion: ProtocolVersion,
+        name: config.name,
+        // A Hub from before requires `login`: it shows the Runner's own credential, if any.
+        login: { account: ownAccount ?? NoClaudeCredentialText },
+        sessions: [...(yield* sessions.running)],
+        ...(yield* Effect.map(sessions.withoutModToken, (ids) =>
+          ids.length === 0 ? {} : { withoutModToken: [...ids] },
+        )),
+        ...(buildVersion !== undefined && { version: buildVersion }),
+        asksCloneAccess: true,
+        updater: hello.updater,
+        ...(hello.lastUpdate !== undefined && { lastUpdate: hello.lastUpdate }),
+        ...(models !== undefined && { models }),
+        relaunches: true,
+        ownClaudeCredential: ownAccount !== undefined,
+      }),
+    ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
 
-      const first = yield* pull.pipe(
-        Effect.timeoutOrElse({
-          duration: WelcomeTimeout,
-          orElse: () => Effect.fail(lost("the Hub did not answer the hello in time")),
-        }),
-        Effect.mapError((error) =>
-          error instanceof ConnectionLost
-            ? error
-            : lost(`the Hub closed the connection before welcoming: ${error.message}`),
-        ),
-      )
-      const answer = parseJson(first[0])
-      const welcome = decodeIncoming(answer)
-      if (welcome._tag === "Success" && welcome.value._tag === "HandshakeRejected") {
-        return yield* new HubRejected({
-          message: welcome.value.message,
-          hubVersion: welcome.value.hubVersion,
-        })
-      }
-      const mismatch = checkHandshake(answer)
-      if (mismatch !== undefined) return yield* new HubRejected({ message: mismatch.message })
-      if (welcome._tag === "Failure" || welcome.value._tag !== "RunnerWelcome") {
-        return yield* lost("the Hub's first message was not a welcome")
-      }
+    const first = yield* pull.pipe(
+      Effect.timeoutOrElse({
+        duration: WelcomeTimeout,
+        orElse: () => Effect.fail(lost("the Hub did not answer the hello in time")),
+      }),
+      Effect.mapError((error) =>
+        error instanceof ConnectionLost
+          ? error
+          : lost(`the Hub closed the connection before welcoming: ${error.message}`),
+      ),
+    )
+    const answer = parseJson(first[0])
+    const welcome = decodeIncoming(answer)
+    if (welcome._tag === "Success" && welcome.value._tag === "HandshakeRejected") {
+      return yield* new HubRejected({
+        message: welcome.value.message,
+        hubVersion: welcome.value.hubVersion,
+      })
+    }
+    const mismatch = checkHandshake(answer)
+    if (mismatch !== undefined) return yield* new HubRejected({ message: mismatch.message })
+    if (welcome._tag === "Failure" || welcome.value._tag !== "RunnerWelcome") {
+      return yield* lost("the Hub's first message was not a welcome")
+    }
 
-      welcomed = true
-      yield* Effect.logInfo(`Connected to the Hub as Runner ${welcome.value.runnerId}`)
-      yield* updater.welcomed
-      yield* hub.connect(write)
-      yield* Effect.addFinalizer(() => hub.disconnect)
-      yield* sessions.snapshotAll
+    welcomed = true
+    yield* Effect.logInfo(`Connected to the Hub as Runner ${welcome.value.runnerId}`)
+    yield* updater.welcomed
+    yield* hub.connect(write)
+    yield* Effect.addFinalizer(() => hub.disconnect)
+    yield* sessions.snapshotAll
 
-      // Messages from the rest of the batch the welcome came in, then everything after it.
-      const route = (text: string) => dispatch(sessions, updater, text)
-      yield* Effect.forEach(first.slice(1), route, { discard: true })
-      return yield* Effect.forever(
-        pull.pipe(Effect.flatMap((batch) => Effect.forEach(batch, route, { discard: true }))),
-      ).pipe(Effect.mapError((error) => lost(`the connection closed: ${error.message}`)))
-    }),
-  )
+    // Messages from the rest of the batch the welcome came in, then everything after it.
+    const route = (text: string) => dispatch(sessions, updater, text)
+    yield* Effect.forEach(first.slice(1), route, { discard: true })
+    return yield* Effect.forever(
+      pull.pipe(Effect.flatMap((batch) => Effect.forEach(batch, route, { discard: true }))),
+    ).pipe(Effect.mapError((error) => lost(`the connection closed: ${error.message}`)))
+  }),
+)
 
 const dispatch = (sessions: Sessions["Service"], updater: Updater["Service"], text: string) => {
   const message = decodeIncoming(parseJson(text))

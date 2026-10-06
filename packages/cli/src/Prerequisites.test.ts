@@ -11,8 +11,6 @@ const mac: HostFacts = {
   user: "ada",
   packageManager: "brew",
   tools: everything,
-  claude: true,
-  claudeSignedIn: true,
   microsandbox: true,
   kvm: undefined,
 }
@@ -122,16 +120,6 @@ describe("the prerequisite plan", () => {
 
     expect(plan.steps).toEqual([])
     expect(plan.missing).toMatchObject([{ name: "gh", fixable: false }])
-  })
-
-  test("Claude Code and its sign-in are reported, never installed", () => {
-    expect(prerequisitePlan({ ...mac, claude: false }, ["runner"]).missing).toMatchObject([
-      { name: "Claude Code", fixable: false },
-    ])
-    expect(prerequisitePlan({ ...mac, claudeSignedIn: false }, ["runner"]).missing).toMatchObject([
-      { name: "Claude Code sign-in", fixable: false },
-    ])
-    expect(prerequisitePlan({ ...mac, claude: false }, ["hub"]).missing).toEqual([])
   })
 
   test("every Step is a system Step, which a dry run only prints", () => {

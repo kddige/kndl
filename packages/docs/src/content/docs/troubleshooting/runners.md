@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-A Runner checks its settings and Claude Code's login before it connects. Then it connects out to the Hub and keeps reconnecting while it can't, so a Runner that is running but never shows up in **New Session** is almost always a connection problem: look at its log.
+A Runner checks its settings before it connects. Then it connects out to the Hub and keeps reconnecting while it can't, so a Runner that is running but never shows up in **New Session** is almost always a connection problem: look at its log.
 
 ## No Runner token
 
@@ -19,18 +19,6 @@ ERROR (#2): ConfigError: SchemaError(Expected string
 **Why.** `RUNNER_TOKEN` isn't set. Every Runner needs one, and the Runner doesn't read `packages/hub/.env.local`, which is the Hub's.
 
 **Fix.** Pair the machine with `claude-hub runner join`, which writes the token, or issue one on the Hub's machine with `bun run runner-token <name>` and start the Runner with it. See [Add a Runner](/how-to/add-a-runner/).
-
-## No Claude account is signed in
-
-**What you see.** The Runner exits at startup with:
-
-```
-RunnerLoginUnknown: No Claude account is signed in according to /Users/you/.claude.json. Run `claude` and sign in, or set RUNNER_LOGIN.
-```
-
-**Why.** Every Session on a Runner uses the Claude Code login of the user that runs it. The Runner reads which account that is from Claude Code's config file, `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`), to show it on each Session, and found none.
-
-**Fix.** As the user that runs the Runner, run `claude` and sign in, then start the Runner again. If Claude Code is signed in some way the file doesn't record, set `RUNNER_LOGIN` to how the login should be shown.
 
 ## The mod isn't built
 
@@ -189,7 +177,7 @@ To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f
 
 **What you see.** A Session shows the banner **This Session is Frozen**: `Its Runner is offline. Prompts sent now wait in the queue until the Runner is back.`
 
-**Why.** Its Runner isn't connected to the Hub: it was stopped, its machine is asleep or offline, or it can't reconnect (see above). A Session runs on its Runner's Claude Code login, so it waits for that Runner rather than moving to another.
+**Why.** Its Runner isn't connected to the Hub: it was stopped, its machine is asleep or offline, or it can't reconnect (see above). A Session's Sandbox and Workspace are on its Runner, so it waits for that Runner rather than moving to another.
 
 **Fix.** Start the Runner again, or fix its connection. Once it is back, each Session is Active again if its Claude Code still runs, whether only the connection dropped or the Runner restarted, and otherwise Asleep, woken at once if prompts are waiting. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
 

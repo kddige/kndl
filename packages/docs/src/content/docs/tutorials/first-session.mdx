@@ -17,7 +17,7 @@ This tutorial runs claude-hub from a checkout of its repository with `bun run`, 
 
 - **A Mac with Apple Silicon, or Linux with KVM.** Sandboxes are [microsandbox](https://github.com/microsandbox/microsandbox) microVMs, which need one of the two. microsandbox itself comes with `bun install`.
 - **[Bun](https://bun.sh) 1.4 or newer.**
-- **Claude Code**, as `claude` on your `PATH`, signed in. Run `claude` once and sign in if you never have: every Session on this machine uses that login.
+- **A Claude account.** Here, the simplest is Claude Code signed in on this machine: run `claude` once and sign in if you never have. The Runner uses that login as its own Claude credential, which Sessions run on when their Creator has added none. A Runner on another machine needs neither, once people [add their own](/how-to/add-your-claude-credential/).
 - **git**.
 - **A GitHub repository to work on** that this machine's own git can clone over HTTPS, such as one of yours. Without the GitHub App, the Runner clones with your host's git credentials.
 

@@ -138,7 +138,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
     >
       <form id="create-session" onSubmit={submit} noValidate {...stylex.props(styles.form)}>
         {claudeCredential === null && (
-          // Not a refusal: the Runner may have its own login to run it on (ADR 0015).
+          // Not a refusal: the Runner may have its own credential to run it on (ADR 0015).
           <Banner intent="accent" icon={<KeyIcon />} title="Add your Claude credential">
             Sessions you start run on your own Claude account once you add a token or API key on
             your{" "}
@@ -194,7 +194,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
             online.length === 0
               ? "No Runner is online, so the Session can't start yet."
               : claudeCredential === null
-                ? "Whose machine and Claude login it runs on."
+                ? "Whose machine it runs on: on its own Claude credential, without yours."
                 : "Whose machine it runs on: on your own Claude account."
           }
         >

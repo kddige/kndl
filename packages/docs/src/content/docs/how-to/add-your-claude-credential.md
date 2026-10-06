@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-The Sessions you start run on your own Claude account, on whichever Runner they are on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). You paste a credential once, on your **Account** page, and every Runner fetches it for your Sessions. Without one, your Sessions run on their Runner's own login, where it has one.
+The Sessions you start run on your own Claude account, on whichever Runner they are on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). You paste a credential once, on your **Account** page, and every Runner fetches it for your Sessions. Without one, your Sessions run on their Runner's own credential, where it has one.
 
 ## Before you start
 
@@ -43,10 +43,10 @@ Once saved, your credential is write-only. The page shows its kind, its last 4 c
 ## Replace or remove it
 
 - **Replace**, to paste a new token, such as when the old one expires or your plan changes. Sessions pick up the new one as they next start or wake.
-- **Remove**, to take it off the Hub. Your Sessions then run on their Runner's own login, and the Hub refuses to start one on a Runner without one.
+- **Remove**, to take it off the Hub. Your Sessions then run on their Runner's own credential, and the Hub refuses to start one on a Runner without one.
 
 A Session that is awake keeps the credential it started with until it next sleeps.
 
 ## See whose account a Session runs on
 
-A Session's header says whose Claude account it runs on: **on Alice's Claude account** for its Creator's, or **on the Runner's Claude account** with the Runner login, when its Creator has none. Its subagents run on the same account.
+A Session's header says whose Claude account it runs on: **on Alice's Claude account** for its Creator's, or **on the Runner's Claude account**, with how the Runners page shows the Runner's own credential, when its Creator has none. Its subagents run on the same account.

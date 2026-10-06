@@ -131,7 +131,7 @@ import {
   type RunnerHello,
   type RunnerList,
   type RunnerId,
-  type RunnerLogin,
+  type RunnerAccount,
   type RunnerToHub,
   type RunnerUpdater,
   RunnerUpdateRequested,
@@ -384,7 +384,6 @@ export class SessionRelay extends Context.Service<
       interface OnlineRunner {
         readonly id: RunnerId
         readonly name: string
-        readonly login: RunnerLogin
         readonly peer: Peer<HubToRunner>
         /** Whether it asks how to clone a Test build (#104). */
         readonly asksCloneAccess: boolean
@@ -394,6 +393,8 @@ export class SessionRelay extends Context.Service<
         readonly updater: RunnerUpdater | undefined
         /** Whether it takes a RelaunchSession (#128). */
         readonly relaunches: boolean
+        /** Its own Claude credential, as its hello showed it. */
+        readonly login: RunnerAccount
         /** Whether it has a Claude credential of its own for Sessions whose Creator has none. */
         readonly ownClaudeCredential: boolean
       }

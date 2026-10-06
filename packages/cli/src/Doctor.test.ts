@@ -65,7 +65,7 @@ describe("doctor", () => {
       prerequisites: {
         missing: [
           { name: "gh", detail: "gh isn't installed.", fixable: true },
-          { name: "Claude Code", detail: "Install Claude Code.", fixable: false },
+          { name: "KVM", detail: "There is no /dev/kvm.", fixable: false },
         ],
         steps: [],
         needsSudo: false,
@@ -75,7 +75,7 @@ describe("doctor", () => {
 
     expect(failing(facts)).toMatchObject([
       { name: "Prerequisites", fix: { _tag: "InstallPrerequisites" } },
-      { name: "Claude Code", status: "fail" },
+      { name: "KVM", status: "fail" },
     ])
     expect(failing(facts)[1]?.fix).toBeUndefined()
   })

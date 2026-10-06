@@ -11,16 +11,13 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import type { ClaudePlan, ClaudeSubscriptionType, RunnerLogin } from "@claude-hub/protocol"
-import { Context, Data, Effect, FileSystem } from "effect"
+import type { ClaudePlan, ClaudeSubscriptionType } from "@claude-hub/protocol"
+import { Context, Data, Effect } from "effect"
 
-// Claude Code's own config file, `.claude.json`: the Runner reads the account signed in from it
-// (the Runner login, ADR 0002), and marks the sessions root as trusted in it, so no Session stops
-// at the folder-trust dialog.
-
-export class RunnerLoginUnknown extends Data.TaggedError("RunnerLoginUnknown")<{
-  readonly message: string
-}> {}
+// What the Runner reads of Claude Code's state on its host, when there is any; none of it is
+// needed. The account and plan of Claude Code's login, from its config file `.claude.json`, for a
+// Runner whose own Claude credential is that login (ADR 0015); and what Claude Code kept of
+// Sessions from before they ran in Sandboxes (ADR 0013), to carry over or forget.
 
 export class ClaudeConfigError extends Data.TaggedError("ClaudeConfigError")<{
   readonly message: string
@@ -43,18 +40,10 @@ export function claudeConfigPath(
   return join(configDir ?? homedir(), `.claude${suffix}.json`)
 }
 
-/** The parsed config file, or `undefined` when it is missing or not JSON. */
-export const readClaudeConfig = (path: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem
-    const text = yield* fs.readFileString(path)
-    return JSON.parse(text) as unknown
-  }).pipe(Effect.orElseSucceed(() => undefined))
-
 /** The signed-in account's email address, from `oauthAccount.emailAddress`. */
-export function loginFromClaudeConfig(config: unknown): RunnerLogin | undefined {
+export function accountFromClaudeConfig(config: unknown): string | undefined {
   const account = field(field(config, "oauthAccount"), "emailAddress")
-  return typeof account === "string" && account.length > 0 ? { account } : undefined
+  return typeof account === "string" && account.length > 0 ? account : undefined
 }
 
 /** Claude Code's `organizationType`s, by the plan Claude Code 2.1.289 takes each for. */
@@ -82,26 +71,6 @@ export function planFromClaudeConfig(config: unknown): ClaudePlan | undefined {
     ? { subscriptionType, rateLimitTier: tier }
     : { subscriptionType }
 }
-
-/**
- * The Runner login: `configured` (from `RUNNER_LOGIN`) when set, else the account in Claude
- * Code's config file.
- */
-export const resolveRunnerLogin = (configured: string | undefined, configPath: string) =>
-  configured !== undefined
-    ? Effect.succeed<RunnerLogin>({ account: configured })
-    : readClaudeConfig(configPath).pipe(
-        Effect.flatMap((config) => {
-          const login = loginFromClaudeConfig(config)
-          return login !== undefined
-            ? Effect.succeed(login)
-            : Effect.fail(
-                new RunnerLoginUnknown({
-                  message: `No Claude account is signed in according to ${configPath}. Run \`claude\` and sign in, or set RUNNER_LOGIN.`,
-                }),
-              )
-        }),
-      )
 
 /** How often a write lost to a Claude Code process rewriting the file is tried again. */
 const rewriteAttempts = 5

@@ -44,11 +44,9 @@ Each person can store one Claude credential on the Hub, on their **Account** pag
 | `HUB_URL` | `http://127.0.0.1:7777` | The Hub. The Runner connects to `/ws/runner` on it, over `wss:` for an `https:` URL. |
 | `RUNNER_TOKEN` | required | The Runner's token: `claude-hub runner join` writes it, from a Pairing code; `claude-hub runner token` or `bun run runner-token` issues one on the Hub's machine. Never reaches a Sandbox. |
 | `RUNNER_NAME` | the short hostname | The name it said hello with. The web UI shows the name the Runner was paired or issued its token with. |
-| `RUNNER_LOGIN` | the account Claude Code is signed in with | How the Runner login is shown. Read from `oauthAccount.emailAddress` in Claude Code's config file when unset; the Runner refuses to start if it finds none. |
 | `RUNNER_SESSIONS_ROOT` | `~/.claude-hub-dev/sessions` | Where each Session's directory goes. |
 | `RUNNER_TMUX_SOCKET` | `claude-hub-dev` | With `RUNNER_SESSIONS_ROOT`, marks the Sandboxes this Runner makes, so Runners sharing a machine keep to their own. A tmux server of that name on the host, left from when Sessions ran there, is stopped as the Runner starts. |
 | `RUNNER_MOD_DIR` | `packages/mod` in the checkout | The mod, whose two plugins, `hub-link` and `hub-link-commands`, Claude Code loads with `--plugin-dir`, from a copy in the Session's directory made each time it starts. The Runner refuses to start if it isn't built. |
-| `CLAUDE_BIN` | `claude` | The Claude Code executable on the host, which the Runner asks which models it offers. |
 | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` | Where Repos are cloned from; `{repo}` is `owner/name`. |
 | `RUNNER_SANDBOX_IMAGE` | `docker:dind` | The image of a Session whose Repo has no Environment. Every new Session needs one today, so this only matters for older Sessions. |
 | `RUNNER_SANDBOX_CLAUDE_VERSION` | the version this claude-hub is tested with | The Claude Code version Sessions run in their Sandboxes. Another may not work with the mod. |
@@ -67,7 +65,7 @@ Each person can store one Claude credential on the Hub, on their **Account** pag
 
 ### The Runner's Claude credential
 
-Claude Code in a Sandbox runs on its Session's Claude credential, which the credential proxy holds in memory for as long as the Session is awake ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/), [ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). A Session without one runs on the Runner's own, read from where `RUNNER_CLAUDE_CREDENTIAL` says:
+Claude Code in a Sandbox runs on its Session's Claude credential, which the credential proxy holds in memory for as long as the Session is awake ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/), [ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). A Session without one runs on the Runner's own, if it has one: a Runner needs no credential of its own, nor Claude Code. It is read from where `RUNNER_CLAUDE_CREDENTIAL` says:
 
 | Value | Read from |
 |---|---|
@@ -86,7 +84,7 @@ security add-generic-password -s claude-hub-setup-token -a "$USER" -w
 
 `security` asks for the token, so it stays out of your shell's history. A Keychain item or file can hold an Anthropic API key (`sk-ant-api…`) instead, which Sessions are then billed by.
 
-The Runner reads its credential when it starts and logs where it came from, or why there is none; it starts either way. It never writes it anywhere, never logs it, and never refreshes Claude Code's login: it reads that again close to its expiry, and when Anthropic refuses it, and logs a warning once it has expired, until `claude` on the host refreshes it. A setup-token is read again when Anthropic refuses it, so a replaced one is picked up without a restart.
+The Runner reads its credential when it starts and logs where it came from, or why there is none; it starts either way. The Runners page shows it by its kind and last four characters, such as **Subscription token …x7Qa**, or by the account of the Claude Code login it uses; or **No Claude credential**. It never writes it anywhere, never logs it, and never refreshes Claude Code's login: it reads that again close to its expiry, and when Anthropic refuses it, and logs a warning once it has expired, until `claude` on the host refreshes it. A setup-token is read again when Anthropic refuses it, so a replaced one is picked up without a restart.
 
 ## Homes
 

@@ -13,15 +13,13 @@ import {
 } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import { BunServices } from "@effect/platform-bun"
 import { Effect } from "effect"
 import {
   claudeConfigPath,
   forgetDirectories,
   hostTranscriptPath,
-  loginFromClaudeConfig,
+  accountFromClaudeConfig,
   planFromClaudeConfig,
-  resolveRunnerLogin,
 } from "./ClaudeConfig.ts"
 
 const tempDir = () => realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-config-")))
@@ -159,26 +157,12 @@ describe("planFromClaudeConfig", () => {
   })
 })
 
-describe("Runner login", () => {
+describe("accountFromClaudeConfig", () => {
   test("is the signed-in account", () => {
-    expect(loginFromClaudeConfig({ oauthAccount: { emailAddress: "a@example.com" } })).toEqual({
-      account: "a@example.com",
-    })
-    expect(loginFromClaudeConfig({})).toBeUndefined()
-  })
-
-  test("comes from RUNNER_LOGIN when set, else the config file, else fails", async () => {
-    const dir = tempDir()
-    const path = join(dir, ".claude.json")
-    const resolve = (configured: string | undefined) =>
-      Effect.runPromise(
-        resolveRunnerLogin(configured, path).pipe(Effect.result, Effect.provide(BunServices.layer)),
-      )
-
-    expect(await resolve(undefined)).toMatchObject({ _tag: "Failure" })
-    writeFileSync(path, JSON.stringify({ oauthAccount: { emailAddress: "b@example.com" } }))
-    expect(await resolve(undefined)).toMatchObject({ success: { account: "b@example.com" } })
-    expect(await resolve("c@example.com")).toMatchObject({ success: { account: "c@example.com" } })
+    expect(accountFromClaudeConfig({ oauthAccount: { emailAddress: "a@example.com" } })).toBe(
+      "a@example.com",
+    )
+    expect(accountFromClaudeConfig({})).toBeUndefined()
   })
 })
 

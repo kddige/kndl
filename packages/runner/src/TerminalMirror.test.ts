@@ -172,8 +172,6 @@ afterAll(() => {
 /** Runs the real Runner against `hub`, with real tmux and the Workspace and Sandbox faked. */
 async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
   const { token } = await hub.run(Effect.flatMap(RunnerTokens, (tokens) => tokens.issue("mac")))
-  const claudeConfig = join(dir, ".claude.json")
-  writeFileSync(claudeConfig, JSON.stringify({ oauthAccount: { emailAddress: "a@example.com" } }))
   const sessionsRoot = join(dir, "sessions")
   const layer = SessionsLive.pipe(
     Layer.provideMerge(HubGitLive),
@@ -203,10 +201,8 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
           hubUrl: new URL(hub.url),
           name: "mac",
           token: Redacted.make(token),
-          login: undefined,
           sessionsRoot,
           modDir: writeFakeMod(join(dir, "mod")),
-          claudeBin: fakeClaude,
           tmuxSocket,
           repoUrlTemplate: "unused",
         }),
@@ -217,7 +213,7 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
   )
   runners.push(
     Effect.runFork(
-      runRunner({ claudeConfigPath: claudeConfig }).pipe(
+      runRunner().pipe(
         Effect.provide(layer),
         Effect.provideService(References.MinimumLogLevel, "None"),
       ),

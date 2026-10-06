@@ -48,7 +48,7 @@ const migrations = SqliteMigrator.fromRecord({
   // Sessions, their event logs and Prompt queues (issue #8).
   "0002_sessions": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
-    // The Runner login a Runner last said hello with; null until it first connects.
+    // The Runner's own Claude credential, as its last hello showed it; null until it first connects.
     yield* sql`ALTER TABLE runners ADD COLUMN login_account TEXT`
     yield* sql`
       CREATE TABLE sessions (

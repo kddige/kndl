@@ -97,10 +97,8 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
             hubUrl: new URL("http://hub.test"),
             name: "test",
             token: Redacted.make("runner-token"),
-            login: undefined,
             sessionsRoot,
             modDir: dir,
-            claudeBin: "claude",
             tmuxSocket: "unused",
             // `{repo}` is `acme/repo-<n>`, a path under `dir` here.
             repoUrlTemplate: `${dir}/{repo}`,

@@ -51,7 +51,7 @@ Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the databa
 | `~/.claude-hub-dev/sessions/` | The sessions root (`RUNNER_SESSIONS_ROOT`), with one directory per Session. |
 | `~/.claude-hub-dev/claude-code/` | Linux builds of Claude Code, mounted read-only into every Sandbox, which Sessions run (`RUNNER_SANDBOX_CLAUDE_CACHE`). |
 | `packages/mod/` | The mod, whose plugins in `plugins/` each Session's Claude Code loads, copied into the Session's directory each time it starts (`RUNNER_MOD_DIR`). |
-| `~/.claude.json` | Claude Code's config file. The Runner reads the signed-in account and its plan from it, and drops the entries of a Session that ran on the host when it purges that Session. `$CLAUDE_CONFIG_DIR/.claude.json` when that is set. |
+| `~/.claude.json` | Claude Code's config file, if Claude Code is on the host; the Runner needs none. When the Runner's own Claude credential is Claude Code's login, the Runner reads that login's account and plan from it. It drops the entries of a Session that ran on the host when it purges that Session. `$CLAUDE_CONFIG_DIR/.claude.json` when that is set. |
 | `~/.microsandbox/` | microsandbox's home (`MSB_HOME`), with its Sandboxes, volumes, snapshots and their logs. |
 
 ### One Session's directory

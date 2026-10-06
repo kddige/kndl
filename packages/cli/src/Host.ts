@@ -17,11 +17,6 @@ import { dirname, join } from "node:path"
 import { GitHubApp } from "@claude-hub/hub/src/GitHubApp.ts"
 import { HubConfig, cookieSecurity } from "@claude-hub/hub/src/HubConfig.ts"
 import {
-  claudeConfigPath,
-  loginFromClaudeConfig,
-  readClaudeConfig,
-} from "@claude-hub/runner/src/ClaudeConfig.ts"
-import {
   missingModBundle,
   RunnerConfig,
   RunnerConfigLive,
@@ -227,10 +222,9 @@ export const readCheckout = (app: string) =>
 
 /** What Prerequisites.ts plans from. */
 export const hostFacts = (layout: Layout) =>
-  Effect.gen(function* () {
+  Effect.sync(() => {
     const on = platform() ?? "linux"
     const managers: ReadonlyArray<PackageManager> = on === "darwin" ? ["brew"] : ["apt", "dnf"]
-    const config = yield* readClaudeConfig(claudeConfigPath())
     return {
       platform: on,
       arch: process.arch,
@@ -238,8 +232,6 @@ export const hostFacts = (layout: Layout) =>
       user: userInfo().username,
       packageManager: managers.find((manager) => has(manager === "apt" ? "apt-get" : manager)),
       tools: { git: has("git"), gh: has("gh"), curl: has("curl") },
-      claude: has("claude"),
-      claudeSignedIn: loginFromClaudeConfig(config) !== undefined,
       microsandbox: microsandboxRuntime(layout),
       kvm: on === "linux" ? kvm() : undefined,
     } satisfies HostFacts

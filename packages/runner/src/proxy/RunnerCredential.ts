@@ -17,7 +17,7 @@ import {
 } from "@claude-hub/protocol"
 import { Context, Data, Effect, Layer, Schema, Semaphore } from "effect"
 import { ChildProcessSpawner } from "effect/process"
-import { claudeConfigPath, planFromClaudeConfig } from "../ClaudeConfig.ts"
+import { accountFromClaudeConfig, claudeConfigPath, planFromClaudeConfig } from "../ClaudeConfig.ts"
 import { runCommand } from "../Process.ts"
 import {
   type CredentialSource,
@@ -100,16 +100,21 @@ export interface RunnerCredentialOptions {
   readonly home: string
   readonly readers: SecretReaders
   readonly platform?: NodeJS.Platform
-  /** Claude Code's config file, for the plan of its account. */
+  /** Claude Code's config file, for its account and the account's plan. */
   readonly claudeConfigPath?: string
   /** Claude Code's config directory, holding its login off macOS. */
   readonly claudeConfigDir?: string
   readonly now?: () => number
 }
 
-/** The credential read, where from, and until when it is good. */
+/** The credential read, how it is shown, where from, and until when it is good. */
 export interface CredentialRead {
   readonly credential: ClaudeCredential
+  /**
+   * How the Hub shows it, never the secret: a token's kind and last four characters, such as
+   * "Subscription token …9f3b", or the account Claude Code is signed in to.
+   */
+  readonly account: string
   /** Where it was read from and where its plan came from, for the log. */
   readonly from: string
   /** When it expires, for Claude Code's login; a setup-token is good until refused. */
@@ -187,13 +192,22 @@ export const makeRunnerCredential = (options: RunnerCredentialOptions) =>
     let cached: CredentialRead | undefined
     let warnedExpiry: number | undefined
 
-    /** A subscription token on the plan the owner stated, else the one Claude Code records. */
-    const withPlan = (secret: string, recorded: ClaudePlan | undefined, from: string) =>
+    /**
+     * A subscription token on the plan the owner stated, else the one Claude Code records. Shown
+     * as Claude Code's account when it is Claude Code's login, else by its kind and last four.
+     */
+    const withPlan = (
+      secret: string,
+      recorded: ClaudePlan | undefined,
+      from: string,
+      claudeCode = false,
+    ) =>
       Effect.gen(function* () {
+        const config = yield* readJson(configPath)
         let plan = options.plan
         let planFrom = "RUNNER_CLAUDE_PLAN"
         if (plan === undefined) {
-          plan = planFromClaudeConfig(yield* readJson(configPath))
+          plan = planFromClaudeConfig(config)
           planFrom = configPath
         }
         if (plan === undefined && recorded !== undefined) {
@@ -209,7 +223,10 @@ export const makeRunnerCredential = (options: RunnerCredentialOptions) =>
             : plan === undefined
               ? "plan unknown: set RUNNER_CLAUDE_PLAN"
               : `plan ${plan.subscriptionType}${plan.rateLimitTier === undefined ? "" : ` (${plan.rateLimitTier})`}, from ${planFrom}`
-        return { credential, from: `${from}; ${planText}` }
+        const account = claudeCode
+          ? (accountFromClaudeConfig(config) ?? "Claude Code's login")
+          : `${credential._tag === "ApiKey" ? "API key" : "Subscription token"} …${secret.trim().slice(-4)}`
+        return { credential, account, from: `${from}; ${planText}` }
       })
 
     const fromKeychain = (service: string) =>
@@ -251,7 +268,7 @@ export const makeRunnerCredential = (options: RunnerCredentialOptions) =>
       const login = parseClaudeCodeLogin(text)
       if (login === undefined)
         return yield* new NoClaudeCredential({ message: `${from} holds no access token` })
-      const read = yield* withPlan(login.accessToken, login.plan, from)
+      const read = yield* withPlan(login.accessToken, login.plan, from, true)
       return login.expiresAt === undefined ? read : { ...read, expiresAt: login.expiresAt }
     })
 

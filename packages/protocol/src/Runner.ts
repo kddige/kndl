@@ -18,7 +18,7 @@ import {
 import { GitIdentity, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
-import { BranchName, RepoName, RunnerLogin } from "./Session.ts"
+import { BranchName, RepoName, RunnerAccount } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
   TerminalFrame,
@@ -46,7 +46,8 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
   protocolVersion: CurrentProtocolVersion,
   /** The Runner's name, such as its short hostname. */
   name: Schema.NonEmptyString,
-  login: RunnerLogin,
+  /** Its own Claude credential, as the Hub shows it; named `login` from before (ADR 0002). */
+  login: RunnerAccount,
   /** Sessions whose Claude Code is running here, including those it kept across a restart. */
   sessions: Schema.Array(SessionId),
   /**

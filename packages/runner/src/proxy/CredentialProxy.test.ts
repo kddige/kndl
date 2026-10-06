@@ -121,7 +121,11 @@ const runnerCredential = RunnerCredential.of({
     runner.held = runner.onHost
     return held
   }),
-  describe: Effect.map(held, (credential) => ({ credential, from: "a test" })),
+  describe: Effect.map(held, (credential) => ({
+    credential,
+    account: "Subscription token …held",
+    from: "a test",
+  })),
 })
 
 let logs: Array<string> = []

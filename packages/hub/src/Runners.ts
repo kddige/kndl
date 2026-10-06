@@ -2,7 +2,7 @@ import {
   type BuildVersion,
   CommitIdPattern,
   RunnerId,
-  type RunnerLogin,
+  type RunnerAccount,
   RunnerModels,
   RunnerUpdater,
   type SessionState,
@@ -16,8 +16,8 @@ import type { Fragment } from "effect/sql/Statement"
 export interface KnownRunner {
   readonly id: RunnerId
   readonly name: string
-  /** The Runner login it last said hello with; null until it first connects. */
-  readonly login: RunnerLogin | null
+  /** Its own Claude credential, as its last hello showed it; null until it first connects. */
+  readonly login: RunnerAccount | null
   /** The version it last said hello with; null before then, or from a Runner too old to say. */
   readonly version: BuildVersion | null
   /** When it was last connected, as of its last hello or disconnect. */
@@ -65,9 +65,9 @@ const fromRow = (row: RunnerRow): KnownRunner => ({
 })
 
 /**
- * What the Hub remembers about Runners beyond their tokens (RunnerTokens.ts): the Runner login and
- * version each last said hello with, and when it was last connected, so the web UI can list
- * Runners that are offline too.
+ * What the Hub remembers about Runners beyond their tokens (RunnerTokens.ts): the own Claude
+ * credential and version each last said hello with, and when it was last connected, so the web
+ * UI can list Runners that are offline too.
  */
 export class Runners extends Context.Service<
   Runners,
@@ -79,7 +79,7 @@ export class Runners extends Context.Service<
     readonly recordHello: (
       id: RunnerId,
       hello: {
-        readonly login: RunnerLogin
+        readonly login: RunnerAccount
         readonly version: BuildVersion | undefined
         readonly updater: RunnerUpdater | undefined
         readonly models?: RunnerModels | undefined
@@ -102,7 +102,7 @@ export class Runners extends Context.Service<
       const recordHello = Effect.fn("Runners.recordHello")(function* (
         id: RunnerId,
         hello: {
-          readonly login: RunnerLogin
+          readonly login: RunnerAccount
           readonly version: BuildVersion | undefined
           readonly updater: RunnerUpdater | undefined
           readonly models?: RunnerModels | undefined

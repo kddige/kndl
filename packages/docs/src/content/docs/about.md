@@ -13,7 +13,7 @@ claude-hub is young and moving fast: expect its setup and settings to change bet
 
 claude-hub is an independent project. It is not affiliated with, endorsed by or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC; claude-hub uses the names only to say what it works with.
 
-claude-hub runs the Claude Code you install, signed in with your own account, under Anthropic's terms for that account. It doesn't change or redistribute Claude Code.
+claude-hub runs Claude Code, as Anthropic publishes it, on your own Claude account, under Anthropic's terms for that account. Each Runner downloads Claude Code from Anthropic into its Sandboxes; claude-hub doesn't change or redistribute it.
 
 ## How these docs are organised
 

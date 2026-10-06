@@ -72,10 +72,8 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
                   hubUrl: new URL("http://hub.test"),
                   name: "test",
                   token: Redacted.make("token"),
-                  login: undefined,
                   sessionsRoot,
                   modDir: dir,
-                  claudeBin: "claude",
                   tmuxSocket: "unused",
                   // `{repo}` is a path under `dir` here.
                   repoUrlTemplate: `${dir}/{repo}`,

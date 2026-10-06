@@ -81,12 +81,20 @@ export const Participant = Schema.Struct({
 })
 export type Participant = typeof Participant.Type
 
-/** The Claude account signed in on a Runner, shown on every Session that runs there (ADR 0002). */
-export const RunnerLogin = Schema.Struct({
-  /** How the account is shown, such as its email address. */
+/**
+ * How a Runner shows its own Claude credential (ADR 0015), which runs Sessions whose Creator has
+ * stored none. Sent in its hello as `login`, and kept as a Session's `runnerLogin`: names from
+ * when every Session ran on the Claude account signed in on its Runner (ADR 0002).
+ */
+export const RunnerAccount = Schema.Struct({
+  /**
+   * The credential's kind and last four characters, such as "Subscription token …9f3b"; the
+   * account Claude Code is signed in to, when it is Claude Code's login; or "No Claude
+   * credential". From a Runner from before: the email address of its Claude account.
+   */
   account: Schema.NonEmptyString,
 })
-export type RunnerLogin = typeof RunnerLogin.Type
+export type RunnerAccount = typeof RunnerAccount.Type
 
 /** Whose Claude credential a Session runs on: its Creator's, or its Runner's own (ADR 0015). */
 export const ClaudeAccount = Schema.Literals(["Creator", "Runner"])
@@ -96,8 +104,8 @@ export type ClaudeAccount = typeof ClaudeAccount.Type
 export const RunnerSummary = Schema.Struct({
   id: RunnerId,
   name: Schema.NonEmptyString,
-  /** The Runner login it last said hello with; null until it first connects. */
-  login: Schema.NullOr(RunnerLogin),
+  /** Its own Claude credential as it last said hello with it; null until it first connects. */
+  login: Schema.NullOr(RunnerAccount),
   isOnline: Schema.Boolean,
   /** The version it last said hello with; null before it connects, or from a Runner too old to say. */
   version: Schema.NullOr(BuildVersion),
@@ -191,8 +199,11 @@ export const SessionSummary = Schema.Struct({
   name: Schema.optionalKey(SessionName),
   state: SessionState,
   runnerId: RunnerId,
-  /** The Runner login every Turn of this Session runs on. */
-  runnerLogin: RunnerLogin,
+  /**
+   * Its Runner's own Claude credential as it was when the Session was created, which the Session
+   * runs on when `claudeAccount` is `Runner`.
+   */
+  runnerLogin: RunnerAccount,
   /**
    * Whose Claude account its Claude Code runs on (ADR 0015): its Creator's own credential, or the
    * Runner's, when the Creator has stored none. Absent from a Hub from before.

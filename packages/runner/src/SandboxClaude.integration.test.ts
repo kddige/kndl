@@ -1,8 +1,9 @@
 // The smoke test for upgrading the pinned Claude Code (PinnedClaudeVersion): a Session's Claude
 // Code in a real microsandbox VM, launched as the Runner launches it, in tmux, through the
 // credential proxy, with the mod loaded. Its banner shows the plan, `/status` opens, a Turn runs
-// Bash in the Sandbox, and a background subagent's run and its task notification are where
-// hub-link and the Hub expect them (ADR 0014). So it is skipped unless CLAUDE_HUB_SANDBOX_IT=1, and makes model
+// Bash in the Sandbox, a background subagent's run and its task notification are where hub-link
+// and the Hub expect them (ADR 0014), and the models and effort levels it takes are those
+// PinnedClaudeModels says. So it is skipped unless CLAUDE_HUB_SANDBOX_IT=1, and makes model
 // calls (a few, on haiku) with this machine's Runner credential, read as the Runner reads it
 // (`RUNNER_CLAUDE_CREDENTIAL`, by default the Keychain item `claude-hub-setup-token`). It needs
 // `msb` installed for the current user, and network access to Docker Hub and to npm the first
@@ -22,6 +23,14 @@ import { BunServices } from "@effect/platform-bun"
 import { Effect, Layer, Redacted } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
+import {
+  type ModelProbe,
+  modelProbeFlags,
+  parseEfforts,
+  parseModelProbe,
+  PinnedClaudeModels,
+  runnerModels,
+} from "./ClaudeModels.ts"
 import { HubLink } from "./HubLink.ts"
 import { makeCredentialProxy, serveCredentialProxy } from "./proxy/CredentialProxy.ts"
 import { DefaultKeychainService, parseCredentialSource } from "./proxy/ProxyConfig.ts"
@@ -73,7 +82,7 @@ const waitFor = (
   })
 
 test.skipIf(!enabled)(
-  `Claude Code ${PinnedClaudeVersion} runs in a Sandbox: its banner shows the plan, /status opens, a Turn runs Bash, and a subagent runs`,
+  `Claude Code ${PinnedClaudeVersion} runs in a Sandbox: its banner shows the plan, /status opens, a Turn runs Bash, a subagent runs, and it takes the models PinnedClaudeModels says`,
   async () => {
     const sessionId = `it-${Date.now().toString(36)}` as SessionId
     const root = await mkdtemp(join(tmpdir(), "claude-hub-it-"))
@@ -200,6 +209,38 @@ test.skipIf(!enabled)(
       const run = `${conversationDir}/${conversation}/subagents/agent-${agentId}.jsonl`
       expect(yield* guestGrep("agent-48", run)).toContain("agent-48")
       yield* tmux.kill(sessionId)
+
+      // The models and effort levels the build takes are those PinnedClaudeModels says, which
+      // the Runner offers its Sessions. Asked in the Sandbox as a Session's Claude Code runs.
+      const probe = (args: ReadonlyArray<string>) =>
+        backend
+          .exec(sessionId, {
+            command: started.claude.path,
+            args: [...modelProbeFlags, ...args],
+            cwd: workspaceGuestPath,
+            env: { ...started.claude.env, ...pass.env },
+          })
+          .pipe(Effect.map((result) => result.stdout))
+      const bare = parseModelProbe(yield* probe(["-p", "/model"]))
+      if (bare === undefined) return yield* Effect.die(new Error("claude -p /model said no model"))
+      const efforts = parseEfforts(yield* probe(["-p", "/effort"]))
+      const probes = new Map<string, ModelProbe>()
+      yield* Effect.forEach(
+        bare.aliases,
+        (alias) =>
+          Effect.map(probe(["--model", alias, "-p", "/model"]), (stdout) => {
+            const found = parseModelProbe(stdout)
+            if (found !== undefined) probes.set(alias, found)
+          }),
+        { concurrency: 4 },
+      )
+      const models = runnerModels(bare, probes, efforts)
+      if (!Bun.deepEquals(models, PinnedClaudeModels)) {
+        console.error(
+          `Claude Code ${PinnedClaudeVersion} takes, for PinnedClaudeModels:\n${JSON.stringify(models, null, 2)}`,
+        )
+      }
+      expect(models).toEqual(PinnedClaudeModels)
     })
 
     const cleanup = Effect.gen(function* () {

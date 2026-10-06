@@ -64,7 +64,6 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 ### [Runners](/troubleshooting/runners/)
 
 - The Runner exits with `ConfigError: SchemaError(Expected string at ["RUNNER_TOKEN"])`.
-- The Runner exits with `RunnerLoginUnknown: No Claude account is signed in …`.
 - The Runner exits with `The hub-link mod isn't built: …`.
 - The Runner keeps logging `Hub connection: could not connect to …`.
 - A Runner on another machine never shows up.

@@ -174,7 +174,7 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 Neither you nor build-box has a Claude credential: add yours on the Account page.
 ```
 
-**Why.** A Session runs on its Creator's Claude credential, or else on its Runner's own login, and neither you nor that Runner has one ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)).
+**Why.** A Session runs on its Creator's Claude credential, or else on its Runner's own, and neither you nor that Runner has one ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)).
 
 **Fix.** [Add your Claude credential](/how-to/add-your-claude-credential/) on your **Account** page, then start the Session again. Or pick a Runner with its own [Claude credential](/reference/configuration/#the-runners-claude-credential).
 

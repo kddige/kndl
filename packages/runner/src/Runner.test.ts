@@ -1,6 +1,6 @@
 // The Runner against a fake Hub WebSocket server, with tmux, the Workspace and the Sandbox faked.
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, posix } from "node:path"
 import { ClaudeSessionId, ProtocolVersion, TestBuildId } from "@claude-hub/protocol"
@@ -120,8 +120,6 @@ interface Harness {
   readonly hubGit: () => HubGit["Service"]
   readonly runner: Fiber.Fiber<never, unknown>
   readonly settings: RunnerSettings
-  /** Claude Code's config file, which the Runner trusts its sessions root in. */
-  readonly claudeConfig: string
 }
 
 const running: Array<{ hub: FakeHub; runner: Fiber.Fiber<never, unknown> }> = []
@@ -173,14 +171,6 @@ function startRunner(
 ): Harness {
   const dir = mkdtempSync(join(tmpdir(), "claude-hub-runner-"))
   const sessionsRoot = join(dir, "sessions")
-  const claudeConfig = join(dir, ".claude.json")
-  writeFileSync(
-    claudeConfig,
-    JSON.stringify({
-      oauthAccount: { emailAddress: "alice@example.com" },
-      projects: { "/elsewhere": { allowedTools: [] } },
-    }),
-  )
   const hub = new FakeHub()
   const tmux = new FakeTmux()
   setup({ hub, tmux })
@@ -189,15 +179,13 @@ function startRunner(
     hubUrl: hub.url,
     name: "mac",
     token: Redacted.make(token),
-    login: undefined,
     sessionsRoot,
     modDir: writeFakeMod(join(dir, "mod"), "built 1"),
-    claudeBin: "/usr/local/bin/claude",
     tmuxSocket: "unused",
     repoUrlTemplate: "unused",
   }
   return runOn(
-    { hub, tmux, sandboxes, workspaces: new FakeWorkspaces(sessionsRoot), settings, claudeConfig },
+    { hub, tmux, sandboxes, workspaces: new FakeWorkspaces(sessionsRoot), settings },
     updater,
     claudeModels,
   )
@@ -220,11 +208,11 @@ async function restartRunner(h: Harness): Promise<Harness> {
 
 /** Runs a Runner on `machine`, with a credential proxy of its own. */
 function runOn(
-  machine: Pick<Harness, "hub" | "tmux" | "sandboxes" | "workspaces" | "settings" | "claudeConfig">,
+  machine: Pick<Harness, "hub" | "tmux" | "sandboxes" | "workspaces" | "settings">,
   updater: Layer.Layer<Updater> = Updater.manual(),
   claudeModels: Layer.Layer<ClaudeModels> = StaticClaudeModels(models),
 ): Harness {
-  const { hub, tmux, sandboxes, workspaces, settings, claudeConfig } = machine
+  const { hub, tmux, sandboxes, workspaces, settings } = machine
   // One record of Sandbox and git calls, in the order they ran.
   const git = new FakeWorkspaceGit(sandboxes.calls)
   const proxy = new FakeCredentialProxy()
@@ -246,7 +234,6 @@ function runOn(
   )
   const runner = Effect.runFork(
     runRunner({
-      claudeConfigPath: claudeConfig,
       backoff: { initial: "20 millis", max: "100 millis", rejected: "50 millis" },
     }).pipe(Effect.provide(layer), Effect.provideService(References.MinimumLogLevel, "None")),
   )
@@ -264,7 +251,6 @@ function runOn(
     },
     runner,
     settings,
-    claudeConfig,
   }
 }
 
@@ -290,7 +276,7 @@ const connected = (h: Harness) =>
   eventually(() => h.hub.connections.length > 0 && h.hub.current.received.length > 0)
 
 describe("connecting", () => {
-  test("says hello with the Runner token, its name and the login from Claude Code's config", async () => {
+  test("says hello with the Runner token, its name and its own Claude credential, here none", async () => {
     const h = startRunner()
     await connected(h)
 
@@ -299,7 +285,8 @@ describe("connecting", () => {
       _tag: "RunnerHello",
       protocolVersion: ProtocolVersion,
       name: "mac",
-      login: { account: "alice@example.com" },
+      // Its own Claude credential, here none; sent even so, as a Hub from before requires it.
+      login: { account: "No Claude credential" },
       sessions: [],
       // The commit this checkout is at, when it is a git checkout (ADR 0011).
       ...(buildVersion !== undefined && { version: buildVersion }),
@@ -546,19 +533,6 @@ describe("restarting under running Sessions (#157)", () => {
     expect(h.proxy.grants.map((grant) => Redacted.value(grant.modToken))).toEqual([
       "chm_mod.secret",
     ])
-  })
-})
-
-const projects = (h: Harness) =>
-  (JSON.parse(readFileSync(h.claudeConfig, "utf8")) as { projects: Record<string, unknown> })
-    .projects
-
-describe("the host's Claude Code", () => {
-  test("keeps its config as it was: Sessions trust their Workspace in the Sandbox", async () => {
-    const h = startRunner()
-    await connected(h)
-
-    expect(projects(h)).toEqual({ "/elsewhere": { allowedTools: [] } })
   })
 })
 

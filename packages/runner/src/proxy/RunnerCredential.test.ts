@@ -217,6 +217,35 @@ const planOf = async (options: Partial<RunnerCredentialOptions>, setup = true) =
   return { plan: read.credential._tag === "OAuthToken" ? read.credential.plan : undefined, read }
 }
 
+const accountOf = async (
+  readers: SecretReaders,
+  source: CredentialSource,
+  options: Partial<RunnerCredentialOptions> = {},
+) => (await run(credentialOf(readers, source, options).describe)).account
+
+describe("how the Hub shows it", () => {
+  test("a token by its kind and last four characters", async () => {
+    const fake = fakeReaders({
+      [DefaultKeychainService]: `${setupToken}\n`,
+      work: "sk-ant-api03-FAKE",
+    })
+    expect(await accountOf(fake.readers, { _tag: "Auto" })).toBe("Subscription token …FAKE")
+    expect(await accountOf(fake.readers, { _tag: "Keychain", service: "work" })).toBe(
+      "API key …FAKE",
+    )
+  })
+
+  test("Claude Code's login by the account it is signed in to, as far as known", async () => {
+    const fake = fakeReaders({ [ClaudeCodeKeychainService]: login(loginToken) })
+    const config = join(dir, "account.claude.json")
+    writeFileSync(config, JSON.stringify({ oauthAccount: { emailAddress: "ada@example.com" } }))
+    expect(
+      await accountOf(fake.readers, { _tag: "ClaudeCode" }, { claudeConfigPath: config }),
+    ).toBe("ada@example.com")
+    expect(await accountOf(fake.readers, { _tag: "ClaudeCode" })).toBe("Claude Code's login")
+  })
+})
+
 describe("the plan", () => {
   test("is RUNNER_CLAUDE_PLAN's first", async () => {
     const { plan, read } = await planOf({

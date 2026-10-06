@@ -9,16 +9,12 @@ The central server that people sign in to. It knows every Session, Runner and Pa
 _Avoid_: server, backend, dashboard
 
 **Runner**:
-A host machine connected to the Hub that runs Sessions, each on its Creator's Claude credential or else on the Runner's own Runner login.
+A host machine connected to the Hub that runs Sessions, each on its Creator's Claude credential or else on the Runner's own, if it has one.
 _Avoid_: worker, agent, node, host
 
-**Runner login**:
-The Claude account a Runner has of its own, signed in or stored on its host. A Session on that Runner whose Creator has no Claude credential runs on it, and that is shown visibly on the Session.
-_Avoid_: owner's subscription, credentials
-
 **Claude credential**:
-A person's own Claude subscription token or Anthropic API key, stored write-only and encrypted on the Hub. The Sessions they create, and their subagents, run on it on any Runner, and each Session shows whose account it runs on.
-_Avoid_: login, OAuth token, Claude key
+A person's own Claude subscription token or Anthropic API key, stored write-only and encrypted on the Hub. The Sessions they create, and their subagents, run on it on any Runner, and each Session shows whose account it runs on. A Runner may have one of its own too, kept on its host: a Session whose Creator has none runs on that, and the Runners page shows it by its kind and last four characters, or by the account of Claude Code's login it uses. A Runner needs neither Claude Code nor a credential of its own.
+_Avoid_: login, Runner login, OAuth token, Claude key
 
 **Pairing code**:
 A short-lived, single-use code that lets a machine become a Runner of the Hub, or take over an existing Runner's place after it is reinstalled. Using it gives the machine its own lasting credential, and the code is spent.
@@ -146,5 +142,5 @@ A deleted Session that can still be restored for 30 days, after which it is purg
 _Avoid_: deleted, trashed
 
 **Move**:
-Transferring a Frozen Session to another Runner so it continues on that Runner's login. Not part of v1.
+Transferring a Frozen Session, with its Sandbox and Workspace, to another Runner so it continues there. Not part of v1.
 _Avoid_: adopt, migrate, transfer

@@ -13,20 +13,13 @@ export interface RunnerSettings {
   readonly name: string
   /** The Runner token the Hub issued, sent as `Authorization: Bearer` on the WebSocket upgrade. */
   readonly token: Redacted.Redacted<string>
-  /** How the Runner login is shown; read from Claude Code's config when unset. */
-  readonly login: string | undefined
-  /**
-   * The directory holding one directory per Session. Claude Code inherits workspace trust from
-   * parent directories, so trusting this one once covers every Session under it (spike #4).
-   */
+  /** The directory holding one directory per Session, with its Workspace. */
   readonly sessionsRoot: string
   /**
    * The mod package, whose plugins each Session's Claude Code loads with `--plugin-dir`, from a
    * copy made as it starts (SessionMod.ts).
    */
   readonly modDir: string
-  /** The Claude Code executable. */
-  readonly claudeBin: string
   /** The tmux server (`tmux -L <name>`) that holds the Sessions, kept apart from the user's own. */
   readonly tmuxSocket: string
   /** Where a Repo is cloned from: `{repo}` is replaced with its `owner/name`. */
@@ -50,10 +43,8 @@ export const RunnerTokenVariable = "RUNNER_TOKEN"
  * | `HUB_URL` | `http://127.0.0.1:7777` |
  * | `RUNNER_TOKEN` | required |
  * | `RUNNER_NAME` | the short hostname |
- * | `RUNNER_LOGIN` | `oauthAccount.emailAddress` from Claude Code's `.claude.json` |
  * | `RUNNER_SESSIONS_ROOT` | `sessions` in the home: `~/.claude-hub-dev/sessions` |
  * | `RUNNER_MOD_DIR` | `packages/mod` in this checkout |
- * | `CLAUDE_BIN` | `claude` |
  * | `RUNNER_TMUX_SOCKET` | the home's: `claude-hub-dev` |
  * | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` |
  *
@@ -70,14 +61,12 @@ export const RunnerConfigLive = Layer.effect(
         Config.withDefault(hostname().split(".")[0] ?? "runner"),
       ),
       token: Config.Redacted(RunnerTokenVariable),
-      login: Config.option(Config.NonEmptyString("RUNNER_LOGIN")),
       sessionsRoot: Config.String("RUNNER_SESSIONS_ROOT").pipe(
         Config.withDefault(join(home.dir, "sessions")),
       ),
       modDir: Config.String("RUNNER_MOD_DIR").pipe(
         Config.withDefault(resolve(import.meta.dir, "../../mod")),
       ),
-      claudeBin: Config.String("CLAUDE_BIN").pipe(Config.withDefault("claude")),
       tmuxSocket: Config.String("RUNNER_TMUX_SOCKET").pipe(Config.withDefault(home.tmuxSocket)),
       repoUrlTemplate: Config.String("RUNNER_REPO_URL").pipe(
         Config.withDefault("https://github.com/{repo}.git"),
@@ -96,7 +85,6 @@ export const RunnerConfigLive = Layer.effect(
     }
     return RunnerConfig.of({
       ...settings,
-      login: settings.login._tag === "Some" ? settings.login.value : undefined,
       sessionsRoot: resolve(settings.sessionsRoot),
       modDir,
     })

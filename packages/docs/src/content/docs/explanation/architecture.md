@@ -28,7 +28,7 @@ flowchart LR
 ```
 
 - **The Hub** is the server people sign in to. It keeps every Session, its Events and its Prompt queue in SQLite, and relays prompts and Events between people and Runners. It runs nothing heavy itself: one Bun process.
-- **A Runner** is a machine that runs Sessions, each on its Creator's Claude credential, stored on the Hub, or else on the Runner's own Runner login ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). It connects out to the Hub over a WebSocket, so the Hub never needs to reach it, and any number can connect.
+- **A Runner** is a machine that runs Sessions, each on its Creator's Claude credential, stored on the Hub, or else on the Runner's own, if it has one ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). It connects out to the Hub over a WebSocket, so the Hub never needs to reach it, and any number can connect.
 - **A Sandbox** is a microVM on a Runner, one per Session, where the Session's Claude Code runs, and with it every tool, hook and command. It is disposable: the Session's Workspace lives on the Runner and is mounted into it.
 
 Everything goes through the Hub. Browsers, Runners and each Session's mod connect to it and never to each other; a mod reaches it through its Runner's credential proxy. See the [protocol reference](/reference/protocol/).
