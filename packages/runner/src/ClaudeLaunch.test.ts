@@ -38,6 +38,10 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
   expect(env).not.toHaveProperty(ModEnvironment.modToken)
 })
 
+test("Claude Code can't start a second Claude Code in the Session as a background job (#191)", () => {
+  expect(claudeLaunch(options).env.CLAUDE_CODE_DISABLE_AGENT_VIEW).toBe("1")
+})
+
 test("waking resumes the conversation", () => {
   const { argv } = claudeLaunch({
     ...options,

@@ -58,13 +58,21 @@ A Runner from before this was added sends no output: the banner has no **Show Cl
 
 ### Waking it after Claude Code never got going
 
-A Session whose Claude Code exited before it wrote its conversation has nothing to `--resume`. The Runner checks for the conversation's transcript in Claude Code's state in the Sandbox, `/var/lib/claude-hub/claude/projects`, and, with none, starts a new conversation with the same id instead, logging:
+A Session whose Claude Code exited before it wrote its conversation has nothing to `--resume`. The Runner checks for the conversation's transcript in Claude Code's state in the Sandbox, `/var/lib/claude-hub/claude/projects`, and, with none, starts a new conversation with the same id instead. A note in the Session's history says Claude Code couldn't resume its conversation, and the Runner logs:
 
 ```
-INFO (#2): Session <id>: Claude Code has no transcript of conversation <conversation id>, so it starts a new one with that id instead of resuming it
+WARN (#2): Session <id>: Claude Code has no transcript of conversation <conversation id>, so it starts a new one with that id instead of resuming it
 ```
 
 The Session's Workspace is as it was; only the conversation starts over. A Runner from before this fix keeps trying `--resume` and the Session can't wake: update it.
+
+## A prompt runs twice
+
+Two Turns start for one prompt, and after the Session sleeps and wakes, Claude Code doesn't remember the conversation: [the note](#waking-it-after-claude-code-never-got-going) says it couldn't resume it.
+
+A second Claude Code ran in the Sandbox, linked to the Hub as the Session. Claude Code's agent view (its left arrow), `/background` and `--bg` start one: a background job, which inherits the Session's mod token and plugins. Both ran each prompt. The job also gave the Hub its own conversation's id to resume, whose transcript isn't in the Session's Claude Code state.
+
+A Runner from before this fix lets Claude Code start one. [Update the Runner](/how-to/add-a-runner/): it turns agent view off in the Session's Claude Code, and the mod doesn't link a background job to the Hub. A Session that has already lost its conversation can't get it back, but its Workspace is as it was.
 
 ## A Session can't start: variables need values
 

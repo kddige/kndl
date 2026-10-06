@@ -54,6 +54,7 @@ Each Session's Claude Code runs inside its Sandbox, so its tools run where it ru
 - **It holds no Claude credential.** It sends every request to the Runner's [credential proxy](/explanation/security-model/#the-credential-proxy) with a token for its Session alone, and the proxy puts the real credential in its place. The token is given to the Claude Code process, never written to the VM.
 - **The mod loads read-only** from `/opt/claude-hub/mod`, each of its plugins with its own `--plugin-dir`, and reaches the Hub through the same proxy, which adds the Session's mod token on the way. It is the Session's own copy of the Runner's mod, made each time Claude Code starts, so an update never changes the mod under a running Turn: a new mod reaches each Session at its next start, wake or change of model ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/#what-a-running-sessions-claude-code-loads-amended-in-159)).
 - **Auto memory is off.** Each Session has its own state, so Sessions would never share what it remembers.
+- **Agent view is off.** One Claude Code runs the Session. A background job of Claude Code's, from its agent view, `/background` or `--bg`, would be a second one that runs each prompt again. The mod's plugins don't link to the Hub from such a process either.
 
 ### How the Sandbox gets `claude`
 

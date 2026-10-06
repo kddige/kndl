@@ -153,7 +153,10 @@ export const SandboxStateReport = Schema.TaggedStruct("SandboxStateReport", {
 })
 export type SandboxStateReport = typeof SandboxStateReport.Type
 
-/** Something about the Session's Sandbox for its Participants. The Hub records it in the Session's log. */
+/**
+ * Something about the Session's Sandbox, or the Claude Code in it, for its Participants, such as a
+ * wake that couldn't resume the conversation. The Hub records it in the Session's log.
+ */
 export const SandboxNote = Schema.TaggedStruct("SandboxNote", {
   sessionId: SessionId,
   message: Schema.String,

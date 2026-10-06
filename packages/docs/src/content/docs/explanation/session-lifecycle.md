@@ -66,7 +66,7 @@ The Hub keeps the latest list in memory only, with the Session's other state, an
 
 If Claude Code can't start, for a new Session or a wake, the Session is Asleep, with the Runner's reason in its history. Its queued prompts stay queued and nothing retries on its own: the next prompt, or **Wake now**, tries again. A Claude Code that exits on its own leaves the Session Asleep too, with the last lines its terminal showed folded under the banner until it wakes: see [Claude Code exited with code N](/troubleshooting/sessions/#claude-code-exited-with-code-n).
 
-A conversation Claude Code never wrote down, because it exited before it got that far, can't be resumed. Waking such a Session starts a new conversation, with the same id, on the same Workspace.
+A conversation Claude Code never wrote down, because it exited before it got that far, can't be resumed. Waking such a Session starts a new conversation, with the same id, on the same Workspace. A note in the Session's history says so: the history still shows the earlier conversation, which Claude Code no longer remembers.
 
 ## Frozen
 

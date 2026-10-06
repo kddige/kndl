@@ -126,6 +126,7 @@ Its environment is what the Start script gets: the package cache variables and, 
 | `CLAUDE_CONFIG_DIR` | `/var/lib/claude-hub/claude`, Claude Code's state, on a disk of the Session's own. The Runner seeds it so Claude Code asks nothing before the conversation. |
 | `IS_SANDBOX` | `1`, which lets `--dangerously-skip-permissions` run as root. |
 | `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | `1`, since each Session would keep notes only for itself. It wins over any setting. |
+| `CLAUDE_CODE_DISABLE_AGENT_VIEW` | `1`: no agent view, `/background`, `--bg` or background daemon, so the Session runs one Claude Code. A background job of Claude Code's would be another, which inherits the mod token, links to the Hub as the Session too, and runs each prompt again. |
 | `DISABLE_INSTALLATION_CHECKS` | `1`: the Runner installs Claude Code, so `/status` doesn't ask for the native installer's `claude` command and install method. |
 | `TZ` | The Runner's time zone, such as `Europe/Copenhagen`, so the times Claude Code and its tools show are yours. |
 
