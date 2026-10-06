@@ -42,12 +42,12 @@ export function fakeBuilds(options: {
       dir: options.dir,
       commit: at,
       checkoutCommit: () => ("checkoutCommit" in options ? options.checkoutCommit : at),
-      build: ({ target, commit, outfile }) =>
+      build: ({ target, commit: builtAt, outfile }) =>
         Effect.gen(function* () {
           built.push(target)
           yield* Effect.sleep("50 millis")
           if (options.fail !== undefined) return yield* Effect.fail(options.fail)
-          yield* Effect.promise(() => writeFile(outfile, fakeBinary(target, commit)))
+          yield* Effect.promise(() => writeFile(outfile, fakeBinary(target, builtAt)))
         }),
     }),
   )

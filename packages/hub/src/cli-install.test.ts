@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import type { CliTarget } from "@claude-hub/protocol"
 import { commit, fakeBinary, fakeBuilds, removeTempDirs, tempDir } from "./cliTestSupport.ts"
 import { startHub, stopHubs } from "./testSupport.ts"
 
@@ -73,7 +74,7 @@ async function hubWithBuilds() {
 }
 
 describe("the install script", () => {
-  const platforms: ReadonlyArray<[Machine, string]> = [
+  const platforms: ReadonlyArray<[Machine, CliTarget]> = [
     [{ os: "Darwin", arch: "arm64" }, "darwin-arm64"],
     [{ os: "Darwin", arch: "x86_64" }, "darwin-x64"],
     [{ os: "Darwin", arch: "x86_64", translated: "1" }, "darwin-arm64"],
@@ -119,7 +120,9 @@ describe("the install script", () => {
     const { hub, builds } = await hubWithBuilds()
     const bsd = await install(hub.url, await machine({ os: "FreeBSD", arch: "amd64" }))
     expect(bsd.exitCode).toBe(1)
-    expect(bsd.stderr).toBe("claude-hub install: claude-hub runs on macOS and Linux, not FreeBSD.\n")
+    expect(bsd.stderr).toBe(
+      "claude-hub install: claude-hub runs on macOS and Linux, not FreeBSD.\n",
+    )
     const arm32 = await install(hub.url, await machine({ os: "Linux", arch: "armv7l" }))
     expect(arm32.exitCode).toBe(1)
     expect(arm32.stderr).toBe("claude-hub install: claude-hub runs on arm64 and x64, not armv7l.\n")
