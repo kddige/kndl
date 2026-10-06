@@ -40,7 +40,7 @@
 //     a new one (ModTokenReissued, #157).
 //   - Archive (#18, ADR 0003): any Participant can delete a Session, which archives it at once.
 //     The Hub records it Archived, with who did it and when, and sends StopSession `Archive`: the
-//     Runner pushes the WIP ref, then destroys the Sandbox and its volumes, keeping the Workspace.
+//     Runner destroys the Sandbox and its volumes, keeping the Workspace.
 //     A Runner that is offline is sent it when it is back. An Archived Session takes no prompts
 //     and opens no terminal; its history stays readable.
 //   - Restore: any Participant can bring an Archived Session back until it is purged. It comes
@@ -76,7 +76,7 @@
 //   memory only, process names redacted, and sends it with the Session to the web. It is cleared
 //   as soon as the Session is no longer Active: asleep, Frozen or Archived.
 // - Git (ADR 0010): the Runner's GitRequests are answered by SessionGit, off the lock, since
-//   they may wait on GitHub. When a Turn ends the Runner is told, to push the WIP ref.
+//   they may wait on GitHub.
 // - Environments (#47, ADR 0009): StartSession carries the Repo's Environment as last applied,
 //   and the Runner reports the version it started the Session on. Environment commands, Test
 //   builds and variable fetches are handled by EnvironmentRelay.ts.
@@ -176,7 +176,6 @@ import {
   type SessionState,
   SessionStateChanged,
   type SessionSummary,
-  SessionTurnEnded,
   StartSession,
   StopAgent,
   StopSession,
@@ -189,7 +188,6 @@ import {
   type WebToHub,
   cantStartText,
   AppPermissionsChecked,
-  WipNotPushed,
   SandboxNoted,
   MaxLastOutputLength,
   sessionNameFrom,
@@ -1478,7 +1476,7 @@ export class SessionRelay extends Context.Service<
 
       // ── Archive, restore and purge ───────────────────────────────────────
 
-      /** Asks the Runner to stop the Archived Session for good: push its WIP ref, destroy its Sandbox. */
+      /** Asks the Runner to stop the Archived Session for good: its Sandbox goes, its Workspace stays. */
       const stopForArchive = (runner: OnlineRunner, sessionId: SessionId) => {
         archiving.add(sessionId)
         runner.peer.send(StopSession.make({ sessionId, reason: "Archive" }))
@@ -2766,14 +2764,6 @@ export class SessionRelay extends Context.Service<
                 Effect.forkIn(layerScope),
               )
               return
-            case "WipPushFailed":
-              yield* Effect.logWarning(
-                `Runner ${runner.name} could not push the WIP ref of ${message.sessionId}: ${message.message}`,
-              )
-              return yield* logEvent(
-                message.sessionId,
-                WipNotPushed.make({ message: message.message }),
-              )
             case "SandboxNote":
               return yield* logEvent(
                 message.sessionId,
@@ -3008,15 +2998,7 @@ export class SessionRelay extends Context.Service<
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {
           yield* sessions.setCurrentTurn(sessionId, null)
           yield* sessionUpdated(sessionId)
-          yield* turnEnded(sessionId)
         }
-      })
-
-      /** Tells the Session's Runner its Turn ended, so it pushes the WIP ref if anything changed. */
-      const turnEnded = Effect.fn("SessionRelay.turnEnded")(function* (sessionId: SessionId) {
-        const session = yield* sessions.get(sessionId)
-        if (Option.isNone(session)) return
-        onlineRunners.get(session.value.runnerId)?.peer.send(SessionTurnEnded.make({ sessionId }))
       })
 
       const modEvents = Effect.fn("SessionRelay.modEvents")(function* (

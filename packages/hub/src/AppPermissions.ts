@@ -31,12 +31,12 @@ export interface RequiredPermission extends AppPermission {
  * something kndl or a Session needs.
  */
 export const RequiredPermissions: ReadonlyArray<RequiredPermission> = [
-  // Runners' clones and WIP pushes, and git in the Sandbox, with the tokens GitHubApp.ts mints.
+  // Runners' clones, and git in the Sandbox, with the tokens GitHubApp.ts mints.
   {
     name: "contents",
     title: "Contents",
     access: "write",
-    why: "Runners clone Repos and push WIP refs; git in the Sandbox pushes branches.",
+    why: "Runners clone Repos; git in the Sandbox pushes branches.",
   },
   // gh pr in the Sandbox.
   {

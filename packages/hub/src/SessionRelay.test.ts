@@ -1111,12 +1111,6 @@ describe("archive, restore and purge", () => {
     })
     expect(await web.untaken("TerminalFrame")).toEqual([])
 
-    // The WIP push failed: the archive stands, with the failure in its history.
-    runner.send({ _tag: "WipPushFailed", sessionId, message: "git push exited with 128" })
-    expect(
-      (await web.take("SessionEventLogged", (m) => m.entry.event._tag === "WipNotPushed")).entry
-        .event,
-    ).toEqual({ _tag: "WipNotPushed", message: "git push exited with 128" })
     runner.send({ _tag: "SessionStarted", sessionId })
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
 
@@ -2092,24 +2086,18 @@ describe("git", () => {
     expect(await other.untaken("GitReply")).toEqual([])
   })
 
-  test("the Runner hears when a Turn ends, but not when a subagent's does", async () => {
-    const { runner, mod, sessionId } = await sessionScene()
-    await mod.post(turnStarted("t-1"))
-    await mod.post(turnEnded("t-1", "subagent-1"))
-    expect(await runner.untaken("SessionTurnEnded")).toEqual([])
-    await mod.post(turnEnded("t-1"))
-    expect(await runner.take("SessionTurnEnded")).toEqual({ _tag: "SessionTurnEnded", sessionId })
-  })
-
-  test("a failed WIP push is in the Session's history", async () => {
+  test("a failed push from a Runner from before #194 is dropped, and the Runner kept", async () => {
     const { runner, web, sessionId } = await sessionScene()
     joinSession(web, sessionId)
     await web.take("SessionHistory")
+
     runner.send({ _tag: "WipPushFailed", sessionId, message: "remote rejected" })
+    runner.send({ _tag: "SandboxNote", sessionId, message: "Capped at 4 CPUs" })
     expect((await web.take("SessionEventLogged")).entry.event).toEqual({
-      _tag: "WipNotPushed",
-      message: "remote rejected",
+      _tag: "SandboxNoted",
+      message: "Capped at 4 CPUs",
     })
+    expect(await web.untaken("SessionEventLogged")).toEqual([])
   })
 
   test("a Runner's note about the Sandbox is in the Session's history", async () => {
@@ -2221,7 +2209,7 @@ describe("git", () => {
         },
         turnEnded("t-1"),
       )
-      runner.send({ _tag: "WipPushFailed", sessionId, message: `bad token ${current}` })
+      runner.send({ _tag: "SandboxNote", sessionId, message: `bad token ${current}` })
       runner.send({
         _tag: "TerminalFrame",
         sessionId,
@@ -2238,7 +2226,7 @@ describe("git", () => {
         { _tag: "TurnStarted", text: `push with ${stars(current)}` },
         { _tag: "ToolCallEnded", output: `password=${stars(previous)}\n` },
         { _tag: "TurnEnded" },
-        { _tag: "WipNotPushed", message: `bad token ${stars(current)}` },
+        { _tag: "SandboxNoted", message: `bad token ${stars(current)}` },
       ])
       expect((await web.take("TerminalFrame")).data).toBe(
         `$ cat /run/kndl/github-token\r\n${stars(current)}\r\n$ `,

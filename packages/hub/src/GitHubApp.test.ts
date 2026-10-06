@@ -72,7 +72,7 @@ describe("the App JWT", () => {
 })
 
 describe("installation tokens", () => {
-  test("for host git are minted for the Repo alone, with contents write only on a personal account", async () => {
+  test("for host git are minted for the Repo alone, with contents read only on a personal account", async () => {
     const token = await withApp(Effect.flatMap(GitHubApp, (app) => app.repoToken(repo)))
 
     expect(github.mintedTokens).toEqual([Redacted.value(token.token)])
@@ -82,7 +82,7 @@ describe("installation tokens", () => {
     expect(mint).toMatchObject({
       method: "POST",
       path: "/app/installations/42/access_tokens",
-      body: { repositories: ["widgets"], permissions: { contents: "write" } },
+      body: { repositories: ["widgets"], permissions: { contents: "read" } },
     })
     // Both as the App, with the JWT.
     for (const request of [lookup, mint]) {
@@ -98,7 +98,7 @@ describe("installation tokens", () => {
     const mint = github.requests.find((request) => request.path.endsWith("/access_tokens"))
     expect(mint?.body).toEqual({
       repositories: ["widgets"],
-      permissions: { contents: "write", members: "read" },
+      permissions: { contents: "read", members: "read" },
     })
   })
 

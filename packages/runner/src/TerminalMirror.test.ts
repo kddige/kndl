@@ -34,7 +34,6 @@ import {
   FakeCredentialProxy,
   FakeOpenPorts,
   FakeSandboxes,
-  FakeWorkspaceGit,
   FakeWorkspaces,
   hostTmuxBackend,
   writeFakeMod,
@@ -195,7 +194,6 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
       ),
       new FakeWorkspaces(sessionsRoot).layer,
       new FakeSandboxes(fakeClaude).layer,
-      new FakeWorkspaceGit().layer,
       proxy.layer,
     ]),
     Layer.provideMerge(

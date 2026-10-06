@@ -85,7 +85,7 @@ A Session whose Runner is offline is Frozen: you can read it, and prompts you se
 
 ## Delete and restore
 
-**Delete Session**, the trash button in the Session's header, archives the Session at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox, keeping the Workspace and Claude Code's state. Any Participant can do it.
+**Delete Session**, the trash button in the Session's header, archives the Session at once: the Runner stops Claude Code and destroys the Sandbox, keeping the Workspace and Claude Code's state. Any Participant can do it.
 
 - **Undo** in the toast restores it straight away.
 - **Archived Sessions**, in the sidebar, lists the Archived Sessions of every Repo, with who deleted each and when, and a **Restore** button.
@@ -98,11 +98,4 @@ A restored Session is Asleep, and the next prompt wakes it in a fresh Sandbox, o
 
 Claude can commit, push and open pull requests with plain `git` and `gh`, once the Hub has the GitHub App: see [Git from Sessions](/explanation/git-from-sessions/).
 
-Whatever happens, the Runner pushes the Workspace's whole state, uncommitted and untracked files included, to a WIP ref on origin: after each Turn that changed it, before sleep and before archiving. To get it:
-
-```sh
-git fetch origin refs/kndl/wip/<session id>
-git switch --detach FETCH_HEAD
-```
-
-The Session id is the last part of its URL, `/sessions/<session id>`.
+Work reaches GitHub only when something pushes it to a branch. Until then it is in the Workspace on the Runner: sleep, wake, delete and restore keep it, but if the Runner's host or its disk is lost, whatever wasn't pushed is lost with it. To keep work safe off the Runner, ask Claude to commit and push the Work branch.

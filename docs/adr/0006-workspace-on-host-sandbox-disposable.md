@@ -4,7 +4,7 @@ status: accepted
 
 # The Workspace lives on the host; Sandboxes are disposable
 
-Each Session's Workspace (a clone of the Repo on its Work branch) and its Docker data live on host volumes mounted into the Sandbox. The Sandbox itself can be stopped or destroyed at any time without losing work. Asleep means the Sandbox is stopped after 15 minutes idle, and waking boots a fresh one on the same volumes. The WIP ref (ADR 0005) covers losing the host itself.
+Each Session's Workspace (a clone of the Repo on its Work branch) and its Docker data live on host volumes mounted into the Sandbox. The Sandbox itself can be stopped or destroyed at any time without losing work. Asleep means the Sandbox is stopped after 15 minutes idle, and waking boots a fresh one on the same volumes. The WIP ref (ADR 0005) covers losing the host itself; it went with #194 (see the last amendment).
 
 Memory snapshots were considered for faster wake and full process state. They are deferred, because snapshot files are large and the backend's snapshot support is young. Services started inside a Sandbox restart from their persisted data instead.
 
@@ -33,3 +33,9 @@ Sandboxes no longer start from a fixed image with tools installed on first boot.
 - **Picking up a new version:** a Session moves to a newer Environment version on its next wake, or through Restart, by recreating its Sandbox from the new build on the same Workspace and disks. Restarting the stopped VM, as in the previous amendment, still applies while the version hasn't changed.
 - **Dependency folders:** instead of a fixed `node_modules` volume, the Environment lists dependency-folder patterns, by default `**/node_modules`, `**/.venv` and `**/target`. At each boot, before the start script, the Sandbox bind-mounts every match from one per-Session disk. A pattern can name a file to sit next to, such as `package.json` for `node_modules`, so the folder is created on a fresh clone and the first install already lands on the disk. For this repo, `bun install` took 1.7–2.4 s cold and about 0.1 s warm this way, against 7.6 s and 7.3 s on the host mount. Matching and binding took about 0.1 s.
 - **Docker is a toggle:** with it on, the Runner installs Docker in the build, gives it its own disk, starts it on boot in about a second, and stops containers before sleep, as before. With it off, there is no Docker disk. Images pulled by the bootstrap aren't visible in Sessions, because the Docker disk is mounted over them.
+
+## Amendment: losing the host loses unpushed work (2026-10-07, #194)
+
+The Runner no longer pushes a WIP ref. The Workspace on the host is the only copy of a Session's work until git in the Sandbox pushes it to a branch, so losing the host, its disk or the Session's directory loses whatever wasn't pushed: uncommitted changes, and commits and branches that never left the Workspace. That is accepted. Sleep, wake, archive and restore keep the Workspace as before, and Claude, or anyone in the Session's terminal, can push a branch at any time (ADR 0010).
+
+The WIP ref guarded only against losing the host, and it read as though the work were on GitHub, when it was on no branch anyone sees.

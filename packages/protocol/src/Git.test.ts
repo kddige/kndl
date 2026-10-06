@@ -1,10 +1,26 @@
 import { describe, expect, test } from "bun:test"
-import { GitAsk, wipRef } from "./Git.ts"
+import { GitAsk } from "./Git.ts"
 import * as Protocol from "./index.ts"
+import { HubToRunner, RunnerToHub } from "./Runner.ts"
 import { expectRejected, expectRoundTrips } from "./testSupport.ts"
+import { HubToWeb, SessionEvent } from "./Web.ts"
 
-test("the WIP ref is per Session, outside refs/heads", () => {
-  expect(wipRef("s-1")).toBe("refs/kndl/wip/s-1")
+describe("the WIP ref (#194) is gone", () => {
+  test("no channel carries its messages, which a peer from before drops", () => {
+    expectRejected(HubToRunner, { _tag: "SessionTurnEnded", sessionId: "s-1" })
+    expectRejected(RunnerToHub, { _tag: "WipPushFailed", sessionId: "s-1", message: "x" })
+    expectRejected(SessionEvent, { _tag: "WipNotPushed", message: "x" })
+    expectRejected(HubToWeb, {
+      _tag: "SessionEventLogged",
+      sessionId: "s-1",
+      entry: { seq: 0, at: 1, event: { _tag: "WipNotPushed", message: "x" } },
+    })
+  })
+
+  test("the protocol exports none of it", () => {
+    for (const name of ["SessionTurnEnded", "WipPushFailed", "WipNotPushed", "wipRef"])
+      expect(Object.keys(Protocol)).not.toContain(name)
+  })
 })
 
 describe("the git tools (#13) are gone", () => {

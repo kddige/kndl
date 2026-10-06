@@ -45,7 +45,7 @@ From the [Google developer documentation style guide](https://developers.google.
 
 ## Glossary terms
 
-`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Session name, Work branch, WIP ref, Pairing code, Claude credential, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
+`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Session name, Work branch, Pairing code, Claude credential, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
 
 Link a term to its page (or to the [glossary](https://kddige.github.io/kndl/reference/glossary/)) on its first use in a page when the reader may not know it. Don't invent synonyms: a Sandbox is never a "VM" or "container" in prose that means the Sandbox.
 

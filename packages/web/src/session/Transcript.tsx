@@ -518,8 +518,6 @@ function Notice({ at, event }: { at: number; event: NoticeEvent }) {
             {event.by ? `${event.message ? "," : ""} by ${event.by.name}` : ""}
           </span>
         </>
-      ) : event._tag === "WipNotPushed" ? (
-        <span>The WIP ref could not be pushed: {event.message}</span>
       ) : event._tag === "ModelSwitched" ? (
         <>
           <Avatar name={event.by.name} src={event.by.avatarUrl} size="sm" />

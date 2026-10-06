@@ -281,10 +281,10 @@ describe("a Session's Claude credential", () => {
     const session = await createSession(web, runner)
     web.send({ _tag: "JoinSession", sessionId: session.id })
     await web.take("SessionHistory")
-    runner.send({ _tag: "WipPushFailed", sessionId: session.id, message: `leaked ${token}` })
+    runner.send({ _tag: "SandboxNote", sessionId: session.id, message: `leaked ${token}` })
     const logged = await web.take(
       "SessionEventLogged",
-      (m) => m.entry.event._tag === "WipNotPushed",
+      (m) => m.entry.event._tag === "SandboxNoted",
     )
     expect(logged.entry.event).toMatchObject({ message: `leaked ${"*".repeat(token.length)}` })
     expect(web.texts.join("\n")).not.toContain(token)

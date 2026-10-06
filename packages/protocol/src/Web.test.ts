@@ -29,7 +29,6 @@ const sessionEvents = [
   },
   { _tag: "TurnStopRequested", by: alice },
   { _tag: "AgentMessaged", agentId: "a-1", sender: alice, text: "also cover the edge cases" },
-  { _tag: "WipNotPushed", message: "git push exited with 128: could not read from remote" },
   { _tag: "SandboxNoted", message: "Memory capped at 8192 MiB by the Runner" },
   { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", effort: "high" },
   { _tag: "ModelSwitched", by: bob, modelLabel: "Opus 5.5" },

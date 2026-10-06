@@ -1,11 +1,11 @@
 ---
 title: GitHub and git
-description: A Repo won't clone, the GitHub App can't see it or lacks permissions, git and gh in a Session can't reach GitHub, or the WIP ref won't push.
+description: A Repo won't clone, the GitHub App can't see it or lacks permissions, or git and gh in a Session can't reach GitHub.
 sidebar:
   order: 6
 ---
 
-Two kinds of git run for a Session: the Runner's own, on its host, which clones the Repo and pushes the WIP ref, and the Session's, in its Sandbox, which Claude uses. They get their access differently. See [Git from Sessions](/explanation/git-from-sessions/).
+Two kinds of git run for a Session: the Runner's own, on its host, which clones the Repo, and the Session's, in its Sandbox, which Claude uses. They get their access differently. See [Git from Sessions](/explanation/git-from-sessions/).
 
 ## The Runner can't clone the Repo
 
@@ -72,24 +72,6 @@ WARN (#2): Session 9af3111eb506f54cea59b83c: its Sandbox has no GitHub token, so
 - `gh` isn't installed. kndl doesn't install it.
 
 **Fix.** [Set up the GitHub App](/how-to/set-up-the-github-app/) and install it on the Repo. Install git and gh in the Environment's [Bootstrap script](/how-to/set-up-an-environment/#write-the-bootstrap-script). Don't run `gh auth login` in the Sandbox: the token is already in place.
-
-## The WIP ref could not be pushed
-
-**What you see.** A Session's transcript notes:
-
-```
-The WIP ref could not be pushed: …
-```
-
-**Why.** The Runner pushes each Session's uncommitted work to `refs/kndl/wip/<session id>` after a Turn, and before sleep and archive. A failed push is noted and doesn't hold anything up, but the work isn't safe off the Runner until a push succeeds. Common reasons are the clone problems above, and these, from the Runner's checks of the Workspace:
-
-| Message | Why |
-|---|---|
-| `host git refused the Workspace: its .git/objects/info/alternates points git at other object directories. Remove it so WIP pushes work.` | Something in the Sandbox, such as `git clone --reference` or `git worktree`, pointed the Workspace at objects elsewhere. The Runner won't read objects outside the Workspace. |
-| `host git refused the Workspace: its .git… is a link or not a plain git file` | A part of `.git` was replaced by a link, which the Runner never follows. |
-| `the Workspace has no HEAD commit` | The Workspace's branch has no commit to build on. |
-
-**Fix.** Remove what the message names from the Workspace's `.git`, in the Session's terminal or by asking Claude, and the next push goes through. Until then, the work is still in the Workspace on the Runner.
 
 ## Claude pushed to the default branch
 

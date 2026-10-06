@@ -80,8 +80,10 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 
 | Direction | Messages |
 |---|---|
-| Runner to Hub | `RunnerHello`; `SessionStarted`, `SessionStartFailed`, `SessionStopped`, `SessionPurged`; `SandboxStateReport`, `SandboxNote`; `SessionPorts`, `TunnelFailed`; terminal frames; git requests and `WipPushFailed`; `FetchVariables`, `FetchCloneAccess`, `FetchClaudeCredential`; Test build logs and results; `UpdateChecked`, `UpdateProgress`, `UpdateFailed` |
-| Hub to Runner | `RunnerWelcome` or `HandshakeRejected`; `StartSession`, `RelaunchSession`, `ModTokenReissued`, `StopSession`, `PurgeSession`; `OpenTunnel`; terminal input, resizes and snapshot requests; git replies; `SessionTurnEnded`; `RunTestBuild`; `VariablesFetched` or `VariablesRefused`; `ClaudeCredentialFetched` or `ClaudeCredentialRefused`; `CheckUpdate`, `ApplyUpdate` |
+| Runner to Hub | `RunnerHello`; `SessionStarted`, `SessionStartFailed`, `SessionStopped`, `SessionPurged`; `SandboxStateReport`, `SandboxNote`; `SessionPorts`, `TunnelFailed`; terminal frames; git requests; `FetchVariables`, `FetchCloneAccess`, `FetchClaudeCredential`; Test build logs and results; `UpdateChecked`, `UpdateProgress`, `UpdateFailed` |
+| Hub to Runner | `RunnerWelcome` or `HandshakeRejected`; `StartSession`, `RelaunchSession`, `ModTokenReissued`, `StopSession`, `PurgeSession`; `OpenTunnel`; terminal input, resizes and snapshot requests; git replies; `RunTestBuild`; `VariablesFetched` or `VariablesRefused`; `ClaudeCredentialFetched` or `ClaudeCredentialRefused`; `CheckUpdate`, `ApplyUpdate` |
+
+The Runner pushes nothing to the Repo itself any more (#194), so `WipPushFailed` and `SessionTurnEnded` are gone. A peer from before may still send them: the other side drops a message it can't decode and carries on, so the protocol version didn't change. The Hub still puts the App's bot, `author`, in a `GitAccess` answer's `AppToken`, which nothing reads now, so a Runner from before still decodes it.
 
 `RunnerHello` carries the Runner's name, `login`, the Sessions it still runs, and `version`: the commit its checkout is on and the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `version` is optional, so a Runner from before it still connects, listed with its version unknown. The Hub compares it with its own commit: it starts and wakes no Session on a Runner behind it, which keeps the Sessions it runs.
 
@@ -201,7 +203,7 @@ A WebSocket per browser tab.
 | Direction | Messages |
 |---|---|
 | Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken` |
-| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; terminal frames; `CommandFailed` |
+| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
 
@@ -259,6 +261,8 @@ The Hub marks a Session's Running agents `Interrupted` when its Claude Code stop
 When the mod can't carry out a command, it reports `AgentCommandFailed { agentId, command, senderId?, message }`, and the Hub passes it on as a `CommandFailed` to whoever sent it: `Your message could not be delivered to the agent: …` or `The agent could not be stopped: …`.
 
 Events and queued prompts from before ADR 0014, from another Session, decode with the sender `FromSession { session }`, which nothing sends any more. The web UI shows them as from that Session's name.
+
+`WipNotPushed`, the note that the Runner couldn't push a Session's uncommitted work, went with that push (#194). The Hub deleted those notes from Sessions' histories as it updated.
 
 `UpdateRunner { runnerId, now }` updates a Runner from the Runners page; sent again with `now: true` while it waits for Turns, it stops them. Each Runner in `RunnerList` carries its `updater` and, while one is under way or after it ended badly, `update`: `Checking`, `Draining` (with `waitingFor`, the Sessions still Active, and `deadline`), `Applying` (with `step`), `Restarting`, `Refused` (with `refusal`) or `Failed` (with `failure`).
 

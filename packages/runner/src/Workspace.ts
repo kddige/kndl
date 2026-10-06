@@ -9,11 +9,10 @@ import {
   claudeProjectsDir,
   forgetDirectories,
 } from "./ClaudeConfig.ts"
-import { cloneWorkspace } from "./HostGit.ts"
+import { cloneWorkspace, type GitAuth, GitError } from "./HostGit.ts"
 import { HubGit } from "./HubGit.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { type SessionDirectories, sessionDirectories } from "./SessionNames.ts"
-import { askAccess } from "./WorkspaceGit.ts"
 
 export class WorkspaceError extends Data.TaggedError("WorkspaceError")<{
   readonly message: string
@@ -24,8 +23,6 @@ export class WorkspaceError extends Data.TaggedError("WorkspaceError")<{
  * directory Claude Code runs in, and the Workspace.
  *
  * Archiving keeps the Workspace, so a restored Session wakes on it; purging removes it.
- *
- * Still to come here: restoring a Workspace from its WIP ref when the Runner lost it.
  */
 export class Workspaces extends Context.Service<
   Workspaces,
@@ -36,8 +33,8 @@ export class Workspaces extends Context.Service<
      */
     readonly prepare: (start: StartSession) => Effect.Effect<SessionDirectories, WorkspaceError>
     /**
-     * Deletes everything of a purged Session on the host: its directory, with the Workspace and
-     * the Runner's git directory for it, and what Claude Code keeps of the directory it ran in.
+     * Deletes everything of a purged Session on the host: its directory, with the Workspace, and
+     * what Claude Code keeps of the directory it ran in.
      * Succeeds when nothing is left.
      */
     readonly remove: (sessionId: SessionId) => Effect.Effect<void, WorkspaceError>
@@ -108,6 +105,24 @@ export const removeSessionFiles = (
   })
 
 /**
+ * Asks the Hub how host git reaches the Session's Repo for the clone: with a GitHub App token, or
+ * with the host's own credentials.
+ */
+const cloneAuth = (hubGit: HubGit["Service"], sessionId: SessionId) =>
+  Effect.gen(function* () {
+    const answer = yield* hubGit.ask(sessionId, { _tag: "GitAccess" })
+    if (answer._tag === "GitFailed") return yield* new GitError({ message: answer.message })
+    if (answer._tag !== "GitAccess")
+      return yield* new GitError({ message: "the Hub gave no Repo access" })
+    const credentials = answer.credentials
+    return (
+      credentials._tag === "AppToken"
+        ? { _tag: "Token", token: credentials.token }
+        : { _tag: "Host" }
+    ) satisfies GitAuth
+  })
+
+/**
  * `git clone` the Repo on the host (ADR 0005), with the GitHub App token the Hub mints, or the
  * host's own git credentials when the Hub has no App (dev mode). Then create the Work branch from
  * the base branch. The token is passed to git for these commands only, never stored.
@@ -122,10 +137,10 @@ export const WorkspacesGitClone = Layer.effect(
 
     const clone = (start: StartSession, workspace: string) =>
       Effect.gen(function* () {
-        const access = yield* askAccess(hubGit, config.repoUrlTemplate, start.sessionId)
+        const auth = yield* cloneAuth(hubGit, start.sessionId)
         yield* cloneWorkspace({
           url: config.repoUrlTemplate.replaceAll("{repo}", start.repo),
-          auth: access.auth,
+          auth,
           workspace,
           baseBranch: start.baseBranch,
           workBranch: start.workBranch,
