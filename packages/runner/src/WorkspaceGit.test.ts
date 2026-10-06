@@ -227,6 +227,9 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     expect(git(workspace(), "status", "--porcelain")).toBe("?? notes.txt")
     const exclude = readFileSync(join(workspace(), ".git", "info", "exclude"), "utf8")
     expect(exclude.split("\n").filter((line) => line === AgentWorktreesPattern)).toHaveLength(1)
+    // The snapshots leave the worktree's own git records and branch be.
+    expect(existsSync(join(workspace(), ".git", "worktrees", "agent-a1"))).toBe(true)
+    expect(git(workspace(), "worktree", "list")).toContain("[worktree-agent-a1]")
     expect(hubGit.wipFailures).toEqual([])
   })
 
