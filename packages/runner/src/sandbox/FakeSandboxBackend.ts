@@ -293,13 +293,16 @@ export const makeFake = (options: FakeOptions = {}) => {
         killAll(sessionId),
         Effect.sync(() => {
           world.sandboxes.delete(sessionId)
-          if (destroyOptions?.keepVolumes === true) return
+          const keep = destroyOptions?.keepVolumes ?? []
+          if (keep === true) return
           // Deleting the entry being visited is safe for a Map.
-          for (const name of world.volumes.keys())
-            if (parseVolumeName(name)?.sessionId === sessionId) {
+          for (const name of world.volumes.keys()) {
+            const volume = parseVolumeName(name)
+            if (volume?.sessionId === sessionId && !keep.includes(volume.key)) {
               world.volumes.delete(name)
               world.volumeRunners.delete(name)
             }
+          }
         }),
       ),
     state: (sessionId) =>

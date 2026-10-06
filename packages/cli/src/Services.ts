@@ -74,8 +74,8 @@ function programArguments(spec: ServiceSpec): ReadonlyArray<string> {
 /**
  * The LaunchAgent. It starts at login (RunAtLoad) and again whenever it exits unsuccessfully
  * (KeepAlive, SuccessfulExit false); ThrottleInterval spaces the restarts. The Runner's agent
- * abandons its process group, so stopping the Runner leaves its Sessions' tmux server and
- * Sandboxes running, for the next Runner to re-adopt.
+ * abandons its process group, so stopping the Runner leaves its Sessions' Sandboxes running until
+ * the next Runner starts and puts them to sleep.
  */
 export function launchdPlist(spec: ServiceSpec): string {
   const log = spec.layout.logFile(spec.role)
@@ -125,8 +125,8 @@ export function launchdPlist(spec: ServiceSpec): string {
 
 /**
  * The systemd user unit. It restarts on failure; the Runner's stops only its own process
- * (KillMode=process), so its Sessions' tmux server and Sandboxes outlive it, for the next Runner
- * to re-adopt.
+ * (KillMode=process), so its Sessions' Sandboxes outlive it until the next Runner starts and
+ * puts them to sleep.
  */
 export function systemdUnitFile(spec: ServiceSpec): string {
   const log = spec.layout.logFile(spec.role)

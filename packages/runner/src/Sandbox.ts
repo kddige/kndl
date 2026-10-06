@@ -7,7 +7,7 @@ import type {
   SessionId,
   StopSession,
 } from "@claude-hub/protocol"
-import { Context, Data, Effect, Layer } from "effect"
+import { Context, Data, type Effect } from "effect"
 import type { SessionDirectories } from "./SessionNames.ts"
 
 export class SandboxError extends Data.TaggedError("SandboxError")<{
@@ -50,33 +50,55 @@ export interface SandboxTarget {
   readonly gitIdentity?: GitIdentity
 }
 
+/** How to run Claude Code in a started Sandbox (ADR 0013). */
+export interface SandboxClaude {
+  /** Its executable, in the Sandbox. */
+  readonly path: string
+  /**
+   * Its environment over the Sandbox's: what the Runner gives each process it starts there (an
+   * Environment's login environment and variables), with Claude Code's state directory. Holds no
+   * Claude credential and no Session token, which the launch adds.
+   */
+  readonly env: Readonly<Record<string, string>>
+}
+
 /** A started Sandbox. */
 export interface SandboxStarted {
   /** The Environment version the Sandbox runs, if any. */
   readonly environmentVersion?: EnvironmentVersion
+  readonly claude: SandboxClaude
 }
 
 /**
  * The seam for a Session's Sandbox (#9): created and started around its Workspace before Claude
- * Code launches, and stopped after Claude Code stops.
+ * Code launches in it, and stopped after Claude Code stops.
  *
- * The live one (SessionSandboxes.ts) reports its state to the Hub with `SandboxStateReport`,
- * and serves the Session's tool bridge, through which the mod routes Claude Code's file and
- * command tools into the Sandbox (#11).
+ * The live one (SessionSandboxes.ts) reports its state to the Hub with `SandboxStateReport`, and
+ * readies the Sandbox for Claude Code at each start: tmux, and Claude Code's state (ADR 0013).
  */
 export class Sandboxes extends Context.Service<
   Sandboxes,
   {
     /**
      * Creates the Session's Sandbox, or reuses its stopped one, and starts it. A Sandbox of
-     * another Environment version is recreated, keeping its volumes. Without a target the Sandbox
-     * comes back as it was last started, as when re-adopting a Session.
+     * another Environment version, or one made before Claude Code ran in Sandboxes, is recreated,
+     * keeping its volumes.
      */
     readonly start: (
       sessionId: SessionId,
       directories: SessionDirectories,
-      target?: SandboxTarget,
+      target: SandboxTarget,
     ) => Effect.Effect<SandboxStarted, SandboxError>
+    /**
+     * Whether Claude Code in the Session's started Sandbox has a transcript of conversation `id`
+     * to resume. One Claude Code wrote on the host, before it moved into the Sandbox, is copied
+     * in first (ADR 0013).
+     */
+    readonly hasTranscript: (
+      sessionId: SessionId,
+      directories: SessionDirectories,
+      id: string,
+    ) => Effect.Effect<boolean, SandboxError>
     /**
      * Reads the Repo's skills and CLAUDE.md from the Workspace in the started Sandbox, never from
      * the host's copy of it: regular files only, within limits, defused (RepoFiles.ts, #125).
@@ -106,17 +128,3 @@ export class Sandboxes extends Context.Service<
     ) => Effect.Effect<void, SandboxError>
   }
 >()("@claude-hub/runner/Sandboxes") {}
-
-/** No Sandbox: Sessions run with nothing around them, and the mod refuses every routed tool. */
-export const NoSandboxes = Layer.succeed(
-  Sandboxes,
-  Sandboxes.of({
-    start: () => Effect.succeed({}),
-    repoFiles: () => Effect.succeed(noRepoFiles),
-    stop: () => Effect.void,
-    purge: () => Effect.void,
-    reconcile: () => Effect.void,
-    testBuild: () =>
-      Effect.fail(new SandboxError({ message: "This Runner runs Sessions without Sandboxes." })),
-  }),
-)

@@ -19,14 +19,16 @@ import { NoClaudeCredential, RunnerCredential } from "./proxy/RunnerCredential.t
 import { makeSessionTokens, type SessionGrant } from "./proxy/SessionTokens.ts"
 import { noRepoFiles, type RepoFiles, Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import type { FakeProcessIO } from "./sandbox/FakeSandboxBackend.ts"
+import { SandboxBackendError } from "./sandbox/SandboxBackend.ts"
+import type { ExecEvent, ExecRequest, SpawnedCommand } from "./sandbox/SandboxBackend.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
 import {
   type LaunchSpec,
   lastOutputOf,
   type PaneEvent,
-  type ServerClaim,
   Tmux,
+  type TmuxBackend,
   TmuxError,
 } from "./Tmux.ts"
 import { WorkspaceError, Workspaces } from "./Workspace.ts"
@@ -205,22 +207,8 @@ export class FakeTmux {
   readonly panes = new Map<SessionId, FakePane>()
   readonly launched: Array<LaunchSpec> = []
   readonly killed: Array<SessionId> = []
-  /** What `claimServer` answers, and how often it was asked. */
-  claim: ServerClaim = { _tag: "NoServer" }
-  claims = 0
-
-  /** Pretends a Session was left running in tmux by an earlier Runner. */
-  leaveRunning(id: SessionId): FakePane {
-    const pane = new FakePane({
-      sessionId: id,
-      cwd: "/",
-      argv: [],
-      env: {},
-      size: { cols: 80, rows: 24 },
-    })
-    this.panes.set(id, pane)
-    return pane
-  }
+  /** How often the host's tmux server was retired. */
+  retired = 0
 
   pane(id: string): FakePane {
     const pane = this.panes.get(sessionId(id))
@@ -230,11 +218,9 @@ export class FakeTmux {
 
   readonly layer = Layer.sync(Tmux, () =>
     Tmux.of({
-      claimServer: Effect.sync(() => {
-        this.claims += 1
-        return this.claim
+      retireHostServer: Effect.sync(() => {
+        this.retired += 1
       }),
-      list: Effect.sync(() => Array.from(this.panes.keys())),
       lastOutput: (id) => Effect.sync(() => lastOutputOf(this.panes.get(id)?.printed ?? "")),
       launch: (spec) =>
         Effect.suspend(() => {
@@ -293,17 +279,91 @@ export class FakeWorkspaces {
   )
 }
 
+/** The environment a command in `hostTmuxBackend` gets: this process's, outside any tmux. */
+const hostTmuxEnv = (request: ExecRequest) => {
+  const inherited: Record<string, string | undefined> = { ...process.env }
+  delete inherited.TMUX
+  return { ...inherited, ...request.env }
+}
+
+/**
+ * The host as a Sandbox for tmux (Tmux.ts): commands run here, with the guest's tmux server moved
+ * to `socket`, never the one a Runner on this machine might use, and each argument that is a key
+ * of `paths`, a path in the Sandbox such as the Workspace's, replaced by its value on the host.
+ */
+export function hostTmuxBackend(options: {
+  readonly socket: string
+  readonly paths?: Readonly<Record<string, string>>
+}): TmuxBackend {
+  const command = (request: ExecRequest): Array<string> => {
+    const args = (request.args ?? []).map((arg) => options.paths?.[arg] ?? arg)
+    const at = args.indexOf("-L")
+    if (request.command === "tmux" && at >= 0) args[at + 1] = options.socket
+    return [request.command, ...args]
+  }
+  return {
+    exec: (_sessionId, request) =>
+      Effect.promise(async () => {
+        const child = Bun.spawn(command(request), {
+          env: hostTmuxEnv(request),
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ])
+        return { exitCode, stdout, stderr }
+      }),
+    spawn: (_sessionId, request) =>
+      Effect.acquireRelease(
+        Effect.sync(() =>
+          Bun.spawn(command(request), {
+            env: hostTmuxEnv(request),
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "ignore",
+          }),
+        ),
+        (child) => Effect.sync(() => child.kill()),
+      ).pipe(
+        Effect.map((child): SpawnedCommand => ({
+          events: Stream.fromReadableStream({
+            evaluate: () => child.stdout,
+            onError: (cause) =>
+              new SandboxBackendError({ operation: "spawn", message: String(cause) }),
+          }).pipe(Stream.map((data): ExecEvent => ({ _tag: "Stdout", data }))),
+          write: (data) =>
+            Effect.sync(() => {
+              child.stdin.write(data)
+              child.stdin.flush()
+            }),
+          closeStdin: Effect.sync(() => void child.stdin.end()),
+        })),
+      ),
+  }
+}
+
+/** The Claude Code {@link FakeSandboxes} says each Sandbox runs. */
+export const fakeSandboxClaudePath = "/opt/claude-code/claude"
+
 /** Sandboxes that only record calls. */
 export class FakeSandboxes {
   readonly calls: Array<string> = []
   /** The running Sessions each `reconcile` was given. */
   readonly reconciled: Array<Array<SessionId>> = []
   /** What each `start` was given to start the Sandbox from. */
-  readonly targets: Array<SandboxTarget | undefined> = []
+  readonly targets: Array<SandboxTarget> = []
   /** What `repoFiles` reads from every Session's Workspace. */
   repo: RepoFiles = noRepoFiles
   /** The Sessions whose Repo files were read, in order. */
   readonly repoFilesRead: Array<SessionId> = []
+  /** The conversations Claude Code has a transcript of, to resume. */
+  readonly transcripts = new Set<string>()
+
+  /** `claudePath`: the Claude Code each Sandbox runs. */
+  constructor(readonly claudePath: string = fakeSandboxClaudePath) {}
 
   readonly layer = Layer.sync(Sandboxes, () =>
     Sandboxes.of({
@@ -311,10 +371,15 @@ export class FakeSandboxes {
         Effect.sync(() => {
           this.calls.push(`start ${id}`)
           this.targets.push(target)
-          return target?.environment === undefined
-            ? {}
-            : { environmentVersion: target.environment.version }
+          return {
+            ...(target.environment === undefined
+              ? {}
+              : { environmentVersion: target.environment.version }),
+            claude: { path: this.claudePath, env: { CLAUDE_CONFIG_DIR: "/claude" } },
+          }
         }),
+      hasTranscript: (_id, _directories, conversation) =>
+        Effect.sync(() => this.transcripts.has(conversation)),
       repoFiles: (id) =>
         Effect.sync(() => {
           this.repoFilesRead.push(id)

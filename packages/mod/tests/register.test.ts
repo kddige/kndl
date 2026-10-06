@@ -1,10 +1,9 @@
 // hub-link in Claude Code's own mod runtime (`claude plugin test`): the hooks module, loading the
 // bundle (`bun run build` first), with the world beneath it faked.
 
-import type { On, PromptComposeInput, PromptEditInput, PromptEditResult } from "claude-code"
+import type { On, PromptComposeInput } from "claude-code"
 import { describe, expect, mock, test } from "claude-code/testing"
 
-const socket = "/sessions/s1/tools.sock"
 const hubUrl = "http://hub.test"
 
 type Fetched = { url: string; method: string; socketPath?: string; body?: string }
@@ -31,170 +30,16 @@ const fakeFetch = (
   return requests
 }
 
-/**
- * Raises `prompt.edit` as the prompt box does. The test engine raises it, but its typed `$` leaves
- * it out, so it is reached through this one cast.
- */
-const editPrompt = ($: unknown, e: PromptEditInput) =>
-  ($ as { prompt: { edit: (e: PromptEditInput) => Promise<PromptEditResult> } }).prompt.edit(e)
-
-const ran = (result: unknown) => ({
-  status: 200,
-  text: JSON.stringify({ _tag: "ToolRan", result }),
-})
-
 describe("tools", () => {
-  test("runs Bash in the Sandbox through the tool bridge", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    const requests = fakeFetch(on, () =>
-      ran({ stdout: "hello from the vm", stderr: "", interrupted: false }),
-    )
-    let reachedCore = false
-    on("tool.call", () => {
-      reachedCore = true
-      return { deny: "core ran it" }
-    })
-
-    const answer = await $.tool.call({ tool: "Bash", command: "echo hello", description: "say hi" })
-
-    expect(reachedCore).toBe(false)
-    expect(answer.isError).toBeFalsy()
-    expect(answer.result).toMatchObject({ stdout: "hello from the vm" })
-    expect(requests).toHaveLength(1)
-    expect(requests[0]).toMatchObject({
-      url: "http://tool-bridge/tools/calls?waitMs=20000",
-      method: "POST",
-      socketPath: socket,
-    })
-    expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
-      callId: expect.stringMatching(/^[A-Za-z0-9_.-]+$/),
-      tool: "Bash",
-      input: { command: "echo hello", description: "say hi" },
-    })
-  })
-
-  test("waits for a long call in steps, past what one fetch allows", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    let waits = 0
-    const requests = fakeFetch(on, (request) => {
-      if (request.method === "POST")
-        return {
-          status: 202,
-          text: JSON.stringify({
-            _tag: "ToolRunning",
-            callId: JSON.parse(request.body ?? "").callId,
-          }),
-        }
-      waits += 1
-      return waits < 3
-        ? { status: 202, text: JSON.stringify({ _tag: "ToolRunning", callId: "c" }) }
-        : ran({ stdout: "149 pass", stderr: "", interrupted: false })
-    })
-    on("tool.call", () => ({ deny: "core ran it" }))
-
-    const answer = await $.tool.call({ tool: "Bash", command: "bun test", timeout: 600000 })
-
-    expect(answer.result).toMatchObject({ stdout: "149 pass" })
-    const callId = JSON.parse(requests[0]?.body ?? "").callId as string
-    expect(requests.slice(1).map((request) => `${request.method} ${request.url}`)).toEqual([
-      `GET http://tool-bridge/tools/calls/${callId}?waitMs=20000`,
-      `GET http://tool-bridge/tools/calls/${callId}?waitMs=20000`,
-      `GET http://tool-bridge/tools/calls/${callId}?waitMs=20000`,
-    ])
-  })
-
-  test("says a call whose answer was lost may have run", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    fakeFetch(on, (request) => {
-      if (request.method === "POST")
-        return { status: 202, text: JSON.stringify({ _tag: "ToolRunning", callId: "c" }) }
-      throw new Error("no complete answer within 30000ms")
-    })
-    on("tool.call", () => ({ deny: "core ran it" }))
-
-    const answer = await $.tool.call({ tool: "Bash", command: "git stash && git stash pop" })
-
-    expect(answer.deny).toContain("may have run")
-    expect(answer.deny).toContain("Check before running it again")
-    expect(answer.deny).not.toContain("did not run")
-  })
-
-  test("runs a call through a Runner from before long calls", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    const requests = fakeFetch(on, (request) =>
-      request.url === "http://tool-bridge/tools/call"
-        ? ran({ stdout: "old", stderr: "", interrupted: false })
-        : { status: 404, text: "not found" },
-    )
-    on("tool.call", () => ({ deny: "core ran it" }))
-
-    const answer = await $.tool.call({ tool: "Bash", command: "echo old" })
-
-    expect(answer.result).toMatchObject({ stdout: "old" })
-    expect(requests.map((request) => request.url)).toEqual([
-      "http://tool-bridge/tools/calls?waitMs=20000",
-      "http://tool-bridge/tools/call",
-    ])
-  })
-
-  // The test runtime hides a fetch hook's throw behind "no implementation for http.fetch", so this
-  // is a failure the mod can't explain: it must not say the call didn't run. (Claude Code's own
-  // fetch names the cause, such as connect ENOENT, which ToolBridgeClient.spec.ts covers.)
-  test("refuses a call whose bridge fails unexplained as may have run, never on the host", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    fakeFetch(on, () => {
-      throw new Error("connect ENOENT")
-    })
-    let reachedCore = false
-    on("tool.call", () => {
-      reachedCore = true
-      return { deny: "core ran it" }
-    })
-
-    const answer = await $.tool.call({ tool: "Read", file_path: "/workspace/a.txt" })
-
-    expect(reachedCore).toBe(false)
-    expect(answer.deny).toBeDefined()
-    expect(answer.deny).toContain("Check before running it again")
-    expect(answer.deny).toContain("never runs on the host")
-  })
-
-  test("refuses a call when the bridge answers BridgeUnavailable", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    fakeFetch(on, () => ({
-      status: 503,
-      text: JSON.stringify({ _tag: "BridgeUnavailable", message: "the Sandbox is down" }),
-    }))
-    on("tool.call", () => ({ deny: "core ran it" }))
-
-    const answer = await $.tool.call({ tool: "Bash", command: "ls" })
-
-    expect(answer.deny).toBeDefined()
-    expect(answer.deny).toContain("the Sandbox is down")
-    expect(answer.deny).toContain("did not run at all")
-  })
-
-  test("refuses every call when no Runner gave it a bridge", async ($, on) => {
+  test("Claude Code runs every tool, in the Sandbox (ADR 0013)", async ($, on) => {
     mock.env(on, {})
-    const requests = fakeFetch(on, () => ran({}))
-    on("tool.call", () => ({ deny: "core ran it" }))
-
-    const answer = await $.tool.call({ tool: "Bash", command: "ls" })
-
-    expect(requests).toHaveLength(0)
-    expect(answer.deny).toBeDefined()
-    expect(answer.deny).toContain("no tool bridge")
-  })
-
-  test("denies tools that would run on the host", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    const requests = fakeFetch(on, () => ran({}))
-    let reachedCore = 0
-    on("tool.call", () => {
-      reachedCore++
-      return { deny: "core ran it" }
+    const called: Array<string> = []
+    on("tool.call", (_, e) => {
+      called.push(String(e.tool))
+      return { result: { stdout: "hello from the vm", stderr: "", interrupted: false } } as never
     })
 
+    const bash = await $.tool.call({ tool: "Bash", command: "echo hello", description: "say hi" })
     const fetched = await $.tool.call({ tool: "WebFetch", url: "https://example.com", prompt: "x" })
     const agent = await $.tool.call({
       tool: "Agent",
@@ -202,84 +47,26 @@ describe("tools", () => {
       prompt: "x",
       subagent_type: "general-purpose",
     } as never)
-    const mcp = await $.tool.call({ tool: "mcp__github__create_issue", title: "x" } as never)
 
-    expect(reachedCore).toBe(0)
-    expect(requests).toHaveLength(0)
-    for (const answer of [fetched, agent, mcp]) {
-      expect(answer.deny).toBeDefined()
-      expect(answer.deny).toContain("not available in this Claude Hub Session")
-    }
-    expect(fetched.deny).toContain("curl through Bash")
+    expect(called).toEqual(["Bash", "WebFetch", "Agent"])
+    for (const answer of [bash, fetched, agent]) expect(answer.deny).toBeUndefined()
+    expect(bash.result).toMatchObject({ stdout: "hello from the vm" })
   })
 
-  test("leaves WebSearch to Claude Code, without asking (#126)", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    const requests = fakeFetch(on, () => ran({}))
-    let reachedCore = 0
-    on("tool.call", () => {
-      reachedCore++
-      return { result: { query: "bun", results: [], durationSeconds: 1 } } as never
-    })
-    on("tool.check", () => ({ decision: "ask", reason: "WebSearchTool requires permission." }))
+  test("a tool Claude Code refuses stays refused", async ($, on) => {
+    mock.env(on, {})
+    on("tool.call", () => ({ deny: "no such file" }))
 
-    const answer = await $.tool.call({ tool: "WebSearch", query: "bun" })
-    const checked = await $.tool.check({ tool: "WebSearch", input: { query: "bun" } })
-    const other = await $.tool.check({ tool: "WebFetch", input: { url: "https://example.com" } })
+    const answer = await $.tool.call({ tool: "Read", file_path: "/workspace/missing.txt" })
 
-    expect(reachedCore).toBe(1)
-    expect(requests).toHaveLength(0)
-    expect(answer.deny).toBeUndefined()
-    expect(answer.result).toMatchObject({ query: "bun" })
-    expect(checked.decision).toBe("allow")
-    expect(other.decision).toBe("ask")
+    expect(answer.deny).toBe("no such file")
   })
 
-  test("refuses a background command", async ($, on) => {
-    mock.env(on, { CLAUDE_HUB_TOOLS_SOCKET: socket })
-    const requests = fakeFetch(on, () => ran({}))
-    on("tool.call", () => ({ deny: "core ran it" }))
+  test("every tool is allowed without asking (ADR 0004)", async ($, on) => {
+    on("tool.check", () => ({ decision: "ask", reason: "Bash requires permission." }))
 
-    const answer = await $.tool.call({ tool: "Bash", command: "sleep 60", run_in_background: true })
-
-    expect(requests).toHaveLength(0)
-    expect(answer.deny).toBeDefined()
-  })
-})
-
-describe("the ! shell shortcut", () => {
-  test("is refused at the start of the prompt", async ($, on) => {
-    on("prompt.edit", (_, e) => ({ text: e.text, cursor: e.cursor }))
-    on("ui.toast", () => ({ value: undefined }))
-
-    const edited = await editPrompt($, {
-      origin: { kind: "composer" },
-      text: "",
-      cursor: 0,
-      start: 0,
-      end: 0,
-      inputText: "!",
-    })
-
-    expect(edited.text).toBe("")
-  })
-
-  test("leaves a ! elsewhere alone", async ($, on) => {
-    on("prompt.edit", (_, e) => ({
-      text: e.text.slice(0, e.start) + e.inputText + e.text.slice(e.end),
-      cursor: e.start + e.inputText.length,
-    }))
-
-    const edited = await editPrompt($, {
-      origin: { kind: "composer" },
-      text: "hi",
-      cursor: 2,
-      start: 2,
-      end: 2,
-      inputText: "!",
-    })
-
-    expect(edited.text).toBe("hi!")
+    for (const tool of ["Bash", "WebFetch", "Agent", "mcp__github__create_issue"])
+      expect((await $.tool.check({ tool, input: {} } as never)).decision).toBe("allow")
   })
 })
 
@@ -389,7 +176,6 @@ describe("the Hub link", () => {
       CLAUDE_HUB_URL: hubUrl,
       CLAUDE_HUB_SESSION_ID: "s1",
       CLAUDE_HUB_MOD_TOKEN: "secret",
-      CLAUDE_HUB_TOOLS_SOCKET: socket,
     })
     const clock = mock.clock(on)
     on("session.id", () => ({ value: "claude-1" }))
@@ -399,14 +185,15 @@ describe("the Hub link", () => {
       if (request.url.endsWith("/mod/hello"))
         return { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 1 }) }
       if (request.url.endsWith("/mod/events")) return { status: 204, text: "" }
-      if (request.socketPath === socket)
-        return ran({ stdout: "a.txt", stderr: "", interrupted: false })
       return new Promise(() => undefined)
     })
     on("session.start", (_, e) => ({ cwd: e.cwd }))
     on("turn.start", () => ({ turnId: "t1" }))
     on("turn.complete", () => ({ text: "done" }))
-    on("tool.call", () => ({ deny: "core ran it" }))
+    on(
+      "tool.call",
+      () => ({ result: { stdout: "a.txt", stderr: "", interrupted: false } }) as never,
+    )
 
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
     await clock.advance(0)
@@ -463,7 +250,6 @@ const linkedSession = (on: On, env: Record<string, string> = {}) => {
     CLAUDE_HUB_URL: hubUrl,
     CLAUDE_HUB_SESSION_ID: "s1",
     CLAUDE_HUB_MOD_TOKEN: "secret",
-    CLAUDE_HUB_TOOLS_SOCKET: socket,
     ...env,
   })
   on("session.id", () => ({ value: "claude-1" }))
@@ -698,23 +484,6 @@ describe("Child Sessions", () => {
     })
 })
 
-const sandbox = {
-  CLAUDE_HUB_WORKSPACE: "/workspace",
-  CLAUDE_HUB_REPO: "acme/app",
-  CLAUDE_HUB_WORK_BRANCH: "claude/fix-login",
-}
-
-/** Claude Code's own environment block, as it describes the host. */
-const hostEnvironment = [
-  "# Environment",
-  "You have been invoked in the following environment: ",
-  " - Primary working directory: /Users/ada/.claude-hub/sessions/s1/claude",
-  " - Is a git repository: false",
-  " - Platform: darwin",
-  " - Shell: zsh",
-  " - OS Version: Darwin 27.0.0",
-].join("\n")
-
 const composeInput = {
   model: "claude-test",
   promptModel: "claude-test",
@@ -724,189 +493,20 @@ const composeInput = {
   traits: ["lean"],
 } satisfies PromptComposeInput
 
-/** Claude Code's own system prompt, as one section. */
-const engineSections = (on: On) =>
-  on("prompt.compose", () => ({
-    sections: [{ id: "env_info_simple", text: "# Environment", scope: "session" }],
-  }))
-
-/** Claude Code's guidance on `!` in a terminal session, as 2.1.289 words it. */
-const bangGuidance = [
-  "# Session-specific guidance",
-  " - If you need the user to run a shell command themselves (e.g., an interactive login like",
-  "`gcloud auth login`), suggest they type `! <command>` in the prompt — the `!` prefix runs the",
-  "command in this session so its output lands directly in the conversation.",
-].join(" ")
-
-describe("what the model is told about its environment", () => {
-  test("the system prompt describes the Sandbox, from the first request", async ($, on) => {
-    mock.env(on, sandbox)
-    engineSections(on)
-
-    const { sections } = await $.prompt.compose(composeInput)
-
-    const environment = sections.find((section) => section.id === "hub-link:sandbox-environment")
-    expect(environment?.scope).toBe("session")
-    expect(environment?.text).toContain("Primary working directory: /workspace")
-    expect(environment?.text).toContain("Is a git repository: true")
-    expect(environment?.text).toContain("Repository: acme/app")
-    expect(environment?.text).toContain("Work branch: claude/fix-login")
-    expect(environment?.text).toContain("Platform: linux")
-    expect(sections.map((section) => section.id)).toEqual([
-      "env_info_simple",
-      "hub-link:shared-session",
-      "hub-link:sandbox-environment",
-    ])
-  })
-
-  test("after Claude Code's advice to suggest `! <command>`, the system prompt says it's off", async ($, on) => {
-    mock.env(on, sandbox)
+describe("what the model is told", () => {
+  test("the system prompt says the Session is shared, after Claude Code's own", async ($, on) => {
     on("prompt.compose", () => ({
-      sections: [{ id: "session_guidance", text: bangGuidance, scope: "session" }],
+      sections: [{ id: "env_info_simple", text: "# Environment", scope: "session" }],
     }))
 
     const { sections } = await $.prompt.compose(composeInput)
 
     expect(sections.map((section) => section.id)).toEqual([
-      "session_guidance",
-      "hub-link:shared-session",
-      "hub-link:sandbox-environment",
-    ])
-    const shared = sections.find((section) => section.id === "hub-link:shared-session")
-    expect(shared?.text).toContain("`! <command>` prompt shortcut would run on that machine")
-    expect(shared?.text).toContain("run a command yourself with Bash, in the sandbox")
-  })
-
-  test("Claude Code's description of the host is left out", async ($, on) => {
-    mock.env(on, sandbox)
-    on("prompt.attachment", (_, e) => ({ text: e.text }))
-
-    const environment = await $.prompt.attachment({
-      type: "environment",
-      text: hostEnvironment,
-      origin: { kind: "engine" },
-    })
-    const date = await $.prompt.attachment({
-      type: "date_change",
-      text: "The date is now 2026-10-05.",
-      origin: { kind: "engine" },
-    })
-
-    expect(environment.text).toBeNull()
-    expect(date.text).toBe("The date is now 2026-10-05.")
-  })
-
-  test("outside a Runner, Claude Code's own environment stands", async ($, on) => {
-    mock.env(on, {})
-    engineSections(on)
-    on("prompt.attachment", (_, e) => ({ text: e.text }))
-
-    const { sections } = await $.prompt.compose(composeInput)
-    const environment = await $.prompt.attachment({
-      type: "environment",
-      text: hostEnvironment,
-      origin: { kind: "engine" },
-    })
-
-    expect(sections.map((section) => section.id)).toEqual([
       "env_info_simple",
       "hub-link:shared-session",
     ])
-    expect(environment.text).toBe(hostEnvironment)
-  })
-})
-
-const repoFiles = "/sessions/s1/repo"
-
-/** Answers `$.fs.read` from `files`, rejecting a path not among them as missing. */
-const fakeFiles = (on: On, files: Record<string, string>) => {
-  const read: Array<string> = []
-  on("fs.read", async (_, e) => {
-    read.push(e.path)
-    const text = files[e.path]
-    if (text === undefined) throw new Error(`ENOENT: no such file, open '${e.path}'`)
-    return { value: text }
-  })
-  return read
-}
-
-/** What Claude Code loaded from the host, as the engine hands it to `prompt.context`. */
-const hostInstructions = [
-  { path: "/etc/claude-code/CLAUDE.md", kind: "managed" as const, content: "Policy." },
-  { path: "/Users/ada/.claude/CLAUDE.md", kind: "user" as const, content: "Mine." },
-]
-
-/** Claude Code's own context: what it was handed. */
-const engineContext = (on: On) =>
-  on("prompt.context", (_, e) => ({
-    blocks: e.blocks,
-    ...(e.instructionFiles === undefined ? {} : { instructionFiles: e.instructionFiles }),
-  }))
-
-describe("the Repo's CLAUDE.md and skills (#125)", () => {
-  test("the Repo's instruction files stand in for the host's, but the managed policy", async ($, on) => {
-    mock.env(on, { ...sandbox, CLAUDE_HUB_REPO_FILES: repoFiles })
-    const read = fakeFiles(on, {
-      [`${repoFiles}/instructions.json`]: JSON.stringify({
-        instructions: [
-          { path: "/workspace/CLAUDE.md", content: "Use bun." },
-          { path: "/workspace/a.md", content: "A.", parent: "/workspace/CLAUDE.md" },
-        ],
-      }),
-    })
-
-    engineContext(on)
-    const context = await $.prompt.context({ blocks: [], instructionFiles: hostInstructions })
-
-    expect(read).toEqual([`${repoFiles}/instructions.json`])
-    expect(context.instructionFiles).toEqual([
-      { path: "/etc/claude-code/CLAUDE.md", kind: "managed", content: "Policy." },
-      { path: "/workspace/CLAUDE.md", kind: "project", content: "Use bun." },
-      { path: "/workspace/a.md", kind: "project", content: "A.", parent: "/workspace/CLAUDE.md" },
-    ])
-  })
-
-  test("without the Runner's list, the host's are still left out", async ($, on) => {
-    mock.env(on, { ...sandbox, CLAUDE_HUB_REPO_FILES: repoFiles })
-    fakeFiles(on, {})
-
-    engineContext(on)
-    const context = await $.prompt.context({ blocks: [], instructionFiles: hostInstructions })
-
-    expect(context.instructionFiles).toEqual([hostInstructions[0]])
-  })
-
-  test("outside a Runner, Claude Code's own instruction files stand", async ($, on) => {
-    mock.env(on, {})
-    const read = fakeFiles(on, {})
-
-    engineContext(on)
-    const context = await $.prompt.context({ blocks: [], instructionFiles: hostInstructions })
-
-    expect(read).toEqual([])
-    expect(context.instructionFiles).toEqual(hostInstructions)
-  })
-
-  test("instruction files a hook above made unknown stay unknown", async ($, on) => {
-    mock.env(on, { ...sandbox, CLAUDE_HUB_REPO_FILES: repoFiles })
-    const read = fakeFiles(on, {})
-    engineContext(on)
-
-    const context = await $.prompt.context({ blocks: [{ name: "claudeMd", text: "Rewritten." }] })
-
-    expect(read).toEqual([])
-    expect(context).toEqual({ blocks: [{ name: "claudeMd", text: "Rewritten." }] })
-  })
-
-  test("a Repo skill points at its directory in the Workspace", async ($, on) => {
-    mock.env(on, { ...sandbox, CLAUDE_HUB_REPO_FILES: repoFiles })
-    on("skill.prompt", (_, e) => ({ text: e.text }))
-
-    const { text } = await $.skill.prompt({
-      skill: "repo:deploy",
-      text: `Base directory for this skill: ${repoFiles}/.claude/skills/deploy\n\nShip it.`,
-    })
-
-    expect(text).toBe("Base directory for this skill: /workspace/.claude/skills/deploy\n\nShip it.")
+    const shared = sections.find((section) => section.id === "hub-link:shared-session")
+    expect(shared?.scope).toBe("session")
+    expect(shared?.text).toContain("shared through Claude Hub")
   })
 })

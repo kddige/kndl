@@ -137,10 +137,12 @@ export function parseCursorState(line: string | undefined): CursorState | undefi
 
 /**
  * Turns a `capture-pane -p -e` of the visible screen and the cursor into terminal output that
- * redraws that screen on a reset terminal of the same size.
+ * redraws that screen on a reset terminal of the same size. tmux carries attributes from one line
+ * into the next, sending only changes, so nothing resets them between lines: a background set on
+ * one line can colour the next.
  */
 export function renderSnapshot(lines: ReadonlyArray<string>, cursor: CursorState): string {
-  const screen = lines.slice(0, cursor.size.rows).join("\x1b[0m\r\n")
+  const screen = lines.slice(0, cursor.size.rows).join("\r\n")
   const show = cursor.isVisible ? "\x1b[?25h" : "\x1b[?25l"
   return `\x1b[0m\x1b[H\x1b[2J${screen}\x1b[0m\x1b[${cursor.y + 1};${cursor.x + 1}H${show}`
 }

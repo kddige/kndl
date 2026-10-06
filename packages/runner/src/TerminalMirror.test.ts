@@ -1,6 +1,7 @@
 // The terminal mirror end to end: a real Hub, a real Runner with real tmux, and a web client
 // over the Hub's WebSocket. The Session's "Claude Code" is a small Bun script, never `claude`;
-// the Workspace and Sandbox are faked. Skipped when tmux isn't installed.
+// the Workspace and Sandbox are faked, with tmux run on the host in the Sandbox's place. Skipped
+// when tmux isn't installed.
 
 import { afterAll, afterEach, describe, expect, test } from "bun:test"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
@@ -28,14 +29,16 @@ import { HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
+import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { SessionsLive } from "./Sessions.ts"
 import {
   FakeCredentialProxy,
   FakeSandboxes,
   FakeWorkspaceGit,
   FakeWorkspaces,
+  hostTmuxBackend,
 } from "./testSupport.ts"
-import { TmuxLive } from "./Tmux.ts"
+import { makeTmux, Tmux } from "./Tmux.ts"
 import { Updater } from "./Updater.ts"
 
 const tmuxSocket = `claude-hub-mirror-test-${process.pid}`
@@ -180,9 +183,17 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
     Layer.provideMerge(ClaudeTrustLive(claudeConfig)),
     Layer.provideMerge(StaticClaudeModels(undefined)),
     Layer.provide([
-      TmuxLive,
+      Layer.succeed(
+        Tmux,
+        Tmux.of({
+          ...makeTmux(
+            hostTmuxBackend({ socket: tmuxSocket, paths: { [workspaceGuestPath]: dir } }),
+          ),
+          retireHostServer: Effect.void,
+        }),
+      ),
       new FakeWorkspaces(sessionsRoot).layer,
-      new FakeSandboxes().layer,
+      new FakeSandboxes(fakeClaude).layer,
       new FakeWorkspaceGit().layer,
       proxy.layer,
     ]),

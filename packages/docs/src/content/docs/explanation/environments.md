@@ -19,9 +19,10 @@ A **Build** is one version made ready on one Runner. The first time a Session ne
 
 1. It boots a Sandbox from the Environment's image, without the Workspace.
 2. It installs Docker, if the Environment turns it on.
-3. It runs the Bootstrap script, with the Variables available at build.
-4. It reads the Login environment (below).
-5. It saves the Sandbox's disk as a microsandbox snapshot, and removes the Sandbox.
+3. It installs tmux and bash with the image's package manager, if the image lacks them: Claude Code runs in tmux, 3.2 or later, and its Bash tool needs bash.
+4. It runs the Bootstrap script, with the Variables available at build.
+5. It reads the Login environment (below).
+6. It saves the Sandbox's disk as a microsandbox snapshot, and removes the Sandbox.
 
 Sessions then boot from that snapshot in a fraction of a second, each adding only its own writes on top. A failed Build fails the Session's start, with the end of the script's output.
 
@@ -50,7 +51,7 @@ Installers such as mise, rustup, nvm and bun's put themselves on `PATH` through 
 
 - After the Bootstrap script, the Build runs one interactive login shell, `bash -lic` (`sh -lc` on an image without bash), and keeps the environment it ends with in the Build, at `/var/lib/claude-hub/login-env.json`.
 - Each new Sandbox probes again in `/workspace` once its Start script has run, so tools set up by the Repo's own files, such as a `mise.toml`, are picked up too.
-- The Start script and `claude mcp serve`, and through it every tool Claude runs, get that environment, with the Environment's Variables over it.
+- The Start script and Claude Code, and so every command Claude runs, get that environment, with the Environment's Variables over it.
 
 The probe runs with no Variable in its environment, so it captures no value. A login shell that fails, or takes more than 60 seconds, fails the Build with the end of its output. Scripts without a `#!` line run with `bash -e` where the image has bash, and `sh -e` otherwise.
 

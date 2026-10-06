@@ -20,7 +20,7 @@ See [the Environment won't open](/troubleshooting/sessions/#the-environment-wont
 
 **Image** is the OCI image every Sandbox of the Repo starts from. The default, `buildpack-deps:bookworm`, is Debian with curl, git, a compiler and the usual `-dev` libraries, which is enough for most stacks once the bootstrap adds a language runtime.
 
-The image can be Debian-like (glibc) or Alpine-like (musl): the build checks which, and gives the Sandbox the matching build of Claude Code's tool server.
+The image can be Debian-like (glibc) or Alpine-like (musl): the build checks which, and gives the Sandbox the matching build of Claude Code. It needs tmux 3.2 or later and bash, which the build installs with the image's package manager (apk, apt-get, dnf or yum) when the image lacks them.
 
 ## Write the Bootstrap script
 

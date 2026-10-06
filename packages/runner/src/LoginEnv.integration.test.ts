@@ -1,11 +1,12 @@
 // An Environment's login environment (#67) on a real microsandbox VM, so it is skipped unless
 // CLAUDE_HUB_SANDBOX_IT=1: a build on buildpack-deps:bookworm whose bootstrap installs mise, puts
 // its activation in ~/.bashrc and installs bun with it, then a Session whose start script and
-// whose tool bridge both find `bun` with nothing else done, and a stored probe that holds no
-// variable's value; then a Test build on Alpine, which has no bash. It needs `msb` installed for the current user and network access to Docker
-// Hub, mise.run and GitHub (for mise and bun), and to npm the first time a Claude Code version
-// is cached. It runs only `claude mcp serve` in the VM: no model calls, no credentials; the
-// variables are made up. Everything it creates is named it-67-… and removed at the end, pass or
+// whose Claude Code's environment both find `bun` with nothing else done, and a stored probe that
+// holds no variable's value; then a Test build on Alpine, which has no bash. It needs `msb`
+// installed for the current user and network access to Docker Hub, mise.run and GitHub (for mise
+// and bun), and to npm the first time a Claude Code version is cached. It runs no Claude Code,
+// only shell commands with the environment Claude Code would get: no model calls, no
+// credentials; the variables are made up. Everything it creates is named it-67-… and removed at the end, pass or
 // fail.
 //
 //   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/LoginEnv.integration.test.ts
@@ -20,7 +21,6 @@ import type {
   RunnerToHub,
   SessionId,
   TestBuildId,
-  ToolBridgeReply,
 } from "@claude-hub/protocol"
 import { EnvironmentVersion } from "@claude-hub/protocol"
 import { devHome } from "@claude-hub/protocol/home"
@@ -29,9 +29,11 @@ import { Sandbox, Snapshot, Volume } from "microsandbox"
 import { loginEnvGuestPath, readLoginEnv } from "./EnvironmentBuilds.ts"
 import { HubLink } from "./HubLink.ts"
 import { Sandboxes } from "./Sandbox.ts"
+import type { SandboxClaude } from "./Sandbox.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
-import { ensureSandboxClaude, hostClaudeVersion } from "./sandbox/SandboxClaude.ts"
+import { ensureSandboxClaude, PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
+import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { FakeHubVariables, variable } from "./testSupport.ts"
@@ -46,6 +48,8 @@ const repo = "acme/it-67" as RepoName
 const version = (n: number) => Schema.decodeSync(EnvironmentVersion)(n)
 const buildValue = "it67-build-made-up-5d1c"
 const runtimeValue = "it67-runtime-made-up-b84e"
+/** The mod in this checkout, which every Sandbox mounts. */
+const modDir = join(import.meta.dir, "..", "..", "mod")
 
 const timings: Array<[string, number]> = []
 const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
@@ -57,22 +61,17 @@ const timed = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
     }),
   )
 
-/** Runs `command` with the Session's Bash tool, through its bridge, as Claude Code would. */
-const bash = (socket: string, command: string) =>
+/** Runs `command` in the Session's Sandbox with Claude Code's environment, in the Workspace. */
+const bash = (sessionId: SessionId, claude: SandboxClaude, command: string) =>
   Effect.gen(function* () {
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const reply = yield* Effect.promise(async () => {
-        const response = await fetch("http://bridge/tools/call", {
-          method: "POST",
-          unix: socket,
-          body: JSON.stringify({ tool: "Bash", input: { command } }),
-        })
-        return (await response.json()) as ToolBridgeReply
-      })
-      if (reply._tag === "ToolRan") return JSON.stringify(reply.result)
-      yield* Effect.sleep("200 millis")
-    }
-    return yield* Effect.die(new Error(`Bash never ran: ${command}`))
+    const backend = yield* SandboxBackend
+    const ran = yield* backend.exec(sessionId, {
+      command: "bash",
+      args: ["-c", command],
+      cwd: workspaceGuestPath,
+      env: claude.env,
+    })
+    return ran.stdout + ran.stderr
   })
 
 const ours = <A extends { readonly name: string | null }>(items: ReadonlyArray<A>) =>
@@ -112,7 +111,6 @@ const recipe: EnvironmentRecipe = {
     "curl -fsSL https://mise.run | sh",
     `echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc`,
     `echo 'export IT67_SEEN="[$BUILD_ONLY][$RUNTIME_ONLY]"' >> ~/.bashrc`,
-    `echo 'it67_function() { echo "from the bashrc"; }' >> ~/.bashrc`,
     "~/.local/bin/mise use -g bun@latest",
     'echo "bootstrap saw [$BUILD_ONLY]"',
   ].join("\n"),
@@ -151,7 +149,6 @@ test.skipIf(!enabled)(
     const root = await mkdtemp(join(tmpdir(), "it-67-"))
     const directories = sessionDirectories(root, sessionId)
     await mkdir(directories.workspace, { recursive: true })
-    await mkdir(directories.claude, { recursive: true })
     await writeFile(join(directories.workspace, "package.json"), '{"name":"app"}\n')
     const cacheDir = process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(devHome.dir, "claude-code")
     const sent: Array<RunnerToHub> = []
@@ -162,12 +159,11 @@ test.skipIf(!enabled)(
 
     const program = Effect.gen(function* () {
       const sandboxes = yield* Sandboxes
-      const socket = directories.toolsSocket
       const v1 = { version: version(1), buildVersion: version(1), recipe }
 
       // The first start builds, probes the login shell, boots from the build and runs the start
       // script with what the probe found.
-      yield* timed(
+      const started = yield* timed(
         "first start (build + probe + restore + start script)",
         sandboxes.start(sessionId, directories, { repo, environment: v1 }),
       )
@@ -177,19 +173,18 @@ test.skipIf(!enabled)(
       expect(terminal).toContain("start saw the runtime variable")
       expect(terminal).toMatch(/start bun \d+\.\d+\.\d+ at \/root\/\.local\/share\/mise\//)
 
-      // The tool bridge's Bash tool finds bun too, and the variables.
+      // Claude Code's environment finds bun too, and the variables. (Its Bash tool also sources
+      // ~/.bashrc for the functions there itself.)
       const tool = yield* timed(
-        "Bash through the bridge: bun --version",
-        bash(socket, 'echo "tool bun $(bun --version) [$RUNTIME_ONLY]"; it67_function'),
+        "Bash with Claude Code's environment: bun --version",
+        bash(sessionId, started.claude, 'echo "tool bun $(bun --version) [$RUNTIME_ONLY]"'),
       )
       expect(tool).toMatch(/tool bun \d+\.\d+\.\d+/)
       expect(tool).toContain(`[${runtimeValue}]`)
-      // Claude Code's Bash tool sources ~/.bashrc for its functions itself.
-      expect(tool).toContain("from the bashrc")
 
       // The stored probe ran with no variable: the ~/.bashrc line saw neither, and no value is
       // anywhere in it.
-      const stored = yield* bash(socket, `cat ${loginEnvGuestPath}`)
+      const stored = yield* bash(sessionId, started.claude, `cat ${loginEnvGuestPath}`)
       expect(stored).toContain("IT67_SEEN")
       expect(stored).toContain("[][]")
       expect(stored).toContain("mise")
@@ -200,11 +195,11 @@ test.skipIf(!enabled)(
 
       // A wake on the same version keeps the probe and the tools still find bun.
       yield* timed("sleep", sandboxes.stop(sessionId, "Sleep"))
-      yield* timed(
+      const woken = yield* timed(
         "wake, same version",
         sandboxes.start(sessionId, directories, { repo, environment: v1 }),
       )
-      expect(yield* bash(socket, "bun --version")).toMatch(/\d+\.\d+\.\d+/)
+      expect(yield* bash(sessionId, woken.claude, "bun --version")).toMatch(/\d+\.\d+\.\d+/)
 
       // A Sandbox of a build made before builds kept a login environment reads as having none.
       const backend = yield* SandboxBackend
@@ -249,10 +244,11 @@ test.skipIf(!enabled)(
         sandboxClaude: (libc) =>
           timed(
             `find or cache Claude Code (${libc})`,
-            hostClaudeVersion("claude").pipe(
-              Effect.tap((v) => ensureSandboxClaude({ cacheDir, version: v, libc })),
+            ensureSandboxClaude({ cacheDir, version: PinnedClaudeVersion, libc }).pipe(
+              Effect.as(PinnedClaudeVersion),
             ),
           ),
+        modDir,
         limits: { cpus: 2, memoryMib: 2048 },
         keepBuilds: 2,
         cloneDefaultBranch: (_repo, directory) =>

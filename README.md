@@ -16,8 +16,8 @@ claude-hub is early: v1 is being built, and things change quickly.
 ## How it works
 
 - The **Hub** keeps the Sessions, signs people in with GitHub, and serves the web UI.
-- A **Runner**, on each machine that runs Sessions, starts each Session's Claude Code in tmux, signed in with that machine's own Claude account.
-- Claude's tools run in the Session's **Sandbox**, a microsandbox microVM built from its Repo's **Environment**, so nothing Claude runs touches the host.
+- A **Runner**, on each machine that runs Sessions, starts each Session's Claude Code in tmux in the Session's **Sandbox**, a microsandbox microVM built from its Repo's **Environment**, so nothing Claude runs touches the host.
+- The Sandbox never holds a Claude credential: the Runner's credential proxy adds its Creator's, or else the Runner's own, to each request on its way to Anthropic.
 - Everyone signed in sees each Session live, prompts it, and can type into its terminal.
 
 The words used here are defined in [`GLOSSARY.md`](GLOSSARY.md), and the design decisions are recorded in [`docs/adr/`](docs/adr/). Both are also on the site.
@@ -57,7 +57,7 @@ One Bun workspace in TypeScript, with [Effect](https://effect.website):
 |---|---|
 | [`packages/protocol`](packages/protocol) | The messages the Hub, Runners, the mod and the web UI exchange, as Effect Schemas. |
 | [`packages/hub`](packages/hub) | The Hub: an Effect HTTP server on Bun, with SQLite. |
-| [`packages/runner`](packages/runner) | A Runner: Claude Code in tmux, its tools in a microsandbox Sandbox. |
+| [`packages/runner`](packages/runner) | A Runner: Claude Code in tmux in a microsandbox Sandbox, behind a credential proxy. |
 | [`packages/cli`](packages/cli) | The `claude-hub` command: installs, runs and looks after a Hub and Runner as services. |
 | [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod each Session loads. |
 | [`packages/web`](packages/web) | The web UI: React on Vite, Base UI and StyleX. |

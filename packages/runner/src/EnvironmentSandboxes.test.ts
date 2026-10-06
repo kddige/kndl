@@ -39,15 +39,7 @@ import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import type { SessionSandboxesOptions } from "./SessionSandboxes.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
-import {
-  echoTools,
-  FakeHubVariables,
-  fakeMcpServer,
-  sandboxesDefaults,
-  sessionId,
-  variable,
-  waitFor,
-} from "./testSupport.ts"
+import { FakeHubVariables, sandboxesDefaults, sessionId, variable } from "./testSupport.ts"
 
 const s1 = sessionId("s-1")
 const s2 = sessionId("s-2")
@@ -131,6 +123,7 @@ const withEnvironments = async (
   } = {},
 ) => {
   const root = await mkdtemp(join(tmpdir(), "claude-hub-environments-"))
+  await mkdir(join(root, "mod"))
   const sent: Array<RunnerToHub> = []
   const variables =
     options.variables ??
@@ -149,16 +142,15 @@ const withEnvironments = async (
       image: "docker:dind",
       claudeCacheDir: join(root, "claude-code"),
       sandboxClaude: () => Effect.succeed("2.1.287"),
+      modDir: join(root, "mod"),
       ...sandboxesDefaults,
       scratchDir: join(root, "scratch"),
-      bridge: { readyTimeout: "2 seconds", restartDelay: () => "10 millis" },
       ...options.sandboxes,
     }),
   )
   const onExec = options.onExec
   const backend = FakeSandboxBackend.layer({
     checkHostPaths: true,
-    onSpawn: (_call, io) => fakeMcpServer(echoTools)(io),
     onExec: (call) =>
       Effect.succeed(
         onExec?.(call) ??
@@ -187,7 +179,6 @@ const directoriesIn = (root: string, id = s1) =>
   Effect.promise(async () => {
     const directories = sessionDirectories(root, id)
     await mkdir(directories.workspace, { recursive: true })
-    await mkdir(directories.claude, { recursive: true })
     await writeFile(join(directories.workspace, "package.json"), "{}\n")
     return directories
   })
@@ -216,7 +207,7 @@ describe("Sandboxes from an Environment", () => {
           repo,
           environment: environment(1),
         })
-        expect(started).toEqual({ environmentVersion: version(1) })
+        expect(started).toMatchObject({ environmentVersion: version(1) })
         expect(variables.asked).toEqual([{ _tag: "Session", sessionId: s1 }])
 
         // The bootstrap ran without the Workspace, and got only the variables available at build.
@@ -292,7 +283,7 @@ describe("Sandboxes from an Environment", () => {
           repo,
           environment: environment(1),
         })
-        expect(started).toEqual({ environmentVersion: version(1) })
+        expect(started).toMatchObject({ environmentVersion: version(1) })
         expect(world.restores).toHaveLength(1)
         expect(world.sandboxes.get(s1)?.spec.mounts).toContainEqual(
           expect.objectContaining({
@@ -406,20 +397,21 @@ describe("Sandboxes from an Environment", () => {
       },
     ))
 
-  test("the tool bridge's processes get the variables, and run the libc's Claude Code", () =>
+  test("Claude Code gets the variables, and is the libc's build", () =>
     withEnvironments(
       ({ root }) =>
         Effect.gen(function* () {
           const sandboxes = yield* Sandboxes
           const world = yield* FakeSandboxBackend
           const directories = yield* directoriesIn(root)
-          yield* sandboxes.start(s1, directories, { repo, environment: environment(1) })
+          const { claude } = yield* sandboxes.start(s1, directories, {
+            repo,
+            environment: environment(1),
+          })
 
-          yield* waitFor(Effect.sync(() => world.spawnCalls.some((c) => c.sessionId === s1)))
-          const serve = world.spawnCalls.find((call) => call.sessionId === s1)
-          expect(serve?.request.command).toBe(sandboxClaudePath("2.1.287", "glibc"))
+          expect(claude.path).toBe(sandboxClaudePath("2.1.287", "glibc"))
           // The login environment probed in the Workspace, under the variables.
-          expect(serve?.request.env).toMatchObject({
+          expect(claude.env).toMatchObject({
             PATH: "/root/.local/share/mise/shims:/root/.local/bin:/workspace/bin:/usr/bin:/bin",
             MISE_SHELL: "bash",
             NPM_TOKEN: "npm-made-up",
@@ -574,7 +566,7 @@ describe("Sandboxes from an Environment", () => {
           repo,
           environment: environment(2, { bootstrapScript: "npm install -g pnpm@9" }),
         })
-        expect(started).toEqual({ environmentVersion: version(2) })
+        expect(started).toMatchObject({ environmentVersion: version(2) })
         expect(world.execCalls.filter(isScript("bootstrap"))).toHaveLength(2)
         expect(world.restores.at(-1)?.reference).toContain(buildName(2, "musl"))
         expect([...world.volumes.keys()].toSorted()).toEqual(volumes)
@@ -590,26 +582,12 @@ describe("Sandboxes from an Environment", () => {
         const directories = yield* directoriesIn(root)
         yield* sandboxes.start(s1, directories, { repo, environment: environment(1) })
         yield* sandboxes.stop(s1, "Sleep")
-        expect(yield* sandboxes.start(s1, directories, { repo })).toEqual({})
+        expect(yield* sandboxes.start(s1, directories, { repo })).not.toHaveProperty(
+          "environmentVersion",
+        )
         expect(world.sandboxes.get(s1)?.spec.image).toBe("docker:dind")
         const files = yield* Effect.promise(() => readdir(directories.session))
         expect(files).not.toContain("sandbox.json")
-      }),
-    ))
-
-  test("a re-adopted Session's Sandbox comes back as it was recorded", () =>
-    withEnvironments(({ root }) =>
-      Effect.gen(function* () {
-        const sandboxes = yield* Sandboxes
-        const world = yield* FakeSandboxBackend
-        const directories = yield* directoriesIn(root)
-        yield* sandboxes.start(s1, directories, { repo, environment: environment(3) })
-        yield* sandboxes.stop(s1, "Sleep")
-        expect(yield* sandboxes.start(s1, directories)).toEqual({
-          environmentVersion: version(3),
-        })
-        expect(world.sandboxes.get(s1)?.state).toBe("Running")
-        expect(world.restores).toHaveLength(1)
       }),
     ))
 
@@ -641,7 +619,9 @@ describe("Sandboxes from an Environment", () => {
       Effect.gen(function* () {
         const sandboxes = yield* Sandboxes
         const world = yield* FakeSandboxBackend
-        expect(yield* sandboxes.start(s1, yield* directoriesIn(root), { repo })).toEqual({})
+        expect(yield* sandboxes.start(s1, yield* directoriesIn(root), { repo })).not.toHaveProperty(
+          "environmentVersion",
+        )
         expect(world.sandboxes.get(s1)?.spec.image).toBe("docker:dind")
         expect(world.snapshots.size).toBe(0)
         expect(variables.asked).toEqual([])

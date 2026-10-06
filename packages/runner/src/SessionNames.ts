@@ -1,6 +1,5 @@
 import { join } from "node:path"
-import { SessionId } from "@claude-hub/protocol"
-import { Schema } from "effect"
+import type { SessionId } from "@claude-hub/protocol"
 
 // A Session's id names its directory and its tmux session, so only ids that are safe in both are
 // accepted. The Hub mints the ids; anything else is refused when the Session starts.
@@ -15,13 +14,6 @@ const TmuxPrefix = "hub-"
 
 export function tmuxSessionName(id: SessionId): string {
   return `${TmuxPrefix}${id}`
-}
-
-/** The Session a tmux session belongs to, or `undefined` for a tmux session that isn't one. */
-export function sessionIdOfTmuxName(name: string): SessionId | undefined {
-  if (!name.startsWith(TmuxPrefix)) return undefined
-  const id = name.slice(TmuxPrefix.length)
-  return isSafeSessionId(id) ? Schema.decodeSync(SessionId)(id) : undefined
 }
 
 /** Where a Session's files live under the sessions root. */

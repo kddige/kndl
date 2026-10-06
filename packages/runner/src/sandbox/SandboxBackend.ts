@@ -32,8 +32,9 @@ export interface HostMount {
 
 /**
  * A disk volume that belongs to the Session: created on first use, kept across stop, start and
- * a destroy that keeps volumes, and removed with the Session's other volumes on destroy. Used for
- * dependency directories, package caches and Docker's data, which are slow on a host mount.
+ * a destroy that keeps it, and removed with the Session's other volumes on destroy. Used for
+ * dependency directories, package caches, Docker's data and Claude Code's state, which are slow on
+ * a host mount or belong to the Session alone.
  */
 export interface VolumeMount {
   readonly _tag: "Volume"
@@ -246,12 +247,13 @@ export interface SandboxBackendShape {
    */
   readonly stop: (sessionId: SessionId) => Effect.Effect<void, SandboxError>
   /**
-   * Stops and removes the Session's Sandbox and, unless `keepVolumes`, its volumes. Never touches
-   * host mounts. Succeeds when there is nothing left to remove.
+   * Stops and removes the Session's Sandbox and its volumes, but those `keepVolumes` names by key,
+   * or all of them when it is `true`. Never touches host mounts. Succeeds when there is nothing
+   * left to remove.
    */
   readonly destroy: (
     sessionId: SessionId,
-    options?: { readonly keepVolumes?: boolean },
+    options?: { readonly keepVolumes?: true | ReadonlyArray<string> },
   ) => Effect.Effect<void, SandboxError>
   /** Where the Session's Sandbox is: `Destroyed` when it has none. */
   readonly state: (sessionId: SessionId) => Effect.Effect<SandboxState, SandboxError>

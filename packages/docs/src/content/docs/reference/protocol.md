@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-Everything goes through the Hub: Runners, browsers and each Session's mod all connect to it, and never to each other. The messages are [Effect Schemas](https://effect.website/docs/schema/introduction/) in `packages/protocol`, which every package builds against.
+Everything goes through the Hub: Runners, browsers and each Session's mod, by way of its Runner, all connect to it, and never to each other. The messages are [Effect Schemas](https://effect.website/docs/schema/introduction/) in `packages/protocol`, which every package builds against.
 
 ## Endpoints
 
@@ -29,7 +29,7 @@ The Hub mints three kinds of token, each `<kind>_<id>.<secret>`, and stores only
 | Prefix | Token | Issued |
 |---|---|---|
 | `chr_` | Runner token | when a Pairing code is redeemed, or by `claude-hub runner token`; one per Runner |
-| `chm_` | mod token | by the Hub for each run of a Session's Claude Code, and passed to it as `CLAUDE_HUB_MOD_TOKEN` |
+| `chm_` | mod token | by the Hub for each run of a Session's Claude Code, and kept by its Runner's [credential proxy](/explanation/security-model/#the-credential-proxy), which relays the mod's calls with it |
 | `chs_` | sign-in token | at sign-in, in the `claude_hub_sign_in` cookie |
 
 ## Handshake
@@ -144,7 +144,7 @@ Every Session and Environment command is checked against the person's access to 
 
 ## Mod channel: `/mod/*`
 
-Plain HTTP from the `hub-link` mod inside each Session's Claude Code:
+Plain HTTP from the `hub-link` mod inside each Session's Claude Code, in its Sandbox. The mod sends it to its Runner's credential proxy with the Session token, and the proxy relays it to the Hub with the mod token:
 
 - `POST /mod/hello` once at start, answered with `ModWelcome`.
 - `POST /mod/events` with the Session's Events as they happen: prompts, tool calls and results, Turn starts and ends.
@@ -169,30 +169,3 @@ A Session's mod registers these tools for Claude, unless the Session is a Child 
 Each `child` is a `ChildSummary`: `id`, `title`, `baseBranch`, `workBranch`, `state`, `working` (a Turn is running), `queued` (prompts in its Prompt queue) and, once a Turn has ended, `lastReport` with its `text` and `at`.
 
 Any request can get `ChildRefused { message }` instead: from a Child Session ("A Child Session can't create Child Sessions of its own: Sessions nest one level deep. …"), for a Session that isn't one of the caller's Child Sessions, or for a Creator who can't use the Repo. `MessageParent` is refused from a Session that isn't a Child Session ("This Session isn't a Child Session: it has no Parent Session to message.") and when the Parent Session is Archived or gone. When the Parent Session is Asleep and can't wake, the message stays in its Prompt queue and the reply is a `ChildRefused` that says so. The Hub checks `create_child` against the Parent Session's Creator's access to the Repo.
-
-## Tool bridge
-
-Claude Code runs on the Runner's host; its tools run in the Sandbox ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/)). The mod sends each tool call over the Session's Unix socket, `CLAUDE_HUB_TOOLS_SOCKET`, to the Runner, which runs it in the Sandbox through `claude mcp serve` started there. This channel never touches the Hub.
-
-A call can outlast one request (Claude Code's fetch gives up after 30 seconds), so the mod starts it under its own `callId` and then waits for it in steps:
-
-| Request | Answer |
-|---|---|
-| `POST /tools/calls?waitMs=<ms>` with `{"callId", "tool", "input"}` | Starts the call, then waits up to `waitMs` (at most 20000) for it to end. Starting a `callId` the bridge already knows starts nothing and waits for that call, so the mod can send it again after a failed request. |
-| `GET /tools/calls/<callId>?waitMs=<ms>` | Waits up to `waitMs` for the call to end. |
-| `DELETE /tools/calls/<callId>` | Cancels the call: the bridge sends the tool server `notifications/cancelled`, and it kills the command. Answers the result if the call had already ended. |
-| `POST /tools/call` with `{"tool", "input"}` | The one request mods used before these, kept so a mod loaded before its Runner was updated still works. It waits for the call to end, so a call over 30 seconds still fails for that mod. |
-
-Each answers one of:
-
-| Reply | Status | Meaning |
-|---|---|---|
-| `ToolRan` | 200 | It ran; `result` is the tool's own output. |
-| `ToolFailed` | 200 | It ran and reported an error, such as a command that exited non-zero. |
-| `ToolRunning` | 202 | Still running: ask again with `GET`. |
-| `ToolLost` | 200, or 404 for a `callId` the bridge doesn't know | It was sent to the Sandbox but has no result and never will: cancelled, or the tool server or Sandbox stopped. It may have run, wholly or in part. `POST /tools/call` answers this as `ToolFailed`, saying it may have run. |
-| `BridgeUnavailable` | 503 | The Sandbox or its tool server is down, so the call didn't run. |
-
-`callId` is 1 to 128 letters, digits, `_`, `.` and `-`; the mod makes it from Claude Code's tool use id. The bridge cancels a call that nothing has asked about for 30 seconds, and every running call when the Sandbox stops. A Runner from before these answers `404` to `POST /tools/calls`, and the mod then falls back to `POST /tools/call`.
-
-The mod refuses the tool call whenever it doesn't get `ToolRan` or `ToolFailed`, so a tool never runs on the host. It says the call did not run only on `BridgeUnavailable`, or when it never reached the bridge; otherwise it says the call may have run.

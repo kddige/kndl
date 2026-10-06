@@ -1,126 +1,32 @@
-// Runs a harmless shell script in real tmux. Skipped when tmux isn't installed.
+// Runs a harmless shell script in real tmux, on the host standing in for a Sandbox. Skipped when
+// tmux isn't installed.
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { BunServices } from "@effect/platform-bun"
 import { Effect, Fiber, Layer, Redacted, Stream } from "effect"
 import { RunnerConfig } from "./RunnerConfig.ts"
-import { sessionId, waitFor } from "./testSupport.ts"
-import {
-  environmentChanges,
-  lastOutputOf,
-  type PaneEvent,
-  paneEnvironment,
-  parseServerEnvironment,
-  Tmux,
-  TmuxLive,
-} from "./Tmux.ts"
+import { FakeSandboxBackend } from "./sandbox/FakeSandboxBackend.ts"
+import { hostTmuxBackend, sessionId, waitFor } from "./testSupport.ts"
+import { lastOutputOf, makeTmux, type PaneEvent, Tmux, TmuxLive } from "./Tmux.ts"
 
 const socket = `claude-hub-test-${process.pid}`
+const hostSocket = `claude-hub-test-${process.pid}-host`
 
 const tmuxMissing = Bun.which("tmux") === null
 // Bun doesn't say why a test was skipped, so this does.
-if (tmuxMissing) console.warn("Skipping the TmuxLive tests: tmux isn't installed")
-
-const tmuxOn = (tmuxSocket: string) =>
-  TmuxLive.pipe(
-    Layer.provide(
-      Layer.succeed(
-        RunnerConfig,
-        RunnerConfig.of({
-          hubUrl: new URL("http://hub.test"),
-          name: "test",
-          token: Redacted.make("token"),
-          login: undefined,
-          sessionsRoot: tmpdir(),
-          modDir: tmpdir(),
-          claudeBin: "claude",
-          tmuxSocket,
-          repoUrlTemplate: "{repo}",
-        }),
-      ),
-    ),
-    Layer.provide(BunServices.layer),
-  )
-
-const TestTmux = tmuxOn(socket)
-
-/** Sockets of servers a test started itself, as another process would have, to stop after. */
-const foreignSockets: Array<string> = []
+if (tmuxMissing) console.warn("Skipping the tmux tests: tmux isn't installed")
 
 afterAll(() => {
   if (tmuxMissing) return
-  for (const name of [socket, ...foreignSockets]) Bun.spawnSync(["tmux", "-L", name, "kill-server"])
+  for (const name of [socket, hostSocket]) Bun.spawnSync(["tmux", "-L", name, "kill-server"])
 })
 
-/**
- * Starts a tmux server on a socket of its own the way a Runner run from a checkout since deleted
- * left one (#105): its global environment has `PWD` set to a directory that no longer exists and
- * an old `PATH`. With `session`, it keeps a session that isn't a Session's.
- */
-function foreignServer(options: { readonly session: boolean }): {
-  readonly socket: string
-  readonly deleted: string
-} {
-  const name = `claude-hub-test-${process.pid}-foreign-${foreignSockets.length}`
-  foreignSockets.push(name)
-  const deleted = realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-deleted-checkout-")))
-  const env: Record<string, string | undefined> = {
-    ...process.env,
-    PWD: deleted,
-    OLDPWD: deleted,
-    PATH: `${deleted}/bin:/usr/bin:/bin`,
-  }
-  delete env.TMUX
-  const command = options.session
-    ? ["new-session", "-d", "-s", "elsewhere", "sleep 600"]
-    : ["start-server", ";", "set-option", "-g", "exit-empty", "off"]
-  const started = Bun.spawnSync([Bun.which("tmux") ?? "tmux", "-L", name, ...command], {
-    cwd: deleted,
-    env,
-  })
-  if (started.exitCode !== 0) throw new Error(`tmux: ${started.stderr.toString()}`)
-  rmSync(deleted, { recursive: true })
-  return { socket: name, deleted }
-}
+const hostBackend = hostTmuxBackend({ socket })
 
-function serverEnvironment(on: string): Record<string, string> {
-  const shown = Bun.spawnSync(["tmux", "-L", on, "show-environment", "-g"])
-  return parseServerEnvironment(shown.stdout.toString())
-}
-
-describe("paneEnvironment", () => {
-  test("sets PWD to the directory it starts in and PATH to the Runner's", () => {
-    expect(
-      paneEnvironment({ cwd: "/sessions/s-1/claude", env: { GREETING: "hi" } }, "/runner/bin"),
-    ).toEqual({ PATH: "/runner/bin", GREETING: "hi", PWD: "/sessions/s-1/claude" })
-  })
-
-  test("lets a launch's own PATH win, but never its PWD", () => {
-    expect(
-      paneEnvironment({ cwd: "/here", env: { PATH: "/own/bin", PWD: "/there" } }, "/runner/bin"),
-    ).toEqual({ PATH: "/own/bin", PWD: "/here" })
-  })
-})
-
-describe("the tmux server's environment", () => {
-  test("is read from show-environment, without the variables it lists as unset", () => {
-    expect(parseServerEnvironment("PATH=/usr/bin:/bin\n-OLDPWD\nPWD=/gone\nEMPTY=\n")).toEqual({
-      PATH: "/usr/bin:/bin",
-      PWD: "/gone",
-      EMPTY: "",
-    })
-  })
-
-  test("says what refreshing it to the Runner's changes", () => {
-    expect(environmentChanges({ PATH: "/old/bin", PWD: "/gone" }, "/runner/bin")).toEqual([
-      "PATH was /old/bin",
-      "PWD was /gone",
-    ])
-    expect(environmentChanges({ PATH: "/runner/bin" }, "/runner/bin")).toEqual([])
-  })
-})
+const TestTmux = Layer.succeed(
+  Tmux,
+  Tmux.of({ ...makeTmux(hostBackend), retireHostServer: Effect.void }),
+)
 
 describe("lastOutputOf", () => {
   test("keeps the end of what the pane shows as plain text", () => {
@@ -143,7 +49,7 @@ describe("lastOutputOf", () => {
   })
 })
 
-describe.skipIf(tmuxMissing)("TmuxLive", () => {
+describe.skipIf(tmuxMissing)("makeTmux", () => {
   test("runs a command in tmux, streams its terminal and reports its exit", async () => {
     const id = sessionId("tmux-1")
     // Prints its arguments (an empty one, and one ending in `;`) and an env var, echoes one line
@@ -160,7 +66,6 @@ describe.skipIf(tmuxMissing)("TmuxLive", () => {
         env: { GREETING: "hello" },
         size: { cols: 60, rows: 10 },
       })
-      expect(yield* tmux.list).toContain(id)
 
       const events: Array<PaneEvent> = []
       const pane = yield* tmux.attach(id)
@@ -205,9 +110,7 @@ describe.skipIf(tmuxMissing)("TmuxLive", () => {
 
       yield* Fiber.join(pump)
       expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 7 })
-
       yield* tmux.kill(id)
-      expect(yield* tmux.list).not.toContain(id)
     })
 
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
@@ -225,8 +128,7 @@ describe.skipIf(tmuxMissing)("TmuxLive", () => {
         size: { cols: 40, rows: 5 },
       })
       yield* Effect.sleep("300 millis")
-      // The dead pane is kept, so a restarted Runner still finds the Session and its exit status.
-      expect(yield* tmux.list).toContain(id)
+      // The dead pane is kept, so its exit status can still be read.
       const pane = yield* tmux.attach(id)
       const events = yield* pane.events.pipe(Stream.runCollect)
       expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 3 })
@@ -236,8 +138,43 @@ describe.skipIf(tmuxMissing)("TmuxLive", () => {
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
   }, 15_000)
 
-  test("keeps what a process printed before it exited, for after it is gone", async () => {
+  test("terminates the process with SIGTERM, in the terminal's own Sandbox", async () => {
     const id = sessionId("tmux-3")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      yield* tmux.launch({
+        sessionId: id,
+        cwd: tmpdir(),
+        argv: ["sh", "-c", 'trap "exit 5" TERM; echo up; while :; do sleep 0.1; done'],
+        env: {},
+        size: { cols: 40, rows: 5 },
+      })
+      const pane = yield* tmux.attach(id)
+      const events: Array<PaneEvent> = []
+      const pump = yield* pane.events.pipe(
+        Stream.runForEach((event) => Effect.sync(() => events.push(event))),
+        Effect.forkChild,
+      )
+      // The trap is set once it has printed.
+      yield* waitFor(
+        pane.snapshot.pipe(
+          Effect.andThen(Effect.sleep("50 millis")),
+          Effect.map(() => snapshots(events).some((data) => data.includes("up"))),
+        ),
+      )
+      yield* pane.terminate
+      yield* Fiber.join(pump)
+      expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 5 })
+      // A dead pane is left alone.
+      yield* pane.terminate
+      yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
+
+  test("keeps what a process printed before it exited, for after it is gone", async () => {
+    const id = sessionId("tmux-4")
     const program = Effect.gen(function* () {
       const tmux = yield* Tmux
       yield* tmux.launch({
@@ -259,90 +196,69 @@ describe.skipIf(tmuxMissing)("TmuxLive", () => {
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
   }, 15_000)
 
-  test("starts a process in its own directory on a server whose PWD was deleted (#105)", async () => {
-    const foreign = foreignServer({ session: true })
-    const cwd = realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-session-")))
-    const id = sessionId("tmux-4")
-    const program = Effect.gen(function* () {
-      const tmux = yield* Tmux
-      // Claude Code reads PWD, not getcwd(), to tell its working directory: so does this.
-      yield* tmux.launch({
-        sessionId: id,
-        cwd,
-        argv: ["sh", "-c", 'printf "pwd=%s\\npath=%s\\n" "$PWD" "$PATH"; exit 1'],
-        env: {},
-        size: { cols: 200, rows: 10 },
+  test("says what tmux said when a launch fails, never what it was given", async () => {
+    const id = sessionId("tmux-5")
+    const launch = (secret: string) =>
+      Effect.gen(function* () {
+        const tmux = yield* Tmux
+        yield* tmux.launch({
+          sessionId: id,
+          cwd: tmpdir(),
+          argv: ["sleep", "5"],
+          env: { CLAUDE_HUB_MOD_TOKEN: secret },
+          size: { cols: 40, rows: 5 },
+        })
       })
-      const pane = yield* tmux.attach(id)
-      yield* pane.events.pipe(Stream.runDrain)
-      const printed = yield* tmux.lastOutput(id)
-      yield* tmux.kill(id)
-      return printed
+    const program = Effect.gen(function* () {
+      yield* launch("first")
+      // The tmux session exists already.
+      const error = yield* Effect.flip(launch("s3cret"))
+      expect(error.message).toContain("duplicate session")
+      expect(error.message).not.toContain("s3cret")
+      yield* (yield* Tmux).kill(id)
     })
 
-    const printed = await Effect.runPromise(
-      program.pipe(Effect.scoped, Effect.provide(tmuxOn(foreign.socket))),
-    )
-    expect(printed).toContain(`pwd=${cwd}`)
-    expect(printed).not.toContain(foreign.deleted)
-    expect(printed).toContain(`path=${process.env.PATH}`)
-    rmSync(cwd, { recursive: true })
+    await Effect.runPromise(program.pipe(Effect.provide(TestTmux)))
   }, 15_000)
+})
 
-  test("replaces a server another process left with no sessions", async () => {
-    const foreign = foreignServer({ session: false })
-    expect(serverEnvironment(foreign.socket).PWD).toBe(foreign.deleted)
-
-    const claim = await Effect.runPromise(
-      Effect.gen(function* () {
-        return yield* (yield* Tmux).claimServer
-      }).pipe(Effect.provide(tmuxOn(foreign.socket))),
-    )
-
-    expect(claim).toEqual({
-      _tag: "Replaced",
-      changed: [
-        `PATH was ${foreign.deleted}/bin:/usr/bin:/bin`,
-        `PWD was ${foreign.deleted}`,
-        `OLDPWD was ${foreign.deleted}`,
-      ],
+describe.skipIf(tmuxMissing)("TmuxLive", () => {
+  test("stops the tmux server Sessions ran on before they moved into their Sandboxes", async () => {
+    const started = Bun.spawnSync(["tmux", "-L", hostSocket, "new-session", "-d", "sleep 600"], {
+      env: { ...process.env, TMUX: undefined },
     })
-    const gone = Bun.spawnSync(["tmux", "-L", foreign.socket, "list-sessions"])
-    expect(gone.exitCode).not.toBe(0)
-  }, 15_000)
+    expect(started.exitCode).toBe(0)
 
-  test("keeps a server with sessions, giving it the Runner's environment", async () => {
-    const foreign = foreignServer({ session: true })
-
+    const layer = TmuxLive.pipe(
+      Layer.provide(FakeSandboxBackend.layer()),
+      Layer.provide(
+        Layer.succeed(
+          RunnerConfig,
+          RunnerConfig.of({
+            hubUrl: new URL("http://hub.test"),
+            name: "test",
+            token: Redacted.make("token"),
+            login: undefined,
+            sessionsRoot: tmpdir(),
+            modDir: tmpdir(),
+            claudeBin: "claude",
+            tmuxSocket: hostSocket,
+            repoUrlTemplate: "{repo}",
+          }),
+        ),
+      ),
+      Layer.provide(BunServices.layer),
+    )
     const program = Effect.gen(function* () {
       const tmux = yield* Tmux
-      const first = yield* tmux.claimServer
-      // Nothing is left to change the second time.
-      const second = yield* tmux.claimServer
-      return [first, second]
+      yield* tmux.retireHostServer
+      // Nothing is left to stop the second time.
+      yield* tmux.retireHostServer
     })
-    const [first, second] = await Effect.runPromise(
-      program.pipe(Effect.provide(tmuxOn(foreign.socket))),
-    )
+    await Effect.runPromise(program.pipe(Effect.provide(layer)))
 
-    expect(first).toMatchObject({ _tag: "Refreshed", sessions: 1 })
-    expect(second).toEqual({ _tag: "Refreshed", sessions: 1, changed: [] })
-    const environment = serverEnvironment(foreign.socket)
-    expect(environment.PWD).toBeUndefined()
-    expect(environment.OLDPWD).toBeUndefined()
-    expect(environment.PATH).toBe(process.env.PATH)
-    const kept = Bun.spawnSync(["tmux", "-L", foreign.socket, "list-sessions", "-F", "#S"])
-    expect(kept.stdout.toString().trim()).toBe("elsewhere")
+    expect(Bun.spawnSync(["tmux", "-L", hostSocket, "list-sessions"]).exitCode).not.toBe(0)
   }, 15_000)
-
-  test("finds no server on a socket nothing runs on", async () => {
-    const claim = await Effect.runPromise(
-      Effect.gen(function* () {
-        return yield* (yield* Tmux).claimServer
-      }).pipe(Effect.provide(tmuxOn(`claude-hub-test-${process.pid}-none`))),
-    )
-    expect(claim).toEqual({ _tag: "NoServer" })
-  })
 })
 
 function snapshots(events: ReadonlyArray<PaneEvent>): Array<string> {

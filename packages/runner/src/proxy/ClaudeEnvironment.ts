@@ -46,8 +46,8 @@ export function credentialEnvironment(
 
 /**
  * The environment Claude Code and its mod run with in the Sandbox: the proxy for Anthropic's API
- * and for the Hub, the Session token for both, and the credential's kind. The rest of the mod's
- * environment (ClaudeLaunch.ts) is the same as on the host.
+ * and for the Hub, the Session token for both, and the credential's kind. The launch adds the rest
+ * (ClaudeLaunch.ts).
  */
 export function sandboxClaudeEnvironment(options: {
   /** The proxy as the guest reaches it, such as `http://host.microsandbox.internal:7778`. */

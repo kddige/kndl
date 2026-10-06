@@ -34,7 +34,7 @@ Type a prompt and send it. While a Turn is running, a prompt from anyone waits i
 
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
 
-Claude's tools are limited to Bash, Read, Write, Edit and NotebookEdit, which run in the Sandbox; WebSearch, which runs at Anthropic; and the tools that hand work to Child Sessions, which ask the Hub (see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/)). Every other tool is denied, background commands are refused, and so is the `!` shell shortcut, which would run on the host. Claude is told so: to run a command, it uses Bash in the Sandbox rather than asking you to type `! <command>`. To have Claude read a web page, ask it to fetch the page: it uses `curl` in the Sandbox, because WebFetch is denied.
+Claude Code runs in the Session's Sandbox, so Claude has its usual tools, and all of them run there: Bash, with background commands, file edits, WebFetch, subagents and the rest. It never asks for a permission ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). The `! <command>` shortcut in the **Terminal** runs in the Sandbox too. The tools that hand work to Child Sessions ask the Hub (see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/)).
 
 ## Choose the model and effort
 
@@ -47,24 +47,15 @@ Anyone in the Session can change it, in any state but Archived. Each change show
 
 A change applies from the next Turn, never in the middle of one. While a Turn runs, the prompt box says "Sonnet 5.5 takes over when this Turn ends."; once it ends, the Runner starts Claude Code again with the new setting, resuming the same conversation in the same Sandbox, and the next prompt waits until it's back. An Asleep Session starts with the new setting when it next wakes, and a Frozen one once its Runner is back. A Turn that ran on another model than the one set now, such as one before a change, names its model in its footer.
 
-The Runner passes the setting to Claude Code as `--model` and `--effort`, which last only for that Session's Claude Code: they never change the Runner's own `~/.claude/settings.json`. A Child Session starts on Claude Code's default.
+The Runner passes the setting to Claude Code as `--model` and `--effort`, which last only for that run of the Session's Claude Code and are never written to its settings. A Child Session starts on Claude Code's default.
 
 ## Use the Repo's skills and CLAUDE.md
 
-Claude follows the Repo's `CLAUDE.md` and can use the Repo's skills, as it would in a checkout of the Repo. Each time the Session starts or wakes, the Runner reads them from the Workspace, in the Sandbox:
+Claude Code runs in `/workspace`, the Repo's checkout, with its normal setting sources, so the Repo's own Claude Code files apply as they would in a checkout on your machine: `CLAUDE.md` files and their imports, `.claude/rules/`, skills, agents, commands, hooks and `.claude/settings.json`. Hooks and a skill's inline shell commands run in the Sandbox. Settings of yours on the Runner's machine never apply.
 
-- `CLAUDE.md` and `.claude/CLAUDE.md` at the Repo's root, and the files they import with `@path`, when those are in the Repo too.
-- Each skill's `.claude/skills/<name>/SKILL.md`. Run one with `/repo:<name>`, or with `/<name>` when no other skill has that name, or let Claude choose it. The skill's other files stay in the Workspace, where Claude reads them with its tools.
+The Repo's `.mcp.json` doesn't: Claude Code starts with `--strict-mcp-config`, so it loads no MCP server.
 
-To change them, edit them in the Repo like any other file. A skill changes the next time the Session starts or wakes. A woken Session resumes its conversation with the instructions it started with, so a changed `CLAUDE.md` reaches Claude once the Session has woken and the conversation is cleared (`/clear` in the **Terminal**) or compacted.
-
-Nothing in the Repo runs on the Runner's machine, so some files are left out:
-
-- `CLAUDE.local.md`, `CLAUDE.md` files in subdirectories, and `.claude/rules/`.
-- The Repo's `.claude/settings.json`, hooks, `.mcp.json`, agents and commands. A skill keeps only its name, `description`, `when_to_use`, `argument-hint`, `disable-model-invocation` and `user-invocable`. Other fields, such as `allowed-tools`, `hooks` and `model`, are ignored.
-- A skill's inline shell commands (`` !`command` ``) don't run. Ask Claude to run the command instead.
-
-In a skill, Claude sees a zero-width space before each `@` and between each `!` and a backtick. Claude Code acts on neither on the host, and the mod tells Claude to leave the spaces out of what it writes. If a file you expect is missing, see [Claude doesn't follow the Repo's CLAUDE.md, or a skill is missing](/troubleshooting/sessions/#claude-doesnt-follow-the-repos-claudemd-or-a-skill-is-missing).
+To change them, edit them in the Repo like any other file. Claude Code reads them as it always does: a `CLAUDE.md` at the start of a conversation, so a changed one reaches Claude once the conversation is cleared (`/clear` in the **Terminal**) or compacted.
 
 ## Use the terminal
 

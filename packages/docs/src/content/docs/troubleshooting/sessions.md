@@ -1,6 +1,6 @@
 ---
 title: Sessions and Sandboxes
-description: A Session won't start or wake, its Sandbox fails, its tool calls fail or may have run, an Environment won't open or its Test build fails, or the web UI refuses an action.
+description: A Session won't start or wake, its Sandbox fails, an Environment won't open or its Test build fails, or the web UI refuses an action.
 sidebar:
   order: 5
 ---
@@ -24,6 +24,7 @@ The Runner logs `Session <id> failed to start: …` with the same reason.
 | `git clone exited with …` | The Runner couldn't clone the Repo. See [GitHub and git](/troubleshooting/github-and-git/#the-runner-cant-clone-the-repo). |
 | `The bootstrap script exited with …` | The Environment's Build failed on this Runner. |
 | `Installing Docker exited with …` | The Build couldn't install Docker, for an Environment with Docker turned on. |
+| `Installing tmux and bash exited with …` | The image lacks tmux or bash, which Claude Code needs in the Sandbox, and has no apk, apt-get, dnf or yum to install them with, or has a tmux older than 3.2. Install them in the Bootstrap script, or pick an image that has them, such as the default `buildpack-deps:bookworm`. |
 | `The start script exited with …` | The Start script failed in the Sandbox. |
 | `Reading the login shell's environment failed: …` | A shell profile, such as `~/.bashrc` in the image, failed when the Runner read the Login environment. |
 | `The Hub refused the Environment's variables: …` | The Hub wouldn't hand the Runner the Environment's variables, for example because the Session was archived while it started. |
@@ -51,17 +52,16 @@ WARN (#2): Session <id> exited with 1; its last 3 line(s) of output are on the S
 
 Fix what the output names, then send a prompt or press **Wake now**: the output stays under the banner until the Session wakes. Some causes:
 
-- `The current working directory was deleted`: the Runner's tmux server was started by another process, from a directory since deleted. See [Sessions exit at once with "The current working directory was deleted"](/troubleshooting/runners/#sessions-exit-at-once-with-the-current-working-directory-was-deleted).
-- A sign-in or usage message: Claude Code's login on that Runner needs attention. Run `claude` there as the Runner's user.
+- A sign-in or usage message: the Claude credential the Session runs on needs attention. That is its Creator's, which they [replace on their Account page](/how-to/add-your-claude-credential/), or else [the Runner's own](/reference/configuration/#the-runners-claude-credential).
 
 A Runner from before this was added sends no output: the banner has no **Show Claude Code's last output**, and its log only says `Session <id> exited with 1`. [Update it](/how-to/add-a-runner/).
 
 ### Waking it after Claude Code never got going
 
-A Session whose Claude Code exited before it wrote its conversation has nothing to `--resume`. The Runner checks for the conversation's transcript in Claude Code's projects folder, `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`), and, with none, starts a new conversation with the same id instead, logging:
+A Session whose Claude Code exited before it wrote its conversation has nothing to `--resume`. The Runner checks for the conversation's transcript in Claude Code's state in the Sandbox, `/var/lib/claude-hub/claude/projects`, and, with none, starts a new conversation with the same id instead, logging:
 
 ```
-INFO (#2): Session <id>: Claude Code has no transcript of conversation <conversation id> in /Users/you/.claude/projects, so it starts a new one with that id instead of resuming it
+INFO (#2): Session <id>: Claude Code has no transcript of conversation <conversation id>, so it starts a new one with that id instead of resuming it
 ```
 
 The Session's Workspace is as it was; only the conversation starts over. A Runner from before this fix keeps trying `--resume` and the Session can't wake: update it.
@@ -107,85 +107,6 @@ The Session is Asleep: The Sandbox failed: host path /Users/you/.claude-hub/clau
 ```sh
 mkdir -p /Users/you/.claude-hub/claude-code
 ```
-
-## Claude's tools are refused
-
-**What you see.** Claude's tool calls come back refused, with text such as:
-
-```
-Bash could not run in this Session's Sandbox (the Sandbox's tool server is not up: preparing the Sandbox failed: the Sandbox image has no bash), so it did not run at all. It never runs on the host.
-```
-
-and the Runner logs `Session <id>: tool server down: …` with the same reason.
-
-**Why.** Claude's tools run in the Sandbox, through `claude mcp serve` there. If that tool server can't start, or stops, the mod refuses each tool call rather than running it on the host. The Runner restarts the server with backoff, and logs each new reason once. Common reasons:
-
-- `the Sandbox image has no bash`: Claude Code's Bash tool needs bash. On an Alpine-like image the Runner installs it with `apk`, but other images without bash can't get it.
-- `no Claude Code at …`: the Linux build of Claude Code isn't where the Runner mounted it, for example after its cache folder was deleted while the Sandbox ran.
-
-**Fix.** For a missing bash, install it in the Environment's Bootstrap script, or pick a base image that has it, such as the default `buildpack-deps:bookworm`. For anything else, restart the Session (**Sleep now**, then **Wake now**) so the Runner sets the Sandbox up again, and check the Runner's log for the reason.
-
-## A tool call may have run, but its result was lost
-
-**What you see.** A tool call comes back with text such as:
-
-```
-Bash may have run in this Session's Sandbox, but its result was lost (the tool bridge stopped answering: …). Check before running it again. It never runs on the host.
-```
-
-or, for a call that ran out of time or was interrupted:
-
-```
-Bash did not finish within 2.5 minutes, so it was stopped in this Session's Sandbox. It may have run in part: check before running it again. It never runs on the host.
-Bash was interrupted, and stopped in this Session's Sandbox. It may have run in part: check before running it again. It never runs on the host.
-```
-
-**Why.** The tool bridge had taken the call, so the command may have done some or all of its work before the answer was lost. Lost answers come from the Sandbox or its tool server stopping mid-call, or the Runner's bridge not answering. A call stops when it runs past its tool's time (Bash's own `timeout`, at most 10 minutes; 5 minutes for the other tools) or when someone interrupts the Turn; see [Long tool calls](/explanation/architecture/#long-tool-calls). Claude is told to check before it runs the call again, since running a command like `git stash pop` twice can do harm.
-
-**Fix.** Usually nothing: Claude checks, such as with `git status`, and goes on. For a command that needs longer than 10 minutes, have Claude split it, or run it in the background in the Sandbox with `nohup … &` and check its log. If calls keep getting lost, check the Runner's log for `tool server down`, and see [Claude's tools are refused](#claudes-tools-are-refused).
-
-## Tool calls over 30 seconds fail
-
-**What you see.** Every tool call that takes longer than 30 seconds fails, with:
-
-```
-Bash could not run in this Session's Sandbox (the tool bridge is unreachable: HooksError: hub-link: $.http.fetch(http://tool-bridge/tools/call) over …/tools.sock aborted: no complete answer within 30000ms), so it did not run at all. It never runs on the host.
-```
-
-or, from a newer mod:
-
-```
-Bash may have run in this Session's Sandbox, but its result was lost (the tool bridge gave no answer: …. This Session's Runner is older than its mod and can't wait on a call for longer than 30 seconds; update the Runner). Check before running it again. It never runs on the host.
-```
-
-**Why.** Before [#109](https://github.com/kddige/claude-hub/issues/109), the mod waited for a call in one request, which Claude Code gives up on after 30 seconds. The first message is wrong about the call not running: the bridge kept running it in the Sandbox. A newer mod waits in steps, but needs a Runner that can answer that way; with an older one, it falls back to the one request and its 30 seconds.
-
-**Fix.** Update the Runner's checkout and restart the Runner, then restart the Session (**Sleep now**, then **Wake now**) so its Claude Code loads the new mod too. Until then, check what a failed call did before running it again.
-
-## Claude doesn't follow the Repo's CLAUDE.md, or a skill is missing
-
-**What you see.** Claude doesn't know an instruction from the Repo's `CLAUDE.md`, or `/repo:<name>` isn't a command. The Runner logs what it left out:
-
-```
-Session <id>: left out of the Repo's skills and CLAUDE.md: …
-```
-
-or, when it couldn't read the Workspace at all, `Session <id>: the Repo's skills and CLAUDE.md were not read`.
-
-**Why.** The Runner copies only what is safe to hand to Claude Code on the host ([ADR 0001](/reference/decisions/0001-claude-on-host-tools-in-sandbox/#repo-skills-and-claudemd-amended-in-125)). It leaves out:
-
-- `… a symbolic link is along its path`: the file, or a folder above it, is a symbolic link.
-- `… larger than 65536 bytes`: the file is over 64 KiB. The instruction files together stop at 256 KiB.
-- `… is outside the Workspace`: an `@` import points outside the Repo, such as `@~/notes.md` or `@../other.md`.
-- `… not UTF-8 text` or `… not text`: the file isn't text, or isn't UTF-8.
-- `… not a skill name`: a skill's folder name must start with a letter or digit, and hold only letters, digits, `.`, `_` and `-`, up to 64 characters.
-- `… imports past depth 5` and `… past the limit of 32 imports`.
-
-Files Claude Code would load in a checkout, but a Session never does, aren't listed: `CLAUDE.local.md`, `CLAUDE.md` files in subdirectories, `.claude/rules/` and commands. See [Use the Repo's skills and CLAUDE.md](/how-to/work-in-a-session/#use-the-repos-skills-and-claudemd).
-
-The copy is taken when the Session starts or wakes. A `CLAUDE.md` changed after that, or one a woken Session started without, isn't in the conversation yet.
-
-**Fix.** Move the file into the Repo, replace the link with the file, or split a large file. Then sleep and wake the Session (**Sleep now**, then send a prompt) and run `/clear` in the **Terminal**, so the conversation starts over with the new instructions. To keep a `CLAUDE.local.md` instruction, move it into `CLAUDE.md`.
 
 ## The Test build fails
 

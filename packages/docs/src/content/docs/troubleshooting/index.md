@@ -18,11 +18,11 @@ Each entry on these pages starts with what you see, quotes the message where cla
 | The Runner's terminal, or `claude-hub logs runner` | Why it won't start, whether it reached the Hub, and what happened to Sandboxes. |
 | A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`, and notes about its Sandbox and WIP ref. |
 | A Session's **Starting…** banner | While a Session starts, **Show log** holds the output of its Build, Bootstrap script and Start script. |
-| A Session's **Terminal** tab | Claude Code's own screen, as it runs in tmux on the Runner. |
+| A Session's **Terminal** tab | Claude Code's own screen, as it runs in tmux in the Session's Sandbox. |
 | A Session's **Asleep** banner | When Claude Code exited on its own, **Show Claude Code's last output** holds the last lines its terminal showed. |
 | `/health` on the Hub | `{"status":"ok"}` when the Hub is up. It needs no sign-in. |
 
-For a closer look on a Runner's machine, list its tmux sessions with `tmux -L claude-hub-dev ls` (`tmux -L claude-hub ls` installed) and its Sandboxes with `bun x msb list` from `packages/runner`. See [Files and paths](/reference/files-and-paths/) for what each is named.
+For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list` from `packages/runner`. See [Files and paths](/reference/files-and-paths/) for what each is named.
 
 ## By symptom
 

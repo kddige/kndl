@@ -111,7 +111,7 @@ The Hub doesn't accept this Runner's token: the Runner was removed on the Hub's 
 
 and `claude-hub status` says the Hub doesn't accept the token.
 
-**Why.** Someone removed the Runner on the Runners page, or Re-paired it, and another `runner join` used that code, here or on another machine. Either way, the Hub closed this Runner's connection and the token stopped working. Its Sessions keep running in tmux.
+**Why.** Someone removed the Runner on the Runners page, or Re-paired it, and another `runner join` used that code, here or on another machine. Either way, the Hub closed this Runner's connection and the token stopped working. Its Sessions keep running in their Sandboxes.
 
 **Fix.** If the machine should still be a Runner, make a code on the Runners page and run `claude-hub runner join` with it: **Re-pair** the Runner if it's still listed, to keep its Sessions; **Add a Runner** if it was removed. If it shouldn't, stop it with `claude-hub runner stop`, or `claude-hub uninstall`.
 
@@ -181,7 +181,7 @@ or, for a Runner that doesn't update itself:
 To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f on main): run `claude-hub update` on this machine. Retrying meanwhile.
 ```
 
-**Why.** The Hub and the Runner speak different protocol versions. The Hub's answer always says which commit it runs, whatever the version, so a Runner that updates itself moves to it, as it would for **Update**, and restarts. Its Sessions keep running in tmux meanwhile; the Hub can't put them to sleep while it turns the Runner away.
+**Why.** The Hub and the Runner speak different protocol versions. The Hub's answer always says which commit it runs, whatever the version, so a Runner that updates itself moves to it, as it would for **Update**, and restarts, which puts its Sessions to sleep. Until then they keep running; the Hub can't put them to sleep while it turns the Runner away.
 
 **Fix.** Usually nothing: the Runner connects again on the Hub's commit. If it can't follow (the log says it failed to update to that commit, or how to update it), run `claude-hub update` on its machine, or for a checkout, pull it to the Hub's commit and restart `bun run runner`.
 
@@ -191,39 +191,19 @@ To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f
 
 **Why.** Its Runner isn't connected to the Hub: it was stopped, its machine is asleep or offline, or it can't reconnect (see above). A Session runs on its Runner's Claude Code login, so it waits for that Runner rather than moving to another.
 
-**Fix.** Start the Runner again, or fix its connection. Once it is back, each Session is Active again if its Claude Code still runs in tmux, and otherwise Asleep, woken at once if prompts are waiting. If Sessions that were running come back Asleep instead, the Runner started with a different tmux socket or sessions root than before, so it didn't find them: start it with the same `RUNNER_TMUX_SOCKET`, `RUNNER_SESSIONS_ROOT` and `CLAUDE_HUB_HOME`. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
+**Fix.** Start the Runner again, or fix its connection. Once it is back, each Session is Active again if its Claude Code still runs, as when only the connection dropped, and otherwise Asleep, woken at once if prompts are waiting. A Runner that restarted puts all its Sessions to sleep as it starts, since their Session tokens went with the old process. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
 
-## Sessions exit at once with "The current working directory was deleted"
+## Running Sessions went to sleep after an update
 
-**What you see.** Every new or woken Session goes Asleep at once with `Claude Code exited with code 1`, and its last output (see [Claude Code exited with code N](/troubleshooting/sessions/#claude-code-exited-with-code-n)) is:
-
-```
-error: The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.
-```
-
-`claude-hub doctor` warns:
+**What you see.** After updating a Runner from a version that ran Claude Code on its host, every Session that was running is Asleep, and the Runner logs once at startup:
 
 ```
-!!  tmux server  The tmux server on socket claude-hub runs in /Users/you/claude-hub/packages/runner, which was deleted; has PWD /Users/you/claude-hub/packages/runner, which was deleted; …
+WARN (#2): Stopped the tmux server claude-hub on the host, where Sessions ran before Claude Code moved into their Sandboxes: each wakes in its Sandbox on its next prompt
 ```
 
-**Why.** A Runner starts each Session in a tmux server on its socket (`RUNNER_TMUX_SOCKET`, `claude-hub` for an install). The server outlives the Runner that started it, so the next Runner on that socket reuses it, and every process the server starts gets its global environment: the directory, `PWD` and `PATH` of whatever started it. When that was a Runner run from a checkout since deleted, `PWD` names a directory that no longer exists. Claude Code trusts `PWD`, finds it gone, and exits. Before [#94](https://github.com/kddige/claude-hub/pull/94), dev Runners used socket `claude-hub` too, so a dev Runner could leave such a server for the installed one.
+**Why.** Claude Code now runs in each Session's Sandbox ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). The Runner stops the tmux server its Sessions ran in on the host, since their Claude Code would go on with nothing to run its tools.
 
-Runners now launch Claude Code with its own `PWD` and the Runner's `PATH`, whatever the server has. At startup a Runner also claims the server: one with no sessions is stopped, and the next Session starts a fresh one; one with sessions is kept, and given the Runner's `PATH` with `PWD` and `OLDPWD` unset. The Runner logs what it changed:
-
-```
-INFO (#2): Stopped the tmux server on socket claude-hub, which had no sessions, so the next Session starts a fresh one with the Runner's environment (PATH was …; PWD was /Users/you/claude-hub/packages/runner)
-WARN (#2): Kept the tmux server on socket claude-hub, which has 2 session(s), and set its environment to the Runner's (PWD was …)
-```
-
-**Fix.** [Update](/how-to/add-a-runner/) the Runner and restart it: `claude-hub runner stop`, then `claude-hub runner start`. Then wake the Session. On an older Runner, stop the server yourself, once no Session runs in it:
-
-```sh
-tmux -L claude-hub list-sessions   # "no server running" or nothing listed: safe to stop
-tmux -L claude-hub kill-server
-```
-
-`claude-hub doctor` checks the server too: it warns when the server runs in a deleted directory, has a `PWD` other than the home, or a `PATH` other than the one in the Runner's service file. A server started elsewhere whose `PWD` is unset and `PATH` is right, as one the Runner kept and refreshed, passes. Stopping a server ends every Session in it, so neither the Runner nor doctor stops one that has any.
+**Fix.** Nothing: send a prompt, or press **Wake now**. The Session wakes in its Sandbox and `--resume` keeps its conversation: the first wake copies the conversation from the host into the Sandbox.
 
 ## Sessions from before an update are gone
 
