@@ -1,4 +1,10 @@
-import { type EffortLevel, EffortLevels, type RunnerId, type SessionId } from "@claude-hub/protocol"
+import {
+  type AgentId,
+  type EffortLevel,
+  EffortLevels,
+  type RunnerId,
+  type SessionId,
+} from "@claude-hub/protocol"
 import {
   createRootRoute,
   createRoute,
@@ -40,15 +46,29 @@ const homeRoute = createRoute({
   component: Home,
 })
 
+const nonEmpty = (value: unknown): value is string => typeof value === "string" && value !== ""
+
+/** Where the Session view is: its chat, one of its agents' views, or its terminal. */
+interface SessionSearch {
+  tab?: SessionTab
+  /** A subagent whose view is open (ADR 0014), in the chat. */
+  agent?: string
+}
+
 const sessionRoute = createRoute({
   getParentRoute: () => hubRoute,
   path: "/sessions/$sessionId",
-  // ?tab=terminal opens the terminal, so it can be linked to and stays open on reload.
-  validateSearch: (search: Record<string, unknown>): { tab?: SessionTab } =>
-    search["tab"] === "terminal" ? { tab: "terminal" } : {},
+  // ?tab=terminal opens the terminal and ?agent= an agent's view, so either can be linked to and
+  // stays open on reload.
+  validateSearch: (search: Record<string, unknown>): SessionSearch =>
+    search["tab"] === "terminal"
+      ? { tab: "terminal" }
+      : nonEmpty(search["agent"])
+        ? { agent: search["agent"] }
+        : {},
   component: function SessionRoute() {
     const { sessionId } = sessionRoute.useParams()
-    const { tab } = sessionRoute.useSearch()
+    const { tab, agent } = sessionRoute.useSearch()
     const navigate = sessionRoute.useNavigate()
     // Remount per Session, so the composer's draft and the scroll position don't carry over.
     return (
@@ -58,6 +78,10 @@ const sessionRoute = createRoute({
         tab={tab ?? "chat"}
         onTabChange={(next) =>
           void navigate({ search: next === "terminal" ? { tab: next } : {}, replace: true })
+        }
+        {...(agent !== undefined && { agentId: agent as AgentId })}
+        onAgentChange={(next) =>
+          void navigate({ search: next === undefined ? {} : { agent: next } })
         }
       />
     )
@@ -97,8 +121,6 @@ interface SetupSearch {
   model?: string
   effort?: EffortLevel
 }
-
-const nonEmpty = (value: unknown): value is string => typeof value === "string" && value !== ""
 
 /**
  * A Repo's Environment (ADR 0009). With ?branch=, it's the setup before the Repo's first Session,

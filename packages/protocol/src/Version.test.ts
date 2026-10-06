@@ -44,7 +44,8 @@ describe("checkHandshake", () => {
 
   test("checks the Hub's welcome the same way", () => {
     expect(
-      checkHandshake({ _tag: "RunnerWelcome", protocolVersion: 2, runnerId: "r" })?.reason,
+      checkHandshake({ _tag: "RunnerWelcome", protocolVersion: ProtocolVersion + 1, runnerId: "r" })
+        ?.reason,
     ).toBe("ProtocolVersionMismatch")
   })
 })

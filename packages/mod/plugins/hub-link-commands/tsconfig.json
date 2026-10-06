@@ -1,0 +1,10 @@
+{
+  "extends": "./.claude-plugin/types/tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "include": [".claude-plugin/types", "hooks", "types", "tests"],
+  "exclude": ["hooks/hub-link-lib.js"]
+}

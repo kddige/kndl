@@ -1,4 +1,5 @@
 import {
+  type AgentId,
   MaxSessionNameLength,
   type SessionId,
   type SessionLogEntry,
@@ -8,16 +9,7 @@ import {
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import {
   day,
   environmentChanged,
@@ -56,10 +48,12 @@ import {
   TrashIcon,
 } from "../ui/index.ts"
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
+import { AgentPanel } from "./AgentPanel.tsx"
 import { Composer } from "./Composer.tsx"
 import { ModelPicker } from "./ModelPicker.tsx"
 import { modelName, otherTurnModel } from "./models.ts"
 import { PromptQueue } from "./PromptQueue.tsx"
+import { useStickToBottom } from "./stickToBottom.ts"
 import { Transcript } from "./Transcript.tsx"
 
 const styles = stylex.create({
@@ -104,28 +98,6 @@ const styles = stylex.create({
     fontWeight: weight.semibold,
   },
   badges: { display: "inline-flex", alignItems: "center", gap: space.s1 },
-  children: {
-    display: "flex",
-    flexDirection: "column",
-    gap: space.s1,
-    margin: 0,
-    padding: 0,
-    listStyle: "none",
-  },
-  child: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: space.s2,
-    minWidth: 0,
-  },
-  childTitle: {
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    fontWeight: weight.medium,
-  },
   tabList: {
     paddingInline: space.s4,
     backgroundColor: color.surface,
@@ -148,16 +120,21 @@ export type SessionTab = "chat" | "terminal"
 
 /**
  * One Session: its conversation, who's here, the Prompt queue and the composer, and in another
- * tab its terminal. `tab` and `onTabChange` let the URL track the open tab.
+ * tab its terminal. With `agentId`, the chat shows that subagent's view instead (ADR 0014). `tab`,
+ * `agentId` and their callbacks let the URL track what is open.
  */
 export function SessionView({
   sessionId,
   tab = "chat",
   onTabChange,
+  agentId,
+  onAgentChange,
 }: {
   sessionId: SessionId
   tab?: SessionTab
   onTabChange?: (tab: SessionTab) => void
+  agentId?: AgentId
+  onAgentChange?: (agentId: AgentId | undefined) => void
 }) {
   const hub = useHub()
   const sessions = useHubState((state) => state.sessions)
@@ -191,6 +168,8 @@ export function SessionView({
     <LoadedSession
       tab={tab}
       onTabChange={onTabChange}
+      agentId={agentId}
+      onAgentChange={onAgentChange}
       summary={summary}
       log={joined.log}
       presence={joined.presence}
@@ -203,6 +182,8 @@ export function SessionView({
 function LoadedSession({
   tab,
   onTabChange,
+  agentId,
+  onAgentChange,
   summary,
   log,
   presence,
@@ -211,6 +192,8 @@ function LoadedSession({
 }: {
   tab: SessionTab
   onTabChange: ((tab: SessionTab) => void) | undefined
+  agentId: AgentId | undefined
+  onAgentChange: ((agentId: AgentId | undefined) => void) | undefined
   summary: SessionSummary
   log: ReadonlyArray<SessionLogEntry>
   presence: JoinedSession["presence"]
@@ -219,25 +202,28 @@ function LoadedSession({
 }) {
   const hub = useHub()
   const navigate = useNavigate()
-  const items = useMemo(() => buildTranscript(log), [log])
+  const transcript = useMemo(() => buildTranscript(log), [log])
+  const items = transcript.items
   const running = summary.currentTurn !== null || runningTurn(items) !== undefined
   const lastChange = useMemo(() => latestStateChange(log), [log])
   const scroller = useStickToBottom(items)
-  const restart = useRestart(summary, () => command(hub.restartSession(summary.id)))
 
   const [renaming, setRenaming] = useState(false)
   const title = sessionTitle(summary)
 
-  // Its Child Sessions that deleting it would archive too (ADR 0012).
-  const sessions = useHubState((hubState) => hubState.sessions)
-  const children = useMemo(
-    () =>
-      (sessions ?? []).filter(
-        (session) => session.parentId === summary.id && session.state !== "Archived",
-      ),
-    [sessions, summary.id],
-  )
-  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // Stopping its Claude Code interrupts its running agents (ADR 0014): sleep, a restart and a
+  // change of model or effort ask first, with what they'd interrupt.
+  const runningAgents = summary.agents?.filter((agent) => agent.status === "Running").length ?? 0
+  const [confirming, setConfirming] = useState<Interruption | null>(null)
+  const interrupting = (interruption: Interruption) => {
+    if (runningAgents === 0) interruption.go()
+    else setConfirming(interruption)
+  }
+  const asked = useRestart(summary, () => command(hub.restartSession(summary.id)))
+  const restart: Restart = {
+    asked: asked.asked,
+    ask: () => interrupting({ title: "Restart the Session?", action: "Restart", go: asked.ask }),
+  }
 
   // Its model and effort, from what its Runner said its Claude Code has (#128).
   const models = useHubState(
@@ -277,23 +263,18 @@ function LoadedSession({
   const [shownTerminal, setShownTerminal] = useState(view === "terminal")
   if (view === "terminal" && !shownTerminal) setShownTerminal(true)
 
-  // Deleting archives at once, so there's nothing to confirm: the toast's Undo restores it. Its
-  // Child Sessions are archived with it, and Undo leaves them archived, so a Parent Session's
-  // delete is confirmed first, listing them.
-  const archive = () => {
-    setConfirmingDelete(false)
+  // Deleting archives at once, so there's nothing to confirm: the toast's Undo restores it.
+  const remove = () => {
     if (!command(hub.archiveSession(summary.id))) return
     toast.show({
       title: "Session deleted",
-      description:
-        children.length === 0
-          ? `${title} is archived. Restore it from ${summary.repo}'s Archived Sessions.`
-          : `${title} and its Child Sessions are archived. Restore them from ${summary.repo}'s Archived Sessions.`,
+      description: `${title} is archived. Restore it from ${summary.repo}'s Archived Sessions.`,
       action: { label: "Undo", onAction: () => command(hub.restoreSession(summary.id)) },
     })
     void navigate({ to: "/" })
   }
-  const remove = () => (children.length === 0 ? archive() : setConfirmingDelete(true))
+  const agent = agentId === undefined ? undefined : transcript.agents.get(agentId)
+  const closeAgent = () => onAgentChange?.(undefined)
 
   return (
     <main {...stylex.props(styles.view)}>
@@ -343,7 +324,13 @@ function LoadedSession({
                 intent="secondary"
                 // The Hub only puts a Session to sleep once started, with nothing running or waiting.
                 disabled={busy || running || queue.length > 0}
-                onClick={() => command(hub.sleepSession(summary.id))}
+                onClick={() =>
+                  interrupting({
+                    title: "Put the Session to sleep?",
+                    action: "Sleep now",
+                    go: () => command(hub.sleepSession(summary.id)),
+                  })
+                }
               >
                 Sleep now
               </Button>
@@ -364,34 +351,28 @@ function LoadedSession({
 
       <Dialog
         size="sm"
-        open={confirmingDelete}
+        open={confirming !== null}
         onOpenChange={(open) => {
-          if (!open) setConfirmingDelete(false)
+          if (!open) setConfirming(null)
         }}
-        title={`Delete ${title} and its Child Sessions?`}
+        title={confirming?.title}
         description={`${
-          children.length === 1
-            ? "Its Child Session is archived with it."
-            : `Its ${children.length} Child Sessions are archived with it.`
-        } Undo restores only ${title}; restore a Child Session from ${summary.repo}'s Archived Sessions.`}
+          runningAgents === 1 ? "An agent is running" : `${runningAgents} agents are running`
+        }; stopping Claude Code interrupts ${runningAgents === 1 ? "it" : "them"}. A message to an interrupted agent resumes it.`}
         footer={
           <>
             <DialogClose>Cancel</DialogClose>
-            <Button intent="danger" onClick={archive}>
-              Delete
+            <Button
+              onClick={() => {
+                confirming?.go()
+                setConfirming(null)
+              }}
+            >
+              {confirming?.action}
             </Button>
           </>
         }
-      >
-        <ul aria-label="Its Child Sessions" {...stylex.props(styles.children)}>
-          {children.map((child) => (
-            <li key={child.id} {...stylex.props(styles.child)}>
-              <span {...stylex.props(styles.childTitle)}>{sessionTitle(child)}</span>
-              <SessionStatus state={statusOf(child.state)} />
-            </li>
-          ))}
-        </ul>
-      </Dialog>
+      />
 
       <Tabs
         value={view}
@@ -407,60 +388,76 @@ function LoadedSession({
           </TabList>
         </div>
         <TabPanel value="chat" keepMounted sx={styles.tabPanel}>
-          <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
-            <div {...stylex.props(styles.column, styles.transcript)}>
-              <StateBanner
-                summary={summary}
-                change={lastChange}
-                running={running}
-                startLog={startLog}
-                restart={restart}
-                onWake={() => command(hub.wakeSession(summary.id))}
-                onRestore={() => restoreSession(hub, summary.id)}
-                onEnterValues={() =>
-                  void navigate({
-                    to: "/repos/$owner/$repo/environment",
-                    params: repoParams(summary.repo),
-                  })
-                }
-              />
-              {items.length === 0 ? (
-                <EmptyState
-                  title="Nothing here yet"
-                  description="Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
-                />
-              ) : (
-                <Transcript items={items} nameTurnModel={nameTurnModel} />
-              )}
-            </div>
-          </div>
+          {agentId !== undefined ? (
+            <AgentPanel session={summary} agentId={agentId} agent={agent} onClose={closeAgent} />
+          ) : (
+            <>
+              <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
+                <div {...stylex.props(styles.column, styles.transcript)}>
+                  <StateBanner
+                    summary={summary}
+                    change={lastChange}
+                    running={running}
+                    startLog={startLog}
+                    restart={restart}
+                    onWake={() => command(hub.wakeSession(summary.id))}
+                    onRestore={() => restoreSession(hub, summary.id)}
+                    onEnterValues={() =>
+                      void navigate({
+                        to: "/repos/$owner/$repo/environment",
+                        params: repoParams(summary.repo),
+                      })
+                    }
+                  />
+                  {items.length === 0 ? (
+                    <EmptyState
+                      title="Nothing here yet"
+                      description="Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
+                    />
+                  ) : (
+                    <Transcript
+                      sessionId={summary.id}
+                      items={items}
+                      nameTurnModel={nameTurnModel}
+                    />
+                  )}
+                </div>
+              </div>
 
-          <div {...stylex.props(styles.column, styles.dock)}>
-            <PromptQueue
-              queue={queue}
-              onCancel={(prompt) => {
-                if (!hub.cancelPrompt(summary.id, prompt.id)) {
-                  toast.show({ title: "Not connected to the Hub", intent: "warning" })
-                }
-              }}
-            />
-            <Composer
-              onSend={send}
-              onStop={() => hub.stopTurn(summary.id)}
-              running={running}
-              disabledReason={disabledReason}
-              hint={hint}
-              picker={
-                <ModelPicker
-                  models={models}
-                  value={setting}
-                  onChange={(next) => command(hub.setSessionModel(summary.id, next))}
-                  disabled={archived}
-                  side="top"
+              <div {...stylex.props(styles.column, styles.dock)}>
+                <PromptQueue
+                  queue={queue}
+                  onCancel={(prompt) => {
+                    if (!hub.cancelPrompt(summary.id, prompt.id)) {
+                      toast.show({ title: "Not connected to the Hub", intent: "warning" })
+                    }
+                  }}
                 />
-              }
-            />
-          </div>
+                <Composer
+                  onSend={send}
+                  onStop={() => hub.stopTurn(summary.id)}
+                  running={running}
+                  disabledReason={disabledReason}
+                  hint={hint}
+                  picker={
+                    <ModelPicker
+                      models={models}
+                      value={setting}
+                      onChange={(next) =>
+                        interrupting({
+                          title: "Switch the model?",
+                          action: "Switch",
+                          go: () => command(hub.setSessionModel(summary.id, next)),
+                        })
+                      }
+                      disabled={archived}
+                      side="top"
+                    />
+                  }
+                />
+              </div>
+            </>
+          )}
         </TabPanel>
         <TabPanel value="terminal" keepMounted sx={styles.tabPanel}>
           {shownTerminal && !archived && (
@@ -499,6 +496,14 @@ function claudeAccountText(summary: SessionSummary): string {
 function command(sent: boolean): boolean {
   if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
   return sent
+}
+
+/** Something that stops the Session's Claude Code, confirmed first while agents run. */
+interface Interruption {
+  readonly title: string
+  /** Its button's label. */
+  readonly action: string
+  readonly go: () => void
 }
 
 /** Asking for a restart, and whether it was just asked: from the click until the Hub answers. */
@@ -714,25 +719,4 @@ function latestStateChange(log: ReadonlyArray<SessionLogEntry>): SessionStateCha
     if (event?._tag === "SessionStateChanged") return event
   }
   return undefined
-}
-
-/**
- * Keeps the transcript scrolled to the bottom as it grows, unless the reader has scrolled up to
- * read something.
- */
-function useStickToBottom(content: unknown) {
-  const ref = useRef<HTMLDivElement>(null)
-  const stuck = useRef(true)
-  useLayoutEffect(() => {
-    const element = ref.current
-    if (element && stuck.current) element.scrollTop = element.scrollHeight
-  }, [content])
-  return {
-    ref,
-    onScroll: () => {
-      const element = ref.current
-      if (!element) return
-      stuck.current = element.scrollHeight - element.scrollTop - element.clientHeight < 64
-    },
-  }
 }

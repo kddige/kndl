@@ -19,7 +19,7 @@ The Runner clones the Repo onto the Session's Work branch, builds the Environmen
 
 ## Find and rename a Session
 
-The sidebar lists every Session that isn't Archived under its Repo's `owner/name`, in the order they were started, the oldest first. Each row's dot shows the Session's state, and a spinner shows a Turn running. [Child Sessions](/how-to/coordinate-with-child-sessions/#find-a-child-session) are listed under their Parent Session's row, whose chevron hides and shows them.
+The sidebar lists every Session that isn't Archived under its Repo's `owner/name`, in the order they were started, the oldest first. Each row's dot shows the Session's state, and a spinner shows a Turn or a subagent running. A Session's [subagents](/how-to/work-with-subagents/#follow-an-agent) are listed under its row, whose chevron hides and shows them.
 
 A Session is shown by its [Session name](/reference/glossary/), or by its Work branch until someone names it. **New Session** doesn't ask for a name. Anyone can rename a Session, in any state:
 
@@ -34,7 +34,7 @@ Type a prompt and send it. While a Turn is running, a prompt from anyone waits i
 
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
 
-Claude Code runs in the Session's Sandbox, so Claude has its usual tools, and all of them run there: Bash, with background commands, file edits, WebFetch, subagents and the rest. It never asks for a permission ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). The `! <command>` shortcut in the **Terminal** runs in the Sandbox too. The tools that hand work to Child Sessions ask the Hub (see [Coordinate with Child Sessions](/how-to/coordinate-with-child-sessions/)).
+Claude Code runs in the Session's Sandbox, so Claude has its usual tools, and all of them run there: Bash, with background commands, file edits, WebFetch, subagents and the rest. It never asks for a permission ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). The `! <command>` shortcut in the **Terminal** runs in the Sandbox too. Its subagents show live in the transcript and the sidebar, and anyone can message or stop them: see [Work with subagents](/how-to/work-with-subagents/).
 
 ## Choose the model and effort
 
@@ -45,9 +45,9 @@ A Session's model and effort level are one setting for everyone in it. The butto
 
 Anyone in the Session can change it, in any state but Archived. Each change shows in the transcript for everyone, such as "Alice Kim switched to Sonnet 5.5, High".
 
-A change applies from the next Turn, never in the middle of one. While a Turn runs, the prompt box says "Sonnet 5.5 takes over when this Turn ends."; once it ends, the Runner starts Claude Code again with the new setting, resuming the same conversation in the same Sandbox, and the next prompt waits until it's back. An Asleep Session starts with the new setting when it next wakes, and a Frozen one once its Runner is back. A Turn that ran on another model than the one set now, such as one before a change, names its model in its footer.
+A change applies from the next Turn, never in the middle of one. While a Turn runs, the prompt box says "Sonnet 5.5 takes over when this Turn ends."; once it ends, the Runner starts Claude Code again with the new setting, resuming the same conversation in the same Sandbox, and the next prompt waits until it's back. An Asleep Session starts with the new setting when it next wakes, and a Frozen one once its Runner is back. The restart interrupts any subagents running, so while some are, the web UI asks first. A Turn that ran on another model than the one set now, such as one before a change, names its model in its footer.
 
-The Runner passes the setting to Claude Code as `--model` and `--effort`, which last only for that run of the Session's Claude Code and are never written to its settings. A Child Session starts on Claude Code's default.
+The Runner passes the setting to Claude Code as `--model` and `--effort`, which last only for that run of the Session's Claude Code and are never written to its settings.
 
 ## Use the Repo's skills and CLAUDE.md
 
@@ -65,7 +65,7 @@ The terminal has one size. Whoever last typed into it, or pressed **Fit to my wi
 
 ## Sleep and wake
 
-A Session with no Turn running, no prompt queued and no one present goes to sleep after 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`). **Sleep now** in the Session's header does it at once. Sleeping stops Claude Code and the Sandbox, and keeps the Workspace and the Sandbox's disks.
+A Session with no Turn or subagent running, no prompt queued and no one present goes to sleep after 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`). **Sleep now** in the Session's header does it at once, after asking while subagents are running. Sleeping stops Claude Code and the Sandbox, and keeps the Workspace and the Sandbox's disks; the subagents that were running are Interrupted, and resume when messaged (see [After sleep or a restart](/how-to/work-with-subagents/#after-sleep-or-a-restart)).
 
 Any prompt wakes an Asleep Session, as does **Wake now** on its banner. Claude Code resumes the same conversation, with `node_modules`, caches and Docker's data as they were.
 
@@ -75,9 +75,9 @@ A Session whose Runner is offline is Frozen: you can read it, and prompts you se
 
 ## Delete and restore
 
-**Delete Session**, the trash button in the Session's header, archives the Session at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox, keeping the Workspace and Claude Code's state. Any Participant can do it. A Parent Session's Child Sessions are archived with it, so for a Parent Session the web UI lists them and asks first.
+**Delete Session**, the trash button in the Session's header, archives the Session at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox, keeping the Workspace and Claude Code's state. Any Participant can do it.
 
-- **Undo** in the toast restores it straight away, but not its Child Sessions.
+- **Undo** in the toast restores it straight away.
 - **Archived Sessions**, in the sidebar, lists the Archived Sessions of every Repo, with who deleted each and when, and a **Restore** button.
 
 A restored Session is Asleep, and the next prompt wakes it in a fresh Sandbox, on the kept Workspace, with the conversation intact; its `node_modules` and Docker's data are gone with the old Sandbox.

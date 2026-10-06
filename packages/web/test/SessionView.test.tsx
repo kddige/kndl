@@ -95,18 +95,24 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   await eventually(() => expect(conversation()).toContain("The tests pass."))
   await eventually(() => expect(conversation()).toContain("That's done."))
   await eventually(() => expect(page.querySelector('[aria-label="Prompt queue"]')).toBeNull())
+
+  // The background agent works on in its worktree after its Turn; done, it starts a Turn of its own.
+  expect(conversation()).toContain("worktree-agent-docs")
+  await eventually(() => expect(conversation()).toContain("The docs agent found one page"))
+  const fromAgent = page.querySelector('[data-turn] a[href$="?agent=agent-docs"]')
+  expect(fromAgent?.textContent).toBe("Find docs that mention tool calls")
   await eventually(() => expect(hasButton("Stop")).toBe(false))
 
-  // Tool calls and the subagent are collapsed: their summaries show, their details don't.
+  // Tool calls and the finished subagents are collapsed: their summaries show, their details don't.
   const toggles = [...page.querySelectorAll('[aria-label="Conversation"] [aria-expanded]')]
   expect(toggles.length).toBeGreaterThan(4)
   expect(toggles.every((toggle) => toggle.getAttribute("aria-expanded") === "false")).toBe(true)
-  expect(conversation()).toContain("agent-kit")
+  expect(conversation()).toContain("Survey the UI kit")
   expect(conversation()).not.toContain("Disclosure is the one")
   expect(conversation()).not.toContain("58 pass")
 
-  // Opening the subagent shows its own work, grouped under it.
-  const agent = toggles.find((toggle) => toggle.textContent?.includes("agent-kit"))
+  // Opening a subagent's card shows its own work, grouped under it.
+  const agent = toggles.find((toggle) => toggle.textContent?.includes("Survey the UI kit"))
   await step(() => (agent as HTMLElement).click())
   await eventually(() => expect(conversation()).toContain("Disclosure is the one"))
 })
@@ -322,9 +328,9 @@ function findToast(title: string): HTMLElement | undefined {
 }
 
 /** The whole app at `path`, against the fake Hub with its script not playing. */
-async function openApp(path: string) {
+async function openApp(path: string, stepMs = 2) {
   const { toast } = await import("../src/ui/index.ts")
-  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+  const hub = new FakeHub({ stepMs, autoplay: false })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }))
   const view = await render(
@@ -367,69 +373,60 @@ test("deleting a Session archives it, hides it from the sidebar, and Undo restor
   await eventually(() => expect(list()).toContain("claude/readme-run"))
 })
 
-/** The open dialog. */
-function dialog(): HTMLElement | null {
-  return document.querySelector<HTMLElement>('[role="dialog"]')
-}
-
-test("deleting a Parent Session lists the Child Sessions archived with it, first", async () => {
-  const { page, sent, find } = await openApp("/sessions/s-release")
-  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("Release 0.4"))
-
-  await step(() => button("Delete Session", page).click())
-  await eventually(() =>
-    expect(dialog()?.textContent).toContain("Delete Release 0.4 and its Child Sessions?"),
+test("a Turn a finished agent started shows the agent it's from, not Claude Code's notification", async () => {
+  const { page } = await openApp("/sessions/s-release")
+  await eventually(() => expect(page.querySelector('[data-turn="t-release-2"]')).not.toBeNull())
+  const turn = page.querySelector('[data-turn="t-release-2"]')
+  const link = turn?.querySelector<HTMLAnchorElement>(
+    'a[href="/sessions/s-release?agent=a-changelog"]',
   )
-  expect(sent()).not.toContain("ArchiveSession")
-  const listed = [...(dialog()?.querySelectorAll("li") ?? [])].map((li) => li.textContent)
-  expect(listed).toEqual(["API docsActive", "ChangelogAsleep"])
-  expect(dialog()?.textContent).toContain("Undo restores only Release 0.4")
-
-  await step(() => button("Delete", dialog() ?? document).click())
-  expect(sent()).toContain("ArchiveSession")
-  // The Hub archives its Child Sessions with it.
-  await eventually(() => expect(find("s-release")?.state).toBe("Archived"))
-  await eventually(() => expect(find("s-api-docs")?.state).toBe("Archived"))
-  expect(find("s-changelog")?.state).toBe("Archived")
+  expect(link?.textContent).toBe("Write the 0.4 changelog")
+  expect(turn?.textContent).toContain("Agent")
+  expect(turn?.textContent).toContain('Agent "Write the 0.4 changelog" finished')
+  expect(page.textContent).not.toContain("<task-notification>")
 })
 
-test("a Session without Child Sessions is deleted without asking", async () => {
-  const { page, sent } = await openApp("/sessions/s-api-docs")
-  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("API docs"))
-  await step(() => button("Delete Session", page).click())
-  expect(sent()).toContain("ArchiveSession")
-  expect(document.querySelector('[role="dialog"] li')).toBeNull()
+test("an agent's view resumes it, messages it while it runs, and stops it", async () => {
+  const { page, sent } = await openApp("/sessions/s-release?agent=a-bump", 40)
+  const heading = () => page.querySelector('section[aria-label="Agent"] h2')?.textContent ?? ""
+  const agentText = () => page.querySelector('section[aria-label="Agent"]')?.textContent ?? ""
+  await eventually(() => expect(heading()).toContain("Bump the package versions"))
+  expect(heading()).toContain("Stopped")
+  // The message it was sent before it stopped shows in its run.
+  expect(agentText()).toContain("Hold off: we bump once the docs land.")
+  const field = () => page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')
+
+  // A message to a stopped agent of an Asleep Session wakes the Session and resumes the agent.
+  await step(() => typeInto(field() as HTMLTextAreaElement, "The docs landed: go ahead"))
+  await step(() => button("Resume", page).click())
+  expect(sent()).toContain("MessageAgent")
+  await eventually(() => expect(heading()).toContain("Running"), 10_000)
+
+  // While it runs, a message reaches it, and Stop stops it.
+  await step(() => typeInto(field() as HTMLTextAreaElement, "Bump the docs too"))
+  await step(() => button("Send message", page).click())
+  await eventually(() => expect(agentText()).toContain("Got your message"))
+  await step(() => button("Stop agent", page).click())
+  expect(sent()).toContain("StopAgent")
+  await eventually(() => expect(heading()).toContain("Stopped"))
 })
 
-test("a Report's Turn shows the Child Session it's from, without the Hub's note", async () => {
-  const { page } = await openApp("/sessions/s-release")
-  await eventually(() => expect(page.textContent).toContain("Report from Child Session"))
-  const link = page.querySelector<HTMLAnchorElement>('a[href="/sessions/s-changelog"]')
-  expect(link?.textContent).toBe("Changelog")
-  expect(page.textContent).toContain("The changelog is in CHANGELOG.md")
-  expect(page.textContent).not.toContain("This is a Report, not a prompt from a person")
+test("a Turn from another Session, from before subagents, shows that Session", async () => {
+  const { page } = await openApp("/sessions/s-readme")
+  const conversation = () => page.querySelector('[aria-label="Conversation"]')
+  await eventually(() => expect(conversation()?.textContent).toContain("VITE_FAKE_HUB=1"))
+  const from = [...(conversation()?.querySelectorAll("a") ?? [])].find(
+    (link) => link.textContent === "claude/web-client",
+  )
+  expect(from?.getAttribute("href")).toBe(`/sessions/${demoSessionId}`)
 })
 
-test("a Child Session's message shows as from it, labelled as a message, without the Hub's note", async () => {
-  const { page } = await openApp("/sessions/s-release")
-  await eventually(() => expect(page.textContent).toContain("Message from Child Session"))
-  const turn = page.querySelector('[data-turn="t-release-msg"]')
-  expect(turn?.querySelector('a[href="/sessions/s-api-docs"]')?.textContent).toBe("API docs")
-  expect(turn?.textContent).toContain("Message from Child Session")
-  expect(turn?.textContent).not.toContain("Report from Child Session")
-  expect(turn?.textContent).toContain("Should the reference cover the deprecated v0 messages")
-  expect(page.textContent).not.toContain("This is a message your Child Session sent")
-  expect(page.textContent).not.toContain("[Message from Child Session")
-})
-
-test("in a Child Session, its Parent Session's message shows as from it", async () => {
-  const { page } = await openApp("/sessions/s-api-docs")
-  await eventually(() => expect(page.textContent).toContain("Parent Session"))
-  expect(
-    page.querySelector<HTMLAnchorElement>('main a[href="/sessions/s-release"]')?.textContent,
-  ).toBe("Release 0.4")
-  expect(page.textContent).toContain("Document every message in packages/protocol")
-  expect(page.textContent).not.toContain("[Message from your Parent Session")
+test("an Interrupted agent's tool call that never ended was cut short, not running", async () => {
+  const { page } = await openApp("/sessions/s-release?agent=a-docs")
+  const agent = () => page.querySelector('section[aria-label="Agent"]')
+  await eventually(() => expect(agent()?.textContent).toContain("Interrupted"))
+  expect(agent()?.querySelector('[aria-label="Cut short"]')).not.toBeNull()
+  expect(agent()?.querySelector('[aria-label="Running"]')).toBeNull()
 })
 
 test("a Repo's Archived screen lists who deleted each Session, and restores it", async () => {

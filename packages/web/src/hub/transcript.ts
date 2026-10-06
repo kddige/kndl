@@ -1,10 +1,15 @@
 // Folds a Session's event log into what the chat shows: Turns with their prompt and sender, the
-// streamed text merged into blocks, each tool call's start and end joined, and a subagent's events
-// grouped under its agentId. State changes between Turns, and a WIP
-// ref the Runner could not push, and a change of model (#128), become notices.
+// streamed text merged into blocks, and each tool call's start and end joined. A subagent (ADR
+// 0014) is a card at the Agent call that started it: its events are grouped by agentId, whichever
+// run they come in, so a background agent keeps filling its card after its Turn ended. State
+// changes between Turns, a WIP ref the Runner could not push, and a change of model (#128) become
+// notices.
 
 import type {
   AgentId,
+  AgentStatus,
+  AgentSummary,
+  AgentWorktree,
   EventSeq,
   Participant,
   PromptId,
@@ -33,17 +38,28 @@ export interface ToolCallView {
 export type Block =
   | { readonly kind: "text"; readonly key: string; readonly text: string }
   | { readonly kind: "tool"; readonly key: string; readonly call: ToolCallView }
+  | { readonly kind: "agent"; readonly key: string; readonly agent: AgentView }
+  /** A person's message to the agent whose blocks these are. */
+  | {
+      readonly kind: "message"
+      readonly key: string
+      readonly sender: Participant
+      readonly text: string
+    }
 
+/** A subagent, as AgentStarted described it, with its status and everything it said and did. */
 export interface AgentView {
   readonly agentId: AgentId
+  /** Its subagent type, such as `general-purpose`. */
+  readonly agentType: string
+  readonly description: string
+  readonly model: string
+  readonly background: boolean
+  readonly status: AgentStatus
+  readonly worktree?: AgentWorktree
+  /** Its text, tool calls and the messages people sent it, across all its runs. */
   readonly blocks: ReadonlyArray<Block>
-  /** How the subagent's loop ended; null while it runs. */
-  readonly end: TurnEnded | null
 }
-
-export type TurnBlock =
-  | Block
-  | { readonly kind: "agent"; readonly key: string; readonly agent: AgentView }
 
 export interface TurnView {
   readonly turnId: TurnId
@@ -51,11 +67,16 @@ export interface TurnView {
   readonly seq: EventSeq
   readonly at: number
   readonly sender: PromptSender
+  /**
+   * For a Turn from an agent, the agent's description. Absent for a task the Session started no
+   * agent for, as Claude Code notifies a background command's end the same way.
+   */
+  readonly agentDescription?: string
   /** The prompt as sent, without the `[Name] ` the Hub prefixes for the model. */
   readonly prompt: string
   readonly promptId?: PromptId
-  /** The main loop's text and tool calls, with subagents where they first spoke. */
-  readonly blocks: ReadonlyArray<TurnBlock>
+  /** The main loop's text and tool calls, with each subagent at its Agent call. */
+  readonly blocks: ReadonlyArray<Block>
   /** Who asked to stop this Turn, in order. */
   readonly stopRequests: ReadonlyArray<Participant>
   /** How the Turn ended; null while it runs. */
@@ -74,10 +95,23 @@ export type TranscriptItem =
       readonly event: NoticeEvent
     }
 
+export interface Transcript {
+  readonly items: ReadonlyArray<TranscriptItem>
+  /** The Session's subagents, by agentId, in the order they started. */
+  readonly agents: ReadonlyMap<AgentId, AgentView>
+}
+
 interface MutableAgent {
   agentId: AgentId
+  agentType: string
+  description: string
+  model: string
+  background: boolean
+  status: AgentStatus
+  worktree?: AgentWorktree
   blocks: Array<Block>
-  end: TurnEnded | null
+  /** Whether AgentStarted placed it; its events before that wait in its blocks. */
+  placed: boolean
 }
 
 interface MutableTurn {
@@ -87,18 +121,19 @@ interface MutableTurn {
   sender: PromptSender
   prompt: string
   promptId?: PromptId
-  blocks: Array<TurnBlock>
-  agents: Map<AgentId, MutableAgent>
-  tools: Map<ToolCallId, { list: Array<Block>; index: number }>
+  blocks: Array<Block>
   stopRequests: Array<Participant>
   end: TurnEnded | null
 }
 
-export function buildTranscript(
-  log: ReadonlyArray<SessionLogEntry>,
-): ReadonlyArray<TranscriptItem> {
+export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript {
   const items: Array<TranscriptItem> = []
   const turns = new Map<TurnId, MutableTurn>()
+  const agents = new Map<AgentId, MutableAgent>()
+  /** Where each tool call's block is, so its end finds it, in any loop. */
+  const tools = new Map<ToolCallId, { list: Array<Block>; index: number }>()
+  /** The Agent calls that started a subagent: its card stands for the call. */
+  const agentCalls = new Set<ToolCallId>()
   let latest: MutableTurn | undefined
 
   const turnFor = (entry: SessionLogEntry, turnId: TurnId): MutableTurn => {
@@ -123,8 +158,6 @@ export function buildTranscript(
       prompt: displayPrompt(prompt, sender),
       ...(promptId !== undefined && { promptId }),
       blocks: [],
-      agents: new Map(),
-      tools: new Map(),
       stopRequests: [],
       end: null,
     }
@@ -134,17 +167,35 @@ export function buildTranscript(
     return turn
   }
 
-  /** The block list an event writes to: the main loop's, or its subagent's. */
-  const blocksFor = (turn: MutableTurn, agentId: AgentId | undefined): Array<Block | TurnBlock> => {
-    if (agentId === undefined) return turn.blocks
-    let agent = turn.agents.get(agentId)
+  /**
+   * The subagent, by agentId. One not started yet collects its events until AgentStarted says
+   * what it is; one that never starts is none the Session asked for, and isn't shown.
+   */
+  const agentFor = (agentId: AgentId): MutableAgent => {
+    let agent = agents.get(agentId)
     if (!agent) {
-      agent = { agentId, blocks: [], end: null }
-      turn.agents.set(agentId, agent)
-      turn.blocks.push({ kind: "agent", key: `agent-${agentId}`, agent })
+      agent = {
+        agentId,
+        agentType: "",
+        description: "",
+        model: "",
+        background: false,
+        status: "Running",
+        blocks: [],
+        placed: false,
+      }
+      agents.set(agentId, agent)
     }
-    return agent.blocks
+    return agent
   }
+
+  /** The block list an event writes to: its main-loop Turn's, or its subagent's card's. */
+  const blocksFor = (
+    entry: SessionLogEntry,
+    turnId: TurnId,
+    agentId: AgentId | undefined,
+  ): Array<Block> =>
+    agentId === undefined ? turnFor(entry, turnId).blocks : agentFor(agentId).blocks
 
   for (const entry of log) {
     const event = entry.event
@@ -153,7 +204,7 @@ export function buildTranscript(
         startTurn(entry, event.turnId, event.sender, event.text, event.promptId)
         break
       case "TextDelta": {
-        const blocks = blocksFor(turnFor(entry, event.turnId), event.agentId)
+        const blocks = blocksFor(entry, event.turnId, event.agentId)
         const last = blocks.at(-1)
         if (last?.kind === "text") {
           blocks[blocks.length - 1] = { ...last, text: last.text + event.text }
@@ -163,26 +214,25 @@ export function buildTranscript(
         break
       }
       case "ToolCallStarted": {
-        const turn = turnFor(entry, event.turnId)
-        const blocks = blocksFor(turn, event.agentId) as Array<Block>
+        if (agentCalls.has(event.toolCallId)) break
+        const blocks = blocksFor(entry, event.turnId, event.agentId)
         blocks.push({
           kind: "tool",
           key: `tool-${event.toolCallId}`,
           call: { toolCallId: event.toolCallId, tool: event.tool, input: event.input },
         })
-        turn.tools.set(event.toolCallId, { list: blocks, index: blocks.length - 1 })
+        tools.set(event.toolCallId, { list: blocks, index: blocks.length - 1 })
         break
       }
       case "ToolCallEnded": {
-        const turn = turnFor(entry, event.turnId)
+        if (agentCalls.has(event.toolCallId)) break
         const ended = { outcome: event.outcome, output: event.output }
-        const started = turn.tools.get(event.toolCallId)
+        const started = tools.get(event.toolCallId)
         const block = started?.list[started.index]
         if (started && block?.kind === "tool") {
           started.list[started.index] = { ...block, call: { ...block.call, ...ended } }
         } else {
-          const blocks = blocksFor(turn, event.agentId) as Array<Block>
-          blocks.push({
+          blocksFor(entry, event.turnId, event.agentId).push({
             kind: "tool",
             key: `tool-${event.toolCallId}`,
             call: { toolCallId: event.toolCallId, tool: event.tool, input: "", ...ended },
@@ -190,16 +240,45 @@ export function buildTranscript(
         }
         break
       }
-      case "TurnEnded": {
-        const turn = turnFor(entry, event.turnId)
-        if (event.agentId === undefined) turn.end = event
-        else {
-          blocksFor(turn, event.agentId)
-          const agent = turn.agents.get(event.agentId)
-          if (agent) agent.end = event
+      case "TurnEnded":
+        // A subagent's run ending says nothing its status doesn't.
+        if (event.agentId === undefined) turnFor(entry, event.turnId).end = event
+        break
+      case "AgentStarted": {
+        const agent = agentFor(event.agentId)
+        agent.agentType = event.agentType
+        agent.description = event.description
+        agent.model = event.model
+        agent.background = event.background
+        if (agent.placed) break
+        agent.placed = true
+        agentCalls.add(event.toolCallId)
+        const card: Block = {
+          kind: "agent",
+          key: `agent-${event.agentId}`,
+          agent: agent as AgentView,
         }
+        // In place of its Agent call; if that wasn't seen, at the end of the Turn that started it.
+        const call = tools.get(event.toolCallId)
+        if (call && call.list[call.index]?.kind === "tool") call.list[call.index] = card
+        else (turns.get(event.turnId) ?? latest ?? turnFor(entry, event.turnId)).blocks.push(card)
         break
       }
+      case "AgentStatusChanged": {
+        const agent = agents.get(event.agentId)
+        if (!agent) break
+        agent.status = event.status
+        if (event.worktree) agent.worktree = event.worktree
+        break
+      }
+      case "AgentMessaged":
+        agents.get(event.agentId)?.blocks.push({
+          kind: "message",
+          key: `message-${entry.seq}`,
+          sender: event.sender,
+          text: event.text,
+        })
+        break
       case "TurnStopRequested":
         if (latest && latest.end === null) latest.stopRequests.push(event.by)
         break
@@ -212,59 +291,112 @@ export function buildTranscript(
     }
   }
 
-  // Hand out plain snapshots, so a later build never shares mutable state with this one.
-  return items.map((item) =>
-    item.kind === "turn" ? { ...item, turn: freeze(item.turn as MutableTurn) } : item,
+  // Hand out plain snapshots, so a later build never shares mutable state with this one. Each
+  // agent is frozen once, so its card and the map hold the same view.
+  const frozen = new Map<AgentId, AgentView>()
+  const freezeBlocks = (blocks: ReadonlyArray<Block>): ReadonlyArray<Block> =>
+    blocks.map((block) =>
+      block.kind === "agent"
+        ? { ...block, agent: freezeAgent(block.agent as MutableAgent) }
+        : block,
+    )
+  const freezeAgent = (agent: MutableAgent): AgentView => {
+    const done = frozen.get(agent.agentId)
+    if (done) return done
+    const { placed: _, blocks, worktree, ...rest } = agent
+    const view: AgentView = {
+      ...rest,
+      ...(worktree && { worktree }),
+      blocks: freezeBlocks(blocks),
+    }
+    frozen.set(agent.agentId, view)
+    return view
+  }
+  const frozenItems = items.map((item): TranscriptItem => {
+    if (item.kind !== "turn") return item
+    const turn = item.turn as MutableTurn
+    const description =
+      turn.sender._tag === "FromAgent" ? agents.get(turn.sender.agentId)?.description : undefined
+    return {
+      ...item,
+      turn: {
+        turnId: turn.turnId,
+        seq: turn.seq,
+        at: turn.at,
+        sender: turn.sender,
+        ...(description !== undefined && { agentDescription: description }),
+        prompt: turn.prompt,
+        ...(turn.promptId !== undefined && { promptId: turn.promptId }),
+        blocks: freezeBlocks(turn.blocks),
+        stopRequests: [...turn.stopRequests],
+        end: turn.end,
+      },
+    }
+  })
+  const shown = new Map<AgentId, AgentView>()
+  for (const agent of agents.values())
+    if (agent.placed) shown.set(agent.agentId, freezeAgent(agent))
+  return { items: frozenItems, agents: shown }
+}
+
+/**
+ * The Session's subagents from its event log, in the order they started, with their status: for
+ * a list that needs no more, such as the sidebar's.
+ */
+export function agentsOf(log: ReadonlyArray<SessionLogEntry>): ReadonlyArray<AgentSummary> {
+  const agents = new Map<AgentId, AgentSummary>()
+  for (const { event } of log) {
+    if (event._tag === "AgentStarted" && !agents.has(event.agentId)) {
+      agents.set(event.agentId, {
+        id: event.agentId,
+        description: event.description,
+        status: "Running",
+      })
+    } else if (event._tag === "AgentStatusChanged") {
+      const agent = agents.get(event.agentId)
+      if (agent) agents.set(event.agentId, { ...agent, status: event.status })
+    }
+  }
+  return [...agents.values()]
+}
+
+/** How many finished agents the open Session lists; the rest are in its transcript. */
+const recentFinished = 3
+
+/**
+ * The open Session's agents for the sidebar: every Running and Interrupted one, the latest
+ * finished ones, and the one whose view is open, in the order they started.
+ */
+export function recentAgents(
+  agents: ReadonlyArray<AgentSummary>,
+  open: string | undefined,
+): ReadonlyArray<AgentSummary> {
+  const finished = agents.filter((agent) => agent.status === "Done" || agent.status === "Stopped")
+  const shown = new Set(finished.slice(-recentFinished))
+  return agents.filter(
+    (agent) => !finished.includes(agent) || shown.has(agent) || agent.id === open,
   )
 }
 
-function freeze(turn: MutableTurn): TurnView {
-  return {
-    turnId: turn.turnId,
-    seq: turn.seq,
-    at: turn.at,
-    sender: turn.sender,
-    prompt: turn.prompt,
-    ...(turn.promptId !== undefined && { promptId: turn.promptId }),
-    blocks: turn.blocks.map((block) =>
-      block.kind === "agent"
-        ? { ...block, agent: { ...block.agent, blocks: [...block.agent.blocks] } }
-        : block,
-    ),
-    stopRequests: [...turn.stopRequests],
-    end: turn.end,
-  }
-}
-
-/** How the note the Hub puts before another Session's prompt starts (ADR 0012). */
-const sessionNotes = [
-  "[Message from your Parent Session ",
-  "[Report from Child Session ",
-  "[Message from Child Session ",
-]
-
 /**
- * A prompt from another Session as that Session wrote it: the Hub's note for the model, which
- * says who sent it and what it is, ends at the first blank line.
+ * What a task notification says, for its Turn: Claude Code prompts the main loop with one, as XML
+ * for the model, when a background agent ends or is stopped (ADR 0014). Its summary and result,
+ * or the text as it is if it has neither.
  */
-export function withoutSessionNote(text: string): string {
-  if (!sessionNotes.some((note) => text.startsWith(note))) return text
-  const end = text.indexOf("\n\n")
-  return end === -1 ? text : text.slice(end + 2)
+export function taskNotificationText(text: string): string {
+  const field = (name: string) =>
+    new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim() ?? ""
+  const said = [field("summary"), field("result")].filter((part) => part !== "")
+  return said.length > 0 ? said.join("\n\n") : text
 }
 
 /**
- * The prompt as its sender wrote it. The Hub prefixes a Participant's prompt with `[Name] `, and
- * another Session's with a note, so the model knows who is talking; the chat already says who, so
- * the prefix is dropped.
+ * The prompt as its sender wrote it. The Hub prefixes a Participant's prompt with `[Name] `, so
+ * the model knows who is talking; the chat already says who, so the prefix is dropped. A Turn
+ * from an agent shows what its task notification says.
  */
 export function displayPrompt(text: string, sender: PromptSender): string {
-  if (
-    sender._tag === "FromParentSession" ||
-    sender._tag === "FromChildSession" ||
-    sender._tag === "FromChildSessionMessage"
-  )
-    return withoutSessionNote(text)
+  if (sender._tag === "FromAgent") return taskNotificationText(text)
   if (sender._tag !== "FromParticipant") return text
   const { name, login } = sender.participant
   for (const label of [name, login]) {

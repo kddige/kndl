@@ -1,5 +1,7 @@
 import {
-  type ChildReport,
+  AgentId,
+  AgentStatus,
+  type AgentSummary,
   ClaudeSessionId,
   EffortLevel,
   EnvironmentVersion,
@@ -29,10 +31,6 @@ export interface NewSession {
   /** The Creator, a signed-in Participant: recorded for history only (ADR 0003). */
   readonly creatorId: ParticipantId
   readonly createdAt: number
-  /** Its Session name, if it is given one from the start, as a Child Session can be. */
-  readonly name?: SessionName
-  /** Its Parent Session, for a Child Session (ADR 0012). */
-  readonly parentId?: SessionId
   /** Its model and effort (#128); absent for Claude Code's default. */
   readonly model?: ModelName
   readonly effort?: EffortLevel
@@ -44,12 +42,11 @@ export interface ModelSetting {
   readonly effort?: EffortLevel
 }
 
-/** What a Child Session's Parent Session has had from it (ADR 0012). */
-export interface ChildRecord {
-  /** Its final message of its last Turn; absent until a Turn ends. */
-  readonly lastReport?: ChildReport
-  /** Its Turns in a row its parent prompted, with no person's prompt to either: the loop guard. */
-  readonly exchanges: number
+/** A subagent the main loop started with its Agent tool (ADR 0014), as AgentStarted said. */
+export interface NewAgent {
+  readonly id: AgentId
+  readonly description: string
+  readonly startedAt: number
 }
 
 interface SessionRow {
@@ -65,7 +62,6 @@ interface SessionRow {
   readonly creatorLogin: string
   readonly creatorName: string
   readonly creatorAvatarUrl: string | null
-  readonly parentId: string | null
   readonly createdAt: number
   readonly currentTurn: string | null
   readonly archivedById: string | null
@@ -90,6 +86,7 @@ export interface Archiving {
 }
 
 const decodeState = Schema.decodeUnknownSync(SessionState)
+const decodeAgentStatus = Schema.decodeUnknownSync(AgentStatus)
 const decodeModel = Schema.decodeUnknownOption(ModelName)
 const decodeEffort = Schema.decodeUnknownOption(EffortLevel)
 
@@ -103,7 +100,7 @@ const settingOf = (row: { readonly model: string | null; readonly effort: string
   }
 }
 
-const toSummary = (row: SessionRow): SessionSummary =>
+const toSummary = (row: SessionRow, agents: ReadonlyArray<AgentSummary> = []): SessionSummary =>
   SessionSummary.make({
     id: SessionId.make(row.id),
     repo: row.repo,
@@ -119,9 +116,9 @@ const toSummary = (row: SessionRow): SessionSummary =>
       name: row.creatorName,
       ...(row.creatorAvatarUrl !== null && { avatarUrl: row.creatorAvatarUrl }),
     },
-    ...(row.parentId !== null && { parentId: SessionId.make(row.parentId) }),
     createdAt: row.createdAt,
     currentTurn: row.currentTurn === null ? null : TurnId.make(row.currentTurn),
+    ...(agents.length > 0 && { agents }),
     ...(row.archivedById !== null &&
       row.archivedAt !== null &&
       row.purgeAt !== null && {
@@ -151,8 +148,9 @@ const toSummary = (row: SessionRow): SessionSummary =>
 
 /**
  * Every Session the Hub knows, in SQLite: its Repo and branches, lifecycle state, Runner,
- * Creator, the Turn running now, and while it is Archived who archived it. People are shown with
- * their current login and name.
+ * Creator, the Turn running now, its subagents (ADR 0014), and while it is Archived who archived
+ * it. People are shown with their current login and name. A summary lists the Running and
+ * Interrupted subagents; the others are only history, in the event log.
  *
  * Purging a Session deletes it, with its event log and Prompt queue, and leaves a
  * note for its Runner to delete what it holds, until the Runner says it has.
@@ -167,23 +165,21 @@ export class Sessions extends Context.Service<
     readonly listByRunner: (
       runnerId: RunnerId,
     ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
-    /** The Session's Child Sessions, Archived ones too, oldest first (ADR 0012). */
-    readonly children: (
-      parentId: SessionId,
-    ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
-    /** What the Child Session's parent has had from it. */
-    readonly childRecord: (id: SessionId) => Effect.Effect<ChildRecord, SqlError>
-    /** Keeps the Child Session's Report, as its parent was sent it, and the loop guard's count. */
-    readonly recordReport: (
+    /** Records a subagent the Session's main loop started, Running. */
+    readonly agentStarted: (id: SessionId, agent: NewAgent) => Effect.Effect<void, SqlError>
+    /** The subagent's status, or none if the Session never started it. */
+    readonly agentStatus: (
       id: SessionId,
-      report: ChildReport,
-      exchanges: number,
-    ) => Effect.Effect<void, SqlError>
-    /**
-     * A person prompted the Session: the loop guard counts afresh for it as a Child Session, and
-     * for its own Child Sessions.
-     */
-    readonly personPrompted: (id: SessionId) => Effect.Effect<void, SqlError>
+      agentId: AgentId,
+    ) => Effect.Effect<Option.Option<AgentStatus>, SqlError>
+    /** Records the subagent's new status; false if the Session never started it. */
+    readonly setAgentStatus: (
+      id: SessionId,
+      agentId: AgentId,
+      status: AgentStatus,
+    ) => Effect.Effect<boolean, SqlError>
+    /** Its Claude Code stopped: its Running subagents are Interrupted. Returns which they were. */
+    readonly interruptAgents: (id: SessionId) => Effect.Effect<ReadonlyArray<AgentId>, SqlError>
     readonly setState: (id: SessionId, state: SessionState) => Effect.Effect<void, SqlError>
     /** Its Session name, or null to clear it, so it is shown by its Work branch. */
     readonly setName: (id: SessionId, name: SessionName | null) => Effect.Effect<void, SqlError>
@@ -252,12 +248,40 @@ export class Sessions extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
 
-      const select = (where: Fragment) => sql<SessionRow>`
+      /** The Running and Interrupted subagents of the Sessions `ids`, by Session. */
+      const activeAgents = Effect.fn("Sessions.activeAgents")(function* (
+        ids: ReadonlyArray<string>,
+      ) {
+        const rows = yield* sql<{
+          readonly sessionId: string
+          readonly id: string
+          readonly description: string
+          readonly status: string
+        }>`
+          SELECT g.session_id AS sessionId, g.agent_id AS id, g.description, g.status
+          FROM agents g
+          WHERE g.session_id IN ${sql.in(ids)} AND g.status IN ('Running', 'Interrupted')
+          ORDER BY g.started_at, g.agent_id
+        `
+        const bySession = new Map<string, Array<AgentSummary>>()
+        for (const row of rows) {
+          const agents = bySession.get(row.sessionId) ?? []
+          agents.push({
+            id: AgentId.make(row.id),
+            description: row.description,
+            status: decodeAgentStatus(row.status),
+          })
+          bySession.set(row.sessionId, agents)
+        }
+        return bySession
+      })
+
+      const selectRows = (where: Fragment) => sql<SessionRow>`
         SELECT s.id, s.repo, s.base_branch AS baseBranch, s.work_branch AS workBranch, s.name,
           s.state,
           s.runner_id AS runnerId, s.runner_login_account AS runnerLoginAccount,
           s.creator_id AS creatorId, p.login AS creatorLogin, p.name AS creatorName,
-          p.avatar_url AS creatorAvatarUrl, s.parent_id AS parentId,
+          p.avatar_url AS creatorAvatarUrl,
           s.created_at AS createdAt, s.current_turn AS currentTurn,
           s.archived_by AS archivedById, a.login AS archivedByLogin, a.name AS archivedByName,
           a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt,
@@ -270,80 +294,79 @@ export class Sessions extends Context.Service<
         ORDER BY s.created_at, s.id
       `
 
+      /** The Sessions `where` picks, as summaries. */
+      const select = Effect.fn("Sessions.select")(function* (where: Fragment) {
+        const rows = yield* selectRows(where)
+        if (rows.length === 0) return []
+        const agents = yield* activeAgents(rows.map((row) => row.id))
+        return rows.map((row) => toSummary(row, agents.get(row.id)))
+      })
+
       const get = Effect.fn("Sessions.get")(function* (id: SessionId) {
-        const rows = yield* select(sql`WHERE s.id = ${id}`)
-        return Option.map(Option.fromNullishOr(rows[0]), toSummary)
+        const summaries = yield* select(sql`WHERE s.id = ${id}`)
+        return Option.fromNullishOr(summaries[0])
       })
 
       const create = Effect.fn("Sessions.create")(function* (session: NewSession) {
         yield* sql`
           INSERT INTO sessions (
             id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at, name, parent_id, model, effort
+            creator_id, created_at, model, effort
           ) VALUES (
             ${session.id}, ${session.repo}, ${session.baseBranch}, ${session.workBranch},
             ${session.state}, ${session.runnerId}, ${session.runnerLogin.account},
-            ${session.creatorId}, ${session.createdAt}, ${session.name ?? null},
-            ${session.parentId ?? null}, ${session.model ?? null}, ${session.effort ?? null}
+            ${session.creatorId}, ${session.createdAt}, ${session.model ?? null},
+            ${session.effort ?? null}
           )
         `
         return Option.getOrThrow(yield* get(session.id))
       })
 
-      const list = Effect.map(select(sql``), (rows) => rows.map(toSummary)).pipe(
-        Effect.withSpan("Sessions.list"),
-      )
+      const list = select(sql``).pipe(Effect.withSpan("Sessions.list"))
 
-      const listByRunner = Effect.fn("Sessions.listByRunner")(function* (runnerId: RunnerId) {
-        const rows = yield* select(sql`WHERE s.runner_id = ${runnerId}`)
-        return rows.map(toSummary)
-      })
+      const listByRunner = (runnerId: RunnerId) => select(sql`WHERE s.runner_id = ${runnerId}`)
 
-      const children = Effect.fn("Sessions.children")(function* (parentId: SessionId) {
-        const rows = yield* select(sql`WHERE s.parent_id = ${parentId}`)
-        return rows.map(toSummary)
-      })
-
-      const childRecord = Effect.fn("Sessions.childRecord")(function* (
+      const agentStarted = Effect.fn("Sessions.agentStarted")(function* (
         id: SessionId,
-      ): Effect.fn.Return<ChildRecord, SqlError> {
-        const rows = yield* sql<{
-          readonly lastReport: string | null
-          readonly lastReportAt: number | null
-          readonly exchanges: number
-        }>`
-          SELECT last_report AS lastReport, last_report_at AS lastReportAt,
-            parent_exchanges AS exchanges
-          FROM sessions WHERE id = ${id}
-        `
-        const row = rows[0]
-        if (row === undefined) return { exchanges: 0 }
-        return {
-          ...(row.lastReport !== null &&
-            row.lastReportAt !== null && {
-              lastReport: { text: row.lastReport, at: row.lastReportAt },
-            }),
-          exchanges: row.exchanges,
-        }
-      })
-
-      const recordReport = Effect.fn("Sessions.recordReport")(function* (
-        id: SessionId,
-        report: ChildReport,
-        exchanges: number,
+        agent: NewAgent,
       ) {
         yield* sql`
-          UPDATE sessions SET last_report = ${report.text}, last_report_at = ${report.at},
-            parent_exchanges = ${exchanges}
-          WHERE id = ${id}
+          INSERT INTO agents (session_id, agent_id, description, status, started_at)
+          VALUES (${id}, ${agent.id}, ${agent.description}, 'Running', ${agent.startedAt})
+          ON CONFLICT (session_id, agent_id) DO UPDATE SET status = 'Running'
         `
       })
 
-      const personPrompted = Effect.fn("Sessions.personPrompted")(function* (id: SessionId) {
-        yield* sql`
-          UPDATE sessions SET parent_exchanges = 0
-          WHERE (id = ${id} OR parent_id = ${id}) AND parent_exchanges > 0
+      const agentStatus = Effect.fn("Sessions.agentStatus")(function* (
+        id: SessionId,
+        agentId: AgentId,
+      ) {
+        const rows = yield* sql<{ readonly status: string }>`
+          SELECT status FROM agents WHERE session_id = ${id} AND agent_id = ${agentId}
         `
+        return Option.map(Option.fromNullishOr(rows[0]), (row) => decodeAgentStatus(row.status))
+      })
+
+      const setAgentStatus = Effect.fn("Sessions.setAgentStatus")(function* (
+        id: SessionId,
+        agentId: AgentId,
+        status: AgentStatus,
+      ) {
+        const rows = yield* sql<{ readonly id: string }>`
+          UPDATE agents SET status = ${status}
+          WHERE session_id = ${id} AND agent_id = ${agentId}
+          RETURNING agent_id AS id
+        `
+        return rows.length > 0
+      })
+
+      const interruptAgents = Effect.fn("Sessions.interruptAgents")(function* (id: SessionId) {
+        const rows = yield* sql<{ readonly id: string }>`
+          UPDATE agents SET status = 'Interrupted'
+          WHERE session_id = ${id} AND status = 'Running'
+          RETURNING agent_id AS id
+        `
+        return rows.map((row) => AgentId.make(row.id)).toSorted()
       })
 
       const setState = Effect.fn("Sessions.setState")(function* (
@@ -452,8 +475,7 @@ export class Sessions extends Context.Service<
       })
 
       const dueForPurge = Effect.fn("Sessions.dueForPurge")(function* (now: number) {
-        const rows = yield* select(sql`WHERE s.state = 'Archived' AND s.purge_at <= ${now}`)
-        return rows.map(toSummary)
+        return yield* select(sql`WHERE s.state = 'Archived' AND s.purge_at <= ${now}`)
       })
 
       const purge = Effect.fn("Sessions.purge")(function* (session: SessionSummary, at: number) {
@@ -462,7 +484,7 @@ export class Sessions extends Context.Service<
             VALUES (${session.id}, ${session.runnerId}, ${at})
           `
         yield* sql`DELETE FROM mod_tokens WHERE session_id = ${session.id}`
-        // The event log and Prompt queue go with it (ON DELETE CASCADE).
+        // The event log, Prompt queue and subagents go with it (ON DELETE CASCADE).
         yield* sql`DELETE FROM sessions WHERE id = ${session.id}`
       }, sql.withTransaction)
 
@@ -498,10 +520,10 @@ export class Sessions extends Context.Service<
         get,
         list,
         listByRunner,
-        children,
-        childRecord,
-        recordReport,
-        personPrompted,
+        agentStarted,
+        agentStatus,
+        setAgentStatus,
+        interruptAgents,
         setState,
         setName,
         setModel,

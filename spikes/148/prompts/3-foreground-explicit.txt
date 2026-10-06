@@ -1,1 +1,0 @@
-Experiment 3. Call the Agent tool once. Its input must contain exactly these keys: "subagent_type": "general-purpose", "model": "haiku", "run_in_background": false (include this key, with the boolean false), "description": "list files", "prompt": "Run ls -la in the current directory and summarise it in one line." Then reply with what it returned, nothing else.

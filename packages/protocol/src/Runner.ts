@@ -18,7 +18,7 @@ import {
 import { GitIdentity, GitReply, GitRequest, SessionTurnEnded, WipPushFailed } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
-import { BranchName, RepoName, RunnerLogin, SessionRef } from "./Session.ts"
+import { BranchName, RepoName, RunnerLogin } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
   TerminalFrame,
@@ -219,12 +219,6 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
    * own: the Session's Creator (#110). Absent from a Hub older than that.
    */
   gitIdentity: Schema.optionalKey(GitIdentity),
-  /**
-   * Its Parent Session, when it is a Child Session (ADR 0012): Claude Code is told whose child it
-   * is and that its final message of each Turn goes there, and its mod offers no Child Session
-   * tools.
-   */
-  parent: Schema.optionalKey(SessionRef),
   /** The model to start Claude Code on, its `--model` (#128); absent for Claude Code's default. */
   model: Schema.optionalKey(ModelName),
   /** The effort level to start Claude Code at, its `--effort` (#128); absent for its default. */
@@ -247,7 +241,6 @@ export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   resume: ClaudeSessionId,
   /** A new mod token, in place of the old one, which the Hub revoked as it sent this. */
   modToken: Schema.NonEmptyString,
-  parent: Schema.optionalKey(SessionRef),
   model: Schema.optionalKey(ModelName),
   effort: Schema.optionalKey(EffortLevel),
 })

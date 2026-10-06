@@ -1,7 +1,15 @@
 import * as stylex from "@stylexjs/stylex"
 import { memo } from "react"
 import { prettyInput, type ToolCallView, toolSummary } from "../hub/transcript.ts"
-import { Badge, CheckIcon, CloseIcon, Disclosure, Spinner, WarningIcon } from "../ui/index.ts"
+import {
+  Badge,
+  CheckIcon,
+  CloseIcon,
+  Disclosure,
+  Spinner,
+  StopIcon,
+  WarningIcon,
+} from "../ui/index.ts"
 import { color, font, leading, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
@@ -18,6 +26,7 @@ const styles = stylex.create({
   },
   status: { display: "inline-flex", flexShrink: 0 },
   succeeded: { color: color.success },
+  cutShort: { color: color.textSubtle },
   failed: { color: color.danger },
   details: { display: "flex", flexDirection: "column" },
   section: {
@@ -46,14 +55,29 @@ const styles = stylex.create({
   },
 })
 
-/** One tool call: a summary row, closed by default, that opens on its input and output. */
-export const ToolCall = memo(function ToolCall({ call }: { call: ToolCallView }) {
+/**
+ * One tool call: a summary row, closed by default, that opens on its input and output. One
+ * `cutShort` never ended: its loop stopped first.
+ */
+export const ToolCall = memo(function ToolCall({
+  call,
+  cutShort = false,
+}: {
+  call: ToolCallView
+  cutShort?: boolean
+}) {
   const summary = toolSummary(call.input)
   return (
     <Disclosure
       summary={
         <>
-          <ToolStatus call={call} />
+          {cutShort ? (
+            <span {...stylex.props(styles.status, styles.cutShort)}>
+              <StopIcon aria-label="Cut short" role="img" aria-hidden={false} />
+            </span>
+          ) : (
+            <ToolStatus call={call} />
+          )}
           <span {...stylex.props(styles.name)}>{call.tool}</span>
           {summary && <span {...stylex.props(styles.summary)}>{summary}</span>}
           {call.outcome === "Denied" && <Badge intent="warning">Denied</Badge>}
@@ -73,7 +97,11 @@ export const ToolCall = memo(function ToolCall({ call }: { call: ToolCallView })
             {call.outcome === "Denied" ? "Reason" : "Output"}
           </span>
           <pre {...stylex.props(styles.pre)}>
-            {call.outcome === undefined ? "Running…" : call.output || "(no output)"}
+            {call.outcome !== undefined
+              ? call.output || "(no output)"
+              : cutShort
+                ? "Cut short: it stopped before it finished."
+                : "Running…"}
           </pre>
         </div>
       </div>

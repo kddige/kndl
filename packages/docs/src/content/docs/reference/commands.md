@@ -101,7 +101,7 @@ Every script runs from the root of a claude-hub checkout. They keep their state 
 | Command | What it does |
 |---|---|
 | `bun run hub` | Starts the Hub on `HOST:PORT` (`127.0.0.1:7777`). Reads `packages/hub/.env.local`. |
-| `bun run runner` | Builds the `hub-link` mod, then starts a Runner. Needs `RUNNER_TOKEN`. |
+| `bun run runner` | Builds the mod, then starts a Runner. Needs `RUNNER_TOKEN`. |
 | `bun run web` | Starts Vite's dev server for the web UI on <http://localhost:5173>, passing `/auth`, `/health`, `/runner/` and `/ws` through to the Hub. |
 | `bun run web:build` | Builds the web UI into `packages/web/dist`, which the Hub serves. |
 | `bun run cli <command>` | Runs the [`claude-hub` command](#the-claude-hub-command) from the checkout. It manages the installed home, not the dev home. |
@@ -156,8 +156,8 @@ A running Hub holds `hub.db.lock`, beside the database, so the reset knows it ru
 | `bun run typecheck` | Runs each package's `typecheck` script: `tsc --noEmit` for the Hub, Runner, CLI, protocol and web UI, a script for the mod, and `astro check` for this site. |
 | `bun run lint` | Lints with oxlint; a warning fails it. |
 | `bun run format` | Formats with oxfmt. `bun run format:check` only checks. |
-| `bun run mod:build` | Builds the mod's hook library into `packages/mod/hooks/hub-link-lib.js`. |
-| `bun run mod:check` | Builds the mod, then runs `claude plugin validate` and `claude plugin test` on it. |
+| `bun run mod:build` | Builds the mod's hook library into each plugin's `hooks/hub-link-lib.js`, under `packages/mod/plugins/`. |
+| `bun run mod:check` | Builds the mod, then runs `claude plugin validate` and `claude plugin test` on each of its plugins. |
 
 ### This site
 

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun scripts/build.ts",
-    "check": "bun run build && claude plugin validate . && claude plugin test .",
+    "check": "bun run build && claude plugin validate plugins/hub-link && claude plugin validate plugins/hub-link-commands && claude plugin test plugins/hub-link && claude plugin test plugins/hub-link-commands",
     "typecheck": "bash scripts/typecheck.sh"
   },
   "devDependencies": {

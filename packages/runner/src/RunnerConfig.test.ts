@@ -3,15 +3,17 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { ConfigProvider, Effect } from "effect"
-import { ModBundle, RunnerConfig, RunnerConfigLive } from "./RunnerConfig.ts"
+import { ModBundles, RunnerConfig, RunnerConfigLive } from "./RunnerConfig.ts"
 
-// A mod directory with its bundle in place, as RunnerConfigLive refuses to start without one.
+// A mod directory with its bundles in place, as RunnerConfigLive refuses to start without one.
 let modDir: string
 
 beforeAll(async () => {
   modDir = await mkdtemp(join(tmpdir(), "claude-hub-runner-config-"))
-  await mkdir(dirname(join(modDir, ModBundle)), { recursive: true })
-  await writeFile(join(modDir, ModBundle), "")
+  for (const bundle of ModBundles) {
+    await mkdir(dirname(join(modDir, bundle)), { recursive: true })
+    await writeFile(join(modDir, bundle), "")
+  }
 })
 
 afterAll(() => rm(modDir, { recursive: true, force: true }))

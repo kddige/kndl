@@ -294,7 +294,6 @@ export const SessionsLive = Layer.effect(
           claudePath: sandbox.claude.path,
           sessionId,
           conversation: yield* conversationFor(request, directories),
-          ...(request.parent === undefined ? {} : { parent: request.parent }),
           ...(request.model === undefined ? {} : { model: request.model }),
           ...(request.effort === undefined ? {} : { effort: request.effort }),
         })

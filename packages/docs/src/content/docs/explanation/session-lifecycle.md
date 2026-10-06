@@ -34,13 +34,15 @@ Each Session starts from a base branch onto its own Work branch, `claude/<sessio
 
 ## Going to sleep
 
-An Active Session with no Turn running, no prompt queued and no Participant present for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**, and each of a Runner's Sessions before it [updates](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit), once its running Turn ends (or is stopped, after ten minutes or with **Update now**).
+An Active Session with no Turn or [subagent](/how-to/work-with-subagents/) running, no prompt queued and no Participant present for 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) is put to sleep. So is one where someone presses **Sleep now**, and each of a Runner's Sessions before it [updates](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit), once its running Turn ends (or is stopped, after ten minutes or with **Update now**).
 
 The Runner stops Claude Code, runs `docker stop` on the Sandbox's containers so databases shut down cleanly, and stops the Sandbox, keeping its disks, Claude Code's state among them, and the Workspace. It pushes the [WIP ref](/explanation/git-from-sessions/#the-wip-ref) first. Only when the Runner reports the Session stopped does the Hub record it Asleep; prompts sent meanwhile wait, and wake it once it is.
 
+Subagents run inside the Session's Claude Code, so they stop with it, and the Hub marks the ones that were running Interrupted ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)). That's why **Sleep now**, a restart and a change of model or effort ask first while agents are running. Their transcripts are part of Claude Code's state, so a message resumes one later.
+
 ## Waking
 
-A prompt to an Asleep Session wakes it, as does **Wake now** on its banner. The Runner starts the same Sandbox again, so `node_modules`, package caches, Docker's data and Claude Code's state are as they were, and starts Claude Code in it with `--resume`, which keeps the conversation. Changing a Session's model or effort restarts its Claude Code the same way. Queued prompts are delivered once the mod has said hello.
+A prompt to an Asleep Session wakes it, as does **Wake now** on its banner. The Runner starts the same Sandbox again, so `node_modules`, package caches, Docker's data and Claude Code's state are as they were, and starts Claude Code in it with `--resume`, which keeps the conversation. Changing a Session's model or effort restarts its Claude Code the same way. Queued prompts are delivered once the mod has said hello. Interrupted subagents don't resume on their own: Claude Code tells Claude which ones can be, and a message to one, from its view, resumes it, waking the Session first if it's Asleep.
 
 A Session doesn't wake while its Runner is behind the Hub or updating: its prompts wait in the queue, and wake it once the Runner runs the Hub's commit.
 
@@ -56,13 +58,13 @@ A conversation Claude Code never wrote down, because it exited before it got tha
 
 While its Runner is offline, a Session is Frozen: still readable, with prompts waiting in its queue. Sessions belong to their Runner, because they run on its Runner login, so they wait for it rather than moving elsewhere.
 
-When the Runner is back, the Session is Active if its Claude Code is still running, and otherwise Asleep, woken at once if prompts are waiting. Claude Code keeps running both when only the Runner's connection dropped and when the Runner itself restarted, after a crash or a `claude-hub runner stop` and `start`: it runs in the Session's Sandbox, not in the Runner. A restarted Runner reads each Session token back from the Claude Code it was given to, and the Hub gives the Session a new mod token, since the old one went with the old process. Until then the credential proxy asks that Claude Code to retry in a moment; a Turn that was running carries on once it can. A Session whose Claude Code stopped while the Runner was down is Asleep.
+When the Runner is back, the Session is Active if its Claude Code is still running, and otherwise Asleep, woken at once if prompts are waiting. Claude Code keeps running both when only the Runner's connection dropped and when the Runner itself restarted, after a crash or a `claude-hub runner stop` and `start`: it runs in the Session's Sandbox, not in the Runner. A restarted Runner reads each Session token back from the Claude Code it was given to, and the Hub gives the Session a new mod token, since the old one went with the old process. Until then the credential proxy asks that Claude Code to retry in a moment; a Turn that was running carries on once it can. A Session whose Claude Code stopped while the Runner was down is Asleep, and its subagents that were running are Interrupted. While a Session is Frozen, its agents stay Running, since its Claude Code may still be running them.
 
 ## Deleting and restoring
 
 Any Participant can delete a Session, from the trash button in its header ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Deleting archives it at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox with its disks, keeping the Workspace and the disk with Claude Code's state. If the WIP push fails, the archive still completes, with the failure in the Session's history.
 
-An Archived Session is hidden from the sidebar, refuses prompts, and its terminal can't be opened. Deleting a [Parent Session](/how-to/coordinate-with-child-sessions/) archives its Child Sessions too, and restoring it restores only the Parent Session.
+An Archived Session is hidden from the sidebar, refuses prompts, and its terminal can't be opened.
 
 - **Undo** on the toast after a delete restores it.
 - **Archived Sessions** in the sidebar lists every Repo's Archived Sessions, with who deleted each and when, and a **Restore** button.

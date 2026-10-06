@@ -152,6 +152,16 @@ export function BranchIcon(props: IconProps) {
   )
 }
 
+/** A subagent (ADR 0014). */
+export function AgentIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="5" width="10" height="8" rx="2" />
+      <path d="M8 5V2.5M6.25 9v.5M9.75 9v.5" />
+    </Icon>
+  )
+}
+
 export function KeyIcon(props: IconProps) {
   return (
     <Icon {...props}>

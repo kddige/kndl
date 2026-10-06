@@ -2,11 +2,11 @@
 // keeps its data in these, as the real Hub's database would, so ids are plain strings.
 
 import type {
+  AgentSummary,
   AppPermissionsCheck,
   ClaudeCredentialInfo,
   Environment,
   EnvironmentVersionInfo,
-  FromSession,
   HubToWeb,
   Participant,
   PendingPairingCode,
@@ -20,7 +20,7 @@ import type {
 
 export type HubMessage = (typeof HubToWeb)["Encoded"]
 export type ParticipantWire = (typeof Participant)["Encoded"]
-export type FromSessionWire = (typeof FromSession)["Encoded"]
+export type AgentSummaryWire = (typeof AgentSummary)["Encoded"]
 export type SessionSummaryWire = (typeof SessionSummary)["Encoded"]
 export type SessionEventWire = (typeof SessionEvent)["Encoded"]
 export type LogEntryWire = (typeof SessionLogEntry)["Encoded"]

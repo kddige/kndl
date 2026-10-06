@@ -19,6 +19,7 @@ claude-hub is early: v1 is being built, and things change quickly.
 - A **Runner**, on each machine that runs Sessions, starts each Session's Claude Code in tmux in the Session's **Sandbox**, a microsandbox microVM built from its Repo's **Environment**, so nothing Claude runs touches the host.
 - The Sandbox never holds a Claude credential: the Runner's credential proxy adds its Creator's, or else the Runner's own, to each request on its way to Anthropic.
 - Everyone signed in sees each Session live, prompts it, and can type into its terminal.
+- A Session delegates with Claude Code's own subagents, in its Sandbox; each shows under its Session, live, and anyone can message, stop or resume it.
 
 The words used here are defined in [`GLOSSARY.md`](GLOSSARY.md), and the design decisions are recorded in [`docs/adr/`](docs/adr/). Both are also on the site.
 
@@ -59,7 +60,7 @@ One Bun workspace in TypeScript, with [Effect](https://effect.website):
 | [`packages/hub`](packages/hub) | The Hub: an Effect HTTP server on Bun, with SQLite. |
 | [`packages/runner`](packages/runner) | A Runner: Claude Code in tmux in a microsandbox Sandbox, behind a credential proxy. |
 | [`packages/cli`](packages/cli) | The `claude-hub` command: installs, runs and looks after a Hub and Runner as services. |
-| [`packages/mod`](packages/mod) | `hub-link`, the Claude Code mod each Session loads. |
+| [`packages/mod`](packages/mod) | The Claude Code mod each Session loads, as two plugins: `hub-link` reports to the Hub, `hub-link-commands` runs its commands. |
 | [`packages/web`](packages/web) | The web UI: React on Vite, Base UI and StyleX. |
 | [`packages/docs`](packages/docs) | The documentation site: Astro Starlight. |
 | [`brand/`](brand) | The logo's sources. `bun run --filter @claude-hub/docs brand` makes the PNG and ICO files from them. |
@@ -73,7 +74,7 @@ All from the repo root:
 | `bun run lint` | Lints with oxlint. |
 | `bun run format:check` | Checks formatting with oxfmt; `bun run format` applies it. |
 | `bun run web` | The web UI's Vite dev server on <http://localhost:5173>, beside `bun run hub`. |
-| `bun run mod:check` | Builds the mod and validates it with Claude Code. |
+| `bun run mod:check` | Builds the mod and validates its plugins with Claude Code. |
 | `bun run docs:dev` | The documentation site on <http://localhost:4321/claude-hub/>. |
 | `bun run docs:build` | Builds the site into `packages/docs/dist`. |
 

@@ -1,22 +1,18 @@
 import type {
+  AgentId,
   Participant,
-  PromptSender,
+  SessionId,
   SessionStateChanged,
   TurnEnded,
 } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { createContext, memo, useContext } from "react"
+import { createContext, memo, type ReactNode, useContext, useState } from "react"
 import { clock, count, duration, statusOf } from "../app/format.ts"
-import type {
-  AgentView,
-  Block,
-  NoticeEvent,
-  TranscriptItem,
-  TurnBlock,
-  TurnView,
-} from "../hub/transcript.ts"
+import type { AgentView, Block, NoticeEvent, TranscriptItem, TurnView } from "../hub/transcript.ts"
 import {
+  AgentIcon,
+  AgentStatus,
   Avatar,
   Badge,
   BranchIcon,
@@ -37,6 +33,9 @@ import { ToolCall } from "./ToolCall.tsx"
 type NameTurnModel = (model: string) => string | undefined
 
 const TurnModelContext = createContext<NameTurnModel>(() => undefined)
+
+/** The Session the transcript is of, for links to its agents. */
+const SessionContext = createContext<SessionId | null>(null)
 
 const styles = stylex.create({
   list: {
@@ -130,8 +129,62 @@ const styles = stylex.create({
     gap: space.s2,
     padding: space.s3,
   },
-  agentId: { fontFamily: font.mono, fontSize: text.sm, color: color.textMuted },
-  agentCount: { color: color.textSubtle, fontSize: text.sm },
+  agentTitle: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontWeight: weight.medium,
+  },
+  agentBranch: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontFamily: font.mono,
+    fontSize: text.xs,
+    color: color.textMuted,
+  },
+  agentCount: {
+    flexShrink: 0,
+    marginInlineStart: "auto",
+    color: color.textSubtle,
+    fontSize: text.xs,
+  },
+  agentMeta: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: space.s2,
+    color: color.textSubtle,
+    fontSize: text.xs,
+  },
+  agentLink: {
+    color: color.textMuted,
+    textDecorationLine: { default: "underline", ":hover": "underline" },
+    textUnderlineOffset: "2px",
+    borderRadius: radius.sm,
+  },
+  message: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s1,
+  },
+  messageText: {
+    paddingBlock: space.s1_5,
+    paddingInline: space.s3,
+    borderRadius: radius.lg,
+    backgroundColor: color.surfaceMuted,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    lineHeight: leading.normal,
+  },
   footer: {
     display: "flex",
     alignItems: "center",
@@ -159,40 +212,46 @@ const styles = stylex.create({
   },
 })
 
-/** The Session's conversation: each Turn's prompt and Claude's reply, and state changes. */
+/**
+ * The Session's conversation: each Turn's prompt and Claude's reply, with its subagents' cards,
+ * and state changes.
+ */
 export const Transcript = memo(function Transcript({
+  sessionId,
   items,
   nameTurnModel = noTurnModel,
 }: {
+  sessionId: SessionId
   items: ReadonlyArray<TranscriptItem>
   /** Names a Turn's model in its footer when it isn't the Session's own. */
   nameTurnModel?: NameTurnModel
 }) {
   return (
-    <TurnModelContext value={nameTurnModel}>
-      <ol aria-label="Conversation" {...stylex.props(styles.list)}>
-        {items.map((item) => (
-          <li key={item.key}>
-            {item.kind === "turn" ? (
-              <Turn turn={item.turn} />
-            ) : (
-              <Notice at={item.at} event={item.event} />
-            )}
-          </li>
-        ))}
-      </ol>
-    </TurnModelContext>
+    <SessionContext value={sessionId}>
+      <TurnModelContext value={nameTurnModel}>
+        <ol aria-label="Conversation" {...stylex.props(styles.list)}>
+          {items.map((item) => (
+            <li key={item.key}>
+              {item.kind === "turn" ? (
+                <Turn turn={item.turn} />
+              ) : (
+                <Notice at={item.at} event={item.event} />
+              )}
+            </li>
+          ))}
+        </ol>
+      </TurnModelContext>
+    </SessionContext>
   )
 })
 
 const noTurnModel: NameTurnModel = () => undefined
 
 const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
-  const sender = turn.sender
   return (
     <article {...stylex.props(styles.turn)} data-turn={turn.turnId}>
       <div {...stylex.props(styles.speaker)}>
-        <Sender sender={sender} />
+        <Sender turn={turn} />
         <time {...stylex.props(styles.time)} dateTime={new Date(turn.at).toISOString()}>
           {clock(turn.at)}
         </time>
@@ -205,24 +264,19 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
         <span {...stylex.props(styles.name)}>Claude</span>
       </div>
       <div {...stylex.props(styles.reply)}>
-        {turn.blocks.map((block) => (
-          <TurnBlockView key={block.key} block={block} />
-        ))}
+        <Blocks blocks={turn.blocks} ended={turn.end !== null} />
         <TurnFooter turn={turn} />
       </div>
     </article>
   )
 })
 
-/** What another Session's prompt is, beside its link (ADR 0012). */
-const sessionSender = {
-  FromParentSession: "Parent Session",
-  FromChildSession: "Report from Child Session",
-  FromChildSessionMessage: "Message from Child Session",
-} as const
-
-/** Who prompted a Turn: a person, the terminal, or another Session, linked (ADR 0012). */
-function Sender({ sender }: { sender: PromptSender }) {
+/**
+ * Who prompted a Turn: a person, the terminal, a subagent that ended (ADR 0014), or, in history
+ * from before, another Session.
+ */
+function Sender({ turn }: { turn: TurnView }) {
+  const sender = turn.sender
   switch (sender._tag) {
     case "FromParticipant":
       return (
@@ -240,9 +294,29 @@ function Sender({ sender }: { sender: PromptSender }) {
           <span {...stylex.props(styles.name)}>Terminal</span>
         </>
       )
-    case "FromParentSession":
-    case "FromChildSession":
-    case "FromChildSessionMessage":
+    case "FromAgent":
+      // A background command's end: Claude Code tells the model of it as of an agent's.
+      if (turn.agentDescription === undefined)
+        return (
+          <>
+            <span aria-hidden="true" {...stylex.props(styles.terminalMark)}>
+              &gt;_
+            </span>
+            <span {...stylex.props(styles.name)}>Background task</span>
+          </>
+        )
+      return (
+        <>
+          <span aria-hidden="true" {...stylex.props(styles.sessionMark)}>
+            <AgentIcon />
+          </span>
+          <AgentLink agentId={sender.agentId} sx={styles.sessionLink}>
+            {turn.agentDescription || sender.agentId}
+          </AgentLink>
+          <Badge intent="accent">Agent</Badge>
+        </>
+      )
+    case "FromSession":
       return (
         <>
           <span aria-hidden="true" {...stylex.props(styles.sessionMark)}>
@@ -255,43 +329,125 @@ function Sender({ sender }: { sender: PromptSender }) {
           >
             {sender.session.title}
           </Link>
-          <Badge intent={sender._tag === "FromParentSession" ? "neutral" : "accent"}>
-            {sessionSender[sender._tag]}
-          </Badge>
+          <Badge>Session</Badge>
         </>
       )
   }
 }
 
-function TurnBlockView({ block }: { block: TurnBlock }) {
-  if (block.kind === "agent") return <Agent agent={block.agent} />
-  return <BlockView block={block} />
+/** A link to the agent view of the transcript's Session's agent. */
+function AgentLink({
+  agentId,
+  children,
+  sx,
+}: {
+  agentId: AgentId
+  children: ReactNode
+  sx: stylex.StyleXStyles
+}) {
+  const sessionId = useContext(SessionContext)
+  if (sessionId === null) return <span {...stylex.props(sx)}>{children}</span>
+  return (
+    <Link
+      to="/sessions/$sessionId"
+      params={{ sessionId }}
+      search={{ agent: agentId }}
+      {...stylex.props(sx, focus.ring)}
+    >
+      {children}
+    </Link>
+  )
 }
 
-function BlockView({ block }: { block: Block }) {
-  return block.kind === "text" ? <Markdown text={block.text} /> : <ToolCall call={block.call} />
+/**
+ * A loop's blocks: the main loop's in a Turn, or a subagent's in its card. Once the loop has
+ * `ended`, a tool call it never saw end was cut short, as by a stopped agent's.
+ */
+export function Blocks({ blocks, ended }: { blocks: ReadonlyArray<Block>; ended: boolean }) {
+  return blocks.map((block) => <BlockView key={block.key} block={block} ended={ended} />)
 }
 
-/** A subagent's work, grouped under its agentId and closed by default like a tool call. */
-const Agent = memo(function Agent({ agent }: { agent: AgentView }) {
+function BlockView({ block, ended }: { block: Block; ended: boolean }) {
+  switch (block.kind) {
+    case "text":
+      return <Markdown text={block.text} />
+    case "tool":
+      return <ToolCall call={block.call} cutShort={ended && block.call.outcome === undefined} />
+    case "agent":
+      return <AgentCard agent={block.agent} />
+    case "message":
+      return (
+        <div {...stylex.props(styles.message)}>
+          <div {...stylex.props(styles.speaker)}>
+            <Avatar name={block.sender.name} src={block.sender.avatarUrl} size="sm" />
+            <span {...stylex.props(styles.name)}>{block.sender.name}</span>
+          </div>
+          <div {...stylex.props(styles.messageText)}>{block.text}</div>
+        </div>
+      )
+  }
+}
+
+/** The one-line summary of a subagent: what it's for, its status, branch and tool calls. */
+export function AgentSummaryRow({ agent }: { agent: AgentView }) {
   const tools = agent.blocks.filter((block) => block.kind === "tool").length
   return (
+    <>
+      {agent.status === "Running" ? (
+        <Spinner size="sm" label="Running" />
+      ) : (
+        <AgentStatus status={agent.status} />
+      )}
+      <span {...stylex.props(styles.agentTitle)} title={agent.description}>
+        {agent.description || agent.agentId}
+      </span>
+      {agent.worktree && (
+        <span {...stylex.props(styles.agentBranch)} title={agent.worktree.path}>
+          <BranchIcon />
+          {agent.worktree.branch}
+        </span>
+      )}
+      <span {...stylex.props(styles.agentCount)}>
+        {tools} {tools === 1 ? "tool call" : "tool calls"}
+      </span>
+    </>
+  )
+}
+
+/** What a subagent is: its type and model, whether it runs in the background. */
+export function AgentMeta({ agent, link }: { agent: AgentView; link?: boolean }) {
+  return (
+    <div {...stylex.props(styles.agentMeta)}>
+      <Badge intent="accent" icon={<AgentIcon />}>
+        {agent.agentType || "Agent"}
+      </Badge>
+      {agent.model !== "" && <span>{agent.model}</span>}
+      <span>{agent.background ? "In the background" : "In the foreground"}</span>
+      {link === true && (
+        <AgentLink agentId={agent.agentId} sx={styles.agentLink}>
+          Message or stop it
+        </AgentLink>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A subagent's card (ADR 0014), at the Agent call that started it, streaming its text and tool
+ * calls. It is open while the agent runs and folds once it has stopped, unless someone opened or
+ * closed it.
+ */
+const AgentCard = memo(function AgentCard({ agent }: { agent: AgentView }) {
+  const [open, setOpen] = useState<boolean>()
+  return (
     <Disclosure
-      summary={
-        <>
-          {agent.end === null && <Spinner size="sm" label="Running" />}
-          <Badge intent="accent">Subagent</Badge>
-          <span {...stylex.props(styles.agentId)}>{agent.agentId}</span>
-          <span {...stylex.props(styles.agentCount)}>
-            {tools} {tools === 1 ? "tool call" : "tool calls"}
-          </span>
-        </>
-      }
+      open={open ?? agent.status === "Running"}
+      onOpenChange={setOpen}
+      summary={<AgentSummaryRow agent={agent} />}
     >
       <div {...stylex.props(styles.agentBody)}>
-        {agent.blocks.map((block) => (
-          <BlockView key={block.key} block={block} />
-        ))}
+        <AgentMeta agent={agent} link />
+        <Blocks blocks={agent.blocks} ended={agent.status !== "Running"} />
       </div>
     </Disclosure>
   )

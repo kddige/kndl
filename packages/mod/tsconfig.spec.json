@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["bun"]
   },
-  "include": ["src/**/*.spec.ts", "tests/**/*.spec.ts"]
+  "include": ["src/**/*.spec.ts"]
 }

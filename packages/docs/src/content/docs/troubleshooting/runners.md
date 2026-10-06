@@ -37,10 +37,10 @@ RunnerLoginUnknown: No Claude account is signed in according to /Users/you/.clau
 **What you see.** The Runner exits at startup with:
 
 ```
-The hub-link mod isn't built: …/packages/mod/hooks/hub-link-lib.js is missing. Run `bun run mod:build`.
+The hub-link mod isn't built: …/packages/mod/plugins/hub-link/hooks/hub-link-lib.js is missing. Run `bun run mod:build`.
 ```
 
-**Why.** The Runner loads the `hub-link` mod into each Session's Claude Code, and it must be built first. `bun run runner` builds it for you; running the Runner's package directly doesn't.
+**Why.** The Runner loads the mod's plugins into each Session's Claude Code, and they must be built first. `bun run runner` builds it for you; running the Runner's package directly doesn't.
 
 **Fix.** Start the Runner with `bun run runner` from the checkout's root, or run `bun run mod:build` first.
 

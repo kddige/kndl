@@ -1,7 +1,8 @@
 // The smoke test for upgrading the pinned Claude Code (PinnedClaudeVersion): a Session's Claude
 // Code in a real microsandbox VM, launched as the Runner launches it, in tmux, through the
-// credential proxy, with the mod loaded. Its banner shows the plan, `/status` opens, and a Turn
-// runs Bash in the Sandbox. So it is skipped unless CLAUDE_HUB_SANDBOX_IT=1, and makes model
+// credential proxy, with the mod loaded. Its banner shows the plan, `/status` opens, a Turn runs
+// Bash in the Sandbox, and a background subagent's run and its task notification are where
+// hub-link and the Hub expect them (ADR 0014). So it is skipped unless CLAUDE_HUB_SANDBOX_IT=1, and makes model
 // calls (a few, on haiku) with this machine's Runner credential, read as the Runner reads it
 // (`RUNNER_CLAUDE_CREDENTIAL`, by default the Keychain item `claude-hub-setup-token`). It needs
 // `msb` installed for the current user, and network access to Docker Hub and to npm the first
@@ -53,8 +54,25 @@ const planNames: Record<string, string> = {
   enterprise: "Claude Enterprise",
 }
 
+/** Waits for `read` to show what `seen` looks for, failing with what it read last. */
+const waitFor = (
+  what: string,
+  read: Effect.Effect<string, unknown>,
+  seen: (text: string) => boolean,
+  seconds: number,
+) =>
+  Effect.gen(function* () {
+    let last = ""
+    for (let waited = 0; waited < seconds * 2; waited++) {
+      last = yield* Effect.orDie(read)
+      if (seen(last)) return last
+      yield* Effect.sleep("500 millis")
+    }
+    return yield* Effect.die(new Error(`no ${what} in ${seconds}s; it read:\n${last}`))
+  })
+
 test.skipIf(!enabled)(
-  `Claude Code ${PinnedClaudeVersion} runs in a Sandbox: its banner shows the plan, /status opens, and a Turn runs Bash`,
+  `Claude Code ${PinnedClaudeVersion} runs in a Sandbox: its banner shows the plan, /status opens, a Turn runs Bash, and a subagent runs`,
   async () => {
     const sessionId = `it-${Date.now().toString(36)}` as SessionId
     const root = await mkdtemp(join(tmpdir(), "claude-hub-it-"))
@@ -93,17 +111,27 @@ test.skipIf(!enabled)(
         size: { cols: 120, rows: 40 },
       })
 
+      const conversationDir = `${claudeStateGuestPath}/projects/-workspace`
+      const transcriptPath = `${conversationDir}/${conversation}.jsonl`
+      /**
+       * What of a file in the Sandbox matches `pattern` (grep's extended syntax, no `'`), or "":
+       * a transcript is read in matches, as a long one comes back empty whole.
+       */
+      const guestGrep = (pattern: string, path: string) =>
+        backend
+          .exec(sessionId, { command: "sh", args: ["-c", `grep -oE '${pattern}' ${path}; true`] })
+          .pipe(Effect.map((result) => result.stdout))
+      // A task notification about an agent: the Agent tool's result mentions them too.
+      const notified = "<task-notification>.{0,4}<task-id>a[0-9a-f]+"
+
       let screen = ""
-      /** Waits for the screen to show what `seen` looks for, failing with the screen. */
+      /** Waits for the screen to show what `seen` looks for. */
       const until = (what: string, seen: (screen: string) => boolean, seconds = 60) =>
-        Effect.gen(function* () {
-          for (let waited = 0; waited < seconds * 2; waited++) {
-            screen = yield* tmux.lastOutput(sessionId)
-            if (seen(screen)) return
-            yield* Effect.sleep("500 millis")
-          }
-          return yield* Effect.die(new Error(`no ${what} in ${seconds}s; the screen:\n${screen}`))
-        })
+        waitFor(what, tmux.lastOutput(sessionId), seen, seconds).pipe(
+          Effect.map((shown) => {
+            screen = shown
+          }),
+        )
 
       yield* Effect.scoped(
         Effect.gen(function* () {
@@ -133,16 +161,42 @@ test.skipIf(!enabled)(
             (s) => /smoke-42\s+Linux/.test(s.replace(/[⎿│]/g, " ")),
             120,
           )
+
+          // A background agent: its run is a sidechain beside the conversation, and once it's
+          // done, Claude Code prompts the main loop with a task notification naming it. Asked once
+          // the Turn has ended, with its answer in the transcript.
+          yield* waitFor(
+            "Turn's end",
+            guestGrep('"type":"text","text":"[^"]*smoke-42', transcriptPath),
+            (text) => text !== "",
+            30,
+          )
+          yield* type(
+            'Use the Agent tool to start one general-purpose subagent in the background, described "smoke agent". Tell it to run `echo agent-$((6*8))` with its Bash tool and reply with the output only. Then end your turn.',
+          )
+          yield* type("\r")
+          yield* waitFor(
+            "task notification",
+            guestGrep(notified, transcriptPath),
+            (text) => text !== "",
+            120,
+          ).pipe(
+            Effect.tapCause(() =>
+              Effect.andThen(tmux.lastOutput(sessionId), (shown) =>
+                Effect.sync(() => console.error(`the screen:\n${shown}`)),
+              ),
+            ),
+          )
         }),
       )
 
       // The Turn ran Bash in the Sandbox, and the transcript is on Claude Code's volume.
-      const transcript = yield* backend.exec(sessionId, {
-        command: "cat",
-        args: [`${claudeStateGuestPath}/projects/-workspace/${conversation}.jsonl`],
-      })
-      expect(transcript.stdout).toContain('"name":"Bash"')
-      expect(transcript.stdout).toContain("smoke-42")
+      expect(yield* guestGrep('"name":"Bash"', transcriptPath)).not.toBe("")
+      // The notification names the agent by the id its run's file has, as hub-link reads it.
+      const agentId = /<task-id>(a[0-9a-f]+)/.exec(yield* guestGrep(notified, transcriptPath))?.[1]
+      expect(agentId).toBeDefined()
+      const run = `${conversationDir}/${conversation}/subagents/agent-${agentId}.jsonl`
+      expect(yield* guestGrep("agent-48", run)).toContain("agent-48")
       yield* tmux.kill(sessionId)
     })
 

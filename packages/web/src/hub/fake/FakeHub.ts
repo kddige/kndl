@@ -1,7 +1,8 @@
 // An in-process stand-in for the Hub's web channel, until the real one (issues #7 and #8) is
 // done. It speaks the protocol over a fake socket, so the HubClient can't tell the difference,
-// and plays a scripted Session: streamed text, tool calls, a subagent, a second Participant
-// joining and queueing a prompt, and a terminal to watch and type into; Environments, shared
+// and plays a scripted Session: streamed text, tool calls, subagents in the foreground and the
+// background, which people can message and stop, a second Participant joining and queueing a
+// prompt, and a terminal to watch and type into; Environments, shared
 // variables and Test builds with a streaming log (environments.ts); and, when asked to, a GitHub
 // App short of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
 //
@@ -36,22 +37,20 @@ import {
   archiveRetentionMs,
   bob,
   demoSessionId,
-  releaseReply,
-  releaseReport,
-  releaseSessionId,
   hubVersion,
   type ReplyStep,
   replyTo,
   scriptedTurn,
   seedRunners,
   seedSessions,
+  taskNotification,
   you as defaultYou,
 } from "./script.ts"
 import { FakeTerminal } from "./terminal.ts"
 import type {
+  AgentSummaryWire,
   AppPermissionsCheckWire,
   ClaudeCredentialInfoWire,
-  FromSessionWire,
   HubMessage,
   LogEntryWire,
   ParticipantWire,
@@ -95,6 +94,46 @@ interface FakeSession {
   terminal: FakeTerminal | null
   /** What its latest start printed, for clients that join while it runs. */
   startLog: string
+  /** Its subagents, in the order they started. */
+  agents: Map<string, FakeAgent>
+}
+
+interface FakeAgent {
+  summary: AgentSummaryWire
+  /** The run it's in while Running. */
+  run: string | null
+  /** Ends its run early, with the status it ends in; null while it doesn't run. */
+  stop: ((status: "Stopped" | "Interrupted") => void) | null
+}
+
+type TurnStart = Pick<
+  Extract<SessionEventWire, { _tag: "TurnStarted" }>,
+  "text" | "sender" | "promptId"
+>
+
+/** A seeded Session's subagents, as its log says they are. */
+function agentsFromLog(log: ReadonlyArray<LogEntryWire>): Map<string, FakeAgent> {
+  const agents = new Map<string, FakeAgent>()
+  for (const { event } of log) {
+    if (event._tag === "AgentStarted") {
+      agents.set(event.agentId, {
+        summary: { id: event.agentId, description: event.description, status: "Running" },
+        run: null,
+        stop: null,
+      })
+    } else if (event._tag === "AgentStatusChanged") {
+      const agent = agents.get(event.agentId)
+      if (agent) agent.summary = { ...agent.summary, status: event.status }
+    }
+  }
+  return agents
+}
+
+/** The agents a summary lists: the Running and Interrupted ones (ADR 0014). */
+function listedAgents(agents: Map<string, FakeAgent>): Array<AgentSummaryWire> {
+  return [...agents.values()]
+    .map((agent) => agent.summary)
+    .filter((agent) => agent.status === "Running" || agent.status === "Interrupted")
 }
 
 class FakeSocket implements HubSocket {
@@ -158,7 +197,6 @@ export class FakeHub implements HubTransport {
   #appPermissions: AppPermissionsCheckWire | null
   #claudeCredential: ClaudeCredentialInfoWire | null
   #scriptStarted = false
-  #releaseStarted = false
   readonly #sockets = new Set<FakeSocket>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
   /** The scripted reply each queued prompt gets when it's delivered. */
@@ -174,19 +212,24 @@ export class FakeHub implements HubTransport {
     this.#claudeCredential = options.claudeCredential ?? null
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
+      const log = seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event }))
+      const agents = agentsFromLog(log)
+      const listed = listedAgents(agents)
       this.sessions.set(seed.summary.id, {
         // Bob has stored his Claude credential; whether the signed-in person has is an option.
         summary: {
           ...seed.summary,
           claudeAccount:
             seed.summary.creator.id === this.#you.id ? this.#claudeAccount() : "Creator",
+          ...(listed.length > 0 && { agents: listed }),
         },
-        log: seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event })),
+        log,
         queue: [],
         guests: [],
         stopTurn: null,
         terminal: null,
         startLog: "",
+        agents,
       })
     }
   }
@@ -396,20 +439,6 @@ export class FakeHub implements HubTransport {
     )
   }
 
-  /** API docs reports to Release 0.4, the first time someone opens it; Changelog follows. */
-  #playRelease(): void {
-    if (this.#releaseStarted) return
-    this.#releaseStarted = true
-    const session = this.sessions.get(releaseSessionId)
-    if (!session) return
-    this.#after(4, () =>
-      this.#prompt(session, session.summary.creator, releaseReport.text, releaseReply, {
-        _tag: "FromChildSession",
-        session: releaseReport.from,
-      }),
-    )
-  }
-
   // ── The channel ──────────────────────────────────────────────────────────
 
   receive(socket: FakeSocket, text: string): void {
@@ -554,8 +583,9 @@ export class FakeHub implements HubTransport {
         const { model: _, effort: __, modelPending: ___, ...rest } = session.summary
         if (session.summary.model === checked.model && session.summary.effort === checked.effort)
           break
-        // The real Hub restarts Claude Code with it once no Turn runs; here, only the wait shows.
+        // The Hub restarts Claude Code with it once no Turn runs, which interrupts its agents.
         const pending = session.summary.currentTurn !== null
+        if (!pending) this.#interruptAgents(session)
         session.summary = {
           ...rest,
           ...(checked.model !== undefined && { model: checked.model }),
@@ -602,7 +632,6 @@ export class FakeHub implements HubTransport {
         }
         this.#presence(session)
         if (message.sessionId === demoSessionId && this.#autoplay) this.play()
-        if (message.sessionId === releaseSessionId && this.#autoplay) this.#playRelease()
         break
       }
       case "LeaveSession": {
@@ -638,6 +667,48 @@ export class FakeHub implements HubTransport {
         if (!session?.stopTurn) break
         this.#append(session, { _tag: "TurnStopRequested", by: this.#you })
         session.stopTurn()
+        break
+      }
+      // As the Hub does (ADR 0014): anyone may message an agent, which resumes one that has
+      // stopped, waking its Session first; a Running one can be stopped.
+      case "MessageAgent": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        const agent = session.agents.get(message.agentId)
+        const refusal = !agent
+          ? "The Session has no such agent."
+          : session.summary.state === "Archived"
+            ? "The Session is archived: restore it to message agents."
+            : session.summary.state === "Frozen"
+              ? "The Session's Runner is offline: message the agent once it is back."
+              : undefined
+        if (refusal !== undefined) {
+          this.#fail(socket, message._tag, refusal, message.sessionId)
+          break
+        }
+        if (session.summary.state === "Asleep") this.#wake(session, "Woken on studio", this.#you)
+        this.#append(session, {
+          _tag: "AgentMessaged",
+          agentId: message.agentId,
+          sender: this.#you,
+          text: message.text,
+        })
+        this.#deliverAgentMessage(session, message.agentId, message.text)
+        break
+      }
+      case "StopAgent": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        const agent = session.agents.get(message.agentId)
+        if (!agent) {
+          this.#fail(socket, message._tag, "The Session has no such agent.", message.sessionId)
+          break
+        }
+        if (agent.summary.status !== "Running" || session.summary.state !== "Active") {
+          this.#fail(socket, message._tag, "The agent isn't running.", message.sessionId)
+          break
+        }
+        agent.stop?.("Stopped")
         break
       }
       case "SleepSession": {
@@ -878,10 +949,6 @@ export class FakeHub implements HubTransport {
           break
         }
         this.#archive(session)
-        // As on the Hub, its Child Sessions are archived with it (ADR 0012).
-        for (const child of this.sessions.values())
-          if (child.summary.parentId === session.summary.id && child.summary.state !== "Archived")
-            this.#archive(child)
         this.#toAll(this.#runnerList())
         break
       }
@@ -1069,6 +1136,7 @@ export class FakeHub implements HubTransport {
       stopTurn: null,
       terminal: null,
       startLog: "",
+      agents: new Map(),
     }
     this.sessions.set(id, session)
     this.#start(session)
@@ -1235,15 +1303,8 @@ export class FakeHub implements HubTransport {
     sender: ParticipantWire,
     text: string,
     reply: ReadonlyArray<ReplyStep>,
-    fromSession?: FromSessionWire,
   ): void {
-    const prompt: QueuedPromptWire = {
-      id: `p-${++this.#ids}`,
-      text,
-      sender,
-      queuedAt: Date.now(),
-      ...(fromSession !== undefined && { fromSession }),
-    }
+    const prompt: QueuedPromptWire = { id: `p-${++this.#ids}`, text, sender, queuedAt: Date.now() }
     this.#replies.set(prompt.id, reply)
     session.queue.push(prompt)
     this.#queueChanged(session)
@@ -1257,7 +1318,7 @@ export class FakeHub implements HubTransport {
    */
   #next(session: FakeSession): void {
     const { state, starting, restarting } = session.summary
-    if (state === "Archived" || starting || restarting) return
+    if (state === "Archived" || starting || restarting || session.stopTurn) return
     if (session.queue.length === 0) return
     if (session.summary.state === "Asleep") {
       this.#wake(session, "Woken by a prompt")
@@ -1266,18 +1327,29 @@ export class FakeHub implements HubTransport {
     const prompt = session.queue.shift()
     if (!prompt) return
     this.#queueChanged(session)
-    this.#runTurn(session, prompt, this.#replies.get(prompt.id) ?? replyTo(prompt.text))
+    const reply = this.#replies.get(prompt.id) ?? replyTo(prompt.text)
     this.#replies.delete(prompt.id)
+    this.#runTurn(
+      session,
+      {
+        // The Hub tells the model who is talking.
+        text: `[${prompt.sender.name}] ${prompt.text}`,
+        sender: { _tag: "FromParticipant", participant: prompt.sender },
+        promptId: prompt.id,
+      },
+      reply,
+    )
   }
 
-  #runTurn(session: FakeSession, prompt: QueuedPromptWire, steps: ReadonlyArray<ReplyStep>): void {
+  #runTurn(session: FakeSession, start: TurnStart, steps: ReadonlyArray<ReplyStep>): void {
     const turnId = `t-${++this.#ids}`
     const started = Date.now()
     // Settled when it starts: a switch while it runs takes over from the next Turn.
     const turnModel = this.#modelId(session)
     const timers: Array<ReturnType<typeof setTimeout>> = []
-    const openTools = new Map<string, { tool: string; agentId?: string }>()
-    const openAgents = new Set<string>()
+    const openTools = new Map<string, string>()
+    /** The subagents it started in the foreground: stopping the Turn stops them too. */
+    const foreground = new Set<string>()
     let ended = false
 
     const end = (reason: "Answered" | "Stopped") => {
@@ -1287,24 +1359,15 @@ export class FakeHub implements HubTransport {
         clearTimeout(timer)
         this.#timers.delete(timer)
       }
-      for (const [toolCallId, open] of openTools) {
+      for (const agentId of foreground) session.agents.get(agentId)?.stop?.("Stopped")
+      for (const [toolCallId, tool] of openTools) {
         this.#append(session, {
           _tag: "ToolCallEnded",
           turnId,
-          ...(open.agentId !== undefined && { agentId: open.agentId }),
           toolCallId,
-          tool: open.tool,
+          tool,
           outcome: "Failed",
           output: "Interrupted: the Turn was stopped.",
-        })
-      }
-      for (const agentId of openAgents) {
-        this.#append(session, {
-          _tag: "TurnEnded",
-          turnId,
-          agentId,
-          reason,
-          durationMs: Date.now() - started,
         })
       }
       this.#append(session, {
@@ -1324,6 +1387,7 @@ export class FakeHub implements HubTransport {
       })
       session.stopTurn = null
       // A model switched while it ran takes over now, as the Hub restarts Claude Code with it.
+      if (session.summary.modelPending) this.#interruptAgents(session)
       const { modelPending: _, ...summary } = session.summary
       session.summary = { ...summary, currentTurn: null }
       this.#summaryChanged(session)
@@ -1333,99 +1397,307 @@ export class FakeHub implements HubTransport {
     session.stopTurn = () => end("Stopped")
     session.summary = { ...session.summary, currentTurn: turnId }
     this.#summaryChanged(session)
-    this.#append(session, {
-      _tag: "TurnStarted",
-      turnId,
-      // The Hub tells the model who is talking: another Session's prompt carries its note already.
-      text: prompt.fromSession ? prompt.text : `[${prompt.sender.name}] ${prompt.text}`,
-      sender: prompt.fromSession ?? { _tag: "FromParticipant", participant: prompt.sender },
-      promptId: prompt.id,
-    })
+    this.#append(session, { _tag: "TurnStarted", turnId, ...start })
 
     let at = 1
     const schedule = (delay: number, fn: () => void) => {
       at += delay
       timers.push(this.#after(at, fn))
     }
-    const layout = (step: ReplyStep): void => {
-      const agent =
-        step.kind !== "queue" && step.kind !== "pause" && step.agentId !== undefined
-          ? { agentId: step.agentId }
-          : {}
-      const touch = () => {
-        if (agent.agentId !== undefined) openAgents.add(agent.agentId)
-      }
+    for (const step of steps) {
       switch (step.kind) {
         case "text":
-          for (const chunk of chunks(step.text)) {
-            schedule(1, () => {
-              touch()
-              this.#append(session, { _tag: "TextDelta", turnId, ...agent, text: chunk })
-            })
-          }
+        case "tool":
+        case "pause":
+          at = this.#layoutStep(session, { turnId }, step, at, schedule, openTools)
           break
-        case "tool": {
+        case "agent": {
+          // The Agent call, and the subagent it starts: a foreground one's work is the call's,
+          // and the Turn waits for it; a background one's call returns at once.
           const toolCallId = `tool-${++this.#ids}`
+          const input = JSON.stringify({
+            description: step.description,
+            prompt: step.prompt,
+            subagent_type: step.agentType,
+            ...(step.background && { run_in_background: true }),
+          })
+          const run = () => this.#runAgent(session, step.agentId, step.steps)
+          let length = 0
           schedule(1, () => {
-            touch()
-            openTools.set(toolCallId, { tool: step.tool, ...agent })
+            openTools.set(toolCallId, "Agent")
             this.#append(session, {
               _tag: "ToolCallStarted",
               turnId,
-              ...agent,
               toolCallId,
-              tool: step.tool,
-              input: JSON.stringify(step.input),
+              tool: "Agent",
+              input,
             })
+            this.#startAgent(session, turnId, toolCallId, step)
+            if (step.background) {
+              this.#runAgent(session, step.agentId, step.steps, () =>
+                this.#fromAgent(session, step.agentId, step.result, step.relay),
+              )
+            } else {
+              foreground.add(step.agentId)
+              run()
+            }
           })
-          // A subagent works while the tool call that started it runs.
-          for (const inner of step.during ?? []) layout(inner)
-          schedule(step.steps ?? 4, () => {
+          if (!step.background) {
+            // The steps it takes: its run's own schedule, laid out the same way.
+            let agentAt = 0
+            for (const inner of step.steps)
+              agentAt = this.#layoutStep(session, null, inner, agentAt, () => {}, null)
+            length = agentAt + 2
+          }
+          schedule(Math.max(1, length), () => {
             openTools.delete(toolCallId)
             this.#append(session, {
               _tag: "ToolCallEnded",
               turnId,
-              ...agent,
               toolCallId,
-              tool: step.tool,
-              outcome: step.outcome ?? "Succeeded",
-              output: step.output,
+              tool: "Agent",
+              outcome: "Succeeded",
+              output: step.background
+                ? `Async agent launched successfully. agentId: ${step.agentId}`
+                : step.result,
             })
           })
           break
         }
-        case "agentEnd":
-          schedule(1, () => {
-            openAgents.delete(step.agentId)
-            this.#append(session, {
-              _tag: "TurnEnded",
-              turnId,
-              agentId: step.agentId,
-              reason: "Answered",
-              durationMs: Date.now() - started,
-            })
-          })
-          break
         case "queue":
-          schedule(0, () =>
-            this.#prompt(
-              session,
-              step.sender,
-              step.text,
-              step.fromSession
-                ? [{ kind: "text", text: "Noted: I'll pass that on." }]
-                : replyTo(step.text),
-              step.fromSession,
-            ),
-          )
-          break
-        case "pause":
-          at += step.steps
+          schedule(0, () => this.#prompt(session, step.sender, step.text, replyTo(step.text)))
           break
       }
     }
-    for (const step of steps) layout(step)
     schedule(1, () => end("Answered"))
+  }
+
+  /**
+   * Lays out a text, tool or pause step from step `at` on, for a Turn's main loop or, with
+   * `agentId`, a subagent's run; returns the step after it. With no `loop`, only counts.
+   */
+  #layoutStep(
+    session: FakeSession,
+    loop: { turnId: string; agentId?: string } | null,
+    step: ReplyStep,
+    at: number,
+    schedule: (delay: number, fn: () => void) => void,
+    openTools: Map<string, string> | null,
+  ): number {
+    switch (step.kind) {
+      case "text":
+        for (const chunk of chunks(step.text)) {
+          schedule(1, () => {
+            if (loop) this.#append(session, { _tag: "TextDelta", ...loop, text: chunk })
+          })
+          at += 1
+        }
+        return at
+      case "tool": {
+        const toolCallId = `tool-${++this.#ids}`
+        const steps = step.steps ?? 4
+        schedule(1, () => {
+          if (!loop) return
+          openTools?.set(toolCallId, step.tool)
+          this.#append(session, {
+            _tag: "ToolCallStarted",
+            ...loop,
+            toolCallId,
+            tool: step.tool,
+            input: JSON.stringify(step.input),
+          })
+        })
+        schedule(steps, () => {
+          if (!loop) return
+          openTools?.delete(toolCallId)
+          this.#append(session, {
+            _tag: "ToolCallEnded",
+            ...loop,
+            toolCallId,
+            tool: step.tool,
+            outcome: step.outcome ?? "Succeeded",
+            output: step.output,
+          })
+        })
+        return at + 1 + steps
+      }
+      case "pause":
+        schedule(step.steps, () => {})
+        return at + step.steps
+      default:
+        return at
+    }
+  }
+
+  /** The Agent tool started a subagent, as the mod reports it: started, and Running. */
+  #startAgent(
+    session: FakeSession,
+    turnId: string,
+    toolCallId: string,
+    step: Extract<ReplyStep, { kind: "agent" }>,
+  ): void {
+    session.agents.set(step.agentId, {
+      summary: { id: step.agentId, description: step.description, status: "Running" },
+      run: null,
+      stop: null,
+    })
+    this.#append(session, {
+      _tag: "AgentStarted",
+      turnId,
+      agentId: step.agentId,
+      toolCallId,
+      agentType: step.agentType,
+      description: step.description,
+      model: step.model,
+      background: step.background ?? false,
+    })
+    this.#agentStatus(session, step.agentId, "Running", step.worktree)
+  }
+
+  /**
+   * Plays a run of a subagent's: its steps, on a schedule of its own, then Done and `then`. A
+   * Stopped run ends there; an Interrupted one, its Claude Code gone, just stops.
+   */
+  #runAgent(
+    session: FakeSession,
+    agentId: string,
+    steps: ReadonlyArray<ReplyStep>,
+    then?: () => void,
+  ): void {
+    const agent = session.agents.get(agentId)
+    if (!agent) return
+    const turnId = `t-${++this.#ids}`
+    const started = Date.now()
+    const timers: Array<ReturnType<typeof setTimeout>> = []
+    const openTools = new Map<string, string>()
+    const schedule = (delay: number, fn: () => void) => {
+      at += delay
+      timers.push(this.#after(at, fn))
+    }
+    let at = 0
+    for (const step of steps)
+      at = this.#layoutStep(session, { turnId, agentId }, step, at, schedule, openTools)
+    const finish = (status: "Done" | "Stopped" | "Interrupted") => {
+      if (agent.run !== turnId) return
+      agent.run = null
+      agent.stop = null
+      for (const timer of timers) {
+        clearTimeout(timer)
+        this.#timers.delete(timer)
+      }
+      if (status !== "Interrupted") {
+        for (const [toolCallId, tool] of openTools) {
+          this.#append(session, {
+            _tag: "ToolCallEnded",
+            turnId,
+            agentId,
+            toolCallId,
+            tool,
+            outcome: "Failed",
+            output: "Interrupted: the agent was stopped.",
+          })
+        }
+        this.#append(session, {
+          _tag: "TurnEnded",
+          turnId,
+          agentId,
+          reason: status === "Done" ? "Answered" : "Stopped",
+          durationMs: Date.now() - started,
+        })
+      }
+      this.#agentStatus(session, agentId, status)
+      if (status === "Done") then?.()
+    }
+    agent.run = turnId
+    agent.stop = finish
+    schedule(1, () => finish("Done"))
+  }
+
+  /**
+   * A message reaches a subagent: a Running one reads it at its next tool call; one that has
+   * stopped is resumed with it, in the background, and tells the Session when it's done.
+   */
+  #deliverAgentMessage(session: FakeSession, agentId: string, text: string): void {
+    const agent = session.agents.get(agentId)
+    if (!agent) return
+    // A Session being woken resumes it once its Claude Code is up.
+    if (session.summary.starting) {
+      this.#after(3, () => this.#deliverAgentMessage(session, agentId, text))
+      return
+    }
+    if (session.summary.state !== "Active") return
+    const quoted = text.length > 60 ? `${text.slice(0, 57)}…` : text
+    if (agent.summary.status === "Running" && agent.run !== null) {
+      const run = agent.run
+      this.#after(2, () => {
+        if (agent.run !== run) return
+        this.#append(session, {
+          _tag: "TextDelta",
+          turnId: run,
+          agentId,
+          text: `\n\nGot your message: "${quoted}". Taking it into account.`,
+        })
+      })
+      return
+    }
+    this.#agentStatus(session, agentId, "Running")
+    const result = `Picked up where I left off: "${quoted}". Done.`
+    this.#runAgent(session, agentId, [{ kind: "text", text: result }], () =>
+      this.#fromAgent(session, agentId, result),
+    )
+  }
+
+  /**
+   * A background agent is done: Claude Code tells itself, which starts a Turn from the agent once
+   * none runs (ADR 0014).
+   */
+  #fromAgent(session: FakeSession, agentId: string, result: string, relay?: string): void {
+    const agent = session.agents.get(agentId)
+    if (!agent || session.summary.state !== "Active") return
+    if (session.stopTurn || session.summary.starting || session.summary.restarting) {
+      this.#after(3, () => this.#fromAgent(session, agentId, result, relay))
+      return
+    }
+    const { description } = agent.summary
+    this.#runTurn(
+      session,
+      {
+        text: taskNotification(agentId, description, result),
+        sender: { _tag: "FromAgent", agentId },
+      },
+      [{ kind: "text", text: relay ?? `**${description}** is done: ${result}` }],
+    )
+  }
+
+  /** A subagent's status changed: logged, and its Session's summary lists it if it should. */
+  #agentStatus(
+    session: FakeSession,
+    agentId: string,
+    status: AgentSummaryWire["status"],
+    worktree?: { readonly path: string; readonly branch: string },
+  ): void {
+    const agent = session.agents.get(agentId)
+    if (!agent) return
+    agent.summary = { ...agent.summary, status }
+    this.#append(session, {
+      _tag: "AgentStatusChanged",
+      agentId,
+      status,
+      ...(worktree !== undefined && { worktree }),
+    })
+    const { agents: _, ...rest } = session.summary
+    const listed = listedAgents(session.agents)
+    session.summary = { ...rest, ...(listed.length > 0 && { agents: listed }) }
+    this.#summaryChanged(session)
+  }
+
+  /** Its Claude Code stopped: its Running agents are Interrupted, as on the Hub. */
+  #interruptAgents(session: FakeSession): void {
+    for (const [agentId, agent] of session.agents) {
+      if (agent.summary.status !== "Running") continue
+      if (agent.stop) agent.stop("Interrupted")
+      else this.#agentStatus(session, agentId, "Interrupted")
+    }
   }
 
   #terminal(session: FakeSession): FakeTerminal {
@@ -1485,6 +1757,7 @@ export class FakeHub implements HubTransport {
     by?: ParticipantWire,
   ): void {
     const wasActive = session.summary.state === "Active"
+    if (wasActive && (state === "Asleep" || state === "Archived")) this.#interruptAgents(session)
     session.summary = { ...session.summary, state }
     this.#append(session, {
       _tag: "SessionStateChanged",

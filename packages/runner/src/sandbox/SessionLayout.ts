@@ -34,8 +34,14 @@ export const claudeStateGuestPath = "/var/lib/claude-hub/claude"
  */
 export const claudeStateVolumeKey = "claude"
 
-/** Where the mod, hub-link, is mounted read-only in the Sandbox, as Claude Code's `--plugin-dir`. */
+/** Where the mod package is mounted read-only in the Sandbox, its plugins under `plugins/`. */
 export const modGuestPath = "/opt/claude-hub/hub-link"
+
+/**
+ * The mod's plugins, each loaded with its own `--plugin-dir`: hub-link reports the Session to the
+ * Hub, and hub-link-commands runs the Hub's commands in it (ADR 0014).
+ */
+export const modPlugins = ["hub-link", "hub-link-commands"] as const
 
 export interface SessionLayoutOptions {
   readonly sessionId: SessionId

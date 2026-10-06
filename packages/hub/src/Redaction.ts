@@ -261,14 +261,20 @@ export function redactText(needles: Needles, text: string): string {
   return stream.push(text) + stream.flush()
 }
 
-/** A Session event with its free text redacted: the prompt, Claude's text, tool input and output. */
+/**
+ * A Session event with its free text redacted: the prompt, Claude's text, tool input and output,
+ * an agent's description and the messages people send it.
+ */
 export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent {
   if (isEmpty(needles)) return event
   const redact = (text: string) => redactText(needles, text)
   switch (event._tag) {
     case "TurnStarted":
     case "TextDelta":
+    case "AgentMessaged":
       return { ...event, text: redact(event.text) }
+    case "AgentStarted":
+      return { ...event, description: redact(event.description) }
     case "ToolCallStarted":
       return { ...event, input: redact(event.input) }
     case "ToolCallEnded":
@@ -281,6 +287,7 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
     case "TurnEnded":
     case "TurnStopRequested":
     case "ModelSwitched":
+    case "AgentStatusChanged":
       return event
   }
 }

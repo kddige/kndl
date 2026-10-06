@@ -3,8 +3,6 @@
 // the Hub refuse a whole batch, and every reply is decoded before the mod acts on it.
 
 import {
-  ChildReply,
-  ChildRequest,
   MaxToolSummaryLength,
   ModCommands,
   ModEvent,
@@ -63,18 +61,6 @@ export const checkEvent = (
 /** The body of `POST /mod/events`, from events {@link checkEvent} passed. */
 export const eventsBody = (messages: ReadonlyArray<ModEventEncoded>) =>
   JSON.stringify({ messages } satisfies ModEventsEncoded)
-
-/** The body of `POST /mod/children`. */
-export const childRequestBody = (request: ChildRequest) =>
-  JSON.stringify(Schema.encodeSync(ChildRequest)(request))
-
-const decodeChildReply = Schema.decodeUnknownExit(Schema.fromJsonString(ChildReply))
-
-/** Reads the Hub's answer to `POST /mod/children`; undefined when it isn't one. */
-export const readChildReply = (text: string): ChildReply | undefined => {
-  const reply = decodeChildReply(text)
-  return Exit.isSuccess(reply) ? reply.value : undefined
-}
 
 const decodeHelloReply = Schema.decodeUnknownExit(Schema.fromJsonString(ModHelloReply))
 const decodeCommands = Schema.decodeUnknownExit(Schema.fromJsonString(ModCommands))
@@ -141,7 +127,10 @@ export const resultSummary = (tool: string, result: unknown) => {
   return clip(typeof result === "string" ? result : (JSON.stringify(result) ?? ""))
 }
 
-/** A prompt from a Participant, as the model reads it: led by the sender's name. */
+/**
+ * A prompt from a Participant, or their message to a subagent, as the model reads it: led by the
+ * sender's name.
+ */
 export const promptFromParticipant = (sender: Participant, text: string) =>
   `[${sender.name}] ${text}`
 
@@ -149,11 +138,43 @@ export const promptFromParticipant = (sender: Participant, text: string) =>
 export const sharedSessionNote = [
   "This session is shared through Claude Hub: several people may watch it live in a web UI and",
   'send it prompts. A prompt that starts with a name in brackets, such as "[Ada Lovelace] ...",',
-  "came from that person; a prompt without one was typed at the terminal. A prompt that starts",
-  'with a note such as "[Report from Child Session ...]" or "[Message from your Parent Session',
-  '..." came from another Claude Hub Session, not a person. When it matters who asked for what,',
-  "address people by name. You run in a sandbox VM where the repository is checked out.",
+  "came from that person; a prompt without one was typed at the terminal. They can watch your",
+  "subagents too, and message or stop one. When it matters who asked for what, address people",
+  "by name. You run in a sandbox VM where the repository is checked out.",
 ].join(" ")
+
+/**
+ * Whether a Turn that starts with `text` is the one a delivered prompt, `delivered`, started.
+ * The Hub delivers one prompt at a time, only while the Session is idle, so it is the next Turn
+ * with a prompt; but not a task notification Claude Code starts when a background agent ends,
+ * unless the prompt rides along in it.
+ */
+export const startsDelivered = (text: string, delivered: string) =>
+  text !== "" && (taskNotificationAgent(text) === undefined || text.includes(delivered))
+
+/**
+ * The agent a task notification is about, when `text` is one: the prompt Claude Code starts a
+ * main-loop Turn with when a background agent ends or is stopped, with the agent's id as its
+ * task id (spike #148).
+ */
+export const taskNotificationAgent = (text: string): string | undefined => {
+  if (!text.trimStart().startsWith("<task-notification>")) return undefined
+  const id = /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(text)?.[1]
+  return id === undefined || id === "" ? undefined : id
+}
+
+/**
+ * The worktree an agent runs in, from the directory it starts in: `isolation: "worktree"` makes
+ * `<workspace>/.claude/worktrees/<name>` on the branch `worktree-<name>` (ADR 0014). Undefined
+ * for an agent that runs in the Workspace itself.
+ */
+export const agentWorktree = (
+  cwd: string,
+): { readonly path: string; readonly branch: string } | undefined => {
+  const match = /^(.*\/\.claude\/worktrees\/([^/]+))\/?$/.exec(cwd)
+  if (match?.[1] === undefined || match[2] === undefined) return undefined
+  return { path: match[1], branch: `worktree-${match[2]}` }
+}
 
 const maxQueued = 5_000
 

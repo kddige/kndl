@@ -3,12 +3,11 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@claude-hub/protocol"
+import { ClaudeSessionId, ProtocolVersion, TestBuildId } from "@claude-hub/protocol"
 import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
-import { childSystemPrompt } from "./ClaudeLaunch.ts"
 import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
@@ -577,7 +576,9 @@ describe("Sessions", () => {
       "--session-id",
       expect.stringMatching(/^[0-9a-f-]{36}$/),
       "--plugin-dir",
-      modGuestPath,
+      `${modGuestPath}/plugins/hub-link`,
+      "--plugin-dir",
+      `${modGuestPath}/plugins/hub-link-commands`,
       "--dangerously-skip-permissions",
     ])
     const sessionToken = spec?.env["CLAUDE_HUB_MOD_TOKEN"] ?? ""
@@ -612,19 +613,6 @@ describe("Sessions", () => {
     ])
   })
 
-  test("tells a Child Session's Claude Code whose child it is, and its mod", async () => {
-    const h = startRunner()
-    await connected(h)
-    const parent = { id: SessionId.make("s-parent"), title: "Release 2.0" }
-    h.hub.send(startSession("s-1", { parent }))
-    await eventually(() => h.hub.all("SessionStarted").length === 1)
-
-    const [spec] = h.tmux.launched
-    expect(spec?.argv.slice(-2)).toEqual(["--append-system-prompt", childSystemPrompt(parent)])
-    expect(childSystemPrompt(parent)).toContain('"Release 2.0" (s-parent)')
-    expect(spec?.env).toMatchObject({ CLAUDE_HUB_PARENT_SESSION_ID: "s-parent" })
-  })
-
   test("starts Claude Code on the Session's model and effort (#128)", async () => {
     const h = startRunner()
     await connected(h)
@@ -637,8 +625,7 @@ describe("Sessions", () => {
   test("restarts Claude Code alone on a new model, resuming its conversation (#128)", async () => {
     const h = startRunner()
     await connected(h)
-    const parent = { id: SessionId.make("s-parent"), title: "Release 2.0" }
-    h.hub.send(startSession("s-1", { parent }))
+    h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
     const first = h.tmux.pane("s-1")
     writeTranscript(h, "3c1f6f0e-claude")
@@ -650,7 +637,6 @@ describe("Sessions", () => {
       workBranch: "claude/s-1",
       resume: "3c1f6f0e-claude",
       modToken: "chm_mod.second",
-      parent,
       model: "opus[1m]",
       effort: "max",
     })
@@ -659,19 +645,9 @@ describe("Sessions", () => {
     expect(first.terminated).toBe(true)
     const relaunched = h.tmux.launched[1]
     expect(relaunched?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
-    expect(relaunched?.argv.slice(-6)).toEqual([
-      "--append-system-prompt",
-      childSystemPrompt(parent),
-      "--model",
-      "opus[1m]",
-      "--effort",
-      "max",
-    ])
+    expect(relaunched?.argv.slice(-4)).toEqual(["--model", "opus[1m]", "--effort", "max"])
     expect(relaunched?.cwd).toBe("/workspace")
-    expect(relaunched?.env).toMatchObject({
-      CLAUDE_CONFIG_DIR: "/claude",
-      CLAUDE_HUB_PARENT_SESSION_ID: "s-parent",
-    })
+    expect(relaunched?.env).toMatchObject({ CLAUDE_CONFIG_DIR: "/claude" })
     // A new Session token, for the new mod token.
     expect(relaunched?.env["CLAUDE_HUB_MOD_TOKEN"]).toStartWith("chp_")
     expect(relaunched?.env["CLAUDE_HUB_MOD_TOKEN"]).not.toBe(

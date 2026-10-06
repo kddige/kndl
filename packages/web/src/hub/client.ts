@@ -5,6 +5,7 @@
 // return a promise of the answer, matched to it by request id.
 
 import {
+  type AgentId,
   type AppPermissionsCheck,
   checkHandshake,
   type ClaudeCredentialState,
@@ -210,6 +211,20 @@ export class HubClient {
 
   stopTurn(sessionId: SessionId): boolean {
     return this.#send({ _tag: "StopTurn", sessionId })
+  }
+
+  /**
+   * Messages a subagent of the Session (ADR 0014): a running one reads it at its next tool call,
+   * a finished one resumes.
+   */
+  messageAgent(sessionId: SessionId, agentId: AgentId, text: string): boolean {
+    const trimmed = text.trim()
+    if (trimmed === "") return false
+    return this.#send({ _tag: "MessageAgent", sessionId, agentId, text: trimmed })
+  }
+
+  stopAgent(sessionId: SessionId, agentId: AgentId): boolean {
+    return this.#send({ _tag: "StopAgent", sessionId, agentId })
   }
 
   /** Puts an Active Session to sleep now, rather than when it has been idle long enough. */

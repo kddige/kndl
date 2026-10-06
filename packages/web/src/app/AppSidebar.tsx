@@ -1,13 +1,21 @@
-import { MaxSessionNameLength, type SessionSummary, sessionTitle } from "@claude-hub/protocol"
+import {
+  type AgentSummary,
+  MaxSessionNameLength,
+  type SessionId,
+  type SessionSummary,
+  sessionTitle,
+} from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router"
+import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
+import { agentsOf, recentAgents } from "../hub/transcript.ts"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
 import { setFolded, useFolded } from "../sessions/folds.ts"
-import { groupByRepo, nestChildren } from "../sessions/groups.ts"
+import { groupByRepo } from "../sessions/groups.ts"
 import { renameSession } from "../sessions/rename.ts"
 import {
+  AgentStatus,
   ArchiveIcon,
   Avatar,
   BoxIcon,
@@ -101,9 +109,10 @@ function sectionOf(pathname: string): "runners" | "environments" | "variables" |
 
 /**
  * The app's sidebar: New Session, the Hub-wide pages, every listed Session under its Repo's name
- * in the order they were created, and the Runners and the signed-in person at the bottom.
- * Child Sessions are under their Parent Session's row, which folds them away; one whose parent
- * isn't listed stands on its own. `onClose` adds a close button, for a drawer.
+ * in the order they were created, and the Runners and the signed-in person at the bottom. A
+ * Session's subagents are under its row, which folds them away (ADR 0014): the Running and
+ * Interrupted ones, and for the open Session its latest finished ones too. `onClose` adds a close button,
+ * for a drawer.
  */
 export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const hub = useHub()
@@ -113,25 +122,24 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const you = useHubState((state) => state.you)
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { sessionId } = useParams({ strict: false })
+  const { agent: agentId } = useSearch({ strict: false })
   const section = sectionOf(pathname)
 
   const groups = useMemo(
-    () =>
-      sessions
-        ? groupByRepo(sessions.filter(isListed)).map((group) => ({
-            repo: group.repo,
-            nodes: nestChildren(group.sessions),
-          }))
-        : null,
+    () => (sessions ? groupByRepo(sessions.filter(isListed)) : null),
     [sessions],
   )
   const known = useMemo(() => new Set((sessions ?? []).map((session) => session.id)), [sessions])
   const folded = useFolded()
-  // When a Child Session becomes current, its folded parent opens, so its row isn't hidden.
-  const currentParent = sessions?.find((session) => session.id === sessionId)?.parentId
+  // The open Session's agents, finished ones too, from its log.
+  const openLog = useHubState((state) =>
+    sessionId === undefined ? undefined : state.joined[sessionId as SessionId]?.log,
+  )
+  const openAgents = useMemo(() => openLog && agentsOf(openLog), [openLog])
+  // When an agent's view opens, its folded Session opens, so its row isn't hidden.
   useEffect(() => {
-    if (currentParent !== undefined) setFolded(currentParent, false)
-  }, [sessionId, currentParent])
+    if (sessionId !== undefined && agentId !== undefined) setFolded(sessionId, false)
+  }, [sessionId, agentId])
   const online = (runners ?? []).filter((runner) => runner.isOnline).length
 
   return (
@@ -237,27 +245,35 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         // Each Repo is a section of its own, under its name.
         groups.map((group) => (
           <NavSection key={group.repo} label={group.repo}>
-            {group.nodes.map(({ session, children }) => (
-              <SessionRow
-                key={session.id}
-                session={session}
-                current={session.id === sessionId}
-                {...(children.length > 0 && {
-                  nested: {
-                    open: !folded.has(session.id),
-                    onOpenChange: (open) => setFolded(session.id, !open, known),
-                    children: children.map((child) => (
-                      <SessionRow
-                        key={child.id}
-                        session={child}
-                        current={child.id === sessionId}
-                        isChild
-                      />
-                    )),
-                  },
-                })}
-              />
-            ))}
+            {group.sessions.map((session) => {
+              const current = session.id === sessionId
+              // The open Session's log, once it has come, has every agent the summary lists.
+              const agents =
+                current && openAgents !== undefined && openAgents.length > 0
+                  ? recentAgents(openAgents, agentId)
+                  : (session.agents ?? [])
+              return (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  current={current && agentId === undefined}
+                  {...(agents.length > 0 && {
+                    nested: {
+                      open: !folded.has(session.id),
+                      onOpenChange: (open) => setFolded(session.id, !open, known),
+                      children: agents.map((agent) => (
+                        <AgentRow
+                          key={agent.id}
+                          session={session}
+                          agent={agent}
+                          current={current && agent.id === agentId}
+                        />
+                      )),
+                    },
+                  })}
+                />
+              )
+            })}
           </NavSection>
         ))
       )}
@@ -267,32 +283,36 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
 
 /**
  * A Session in the sidebar: its state's dot, its Session name (or Work branch) and what it's busy
- * with, leading to it. Its Rename button turns the row into a field for the name. A Parent
- * Session's row holds its Child Sessions' rows, `nested`; a child's row, `isChild`, shows only
- * its dot and name.
+ * with, leading to it. Its Rename button turns the row into a field for the name. Its agents'
+ * rows are `nested` under it.
  */
 function SessionRow({
   session,
   current,
   nested,
-  isChild = false,
 }: {
   session: SessionSummary
   current: boolean
   nested?: Omit<NestedNavItems, "label">
-  isChild?: boolean
 }) {
   const hub = useHub()
   const [renaming, setRenaming] = useState(false)
   const title = sessionTitle(session)
   return (
     <NavItem
-      render={<Link to="/sessions/$sessionId" params={{ sessionId: session.id }} />}
+      // Exact, so the Link doesn't mark itself current while one of its agents' views is open.
+      render={
+        <Link
+          to="/sessions/$sessionId"
+          params={{ sessionId: session.id }}
+          activeOptions={{ exact: true }}
+        />
+      }
       icon={<SessionStatus state={statusOf(session.state)} variant="dot" />}
       current={current}
       title={session.name === undefined ? title : `${title} · ${session.workBranch}`}
-      {...(!isChild && { trailing: <SessionIndicators session={session} /> })}
-      {...(nested && { nested: { ...nested, label: `Child Sessions of ${title}` } })}
+      trailing={<SessionIndicators session={session} />}
+      {...(nested && { nested: { ...nested, label: `Agents of ${title}` } })}
       action={
         <IconButton label={`Rename ${title}`} size="sm" onClick={() => setRenaming(true)}>
           <PencilIcon />
@@ -319,7 +339,38 @@ function SessionRow({
   )
 }
 
-/** What a Session is busy with, and whether its Environment changed, in the row's rail. */
+/** A subagent under its Session's row: its status's dot and description, leading to its view. */
+function AgentRow({
+  session,
+  agent,
+  current,
+}: {
+  session: SessionSummary
+  agent: AgentSummary
+  current: boolean
+}) {
+  return (
+    <NavItem
+      render={
+        <Link
+          to="/sessions/$sessionId"
+          params={{ sessionId: session.id }}
+          search={{ agent: agent.id }}
+        />
+      }
+      icon={<AgentStatus status={agent.status} variant="dot" />}
+      current={current}
+      title={`${agent.description} · ${agent.status}`}
+    >
+      {agent.description || agent.id}
+    </NavItem>
+  )
+}
+
+/**
+ * What a Session is busy with, and whether its Environment changed, in the row's rail. A Session
+ * with a Running agent is working even between Turns.
+ */
 function SessionIndicators({ session }: { session: SessionSummary }) {
   const busy =
     session.restarting !== undefined
@@ -328,7 +379,9 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
         ? "Starting"
         : session.currentTurn !== null
           ? "Working"
-          : null
+          : session.agents?.some((agent) => agent.status === "Running") === true
+            ? "Agents working"
+            : null
   const changed = environmentChanged(session)
   if (busy === null && !changed) return null
   return (

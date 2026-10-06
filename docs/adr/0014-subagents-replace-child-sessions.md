@@ -14,17 +14,18 @@ ADR 0012 kept the Agent tool off because an agent ran on the host, invisible to 
 - **Agents.** With ADR 0001's tool allowlists retired (#147), nothing refuses Agent, SendMessage or TaskStop. They work as in a terminal. Claude Code decides foreground or background: 2.1.289 runs an Agent call in the background unless the call says `run_in_background: false`. hub-link doesn't change that.
 - **What hub-link reports.** An agent is keyed by Claude Code's `agentId`, unique in its Session. hub-link learns each one at `agent.spawn`, and reports only those: agents Claude Code starts for itself, such as progress summaries, never pass `agent.spawn`.
   - `AgentStarted`: `agentId`, the parent loop's `turnId` and Agent `toolCallId`, `agentType`, `description`, `model` and `background`.
-  - `AgentStatusChanged`: `agentId` and `status`: Running at SubagentStart, Done at SubagentStop, Stopped at an aborted `turn.complete` (TaskStop fires no SubagentStop). Once the agent has a worktree, its path and branch.
+  - `AgentStatusChanged`: `agentId` and `status`: Running at SubagentStart, Done at SubagentStop, Stopped once a `TaskStop` call stops it, by the model or by hub-link-commands, or at an aborted `turn.complete` (TaskStop fires no SubagentStop, and a stopped background agent's run no `turn.complete` either). Once the agent has a worktree, its path and branch.
   - An agent's text, tool calls and run ends stay `TextDelta`, `ToolCallStarted`, `ToolCallEnded` and `TurnEnded`, tagged with its `agentId`. Their `turnId` is the agent's own run, new for each run, so the web groups them by `agentId`. That also fixes the phantom Turn the web builds today from an agent's unknown `turnId`.
-- **Turns from agents.** When a background agent finishes or is stopped, Claude Code starts a main-loop Turn with a `<task-notification>` prompt. hub-link reports its sender as `FromAgent { agentId }`, read from the notification's task id.
+- **Turns from agents.** When a background agent finishes or is stopped, Claude Code starts a main-loop Turn with a `<task-notification>` prompt. hub-link reports its sender as `FromAgent { agentId }`, read from the notification's task id. A background command's end is notified the same way, so the web UI shows a Turn from an id the Session never started as from a background task.
 - **Messaging and stopping.** The web sends `MessageAgent { sessionId, agentId, text }` and `StopAgent { sessionId, agentId }`, and the Hub relays them as mod commands.
   - A message goes through `$.session.send`, prefixed with the Participant's name as a prompt is. A running agent reads it at its next tool round. A Done, Stopped or Interrupted one resumes from its transcript, with the same `agentId`.
   - Stop runs `TaskStop` with the `agentId`.
   - The Hub records each message as an `AgentMessaged` event, since Claude Code doesn't keep it in the agent's messages.
   - The Prompt queue feeds the main loop only.
 - **Two plugins.** A plugin's hooks don't see the work it causes: when a plugin resumes an agent with `session.send`, that run's steps skip the plugin's own hooks (#148). So the mod package holds two plugins, both loaded with `--plugin-dir`:
-  - **hub-link** reports: Turn and agent events, the band.
-  - **hub-link-commands** runs every command from the Hub: `DeliverPrompt`, `StopTurn`, `MessageAgent` and `StopAgent`.
+  - **hub-link** reports: Turn and agent events.
+  - **hub-link-commands** runs every command from the Hub: `DeliverPrompt`, `StopTurn`, `MessageAgent` and `StopAgent`. It also draws the band, since `PresenceChanged`, the band's Participants, is a command too.
+  - Both say hello with the Session's mod token; only hub-link-commands polls. Before it submits a prompt from the Hub, hub-link-commands records its `promptId`, sender and text in its `$.state`; hub-link reads that at `turn.start` to report the Turn as from that Participant, with that `promptId`.
 - **Web UI.**
   - **Sidebar.** A Session's agents are listed under it with a status dot. Finished ones fold away.
   - **Transcript.** An agent is a card at the Agent call that started it, streaming its text and tool calls, folded once it is Done. A background agent keeps streaming into its card after its Turn ends.

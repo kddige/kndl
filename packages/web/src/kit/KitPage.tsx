@@ -2,6 +2,7 @@ import * as stylex from "@stylexjs/stylex"
 import { getRouteApi } from "@tanstack/react-router"
 import { type ComponentProps, type ReactNode, useEffect, useState } from "react"
 import {
+  AgentStatus,
   ArchiveIcon,
   Avatar,
   AvatarStack,
@@ -943,7 +944,7 @@ export function KitPage() {
 
         <Buttons />
 
-        <Section title="Badge, SessionStatus">
+        <Section title="Badge, SessionStatus, AgentStatus">
           <Row label="badge">
             <Badge>12</Badge>
             <Badge intent="accent">New</Badge>
@@ -962,6 +963,18 @@ export function KitPage() {
             <SessionStatus state="asleep" variant="dot" />
             <SessionStatus state="frozen" variant="dot" />
             <SessionStatus state="archived" variant="dot" />
+          </Row>
+          <Row label="agent">
+            <AgentStatus status="Running" />
+            <AgentStatus status="Done" />
+            <AgentStatus status="Stopped" />
+            <AgentStatus status="Interrupted" />
+          </Row>
+          <Row label="agent dot">
+            <AgentStatus status="Running" variant="dot" />
+            <AgentStatus status="Done" variant="dot" />
+            <AgentStatus status="Stopped" variant="dot" />
+            <AgentStatus status="Interrupted" variant="dot" />
           </Row>
         </Section>
 

@@ -108,7 +108,8 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
   expect(groups()).toEqual([
     {
       repo: "kddige/claude-hub",
-      sessions: ["claude/readme-run", "claude/web-client", "Release 0.4", "API docs", "Changelog"],
+      // Release 0.4's interrupted agent is under it.
+      sessions: ["claude/readme-run", "claude/web-client", "Release 0.4", "Document the protocol"],
     },
     { repo: "kddige/dotfiles", sessions: ["claude/zsh-prompt"] },
   ])
@@ -261,7 +262,7 @@ test("the Environments page lists every Repo with a Session, Archived ones inclu
     a.textContent,
   ])
   expect(rows).toEqual([
-    ["/repos/kddige/claude-hub/environment", "kddige/claude-hub5 Sessions"],
+    ["/repos/kddige/claude-hub/environment", "kddige/claude-hub3 Sessions"],
     ["/repos/kddige/dotfiles/environment", "kddige/dotfiles1 Session"],
   ])
 })
@@ -296,28 +297,34 @@ test("on a narrow screen the sidebar is a drawer, closed by following a link", a
   await eventually(() => expect(nav()).toBeNull())
 })
 
-/** The Sessions nested under a Session's row, as their links read. */
+/** The agents nested under a Session's row, as their links read. */
 function nestedUnder(sessionId: string): Array<string | null> {
   const list = row(sessionId).querySelector(":scope > ul")
   return [...(list?.querySelectorAll("a") ?? [])].map((a) => a.textContent)
 }
 
-test("Child Sessions nest under their Parent Session, which only its chevron folds", async () => {
+const releaseAgents = [
+  "Write the 0.4 changelog",
+  "Document the protocol",
+  "Bump the package versions",
+]
+
+test("a Session's running and interrupted agents nest under it, which only its chevron folds", async () => {
   const { router } = await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
 
-  // In the order they were created, each with its dot and name only.
-  expect(nestedUnder("s-release")).toEqual(["API docs", "Changelog"])
+  // Another Session lists only the agents still running or interrupted, each with its status.
+  expect(nestedUnder("s-release")).toEqual(["Document the protocol"])
   expect(
-    ["s-api-docs", "s-changelog"].map((id) =>
-      row(id).querySelector('a [role="img"]')?.getAttribute("aria-label"),
-    ),
-  ).toEqual(["Active", "Asleep"])
-  // Only a row with children has a chevron, open to start with, naming the list it controls.
-  const chevron = button("Child Sessions of Release 0.4", nav() ?? document)
+    nav()
+      ?.querySelector('a[href="/sessions/s-release?agent=a-docs"] [role="img"]')
+      ?.getAttribute("aria-label"),
+  ).toBe("Interrupted")
+  // Only a row with agents has a chevron, open to start with, naming the list it controls.
+  const chevron = button("Agents of Release 0.4", nav() ?? document)
   expect(chevron.getAttribute("aria-expanded")).toBe("true")
   const controlled = document.getElementById(chevron.getAttribute("aria-controls") ?? "")
-  expect(controlled?.querySelectorAll("a").length).toBe(2)
+  expect(controlled?.querySelectorAll("a").length).toBe(1)
   expect(nav()?.querySelectorAll("button[aria-expanded]").length).toBe(1)
 
   // The chevron folds them, and the fold is kept for this viewer.
@@ -335,57 +342,57 @@ test("Child Sessions nest under their Parent Session, which only its chevron fol
   await eventually(() => expect(router.state.location.pathname).toBe("/sessions/s-release"))
   expect(nestedUnder("s-release")).toEqual([])
 
-  // Opened again, the chevron shows them.
-  await step(() => button("Child Sessions of Release 0.4", nav() ?? document).click())
-  expect(nestedUnder("s-release")).toEqual(["API docs", "Changelog"])
+  // Opened again, the chevron shows them: the open Session's finished agents too.
+  await step(() => button("Agents of Release 0.4", nav() ?? document).click())
+  await eventually(() => expect(nestedUnder("s-release")).toEqual(releaseAgents))
   expect(JSON.parse(localStorage.getItem("claude-hub:sidebar-folded") ?? "[]")).toEqual([])
 })
 
-test("a fold lasts across reloads, and opens when one of its Child Sessions becomes current", async () => {
+test("an agent's row opens its view, and is the current one", async () => {
+  const { router, page } = await open("/sessions/s-release")
+  await eventually(() => expect(nestedUnder("s-release")).toEqual(releaseAgents))
+  expect(current()).toEqual(["Release 0.4"])
+
+  const link = nav()?.querySelector<HTMLAnchorElement>(
+    'a[href="/sessions/s-release?agent=a-changelog"]',
+  )
+  await step(() => link?.click())
+  await eventually(() =>
+    expect(router.state.location.search).toEqual({ agent: "a-changelog" } as never),
+  )
+  expect(current()).toEqual(["Write the 0.4 changelog"])
+  await eventually(() => expect(page.querySelector("main h2")?.textContent).toContain("Done"))
+
+  // Leaving for another Session, its finished agents fold away.
+  await step(() => router.history.push("/sessions/s-readme"))
+  await eventually(() => expect(nestedUnder("s-release")).toEqual(["Document the protocol"]))
+})
+
+test("a fold lasts across reloads, and opens when one of its agents' views opens", async () => {
   localStorage.setItem("claude-hub:sidebar-folded", JSON.stringify(["s-release"]))
   const { router } = await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
   expect(nestedUnder("s-release")).toEqual([])
-  expect(
-    button("Child Sessions of Release 0.4", nav() ?? document).getAttribute("aria-expanded"),
-  ).toBe("false")
+  expect(button("Agents of Release 0.4", nav() ?? document).getAttribute("aria-expanded")).toBe(
+    "false",
+  )
 
-  // Opening a child, as from a link in a transcript, opens its parent so it shows as current.
-  await step(() => router.history.push("/sessions/s-changelog"))
-  await eventually(() => expect(current()).toEqual(["Changelog"]))
-  expect(nestedUnder("s-release")).toEqual(["API docs", "Changelog"])
+  // Opening an agent, as from its card in a transcript, opens its Session so it shows as current.
+  await step(() => router.history.push("/sessions/s-release?agent=a-docs"))
+  await eventually(() => expect(current()).toEqual(["Document the protocol"]))
+  await eventually(() => expect(nestedUnder("s-release")).toEqual(releaseAgents))
   expect(localStorage.getItem("claude-hub:sidebar-folded")).toBe("[]")
 })
 
-test("a Child Session whose parent is archived stands under its Repo on its own", async () => {
-  const { client } = await open("/sessions/s-readme")
-  await eventually(() => expect(groups().length).toBe(2))
-  await step(() => client.archiveSession("s-release" as never))
-  await eventually(() =>
-    expect(groups()[0]?.sessions).toEqual(["claude/readme-run", "claude/web-client"]),
-  )
-
-  await step(() => client.restoreSession("s-api-docs" as never))
-  await eventually(() =>
-    expect(groups()[0]?.sessions).toEqual(["claude/readme-run", "claude/web-client", "API docs"]),
-  )
-  expect(row("s-api-docs").closest("ul")?.hasAttribute("aria-labelledby")).toBe(true)
-  expect(nav()?.querySelectorAll("button[aria-expanded]").length).toBe(0)
-
-  // Its parent restored, it nests again.
-  await step(() => client.restoreSession("s-release" as never))
-  await eventually(() => expect(nestedUnder("s-release")).toEqual(["API docs"]))
-})
-
-test("on a narrow screen the drawer nests and folds Child Sessions too", async () => {
+test("on a narrow screen the drawer nests and folds agents too", async () => {
   setWidth(400)
   const { page } = await open("/")
   await eventually(() => expect(button("Open navigation", page)).toBeTruthy())
   await step(() => button("Open navigation", page).click())
   await eventually(() => expect(nav()).not.toBeNull())
 
-  expect(nestedUnder("s-release")).toEqual(["API docs", "Changelog"])
-  await step(() => button("Child Sessions of Release 0.4", nav() ?? document).click())
+  expect(nestedUnder("s-release")).toEqual(["Document the protocol"])
+  await step(() => button("Agents of Release 0.4", nav() ?? document).click())
   expect(nestedUnder("s-release")).toEqual([])
   // Folding doesn't follow a link, so the drawer stays open.
   expect(nav()).not.toBeNull()
