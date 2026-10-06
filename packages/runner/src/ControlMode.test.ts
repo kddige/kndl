@@ -53,7 +53,7 @@ describe("ControlModeParser", () => {
       bytes(
         [
           "%layout-change @0 f6dd,50x7,0,0,0 f6dd,50x7,0,0,0 *",
-          "%subscription-changed claude-hub-exit $0 - - - : 1 3",
+          "%subscription-changed kndl-exit $0 - - - : 1 3",
           "%exit",
           "",
         ].join("\n"),
@@ -61,7 +61,7 @@ describe("ControlModeParser", () => {
     )
     expect(events).toEqual([
       { _tag: "LayoutChange", size: { cols: 50, rows: 7 } },
-      { _tag: "SubscriptionChanged", name: "claude-hub-exit", value: "1 3" },
+      { _tag: "SubscriptionChanged", name: "kndl-exit", value: "1 3" },
       { _tag: "Exit", reason: undefined },
     ])
   })

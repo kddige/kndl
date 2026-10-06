@@ -11,7 +11,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import type { ClaudePlan, ClaudeSubscriptionType } from "@claude-hub/protocol"
+import type { ClaudePlan, ClaudeSubscriptionType } from "@kndl/protocol"
 import { Context, Data, Effect } from "effect"
 
 // What the Runner reads of Claude Code's state on its host, when there is any; none of it is
@@ -93,7 +93,7 @@ function rewriteConfig(
     if (next === undefined) return attempt === 1 ? "Unchanged" : "Changed"
     const temp = join(
       dirname(file),
-      `.${basename(file)}.claude-hub-${process.pid}-${randomBytes(4).toString("hex")}`,
+      `.${basename(file)}.kndl-${process.pid}-${randomBytes(4).toString("hex")}`,
     )
     const mode = statSync(file).mode & 0o7777
     try {
@@ -141,7 +141,7 @@ export function claudeProjectsDir(env: Record<string, string | undefined> = proc
 }
 
 /** {@link claudeProjectsDir} for the Runner, or a test's own. */
-export const ClaudeProjectsDir = Context.Reference<string>("@claude-hub/runner/ClaudeProjectsDir", {
+export const ClaudeProjectsDir = Context.Reference<string>("@kndl/runner/ClaudeProjectsDir", {
   defaultValue: () => claudeProjectsDir(),
 })
 

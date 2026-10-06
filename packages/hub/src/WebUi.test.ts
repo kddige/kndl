@@ -10,14 +10,14 @@ import { assetCacheControl, notBuiltMessage, pageCacheControl } from "./WebUi.ts
 
 afterEach(stopHubs)
 
-const indexHtml = `<!doctype html><title>Claude Hub</title><script type="module" src="/assets/index-Bx1a2b3c.js"></script>`
+const indexHtml = `<!doctype html><title>kndl</title><script type="module" src="/assets/index-Bx1a2b3c.js"></script>`
 const script = `console.log("the web UI")`
 
 /** Holds the build, `dist/`, and a file beside it that must not be served. */
 let root: string
 let webDir: string
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), "claude-hub-web-"))
+  root = await mkdtemp(join(tmpdir(), "kndl-web-"))
   webDir = join(root, "dist")
   await mkdir(join(webDir, "assets"), { recursive: true })
   await writeFile(join(root, "secret.txt"), "not for the web")

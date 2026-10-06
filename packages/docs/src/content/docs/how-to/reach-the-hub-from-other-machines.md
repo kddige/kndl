@@ -71,6 +71,6 @@ Sign-in tokens then travel in cleartext: anyone who can watch the network can ta
 
 ## Whichever you pick
 
-- **Dev login stops working**, except through an SSH tunnel. The Hub refuses to start with `CLAUDE_HUB_DEV_LOGIN` unless `HOST` and `HUB_PUBLIC_URL` are both loopback. Set up [GitHub sign-in](/how-to/set-up-the-github-app/).
+- **Dev login stops working**, except through an SSH tunnel. The Hub refuses to start with `KNDL_DEV_LOGIN` unless `HOST` and `HUB_PUBLIC_URL` are both loopback. Set up [GitHub sign-in](/how-to/set-up-the-github-app/).
 - **Bind to loopback behind a proxy or Tailscale.** Only set `HOST=0.0.0.0` when browsers connect to the Hub directly.
 - **Everyone must use the one origin.** The Hub refuses cookie-authenticated requests from any origin but `HUB_PUBLIC_URL`'s.

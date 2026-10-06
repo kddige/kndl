@@ -1,4 +1,4 @@
-import { type EffortLevel, findModel, type RunnerModels } from "@claude-hub/protocol"
+import { type EffortLevel, findModel, type RunnerModels } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
 import {

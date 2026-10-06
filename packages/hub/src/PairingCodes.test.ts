@@ -7,7 +7,7 @@ import {
   Participant,
   ParticipantId,
   RunnerId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Effect, Exit, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { TestClock } from "effect/testing"

@@ -1,6 +1,6 @@
-# Claude Hub
+# kndl
 
-A self-hosted platform where a team runs Claude Code sessions in sandboxes and works in them together from the web, "pair-prompting" the way two people pair-program at one screen.
+kndl (said "kindle", written lowercase): multiplayer agentic sessions. A self-hosted platform where a team runs Claude Code sessions in sandboxes and works in them together from the web, "pair-prompting" the way two people pair-program at one screen.
 
 ## Infrastructure
 
@@ -29,7 +29,7 @@ A TCP port listening inside a Session's Sandbox, which its Runner notices while 
 _Avoid_: service, endpoint
 
 **Forward**:
-A `claude-hub forward` connection from someone's machine to a Session, which makes each of its Open ports reachable on that machine's `localhost`, 1:1, through the Hub. A connected Forward counts as presence in the Session.
+A `kndl forward` connection from someone's machine to a Session, which makes each of its Open ports reachable on that machine's `localhost`, 1:1, through the Hub. A connected Forward counts as presence in the Session.
 _Avoid_: tunnel, port mapping, proxy
 
 **Preview**:
@@ -37,7 +37,7 @@ An Open port made reachable in the browser on its own domain, for Participants.
 _Avoid_: port forward, tunnel
 
 **CLI token**:
-The long-lived credential the `claude-hub` CLI signs in to a Hub with, made by `claude-hub login` and listed and revocable on its owner's Account page.
+The long-lived credential the `kndl` CLI signs in to a Hub with, made by `kndl login` and listed and revocable on its owner's Account page.
 _Avoid_: API key, access token, session cookie
 
 ## Sessions

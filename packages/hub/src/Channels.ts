@@ -17,7 +17,7 @@ import {
   RunnerToHub,
   WebHello,
   WebToHub,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Duration, Effect, Queue, Schema, type Scope } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"

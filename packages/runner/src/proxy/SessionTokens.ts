@@ -13,7 +13,7 @@
 // let in again, standing for the Session's new grant.
 
 import { createHash, randomBytes } from "node:crypto"
-import type { ClaudeCredential, SessionId } from "@claude-hub/protocol"
+import type { ClaudeCredential, SessionId } from "@kndl/protocol"
 import { Context, Effect, Layer, Redacted } from "effect"
 
 /** What a Session token stands for. */
@@ -49,7 +49,7 @@ export class SessionTokens extends Context.Service<
      */
     readonly find: (token: string) => Effect.Effect<SessionGrant | "Held" | undefined>
   }
->()("@claude-hub/runner/SessionTokens") {}
+>()("@kndl/runner/SessionTokens") {}
 
 /** What a Session token starts with, so a leaked one is recognisable. */
 export const SessionTokenPrefix = "chp_"

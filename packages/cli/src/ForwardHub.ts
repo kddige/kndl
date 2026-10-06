@@ -1,4 +1,4 @@
-// What `claude-hub forward` (#180) asks of the Hub, as the CLI token's person: the Sessions it can
+// What `kndl forward` (#180) asks of the Hub, as the CLI token's person: the Sessions it can
 // forward, and a Session's forward, the WebSocket that keeps it in the Session's presence and
 // sends the Session as it changes (Forward.ts in the protocol).
 import {
@@ -10,7 +10,7 @@ import {
   ProtocolVersion,
   type SessionId,
   type SessionSummary,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Option, Schema } from "effect"
 
 const HubTimeoutMs = 15_000

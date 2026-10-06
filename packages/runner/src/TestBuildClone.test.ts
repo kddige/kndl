@@ -6,8 +6,8 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { GitAnswer, TestBuildId } from "@claude-hub/protocol"
 import { BunServices } from "@effect/platform-bun"
+import { GitAnswer, TestBuildId } from "@kndl/protocol"
 import { Effect, Exit, Redacted } from "effect"
 import { authorizationHeader } from "./HostGit.ts"
 import { cloneTestBuild } from "./SessionSandboxes.ts"
@@ -31,7 +31,7 @@ function filesContaining(dir: string, needle: string): Array<string> {
 }
 
 describe.skipIf(Bun.which("git") === null)("A Test build's clone", () => {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-test-build-clone-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-test-build-clone-"))
   /** The Authorization header of each request git sent, or null. */
   const authorizations: Array<string | null> = []
   // Refuses every request, after noting how it was authorized: git's clone fails, as wanted.

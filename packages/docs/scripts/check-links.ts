@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative, sep } from "node:path"
 
 /** The site's base path, as astro.config.mjs sets it. */
-export const base = "/claude-hub/"
+export const base = "/kndl/"
 
 /** A link that doesn't resolve: on which page, to where, and why. */
 export interface BrokenLink {

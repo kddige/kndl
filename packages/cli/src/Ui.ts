@@ -64,7 +64,7 @@ export interface UiShape {
   ) => Effect.Effect<A, E, R>
 }
 
-export class Ui extends Context.Service<Ui, UiShape>()("@claude-hub/cli/Ui") {
+export class Ui extends Context.Service<Ui, UiShape>()("@kndl/cli/Ui") {
   /** clack on a terminal at both ends; plain lines otherwise. clack loads on first use. */
   static readonly layer = Layer.sync(Ui, () =>
     process.stdin.isTTY === true && process.stdout.isTTY === true ? clackUi : plainUi,
@@ -206,10 +206,10 @@ const clackUi: UiShape = {
 }
 
 /** An answer a scripted Ui gives to cancel the question. */
-export const CancelAnswer: unique symbol = Symbol.for("@claude-hub/cli/Ui/Cancel")
+export const CancelAnswer: unique symbol = Symbol.for("@kndl/cli/Ui/Cancel")
 
 /** An answer a scripted Ui never gives: for a question raced against something else, which wins. */
-export const NoAnswer: unique symbol = Symbol.for("@claude-hub/cli/Ui/NoAnswer")
+export const NoAnswer: unique symbol = Symbol.for("@kndl/cli/Ui/NoAnswer")
 
 /**
  * A Ui for tests: each question takes the next answer from `answers` (CancelAnswer cancels it,

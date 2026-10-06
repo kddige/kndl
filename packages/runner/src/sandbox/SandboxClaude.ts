@@ -21,7 +21,7 @@ import { Data, Effect } from "effect"
 
 /**
  * The Claude Code version Sessions run. Upgrading it: change it here, then run the smoke test,
- * `CLAUDE_HUB_SANDBOX_IT=1 bun test src/SandboxClaude.integration.test.ts` in packages/runner,
+ * `KNDL_SANDBOX_IT=1 bun test src/SandboxClaude.integration.test.ts` in packages/runner,
  * which runs it in a Sandbox through the credential proxy: its banner, `/status`, and a Turn
  * with Bash. It also checks PinnedClaudeModels (ClaudeModels.ts), the models the build takes,
  * and says what the build lists when the table is out of date.
@@ -29,7 +29,7 @@ import { Data, Effect } from "effect"
 export const PinnedClaudeVersion = "2.1.289"
 
 /** Where the cache directory is mounted in every Sandbox. */
-export const sandboxClaudeGuestDir = "/opt/claude-hub/claude-code"
+export const sandboxClaudeGuestDir = "/opt/kndl/claude-code"
 
 export class SandboxClaudeError extends Data.TaggedError("SandboxClaudeError")<{
   readonly message: string

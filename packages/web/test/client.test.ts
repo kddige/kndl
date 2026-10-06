@@ -8,7 +8,7 @@ import {
   RunnerId,
   SessionId,
   type TerminalFrame,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
 import { editFrom, toDraft } from "../src/environment/draft.ts"
 import { HubClient } from "../src/hub/client.ts"
@@ -315,12 +315,12 @@ describe("commands", () => {
     client.start()
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
     const session = await client.createSession({
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
       runnerId: RunnerId.make("r-studio"),
     })
     expect(session).toMatchObject({
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
       state: "Active",
     })
@@ -333,7 +333,7 @@ describe("commands", () => {
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
     await expect(
       client.createSession({
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         baseBranch: "main",
         runnerId: RunnerId.make("r-ci"),
       }),
@@ -616,7 +616,7 @@ async function online() {
 }
 
 describe("Environments", () => {
-  const repo = "kddige/claude-hub"
+  const repo = "kddige/kndl"
   const studio = RunnerId.make("r-studio")
 
   /** The fake's saved Environment as a draft, changed by `change`. */
@@ -793,7 +793,7 @@ describe("Environments", () => {
     ).rejects.toThrow("under 4 characters")
 
     await expect(client.deleteSharedVariable("GH_READ_TOKEN")).rejects.toThrow(
-      "GH_READ_TOKEN is linked in kddige/claude-hub",
+      "GH_READ_TOKEN is linked in kddige/kndl",
     )
     const left = await client.deleteSharedVariable("API_KEY")
     expect(left.map((variable) => variable.name)).not.toContain("API_KEY")

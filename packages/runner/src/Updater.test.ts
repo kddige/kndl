@@ -5,8 +5,8 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { BuildVersion, RunnerToHub, RunnerUpdater } from "@claude-hub/protocol"
 import { BunServices } from "@effect/platform-bun"
+import type { BuildVersion, RunnerToHub, RunnerUpdater } from "@kndl/protocol"
 import { Effect, Exit, Layer, References, Scope } from "effect"
 import { HubLink } from "./HubLink.ts"
 import { CommandFailed, hostEnvironment, runCommand } from "./Process.ts"
@@ -70,7 +70,7 @@ interface Harness {
 }
 
 describe.skipIf(Bun.which("git") === null)("the Runner's Updater", () => {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-updater-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-updater-"))
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
   let counter = 0
@@ -237,7 +237,7 @@ describe.skipIf(Bun.which("git") === null)("the Runner's Updater", () => {
     await eventually(() => h.calls.includes("restart"))
 
     expect(git(h.clone, "rev-parse", "HEAD")).toBe(second)
-    // Still on main, following origin's, for a later `claude-hub update`.
+    // Still on main, following origin's, for a later `kndl update`.
     expect(git(h.clone, "symbolic-ref", "--short", "HEAD")).toBe("main")
     expect(git(h.clone, "rev-parse", "--abbrev-ref", "main@{upstream}")).toBe("origin/main")
     expect(h.calls.filter((call) => !call.startsWith("git"))).toEqual([

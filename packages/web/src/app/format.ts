@@ -1,6 +1,6 @@
 // Small formatters for times, durations and counts.
 
-import type { RunnerSummary, SessionState, SessionSummary } from "@claude-hub/protocol"
+import type { RunnerSummary, SessionState, SessionSummary } from "@kndl/protocol"
 import type { SessionState as StatusState } from "../ui/index.ts"
 
 /** "just now", "5m ago", "3h ago", "2d ago", then the date. */

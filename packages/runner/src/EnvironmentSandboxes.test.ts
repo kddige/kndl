@@ -12,8 +12,8 @@ import type {
   SandboxStateReport,
   SessionEnvironment,
   TestBuildId,
-} from "@claude-hub/protocol"
-import { EnvironmentVersion } from "@claude-hub/protocol"
+} from "@kndl/protocol"
+import { EnvironmentVersion } from "@kndl/protocol"
 import { Effect, Layer, References, Schema } from "effect"
 import {
   buildGroup,
@@ -74,7 +74,7 @@ const environment = (
 const scriptOf = (call: FakeExecCall) =>
   call.request.command !== "sh"
     ? undefined
-    : /\/tmp\/claude-hub-(\w+)\.sh$/.exec(call.request.args?.at(-1) ?? "")?.[1]
+    : /\/tmp\/kndl-(\w+)\.sh$/.exec(call.request.args?.at(-1) ?? "")?.[1]
 
 const isScript = (name: string) => (call: FakeExecCall) => scriptOf(call) === name
 
@@ -122,7 +122,7 @@ const withEnvironments = async (
     readonly variables?: FakeHubVariables
   } = {},
 ) => {
-  const root = await mkdtemp(join(tmpdir(), "claude-hub-environments-"))
+  const root = await mkdtemp(join(tmpdir(), "kndl-environments-"))
   const sent: Array<RunnerToHub> = []
   const variables =
     options.variables ??

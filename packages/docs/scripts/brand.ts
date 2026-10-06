@@ -1,6 +1,6 @@
 // Makes the raster brand assets from the SVG sources in brand/, and copies the favicons into the
 // docs site's and the web UI's public folders. After changing brand/, run `bun run brand` here, or
-// `bun run --filter @claude-hub/docs brand` from the repo root.
+// `bun run --filter @kndl/docs brand` from the repo root.
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import sharp from "sharp"
@@ -12,6 +12,8 @@ const docsPublic = join(root, "packages", "docs", "public")
 const publics = [docsPublic, join(root, "packages", "web", "public")]
 
 const mark = readFileSync(join(brand, "mark.svg"))
+// Kip simplified for 16 and 32 pixels: no stars or glow, and a face drawn on the pixel grid.
+const markSmall = readFileSync(join(brand, "mark-small.svg"))
 
 const png = (svg: Buffer, width: number, height = width) =>
   sharp(svg, { density: 600 }).resize(width, height).png({ compressionLevel: 9 }).toBuffer()
@@ -40,17 +42,20 @@ const ico = (frames: ReadonlyArray<{ readonly size: number; readonly data: Buffe
 mkdirSync(raster, { recursive: true })
 
 const frames = await Promise.all(
-  [16, 32, 48].map(async (size) => ({ size, data: await png(mark, size) })),
+  [
+    { size: 16, svg: markSmall },
+    { size: 32, svg: markSmall },
+    { size: 48, svg: mark },
+  ].map(async ({ size, svg }) => ({ size, data: await png(svg, size) })),
 )
 writeFileSync(join(raster, "favicon.ico"), ico(frames))
-writeFileSync(join(raster, "favicon-32.png"), await png(mark, 32))
+writeFileSync(join(raster, "favicon-32.png"), await png(markSmall, 32))
 
-// iOS rounds the corners itself, so the apple-touch icon is the mark on a full square, without
-// the tile's rounded corners and edge.
-const square = mark
-  .toString()
-  .replace(/<rect width="64" height="64" rx="15"/, '<rect width="64" height="64" rx="0"')
-  .replace(/<rect x="0.75"[^>]*\/>/, "")
+// iOS rounds the corners itself, so the apple-touch icon is the mark on a full square: the night
+// tile without its rounded corners.
+const tile = '<rect width="128" height="128" rx="30"'
+if (!mark.includes(tile)) throw new Error(`brand/mark.svg has no ${tile}> to square off.`)
+const square = mark.toString().replace(tile, '<rect width="128" height="128"')
 writeFileSync(join(raster, "apple-touch-icon.png"), await png(Buffer.from(square), 180))
 
 writeFileSync(
@@ -62,7 +67,8 @@ writeFileSync(
 
 for (const dir of publics) {
   mkdirSync(dir, { recursive: true })
-  copyFileSync(join(brand, "mark.svg"), join(dir, "favicon.svg"))
+  // Browsers draw favicon.svg at 16 to 32 pixels, so it's the small mark.
+  copyFileSync(join(brand, "mark-small.svg"), join(dir, "favicon.svg"))
   copyFileSync(join(raster, "favicon.ico"), join(dir, "favicon.ico"))
   copyFileSync(join(raster, "apple-touch-icon.png"), join(dir, "apple-touch-icon.png"))
 }

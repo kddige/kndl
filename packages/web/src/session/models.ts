@@ -10,7 +10,7 @@ import {
   type ModelSwitched,
   type RunnerModels,
   sameModel,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 
 /** A Session's model and effort: absent ones are Claude Code's default. */
 export interface ModelSetting {

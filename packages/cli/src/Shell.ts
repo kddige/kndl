@@ -2,7 +2,7 @@
 // Services.ts, Update.ts) are lists of Steps, built and tested without running anything; Shell
 // is the thin layer that runs them.
 //
-// With CLAUDE_HUB_DRY_RUN=1, Shell prints the Steps that change the system (package managers,
+// With KNDL_DRY_RUN=1, Shell prints the Steps that change the system (package managers,
 // sudo, launchctl, systemctl, loginctl) instead of running them, and runs the rest (git, bun).
 import { Context, Data, Effect, Layer, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
@@ -59,12 +59,12 @@ export class Shell extends Context.Service<
     /** Runs a Step attached to this terminal, for sudo's password and long builds' progress. */
     readonly attached: (s: Step) => Effect.Effect<number, StepFailed>
   }
->()("@claude-hub/cli/Shell") {
+>()("@kndl/cli/Shell") {
   static readonly layer = Layer.effect(
     Shell,
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-      const dryRun = process.env.CLAUDE_HUB_DRY_RUN === "1"
+      const dryRun = process.env.KNDL_DRY_RUN === "1"
       const root = process.getuid?.() === 0
 
       const command = (s: Step, stdio: "pipe" | "inherit") => {

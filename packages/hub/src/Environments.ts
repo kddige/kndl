@@ -44,7 +44,7 @@ import {
   type VariableValue,
   valuesNeededText,
   variableNameProblem,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Clock, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -275,7 +275,7 @@ export class Environments extends Context.Service<
       name: string,
     ) => Effect.Effect<void, EnvironmentRefused | SqlError>
   }
->()("@claude-hub/hub/Environments") {
+>()("@kndl/hub/Environments") {
   static readonly layer = Layer.effect(
     Environments,
     Effect.gen(function* () {

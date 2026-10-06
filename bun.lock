@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "claude-hub",
+      "name": "kndl",
       "devDependencies": {
         "@types/bun": "1.4.2",
         "oxfmt": "0.71.0",
@@ -12,21 +12,21 @@
       },
     },
     "packages/cli": {
-      "name": "@claude-hub/cli",
+      "name": "@kndl/cli",
       "bin": {
-        "claude-hub": "src/main.ts",
+        "kndl": "src/main.ts",
       },
       "dependencies": {
         "@clack/prompts": "1.8.1",
-        "@claude-hub/hub": "workspace:*",
-        "@claude-hub/protocol": "workspace:*",
-        "@claude-hub/runner": "workspace:*",
         "@effect/platform-bun": "4.0.0",
+        "@kndl/hub": "workspace:*",
+        "@kndl/protocol": "workspace:*",
+        "@kndl/runner": "workspace:*",
         "effect": "4.0.0",
       },
     },
     "packages/docs": {
-      "name": "@claude-hub/docs",
+      "name": "@kndl/docs",
       "dependencies": {
         "@astrojs/markdown-remark": "7.3.1",
         "@astrojs/starlight": "0.42.5",
@@ -41,44 +41,44 @@
       },
     },
     "packages/hub": {
-      "name": "@claude-hub/hub",
+      "name": "@kndl/hub",
       "dependencies": {
-        "@claude-hub/protocol": "workspace:*",
         "@effect/platform-bun": "4.0.0",
         "@effect/sql-sqlite-bun": "4.0.0",
+        "@kndl/protocol": "workspace:*",
         "effect": "4.0.0",
       },
     },
     "packages/mod": {
-      "name": "@claude-hub/mod",
+      "name": "@kndl/mod",
       "dependencies": {
-        "@claude-hub/protocol": "workspace:*",
+        "@kndl/protocol": "workspace:*",
         "effect": "4.0.0",
       },
       "devDependencies": {
-        "@claude-hub/hub": "workspace:*",
+        "@kndl/hub": "workspace:*",
       },
     },
     "packages/protocol": {
-      "name": "@claude-hub/protocol",
+      "name": "@kndl/protocol",
       "dependencies": {
         "effect": "4.0.0",
       },
     },
     "packages/runner": {
-      "name": "@claude-hub/runner",
+      "name": "@kndl/runner",
       "dependencies": {
-        "@claude-hub/protocol": "workspace:*",
         "@effect/platform-bun": "4.0.0",
+        "@kndl/protocol": "workspace:*",
         "effect": "4.0.0",
         "microsandbox": "0.7.6",
       },
     },
     "packages/web": {
-      "name": "@claude-hub/web",
+      "name": "@kndl/web",
       "dependencies": {
         "@base-ui/react": "1.8.0",
-        "@claude-hub/protocol": "workspace:*",
+        "@kndl/protocol": "workspace:*",
         "@stylexjs/stylex": "0.19.1",
         "@tanstack/react-router": "1.170.41",
         "@xterm/addon-fit": "0.11.0",
@@ -215,20 +215,6 @@
     "@clack/core": ["@clack/core@1.5.1", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ=="],
 
     "@clack/prompts": ["@clack/prompts@1.8.1", "", { "dependencies": { "@clack/core": "1.5.1", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-dlT1m5e/0yUL0kRNcQn7yGLVThkgbB0Ga/1AmfDDC/8ik6AIiSf2QLQO2zPYvefsHP0aFgxO93cVLCCfDp7kzQ=="],
-
-    "@claude-hub/cli": ["@claude-hub/cli@workspace:packages/cli"],
-
-    "@claude-hub/docs": ["@claude-hub/docs@workspace:packages/docs"],
-
-    "@claude-hub/hub": ["@claude-hub/hub@workspace:packages/hub"],
-
-    "@claude-hub/mod": ["@claude-hub/mod@workspace:packages/mod"],
-
-    "@claude-hub/protocol": ["@claude-hub/protocol@workspace:packages/protocol"],
-
-    "@claude-hub/runner": ["@claude-hub/runner@workspace:packages/runner"],
-
-    "@claude-hub/web": ["@claude-hub/web@workspace:packages/web"],
 
     "@ctrl/tinycolor": ["@ctrl/tinycolor@4.2.1", "", {}, "sha512-Vh5uy9Y1JBMId6J1f68TMXnZrTCvNdo9Fu2k0d1YnJngR+sM5kWTKl441c/3TFs+cG0NWOjRWgQ/iaWhbYx+7A=="],
 
@@ -393,6 +379,20 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.6.0", "", {}, "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@kndl/cli": ["@kndl/cli@workspace:packages/cli"],
+
+    "@kndl/docs": ["@kndl/docs@workspace:packages/docs"],
+
+    "@kndl/hub": ["@kndl/hub@workspace:packages/hub"],
+
+    "@kndl/mod": ["@kndl/mod@workspace:packages/mod"],
+
+    "@kndl/protocol": ["@kndl/protocol@workspace:packages/protocol"],
+
+    "@kndl/runner": ["@kndl/runner@workspace:packages/runner"],
+
+    "@kndl/web": ["@kndl/web@workspace:packages/web"],
 
     "@mdx-js/mdx": ["@mdx-js/mdx@3.1.1", "", { "dependencies": { "@types/estree": "^1.0.0", "@types/estree-jsx": "^1.0.0", "@types/hast": "^3.0.0", "@types/mdx": "^2.0.0", "acorn": "^8.0.0", "collapse-white-space": "^2.0.0", "devlop": "^1.0.0", "estree-util-is-identifier-name": "^3.0.0", "estree-util-scope": "^1.0.0", "estree-walker": "^3.0.0", "hast-util-to-jsx-runtime": "^2.0.0", "markdown-extensions": "^2.0.0", "recma-build-jsx": "^1.0.0", "recma-jsx": "^1.0.0", "recma-stringify": "^1.0.0", "rehype-recma": "^1.0.0", "remark-mdx": "^3.0.0", "remark-parse": "^11.0.0", "remark-rehype": "^11.0.0", "source-map": "^0.7.0", "unified": "^11.0.0", "unist-util-position-from-estree": "^2.0.0", "unist-util-stringify-position": "^4.0.0", "unist-util-visit": "^5.0.0", "vfile": "^6.0.0" } }, "sha512-f6ZO2ifpwAQIpzGWaBQT2TXxPv6z3RBzQKpVftEWN78Vl/YweF1uwussDx8ECAXVtr3Rs89fKyG9YlzUs9DyGQ=="],
 
@@ -1456,9 +1456,9 @@
 
     "@babel/helper-compilation-targets/semver": ["semver@6.3.1", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="],
 
-    "@claude-hub/docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
-
     "@img/sharp-wasm32/@emnapi/runtime": ["@emnapi/runtime@1.11.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA=="],
+
+    "@kndl/docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "@vscode/emmet-helper/jsonc-parser": ["jsonc-parser@2.3.1", "", {}, "sha512-H8jvkz1O50L3dMZCsLqiuB2tA7muqbSg1AtGEkN0leAqGjsUzDJir3Zwr02BhqdcITPg3ei3mZ+HjMocAknhhg=="],
 

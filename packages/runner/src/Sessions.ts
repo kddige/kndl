@@ -7,8 +7,8 @@ import type {
   StartSession,
   StopSession,
   TerminalSize,
-} from "@claude-hub/protocol"
-import { RunnerToHub } from "@claude-hub/protocol"
+} from "@kndl/protocol"
+import { RunnerToHub } from "@kndl/protocol"
 import {
   Cause,
   Context,
@@ -77,7 +77,7 @@ export class Sessions extends Context.Service<
      */
     readonly ownClaudeAccount: Effect.Effect<string | undefined>
   }
->()("@claude-hub/runner/Sessions") {}
+>()("@kndl/runner/Sessions") {}
 
 interface Running {
   readonly pane: Pane

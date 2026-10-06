@@ -10,12 +10,12 @@
 
 import { readdir } from "node:fs/promises"
 import { posix } from "node:path"
-import type { DependencyFolder } from "@claude-hub/protocol"
+import type { DependencyFolder } from "@kndl/protocol"
 import { Effect } from "effect"
 import { workspaceGuestPath } from "./SessionLayout.ts"
 
 /** Where the Session's dependency disk is mounted in the guest. */
-export const dependencyDiskGuestPath = "/var/lib/claude-hub/deps"
+export const dependencyDiskGuestPath = "/var/lib/kndl/deps"
 
 /** The volume key of the Session's dependency disk. */
 export const dependencyDiskKey = "deps"

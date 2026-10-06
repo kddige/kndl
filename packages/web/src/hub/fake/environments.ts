@@ -13,7 +13,7 @@ import {
   sensitiveValueProblem,
   type ValueNeeded,
   valuesNeededText,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Redacted } from "effect"
 import { bob, you } from "./script.ts"
 import type {
@@ -56,7 +56,7 @@ export class FakeEnvironments {
     this.#shared.set("GH_READ_TOKEN", { kind: "Sensitive", value: "made-up-gh-token" })
     this.#shared.set("SENTRY_DSN", { kind: "Plain", value: "https://key@sentry.example/1" })
     this.#shared.set("NPM_REGISTRY", { kind: "Plain", value: "https://registry.npmjs.org" })
-    const repo = "kddige/claude-hub"
+    const repo = "kddige/kndl"
     this.#environments.set(repo, {
       environment: {
         repo,

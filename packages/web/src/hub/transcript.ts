@@ -23,7 +23,7 @@ import type {
   WipNotPushed,
   SandboxNoted,
   ModelSwitched,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 
 export interface ToolCallView {
   readonly toolCallId: ToolCallId

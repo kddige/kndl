@@ -62,7 +62,7 @@ export class GitHub extends Context.Service<
       readonly redirectUri: string
     }) => Effect.Effect<GitHubUser, GitHubError>
   }
->()("@claude-hub/hub/GitHub") {
+>()("@kndl/hub/GitHub") {
   /** Talks to github.com with the client id and secret from `HubConfig`. */
   static readonly layer = Layer.effect(
     GitHub,
@@ -108,7 +108,7 @@ export class GitHub extends Context.Service<
                 HttpClientRequest.bearerToken(exchanged.access_token),
                 HttpClientRequest.accept("application/vnd.github+json"),
                 HttpClientRequest.setHeader("x-github-api-version", "2022-11-28"),
-                HttpClientRequest.setHeader("user-agent", "claude-hub"),
+                HttpClientRequest.setHeader("user-agent", "kndl"),
               ),
             )
             .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(GitHubUser)))

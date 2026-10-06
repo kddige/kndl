@@ -4,10 +4,11 @@
 // `bun src/main.ts` serves the Hub; `bun src/main.ts runner-token <name>` issues a Runner's
 // token and prints it; `bun src/main.ts secrets-key` prints a new HUB_SECRETS_KEY (both in
 // Admin.ts); `bun src/main.ts secrets-reset [--yes]` clears the Sensitive values a lost key
-// encrypted (SecretsReset.ts). The claude-hub CLI shares all three. Configuration is read from
+// encrypted (SecretsReset.ts). The kndl CLI shares all three. Configuration is read from
 // the environment: see HubConfig.ts and Database.ts.
 
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
+import { formerServiceRole, moveFromFormerService } from "@kndl/protocol/former-name"
 import { Console, Effect, Layer, Option } from "effect"
 import { HttpRouter } from "effect/http"
 import { issueRunnerToken, runnerTokenNotice, secretsKeyNotice } from "./Admin.ts"
@@ -50,7 +51,7 @@ const announceSignIn = Layer.effectDiscard(
     }
     if (Option.isNone(config.githubApp)) {
       yield* Effect.logWarning(
-        "The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `claude-hub onboard --github-app create` to set one up.",
+        "The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `kndl onboard --github-app create` to set one up.",
       )
     }
     if (Option.isNone(config.secretsKey)) {
@@ -63,7 +64,7 @@ const announceSignIn = Layer.effectDiscard(
     }
     if (Option.isSome(config.devLogin)) {
       yield* Effect.logWarning(
-        `Dev login is on (CLAUDE_HUB_DEV_LOGIN): anyone reaching ${config.publicUrl.origin} can sign in without GitHub.`,
+        `Dev login is on (KNDL_DEV_LOGIN): anyone reaching ${config.publicUrl.origin} can sign in without GitHub.`,
       )
     }
   }),
@@ -138,6 +139,8 @@ const secretsReset = (yes: boolean) =>
 
 const [command, ...args] = process.argv.slice(2)
 if (command === undefined) {
+  // Started by a service of the former name, the Hub moves the install to kndl's names first.
+  if (formerServiceRole(process.env) === "hub") moveFromFormerService("hub")
   BunRuntime.runMain(Layer.launch(HubLive))
 } else if (command === "runner-token" && args.length === 1 && args[0]) {
   BunRuntime.runMain(

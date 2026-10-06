@@ -1,5 +1,5 @@
 // An Environment's login environment (#67) on a real microsandbox VM, so it is skipped unless
-// CLAUDE_HUB_SANDBOX_IT=1: a build on buildpack-deps:bookworm whose bootstrap installs mise, puts
+// KNDL_SANDBOX_IT=1: a build on buildpack-deps:bookworm whose bootstrap installs mise, puts
 // its activation in ~/.bashrc and installs bun with it, then a Session whose start script and
 // whose Claude Code's environment both find `bun` with nothing else done, and a stored probe that
 // holds no variable's value; then a Test build on Alpine, which has no bash. It needs `msb`
@@ -9,7 +9,7 @@
 // credentials; the variables are made up. Everything it creates is named it-67-… and removed at the end, pass or
 // fail.
 //
-//   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/LoginEnv.integration.test.ts
+//   KNDL_SANDBOX_IT=1 bun test packages/runner/src/LoginEnv.integration.test.ts
 
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
@@ -21,9 +21,9 @@ import type {
   RunnerToHub,
   SessionId,
   TestBuildId,
-} from "@claude-hub/protocol"
-import { EnvironmentVersion } from "@claude-hub/protocol"
-import { devHome } from "@claude-hub/protocol/home"
+} from "@kndl/protocol"
+import { EnvironmentVersion } from "@kndl/protocol"
+import { devHome } from "@kndl/protocol/home"
 import { Duration, Effect, Layer, Option, Schema } from "effect"
 import { Sandbox, Snapshot, Volume } from "microsandbox"
 import { loginEnvGuestPath, readLoginEnv } from "./EnvironmentBuilds.ts"
@@ -38,7 +38,7 @@ import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { FakeHubVariables, variable } from "./testSupport.ts"
 
-const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
+const enabled = process.env.KNDL_SANDBOX_IT === "1"
 
 /** Everything this test makes is named under it, and only that is removed. */
 const namePrefix = "it-67-"

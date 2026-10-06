@@ -11,7 +11,7 @@ import { HubConfig, HubConfigError, SecretsKeyBytes } from "./HubConfig.ts"
 // when the Hub starts rather than when a Session first needs a value.
 
 const format = "v1"
-const checkText = "claude-hub secrets check"
+const checkText = "kndl secrets check"
 const checkContext = "secrets-check"
 
 /** Encrypts `plaintext` under `key`, bound to `context`. */
@@ -63,7 +63,7 @@ const noKey = new SecretsUnavailable({
 
 /** What to do when the key the stored values were saved with is gone. */
 const lostKey =
-  "If that key is lost, `bun run secrets-reset` (or `claude-hub secrets reset`) clears those values, keeping their variables, so a new key can be used."
+  "If that key is lost, `bun run secrets-reset` (or `kndl secrets reset`) clears those values, keeping their variables, so a new key can be used."
 
 /**
  * Encrypts and decrypts Sensitive values with the key from the Hub's config. Building it checks
@@ -90,7 +90,7 @@ export class Secrets extends Context.Service<
      */
     readonly digest: (text: string) => string
   }
->()("@claude-hub/hub/Secrets") {
+>()("@kndl/hub/Secrets") {
   static readonly layer = Layer.effect(
     Secrets,
     Effect.gen(function* () {
@@ -137,9 +137,8 @@ export class Secrets extends Context.Service<
       }
 
       const digestKey = Option.match(key, {
-        onNone: () => Buffer.from("claude-hub environment digest"),
-        onSome: (bytes) =>
-          createHmac("sha256", bytes).update("claude-hub environment digest").digest(),
+        onNone: () => Buffer.from("kndl environment digest"),
+        onSome: (bytes) => createHmac("sha256", bytes).update("kndl environment digest").digest(),
       })
 
       return Secrets.of({

@@ -38,11 +38,11 @@ const sessionEvents = [
 
 const webToHub = [
   { _tag: "WebHello", protocolVersion: ProtocolVersion },
-  { _tag: "CreateSession", requestId: "q-1", repo: "kddige/claude-hub", baseBranch: "main" },
+  { _tag: "CreateSession", requestId: "q-1", repo: "kddige/kndl", baseBranch: "main" },
   {
     _tag: "CreateSession",
     requestId: "q-2",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
     runnerId: "r-1",
   },
@@ -67,31 +67,31 @@ const webToHub = [
   { _tag: "CloseTerminal", sessionId: "s-1" },
   { _tag: "TerminalInput", sessionId: "s-1", data: "\u001b[A" },
   { _tag: "TerminalResize", sessionId: "s-1", size },
-  { _tag: "GetEnvironment", requestId: "q-3", repo: "kddige/claude-hub" },
+  { _tag: "GetEnvironment", requestId: "q-3", repo: "kddige/kndl" },
   {
     _tag: "CheckEnvironmentDraft",
     requestId: "q-4",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     draft: environmentDraft,
   },
   {
     _tag: "StartTestBuild",
     requestId: "q-5",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     runnerId: "r-1",
     draft: environmentDraft,
   },
   {
     _tag: "ApplyEnvironment",
     requestId: "q-6",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseVersion: 2,
     draft: environmentDraft,
   },
   {
     _tag: "ApplyEnvironment",
     requestId: "q-7",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseVersion: null,
     draft: { ...environmentDraft, variables: [] },
   },
@@ -112,8 +112,8 @@ const webToHub = [
   },
   { _tag: "DeleteSharedVariable", requestId: "q-11", name: "REGISTRY" },
   { _tag: "CheckAppPermissions", requestId: "q-12" },
-  { _tag: "CheckRepo", requestId: "q-13", repo: "kddige/claude-hub" },
-  { _tag: "CheckRepo", requestId: "q-14", repo: "kddige/claude-hub", fresh: true },
+  { _tag: "CheckRepo", requestId: "q-13", repo: "kddige/kndl" },
+  { _tag: "CheckRepo", requestId: "q-14", repo: "kddige/kndl", fresh: true },
   { _tag: "CreatePairingCode", requestId: "q-13" },
   { _tag: "CreatePairingCode", requestId: "q-14", runnerId: "r-1" },
   { _tag: "RevokePairingCode", requestId: "q-15", pairingCodeId: "pc-1" },
@@ -122,7 +122,7 @@ const webToHub = [
   {
     _tag: "CreateSession",
     requestId: "q-18",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
     model: "opus[1m]",
     effort: "low",
@@ -323,18 +323,18 @@ const hubToWeb = [
   {
     _tag: "EnvironmentState",
     requestId: "q-3",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     environment,
     versions: [
       { version: 3, appliedBy: alice, appliedAt: 1_790_000_000_300, rebuilt: false },
       { version: 2, appliedBy: bob, appliedAt: 1_790_000_000_200, rebuilt: true },
     ],
   },
-  { _tag: "EnvironmentState", repo: "kddige/claude-hub", environment: null, versions: [] },
+  { _tag: "EnvironmentState", repo: "kddige/kndl", environment: null, versions: [] },
   {
     _tag: "EnvironmentDraftChecked",
     requestId: "q-4",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     needsTestBuild: true,
     testBuildPassed: false,
   },
@@ -343,18 +343,18 @@ const hubToWeb = [
     requestId: "q-5",
     testBuild: {
       id: "b-1",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       runnerId: "r-1",
       startedBy: alice,
       startedAt: 1_790_000_000_000,
     },
   },
   { _tag: "TestBuildLogged", testBuildId: "b-1", data: "Setting up ripgrep\n" },
-  { _tag: "TestBuildEnded", testBuildId: "b-1", repo: "kddige/claude-hub", result: "Passed" },
+  { _tag: "TestBuildEnded", testBuildId: "b-1", repo: "kddige/kndl", result: "Passed" },
   {
     _tag: "TestBuildEnded",
     testBuildId: "b-1",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     result: "Failed",
     message: "The bootstrap exited with 100",
   },
@@ -366,7 +366,7 @@ const hubToWeb = [
       {
         _tag: "Sensitive",
         name: "GITHUB_TOKEN",
-        linkedBy: [{ repo: "kddige/claude-hub", name: "GH_TOKEN", availableAtBuild: false }],
+        linkedBy: [{ repo: "kddige/kndl", name: "GH_TOKEN", availableAtBuild: false }],
         needsValue: false,
       },
       { _tag: "Sensitive", name: "NPM_TOKEN", linkedBy: [], needsValue: true },
@@ -380,23 +380,23 @@ const hubToWeb = [
     credential: { kind: "OAuthToken", last4: "ONLY", plan: "max5x", addedAt: 1_700_000_000_000 },
     warning: "Saved without checking it: Anthropic couldn't be reached.",
   },
-  { _tag: "RepoChecked", requestId: "q-13", repo: "kddige/claude-hub", status: "Allowed" },
-  { _tag: "RepoChecked", requestId: "q-13", repo: "kddige/claude-hub", status: "NoAccess" },
+  { _tag: "RepoChecked", requestId: "q-13", repo: "kddige/kndl", status: "Allowed" },
+  { _tag: "RepoChecked", requestId: "q-13", repo: "kddige/kndl", status: "NoAccess" },
   {
     _tag: "RepoChecked",
     requestId: "q-14",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     status: "NotInstalled",
-    installUrl: "https://github.com/apps/claude-hub-ada/installations/new",
+    installUrl: "https://github.com/apps/kndl-ada/installations/new",
   },
-  { _tag: "RepoAccessLost", repo: "kddige/claude-hub" },
+  { _tag: "RepoAccessLost", repo: "kddige/kndl" },
   {
     _tag: "AppPermissionsChecked",
     requestId: "q-12",
     check: {
-      slug: "claude-hub-ada",
-      settingsUrl: "https://github.com/settings/apps/claude-hub-ada/permissions",
-      installUrl: "https://github.com/apps/claude-hub-ada/installations/new",
+      slug: "kndl-ada",
+      settingsUrl: "https://github.com/settings/apps/kndl-ada/permissions",
+      installUrl: "https://github.com/apps/kndl-ada/installations/new",
       missing: [{ name: "issues", title: "Issues", access: "write" }],
       missingEvents: [],
       installed: 2,
@@ -478,10 +478,10 @@ describe("WebToHub", () => {
     expectRejected(WebToHub, { _tag: "WakeSession", sessionId: 7 })
     expectRejected(WebToHub, {
       _tag: "CreateSession",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
     })
-    expectRejected(WebToHub, { ...webToHub[1], repo: "kddige/claude-hub/extra" })
+    expectRejected(WebToHub, { ...webToHub[1], repo: "kddige/kndl/extra" })
     expectRejected(WebToHub, { _tag: "JoinSession", sessionId: "s-1", afterSeq: -1 })
     expectRejected(WebToHub, { _tag: "CancelPrompt", sessionId: "s-1" })
     expectRejected(WebToHub, { _tag: "DeliverPrompt", sessionId: "s-1", promptId: "p", text: "x" })

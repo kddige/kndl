@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { RequiredPermissions } from "@claude-hub/hub/src/AppPermissions.ts"
+import { RequiredPermissions } from "@kndl/hub/src/AppPermissions.ts"
 import { Option, Redacted } from "effect"
 import {
   appEnvUpdates,
@@ -24,7 +24,7 @@ const manifest = appManifest({
 describe("the App's manifest", () => {
   test("asks for every required permission, and for sign-in back to the Hub", () => {
     expect(manifest).toEqual({
-      name: "claude-hub-studio",
+      name: "kndl-studio",
       url: "https://hub.example.com",
       description: expect.stringContaining("https://hub.example.com"),
       redirect_url: "http://127.0.0.1:50123/github-app/created",
@@ -50,12 +50,12 @@ describe("the App's manifest", () => {
   })
 
   test("names the App after the machine, within GitHub's 34 characters", () => {
-    expect(appName("mac")).toBe("claude-hub-mac")
-    expect(appName("My_Box.lan")).toBe("claude-hub-my-box")
-    expect(appName("")).toBe("claude-hub")
-    expect(appName("a-very-long-machine-name-indeed")).toBe("claude-hub-a-very-long-machine-nam")
+    expect(appName("mac")).toBe("kndl-mac")
+    expect(appName("My_Box.lan")).toBe("kndl-my-box")
+    expect(appName("")).toBe("kndl")
+    expect(appName("a-very-long-machine-name-indeed")).toBe("kndl-a-very-long-machine-name-inde")
     // Cut at 34, it would end in a hyphen.
-    expect(appName("abcdefghijklmnopqrstuvw-x")).toBe("claude-hub-abcdefghijklmnopqrstuvw")
+    expect(appName("abcdefghijklmnopqrstuvwxyzab-x")).toBe("kndl-abcdefghijklmnopqrstuvwxyzab")
   })
 })
 
@@ -120,8 +120,8 @@ describe("the redirect back", () => {
 describe("the new App's settings", () => {
   const conversion = {
     id: 1001,
-    slug: "claude-hub-studio",
-    htmlUrl: "https://github.com/apps/claude-hub-studio",
+    slug: "kndl-studio",
+    htmlUrl: "https://github.com/apps/kndl-studio",
     owner: "kddige",
     clientId: "Iv23liabc",
     clientSecret: Redacted.make("secret"),
@@ -130,8 +130,8 @@ describe("the new App's settings", () => {
   }
 
   test("go into hub.env, the key by its path in the home", () => {
-    const path = appKeyFile("/home/me/.claude-hub", 1001)
-    expect(path).toBe("/home/me/.claude-hub/github-app-1001.pem")
+    const path = appKeyFile("/home/me/.kndl", 1001)
+    expect(path).toBe("/home/me/.kndl/github-app-1001.pem")
     expect(appEnvUpdates(settingsFromConversion(conversion, path))).toEqual({
       GITHUB_APP_ID: "1001",
       GITHUB_APP_PRIVATE_KEY_PATH: path,

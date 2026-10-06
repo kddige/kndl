@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { GitAnswer } from "@claude-hub/protocol"
+import { GitAnswer } from "@kndl/protocol"
 import { Effect, Exit, Layer, Logger, Redacted, Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { makeFake } from "./sandbox/FakeSandboxBackend.ts"
@@ -204,7 +204,7 @@ describe.skipIf(Bun.which("git") === null)("setSandboxIdentity", () => {
       fake: ReturnType<typeof makeFake>,
     ) => Promise<void>,
   ) => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-identity-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-identity-"))
     const env: Record<string, string> = {
       PATH: process.env["PATH"] ?? "/usr/bin:/bin",
       HOME: dir,
@@ -261,7 +261,7 @@ describe.skipIf(Bun.which("git") === null)("setSandboxIdentity", () => {
     }))
 
   test("an identity the Environment set in the system gitconfig is kept", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-identity-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-identity-"))
     const env = {
       PATH: process.env["PATH"] ?? "/usr/bin:/bin",
       HOME: dir,

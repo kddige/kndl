@@ -2,7 +2,7 @@
 // Runners over WebSockets, and `runner join`'s requests over HTTP.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { PairingCodeRefused } from "@claude-hub/protocol"
+import { PairingCodeRefused } from "@kndl/protocol"
 import { HubVersion } from "./HubVersion.ts"
 import { RunnerGoneCloseCode } from "./RunnerRelay.ts"
 import { openRunner, openWeb, runnerLogin, stopAll } from "./testChannels.ts"
@@ -207,11 +207,11 @@ async function runnerWithSession() {
   const web = await openWeb(hub, "alice")
   const paired = await redeem(hub, (await mint(web, "q-1")).code, "studio")
   const runner = await openRunner(hub, paired.token)
-  await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+  await seedEnvironment(hub, "kddige/kndl", "dev:alice")
   web.send({
     _tag: "CreateSession",
     requestId: "q-2",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
   })
   await runner.take("StartSession")

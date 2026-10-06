@@ -9,7 +9,7 @@ import { generateKeyPairSync, type KeyObject, verify } from "node:crypto"
 import { grants, manifestPermissions, RequiredEvents, requiredOn } from "./AppPermissions.ts"
 
 export const appId = "123456"
-export const appSlug = "claude-hub-test"
+export const appSlug = "kndl-test"
 export const botUserId = 9001
 export const installationId = 42
 /** Where the stand-in says the App's pages are, as GitHub's `html_url`s. */
@@ -183,7 +183,7 @@ export class StandInGitHub {
     const id = 1000 + this.manifestCodes.size
     const conversion: StandInConversion = {
       id,
-      slug: `claude-hub-new-${id}`,
+      slug: `kndl-new-${id}`,
       owner: options.owner ?? this.appOwner.login,
       clientId: `Iv23li${id}`,
       clientSecret: `standin-client-secret-${id}`,

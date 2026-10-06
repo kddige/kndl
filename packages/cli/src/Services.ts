@@ -3,10 +3,10 @@
 // query them, and reading what those commands answer. Cli.ts writes the files and runs the Steps.
 //
 // Both kinds run `bun --env-file=<home>/<role>.env <home>/app/packages/<role>/src/main.ts` in the
-// home, with CLAUDE_HUB_HOME set, so the env file is read the same way, by Bun, on both platforms.
+// home, with KNDL_HOME set, so the env file is read the same way, by Bun, on both platforms.
 // Both log to `<home>/logs/<role>.log` and restart the process when it exits unsuccessfully, as
 // when it crashes, or a Runner exits to restart on the commit it updated to (#87). They set
-// CLAUDE_HUB_SERVICE to the role, which tells the Runner that something starts it again.
+// KNDL_SERVICE to the role, which tells the Runner that something starts it again.
 import { join } from "node:path"
 import type { Layout, Role } from "./Layout.ts"
 import { type Step, step } from "./Shell.ts"
@@ -37,17 +37,17 @@ export interface ServiceTarget {
   readonly userHome: string
 }
 
-/** The launchd label: `io.github.kddige.claude-hub.hub`, `….runner`. */
-export const launchdLabel = (role: Role) => `io.github.kddige.claude-hub.${role}`
+/** The launchd label: `io.github.kddige.kndl.hub`, `….runner`. */
+export const launchdLabel = (role: Role) => `io.github.kddige.kndl.${role}`
 
 /**
  * Set to the role on the process a service runs: the Runner updates itself only when it is set,
  * since exiting to restart is safe only under a service (see the Runner's SelfUpdate.ts).
  */
-export const ServiceVariable = "CLAUDE_HUB_SERVICE"
+export const ServiceVariable = "KNDL_SERVICE"
 
-/** The systemd unit: `claude-hub-hub.service`, `claude-hub-runner.service`. */
-export const systemdUnit = (role: Role) => `claude-hub-${role}.service`
+/** The systemd unit: `kndl-hub.service`, `kndl-runner.service`. */
+export const systemdUnit = (role: Role) => `kndl-${role}.service`
 
 const RoleTitle: Record<Role, string> = { hub: "Hub", runner: "Runner" }
 
@@ -82,7 +82,7 @@ export function launchdPlist(spec: ServiceSpec): string {
   const lines = [
     `<?xml version="1.0" encoding="UTF-8"?>`,
     `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">`,
-    `<!-- The claude-hub ${RoleTitle[spec.role]}, written by \`claude-hub ${spec.role} install\`. -->`,
+    `<!-- The kndl ${RoleTitle[spec.role]}, written by \`kndl ${spec.role} install\`. -->`,
     `<plist version="1.0">`,
     `<dict>`,
     `  <key>Label</key>`,
@@ -95,7 +95,7 @@ export function launchdPlist(spec: ServiceSpec): string {
     `  <string>${xml(spec.layout.home.dir)}</string>`,
     `  <key>EnvironmentVariables</key>`,
     `  <dict>`,
-    `    <key>CLAUDE_HUB_HOME</key>`,
+    `    <key>KNDL_HOME</key>`,
     `    <string>${xml(spec.layout.home.dir)}</string>`,
     `    <key>${ServiceVariable}</key>`,
     `    <string>${spec.role}</string>`,
@@ -131,15 +131,15 @@ export function launchdPlist(spec: ServiceSpec): string {
 export function systemdUnitFile(spec: ServiceSpec): string {
   const log = spec.layout.logFile(spec.role)
   const lines = [
-    `# The claude-hub ${RoleTitle[spec.role]}, written by \`claude-hub ${spec.role} install\`.`,
+    `# The kndl ${RoleTitle[spec.role]}, written by \`kndl ${spec.role} install\`.`,
     `[Unit]`,
-    `Description=claude-hub ${RoleTitle[spec.role]}`,
+    `Description=kndl ${RoleTitle[spec.role]}`,
     `After=network-online.target`,
     ``,
     `[Service]`,
     `Type=simple`,
     `WorkingDirectory=${systemdPath(spec.layout.home.dir)}`,
-    `Environment=${systemdWord(`CLAUDE_HUB_HOME=${spec.layout.home.dir}`)}`,
+    `Environment=${systemdWord(`KNDL_HOME=${spec.layout.home.dir}`)}`,
     `Environment=${ServiceVariable}=${spec.role}`,
     `Environment=${systemdWord(`PATH=${spec.path}`)}`,
     `ExecStart=${programArguments(spec).map(systemdWord).join(" ")}`,

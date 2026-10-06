@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { credentialFromSecret } from "@claude-hub/protocol"
+import { credentialFromSecret } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { ClaudeOAuthScopes, sandboxClaudeEnvironment } from "./ClaudeEnvironment.ts"
 
@@ -8,8 +8,8 @@ const proxyUrl = "http://host.microsandbox.internal:7778"
 
 const proxied = {
   ANTHROPIC_BASE_URL: proxyUrl,
-  CLAUDE_HUB_URL: proxyUrl,
-  CLAUDE_HUB_MOD_TOKEN: "chp_session",
+  KNDL_URL: proxyUrl,
+  KNDL_MOD_TOKEN: "chp_session",
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   DISABLE_AUTOUPDATER: "1",
 }

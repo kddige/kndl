@@ -1,12 +1,12 @@
-# claude-hub
+# kndl
 
-Multiplayer Claude Code: run sessions on any machine, watch and drive them together from a web UI. See `README.md` for the architecture and how to run it.
+Multiplayer agentic sessions. kndl (said "kindle", always lowercase; formerly claude-hub) runs Claude Code sessions on any machine, and people watch and drive them together from a web UI. See `README.md` for the architecture and how to run it.
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues live in GitHub Issues on kddige/claude-hub, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues on kddige/kndl, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

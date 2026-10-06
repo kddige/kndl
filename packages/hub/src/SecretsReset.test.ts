@@ -34,7 +34,7 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-const repo = "kddige/claude-hub"
+const repo = "kddige/kndl"
 const buildSecret = "npm_BUILD_SECRET_4f1c"
 const runtimeSecret = "sk_RUNTIME_SECRET_9a2e"
 const sharedSecret = "ghp_SHARED_SECRET_77b0"
@@ -109,7 +109,7 @@ async function scene(hub: TestHub) {
 
 /** A database whose key is `lostKey`, holding every kind of variable, a Session and its log. */
 async function seededDatabase() {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-reset-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-reset-"))
   dirs.push(dir)
   const file = join(dir, "hub.db")
   const env = await scene(await startHub({ config: withKey(lostKey), database: databaseAt(file) }))
@@ -185,7 +185,7 @@ describe("secrets-reset", () => {
   }, 20_000)
 
   test("refuses where there is no database, rather than make one", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-reset-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-reset-"))
     dirs.push(dir)
     const file = join(dir, "hub.db")
     expect(await reset(file, true).catch((cause: unknown) => String(cause))).toContain(

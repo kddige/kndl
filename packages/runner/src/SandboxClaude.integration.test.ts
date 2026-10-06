@@ -3,23 +3,23 @@
 // credential proxy, with the mod loaded. Its banner shows the plan, `/status` opens, a Turn runs
 // Bash in the Sandbox, a background subagent's run and its task notification are where hub-link
 // and the Hub expect them (ADR 0014), and the models and effort levels it takes are those
-// PinnedClaudeModels says. So it is skipped unless CLAUDE_HUB_SANDBOX_IT=1, and makes model
+// PinnedClaudeModels says. So it is skipped unless KNDL_SANDBOX_IT=1, and makes model
 // calls (a few, on haiku) with this machine's Runner credential, read as the Runner reads it
-// (`RUNNER_CLAUDE_CREDENTIAL`, by default the Keychain item `claude-hub-setup-token`). It needs
+// (`RUNNER_CLAUDE_CREDENTIAL`, by default the Keychain item `kndl-setup-token`). It needs
 // `msb` installed for the current user, and network access to Docker Hub and to npm the first
 // time a Claude Code version is cached. No Hub runs: the mod's link stays down. Everything it
-// creates is named claude-hub-it-… and destroyed at the end, pass or fail.
+// creates is named kndl-it-… and destroyed at the end, pass or fail.
 //
-//   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/SandboxClaude.integration.test.ts
+//   KNDL_SANDBOX_IT=1 bun test packages/runner/src/SandboxClaude.integration.test.ts
 
 import { expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { RepoName, SessionId } from "@claude-hub/protocol"
-import { devHome } from "@claude-hub/protocol/home"
 import { BunServices } from "@effect/platform-bun"
+import type { RepoName, SessionId } from "@kndl/protocol"
+import { devHome } from "@kndl/protocol/home"
 import { Effect, Layer, Redacted } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
@@ -51,7 +51,7 @@ import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { FakeHubVariables, sandboxesDefaults } from "./testSupport.ts"
 import { makeTmux } from "./Tmux.ts"
 
-const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
+const enabled = process.env.KNDL_SANDBOX_IT === "1"
 
 /** The mod in this checkout, which the Session's Claude Code loads a copy of. */
 const modDir = join(import.meta.dir, "..", "..", "mod")
@@ -85,7 +85,7 @@ test.skipIf(!enabled)(
   `Claude Code ${PinnedClaudeVersion} runs in a Sandbox: its banner shows the plan, /status opens, a Turn runs Bash, a subagent runs, and it takes the models PinnedClaudeModels says`,
   async () => {
     const sessionId = `it-${Date.now().toString(36)}` as SessionId
-    const root = await mkdtemp(join(tmpdir(), "claude-hub-it-"))
+    const root = await mkdtemp(join(tmpdir(), "kndl-it-"))
     const directories = sessionDirectories(root, sessionId)
     await mkdir(directories.workspace, { recursive: true })
     const cacheDir = process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(devHome.dir, "claude-code")

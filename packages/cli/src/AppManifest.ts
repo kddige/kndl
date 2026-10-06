@@ -8,8 +8,8 @@
 // browser to the manifest's `redirect_url` with a one-time `code`, which `POST
 // /app-manifests/{code}/conversions` trades for the App's id, client id and secret, and private key.
 import { join } from "node:path"
-import { manifestPermissions, RequiredEvents } from "@claude-hub/hub/src/AppPermissions.ts"
-import type { ManifestConversion } from "@claude-hub/hub/src/GitHubApp.ts"
+import { manifestPermissions, RequiredEvents } from "@kndl/hub/src/AppPermissions.ts"
+import type { ManifestConversion } from "@kndl/hub/src/GitHubApp.ts"
 import { Redacted } from "effect"
 
 /** GitHub's web and API origins: github.com unless a test points them elsewhere. */
@@ -28,7 +28,7 @@ export type AppOwner =
   | { readonly _tag: "Personal" }
   | { readonly _tag: "Organization"; readonly login: string }
 
-/** The manifest's fields that claude-hub sets; the rest take GitHub's defaults. */
+/** The manifest's fields that kndl sets; the rest take GitHub's defaults. */
 export interface AppManifest {
   readonly name: string
   readonly url: string
@@ -59,7 +59,7 @@ export function appManifest(options: {
   return {
     name: appName(options.machine),
     url: hub,
-    description: `claude-hub at ${hub}: Claude Code Sessions on its Runners, watched and driven together.`,
+    description: `kndl at ${hub}: Claude Code Sessions on its Runners, watched and driven together.`,
     redirect_url: options.redirectUrl,
     callback_urls: [`${hub}/auth/github/callback`],
     public: false,
@@ -69,14 +69,14 @@ export function appManifest(options: {
   }
 }
 
-/** A name for the App: `claude-hub-<machine>`, as GitHub takes it. It can be changed on GitHub. */
+/** A name for the App: `kndl-<machine>`, as GitHub takes it. It can be changed on GitHub. */
 export function appName(machine: string): string {
   const host = machine
     .split(".")[0]
     ?.toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "")
-  return (host ? `claude-hub-${host}` : "claude-hub").slice(0, NameLength).replace(/-+$/, "")
+  return (host ? `kndl-${host}` : "kndl").slice(0, NameLength).replace(/-+$/, "")
 }
 
 /** GitHub's page that makes an App from a manifest POSTed to it, for `owner`. */
@@ -111,7 +111,7 @@ export function manifestPage(action: string, manifest: AppManifest, owner: AppOw
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>claude-hub: create the GitHub App</title>
+<title>kndl: create the GitHub App</title>
 <style>
 body { font: 15px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; color: #1f2328; background: #fff; }
 button { font: inherit; padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #1f883d; background: #1f883d; color: #fff; cursor: pointer; }
@@ -121,9 +121,9 @@ code { font-size: 0.9em; }
 </head>
 <body>
 <h1>Create the GitHub App</h1>
-<p>This sends GitHub the claude-hub App's manifest, to create <strong>${html(manifest.name)}</strong> on ${html(where)}, for the Hub at <code>${html(manifest.url)}</code>, with these permissions:</p>
+<p>This sends GitHub the kndl App's manifest, to create <strong>${html(manifest.name)}</strong> on ${html(where)}, for the Hub at <code>${html(manifest.url)}</code>, with these permissions:</p>
 <ul>${permissions}</ul>
-<p>On GitHub you can change its name, then create it. GitHub sends you back here, and <code>claude-hub onboard</code> finishes in the terminal.</p>
+<p>On GitHub you can change its name, then create it. GitHub sends you back here, and <code>kndl onboard</code> finishes in the terminal.</p>
 <form id="manifest" method="post" action="${html(action)}">
 <input type="hidden" name="manifest" value="${html(JSON.stringify(manifest))}">
 <button type="submit">Continue to GitHub</button>
@@ -137,11 +137,11 @@ code { font-size: 0.9em; }
 /** The page GitHub's redirect lands on once the App is made. */
 export function landedPage(ok: boolean): string {
   const message = ok
-    ? "GitHub created the App. Go back to the terminal: <code>claude-hub onboard</code> saves its settings."
+    ? "GitHub created the App. Go back to the terminal: <code>kndl onboard</code> saves its settings."
     : "This isn't the redirect onboard is waiting for: it's from another attempt, or has no code. Start again from the terminal."
   return `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>claude-hub: the GitHub App</title>
+<head><meta charset="utf-8"><title>kndl: the GitHub App</title>
 <style>body { font: 15px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; padding: 0 1rem; }</style>
 </head>
 <body><p>${message}</p></body>

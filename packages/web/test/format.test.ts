@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { SessionSummary } from "@claude-hub/protocol"
+import { SessionSummary } from "@kndl/protocol"
 import { Schema } from "effect"
 import { environmentChanged, terminalText } from "../src/app/format.ts"
 import { alice, sessionSummary } from "./fixtures.ts"

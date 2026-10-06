@@ -49,8 +49,8 @@ export interface WorkspacePaths {
 
 /** The identity WIP commits get when the GitHub App has none to offer. */
 export const WipIdentity: GitIdentity = {
-  name: "claude-hub",
-  email: "claude-hub@users.noreply.github.com",
+  name: "kndl",
+  email: "kndl@users.noreply.github.com",
 }
 
 /**

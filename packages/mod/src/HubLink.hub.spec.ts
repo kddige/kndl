@@ -6,17 +6,17 @@ import { afterAll, afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { databaseAt } from "@claude-hub/hub/src/Database.ts"
-import { ModOutbox } from "@claude-hub/hub/src/ModOutbox.ts"
-import { ModTokens } from "@claude-hub/hub/src/ModTokens.ts"
-import { PromptQueue } from "@claude-hub/hub/src/PromptQueue.ts"
-import { RunnerTokens } from "@claude-hub/hub/src/RunnerTokens.ts"
-import { SessionLog } from "@claude-hub/hub/src/SessionLog.ts"
-import { Sessions } from "@claude-hub/hub/src/Sessions.ts"
-import { devSignIn, startHub, stopHubs } from "@claude-hub/hub/src/testSupport.ts"
-import type { TestHub } from "@claude-hub/hub/src/testSupport.ts"
-import { ModCommand, ParticipantId, PromptId, SessionId } from "@claude-hub/protocol"
-import type { Participant } from "@claude-hub/protocol"
+import { databaseAt } from "@kndl/hub/src/Database.ts"
+import { ModOutbox } from "@kndl/hub/src/ModOutbox.ts"
+import { ModTokens } from "@kndl/hub/src/ModTokens.ts"
+import { PromptQueue } from "@kndl/hub/src/PromptQueue.ts"
+import { RunnerTokens } from "@kndl/hub/src/RunnerTokens.ts"
+import { SessionLog } from "@kndl/hub/src/SessionLog.ts"
+import { Sessions } from "@kndl/hub/src/Sessions.ts"
+import { devSignIn, startHub, stopHubs } from "@kndl/hub/src/testSupport.ts"
+import type { TestHub } from "@kndl/hub/src/testSupport.ts"
+import { ModCommand, ParticipantId, PromptId, SessionId } from "@kndl/protocol"
+import type { Participant } from "@kndl/protocol"
 import { Effect } from "effect"
 import { HubLink } from "./HubLink.ts"
 import type { HubFetch, LinkStatus } from "./HubLink.ts"
@@ -24,7 +24,7 @@ import { promptFromParticipant } from "./HubMessages.ts"
 
 afterEach(stopHubs)
 
-const scratch = mkdtempSync(join(tmpdir(), "claude-hub-mod-link-"))
+const scratch = mkdtempSync(join(tmpdir(), "kndl-mod-link-"))
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
 
 const sessionId = SessionId.make("s-link")
@@ -42,9 +42,9 @@ const seed = async (hub: TestHub) => {
       const runner = yield* (yield* RunnerTokens).issue("mac")
       yield* (yield* Sessions).create({
         id: sessionId,
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         baseBranch: "main",
-        workBranch: "claude-hub/s-link",
+        workBranch: "kndl/s-link",
         state: "Active",
         runnerId: runner.runnerId,
         runnerLogin: { account: "alice@example.com" },

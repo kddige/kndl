@@ -22,7 +22,7 @@ import {
   planFromClaudeConfig,
 } from "./ClaudeConfig.ts"
 
-const tempDir = () => realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-config-")))
+const tempDir = () => realpathSync(mkdtempSync(join(tmpdir(), "kndl-config-")))
 
 const forget = (configPath: string, directories: ReadonlyArray<string>) =>
   Effect.runPromise(forgetDirectories(configPath, directories))

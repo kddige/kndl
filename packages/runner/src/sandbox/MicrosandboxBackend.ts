@@ -33,7 +33,7 @@
 import { mkdir, readdir, realpath, rm, stat, symlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join, posix } from "node:path"
-import type { SandboxState, SessionId } from "@claude-hub/protocol"
+import type { SandboxState, SessionId } from "@kndl/protocol"
 import { Cause, Effect, Layer, Option, Queue, Schema, Stream } from "effect"
 import { MicrosandboxError, NetworkPolicy, Sandbox, Snapshot, Volume } from "microsandbox"
 import type {
@@ -134,7 +134,7 @@ const call = <A>(operation: string, sessionId: SessionId | undefined, f: () => P
 // Run inside the guest. Each is a no-op when Docker isn't set up for the Sandbox.
 
 /** Lists the containers stopped by the last clean stop, to start again on the next boot. */
-const runningListPath = `${dockerDataPath}/.claude-hub-running`
+const runningListPath = `${dockerDataPath}/.kndl-running`
 
 const startDockerScript = `
 grep -q ' ${dockerDataPath} ' /proc/mounts || exit 0
@@ -191,9 +191,9 @@ const SandboxConfigLabels = Schema.fromJsonString(
 )
 const decodeConfigLabels = Schema.decodeUnknownOption(SandboxConfigLabels)
 
-/** The Runner mark on a listed Sandbox, if it has one. */
-const sandboxRunner = (sandbox: { readonly configJson: string }) =>
-  Option.getOrUndefined(decodeConfigLabels(sandbox.configJson))?.labels?.[runnerLabel]
+/** The Runner mark on a listed Sandbox, under `label`, if it has one. */
+const sandboxRunner = (sandbox: { readonly configJson: string }, label: string) =>
+  Option.getOrUndefined(decodeConfigLabels(sandbox.configJson))?.labels?.[label]
 
 /** Where microsandbox keeps its Sandboxes. */
 const msbHome = () => process.env["MSB_HOME"] ?? join(homedir(), ".microsandbox")
@@ -221,10 +221,16 @@ const checkSnapshotNames = (group: string, name?: string) =>
 export const make = Effect.fnUntraced(function* ({
   runner,
   namePrefix = prefix,
+  markLabel = runnerLabel,
 }: {
   readonly runner: string
   /** What everything this backend makes is named under; see `namesFor`. */
   readonly namePrefix?: string
+  /**
+   * The label carrying the Runner mark. Only the move from the former name (ADR 0017) gives
+   * another, to stop the Sandboxes a Runner made under it.
+   */
+  readonly markLabel?: string
 }) {
   const { sandboxName, volumeName, parseSandboxName, parseVolumeName, snapshotGroup } =
     namesFor(namePrefix)
@@ -246,7 +252,7 @@ export const make = Effect.fnUntraced(function* ({
       .memory(spec.memoryMib)
       .network((n) => n.policy(NetworkPolicy.allowAll()))
       .label(sessionLabel, spec.sessionId)
-      .label(runnerLabel, runner)
+      .label(markLabel, runner)
       .envs({ ...spec.env })
       .logLevel("warn")
       .detached(true)
@@ -378,7 +384,7 @@ export const make = Effect.fnUntraced(function* ({
           .size(volume.sizeMib)
           .label(sessionLabel, spec.sessionId)
           .label(volumeLabel, volume.key)
-          .label(runnerLabel, runner)
+          .label(markLabel, runner)
           .create(),
       ).pipe(
         // An existing volume holds the Session's data from before: keep it as it is.
@@ -530,7 +536,7 @@ export const make = Effect.fnUntraced(function* ({
         if (sessionId === undefined) continue
         const found = entry(sessionId)
         found.state = stateOf(sandbox.status)
-        found.runner = sandboxRunner(sandbox)
+        found.runner = sandboxRunner(sandbox, markLabel)
       }
       cursor = page.nextCursor
     } while (cursor !== undefined)
@@ -543,7 +549,7 @@ export const make = Effect.fnUntraced(function* ({
       found.volumes.push(volume.name)
       // A Sandbox's own mark wins; a destroyed one's volumes still say whose they were.
       if (found.state === "Destroyed" && found.runner === undefined)
-        found.runner = volume.labels.find(([key]) => key === runnerLabel)?.[1]
+        found.runner = volume.labels.find(([key]) => key === markLabel)?.[1]
     }
     return [...listings].map(([sessionId, found]): SandboxListing => ({
       sessionId,
@@ -690,7 +696,7 @@ export const make = Effect.fnUntraced(function* ({
       const h = yield* handle(sessionId)
       yield* call("label restored Sandbox", sessionId, () =>
         h.modify({
-          labels: { [sessionLabel]: sessionId, [runnerLabel]: runner },
+          labels: { [sessionLabel]: sessionId, [markLabel]: runner },
           ...(spec.workdir === undefined ? {} : { workdir: spec.workdir }),
           policy: "restart",
         }),

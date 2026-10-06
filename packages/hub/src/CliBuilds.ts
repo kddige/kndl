@@ -1,19 +1,19 @@
-// The `claude-hub` CLI binaries the Hub serves (issue #178, ADR 0016): built with
+// The `kndl` CLI binaries the Hub serves (issue #178, ADR 0016): built with
 // `bun build --compile` from the checkout the Hub runs from, at its commit, so the CLI follows the
 // Hub's commit as Runners do (ADR 0011).
 //
 // A binary is built the first time someone asks for it, not when the Hub is installed or updated:
 // each is about 65 MB, a target other than the Hub's own platform downloads that platform's Bun
 // first, and most Hubs only ever serve one or two of the four. It is kept in
-// `<cliDir>/<commit>/claude-hub-<target>`, and builds of other commits are removed once one of
+// `<cliDir>/<commit>/kndl-<target>`, and builds of other commits are removed once one of
 // this commit's is made. One build runs at a time: a request for a binary another request is
 // building waits for it and is served the same file.
 
 import { existsSync } from "node:fs"
 import { mkdir, readdir, rename, rm } from "node:fs/promises"
 import { join } from "node:path"
-import { CommitIdPattern, type CliTarget } from "@claude-hub/protocol"
-import { readBuildVersion, thisCheckout } from "@claude-hub/protocol/checkout"
+import { CommitIdPattern, type CliTarget } from "@kndl/protocol"
+import { readBuildVersion, thisCheckout } from "@kndl/protocol/checkout"
 import { Context, Data, Effect, Layer, Semaphore } from "effect"
 import { HubConfig } from "./HubConfig.ts"
 import { HubVersion } from "./HubVersion.ts"
@@ -39,21 +39,21 @@ export class CliBuilds extends Context.Service<
     /** The path of the binary for `target`, built first if it isn't yet. */
     readonly binary: (target: CliTarget) => Effect.Effect<string, CliBuildError>
   }
->()("@claude-hub/hub/CliBuilds") {
+>()("@kndl/hub/CliBuilds") {
   static readonly make = (options: {
     /** Where binaries are kept, by commit. */
     readonly dir: string
     readonly commit: string | undefined
     readonly build: CliBuilder
     /**
-     * The commit the checkout is at now. A checkout `claude-hub update` has moved since the Hub
+     * The commit the checkout is at now. A checkout `kndl update` has moved since the Hub
      * started would build other code than the Hub runs, so nothing is built until it restarts.
      */
     readonly checkoutCommit: () => string | undefined
   }) => {
     const lock = Semaphore.makeUnsafe(1)
     const { commit, dir } = options
-    const pathOf = (target: CliTarget, at: string) => join(dir, at, `claude-hub-${target}`)
+    const pathOf = (target: CliTarget, at: string) => join(dir, at, `kndl-${target}`)
 
     const build = (target: CliTarget, at: string) =>
       Effect.gen(function* () {
@@ -75,7 +75,7 @@ export class CliBuilds extends Context.Service<
             (detail) =>
               new CliBuildError({
                 status: 500,
-                message: `The Hub couldn't build the claude-hub CLI for ${target}: ${detail}`,
+                message: `The Hub couldn't build the kndl CLI for ${target}: ${detail}`,
               }),
           ),
           Effect.flatMap(() => Effect.promise(() => rename(partial, path))),
@@ -83,7 +83,7 @@ export class CliBuilds extends Context.Service<
           Effect.tapError((error) => Effect.logError(error.message)),
         )
         yield* Effect.logInfo(
-          `Built the claude-hub CLI for ${target} at ${at.slice(0, 12)} in ${((Date.now() - started) / 1000).toFixed(1)} s.`,
+          `Built the kndl CLI for ${target} at ${at.slice(0, 12)} in ${((Date.now() - started) / 1000).toFixed(1)} s.`,
         )
         yield* pruneOtherCommits(dir, at)
         return path
@@ -97,7 +97,7 @@ export class CliBuilds extends Context.Service<
             new CliBuildError({
               status: 503,
               message:
-                "This Hub doesn't run from a git checkout, so it has no commit to build the claude-hub CLI at.",
+                "This Hub doesn't run from a git checkout, so it has no commit to build the kndl CLI at.",
             }),
           )
         }
@@ -126,7 +126,7 @@ export class CliBuilds extends Context.Service<
   static readonly unused = Layer.succeed(
     CliBuilds,
     CliBuilds.make({
-      dir: "/nonexistent/claude-hub/cli",
+      dir: "/nonexistent/kndl/cli",
       commit: undefined,
       build: () => Effect.die(new Error("CliBuilds: no builds in this test")),
       checkoutCommit: () => undefined,
@@ -157,9 +157,9 @@ export const compileCli =
             "--compile",
             `--target=bun-${target}`,
             "--define",
-            `CLAUDE_HUB_BUILD_COMMIT=${JSON.stringify(commit)}`,
+            `KNDL_BUILD_COMMIT=${JSON.stringify(commit)}`,
             "--define",
-            `CLAUDE_HUB_BUILD_TARGET=${JSON.stringify(target)}`,
+            `KNDL_BUILD_TARGET=${JSON.stringify(target)}`,
             "--outfile",
             outfile,
             cliEntryPoint(checkout),

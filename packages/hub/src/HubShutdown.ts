@@ -14,7 +14,7 @@ export class HubShutdown extends Context.Service<
     /** Begins shutting down. Doing it again changes nothing. */
     readonly start: Effect.Effect<void>
   }
->()("@claude-hub/hub/HubShutdown") {
+>()("@kndl/hub/HubShutdown") {
   static readonly layer = Layer.sync(HubShutdown, () => {
     const begun = Deferred.makeUnsafe<void>()
     return HubShutdown.of({

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { entryRemoval, homeRemoval, refuseHome } from "./Guards.ts"
 
 const userHome = "/Users/ada"
-const home = "/Users/ada/.claude-hub"
+const home = "/Users/ada/.kndl"
 const installed = [
   "app",
   "hub.env",
@@ -16,7 +16,7 @@ const installed = [
 ]
 
 describe("purging the home", () => {
-  test("removes exactly the resolved home, when it holds only claude-hub's entries", () => {
+  test("removes exactly the resolved home, when it holds only kndl's entries", () => {
     expect(homeRemoval(home, { home, userHome, entries: installed })).toEqual({
       _tag: "Remove",
       path: home,
@@ -30,14 +30,14 @@ describe("purging the home", () => {
   })
 
   test("refuses a path that isn't the resolved home", () => {
-    const removal = homeRemoval("/Users/ada/.claude-hub/sessions", {
+    const removal = homeRemoval("/Users/ada/.kndl/sessions", {
       home,
       userHome,
       entries: installed,
     })
 
     expect(removal).toMatchObject({ _tag: "Refused" })
-    expect(removal._tag === "Refused" && removal.reason).toContain("not the claude-hub home")
+    expect(removal._tag === "Refused" && removal.reason).toContain("not the kndl home")
   })
 
   test("refuses the user's home directory", () => {
@@ -61,7 +61,7 @@ describe("purging the home", () => {
     expect(refuseHome({ home: "/opt", userHome, entries: installed })).toContain("top-level")
   })
 
-  test("refuses a directory that doesn't look like a claude-hub home", () => {
+  test("refuses a directory that doesn't look like a kndl home", () => {
     const removal = homeRemoval("/Users/ada/projects", {
       home: "/Users/ada/projects",
       userHome,
@@ -75,15 +75,15 @@ describe("purging the home", () => {
     expect(homeRemoval(home, { home, userHome, entries: [] })._tag).toBe("Refused")
   })
 
-  test("refuses a home that holds files claude-hub didn't put there", () => {
+  test("refuses a home that holds files kndl didn't put there", () => {
     const removal = homeRemoval(home, { home, userHome, entries: [...installed, "thesis.tex"] })
 
     expect(removal._tag === "Refused" && removal.reason).toContain("thesis.tex")
   })
 
-  test("refuses a git checkout, as when CLAUDE_HUB_HOME names the repo", () => {
-    const removal = homeRemoval("/Users/ada/code/claude-hub", {
-      home: "/Users/ada/code/claude-hub",
+  test("refuses a git checkout, as when KNDL_HOME names the repo", () => {
+    const removal = homeRemoval("/Users/ada/code/kndl", {
+      home: "/Users/ada/code/kndl",
       userHome,
       entries: [".git", "packages", "logs"],
     })
@@ -92,7 +92,7 @@ describe("purging the home", () => {
   })
 
   test("refuses a relative home", () => {
-    expect(refuseHome({ home: ".claude-hub", userHome, entries: installed })).toContain("absolute")
+    expect(refuseHome({ home: ".kndl", userHome, entries: installed })).toContain("absolute")
   })
 })
 
@@ -100,7 +100,7 @@ describe("uninstalling, which keeps the data", () => {
   test("removes the installed checkout in the home", () => {
     expect(entryRemoval("app", { home, userHome, entries: installed })).toEqual({
       _tag: "Remove",
-      path: "/Users/ada/.claude-hub/app",
+      path: "/Users/ada/.kndl/app",
     })
   })
 
@@ -114,7 +114,7 @@ describe("uninstalling, which keeps the data", () => {
     expect(removal._tag).toBe("Refused")
   })
 
-  test("refuses when the home isn't a claude-hub home", () => {
+  test("refuses when the home isn't a kndl home", () => {
     expect(entryRemoval("app", { home, userHome, entries: ["Documents"] })._tag).toBe("Refused")
   })
 })

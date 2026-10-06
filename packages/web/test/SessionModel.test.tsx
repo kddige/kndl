@@ -110,8 +110,8 @@ test("New Session starts on the model picked in its dialog", async () => {
 
   // Claude Code's default until one is picked.
   const choose = button("Model and effort: Opus 5.5", dialog)
-  const repo = dialog.querySelector<HTMLInputElement>('input[placeholder="kddige/claude-hub"]')
-  await step(() => repo && typeInto(repo, "kddige/claude-hub"))
+  const repo = dialog.querySelector<HTMLInputElement>('input[placeholder="kddige/kndl"]')
+  await step(() => repo && typeInto(repo, "kddige/kndl"))
   await step(() => choose.click())
   await settle()
   await step(() => radio("Sonnet 5.5").click())

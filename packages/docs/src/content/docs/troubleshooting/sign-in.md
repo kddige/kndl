@@ -1,6 +1,6 @@
 ---
 title: Signing in
-description: Sign-in fails, doesn't stick, or isn't offered, with GitHub, with dev login, or for the claude-hub CLI.
+description: Sign-in fails, doesn't stick, or isn't offered, with GitHub, with dev login, or for the kndl CLI.
 sidebar:
   order: 3
 ---
@@ -37,6 +37,14 @@ Browsers reach the Hub over plain HTTP at http://192.168.1.10:7777 (HUB_PUBLIC_U
 
 **Fix.** Give the Hub an HTTPS URL, or reach it through an SSH tunnel to `localhost`. [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/) walks through each option, and the last resort, `HUB_INSECURE_COOKIES=1`, with its trade-off.
 
+## Signed out after the move from claude-hub
+
+**What you see.** After the Hub moved from claude-hub to kndl's names, the web UI shows the sign-in page to everyone.
+
+**Why.** The web UI's sign-in cookie is named after kndl now, so the browser's cookie of the old name no longer counts.
+
+**Fix.** Sign in again, once. CLI tokens are kept, so a signed-in `kndl` command stays signed in.
+
 ## "The sign-in expired or came from elsewhere"
 
 **What you see.** After GitHub, the browser shows:
@@ -70,7 +78,7 @@ Sign-in failed: GitHub refused the sign-in: …
 **What you see.** The sign-in page offers only **Sign in as dev**, or says:
 
 ```
-This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with CLAUDE_HUB_DEV_LOGIN=1.
+This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with KNDL_DEV_LOGIN=1.
 ```
 
 **Why.** `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` aren't set where the Hub reads them, so GitHub sign-in is off. The Hub warned `GitHub sign-in is off` at startup.
@@ -87,32 +95,32 @@ This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on 
 
 ## After Approve, the browser can't connect to `127.0.0.1`
 
-**What you see.** You ran `claude-hub login` and pressed **Approve**, and the browser says it can't reach `127.0.0.1` or that the connection was refused.
+**What you see.** You ran `kndl login` and pressed **Approve**, and the browser says it can't reach `127.0.0.1` or that the connection was refused.
 
 **Why.** The page sends the browser back to the CLI on the machine the browser runs on. When the CLI runs on another machine, such as over a remote desktop or a shell the CLI doesn't know is SSH, nothing listens there.
 
-**Fix.** Go back a page in the browser: the sign-in page shows the Login code. Paste it in the terminal, where the CLI asks `Waiting for the browser. Or paste the code the page shows`. To go straight to the code next time, run `claude-hub login --no-browser`. See [Sign in the CLI](/how-to/sign-in-the-cli/#sign-in-over-ssh).
+**Fix.** Go back a page in the browser: the sign-in page shows the Login code. Paste it in the terminal, where the CLI asks `Waiting for the browser. Or paste the code the page shows`. To go straight to the code next time, run `kndl login --no-browser`. See [Sign in the CLI](/how-to/sign-in-the-cli/#sign-in-over-ssh).
 
 ## "That code isn't valid"
 
-**What you see.** `claude-hub login` says:
+**What you see.** `kndl login` says:
 
 ```
-That code isn't valid: it may have expired or been used. Run claude-hub login again.
+That code isn't valid: it may have expired or been used. Run kndl login again.
 ```
 
-**Why.** The Hub has no Login code that the CLI can trade. A code lasts 10 minutes and works once; restarting the Hub forgets every code; and a code only works for the `claude-hub login` that opened its page, so one approved on a page another run opened is refused, and spent.
+**Why.** The Hub has no Login code that the CLI can trade. A code lasts 10 minutes and works once; restarting the Hub forgets every code; and a code only works for the `kndl login` that opened its page, so one approved on a page another run opened is refused, and spent.
 
-**Fix.** Run `claude-hub login` again, open the address this run prints, and approve within 10 minutes.
+**Fix.** Run `kndl login` again, open the address this run prints, and approve within 10 minutes.
 
 ## "doesn't accept this machine's CLI token"
 
-**What you see.** `claude-hub whoami` says:
+**What you see.** `kndl whoami` says:
 
 ```
-https://hub.example.com doesn't accept this machine's CLI token: it was revoked. Run claude-hub login to sign in again.
+https://hub.example.com doesn't accept this machine's CLI token: it was revoked. Run kndl login to sign in again.
 ```
 
 **Why.** The Hub has no CLI token like the one in `cli.json`: someone revoked it on the **Account** page, under **CLI tokens**, or the Hub was set up again with a new database. The Hub refuses a revoked token from its next request on.
 
-**Fix.** Run `claude-hub login` to sign the CLI in again. See [Sign in the CLI](/how-to/sign-in-the-cli/).
+**Fix.** Run `kndl login` to sign the CLI in again. See [Sign in the CLI](/how-to/sign-in-the-cli/).

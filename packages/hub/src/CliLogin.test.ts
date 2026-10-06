@@ -68,7 +68,7 @@ async function signInCli(hub: TestHub, cookie: string, machine = "laptop") {
   }
 }
 
-describe("claude-hub login", () => {
+describe("kndl login", () => {
   test("signs the CLI in for whoever approves it, and lists the token on their Account page alone", async () => {
     const hub = await loginHub()
     const alice = await openWeb(hub, "alice")
@@ -150,7 +150,7 @@ describe("a CLI token", () => {
     const withCookie = await fetch(`${hub.url}/auth/cli/me`, { headers: { cookie: alice.cookie } })
     expect(withCookie.status).toBe(401)
     expect(await withCookie.json()).toEqual({
-      error: "Expected a CLI token: run claude-hub login",
+      error: "Expected a CLI token: run kndl login",
     })
   })
 
@@ -182,7 +182,7 @@ describe("a CLI token", () => {
     expect((await whoami(hub, signedIn.token)).status).toBe(401)
   })
 
-  test("signs itself out with claude-hub logout", async () => {
+  test("signs itself out with kndl logout", async () => {
     const hub = await loginHub()
     const alice = await openWeb(hub, "alice")
     const signedIn = await signInCli(hub, alice.cookie)

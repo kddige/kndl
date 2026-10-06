@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { RepoName, RunnerToHub, SandboxStateReport, SessionId } from "@claude-hub/protocol"
+import type { RepoName, RunnerToHub, SandboxStateReport, SessionId } from "@kndl/protocol"
 import { Effect, Layer, Schedule } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
@@ -45,7 +45,7 @@ const withSandboxes = async (
     readonly githubToken?: SandboxTokenSource
   } = {},
 ) => {
-  const root = await mkdtemp(join(tmpdir(), "claude-hub-sandboxes-"))
+  const root = await mkdtemp(join(tmpdir(), "kndl-sandboxes-"))
   const sent: Array<RunnerToHub> = []
   const hub = Layer.succeed(
     HubLink,
@@ -161,7 +161,7 @@ describe("SessionSandboxes", () => {
         })
         // tmux and bash, installed if the image lacks them, and Claude Code's state seeded.
         const needs = new TextDecoder().decode(
-          yield* backend.readFile(s1, "/tmp/claude-hub-claude-needs.sh"),
+          yield* backend.readFile(s1, "/tmp/kndl-claude-needs.sh"),
         )
         expect(needs).toContain("command -v tmux")
         expect(needs).toContain("command -v bash")
@@ -266,7 +266,7 @@ describe("SessionSandboxes", () => {
       {
         onExec: ({ request }) =>
           Effect.succeed(
-            request.args?.at(-1) === "/tmp/claude-hub-claude-needs.sh"
+            request.args?.at(-1) === "/tmp/kndl-claude-needs.sh"
               ? {
                   exitCode: 1,
                   stderr:

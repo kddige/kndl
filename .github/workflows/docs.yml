@@ -35,9 +35,9 @@ jobs:
         with:
           bun-version: 1.4.0
       - name: Install the docs package's dependencies
-        run: bun install --frozen-lockfile --filter @claude-hub/docs
+        run: bun install --frozen-lockfile --filter @kndl/docs
       - name: Type-check
-        run: bun run --filter @claude-hub/docs typecheck
+        run: bun run --filter @kndl/docs typecheck
       - name: Build, and check every internal link and anchor
         run: bun run docs:build
       - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

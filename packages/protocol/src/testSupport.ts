@@ -74,7 +74,7 @@ export const runnerModels = {
 
 export const sessionSummary = {
   id: "s-1",
-  repo: "kddige/claude-hub",
+  repo: "kddige/kndl",
   baseBranch: "main",
   workBranch: "claude/s-1",
   state: "Active",
@@ -110,7 +110,7 @@ export const environmentDraft = {
 
 /** The same Environment as applied, as the web UI sees it: no Sensitive values. */
 export const environment = {
-  repo: "kddige/claude-hub",
+  repo: "kddige/kndl",
   version: 3,
   ...recipe,
   variables: [

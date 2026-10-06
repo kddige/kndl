@@ -1,10 +1,10 @@
-// What `claude-hub update` on the Hub's machine leaves for the Hub it restarts (issue #87, ADR
+// What `kndl update` on the Hub's machine leaves for the Hub it restarts (issue #87, ADR
 // 0011): the commit it moved the Hub to, for Runners to follow. The CLI writes it into the Hub's
 // database before restarting the Hub; the Hub reads it once it runs, and tells the Runners it
 // covers to update as they connect. It applies only while the Hub runs that commit, and the next
 // `update` replaces it.
 
-import { RunnerId } from "@claude-hub/protocol"
+import { RunnerId } from "@kndl/protocol"
 import { Context, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -43,7 +43,7 @@ export class RunnerUpdatePush extends Context.Service<
     /** The push for `commit`, the one the Hub runs, if the last update left one. */
     readonly forCommit: (commit: string) => Effect.Effect<Option.Option<UpdatePush>, SqlError>
   }
->()("@claude-hub/hub/RunnerUpdatePush") {
+>()("@kndl/hub/RunnerUpdatePush") {
   static readonly layer = Layer.effect(
     RunnerUpdatePush,
     Effect.gen(function* () {
@@ -103,7 +103,7 @@ export interface PushRecorded {
 
 /**
  * Leaves a push for the Hub in its database at `DatabaseFile` (read from the configuration, as
- * `issueRunnerToken` does), for `claude-hub update`. `localToken` is the token of the Runner on
+ * `issueRunnerToken` does), for `kndl update`. `localToken` is the token of the Runner on
  * this machine, if one is set up: it always follows.
  */
 export const requestRunnerUpdates = (options: {

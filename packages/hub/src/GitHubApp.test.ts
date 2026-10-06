@@ -5,7 +5,7 @@
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { createPrivateKey } from "node:crypto"
-import { RepoName } from "@claude-hub/protocol"
+import { RepoName } from "@kndl/protocol"
 import { Duration, Effect, Layer, Option, Redacted } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { manifestPermissions, requiredOn } from "./AppPermissions.ts"

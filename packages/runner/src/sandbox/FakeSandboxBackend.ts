@@ -17,7 +17,7 @@
 import { stat } from "node:fs/promises"
 import { createConnection } from "node:net"
 import { posix } from "node:path"
-import type { SandboxState, SessionId } from "@claude-hub/protocol"
+import type { SandboxState, SessionId } from "@kndl/protocol"
 import { Context, Effect, Fiber, Layer, Option, Queue, Stream } from "effect"
 import type { Cause, Scope } from "effect"
 import { parseVolumeName, volumeName } from "./Naming.ts"
@@ -496,7 +496,7 @@ export const connectHostTcp = (
 
 /** The fake's state, provided next to the SandboxBackend by {@link layer}. */
 export class FakeSandboxBackend extends Context.Service<FakeSandboxBackend, FakeSandboxWorld>()(
-  "@claude-hub/runner/FakeSandboxBackend",
+  "@kndl/runner/FakeSandboxBackend",
 ) {
   static readonly layer = (options?: FakeOptions) =>
     Layer.syncContext(() => {

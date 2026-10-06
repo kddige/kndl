@@ -8,7 +8,7 @@
 // Another Runner's Sandboxes, and unmarked ones made before Sandboxes carried a mark, are left
 // alone and only logged (#38): their Sessions may be live on a Runner this one knows nothing of.
 
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 import { Effect } from "effect"
 import { SandboxBackend } from "./SandboxBackend.ts"
 import type { SandboxListing } from "./SandboxBackend.ts"

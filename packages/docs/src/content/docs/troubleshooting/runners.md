@@ -18,7 +18,7 @@ ERROR (#2): ConfigError: SchemaError(Expected string
 
 **Why.** `RUNNER_TOKEN` isn't set. Every Runner needs one, and the Runner doesn't read `packages/hub/.env.local`, which is the Hub's.
 
-**Fix.** Pair the machine with `claude-hub runner join`, which writes the token, or issue one on the Hub's machine with `bun run runner-token <name>` and start the Runner with it. See [Add a Runner](/how-to/add-a-runner/).
+**Fix.** Pair the machine with `kndl runner join`, which writes the token, or issue one on the Hub's machine with `bun run runner-token <name>` and start the Runner with it. See [Add a Runner](/how-to/add-a-runner/).
 
 ## The mod isn't built
 
@@ -64,7 +64,7 @@ The Runner keeps trying, so it connects on its own once the Hub is back.
 
 ## The Pairing code can't be used
 
-**What you see.** `claude-hub runner join` stops before writing anything with:
+**What you see.** `kndl runner join` stops before writing anything with:
 
 ```
 That pairing code can't be used: it may be mistyped, expired (codes last 15 minutes), already used or revoked. Make a new one on the Hub's Runners page (Add a Runner).
@@ -78,16 +78,16 @@ A few other answers come before the Hub is asked, or instead:
 
 - `The code after # isn't a whole pairing code …`: part of the link is missing. Copy the command again.
 - `The Hub already has a Runner named build-box …`: the short hostname is taken by another Runner. Join with `--name` and another name, or, if this machine should take that Runner's place, **Re-pair** it on the Runners page and join with that code. The code isn't used up.
-- `… doesn't pair Runners with codes: it runs a claude-hub from before them`: update the Hub, or issue a token on its machine with `claude-hub runner token <name>` and run `claude-hub onboard --role runner --hub-url <url> --token <token>`.
+- `… doesn't pair Runners with codes: it runs a kndl from before them`: update the Hub, or issue a token on its machine with `kndl runner token <name>` and run `kndl onboard --role runner --hub-url <url> --token <token>`.
 - `Couldn't reach the Hub at …`: the machine can't reach the URL in the link, the Hub's `HUB_PUBLIC_URL`. See [A Runner on another machine never shows up](#a-runner-on-another-machine-never-shows-up).
 
 ## The Runner was paired but doesn't connect
 
-**What you see.** `runner join` pairs, then says `` Runner: not connected to the Hub after 30 seconds: see `claude-hub logs runner` ``.
+**What you see.** `runner join` pairs, then says `` Runner: not connected to the Hub after 30 seconds: see `kndl logs runner` ``.
 
 **Why.** The token is in `runner.env` and the Runners page lists the Runner, offline, but the service didn't start or can't reach the Hub over its WebSocket. A proxy that passes plain HTTP but not WebSockets does this.
 
-**Fix.** Read `claude-hub logs runner` and run `claude-hub doctor`. Once it's fixed, `claude-hub runner start` (or `claude-hub onboard`, which keeps the token) finishes the job: the code is already used, and the token doesn't expire.
+**Fix.** Read `kndl logs runner` and run `kndl doctor`. Once it's fixed, `kndl runner start` (or `kndl onboard`, which keeps the token) finishes the job: the code is already used, and the token doesn't expire.
 
 ## The Hub doesn't accept the Runner's token
 
@@ -97,11 +97,11 @@ A few other answers come before the Hub is asked, or instead:
 The Hub doesn't accept this Runner's token: the Runner was removed on the Hub's Runners page, or paired again with a new token. …
 ```
 
-and `claude-hub status` says the Hub doesn't accept the token.
+and `kndl status` says the Hub doesn't accept the token.
 
 **Why.** Someone removed the Runner on the Runners page, or Re-paired it, and another `runner join` used that code, here or on another machine. Either way, the Hub closed this Runner's connection and the token stopped working. Its Sessions keep running in their Sandboxes.
 
-**Fix.** If the machine should still be a Runner, make a code on the Runners page and run `claude-hub runner join` with it: **Re-pair** the Runner if it's still listed, to keep its Sessions; **Add a Runner** if it was removed. If it shouldn't, stop it with `claude-hub runner stop`, or `claude-hub uninstall`.
+**Fix.** If the machine should still be a Runner, make a code on the Runners page and run `kndl runner join` with it: **Re-pair** the Runner if it's still listed, to keep its Sessions; **Add a Runner** if it was removed. If it shouldn't, stop it with `kndl runner stop`, or `kndl uninstall`.
 
 ## A Runner can't be removed
 
@@ -119,12 +119,12 @@ and `claude-hub status` says the Hub doesn't accept the token.
 build-box: this Runner needs an update. Update it on the Runners page.
 ```
 
-**Why.** It runs an older commit of claude-hub than the Hub, or one the Hub's history doesn't have, such as another branch's. A new or woken Session may need what the Hub's commit added, so the Hub starts and wakes none there; Sessions already running there go on, and prompts to its Asleep Sessions wait in their queue. Runners report their commit when they connect; a Runner from before that is listed with **Version unknown**.
+**Why.** It runs an older commit of kndl than the Hub, or one the Hub's history doesn't have, such as another branch's. A new or woken Session may need what the Hub's commit added, so the Hub starts and wakes none there; Sessions already running there go on, and prompts to its Asleep Sessions wait in their queue. Runners report their commit when they connect; a Runner from before that is listed with **Version unknown**.
 
 **Fix.** Press **Update** on its row ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)). A row without **Update** says why the Runner doesn't update itself:
 
 - It runs from a checkout (`bun run runner`): pull the checkout to the Hub's commit and restart it.
-- It's from before Runners followed the Hub, or isn't run as the claude-hub service: run `claude-hub update` on its machine.
+- It's from before Runners followed the Hub, or isn't run as the kndl service: run `kndl update` on its machine.
 
 While it updates, Sessions fail with `build-box: this Runner is updating. Sessions start and wake there again once it is back.`
 
@@ -140,7 +140,7 @@ or **refuses: commit not on origin** (`origin has no commit 1a2b3c4d5e6f: push i
 
 **Why.** A Runner moves only to a commit it can fetch, and by default only to one on `origin/main`, so a Hub running a branch or an unpushed commit can't move its Runners there unasked.
 
-**Fix.** For **not on main**: run the Hub on `main`, or, to let this Runner follow any commit, add `RUNNER_UPDATE_ANY_COMMIT=1` to its `runner.env`, restart it with `claude-hub runner stop` and `claude-hub runner start`, and press **Update** again. For **not on origin**: push the commit the Hub runs. For **couldn't check**: the Runner's machine can't fetch from origin; run `git fetch` in its install, `~/.claude-hub/app`, to see why (the same credentials `claude-hub update` uses).
+**Fix.** For **not on main**: run the Hub on `main`, or, to let this Runner follow any commit, add `RUNNER_UPDATE_ANY_COMMIT=1` to its `runner.env`, restart it with `kndl runner stop` and `kndl runner start`, and press **Update** again. For **not on origin**: push the commit the Hub runs. For **couldn't check**: the Runner's machine can't fetch from origin; run `git fetch` in its install, `~/.kndl/app`, to see why (the same credentials `kndl update` uses).
 
 ## A Runner's update failed
 
@@ -152,7 +152,7 @@ Moving to 1a2b3c4d5e6f failed, so it went back to the commit it ran: bun install
 
 **Why.** A step of the update failed: checking out the commit, `bun install`, building the mod, the check that the Runner loads, or the Runner, restarted on the new commit, didn't get the Hub's welcome in three starts. The Runner went back to the commit it ran, rebuilt it and reconnected, and its Sessions wake there. If going back failed too, the row says `and so did going back; see its log`.
 
-**Fix.** Read `claude-hub logs runner` on its machine for the full output, fix the cause (often the network, or disk space), and press **Update** again. The Runner doesn't try the same commit again by itself. If going back failed, run `claude-hub update` on its machine, which puts the install back in order.
+**Fix.** Read `kndl logs runner` on its machine for the full output, fix the cause (often the network, or disk space), and press **Update** again. The Runner doesn't try the same commit again by itself. If going back failed, run `kndl update` on its machine, which puts the install back in order.
 
 ## The Hub turns the Runner away
 
@@ -166,12 +166,12 @@ Updating this Runner to the Hub's commit (the Hub runs 1a2b3c4d5e6f on main).
 or, for a Runner that doesn't update itself:
 
 ```
-To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f on main): run `claude-hub update` on this machine. Retrying meanwhile.
+To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f on main): run `kndl update` on this machine. Retrying meanwhile.
 ```
 
 **Why.** The Hub and the Runner speak different protocol versions. The Hub's answer always says which commit it runs, whatever the version, so a Runner that updates itself moves to it, as it would for **Update**, and restarts under its Sessions, which keep running: the Hub can't put them to sleep first while it turns the Runner away.
 
-**Fix.** Usually nothing: the Runner connects again on the Hub's commit. If it can't follow (the log says it failed to update to that commit, or how to update it), run `claude-hub update` on its machine, or for a checkout, pull it to the Hub's commit and restart `bun run runner`.
+**Fix.** Usually nothing: the Runner connects again on the Hub's commit. If it can't follow (the log says it failed to update to that commit, or how to update it), run `kndl update` on its machine, or for a checkout, pull it to the Hub's commit and restart `bun run runner`.
 
 ## Its Sessions are Frozen
 
@@ -186,7 +186,7 @@ To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f
 **What you see.** After updating a Runner from a version that ran Claude Code on its host, every Session that was running is Asleep, and the Runner logs once at startup:
 
 ```
-WARN (#2): Stopped the tmux server claude-hub on the host, where Sessions ran before Claude Code moved into their Sandboxes: each wakes in its Sandbox on its next prompt
+WARN (#2): Stopped the tmux server kndl on the host, where Sessions ran before Claude Code moved into their Sandboxes: each wakes in its Sandbox on its next prompt
 ```
 
 **Why.** Claude Code now runs in each Session's Sandbox ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). The Runner stops the tmux server its Sessions ran in on the host, since their Claude Code would go on with nothing to run its tools.
@@ -197,18 +197,18 @@ WARN (#2): Stopped the tmux server claude-hub on the host, where Sessions ran be
 
 **What you see.** After updating your checkout, Sessions that were running before don't come back: the Runner re-adopts none of them, and waking one fails because its Workspace can't be found.
 
-**Why.** Runners run from a checkout used to keep their state in `~/.claude-hub/sessions`, `~/.claude-hub/claude-code` and tmux socket `claude-hub`. They now use the dev home, `~/.claude-hub-dev`, and tmux socket `claude-hub-dev`, so that a dev Runner and an installed one can share a machine (see [the dev home](/reference/configuration/#homes)). Nothing is migrated. The new defaults point at a new socket and sessions root, so the Runner finds none of the old Sessions, and it has a new Runner mark, so it leaves their Sandboxes alone.
+**Why.** Runners run from a checkout used to keep their state in `~/.kndl/sessions`, `~/.kndl/claude-code` and tmux socket `kndl`. They now use the dev home, `~/.kndl-dev`, and tmux socket `kndl-dev`, so that a dev Runner and an installed one can share a machine (see [the dev home](/reference/configuration/#homes)). Nothing is migrated. The new defaults point at a new socket and sessions root, so the Runner finds none of the old Sessions, and it has a new Runner mark, so it leaves their Sandboxes alone.
 
 **Fix.** Either delete the old Sessions, or keep running a Runner with the old values:
 
 ```sh
-RUNNER_SESSIONS_ROOT=$HOME/.claude-hub/sessions \
-RUNNER_TMUX_SOCKET=claude-hub \
-RUNNER_SANDBOX_CLAUDE_CACHE=$HOME/.claude-hub/claude-code \
+RUNNER_SESSIONS_ROOT=$HOME/.kndl/sessions \
+RUNNER_TMUX_SOCKET=kndl \
+RUNNER_SANDBOX_CLAUDE_CACHE=$HOME/.kndl/claude-code \
 RUNNER_TOKEN=chr_… bun run runner
 ```
 
-To clean up once you no longer need them: run `tmux -L claude-hub kill-server`, remove their Sandboxes (named `claude-hub-<session id>`) with microsandbox's `msb`, and delete `~/.claude-hub/sessions` and `~/.claude-hub/claude-code`. Keep `~/.claude-hub/github-app.pem` if `GITHUB_APP_PRIVATE_KEY_PATH` points there.
+To clean up once you no longer need them: run `tmux -L kndl kill-server`, remove their Sandboxes (named `kndl-<session id>`) with microsandbox's `msb`, and delete `~/.kndl/sessions` and `~/.kndl/claude-code`. Keep `~/.kndl/github-app.pem` if `GITHUB_APP_PRIVATE_KEY_PATH` points there.
 
 ## It warns about Sandboxes it doesn't know
 

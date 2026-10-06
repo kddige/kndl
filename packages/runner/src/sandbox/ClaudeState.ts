@@ -6,7 +6,7 @@
 
 import { readdir, readFile } from "node:fs/promises"
 import { dirname, join, posix, relative } from "node:path"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 import { Effect } from "effect"
 import { hostTranscriptPath } from "../ClaudeConfig.ts"
 import { SandboxBackendError } from "./SandboxBackend.ts"

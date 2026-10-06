@@ -1,11 +1,11 @@
 // The WIP ref (issue #13, ADR 0010): the Runner, on its host, force-pushes a snapshot of a
-// Session's Workspace to `refs/claude-hub/wip/<session>` after a Turn that changed it, and before
+// Session's Workspace to `refs/kndl/wip/<session>` after a Turn that changed it, and before
 // the Session sleeps or is archived. A failure is logged and reported to the Hub, and never stops
 // anything else. One WIP push runs at a time per Session. The token for it stays with the
 // Runner, which asks the Hub for one per push.
 
 import { join } from "node:path"
-import { type GitIdentity, type SessionId, wipRef } from "@claude-hub/protocol"
+import { type GitIdentity, type SessionId, wipRef } from "@kndl/protocol"
 import { Cause, Context, Duration, Effect, Layer, Semaphore } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import {
@@ -40,7 +40,7 @@ export class WorkspaceGit extends Context.Service<
       reason: WipReason,
     ) => Effect.Effect<void>
   }
->()("@claude-hub/runner/WorkspaceGit") {}
+>()("@kndl/runner/WorkspaceGit") {}
 
 /** The Repo access a GitAccess answer gave. */
 export interface RepoAccess {
@@ -122,7 +122,7 @@ export const WorkspaceGitLive = Layer.effect(
         if (last.trim() === state) return
         const repo = yield* access(sessionId)
         const commit = yield* commitSnapshot(paths(directories), snapshot, {
-          message: `claude-hub WIP of Session ${sessionId} (${reason})`,
+          message: `kndl WIP of Session ${sessionId} (${reason})`,
           identity: repo.author ?? WipIdentity,
         })
         yield* forcePushRef(paths(directories), {

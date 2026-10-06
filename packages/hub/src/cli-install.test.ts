@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import type { CliTarget } from "@claude-hub/protocol"
+import type { CliTarget } from "@kndl/protocol"
 import { commit, fakeBinary, fakeBuilds, removeTempDirs, tempDir } from "./cliTestSupport.ts"
 import { startHub, stopHubs } from "./testSupport.ts"
 
@@ -15,7 +15,7 @@ afterEach(async () => {
   await removeTempDirs()
 })
 
-const version = `claude-hub v${commit.slice(0, 12)}`
+const version = `kndl v${commit.slice(0, 12)}`
 
 interface Machine {
   /** What `uname -s` and `uname -m` say. */
@@ -54,8 +54,8 @@ async function install(
     env: {
       HOME: at.home,
       PATH: options.path ?? `${at.stubs}:/usr/bin:/bin`,
-      CLAUDE_HUB_URL: hubUrl,
-      CLAUDE_HUB_BIN_DIR: at.bin,
+      KNDL_URL: hubUrl,
+      KNDL_BIN_DIR: at.bin,
       ...options.env,
     },
   })
@@ -92,7 +92,7 @@ describe("the install script", () => {
       const result = await install(hub.url, at)
       expect(result.stderr).toBe("")
       expect(result.exitCode).toBe(0)
-      const dest = join(at.bin, "claude-hub")
+      const dest = join(at.bin, "kndl")
       expect(result.stdout).toContain(`Installed ${version} in ${dest}.`)
       expect(await readFile(dest, "utf8")).toBe(fakeBinary(target, commit))
       expect((await stat(dest)).mode & 0o777).toBe(0o755)
@@ -109,7 +109,7 @@ describe("the install script", () => {
       const result = await install(hub.url, at)
       expect(result.exitCode).toBe(1)
       expect(result.stderr).toBe(
-        "claude-hub install: claude-hub doesn't run on Windows. Install it in WSL, or on a Mac or Linux machine.\n",
+        "kndl install: kndl doesn't run on Windows. Install it in WSL, or on a Mac or Linux machine.\n",
       )
       expect(builds.built).toEqual([])
       expect(existsSync(at.bin)).toBe(false)
@@ -120,12 +120,10 @@ describe("the install script", () => {
     const { hub, builds } = await hubWithBuilds()
     const bsd = await install(hub.url, await machine({ os: "FreeBSD", arch: "amd64" }))
     expect(bsd.exitCode).toBe(1)
-    expect(bsd.stderr).toBe(
-      "claude-hub install: claude-hub runs on macOS and Linux, not FreeBSD.\n",
-    )
+    expect(bsd.stderr).toBe("kndl install: kndl runs on macOS and Linux, not FreeBSD.\n")
     const arm32 = await install(hub.url, await machine({ os: "Linux", arch: "armv7l" }))
     expect(arm32.exitCode).toBe(1)
-    expect(arm32.stderr).toBe("claude-hub install: claude-hub runs on arm64 and x64, not armv7l.\n")
+    expect(arm32.stderr).toBe("kndl install: kndl runs on arm64 and x64, not armv7l.\n")
     expect(builds.built).toEqual([])
   })
 
@@ -133,7 +131,7 @@ describe("the install script", () => {
     const { hub } = await hubWithBuilds()
     const at = await machine({ os: "Linux", arch: "x86_64" })
     expect((await install(hub.url, at)).exitCode).toBe(0)
-    const config = join(at.home, ".config", "claude-hub", "cli.json")
+    const config = join(at.home, ".config", "kndl", "cli.json")
     expect(JSON.parse(await readFile(config, "utf8"))).toEqual({ hub: hub.url })
     expect((await stat(config)).mode & 0o777).toBe(0o600)
 
@@ -145,7 +143,7 @@ describe("the install script", () => {
     // XDG_CONFIG_HOME moves it.
     const xdg = join(at.home, "xdg")
     expect((await install(hub.url, at, { env: { XDG_CONFIG_HOME: xdg } })).exitCode).toBe(0)
-    expect(JSON.parse(await readFile(join(xdg, "claude-hub", "cli.json"), "utf8"))).toEqual({
+    expect(JSON.parse(await readFile(join(xdg, "kndl", "cli.json"), "utf8"))).toEqual({
       hub: hub.url,
     })
   })
@@ -164,21 +162,21 @@ describe("the install script", () => {
   test("installs into ~/.local/bin by default", async () => {
     const { hub } = await hubWithBuilds()
     const at = await machine({ os: "Linux", arch: "x86_64" })
-    const result = await install(hub.url, at, { env: { CLAUDE_HUB_BIN_DIR: "" } })
+    const result = await install(hub.url, at, { env: { KNDL_BIN_DIR: "" } })
     expect(result.exitCode).toBe(0)
-    expect(existsSync(join(at.home, ".local", "bin", "claude-hub"))).toBe(true)
+    expect(existsSync(join(at.home, ".local", "bin", "kndl"))).toBe(true)
   })
 
-  test("leaves the command of a claude-hub install alone", async () => {
+  test("leaves the command of a kndl install alone", async () => {
     const { hub, builds } = await hubWithBuilds()
     const at = await machine({ os: "Linux", arch: "x86_64" })
     await mkdir(at.bin)
-    const wrapper = "#!/bin/sh\n# claude-hub: written by install.sh. Runs the installed CLI.\n"
-    await writeFile(join(at.bin, "claude-hub"), wrapper)
+    const wrapper = "#!/bin/sh\n# kndl: written by install.sh. Runs the installed CLI.\n"
+    await writeFile(join(at.bin, "kndl"), wrapper)
     const result = await install(hub.url, at)
     expect(result.exitCode).toBe(1)
-    expect(result.stderr).toContain("is the command of the claude-hub install on this machine")
-    expect(await readFile(join(at.bin, "claude-hub"), "utf8")).toBe(wrapper)
+    expect(result.stderr).toContain("is the command of the kndl install on this machine")
+    expect(await readFile(join(at.bin, "kndl"), "utf8")).toBe(wrapper)
     expect(builds.built).toEqual([])
   })
 
@@ -189,8 +187,8 @@ describe("the install script", () => {
     const result = await install(hub.url, at)
     expect(result.exitCode).toBe(1)
     expect(result.stderr).toBe(
-      `claude-hub install: The Hub answered 500 for ${hub.url}/cli/linux-arm64: The Hub couldn't build the claude-hub CLI for linux-arm64: no network\n`,
+      `kndl install: The Hub answered 500 for ${hub.url}/cli/linux-arm64: The Hub couldn't build the kndl CLI for linux-arm64: no network\n`,
     )
-    expect(existsSync(join(at.bin, "claude-hub"))).toBe(false)
+    expect(existsSync(join(at.bin, "kndl"))).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-// `claude-hub forward [session] [ports...]` (#180, ADR 0016): a Session's Open ports on localhost
+// `kndl forward [session] [ports...]` (#180, ADR 0016): a Session's Open ports on localhost
 // here, as the CLI token's person (Login.ts).
 //
 // - Which Session: its id, the start of it (the short id the web shows) or its URL; with none, a
@@ -11,7 +11,7 @@
 //   to, the listeners staying up meanwhile.
 // - On a terminal the list is redrawn as it changes (ForwardTui.ts): Esc stops forwarding the
 //   Session and goes back to the picker, Ctrl-C stops. Without one, each change is a line.
-import { ForwardCloseCode, type SessionSummary } from "@claude-hub/protocol"
+import { ForwardCloseCode, type SessionSummary } from "@kndl/protocol"
 import { Effect } from "effect"
 import { readCliConfig } from "./CliConfig.ts"
 import { fail } from "./Failure.ts"
@@ -73,7 +73,7 @@ export type ForwardOutcome =
 const failed = (message: string): ForwardOutcome => ({ _tag: "Failed", message })
 
 const signedOutText =
-  "This machine's CLI token isn't accepted any more: run claude-hub login to sign in again."
+  "This machine's CLI token isn't accepted any more: run kndl login to sign in again."
 
 const notListed = (listing: Exclude<SessionListing, { _tag: "Listed" }>) =>
   failed(listing._tag === "SignedOut" ? signedOutText : listing.message)
@@ -131,14 +131,14 @@ export async function runForward(
         if (!context.interactive) {
           io.output.write(
             active.length === 0
-              ? "None of your Sessions is Active. Name one to wake it and forward its ports: claude-hub forward <id>\n"
+              ? "None of your Sessions is Active. Name one to wake it and forward its ports: kndl forward <id>\n"
               : `${active.map(sessionLine).join("\n")}\n`,
           )
           return { _tag: "Listed" }
         }
         if (active.length === 0) {
           return failed(
-            "None of your Sessions is Active. Name one to wake it and forward its ports: claude-hub forward <id>",
+            "None of your Sessions is Active. Name one to wake it and forward its ports: kndl forward <id>",
           )
         }
         const picked = await pick(active, context)
@@ -167,7 +167,7 @@ async function findSession(
   if (typeof target === "string") return failed(target)
   if (target._tag === "Url" && target.origin !== new URL(signIn.hub).origin) {
     return failed(
-      `That Session is on ${target.origin}, and the CLI is signed in to ${signIn.hub}: run claude-hub login ${target.origin} first.`,
+      `That Session is on ${target.origin}, and the CLI is signed in to ${signIn.hub}: run kndl login ${target.origin} first.`,
     )
   }
   const listing = await listSessions(signIn.hub, signIn.token)
@@ -186,7 +186,7 @@ async function findSession(
       )
     case "None":
       return failed(
-        `None of your Sessions has the id ${target.id}, or one starting with it: claude-hub forward with no Session lists those you can forward.`,
+        `None of your Sessions has the id ${target.id}, or one starting with it: kndl forward with no Session lists those you can forward.`,
       )
   }
 }
@@ -382,12 +382,12 @@ function forwardSession(
   })
 }
 
-/** `claude-hub forward`, as the CLI is signed in. */
+/** `kndl forward`, as the CLI is signed in. */
 export const forward = (request: ForwardRequest, on: LoginContext) =>
   Effect.gen(function* () {
     const config = readCliConfig(on.configPath)
     if (config.token === undefined || config.hub === undefined) {
-      return yield* fail("The CLI isn't signed in to a Hub: run claude-hub login <hub-url>")
+      return yield* fail("The CLI isn't signed in to a Hub: run kndl login <hub-url>")
     }
     const signIn = { hub: config.hub, token: config.token }
     const outcome = yield* Effect.callback<ForwardOutcome>((resume) => {

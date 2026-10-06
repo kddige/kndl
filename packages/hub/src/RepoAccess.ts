@@ -23,7 +23,7 @@
 //   once (#197); GitHub is asked by the spelling first asked about. `fullName` says how GitHub
 //   spells it, for the Hub to keep that spelling.
 
-import { type Participant, type RepoName, repoKey, sameRepo } from "@claude-hub/protocol"
+import { type Participant, type RepoName, repoKey, sameRepo } from "@kndl/protocol"
 import { Cache, Context, Duration, Effect, Equal, Exit, Hash, Layer, Option, Schema } from "effect"
 import { GitHubApp, type GitHubAppError } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
@@ -114,7 +114,7 @@ export class RepoAccess extends Context.Service<
      */
     readonly fullName: (repo: RepoName) => Effect.Effect<Option.Option<RepoName>>
   }
->()("@claude-hub/hub/RepoAccess") {
+>()("@kndl/hub/RepoAccess") {
   static readonly layer = Layer.effect(
     RepoAccess,
     Effect.gen(function* () {

@@ -7,7 +7,7 @@ import { matchDependencyFolders } from "./DependencyFolders.ts"
 
 let root = ""
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "claude-hub-deps-"))
+  root = await mkdtemp(join(tmpdir(), "kndl-deps-"))
 })
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })

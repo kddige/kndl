@@ -14,13 +14,9 @@ import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { homedir, userInfo } from "node:os"
 import { dirname, join } from "node:path"
-import { GitHubApp } from "@claude-hub/hub/src/GitHubApp.ts"
-import { HubConfig, cookieSecurity } from "@claude-hub/hub/src/HubConfig.ts"
-import {
-  missingModBundle,
-  RunnerConfig,
-  RunnerConfigLive,
-} from "@claude-hub/runner/src/RunnerConfig.ts"
+import { GitHubApp } from "@kndl/hub/src/GitHubApp.ts"
+import { HubConfig, cookieSecurity } from "@kndl/hub/src/HubConfig.ts"
+import { missingModBundle, RunnerConfig, RunnerConfigLive } from "@kndl/runner/src/RunnerConfig.ts"
 import { Cause, ConfigProvider, Effect, Exit, Option } from "effect"
 import { FetchHttpClient } from "effect/http"
 import type { AppPermissionsFact, DoctorFacts, Health } from "./Doctor.ts"
@@ -50,7 +46,7 @@ import {
 import { Shell, step } from "./Shell.ts"
 import type { Checkout } from "./Update.ts"
 
-/** This machine's platform, or a failure on one claude-hub doesn't install on. */
+/** This machine's platform, or a failure on one kndl doesn't install on. */
 export function platform(): Platform | undefined {
   return process.platform === "darwin" || process.platform === "linux"
     ? process.platform
@@ -136,14 +132,14 @@ export const moveAside = (layout: Layout, renames: ReadonlyArray<Rename>) =>
     catch: (error) => fail(`Could not move the old data aside: ${errorMessage(error)}`),
   }).pipe(Effect.uninterruptible)
 
-/** Writes the `claude-hub` wrapper. */
+/** Writes the `kndl` wrapper. */
 export const writeWrapper = (layout: Layout) =>
   writeFileWhole(layout.wrapper, wrapperScript(layout, bunPath()), 0o755)
 
 /** The first line install.sh and {@link wrapperScript} put after the shebang. */
-const WrapperMark = "# claude-hub: written by install.sh."
+const WrapperMark = "# kndl: written by install.sh."
 
-/** Whether the file at the wrapper's path is one claude-hub wrote, so uninstall may remove it. */
+/** Whether the file at the wrapper's path is one kndl wrote, so uninstall may remove it. */
 export function isOurWrapper(path: string): boolean {
   try {
     return readFileSync(path, "utf8").split("\n")[1]?.startsWith(WrapperMark) === true
@@ -329,7 +325,7 @@ export function homeEnvironment(layout: Layout, role: Role): Record<string, stri
     RUNNER_MOD_DIR: join(layout.app, "packages", "mod"),
     HUB_WEB_DIR: join(layout.app, "packages", "web", "dist"),
     ...readEnvValues(layout.envFile(role)),
-    CLAUDE_HUB_HOME: layout.home.dir,
+    KNDL_HOME: layout.home.dir,
   }
 }
 
@@ -348,7 +344,7 @@ export const doctorFacts = (layout: Layout, on: Platform) =>
     const roles = configuredRoles(layout)
     const shell = yield* Shell
     const wrapperExists = existsSync(layout.wrapper)
-    const onPath = Bun.which("claude-hub")
+    const onPath = Bun.which("kndl")
     const hub = roles.includes("hub")
     const runner = roles.includes("runner")
     const hubValues = readEnvValues(layout.envFile("hub"))

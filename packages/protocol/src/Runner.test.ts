@@ -129,7 +129,7 @@ const hubToRunner = [
   {
     _tag: "StartSession",
     sessionId: "s-1",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
     workBranch: "claude/s-1",
     modToken: "mod-token",
@@ -137,7 +137,7 @@ const hubToRunner = [
   {
     _tag: "StartSession",
     sessionId: "s-1",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
     workBranch: "claude/s-1",
     resume: "0b6d6c1e-claude",
@@ -146,7 +146,7 @@ const hubToRunner = [
   {
     _tag: "StartSession",
     sessionId: "s-2",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
     workBranch: "claude/s-2",
     modToken: "mod-token",
@@ -162,14 +162,14 @@ const hubToRunner = [
     requestId: "g-1",
     answer: {
       _tag: "GitAccess",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       credentials: {
         _tag: "AppToken",
         token: "ghs_installation",
         expiresAt: 1_790_000_000_000,
         author: {
-          name: "claude-hub[bot]",
-          email: "41898282+claude-hub[bot]@users.noreply.github.com",
+          name: "kndl[bot]",
+          email: "41898282+kndl[bot]@users.noreply.github.com",
         },
       },
     },
@@ -179,7 +179,7 @@ const hubToRunner = [
     requestId: "g-1",
     answer: {
       _tag: "GitAccess",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       credentials: { _tag: "HostCredentials" },
     },
   },
@@ -210,7 +210,7 @@ const hubToRunner = [
   {
     _tag: "StartSession",
     sessionId: "s-1",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
     workBranch: "claude/s-1",
     modToken: "mod-token",
@@ -219,7 +219,7 @@ const hubToRunner = [
   {
     _tag: "RunTestBuild",
     testBuildId: "b-1",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     recipe: environmentRecipe,
   },
   {
@@ -253,7 +253,7 @@ const hubToRunner = [
   {
     _tag: "StartSession",
     sessionId: "s-1",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
     workBranch: "claude/s-1",
     modToken: "mod-token",
@@ -263,7 +263,7 @@ const hubToRunner = [
   {
     _tag: "RelaunchSession",
     sessionId: "s-1",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     workBranch: "claude/s-1",
     resume: "0b6d6c1e-claude",
     modToken: "mod-2",
@@ -271,7 +271,7 @@ const hubToRunner = [
   {
     _tag: "RelaunchSession",
     sessionId: "s-2",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     workBranch: "claude/s-2",
     resume: "0b6d6c1e-claude",
     modToken: "mod-3",
@@ -341,7 +341,7 @@ describe("HubToRunner", () => {
   })
 
   test("rejects malformed messages", () => {
-    expectRejected(HubToRunner, { ...hubToRunner[2], repo: "claude-hub" })
+    expectRejected(HubToRunner, { ...hubToRunner[2], repo: "kndl" })
     expectRejected(HubToRunner, {
       _tag: "OpenTunnel",
       tunnelId: "t-1",
@@ -360,7 +360,7 @@ describe("HubToRunner", () => {
       requestId: "g-1",
       answer: {
         _tag: "GitAccess",
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         credentials: {
           _tag: "AppToken",
           token: "",
@@ -376,7 +376,7 @@ describe("HubToRunner", () => {
     expectRejected(HubToRunner, {
       _tag: "RelaunchSession",
       sessionId: "s-1",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       workBranch: "claude/s-1",
       modToken: "m",
     })

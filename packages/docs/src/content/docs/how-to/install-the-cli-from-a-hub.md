@@ -1,14 +1,14 @@
 ---
 title: Install the CLI from a Hub
-description: Install the claude-hub command from a Hub with one line, on a machine that runs no Hub or Runner, and keep it on the Hub's commit.
+description: Install the kndl command from a Hub with one line, on a machine that runs no Hub or Runner, and keep it on the Hub's commit.
 sidebar:
   order: 10
 ---
 
-A Hub serves the `claude-hub` command, built from the commit the Hub runs, to anyone who can reach it. At the end of this page you have `claude-hub` in `~/.local/bin`, and it keeps itself on the Hub's commit.
+A Hub serves the `kndl` command, built from the commit the Hub runs, to anyone who can reach it. At the end of this page you have `kndl` in `~/.local/bin`, and it keeps itself on the Hub's commit.
 
 :::note
-The command from a Hub doesn't set up or run a Hub or a Runner. To make a machine one, [install claude-hub](/how-to/install/) instead: that install's `claude-hub` has every command.
+The command from a Hub doesn't set up or run a Hub or a Runner. To make a machine one, [install kndl](/how-to/install/) instead: that install's `kndl` has every command.
 :::
 
 ## Before you start
@@ -32,7 +32,7 @@ Nothing needs setting up on the Hub's machine: a Hub serves the command as long 
 2. Check what it says at the end:
 
    ```
-   Installed claude-hub v1e9cf127d5c2 in /home/ada/.local/bin/claude-hub.
+   Installed kndl v1e9cf127d5c2 in /home/ada/.local/bin/kndl.
    ```
 
    `v1e9cf127d5c2` is the Hub's commit.
@@ -46,43 +46,43 @@ Nothing needs setting up on the Hub's machine: a Hub serves the command as long 
 4. Check that it runs:
 
    ```sh
-   claude-hub --version
+   kndl --version
    ```
 
 ### Install it somewhere else
 
-To install it in another directory, set `CLAUDE_HUB_BIN_DIR`:
+To install it in another directory, set `KNDL_BIN_DIR`:
 
 ```sh
-curl -fsSL https://hub.example.com/cli | CLAUDE_HUB_BIN_DIR="$HOME/bin" sh
+curl -fsSL https://hub.example.com/cli | KNDL_BIN_DIR="$HOME/bin" sh
 ```
 
-On a machine with a claude-hub install, `~/.local/bin/claude-hub` is that install's command, and the script leaves it alone:
+On a machine with a kndl install, `~/.local/bin/kndl` is that install's command, and the script leaves it alone:
 
 ```
-claude-hub install: /home/ada/.local/bin/claude-hub is the command of the claude-hub install on this machine, which has every command this one has and updates with the install. To install this one elsewhere, set CLAUDE_HUB_BIN_DIR.
+kndl install: /home/ada/.local/bin/kndl is the command of the kndl install on this machine, which has every command this one has and updates with the install. To install this one elsewhere, set KNDL_BIN_DIR.
 ```
 
 ## Updates
 
-Each time you run it, `claude-hub` asks the Hub it was installed from for its commit, and waits up to two seconds for an answer. When the Hub runs another commit, `claude-hub` downloads that commit's binary, puts it in its own place, and runs your command again with it:
+Each time you run it, `kndl` asks the Hub it was installed from for its commit, and waits up to two seconds for an answer. When the Hub runs another commit, `kndl` downloads that commit's binary, puts it in its own place, and runs your command again with it:
 
 ```
-claude-hub: updating to 1e9cf127d5c2 from https://hub.example.com...
-claude-hub: updated to 1e9cf127d5c2.
+kndl: updating to 1e9cf127d5c2 from https://hub.example.com...
+kndl: updated to 1e9cf127d5c2.
 ```
 
-If the Hub doesn't answer, or the update fails, it runs your command as it is. To turn updates off, set `CLAUDE_HUB_NO_SELF_UPDATE=1`.
+If the Hub doesn't answer, or the update fails, it runs your command as it is. To turn updates off, set `KNDL_NO_SELF_UPDATE=1`.
 
-The Hub it updates from is in `~/.config/claude-hub/cli.json`. To move to another Hub, run that Hub's install script.
+The Hub it updates from is in `~/.config/kndl/cli.json`. To move to another Hub, run that Hub's install script.
 
 ## Commands that need an install
 
-The commands that set up and look after a Hub or a Runner, such as `onboard`, `status`, `update` and `runner join`, need a claude-hub install. The command from a Hub says so, and exits 1:
+The commands that set up and look after a Hub or a Runner, such as `onboard`, `status`, `update` and `runner join`, need a kndl install. The command from a Hub says so, and exits 1:
 
 ```
-`claude-hub status` needs a claude-hub install, and there is none in /home/ada/.claude-hub.
-This claude-hub, installed from a Hub, doesn't set up or run a Hub or a Runner itself. To make this machine one, install claude-hub with:
+`kndl status` needs a kndl install, and there is none in /home/ada/.kndl.
+This kndl, installed from a Hub, doesn't set up or run a Hub or a Runner itself. To make this machine one, install kndl with:
 …
 ```
 
@@ -93,12 +93,12 @@ On a machine with an install, it names the install's own command to run instead.
 If you [signed it in](/how-to/sign-in-the-cli/), sign it out first, so the Hub revokes its CLI token:
 
 ```sh
-claude-hub logout
-rm ~/.local/bin/claude-hub ~/.config/claude-hub/cli.json
+kndl logout
+rm ~/.local/bin/kndl ~/.config/kndl/cli.json
 ```
 
 ## Next steps
 
 - [Sign in the CLI](/how-to/sign-in-the-cli/): sign it in to the Hub as you.
-- [Commands](/reference/commands/#the-claude-hub-command-from-a-hub): what the command from a Hub does, and the Hub's `/cli` routes.
+- [Commands](/reference/commands/#the-kndl-command-from-a-hub): what the command from a Hub does, and the Hub's `/cli` routes.
 - [Install](/how-to/install/): make a machine a Hub or a Runner.

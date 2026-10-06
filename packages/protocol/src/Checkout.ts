@@ -1,6 +1,6 @@
 // The commit a Hub or Runner runs, read from the git checkout it runs from (ADR 0011).
 //
-// Imported as `@claude-hub/protocol/checkout`, not from the package's index: it runs git, which
+// Imported as `@kndl/protocol/checkout`, not from the package's index: it runs git, which
 // the web UI and the mod's bundle have no use for.
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"

@@ -1,4 +1,4 @@
-// The pages `claude-hub login` opens (issue #179), against the fake Hub: approving the CLI on a
+// The pages `kndl login` opens (issue #179), against the fake Hub: approving the CLI on a
 // machine, the browser sent back to the CLI with the Login code or the code shown to paste, going
 // back a page to see it again, signing in first, and the page the CLI sends the browser to after.
 
@@ -78,9 +78,9 @@ test("approves the CLI as whoever is signed in, and sends the browser back to it
     port: "52345",
     state: "abc123",
   })
-  await eventually(() => expect(page()).toContain("Sign in claude-hub on laptop?"))
+  await eventually(() => expect(page()).toContain("Sign in kndl on laptop?"))
   expect(page()).toContain("Alice Kim (@alice)")
-  expect(page()).toContain("Approve only if you just ran claude-hub login on laptop")
+  expect(page()).toContain("Approve only if you just ran kndl login on laptop")
 
   await step(() => button("Approve").click())
   await eventually(() => expect(went).toHaveLength(1))
@@ -91,14 +91,14 @@ test("approves the CLI as whoever is signed in, and sends the browser back to it
   const code = url.searchParams.get("code") ?? ""
   expect(code).toMatch(/^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$/)
   // While it goes, and if it can't, the code is there to paste.
-  expect(page()).toContain("Sending you back to claude-hub on laptop")
+  expect(page()).toContain("Sending you back to kndl on laptop")
   expect(shownCode()).toBe(code)
   expect(await listedMachines(client)).toEqual(["laptop"])
 })
 
 test("shows the code to paste at once without a port, as with --no-browser", async () => {
   const { went } = await openPage({ machine: "devbox", challenge })
-  await eventually(() => expect(page()).toContain("Sign in claude-hub on devbox?"))
+  await eventually(() => expect(page()).toContain("Sign in kndl on devbox?"))
   await step(() => button("Approve").click())
   await eventually(() => expect(page()).toContain("Paste this code in the terminal"))
   expect(shownCode()).toMatch(/^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$/)
@@ -109,7 +109,7 @@ test("shows the code to paste at once without a port, as with --no-browser", asy
 test("shows the same code again on coming back to the page, without approving again", async () => {
   const search = { machine: "laptop", challenge, port: "52345", state: "abc123" }
   const first = await openPage(search)
-  await eventually(() => expect(page()).toContain("Sign in claude-hub on laptop?"))
+  await eventually(() => expect(page()).toContain("Sign in kndl on laptop?"))
   await step(() => button("Approve").click())
   await eventually(() => expect(first.went).toHaveLength(1))
   const code = shownCode()
@@ -126,7 +126,7 @@ test("asks to sign in first, and comes back to the page after GitHub", async () 
   const address = `/cli-login?machine=laptop&challenge=${challenge}`
   window.history.replaceState(null, "", address)
   await openPage({ machine: "laptop", challenge }, { signedIn: false })
-  await eventually(() => expect(page()).toContain("Sign in to approve claude-hub on laptop."))
+  await eventually(() => expect(page()).toContain("Sign in to approve kndl on laptop."))
   const github = [...document.querySelectorAll("a")].find((a) =>
     a.textContent?.includes("Sign in with GitHub"),
   )
@@ -135,13 +135,13 @@ test("asks to sign in first, and comes back to the page after GitHub", async () 
   expect(href.searchParams.get("return")).toBe(address)
 
   await step(() => button("Sign in as dev").click())
-  await eventually(() => expect(page()).toContain("Sign in claude-hub on laptop?"))
+  await eventually(() => expect(page()).toContain("Sign in kndl on laptop?"))
   window.history.replaceState(null, "", "/")
 })
 
 test("cancelling approves nothing", async () => {
   const { client, went } = await openPage({ machine: "laptop", challenge })
-  await eventually(() => expect(page()).toContain("Sign in claude-hub on laptop?"))
+  await eventually(() => expect(page()).toContain("Sign in kndl on laptop?"))
   await step(() => button("Cancel").click())
   expect(page()).toContain("Not approved")
   expect(went).toEqual([])
@@ -175,7 +175,7 @@ test("reads the port from the address, and drops one that isn't a port", () => {
 
 test("the done page says the CLI is signed in, and forgets the code", async () => {
   sessionStorage.setItem(
-    `claude-hub:cli-login:${challenge}`,
+    `kndl:cli-login:${challenge}`,
     JSON.stringify({ code: "ABCD-EFGH-JKMN-PQRS", expiresAt: Date.now() + 60_000 }),
   )
   const hub = new FakeHub({ stepMs: 2, autoplay: false })
@@ -193,7 +193,7 @@ test("the done page says the CLI is signed in, and forgets the code", async () =
     client.stop()
     hub.dispose()
   }
-  await eventually(() => expect(page()).toContain("claude-hub is signed in"))
-  expect(page()).toContain("claude-hub on laptop is signed in to this Hub")
+  await eventually(() => expect(page()).toContain("kndl is signed in"))
+  expect(page()).toContain("kndl on laptop is signed in to this Hub")
   expect(sessionStorage.length).toBe(0)
 })

@@ -7,8 +7,8 @@ import { afterAll, afterEach, describe, expect, test } from "bun:test"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type HubToWeb, ProtocolVersion } from "@claude-hub/protocol"
 import { BunServices, BunSocket } from "@effect/platform-bun"
+import { type HubToWeb, ProtocolVersion } from "@kndl/protocol"
 import { Effect, Fiber, Layer, Option, Redacted, References } from "effect"
 import { RunnerTokens } from "../../hub/src/RunnerTokens.ts"
 import { generateSecretsKey } from "../../hub/src/Secrets.ts"
@@ -43,11 +43,11 @@ import { makeTmux, Tmux } from "./Tmux.ts"
 import { Tunnels } from "./Tunnels.ts"
 import { Updater } from "./Updater.ts"
 
-const tmuxSocket = `claude-hub-mirror-test-${process.pid}`
+const tmuxSocket = `kndl-mirror-test-${process.pid}`
 const tmuxMissing = Bun.which("tmux") === null
 // Bun doesn't say why a test was skipped, so this does.
 if (tmuxMissing) console.warn("Skipping the terminal mirror test: tmux isn't installed")
-const dir = mkdtempSync(join(tmpdir(), "claude-hub-mirror-"))
+const dir = mkdtempSync(join(tmpdir(), "kndl-mirror-"))
 
 /**
  * Stands in for Claude Code: ignores its flags, says it's ready, echoes each line, prints the

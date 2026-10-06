@@ -1,5 +1,5 @@
 {
-  "name": "@claude-hub/mod",
+  "name": "@kndl/mod",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,10 +8,10 @@
     "typecheck": "bash scripts/typecheck.sh"
   },
   "devDependencies": {
-    "@claude-hub/hub": "workspace:*"
+    "@kndl/hub": "workspace:*"
   },
   "dependencies": {
-    "@claude-hub/protocol": "workspace:*",
+    "@kndl/protocol": "workspace:*",
     "effect": "4.0.0"
   }
 }

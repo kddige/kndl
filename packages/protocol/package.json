@@ -1,11 +1,12 @@
 {
-  "name": "@claude-hub/protocol",
+  "name": "@kndl/protocol",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./home": "./src/Home.ts",
     "./checkout": "./src/Checkout.ts",
+    "./former-name": "./src/FormerName.ts",
     "./tunnel-end": "./src/TunnelEnd.ts"
   },
   "scripts": {

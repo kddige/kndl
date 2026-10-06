@@ -3,7 +3,7 @@
 // line, which returns output only once a command exits. The server dies with the VM, so a
 // Session's terminal lasts as long as its Sandbox runs.
 
-import { MaxLastOutputLength, type SessionId, type TerminalSize } from "@claude-hub/protocol"
+import { MaxLastOutputLength, type SessionId, type TerminalSize } from "@kndl/protocol"
 import { Context, Data, Effect, Layer, Queue, type Scope, Stream } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import {
@@ -90,7 +90,7 @@ export class Tmux extends Context.Service<
      */
     readonly retireHostServer: Effect.Effect<void>
   }
->()("@claude-hub/runner/Tmux") {}
+>()("@kndl/runner/Tmux") {}
 
 /** How many lines of a dead pane {@link lastOutputOf} keeps. */
 export const LastOutputLines = 40
@@ -127,10 +127,10 @@ export function lastOutputOf(
 }
 
 /**
- * The tmux server in each Sandbox, `tmux -L claude-hub`: apart from any tmux the agent starts
+ * The tmux server in each Sandbox, `tmux -L kndl`: apart from any tmux the agent starts
  * there itself. `-f /dev/null`: an image's tmux.conf must not change how Sessions behave.
  */
-const guestServer = ["-L", "claude-hub", "-f", "/dev/null"]
+const guestServer = ["-L", "kndl", "-f", "/dev/null"]
 
 /** What the Tmux service needs of a Sandbox backend: running commands. */
 export type TmuxBackend = Pick<SandboxBackendShape, "exec" | "spawn">
@@ -317,7 +317,7 @@ function sequence(commands: ReadonlyArray<ReadonlyArray<string>>): Array<string>
   ])
 }
 
-const ExitSubscription = "claude-hub-exit"
+const ExitSubscription = "kndl-exit"
 
 /** The most bytes typed with one `send-keys` command. */
 const InputChunkBytes = 256

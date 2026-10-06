@@ -1,6 +1,6 @@
 // What an operator does to a Hub from the command line, outside the server: issue a Runner's
 // token and make a secrets key. `bun run runner-token` and `bun run secrets-key` (main.ts) and the
-// claude-hub CLI (`claude-hub runner token`, `claude-hub secrets key`) share it.
+// kndl CLI (`kndl runner token`, `kndl secrets key`) share it.
 import { Effect, Layer } from "effect"
 import { DatabaseLive } from "./Database.ts"
 import { type RunnerIdentity, RunnerTokens } from "./RunnerTokens.ts"

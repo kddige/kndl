@@ -10,14 +10,14 @@ import { requestRunnerUpdates, RunnerUpdatePush } from "./RunnerUpdatePush.ts"
 
 /** Runs `effect` against a fresh database file, as the CLI opens the Hub's. */
 const withDatabase = async <A, E>(effect: Effect.Effect<A, E>) => {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-push-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-push-"))
   try {
     return await Effect.runPromise(
       effect.pipe(
         Effect.provide(
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
-              env: { HUB_DATABASE: join(dir, "hub.db"), CLAUDE_HUB_HOME: dir },
+              env: { HUB_DATABASE: join(dir, "hub.db"), KNDL_HOME: dir },
             }),
           ),
         ),
@@ -33,7 +33,7 @@ const read = (commit: string) =>
     Effect.provide(RunnerUpdatePush.layer.pipe(Layer.provideMerge(DatabaseLive))),
   )
 
-describe("claude-hub update leaving the push", () => {
+describe("kndl update leaving the push", () => {
   test("records it for the commit, and finds the Runner here by its token", async () => {
     const outcome = await withDatabase(
       Effect.gen(function* () {

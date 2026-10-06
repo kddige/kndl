@@ -8,8 +8,8 @@ import {
   fakeBuilds,
   removeTempDirs,
   tempDir,
-} from "@claude-hub/hub/src/cliTestSupport.ts"
-import { startHub, stopHubs } from "@claude-hub/hub/src/testSupport.ts"
+} from "@kndl/hub/src/cliTestSupport.ts"
+import { startHub, stopHubs } from "@kndl/hub/src/testSupport.ts"
 import { Effect, Exit } from "effect"
 import type { Build } from "./BuildInfo.ts"
 import { cliConfigPath, readCliConfig } from "./CliConfig.ts"
@@ -35,20 +35,20 @@ describe("whether the CLI asks its Hub for an update", () => {
   test("never from a checkout, as an install's command runs: the checkout updates with it", () => {
     expect(planSelfUpdate({ build: undefined, env: {}, config: { hub } })).toEqual({
       _tag: "Skip",
-      reason: "It runs from a checkout, which `claude-hub update` updates.",
+      reason: "It runs from a checkout, which `kndl update` updates.",
     })
   })
 
-  test("never with CLAUDE_HUB_NO_SELF_UPDATE set", () => {
-    const env = { CLAUDE_HUB_NO_SELF_UPDATE: "1" }
+  test("never with KNDL_NO_SELF_UPDATE set", () => {
+    const env = { KNDL_NO_SELF_UPDATE: "1" }
     expect(planSelfUpdate({ build: built, env, config: { hub } })._tag).toBe("Skip")
     // Set empty, it isn't set.
-    const empty = { CLAUDE_HUB_NO_SELF_UPDATE: "" }
+    const empty = { KNDL_NO_SELF_UPDATE: "" }
     expect(planSelfUpdate({ build: built, env: empty, config: { hub } })._tag).toBe("Check")
   })
 
   test("not again in the run it started after updating", () => {
-    const env = { CLAUDE_HUB_UPDATED_TO: "b".repeat(40) }
+    const env = { KNDL_UPDATED_TO: "b".repeat(40) }
     expect(planSelfUpdate({ build: built, env, config: { hub } })._tag).toBe("Skip")
   })
 
@@ -68,8 +68,8 @@ describe("whether the CLI asks its Hub for an update", () => {
 
 describe("the CLI's config", () => {
   test("is cli.json in XDG_CONFIG_HOME, or ~/.config", () => {
-    expect(cliConfigPath({}, "/home/ada")).toBe("/home/ada/.config/claude-hub/cli.json")
-    expect(cliConfigPath({ XDG_CONFIG_HOME: "/xdg" }, "/home/ada")).toBe("/xdg/claude-hub/cli.json")
+    expect(cliConfigPath({}, "/home/ada")).toBe("/home/ada/.config/kndl/cli.json")
+    expect(cliConfigPath({ XDG_CONFIG_HOME: "/xdg" }, "/home/ada")).toBe("/xdg/kndl/cli.json")
   })
 
   test("reads the Hub the install script recorded, and nothing from a file it can't read", async () => {
@@ -99,11 +99,11 @@ describe("asking the Hub", () => {
   })
 })
 
-/** A CLI at the old commit, at `<dir>/bin/claude-hub`. */
+/** A CLI at the old commit, at `<dir>/bin/kndl`. */
 async function installed() {
   const dir = await tempDir("cli-exe-")
   await mkdir(join(dir, "bin"))
-  const exe = join(dir, "bin", "claude-hub")
+  const exe = join(dir, "bin", "kndl")
   await writeFile(exe, fakeBinary("linux-x64", built.commit))
   await chmod(exe, 0o755)
   return { dir, exe }
@@ -120,13 +120,13 @@ describe("replacing the binary", () => {
     expect(result).toBe(realpathSync(exe))
     expect(await readFile(exe, "utf8")).toBe(fakeBinary("linux-x64", commit))
     expect((await stat(exe)).mode & 0o777).toBe(0o755)
-    expect(await readdir(join(exe, ".."))).toEqual(["claude-hub"])
+    expect(await readdir(join(exe, ".."))).toEqual(["kndl"])
   })
 
   test("replaces the file a symlink points to, keeping the link", async () => {
     const at = await startHub({ cliBuilds: fakeBuilds({ dir: await tempDir("cli-") }).layer })
     const { dir, exe } = await installed()
-    const link = join(dir, "claude-hub-link")
+    const link = join(dir, "kndl-link")
     await symlink(exe, link)
     await Effect.runPromise(replaceBinary({ hub: at.url, target: "linux-x64", commit, exe: link }))
     expect(await readFile(exe, "utf8")).toBe(fakeBinary("linux-x64", commit))
@@ -141,7 +141,7 @@ describe("replacing the binary", () => {
     )
     expect(exit).toEqual(Exit.fail(`the Hub sent the CLI at ${commit}, not ${other}`))
     expect(await readFile(exe, "utf8")).toBe(fakeBinary("linux-x64", built.commit))
-    expect(await readdir(join(exe, ".."))).toEqual(["claude-hub"])
+    expect(await readdir(join(exe, ".."))).toEqual(["kndl"])
   })
 
   test("keeps the binary it has when the Hub can't serve one", async () => {
@@ -153,7 +153,7 @@ describe("replacing the binary", () => {
     )
     expect(exit).toEqual(
       Exit.fail(
-        "the Hub answered 500: The Hub couldn't build the claude-hub CLI for linux-x64: no network",
+        "the Hub answered 500: The Hub couldn't build the kndl CLI for linux-x64: no network",
       ),
     )
     expect(await readFile(exe, "utf8")).toBe(fakeBinary("linux-x64", built.commit))

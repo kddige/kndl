@@ -1,5 +1,5 @@
 // An Environment (ADR 0009) on a real microsandbox VM, so it is skipped unless
-// CLAUDE_HUB_SANDBOX_IT=1: a real build of an Alpine recipe with Docker, a Session booted from
+// KNDL_SANDBOX_IT=1: a real build of an Alpine recipe with Docker, a Session booted from
 // it, a variable reaching the Session's processes but not the VM's stored environment, a wake, a
 // recreate on a new version, and a Test build. It needs `msb` installed for the current user,
 // network access to Docker Hub and Alpine's packages, and to npm the first time a Claude Code
@@ -7,7 +7,7 @@
 // would get: no model calls, no credentials; the variables are made up. Everything it creates is named it-49-… and removed at the end,
 // pass or fail.
 //
-//   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/Environments.integration.test.ts
+//   KNDL_SANDBOX_IT=1 bun test packages/runner/src/Environments.integration.test.ts
 
 import { expect, test } from "bun:test"
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
@@ -19,9 +19,9 @@ import type {
   RunnerToHub,
   SessionId,
   TestBuildId,
-} from "@claude-hub/protocol"
-import { EnvironmentVersion } from "@claude-hub/protocol"
-import { devHome } from "@claude-hub/protocol/home"
+} from "@kndl/protocol"
+import { EnvironmentVersion } from "@kndl/protocol"
+import { devHome } from "@kndl/protocol/home"
 import { Duration, Effect, Layer, Option, Schema } from "effect"
 import { Sandbox, Snapshot, Volume } from "microsandbox"
 import { buildGroup } from "./EnvironmentBuilds.ts"
@@ -36,7 +36,7 @@ import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { FakeHubVariables, variable } from "./testSupport.ts"
 
-const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
+const enabled = process.env.KNDL_SANDBOX_IT === "1"
 
 /** Everything this test makes is named under it, and only that is removed. */
 const namePrefix = "it-49-"
@@ -133,7 +133,7 @@ test.skipIf(!enabled)(
   "an Environment is built, booted, woken, recreated and Test built on a real VM",
   async () => {
     const sessionId = `s${Date.now().toString(36)}` as SessionId
-    const root = await mkdtemp(join(tmpdir(), "claude-hub-it-49-"))
+    const root = await mkdtemp(join(tmpdir(), "kndl-it-49-"))
     const directories = sessionDirectories(root, sessionId)
     await mkdir(directories.workspace, { recursive: true })
     await writeFile(join(directories.workspace, "package.json"), '{"name":"app"}\n')

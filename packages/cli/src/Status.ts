@@ -1,4 +1,4 @@
-// `claude-hub status`: what's installed in the home, which services run, where the Hub is, whether
+// `kndl status`: what's installed in the home, which services run, where the Hub is, whether
 // the Runner is connected, and which commit the install is on.
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs"
 import { Console, Effect } from "effect"
@@ -73,19 +73,19 @@ export const status = (layout: Layout) =>
     if (!isInstalled(layout)) {
       yield* Console.log(
         [
-          `claude-hub is not installed in ${layout.home.dir}.`,
+          `kndl is not installed in ${layout.home.dir}.`,
           "",
           `Install it with:  ${InstallLine}`,
-          "or set CLAUDE_HUB_HOME to the home you installed.",
+          "or set KNDL_HOME to the home you installed.",
         ].join("\n"),
       )
       return false
     }
     const checkout = yield* readCheckout(layout.app)
-    const lines = [`claude-hub in ${layout.home.dir}`, `  Install   ${describeCheckout(checkout)}`]
+    const lines = [`kndl in ${layout.home.dir}`, `  Install   ${describeCheckout(checkout)}`]
     const roles = configuredRoles(layout)
     if (roles.length === 0) {
-      lines.push("  Setup     neither a Hub nor a Runner yet: run `claude-hub onboard`")
+      lines.push("  Setup     neither a Hub nor a Runner yet: run `kndl onboard`")
     }
     const on = platform()
     for (const role of roles) {

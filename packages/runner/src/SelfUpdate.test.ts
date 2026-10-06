@@ -16,7 +16,7 @@ import {
   updaterOf,
 } from "./SelfUpdate.ts"
 
-const app = "/home/alice/.claude-hub/app"
+const app = "/home/alice/.kndl/app"
 const installed = {
   devHome: false,
   checkout: app,
@@ -29,7 +29,7 @@ const target = { commit: "b".repeat(40), branch: "main" }
 const onMain = { fetchError: undefined, exists: true, onMain: true }
 
 describe("who updates itself", () => {
-  test("the claude-hub service, running the installed checkout", () => {
+  test("the kndl service, running the installed checkout", () => {
     expect(updaterOf(installed)).toEqual({ self: true })
   })
 
@@ -37,7 +37,7 @@ describe("who updates itself", () => {
     const updater = updaterOf({
       ...installed,
       devHome: true,
-      checkout: "/src/claude-hub",
+      checkout: "/src/kndl",
       service: undefined,
     })
 
@@ -46,18 +46,18 @@ describe("who updates itself", () => {
   })
 
   test("not a Runner run from another checkout than the installed one", () => {
-    const updater = updaterOf({ ...installed, checkout: "/src/claude-hub" })
+    const updater = updaterOf({ ...installed, checkout: "/src/kndl" })
 
     expect(updater).toEqual({
       self: false,
-      reason: `it runs from /src/claude-hub, not the installed checkout ${app}`,
+      reason: `it runs from /src/kndl, not the installed checkout ${app}`,
     })
   })
 
   test("not one run by hand, which nothing would start again after it exits", () => {
     expect(updaterOf({ ...installed, service: undefined })).toMatchObject({
       self: false,
-      reason: expect.stringContaining("isn't run by the claude-hub service"),
+      reason: expect.stringContaining("isn't run by the kndl service"),
     })
   })
 
@@ -216,7 +216,7 @@ describe("starting after an update", () => {
     expect(lastUpdateOf(failed)).toEqual(failed.failure)
   })
 
-  test("forgets a failure once it runs another commit, as after `claude-hub update`", () => {
+  test("forgets a failure once it runs another commit, as after `kndl update`", () => {
     expect(bootDecision(failed, target.commit, 4)).toEqual({ _tag: "Clear" })
   })
 
@@ -275,11 +275,11 @@ describe("turned away by the Hub", () => {
     expect(advice.message).toContain("pull this checkout to the Hub's commit")
   })
 
-  test("says to run `claude-hub update` when an older Hub says no commit", () => {
+  test("says to run `kndl update` when an older Hub says no commit", () => {
     expect(rejectedAdvice({ self: true }, undefined)).toEqual({
       update: false,
       message:
-        "To connect again, this Runner needs the Hub's version: run `claude-hub update` on this machine. Retrying meanwhile.",
+        "To connect again, this Runner needs the Hub's version: run `kndl update` on this machine. Retrying meanwhile.",
     })
   })
 })

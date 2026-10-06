@@ -1,6 +1,6 @@
 # Navigation UX: the app sidebar
 
-Research behind issue #76, which replaces the home-page Session list with an app sidebar. It records what comparable products do, what the usability and accessibility guidance says, and what claude-hub takes from each. It is a redesign of how existing pages are reached, not new features: the sidebar only shows data the web UI already has.
+Research behind issue #76, which replaces the home-page Session list with an app sidebar. It records what comparable products do, what the usability and accessibility guidance says, and what kndl takes from each. It is a redesign of how existing pages are reached, not new features: the sidebar only shows data the web UI already has.
 
 ## Sources
 
@@ -31,9 +31,9 @@ OpenClaw is the closest comparison: an open-source agent whose web Control UI is
 - W3C APG, [disclosure navigation](https://w3.org/WAI/ARIA/apg/patterns/disclosure/examples/disclosure-navigation): a `nav` with an accessible name around plain lists of links; toggles are `button`s with `aria-expanded` and `aria-controls`; the current page's link has `aria-current="page"`. No `role="menu"`, so links keep their meaning and Tab works as usual.
 - Primer, [NavList accessibility](https://primer.style/product/components/nav-list/accessibility/): the current item must not be shown by colour alone; collapsed and expanded groups must say so programmatically; a tree view is not a substitute for navigation.
 
-## Recommendations for claude-hub
+## Recommendations for kndl
 
-| # | Recommendation | Source | In claude-hub |
+| # | Recommendation | Source | In kndl |
 |---|---|---|---|
 | 1 | One persistent left sidebar on desktop, never hidden behind a menu there. | NN/g vertical nav, hamburger study | The sidebar replaces the top header and the list on `/`. It's always visible from 48rem up. |
 | 2 | Hub-wide destinations first, as a short labelled list with icons; Sessions under them. | Linear, Vercel, NN/g | **Environments**, **Shared variables** and **Archived Sessions**, then a **Sessions** heading. Three items keep the Sessions in view without scrolling. |

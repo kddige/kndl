@@ -12,7 +12,7 @@ import {
   type RunnerSummary,
   type SharedVariable,
   valuesNeededText,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { type ReactNode, useEffect, useMemo, useState } from "react"

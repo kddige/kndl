@@ -2,11 +2,11 @@
 // - a sign-in cookie, for people in a browser;
 // - a Runner token, as `Authorization: Bearer`, for a Runner;
 // - a mod token, as `Authorization: Bearer`, for one Session's mod;
-// - a CLI token, as `Authorization: Bearer`, for the `claude-hub` CLI of a person signed in with
-//   `claude-hub login`: on the CLI's own endpoints, the tunnel endpoint among them.
+// - a CLI token, as `Authorization: Bearer`, for the `kndl` CLI of a person signed in with
+//   `kndl login`: on the CLI's own endpoints, the tunnel endpoint among them.
 // Sandboxes can reach the Hub (ADR 0004), so nothing is open without one.
 
-import type { Participant } from "@claude-hub/protocol"
+import type { Participant } from "@kndl/protocol"
 import { Duration, Effect, Option, Schema } from "effect"
 import { HttpServerRequest, HttpServerRespondable, HttpServerResponse } from "effect/http"
 import { type CliIdentity, CliTokens } from "./CliTokens.ts"
@@ -19,7 +19,7 @@ import { SignIns } from "./SignIns.ts"
  * The cookie holding a browser's sign-in token. Host-only: it never names a `Domain`. No
  * `__Host-` prefix, which browsers refuse without `Secure`: see `cookieSecurity`.
  */
-export const signInCookie = "claude_hub_sign_in"
+export const signInCookie = "kndl_sign_in"
 
 /** No credential, or one that isn't valid here: answered with 401. */
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
@@ -106,7 +106,7 @@ export const authenticateCli = Effect.gen(function* () {
     ? Option.none<CliIdentity>()
     : yield* (yield* CliTokens).authenticate(token.value)
   if (Option.isNone(cli)) {
-    return yield* new Unauthorized({ message: "Expected a CLI token: run claude-hub login" })
+    return yield* new Unauthorized({ message: "Expected a CLI token: run kndl login" })
   }
   return cli.value
 })

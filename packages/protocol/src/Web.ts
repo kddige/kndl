@@ -555,7 +555,7 @@ export const PairingCodeCreated = Schema.TaggedStruct("PairingCodeCreated", {
   id: PairingCodeId,
   /** The code, in groups of five. */
   code: Schema.NonEmptyString,
-  /** The Hub's public URL with the code as its fragment, for `claude-hub runner join`. */
+  /** The Hub's public URL with the code as its fragment, for `kndl runner join`. */
   link: Schema.NonEmptyString,
   expiresAt: EpochMillis,
   runnerId: Schema.optionalKey(RunnerId),

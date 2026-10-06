@@ -4,7 +4,7 @@ import {
   EffortLevels,
   type RunnerId,
   type SessionId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import {
   createRootRoute,
   createRoute,
@@ -195,7 +195,7 @@ const kitRoute = createRoute({
 })
 
 /**
- * Approving `claude-hub login` on a machine (issue #179): on its own, without the sidebar, and
+ * Approving `kndl login` on a machine (issue #179): on its own, without the sidebar, and
  * signed in or not.
  */
 const cliLoginRoute = createRoute({

@@ -3,7 +3,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { CliTarget } from "@claude-hub/protocol"
+import type { CliTarget } from "@kndl/protocol"
 import { Effect, Layer } from "effect"
 import { CliBuilds } from "./CliBuilds.ts"
 
@@ -25,7 +25,7 @@ export async function removeTempDirs() {
 
 /** What a stand-in build writes: a script that says its version as the CLI does, and its target. */
 export const fakeBinary = (target: string, at: string) =>
-  `#!/bin/sh\n# target: ${target}\necho "claude-hub v${at.slice(0, 12)}"\n`
+  `#!/bin/sh\n# target: ${target}\necho "kndl v${at.slice(0, 12)}"\n`
 
 /** CliBuilds with a stand-in for `bun build --compile`, which counts its builds. */
 export function fakeBuilds(options: {

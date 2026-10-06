@@ -1,17 +1,17 @@
 // The credential proxy (#145, ADR 0013) as a Sandbox reaches it, on a real microsandbox VM, so it
-// is skipped unless CLAUDE_HUB_SANDBOX_IT=1. A Sandbox on buildpack-deps:bookworm (which has curl)
+// is skipped unless KNDL_SANDBOX_IT=1. A Sandbox on buildpack-deps:bookworm (which has curl)
 // calls the proxy at host.microsandbox.internal with a Session token, the way Claude Code and its
 // mod will; the proxy forwards to a fake Anthropic and a fake Hub on this host's loopback, so
 // nothing here reaches Anthropic. It needs `msb` installed for the current user and network
 // access to Docker Hub. Everything it creates is named it-145-… and removed at the end.
 //
-//   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/proxy/CredentialProxy.integration.test.ts
+//   KNDL_SANDBOX_IT=1 bun test packages/runner/src/proxy/CredentialProxy.integration.test.ts
 
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type ClaudeCredential, credentialFromSecret, type SessionId } from "@claude-hub/protocol"
+import { type ClaudeCredential, credentialFromSecret, type SessionId } from "@kndl/protocol"
 import { Cause, Effect, Exit, Layer, Redacted } from "effect"
 import { Sandbox, Volume } from "microsandbox"
 import * as MicrosandboxBackend from "../sandbox/MicrosandboxBackend.ts"
@@ -21,7 +21,7 @@ import { makeCredentialProxy, serveCredentialProxy } from "./CredentialProxy.ts"
 import { RunnerCredential } from "./RunnerCredential.ts"
 import { makeSessionTokens, SessionTokens } from "./SessionTokens.ts"
 
-const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
+const enabled = process.env.KNDL_SANDBOX_IT === "1"
 
 const namePrefix = "it-145-"
 
@@ -52,7 +52,7 @@ test.skipIf(!enabled)(
   async () => {
     await sweep()
     const sessionId = `s${Date.now().toString(36)}` as SessionId
-    const workspace = await mkdtemp(join(tmpdir(), "claude-hub-it-145-"))
+    const workspace = await mkdtemp(join(tmpdir(), "kndl-it-145-"))
 
     const toAnthropic: Array<{ path: string; authorization: string | null }> = []
     const anthropic = Bun.serve({
@@ -162,7 +162,7 @@ test.skipIf(!enabled)(
 
       // The mod's command poll, relayed to the Hub with the mod token.
       const poll = yield* sh(
-        `curl -s -H "authorization: Bearer $CLAUDE_HUB_MOD_TOKEN" "$CLAUDE_HUB_URL/mod/commands?after=0&waitMs=1000"`,
+        `curl -s -H "authorization: Bearer $KNDL_MOD_TOKEN" "$KNDL_URL/mod/commands?after=0&waitMs=1000"`,
       )
       expect(poll.stdout).toBe('{"messages":[]}')
 

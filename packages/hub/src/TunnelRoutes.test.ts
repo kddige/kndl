@@ -11,7 +11,7 @@ import {
   TunnelCloseCode,
   TunnelMaxFrame,
   TunnelWindow,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Effect, Option, Redacted } from "effect"
 import { signInCookie } from "./Auth.ts"
 import { CliTokens, pkceChallenge } from "./CliTokens.ts"
@@ -32,7 +32,7 @@ afterEach(async () => {
   await stopAll()
 })
 
-const repo = "kddige/claude-hub"
+const repo = "kddige/kndl"
 
 /** The bytes 0..n-1 of a pattern a test can check arrived whole and in order. */
 const pattern = (from: number, length: number) => {

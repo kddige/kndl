@@ -112,7 +112,7 @@
 //   says TunnelFailed, or goes offline first, fails the tunnel.
 // - CLI tokens (CliTokens.ts): each person is sent their own (CliTokenList) after the welcome and
 //   whenever one is made or revoked, and may revoke them from any of their web clients.
-// - Forwards (#180, ADR 0016): `claude-hub forward` keeps a connection per Session it forwards
+// - Forwards (#180, ADR 0016): `kndl forward` keeps a connection per Session it forwards
 //   (ForwardRoutes.ts), sent the Session whenever it changes. A forward is presence, named with
 //   the machine its CLI token is named after, so it keeps the Session from being idle. One to an
 //   Asleep Session wakes it. When the Session goes to sleep anyway, or is archived or purged, or
@@ -203,7 +203,7 @@ import {
   TunnelCloseCode,
   repoKey,
   sameRepo,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import {
   Clock,
   Context,
@@ -403,12 +403,12 @@ export class SessionRelay extends Context.Service<
     /** Whether a Runner is connected now. */
     readonly runnerOnline: (id: RunnerId) => boolean
     /**
-     * A person's CLI tokens changed, as at `claude-hub login`: their web clients are sent them,
+     * A person's CLI tokens changed, as at `kndl login`: their web clients are sent them,
      * and the forwards of a token revoked are closed.
      */
     readonly cliTokensChanged: (participantId: ParticipantId) => Effect.Effect<void>
     /**
-     * A `claude-hub forward`, once welcomed, by a caller already checked for access (#180): sends
+     * A `kndl forward`, once welcomed, by a caller already checked for access (#180): sends
      * it the Session, now and whenever it changes, and counts it as presence until the scope
      * closes. An Asleep Session is woken; one that can't be is closed, saying why.
      */
@@ -417,7 +417,7 @@ export class SessionRelay extends Context.Service<
       sessionId: SessionId,
       peer: Peer<HubToForward>,
     ) => Effect.Effect<Receive<never>, never, Scope.Scope>
-    /** The Sessions `claude-hub forward` can pick from: the caller's that aren't Archived. */
+    /** The Sessions `kndl forward` can pick from: the caller's that aren't Archived. */
     readonly forwardableSessions: (
       you: Participant,
     ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
@@ -438,7 +438,7 @@ export class SessionRelay extends Context.Service<
       port: number,
     ) => Effect.Effect<PendingTunnel, TunnelRefused | SqlError>
   }
->()("@claude-hub/hub/SessionRelay") {
+>()("@kndl/hub/SessionRelay") {
   static readonly layer = Layer.effect(
     SessionRelay,
     Effect.gen(function* () {
@@ -496,7 +496,7 @@ export class SessionRelay extends Context.Service<
         readonly forwardsPorts: boolean
       }
 
-      /** A `claude-hub forward` of one Session (#180), by a CLI token. */
+      /** A `kndl forward` of one Session (#180), by a CLI token. */
       interface ForwardClient {
         readonly you: Participant
         readonly tokenId: CliTokenId
@@ -2889,7 +2889,7 @@ export class SessionRelay extends Context.Service<
                   if (session.keepAwake !== undefined) keptAwake.push(session.id)
                 }
               }
-              // A push `claude-hub update` left drains it, now its Sessions are settled.
+              // A push `kndl update` left drains it, now its Sessions are settled.
               yield* runnerUpdates.drain(runner.id)
               // Back from a drain or a restart, its Sessions with Keep awake on wake (ADR 0016),
               // unless that drain has just begun: then they wake once it is back from it.
@@ -3237,7 +3237,7 @@ export class SessionRelay extends Context.Service<
         return endForwards(
           (forward) => forward.you.id === participantId && !current.has(forward.tokenId),
           ForwardCloseCode.SignedOut,
-          "This machine's CLI token was revoked: run claude-hub login to sign in again.",
+          "This machine's CLI token was revoked: run kndl login to sign in again.",
         )
       }
 

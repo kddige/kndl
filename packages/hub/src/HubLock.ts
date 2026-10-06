@@ -12,7 +12,7 @@
 //
 // The lock is on a file beside the database rather than on the database itself: an exclusive
 // lock on `hub.db` would also keep out what may run beside a live Hub, such as issuing a Runner
-// token or `claude-hub doctor`.
+// token or `kndl doctor`.
 import { Database } from "bun:sqlite"
 import { Effect, Schema, type Scope } from "effect"
 

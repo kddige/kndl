@@ -19,7 +19,7 @@ import { seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
 
 afterEach(stopAll)
 
-const repo = "kddige/claude-hub"
+const repo = "kddige/kndl"
 const token = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
 const apiKey = "sk-ant-api03-FAKE_KEY_FOR_TESTS_ONLY_77d1"
 

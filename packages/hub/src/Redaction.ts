@@ -26,7 +26,7 @@
 // program printing it), and a value Claude Code's TUI wraps onto a new line itself, with
 // indentation, in the terminal. The transcript is redacted either way.
 
-import { MinSensitiveValueLength, type SessionEvent } from "@claude-hub/protocol"
+import { MinSensitiveValueLength, type SessionEvent } from "@kndl/protocol"
 
 /** The longest a stream holds text back that could start a value, in milliseconds. */
 export const holdMillis = 100

@@ -1,0 +1,274 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 128 128" width="512" height="512"><title>kndl</title><defs>
+    <!-- shared flame shapes, 128 box -->
+    <path id="flameOuter" d="M64 12 C 74 30, 100 46, 100 74 C 100 96, 84 108, 64 108 C 44 108, 28 96, 28 74 C 28 58, 36 48, 44 40 C 45 52, 50 58, 57 60 C 54 44, 56 26, 64 12 Z"/>
+    <path id="flameInner" d="M64 50 C 70 62, 85 70, 85 86 C 85 98, 76 105, 64 105 C 52 105, 43 98, 43 86 C 43 75, 52 66, 64 50 Z"/>
+
+    <radialGradient id="kipGlow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#FFC94A" stop-opacity=".55"/><stop offset="1" stop-color="#FFC94A" stop-opacity="0"/></radialGradient>
+    <radialGradient id="flyGlow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#E9FF7A" stop-opacity=".7"/><stop offset=".45" stop-color="#C8F25A" stop-opacity=".22"/><stop offset="1" stop-color="#C8F25A" stop-opacity="0"/></radialGradient>
+    <linearGradient id="emberFlame" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE27A"/><stop offset=".55" stop-color="#FF9F2E"/><stop offset="1" stop-color="#F0453A"/></linearGradient>
+    <linearGradient id="toast" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8E5427"/><stop offset="1" stop-color="#E2A35E"/></linearGradient>
+    <linearGradient id="nightSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#191338"/><stop offset="1" stop-color="#2E1D4A"/></linearGradient>
+    <clipPath id="mallowClip"><rect x="40" y="30" width="48" height="52" rx="15" transform="rotate(-16 64 56)"/></clipPath>
+
+    <!-- A. Kip, the little flame -->
+    <symbol id="kip" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#1D1733"/>
+      <g fill="#FFF3C8"><circle cx="20" cy="22" r="1.8"/><circle cx="104" cy="18" r="1.3"/><circle cx="112" cy="44" r="1.9"/><circle cx="16" cy="56" r="1.2"/><circle cx="30" cy="36" r="1"/></g>
+      <circle cx="64" cy="82" r="50" fill="url(#kipGlow)"/>
+      <rect x="28" y="100" width="72" height="13" rx="6.5" fill="#6B4A3A" transform="rotate(-11 64 106)"/>
+      <rect x="28" y="100" width="72" height="13" rx="6.5" fill="#8C5F47" transform="rotate(11 64 106)"/>
+      <use href="#flameOuter" fill="#F6C445"/>
+      <use href="#flameInner" fill="#FFEDB5"/>
+      <ellipse cx="56" cy="85" rx="3.4" ry="4.4" fill="#2A1F3D"/>
+      <ellipse cx="72" cy="85" rx="3.4" ry="4.4" fill="#2A1F3D"/>
+      <circle cx="57.2" cy="83.4" r="1.1" fill="#fff"/><circle cx="73.2" cy="83.4" r="1.1" fill="#fff"/>
+      <circle cx="49.5" cy="93" r="3.4" fill="#F59C8B" opacity=".65"/><circle cx="78.5" cy="93" r="3.4" fill="#F59C8B" opacity=".65"/>
+      <path d="M59 94 Q64 99.5 69 94" fill="none" stroke="#2A1F3D" stroke-width="2.6" stroke-linecap="round"/>
+    </symbol>
+
+    <!-- B. Round, friends around the fire, seen from above -->
+    <symbol id="round" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#123A2C"/>
+      <circle cx="64" cy="64" r="54" fill="none" stroke="#1E5240" stroke-width="1.5" stroke-dasharray="2 5"/>
+      <g>
+        <circle cx="64" cy="18" r="9.5" fill="#F4E6C8"/>
+        <circle cx="104" cy="41" r="9.5" fill="#9FD9B8"/>
+        <circle cx="104" cy="87" r="9.5" fill="#F4E6C8"/>
+        <circle cx="64" cy="110" r="9.5" fill="#F7C548"/>
+        <circle cx="24" cy="87" r="9.5" fill="#9FD9B8"/>
+        <circle cx="24" cy="41" r="9.5" fill="#F4E6C8"/>
+      </g>
+      <circle cx="64" cy="64" r="24" fill="#F7B733" opacity=".14"/>
+      <g transform="translate(64 66) scale(.4) translate(-64 -62)">
+        <use href="#flameOuter" fill="#F7B733"/>
+        <use href="#flameInner" fill="#FFE8A3"/>
+      </g>
+      <g fill="#F7C548"><circle cx="80" cy="54" r="1.6"/><circle cx="48" cy="50" r="1.2"/><circle cx="76" cy="44" r="1"/></g>
+    </symbol>
+
+    <!-- C. The K of kindling, sticks lit at the tip -->
+    <symbol id="kstick" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#211C1B"/>
+      <circle cx="90" cy="30" r="30" fill="#FF7A2F" opacity=".12"/>
+      <line x1="44" y1="26" x2="40" y2="104" stroke="#D8AE7E" stroke-width="13" stroke-linecap="round"/>
+      <line x1="46" y1="68" x2="88" y2="102" stroke="#B7895A" stroke-width="13" stroke-linecap="round"/>
+      <line x1="46" y1="68" x2="84" y2="40" stroke="#E8C394" stroke-width="13" stroke-linecap="round"/>
+      <circle cx="40" cy="104" r="4" fill="#8E6440"/><circle cx="88" cy="102" r="4" fill="#7D5636"/>
+      <g transform="translate(92 26) scale(.34) translate(-64 -70)">
+        <use href="#flameOuter" fill="url(#emberFlame)"/>
+        <use href="#flameInner" fill="#FFF0B8"/>
+      </g>
+      <g fill="#FFB347"><circle cx="106" cy="16" r="1.6"/><circle cx="78" cy="14" r="1.2"/><circle cx="110" cy="34" r="1"/></g>
+    </symbol>
+
+    <!-- D. Mallow, the toasting marshmallow -->
+    <symbol id="mallow" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#3B1F40"/>
+      <path d="M86 22 c -6 -6, 4 -10, -2 -16" fill="none" stroke="#F3DCE8" stroke-width="3" stroke-linecap="round" opacity=".45"/>
+      <path d="M96 30 c -5 -5, 3 -8, -2 -13" fill="none" stroke="#F3DCE8" stroke-width="2.5" stroke-linecap="round" opacity=".3"/>
+      <line x1="30" y1="118" x2="58" y2="76" stroke="#C49464" stroke-width="5.5" stroke-linecap="round"/>
+      <rect x="40" y="30" width="48" height="52" rx="15" transform="rotate(-16 64 56)" fill="#FFF7EA"/>
+      <g clip-path="url(#mallowClip)"><rect x="20" y="10" width="90" height="34" fill="url(#toast)" transform="rotate(-16 64 56)"/></g>
+      <ellipse cx="58" cy="62" rx="3.2" ry="4.2" fill="#3B1F40"/>
+      <ellipse cx="74" cy="57.5" rx="3.2" ry="4.2" fill="#3B1F40"/>
+      <circle cx="59" cy="60.5" r="1" fill="#fff"/><circle cx="75" cy="56" r="1" fill="#fff"/>
+      <path d="M62 70 Q68 74 73.5 67.5" fill="none" stroke="#3B1F40" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="52" cy="69" r="3" fill="#F7A3B9" opacity=".7"/><circle cx="80" cy="64.5" r="3" fill="#F7A3B9" opacity=".7"/>
+      <g transform="translate(88 106) scale(.26) translate(-64 -60)">
+        <use href="#flameOuter" fill="#FFB938"/>
+        <use href="#flameInner" fill="#FFEDB0"/>
+      </g>
+    </symbol>
+
+    <!-- E. Glim, the firefly -->
+    <symbol id="glim" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#0F2321"/>
+      <g fill="#E6F7C9"><circle cx="18" cy="20" r="1.5"/><circle cx="108" cy="16" r="1.1"/><circle cx="112" cy="104" r="1.4"/><circle cx="22" cy="100" r="1"/><circle cx="96" cy="40" r=".9"/></g>
+      <circle cx="78" cy="80" r="44" fill="url(#flyGlow)"/>
+      <ellipse cx="50" cy="44" rx="20" ry="11" fill="#DDF3EE" opacity=".42" transform="rotate(-38 50 44)"/>
+      <ellipse cx="64" cy="40" rx="18" ry="10" fill="#DDF3EE" opacity=".3" transform="rotate(-70 64 40)"/>
+      <ellipse cx="78" cy="80" rx="19" ry="17" fill="#E2FA6E" transform="rotate(35 78 80)"/>
+      <ellipse cx="80" cy="82" rx="10" ry="9" fill="#F8FFD2" transform="rotate(35 78 80)"/>
+      <ellipse cx="60" cy="62" rx="13" ry="12" fill="#2E2A45"/>
+      <circle cx="47" cy="52" r="12" fill="#3A3557"/>
+      <path d="M42 42 C 36 30, 28 28, 24 30" fill="none" stroke="#3A3557" stroke-width="2.6" stroke-linecap="round"/>
+      <path d="M50 41 C 48 28, 42 22, 37 21" fill="none" stroke="#3A3557" stroke-width="2.6" stroke-linecap="round"/>
+      <circle cx="24" cy="30" r="2.6" fill="#E2FA6E"/><circle cx="37" cy="21" r="2.6" fill="#E2FA6E"/>
+      <circle cx="44" cy="53" r="3.6" fill="#fff"/><circle cx="43.4" cy="53.6" r="2" fill="#1A1630"/>
+      <circle cx="53" cy="51" r="3.6" fill="#fff"/><circle cx="52.4" cy="51.6" r="2" fill="#1A1630"/>
+      <path d="M45 59.5 Q49 62 53 59" fill="none" stroke="#C9C2E8" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+
+    <!-- F. Constellation, the fire drawn in stars -->
+    <symbol id="stars" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="url(#nightSky)"/>
+      <g fill="#fff" opacity=".35"><circle cx="16" cy="18" r=".9"/><circle cx="110" cy="24" r=".8"/><circle cx="104" cy="110" r=".9"/><circle cx="20" cy="104" r=".7"/><circle cx="96" cy="70" r=".6"/><circle cx="28" cy="70" r=".6"/></g>
+      <polyline points="64,16 76,40 90,58 92,80 80,98 64,102 48,98 36,80 38,60 50,48 56,62 64,16" fill="none" stroke="#F4D78C" stroke-width="1.6" stroke-linejoin="round" opacity=".75"/>
+      <line x1="38" y1="108" x2="90" y2="116" stroke="#F4D78C" stroke-width="1.4" opacity=".4" stroke-linecap="round"/>
+      <line x1="38" y1="116" x2="90" y2="108" stroke="#F4D78C" stroke-width="1.4" opacity=".4" stroke-linecap="round"/>
+      <g fill="#FFE9A6">
+        <path d="M64 6 L66.6 13.4 L74 16 L66.6 18.6 L64 26 L61.4 18.6 L54 16 L61.4 13.4 Z"/>
+        <path d="M90 52 L91.6 56.4 L96 58 L91.6 59.6 L90 64 L88.4 59.6 L84 58 L88.4 56.4 Z"/>
+        <path d="M36 74 L37.6 78.4 L42 80 L37.6 81.6 L36 86 L34.4 81.6 L30 80 L34.4 78.4 Z"/>
+        <circle cx="76" cy="40" r="2.4"/><circle cx="92" cy="80" r="2.2"/><circle cx="80" cy="98" r="2.2"/>
+        <circle cx="64" cy="102" r="2.6"/><circle cx="48" cy="98" r="2.2"/><circle cx="38" cy="60" r="2"/>
+        <circle cx="50" cy="48" r="2"/><circle cx="56" cy="62" r="2.2"/><circle cx="64" cy="80" r="3.2"/>
+      </g>
+    </symbol>
+    <path id="spark" d="M0 -7 L1.9 -1.9 L7 0 L1.9 1.9 L0 7 L-1.9 1.9 L-7 0 L-1.9 -1.9 Z"/>
+    <g id="kipSky">
+      <rect width="128" height="128" rx="30" fill="#1D1733"/>
+      <g fill="#FFF3C8"><circle cx="20" cy="22" r="1.8"/><circle cx="104" cy="18" r="1.3"/><circle cx="112" cy="44" r="1.9"/><circle cx="16" cy="56" r="1.2"/><circle cx="30" cy="36" r="1"/></g>
+      <circle cx="64" cy="82" r="50" fill="url(#kipGlow)"/>
+    </g>
+    <g id="kipLogs">
+      <rect x="28" y="100" width="72" height="13" rx="6.5" fill="#6B4A3A" transform="rotate(-11 64 106)"/>
+      <rect x="28" y="100" width="72" height="13" rx="6.5" fill="#8C5F47" transform="rotate(11 64 106)"/>
+    </g>
+    <g id="kipFlame"><use href="#flameOuter" fill="#F6C445"/><use href="#flameInner" fill="#FFEDB5"/></g>
+    <g id="kipCheeks" fill="#F59C8B" opacity=".65"><circle cx="49.5" cy="93" r="3.4"/><circle cx="78.5" cy="93" r="3.4"/></g>
+    <g id="kipFace">
+      <ellipse cx="56" cy="85" rx="3.4" ry="4.4" fill="#2A1F3D"/><ellipse cx="72" cy="85" rx="3.4" ry="4.4" fill="#2A1F3D"/>
+      <circle cx="57.2" cy="83.4" r="1.1" fill="#fff"/><circle cx="73.2" cy="83.4" r="1.1" fill="#fff"/>
+      <use href="#kipCheeks"/>
+      <path d="M59 94 Q64 99.5 69 94" fill="none" stroke="#2A1F3D" stroke-width="2.6" stroke-linecap="round"/>
+    </g>
+    <g id="kipFig"><use href="#kipLogs"/><use href="#kipFlame"/><use href="#kipFace"/></g>
+
+    <symbol id="kipThink" viewBox="0 0 128 128">
+      <use href="#kipSky"/><use href="#kipLogs"/><use href="#kipFlame"/><use href="#kipCheeks"/>
+      <ellipse cx="57" cy="82" rx="3.4" ry="4.4" fill="#2A1F3D"/><ellipse cx="73" cy="82" rx="3.4" ry="4.4" fill="#2A1F3D"/>
+      <circle cx="58" cy="79.6" r="1.2" fill="#fff"/><circle cx="74" cy="79.6" r="1.2" fill="#fff"/>
+      <path d="M60 95.5 Q64 93.5 68 95" fill="none" stroke="#2A1F3D" stroke-width="2.4" stroke-linecap="round"/>
+      <g fill="#FFF3C8"><circle cx="92" cy="46" r="2.6"/><circle cx="100" cy="35" r="3.6"/><circle cx="110" cy="22" r="5"/></g>
+    </symbol>
+    <symbol id="kipWait" viewBox="0 0 128 128">
+      <use href="#kipSky"/><use href="#kipLogs"/><use href="#kipFlame"/><use href="#kipCheeks"/>
+      <ellipse cx="56" cy="84" rx="3.9" ry="5.2" fill="#2A1F3D"/><ellipse cx="72" cy="84" rx="3.9" ry="5.2" fill="#2A1F3D"/>
+      <circle cx="57.3" cy="82" r="1.3" fill="#fff"/><circle cx="73.3" cy="82" r="1.3" fill="#fff"/>
+      <circle cx="64" cy="96" r="2.6" fill="#2A1F3D"/>
+      <rect x="84" y="10" width="32" height="28" rx="11" fill="#FFF3C8"/>
+      <path d="M90 36 L86 46 L98 37 Z" fill="#FFF3C8"/>
+      <text x="100" y="31.5" font-family="system-ui, sans-serif" font-size="21" font-weight="800" fill="#1D1733" text-anchor="middle">?</text>
+    </symbol>
+    <symbol id="kipDone" viewBox="0 0 128 128">
+      <use href="#kipSky"/><use href="#kipLogs"/><use href="#kipFlame"/><use href="#kipCheeks"/>
+      <path d="M52 86 Q56 80.5 60 86 M68 86 Q72 80.5 76 86" fill="none" stroke="#2A1F3D" stroke-width="2.8" stroke-linecap="round"/>
+      <path d="M57 92 Q64 102 71 92 Z" fill="#2A1F3D" stroke="#2A1F3D" stroke-width="2" stroke-linejoin="round"/>
+      <g fill="#FFF3C8"><use href="#spark" transform="translate(100 32) scale(1.2)"/><use href="#spark" transform="translate(28 30) scale(.8)"/><use href="#spark" transform="translate(110 64) scale(.6)"/></g>
+    </symbol>
+    <symbol id="kipSleep" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#1D1733"/>
+      <g fill="#FFF3C8"><circle cx="20" cy="22" r="1.8"/><circle cx="104" cy="18" r="1.3"/><circle cx="112" cy="44" r="1.9"/><circle cx="16" cy="56" r="1.2"/><circle cx="30" cy="36" r="1"/></g>
+      <circle cx="64" cy="96" r="34" fill="url(#kipGlow)" opacity=".7"/>
+      <use href="#kipLogs"/>
+      <g transform="translate(64 106) scale(.6) translate(-64 -106)">
+        <use href="#flameOuter" fill="#E3A23A"/><use href="#flameInner" fill="#F6D48C"/>
+        <path d="M51 85 Q56 90 61 85 M67 85 Q72 90 77 85" fill="none" stroke="#2A1F3D" stroke-width="3.6" stroke-linecap="round"/>
+        <use href="#kipCheeks"/>
+        <circle cx="64" cy="96" r="2.4" fill="#2A1F3D"/>
+      </g>
+      <g fill="#FFF3C8" font-family="system-ui, sans-serif" font-weight="800" opacity=".85"><text x="80" y="62" font-size="14">z</text><text x="92" y="48" font-size="11">z</text><text x="101" y="37" font-size="8">z</text></g>
+    </symbol>
+
+    <symbol id="roundKip" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#123A2C"/>
+      <circle cx="64" cy="64" r="44" fill="none" stroke="#1E5240" stroke-width="1.5" stroke-dasharray="2 5"/>
+      <circle cx="64" cy="64" r="30" fill="#F7B733" opacity=".13"/>
+      <g>
+        <circle cx="64" cy="20" r="9" fill="#F4E6C8"/><circle cx="102.1" cy="42" r="9" fill="#9FD9B8"/>
+        <circle cx="102.1" cy="86" r="9" fill="#F4E6C8"/><circle cx="64" cy="108" r="9" fill="#F7C548"/>
+        <circle cx="25.9" cy="86" r="9" fill="#9FD9B8"/><circle cx="25.9" cy="42" r="9" fill="#F4E6C8"/>
+      </g>
+      <g transform="translate(64 64) scale(.56) translate(-64 -62)"><use href="#kipFlame"/><use href="#kipFace"/></g>
+    </symbol>
+
+    <symbol id="kstick2" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#211C1B"/>
+      <circle cx="84" cy="36" r="28" fill="#FF7A2F" opacity=".14"/>
+      <line x1="42" y1="24" x2="38" y2="106" stroke="#D8AE7E" stroke-width="13" stroke-linecap="round"/>
+      <line x1="44" y1="68" x2="90" y2="104" stroke="#B7895A" stroke-width="13" stroke-linecap="round"/>
+      <line x1="44" y1="68" x2="80" y2="46" stroke="#E8C394" stroke-width="13" stroke-linecap="round"/>
+      <circle cx="38" cy="106" r="4" fill="#8E6440"/><circle cx="90" cy="104" r="4" fill="#7D5636"/>
+      <g transform="translate(84 44) scale(.46) translate(-64 -84)">
+        <use href="#flameOuter" fill="url(#emberFlame)"/><use href="#flameInner" fill="#FFF0B8"/>
+      </g>
+    </symbol>
+    <symbol id="kmono" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#211C1B"/>
+      <g stroke="#F3E2C8" stroke-width="12" stroke-linecap="round">
+        <line x1="42" y1="24" x2="38" y2="106"/><line x1="44" y1="68" x2="90" y2="104"/><line x1="44" y1="68" x2="76" y2="49"/>
+      </g>
+      <g transform="translate(86 42) scale(.46) translate(-64 -84)">
+        <use href="#flameOuter" fill="#FFC23D"/>
+      </g>
+    </symbol>
+
+    <g id="mallowFig">
+      <line x1="30" y1="118" x2="58" y2="76" stroke="#C49464" stroke-width="5.5" stroke-linecap="round"/>
+      <rect x="40" y="30" width="48" height="52" rx="15" transform="rotate(-16 64 56)" fill="#FFF7EA"/>
+      <g clip-path="url(#mallowClip)"><rect x="20" y="10" width="90" height="34" fill="url(#toast)" transform="rotate(-16 64 56)"/></g>
+      <ellipse cx="58" cy="62" rx="3.2" ry="4.2" fill="#3B1F40"/><ellipse cx="74" cy="57.5" rx="3.2" ry="4.2" fill="#3B1F40"/>
+      <circle cx="59" cy="60.5" r="1" fill="#fff"/><circle cx="75" cy="56" r="1" fill="#fff"/>
+      <path d="M62 70 Q68 74 73.5 67.5" fill="none" stroke="#3B1F40" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="52" cy="69" r="3" fill="#F7A3B9" opacity=".7"/><circle cx="80" cy="64.5" r="3" fill="#F7A3B9" opacity=".7"/>
+    </g>
+    <symbol id="duo" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#24183A"/>
+      <g fill="#FFF3C8"><circle cx="18" cy="20" r="1.6"/><circle cx="40" cy="12" r="1.1"/><circle cx="14" cy="48" r="1.2"/><circle cx="60" cy="24" r="1"/></g>
+      <circle cx="46" cy="92" r="40" fill="url(#kipGlow)"/>
+      <g transform="translate(46 117) scale(.66) translate(-64 -113)"><use href="#kipFig"/></g>
+      <g transform="translate(92 34) scale(-.6 .6) translate(-64 -56)"><use href="#mallowFig"/></g>
+    </symbol>
+
+    <g id="glimFig">
+      <circle cx="78" cy="80" r="44" fill="url(#flyGlow)"/>
+      <ellipse cx="50" cy="44" rx="20" ry="11" fill="#DDF3EE" opacity=".42" transform="rotate(-38 50 44)"/>
+      <ellipse cx="64" cy="40" rx="18" ry="10" fill="#DDF3EE" opacity=".3" transform="rotate(-70 64 40)"/>
+      <ellipse cx="78" cy="80" rx="19" ry="17" fill="#E2FA6E" transform="rotate(35 78 80)"/>
+      <ellipse cx="80" cy="82" rx="10" ry="9" fill="#F8FFD2" transform="rotate(35 78 80)"/>
+      <ellipse cx="60" cy="62" rx="13" ry="12" fill="#2E2A45"/>
+      <circle cx="47" cy="52" r="12" fill="#3A3557"/>
+      <path d="M42 42 C 36 30, 28 28, 24 30 M50 41 C 48 28, 42 22, 37 21" fill="none" stroke="#3A3557" stroke-width="2.6" stroke-linecap="round"/>
+      <circle cx="24" cy="30" r="2.6" fill="#E2FA6E"/><circle cx="37" cy="21" r="2.6" fill="#E2FA6E"/>
+      <circle cx="44" cy="53" r="3.6" fill="#fff"/><circle cx="43.4" cy="53.6" r="2" fill="#1A1630"/>
+      <circle cx="53" cy="51" r="3.6" fill="#fff"/><circle cx="52.4" cy="51.6" r="2" fill="#1A1630"/>
+      <path d="M45 59.5 Q49 62 53 59" fill="none" stroke="#C9C2E8" stroke-width="1.8" stroke-linecap="round"/>
+    </g>
+    <symbol id="glims" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="#0F2321"/>
+      <g fill="#E6F7C9"><circle cx="18" cy="20" r="1.5"/><circle cx="112" cy="104" r="1.4"/><circle cx="22" cy="100" r="1"/></g>
+      <path d="M22 98 C 34 64, 76 112, 96 84 S 92 30, 56 30" fill="none" stroke="#E2FA6E" stroke-width="1.6" stroke-dasharray="1.5 6" stroke-linecap="round" opacity=".55"/>
+      <g transform="translate(36 40) scale(-.36 .36) translate(-60 -62)"><use href="#glimFig"/></g>
+      <g transform="translate(100 36) scale(.3) translate(-60 -62)"><use href="#glimFig"/></g>
+      <g transform="translate(64 82) scale(.56) translate(-60 -62)"><use href="#glimFig"/></g>
+    </symbol>
+
+    <g id="starFire">
+      <polyline points="64,16 76,40 90,58 92,80 80,98 64,102 48,98 36,80 38,60 50,48 56,62 64,16" fill="none" stroke="#F4D78C" stroke-width="2.4" stroke-linejoin="round" opacity=".8"/>
+      <g fill="#FFE9A6">
+        <use href="#spark" transform="translate(64 16) scale(1.3)"/>
+        <circle cx="76" cy="40" r="3"/><circle cx="90" cy="58" r="3"/><circle cx="92" cy="80" r="3"/><circle cx="80" cy="98" r="3"/>
+        <circle cx="64" cy="102" r="3.4"/><circle cx="48" cy="98" r="3"/><circle cx="36" cy="80" r="3"/><circle cx="38" cy="60" r="3"/>
+        <circle cx="50" cy="48" r="3"/><circle cx="56" cy="62" r="3"/><circle cx="64" cy="80" r="4"/>
+      </g>
+    </g>
+    <symbol id="stars2" viewBox="0 0 128 128">
+      <rect width="128" height="128" rx="30" fill="url(#nightSky)"/>
+      <g fill="#fff" opacity=".3"><circle cx="16" cy="16" r=".9"/><circle cx="112" cy="18" r=".8"/><circle cx="112" cy="112" r=".9"/><circle cx="14" cy="110" r=".7"/></g>
+      <circle cx="64" cy="64" r="44" fill="none" stroke="#F4D78C" stroke-width="1.2" opacity=".35"/>
+      <g fill="#FFE9A6">
+        <use href="#spark" transform="translate(64 20) scale(1.1)"/><use href="#spark" transform="translate(102.1 42) scale(.9)"/>
+        <use href="#spark" transform="translate(102.1 86) scale(1)"/><use href="#spark" transform="translate(64 108) scale(.9)"/>
+        <use href="#spark" transform="translate(25.9 86) scale(1.1)"/><use href="#spark" transform="translate(25.9 42) scale(.9)"/>
+      </g>
+      <g transform="translate(64 66) scale(.42) translate(-64 -60)"><use href="#starFire"/></g>
+    </symbol>
+  
+  <symbol id="kipBare" viewBox="16 6 96 112"><use href="#kipFig"/></symbol>
+  <symbol id="duoBare" viewBox="8 8 116 116">
+    <circle cx="46" cy="92" r="40" fill="url(#kipGlow)"/>
+    <g transform="translate(46 117) scale(.66) translate(-64 -113)"><use href="#kipFig"/></g>
+    <g transform="translate(92 34) scale(-.6 .6) translate(-64 -56)"><use href="#mallowFig"/></g>
+  </symbol>
+</defs><use href="#kipDone"/></svg>

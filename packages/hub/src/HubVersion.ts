@@ -1,12 +1,8 @@
 // The commit the Hub runs (ADR 0011), and how a Runner's compares with it, for the Runners page.
 // Read once from the checkout the Hub runs from; nothing acts on it yet (#87 will).
 
-import {
-  type BuildVersion,
-  type RunnerVersionStatus,
-  runnerVersionStatus,
-} from "@claude-hub/protocol"
-import { checkoutHolds, readBuildVersion, thisCheckout } from "@claude-hub/protocol/checkout"
+import { type BuildVersion, type RunnerVersionStatus, runnerVersionStatus } from "@kndl/protocol"
+import { checkoutHolds, readBuildVersion, thisCheckout } from "@kndl/protocol/checkout"
 import { Context, Effect, Layer } from "effect"
 
 export class HubVersion extends Context.Service<
@@ -17,7 +13,7 @@ export class HubVersion extends Context.Service<
     /** A Runner's version against the Hub's. */
     readonly statusOf: (runner: BuildVersion | null) => RunnerVersionStatus
   }
->()("@claude-hub/hub/HubVersion") {
+>()("@kndl/hub/HubVersion") {
   /** The Hub's own checkout's. */
   static readonly layer = Layer.sync(HubVersion, () => {
     const version = readBuildVersion()

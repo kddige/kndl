@@ -16,7 +16,7 @@
 // It logs each request to Anthropic under its Session, and never a credential, a mod token or a
 // Session token.
 
-import type { ClaudeCredential, SessionId } from "@claude-hub/protocol"
+import type { ClaudeCredential, SessionId } from "@kndl/protocol"
 import { Context, Data, Effect, Layer, Redacted } from "effect"
 import type { Scope } from "effect"
 import { RunnerConfig } from "../RunnerConfig.ts"
@@ -77,7 +77,7 @@ export class CredentialProxy extends Context.Service<
      */
     readonly runnerAccount: Effect.Effect<string | undefined>
   }
->()("@claude-hub/runner/CredentialProxy") {}
+>()("@kndl/runner/CredentialProxy") {}
 
 /** Anthropic's API, where requests go unless a test says otherwise. */
 export const AnthropicApi = "https://api.anthropic.com"
@@ -169,7 +169,7 @@ const sameCredential = (a: ClaudeCredential, b: ClaudeCredential) =>
 
 /** An error as Anthropic's API words one, which Claude Code shows as it is. */
 const apiError = (status: number, type: string, message: string) =>
-  Response.json({ type: "error", error: { type, message: `claude-hub: ${message}` } }, { status })
+  Response.json({ type: "error", error: { type, message: `kndl: ${message}` } }, { status })
 
 const returned = (response: Response) => {
   const headers = new Headers()

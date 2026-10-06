@@ -1,6 +1,6 @@
 // Renaming a Session in place, from its header or its sidebar row.
 
-import { type SessionSummary, sessionTitle } from "@claude-hub/protocol"
+import { type SessionSummary, sessionTitle } from "@kndl/protocol"
 import type { HubClient } from "../hub/client.ts"
 import { toast } from "../ui/index.ts"
 

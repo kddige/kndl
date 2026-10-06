@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { PairingCodeRefused } from "@claude-hub/protocol"
+import { PairingCodeRefused } from "@kndl/protocol"
 import {
   connectionSettled,
   describeConnectionCheck,
@@ -34,7 +34,7 @@ describe("readPairAnswer", () => {
   test("a Hub from before Pairing codes: update it, or use a token", () => {
     const outcome = readPairAnswer(hub, 404, undefined)
     expect(outcome._tag).toBe("Refused")
-    expect(outcome._tag === "Refused" && outcome.message).toContain("claude-hub runner token")
+    expect(outcome._tag === "Refused" && outcome.message).toContain("kndl runner token")
   })
 
   test("something that isn't a Hub", () => {

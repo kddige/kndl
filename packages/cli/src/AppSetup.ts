@@ -1,4 +1,4 @@
-// Onboard's GitHub App step (issue #86): create the App on GitHub from claude-hub's manifest, or
+// Onboard's GitHub App step (issue #86): create the App on GitHub from kndl's manifest, or
 // take the settings of one made by hand. AppManifest.ts decides what is sent and saved; this serves
 // the page, waits for GitHub's redirect, trades its code for the App's credentials and saves the
 // private key.
@@ -11,8 +11,8 @@ import { randomBytes } from "node:crypto"
 import { statSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
-import { appInstallUrl } from "@claude-hub/hub/src/AppPermissions.ts"
-import { convertManifest } from "@claude-hub/hub/src/GitHubApp.ts"
+import { appInstallUrl } from "@kndl/hub/src/AppPermissions.ts"
+import { convertManifest } from "@kndl/hub/src/GitHubApp.ts"
 import { Context, Effect, Redacted } from "effect"
 import { FetchHttpClient } from "effect/http"
 import {
@@ -40,7 +40,7 @@ import { Shell, step } from "./Shell.ts"
 import { Ui } from "./Ui.ts"
 
 /** Where onboard finds GitHub: github.com, or a test's stand-in. */
-export const GitHubSiteRef = Context.Reference<GitHubSite>("@claude-hub/cli/GitHubSite", {
+export const GitHubSiteRef = Context.Reference<GitHubSite>("@kndl/cli/GitHubSite", {
   defaultValue: () => GitHubDotCom,
 })
 
@@ -51,11 +51,11 @@ export type AppPlan =
   | { readonly _tag: "Manual"; readonly settings: AppSettings }
 
 export const AppSetupTitles = (hasApp: boolean): Record<AppSetupChoice, string> => ({
-  create: "Create it on GitHub now, from claude-hub's manifest (in a browser)",
+  create: "Create it on GitHub now, from kndl's manifest (in a browser)",
   manual: "Paste the settings of an App I made on GitHub myself",
   skip: hasApp
     ? "Keep the App hub.env has"
-    : "Not now: GitHub sign-in stays off (`claude-hub onboard --github-app create` later)",
+    : "Not now: GitHub sign-in stays off (`kndl onboard --github-app create` later)",
 })
 
 /** The questions for `choice`: whose App to create, or the settings of one made by hand. */
@@ -149,7 +149,7 @@ export const createApp = (layout: Layout, hubUrl: string, owner: AppOwner, on: P
       if (shell.dryRun) {
         yield* ui.log(
           "info",
-          `[dry run] the GitHub App isn't created: onboard would serve a page on 127.0.0.1 that sends GitHub claude-hub's manifest, for ${newAppUrl(site, owner, "…")}.`,
+          `[dry run] the GitHub App isn't created: onboard would serve a page on 127.0.0.1 that sends GitHub kndl's manifest, for ${newAppUrl(site, owner, "…")}.`,
         )
         return undefined
       }
@@ -202,7 +202,7 @@ export const createApp = (layout: Layout, hubUrl: string, owner: AppOwner, on: P
             Effect.provide(FetchHttpClient.layer),
             Effect.mapError((error) =>
               fail(
-                `${error.message}. A code works once, within an hour: run \`claude-hub onboard --github-app create\` again, or delete the App on GitHub and paste another's settings with --github-app manual.`,
+                `${error.message}. A code works once, within an hour: run \`kndl onboard --github-app create\` again, or delete the App on GitHub and paste another's settings with --github-app manual.`,
               ),
             ),
           ),

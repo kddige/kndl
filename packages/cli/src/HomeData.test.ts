@@ -50,12 +50,12 @@ describe("explaining old data", () => {
   const renames = [{ from: "sessions", to: "sessions.old-20261004" }]
 
   test("names the data, the renames, and the other way out", () => {
-    const text = explainOldData({ entries: ["sessions"] }, "/home/ada/.claude-hub", renames)
+    const text = explainOldData({ entries: ["sessions"] }, "/home/ada/.kndl", renames)
 
     expect(text).toContain("sessions, with no runner.env")
     expect(text).toContain("sessions → sessions.old-20261004")
     expect(text).toContain("--move-old-data")
-    expect(text).toContain("CLAUDE_HUB_HOME")
+    expect(text).toContain("KNDL_HOME")
   })
 })
 

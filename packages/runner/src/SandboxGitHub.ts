@@ -4,7 +4,7 @@
 //
 // The Runner asks the Hub for one when the Sandbox starts or wakes, and again every 45 minutes
 // while it runs, as each lasts an hour. The token goes into a file in the Sandbox, on a tmpfs the
-// Runner mounts at /run/claude-hub, so it is only ever in the VM's memory: never in the VM's
+// Runner mounts at /run/kndl, so it is only ever in the VM's memory: never in the VM's
 // settings (spike #46: microsandbox keeps those in its database), never on its root filesystem
 // (an image on the Runner's disk), never on the Runner's disk. A git credential helper in the
 // system gitconfig reads the file, and gh's hosts.yml is a link to a file beside it.
@@ -15,14 +15,14 @@
 // Commits made there are by the Session's Creator (#110), set in the same system gitconfig when
 // the Sandbox starts, unless the Environment set an identity of its own.
 
-import type { GitAnswer, GitIdentity, SessionId } from "@claude-hub/protocol"
+import type { GitAnswer, GitIdentity, SessionId } from "@kndl/protocol"
 import { Cause, Duration, Effect, Redacted } from "effect"
 import type { Scope } from "effect"
 import { SandboxError } from "./Sandbox.ts"
 import type { SandboxBackend } from "./sandbox/SandboxBackend.ts"
 
 /** The tmpfs in the Sandbox that holds its credentials. */
-export const credentialsDir = "/run/claude-hub"
+export const credentialsDir = "/run/kndl"
 /** The token, alone. */
 export const tokenPath = `${credentialsDir}/github-token`
 /** gh's hosts.yml, which `~/.config/gh/hosts.yml` links to. */
@@ -51,7 +51,7 @@ export const prepareScript = `set -e
 dir=${credentialsDir}
 mkdir -p "$dir"
 if ! grep -qs " $dir tmpfs " /proc/mounts; then
-  mount -t tmpfs -o mode=0700,size=1m claude-hub "$dir"
+  mount -t tmpfs -o mode=0700,size=1m kndl "$dir"
 fi
 grep -qs " $dir tmpfs " /proc/mounts
 chmod 0700 "$dir"

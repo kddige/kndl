@@ -67,7 +67,7 @@ The terminal has one size. Whoever last typed into it, or pressed **Fit to my wi
 
 ## See its Open ports
 
-While something listens on a TCP port in an Active Session's Sandbox, such as a dev server Claude started, the Session's header shows how many ports are open (**3 ports**). Press it for the list: each port with the addresses it listens on and the process holding it. A port a Docker container publishes shows the process `docker-proxy` and a **Docker** label. Below the list is the `claude-hub forward` command that opens the ports on `localhost` on your machine: see [Forward a Session's ports](/how-to/forward-a-sessions-ports/).
+While something listens on a TCP port in an Active Session's Sandbox, such as a dev server Claude started, the Session's header shows how many ports are open (**3 ports**). Press it for the list: each port with the addresses it listens on and the process holding it. A port a Docker container publishes shows the process `docker-proxy` and a **Docker** label. Below the list is the `kndl forward` command that opens the ports on `localhost` on your machine: see [Forward a Session's ports](/how-to/forward-a-sessions-ports/).
 
 A port shows within about 2 seconds of a server starting to listen, and goes as soon after it stops. Claude Code's own login callback port is never listed. A Session that isn't Active has no Open ports: the list empties when it goes to sleep, and fills again once it wakes and its servers are running.
 
@@ -101,7 +101,7 @@ Claude can commit, push and open pull requests with plain `git` and `gh`, once t
 Whatever happens, the Runner pushes the Workspace's whole state, uncommitted and untracked files included, to a WIP ref on origin: after each Turn that changed it, before sleep and before archiving. To get it:
 
 ```sh
-git fetch origin refs/claude-hub/wip/<session id>
+git fetch origin refs/kndl/wip/<session id>
 git switch --detach FETCH_HEAD
 ```
 

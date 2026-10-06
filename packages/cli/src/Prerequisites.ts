@@ -47,7 +47,7 @@ export interface PrerequisitePlan {
 }
 
 /**
- * The tools a Hub and a Runner need: gh is how claude-hub itself is installed and updated. A
+ * The tools a Hub and a Runner need: gh is how kndl itself is installed and updated. A
  * Runner's Sessions run in their Sandboxes, which bring their own tmux and Claude Code (ADR 0013).
  */
 const Tools: ReadonlyArray<Tool> = ["git", "gh"]
@@ -73,7 +73,7 @@ export function prerequisitePlan(facts: HostFacts, roles: ReadonlyArray<Role>): 
         fixable: manager !== undefined,
         detail:
           manager === undefined
-            ? `${tool} isn't installed, and no package manager claude-hub knows (${facts.platform === "darwin" ? "Homebrew" : "apt or dnf"}) was found: install it yourself.`
+            ? `${tool} isn't installed, and no package manager kndl knows (${facts.platform === "darwin" ? "Homebrew" : "apt or dnf"}) was found: install it yourself.`
             : `${tool} isn't installed.`,
       })
     }
@@ -127,7 +127,7 @@ export function prerequisitePlan(facts: HostFacts, roles: ReadonlyArray<Role>): 
       afterwards.push(
         // A user's systemd manager keeps the groups it started with, and lingering keeps it
         // running across logins: only a reboot gives the Runner's service the new group.
-        `Reboot so ${facts.user}'s new kvm group reaches the Runner's service (logging out isn't enough while the services linger), then run \`claude-hub doctor\`.`,
+        `Reboot so ${facts.user}'s new kvm group reaches the Runner's service (logging out isn't enough while the services linger), then run \`kndl doctor\`.`,
       )
     }
   }

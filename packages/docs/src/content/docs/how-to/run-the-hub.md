@@ -9,16 +9,16 @@ The Hub serves the web UI, holds the Sessions' state, and is where Runners conne
 
 ## On an install
 
-[`claude-hub onboard`](/how-to/install/#set-the-machine-up) installed the Hub as a service that starts at login and restarts if it crashes. It serves the web UI onboard built, at `HUB_PUBLIC_URL`, and logs to `~/.claude-hub/logs/hub.log`.
+[`kndl onboard`](/how-to/install/#set-the-machine-up) installed the Hub as a service that starts at login and restarts if it crashes. It serves the web UI onboard built, at `HUB_PUBLIC_URL`, and logs to `~/.kndl/logs/hub.log`.
 
 ```sh
-claude-hub hub status    # whether the service runs
-claude-hub logs hub -f   # follow its log
-claude-hub hub stop      # stop it until the next start or login
-claude-hub hub start
+kndl hub status    # whether the service runs
+kndl logs hub -f   # follow its log
+kndl hub stop      # stop it until the next start or login
+kndl hub start
 ```
 
-Its settings are in `~/.claude-hub/hub.env`; every one is in the [configuration reference](/reference/configuration/#hub). After changing the file, `claude-hub hub install` restarts the Hub with it. `claude-hub onboard` changes the settings by asking, and restarts it too.
+Its settings are in `~/.kndl/hub.env`; every one is in the [configuration reference](/reference/configuration/#hub). After changing the file, `kndl hub install` restarts the Hub with it. `kndl onboard` changes the settings by asking, and restarts it too.
 
 Next, [add a Runner](/how-to/add-a-runner/). To let other machines and people reach the Hub, see [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/).
 
@@ -65,7 +65,7 @@ HUB_PUBLIC_URL=http://127.0.0.1:7777
 GITHUB_CLIENT_ID=Iv1.…
 GITHUB_CLIENT_SECRET=…
 GITHUB_APP_ID=…
-GITHUB_APP_PRIVATE_KEY_PATH=/home/you/.claude-hub-dev/github-app.pem
+GITHUB_APP_PRIVATE_KEY_PATH=/home/you/.kndl-dev/github-app.pem
 HUB_SECRETS_KEY=…   # from `bun run secrets-key`
 ```
 
@@ -88,13 +88,13 @@ Once any Sensitive value is saved, the Hub refuses to start without the same key
 The Hub needs at least one way to sign in:
 
 - **GitHub sign-in**, for a team. Set up the GitHub App, which gives the Hub `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`: see [Set up the GitHub App](/how-to/set-up-the-github-app/). On an install, onboard offers to create it.
-- **Dev login**, for trying it on one machine. `CLAUDE_HUB_DEV_LOGIN=1`, which onboard offers for a `local` Hub, lets anyone who reaches the Hub sign in as any name, without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers.
+- **Dev login**, for trying it on one machine. `KNDL_DEV_LOGIN=1`, which onboard offers for a `local` Hub, lets anyone who reaches the Hub sign in as any name, without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers.
 
 With neither, the sign-in page says the Hub has no way to sign in turned on.
 
 ## Stop the Hub
 
-On an install, `claude-hub hub stop`; from a checkout, Ctrl-C (SIGINT) or SIGTERM. The Hub answers any waiting mod long poll with no commands, closes the Runner and web WebSockets with code 1001 (going away), and exits within a second. Runners reconnect when it comes back, and Sessions keep running on them in the meantime.
+On an install, `kndl hub stop`; from a checkout, Ctrl-C (SIGINT) or SIGTERM. The Hub answers any waiting mod long poll with no commands, closes the Runner and web WebSockets with code 1001 (going away), and exits within a second. Runners reconnect when it comes back, and Sessions keep running on them in the meantime.
 
 ## Check it's up
 
@@ -103,4 +103,4 @@ curl http://127.0.0.1:7777/health
 # {"status":"ok"}
 ```
 
-`/health` needs no sign-in and answers once the Hub's database does. On an install, `claude-hub status` checks it for you, and `claude-hub doctor` checks everything else.
+`/health` needs no sign-in and answers once the Hub's database does. On an install, `kndl status` checks it for you, and `kndl doctor` checks everything else.

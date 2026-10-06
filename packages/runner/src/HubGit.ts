@@ -10,7 +10,7 @@ import {
   type SessionId,
   type TestBuildId,
   WipPushFailed,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Deferred, Duration, Effect, Layer, Schema } from "effect"
 import { HubLink } from "./HubLink.ts"
 
@@ -39,7 +39,7 @@ export class HubGit extends Context.Service<
     /** Pushing the WIP ref failed; the Hub records it in the Session's log. */
     readonly wipPushFailed: (sessionId: SessionId, message: string) => Effect.Effect<void>
   }
->()("@claude-hub/runner/HubGit") {}
+>()("@kndl/runner/HubGit") {}
 
 export const HubGitLive = Layer.effect(
   HubGit,

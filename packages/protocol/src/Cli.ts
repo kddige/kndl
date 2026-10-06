@@ -3,7 +3,7 @@ import { CommitId } from "./Build.ts"
 import { PairingAlphabet } from "./Pairing.ts"
 import { EpochMillis, Participant } from "./Session.ts"
 
-// The `claude-hub` CLI the Hub serves (issue #178, ADR 0016): `GET /cli` is the install script,
+// The `kndl` CLI the Hub serves (issue #178, ADR 0016): `GET /cli` is the install script,
 // `GET /cli/version` the commit the Hub serves it at, and `GET /cli/<target>` the binary, built
 // with `bun build --compile` from the Hub's own commit. The CLI follows that commit, as Runners
 // follow the Hub's (ADR 0011).
@@ -20,9 +20,9 @@ export const CliVersion = Schema.Struct({ commit: CommitId })
 export type CliVersion = typeof CliVersion.Type
 
 /** The response header on `GET /cli/<target>` naming the commit the binary was built at. */
-export const CliCommitHeader = "x-claude-hub-commit"
+export const CliCommitHeader = "x-kndl-commit"
 
-// Signing the CLI in (issue #179, ADR 0016): `claude-hub login <hub>` opens `/cli-login` on the
+// Signing the CLI in (issue #179, ADR 0016): `kndl login <hub>` opens `/cli-login` on the
 // Hub in a browser, where a signed-in person approves the machine. The page hands the CLI a
 // one-time Login code, by redirecting to the CLI on a `localhost` port or, when that can't reach
 // it (as over SSH), by showing it to paste. The CLI trades the code, with the PKCE verifier only
@@ -35,7 +35,7 @@ export type CliTokenId = typeof CliTokenId.Type
 
 export const MaxMachineNameLength = 64
 
-/** The machine a CLI token is named after: its host name, as `claude-hub login` sends it. */
+/** The machine a CLI token is named after: its host name, as `kndl login` sends it. */
 export const MachineName = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isNonEmpty(),

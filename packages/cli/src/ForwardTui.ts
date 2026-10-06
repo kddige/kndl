@@ -1,7 +1,7 @@
-// The terminal of `claude-hub forward` (#180): the keys it reads in raw mode, the Session picker,
+// The terminal of `kndl forward` (#180): the keys it reads in raw mode, the Session picker,
 // the live list of what's forwarded, and the screen they are drawn on, redrawn in place. The keys,
 // the picker and the drawing are pure, so they are tested without a terminal.
-import { isDockerPort, type SessionSummary } from "@claude-hub/protocol"
+import { isDockerPort, type SessionSummary } from "@kndl/protocol"
 import { localUrl, sessionLine, sessionTitle, shortId } from "./ForwardArgs.ts"
 import type { ForwardedPort } from "./ForwardPorts.ts"
 
@@ -153,7 +153,7 @@ export function portLine(
     }
     case "Taken": {
       const holder = port.state.holder === undefined ? "" : ` by ${port.state.holder}`
-      return `${String(port.local).padEnd(24)} taken here${holder}: trying again until it's free. Or forward it to another port: claude-hub forward ${shortId(view.session)} ${port.remote}:${port.local + 100}`
+      return `${String(port.local).padEnd(24)} taken here${holder}: trying again until it's free. Or forward it to another port: kndl forward ${shortId(view.session)} ${port.remote}:${port.local + 100}`
     }
     case "Refused":
       return `${String(port.local).padEnd(24)} ${port.state.message}`

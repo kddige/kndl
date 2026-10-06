@@ -1,12 +1,12 @@
 #!/bin/sh
-# Installs claude-hub: Bun if it's missing, the checkout in <home>/app, its dependencies, and the
-# `claude-hub` command in ~/.local/bin; then `claude-hub onboard`, when there's a terminal to ask
-# in. Run again on an installed machine, it updates the install and runs `claude-hub doctor --fix`.
+# Installs kndl: Bun if it's missing, the checkout in <home>/app, its dependencies, and the
+# `kndl` command in ~/.local/bin; then `kndl onboard`, when there's a terminal to ask
+# in. Run again on an installed machine, it updates the install and runs `kndl doctor --fix`.
 #
-#   gh api repos/kddige/claude-hub/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
+#   gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
 #   ... | sh -s -- --ref <branch|tag|sha> --no-onboard
 #
-# The home is CLAUDE_HUB_HOME, by default ~/.claude-hub. CLAUDE_HUB_REPO overrides where the
+# The home is KNDL_HOME, by default ~/.kndl. KNDL_REPO overrides where the
 # checkout is cloned from (a URL, or a local checkout). Everything is in functions, and the last
 # line runs them, so a download cut short runs nothing.
 
@@ -17,7 +17,7 @@ say() {
 }
 
 die() {
-  printf 'claude-hub install: %s\n' "$*" >&2
+  printf 'kndl install: %s\n' "$*" >&2
   exit 1
 }
 
@@ -36,11 +36,11 @@ add_to_path() {
     */bash) rc="$HOME/.bashrc" ;;
     *) rc="$HOME/.profile" ;;
   esac
-  if [ -f "$rc" ] && grep -q '# claude-hub: PATH' "$rc"; then
+  if [ -f "$rc" ] && grep -q '# kndl: PATH' "$rc"; then
     return 0
   fi
   # shellcheck disable=SC2016 # $PATH expands when the startup file runs, not here.
-  printf '\nexport PATH="%s:$PATH" # claude-hub: PATH\n' "$bin_dir" >>"$rc"
+  printf '\nexport PATH="%s:$PATH" # kndl: PATH\n' "$bin_dir" >>"$rc"
   say "Added $bin_dir to PATH in $rc: open a new shell, or run  export PATH=\"$bin_dir:\$PATH\""
 }
 
@@ -63,11 +63,11 @@ find_bun() {
 }
 
 # Clones the checkout. A private GitHub repo is cloned with gh, and the checkout keeps using gh's
-# credentials (in its own git config only), so `claude-hub update` can fetch.
+# credentials (in its own git config only), so `kndl update` can fetch.
 clone() {
   repo=$1
   app=$2
-  if [ -n "${CLAUDE_HUB_REPO:-}" ]; then
+  if [ -n "${KNDL_REPO:-}" ]; then
     git clone --quiet "$repo" "$app"
     return 0
   fi
@@ -95,21 +95,21 @@ checkout_ref() {
   fi
 }
 
-# Writes the `claude-hub` command; the CLI's Layout.ts writes the same script.
+# Writes the `kndl` command; the CLI's Layout.ts writes the same script.
 write_wrapper() {
   wrapper=$1
   home=$2
   bun=$3
   mkdir -p "$(dirname "$wrapper")"
-  if [ -e "$wrapper" ] && ! sed -n 2p "$wrapper" | grep -q '^# claude-hub: written by install.sh.'; then
-    die "$wrapper exists and isn't claude-hub's: move it, and run this again."
+  if [ -e "$wrapper" ] && ! sed -n 2p "$wrapper" | grep -q '^# kndl: written by install.sh.'; then
+    die "$wrapper exists and isn't kndl's: move it, and run this again."
   fi
   {
     say '#!/bin/sh'
-    say '# claude-hub: written by install.sh. Runs the CLI from the installed checkout.'
-    say ": \"\${CLAUDE_HUB_HOME:=$home}\""
-    say 'export CLAUDE_HUB_HOME'
-    say "exec $(quote "$bun") \"\$CLAUDE_HUB_HOME/app/packages/cli/src/main.ts\" \"\$@\""
+    say '# kndl: written by install.sh. Runs the CLI from the installed checkout.'
+    say ": \"\${KNDL_HOME:=$home}\""
+    say 'export KNDL_HOME'
+    say "exec $(quote "$bun") \"\$KNDL_HOME/app/packages/cli/src/main.ts\" \"\$@\""
   } >"$wrapper.tmp"
   chmod 755 "$wrapper.tmp"
   mv "$wrapper.tmp" "$wrapper"
@@ -159,30 +159,30 @@ main() {
 
   case "$(uname -s)" in
     Darwin | Linux) ;;
-    *) die "claude-hub runs on macOS and Linux." ;;
+    *) die "kndl runs on macOS and Linux." ;;
   esac
   [ -n "${HOME:-}" ] || die "HOME isn't set."
   command -v git >/dev/null 2>&1 || die "git is missing: install it, and run this again."
 
-  home=${CLAUDE_HUB_HOME:-$HOME/.claude-hub}
+  home=${KNDL_HOME:-$HOME/.kndl}
   case $home in
     /*) ;;
-    *) die "CLAUDE_HUB_HOME must be an absolute path, not $home." ;;
+    *) die "KNDL_HOME must be an absolute path, not $home." ;;
   esac
   home=${home%/}
-  [ -n "$home" ] && [ "$home" != "${HOME%/}" ] || die "CLAUDE_HUB_HOME can't be / or your home directory."
+  [ -n "$home" ] && [ "$home" != "${HOME%/}" ] || die "KNDL_HOME can't be / or your home directory."
   app="$home/app"
-  wrapper="$HOME/.local/bin/claude-hub"
-  repo=${CLAUDE_HUB_REPO:-kddige/claude-hub}
+  wrapper="$HOME/.local/bin/kndl"
+  repo=${KNDL_REPO:-kddige/kndl}
 
   bun=$(find_bun)
   mkdir -p "$home"
 
   if [ -d "$app/.git" ]; then
-    say "claude-hub is installed in $home: updating it."
+    say "kndl is installed in $home: updating it."
     write_wrapper "$wrapper" "$home" "$bun"
     add_to_path "$(dirname "$wrapper")"
-    export CLAUDE_HUB_HOME="$home"
+    export KNDL_HOME="$home"
     # update ends with doctor, which fails on what --fix may repair: run it either way, and fail
     # if either did.
     status=0
@@ -200,19 +200,19 @@ main() {
   fi
 
   [ ! -e "$app" ] || die "$app exists but isn't a git checkout: move it, and run this again."
-  say "Installing claude-hub in $home."
+  say "Installing kndl in $home."
   clone "$repo" "$app"
   [ -z "$ref" ] || checkout_ref "$app" "$ref"
   (cd "$app" && "$bun" install --frozen-lockfile)
   write_wrapper "$wrapper" "$home" "$bun"
   add_to_path "$(dirname "$wrapper")"
-  export CLAUDE_HUB_HOME="$home"
+  export KNDL_HOME="$home"
   say "Installed: $wrapper"
 
   if [ "$onboard" = 1 ] && has_tty; then
     "$wrapper" onboard </dev/tty
   else
-    say "Next: claude-hub onboard  (set up a Hub, a Runner, or both)."
+    say "Next: kndl onboard  (set up a Hub, a Runner, or both)."
   fi
 }
 

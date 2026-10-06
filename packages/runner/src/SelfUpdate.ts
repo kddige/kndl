@@ -16,7 +16,7 @@
 // starts) is rolled back as it starts (bootDecision), and the failure is reported in the next
 // hello, from the marker.
 //
-// Who updates itself (updaterOf): only a Runner the claude-hub service runs from the installed
+// Who updates itself (updaterOf): only a Runner the kndl service runs from the installed
 // checkout, `<home>/app`. A Runner a developer runs with `bun run runner` never rewrites their
 // checkout: it says the Hub wants another commit and goes on running. Nor does one run by hand
 // from the installed checkout, which nothing would start again after its restart.
@@ -27,17 +27,17 @@ import {
   UpdateFailure,
   type UpdateRefusal,
   type UpdateStep,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Schema } from "effect"
 
 /** In `runner.env`: follow any commit the Hub runs, not only one on origin/main (a dev Hub). */
 export const UpdateAnyCommitVariable = "RUNNER_UPDATE_ANY_COMMIT"
 
 /**
- * Set by the claude-hub service on the process it runs (`runner`): a restart is safe, since the
+ * Set by the kndl service on the process it runs (`runner`): a restart is safe, since the
  * service manager starts it again.
  */
-export const ServiceVariable = "CLAUDE_HUB_SERVICE"
+export const ServiceVariable = "KNDL_SERVICE"
 
 /**
  * The exit code that asks for a restart: EX_TEMPFAIL. The services restart a Runner that exits
@@ -49,7 +49,7 @@ export const RestartExitCode = 75
  * Set on the Runner started only to check it loads, on the commit it moves to: it imports all its
  * code, checks the mod is built, and exits 0 without connecting.
  */
-export const LoadCheckVariable = "CLAUDE_HUB_RUNNER_LOAD_CHECK"
+export const LoadCheckVariable = "KNDL_RUNNER_LOAD_CHECK"
 
 /** How many times a new commit may start without the Hub's welcome before it is rolled back. */
 export const MaxBootsBeforeWelcome = 3
@@ -59,7 +59,7 @@ export const MainBranch = "main"
 
 /** What says whether the Runner may update itself. */
 export interface UpdaterFacts {
-  /** It runs in a checkout's dev home (no CLAUDE_HUB_HOME): `bun run runner`. */
+  /** It runs in a checkout's dev home (no KNDL_HOME): `bun run runner`. */
   readonly devHome: boolean
   /** The checkout the Runner runs from, its real path; `undefined` outside a git checkout. */
   readonly checkout: string | undefined
@@ -88,7 +88,7 @@ export function updaterOf(facts: UpdaterFacts): RunnerUpdater {
   }
   if (facts.service !== "runner") {
     return manual(
-      "it isn't run by the claude-hub service, which would start it again: run `claude-hub update` on its machine",
+      "it isn't run by the kndl service, which would start it again: run `kndl update` on its machine",
     )
   }
   return { self: true, ...anyCommit }
@@ -145,7 +145,7 @@ export interface Position {
 /**
  * What applying an update does:
  * - `Restart`: the checkout is at the commit already, as on the Hub's machine, whose checkout
- *   `claude-hub update` moved for both: only check the Runner loads, and restart. Nothing to roll
+ *   `kndl update` moved for both: only check the Runner loads, and restart. Nothing to roll
  *   back: this Runner didn't move it.
  * - `Move`: check out the commit (`checkout`, git's arguments), install, build, check, restart;
  *   `back` returns the checkout to where it was.
@@ -160,8 +160,8 @@ export type ApplyPlan =
 
 /**
  * How to move from `head` to `target`. A checkout on a branch the commit is on stays on that
- * branch, moved to the commit, so a later `claude-hub update` follows it on; otherwise the
- * checkout is detached at the commit, as `claude-hub update --ref <commit>` would leave it.
+ * branch, moved to the commit, so a later `kndl update` follows it on; otherwise the
+ * checkout is detached at the commit, as `kndl update --ref <commit>` would leave it.
  */
 export function applyPlan(
   head: Position,
@@ -319,7 +319,7 @@ export function failureOf(
       ? ""
       : rolledBack
         ? ` It went back to the commit it ran.`
-        : ` Going back to the commit it ran failed too: run \`claude-hub update\` on its machine.`
+        : ` Going back to the commit it ran failed too: run \`kndl update\` on its machine.`
   return {
     target,
     message: `Updating to ${short(target.commit)} failed while ${FailedAtText[step]}: ${firstLines(error)}${after}`,
@@ -344,10 +344,10 @@ export function rejectedAdvice(
     return { update: true, message: `Updating this Runner to the Hub's commit${at}.` }
   }
   const how = updater.self
-    ? "run `claude-hub update` on this machine"
+    ? "run `kndl update` on this machine"
     : updater.reason?.startsWith("it runs from a developer's checkout")
       ? "pull this checkout to the Hub's commit and restart `bun run runner`"
-      : "run `claude-hub update` on this machine"
+      : "run `kndl update` on this machine"
   return {
     update: false,
     message: `To connect again, this Runner needs the Hub's version${at}: ${how}. Retrying meanwhile.`,

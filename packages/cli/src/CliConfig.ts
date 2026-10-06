@@ -1,9 +1,9 @@
-// The CLI's own config, for a `claude-hub` installed from a Hub (issue #178):
-// `${XDG_CONFIG_HOME:-~/.config}/claude-hub/cli.json`, 0600. The install script the Hub serves
+// The CLI's own config, for a `kndl` installed from a Hub (issue #178):
+// `${XDG_CONFIG_HOME:-~/.config}/kndl/cli.json`, 0600. The install script the Hub serves
 // writes it, `{"hub":"<the Hub's URL>"}`, and the CLI updates itself from that Hub (SelfUpdate.ts).
 // It is not an install's: an install's home holds what the Hub and Runner read.
 //
-// `claude-hub login` (issue #179, Login.ts) records the Hub it signs in to there too, with the CLI
+// `kndl login` (issue #179, Login.ts) records the Hub it signs in to there too, with the CLI
 // token it got: the CLI is signed in to one Hub at a time, the one it updates itself from, and
 // logging in to another replaces it. The file is written whole, 0600 in a 0700 directory, as
 // compact JSON, so the install script still finds `"hub":"<url>"` in it and keeps it.
@@ -16,7 +16,7 @@ import { Effect, Option, Schema } from "effect"
 export const CliConfig = Schema.Struct({
   /** The Hub the CLI was installed from, or signed in to, as its origin: `https://hub.example.com`. */
   hub: Schema.optional(Schema.String),
-  /** The CLI token `claude-hub login` got from that Hub. Never printed. */
+  /** The CLI token `kndl login` got from that Hub. Never printed. */
   token: Schema.optional(Schema.String),
 })
 export type CliConfig = typeof CliConfig.Type
@@ -26,7 +26,7 @@ export function cliConfigPath(
   env: Record<string, string | undefined> = process.env,
   userHome: string = homedir(),
 ): string {
-  return join(env.XDG_CONFIG_HOME || join(userHome, ".config"), "claude-hub", "cli.json")
+  return join(env.XDG_CONFIG_HOME || join(userHome, ".config"), "kndl", "cli.json")
 }
 
 const decode = Schema.decodeUnknownOption(Schema.fromJsonString(CliConfig))

@@ -1,4 +1,4 @@
-import type { TerminalSize } from "@claude-hub/protocol"
+import type { TerminalSize } from "@kndl/protocol"
 
 // tmux control mode (`tmux -C attach`): the client reads one line per notification on stdout
 // and writes one command per line on stdin. Each command gets one reply, a %begin/%end (or

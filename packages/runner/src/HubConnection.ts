@@ -4,8 +4,8 @@ import {
   HubToRunner,
   ProtocolVersion,
   RunnerToHub,
-} from "@claude-hub/protocol"
-import { readBuildVersion } from "@claude-hub/protocol/checkout"
+} from "@kndl/protocol"
+import { readBuildVersion } from "@kndl/protocol/checkout"
 import { Data, Duration, Effect, Redacted, Schema } from "effect"
 import { Socket } from "effect/socket"
 import { ClaudeModels } from "./ClaudeModels.ts"
@@ -59,7 +59,7 @@ const buildVersion = readBuildVersion()
  * page, or a Re-pair gave another machine (or another `runner join` here) its place.
  */
 export const TokenRefusedText =
-  "The Hub doesn't accept this Runner's token: the Runner was removed on the Hub's Runners page, or paired again with a new token. To pair this machine again, make a code on the Runners page (Add a Runner, or Re-pair) and run `claude-hub runner join '<link>'`. Retrying meanwhile."
+  "The Hub doesn't accept this Runner's token: the Runner was removed on the Hub's Runners page, or paired again with a new token. To pair this machine again, make a code on the Runners page (Add a Runner, or Re-pair) and run `kndl runner join '<link>'`. Retrying meanwhile."
 
 /** Whether the Hub refuses the Runner's token, by asking it over HTTP. */
 const tokenRefused = Effect.gen(function* () {

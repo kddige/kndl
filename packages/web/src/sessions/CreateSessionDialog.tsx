@@ -1,4 +1,4 @@
-import type { RunnerId } from "@claude-hub/protocol"
+import type { RunnerId } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { type FormEvent, type ReactElement, useState } from "react"
@@ -194,7 +194,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
           <Input
             value={repo}
             onValueChange={(value: string) => setRepo(value)}
-            placeholder="kddige/claude-hub"
+            placeholder="kddige/kndl"
             autoFocus
             spellCheck={false}
             autoCapitalize="off"

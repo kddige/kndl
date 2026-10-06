@@ -20,7 +20,7 @@ import {
   claudeCredentialProblem,
   type EpochMillis,
   type ParticipantId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Clock, Context, Duration, Effect, Layer, Redacted, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http"
 import { SqlClient } from "effect/sql"
@@ -70,7 +70,7 @@ const reasonLimit = 200
 export class ClaudeCheck extends Context.Service<
   ClaudeCheck,
   { readonly check: (credential: ClaudeCredential) => Effect.Effect<ClaudeCheckResult> }
->()("@claude-hub/hub/ClaudeCheck") {
+>()("@kndl/hub/ClaudeCheck") {
   static readonly layer = Layer.effect(
     ClaudeCheck,
     Effect.gen(function* () {
@@ -234,7 +234,7 @@ export class ClaudeCredentials extends Context.Service<
     /** Every value stored, and every one replaced or removed since the Hub started: to redact. */
     readonly values: () => ReadonlyArray<string>
   }
->()("@claude-hub/hub/ClaudeCredentials") {
+>()("@kndl/hub/ClaudeCredentials") {
   static readonly layer = Layer.effect(
     ClaudeCredentials,
     Effect.gen(function* () {

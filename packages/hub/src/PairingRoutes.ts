@@ -1,4 +1,4 @@
-// What `claude-hub runner join` asks the Hub over plain HTTP(S) (issue #85):
+// What `kndl runner join` asks the Hub over plain HTTP(S) (issue #85):
 //
 // - `POST /runner/pair` redeems a Pairing code for a Runner token. It is open: the code is the
 //   credential. Every refused code gets the same 403 (PairingCodes.ts).
@@ -12,7 +12,7 @@ import {
   Paired,
   PairingCodeRefused,
   RunnerConnection,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Effect } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateRunner } from "./Auth.ts"

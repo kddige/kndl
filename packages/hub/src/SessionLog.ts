@@ -1,4 +1,4 @@
-import { EventSeq, SessionEvent, type SessionId, SessionLogEntry } from "@claude-hub/protocol"
+import { EventSeq, SessionEvent, type SessionId, SessionLogEntry } from "@kndl/protocol"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -27,7 +27,7 @@ export class SessionLog extends Context.Service<
       afterSeq?: EventSeq,
     ) => Effect.Effect<ReadonlyArray<SessionLogEntry>, SqlError>
   }
->()("@claude-hub/hub/SessionLog") {
+>()("@kndl/hub/SessionLog") {
   static readonly layer = Layer.effect(
     SessionLog,
     Effect.gen(function* () {

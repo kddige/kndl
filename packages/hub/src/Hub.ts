@@ -1,4 +1,4 @@
-import { MaxCommandWaitMs } from "@claude-hub/protocol"
+import { MaxCommandWaitMs } from "@kndl/protocol"
 import { Layer } from "effect"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"

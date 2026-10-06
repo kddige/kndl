@@ -1,5 +1,5 @@
-import { ClaudeSubscriptionType, defaultRateLimitTier, type ClaudePlan } from "@claude-hub/protocol"
-import { HomeConfig } from "@claude-hub/protocol/home"
+import { ClaudeSubscriptionType, defaultRateLimitTier, type ClaudePlan } from "@kndl/protocol"
+import { HomeConfig } from "@kndl/protocol/home"
 import { Config, Context, Effect, Layer, Option } from "effect"
 
 /** Where the Runner's credential is read from, as `RUNNER_CLAUDE_CREDENTIAL` says. */
@@ -16,7 +16,7 @@ export type CredentialSource =
   | { readonly _tag: "None" }
 
 /** The Keychain item the Runner looks for a setup-token in, unless told another. */
-export const DefaultKeychainService = "claude-hub-setup-token"
+export const DefaultKeychainService = "kndl-setup-token"
 
 /** The file in the Runner's home it looks for one in, off macOS. */
 export const DefaultTokenFile = "claude-token"
@@ -51,7 +51,7 @@ export interface ProxySettings {
 }
 
 export class ProxyConfig extends Context.Service<ProxyConfig, ProxySettings>()(
-  "@claude-hub/runner/ProxyConfig",
+  "@kndl/runner/ProxyConfig",
 ) {}
 
 /** The proxy's port in an installed home, and in a checkout's dev home, so both can run. */
@@ -63,7 +63,7 @@ export const DefaultProxyPort = { installed: 7778, dev: 7779 } as const
  * | Variable | Default |
  * |---|---|
  * | `RUNNER_PROXY_PORT` | `7778`; `7779` in the dev home |
- * | `RUNNER_CLAUDE_CREDENTIAL` | the setup-token in Keychain item `claude-hub-setup-token` on macOS, or in `<home>/claude-token` elsewhere; else Claude Code's own login |
+ * | `RUNNER_CLAUDE_CREDENTIAL` | the setup-token in Keychain item `kndl-setup-token` on macOS, or in `<home>/claude-token` elsewhere; else Claude Code's own login |
  * | `RUNNER_CLAUDE_PLAN` | the plan of the account in Claude Code's `.claude.json` |
  * | `RUNNER_CLAUDE_RATE_LIMIT_TIER` | Claude Code's for the plan: `default_claude_ai` for pro, `default_claude_max_5x` for max |
  */

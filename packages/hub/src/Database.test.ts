@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { AgentId, EnvironmentVersion, ParticipantId, SessionId } from "@claude-hub/protocol"
+import { AgentId, EnvironmentVersion, ParticipantId, SessionId } from "@kndl/protocol"
 import { ConfigProvider, Effect, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { DatabaseFile, databaseAt } from "./Database.ts"
@@ -24,15 +24,13 @@ describe("the Hub's database", () => {
     expect(databaseIn({})).toBe(new URL("../hub.db", import.meta.url).pathname)
   })
 
-  test("is hub.db in the home CLAUDE_HUB_HOME names", () => {
-    expect(databaseIn({ CLAUDE_HUB_HOME: "/srv/claude-hub" })).toBe("/srv/claude-hub/hub.db")
+  test("is hub.db in the home KNDL_HOME names", () => {
+    expect(databaseIn({ KNDL_HOME: "/srv/kndl" })).toBe("/srv/kndl/hub.db")
   })
 
   test("is HUB_DATABASE when set, whatever the home", () => {
     expect(databaseIn({ HUB_DATABASE: "/tmp/a.db" })).toBe("/tmp/a.db")
-    expect(databaseIn({ HUB_DATABASE: "/tmp/a.db", CLAUDE_HUB_HOME: "/srv/claude-hub" })).toBe(
-      "/tmp/a.db",
-    )
+    expect(databaseIn({ HUB_DATABASE: "/tmp/a.db", KNDL_HOME: "/srv/kndl" })).toBe("/tmp/a.db")
   })
 })
 
@@ -117,7 +115,7 @@ const beforeChildSessions = Effect.gen(function* () {
 
 describe("migration 0013, Session names", () => {
   test("leaves the Sessions there were unnamed, shown by their Work branch, and lets them be named", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(
@@ -166,7 +164,7 @@ const agent = (n: number) => ({
 
 describe("migration 0017, subagents", () => {
   test("makes Child Sessions ordinary Sessions, and keeps their history and queue readable", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
     dirs.push(dir)
     const file = join(dir, "hub.db")
     const ref = { id: SessionId.make("s-2"), title: "Docs" }
@@ -259,7 +257,7 @@ describe("migration 0017, subagents", () => {
   })
 
   test("keeps a Session's subagents, listing the Running and Interrupted ones on its summary", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
     dirs.push(dir)
     const file = join(dir, "hub.db")
     const listed = await onDatabase(
@@ -307,7 +305,7 @@ describe("migration 0017, subagents", () => {
 
 describe("migration 0018, Keep awake", () => {
   test("leaves the Sessions there were with it off, and keeps who turned it on", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(
@@ -369,7 +367,7 @@ describe("migration 0018, Keep awake", () => {
 
 describe("migration 0020, Repo names ignoring case", () => {
   test("leaves the rows there were, and finds a Repo's Environment by any spelling", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(
@@ -423,7 +421,7 @@ describe("migration 0020, Repo names ignoring case", () => {
 
 describe("migration 0015, Session models", () => {
   test("leaves the Sessions there were on Claude Code's default, and lets their model be set", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(
@@ -466,7 +464,7 @@ describe("migration 0015, Session models", () => {
 
 describe("migration 0009, Sensitive values that need a value", () => {
   test("keeps the variables and links, and lets only a Sensitive value be null", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(

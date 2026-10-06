@@ -85,7 +85,7 @@ function glossarySource(): Source {
     data: {
       title: "Glossary",
       description:
-        "The words claude-hub uses, what each one means, and the words to avoid. Rendered from GLOSSARY.md.",
+        "The words kndl uses, what each one means, and the words to avoid. Rendered from GLOSSARY.md.",
       sidebar: { order: 90 },
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
     },
@@ -156,11 +156,11 @@ function decisionsIndex(adrs: ReadonlyArray<Adr>): Source {
     data: {
       title: "Decisions",
       description:
-        "The architecture decision records behind claude-hub: what was decided, and why. Rendered from docs/adr.",
+        "The architecture decision records behind kndl: what was decided, and why. Rendered from docs/adr.",
       sidebar: { label: "All decisions", order: 0 },
     },
     body: [
-      "Each architecture decision record (ADR) captures one decision that shapes claude-hub: the context, what was decided and what it costs. They are kept in `docs/adr/` in the repository and rendered here unchanged. A decision that was replaced stays, marked superseded, so the history reads in order.",
+      "Each architecture decision record (ADR) captures one decision that shapes kndl: the context, what was decided and what it costs. They are kept in `docs/adr/` in the repository and rendered here unchanged. A decision that was replaced stays, marked superseded, so the history reads in order.",
       "",
       "| ADR | Decision | Status |",
       "|---|---|---|",
@@ -209,7 +209,7 @@ async function store(context: LoaderContext, source: Source) {
 export function docsWithRepoFiles(): Loader {
   const docs = docsLoader()
   return {
-    name: "claude-hub-docs",
+    name: "kndl-docs",
     load: async (context) => {
       await docs.load(context)
       for (const source of sources()) await store(context, source)

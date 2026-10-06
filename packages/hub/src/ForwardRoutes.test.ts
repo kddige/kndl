@@ -1,4 +1,4 @@
-// `claude-hub forward`'s connection to the Hub (#180, ADR 0016), end to end: a real Hub, a fake
+// `kndl forward`'s connection to the Hub (#180, ADR 0016), end to end: a real Hub, a fake
 // Runner, the web UI and forwards over WebSockets as the CLI opens them.
 
 import { afterEach, describe, expect, test } from "bun:test"
@@ -8,7 +8,7 @@ import {
   Participant,
   ParticipantId,
   ProtocolVersion,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Effect } from "effect"
 import { CliTokens, pkceChallenge } from "./CliTokens.ts"
 import { Connection, issueRunnerToken, openRunner, openWeb, stopAll } from "./testChannels.ts"
@@ -16,7 +16,7 @@ import { bearer, devSignIn, seedEnvironment, startHub, type TestHub } from "./te
 
 afterEach(stopAll)
 
-const repo = "kddige/claude-hub"
+const repo = "kddige/kndl"
 
 type Forwarded = typeof HubToForward.Encoded
 
@@ -25,7 +25,7 @@ const ports = [
   { port: 5173, addresses: ["::1"], process: "node vite" },
 ]
 
-/** A CLI token for `login`, as `claude-hub login` on `machine` gets one. */
+/** A CLI token for `login`, as `kndl login` on `machine` gets one. */
 const cliToken = (hub: TestHub, login: string, machine: string) =>
   hub.run(
     Effect.gen(function* () {
@@ -250,7 +250,7 @@ describe("the forward endpoint", () => {
     scene.web.send({ _tag: "RevokeCliToken", requestId: "r", cliTokenId: scene.laptop.id })
     expect(await forward.closed).toEqual({
       code: ForwardCloseCode.SignedOut,
-      reason: "This machine's CLI token was revoked: run claude-hub login to sign in again.",
+      reason: "This machine's CLI token was revoked: run kndl login to sign in again.",
     })
 
     const desktop = await cliToken(scene.hub, "alice", "desktop")

@@ -137,9 +137,9 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
 
 const startLink = async ($: EngineInterface) => {
   const [hubUrl, sessionId, modToken, kind] = await Promise.all([
-    $.env.get("CLAUDE_HUB_URL"),
-    $.env.get("CLAUDE_HUB_SESSION_ID"),
-    $.env.get("CLAUDE_HUB_MOD_TOKEN"),
+    $.env.get("KNDL_URL"),
+    $.env.get("KNDL_SESSION_ID"),
+    $.env.get("KNDL_MOD_TOKEN"),
     $.env.get("CLAUDE_CODE_SESSION_KIND"),
   ])
   // hub-link says so in the debug log. A background job or daemon of Claude Code's isn't the

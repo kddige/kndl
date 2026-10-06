@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Participant, ParticipantId, RunnerId, SessionId } from "@claude-hub/protocol"
+import { Participant, ParticipantId, RunnerId, SessionId } from "@kndl/protocol"
 import { Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { TestClock } from "effect/testing"

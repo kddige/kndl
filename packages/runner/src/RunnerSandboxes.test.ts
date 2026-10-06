@@ -6,7 +6,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { RepoName, RunnerToHub, SessionId } from "@claude-hub/protocol"
+import type { RepoName, RunnerToHub, SessionId } from "@kndl/protocol"
 import { Effect, Layer, Redacted, References } from "effect"
 import { NoHubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
@@ -45,7 +45,7 @@ interface RunnerHost {
 }
 
 async function runnerHost(tmuxSocket: string): Promise<RunnerHost> {
-  const dir = await mkdtemp(join(tmpdir(), "claude-hub-rs-"))
+  const dir = await mkdtemp(join(tmpdir(), "kndl-rs-"))
   dirs.push(dir)
   return { tmuxSocket, sessionsRoot: dir, tmux: new FakeTmux(), sent: [] }
 }
@@ -78,7 +78,7 @@ const runProcess = <A>(
       name: host.tmuxSocket,
       token: Redacted.make("chr_test.secret"),
       sessionsRoot: host.sessionsRoot,
-      modDir: "/opt/claude-hub/packages/mod",
+      modDir: "/opt/kndl/packages/mod",
       tmuxSocket: host.tmuxSocket,
       repoUrlTemplate: "unused",
     }),
@@ -133,8 +133,8 @@ const stateIn = (world: FakeSandboxWorld, id: SessionId) => world.sandboxes.get(
 test("Runners restarting side by side on one host each keep to their own Sandboxes", async () => {
   const world = makeFakeWorld()
   // An installed Runner and a dev one, on their default sockets.
-  const a = await runnerHost("claude-hub")
-  const b = await runnerHost("claude-hub-dev")
+  const a = await runnerHost("kndl")
+  const b = await runnerHost("kndl-dev")
   const sa = sessionId("s-a")
   const sb = sessionId("s-b")
   const asleep = sessionId("s-asleep")

@@ -17,12 +17,12 @@ Without it, use dev login on one machine, and Runners use their host's own git c
 On the Hub's machine:
 
 ```sh
-claude-hub onboard --github-app create
+kndl onboard --github-app create
 ```
 
 Onboard asks whether the App is your own account's or an organization's, then:
 
-1. Serves a page on a free port on `127.0.0.1` and opens it in your browser. The page sends GitHub claude-hub's manifest: the App's name (`claude-hub-<machine>`), the Hub's sign-in callback, and [the permissions below](#the-permissions). Nothing is created yet.
+1. Serves a page on a free port on `127.0.0.1` and opens it in your browser. The page sends GitHub kndl's manifest: the App's name (`kndl-<machine>`), the Hub's sign-in callback, and [the permissions below](#the-permissions). Nothing is created yet.
 2. On GitHub, change the name if you like, and create the App. GitHub sends the browser back to the page.
 3. Onboard trades the code GitHub sent back for the App's settings. It saves the private key as `github-app-<id>.pem` in the home, readable only by you, and the App ID, Client ID and client secret in `hub.env`, with `GITHUB_APP_PRIVATE_KEY_PATH` pointing at the key. It never prints them.
 4. It prints the App's install link. [Install the App](#install-the-app) on the Repos Sessions should work on.
@@ -69,12 +69,12 @@ Open the install link onboard printed, or the App's settings on GitHub and **Ins
 
 ## Keep the permissions in step
 
-When claude-hub comes to need a new permission, the App's settings and each installation fall behind. Changing the App's permissions on GitHub asks each account it's installed on to accept them, and until one does, its installation keeps the old ones. GitHub has no API to change either, so claude-hub only says what's missing and where to fix it.
+When kndl comes to need a new permission, the App's settings and each installation fall behind. Changing the App's permissions on GitHub asks each account it's installed on to accept them, and until one does, its installation keeps the old ones. GitHub has no API to change either, so kndl only says what's missing and where to fix it.
 
 The Hub checks the App and every installation against [the list](#the-permissions) as it starts, then every hour:
 
 - **In the web UI**, a banner lists what's missing, with links to the App's permissions page and to each installation's review of the request. **Check again** checks at once, after you've fixed it.
-- **`claude-hub doctor`** fails its `GitHub App` check, with the same links.
+- **`kndl doctor`** fails its `GitHub App` check, with the same links.
 - **The Hub's log** has a warning for each.
 
 To fix it:
@@ -100,21 +100,21 @@ Then note its **App ID** and **Client ID**, and generate a **client secret** and
 
 Only the Hub's machine needs them. Runners never see the private key: they get short-lived tokens from the Hub.
 
-- **An install:** run `claude-hub onboard --github-app manual`, and paste them. Onboard writes them to `hub.env`.
+- **An install:** run `kndl onboard --github-app manual`, and paste them. Onboard writes them to `hub.env`.
 - **A checkout:** add them to `packages/hub/.env.local`, and restart the Hub:
 
   ```sh
   GITHUB_CLIENT_ID=Iv1.…
   GITHUB_CLIENT_SECRET=…
   GITHUB_APP_ID=…
-  GITHUB_APP_PRIVATE_KEY_PATH=/home/you/.claude-hub-dev/github-app.pem
+  GITHUB_APP_PRIVATE_KEY_PATH=/home/you/.kndl-dev/github-app.pem
   ```
 
 The warnings that GitHub sign-in is off and that the GitHub App is not configured are gone, and the sign-in page offers **Sign in with GitHub**. [Install the App](#install-the-app) as above.
 
 ## Protect the default branch
 
-Anything running in a Session's Sandbox can push any branch of its Repo and merge its pull requests, for as long as the Session runs. claude-hub doesn't stop it. The guardrail is a GitHub ruleset on each Repo's default branch:
+Anything running in a Session's Sandbox can push any branch of its Repo and merge its pull requests, for as long as the Session runs. kndl doesn't stop it. The guardrail is a GitHub ruleset on each Repo's default branch:
 
 1. In the Repo on GitHub, open **Settings**, **Rules**, **Rulesets**, and add a branch ruleset that targets the default branch.
 2. Require a pull request before merging, with at least one approval.

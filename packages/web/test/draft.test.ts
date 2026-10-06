@@ -7,7 +7,7 @@ import {
   RepoName,
   type SharedVariable,
   valuesNeededText,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Redacted } from "effect"
 import {
   draftIdentity,
@@ -192,8 +192,8 @@ describe("problems", () => {
   })
 
   test("a reserved or unnamed variable", () => {
-    const reserved = withVariable(editFrom(saved), { name: "CLAUDE_HUB_X" })
-    expect(problemsOf(reserved).all.join(" ")).toContain("CLAUDE_HUB_X is reserved")
+    const reserved = withVariable(editFrom(saved), { name: "KNDL_X" })
+    expect(problemsOf(reserved).all.join(" ")).toContain("KNDL_X is reserved")
     expect(problemsOf(withVariable(editFrom(saved), {})).all).toContain("A variable has no name.")
   })
 })
@@ -243,7 +243,7 @@ describe("kept across reloads", () => {
     const planted = JSON.parse(JSON.stringify(editFrom(saved)))
     planted.variables[1].value = secret
     expect(parseEdit(planted)?.variables[1]?.value).toBe("")
-    store.set("claude-hub:environment-draft:acme/app", "{not json")
+    store.set("kndl:environment-draft:acme/app", "{not json")
     expect(loadEdit("acme/app")).toBeNull()
   })
 

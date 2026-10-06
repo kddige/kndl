@@ -14,7 +14,7 @@ import {
   type RunnerVersionStatus,
   type UpdateStep,
   updateUnderWay,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 
 /** Online Runners first, then by name. */
 export function sortRunners(runners: ReadonlyArray<RunnerSummary>): Array<RunnerSummary> {
@@ -76,7 +76,7 @@ export function manualUpdateText(runner: RunnerSummary): string | undefined {
 /** How a Runner comes to run the Hub's commit, by the way it said it updates. */
 function howToUpdate(updater: RunnerUpdater | undefined): string {
   if (updater === undefined) {
-    return "It's too old to update itself: run `claude-hub update` on its machine once."
+    return "It's too old to update itself: run `kndl update` on its machine once."
   }
   if (updater.self) return "Update moves it to the Hub's commit."
   return `It doesn't update itself${updater.reason === undefined ? "" : `: ${updater.reason}`}.`

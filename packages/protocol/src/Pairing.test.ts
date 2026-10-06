@@ -40,7 +40,7 @@ describe("pairing links", () => {
     const link = pairingLink("https://hub.example.com/some/page", code)
     expect(link).toBe("https://hub.example.com#7K3QH-WM2PA-9XC4R-TBV0E")
     expect(pairingCommand(link)).toBe(
-      "claude-hub runner join 'https://hub.example.com#7K3QH-WM2PA-9XC4R-TBV0E'",
+      "kndl runner join 'https://hub.example.com#7K3QH-WM2PA-9XC4R-TBV0E'",
     )
   })
 

@@ -4,7 +4,7 @@
 // GitHub API.
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
-import { DefaultEnvironmentDraft, Participant, ParticipantId } from "@claude-hub/protocol"
+import { DefaultEnvironmentDraft, Participant, ParticipantId } from "@kndl/protocol"
 import { Effect, Option, Redacted } from "effect"
 import { signInCookie } from "./Auth.ts"
 import type { HubConfigInput } from "./HubConfig.ts"
@@ -30,7 +30,7 @@ beforeAll(() => {
 })
 afterAll(() => github.stop())
 
-const repo = "kddige/claude-hub"
+const repo = "kddige/kndl"
 const secret = "kddige/secret"
 const missing = "kddige/no-such-repo"
 const octocat = { id: "github:1", login: "octocat", name: "octocat" }
@@ -208,7 +208,7 @@ describe("Test builds", () => {
     const token = JSON.stringify(answer).match(/ghs_standin\w+/)?.[0]
     expect(github.mintedTokens).toContain(token ?? "none")
     const mint = github.requests.findLast((request) => request.path.endsWith("/access_tokens"))
-    expect(mint?.body).toEqual({ repositories: ["claude-hub"], permissions: { contents: "read" } })
+    expect(mint?.body).toEqual({ repositories: ["kndl"], permissions: { contents: "read" } })
 
     // Not for a Test build that isn't the Runner's.
     expect(await cloneAccess(runner, "not-a-test-build")).toEqual({
@@ -282,7 +282,7 @@ describe("Test builds", () => {
       }),
     ).toMatchObject({
       _tag: "CommandFailed",
-      message: expect.stringContaining("runs an older claude-hub"),
+      message: expect.stringContaining("runs an older kndl"),
     })
     expect(await oldRunner.untaken("RunTestBuild")).toEqual([])
   })

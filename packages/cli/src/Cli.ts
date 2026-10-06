@@ -1,6 +1,6 @@
-// The `claude-hub` command tree. Each command resolves the home (Layout.ts) and hands off to the
+// The `kndl` command tree. Each command resolves the home (Layout.ts) and hands off to the
 // module that does the work; a command that ends badly sets the exit code.
-import { runnerTokenNotice, secretsKeyNotice } from "@claude-hub/hub/src/Admin.ts"
+import { runnerTokenNotice, secretsKeyNotice } from "@kndl/hub/src/Admin.ts"
 import { Console, Effect, Option } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import {
@@ -41,7 +41,7 @@ const optional = <A>(flag: Flag.Flag<A>) =>
 
 /**
  * For a command that sets up or runs a Hub or a Runner: a binary installed from a Hub refuses it,
- * saying it needs a claude-hub install (InstallGate.ts).
+ * saying it needs a kndl install (InstallGate.ts).
  */
 const operator =
   (command: string) =>
@@ -89,7 +89,7 @@ const onboardCommand = Command.make(
     githubApp: optional(
       Flag.Literals("github-app", AppSetupChoices).pipe(
         Flag.withDescription(
-          "The GitHub App: create it on GitHub from claude-hub's manifest, paste a manual one's settings, or skip",
+          "The GitHub App: create it on GitHub from kndl's manifest, paste a manual one's settings, or skip",
         ),
       ),
     ),
@@ -100,7 +100,7 @@ const onboardCommand = Command.make(
     ),
     token: optional(
       Flag.String("token").pipe(
-        Flag.withDescription("A Runner's token, from `claude-hub runner token <name>`"),
+        Flag.withDescription("A Runner's token, from `kndl runner token <name>`"),
       ),
     ),
     pair: optional(
@@ -136,7 +136,7 @@ const onboardCommand = Command.make(
     ),
     moveOldData: off("move-old-data").pipe(
       Flag.withDescription(
-        "Rename claude-hub data the home holds without its env file (sessions, claude-code, hub.db) to <name>.old-<YYYYMMDD>, keeping it",
+        "Rename kndl data the home holds without its env file (sessions, claude-code, hub.db) to <name>.old-<YYYYMMDD>, keeping it",
       ),
     ),
   },
@@ -333,7 +333,7 @@ const joinCommand = Command.make(
     ),
     moveOldData: off("move-old-data").pipe(
       Flag.withDescription(
-        "Rename claude-hub data the home holds without its env file to <name>.old-<YYYYMMDD>, keeping it",
+        "Rename kndl data the home holds without its env file to <name>.old-<YYYYMMDD>, keeping it",
       ),
     ),
   },
@@ -450,7 +450,7 @@ const forwardCommand = Command.make(
   ),
 )
 
-export const cli = Command.make("claude-hub").pipe(
+export const cli = Command.make("kndl").pipe(
   Command.withSubcommands([
     onboardCommand,
     statusCommand,
@@ -467,6 +467,6 @@ export const cli = Command.make("claude-hub").pipe(
     forwardCommand,
   ]),
   Command.withDescription(
-    "Install, run and look after a claude-hub Hub and Runner; sign the CLI in to a Hub",
+    "Install, run and look after a kndl Hub and Runner; sign the CLI in to a Hub",
   ),
 )

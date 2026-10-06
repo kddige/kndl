@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type PairingTarget, RunnerId } from "@claude-hub/protocol"
+import { type PairingTarget, RunnerId } from "@kndl/protocol"
 import { Cause, Effect, Exit } from "effect"
 import { envValues, parseEnv } from "./EnvFile.ts"
 import { dateStamp } from "./HomeData.ts"
@@ -40,9 +40,9 @@ let scratch: string
 let layout: Layout
 
 beforeEach(async () => {
-  scratch = await mkdtemp(join(tmpdir(), "claude-hub-onboard-"))
+  scratch = await mkdtemp(join(tmpdir(), "kndl-onboard-"))
   const userHome = join(scratch, "user")
-  layout = resolveLayout({ CLAUDE_HUB_HOME: join(userHome, ".claude-hub") }, userHome)
+  layout = resolveLayout({ KNDL_HOME: join(userHome, ".kndl") }, userHome)
   mkdirSync(join(layout.app, ".git"), { recursive: true })
 })
 
@@ -143,7 +143,7 @@ describe("onboard, answered from a script", () => {
     expect(env("hub")).toMatchObject({
       HOST: "127.0.0.1",
       HUB_PUBLIC_URL: "http://127.0.0.1:7777",
-      CLAUDE_HUB_DEV_LOGIN: "1",
+      KNDL_DEV_LOGIN: "1",
     })
     expect(env("runner")).toMatchObject({ HUB_URL: "http://127.0.0.1:7777", RUNNER_NAME: "mac" })
     expect(env("runner").RUNNER_TOKEN).toMatch(/^chr_/)
@@ -309,7 +309,7 @@ describe("onboard on a home with old data", () => {
     )
 
     expect(Exit.isSuccess(exit)).toBe(true)
-    expect(transcript.some((line) => line.startsWith("note: Old claude-hub data:"))).toBe(true)
+    expect(transcript.some((line) => line.startsWith("note: Old kndl data:"))).toBe(true)
     expect(
       readFileSync(join(layout.home.dir, `sessions.old-${stamp}`, "s1", "work.txt"), "utf8"),
     ).toBe("old work")

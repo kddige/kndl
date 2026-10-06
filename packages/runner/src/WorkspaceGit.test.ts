@@ -14,8 +14,8 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { type SessionId, wipRef } from "@claude-hub/protocol"
 import { BunServices } from "@effect/platform-bun"
+import { type SessionId, wipRef } from "@kndl/protocol"
 import { Effect, Layer, Redacted, References } from "effect"
 import { AgentWorktreesPattern, gitEnvironment, WipIdentity } from "./HostGit.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
@@ -26,8 +26,8 @@ import { WorkspaceGit, WorkspaceGitLive, type WipReason } from "./WorkspaceGit.t
 
 const Token = "ghs_FAKEtoken0123456789abcdef"
 const Bot = {
-  name: "claude-hub-test[bot]",
-  email: "42+claude-hub-test[bot]@users.noreply.github.com",
+  name: "kndl-test[bot]",
+  email: "42+kndl-test[bot]@users.noreply.github.com",
 }
 
 const testIdentity = {
@@ -61,7 +61,7 @@ function filesContaining(dir: string, needle: string): Array<string> {
 }
 
 describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-git-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-git-"))
   const sessionsRoot = join(dir, "sessions")
   afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
@@ -154,7 +154,7 @@ describe.skipIf(Bun.which("git") === null)("WorkspaceGit", () => {
     expectNoTokenOnDisk()
   })
 
-  test("without the GitHub App, the WIP push uses the host's credentials, as claude-hub", async () => {
+  test("without the GitHub App, the WIP push uses the host's credentials, as kndl", async () => {
     hubGit.credentials = { _tag: "HostCredentials" }
     await prepare()
     writeFileSync(join(workspace(), "a.txt"), "a\n")

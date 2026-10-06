@@ -7,7 +7,7 @@
 //
 // Without the App there is nothing to check.
 
-import type { AppPermissionsCheck } from "@claude-hub/protocol"
+import type { AppPermissionsCheck } from "@kndl/protocol"
 import { Context, Deferred, Duration, Effect, Layer, Option, PubSub, type Scope } from "effect"
 import { describeDrift } from "./AppPermissions.ts"
 import { GitHubApp, type GitHubAppError } from "./GitHubApp.ts"
@@ -25,7 +25,7 @@ export class PermissionDrift extends Context.Service<
     /** Each check that found something other than the one before, from now on. */
     readonly changes: Effect.Effect<PubSub.Subscription<AppPermissionsCheck>, never, Scope.Scope>
   }
->()("@claude-hub/hub/PermissionDrift") {
+>()("@kndl/hub/PermissionDrift") {
   static readonly layer = Layer.effect(
     PermissionDrift,
     Effect.gen(function* () {

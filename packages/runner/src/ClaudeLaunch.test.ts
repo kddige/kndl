@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 import { claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
 
@@ -16,7 +16,7 @@ test("the mod's plugins read every variable the Runner sets for them, by the sam
 const options = {
   claudePath: "/opt/claude-code/2.1.289-musl/claude",
   sessionId: "s-1" as SessionId,
-  mod: "/opt/claude-hub/mod/m1",
+  mod: "/opt/kndl/mod/m1",
   conversation: { _tag: "New", id: "3c1f6f0e-claude" },
 } as const
 
@@ -27,9 +27,9 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
     "--session-id",
     "3c1f6f0e-claude",
     "--plugin-dir",
-    "/opt/claude-hub/mod/m1/hub-link",
+    "/opt/kndl/mod/m1/hub-link",
     "--plugin-dir",
-    "/opt/claude-hub/mod/m1/hub-link-commands",
+    "/opt/kndl/mod/m1/hub-link-commands",
     "--dangerously-skip-permissions",
   ])
   expect(env[ModEnvironment.sessionId]).toBe("s-1")

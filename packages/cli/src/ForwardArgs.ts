@@ -1,7 +1,7 @@
-// What `claude-hub forward [session] [ports...]` (#180) is given, read: which Session, which of its
+// What `kndl forward [session] [ports...]` (#180) is given, read: which Session, which of its
 // ports to which local ones, and where to listen. Pure, so it is tested on its own.
 import { isIP } from "node:net"
-import type { SessionSummary } from "@claude-hub/protocol"
+import type { SessionSummary } from "@kndl/protocol"
 
 /** A Session's short id, as the web shows it in the forward command: its first 6 characters. */
 export const shortId = (session: Pick<SessionSummary, "id">) => session.id.slice(0, 6)

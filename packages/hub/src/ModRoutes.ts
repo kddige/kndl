@@ -15,7 +15,7 @@ import {
   ModHelloReply,
   ProtocolVersion,
   type SessionId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Duration, Effect, Schema } from "effect"
 import {
   HttpRouter,

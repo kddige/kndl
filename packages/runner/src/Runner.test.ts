@@ -3,9 +3,9 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, posix } from "node:path"
-import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@claude-hub/protocol"
-import { readBuildVersion } from "@claude-hub/protocol/checkout"
 import { BunServices, BunSocket } from "@effect/platform-bun"
+import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@kndl/protocol"
+import { readBuildVersion } from "@kndl/protocol/checkout"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
 import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
@@ -172,7 +172,7 @@ function startRunner(
   updater: Layer.Layer<Updater> = Updater.manual(),
   claudeModels: Layer.Layer<ClaudeModels> = StaticClaudeModels(models),
 ): Harness {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-runner-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-runner-"))
   const sessionsRoot = join(dir, "sessions")
   const hub = new FakeHub()
   const tmux = new FakeTmux()
@@ -195,7 +195,7 @@ function startRunner(
 }
 
 /**
- * Restarts the Runner on the same machine, as `claude-hub restart` or a crash would: what runs in
+ * Restarts the Runner on the same machine, as `kndl restart` or a crash would: what runs in
  * tmux and the Sandboxes runs on, and the Hub is the same. The new Runner has a new credential
  * proxy: only the old one's memory held its Session tokens.
  */
@@ -448,7 +448,7 @@ const withSession = async () => {
   await connected(h)
   h.hub.send(startSession("s-1"))
   await eventually(() => h.hub.all("SessionStarted").length === 1)
-  const kept = h.tmux.launched[0]?.env["CLAUDE_HUB_MOD_TOKEN"] as string
+  const kept = h.tmux.launched[0]?.env["KNDL_MOD_TOKEN"] as string
   return { h, kept }
 }
 
@@ -573,7 +573,7 @@ describe("Sessions", () => {
       expect.stringMatching(new RegExp(`^${modGuestPath}/[0-9a-z]+/hub-link-commands$`)),
       "--dangerously-skip-permissions",
     ])
-    const sessionToken = spec?.env["CLAUDE_HUB_MOD_TOKEN"] ?? ""
+    const sessionToken = spec?.env["KNDL_MOD_TOKEN"] ?? ""
     expect(sessionToken).toStartWith("chp_")
     expect(spec?.env).toEqual({
       // What the Sandbox says Claude Code runs with.
@@ -581,12 +581,12 @@ describe("Sessions", () => {
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
       CLAUDE_CODE_DISABLE_AGENT_VIEW: "1",
       DISABLE_INSTALLATION_CHECKS: "1",
-      CLAUDE_HUB_SESSION_ID: "s-1",
+      KNDL_SESSION_ID: "s-1",
       // The credential proxy, for Anthropic's API and the Hub alike, and the Session token for
       // both: never the mod token, nor a Claude credential (ADR 0013).
       ANTHROPIC_BASE_URL: "http://host.microsandbox.internal:7778",
-      CLAUDE_HUB_URL: "http://host.microsandbox.internal:7778",
-      CLAUDE_HUB_MOD_TOKEN: sessionToken,
+      KNDL_URL: "http://host.microsandbox.internal:7778",
+      KNDL_MOD_TOKEN: sessionToken,
       CLAUDE_CODE_OAUTH_TOKEN: sessionToken,
       CLAUDE_CODE_OAUTH_SCOPES: expect.any(String),
       _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1",
@@ -642,10 +642,8 @@ describe("Sessions", () => {
     expect(relaunched?.cwd).toBe("/workspace")
     expect(relaunched?.env).toMatchObject({ CLAUDE_CONFIG_DIR: "/claude" })
     // A new Session token, for the new mod token.
-    expect(relaunched?.env["CLAUDE_HUB_MOD_TOKEN"]).toStartWith("chp_")
-    expect(relaunched?.env["CLAUDE_HUB_MOD_TOKEN"]).not.toBe(
-      h.tmux.launched[0]?.env["CLAUDE_HUB_MOD_TOKEN"],
-    )
+    expect(relaunched?.env["KNDL_MOD_TOKEN"]).toStartWith("chp_")
+    expect(relaunched?.env["KNDL_MOD_TOKEN"]).not.toBe(h.tmux.launched[0]?.env["KNDL_MOD_TOKEN"])
     // The Sandbox and the Workspace are left as they are.
     expect(h.sandboxes.calls).toEqual(["start s-1"])
     expect(h.workspaces.prepared).toHaveLength(1)
@@ -1029,7 +1027,7 @@ describe("Sessions", () => {
     const woken = h.tmux.launched[1]
     expect(woken?.cwd).toBe("/workspace")
     expect(woken?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
-    expect(woken?.env["CLAUDE_HUB_MOD_TOKEN"]).toStartWith("chp_")
+    expect(woken?.env["KNDL_MOD_TOKEN"]).toStartWith("chp_")
   })
 
   test("leaves Sessions running in tmux when the Runner stops", async () => {
@@ -1054,7 +1052,7 @@ describe("Sessions", () => {
 
     // What it printed goes with it, read before its tmux session is killed, without its Session
     // token.
-    const sessionToken = h.tmux.launched[0]?.env["CLAUDE_HUB_MOD_TOKEN"] ?? ""
+    const sessionToken = h.tmux.launched[0]?.env["KNDL_MOD_TOKEN"] ?? ""
     h.tmux
       .pane("s-1")
       .output("\u001b[31mError:\u001b[0m The current working directory was deleted\r\n")

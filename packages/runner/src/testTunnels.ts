@@ -1,13 +1,14 @@
 // Tunnels end to end, for tests (#177): a real Hub and a real Runner, whose Session runs in real
 // tmux with its Workspace and Sandbox faked, and whose "guest" ports are servers on the host, which
 // a test may open and close as it goes. Also the client's side: a tunnel's socket, a local listener
-// that carries each connection through one, as `claude-hub forward` does (#180), and the CLI token
+// that carries each connection through one, as `kndl forward` does (#180), and the CLI token
 // it does it with. Not part of the Runner.
 
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { BunServices, BunSocket } from "@effect/platform-bun"
 import {
   type OpenPort,
   Participant,
@@ -16,9 +17,8 @@ import {
   RunnerToHub,
   type SessionId,
   tunnelPath,
-} from "@claude-hub/protocol"
-import { TunnelEnd } from "@claude-hub/protocol/tunnel-end"
-import { BunServices, BunSocket } from "@effect/platform-bun"
+} from "@kndl/protocol"
+import { TunnelEnd } from "@kndl/protocol/tunnel-end"
 import { Effect, Fiber, Layer, Option, Redacted, References } from "effect"
 import { CliTokens, pkceChallenge } from "../../hub/src/CliTokens.ts"
 import { RunnerTokens } from "../../hub/src/RunnerTokens.ts"
@@ -58,7 +58,7 @@ import { Updater } from "./Updater.ts"
 
 export const tmuxMissing = Bun.which("tmux") === null
 
-const tmuxSocket = `claude-hub-tunnel-test-${process.pid}`
+const tmuxSocket = `kndl-tunnel-test-${process.pid}`
 let made: string | undefined
 
 /**
@@ -68,7 +68,7 @@ let made: string | undefined
  */
 const sceneDir = () => {
   if (made !== undefined) return made
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-tunnels-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-tunnels-"))
   writeFileSync(
     join(dir, "fake-claude"),
     `#!${process.execPath}
@@ -173,7 +173,7 @@ export interface TunnelScene {
   readonly headers: Record<string, string>
   /** Opens and closes ports in the Sandbox: the Runner reports these as its Open ports now. */
   readonly setPorts: (ports: ReadonlyArray<GuestPort>) => Promise<void>
-  /** A CLI token for `login`, signed in on the web already, as `claude-hub login` on `machine` gets. */
+  /** A CLI token for `login`, signed in on the web already, as `kndl login` on `machine` gets. */
   readonly cliToken: (login: string, machine: string) => Promise<string>
 }
 
@@ -413,7 +413,7 @@ export interface ForwardedClose {
 
 /**
  * Listens on 127.0.0.1 and carries each connection through a tunnel of its own to `url`, as
- * `claude-hub forward` will: so a test can `fetch` a server in the Sandbox, or open a WebSocket
+ * `kndl forward` will: so a test can `fetch` a server in the Sandbox, or open a WebSocket
  * to it.
  */
 export async function forwardLocally(url: string, headers: Record<string, string>) {

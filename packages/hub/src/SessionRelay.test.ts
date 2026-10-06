@@ -14,7 +14,7 @@ import {
   Participant,
   ParticipantId,
   ProtocolVersion,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Effect, Exit, Option, Redacted } from "effect"
 import { signInCookie } from "./Auth.ts"
 import { databaseAt } from "./Database.ts"
@@ -106,11 +106,11 @@ async function sessionScene(
   const runnerToken = (await issueRunnerToken(theHub)).token
   const runner = await openRunner(theHub, runnerToken, [], undefined, true, options.runnerHello)
   const web = await openWeb(theHub, "alice")
-  await seedEnvironment(theHub, "kddige/claude-hub", "dev:alice")
+  await seedEnvironment(theHub, "kddige/kndl", "dev:alice")
   web.send({
     _tag: "CreateSession",
     requestId: "req-1",
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     baseBranch: "main",
     ...options.create,
   })
@@ -199,7 +199,7 @@ describe("CreateSession", () => {
     expect(start).toEqual({
       _tag: "StartSession",
       sessionId,
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
       workBranch: `claude/${sessionId}`,
       modToken: start.modToken,
@@ -213,7 +213,7 @@ describe("CreateSession", () => {
       requestId: "req-1",
       session: {
         id: sessionId,
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         baseBranch: "main",
         workBranch: `claude/${sessionId}`,
         state: "Active",
@@ -237,7 +237,7 @@ describe("CreateSession", () => {
     web.send({
       _tag: "CreateSession",
       requestId: "req-1",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
     })
 
@@ -591,11 +591,11 @@ describe("the Session lifecycle", () => {
     const hub = await hubSleepingAfter(150)
     const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
     const web = await openWeb(hub, "alice")
-    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    await seedEnvironment(hub, "kddige/kndl", "dev:alice")
     web.send({
       _tag: "CreateSession",
       requestId: "r",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
     })
     const start = await runner.take("StartSession")
@@ -644,7 +644,7 @@ describe("the Session lifecycle", () => {
     expect(wake).toEqual({
       _tag: "StartSession",
       sessionId,
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
       workBranch: `claude/${sessionId}`,
       modToken: wake.modToken,
@@ -754,7 +754,7 @@ describe("the Session lifecycle", () => {
     await hub.run(
       Effect.flatMap(Environments, (environments) =>
         environments.apply(
-          "kddige/claude-hub",
+          "kddige/kndl",
           EnvironmentVersion.make(1),
           { ...DefaultEnvironmentDraft, resources: { cpus: 3, memoryMib: 4096 } },
           ParticipantId.make("dev:alice"),
@@ -823,11 +823,11 @@ describe("the Session lifecycle", () => {
     const hub = await startHub({ config: { devLogin: true } })
     const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
     const web = await openWeb(hub, "alice")
-    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    await seedEnvironment(hub, "kddige/kndl", "dev:alice")
     web.send({
       _tag: "CreateSession",
       requestId: "r",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
     })
     const start = await runner.take("StartSession")
@@ -860,11 +860,11 @@ describe("the Session lifecycle", () => {
     const hub = await hubSleepingAfter(100)
     const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
     const web = await openWeb(hub, "alice")
-    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    await seedEnvironment(hub, "kddige/kndl", "dev:alice")
     web.send({
       _tag: "CreateSession",
       requestId: "r",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
     })
     const { sessionId } = await runner.take("StartSession")
@@ -1387,7 +1387,7 @@ describe("Session names", () => {
   })
 
   test("a name outlives a Hub restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -1472,7 +1472,7 @@ describe("Keep awake (ADR 0016)", () => {
   })
 
   test("its Runner back from a restart wakes it, and it outlives a Hub restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -1611,12 +1611,12 @@ describe("model and effort (#128)", () => {
       relaunches: true,
     })
     const web = await openWeb(hub, "alice")
-    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    await seedEnvironment(hub, "kddige/kndl", "dev:alice")
     const create = (more: Record<string, unknown>) =>
       web.send({
         _tag: "CreateSession",
         requestId: "r",
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         baseBranch: "main",
         ...more,
       })
@@ -1697,7 +1697,7 @@ describe("model and effort (#128)", () => {
     expect(relaunch).toEqual({
       _tag: "RelaunchSession",
       sessionId,
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       workBranch: `claude/${sessionId}`,
       resume: "claude-1",
       modToken: relaunch.modToken,
@@ -1833,11 +1833,11 @@ describe("the terminal relay", () => {
     const hub = await startHub({ config: { devLogin: true } })
     const runner = await openRunner(hub, (await issueRunnerToken(hub)).token)
     const web = await openWeb(hub, "alice")
-    await seedEnvironment(hub, "kddige/claude-hub", "dev:alice")
+    await seedEnvironment(hub, "kddige/kndl", "dev:alice")
     web.send({
       _tag: "CreateSession",
       requestId: "r",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       baseBranch: "main",
     })
     const { sessionId } = await runner.take("StartSession")
@@ -1963,7 +1963,7 @@ describe("the terminal relay", () => {
   })
 
   test("after a Hub restart, a reopened terminal asks the Runner for a fresh snapshot", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -2001,7 +2001,7 @@ describe("the terminal relay", () => {
 
 describe("a Hub restart", () => {
   test("keeps Sessions, their history and Prompt queues", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -2062,7 +2062,7 @@ describe("git", () => {
 
     expect(await ask(runner, sessionId, { _tag: "GitAccess" })).toEqual({
       _tag: "GitAccess",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       credentials: { _tag: "HostCredentials" },
     })
     const failed = await ask(runner, sessionId, { _tag: "SandboxToken" })
@@ -2134,7 +2134,7 @@ describe("git", () => {
 
     const appHub = () => {
       github.reset()
-      github.installedOn.add("kddige/claude-hub")
+      github.installedOn.add("kddige/kndl")
       return startHub({
         config: {
           devLogin: true,
@@ -2157,7 +2157,7 @@ describe("git", () => {
 
       expect(access).toMatchObject({
         _tag: "GitAccess",
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         credentials: {
           _tag: "AppToken",
           token: github.mintedTokens[0],
@@ -2175,7 +2175,7 @@ describe("git", () => {
 
       expect(answer).toMatchObject({ _tag: "SandboxToken", token: sandboxTokens()[0] })
       const mint = github.requests.findLast((request) => request.path.endsWith("/access_tokens"))
-      expect(mint?.body).toEqual({ repositories: ["claude-hub"] })
+      expect(mint?.body).toEqual({ repositories: ["kndl"] })
       // A refresh is a new token.
       const again = await ask(runner, sessionId, { _tag: "SandboxToken" })
       expect((again as { token: string }).token).toBe(sandboxTokens()[1] ?? "")
@@ -2226,7 +2226,7 @@ describe("git", () => {
         _tag: "TerminalFrame",
         sessionId,
         kind: "Snapshot",
-        data: `$ cat /run/claude-hub/github-token\r\n${current}\r\n$ `,
+        data: `$ cat /run/kndl/github-token\r\n${current}\r\n$ `,
         size: { cols: 80, rows: 24 },
       })
 
@@ -2241,7 +2241,7 @@ describe("git", () => {
         { _tag: "WipNotPushed", message: `bad token ${stars(current)}` },
       ])
       expect((await web.take("TerminalFrame")).data).toBe(
-        `$ cat /run/claude-hub/github-token\r\n${stars(current)}\r\n$ `,
+        `$ cat /run/kndl/github-token\r\n${stars(current)}\r\n$ `,
       )
       for (const token of [previous, current]) {
         expect(web.texts.join("\n")).not.toContain(token)
@@ -2295,7 +2295,7 @@ describe("Repo access", () => {
   })
   afterAll(() => github.stop())
 
-  const repo = "kddige/claude-hub"
+  const repo = "kddige/kndl"
   const secret = "kddige/secret"
   const octocat = { id: "github:1", login: "octocat", name: "octocat" }
   const hubot = { id: "github:2", login: "hubot", name: "hubot" }
@@ -2527,7 +2527,7 @@ describe("Repo access", () => {
   })
 
   test("dev login has access to every Repo, and a dev sign-in none once it is off", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const devHub = await startHub({ config: { devLogin: true }, database })

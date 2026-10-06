@@ -4,7 +4,7 @@ import {
   type SessionId,
   type SessionSummary,
   sessionTitle,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
@@ -42,20 +42,12 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { color, radius, space, text } from "../ui/tokens.stylex.ts"
+import { Brand } from "./Brand.tsx"
 import { environmentChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
 
 const styles = stylex.create({
-  brand: {
-    flex: 1,
-    fontSize: text.md,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    color: color.text,
-    textDecoration: "none",
-    borderRadius: radius.sm,
-  },
   note: {
     paddingBlock: space.s1,
     paddingInline: space.s2,
@@ -150,9 +142,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
       label="Main"
       header={
         <>
-          <Link to="/" {...stylex.props(styles.brand, focus.ring)}>
-            Claude Hub
-          </Link>
+          <Brand />
           <CreateSessionDialog
             trigger={
               <IconButton label="New Session" size="sm">

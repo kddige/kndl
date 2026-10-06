@@ -335,7 +335,7 @@ function Fields() {
           <Input placeholder="e.g. Fix flaky login test" />
         </Field>
         <Field label="Repo" description="owner/name of a GitHub repository.">
-          <Input defaultValue="kddige/claude-hub" />
+          <Input defaultValue="kddige/kndl" />
         </Field>
         <Field label="Secret name" invalid error="Use letters, digits and underscores only.">
           <Input defaultValue="API-KEY" />
@@ -509,7 +509,7 @@ function Overlays() {
           }
         >
           <Field label="Repo">
-            <Input defaultValue="kddige/claude-hub" />
+            <Input defaultValue="kddige/kndl" />
           </Field>
           <Field label="Base branch">
             <Select options={BRANCHES} defaultValue="main" />
@@ -713,7 +713,7 @@ function SidebarKit() {
       label="Kit navigation"
       header={
         <>
-          <span {...stylex.props(styles.brand)}>Claude Hub</span>
+          <span {...stylex.props(styles.brand)}>kndl</span>
           <IconButton label="New Session" size="sm">
             <PlusIcon />
           </IconButton>
@@ -732,7 +732,7 @@ function SidebarKit() {
           Archived Sessions
         </NavItem>
       </NavSection>
-      <NavSection label="kddige/claude-hub">
+      <NavSection label="kddige/kndl">
         <NavItem
           {...item("fix")}
           icon={<SessionStatus state="active" variant="dot" />}
@@ -838,7 +838,7 @@ function PageHeaders() {
       </div>
       <div {...stylex.props(styles.pageFrame)}>
         <PageHeader
-          title="kddige/claude-hub"
+          title="kddige/kndl"
           badge={<Badge intent="warning">Not set up</Badge>}
           description="Environment: what every Sandbox of this Repo is built from."
           actions={<Button size="sm">Shared variables</Button>}
@@ -849,7 +849,7 @@ function PageHeaders() {
           <PageHeader
             title="claude/a-very-long-work-branch-name-that-does-not-fit"
             badge={<SessionStatus state="active" />}
-            description="kddige/claude-hub · from main · on ada@example.com"
+            description="kddige/kndl · from main · on ada@example.com"
             actions={
               <>
                 <IconButton label="Delete Session" size="sm">

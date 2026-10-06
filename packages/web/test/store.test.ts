@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { ProtocolVersion, type SessionId, type TerminalFrame } from "@claude-hub/protocol"
+import { ProtocolVersion, type SessionId, type TerminalFrame } from "@kndl/protocol"
 import {
   acceptsFrame,
   appendEntries,
@@ -424,9 +424,9 @@ describe("terminals", () => {
 
 test("the GitHub App's permission check is kept, the latest in place of the one before", () => {
   const check = {
-    slug: "claude-hub-alice",
-    settingsUrl: "https://github.com/settings/apps/claude-hub-alice/permissions",
-    installUrl: "https://github.com/apps/claude-hub-alice/installations/new",
+    slug: "kndl-alice",
+    settingsUrl: "https://github.com/settings/apps/kndl-alice/permissions",
+    installUrl: "https://github.com/apps/kndl-alice/installations/new",
     missing: [{ name: "issues", title: "Issues", access: "write" as const }],
     missingEvents: [],
     installed: 1,

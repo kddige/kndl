@@ -49,7 +49,7 @@ const start = (id: string, extra: Record<string, unknown> = {}) =>
   )
 
 describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-workspace-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-workspace-"))
   const origin = join(dir, "acme", "origin")
   const sessionsRoot = join(dir, "sessions")
   // Without the GitHub App: the clone uses the host's own git credentials.
@@ -130,7 +130,7 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
 
 describe("removing a purged Session's files", () => {
   test("deletes its directory and Claude Code's transcripts and entry for it, nothing else", async () => {
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "claude-hub-purge-")))
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "kndl-purge-")))
     const directories = sessionDirectories(join(dir, "sessions"), sessionId("p-1"))
     const other = sessionDirectories(join(dir, "sessions"), sessionId("p-2"))
     for (const d of [directories, other]) mkdirSync(join(d.workspace, ".git"), { recursive: true })

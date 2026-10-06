@@ -1,8 +1,8 @@
 // WebSocket peers for the Hub's tests: web clients and a fake Runner that keep what they
 // receive, so a test can take the messages it expects. Not part of the Hub.
 
-import type { BuildVersion, HubToRunner, HubToWeb } from "@claude-hub/protocol"
-import { ProtocolVersion } from "@claude-hub/protocol"
+import type { BuildVersion, HubToRunner, HubToWeb } from "@kndl/protocol"
+import { ProtocolVersion } from "@kndl/protocol"
 import { Effect } from "effect"
 import { RunnerTokens } from "./RunnerTokens.ts"
 import { bearer, cookieFrom, devSignIn, stopHubs, type TestHub, webOrigin } from "./testSupport.ts"

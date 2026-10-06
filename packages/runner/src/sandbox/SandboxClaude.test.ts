@@ -8,7 +8,7 @@ import { ensureSandboxClaude, linuxPackage, sandboxClaudePath } from "./SandboxC
 
 let dir = ""
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "claude-hub-sandbox-claude-"))
+  dir = await mkdtemp(join(tmpdir(), "kndl-sandbox-claude-"))
 })
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
@@ -84,9 +84,7 @@ describe("the Sandbox's Claude Code", () => {
     expect(requests).toContain(
       "https://registry.test/@anthropic-ai/claude-code-linux-arm64/2.1.287",
     )
-    expect(sandboxClaudePath("2.1.287", "glibc")).toBe(
-      "/opt/claude-hub/claude-code/2.1.287-glibc/claude",
-    )
+    expect(sandboxClaudePath("2.1.287", "glibc")).toBe("/opt/kndl/claude-code/2.1.287-glibc/claude")
   })
 
   test("refuses a download that fails its integrity check, leaving nothing behind", async () => {
@@ -120,6 +118,6 @@ describe("the Sandbox's Claude Code", () => {
     expect(linuxPackage("x64")).toBe("@anthropic-ai/claude-code-linux-x64-musl")
     expect(linuxPackage("ia32")).toBeUndefined()
     expect(linuxPackage("x64", "glibc")).toBe("@anthropic-ai/claude-code-linux-x64")
-    expect(sandboxClaudePath("2.1.287")).toBe("/opt/claude-hub/claude-code/2.1.287/claude")
+    expect(sandboxClaudePath("2.1.287")).toBe("/opt/kndl/claude-code/2.1.287/claude")
   })
 })

@@ -2,7 +2,7 @@
 // Participants that Sessions and the Prompt queue show.
 
 import { describe, expect, test } from "bun:test"
-import { Participant, ParticipantId, PromptId, QueuedPrompt, SessionId } from "@claude-hub/protocol"
+import { Participant, ParticipantId, PromptId, QueuedPrompt, SessionId } from "@kndl/protocol"
 import { Effect, Layer, Option } from "effect"
 import { DatabaseTest } from "./Database.ts"
 import { PromptQueue } from "./PromptQueue.ts"
@@ -66,7 +66,7 @@ describe("avatars", () => {
         const sessionId = SessionId.make("s-1")
         const created = yield* sessions.create({
           id: sessionId,
-          repo: "kddige/claude-hub",
+          repo: "kddige/kndl",
           baseBranch: "main",
           workBranch: "claude/s-1",
           state: "Active",

@@ -1,4 +1,4 @@
-import type { PresentParticipant } from "@claude-hub/protocol"
+import type { PresentParticipant } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Avatar, AvatarStack, Popover } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
@@ -43,7 +43,7 @@ export const presentText = (person: PresentParticipant): string => {
 
 /**
  * Who's in the Session: their avatars in its header, which open the list of them, a forward
- * (`claude-hub forward`) with the machine it's from (#180).
+ * (`kndl forward`) with the machine it's from (#180).
  */
 export function Presence({ presence }: { presence: ReadonlyArray<PresentParticipant> }) {
   if (presence.length === 0) return null

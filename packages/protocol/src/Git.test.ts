@@ -4,7 +4,7 @@ import * as Protocol from "./index.ts"
 import { expectRejected, expectRoundTrips } from "./testSupport.ts"
 
 test("the WIP ref is per Session, outside refs/heads", () => {
-  expect(wipRef("s-1")).toBe("refs/claude-hub/wip/s-1")
+  expect(wipRef("s-1")).toBe("refs/kndl/wip/s-1")
 })
 
 describe("the git tools (#13) are gone", () => {

@@ -1,4 +1,4 @@
-// A terminal for tests of `claude-hub forward` (#180): its stdout, played as a terminal plays it,
+// A terminal for tests of `kndl forward` (#180): its stdout, played as a terminal plays it,
 // and its stdin in raw mode, typed into. Not part of the CLI.
 
 import { controlSequence, type KeyInput, plain, type ScreenOutput } from "./ForwardTui.ts"

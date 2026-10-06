@@ -1,4 +1,4 @@
-import type { QueuedPrompt } from "@claude-hub/protocol"
+import type { QueuedPrompt } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Avatar, CloseIcon, IconButton } from "../ui/index.ts"
 import { color, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"

@@ -4,7 +4,7 @@
 // by the Runner it was sent to; one never claimed fails, when the Runner says it couldn't open it
 // (TunnelFailed), goes offline, or the client stops waiting. See TunnelRoutes.ts.
 
-import { type RunnerId, TunnelCloseCode, TunnelId } from "@claude-hub/protocol"
+import { type RunnerId, TunnelCloseCode, TunnelId } from "@kndl/protocol"
 import { Context, Data, Deferred, Effect, Layer, Option } from "effect"
 import type { Socket } from "effect/socket"
 
@@ -45,7 +45,7 @@ export class Tunnels extends Context.Service<
     /** The client stopped waiting, or the tunnel is over. */
     readonly forget: (tunnelId: TunnelId) => Effect.Effect<void>
   }
->()("@claude-hub/hub/Tunnels") {
+>()("@kndl/hub/Tunnels") {
   static readonly layer = Layer.sync(Tunnels, () => {
     const pending = new Map<string, PendingTunnel>()
     const failWith = (tunnel: PendingTunnel, refused: TunnelRefused) => {

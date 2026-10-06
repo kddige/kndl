@@ -1,7 +1,7 @@
 // Starting over when HUB_SECRETS_KEY is lost (#57). The Hub refuses to start while it stores
 // Sensitive values it can't decrypt (Secrets.ts); a reset clears every value the lost key
 // encrypted and keeps everything else, so a Hub with a new key starts. `bun run secrets-reset`
-// (main.ts) and `claude-hub secrets reset` share it, as they share Admin.ts.
+// (main.ts) and `kndl secrets reset` share it, as they share Admin.ts.
 //
 // - It refuses while a Hub runs on the database, and a Hub doesn't start while it runs: both
 //   hold the database's lock (HubLock.ts).

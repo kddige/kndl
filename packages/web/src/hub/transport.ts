@@ -2,7 +2,7 @@
 // browser's transport talks to the real Hub on the page's own origin; the fake Hub implements the
 // same interface in-process.
 
-import { type CliLoginApproval, CliLoginApproved, Participant } from "@claude-hub/protocol"
+import { type CliLoginApproval, CliLoginApproved, Participant } from "@kndl/protocol"
 import { Schema } from "effect"
 import { hubPaths, type SignInOptions, webSocketUrl } from "./config.ts"
 
@@ -31,7 +31,7 @@ export interface HubTransport {
   devSignIn(login?: string): Promise<void>
   signOut(): Promise<void>
   /**
-   * Approves `claude-hub login` on a machine, as whoever is signed in: the Login code the CLI
+   * Approves `kndl login` on a machine, as whoever is signed in: the Login code the CLI
    * trades for its token (issue #179). Throws with the Hub's reason when it refuses.
    */
   approveCli(request: CliLoginApproval): Promise<CliLoginApproved>

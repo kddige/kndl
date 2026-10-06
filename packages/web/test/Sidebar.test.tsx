@@ -2,7 +2,7 @@
 // there, against the fake Hub with its script not playing.
 
 import { afterEach, expect, test } from "bun:test"
-import { SessionId } from "@claude-hub/protocol"
+import { SessionId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
 
@@ -107,18 +107,18 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
 
   // Archived Sessions aren't listed; each Repo is a section under its name, in alphabetical order.
   expect(groups()).toEqual([
+    { repo: "kddige/dotfiles", sessions: ["claude/zsh-prompt"] },
     {
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       // Release 0.4's interrupted agent is under it.
       sessions: ["claude/readme-run", "claude/web-client", "Release 0.4", "Document the protocol"],
     },
-    { repo: "kddige/dotfiles", sessions: ["claude/zsh-prompt"] },
   ])
   expect(current()).toEqual(["claude/readme-run"])
   // No single "Sessions" heading over them, and no links out to GitHub.
   expect([...(nav()?.querySelectorAll("div[id]") ?? [])].map((el) => el.textContent)).toEqual([
-    "kddige/claude-hub",
     "kddige/dotfiles",
+    "kddige/kndl",
   ])
   expect(nav()?.querySelector("a[target='_blank']")).toBeNull()
 
@@ -187,7 +187,7 @@ test("a Session is renamed from its sidebar row, and every open tab sees the nam
     await step(() => again && typeInto(again, "  Prompt colours "))
     await step(() => again && press(again, "Enter"))
     await eventually(() =>
-      expect(groups()[1]).toEqual({ repo: "kddige/dotfiles", sessions: ["Prompt colours"] }),
+      expect(groups()[0]).toEqual({ repo: "kddige/dotfiles", sessions: ["Prompt colours"] }),
     )
     await eventually(() => expect(otherName()).toBe("Prompt colours"))
     expect(row("s-dotfiles").querySelector("a")?.title).toBe("Prompt colours · claude/zsh-prompt")
@@ -201,7 +201,7 @@ test("a Session is renamed from its sidebar row, and every open tab sees the nam
     const cleared = nameField(nav() ?? document)
     await step(() => cleared && typeInto(cleared, ""))
     await step(() => cleared && press(cleared, "Enter"))
-    await eventually(() => expect(groups()[1]?.sessions).toEqual(["claude/zsh-prompt"]))
+    await eventually(() => expect(groups()[0]?.sessions).toEqual(["claude/zsh-prompt"]))
     await eventually(() => expect(otherName()).toBeUndefined())
   } finally {
     other.stop()
@@ -251,7 +251,7 @@ test("the start page points at the sidebar, and the general nav marks its page",
     () =>
       void router.navigate({
         to: "/repos/$owner/$repo/archived",
-        params: { owner: "kddige", repo: "claude-hub" },
+        params: { owner: "kddige", repo: "kndl" },
       }),
   )
   await eventually(() => expect(current()).toEqual(["Archived Sessions"]))
@@ -262,10 +262,10 @@ test("each page beside the sidebar opens with the one PageHeader, holding its on
   const pages = [
     ["/sessions/s-readme", "claude/readme-run"],
     ["/environments", "Environments"],
-    ["/repos/kddige/claude-hub/environment", "kddige/claude-hub"],
+    ["/repos/kddige/kndl/environment", "kddige/kndl"],
     ["/variables", "Shared variables"],
     ["/archive", "Archived Sessions"],
-    ["/repos/kddige/claude-hub/archived", "Archived Sessions"],
+    ["/repos/kddige/kndl/archived", "Archived Sessions"],
   ] as const
   for (const [path, title] of pages) {
     await step(() => router.history.push(path))
@@ -286,19 +286,19 @@ test("the Environments page lists every Repo with a Session, Archived ones inclu
     a.textContent,
   ])
   expect(rows).toEqual([
-    ["/repos/kddige/claude-hub/environment", "kddige/claude-hub3 Sessions"],
     ["/repos/kddige/dotfiles/environment", "kddige/dotfiles1 Session"],
+    ["/repos/kddige/kndl/environment", "kddige/kndl3 Sessions"],
   ])
 })
 
 test("the Archive page lists every Repo's Archived Sessions, and restores them", async () => {
   const { page, client } = await open("/archive")
   const archived = () =>
-    page.querySelector('ul[aria-label="Archived Sessions of kddige/claude-hub"]')?.textContent ?? ""
+    page.querySelector('ul[aria-label="Archived Sessions of kddige/kndl"]')?.textContent ?? ""
   await eventually(() => expect(archived()).toContain("claude/flaky-login"))
   expect(archived()).toContain("Deleted by Bob Lee 3d ago")
   expect(current()).toEqual(["Archived Sessions"])
-  expect(page.querySelector("h2 a")?.getAttribute("href")).toBe("/repos/kddige/claude-hub/archived")
+  expect(page.querySelector("h2 a")?.getAttribute("href")).toBe("/repos/kddige/kndl/archived")
 
   await step(() => button("Restore claude/flaky-login", page).click())
   await eventually(() =>
@@ -357,9 +357,7 @@ test("a Session's running and interrupted agents nest under it, which only its c
   expect(nestedUnder("s-release")).toEqual([])
   expect(controlled?.hidden).toBe(true)
   expect(router.state.location.pathname).toBe("/sessions/s-readme")
-  expect(JSON.parse(localStorage.getItem("claude-hub:sidebar-folded") ?? "[]")).toEqual([
-    "s-release",
-  ])
+  expect(JSON.parse(localStorage.getItem("kndl:sidebar-folded") ?? "[]")).toEqual(["s-release"])
 
   // A click on the row itself opens the Session and leaves the fold alone.
   await step(() => row("s-release").querySelector("a")?.click())
@@ -369,7 +367,7 @@ test("a Session's running and interrupted agents nest under it, which only its c
   // Opened again, the chevron shows them: the open Session's finished agents too.
   await step(() => button("Agents of Release 0.4", nav() ?? document).click())
   await eventually(() => expect(nestedUnder("s-release")).toEqual(releaseAgents))
-  expect(JSON.parse(localStorage.getItem("claude-hub:sidebar-folded") ?? "[]")).toEqual([])
+  expect(JSON.parse(localStorage.getItem("kndl:sidebar-folded") ?? "[]")).toEqual([])
 })
 
 test("an agent's row opens its view, and is the current one", async () => {
@@ -393,7 +391,7 @@ test("an agent's row opens its view, and is the current one", async () => {
 })
 
 test("a fold lasts across reloads, and opens when one of its agents' views opens", async () => {
-  localStorage.setItem("claude-hub:sidebar-folded", JSON.stringify(["s-release"]))
+  localStorage.setItem("kndl:sidebar-folded", JSON.stringify(["s-release"]))
   const { router } = await open("/sessions/s-readme")
   await eventually(() => expect(groups().length).toBe(2))
   expect(nestedUnder("s-release")).toEqual([])
@@ -405,7 +403,7 @@ test("a fold lasts across reloads, and opens when one of its agents' views opens
   await step(() => router.history.push("/sessions/s-release?agent=a-docs"))
   await eventually(() => expect(current()).toEqual(["Document the protocol"]))
   await eventually(() => expect(nestedUnder("s-release")).toEqual(releaseAgents))
-  expect(localStorage.getItem("claude-hub:sidebar-folded")).toBe("[]")
+  expect(localStorage.getItem("kndl:sidebar-folded")).toBe("[]")
 })
 
 test("on a narrow screen the drawer nests and folds agents too", async () => {

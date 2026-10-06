@@ -72,9 +72,9 @@ async function open(
 }
 
 test("a change to the image needs a passing Test build before it applies", async () => {
-  const { page, section, status } = await open("/repos/kddige/claude-hub/environment")
+  const { page, section, status } = await open("/repos/kddige/kndl/environment")
   // Headed by the Repo while it loads, then with its version beside it.
-  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("kddige/claude-hub"))
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("kddige/kndl"))
   await eventually(() => expect(page.textContent).toContain("Version 2"))
   expect(section("Version history").textContent).toContain("Changed the build")
   expect(status()).toContain("No changes to apply.")
@@ -107,7 +107,7 @@ test("a change to the image needs a passing Test build before it applies", async
 })
 
 test("the draft survives a reload, without its Sensitive values", async () => {
-  const first = await open("/repos/kddige/claude-hub/environment")
+  const first = await open("/repos/kddige/kndl/environment")
   await eventually(() => expect(first.status()).toContain("No changes to apply."))
   await step(() => button("Add variable").click())
   // The new row's name, then its value.
@@ -126,7 +126,7 @@ test("the draft survives a reload, without its Sensitive values", async () => {
   await cleanup?.()
   cleanup = undefined
 
-  const second = await open("/repos/kddige/claude-hub/environment")
+  const second = await open("/repos/kddige/kndl/environment")
   const values = () =>
     [...second.section("Variables").querySelectorAll("input")].map((input) => input.value)
   await eventually(() => expect(values()).toContain("LOG_LEVEL"))
@@ -135,13 +135,13 @@ test("the draft survives a reload, without its Sensitive values", async () => {
 })
 
 test("a draft made before someone else applied is refused, with a way to reload", async () => {
-  const { hub, page, status } = await open("/repos/kddige/claude-hub/environment")
+  const { hub, page, status } = await open("/repos/kddige/kndl/environment")
   await eventually(() => expect(status()).toContain("No changes to apply."))
   const cpus = page.querySelector('section[aria-label="Resources"] input') as HTMLInputElement
   await step(() => typeInto(cpus, "8"))
   await eventually(() => expect(status()).toContain("No Test build needed"))
 
-  await step(() => hub.teammateApplies("kddige/claude-hub"))
+  await step(() => hub.teammateApplies("kddige/kndl"))
   await eventually(() =>
     expect(page.textContent).toContain("applied version 3 since you started this draft"),
   )
@@ -189,7 +189,7 @@ test("shared variables: linked ones show who links them, and can't be deleted", 
   )
   const row = page.querySelector('li[aria-label="GH_READ_TOKEN"]')
   expect(row?.textContent).toContain("Linked by")
-  expect(row?.textContent).toContain("kddige/claude-hub as GITHUB_TOKEN")
+  expect(row?.textContent).toContain("kddige/kndl as GITHUB_TOKEN")
   expect(row?.textContent).toContain("set")
 
   await step(() => button("Delete GH_READ_TOKEN").click())
@@ -197,7 +197,7 @@ test("shared variables: linked ones show who links them, and can't be deleted", 
   await step(() => button("Delete").click())
   await eventually(() =>
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-      "GH_READ_TOKEN is linked in kddige/claude-hub",
+      "GH_READ_TOKEN is linked in kddige/kndl",
     ),
   )
 })
@@ -209,12 +209,12 @@ const needsValueBadges = (within: ParentNode) =>
   [...within.querySelectorAll("span")].filter((span) => span.textContent === "needs a value")
 
 test("after a secrets-reset, the Environment asks for the cleared values again", async () => {
-  const { page, section, status } = await open("/repos/kddige/claude-hub/environment", 2, (hub) =>
+  const { page, section, status } = await open("/repos/kddige/kndl/environment", 2, (hub) =>
     hub.environments.resetSecrets(),
   )
   await eventually(() =>
     expect(page.textContent).toContain(
-      "kddige/claude-hub's Sessions can't start: NPM_TOKEN and GITHUB_TOKEN (the shared variable GH_READ_TOKEN) need values",
+      "kddige/kndl's Sessions can't start: NPM_TOKEN and GITHUB_TOKEN (the shared variable GH_READ_TOKEN) need values",
     ),
   )
   await eventually(() => expect(needsValueBadges(section("Variables"))).toHaveLength(2))

@@ -1,17 +1,20 @@
-// The `claude-hub` CLI, served by the Hub (issue #178, ADR 0016):
+// The `kndl` CLI, served by the Hub (issue #178, ADR 0016):
 //
 // - `GET /cli` is the install script, for `curl https://<hub>/cli | sh` (cli-install.sh), with
 //   the Hub's public URL filled in.
 // - `GET /cli/version` says the commit the Hub serves the CLI at: its own.
 // - `GET /cli/<os>-<arch>` is the binary for that platform, built at that commit (CliBuilds.ts),
-//   with the commit in its `x-claude-hub-commit` header.
+//   with the commit in its `x-kndl-commit` header. A CLI of kndl's former name reads the commit
+//   from a header of that name (ADR 0017), so it is sent too: without it, such a CLI could never
+//   update itself to kndl.
 //
-// All three are open, with no sign-in: the binary is claude-hub's own code at the Hub's commit,
+// All three are open, with no sign-in: the binary is kndl's own code at the Hub's commit,
 // and holds no setting, token or key of the Hub's. What the CLI does with a Hub afterwards is
 // signed in.
 
 import { readFileSync } from "node:fs"
-import { CliCommitHeader, CliTargets, CliVersion, isCliTarget } from "@claude-hub/protocol"
+import { CliCommitHeader, CliTargets, CliVersion, isCliTarget } from "@kndl/protocol"
+import { FormerName } from "@kndl/protocol/former-name"
 import { Effect } from "effect"
 import { HttpRouter, HttpServerResponse } from "effect/http"
 import { CliBuilds } from "./CliBuilds.ts"
@@ -56,7 +59,7 @@ export const CliRoutes = HttpRouter.use(
       builds.commit === undefined
         ? Effect.succeed(
             text(
-              "This Hub doesn't run from a git checkout, so it has no commit to serve the claude-hub CLI at.",
+              "This Hub doesn't run from a git checkout, so it has no commit to serve the kndl CLI at.",
               503,
             ),
           )
@@ -73,7 +76,7 @@ export const CliRoutes = HttpRouter.use(
         const { target } = yield* HttpRouter.params
         if (target === undefined || !isCliTarget(target)) {
           return text(
-            `The Hub builds the claude-hub CLI for ${CliTargets.join(", ")}, not ${target}.`,
+            `The Hub builds the kndl CLI for ${CliTargets.join(", ")}, not ${target}.`,
             404,
           )
         }
@@ -82,6 +85,7 @@ export const CliRoutes = HttpRouter.use(
           contentType: "application/octet-stream",
           headers: {
             [CliCommitHeader]: builds.commit ?? "",
+            [FormerName.cliCommitHeader]: builds.commit ?? "",
             "cache-control": "no-store",
           },
         }).pipe(Effect.orDie)

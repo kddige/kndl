@@ -17,7 +17,7 @@ export const hubPaths = {
   /** `POST`: signs out and clears the cookie. */
   signOut: "/auth/sign-out",
   /**
-   * `POST` with `{ machine, challenge }`, from the `/cli-login` page: approves `claude-hub login`
+   * `POST` with `{ machine, challenge }`, from the `/cli-login` page: approves `kndl login`
    * on that machine, answering a Login code for it (issue #179).
    */
   cliApprove: "/auth/cli/approve",

@@ -6,11 +6,11 @@
 // (RepoAccess.ts). As the App, it reads its own permissions and its installations', to check them
 // against what the Hub needs (AppPermissions.ts).
 //
-// It also makes the App in the first place: `claude-hub onboard` registers it on GitHub from a
+// It also makes the App in the first place: `kndl onboard` registers it on GitHub from a
 // manifest, and trades the code GitHub hands back for its credentials (convertManifest).
 
 import { createPrivateKey, type KeyObject, sign } from "node:crypto"
-import { type AppPermissionsCheck, type GitIdentity, RepoName, repoKey } from "@claude-hub/protocol"
+import { type AppPermissionsCheck, type GitIdentity, RepoName, repoKey } from "@kndl/protocol"
 import {
   Clock,
   Context,
@@ -191,7 +191,7 @@ export class GitHubApp extends Context.Service<
      */
     readonly checkPermissions: Effect.Effect<AppPermissionsCheck, GitHubAppError>
   }
->()("@claude-hub/hub/GitHubApp") {
+>()("@kndl/hub/GitHubApp") {
   /** The App from `HubConfig.githubApp`; when that is none, every call fails, saying so. */
   static readonly layer = Layer.effect(
     GitHubApp,
@@ -242,7 +242,7 @@ export class GitHubApp extends Context.Service<
           ),
           HttpClientRequest.accept("application/vnd.github+json"),
           HttpClientRequest.setHeader("x-github-api-version", "2022-11-28"),
-          HttpClientRequest.setHeader("user-agent", "claude-hub"),
+          HttpClientRequest.setHeader("user-agent", "kndl"),
         ),
       )
 
@@ -529,7 +529,7 @@ export const convertManifest = Effect.fn("GitHubApp.convertManifest")(function* 
     ).pipe(
       HttpClientRequest.accept("application/vnd.github+json"),
       HttpClientRequest.setHeader("x-github-api-version", "2022-11-28"),
-      HttpClientRequest.setHeader("user-agent", "claude-hub"),
+      HttpClientRequest.setHeader("user-agent", "kndl"),
     ),
   )
   return {

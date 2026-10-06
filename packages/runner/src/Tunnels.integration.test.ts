@@ -1,14 +1,14 @@
-// CLAUDE_HUB_SANDBOX_IT=1: tunnels into a real microsandbox Sandbox (#177). One Sandbox on
+// KNDL_SANDBOX_IT=1: tunnels into a real microsandbox Sandbox (#177). One Sandbox on
 // oven/bun:1, named it-177-…, serves HTTP and a WebSocket on 127.0.0.1 and on ::1; a real Hub and
 // Runner (testTunnels.ts) carry each connection to it through agentd, as a Session's would be. It
 // needs `msb` installed for the current user, the oven/bun:1 image (pulled on first run), and
 // tmux, for the Session the scene runs. The Sandbox is removed at the end, pass or fail; no other
 // Sandbox is touched.
 //
-//   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/Tunnels.integration.test.ts
+//   KNDL_SANDBOX_IT=1 bun test packages/runner/src/Tunnels.integration.test.ts
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
-import { TunnelCloseCode } from "@claude-hub/protocol"
+import { TunnelCloseCode } from "@kndl/protocol"
 import { Effect } from "effect"
 import { Sandbox } from "microsandbox"
 import { makeAgentTcp } from "./sandbox/AgentTcp.ts"
@@ -23,8 +23,8 @@ import {
 } from "./testTunnels.ts"
 import { TunnelBufferCap, TunnelStallMs } from "./Tunnels.ts"
 
-const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1" && !tmuxMissing
-if (process.env.CLAUDE_HUB_SANDBOX_IT === "1" && tmuxMissing) {
+const enabled = process.env.KNDL_SANDBOX_IT === "1" && !tmuxMissing
+if (process.env.KNDL_SANDBOX_IT === "1" && tmuxMissing) {
   console.warn("Skipping the real-Sandbox tunnel tests: tmux isn't installed")
 }
 

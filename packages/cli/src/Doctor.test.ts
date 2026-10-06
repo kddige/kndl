@@ -4,19 +4,19 @@ import {
   checkAppPermissions,
   type InstallationFacts,
   manifestPermissions,
-} from "@claude-hub/hub/src/AppPermissions.ts"
+} from "@kndl/hub/src/AppPermissions.ts"
 import { type DoctorFacts, diagnose, formatChecks } from "./Doctor.ts"
 
 const healthy: DoctorFacts = {
-  home: "/home/ada/.claude-hub",
+  home: "/home/ada/.kndl",
   installed: true,
-  wrapper: { path: "/home/ada/.local/bin/claude-hub", exists: true, current: true, onPath: true },
+  wrapper: { path: "/home/ada/.local/bin/kndl", exists: true, current: true, onPath: true },
   roles: ["hub", "runner"],
   oldData: undefined,
   prerequisites: { missing: [], steps: [], needsSudo: false, afterwards: [] },
   envFiles: [
-    { role: "hub", path: "/home/ada/.claude-hub/hub.env", mode: 0o100600 },
-    { role: "runner", path: "/home/ada/.claude-hub/runner.env", mode: 0o100600 },
+    { role: "hub", path: "/home/ada/.kndl/hub.env", mode: 0o100600 },
+    { role: "runner", path: "/home/ada/.kndl/runner.env", mode: 0o100600 },
   ],
   hubConfigError: undefined,
   githubApp: undefined,
@@ -121,7 +121,7 @@ describe("doctor", () => {
 
   test("nothing set up yet points at onboard", () => {
     expect(failing({ ...healthy, roles: [], envFiles: [], services: [] })[0]?.detail).toContain(
-      "claude-hub onboard",
+      "kndl onboard",
     )
   })
 
@@ -173,8 +173,8 @@ const check = (facts: DoctorFacts) => diagnose(facts).find((c) => c.name === "Gi
 
 describe("doctor and the GitHub App", () => {
   const app: AppFacts = {
-    slug: "claude-hub-mac",
-    htmlUrl: "https://github.com/apps/claude-hub-mac",
+    slug: "kndl-mac",
+    htmlUrl: "https://github.com/apps/kndl-mac",
     owner: { login: "ada", type: "User" },
     permissions: manifestPermissions(),
     events: [],
@@ -200,7 +200,7 @@ describe("doctor and the GitHub App", () => {
     expect(check(withApp(app))).toEqual({
       name: "GitHub App",
       status: "ok",
-      detail: "claude-hub-mac and its installation have the permissions the Hub needs",
+      detail: "kndl-mac and its installation have the permissions the Hub needs",
     })
   })
 
@@ -213,7 +213,7 @@ describe("doctor and the GitHub App", () => {
     expect(found?.status).toBe("fail")
     expect(found?.fix).toBeUndefined()
     expect(found?.detail).toContain(
-      "The App claude-hub-mac lacks Issues: read and write. Add it at https://github.com/settings/apps/claude-hub-mac/permissions",
+      "The App kndl-mac lacks Issues: read and write. Add it at https://github.com/settings/apps/kndl-mac/permissions",
     )
     expect(found?.detail).toContain(
       "Its installation on ada lacks Issues: read and write. Once the App has it, accept it at https://github.com/settings/installations/7/permissions/update",
@@ -236,7 +236,7 @@ describe("doctor and the GitHub App", () => {
   test("an App installed nowhere warns, linking to its install page", () => {
     expect(check(withApp(app, []))).toMatchObject({
       status: "warn",
-      detail: expect.stringContaining("https://github.com/apps/claude-hub-mac/installations/new"),
+      detail: expect.stringContaining("https://github.com/apps/kndl-mac/installations/new"),
     })
   })
 
@@ -259,18 +259,18 @@ describe("doctor and the GitHub App", () => {
     expect(found?.status).toBe("fail")
     expect(found?.fix).toBeUndefined()
     expect(found?.detail).toContain("nobody signed in with GitHub can see any Session")
-    expect(found?.detail).toContain("claude-hub onboard --github-app create")
-    expect(found?.detail).toContain("claude-hub onboard --github-app manual")
+    expect(found?.detail).toContain("kndl onboard --github-app create")
+    expect(found?.detail).toContain("kndl onboard --github-app manual")
   })
 
   test("doctor prints a detail's lines under each other", () => {
     expect(
       formatChecks([
-        { name: "Install", status: "ok", detail: "/home/ada/.claude-hub/app" },
+        { name: "Install", status: "ok", detail: "/home/ada/.kndl/app" },
         { name: "GitHub App", status: "fail", detail: "The App lacks one.\nIts installation too." },
       ]),
     ).toEqual([
-      "ok  Install     /home/ada/.claude-hub/app",
+      "ok  Install     /home/ada/.kndl/app",
       "XX  GitHub App  The App lacks one.",
       "                Its installation too.",
     ])

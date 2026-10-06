@@ -76,9 +76,9 @@ const welcome = { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protoc
 /** A session a Runner started, linked to the Hub. Returns the requests, and the events posted. */
 const linkedSession = (on: On) => {
   mock.env(on, {
-    CLAUDE_HUB_URL: hubUrl,
-    CLAUDE_HUB_SESSION_ID: "s1",
-    CLAUDE_HUB_MOD_TOKEN: "secret",
+    KNDL_URL: hubUrl,
+    KNDL_SESSION_ID: "s1",
+    KNDL_MOD_TOKEN: "secret",
   })
   on("session.id", () => ({ value: "claude-1" }))
   on("session.model", () => ({ value: "claude-test" }))
@@ -120,9 +120,9 @@ describe("the Hub link", () => {
 
   test("is off in a background job of Claude Code's, which inherits the mod token (#191)", async ($, on) => {
     mock.env(on, {
-      CLAUDE_HUB_URL: hubUrl,
-      CLAUDE_HUB_SESSION_ID: "s1",
-      CLAUDE_HUB_MOD_TOKEN: "secret",
+      KNDL_URL: hubUrl,
+      KNDL_SESSION_ID: "s1",
+      KNDL_MOD_TOKEN: "secret",
       CLAUDE_CODE_SESSION_KIND: "bg",
     })
     const lines: Array<string> = []
@@ -437,6 +437,6 @@ describe("what the model is told", () => {
     ])
     const shared = sections.find((section) => section.id === "hub-link:shared-session")
     expect(shared?.scope).toBe("session")
-    expect(shared?.text).toContain("shared through Claude Hub")
+    expect(shared?.text).toContain("shared through kndl")
   })
 })

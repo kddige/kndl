@@ -1,7 +1,7 @@
 // Redacting Sensitive values from text and streams (issue #48), on made-up values.
 
 import { describe, expect, test } from "bun:test"
-import { AgentId, ParticipantId, type SessionEvent, ToolCallId, TurnId } from "@claude-hub/protocol"
+import { AgentId, ParticipantId, type SessionEvent, ToolCallId, TurnId } from "@kndl/protocol"
 import { everything, needlesOf, redactEvent, redactText, StreamRedactor } from "./Redaction.ts"
 
 const secret = "sk_TEST_9f3a2b"

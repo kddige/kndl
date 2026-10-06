@@ -1,4 +1,4 @@
-// CLI tokens (GLOSSARY.md, issue #179, ADR 0016): what `claude-hub login` leaves on a machine, so
+// CLI tokens (GLOSSARY.md, issue #179, ADR 0016): what `kndl login` leaves on a machine, so
 // the CLI can act for the person who approved it.
 //
 // - Signing in is two steps. On the `/cli-login` page a signed-in person approves the machine,
@@ -23,7 +23,7 @@ import {
   PairingAlphabet,
   Participant,
   ParticipantId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Clock, Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -55,7 +55,7 @@ export class LoginRefused extends Schema.TaggedError<LoginRefused>()("LoginRefus
 
 /** Every refused Login code is refused alike. */
 export const loginRefusedMessage =
-  "That code isn't valid: it may have expired or been used. Run claude-hub login again."
+  "That code isn't valid: it may have expired or been used. Run kndl login again."
 
 /** A new Login code: {@link CliLoginCodeLength} characters of the alphabet, 5 random bits each. */
 export function newCliLoginCode(random: (size: number) => Uint8Array = randomBytes): string {
@@ -113,7 +113,7 @@ export class CliTokens extends Context.Service<
       id: CliTokenId,
     ) => Effect.Effect<boolean, SqlError>
   }
->()("@claude-hub/hub/CliTokens") {
+>()("@kndl/hub/CliTokens") {
   static readonly layer = Layer.effect(
     CliTokens,
     Effect.gen(function* () {

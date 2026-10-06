@@ -13,7 +13,7 @@ import {
   SessionState,
   SessionSummary,
   TurnId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -273,7 +273,7 @@ export class Sessions extends Context.Service<
      */
     readonly setLastOutput: (id: SessionId, output: string | null) => Effect.Effect<void, SqlError>
   }
->()("@claude-hub/hub/Sessions") {
+>()("@kndl/hub/Sessions") {
   static readonly layer = Layer.effect(
     Sessions,
     Effect.gen(function* () {
