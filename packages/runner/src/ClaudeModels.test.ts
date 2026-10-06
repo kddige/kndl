@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import { type ModelProbe, parseEfforts, parseModelProbe, runnerModels } from "./ClaudeModels.ts"
+import { ConfigProvider, Effect, Logger } from "effect"
+import {
+  ClaudeModels,
+  ClaudeModelsLive,
+  type ModelProbe,
+  PinnedClaudeModels,
+  parseEfforts,
+  parseModelProbe,
+  runnerModels,
+} from "./ClaudeModels.ts"
+import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 
 // What `claude --output-format stream-json --verbose -p /model` prints, trimmed to what is read,
 // as Claude Code 2.1.289 prints it.
@@ -157,5 +167,28 @@ describe("runnerModels", () => {
       effort: true,
     })
     expect(models.efforts).toEqual(["low", "max"])
+  })
+})
+
+const modelsWith = (env: Record<string, string>) =>
+  Effect.runPromise(
+    Effect.service(ClaudeModels).pipe(
+      Effect.flatMap((service) => service.current),
+      Effect.provide(ClaudeModelsLive),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+      Effect.provide(Logger.layer([])),
+    ),
+  )
+
+describe("ClaudeModelsLive", () => {
+  test("says the pinned build's models, with no Claude Code on the host", async () => {
+    expect(await modelsWith({ PATH: "/nonexistent" })).toEqual(PinnedClaudeModels)
+    expect(await modelsWith({ RUNNER_SANDBOX_CLAUDE_VERSION: PinnedClaudeVersion })).toEqual(
+      PinnedClaudeModels,
+    )
+  })
+
+  test("says none for another version, whose models aren't known", async () => {
+    expect(await modelsWith({ RUNNER_SANDBOX_CLAUDE_VERSION: "2.0.0" })).toBeUndefined()
   })
 })

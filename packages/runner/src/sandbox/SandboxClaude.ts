@@ -23,7 +23,8 @@ import { Data, Effect } from "effect"
  * The Claude Code version Sessions run. Upgrading it: change it here, then run the smoke test,
  * `CLAUDE_HUB_SANDBOX_IT=1 bun test src/SandboxClaude.integration.test.ts` in packages/runner,
  * which runs it in a Sandbox through the credential proxy: its banner, `/status`, and a Turn
- * with Bash.
+ * with Bash. It also checks PinnedClaudeModels (ClaudeModels.ts), the models the build takes,
+ * and says what the build lists when the table is out of date.
  */
 export const PinnedClaudeVersion = "2.1.289"
 
