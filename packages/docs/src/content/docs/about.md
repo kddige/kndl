@@ -35,7 +35,7 @@ kndl is said "kindle" and always written lowercase, even at the start of a sente
 
 ## The mark
 
-The kndl mark is a terminal prompt whose two strokes meet at a node, followed by a cursor: several lines of work joining at one Hub, ready for the next prompt. It is drawn from scratch for this project, set in the indigo of the web UI's accent, and the wordmark is set in JetBrains Mono. The source files are in `brand/` in the repository.
+The kndl mark is Kip, a friendly flame on two crossed logs: the small fire that kindling gets going, which everyone gathers around. Kip is drawn from scratch for this project in a night violet, a warm yellow flame with a pale core, and brown logs, and the wordmark is set in Fraunces with its soft, rounded strokes. Kip's friend Mallow, a marshmallow, joins on the social card. The source files are in `brand/` in the repository.
 
 ## Contributing
 

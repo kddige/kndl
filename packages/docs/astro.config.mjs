@@ -41,7 +41,7 @@ export default defineConfig({
         },
         { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
         { tag: "meta", attrs: { name: "twitter:image", content: `${site}${base}og.png` } },
-        { tag: "meta", attrs: { name: "theme-color", content: "#3D5DCF" } },
+        { tag: "meta", attrs: { name: "theme-color", content: "#1D1733" } },
       ],
       customCss: ["./src/styles/theme.css"],
       components: {

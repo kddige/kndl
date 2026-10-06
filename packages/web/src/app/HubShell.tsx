@@ -1,5 +1,5 @@
 import * as stylex from "@stylexjs/stylex"
-import { Link, Outlet, useRouterState } from "@tanstack/react-router"
+import { Outlet, useRouterState } from "@tanstack/react-router"
 import { type MouseEvent, useEffect, useState } from "react"
 import type { Connection } from "../hub/store.ts"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
@@ -15,11 +15,11 @@ import {
   toast,
   WarningIcon,
 } from "../ui/index.ts"
-import { focus } from "../ui/shared.ts"
-import { chrome, color, radius, space, text, tracking, weight } from "../ui/tokens.stylex.ts"
+import { chrome, color, space } from "../ui/tokens.stylex.ts"
 import { useMediaQuery, WIDE } from "../ui/useMediaQuery.ts"
 import { AppPermissionsBanner } from "./AppPermissionsBanner.tsx"
 import { AppSidebar } from "./AppSidebar.tsx"
+import { Brand } from "./Brand.tsx"
 import { useHub, useHubState } from "./hub.tsx"
 import { SignIn } from "./SignIn.tsx"
 
@@ -52,15 +52,6 @@ const styles = stylex.create({
     borderBottomStyle: "solid",
     borderBottomColor: color.border,
     backgroundColor: color.surface,
-  },
-  brand: {
-    flex: 1,
-    fontSize: text.md,
-    fontWeight: weight.semibold,
-    letterSpacing: tracking.tight,
-    color: color.text,
-    textDecoration: "none",
-    borderRadius: radius.sm,
   },
   drawer: { display: "flex", flexDirection: "column", height: "100%" },
   banner: { margin: space.s3, marginBottom: 0 },
@@ -140,9 +131,7 @@ export function HubShell() {
             <IconButton label="Open navigation" noTooltip onClick={() => setDrawerOn(pathname)}>
               <MenuIcon />
             </IconButton>
-            <Link to="/" {...stylex.props(styles.brand, focus.ring)}>
-              kndl
-            </Link>
+            <Brand />
             <CreateSessionDialog
               trigger={
                 <IconButton label="New Session" noTooltip>

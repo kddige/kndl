@@ -1,6 +1,6 @@
 // Makes the raster brand assets from the SVG sources in brand/, and copies the favicons into the
 // docs site's and the web UI's public folders. After changing brand/, run `bun run brand` here, or
-// `bun run --filter @claude-hub/docs brand` from the repo root.
+// `bun run --filter @kndl/docs brand` from the repo root.
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import sharp from "sharp"

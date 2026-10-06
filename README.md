@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="brand/lockup-dark.svg">
-    <img src="brand/lockup-light.svg" alt="kndl" width="280">
+    <img src="brand/lockup-light.svg" alt="kndl" width="180">
   </picture>
 </p>
 
