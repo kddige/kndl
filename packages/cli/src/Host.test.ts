@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { appId, appKeyPair, StandInGitHub } from "@claude-hub/hub/src/testGitHubApi.ts"
+import { appId, appKeyPair, StandInGitHub } from "@kndl/hub/src/testGitHubApi.ts"
 import { Effect } from "effect"
 import { appPermissionsFact } from "./Host.ts"
 import { type Layout, resolveLayout } from "./Layout.ts"
@@ -18,8 +18,8 @@ let layout: Layout
 
 beforeEach(async () => {
   github.reset()
-  scratch = await mkdtemp(join(tmpdir(), "claude-hub-host-"))
-  layout = resolveLayout({ CLAUDE_HUB_HOME: join(scratch, ".claude-hub") }, scratch)
+  scratch = await mkdtemp(join(tmpdir(), "kndl-host-"))
+  layout = resolveLayout({ KNDL_HOME: join(scratch, ".kndl") }, scratch)
   mkdirSync(layout.home.dir, { recursive: true })
 })
 

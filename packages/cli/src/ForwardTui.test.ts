@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionSummary } from "@claude-hub/protocol"
+import type { SessionSummary } from "@kndl/protocol"
 import type { ForwardedPort } from "./ForwardPorts.ts"
 import {
   Keys,
@@ -16,7 +16,7 @@ import { keyboard, terminal } from "./testTerminal.ts"
 
 const summary = (fields: Partial<Omit<SessionSummary, "id">> & { readonly id: string }) =>
   ({
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     workBranch: "claude/fix-login",
     state: "Active",
     ...fields,
@@ -71,8 +71,8 @@ describe("the picker", () => {
   test("lists each Session with its short id, name, Repo and ports, the chosen one marked", () => {
     expect(pickerLines({ ...picker, selected: 1 }).map(plain)).toEqual([
       "Forward which Session?",
-      "  0b9256  claude/fix-login  kddige/claude-hub  3000",
-      "> 77ab12  Docs  kddige/claude-hub  no open ports",
+      "  0b9256  claude/fix-login  kddige/kndl  3000",
+      "> 77ab12  Docs  kddige/kndl  no open ports",
       "Up and down to choose, Enter to forward, Esc to quit",
     ])
   })
@@ -124,9 +124,9 @@ describe("the live list", () => {
 
   test("each port's local URL, process and Docker label, and the Session's state", () => {
     expect(liveLines(view).map(plain)).toEqual([
-      "Forwarding 0b9256 claude/fix-login · kddige/claude-hub · Active",
+      "Forwarding 0b9256 claude/fix-login · kddige/kndl · Active",
       "  http://localhost:3000    bun server · 2 connections",
-      "  3001                     taken here by node (pid 4242): trying again until it's free. Or forward it to another port: claude-hub forward 0b9256 3001:3101",
+      "  3001                     taken here by node (pid 4242): trying again until it's free. Or forward it to another port: kndl forward 0b9256 3001:3101",
       "  http://localhost:5174    node vite (port 5173 in the Session)",
       "  http://localhost:5432    docker-proxy · Docker",
       "  80                       Port 80 needs privileges here: forward it to a higher port, as 80:8080.",
@@ -145,7 +145,7 @@ describe("the live list", () => {
       canPick: false,
     }).map(plain)
     expect(waking).toEqual([
-      "Forwarding 0b9256 claude/fix-login · kddige/claude-hub · starting",
+      "Forwarding 0b9256 claude/fix-login · kddige/kndl · starting",
       "  Nothing listens in the Session yet: a port appears here once something does.",
       "Waking the Session...",
       "Ctrl-C: stop",

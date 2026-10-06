@@ -1,4 +1,4 @@
-import { sameRepo, type SessionId, type SessionSummary, sessionTitle } from "@claude-hub/protocol"
+import { sameRepo, type SessionId, type SessionSummary, sessionTitle } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useMemo } from "react"

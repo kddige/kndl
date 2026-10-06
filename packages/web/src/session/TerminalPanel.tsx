@@ -8,7 +8,7 @@
 //
 // What the terminal prints goes to xterm only, which draws it as text: never as HTML.
 
-import type { SessionId, SessionSummary, TerminalFrame, TerminalSize } from "@claude-hub/protocol"
+import type { SessionId, SessionSummary, TerminalFrame, TerminalSize } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { FitAddon } from "@xterm/addon-fit"
 import { type ITheme, Terminal } from "@xterm/xterm"

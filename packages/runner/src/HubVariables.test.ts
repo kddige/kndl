@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { FetchVariables, RunnerToHub, VariablesRequestId } from "@claude-hub/protocol"
+import type { FetchVariables, RunnerToHub, VariablesRequestId } from "@kndl/protocol"
 import { Effect, Fiber, Layer, Redacted } from "effect"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables, HubVariablesLive, variablesEnv } from "./HubVariables.ts"

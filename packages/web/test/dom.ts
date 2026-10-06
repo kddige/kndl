@@ -19,7 +19,7 @@ if (!globalThis.stylexCompilerRegistered) {
   const stylex = createStylexBunPlugin({
     dev: true,
     // The plugin writes the collected CSS to a file; keep it out of the repo.
-    bunDevCssOutput: join(tmpdir(), "claude-hub-web-test-stylex.css"),
+    bunDevCssOutput: join(tmpdir(), "kndl-web-test-stylex.css"),
   })
   // Only this package's sources use StyleX. The plugin's own filter matches every JS file,
   // Babel's included, which would make the compiler try to compile itself as it loads.

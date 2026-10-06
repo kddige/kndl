@@ -1,10 +1,10 @@
 // What the GitHub App's permissions lack, as the Hub last found (issue #86), with links to where
-// on GitHub to fix it: claude-hub can't change an App's permissions, nor accept them for an
+// on GitHub to fix it: kndl can't change an App's permissions, nor accept them for an
 // account. First the App's own settings; then each account it's installed on, which has to accept
 // what the App asks for.
 
-import type { AppPermissionsCheck } from "@claude-hub/protocol"
-import { describeMissing, hasPermissionDrift } from "@claude-hub/protocol"
+import type { AppPermissionsCheck } from "@kndl/protocol"
+import { describeMissing, hasPermissionDrift } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
 import { Banner, Button, ExternalLinkIcon, toast, WarningIcon } from "../ui/index.ts"

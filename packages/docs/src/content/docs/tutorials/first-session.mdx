@@ -7,10 +7,10 @@ sidebar:
 
 import { Steps } from "@astrojs/starlight/components"
 
-In this tutorial you run the whole of claude-hub on one machine: a Hub, the web UI and one Runner. You sign in without GitHub, give a Repo its Environment, start a Session on it, and see a second person join. It takes about twenty minutes, most of it waiting for the first Build.
+In this tutorial you run the whole of kndl on one machine: a Hub, the web UI and one Runner. You sign in without GitHub, give a Repo its Environment, start a Session on it, and see a second person join. It takes about twenty minutes, most of it waiting for the first Build.
 
 :::note[From a checkout]
-This tutorial runs claude-hub from a checkout of its repository with `bun run`, so you see each part start. To install a Hub and Runner as services instead, use the `claude-hub` command: see [Install claude-hub](/how-to/install/).
+This tutorial runs kndl from a checkout of its repository with `bun run`, so you see each part start. To install a Hub and Runner as services instead, use the `kndl` command: see [Install kndl](/how-to/install/).
 :::
 
 ## What you need
@@ -28,8 +28,8 @@ This tutorial runs claude-hub from a checkout of its repository with `bun run`, 
 1. Get the code and install its dependencies:
 
    ```sh
-   gh repo clone kddige/claude-hub
-   cd claude-hub
+   gh repo clone kddige/kndl
+   cd kndl
    bun install
    ```
 
@@ -42,7 +42,7 @@ This tutorial runs claude-hub from a checkout of its repository with `bun run`, 
 3. Start the Hub with dev login, which signs you in without GitHub. It only works when the Hub and its URL are both on loopback:
 
    ```sh
-   HUB_PUBLIC_URL=http://127.0.0.1:7777 CLAUDE_HUB_DEV_LOGIN=1 bun run hub
+   HUB_PUBLIC_URL=http://127.0.0.1:7777 KNDL_DEV_LOGIN=1 bun run hub
    ```
 
    The Hub logs a few warnings at startup: GitHub sign-in is off, the GitHub App is not configured, `HUB_SECRETS_KEY` is not set, and dev login is on. All of them are expected here. Leave it running.
@@ -122,4 +122,4 @@ You ran a Hub and a Runner on one machine, gave a Repo its Environment through a
 - [Add a Runner on another machine](/how-to/add-a-runner/)
 - [Set up the GitHub App](/how-to/set-up-the-github-app/), for GitHub sign-in and for `git push` from Sessions
 - [Set up an Environment](/how-to/set-up-an-environment/) with your Repo's tools
-- [How claude-hub works](/explanation/architecture/)
+- [How kndl works](/explanation/architecture/)

@@ -33,7 +33,7 @@
 import { mkdir, readdir, realpath, rm, stat, symlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join, posix } from "node:path"
-import type { SandboxState, SessionId } from "@claude-hub/protocol"
+import type { SandboxState, SessionId } from "@kndl/protocol"
 import { Cause, Effect, Layer, Option, Queue, Schema, Stream } from "effect"
 import { MicrosandboxError, NetworkPolicy, Sandbox, Snapshot, Volume } from "microsandbox"
 import type {
@@ -134,7 +134,7 @@ const call = <A>(operation: string, sessionId: SessionId | undefined, f: () => P
 // Run inside the guest. Each is a no-op when Docker isn't set up for the Sandbox.
 
 /** Lists the containers stopped by the last clean stop, to start again on the next boot. */
-const runningListPath = `${dockerDataPath}/.claude-hub-running`
+const runningListPath = `${dockerDataPath}/.kndl-running`
 
 const startDockerScript = `
 grep -q ' ${dockerDataPath} ' /proc/mounts || exit 0

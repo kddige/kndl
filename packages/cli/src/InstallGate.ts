@@ -1,8 +1,8 @@
-// One `claude-hub` CLI, two ways to have it (issue #178): an install's, run from its checkout by
+// One `kndl` CLI, two ways to have it (issue #178): an install's, run from its checkout by
 // the command install.sh writes, and a binary installed from a Hub (BuildInfo.ts). The commands
 // that set up and run a Hub or a Runner (onboard, update, status, logs, doctor, the services...)
 // run Bun on the install's checkout, so a binary from a Hub doesn't run them: it says they need a
-// claude-hub install, and how to get one, or which command runs them when there is one.
+// kndl install, and how to get one, or which command runs them when there is one.
 import { readFileSync } from "node:fs"
 import { Effect } from "effect"
 import { InstallLine } from "./Actions.ts"
@@ -11,7 +11,7 @@ import { fail } from "./Failure.ts"
 import { isInstalled, isOurWrapper } from "./Host.ts"
 import { type Layout, isWrapperFor, resolveLayout, shellQuote } from "./Layout.ts"
 
-/** What a binary from a Hub says to `claude-hub <command>`, given what this machine has. */
+/** What a binary from a Hub says to `kndl <command>`, given what this machine has. */
 export function needsInstallMessage(
   command: string,
   layout: Layout,
@@ -22,21 +22,20 @@ export function needsInstallMessage(
     readonly wrapper: boolean
   },
 ): string {
-  const notHere =
-    "This claude-hub, installed from a Hub, doesn't set up or run a Hub or a Runner itself."
+  const notHere = "This kndl, installed from a Hub, doesn't set up or run a Hub or a Runner itself."
   if (!machine.installed) {
     return [
-      `\`claude-hub ${command}\` needs a claude-hub install, and there is none in ${layout.home.dir}.`,
-      `${notHere} To make this machine one, install claude-hub with:`,
+      `\`kndl ${command}\` needs a kndl install, and there is none in ${layout.home.dir}.`,
+      `${notHere} To make this machine one, install kndl with:`,
       "",
       `  ${InstallLine}`,
       "",
-      "or set CLAUDE_HUB_HOME to the home you installed.",
+      "or set KNDL_HOME to the home you installed.",
     ].join("\n")
   }
   const installs = machine.wrapper ? shellQuote(layout.wrapper) : `bun ${shellQuote(layout.cli)}`
   return [
-    `\`claude-hub ${command}\` runs on the claude-hub install in ${layout.home.dir}, with its own command. ${notHere} Run:`,
+    `\`kndl ${command}\` runs on the kndl install in ${layout.home.dir}, with its own command. ${notHere} Run:`,
     "",
     `  ${installs} ${command}`,
   ].join("\n")

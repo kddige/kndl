@@ -141,7 +141,7 @@ export function HubShell() {
               <MenuIcon />
             </IconButton>
             <Link to="/" {...stylex.props(styles.brand, focus.ring)}>
-              Claude Hub
+              kndl
             </Link>
             <CreateSessionDialog
               trigger={

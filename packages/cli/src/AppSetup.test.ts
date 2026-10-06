@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { appKeyPair, StandInGitHub } from "@claude-hub/hub/src/testGitHubApi.ts"
+import { appKeyPair, StandInGitHub } from "@kndl/hub/src/testGitHubApi.ts"
 import { Cause, Effect, Exit } from "effect"
 import { GitHubSiteRef } from "./AppSetup.ts"
 import { envValues, parseEnv } from "./EnvFile.ts"
@@ -44,9 +44,9 @@ let layout: Layout
 
 beforeEach(async () => {
   github.reset()
-  scratch = await mkdtemp(join(tmpdir(), "claude-hub-app-"))
+  scratch = await mkdtemp(join(tmpdir(), "kndl-app-"))
   const userHome = join(scratch, "user")
-  layout = resolveLayout({ CLAUDE_HUB_HOME: join(userHome, ".claude-hub") }, userHome)
+  layout = resolveLayout({ KNDL_HOME: join(userHome, ".kndl") }, userHome)
   mkdirSync(join(layout.app, ".git"), { recursive: true })
 })
 
@@ -153,7 +153,7 @@ describe("creating the GitHub App from the manifest", () => {
     expect(readFileSync(keyPath, "utf8")).toStartWith("-----BEGIN RSA PRIVATE KEY-----")
     expect(statSync(keyPath).mode & 0o777).toBe(0o600)
     expect(transcript).toContainEqual(
-      expect.stringContaining("https://github.com/apps/claude-hub-new-1000/installations/new"),
+      expect.stringContaining("https://github.com/apps/kndl-new-1000/installations/new"),
     )
     // The secrets are written, never shown.
     const shown = transcript.join("\n")

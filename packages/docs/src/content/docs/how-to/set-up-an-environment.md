@@ -50,7 +50,7 @@ apt-get update && apt-get install -y gh
 Debian's own package (`apt-get install -y gh`) works too, but is older. Commits are by the Session's Creator unless you set another identity here ([why](/explanation/git-from-sessions/#in-the-sandbox)), for example a shared bot:
 
 ```sh
-git config --global user.name "Claude (claude-hub)"
+git config --global user.name "Claude (kndl)"
 git config --global user.email "claude@example.com"
 ```
 

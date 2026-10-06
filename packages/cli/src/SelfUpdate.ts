@@ -1,4 +1,4 @@
-// A `claude-hub` installed from a Hub follows the Hub's commit (issue #178), as Runners do
+// A `kndl` installed from a Hub follows the Hub's commit (issue #178), as Runners do
 // (ADR 0011). Each run asks the Hub it was installed from (CliConfig.ts) for its commit
 // (`GET /cli/version`); when it differs from the binary's own, the CLI downloads the Hub's binary
 // for its platform, checks it runs and is at that commit, puts it in its own place with a rename,
@@ -6,20 +6,20 @@
 // so the CLI works offline; an update that fails says why and goes on with this binary.
 //
 // A CLI run from a checkout, as an install's command runs it, has no build (BuildInfo.ts) and
-// never updates itself: it updates with the checkout, by `claude-hub update`.
+// never updates itself: it updates with the checkout, by `kndl update`.
 import { realpathSync } from "node:fs"
 import { chmod, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { CliCommitHeader, CliVersion } from "@claude-hub/protocol"
+import { CliCommitHeader, CliVersion } from "@kndl/protocol"
 import { Console, Effect, Option, Schema } from "effect"
 import type { Build } from "./BuildInfo.ts"
 import type { CliConfig } from "./CliConfig.ts"
 
 /** Set to anything, the CLI never updates itself. */
-export const NoSelfUpdateVariable = "CLAUDE_HUB_NO_SELF_UPDATE"
+export const NoSelfUpdateVariable = "KNDL_NO_SELF_UPDATE"
 
 /** Set on the run of the command again after an update, to the commit updated to. */
-export const UpdatedVariable = "CLAUDE_HUB_UPDATED_TO"
+export const UpdatedVariable = "KNDL_UPDATED_TO"
 
 /** Whether to ask the Hub for its commit, and if not, why not. */
 export type SelfUpdatePlan =
@@ -33,7 +33,7 @@ export function planSelfUpdate(input: {
 }): SelfUpdatePlan {
   const { build, env, config } = input
   if (build === undefined) {
-    return { _tag: "Skip", reason: "It runs from a checkout, which `claude-hub update` updates." }
+    return { _tag: "Skip", reason: "It runs from a checkout, which `kndl update` updates." }
   }
   if (env[NoSelfUpdateVariable]) {
     return { _tag: "Skip", reason: `${NoSelfUpdateVariable} is set.` }
@@ -87,7 +87,7 @@ export const replaceBinary = (options: {
   Effect.tryPromise({
     try: async () => {
       const exe = realpathSync(options.exe)
-      const partial = join(dirname(exe), `.claude-hub.update-${process.pid}`)
+      const partial = join(dirname(exe), `.kndl.update-${process.pid}`)
       try {
         const url = new URL(`/cli/${options.target}`, options.hub)
         const response = await fetch(url, { signal: AbortSignal.timeout(DownloadTimeoutMs) })
@@ -171,7 +171,7 @@ export const selfUpdate = (input: {
     const commit = updateTo(plan.build, yield* hubCommit(plan.hub))
     if (commit === undefined) return
     const short = commit.slice(0, 12)
-    yield* Console.error(`claude-hub: updating to ${short} from ${plan.hub}...`)
+    yield* Console.error(`kndl: updating to ${short} from ${plan.hub}...`)
     yield* replaceBinary({
       hub: plan.hub,
       target: plan.build.target,
@@ -181,10 +181,10 @@ export const selfUpdate = (input: {
       Effect.matchEffect({
         onFailure: (reason) =>
           Console.error(
-            `claude-hub: couldn't update to ${short} (${reason}); going on with ${plan.build.commit.slice(0, 12)}.`,
+            `kndl: couldn't update to ${short} (${reason}); going on with ${plan.build.commit.slice(0, 12)}.`,
           ),
         onSuccess: (exe) =>
-          Effect.andThen(Console.error(`claude-hub: updated to ${short}.`), runAgain(exe, commit)),
+          Effect.andThen(Console.error(`kndl: updated to ${short}.`), runAgain(exe, commit)),
       }),
     )
   })

@@ -18,7 +18,7 @@ afterEach(() => {
 })
 
 const databaseFile = () => {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-lock-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-lock-"))
   dirs.push(dir)
   return join(dir, "hub.db")
 }

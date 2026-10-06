@@ -1,11 +1,11 @@
-// The Hub's real build of the claude-hub CLI, `bun build --compile` of this checkout, for this
+// The Hub's real build of the kndl CLI, `bun build --compile` of this checkout, for this
 // machine's platform: the binary runs, knows its commit, and refuses the commands that need an
 // install. Other platforms' builds download their Bun, so they are left to the Hub.
 
 import { afterEach, expect, test } from "bun:test"
 import { join } from "node:path"
-import { type CliTarget, isCliTarget } from "@claude-hub/protocol"
-import { thisCheckout } from "@claude-hub/protocol/checkout"
+import { type CliTarget, isCliTarget } from "@kndl/protocol"
+import { thisCheckout } from "@kndl/protocol/checkout"
 import { Effect } from "effect"
 import { compileCli } from "./CliBuilds.ts"
 import { commit, removeTempDirs, tempDir } from "./cliTestSupport.ts"
@@ -28,7 +28,7 @@ test.skipIf(!isCliTarget(host))(
   `builds a CLI for ${host} that knows its commit, and needs an install to run one`,
   async () => {
     const dir = await tempDir("cli-build-")
-    const binary = join(dir, "claude-hub")
+    const binary = join(dir, "kndl")
     await Effect.runPromise(
       compileCli(thisCheckout)({ target: host as CliTarget, commit, outfile: binary }),
     )
@@ -38,18 +38,18 @@ test.skipIf(!isCliTarget(host))(
     // A home with no install, a config with no Hub: nothing to update from.
     const env = {
       HOME: dir,
-      CLAUDE_HUB_HOME: join(dir, ".claude-hub"),
+      KNDL_HOME: join(dir, ".kndl"),
       XDG_CONFIG_HOME: join(dir, ".config"),
     }
     expect(await run([binary, "--version"], env)).toEqual({
-      stdout: `claude-hub v${commit.slice(0, 12)}\n`,
+      stdout: `kndl v${commit.slice(0, 12)}\n`,
       stderr: "",
       exitCode: 0,
     })
     const status = await run([binary, "status"], env)
     expect(status.exitCode).toBe(1)
     expect(status.stderr).toContain(
-      `\`claude-hub status\` needs a claude-hub install, and there is none in ${env.CLAUDE_HUB_HOME}.`,
+      `\`kndl status\` needs a kndl install, and there is none in ${env.KNDL_HOME}.`,
     )
   },
   120_000,

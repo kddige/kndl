@@ -121,11 +121,11 @@ export function SignIn({
 
   return (
     <AuthCard
-      title="Sign in to Claude Hub"
+      title="Sign in to kndl"
       lede={
         options.github || options.dev
           ? (lede ?? "Sign in to see the Sessions on the Repos you can access.")
-          : "This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with CLAUDE_HUB_DEV_LOGIN=1."
+          : "This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with KNDL_DEV_LOGIN=1."
       }
     >
       {options.github && (

@@ -338,7 +338,7 @@ export type QueuedPrompt = typeof QueuedPrompt.Type
 
 /**
  * A Participant present in a Session: in it in the web UI, forwarding its ports with
- * `claude-hub forward` (ADR 0016), or both.
+ * `kndl forward` (ADR 0016), or both.
  */
 export const PresentParticipant = Schema.Struct({
   ...Participant.fields,

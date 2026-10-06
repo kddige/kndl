@@ -39,7 +39,7 @@ export async function createHubClient(): Promise<HubClient> {
   const { FakeHub } = await import("../hub/fake/FakeHub.ts")
   console.info(`Using the fake Hub (VITE_FAKE_HUB=${String(import.meta.env.VITE_FAKE_HUB)})`)
   const fake = new FakeHub({ signedIn: mode === "signed-in" })
-  // Its test controls, from the console: fakeHub.teammateApplies("kddige/claude-hub").
+  // Its test controls, from the console: fakeHub.teammateApplies("kddige/kndl").
   Object.assign(globalThis, { fakeHub: fake })
   return new HubClient(fake, { retryDelay: () => 300 })
 }

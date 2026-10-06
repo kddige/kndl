@@ -1,18 +1,18 @@
 // A Session's Sandbox going to sleep and waking (#12) on a real microsandbox VM, so it is skipped
-// unless CLAUDE_HUB_SANDBOX_IT=1. It needs `msb` installed for the current user, the
+// unless KNDL_SANDBOX_IT=1. It needs `msb` installed for the current user, the
 // `docker:dind` image, and network access to npm the first time a Claude Code version is cached,
 // and to Docker Hub for `alpine`. It runs no Claude Code, only shell commands with the
 // environment Claude Code would get: no model calls, no credentials. Everything it creates is
-// named claude-hub-it-… and destroyed at the end, pass or fail.
+// named kndl-it-… and destroyed at the end, pass or fail.
 //
-//   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/SessionSleep.integration.test.ts
+//   KNDL_SANDBOX_IT=1 bun test packages/runner/src/SessionSleep.integration.test.ts
 
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { RepoName, RunnerToHub, SessionId } from "@claude-hub/protocol"
-import { devHome } from "@claude-hub/protocol/home"
+import type { RepoName, RunnerToHub, SessionId } from "@kndl/protocol"
+import { devHome } from "@kndl/protocol/home"
 import { Duration, Effect, Layer } from "effect"
 import { Sandbox } from "microsandbox"
 import { HubLink } from "./HubLink.ts"
@@ -26,7 +26,7 @@ import { sessionDirectories } from "./SessionNames.ts"
 import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import { FakeHubVariables, sandboxesDefaults } from "./testSupport.ts"
 
-const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
+const enabled = process.env.KNDL_SANDBOX_IT === "1"
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 
@@ -59,7 +59,7 @@ test.skipIf(!enabled)(
   "a Session's Sandbox sleeps and wakes on its volumes, keeping node_modules and the Workspace",
   async () => {
     const sessionId = `it-${Date.now().toString(36)}` as SessionId
-    const root = await mkdtemp(join(tmpdir(), "claude-hub-it-"))
+    const root = await mkdtemp(join(tmpdir(), "kndl-it-"))
     const directories = sessionDirectories(root, sessionId)
     await mkdir(directories.workspace, { recursive: true })
     await writeFile(join(directories.workspace, "package.json"), '{"name":"app"}\n')
@@ -68,9 +68,7 @@ test.skipIf(!enabled)(
 
     // Sandboxes not the Runner's on this machine, such as a spike's: we must leave them be.
     const othersBefore = await Sandbox.list().then((page) =>
-      page.sandboxes
-        .filter((s) => !s.name.startsWith("claude-hub-"))
-        .map((s) => [s.name, s.status]),
+      page.sandboxes.filter((s) => !s.name.startsWith("kndl-")).map((s) => [s.name, s.status]),
     )
 
     const program = Effect.gen(function* () {
@@ -216,9 +214,7 @@ test.skipIf(!enabled)(
       )
     }
     const othersAfter = await Sandbox.list().then((page) =>
-      page.sandboxes
-        .filter((s) => !s.name.startsWith("claude-hub-"))
-        .map((s) => [s.name, s.status]),
+      page.sandboxes.filter((s) => !s.name.startsWith("kndl-")).map((s) => [s.name, s.status]),
     )
     expect(othersAfter).toEqual(othersBefore)
   },

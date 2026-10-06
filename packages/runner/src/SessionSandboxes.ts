@@ -33,9 +33,9 @@ import type {
   SessionId,
   TestBuildId,
   VariableValue,
-} from "@claude-hub/protocol"
-import { EnvironmentRecipe, EnvironmentVersion, RunnerToHub } from "@claude-hub/protocol"
-import { HomeConfig } from "@claude-hub/protocol/home"
+} from "@kndl/protocol"
+import { EnvironmentRecipe, EnvironmentVersion, RunnerToHub } from "@kndl/protocol"
+import { HomeConfig } from "@kndl/protocol/home"
 import { Config, Effect, Exit, Layer, Option, Schema, Scope, Semaphore } from "effect"
 import type { Cause } from "effect"
 import { ChildProcessSpawner } from "effect/process"
@@ -818,9 +818,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         })
         const scratch = options.scratchDir ?? tmpdir()
         yield* Effect.promise(() => mkdir(scratch, { recursive: true }))
-        const directory = yield* Effect.promise(() =>
-          mkdtemp(join(scratch, "claude-hub-test-build-")),
-        )
+        const directory = yield* Effect.promise(() => mkdtemp(join(scratch, "kndl-test-build-")))
         // A new directory for the clone: a directory replaced under a mount stays stale.
         const workspace = join(directory, "workspace")
         yield* Effect.gen(function* () {
@@ -950,7 +948,7 @@ export const cloneTestBuild = (options: {
  * |---|---|
  * | `RUNNER_SANDBOX_IMAGE` | `docker:dind` |
  * | `RUNNER_SANDBOX_CLAUDE_VERSION` | {@link PinnedClaudeVersion} |
- * | `RUNNER_SANDBOX_CLAUDE_CACHE` | `claude-code` in the home: `~/.claude-hub-dev/claude-code` |
+ * | `RUNNER_SANDBOX_CLAUDE_CACHE` | `claude-code` in the home: `~/.kndl-dev/claude-code` |
  * | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count |
  * | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory |
  * | `RUNNER_SANDBOX_KEEP_BUILDS` | 3 |

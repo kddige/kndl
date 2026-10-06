@@ -2,7 +2,7 @@
 // and what that writes into `hub.env` and `runner.env`. Each answer comes from a flag, else from
 // the existing env file (unless `--reset`), else from a question, or, with `--non-interactive`, a
 // default or a failure. Cli.ts asks; this decides, and is tested.
-import { isLoopback } from "@claude-hub/hub/src/HubConfig.ts"
+import { isLoopback } from "@kndl/hub/src/HubConfig.ts"
 import type { Role } from "./Layout.ts"
 
 /** What onboard sets up: `--role`. */
@@ -69,7 +69,7 @@ export function hubChoicesFrom(
     port: Number.isSafeInteger(port) ? port : DefaultPort,
     publicUrl,
     insecureCookies: truthy(values.HUB_INSECURE_COOKIES),
-    devLogin: truthy(values.CLAUDE_HUB_DEV_LOGIN),
+    devLogin: truthy(values.KNDL_DEV_LOGIN),
   }
 }
 
@@ -106,7 +106,7 @@ export function hubEnvUpdates(
     PORT: String(choices.port),
     HUB_PUBLIC_URL: new URL(choices.publicUrl).origin,
     HUB_INSECURE_COOKIES: lan && choices.insecureCookies ? "1" : undefined,
-    CLAUDE_HUB_DEV_LOGIN: choices.reach === "local" && choices.devLogin ? "1" : undefined,
+    KNDL_DEV_LOGIN: choices.reach === "local" && choices.devLogin ? "1" : undefined,
     HUB_SECRETS_KEY: secretsKey,
   }
 }
@@ -131,7 +131,7 @@ export function runnerEnvUpdates(choices: {
 export function checkRunnerToken(token: string): string | undefined {
   return /^chr_\S+$/.test(token.trim())
     ? undefined
-    : "A Runner token starts with chr_: issue one on the Hub's machine with `claude-hub runner token <name>`."
+    : "A Runner token starts with chr_: issue one on the Hub's machine with `kndl runner token <name>`."
 }
 
 /**

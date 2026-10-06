@@ -1,6 +1,6 @@
 // Sample Hub messages for the web package's tests, decoded with the protocol's schemas so they
 // carry the same branded types the client sees.
-import { HubToWeb, ProtocolVersion, SessionLogEntry } from "@claude-hub/protocol"
+import { HubToWeb, ProtocolVersion, SessionLogEntry } from "@kndl/protocol"
 import { Schema } from "effect"
 
 type HubToWebEncoded = typeof HubToWeb.Encoded
@@ -24,7 +24,7 @@ export const runnerSummary = {
 
 export const sessionSummary = {
   id: "s-1",
-  repo: "kddige/claude-hub",
+  repo: "kddige/kndl",
   baseBranch: "main",
   workBranch: "claude/s-1",
   state: "Active",

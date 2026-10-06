@@ -1,31 +1,31 @@
 // How Sandboxes, volumes and snapshots are named and labelled. Everything a backend makes starts
-// with `claude-hub-` and carries its Session's id, so the Runner can find what it made after a
+// with `kndl-` and carries its Session's id, so the Runner can find what it made after a
 // crash (Reconcile.ts) and never mistakes anything else on the host for its own.
 //
-//   Sandbox:        claude-hub-<sessionId>
-//   Volume:         claude-hub-<sessionId>.<key>
-//   Snapshot group: claude-hub-<runner mark>-<group>
+//   Sandbox:        kndl-<sessionId>
+//   Volume:         kndl-<sessionId>.<key>
+//   Snapshot group: kndl-<runner mark>-<group>
 //
 // Environment builds and Test builds run in Sandboxes of their own (ADR 0009), addressed like a
 // Session's by an id no Hub-minted Session id can take: `build-…` or `testbuild-…`.
 //
 // Several Runners can share one host, and so one microsandbox (#38). Each labels what it makes
-// with its Runner mark (`claude-hub.runner`), and reconciles only what carries its own mark.
+// with its Runner mark (`kndl.runner`), and reconciles only what carries its own mark.
 // Sandboxes made before the mark have none: they belong to no Runner, and are only reported.
 
 import { createHash } from "node:crypto"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 import { Effect } from "effect"
 import { InvalidSandboxSpec } from "./SandboxBackend.ts"
 
-export const prefix = "claude-hub-"
+export const prefix = "kndl-"
 
 /** The label naming a Sandbox's or volume's Session. */
-export const sessionLabel = "claude-hub.session"
+export const sessionLabel = "kndl.session"
 /** The label naming a volume's key within its Session. */
-export const volumeLabel = "claude-hub.volume"
+export const volumeLabel = "kndl.volume"
 /** The label carrying the mark of the Runner that made a Sandbox or volume. */
-export const runnerLabel = "claude-hub.runner"
+export const runnerLabel = "kndl.runner"
 
 /**
  * This Runner's mark: a digest of its tmux socket name and sessions root. Both are fixed by its

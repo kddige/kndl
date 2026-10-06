@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import type { SessionId } from "@claude-hub/protocol"
-import { devHome, homeAt } from "@claude-hub/protocol/home"
-import type { Home } from "@claude-hub/protocol/home"
+import type { SessionId } from "@kndl/protocol"
+import { devHome, homeAt } from "@kndl/protocol/home"
+import type { Home } from "@kndl/protocol/home"
 import { Effect, Option, Stream } from "effect"
 import {
   FakeSandboxBackend,
@@ -50,32 +50,32 @@ const markIn = (home: Home) =>
 
 describe("naming", () => {
   test("names carry the prefix and the Session id, and parse back", () => {
-    expect(sandboxName(s1)).toBe("claude-hub-s-1")
-    expect(volumeName(s1, "deps-node-modules")).toBe("claude-hub-s-1.deps-node-modules")
-    expect(parseSandboxName("claude-hub-s-1")).toBe(s1)
-    expect(parseVolumeName("claude-hub-s-1.cache")).toEqual({ sessionId: s1, key: "cache" })
+    expect(sandboxName(s1)).toBe("kndl-s-1")
+    expect(volumeName(s1, "deps-node-modules")).toBe("kndl-s-1.deps-node-modules")
+    expect(parseSandboxName("kndl-s-1")).toBe(s1)
+    expect(parseVolumeName("kndl-s-1.cache")).toEqual({ sessionId: s1, key: "cache" })
   })
 
   test("a Runner's mark is fixed by its tmux socket and sessions root", () => {
     const runner = {
-      tmuxSocket: "claude-hub-dev",
-      sessionsRoot: "/Users/a/.claude-hub-dev/sessions",
+      tmuxSocket: "kndl-dev",
+      sessionsRoot: "/Users/a/.kndl-dev/sessions",
     }
     expect(runnerMark(runner)).toMatch(/^[0-9a-f]{16}$/)
     expect(runnerMark({ ...runner })).toBe(runnerMark(runner))
-    expect(runnerMark({ ...runner, tmuxSocket: "claude-hub-test" })).not.toBe(runnerMark(runner))
+    expect(runnerMark({ ...runner, tmuxSocket: "kndl-test" })).not.toBe(runnerMark(runner))
     expect(runnerMark({ ...runner, sessionsRoot: "/tmp/sessions" })).not.toBe(runnerMark(runner))
   })
 
   test("a dev Runner and an installed one on the same host have different marks", () => {
-    expect(markIn(devHome)).not.toBe(markIn(homeAt(join(homedir(), ".claude-hub"))))
+    expect(markIn(devHome)).not.toBe(markIn(homeAt(join(homedir(), ".kndl"))))
   })
 
   test("names without the prefix are never ours", () => {
     expect(parseSandboxName("cc-spike")).toBeUndefined()
-    expect(parseSandboxName("claude-hub-")).toBeUndefined()
+    expect(parseSandboxName("kndl-")).toBeUndefined()
     expect(parseVolumeName("cc-spike.cache")).toBeUndefined()
-    expect(parseVolumeName("claude-hub-s-1")).toBeUndefined()
+    expect(parseVolumeName("kndl-s-1")).toBeUndefined()
   })
 })
 
@@ -95,14 +95,14 @@ describe("Session layout", () => {
         guestPath: "/workspace/node_modules",
         sizeMib: 16384,
       },
-      { _tag: "Volume", key: "cache", guestPath: "/var/cache/claude-hub", sizeMib: 16384 },
-      { _tag: "Volume", key: "claude", guestPath: "/var/lib/claude-hub/claude", sizeMib: 8192 },
+      { _tag: "Volume", key: "cache", guestPath: "/var/cache/kndl", sizeMib: 16384 },
+      { _tag: "Volume", key: "claude", guestPath: "/var/lib/kndl/claude", sizeMib: 8192 },
     ])
     expect(spec.docker).toEqual({ sizeMib: 32768 })
     expect(spec.env).toMatchObject({
       REPO_SECRET: "x",
-      XDG_CACHE_HOME: "/var/cache/claude-hub",
-      BUN_INSTALL_CACHE_DIR: "/var/cache/claude-hub/bun",
+      XDG_CACHE_HOME: "/var/cache/kndl",
+      BUN_INSTALL_CACHE_DIR: "/var/cache/kndl/bun",
     })
     await Effect.runPromise(checkSpec(spec))
   })
@@ -158,7 +158,7 @@ describe("fake backend", () => {
         expect(world.hostFiles.get("/host/workspaces/s-1/README.md")).toEqual(
           new TextEncoder().encode("readme"),
         )
-        expect(world.volumes.get("claude-hub-s-1.deps-node-modules")?.has("/dep.js")).toBe(true)
+        expect(world.volumes.get("kndl-s-1.deps-node-modules")?.has("/dep.js")).toBe(true)
       }),
     ))
 
@@ -168,7 +168,7 @@ describe("fake backend", () => {
         const backend = yield* SandboxBackend
         yield* backend.create(layout(s1))
         yield* backend.writeFile(s1, "/etc/marker", "root")
-        yield* backend.writeFile(s1, "/var/cache/claude-hub/bun/pkg", "cached")
+        yield* backend.writeFile(s1, "/var/cache/kndl/bun/pkg", "cached")
         yield* backend.destroy(s1, { keepVolumes: true })
         expect(yield* backend.state(s1)).toBe("Destroyed")
         expect((yield* backend.list).map((l) => [l.sessionId, l.state, l.volumes.length])).toEqual([
@@ -176,7 +176,7 @@ describe("fake backend", () => {
         ])
 
         yield* backend.create(layout(s1))
-        expect(text(yield* backend.readFile(s1, "/var/cache/claude-hub/bun/pkg"))).toBe("cached")
+        expect(text(yield* backend.readFile(s1, "/var/cache/kndl/bun/pkg"))).toBe("cached")
         expect((yield* Effect.flip(backend.readFile(s1, "/etc/marker")))._tag).toBe(
           "SandboxBackendError",
         )

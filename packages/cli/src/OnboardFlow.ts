@@ -1,4 +1,4 @@
-// `claude-hub onboard`: asks what Onboard.ts can't decide on its own, writes `hub.env` and
+// `kndl onboard`: asks what Onboard.ts can't decide on its own, writes `hub.env` and
 // `runner.env`, builds, and installs and starts the services. Every question has a flag; with
 // `--non-interactive` (or no terminal) it never asks, and never loads the prompt library. The
 // questions go through Ui, so the flow runs in tests against a script of answers.
@@ -7,8 +7,8 @@
 // question leaves the home as it was.
 import { mkdir } from "node:fs/promises"
 import { hostname, networkInterfaces, userInfo } from "node:os"
-import { generateSecretsKey } from "@claude-hub/hub/src/Secrets.ts"
-import { type PairingTarget, parsePairing } from "@claude-hub/protocol"
+import { generateSecretsKey } from "@kndl/hub/src/Secrets.ts"
+import { type PairingTarget, parsePairing } from "@kndl/protocol"
 import { Effect } from "effect"
 import {
   build,
@@ -114,7 +114,7 @@ export const onboard = (layout: Layout, options: OnboardOptions) => {
     const on = yield* requirePlatform(platform())
     const ui = yield* Ui
     const shell = yield* Shell
-    yield* ui.intro(`claude-hub onboard, in ${layout.home.dir}`)
+    yield* ui.intro(`kndl onboard, in ${layout.home.dir}`)
 
     const roles = yield* configure(layout, options)
 
@@ -131,7 +131,7 @@ export const onboard = (layout: Layout, options: OnboardOptions) => {
     if (!services) {
       yield* ui.log(
         "info",
-        "Services not installed (--no-services): `claude-hub hub install`, `claude-hub runner install`.",
+        "Services not installed (--no-services): `kndl hub install`, `kndl runner install`.",
       )
     } else {
       const runnerLogFrom = runnerLogSize(layout)
@@ -186,7 +186,7 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
     const interactive = ui.interactive
 
     // Onboard writes the home's env files, and `--reset` rewrites them: never somewhere that isn't
-    // a claude-hub home, such as the home directory itself.
+    // a kndl home, such as the home directory itself.
     const refused = refuseHome(homeFacts(layout))
     if (refused !== undefined) return yield* fail(refused)
 
@@ -386,10 +386,10 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
             reset: options.reset,
             interactive,
           }),
-          "--token <token> (from `claude-hub runner token <name>` on the Hub's machine)",
+          "--token <token> (from `kndl runner token <name>` on the Hub's machine)",
           () =>
             ui.password({
-              message: `This Runner's token, from \`claude-hub runner token ${name}\` on the Hub's machine`,
+              message: `This Runner's token, from \`kndl runner token ${name}\` on the Hub's machine`,
               validate: checkRunnerToken,
             }),
         )
@@ -404,7 +404,7 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
     // 5. Redeem the pairing link, move the old data aside, and write the env files, each whole.
     // The code is redeemed before the prerequisites are installed and the Runner built, which can
     // take longer than its 15 minutes; with the token in runner.env, a later step that fails is
-    // retried with `claude-hub onboard`, which keeps it, without a new code.
+    // retried with `kndl onboard`, which keeps it, without a new code.
     if (runner?.pairing !== undefined) {
       const target = runner.pairing
       const client = yield* HubClient
@@ -446,7 +446,7 @@ export const configure = (layout: Layout, options: OnboardOptions) =>
       )
       if (created !== undefined) {
         yield* ui.note(
-          `Install ${created.slug} on the Repos claude-hub works in: ${created.installUrl}\nUntil then, the Hub has no Repos to offer.`,
+          `Install ${created.slug} on the Repos kndl works in: ${created.installUrl}\nUntil then, the Hub has no Repos to offer.`,
           "Install the GitHub App",
         )
       }
@@ -501,7 +501,7 @@ const askPairing = (options: OnboardOptions, runnerValues: Readonly<Record<strin
           },
           {
             value: "token" as const,
-            label: "A Runner token, from `claude-hub runner token <name>` on the Hub's machine",
+            label: "A Runner token, from `kndl runner token <name>` on the Hub's machine",
           },
         ],
       })
@@ -520,7 +520,7 @@ const askPairing = (options: OnboardOptions, runnerValues: Readonly<Record<strin
   })
 
 /**
- * Stops on claude-hub data in the home that this install didn't make (HomeData.ts), unless it is to
+ * Stops on kndl data in the home that this install didn't make (HomeData.ts), unless it is to
  * be moved aside: with `--move-old-data`, or when the person chooses to and confirms it. Returns the
  * renames for configure to make once every question is answered, or `undefined` when there's no
  * old data. Nothing is ever deleted.
@@ -539,12 +539,12 @@ const protectHome = (layout: Layout, moveOldData: boolean) =>
           `${explanation}\n\nonboard can't ask, so it needs --move-old-data to move it aside.`,
         )
       }
-      yield* ui.note(explanation, "Old claude-hub data")
+      yield* ui.note(explanation, "Old kndl data")
       const choice = yield* ui.select({
         message: "What now?",
         choices: [
           { value: "move", label: "Move it aside", hint: listed },
-          { value: "stop", label: "Stop, to set CLAUDE_HUB_HOME to another directory" },
+          { value: "stop", label: "Stop, to set KNDL_HOME to another directory" },
         ],
       })
       const confirmed =
@@ -555,7 +555,7 @@ const protectHome = (layout: Layout, moveOldData: boolean) =>
         }))
       if (!confirmed) {
         return yield* fail(
-          "Nothing was changed. Move the old data yourself, or set CLAUDE_HUB_HOME to another directory, and onboard again.",
+          "Nothing was changed. Move the old data yourself, or set KNDL_HOME to another directory, and onboard again.",
         )
       }
     }
@@ -582,7 +582,7 @@ const healthCheck = (layout: Layout, roles: ReadonlyArray<Role>, runnerLogFrom: 
       if (!result.ok) {
         yield* ui.log(
           "warn",
-          `Hub: ${result.url}/health: ${result.detail}. See \`claude-hub logs hub\` and \`claude-hub doctor\`.`,
+          `Hub: ${result.url}/health: ${result.detail}. See \`kndl logs hub\` and \`kndl doctor\`.`,
         )
       }
     }
@@ -628,14 +628,14 @@ function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
     lines.push(`The Hub: ${values.HUB_PUBLIC_URL ?? "(no HUB_PUBLIC_URL)"}`)
     lines.push(
       values.GITHUB_APP_ID === undefined
-        ? "GitHub sign-in needs a GitHub App: `claude-hub onboard --github-app create` creates one. See https://kddige.github.io/claude-hub/how-to/set-up-the-github-app/."
-        : "Install the GitHub App on the Repos claude-hub works in; `claude-hub doctor` checks its permissions.",
+        ? "GitHub sign-in needs a GitHub App: `kndl onboard --github-app create` creates one. See https://kddige.github.io/kndl/how-to/set-up-the-github-app/."
+        : "Install the GitHub App on the Repos kndl works in; `kndl doctor` checks its permissions.",
     )
     lines.push(
       "Add a Runner on another machine: Add a Runner on the Hub's Runners page, and run the command it shows there.",
     )
   }
-  lines.push("`claude-hub status` shows how things are; `claude-hub doctor` checks them.")
+  lines.push("`kndl status` shows how things are; `kndl doctor` checks them.")
   return lines.join("\n")
 }
 

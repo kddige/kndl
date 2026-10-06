@@ -19,7 +19,7 @@ import type {
   SessionLogEntry,
   SessionSummary,
   SharedVariable,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 
 export type HubMessage = (typeof HubToWeb)["Encoded"]
 export type ParticipantWire = (typeof Participant)["Encoded"]

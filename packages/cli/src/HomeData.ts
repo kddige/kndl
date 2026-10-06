@@ -1,8 +1,8 @@
-// Whether a home holds claude-hub data that no install there made, decided before onboard writes
+// Whether a home holds kndl data that no install there made, decided before onboard writes
 // anything.
 //
-// Before checkouts got a dev home of their own (`~/.claude-hub-dev`), a checkout's Runner kept its
-// Session Workspaces in `~/.claude-hub/sessions`, with tmux socket `claude-hub`: exactly where an
+// Before checkouts got a dev home of their own (`~/.kndl-dev`), a checkout's Runner kept its
+// Session Workspaces in `~/.kndl/sessions`, with tmux socket `kndl`: exactly where an
 // installed Runner keeps them now. A Runner installed over that data would carry the old Runner's
 // mark (a digest of its tmux socket and sessions root, see the Runner's Naming.ts), so it would
 // reconcile the old Sandboxes against a new Hub database that has never heard of them. A role's data is the install's own once onboard has written that role's
@@ -49,11 +49,11 @@ export function findOldData(facts: HomeDataFacts): OldData | undefined {
 /** Why onboard stops on the home, and what the person can do: onboard and doctor say the same. */
 export function explainOldData(old: OldData, home: string, renames: ReadonlyArray<Rename>): string {
   const choices = [
-    `Move it aside, keeping it: ${renames.map((rename) => `${rename.from} → ${rename.to}`).join(", ")}. Nothing is deleted. (\`claude-hub onboard --move-old-data\`)`,
-    "Install somewhere else: set CLAUDE_HUB_HOME to another directory.",
+    `Move it aside, keeping it: ${renames.map((rename) => `${rename.from} → ${rename.to}`).join(", ")}. Nothing is deleted. (\`kndl onboard --move-old-data\`)`,
+    "Install somewhere else: set KNDL_HOME to another directory.",
   ]
   return [
-    `${home} holds claude-hub data that wasn't set up here by \`claude-hub onboard\`: ${old.entries.join(", ")}, with no ${[...new Set(old.entries.map((entry) => `${DataEntries[entry]}.env`))].join(" or ")}. It is likely a checkout's, from before checkouts kept theirs in ~/.claude-hub-dev. A Runner or Hub set up over it would take over its Sessions and Sandboxes, with a new Hub database that doesn't know them.`,
+    `${home} holds kndl data that wasn't set up here by \`kndl onboard\`: ${old.entries.join(", ")}, with no ${[...new Set(old.entries.map((entry) => `${DataEntries[entry]}.env`))].join(" or ")}. It is likely a checkout's, from before checkouts kept theirs in ~/.kndl-dev. A Runner or Hub set up over it would take over its Sessions and Sandboxes, with a new Hub database that doesn't know them.`,
     `You can:\n${choices.map((choice) => `  - ${choice}`).join("\n")}`,
   ].join("\n\n")
 }

@@ -1,7 +1,7 @@
 // What uninstall, `uninstall --purge` and `onboard --reset` may delete, decided before anything is
 // deleted. A home is removed only when it is exactly the resolved home, is nowhere near the user's
-// own home directory or `/`, and holds only what claude-hub puts there: a mistyped
-// CLAUDE_HUB_HOME must never cost anyone their files.
+// own home directory or `/`, and holds only what kndl puts there: a mistyped
+// KNDL_HOME must never cost anyone their files.
 import { isAbsolute, join, normalize, relative, sep } from "node:path"
 import { HomeEntries } from "./Layout.ts"
 
@@ -22,7 +22,7 @@ export interface HomeFacts {
 export function refuseHomeRemoval(target: string, facts: HomeFacts): string | undefined {
   const home = normalize(facts.home)
   if (normalize(target) !== home) {
-    return `${target} is not the claude-hub home (${home}); only the home itself is removed.`
+    return `${target} is not the kndl home (${home}); only the home itself is removed.`
   }
   const general = refuseHome(facts)
   if (general !== undefined) return general
@@ -30,7 +30,7 @@ export function refuseHomeRemoval(target: string, facts: HomeFacts): string | un
     (name) => !(HomeEntries as ReadonlyArray<string>).includes(name) && !ToleratedEntry.test(name),
   )
   if (unknown.length > 0) {
-    return `${home} holds files claude-hub didn't put there (${unknown.join(", ")}), so it isn't removed. Move them out, or delete the home yourself.`
+    return `${home} holds files kndl didn't put there (${unknown.join(", ")}), so it isn't removed. Move them out, or delete the home yourself.`
   }
   return undefined
 }
@@ -43,7 +43,7 @@ export function refuseEntryRemoval(entry: string, facts: HomeFacts): string | un
   const general = refuseHome(facts)
   if (general !== undefined) return general
   if (!(HomeEntries as ReadonlyArray<string>).includes(entry)) {
-    return `${entry} is not one of the claude-hub home's own entries.`
+    return `${entry} is not one of the kndl home's own entries.`
   }
   return undefined
 }
@@ -72,14 +72,14 @@ export function entryRemoval(entry: (typeof HomeEntries)[number], facts: HomeFac
     : { _tag: "Refused", reason }
 }
 
-/** Why this can't be a claude-hub home at all, or `undefined` when it can. */
+/** Why this can't be a kndl home at all, or `undefined` when it can. */
 export function refuseHome(facts: HomeFacts): string | undefined {
   const home = normalize(facts.home)
   const userHome = normalize(facts.userHome)
   if (!isAbsolute(home)) return `The home ${home} is not an absolute path.`
   if (home === sep) return "The home is /, which is never removed."
   if (home === userHome) {
-    return `The home is your home directory (${home}), which is never removed. Set CLAUDE_HUB_HOME to the claude-hub home, such as ${userHome}/.claude-hub.`
+    return `The home is your home directory (${home}), which is never removed. Set KNDL_HOME to the kndl home, such as ${userHome}/.kndl.`
   }
   if (isInside(userHome, home)) {
     return `The home ${home} holds your home directory (${userHome}), so it is never removed.`
@@ -88,10 +88,10 @@ export function refuseHome(facts: HomeFacts): string | undefined {
     return `The home ${home} is a top-level directory, which is never removed.`
   }
   if (facts.entries.includes(".git")) {
-    return `${home} is a git checkout, not a claude-hub home.`
+    return `${home} is a git checkout, not a kndl home.`
   }
   if (!facts.entries.some((name) => (HomeEntries as ReadonlyArray<string>).includes(name))) {
-    return `${home} doesn't look like a claude-hub home: it holds none of ${HomeEntries.join(", ")}.`
+    return `${home} doesn't look like a kndl home: it holds none of ${HomeEntries.join(", ")}.`
   }
   return undefined
 }

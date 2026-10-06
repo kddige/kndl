@@ -1,4 +1,4 @@
-// `claude-hub login`, `logout` and `whoami` (issue #179) against a fake Hub on a loopback port. The
+// `kndl login`, `logout` and `whoami` (issue #179) against a fake Hub on a loopback port. The
 // browser is played by the fake Shell that "opens" the login page: it approves at the fake Hub, as
 // the page does, and goes back to the CLI's callback with the code, or doesn't, as over SSH, where
 // the code is pasted instead. Every token is the fake Hub's; the config is in a temp dir.
@@ -8,7 +8,7 @@ import { statSync } from "node:fs"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { formatCliLoginCode, normalizeCliLoginCode } from "@claude-hub/protocol"
+import { formatCliLoginCode, normalizeCliLoginCode } from "@kndl/protocol"
 import { Cause, Console, Effect, Exit } from "effect"
 import { readCliConfig, writeCliConfig } from "./CliConfig.ts"
 import {
@@ -112,8 +112,8 @@ let scratch: string
 let configPath: string
 beforeEach(async () => {
   hub.reset()
-  scratch = await mkdtemp(join(tmpdir(), "claude-hub-login-"))
-  configPath = join(scratch, "config", "claude-hub", "cli.json")
+  scratch = await mkdtemp(join(tmpdir(), "kndl-login-"))
+  configPath = join(scratch, "config", "kndl", "cli.json")
 })
 afterEach(async () => {
   await rm(scratch, { recursive: true, force: true })
@@ -320,7 +320,7 @@ describe("login", () => {
   test("--no-browser without a terminal says it needs one", async () => {
     const { ui } = scriptedUi([], { interactive: false })
     const { exit } = await run(login({ hub: hub.url, noBrowser: true }, laptop()), ui)
-    expect(failure(exit)).toContain("claude-hub login needs a terminal to paste the code into")
+    expect(failure(exit)).toContain("kndl login needs a terminal to paste the code into")
   })
 
   test("signs in to the Hub the CLI was installed from when none is given", async () => {

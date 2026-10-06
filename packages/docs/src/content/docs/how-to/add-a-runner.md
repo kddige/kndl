@@ -18,20 +18,20 @@ Nothing is done on the Hub's machine: anyone signed in to the web UI adds a Runn
 1. In the web UI, open **Runners** in the sidebar and choose **Add a Runner**. It shows a command with a [Pairing code](#pairing-codes) in it:
 
    ```sh
-   claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
+   kndl runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
    ```
 
-2. On the **Runner's machine**, [install claude-hub](/how-to/install/#install), then paste the command.
+2. On the **Runner's machine**, [install kndl](/how-to/install/#install), then paste the command.
 
-`runner join` checks the machine has what a Runner needs (and offers to install what's missing), redeems the code with the Hub for the Runner's token, writes `~/.claude-hub/runner.env`, installs and starts the Runner's service, and waits until the Hub says the Runner is connected. The Runners page shows the new Runner as soon as the code is used.
+`runner join` checks the machine has what a Runner needs (and offers to install what's missing), redeems the code with the Hub for the Runner's token, writes `~/.kndl/runner.env`, installs and starts the Runner's service, and waits until the Hub says the Runner is connected. The Runners page shows the new Runner as soon as the code is used.
 
 The Runner is named after the machine's short hostname; `--name build-box` names it something else. The name is the Runner's identity on the Hub, so choose it with [Runner names](#runner-names) in mind. Without questions, for a script:
 
 ```sh
-claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE' --name build-box --non-interactive
+kndl runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE' --name build-box --non-interactive
 ```
 
-`claude-hub onboard --role runner --pair '<link>'` does the same, and onboard run without flags asks whether the Runner has a pairing link or a token. See [the command reference](/reference/commands/#claude-hub-runner-join).
+`kndl onboard --role runner --pair '<link>'` does the same, and onboard run without flags asks whether the Runner has a pairing link or a token. See [the command reference](/reference/commands/#kndl-runner-join).
 
 ### Pairing codes
 
@@ -45,16 +45,16 @@ claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE' --name 
 For a Hub from before Pairing codes, or to script everything from the Hub's machine. On the **Hub's machine**, issue the Runner's token:
 
 ```sh
-claude-hub runner token build-box
+kndl runner token build-box
 ```
 
-On the **Runner's machine**, [install claude-hub](/how-to/install/#install). When onboard asks, choose **Runner**, then a Runner token, and give it the Hub's URL and the token. Or, without questions:
+On the **Runner's machine**, [install kndl](/how-to/install/#install). When onboard asks, choose **Runner**, then a Runner token, and give it the Hub's URL and the token. Or, without questions:
 
 ```sh
-claude-hub onboard --role runner --hub-url https://hub.example.com --token chr_… --runner-name build-box
+kndl onboard --role runner --hub-url https://hub.example.com --token chr_… --runner-name build-box
 ```
 
-Onboard writes `~/.claude-hub/runner.env`, installs the Runner's service and waits for it to connect. `claude-hub status` shows whether it's connected, and `claude-hub logs runner` what it logged.
+Onboard writes `~/.kndl/runner.env`, installs the Runner's service and waits for it to connect. `kndl status` shows whether it's connected, and `kndl logs runner` what it logged.
 
 ## The Runners page
 
@@ -70,13 +70,13 @@ A Runner's name is its identity on the Hub: its Sessions, Archived ones included
 - **A reinstalled machine** goes back in its own place with **Re-pair**: it keeps its name and Sessions.
 - **A name the Hub has** can't be taken by a new Runner. `runner join` refuses with `The Hub already has a Runner named build-box …`, and the code isn't used up.
 - **A removed Runner's name** is free again. A machine paired later under it takes over the removed Runner's record, with its Archived Sessions, which can then be restored onto it. Removing a Runner and adding the machine again under the same name is that takeover.
-- **For a clean slate**, with none of the old Runner's Sessions, pair the machine under a name the Hub has never had: `claude-hub runner join '<link>' --name build-box-2`.
+- **For a clean slate**, with none of the old Runner's Sessions, pair the machine under a name the Hub has never had: `kndl runner join '<link>' --name build-box-2`.
 
-`claude-hub runner token <name>` follows the same names without a Pairing code: for a Runner the Hub has, it replaces its token; for a removed one's name, it brings that Runner back.
+`kndl runner token <name>` follows the same names without a Pairing code: for a Runner the Hub has, it replaces its token; for a removed one's name, it brings that Runner back.
 
 ## Keep Runners on the Hub's commit
 
-Runners follow the Hub's commit ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `claude-hub update` on the Hub's machine moves the Hub, and the Hub then asks each Runner to move to its commit as it reconnects. `--no-update-runners` leaves Runners on other machines where they are; the Runner on the Hub's own machine follows either way, since they share the install. See [`claude-hub update`](/reference/commands/#claude-hub-update).
+Runners follow the Hub's commit ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `kndl update` on the Hub's machine moves the Hub, and the Hub then asks each Runner to move to its commit as it reconnects. `--no-update-runners` leaves Runners on other machines where they are; the Runner on the Hub's own machine follows either way, since they share the install. See [`kndl update`](/reference/commands/#kndl-update).
 
 A Runner **behind the Hub** keeps its running Sessions, but the Hub doesn't start or wake Sessions there: `CreateSession` and waking answer `build-box: this Runner needs an update. Update it on the Runners page.`, and prompts sent to its Asleep Sessions wait in their queue until it is updated.
 
@@ -90,19 +90,19 @@ Meanwhile its row is marked **updating**, then **restarting**, with a line sayin
 
 If a step fails, or the Runner starts three times on the new commit without the Hub welcoming it, the Runner goes back to the commit it ran, rebuilds it, reconnects and reports the error, which its row shows as **update failed** with git's or bun's message. It doesn't try that commit again by itself: fix the cause, then **Update** again.
 
-Some Sessions are still running when the code changes under them: on the Hub's own machine, `claude-hub update` moves the checkout before the Hub drains its Runner, and a Runner run from a checkout is pulled and restarted by hand. Each such Session keeps the copy of the mod it started with, so its Turn ends as it would have. The new mod reaches it at its next start, wake or change of model.
+Some Sessions are still running when the code changes under them: on the Hub's own machine, `kndl update` moves the checkout before the Hub drains its Runner, and a Runner run from a checkout is pulled and restarted by hand. Each such Session keeps the copy of the mod it started with, so its Turn ends as it would have. The new mod reaches it at its next start, wake or change of model.
 
-Only a Runner installed as the claude-hub service updates itself, since only a service manager starts it again. Its row has no **Update**, and says why, when it:
+Only a Runner installed as the kndl service updates itself, since only a service manager starts it again. Its row has no **Update**, and says why, when it:
 
 - runs from a checkout (`bun run runner`): it never rewrites a developer's checkout. Pull the checkout to the Hub's commit and restart it.
-- runs from a claude-hub from before Runners followed the Hub. Run `claude-hub update` on its machine once; it follows from then on.
-- runs from another checkout than the install, or not as the service: run `claude-hub update` on its machine.
+- runs from a kndl from before Runners followed the Hub. Run `kndl update` on its machine once; it follows from then on.
+- runs from another checkout than the install, or not as the service: run `kndl update` on its machine.
 
 The rest of this page runs a Runner from a checkout. What the Runner does once it runs is the same either way.
 
 ## From a checkout
 
-The machine needs a checkout of claude-hub with `bun install` run.
+The machine needs a checkout of kndl with `bun install` run.
 
 ### Issue a Runner token
 
@@ -129,13 +129,13 @@ On the Hub's own machine, `HUB_URL` can stay at its default, `http://127.0.0.1:7
 To keep the settings out of your shell history, put them in an env file and start it with `bun --env-file`:
 
 ```sh
-# ~/.claude-hub-dev/runner.env (chmod 600)
+# ~/.kndl-dev/runner.env (chmod 600)
 HUB_URL=https://hub.example.com
 RUNNER_TOKEN=chr_…
 ```
 
 ```sh
-bun --env-file="$HOME/.claude-hub-dev/runner.env" run runner
+bun --env-file="$HOME/.kndl-dev/runner.env" run runner
 ```
 
 Every Runner setting is in the [configuration reference](/reference/configuration/#runner).
@@ -148,9 +148,9 @@ If the Hub goes away, the Runner reconnects with backoff, from half a second dou
 
 ## Stop or restart it
 
-Ctrl-C (SIGINT) or SIGTERM stops the Runner at once; `claude-hub runner stop` stops an installed one. While it is offline its Sessions are Frozen: readable, with prompts waiting in their queues. Their Claude Code keeps running in their Sandboxes, so when the Runner starts again they are Active as they were, and the prompts that waited go out. A Session whose Claude Code stopped meanwhile is Asleep, and the next prompt wakes it with its conversation, in the same Sandbox.
+Ctrl-C (SIGINT) or SIGTERM stops the Runner at once; `kndl runner stop` stops an installed one. While it is offline its Sessions are Frozen: readable, with prompts waiting in their queues. Their Claude Code keeps running in their Sandboxes, so when the Runner starts again they are Active as they were, and the prompts that waited go out. A Session whose Claude Code stopped meanwhile is Asleep, and the next prompt wakes it with its conversation, in the same Sandbox.
 
-To look at a Session's Claude Code by hand, open its **Terminal** tab. It runs in tmux in the Session's Sandbox, on server `claude-hub`, as session `hub-<session id>`.
+To look at a Session's Claude Code by hand, open its **Terminal** tab. It runs in tmux in the Session's Sandbox, on server `kndl`, as session `hub-<session id>`.
 
 ## Run two Runners on one machine
 

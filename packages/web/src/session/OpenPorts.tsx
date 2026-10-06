@@ -1,4 +1,4 @@
-import { isDockerPort, type OpenPort, type SessionSummary } from "@claude-hub/protocol"
+import { isDockerPort, type OpenPort, type SessionSummary } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { copyCommand } from "../app/copy.ts"
 import {
@@ -78,12 +78,11 @@ const styles = stylex.create({
   },
 })
 
-/** A Session's short id, as `claude-hub forward` takes it: its first 6 characters (ADR 0016). */
+/** A Session's short id, as `kndl forward` takes it: its first 6 characters (ADR 0016). */
 export const shortSessionId = (summary: SessionSummary) => summary.id.slice(0, 6)
 
 /** The command that forwards a Session's Open ports to the machine it runs on (#180). */
-export const forwardCommand = (summary: SessionSummary) =>
-  `claude-hub forward ${shortSessionId(summary)}`
+export const forwardCommand = (summary: SessionSummary) => `kndl forward ${shortSessionId(summary)}`
 
 const portsText = (count: number) => (count === 1 ? "1 port" : `${count} ports`)
 

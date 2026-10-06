@@ -10,7 +10,7 @@ import {
   type VariablesRefused,
   VariablesRequestId,
   type VariableValue,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Data, Deferred, Duration, Effect, Exit, Layer, Redacted, Schema } from "effect"
 import { HubLink } from "./HubLink.ts"
 
@@ -33,7 +33,7 @@ export class HubVariables extends Context.Service<
     /** Hands the Hub's answer to the request waiting for it. */
     readonly receive: (reply: VariablesFetched | VariablesRefused) => Effect.Effect<void>
   }
->()("@claude-hub/runner/HubVariables") {}
+>()("@kndl/runner/HubVariables") {}
 
 export const HubVariablesLive = Layer.effect(
   HubVariables,

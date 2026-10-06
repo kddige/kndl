@@ -1,4 +1,4 @@
-// The local side of `claude-hub forward` (#180): a listener for each port forwarded, on 127.0.0.1
+// The local side of `kndl forward` (#180): a listener for each port forwarded, on 127.0.0.1
 // and ::1 (or the address `--bind` gives), whose every connection is a tunnel of its own through
 // the Hub to the port in the Session's Sandbox (Tunnel.ts). The ports follow the Session's Open
 // ports as the Hub reports them, or those named, while they are open.
@@ -7,8 +7,8 @@
 // seconds until it is free. A port the OS refuses (one below 1024, without the privilege) is
 // skipped for good.
 import { createServer, type Server, type Socket } from "node:net"
-import { type OpenPort, type SessionId, tunnelPath } from "@claude-hub/protocol"
-import { TunnelEnd } from "@claude-hub/protocol/tunnel-end"
+import { type OpenPort, type SessionId, tunnelPath } from "@kndl/protocol"
+import { TunnelEnd } from "@kndl/protocol/tunnel-end"
 import type { PortMapping } from "./ForwardArgs.ts"
 import { socketUrl } from "./ForwardHub.ts"
 

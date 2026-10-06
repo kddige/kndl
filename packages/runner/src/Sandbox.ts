@@ -6,7 +6,7 @@ import type {
   SessionEnvironment,
   SessionId,
   StopSession,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Data, type Effect } from "effect"
 import type { SessionDirectories } from "./SessionNames.ts"
 
@@ -113,4 +113,4 @@ export class Sandboxes extends Context.Service<
       log: (text: string) => Effect.Effect<void>,
     ) => Effect.Effect<void, SandboxError>
   }
->()("@claude-hub/runner/Sandboxes") {}
+>()("@kndl/runner/Sandboxes") {}

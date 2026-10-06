@@ -3,7 +3,7 @@
 // it (ADR 0003), checked on every connection. This is the one place that says who the caller is and whether they may: a
 // new kind of credential is added to `identifyCaller` alone.
 
-import type { Participant, SessionId, SessionSummary } from "@claude-hub/protocol"
+import type { Participant, SessionId, SessionSummary } from "@kndl/protocol"
 import { Data, Effect, Option } from "effect"
 import { HttpServerRequest } from "effect/http"
 import { authenticateCli, authenticateParticipant, bearerToken, requireSameOrigin } from "./Auth.ts"

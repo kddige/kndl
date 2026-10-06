@@ -1,15 +1,15 @@
-// Drives real microsandbox VMs, so it is skipped unless CLAUDE_HUB_SANDBOX_IT=1. It needs `msb`
+// Drives real microsandbox VMs, so it is skipped unless KNDL_SANDBOX_IT=1. It needs `msb`
 // installed for the current user, the `docker:dind` image (pulled on first run) and network
-// access for one small Docker Hub pull. Everything it creates is named claude-hub-it-… and
+// access for one small Docker Hub pull. Everything it creates is named kndl-it-… and
 // destroyed at the end, pass or fail.
 //
-//   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/sandbox/MicrosandboxBackend.integration.test.ts
+//   KNDL_SANDBOX_IT=1 bun test packages/runner/src/sandbox/MicrosandboxBackend.integration.test.ts
 
 import { expect, test } from "bun:test"
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 import { Deferred, Duration, Effect, Fiber, Option, Schedule, Stream } from "effect"
 import { Sandbox } from "microsandbox"
 import * as MicrosandboxBackend from "./MicrosandboxBackend.ts"
@@ -17,7 +17,7 @@ import { reconcileSandboxes } from "./Reconcile.ts"
 import { SandboxBackend, shell } from "./SandboxBackend.ts"
 import { sessionSandboxSpec } from "./SessionLayout.ts"
 
-const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
+const enabled = process.env.KNDL_SANDBOX_IT === "1"
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes)
 
@@ -35,7 +35,7 @@ test.skipIf(!enabled)(
   "a Session's Sandbox boots, runs commands, and keeps its data across stop, start and re-create",
   async () => {
     const sessionId = `it-${Date.now().toString(36)}` as SessionId
-    const workspace = await mkdtemp(join(tmpdir(), "claude-hub-it-"))
+    const workspace = await mkdtemp(join(tmpdir(), "kndl-it-"))
     const spec = sessionSandboxSpec({
       sessionId,
       image: "docker:dind",
@@ -53,9 +53,7 @@ test.skipIf(!enabled)(
     // as they were.
     const others = () =>
       Sandbox.list().then((page) =>
-        page.sandboxes
-          .filter((s) => s.name !== `claude-hub-${sessionId}`)
-          .map((s) => [s.name, s.status]),
+        page.sandboxes.filter((s) => s.name !== `kndl-${sessionId}`).map((s) => [s.name, s.status]),
       )
     const othersBefore = await others()
 
@@ -112,7 +110,7 @@ test.skipIf(!enabled)(
       yield* backend.writeFile(sessionId, "/root/marker", "rootfs")
       yield* timed("writeFile", backend.writeFile(sessionId, "/workspace/README.md", "workspace"))
       yield* backend.writeFile(sessionId, "/workspace/node_modules/dep.js", "dependency")
-      yield* backend.writeFile(sessionId, "/var/cache/claude-hub/bun/pkg", "cached")
+      yield* backend.writeFile(sessionId, "/var/cache/kndl/bun/pkg", "cached")
       yield* backend.writeFile(sessionId, "/workspace/a/b/deep.txt", "deep")
       expect(text(yield* backend.readFile(sessionId, "/workspace/a/b/deep.txt"))).toBe("deep")
       expect(
@@ -158,9 +156,7 @@ test.skipIf(!enabled)(
       expect(text(yield* backend.readFile(sessionId, "/workspace/node_modules/dep.js"))).toBe(
         "dependency",
       )
-      expect(text(yield* backend.readFile(sessionId, "/var/cache/claude-hub/bun/pkg"))).toBe(
-        "cached",
-      )
+      expect(text(yield* backend.readFile(sessionId, "/var/cache/kndl/bun/pkg"))).toBe("cached")
       expect((yield* sh("echo $REPO_SECRET")).stdout).toBe("s3cret\n")
       expect((yield* sh("docker ps --format '{{.Names}}'")).stdout).toBe("keep\n")
 

@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, lstatSync, readdirSync, realpathSync, rmSync } from "node:fs"
 import { join } from "node:path"
-import type { SessionId, StartSession } from "@claude-hub/protocol"
+import type { SessionId, StartSession } from "@kndl/protocol"
 import { Context, Data, Effect, FileSystem, Layer } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import {
@@ -42,7 +42,7 @@ export class Workspaces extends Context.Service<
      */
     readonly remove: (sessionId: SessionId) => Effect.Effect<void, WorkspaceError>
   }
->()("@claude-hub/runner/Workspaces") {}
+>()("@kndl/runner/Workspaces") {}
 
 const fileError = (error: { readonly message: string }) =>
   new WorkspaceError({ message: error.message })

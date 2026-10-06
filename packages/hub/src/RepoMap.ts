@@ -2,7 +2,7 @@
 // same entry (#197): GitHub's names ignore case. Each entry keeps the spelling it was first set
 // with, which iterating gives back.
 
-import { repoKey } from "@claude-hub/protocol"
+import { repoKey } from "@kndl/protocol"
 
 /** A Map by Repo whose names match ignoring case. */
 export class RepoMap<V> implements ReadonlyMap<string, V> {

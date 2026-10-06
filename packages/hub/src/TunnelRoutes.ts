@@ -26,7 +26,7 @@ import {
   TunnelDialTimeoutMs,
   TunnelMaxFrame,
   TunnelWindow,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Deferred, Duration, Effect, Fiber, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"

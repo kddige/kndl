@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 
 // A Session's id names its directory and its tmux session, so only ids that are safe in both are
 // accepted. The Hub mints the ids; anything else is refused when the Session starts.

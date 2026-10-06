@@ -35,7 +35,7 @@ import {
   sessionNameFrom,
   UpdateDrainMillis,
   WebToHub,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
@@ -322,7 +322,7 @@ export class FakeHub implements HubTransport {
   }
 
   /**
-   * A machine redeems the newest Pairing code, as `claude-hub runner join` would, and connects: a
+   * A machine redeems the newest Pairing code, as `kndl runner join` would, and connects: a
    * new Runner named `name`, or, for a Re-pair's code, that Runner with a new token. In the
    * browser, `fakeHub.redeemPairingCode("mac-mini")` in the console.
    */
@@ -378,7 +378,7 @@ export class FakeHub implements HubTransport {
   /**
    * Bob applies a version of `repo`'s Environment that gives each Sandbox more memory, as a
    * teammate would meanwhile: a draft made from the version before is then stale. In the browser,
-   * `fakeHub.teammateApplies("kddige/claude-hub")` in the console.
+   * `fakeHub.teammateApplies("kddige/kndl")` in the console.
    */
   teammateApplies(repo: string): void {
     const { environment } = this.environments.state(repo)
@@ -430,7 +430,7 @@ export class FakeHub implements HubTransport {
   /**
    * Takes the signed-in person's access to `repo` away, as the real Hub does when GitHub says so
    * at its next check: its Sessions and Environment are gone from them. In the browser,
-   * `fakeHub.revokeRepo("kddige/claude-hub")` in the console.
+   * `fakeHub.revokeRepo("kddige/kndl")` in the console.
    */
   revokeRepo(repo: string): void {
     this.repoAccess.set(repo, "NoAccess")
@@ -605,7 +605,7 @@ export class FakeHub implements HubTransport {
           repo: message.repo,
           status,
           ...(status === "NotInstalled" && {
-            installUrl: "https://github.com/apps/claude-hub/installations/new",
+            installUrl: "https://github.com/apps/kndl/installations/new",
           }),
         })
         break

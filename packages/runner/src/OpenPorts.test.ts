@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { RunnerToHub, SessionPorts } from "@claude-hub/protocol"
+import type { RunnerToHub, SessionPorts } from "@kndl/protocol"
 import { Effect, Layer } from "effect"
 import { HubLink } from "./HubLink.ts"
 import {

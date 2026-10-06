@@ -116,4 +116,4 @@ export const SessionTurnEnded = Schema.TaggedStruct("SessionTurnEnded", {
 export type SessionTurnEnded = typeof SessionTurnEnded.Type
 
 /** The ref a Session's WIP snapshot is force-pushed to on origin. */
-export const wipRef = (sessionId: SessionId | string) => `refs/claude-hub/wip/${sessionId}`
+export const wipRef = (sessionId: SessionId | string) => `refs/kndl/wip/${sessionId}`

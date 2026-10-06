@@ -1,7 +1,7 @@
 // Signing in and out. These are the only routes, with /health, /cli and the CLI's trade of a Login
 // code (CliLoginRoutes.ts), that answer without a credential.
 
-import { Participant, ParticipantId } from "@claude-hub/protocol"
+import { Participant, ParticipantId } from "@kndl/protocol"
 import { Duration, Effect, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import {
@@ -20,13 +20,13 @@ import { constantTimeEqual, hashSecret, randomSecret } from "./Tokens.ts"
  * Holds the OAuth `state` between leaving for GitHub and coming back. No `__Host-` or `__Secure-`
  * prefix, which browsers refuse without `Secure`: see `cookieSecurity`.
  */
-const stateCookie = "claude_hub_oauth_state"
+const stateCookie = "kndl_oauth_state"
 
 /**
  * Holds where to go once signed in with GitHub, when not to the web UI's start: `GET /auth/github`
  * takes it as `?return=`, such as the `/cli-login` page asking to come back to itself.
  */
-const returnCookie = "claude_hub_oauth_return"
+const returnCookie = "kndl_oauth_return"
 
 /**
  * A path on the Hub to come back to after signing in, or undefined for anything else: it must start
@@ -168,7 +168,7 @@ export const AuthRoutes = HttpRouter.use(
     )
 
     // Dev login: sign in as a local Participant without GitHub. Answers 404 unless
-    // CLAUDE_HUB_DEV_LOGIN is set, which HubConfig refuses unless the Hub is on loopback.
+    // KNDL_DEV_LOGIN is set, which HubConfig refuses unless the Hub is on loopback.
     yield* router.add(
       "POST",
       "/auth/dev",

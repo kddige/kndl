@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { SessionSummary } from "@claude-hub/protocol"
+import type { SessionSummary } from "@kndl/protocol"
 import { groupByRepo, knownRepos } from "../src/sessions/groups.ts"
 
 function session(id: string, repo: string, createdAt: number): SessionSummary {

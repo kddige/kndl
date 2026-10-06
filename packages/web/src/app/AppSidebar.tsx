@@ -4,7 +4,7 @@ import {
   type SessionId,
   type SessionSummary,
   sessionTitle,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
@@ -151,7 +151,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
       header={
         <>
           <Link to="/" {...stylex.props(styles.brand, focus.ring)}>
-            Claude Hub
+            kndl
           </Link>
           <CreateSessionDialog
             trigger={

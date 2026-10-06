@@ -27,9 +27,9 @@ const linkedSession = (
   env: Record<string, string> = {},
 ) => {
   mock.env(on, {
-    CLAUDE_HUB_URL: hubUrl,
-    CLAUDE_HUB_SESSION_ID: "s1",
-    CLAUDE_HUB_MOD_TOKEN: "secret",
+    KNDL_URL: hubUrl,
+    KNDL_SESSION_ID: "s1",
+    KNDL_MOD_TOKEN: "secret",
     ...env,
   })
   on("session.id", () => ({ value: "claude-1" }))

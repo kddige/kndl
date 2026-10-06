@@ -20,8 +20,8 @@ import {
   TunnelAddress,
   TunnelCloseCode,
   type TunnelId,
-} from "@claude-hub/protocol"
-import { TunnelEnd } from "@claude-hub/protocol/tunnel-end"
+} from "@kndl/protocol"
+import { TunnelEnd } from "@kndl/protocol/tunnel-end"
 import { Context, Effect, Layer, Redacted, Schema } from "effect"
 import { Socket } from "effect/socket"
 import { HubLink } from "./HubLink.ts"
@@ -43,7 +43,7 @@ export class Tunnels extends Context.Service<
     /** How many tunnels are open now. */
     readonly openCount: Effect.Effect<number>
   }
->()("@claude-hub/runner/Tunnels") {
+>()("@kndl/runner/Tunnels") {
   /** A Runner that opens no tunnels: it answers each with a TunnelFailed. For tests. */
   static readonly refusing = Layer.effect(
     Tunnels,

@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "bun:test"
 import { join } from "node:path"
-import { accessLabel } from "@claude-hub/protocol"
+import { accessLabel } from "@kndl/protocol"
 import {
   type AppFacts,
   checkAppPermissions,
@@ -21,8 +21,8 @@ const all = manifestPermissions()
 const personal = manifestPermissions(requiredOn(false))
 
 const app: AppFacts = {
-  slug: "claude-hub-ada",
-  htmlUrl: "https://github.com/apps/claude-hub-ada",
+  slug: "kndl-ada",
+  htmlUrl: "https://github.com/apps/kndl-ada",
   owner: { login: "ada", type: "User" },
   permissions: all,
   events: [],
@@ -89,9 +89,9 @@ describe("checkAppPermissions", () => {
   test("finds nothing when the App and its installations have it all", () => {
     const check = checkAppPermissions(app, [installation()], 1000)
     expect(check).toEqual({
-      slug: "claude-hub-ada",
-      settingsUrl: "https://github.com/settings/apps/claude-hub-ada/permissions",
-      installUrl: "https://github.com/apps/claude-hub-ada/installations/new",
+      slug: "kndl-ada",
+      settingsUrl: "https://github.com/settings/apps/kndl-ada/permissions",
+      installUrl: "https://github.com/apps/kndl-ada/installations/new",
       missing: [],
       missingEvents: [],
       installed: 1,
@@ -113,10 +113,10 @@ describe("checkAppPermissions", () => {
     )
     expect(check.missing).toEqual([{ name: "issues", title: "Issues", access: "write" }])
     expect(check.settingsUrl).toBe(
-      "https://github.com/organizations/octo/settings/apps/claude-hub-ada/permissions",
+      "https://github.com/organizations/octo/settings/apps/kndl-ada/permissions",
     )
     expect(describeDrift(check)).toEqual([
-      "The App claude-hub-ada lacks Issues: read and write. Add it at https://github.com/organizations/octo/settings/apps/claude-hub-ada/permissions",
+      "The App kndl-ada lacks Issues: read and write. Add it at https://github.com/organizations/octo/settings/apps/kndl-ada/permissions",
     ])
   })
 

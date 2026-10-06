@@ -40,23 +40,21 @@ describe("the launchd LaunchAgent", () => {
         "  <key>ProgramArguments</key>",
         "  <array>",
         "    <string>/home/ada/.bun/bin/bun</string>",
-        "    <string>--env-file=/home/ada/.claude-hub/hub.env</string>",
-        "    <string>/home/ada/.claude-hub/app/packages/hub/src/main.ts</string>",
+        "    <string>--env-file=/home/ada/.kndl/hub.env</string>",
+        "    <string>/home/ada/.kndl/app/packages/hub/src/main.ts</string>",
         "  </array>",
       ].join("\n"),
     )
   })
 
-  test("sets CLAUDE_HUB_HOME and the PATH, and runs in the home", () => {
-    expect(plist).toContain(
-      "<key>CLAUDE_HUB_HOME</key>\n    <string>/home/ada/.claude-hub</string>",
-    )
+  test("sets KNDL_HOME and the PATH, and runs in the home", () => {
+    expect(plist).toContain("<key>KNDL_HOME</key>\n    <string>/home/ada/.kndl</string>")
     expect(plist).toContain(
       "<key>PATH</key>\n    <string>/home/ada/.bun/bin:/usr/bin:/bin</string>",
     )
     // Tells a Runner its service starts it again, so it may restart to update itself (#87).
-    expect(plist).toContain("<key>CLAUDE_HUB_SERVICE</key>\n    <string>hub</string>")
-    expect(plist).toContain("<key>WorkingDirectory</key>\n  <string>/home/ada/.claude-hub</string>")
+    expect(plist).toContain("<key>KNDL_SERVICE</key>\n    <string>hub</string>")
+    expect(plist).toContain("<key>WorkingDirectory</key>\n  <string>/home/ada/.kndl</string>")
   })
 
   test("starts at login and restarts after a crash", () => {
@@ -68,18 +66,16 @@ describe("the launchd LaunchAgent", () => {
 
   test("logs to the home's logs directory", () => {
     expect(plist).toContain(
-      "<key>StandardOutPath</key>\n  <string>/home/ada/.claude-hub/logs/hub.log</string>",
+      "<key>StandardOutPath</key>\n  <string>/home/ada/.kndl/logs/hub.log</string>",
     )
     expect(plist).toContain(
-      "<key>StandardErrorPath</key>\n  <string>/home/ada/.claude-hub/logs/hub.log</string>",
+      "<key>StandardErrorPath</key>\n  <string>/home/ada/.kndl/logs/hub.log</string>",
     )
   })
 
   test("is labelled per role", () => {
-    expect(plist).toContain("<string>io.github.kddige.claude-hub.hub</string>")
-    expect(launchdPlist(spec("runner"))).toContain(
-      "<string>io.github.kddige.claude-hub.runner</string>",
-    )
+    expect(plist).toContain("<string>io.github.kddige.kndl.hub</string>")
+    expect(launchdPlist(spec("runner"))).toContain("<string>io.github.kddige.kndl.runner</string>")
   })
 
   test("lets the Runner's Sessions outlive it, and only the Runner's", () => {
@@ -104,15 +100,15 @@ describe("the systemd user unit", () => {
 
   test("runs the Runner with Bun, loading runner.env, from the installed checkout", () => {
     expect(unit).toContain(
-      "ExecStart=/home/ada/.bun/bin/bun --env-file=/home/ada/.claude-hub/runner.env /home/ada/.claude-hub/app/packages/runner/src/main.ts",
+      "ExecStart=/home/ada/.bun/bin/bun --env-file=/home/ada/.kndl/runner.env /home/ada/.kndl/app/packages/runner/src/main.ts",
     )
   })
 
-  test("sets CLAUDE_HUB_HOME and the PATH, and runs in the home", () => {
-    expect(unit).toContain("Environment=CLAUDE_HUB_HOME=/home/ada/.claude-hub")
+  test("sets KNDL_HOME and the PATH, and runs in the home", () => {
+    expect(unit).toContain("Environment=KNDL_HOME=/home/ada/.kndl")
     expect(unit).toContain("Environment=PATH=/home/ada/.bun/bin:/usr/bin:/bin")
-    expect(unit).toContain("Environment=CLAUDE_HUB_SERVICE=runner")
-    expect(unit).toContain("WorkingDirectory=/home/ada/.claude-hub")
+    expect(unit).toContain("Environment=KNDL_SERVICE=runner")
+    expect(unit).toContain("WorkingDirectory=/home/ada/.kndl")
   })
 
   test("restarts on failure and starts with the user's session", () => {
@@ -121,8 +117,8 @@ describe("the systemd user unit", () => {
   })
 
   test("appends to the home's logs", () => {
-    expect(unit).toContain("StandardOutput=append:/home/ada/.claude-hub/logs/runner.log")
-    expect(unit).toContain("StandardError=append:/home/ada/.claude-hub/logs/runner.log")
+    expect(unit).toContain("StandardOutput=append:/home/ada/.kndl/logs/runner.log")
+    expect(unit).toContain("StandardError=append:/home/ada/.kndl/logs/runner.log")
   })
 
   test("stops only the Runner's own process, so its Sessions outlive it", () => {
@@ -139,25 +135,25 @@ describe("the systemd user unit", () => {
   test("doesn't quote paths that take no quotes", () => {
     const spaced = systemdUnitFile({
       ...spec("hub"),
-      layout: resolveLayout({ CLAUDE_HUB_HOME: "/srv/claude hub" }, "/home/ada"),
+      layout: resolveLayout({ KNDL_HOME: "/srv/kndl home" }, "/home/ada"),
     })
 
-    expect(spaced).toContain("WorkingDirectory=/srv/claude hub\n")
-    expect(spaced).toContain("StandardOutput=append:/srv/claude hub/logs/hub.log\n")
-    expect(spaced).toContain('Environment="CLAUDE_HUB_HOME=/srv/claude hub"')
+    expect(spaced).toContain("WorkingDirectory=/srv/kndl home\n")
+    expect(spaced).toContain("StandardOutput=append:/srv/kndl home/logs/hub.log\n")
+    expect(spaced).toContain('Environment="KNDL_HOME=/srv/kndl home"')
   })
 })
 
 describe("where the service files go", () => {
   test("a LaunchAgent in ~/Library/LaunchAgents", () => {
     expect(serviceFilePath(target("darwin", "hub"))).toBe(
-      "/home/ada/Library/LaunchAgents/io.github.kddige.claude-hub.hub.plist",
+      "/home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
     )
   })
 
   test("a systemd user unit in the config home", () => {
     expect(serviceFilePath(target("linux", "runner"))).toBe(
-      "/home/ada/.config/systemd/user/claude-hub-runner.service",
+      "/home/ada/.config/systemd/user/kndl-runner.service",
     )
   })
 })
@@ -165,38 +161,38 @@ describe("where the service files go", () => {
 describe("the service commands", () => {
   test("launchd: install unloads any earlier version, then enables and loads", () => {
     expect(commands(installSteps(target("darwin", "hub")))).toEqual([
-      "launchctl bootout gui/501/io.github.kddige.claude-hub.hub",
-      "launchctl enable gui/501/io.github.kddige.claude-hub.hub",
-      "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.claude-hub.hub.plist",
+      "launchctl bootout gui/501/io.github.kddige.kndl.hub",
+      "launchctl enable gui/501/io.github.kddige.kndl.hub",
+      "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
     ])
     expect(installSteps(target("darwin", "hub"))[0]?.mayFail).toBe(true)
   })
 
   test("launchd: stop unloads, so KeepAlive doesn't restart it", () => {
     expect(commands(stopSteps(target("darwin", "runner")))).toEqual([
-      "launchctl bootout gui/501/io.github.kddige.claude-hub.runner",
+      "launchctl bootout gui/501/io.github.kddige.kndl.runner",
     ])
   })
 
   test("launchd: start loads the agent and kicks it", () => {
     expect(commands(startSteps(target("darwin", "hub")))).toEqual([
-      "launchctl enable gui/501/io.github.kddige.claude-hub.hub",
-      "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.claude-hub.hub.plist",
-      "launchctl kickstart gui/501/io.github.kddige.claude-hub.hub",
+      "launchctl enable gui/501/io.github.kddige.kndl.hub",
+      "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
+      "launchctl kickstart gui/501/io.github.kddige.kndl.hub",
     ])
   })
 
   test("systemd: install reloads, enables and restarts the user unit", () => {
     expect(commands(installSteps(target("linux", "hub")))).toEqual([
       "systemctl --user daemon-reload",
-      "systemctl --user enable --now claude-hub-hub.service",
-      "systemctl --user restart claude-hub-hub.service",
+      "systemctl --user enable --now kndl-hub.service",
+      "systemctl --user restart kndl-hub.service",
     ])
   })
 
   test("systemd: uninstall disables and stops it", () => {
     expect(commands(uninstallSteps(target("linux", "runner")))).toEqual([
-      "systemctl --user disable --now claude-hub-runner.service",
+      "systemctl --user disable --now kndl-runner.service",
     ])
   })
 
@@ -214,7 +210,7 @@ describe("the service commands", () => {
 
 describe("reading how a service is doing", () => {
   test("launchd: running, with its pid", () => {
-    const stdout = "gui/501/io.github.kddige.claude-hub.hub = {\n\tstate = running\n\tpid = 4242\n}"
+    const stdout = "gui/501/io.github.kddige.kndl.hub = {\n\tstate = running\n\tpid = 4242\n}"
 
     expect(parseServiceState("darwin", { exitCode: 0, stdout })).toEqual({
       _tag: "Running",

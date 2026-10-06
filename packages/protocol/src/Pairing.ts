@@ -3,7 +3,7 @@ import { RunnerId } from "./Ids.ts"
 import { EpochMillis, Participant } from "./Session.ts"
 
 // Pairing codes (GLOSSARY.md): what a person mints on the Runners page and a machine redeems with
-// `claude-hub runner join` for a lasting Runner token. The Hub keeps only a code's hash.
+// `kndl runner join` for a lasting Runner token. The Hub keeps only a code's hash.
 //
 // A code is 20 characters of Crockford base32 (100 random bits), shown in groups of five:
 // `7K3QH-WM2PA-...`. Reading one back is forgiving: case, dashes and spaces don't matter, and the
@@ -51,7 +51,7 @@ export function pairingLink(hubUrl: string, code: string): string {
 
 /** What the Runners page offers to paste on the new machine. */
 export function pairingCommand(link: string): string {
-  return `claude-hub runner join '${link}'`
+  return `kndl runner join '${link}'`
 }
 
 const invalid = (message: string) => ({ _tag: "Invalid", message }) as const

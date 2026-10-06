@@ -1,5 +1,5 @@
 {
-  "name": "@claude-hub/hub",
+  "name": "@kndl/hub",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@claude-hub/protocol": "workspace:*",
+    "@kndl/protocol": "workspace:*",
     "@effect/platform-bun": "4.0.0",
     "@effect/sql-sqlite-bun": "4.0.0",
     "effect": "4.0.0"

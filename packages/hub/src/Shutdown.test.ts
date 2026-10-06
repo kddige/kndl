@@ -5,7 +5,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { MaxCommandWaitMs, ProtocolVersion, SessionId } from "@claude-hub/protocol"
+import { MaxCommandWaitMs, ProtocolVersion, SessionId } from "@kndl/protocol"
 import { Effect, Layer } from "effect"
 import { databaseAt } from "./Database.ts"
 import { ModTokens } from "./ModTokens.ts"
@@ -41,7 +41,7 @@ async function seed(filename: string) {
 }
 
 async function startSeededHub() {
-  const dir = mkdtempSync(join(tmpdir(), "claude-hub-shutdown-"))
+  const dir = mkdtempSync(join(tmpdir(), "kndl-shutdown-"))
   dirs.push(dir)
   const database = join(dir, "hub.db")
   const tokens = await seed(database)

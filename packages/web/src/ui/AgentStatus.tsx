@@ -1,4 +1,4 @@
-import type { AgentStatus as Status } from "@claude-hub/protocol"
+import type { AgentStatus as Status } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { color, leading, radius, space, text, weight } from "./tokens.stylex.ts"
 

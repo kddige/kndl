@@ -1,4 +1,4 @@
-import { ParticipantId, PromptId, QueuedPrompt, type SessionId } from "@claude-hub/protocol"
+import { ParticipantId, PromptId, QueuedPrompt, type SessionId } from "@kndl/protocol"
 import { Context, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -23,7 +23,7 @@ export class PromptQueue extends Context.Service<
     /** The Session's queue, in order. */
     readonly list: (sessionId: SessionId) => Effect.Effect<ReadonlyArray<QueuedPrompt>, SqlError>
   }
->()("@claude-hub/hub/PromptQueue") {
+>()("@kndl/hub/PromptQueue") {
   static readonly layer = Layer.effect(
     PromptQueue,
     Effect.gen(function* () {

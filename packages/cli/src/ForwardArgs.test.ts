@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionSummary } from "@claude-hub/protocol"
+import type { SessionSummary } from "@kndl/protocol"
 import {
   bindAddresses,
   localUrl,
@@ -14,7 +14,7 @@ import {
 /** A Session as the Hub lists it, with only what these read. */
 const summary = (fields: Partial<Omit<SessionSummary, "id">> & { readonly id: string }) =>
   ({
-    repo: "kddige/claude-hub",
+    repo: "kddige/kndl",
     workBranch: "claude/fix-login",
     state: "Active",
     ...fields,
@@ -112,9 +112,9 @@ describe("which Session", () => {
           ],
         }),
       ),
-    ).toBe("0b9256  claude/fix-login  kddige/claude-hub  3000, 5173")
+    ).toBe("0b9256  claude/fix-login  kddige/kndl  3000, 5173")
     expect(sessionLine(summary({ id: "77ab12ffc0", name: "Docs", state: "Asleep" }))).toBe(
-      "77ab12  Docs  kddige/claude-hub  Asleep  no open ports",
+      "77ab12  Docs  kddige/kndl  Asleep  no open ports",
     )
   })
 })

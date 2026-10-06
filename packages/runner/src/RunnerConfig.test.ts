@@ -9,7 +9,7 @@ import { ModBundles, RunnerConfig, RunnerConfigLive } from "./RunnerConfig.ts"
 let modDir: string
 
 beforeAll(async () => {
-  modDir = await mkdtemp(join(tmpdir(), "claude-hub-runner-config-"))
+  modDir = await mkdtemp(join(tmpdir(), "kndl-runner-config-"))
   for (const bundle of ModBundles) {
     await mkdir(dirname(join(modDir, bundle)), { recursive: true })
     await writeFile(join(modDir, bundle), "")
@@ -36,20 +36,20 @@ describe("the Runner's defaults", () => {
   test("from a checkout are the dev home's", async () => {
     const settings = await settingsIn({})
 
-    expect(settings.sessionsRoot).toBe(join(homedir(), ".claude-hub-dev", "sessions"))
-    expect(settings.tmuxSocket).toBe("claude-hub-dev")
+    expect(settings.sessionsRoot).toBe(join(homedir(), ".kndl-dev", "sessions"))
+    expect(settings.tmuxSocket).toBe("kndl-dev")
   })
 
-  test("follow CLAUDE_HUB_HOME", async () => {
-    const settings = await settingsIn({ CLAUDE_HUB_HOME: "/srv/claude-hub" })
+  test("follow KNDL_HOME", async () => {
+    const settings = await settingsIn({ KNDL_HOME: "/srv/kndl" })
 
-    expect(settings.sessionsRoot).toBe("/srv/claude-hub/sessions")
-    expect(settings.tmuxSocket).toBe("claude-hub")
+    expect(settings.sessionsRoot).toBe("/srv/kndl/sessions")
+    expect(settings.tmuxSocket).toBe("kndl")
   })
 
   test("give way to RUNNER_SESSIONS_ROOT and RUNNER_TMUX_SOCKET", async () => {
     const settings = await settingsIn({
-      CLAUDE_HUB_HOME: "/srv/claude-hub",
+      KNDL_HOME: "/srv/kndl",
       RUNNER_SESSIONS_ROOT: "/tmp/sessions",
       RUNNER_TMUX_SOCKET: "mine",
     })

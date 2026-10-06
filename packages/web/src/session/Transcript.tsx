@@ -4,7 +4,7 @@ import type {
   SessionId,
   SessionStateChanged,
   TurnEnded,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, memo, type ReactNode, useContext, useState } from "react"

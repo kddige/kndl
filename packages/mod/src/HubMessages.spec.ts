@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { MaxToolSummaryLength, ModEvents, ModHello, ProtocolVersion } from "@claude-hub/protocol"
+import { MaxToolSummaryLength, ModEvents, ModHello, ProtocolVersion } from "@kndl/protocol"
 import { Schema } from "effect"
 import {
   agentWorktree,

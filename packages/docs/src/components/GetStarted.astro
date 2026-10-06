@@ -21,8 +21,8 @@ const base = import.meta.env.BASE_URL
       <LinkButton href={`${base}how-to/install/`} variant="minimal">Install</LinkButton>
     </div>
     <p class="note">
-      This runs claude-hub from a checkout. To install a Hub and Runners as services, use the
-      <code>claude-hub</code> command: see <a href={`${base}how-to/install/`}>Install claude-hub</a>.
+      This runs kndl from a checkout. To install a Hub and Runners as services, use the
+      <code>kndl</code> command: see <a href={`${base}how-to/install/`}>Install kndl</a>.
     </p>
   </div>
   <div class="term" role="img" aria-label="Terminal: bun install, bun run web:build, then bun run hub with dev login.">
@@ -30,7 +30,7 @@ const base = import.meta.env.BASE_URL
     <pre aria-hidden="true"><code><span class="p">$</span> bun install
 <span class="p">$</span> bun run web:build
 <span class="p">$</span> HUB_PUBLIC_URL=http://127.0.0.1:7777 \
-  CLAUDE_HUB_DEV_LOGIN=1 bun run hub
+  KNDL_DEV_LOGIN=1 bun run hub
 <span class="c"># then open http://127.0.0.1:7777</span></code></pre>
   </div>
 </section>

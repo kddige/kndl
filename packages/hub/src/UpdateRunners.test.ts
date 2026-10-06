@@ -5,11 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import {
-  type ModCommandsEncoded,
-  type ModEventsEncoded,
-  ProtocolVersion,
-} from "@claude-hub/protocol"
+import { type ModCommandsEncoded, type ModEventsEncoded, ProtocolVersion } from "@kndl/protocol"
 import { Effect } from "effect"
 import { databaseAt } from "./Database.ts"
 import { HubVersion } from "./HubVersion.ts"
@@ -33,7 +29,7 @@ const hubCommit = { commit: "a".repeat(40), branch: "main" }
 const olderCommit = { commit: "b".repeat(40), branch: "main" }
 const selfUpdating = { updater: { self: true } }
 const alice = { id: "dev:alice", login: "alice", name: "alice" }
-const repo = "kddige/claude-hub"
+const repo = "kddige/kndl"
 
 /** A Hub at hubCommit, whose history holds olderCommit, with dev login. */
 const updatesHub = (database?: ReturnType<typeof databaseAt>) =>
@@ -393,15 +389,15 @@ describe("updating a Runner", () => {
   })
 })
 
-describe("claude-hub update's push", () => {
+describe("kndl update's push", () => {
   test("tells Runners that update themselves to follow as they connect behind the Hub", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await updatesHub(database)
       const studio = await issueRunnerToken(first, "studio")
       const laptop = await issueRunnerToken(first, "laptop")
-      // As `claude-hub update --no-update-runners` leaves it: only the Runner on its machine.
+      // As `kndl update --no-update-runners` leaves it: only the Runner on its machine.
       await first.run(
         Effect.flatMap(RunnerUpdatePush, (push) =>
           push.request(

@@ -5,21 +5,21 @@ const link = (href: string) => ({ type: "element", tagName: "a", properties: { h
 
 const run = (...hrefs: ReadonlyArray<string>) => {
   const links = hrefs.map(link)
-  rehypeBaseLinks({ base: "/claude-hub/" })({ type: "root", children: links })
+  rehypeBaseLinks({ base: "/kndl/" })({ type: "root", children: links })
   return links.map((node) => node.properties.href)
 }
 
 test("prefixes the base path to root-relative links", () => {
   expect(run("/how-to/add-a-runner/", "/reference/glossary/#sandbox")).toEqual([
-    "/claude-hub/how-to/add-a-runner/",
-    "/claude-hub/reference/glossary/#sandbox",
+    "/kndl/how-to/add-a-runner/",
+    "/kndl/reference/glossary/#sandbox",
   ])
 })
 
 test("leaves other links alone", () => {
   const hrefs = [
-    "/claude-hub/about/",
-    "https://github.com/kddige/claude-hub",
+    "/kndl/about/",
+    "https://github.com/kddige/kndl",
     "//example.com/x",
     "#anchor",
     "relative/",

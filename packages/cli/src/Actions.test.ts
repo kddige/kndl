@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { databaseAt } from "@claude-hub/hub/src/Database.ts"
-import { holdHubLock } from "@claude-hub/hub/src/HubLock.ts"
+import { databaseAt } from "@kndl/hub/src/Database.ts"
+import { holdHubLock } from "@kndl/hub/src/HubLock.ts"
 import { Effect, Exit } from "effect"
 import { SqlClient } from "effect/sql"
 import { resetHubSecrets } from "./Actions.ts"
@@ -15,8 +15,8 @@ let layout: Layout
 let database: string
 
 beforeEach(async () => {
-  scratch = mkdtempSync(join(tmpdir(), "claude-hub-actions-"))
-  layout = resolveLayout({ CLAUDE_HUB_HOME: join(scratch, ".claude-hub") }, scratch)
+  scratch = mkdtempSync(join(tmpdir(), "kndl-actions-"))
+  layout = resolveLayout({ KNDL_HOME: join(scratch, ".kndl") }, scratch)
   database = join(layout.home.dir, "hub.db")
   mkdirSync(layout.home.dir)
   writeFileSync(layout.envFile("hub"), "PORT=7777\n")
@@ -65,7 +65,7 @@ const reset = (
 const failure = (exit: Exit.Exit<unknown, { readonly message: string }>) =>
   Exit.isFailure(exit) ? exit.cause.toString() : undefined
 
-describe("claude-hub secrets reset", () => {
+describe("kndl secrets reset", () => {
   test("asks first, and clears the Sensitive values in the home's database when told to", async () => {
     const { exit, transcript } = await reset({ yes: false }, [true])
 
@@ -103,7 +103,7 @@ describe("claude-hub secrets reset", () => {
     )
 
     expect(failure(exit)).toContain(`a Hub is running on ${database}`)
-    expect(failure(exit)).toContain("claude-hub hub stop")
+    expect(failure(exit)).toContain("kndl hub stop")
     expect(await sharedValue()).toBe("v1:sealed")
   })
 

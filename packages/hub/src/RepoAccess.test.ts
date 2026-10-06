@@ -2,7 +2,7 @@
 // why access is refused (#104).
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
-import { Participant, ParticipantId, RepoName } from "@claude-hub/protocol"
+import { Participant, ParticipantId, RepoName } from "@kndl/protocol"
 import { Duration, Effect, Layer, Option, Redacted } from "effect"
 import { TestClock } from "effect/testing"
 import { GitHubApp } from "./GitHubApp.ts"

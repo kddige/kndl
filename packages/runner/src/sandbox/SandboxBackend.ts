@@ -9,7 +9,7 @@
 // A backend keeps what commands print off the host's disk: their output may hold variable values
 // (ADR 0009).
 
-import type { SandboxState, SessionId } from "@claude-hub/protocol"
+import type { SandboxState, SessionId } from "@kndl/protocol"
 import { Context, Data, Effect, Stream } from "effect"
 import type { Option, Scope } from "effect"
 
@@ -342,7 +342,7 @@ export interface SandboxBackendShape {
 }
 
 export class SandboxBackend extends Context.Service<SandboxBackend, SandboxBackendShape>()(
-  "@claude-hub/runner/SandboxBackend",
+  "@kndl/runner/SandboxBackend",
 ) {}
 
 /** Runs an {@link ExecEvent} stream to the end and collects it, for a backend's `exec`. */

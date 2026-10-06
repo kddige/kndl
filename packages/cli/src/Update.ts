@@ -1,4 +1,4 @@
-// What `claude-hub update` moves the installed checkout to. A branch is followed: the checkout
+// What `kndl update` moves the installed checkout to. A branch is followed: the checkout
 // stays on it, and a later plain `update` pulls it. A tag or a commit pins: the checkout is
 // detached there, and a later plain `update` stays put and says how to follow main again. A fresh
 // install follows main.
@@ -142,7 +142,7 @@ export function describeCheckout(checkout: Checkout): string {
 
 /** What plain `update` says on a pinned checkout. */
 export function pinnedNotice(pinned: Pinned): string {
-  return `The install is pinned at ${pinned.at}, so update stays there. To follow ${DefaultBranch} again: claude-hub update --ref ${DefaultBranch}`
+  return `The install is pinned at ${pinned.at}, so update stays there. To follow ${DefaultBranch} again: kndl update --ref ${DefaultBranch}`
 }
 
 /**

@@ -1,11 +1,11 @@
-// The Hub serving the claude-hub CLI (issue #178): the install script, the commit, and the
+// The Hub serving the kndl CLI (issue #178): the install script, the commit, and the
 // binaries, built once per commit and target, on a real Hub with a stand-in build.
 
 import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { CliCommitHeader } from "@claude-hub/protocol"
+import { CliCommitHeader } from "@kndl/protocol"
 import { installScript } from "./CliRoutes.ts"
 import { commit, fakeBinary, fakeBuilds, removeTempDirs, tempDir } from "./cliTestSupport.ts"
 import { startHub, stopHubs } from "./testSupport.ts"
@@ -23,7 +23,7 @@ describe("GET /cli", () => {
     expect(response.headers.get("content-type")).toBe("text/x-shellscript; charset=utf-8")
     const script = await response.text()
     expect(script.startsWith("#!/bin/sh\n")).toBe(true)
-    expect(script).toContain("hub_url=${CLAUDE_HUB_URL:-'https://hub.example.com'}")
+    expect(script).toContain("hub_url=${KNDL_URL:-'https://hub.example.com'}")
     expect(script).not.toContain("@HUB_URL@")
     expect(script).toBe(installScript(new URL("https://hub.example.com")))
   })
@@ -56,7 +56,7 @@ describe("GET /cli/<target>", () => {
       expect(response.headers.get("content-type")).toBe("application/octet-stream")
       expect(response.headers.get(CliCommitHeader)).toBe(commit)
       expect(await response.text()).toBe(fakeBinary(target, commit))
-      expect(existsSync(join(dir, commit, `claude-hub-${target}`))).toBe(true)
+      expect(existsSync(join(dir, commit, `kndl-${target}`))).toBe(true)
     }
   })
 
@@ -78,7 +78,7 @@ describe("GET /cli/<target>", () => {
       const response = await fetch(`${hub.url}/cli/${target}`)
       expect({ target, status: response.status }).toEqual({ target, status: 404 })
       expect(await response.text()).toContain(
-        "The Hub builds the claude-hub CLI for darwin-arm64, darwin-x64, linux-x64, linux-arm64",
+        "The Hub builds the kndl CLI for darwin-arm64, darwin-x64, linux-x64, linux-arm64",
       )
     }
     // Not the web UI's page either, as an unknown path outside the Hub's would be.
@@ -90,7 +90,7 @@ describe("GET /cli/<target>", () => {
     const dir = await tempDir("cli-")
     const old = "0ld".padEnd(40, "0").replaceAll("l", "1")
     await mkdir(join(dir, old), { recursive: true })
-    await writeFile(join(dir, old, "claude-hub-linux-x64"), "old")
+    await writeFile(join(dir, old, "kndl-linux-x64"), "old")
     await writeFile(join(dir, "not-a-build"), "kept")
     const hub = await startHub({ cliBuilds: fakeBuilds({ dir }).layer })
     expect((await fetch(`${hub.url}/cli/linux-x64`)).status).toBe(200)
@@ -113,7 +113,7 @@ describe("GET /cli/<target>", () => {
     const response = await fetch(`${hub.url}/cli/linux-arm64`)
     expect(response.status).toBe(500)
     expect(await response.text()).toBe(
-      "The Hub couldn't build the claude-hub CLI for linux-arm64: no network",
+      "The Hub couldn't build the kndl CLI for linux-arm64: no network",
     )
     await fetch(`${hub.url}/cli/linux-arm64`)
     expect(builds.built).toEqual(["linux-arm64", "linux-arm64"])

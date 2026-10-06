@@ -1,5 +1,5 @@
 // The Sandbox's GitHub token (#73, ADR 0010) on a real microsandbox VM, so it is skipped unless
-// CLAUDE_HUB_SANDBOX_IT=1: a Sandbox on buildpack-deps:bookworm (which has git) gets a made-up
+// KNDL_SANDBOX_IT=1: a Sandbox on buildpack-deps:bookworm (which has git) gets a made-up
 // token the way a Session's does, and git's credential helper and gh's hosts.yml hand it out,
 // and its replacement after a refresh. The token is only in the VM's memory: not in its root
 // filesystem's image, microsandbox's database or the Sandbox's logs on this disk. gh comes from
@@ -7,13 +7,13 @@
 // GitHub. It needs `msb` installed for the current user and network access to Docker Hub and
 // Debian. Everything it creates is named it-73-… and removed at the end, pass or fail.
 //
-//   CLAUDE_HUB_SANDBOX_IT=1 bun test packages/runner/src/SandboxGitHub.integration.test.ts
+//   KNDL_SANDBOX_IT=1 bun test packages/runner/src/SandboxGitHub.integration.test.ts
 
 import { expect, test } from "bun:test"
 import { mkdtemp, readdir, rm } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 import { Cause, Effect, Exit, Layer, Redacted } from "effect"
 import { Sandbox, Volume } from "microsandbox"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
@@ -21,7 +21,7 @@ import { SandboxBackend, shell } from "./sandbox/SandboxBackend.ts"
 import { sessionSandboxSpec } from "./sandbox/SessionLayout.ts"
 import { credentialsDir, ghHostsPath, installSandboxToken, tokenPath } from "./SandboxGitHub.ts"
 
-const enabled = process.env.CLAUDE_HUB_SANDBOX_IT === "1"
+const enabled = process.env.KNDL_SANDBOX_IT === "1"
 
 /** Everything this test makes is named under it, and only that is removed. */
 const namePrefix = "it-73-"
@@ -69,7 +69,7 @@ test.skipIf(!enabled)(
     await sweep()
     const sessionId = `s${Date.now().toString(36)}` as SessionId
     const sandboxName = `${namePrefix}${sessionId}`
-    const workspace = await mkdtemp(join(tmpdir(), "claude-hub-it-73-"))
+    const workspace = await mkdtemp(join(tmpdir(), "kndl-it-73-"))
     const others = () =>
       Sandbox.list().then((page) =>
         page.sandboxes.filter((s) => !s.name.startsWith(namePrefix)).map((s) => [s.name, s.status]),
@@ -105,7 +105,7 @@ test.skipIf(!enabled)(
       yield* installSandboxToken(backend, sessionId, Redacted.make(firstToken))
 
       // On a tmpfs, readable by root alone.
-      expect((yield* sh("grep ' /run/claude-hub ' /proc/mounts")).stdout).toContain(
+      expect((yield* sh("grep ' /run/kndl ' /proc/mounts")).stdout).toContain(
         `${credentialsDir} tmpfs`,
       )
       expect((yield* sh(`stat -c %a ${credentialsDir} ${tokenPath} ${ghHostsPath}`)).stdout).toBe(
@@ -132,7 +132,7 @@ test.skipIf(!enabled)(
       yield* installSandboxToken(backend, sessionId, Redacted.make(secondToken))
       expect((yield* fill("github.com")).stdout).toContain(`password=${secondToken}\n`)
       expect((yield* sh("gh auth token")).stdout.trim()).toBe(secondToken)
-      expect((yield* sh("grep -c ' /run/claude-hub ' /proc/mounts")).stdout).toBe("1\n")
+      expect((yield* sh("grep -c ' /run/kndl ' /proc/mounts")).stdout).toBe("1\n")
 
       // What is on this disk: the VM's root filesystem image, flushed; its logs; microsandbox's
       // database. None holds either token, though the scan finds what is on the root filesystem.

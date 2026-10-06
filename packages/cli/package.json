@@ -1,9 +1,9 @@
 {
-  "name": "@claude-hub/cli",
+  "name": "@kndl/cli",
   "private": true,
   "type": "module",
   "bin": {
-    "claude-hub": "src/main.ts"
+    "kndl": "src/main.ts"
   },
   "scripts": {
     "start": "bun src/main.ts",
@@ -11,9 +11,9 @@
   },
   "dependencies": {
     "@clack/prompts": "1.8.1",
-    "@claude-hub/hub": "workspace:*",
-    "@claude-hub/protocol": "workspace:*",
-    "@claude-hub/runner": "workspace:*",
+    "@kndl/hub": "workspace:*",
+    "@kndl/protocol": "workspace:*",
+    "@kndl/runner": "workspace:*",
     "@effect/platform-bun": "4.0.0",
     "effect": "4.0.0"
   }

@@ -1,4 +1,4 @@
-import { RunnerId, SessionId } from "@claude-hub/protocol"
+import { RunnerId, SessionId } from "@kndl/protocol"
 import { Clock, Context, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -25,7 +25,7 @@ export class ModTokens extends Context.Service<
     /** Invalidates the Session's mod token, as when its Claude Code stops. */
     readonly revoke: (sessionId: SessionId) => Effect.Effect<void, SqlError>
   }
->()("@claude-hub/hub/ModTokens") {
+>()("@kndl/hub/ModTokens") {
   static readonly layer = Layer.effect(
     ModTokens,
     Effect.gen(function* () {

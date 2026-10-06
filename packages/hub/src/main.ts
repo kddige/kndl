@@ -4,7 +4,7 @@
 // `bun src/main.ts` serves the Hub; `bun src/main.ts runner-token <name>` issues a Runner's
 // token and prints it; `bun src/main.ts secrets-key` prints a new HUB_SECRETS_KEY (both in
 // Admin.ts); `bun src/main.ts secrets-reset [--yes]` clears the Sensitive values a lost key
-// encrypted (SecretsReset.ts). The claude-hub CLI shares all three. Configuration is read from
+// encrypted (SecretsReset.ts). The kndl CLI shares all three. Configuration is read from
 // the environment: see HubConfig.ts and Database.ts.
 
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
@@ -50,7 +50,7 @@ const announceSignIn = Layer.effectDiscard(
     }
     if (Option.isNone(config.githubApp)) {
       yield* Effect.logWarning(
-        "The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `claude-hub onboard --github-app create` to set one up.",
+        "The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `kndl onboard --github-app create` to set one up.",
       )
     }
     if (Option.isNone(config.secretsKey)) {
@@ -63,7 +63,7 @@ const announceSignIn = Layer.effectDiscard(
     }
     if (Option.isSome(config.devLogin)) {
       yield* Effect.logWarning(
-        `Dev login is on (CLAUDE_HUB_DEV_LOGIN): anyone reaching ${config.publicUrl.origin} can sign in without GitHub.`,
+        `Dev login is on (KNDL_DEV_LOGIN): anyone reaching ${config.publicUrl.origin} can sign in without GitHub.`,
       )
     }
   }),

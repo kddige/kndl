@@ -1,7 +1,7 @@
-// What `claude-hub doctor` checks, and what `--fix` can repair. Host.ts gathers the facts; this
+// What `kndl doctor` checks, and what `--fix` can repair. Host.ts gathers the facts; this
 // turns them into checks, pure and tested; Cli.ts prints them and runs the fixes.
-import { describeDrift } from "@claude-hub/hub/src/AppPermissions.ts"
-import { type AppPermissionsCheck, hasPermissionDrift } from "@claude-hub/protocol"
+import { describeDrift } from "@kndl/hub/src/AppPermissions.ts"
+import { type AppPermissionsCheck, hasPermissionDrift } from "@kndl/protocol"
 import { DataEntries, type OldData } from "./HomeData.ts"
 import type { Role } from "./Layout.ts"
 import type { PrerequisitePlan } from "./Prerequisites.ts"
@@ -17,7 +17,7 @@ export interface DoctorFacts {
     readonly exists: boolean
     /** Runs this home's CLI, as install.sh writes it. */
     readonly current: boolean
-    /** Whether `claude-hub` on PATH is this wrapper. */
+    /** Whether `kndl` on PATH is this wrapper. */
     readonly onPath: boolean
   }
   /** The roles set up here: which env files exist. */
@@ -96,7 +96,7 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
       {
         name: "Install",
         status: "fail",
-        detail: `No claude-hub install in ${facts.home}: run install.sh, or set CLAUDE_HUB_HOME to the home you installed.`,
+        detail: `No kndl install in ${facts.home}: run install.sh, or set KNDL_HOME to the home you installed.`,
       },
     ]
   }
@@ -105,7 +105,7 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
   checks.push(
     !facts.wrapper.exists || !facts.wrapper.current
       ? {
-          name: "claude-hub command",
+          name: "kndl command",
           status: "warn",
           detail: facts.wrapper.exists
             ? `${facts.wrapper.path} doesn't run this home's CLI.`
@@ -114,11 +114,11 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
         }
       : !facts.wrapper.onPath
         ? {
-            name: "claude-hub command",
+            name: "kndl command",
             status: "warn",
-            detail: `${facts.wrapper.path} isn't what \`claude-hub\` runs: put its directory first on PATH.`,
+            detail: `${facts.wrapper.path} isn't what \`kndl\` runs: put its directory first on PATH.`,
           }
-        : { name: "claude-hub command", status: "ok", detail: facts.wrapper.path },
+        : { name: "kndl command", status: "ok", detail: facts.wrapper.path },
   )
 
   if (facts.oldData !== undefined && facts.oldData.entries.length > 0) {
@@ -126,7 +126,7 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
     checks.push({
       name: "Old data",
       status: "warn",
-      detail: `${facts.home} holds ${facts.oldData.entries.join(", ")} with no ${envFiles.join(" or ")}: claude-hub data that onboard didn't set up here, likely a checkout's from before ~/.claude-hub-dev. A Runner or Hub set up over it would take it over. Move it aside with \`claude-hub onboard --move-old-data\`, or \`claude-hub doctor --fix\`, which asks first; or set CLAUDE_HUB_HOME to another directory.`,
+      detail: `${facts.home} holds ${facts.oldData.entries.join(", ")} with no ${envFiles.join(" or ")}: kndl data that onboard didn't set up here, likely a checkout's from before ~/.kndl-dev. A Runner or Hub set up over it would take it over. Move it aside with \`kndl onboard --move-old-data\`, or \`kndl doctor --fix\`, which asks first; or set KNDL_HOME to another directory.`,
       fix: { _tag: "MoveOldData", entries: facts.oldData.entries },
     })
   }
@@ -135,7 +135,7 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
     checks.push({
       name: "Setup",
       status: "warn",
-      detail: "Neither a Hub nor a Runner is set up here: run `claude-hub onboard`.",
+      detail: "Neither a Hub nor a Runner is set up here: run `kndl onboard`.",
     })
   }
 
@@ -218,7 +218,7 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
         checks.push({
           name,
           status: "fail",
-          detail: `not installed: \`claude-hub ${role} install\``,
+          detail: `not installed: \`kndl ${role} install\``,
           fix: { _tag: "InstallService", role },
         })
         break
@@ -226,7 +226,7 @@ export function diagnose(facts: DoctorFacts): ReadonlyArray<Check> {
         checks.push({
           name,
           status: "fail",
-          detail: `${describeServiceState(state)}; its log: claude-hub logs ${role}`,
+          detail: `${describeServiceState(state)}; its log: kndl logs ${role}`,
           fix: { _tag: "StartService", role },
         })
     }
@@ -261,7 +261,7 @@ function appCheck(fact: AppPermissionsFact): Check {
       name,
       status: "fail",
       detail:
-        "GitHub sign-in is on (GITHUB_CLIENT_ID), but hub.env has no GitHub App, so nobody signed in with GitHub can see any Session: the Hub asks GitHub, as the App, who can access each Repo. Create one with `claude-hub onboard --github-app create`, or set up one you made yourself with `claude-hub onboard --github-app manual`.",
+        "GitHub sign-in is on (GITHUB_CLIENT_ID), but hub.env has no GitHub App, so nobody signed in with GitHub can see any Session: the Hub asks GitHub, as the App, who can access each Repo. Create one with `kndl onboard --github-app create`, or set up one you made yourself with `kndl onboard --github-app manual`.",
     }
   }
   if (fact._tag === "Unchecked") {
@@ -272,7 +272,7 @@ function appCheck(fact: AppPermissionsFact): Check {
     return {
       name,
       status: "fail",
-      detail: `${describeDrift(check).join("\n")}\nUntil then, what needs it fails: see https://kddige.github.io/claude-hub/how-to/set-up-the-github-app/.`,
+      detail: `${describeDrift(check).join("\n")}\nUntil then, what needs it fails: see https://kddige.github.io/kndl/how-to/set-up-the-github-app/.`,
     }
   }
   if (check.installed === 0) {

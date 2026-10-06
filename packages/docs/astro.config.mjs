@@ -1,11 +1,11 @@
-// The claude-hub docs site: Astro Starlight, published to GitHub Pages under /claude-hub/.
+// The kndl docs site: Astro Starlight, published to GitHub Pages under /kndl/.
 import { unified } from "@astrojs/markdown-remark"
 import starlight from "@astrojs/starlight"
 import { defineConfig } from "astro/config"
 import { rehypeBaseLinks } from "./src/plugins/rehypeBaseLinks.ts"
 
 const site = "https://kddige.github.io"
-const base = "/claude-hub/"
+const base = "/kndl/"
 
 export default defineConfig({
   site,
@@ -16,13 +16,13 @@ export default defineConfig({
   markdown: { processor: unified({ rehypePlugins: [[rehypeBaseLinks, { base }]] }) },
   integrations: [
     starlight({
-      title: "claude-hub",
+      title: "kndl",
       description:
-        "Multiplayer Claude Code, self-hosted: run Sessions in Sandboxes on your own machines, and watch and drive them together from the web.",
+        "Multiplayer agentic sessions, self-hosted: run Claude Code Sessions in Sandboxes on your own machines, and watch and drive them together from the web.",
       logo: {
         light: "../../brand/lockup-light.svg",
         dark: "../../brand/lockup-dark.svg",
-        alt: "claude-hub",
+        alt: "kndl",
         replacesTitle: true,
       },
       favicon: "/favicon.svg",
@@ -36,7 +36,7 @@ export default defineConfig({
           tag: "meta",
           attrs: {
             property: "og:image:alt",
-            content: "claude-hub: multiplayer Claude Code, self-hosted.",
+            content: "kndl: multiplayer agentic sessions, self-hosted.",
           },
         },
         { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
@@ -70,7 +70,7 @@ export default defineConfig({
             { slug: "how-to/install-the-cli-from-a-hub" },
             { slug: "how-to/sign-in-the-cli" },
             { slug: "how-to/forward-a-sessions-ports" },
-            { slug: "how-to/develop-claude-hub" },
+            { slug: "how-to/develop-kndl" },
           ],
         },
         { label: "Explanation", items: [{ autogenerate: { directory: "explanation" } }] },

@@ -26,7 +26,7 @@ import {
   ParticipantId,
   type PendingPairingCode,
   RunnerId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -121,7 +121,7 @@ export class PairingCodes extends Context.Service<
       name: string,
     ) => Effect.Effect<Redeemed, SqlError | PairingRefused>
   }
->()("@claude-hub/hub/PairingCodes") {
+>()("@kndl/hub/PairingCodes") {
   static readonly layer = Layer.effect(
     PairingCodes,
     Effect.gen(function* () {

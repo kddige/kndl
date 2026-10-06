@@ -12,8 +12,8 @@
 // ("turn-abort"). A `tool.call` hook reports its call's end after the abort, so a flush waited
 // for there was refused, and the link never posted again (#165).
 
-import { MaxCommandWaitMs } from "@claude-hub/protocol"
-import type { ModCommand } from "@claude-hub/protocol"
+import { MaxCommandWaitMs } from "@kndl/protocol"
+import type { ModCommand } from "@kndl/protocol"
 import {
   checkEvent,
   eventsBody,

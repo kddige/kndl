@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs"
 import { hostname } from "node:os"
 import { join, resolve } from "node:path"
-import { runnerTunnelPath, type TunnelId } from "@claude-hub/protocol"
-import { HomeConfig } from "@claude-hub/protocol/home"
+import { runnerTunnelPath, type TunnelId } from "@kndl/protocol"
+import { HomeConfig } from "@kndl/protocol/home"
 import { Config, Context, Effect, Layer, type Redacted } from "effect"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
 
@@ -28,7 +28,7 @@ export interface RunnerSettings {
 }
 
 export class RunnerConfig extends Context.Service<RunnerConfig, RunnerSettings>()(
-  "@claude-hub/runner/RunnerConfig",
+  "@kndl/runner/RunnerConfig",
 ) {}
 
 /** The environment variable that carries the Runner token; never passed on to tmux or Claude Code. */
@@ -36,17 +36,17 @@ export const RunnerTokenVariable = "RUNNER_TOKEN"
 
 /**
  * Reads the configuration from the environment. The sessions root and the tmux socket default to
- * the home's (see `@claude-hub/protocol/home`): from a checkout, the dev home `~/.claude-hub-dev`,
- * unless `CLAUDE_HUB_HOME` names another.
+ * the home's (see `@kndl/protocol/home`): from a checkout, the dev home `~/.kndl-dev`,
+ * unless `KNDL_HOME` names another.
  *
  * | Variable | Default |
  * |---|---|
  * | `HUB_URL` | `http://127.0.0.1:7777` |
  * | `RUNNER_TOKEN` | required |
  * | `RUNNER_NAME` | the short hostname |
- * | `RUNNER_SESSIONS_ROOT` | `sessions` in the home: `~/.claude-hub-dev/sessions` |
+ * | `RUNNER_SESSIONS_ROOT` | `sessions` in the home: `~/.kndl-dev/sessions` |
  * | `RUNNER_MOD_DIR` | `packages/mod` in this checkout |
- * | `RUNNER_TMUX_SOCKET` | the home's: `claude-hub-dev` |
+ * | `RUNNER_TMUX_SOCKET` | the home's: `kndl-dev` |
  * | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` |
  *
  * The credential proxy's settings, `RUNNER_PROXY_PORT` and `RUNNER_CLAUDE_*`, are read by

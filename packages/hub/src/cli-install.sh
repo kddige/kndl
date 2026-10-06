@@ -1,13 +1,13 @@
 #!/bin/sh
-# Installs the claude-hub CLI from a claude-hub Hub, which builds it from the commit it runs
+# Installs the kndl CLI from a kndl Hub, which builds it from the commit it runs
 # (CliRoutes.ts serves this script at GET /cli, with the Hub's URL filled in):
 #
 #   curl -fsSL https://hub.example.com/cli | sh
 #
-# It downloads the binary for this machine's platform into CLAUDE_HUB_BIN_DIR, by default
-# ~/.local/bin, as claude-hub, and records the Hub in the CLI's config,
-# ${XDG_CONFIG_HOME:-~/.config}/claude-hub/cli.json, for the CLI to update itself from.
-# CLAUDE_HUB_URL overrides the Hub's URL. Everything is in functions, and the last line runs them,
+# It downloads the binary for this machine's platform into KNDL_BIN_DIR, by default
+# ~/.local/bin, as kndl, and records the Hub in the CLI's config,
+# ${XDG_CONFIG_HOME:-~/.config}/kndl/cli.json, for the CLI to update itself from.
+# KNDL_URL overrides the Hub's URL. Everything is in functions, and the last line runs them,
 # so a download cut short runs nothing.
 
 set -eu
@@ -17,7 +17,7 @@ say() {
 }
 
 die() {
-  printf 'claude-hub install: %s\n' "$*" >&2
+  printf 'kndl install: %s\n' "$*" >&2
   exit 1
 }
 
@@ -29,14 +29,14 @@ detect_target() {
     Darwin) os=darwin ;;
     Linux) os=linux ;;
     MINGW* | MSYS* | CYGWIN* | Windows_NT)
-      die "claude-hub doesn't run on Windows. Install it in WSL, or on a Mac or Linux machine."
+      die "kndl doesn't run on Windows. Install it in WSL, or on a Mac or Linux machine."
       ;;
-    *) die "claude-hub runs on macOS and Linux, not $os." ;;
+    *) die "kndl runs on macOS and Linux, not $os." ;;
   esac
   case $arch in
     arm64 | aarch64) arch=arm64 ;;
     x86_64 | amd64) arch=x64 ;;
-    *) die "claude-hub runs on arm64 and x64, not $arch." ;;
+    *) die "kndl runs on arm64 and x64, not $arch." ;;
   esac
   # A shell under Rosetta says x86_64 on an Apple silicon Mac: install the native binary.
   if [ "$os-$arch" = darwin-x64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" = 1 ]; then
@@ -57,14 +57,14 @@ download() {
   elif command -v wget >/dev/null 2>&1; then
     wget -q -O "$out" "$url" || die "Couldn't download $url."
   else
-    die "Installing claude-hub needs curl or wget."
+    die "Installing kndl needs curl or wget."
   fi
 }
 
 # Records the Hub for the CLI, unless it is recorded already: what else the file holds is about
 # that Hub, and stays.
 record_hub() {
-  dir=${XDG_CONFIG_HOME:-$HOME/.config}/claude-hub
+  dir=${XDG_CONFIG_HOME:-$HOME/.config}/kndl
   file=$dir/cli.json
   if [ -f "$file" ] && grep -qF "\"hub\":\"$hub_url\"" "$file"; then
     return 0
@@ -78,7 +78,7 @@ record_hub() {
 main() {
   case $hub_url in
     http://* | https://*) ;;
-    *) die "CLAUDE_HUB_URL must be the Hub's http:// or https:// URL, not $hub_url." ;;
+    *) die "KNDL_URL must be the Hub's http:// or https:// URL, not $hub_url." ;;
   esac
   # It goes into the CLI's config file as a JSON string.
   case $hub_url in
@@ -88,20 +88,20 @@ main() {
   [ -n "${HOME:-}" ] || die "HOME isn't set."
 
   target=$(detect_target)
-  bin_dir=${CLAUDE_HUB_BIN_DIR:-$HOME/.local/bin}
+  bin_dir=${KNDL_BIN_DIR:-$HOME/.local/bin}
   bin_dir=${bin_dir%/}
-  dest=$bin_dir/claude-hub
+  dest=$bin_dir/kndl
 
-  # The command install.sh writes runs a claude-hub install's own CLI, which has every command
+  # The command install.sh writes runs a kndl install's own CLI, which has every command
   # this one has, and updates with the install.
-  if [ -f "$dest" ] && sed -n 2p "$dest" 2>/dev/null | grep -q '^# claude-hub: written by install.sh.'; then
-    die "$dest is the command of the claude-hub install on this machine, which has every command this one has and updates with the install. To install this one elsewhere, set CLAUDE_HUB_BIN_DIR."
+  if [ -f "$dest" ] && sed -n 2p "$dest" 2>/dev/null | grep -q '^# kndl: written by install.sh.'; then
+    die "$dest is the command of the kndl install on this machine, which has every command this one has and updates with the install. To install this one elsewhere, set KNDL_BIN_DIR."
   fi
 
   mkdir -p "$bin_dir"
   partial=$dest.download-$$
   trap 'rm -f "$partial"' EXIT
-  say "Downloading claude-hub for $target from $hub_url (the Hub builds it the first time it's asked, which can take a minute)..."
+  say "Downloading kndl for $target from $hub_url (the Hub builds it the first time it's asked, which can take a minute)..."
   download "$hub_url/cli/$target" "$partial"
   chmod 755 "$partial"
   if [ "${target%%-*}" = darwin ]; then
@@ -109,7 +109,7 @@ main() {
     # binary as it starts: sign it again, ad hoc.
     codesign --force --sign - "$partial" >/dev/null 2>&1 || die "Couldn't sign the binary for macOS with codesign."
   fi
-  version=$(CLAUDE_HUB_NO_SELF_UPDATE=1 "$partial" --version) || die "The downloaded claude-hub doesn't run on this machine."
+  version=$(KNDL_NO_SELF_UPDATE=1 "$partial" --version) || die "The downloaded kndl doesn't run on this machine."
   mv -f "$partial" "$dest"
   trap - EXIT
   record_hub
@@ -117,9 +117,9 @@ main() {
 
   case ":${PATH:-}:" in
     *":$bin_dir:"*)
-      found=$(command -v claude-hub 2>/dev/null || true)
+      found=$(command -v kndl 2>/dev/null || true)
       if [ -n "$found" ] && [ "$found" != "$dest" ]; then
-        say "Note: claude-hub on your PATH is $found, which comes before $dest."
+        say "Note: kndl on your PATH is $found, which comes before $dest."
       fi
       ;;
     *)
@@ -130,5 +130,5 @@ main() {
   esac
 }
 
-hub_url=${CLAUDE_HUB_URL:-@HUB_URL@}
+hub_url=${KNDL_URL:-@HUB_URL@}
 main "$@"

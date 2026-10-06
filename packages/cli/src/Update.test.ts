@@ -40,7 +40,7 @@ describe("where update goes", () => {
     const target = updateTarget(pinned, undefined, remote)
 
     expect(target).toEqual({ _tag: "Pinned", at: "v0.1.0" })
-    expect(pinnedNotice({ _tag: "Pinned", at: "v0.1.0" })).toContain("claude-hub update --ref main")
+    expect(pinnedNotice({ _tag: "Pinned", at: "v0.1.0" })).toContain("kndl update --ref main")
   })
 
   test("a pinned commit with no tag names the commit", () => {

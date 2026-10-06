@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { CredentialRequestId, FetchClaudeCredential, RunnerToHub } from "@claude-hub/protocol"
+import type { CredentialRequestId, FetchClaudeCredential, RunnerToHub } from "@kndl/protocol"
 import { Effect, Fiber, Layer, Redacted } from "effect"
 import { HubClaudeCredential, HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubLink } from "./HubLink.ts"

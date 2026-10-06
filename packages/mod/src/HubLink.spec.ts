@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AsyncLocalStorage } from "node:async_hooks"
-import { ProtocolVersion } from "@claude-hub/protocol"
-import type { ModCommand } from "@claude-hub/protocol"
+import { ProtocolVersion } from "@kndl/protocol"
+import type { ModCommand } from "@kndl/protocol"
 import { HubLink, LostTimerMs, retryDelay } from "./HubLink.ts"
 import type { HubFetch, LinkStatus } from "./HubLink.ts"
 

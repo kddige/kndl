@@ -9,8 +9,8 @@ import { FakeSandboxBackend } from "./sandbox/FakeSandboxBackend.ts"
 import { hostTmuxBackend, sessionId, waitFor } from "./testSupport.ts"
 import { lastOutputOf, makeTmux, type PaneEvent, Tmux, TmuxLive } from "./Tmux.ts"
 
-const socket = `claude-hub-test-${process.pid}`
-const hostSocket = `claude-hub-test-${process.pid}-host`
+const socket = `kndl-test-${process.pid}`
+const hostSocket = `kndl-test-${process.pid}-host`
 
 const tmuxMissing = Bun.which("tmux") === null
 // Bun doesn't say why a test was skipped, so this does.
@@ -140,7 +140,7 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
 
   test("gives the process the launch's PATH, which tmux takes from its client", async () => {
     const id = sessionId("tmux-path")
-    const path = `/claude-hub-test-bin:${process.env.PATH ?? "/usr/bin:/bin"}`
+    const path = `/kndl-test-bin:${process.env.PATH ?? "/usr/bin:/bin"}`
     const program = Effect.gen(function* () {
       const tmux = yield* Tmux
       yield* tmux.launch({
@@ -225,19 +225,19 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
         sessionId: id,
         cwd: tmpdir(),
         argv: ["sh", "-c", "read line; exit 0"],
-        env: { CLAUDE_HUB_MOD_TOKEN: "chp_kept=1" },
+        env: { KNDL_MOD_TOKEN: "chp_kept=1" },
         size: { cols: 40, rows: 5 },
       })
-      expect(yield* tmux.variable(id, "CLAUDE_HUB_MOD_TOKEN")).toBe("chp_kept=1")
-      expect(yield* tmux.variable(id, "CLAUDE_HUB_MOD")).toBeUndefined()
-      expect(yield* tmux.variable(sessionId("tmux-none"), "CLAUDE_HUB_MOD_TOKEN")).toBeUndefined()
+      expect(yield* tmux.variable(id, "KNDL_MOD_TOKEN")).toBe("chp_kept=1")
+      expect(yield* tmux.variable(id, "KNDL_MOD")).toBeUndefined()
+      expect(yield* tmux.variable(sessionId("tmux-none"), "KNDL_MOD_TOKEN")).toBeUndefined()
 
       // Not once the process has exited.
       const pane = yield* tmux.attach(id)
       yield* pane.input("\r")
       const events = yield* pane.events.pipe(Stream.runCollect)
       expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 0 })
-      expect(yield* tmux.variable(id, "CLAUDE_HUB_MOD_TOKEN")).toBeUndefined()
+      expect(yield* tmux.variable(id, "KNDL_MOD_TOKEN")).toBeUndefined()
       yield* tmux.kill(id)
     })
 
@@ -253,7 +253,7 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
           sessionId: id,
           cwd: tmpdir(),
           argv: ["sleep", "5"],
-          env: { CLAUDE_HUB_MOD_TOKEN: secret },
+          env: { KNDL_MOD_TOKEN: secret },
           size: { cols: 40, rows: 5 },
         })
       })

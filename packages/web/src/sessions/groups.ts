@@ -1,6 +1,6 @@
 // Sessions arranged by Repo, as the sidebar and the Hub-wide pages show them.
 
-import { repoKey, type SessionSummary } from "@claude-hub/protocol"
+import { repoKey, type SessionSummary } from "@kndl/protocol"
 
 export interface RepoGroup {
   /** `owner/name`. */

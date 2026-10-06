@@ -12,7 +12,7 @@
 // disk: it may hold variable values.
 
 import { createHash } from "node:crypto"
-import type { EnvironmentRecipe, EnvironmentResources, SessionId } from "@claude-hub/protocol"
+import type { EnvironmentRecipe, EnvironmentResources, SessionId } from "@kndl/protocol"
 import { Data, Duration, Effect, Schema, Stream } from "effect"
 import type { Option } from "effect"
 import type { SandboxBackendShape, SandboxError } from "./sandbox/SandboxBackend.ts"
@@ -130,7 +130,7 @@ tmux -V | awk '{ version = $2; sub(/^[^0-9]*/, "", version); split(version, v, "
     print "Claude Code runs in tmux 3.2 or later, and the image has " $0 > "/dev/stderr"; exit 1 } }'`
 
 /** Where a script is written in the guest while it runs. */
-const scriptPath = (name: string) => `/tmp/claude-hub-${name}.sh`
+const scriptPath = (name: string) => `/tmp/kndl-${name}.sh`
 
 /** Keeps the end of what a script printed, for the failure message. */
 const tail = () => {
@@ -217,13 +217,13 @@ export const runScript = (
 // as one of the Environment's variables are dropped: those always come from the Hub.
 
 /** Where a build, and each Sandbox booted from it, keeps its login environment, as JSON. */
-export const loginEnvGuestPath = "/var/lib/claude-hub/login-env.json"
+export const loginEnvGuestPath = "/var/lib/kndl/login-env.json"
 
 /** How long the login shell may take before the probe gives up on it. */
 export const loginEnvTimeout = Duration.seconds(60)
 
 /** What the probe prints around the environment, so nothing else the shell prints is taken. */
-export const loginEnvMarker = "__claude_hub_login_env_6b1f__"
+export const loginEnvMarker = "__kndl_login_env_6b1f__"
 
 /**
  * Runs `$1` in an interactive login shell: bash where the image has it, which reads

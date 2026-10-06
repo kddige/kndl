@@ -3,7 +3,7 @@
 // long poll needs a real connection held open.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { ModCommand, ProtocolVersion, SessionId } from "@claude-hub/protocol"
+import { ModCommand, ProtocolVersion, SessionId } from "@kndl/protocol"
 import { Effect, Exit, Option } from "effect"
 import { signInCookie } from "./Auth.ts"
 import { GitHub } from "./GitHub.ts"
@@ -465,7 +465,7 @@ describe("web channel", () => {
 })
 
 describe("dev login", () => {
-  test("is off unless CLAUDE_HUB_DEV_LOGIN is set", async () => {
+  test("is off unless KNDL_DEV_LOGIN is set", async () => {
     const hub = await startHub()
 
     expect((await devSignIn(hub)).status).toBe(404)
@@ -581,16 +581,14 @@ describe("GitHub sign-in", () => {
     const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
     const location = new URL(start.headers.get("location") ?? "")
     const state = location.searchParams.get("state") ?? ""
-    const stateCookie = /claude_hub_oauth_state=([^;]+)/.exec(
-      start.headers.get("set-cookie") ?? "",
-    )?.[1]
+    const stateCookie = /kndl_oauth_state=([^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1]
 
     expect(start.status).toBe(302)
     expect(location.searchParams.get("redirect_uri")).toBe(`${webOrigin}/auth/github/callback`)
 
     const callback = await fetch(
       `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-      { redirect: "manual", headers: { cookie: `claude_hub_oauth_state=${stateCookie}` } },
+      { redirect: "manual", headers: { cookie: `kndl_oauth_state=${stateCookie}` } },
     )
     expect(callback.status).toBe(302)
 
@@ -602,7 +600,7 @@ describe("GitHub sign-in", () => {
     const hub = await startHub({ github })
     const callback = await fetch(`${hub.url}/auth/github/callback?code=good-code&state=forged`, {
       redirect: "manual",
-      headers: { cookie: "claude_hub_oauth_state=other" },
+      headers: { cookie: "kndl_oauth_state=other" },
     })
 
     expect(callback.status).toBe(400)
@@ -618,7 +616,7 @@ describe("GitHub sign-in", () => {
     const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
     const callback = await fetch(
       `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-      { redirect: "manual", headers: { cookie: `claude_hub_oauth_state=${state}` } },
+      { redirect: "manual", headers: { cookie: `kndl_oauth_state=${state}` } },
     )
 
     expect(start.headers.get("set-cookie")).toContain("Secure")
@@ -690,7 +688,7 @@ describe("cookies", () => {
     const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
     const callback = await fetch(
       `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-      { redirect: "manual", headers: { cookie: `claude_hub_oauth_state=${state}` } },
+      { redirect: "manual", headers: { cookie: `kndl_oauth_state=${state}` } },
     )
     const setCookies = [...start.headers.getSetCookie(), ...callback.headers.getSetCookie()]
 
@@ -714,7 +712,7 @@ async function signInAndAskMe(hub: TestHub) {
   const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
   const callback = await fetch(
     `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-    { redirect: "manual", headers: { cookie: `claude_hub_oauth_state=${state}` } },
+    { redirect: "manual", headers: { cookie: `kndl_oauth_state=${state}` } },
   )
   const me = await fetch(`${hub.url}/auth/me`, { headers: { cookie: cookieFrom(callback) } })
   return me.json()

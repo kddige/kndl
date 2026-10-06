@@ -1,5 +1,5 @@
-import type { EffortLevel, ModelOption, RunnerModels } from "@claude-hub/protocol"
-import { EffortLevels } from "@claude-hub/protocol"
+import type { EffortLevel, ModelOption, RunnerModels } from "@kndl/protocol"
+import { EffortLevels } from "@kndl/protocol"
 import { Config, Context, Effect, Layer } from "effect"
 import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 
@@ -221,7 +221,7 @@ export class ClaudeModels extends Context.Service<
      */
     readonly current: Effect.Effect<RunnerModels | undefined>
   }
->()("@claude-hub/runner/ClaudeModels") {}
+>()("@kndl/runner/ClaudeModels") {}
 
 /**
  * {@link PinnedClaudeModels}, while Sessions run the pinned build. Sessions on another, through

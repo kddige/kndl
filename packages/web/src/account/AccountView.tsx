@@ -1,7 +1,7 @@
 // The signed-in person's own settings: their Claude credential (ADR 0015), which the Sessions they
 // start run on. It is pasted once and checked with Anthropic as it is saved; after that it is
 // write-only, so the page shows only its kind, its last 4 characters and its plan. And their CLI
-// tokens (issue #179): a machine each that `claude-hub login` signed in, to revoke.
+// tokens (issue #179): a machine each that `kndl login` signed in, to revoke.
 
 import {
   type ClaudeCredentialInfo,
@@ -11,7 +11,7 @@ import {
   claudePlanChoices,
   claudePlanLabel,
   type CliTokenInfo,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, type ReactNode, useState } from "react"
 import { copyCommand } from "../app/copy.ts"
@@ -445,11 +445,11 @@ function RemoveDialog({
   )
 }
 
-/** The machines `claude-hub login` signed in as this person, newest first, to revoke. */
+/** The machines `kndl login` signed in as this person, newest first, to revoke. */
 function CliTokensSection() {
   const tokens = useHubState((state) => state.cliTokens)
   const [revoking, setRevoking] = useState<CliTokenInfo | null>(null)
-  const command = `claude-hub login ${window.location.origin}`
+  const command = `kndl login ${window.location.origin}`
 
   return (
     <section aria-labelledby="cli-tokens" {...stylex.props(styles.section)}>
@@ -458,8 +458,8 @@ function CliTokensSection() {
           CLI tokens
         </h2>
         <p {...stylex.props(styles.note)}>
-          Each machine where you signed the claude-hub CLI in to this Hub, to act as you. Revoking
-          one signs that machine out at once.
+          Each machine where you signed the kndl CLI in to this Hub, to act as you. Revoking one
+          signs that machine out at once.
         </p>
       </div>
       {tokens === null ? (
@@ -556,7 +556,7 @@ function RevokeCliTokenDialog({
         }
       }}
       title={`Revoke the CLI token for ${shown?.machine ?? "this machine"}?`}
-      description="claude-hub there is signed out at once: its next request is refused, a forwarded port's next connection too. Run claude-hub login there to sign it in again."
+      description="kndl there is signed out at once: its next request is refused, a forwarded port's next connection too. Run kndl login there to sign it in again."
       footer={
         <>
           <DialogClose>Cancel</DialogClose>

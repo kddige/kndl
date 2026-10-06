@@ -24,7 +24,7 @@ export const UpdateDrainMillis = 10 * 60 * 1000
 
 /**
  * Whether a Runner updates itself when the Hub asks, which it says in its hello:
- * - `self`: it runs as the claude-hub service from the CLI's checkout, `<home>/app`, so it may
+ * - `self`: it runs as the kndl service from the CLI's checkout, `<home>/app`, so it may
  *   move that checkout and exit to be restarted by its service manager.
  * - otherwise it is updated by hand, and `reason` says why: it runs from a developer's checkout,
  *   which it never rewrites, or isn't run by a service that would start it again.

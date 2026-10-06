@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { type ClaudeCredential, credentialFromSecret } from "@claude-hub/protocol"
+import { type ClaudeCredential, credentialFromSecret } from "@kndl/protocol"
 import { Effect, Redacted } from "effect"
 import { sessionId } from "../testSupport.ts"
 import { makeSessionTokens, SessionTokenPrefix } from "./SessionTokens.ts"

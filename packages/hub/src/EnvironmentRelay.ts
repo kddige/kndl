@@ -34,7 +34,7 @@ import {
   VariablesFetched,
   VariablesRefused,
   type WebToHub,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Clock, Effect, Option, Redacted } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { EnvironmentRefused, Environments } from "./Environments.ts"
@@ -193,7 +193,7 @@ export const makeEnvironmentRelay = Effect.fnUntraced(function* (host: Environme
         }
         if (host.hasGitHubApp && !runner.asksCloneAccess) {
           return yield* new EnvironmentRefused({
-            message: `${runner.name} runs an older claude-hub, which would clone the Repo with its machine's own git credentials: update it to run Test builds on it.`,
+            message: `${runner.name} runs an older kndl, which would clone the Repo with its machine's own git credentials: update it to run Test builds on it.`,
           })
         }
         const prepared = yield* environments.prepare(message.repo, message.draft)

@@ -1,12 +1,12 @@
-// Signing the `claude-hub` CLI in (issue #179, ADR 0016; CliTokens.ts says how):
+// Signing the `kndl` CLI in (issue #179, ADR 0016; CliTokens.ts says how):
 //
 // - `POST /auth/cli/approve`, from the `/cli-login` page with the sign-in cookie, approves a
 //   machine: a Login code for it. Anyone signed in may, not only operators.
 // - `POST /auth/cli/token`, from the CLI, trades the code and its PKCE verifier for a CLI token.
 //   It is open: the code and the verifier together are the credential. Every refused code gets
 //   the same 400.
-// - `GET /auth/cli/me`, with a CLI token, says whose it is, for `claude-hub whoami`.
-// - `POST /auth/cli/sign-out`, with a CLI token, revokes it, for `claude-hub logout`.
+// - `GET /auth/cli/me`, with a CLI token, says whose it is, for `kndl whoami`.
+// - `POST /auth/cli/sign-out`, with a CLI token, revokes it, for `kndl logout`.
 //
 // No token is ever logged: only the machine, the person and the token's id.
 
@@ -16,7 +16,7 @@ import {
   CliSignedIn,
   CliTokenRequest,
   CliWhoAmI,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Effect } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateCli, authenticateParticipant, requireSameOrigin } from "./Auth.ts"

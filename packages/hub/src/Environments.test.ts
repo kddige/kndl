@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ProtocolVersion } from "@claude-hub/protocol"
+import { ProtocolVersion } from "@kndl/protocol"
 import { Effect, Layer, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { databaseAt } from "./Database.ts"
@@ -25,7 +25,7 @@ import { baseConfig, startHub, type TestHub } from "./testSupport.ts"
 
 afterEach(stopAll)
 
-const repo = "kddige/claude-hub"
+const repo = "kddige/kndl"
 const buildSecret = "npm_BUILD_SECRET_4f1c"
 const runtimeSecret = "sk_RUNTIME_SECRET_9a2e"
 const sharedSecret = "ghp_SHARED_SECRET_77b0"
@@ -175,7 +175,7 @@ describe("Secrets", () => {
   })
 
   test("the Hub refuses to start when Sensitive values are stored but the key is missing or wrong", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
     try {
       const database = databaseAt(join(dir, "hub.db"))
       // A key with nothing encrypted yet is taken, whichever it is.
@@ -237,7 +237,7 @@ describe("Secrets", () => {
 
   test("the Hub's Layer fails cleanly when the key is wrong, as main.ts would report it", async () => {
     // The same check, without a server: Secrets over a database holding a value under keyA.
-    const dir = mkdtempSync(join(tmpdir(), "claude-hub-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const store = Layer.provideMerge(
@@ -484,7 +484,7 @@ describe("Applying an Environment", () => {
         },
         /TOKEN is there twice/,
       ],
-      [{ variables: [{ _tag: "Plain", name: "CLAUDE_HUB_URL", value: "x" }] }, /reserved/],
+      [{ variables: [{ _tag: "Plain", name: "KNDL_URL", value: "x" }] }, /reserved/],
       [{ variables: [{ _tag: "Plain", name: "MY-VAR", value: "x" }] }, /not a variable name/],
       [
         {
@@ -565,7 +565,7 @@ describe("Shared variables", () => {
       ],
     })
     expectRefused(await set({ _tag: "Sensitive", name: "NEW" }), /no saved Sensitive value/)
-    expectRefused(await set({ _tag: "Plain", name: "CLAUDE_HUB_X", value: "x" }), /reserved/)
+    expectRefused(await set({ _tag: "Plain", name: "KNDL_X", value: "x" }), /reserved/)
 
     const linked = draft({
       variables: [
@@ -600,7 +600,7 @@ describe("Shared variables", () => {
     ).toBe("SharedVariables")
     expectRefused(
       await set({ _tag: "Plain", name: "REGISTRY", value: "docker.io" }),
-      /available at build in kddige\/claude-hub/,
+      /available at build in kddige\/kndl/,
     )
     expect((await set({ _tag: "Plain", name: "REGISTRY", value: "ghcr.io" }))._tag).toBe(
       "SharedVariables",
@@ -609,7 +609,7 @@ describe("Shared variables", () => {
     // A linked variable can't be deleted; an unlinked one can.
     const del = nextRequest()
     web.send({ _tag: "DeleteSharedVariable", requestId: del, name: "GITHUB_TOKEN" })
-    expectRefused(await answer(web, del), /linked in kddige\/claude-hub/)
+    expectRefused(await answer(web, del), /linked in kddige\/kndl/)
     await set({ _tag: "Plain", name: "UNUSED", value: "1" })
     const delUnused = nextRequest()
     web.send({ _tag: "DeleteSharedVariable", requestId: delUnused, name: "UNUSED" })

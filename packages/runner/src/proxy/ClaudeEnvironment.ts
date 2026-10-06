@@ -2,7 +2,7 @@
 // 0013, spike #142). It holds only the Session token, and sends both inference and the mod's
 // calls to the credential proxy on the Runner's host.
 
-import type { ClaudeCredential } from "@claude-hub/protocol"
+import type { ClaudeCredential } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { ModEnvironment } from "../ClaudeLaunch.ts"
 

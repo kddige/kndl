@@ -28,7 +28,7 @@ import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 //
 // The mod runs in Claude Code's mod runtime, which may not run Effect (spike #4). Until #4
 // answers, the mod imports the *types* only (`import type { ModToHub } from
-// "@claude-hub/protocol"`) and does no runtime validation of its own; the Hub validates
+// "@kndl/protocol"`) and does no runtime validation of its own; the Hub validates
 // everything the mod sends. `ModToHubEncoded` and `HubToModEncoded` are the plain JSON shapes,
 // without brands, for building and reading messages without the schemas.
 

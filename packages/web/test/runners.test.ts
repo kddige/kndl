@@ -4,7 +4,7 @@ import {
   type PendingPairingCode,
   RunnerId,
   type RunnerSummary,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import {
   codeOutcome,
   manualUpdateText,
@@ -80,7 +80,7 @@ describe("a Runner's update", () => {
       "It doesn't update itself: dev checkout.",
     )
     const { updater: _, ...old } = behind
-    expect(manualUpdateText(old)).toContain("run `claude-hub update` on its machine once")
+    expect(manualUpdateText(old)).toContain("run `kndl update` on its machine once")
     expect(manualUpdateText({ ...old, versionStatus: "Current" })).toBeUndefined()
     expect(manualUpdateText({ ...old, versionStatus: "Unknown" })).toBeUndefined()
   })

@@ -41,18 +41,18 @@ The same words can end the Runner's warning that a Sandbox has no GitHub token (
 
 ## The GitHub App is missing permissions
 
-**What you see.** The web UI shows a banner, **The GitHub App is missing permissions**, that lists them. `claude-hub doctor` fails with:
+**What you see.** The web UI shows a banner, **The GitHub App is missing permissions**, that lists them. `kndl doctor` fails with:
 
 ```
-XX  GitHub App: The App claude-hub-build-box lacks Issues: read and write. Add it at https://github.com/settings/apps/claude-hub-build-box/permissions
+XX  GitHub App: The App kndl-build-box lacks Issues: read and write. Add it at https://github.com/settings/apps/kndl-build-box/permissions
       Its installation on ada lacks Issues: read and write. Once the App has it, accept it at https://github.com/settings/installations/12345/permissions/update
 ```
 
 and the Hub logs the same lines as warnings. Meanwhile what needs the permission fails, such as `gh issue comment` in a Session with `Resource not accessible by integration`.
 
-**Why.** claude-hub came to need a permission the App was created without, or someone removed one. Or the App has it, but an installation hasn't accepted it yet: GitHub keeps an installation on its old permissions until someone who manages the account accepts the new ones.
+**Why.** kndl came to need a permission the App was created without, or someone removed one. Or the App has it, but an installation hasn't accepted it yet: GitHub keeps an installation on its old permissions until someone who manages the account accepts the new ones.
 
-**Fix.** Follow the links: add the permissions on the App's page and **Save changes**, then on each installation's page **Accept new permissions**. Click **Check again** on the banner, or run `claude-hub doctor`. The Hub also checks every hour on its own. See [Keep the permissions in step](/how-to/set-up-the-github-app/#keep-the-permissions-in-step).
+**Fix.** Follow the links: add the permissions on the App's page and **Save changes**, then on each installation's page **Accept new permissions**. Click **Check again** on the banner, or run `kndl doctor`. The Hub also checks every hour on its own. See [Keep the permissions in step](/how-to/set-up-the-github-app/#keep-the-permissions-in-step).
 
 If the banner never appears and doctor warns `Couldn't check its permissions`, the Hub's App settings are wrong, or GitHub can't be reached: the message says which.
 
@@ -69,7 +69,7 @@ WARN (#2): Session 9af3111eb506f54cea59b83c: its Sandbox has no GitHub token, so
 - The Hub has no GitHub App configured (it warned `The GitHub App is not configured` at startup). Sandboxes then never get a token, by design.
 - The App isn't installed on the Repo (see above), or GitHub failed. The Runner asks again every five minutes and logs `its Sandbox has a GitHub token again` when it gets one.
 - git wasn't in the image when the token arrived, so the credential helper wasn't set yet. It is set again at the next refresh, within 45 minutes; restarting the Session sets it at once.
-- `gh` isn't installed. claude-hub doesn't install it.
+- `gh` isn't installed. kndl doesn't install it.
 
 **Fix.** [Set up the GitHub App](/how-to/set-up-the-github-app/) and install it on the Repo. Install git and gh in the Environment's [Bootstrap script](/how-to/set-up-an-environment/#write-the-bootstrap-script). Don't run `gh auth login` in the Sandbox: the token is already in place.
 
@@ -81,7 +81,7 @@ WARN (#2): Session 9af3111eb506f54cea59b83c: its Sandbox has no GitHub token, so
 The WIP ref could not be pushed: …
 ```
 
-**Why.** The Runner pushes each Session's uncommitted work to `refs/claude-hub/wip/<session id>` after a Turn, and before sleep and archive. A failed push is noted and doesn't hold anything up, but the work isn't safe off the Runner until a push succeeds. Common reasons are the clone problems above, and these, from the Runner's checks of the Workspace:
+**Why.** The Runner pushes each Session's uncommitted work to `refs/kndl/wip/<session id>` after a Turn, and before sleep and archive. A failed push is noted and doesn't hold anything up, but the work isn't safe off the Runner until a push succeeds. Common reasons are the clone problems above, and these, from the Runner's checks of the Workspace:
 
 | Message | Why |
 |---|---|
@@ -95,6 +95,6 @@ The WIP ref could not be pushed: …
 
 **What you see.** A Session pushed straight to `main`, or merged its own pull request.
 
-**Why.** The Sandbox token has every permission the App's installation has, on the Session's Repo, and claude-hub doesn't restrict what git and gh do with it. That is by design ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)).
+**Why.** The Sandbox token has every permission the App's installation has, on the Session's Repo, and kndl doesn't restrict what git and gh do with it. That is by design ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)).
 
 **Fix.** Protect the default branch with a GitHub ruleset: require a pull request with at least one approval, block force pushes, and keep the App off the bypass list. See [Protect the default branch](/how-to/set-up-the-github-app/#protect-the-default-branch).

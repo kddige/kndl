@@ -161,7 +161,7 @@ describe("a connection into a Sandbox", () => {
   test("opens a stream on the Sandbox's client, and speaks agentd's core.tcp messages", async () => {
     const { tcp, agents } = scene()
     const { events, handlers } = recorder()
-    const connection = await tcp.connect("claude-hub-s1", "::1", 5173, handlers)
+    const connection = await tcp.connect("kndl-s1", "::1", 5173, handlers)
     const [agent] = agents
     const stream = agent?.streams[0] as FakeStream
     expect(stream.opened).toEqual({ v: 2, t: "core.tcp.connect", p: { host: "::1", port: 5173 } })
@@ -189,17 +189,17 @@ describe("a connection into a Sandbox", () => {
     stream.push({ done: false, value: frame("core.tcp.closed", {}, FLAG_TERMINAL) })
     await until(() => events.closed !== undefined)
     expect(events).toMatchObject({ received: ["hello"], eof: true, closed: false })
-    expect(tcp.openCount("claude-hub-s1")).toBe(0)
+    expect(tcp.openCount("kndl-s1")).toBe(0)
   })
 
   test("shares one client among a Sandbox's connections, closed after the last", async () => {
     const { tcp, agents } = scene()
-    const one = await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, recorder().handlers)
-    const two = await tcp.connect("claude-hub-s1", "::1", 5173, recorder().handlers)
+    const one = await tcp.connect("kndl-s1", "127.0.0.1", 3000, recorder().handlers)
+    const two = await tcp.connect("kndl-s1", "::1", 5173, recorder().handlers)
     expect(agents).toHaveLength(1)
     expect(agents[0]?.streams.map((stream) => stream.id)).toEqual([1, 2])
     // Another Sandbox has its own.
-    await tcp.connect("claude-hub-s2", "127.0.0.1", 3000, recorder().handlers)
+    await tcp.connect("kndl-s2", "127.0.0.1", 3000, recorder().handlers)
     expect(agents).toHaveLength(2)
 
     await one.close()
@@ -210,7 +210,7 @@ describe("a connection into a Sandbox", () => {
     expect(agents[1]?.closed).toBe(false)
 
     // The next connection makes a new one.
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, recorder().handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, recorder().handlers)
     expect(agents).toHaveLength(3)
   })
 
@@ -219,8 +219,8 @@ describe("a connection into a Sandbox", () => {
     const { tcp, agents } = scene()
     const busy = recorder()
     const other = recorder()
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, busy.handlers)
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, other.handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, busy.handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, other.handlers)
     const [first, second] = agents[0]?.streams ?? []
     for (let n = 0; n < 100; n++) first?.push(data(`${n}`))
     second?.push(data("hello"))
@@ -235,37 +235,37 @@ describe("a connection into a Sandbox", () => {
         value: frame("core.tcp.failed", { message: "Connection refused" }, FLAG_TERMINAL),
       }),
     )
-    const failed = tcp.connect("claude-hub-s1", "127.0.0.1", 3000, recorder().handlers)
+    const failed = tcp.connect("kndl-s1", "127.0.0.1", 3000, recorder().handlers)
     await expect(failed).rejects.toThrow(new AgentTcpFailed("Connection refused"))
     await until(() => agents[0]?.closed === true)
-    expect(tcp.openCount("claude-hub-s1")).toBe(0)
+    expect(tcp.openCount("kndl-s1")).toBe(0)
   })
 
   test("takes so many connections into one Sandbox at once, and no more", async () => {
     const { tcp } = scene(connected, 2)
-    const first = await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, recorder().handlers)
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, recorder().handlers)
-    await expect(
-      tcp.connect("claude-hub-s1", "127.0.0.1", 3000, recorder().handlers),
-    ).rejects.toThrow(AgentTcpFailed)
+    const first = await tcp.connect("kndl-s1", "127.0.0.1", 3000, recorder().handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, recorder().handlers)
+    await expect(tcp.connect("kndl-s1", "127.0.0.1", 3000, recorder().handlers)).rejects.toThrow(
+      AgentTcpFailed,
+    )
     // Another Sandbox has its own.
-    await tcp.connect("claude-hub-s2", "127.0.0.1", 3000, recorder().handlers)
+    await tcp.connect("kndl-s2", "127.0.0.1", 3000, recorder().handlers)
     // One closed makes room.
     await first.close()
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, recorder().handlers)
-    expect(tcp.openCount("claude-hub-s1")).toBe(2)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, recorder().handlers)
+    expect(tcp.openCount("kndl-s1")).toBe(2)
   })
 
   test("tells a connection that ended from one that was lost", async () => {
     const { tcp, agents } = scene()
     const ended = recorder()
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, ended.handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, ended.handlers)
     agents[0]?.streams[0]?.push({ done: false, value: frame("core.tcp.closed") })
     await until(() => ended.events.closed !== undefined)
     expect(ended.events.closed).toBe(false)
 
     const lost = recorder()
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, lost.handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, lost.handlers)
     agents.at(-1)?.streams.at(-1)?.push({ done: true, value: undefined })
     await until(() => lost.events.closed !== undefined)
     expect(lost.events.closed).toBe(true)
@@ -275,14 +275,14 @@ describe("a connection into a Sandbox", () => {
     const { tcp, agents } = scene()
     const one = recorder()
     const two = recorder()
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, one.handlers)
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, two.handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, one.handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, two.handlers)
     for (const stream of agents[0]?.streams ?? []) stream.fail()
     await until(() => one.events.closed !== undefined && two.events.closed !== undefined)
     expect([one.events.closed, two.events.closed]).toEqual([true, true])
     await until(() => agents[0]?.closed === true)
 
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, recorder().handlers)
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, recorder().handlers)
     expect(agents).toHaveLength(2)
   })
 
@@ -291,10 +291,10 @@ describe("a connection into a Sandbox", () => {
     const one = recorder()
     const two = recorder()
     const other = recorder()
-    await tcp.connect("claude-hub-s1", "127.0.0.1", 3000, one.handlers)
-    await tcp.connect("claude-hub-s1", "::1", 5173, two.handlers)
-    await tcp.connect("claude-hub-s2", "127.0.0.1", 3000, other.handlers)
-    await tcp.drop("claude-hub-s1")
+    await tcp.connect("kndl-s1", "127.0.0.1", 3000, one.handlers)
+    await tcp.connect("kndl-s1", "::1", 5173, two.handlers)
+    await tcp.connect("kndl-s2", "127.0.0.1", 3000, other.handlers)
+    await tcp.drop("kndl-s1")
     expect([one.events.closed, two.events.closed, other.events.closed]).toEqual([
       false,
       false,
@@ -306,9 +306,9 @@ describe("a connection into a Sandbox", () => {
     ])
     await until(() => agents[0]?.closed === true)
     expect(agents[1]?.closed).toBe(false)
-    expect(tcp.openCount("claude-hub-s1")).toBe(0)
+    expect(tcp.openCount("kndl-s1")).toBe(0)
     await tcp.dropAll()
     expect(other.events.closed).toBe(false)
-    expect(tcp.openCount("claude-hub-s2")).toBe(0)
+    expect(tcp.openCount("kndl-s2")).toBe(0)
   })
 })

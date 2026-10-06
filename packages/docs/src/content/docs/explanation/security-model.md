@@ -1,11 +1,11 @@
 ---
 title: Security model
-description: What claude-hub protects and what it trusts - the Sandbox boundary, credentials and tokens, who can do what, and the limits of redaction.
+description: What kndl protects and what it trusts - the Sandbox boundary, credentials and tokens, who can do what, and the limits of redaction.
 sidebar:
   order: 5
 ---
 
-claude-hub runs an AI agent with no approval prompts, on your machines, for a team. This page says what that trusts, and what keeps each credential where it belongs.
+kndl runs an AI agent with no approval prompts, on your machines, for a team. This page says what that trusts, and what keeps each credential where it belongs.
 
 ## The Sandbox is the boundary
 
@@ -28,7 +28,7 @@ Sessions never ask for tool approval: everything inside the Sandbox is allowed (
 | Runner tokens | the Runner, as `RUNNER_TOKEN`; the Hub keeps a hash | Never |
 | Mod tokens, one per run of a Session | the Runner's memory; the Hub keeps a hash | Never ([The credential proxy](#the-credential-proxy)) |
 | Sign-in cookies | the browser; the Hub keeps a hash | Never |
-| CLI tokens, one per machine signed in with `claude-hub login` | that machine's `cli.json`, readable only by its user; the Hub keeps a hash | Never |
+| CLI tokens, one per machine signed in with `kndl login` | that machine's `cli.json`, readable only by its user; the Hub keeps a hash | Never |
 | The Sandbox token, for `git` and `gh` | the Sandbox's memory | Yes, by design ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)) |
 | A Test build's clone token, read-only and for one Repo | the environment of the Runner's one `git clone` | Never |
 | Environment Variables | encrypted on the Hub if Sensitive; in the Runner's memory while needed | Yes, by design: in every process's environment |
@@ -52,7 +52,7 @@ Anything in a Sandbox can read its Session token, and spend its Session's creden
 
 ## Every endpoint needs a credential
 
-Code in a Sandbox can reach the Hub's address, so every Hub route but sign-in, `/health`, the [`claude-hub` command it serves](/how-to/install-the-cli-from-a-hub/) and the web UI's files needs a credential: a sign-in cookie for people, a CLI token for a person's [`claude-hub` CLI](/how-to/sign-in-the-cli/) on its own endpoints, a Runner token for Runners, a mod token for one Session's mod. The Hub keeps only SHA-256 hashes of them and compares in constant time. See the [protocol reference](/reference/protocol/#endpoints).
+Code in a Sandbox can reach the Hub's address, so every Hub route but sign-in, `/health`, the [`kndl` command it serves](/how-to/install-the-cli-from-a-hub/) and the web UI's files needs a credential: a sign-in cookie for people, a CLI token for a person's [`kndl` CLI](/how-to/sign-in-the-cli/) on its own endpoints, a Runner token for Runners, a mod token for one Session's mod. The Hub keeps only SHA-256 hashes of them and compares in constant time. See the [protocol reference](/reference/protocol/#endpoints).
 
 Cookie-authenticated requests must come from `HUB_PUBLIC_URL`'s origin, and the cookie is `HttpOnly`, `SameSite=Lax`, host-only and `Secure` unless the Hub is on loopback over HTTP. Dev login only works with the Hub bound to loopback, and only answers loopback callers.
 

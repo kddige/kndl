@@ -1,4 +1,4 @@
-import { sameRepo } from "@claude-hub/protocol"
+import { sameRepo } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useMemo } from "react"

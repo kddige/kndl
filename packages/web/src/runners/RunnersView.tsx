@@ -17,7 +17,7 @@ import {
   runnerRemovalRefusal,
   type SessionSummary,
   sessionTitle,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useState } from "react"
 import { copyCommand } from "../app/copy.ts"

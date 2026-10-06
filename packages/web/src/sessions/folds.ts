@@ -4,7 +4,7 @@
 
 import { useSyncExternalStore } from "react"
 
-const storageKey = "claude-hub:sidebar-folded"
+const storageKey = "kndl:sidebar-folded"
 
 /** What couldn't be stored, as when storage is full or off: it lasts until the page closes. */
 let unstored: string | undefined

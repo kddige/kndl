@@ -1,6 +1,6 @@
 import { join } from "node:path"
-import { HomeConfig } from "@claude-hub/protocol/home"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
+import { HomeConfig } from "@kndl/protocol/home"
 import { Config, Effect, Layer } from "effect"
 import { SqlClient } from "effect/sql"
 
@@ -299,7 +299,7 @@ const migrations = SqliteMigrator.fromRecord({
 
   // Runners follow the Hub's commit (issue #87, ADR 0011). A Runner keeps whether it said it updates
   // itself (`updater`, its hello's RunnerUpdater as JSON; null from a Runner too old to say).
-  // `claude-hub update` on the Hub's machine leaves one row in `runner_update_push`: the commit it
+  // `kndl update` on the Hub's machine leaves one row in `runner_update_push`: the commit it
   // moved the Hub to, which the Hub, once it runs that commit, tells Runners to follow as they
   // connect; every Runner's, or only `local_runner_id`'s with `--no-update-runners`.
   "0012_runner_updates": Effect.gen(function* () {
@@ -399,7 +399,7 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE sessions ADD COLUMN keep_awake_by TEXT REFERENCES participants (id)`
     yield* sql`ALTER TABLE sessions ADD COLUMN keep_awake_at INTEGER`
   }),
-  // CLI tokens (ADR 0016): what `claude-hub login` leaves on a machine, named after it. Only the
+  // CLI tokens (ADR 0016): what `kndl login` leaves on a machine, named after it. Only the
   // secret's hash is kept; revoking one deletes its row.
   "0019_cli_tokens": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -439,7 +439,7 @@ const migrated = <E, R>(client: Layer.Layer<SqlClient.SqlClient, E, R>) =>
   )
 
 /**
- * Where the Hub's database is: `HUB_DATABASE`, or else `hub.db` in the home `CLAUDE_HUB_HOME`
+ * Where the Hub's database is: `HUB_DATABASE`, or else `hub.db` in the home `KNDL_HOME`
  * names. From a checkout it is `hub.db` in `packages/hub` (wherever the Hub is started from), not in
  * the dev home: each checkout keeps its own, beside the `.env.local` holding its `HUB_SECRETS_KEY`.
  */

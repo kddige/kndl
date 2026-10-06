@@ -58,7 +58,7 @@ A Runner from before this was added sends no output: the banner has no **Show Cl
 
 ### Waking it after Claude Code never got going
 
-A Session whose Claude Code exited before it wrote its conversation has nothing to `--resume`. The Runner checks for the conversation's transcript in Claude Code's state in the Sandbox, `/var/lib/claude-hub/claude/projects`, and, with none, starts a new conversation with the same id instead. A note in the Session's history says Claude Code couldn't resume its conversation, and the Runner logs:
+A Session whose Claude Code exited before it wrote its conversation has nothing to `--resume`. The Runner checks for the conversation's transcript in Claude Code's state in the Sandbox, `/var/lib/kndl/claude/projects`, and, with none, starts a new conversation with the same id instead. A note in the Session's history says Claude Code couldn't resume its conversation, and the Runner logs:
 
 ```
 WARN (#2): Session <id>: Claude Code has no transcript of conversation <conversation id>, so it starts a new one with that id instead of resuming it
@@ -79,7 +79,7 @@ A Runner from before this fix lets Claude Code start one. [Update the Runner](/h
 **What you see.** A Session shows **This Session can't start**, or a new one is refused, with:
 
 ```
-kddige/claude-hub's Sessions can't start: NPM_TOKEN and GH_TOKEN (the shared variable GITHUB_TOKEN) need values. Enter them on the Repo's Environment screen and the Shared variables screen.
+kddige/kndl's Sessions can't start: NPM_TOKEN and GH_TOKEN (the shared variable GITHUB_TOKEN) need values. Enter them on the Repo's Environment screen and the Shared variables screen.
 ```
 
 A Test build of the Environment is refused with `NPM_TOKEN needs a value.`, and the variables show **needs a value** on the Environment and **Shared variables** screens.
@@ -105,15 +105,15 @@ A Test build of the Environment is refused with `NPM_TOKEN needs a value.`, and 
 **What you see.** On a machine whose Runner has never run a Session, the first Session on a Repo with an Environment fails with:
 
 ```
-The Session is Asleep: The Sandbox failed: host path /Users/you/.claude-hub/claude-code is not a directory
+The Session is Asleep: The Sandbox failed: host path /Users/you/.kndl/claude-code is not a directory
 ```
 
-**Why.** The Runner mounted its cache of Claude Code for Sandboxes before it had made that folder. Fixed in [#71](https://github.com/kddige/claude-hub/pull/71).
+**Why.** The Runner mounted its cache of Claude Code for Sandboxes before it had made that folder. Fixed in [#71](https://github.com/kddige/kndl/pull/71).
 
 **Fix.** Update your checkout. On an older one, make the folder named in the message and wake the Session:
 
 ```sh
-mkdir -p /Users/you/.claude-hub/claude-code
+mkdir -p /Users/you/.kndl/claude-code
 ```
 
 ## The Test build fails
@@ -134,7 +134,7 @@ The GitHub App isn't installed on owner/name, so a Test build can't clone it: in
 ```
 
 ```
-build-box runs an older claude-hub, which would clone the Repo with its machine's own git credentials: update it to run Test builds on it.
+build-box runs an older kndl, which would clone the Repo with its machine's own git credentials: update it to run Test builds on it.
 ```
 
 ```
@@ -202,7 +202,7 @@ Neither you nor build-box has a Claude credential: add yours on the Account page
 
 **Why.** You see only the Sessions of Repos you have access to on GitHub, as a collaborator, and only Repos the GitHub App is installed on. Someone who loses access is taken out of the Repo's Sessions within twice `HUB_REPO_ACCESS_TTL_MS`. `Could not check your access on GitHub; try again.` means GitHub didn't answer the Hub. See [Who can do what](/explanation/security-model/#who-can-do-what).
 
-**Fix.** Have the Repo's owner add you on GitHub, or install the App on it. Its Sessions show up within twice `HUB_REPO_ACCESS_TTL_MS` (5 minutes by default), with no reload. Without `GITHUB_APP_ID` on the Hub, GitHub sign-ins see no Sessions at all, and `claude-hub doctor` fails its `GitHub App` check: [set up the GitHub App](/how-to/set-up-the-github-app/).
+**Fix.** Have the Repo's owner add you on GitHub, or install the App on it. Its Sessions show up within twice `HUB_REPO_ACCESS_TTL_MS` (5 minutes by default), with no reload. Without `GITHUB_APP_ID` on the Hub, GitHub sign-ins see no Sessions at all, and `kndl doctor` fails its `GitHub App` check: [set up the GitHub App](/how-to/set-up-the-github-app/).
 
 ## A Session doesn't go to sleep
 

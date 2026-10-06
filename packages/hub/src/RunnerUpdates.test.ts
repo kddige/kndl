@@ -1,13 +1,8 @@
 // The Hub's side of a Runner's update (RunnerUpdates.ts), as pure functions: what each message
-// does to the update, the drain plan, and when `claude-hub update`'s push applies.
+// does to the update, the drain plan, and when `kndl update`'s push applies.
 
 import { describe, expect, test } from "bun:test"
-import {
-  RunnerId,
-  type RunnerUpdateState,
-  SessionId,
-  UpdateDrainMillis,
-} from "@claude-hub/protocol"
+import { RunnerId, type RunnerUpdateState, SessionId, UpdateDrainMillis } from "@kndl/protocol"
 import {
   afterChecked,
   afterDisconnect,
@@ -181,7 +176,7 @@ describe("draining a Runner", () => {
   })
 })
 
-describe("claude-hub update's push", () => {
+describe("kndl update's push", () => {
   const push = { commit: hub.commit, now: false, allRunners: true, localRunner: undefined }
   const runner = {
     id: studio,

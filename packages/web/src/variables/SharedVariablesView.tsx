@@ -10,7 +10,7 @@ import {
   sensitiveValueProblem,
   valuesNeededText,
   variableNameProblem,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { Redacted } from "effect"

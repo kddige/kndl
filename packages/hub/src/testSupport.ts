@@ -2,14 +2,14 @@
 // it. Not part of the Hub.
 
 import { createServer } from "node:net"
+import { BunHttpServer } from "@effect/platform-bun"
 import {
   DefaultEnvironmentDraft,
   type EnvironmentDraft,
   ParticipantId,
   RunnerId,
   TestBuildId,
-} from "@claude-hub/protocol"
-import { BunHttpServer } from "@effect/platform-bun"
+} from "@kndl/protocol"
 import { Context, Duration, Effect, Exit, Layer, Option, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
 import type { SqlClient } from "effect/sql"
@@ -49,9 +49,9 @@ export const baseConfig: HubConfigInput = {
   repoAccessTtlMs: Duration.toMillis(DefaultRepoAccessTtl),
   secretsKey: Option.none(),
   // No web UI build: WebUi.test.ts makes its own.
-  webDir: "/nonexistent/claude-hub/web",
+  webDir: "/nonexistent/kndl/web",
   // No CLI builds: CliRoutes.test.ts gives its own.
-  cliDir: "/nonexistent/claude-hub/cli",
+  cliDir: "/nonexistent/kndl/cli",
 }
 
 /** The Hub's stores and services, and its database, which tests can reach into. */

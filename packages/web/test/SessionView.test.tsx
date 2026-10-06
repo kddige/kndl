@@ -61,7 +61,7 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
 
   // Connected and joined: the Session's header, named by its work branch, with its Repo.
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/web-client"))
-  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("kddige/claude-hub")
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("kddige/kndl")
   // Its Creator has stored no Claude credential, so it runs on the Runner's (ADR 0015).
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain(
     "on the Runner's Claude account",
@@ -260,15 +260,13 @@ test("a Session that can't start for values a secrets-reset cleared leads to its
   expect(sent()).toContain("WakeSession")
   await eventually(() => expect(banner()).toContain("This Session can't start"))
   expect(banner()).toContain(
-    "kddige/claude-hub's Sessions can't start: NPM_TOKEN and GITHUB_TOKEN (the shared variable GH_READ_TOKEN) need values.",
+    "kddige/kndl's Sessions can't start: NPM_TOKEN and GITHUB_TOKEN (the shared variable GH_READ_TOKEN) need values.",
   )
   expect(banner()).toContain("Prompts sent now wait in the queue until it starts.")
   expect(header()).toContain("Asleep")
 
   await step(() => button("Enter values", page).click())
-  await eventually(() =>
-    expect(page.querySelector("h1")?.textContent).toContain("kddige/claude-hub"),
-  )
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toContain("kddige/kndl"))
   await eventually(() => expect(page.textContent).toContain("NPM_TOKEN needs a value: enter one."))
 })
 
@@ -291,7 +289,7 @@ test("a restart for a changed Environment shows its progress until the Session i
   await step(() => button("Show log", page).click())
   await eventually(() =>
     expect(page.querySelector('[aria-label="Start log"]')?.textContent).toContain(
-      "Building version 2 of kddige/claude-hub's Environment",
+      "Building version 2 of kddige/kndl's Environment",
     ),
   )
 
@@ -413,7 +411,8 @@ test("deleting a Session archives it, hides it from the sidebar, and Undo restor
   await eventually(() => expect(find("s-readme")?.state).toBe("Archived"))
   // Back on the start page; the sidebar no longer lists it.
   await eventually(() => expect(router.state.location.pathname).toBe("/"))
-  const list = () => page.querySelector("ul[aria-labelledby]")?.textContent ?? ""
+  const list = () =>
+    [...page.querySelectorAll("ul[aria-labelledby]")].map((ul) => ul.textContent).join("\n")
   await eventually(() => expect(list()).toContain("claude/web-client"))
   expect(list()).not.toContain("claude/readme-run")
 
@@ -482,7 +481,7 @@ test("an Interrupted agent's tool call that never ended was cut short, not runni
 })
 
 test("a Repo's Archived screen lists who deleted each Session, and restores it", async () => {
-  const { page, sent, find } = await openApp("/repos/kddige/claude-hub/archived")
+  const { page, sent, find } = await openApp("/repos/kddige/kndl/archived")
   const archived = () => page.querySelector('ul[aria-label="Archived Sessions"]')?.textContent ?? ""
   await eventually(() => expect(archived()).toContain("claude/flaky-login"))
   expect(archived()).toContain("Deleted by Bob Lee 3d ago")

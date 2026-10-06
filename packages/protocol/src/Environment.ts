@@ -459,7 +459,7 @@ export const DefaultEnvironmentDraft: EnvironmentDraft = {
 }
 
 /** Names the Runner sets itself, which no variable may take. */
-export const ReservedVariablePrefix = "CLAUDE_HUB_"
+export const ReservedVariablePrefix = "KNDL_"
 
 export const ResourceLimits = {
   cpus: { min: 1, max: 64 },

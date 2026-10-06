@@ -11,7 +11,7 @@ import {
   CredentialRequestId,
   FetchClaudeCredential,
   type SessionId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Data, Deferred, Duration, Effect, Exit, Layer, Schema } from "effect"
 import { HubLink } from "./HubLink.ts"
 
@@ -39,7 +39,7 @@ export class HubClaudeCredential extends Context.Service<
       reply: ClaudeCredentialFetched | ClaudeCredentialRefused,
     ) => Effect.Effect<void>
   }
->()("@claude-hub/runner/HubClaudeCredential") {}
+>()("@kndl/runner/HubClaudeCredential") {}
 
 export const HubClaudeCredentialLive = Layer.effect(
   HubClaudeCredential,

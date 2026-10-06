@@ -74,7 +74,7 @@ export function taskNotification(agentId: string, description: string, result: s
   ].join("\n")
 }
 
-/** The CLI tokens the signed-in person has, as `claude-hub login` on two machines left them. */
+/** The CLI tokens the signed-in person has, as `kndl login` on two machines left them. */
 export function seedCliTokens(): Array<CliTokenInfoWire> {
   const now = Date.now()
   return [
@@ -195,7 +195,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
     {
       summary: {
         id: demoSessionId,
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         baseBranch: "main",
         workBranch: "claude/web-client",
         state: "Active",
@@ -251,7 +251,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
     {
       summary: {
         id: "s-readme",
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         baseBranch: "main",
         workBranch: "claude/readme-run",
         state: "Asleep",
@@ -305,7 +305,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
     {
       summary: {
         id: "s-flaky",
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         baseBranch: "main",
         workBranch: "claude/flaky-login",
         state: "Archived",
@@ -346,7 +346,7 @@ function releaseSessions(now: number): Array<SeedSession> {
       summary: {
         id: releaseSessionId,
         name: "Release 0.4",
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         baseBranch: "main",
         workBranch: "claude/release-0-4",
         state: "Asleep",
@@ -376,7 +376,7 @@ function releaseSessions(now: number): Array<SeedSession> {
           agentId: docs.agentId,
           status: "Running",
           worktree: {
-            path: "/workspace/claude-hub/.claude/worktrees/agent-docs",
+            path: "/workspace/kndl/.claude/worktrees/agent-docs",
             branch: "worktree-agent-docs",
           },
         },
@@ -429,7 +429,7 @@ function releaseSessions(now: number): Array<SeedSession> {
           toolCallId: "t-release-a3-tool-2",
           tool: "Read",
           input: JSON.stringify({
-            file_path: "/workspace/claude-hub/packages/protocol/src/Mod.ts",
+            file_path: "/workspace/kndl/packages/protocol/src/Mod.ts",
           }),
         },
         { _tag: "AgentStatusChanged", agentId: docs.agentId, status: "Interrupted" },
@@ -622,7 +622,7 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
     model: "claude-haiku-4-5-20251001",
     background: true,
     worktree: {
-      path: "/workspace/claude-hub/.claude/worktrees/agent-docs",
+      path: "/workspace/kndl/.claude/worktrees/agent-docs",
       branch: "worktree-agent-docs",
     },
     steps: [
@@ -698,9 +698,9 @@ export function replyTo(text: string): ReadonlyArray<ReplyStep> {
  */
 export function driftedAppPermissions(now = Date.now()): AppPermissionsCheckWire {
   return {
-    slug: "claude-hub-alice",
-    settingsUrl: "https://github.com/settings/apps/claude-hub-alice/permissions",
-    installUrl: "https://github.com/apps/claude-hub-alice/installations/new",
+    slug: "kndl-alice",
+    settingsUrl: "https://github.com/settings/apps/kndl-alice/permissions",
+    installUrl: "https://github.com/apps/kndl-alice/installations/new",
     missing: [{ name: "issues", title: "Issues", access: "write" }],
     missingEvents: [],
     installed: 2,

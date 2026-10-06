@@ -1,11 +1,11 @@
-// `claude-hub forward` end to end (#180): a real Hub and Runner, whose Session's Sandbox is faked
+// `kndl forward` end to end (#180): a real Hub and Runner, whose Session's Sandbox is faked
 // with servers on this machine standing in for the guest's (testTunnels.ts), and the CLI on a
 // terminal played as one (testTerminal.ts). They run the Session in real tmux, so they are skipped
 // when tmux isn't installed.
 
 import { afterAll, afterEach, describe, expect, test } from "bun:test"
 import { createServer, type Server } from "node:net"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 import {
   type GuestPort,
   removeTunnelScenes,
@@ -14,7 +14,7 @@ import {
   tunnelScene,
   type TunnelScene,
   Web,
-} from "@claude-hub/runner/src/testTunnels.ts"
+} from "@kndl/runner/src/testTunnels.ts"
 import { type ForwardIo, type ForwardOutcome, type ForwardRequest, runForward } from "./Forward.ts"
 import { keyboard, terminal } from "./testTerminal.ts"
 
@@ -112,7 +112,7 @@ const refused = (port: number) =>
     )
   })
 
-/** `claude-hub forward`, run on a terminal (or not), signed in as alice on `machine`. */
+/** `kndl forward`, run on a terminal (or not), signed in as alice on `machine`. */
 async function run(
   scene: TunnelScene,
   request: Partial<ForwardRequest>,
@@ -193,7 +193,7 @@ const sleepFromWeb = async (scene: TunnelScene, sessionId: SessionId) => {
   })
 }
 
-describe.skipIf(tmuxMissing)("claude-hub forward", () => {
+describe.skipIf(tmuxMissing)("kndl forward", () => {
   test("forwards each Open port at localhost, an OAuth redirect too, following them as they open and close", async () => {
     const vite = await guest("vite")
     const api = await guest("api")
@@ -246,9 +246,7 @@ describe.skipIf(tmuxMissing)("claude-hub forward", () => {
     )
 
     await cli.shows(`taken here by node (pid 4242): trying again until it's free`)
-    await cli.shows(
-      `claude-hub forward ${scene.sessionId.slice(0, 6)} ${api.port}:${api.port + 100}`,
-    )
+    await cli.shows(`kndl forward ${scene.sessionId.slice(0, 6)} ${api.port}:${api.port + 100}`)
     await close(squatter)
     await cli.shows(new RegExp(`http://localhost:${api.port} +bun server`))
     expect(await get(api.port)).toBe("api at /")
@@ -373,7 +371,7 @@ describe.skipIf(tmuxMissing)("claude-hub forward", () => {
     expect(await none.outcome).toEqual({
       _tag: "Failed",
       message:
-        "None of your Sessions has the id zz, or one starting with it: claude-hub forward with no Session lists those you can forward.",
+        "None of your Sessions has the id zz, or one starting with it: kndl forward with no Session lists those you can forward.",
     })
     const elsewhere = await run(
       scene,
@@ -382,7 +380,7 @@ describe.skipIf(tmuxMissing)("claude-hub forward", () => {
     )
     expect(await elsewhere.outcome).toEqual({
       _tag: "Failed",
-      message: `That Session is on https://hub.example.com, and the CLI is signed in to ${scene.hub.url}: run claude-hub login https://hub.example.com first.`,
+      message: `That Session is on https://hub.example.com, and the CLI is signed in to ${scene.hub.url}: run kndl login https://hub.example.com first.`,
     })
     const byUrl = await run(scene, { session: `${scene.hub.url}/sessions/${scene.sessionId}` })
     await byUrl.shows(`Forwarding ${scene.sessionId.slice(0, 6)}`)

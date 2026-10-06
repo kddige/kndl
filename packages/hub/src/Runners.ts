@@ -6,7 +6,7 @@ import {
   RunnerModels,
   RunnerUpdater,
   type SessionState,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -93,7 +93,7 @@ export class Runners extends Context.Service<
     /** A Runner paired and not removed. */
     readonly get: (id: RunnerId) => Effect.Effect<Option.Option<KnownRunner>, SqlError>
   }
->()("@claude-hub/hub/Runners") {
+>()("@kndl/hub/Runners") {
   static readonly layer = Layer.effect(
     Runners,
     Effect.gen(function* () {

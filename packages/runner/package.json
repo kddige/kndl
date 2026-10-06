@@ -1,5 +1,5 @@
 {
-  "name": "@claude-hub/runner",
+  "name": "@kndl/runner",
   "private": true,
   "type": "module",
   "scripts": {
@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@claude-hub/protocol": "workspace:*",
+    "@kndl/protocol": "workspace:*",
     "@effect/platform-bun": "4.0.0",
     "effect": "4.0.0",
     "microsandbox": "0.7.6"

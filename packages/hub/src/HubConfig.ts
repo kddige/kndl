@@ -2,7 +2,7 @@ import { createPrivateKey } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { HomeConfig } from "@claude-hub/protocol/home"
+import { HomeConfig } from "@kndl/protocol/home"
 import { Config, Context, Duration, Effect, Layer, Option, Redacted, Schema } from "effect"
 
 /** The GitHub App's user sign-in credentials (issue #1). */
@@ -190,18 +190,18 @@ export class HubConfig extends Context.Service<
     /** Where the CLI binaries the Hub serves are built and kept: `cli/` in its home (CliBuilds.ts). */
     readonly cliDir: string
   }
->()("@claude-hub/hub/HubConfig") {
+>()("@kndl/hub/HubConfig") {
   /** Checks the configuration; fails when it would expose dev login or half-configure GitHub. */
   static readonly make = Effect.fnUntraced(function* (input: HubConfigInput) {
     const { host, publicUrl } = input
     if (input.devLogin && !isLoopback(host)) {
       return yield* new HubConfigError({
-        message: `Dev login (CLAUDE_HUB_DEV_LOGIN) is refused: the Hub is bound to ${host}, not a loopback address. Unset CLAUDE_HUB_DEV_LOGIN, or set HOST=127.0.0.1.`,
+        message: `Dev login (KNDL_DEV_LOGIN) is refused: the Hub is bound to ${host}, not a loopback address. Unset KNDL_DEV_LOGIN, or set HOST=127.0.0.1.`,
       })
     }
     if (input.devLogin && !isLoopback(publicUrl.hostname)) {
       return yield* new HubConfigError({
-        message: `Dev login (CLAUDE_HUB_DEV_LOGIN) is refused: browsers reach the Hub at ${publicUrl.origin}, not a loopback address. Unset CLAUDE_HUB_DEV_LOGIN, or set HUB_PUBLIC_URL to a localhost URL.`,
+        message: `Dev login (KNDL_DEV_LOGIN) is refused: browsers reach the Hub at ${publicUrl.origin}, not a loopback address. Unset KNDL_DEV_LOGIN, or set HUB_PUBLIC_URL to a localhost URL.`,
       })
     }
     if (!Number.isSafeInteger(input.sleepAfterMs) || input.sleepAfterMs <= 0) {
@@ -285,10 +285,10 @@ export class HubConfig extends Context.Service<
    * From the environment: `HOST` (127.0.0.1), `PORT` (7777), `HUB_PUBLIC_URL`
    * (http://localhost:5173), `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (unset: GitHub sign-in
    * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the Runner uses its host's
-   * git credentials, and the Sandbox gets no GitHub token), `CLAUDE_HUB_DEV_LOGIN` (off), `CLAUDE_HUB_DEV_USER` (`$USER`), `HUB_INSECURE_COOKIES` (off), `HUB_SLEEP_AFTER_MS`
+   * git credentials, and the Sandbox gets no GitHub token), `KNDL_DEV_LOGIN` (off), `KNDL_DEV_USER` (`$USER`), `HUB_INSECURE_COOKIES` (off), `HUB_SLEEP_AFTER_MS`
    * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days), `HUB_REPO_ACCESS_TTL_MS` (5 minutes),
    * `HUB_SECRETS_KEY` (unset: Sensitive values can't be saved) and `HUB_WEB_DIR` (DefaultWebDir).
-   * The CLI binaries go in `cli/` in the home (`CLAUDE_HUB_HOME`, or the dev home).
+   * The CLI binaries go in `cli/` in the home (`KNDL_HOME`, or the dev home).
    */
   static readonly layer = Layer.effect(
     HubConfig,
@@ -312,9 +312,9 @@ export class HubConfig extends Context.Service<
         githubClientId: Config.option(Config.NonEmptyString("GITHUB_CLIENT_ID")),
         githubClientSecret: Config.option(Config.Redacted("GITHUB_CLIENT_SECRET")),
         githubAppId: Config.option(Config.NonEmptyString("GITHUB_APP_ID")),
-        devLogin: Config.Boolean("CLAUDE_HUB_DEV_LOGIN").pipe(Config.withDefault(false)),
+        devLogin: Config.Boolean("KNDL_DEV_LOGIN").pipe(Config.withDefault(false)),
         insecureCookies: Config.Boolean("HUB_INSECURE_COOKIES").pipe(Config.withDefault(false)),
-        devLoginName: Config.String("CLAUDE_HUB_DEV_USER").pipe(
+        devLoginName: Config.String("KNDL_DEV_USER").pipe(
           Config.orElse(() => Config.String("USER")),
           Config.withDefault("dev"),
         ),

@@ -1,7 +1,7 @@
 // What the CLI asks a Hub over HTTP(S) for a Runner: to redeem a Pairing code, and whether it has
 // the Runner connected (PairingRoutes.ts in the Hub). Join.ts reads the answers; this only asks.
 // A service, so onboard's flow runs in tests against a Hub that answers from a script.
-import type { PairingTarget } from "@claude-hub/protocol"
+import type { PairingTarget } from "@kndl/protocol"
 import { Context, Effect, Layer } from "effect"
 import {
   type ConnectionCheck,
@@ -18,7 +18,7 @@ export class HubClient extends Context.Service<
     /** Whether the Hub at `hubUrl` has the Runner with `token` connected. */
     readonly connection: (hubUrl: string, token: string) => Effect.Effect<ConnectionCheck>
   }
->()("@claude-hub/cli/HubClient") {
+>()("@kndl/cli/HubClient") {
   static readonly layer = Layer.succeed(
     HubClient,
     HubClient.of({

@@ -9,8 +9,8 @@ import {
   ModHello,
   ModHelloReply,
   ProtocolVersion,
-} from "@claude-hub/protocol"
-import type { ModEventsEncoded, Participant, TurnEndReason, TurnUsage } from "@claude-hub/protocol"
+} from "@kndl/protocol"
+import type { ModEventsEncoded, Participant, TurnEndReason, TurnUsage } from "@kndl/protocol"
 import { Exit, Schema } from "effect"
 
 export type ModEventEncoded = typeof ModEvent.Encoded
@@ -146,7 +146,7 @@ export const promptFromParticipant = (sender: Participant, text: string) =>
 
 /** What the model is told about the Session being shared, in the system prompt. */
 export const sharedSessionNote = [
-  "This session is shared through Claude Hub: several people may watch it live in a web UI and",
+  "This session is shared through kndl: several people may watch it live in a web UI and",
   'send it prompts. A prompt that starts with a name in brackets, such as "[Ada Lovelace] ...",',
   "came from that person; a prompt without one was typed at the terminal. They can watch your",
   "subagents too, and message or stop one. When it matters who asked for what, address people",

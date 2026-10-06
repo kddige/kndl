@@ -1,4 +1,4 @@
-import type { RunnerToHub } from "@claude-hub/protocol"
+import type { RunnerToHub } from "@kndl/protocol"
 import { Context, Effect, Layer, Semaphore } from "effect"
 
 /** Writes one message on the current connection to the Hub. */
@@ -20,7 +20,7 @@ export class HubLink extends Context.Service<
     readonly connect: (write: HubWriter) => Effect.Effect<void>
     readonly disconnect: Effect.Effect<void>
   }
->()("@claude-hub/runner/HubLink") {}
+>()("@kndl/runner/HubLink") {}
 
 /** Messages not kept while disconnected: sent again after every reconnect, or moot by then. */
 const resentOnConnect = (message: RunnerToHub) =>

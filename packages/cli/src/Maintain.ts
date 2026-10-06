@@ -66,8 +66,7 @@ export const doctor = (layout: Layout, options: { readonly fix: boolean; readonl
     const passed = yield* report(checks)
     const fixes = checks.flatMap((check) => (check.fix === undefined ? [] : [check.fix]))
     if (!options.fix) {
-      if (fixes.length > 0)
-        yield* Console.log("\n`claude-hub doctor --fix` can repair some of this.")
+      if (fixes.length > 0) yield* Console.log("\n`kndl doctor --fix` can repair some of this.")
       return passed
     }
     if (fixes.length === 0) return passed
@@ -142,7 +141,7 @@ const applyFix = (
         if (!ui.interactive) {
           yield* ui.log(
             "warn",
-            `The old data stays where it is: doctor moves it only when you confirm, in a terminal. Or run \`claude-hub onboard --move-old-data\`.`,
+            `The old data stays where it is: doctor moves it only when you confirm, in a terminal. Or run \`kndl onboard --move-old-data\`.`,
           )
           return
         }
@@ -245,7 +244,7 @@ export const update = (layout: Layout, options: UpdateOptions) =>
   })
 
 /**
- * Stops and removes the services and the `claude-hub` command, and the installed checkout; the
+ * Stops and removes the services and the `kndl` command, and the installed checkout; the
  * home's data stays, unless `purge`, which removes the whole home. The guards decide what may be
  * deleted before anything is.
  */
@@ -275,7 +274,7 @@ export const uninstall = (
     const wrapper = isOurWrapper(layout.wrapper)
     const plan = [
       ...services.map((service) => `the ${RoleTitle[service.role]} service (${service.path})`),
-      ...(wrapper ? [`the claude-hub command (${layout.wrapper})`] : []),
+      ...(wrapper ? [`the kndl command (${layout.wrapper})`] : []),
       options.purge
         ? `the whole home, ${removal.path}, with its data`
         : `the installed checkout, ${removal.path}`,

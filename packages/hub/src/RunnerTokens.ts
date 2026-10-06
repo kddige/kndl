@@ -1,4 +1,4 @@
-import { RunnerId } from "@claude-hub/protocol"
+import { RunnerId } from "@kndl/protocol"
 import { Clock, Context, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -32,7 +32,7 @@ export class RunnerTokens extends Context.Service<
     /** Removes a Runner: its token stops working, and it is no longer listed. */
     readonly remove: (id: RunnerId) => Effect.Effect<void, SqlError>
   }
->()("@claude-hub/hub/RunnerTokens") {
+>()("@kndl/hub/RunnerTokens") {
   static readonly layer = Layer.effect(
     RunnerTokens,
     Effect.gen(function* () {

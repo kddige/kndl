@@ -15,7 +15,7 @@ describe("PageHeader", () => {
   test("heads the page: the title is its h1, beside its badge, over its description", async () => {
     const { container, unmount } = await render(
       <PageHeader
-        title="kddige/claude-hub"
+        title="kddige/kndl"
         badge={<Badge>Version 3</Badge>}
         description="What every Sandbox of this Repo is built from."
         actions={<Button size="sm">Shared variables</Button>}
@@ -24,11 +24,11 @@ describe("PageHeader", () => {
     cleanup = unmount
     const header = container.querySelector("header")
     const h1 = header?.querySelector("h1")
-    expect(h1?.textContent).toBe("kddige/claude-hub")
+    expect(h1?.textContent).toBe("kddige/kndl")
     // StyleX compiled the styles into class names.
     expect(h1?.className).not.toBe("")
     // The badge sits in the title's row, not in its name.
-    expect(h1?.parentElement?.textContent).toBe("kddige/claude-hubVersion 3")
+    expect(h1?.parentElement?.textContent).toBe("kddige/kndlVersion 3")
     expect(header?.querySelector("p")?.textContent).toBe(
       "What every Sandbox of this Repo is built from.",
     )

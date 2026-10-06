@@ -1,4 +1,4 @@
-# @claude-hub/protocol
+# @kndl/protocol
 
 The messages the Hub, Runners, the mod and the web UI exchange, as [Effect](https://effect.website) Schemas (Effect 4). Terms are those of [`GLOSSARY.md`](../../GLOSSARY.md).
 
@@ -56,7 +56,7 @@ The mod runs in Claude Code's mod runtime, which can `fetch` with request header
 The mod may not be able to run Effect: spike #4 will tell. Until then, the mod imports types only and does no runtime validation of its own; the Hub validates everything the mod sends.
 
 ```ts
-import type { ModCommandsEncoded, ModEventsEncoded, ModToHubEncoded } from "@claude-hub/protocol"
+import type { ModCommandsEncoded, ModEventsEncoded, ModToHubEncoded } from "@kndl/protocol"
 ```
 
-The `...Encoded` types (`ModToHubEncoded`, `HubToModEncoded`, `ModEventsEncoded`, `ModHelloReplyEncoded`, `ModCommandsEncoded`, `ModCommandsQueryEncoded`) are the JSON shapes on the wire, without brands. For the import to resolve, the mod needs `@claude-hub/protocol` as a workspace dependency and `"allowImportingTsExtensions": true` in its `tsconfig.json`, because this package is imported from source.
+The `...Encoded` types (`ModToHubEncoded`, `HubToModEncoded`, `ModEventsEncoded`, `ModHelloReplyEncoded`, `ModCommandsEncoded`, `ModCommandsQueryEncoded`) are the JSON shapes on the wire, without brands. For the import to resolve, the mod needs `@kndl/protocol` as a workspace dependency and `"allowImportingTsExtensions": true` in its `tsconfig.json`, because this package is imported from source.

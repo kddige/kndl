@@ -34,7 +34,7 @@ import {
   type TerminalSize,
   type TestBuild,
   WebToHub,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
 import {
   acceptsFrame,

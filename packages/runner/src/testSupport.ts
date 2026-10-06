@@ -14,7 +14,7 @@ import {
   type TestBuildId,
   type VariablesFor,
   type VariableValue,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { type Cause, Effect, Layer, Queue, Redacted, Schema, Stream } from "effect"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"

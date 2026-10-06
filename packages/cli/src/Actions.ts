@@ -5,14 +5,14 @@ import { existsSync } from "node:fs"
 import { chmod, mkdir, readFile } from "node:fs/promises"
 import { userInfo } from "node:os"
 import { delimiter, dirname } from "node:path"
-import { issueRunnerToken } from "@claude-hub/hub/src/Admin.ts"
-import { requestRunnerUpdates } from "@claude-hub/hub/src/RunnerUpdatePush.ts"
+import { issueRunnerToken } from "@kndl/hub/src/Admin.ts"
+import { requestRunnerUpdates } from "@kndl/hub/src/RunnerUpdatePush.ts"
 import {
   resetSecrets,
   type SecretsResetPlan,
   secretsResetDoneText,
   secretsResetPlanText,
-} from "@claude-hub/hub/src/SecretsReset.ts"
+} from "@kndl/hub/src/SecretsReset.ts"
 import { Cause, ConfigProvider, Console, Effect } from "effect"
 import { fail } from "./Failure.ts"
 import {
@@ -47,7 +47,7 @@ export const RoleTitle: Record<Role, string> = { hub: "Hub", runner: "Runner" }
 
 /** The install line, for the commands that need an install and find none. */
 export const InstallLine =
-  "gh api repos/kddige/claude-hub/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh"
+  "gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh"
 
 /** Fails unless the home holds an installed checkout. */
 export const requireInstall = (layout: Layout) =>
@@ -55,14 +55,14 @@ export const requireInstall = (layout: Layout) =>
     ? Effect.void
     : Effect.fail(
         fail(
-          `No claude-hub install in ${layout.home.dir} (no ${layout.app}). Install it with:\n\n  ${InstallLine}\n\nor set CLAUDE_HUB_HOME to the home you installed.`,
+          `No kndl install in ${layout.home.dir} (no ${layout.app}). Install it with:\n\n  ${InstallLine}\n\nor set KNDL_HOME to the home you installed.`,
         ),
       )
 
-/** Fails on a platform claude-hub doesn't run services on. */
+/** Fails on a platform kndl doesn't run services on. */
 export const requirePlatform = (on: Platform | undefined) =>
   on === undefined
-    ? Effect.fail(fail(`claude-hub runs on macOS and Linux, not ${process.platform}.`))
+    ? Effect.fail(fail(`kndl runs on macOS and Linux, not ${process.platform}.`))
     : Effect.succeed(on)
 
 /**
@@ -120,13 +120,13 @@ export const installPrerequisites = (
     const ui = yield* Ui
     yield* ui.note(
       describePlan(plan),
-      `To install what's missing, claude-hub would run${plan.needsSudo ? " (with sudo)" : ""}:`,
+      `To install what's missing, kndl would run${plan.needsSudo ? " (with sudo)" : ""}:`,
     )
     const approved =
       options.approved ??
       (ui.interactive ? yield* ui.confirm({ message: "Run these now?", initial: true }) : false)
     if (!approved) {
-      yield* ui.log("warn", "Skipped: run them yourself, or `claude-hub doctor --fix`.")
+      yield* ui.log("warn", "Skipped: run them yourself, or `kndl doctor --fix`.")
       return false
     }
     yield* runSteps(plan.steps)
@@ -149,7 +149,7 @@ export const installService = (layout: Layout, role: Role, on: Platform) =>
   Effect.gen(function* () {
     if (!existsSync(layout.envFile(role))) {
       return yield* fail(
-        `The ${RoleTitle[role]} isn't set up here (${layout.envFile(role)} is missing): run \`claude-hub onboard\`.`,
+        `The ${RoleTitle[role]} isn't set up here (${layout.envFile(role)} is missing): run \`kndl onboard\`.`,
       )
     }
     const target = serviceTarget(layout, role, on)
@@ -166,7 +166,7 @@ export const startService = (layout: Layout, role: Role, on: Platform) =>
     const target = serviceTarget(layout, role, on)
     if (!existsSync(serviceFilePath(target))) {
       return yield* fail(
-        `The ${RoleTitle[role]} service isn't installed: \`claude-hub ${role} install\`.`,
+        `The ${RoleTitle[role]} service isn't installed: \`kndl ${role} install\`.`,
       )
     }
     yield* runSteps(startSteps(target), `Start the ${RoleTitle[role]}'s service`)
@@ -267,7 +267,7 @@ export const issueToken = (layout: Layout, name: string) =>
     const env = homeEnvironment(layout, "hub")
     if (!existsSync(layout.envFile("hub")) && env.HUB_DATABASE === undefined) {
       return yield* fail(
-        `No Hub is set up in ${layout.home.dir}: issue the token on the Hub's machine, or run \`claude-hub onboard\` here first.`,
+        `No Hub is set up in ${layout.home.dir}: issue the token on the Hub's machine, or run \`kndl onboard\` here first.`,
       )
     }
     return yield* issueRunnerToken(name).pipe(
@@ -306,7 +306,7 @@ export const resetHubSecrets = (layout: Layout, options: { readonly yes: boolean
           case "Cancelled":
             return error
           case "HubLockRefused":
-            return fail(`${error.message} The Hub's service stops with \`claude-hub hub stop\`.`)
+            return fail(`${error.message} The Hub's service stops with \`kndl hub stop\`.`)
           case "NoHubDatabase":
             return fail(error.message)
           default:
@@ -316,7 +316,7 @@ export const resetHubSecrets = (layout: Layout, options: { readonly yes: boolean
     )
     if (outcome._tag === "NothingToReset") {
       yield* Console.log(
-        "Nothing to reset: the Hub stores no Sensitive values, so a new key works as it is. Make one with `claude-hub secrets key`.",
+        "Nothing to reset: the Hub stores no Sensitive values, so a new key works as it is. Make one with `kndl secrets key`.",
       )
     } else if (outcome._tag === "Kept") {
       return yield* fail(
@@ -325,7 +325,7 @@ export const resetHubSecrets = (layout: Layout, options: { readonly yes: boolean
           : "Nothing was cleared: pass --yes to reset without a terminal.",
       )
     } else {
-      yield* Console.log(secretsResetDoneText(outcome.plan, "`claude-hub secrets key`"))
+      yield* Console.log(secretsResetDoneText(outcome.plan, "`kndl secrets key`"))
     }
   })
 

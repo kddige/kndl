@@ -2,7 +2,7 @@
 // not, why, before they set up a Session or an Environment for it. The Hub answers from its cache
 // of what GitHub said; "Check again" asks GitHub afresh, as after installing the GitHub App.
 
-import { type RepoStatus, sameRepo } from "@claude-hub/protocol"
+import { type RepoStatus, sameRepo } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useCallback, useEffect, useState } from "react"
 import { ExternalLinkIcon } from "../ui/index.ts"

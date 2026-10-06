@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { ClaudeCredential } from "@claude-hub/protocol"
+import type { ClaudeCredential } from "@kndl/protocol"
 import { Effect, Logger, Redacted } from "effect"
 import {
   type CredentialSource,
@@ -21,7 +21,7 @@ import {
 const setupToken = "sk-ant-oat01-setup-FAKE"
 const loginToken = "sk-ant-oat01-login-FAKE"
 
-const dir = mkdtempSync(join(tmpdir(), "claude-hub-credential-"))
+const dir = mkdtempSync(join(tmpdir(), "kndl-credential-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 const noConfig = join(dir, "missing.claude.json")
@@ -97,9 +97,9 @@ describe("parseCredentialSource", () => {
       service: DefaultKeychainService,
     })
     expect(parseCredentialSource(" keychain:work ")).toEqual({ _tag: "Keychain", service: "work" })
-    expect(parseCredentialSource("file:/etc/claude-hub/token")).toEqual({
+    expect(parseCredentialSource("file:/etc/kndl/token")).toEqual({
       _tag: "File",
-      path: "/etc/claude-hub/token",
+      path: "/etc/kndl/token",
     })
   })
 

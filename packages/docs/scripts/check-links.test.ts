@@ -5,7 +5,7 @@ const page = (body: string) => `<html><body id="_top">${body}</body></html>`
 
 describe("brokenLinks", () => {
   const pages = new Map([
-    ["index.html", page('<a href="/claude-hub/how-to/install/#install">Install</a>')],
+    ["index.html", page('<a href="/kndl/how-to/install/#install">Install</a>')],
     [
       "how-to/install/index.html",
       page('<h2 id="install">Install</h2><a href="#install">here</a><a href="#_top">top</a>'),
@@ -21,8 +21,8 @@ describe("brokenLinks", () => {
       "about/index.html",
       page(
         [
-          '<a href="/claude-hub/how-to/gone/">gone</a>',
-          '<a href="/claude-hub/how-to/install/#nowhere">nowhere</a>',
+          '<a href="/kndl/how-to/gone/">gone</a>',
+          '<a href="/kndl/how-to/install/#nowhere">nowhere</a>',
           '<a href="#missing">missing</a>',
           '<a href="/how-to/install/">no base</a>',
           '<a href="how-to/install/">relative</a>',
@@ -30,10 +30,10 @@ describe("brokenLinks", () => {
       ),
     )
     expect(brokenLinks(withBad).map((b) => [b.href, b.reason])).toEqual([
-      ["/claude-hub/how-to/gone/", "no such page"],
-      ["/claude-hub/how-to/install/#nowhere", "no #nowhere on how-to/install/index.html"],
+      ["/kndl/how-to/gone/", "no such page"],
+      ["/kndl/how-to/install/#nowhere", "no #nowhere on how-to/install/index.html"],
       ["#missing", "no #missing on about/index.html"],
-      ["/how-to/install/", "outside the site's base path /claude-hub/"],
+      ["/how-to/install/", "outside the site's base path /kndl/"],
       ["how-to/install/", "relative; link root-relative instead"],
     ])
   })
@@ -43,7 +43,7 @@ describe("brokenLinks", () => {
       [
         "index.html",
         page(
-          '<a href="https://diataxis.fr">x</a><a href="mailto:a@b.c">m</a><a href="/claude-hub/og.png">og</a>',
+          '<a href="https://diataxis.fr">x</a><a href="mailto:a@b.c">m</a><a href="/kndl/og.png">og</a>',
         ),
       ],
     ])

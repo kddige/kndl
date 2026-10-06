@@ -21,7 +21,7 @@ import {
   RunnerRemoved,
   runnerRemovalRefusal,
   type WebToHub,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Effect, Option } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { HubConfig } from "./HubConfig.ts"

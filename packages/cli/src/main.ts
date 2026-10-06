@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-// The `claude-hub` CLI. Installed, the wrapper install.sh writes runs it from `<home>/app`; in a
+// The `kndl` CLI. Installed, the wrapper install.sh writes runs it from `<home>/app`; in a
 // checkout, `bun packages/cli/src/main.ts <command>`. Either way it manages the installed home,
-// `CLAUDE_HUB_HOME` or `~/.claude-hub`, never a checkout's dev home. A Hub also serves it as one
+// `KNDL_HOME` or `~/.kndl`, never a checkout's dev home. A Hub also serves it as one
 // binary (issue #178), which first updates itself to the Hub's commit (SelfUpdate.ts).
 import { BunRuntime, BunServices } from "@effect/platform-bun"
 import { Console, Effect, Layer } from "effect"

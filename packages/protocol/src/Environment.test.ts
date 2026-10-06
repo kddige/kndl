@@ -37,9 +37,9 @@ describe("EnvironmentState", () => {
   test("never carries a Sensitive value to the web", () => {
     const encoded = Schema.encodeSync(EnvironmentState)({
       _tag: "EnvironmentState",
-      repo: "kddige/claude-hub",
+      repo: "kddige/kndl",
       environment: {
-        repo: "kddige/claude-hub",
+        repo: "kddige/kndl",
         version: 1 as never,
         ...DefaultEnvironmentDraft,
         // A value that slipped into a view is not part of the schema, so it is not sent.
@@ -70,8 +70,8 @@ describe("variableNameProblem", () => {
     for (const name of ["", "1PASSWORD", "MY-VAR", "A B", "PATH=x", "x".repeat(129)]) {
       expect(variableNameProblem(name)).toBeString()
     }
-    expect(variableNameProblem("CLAUDE_HUB_URL")).toContain("reserved")
-    expect(variableNameProblem("claude_hub_token")).toContain("reserved")
+    expect(variableNameProblem("KNDL_URL")).toContain("reserved")
+    expect(variableNameProblem("kndl_token")).toContain("reserved")
   })
 })
 

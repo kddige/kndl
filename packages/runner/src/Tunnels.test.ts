@@ -3,14 +3,14 @@
 // the Session in real tmux, so they are skipped when tmux isn't installed.
 
 import { afterAll, afterEach, describe, expect, test } from "bun:test"
+import { BunSocket } from "@effect/platform-bun"
 import {
   type OpenTunnel,
   type RunnerToHub,
   SessionId,
   TunnelCloseCode,
   TunnelId,
-} from "@claude-hub/protocol"
-import { BunSocket } from "@effect/platform-bun"
+} from "@kndl/protocol"
 import { Effect, Layer, Redacted } from "effect"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"

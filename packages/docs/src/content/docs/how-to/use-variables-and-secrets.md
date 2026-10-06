@@ -24,7 +24,7 @@ Once any Sensitive value is saved, the Hub refuses to start without the same key
 ## Add a variable to an Environment
 
 1. Open the Repo's Environment and, under **Variables**, press **Add variable**.
-2. Give it a **Name**: letters, digits and underscores, not starting with a digit, unique in the Environment. Names starting `CLAUDE_HUB_` are the Runner's.
+2. Give it a **Name**: letters, digits and underscores, not starting with a digit, unique in the Environment. Names starting `KNDL_` are the Runner's.
 3. Pick its **Kind**:
    - **Plain**: everyone can see its value. For settings, such as `NODE_ENV`.
    - **Sensitive**: write-only. The Hub encrypts it and never sends it to the web UI, where it shows as set and can only be replaced. It must be at least 4 characters, so it can be found and masked in output. For tokens and keys.
@@ -49,11 +49,11 @@ The values the key encrypted are lost with it: nothing can decrypt them. A reset
 
    ```sh
    bun run secrets-reset          # in a checkout
-   claude-hub secrets reset       # on an installed Hub
+   kndl secrets reset       # on an installed Hub
    ```
 
    It lists each Sensitive variable it clears, by Repo, and the shared ones, and asks before clearing them. Without a terminal it needs `--yes`.
-3. Make a new key with `bun run secrets-key` (or `claude-hub secrets key`), set `HUB_SECRETS_KEY` to it, and start the Hub.
+3. Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it, and start the Hub.
 4. Enter the values again. Each cleared variable keeps its name, **At build** and Links, and shows **needs a value**:
    - On a Repo's Environment, type each value and apply. A value entered in place of a cleared one applies without a Test build, even at build.
    - On **Shared variables**, press **Enter value** on each.

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
-import { credentialFromSecret, type ClaudeCredential } from "@claude-hub/protocol"
+import { credentialFromSecret, type ClaudeCredential } from "@kndl/protocol"
 import { Cause, Effect, Exit, Logger, Redacted, Scope } from "effect"
 import { sessionId } from "../testSupport.ts"
 import { OAuthBeta, serveCredentialProxy, upstreamHeaders } from "./CredentialProxy.ts"

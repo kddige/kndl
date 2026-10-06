@@ -1,5 +1,5 @@
-// `claude-hub login`, `logout` and `whoami` (issue #179, ADR 0016): signing the CLI in to a Hub
-// with a CLI token, for the commands that act on the Hub as someone (`claude-hub forward`, #177).
+// `kndl login`, `logout` and `whoami` (issue #179, ADR 0016): signing the CLI in to a Hub
+// with a CLI token, for the commands that act on the Hub as someone (`kndl forward`, #177).
 //
 // Login opens the Hub's `/cli-login` page in a browser, where a signed-in person approves this
 // machine. The page sends the browser back to the CLI on a `localhost` port with a one-time Login
@@ -13,7 +13,7 @@ import {
   CliSignedIn,
   CliWhoAmI,
   normalizeCliLoginCode,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Console, Duration, Effect, Option, Schema } from "effect"
 import { browserOpener } from "./AppSetup.ts"
 import { readCliConfig, writeCliConfig } from "./CliConfig.ts"
@@ -207,11 +207,11 @@ const serveCallback = (state: string) =>
           const given = url.searchParams.get("code")
           if (url.searchParams.get("state") !== state || given === null) {
             return textResponse(
-              "This isn't the sign-in claude-hub login is waiting for. Run claude-hub login again.",
+              "This isn't the sign-in kndl login is waiting for. Run kndl login again.",
               400,
             )
           }
-          if (taken) return textResponse("claude-hub login already has a code.", 409)
+          if (taken) return textResponse("kndl login already has a code.", 409)
           taken = true
           code.resolve(given)
           return outcome.promise
@@ -224,9 +224,7 @@ const serveCallback = (state: string) =>
         settle: (response: Response) => Effect.sync(() => outcome.resolve(response)),
         stop: () =>
           Effect.andThen(
-            Effect.sync(() =>
-              outcome.resolve(textResponse("claude-hub login stopped waiting.", 410)),
-            ),
+            Effect.sync(() => outcome.resolve(textResponse("kndl login stopped waiting.", 410))),
             Effect.promise(() => server.stop(false)),
           ),
       }
@@ -244,8 +242,7 @@ const withDeadline = <A, E, R>(effect: Effect.Effect<A, E | CliFailure, R>) =>
   effect.pipe(
     Effect.timeoutOrElse({
       duration: Duration.millis(CliLoginCodeLifetimeMs),
-      orElse: () =>
-        Effect.fail(fail("Gave up waiting for the sign-in. Run claude-hub login again.")),
+      orElse: () => Effect.fail(fail("Gave up waiting for the sign-in. Run kndl login again.")),
     }),
   )
 
@@ -270,7 +267,7 @@ export const login = (
       const before = readCliConfig(on.configPath)
       const given = options.hub ?? before.hub
       if (given === undefined) {
-        return yield* fail("Say which Hub to sign in to: claude-hub login <hub-url>")
+        return yield* fail("Say which Hub to sign in to: kndl login <hub-url>")
       }
       const hub = hubOrigin(given)
       if (hub === undefined) return yield* fail(`${given} isn't a Hub's http:// or https:// URL.`)
@@ -279,7 +276,7 @@ export const login = (
       const pasteOnly = options.noBrowser || overSsh(on.env)
       if (pasteOnly && !ui.interactive) {
         return yield* fail(
-          "claude-hub login needs a terminal to paste the code into. Run it in one, or without --no-browser on a machine with a browser.",
+          "kndl login needs a terminal to paste the code into. Run it in one, or without --no-browser on a machine with a browser.",
         )
       }
       const askForCode = (message: string) => ui.text({ message, validate: codeProblem })
@@ -292,7 +289,7 @@ export const login = (
         const url = loginPageUrl(hub, { machine: on.machine, challenge })
         yield* ui.note(
           [
-            `Open ${url} in a browser where you can sign in to the Hub, and approve claude-hub on ${on.machine}.`,
+            `Open ${url} in a browser where you can sign in to the Hub, and approve kndl on ${on.machine}.`,
             "The page then shows a code: paste it here.",
           ].join("\n\n"),
           "Sign in to the Hub",
@@ -311,8 +308,8 @@ export const login = (
         yield* ui.note(
           [
             opener === undefined
-              ? `Open ${url} in a browser on this machine, and approve claude-hub on ${on.machine}.`
-              : `Opening ${url} in your browser: approve claude-hub on ${on.machine} there.`,
+              ? `Open ${url} in a browser on this machine, and approve kndl on ${on.machine}.`
+              : `Opening ${url} in your browser: approve kndl on ${on.machine} there.`,
             "If the browser can't come back here once you approve, go back a page there: it shows a code to paste here.",
           ].join("\n\n"),
           "Sign in to the Hub",
@@ -367,7 +364,7 @@ export const login = (
       if (before.hub !== undefined && before.hub !== hub) {
         yield* ui.log(
           "info",
-          `The CLI's Hub is now ${hub}, not ${before.hub}: a claude-hub installed from a Hub updates itself from it.`,
+          `The CLI's Hub is now ${hub}, not ${before.hub}: a kndl installed from a Hub updates itself from it.`,
         )
       }
     }),
@@ -403,13 +400,13 @@ export const whoami = (on: LoginContext) =>
   Effect.gen(function* () {
     const config = readCliConfig(on.configPath)
     if (config.token === undefined || config.hub === undefined) {
-      return yield* fail("The CLI isn't signed in to a Hub: run claude-hub login <hub-url>")
+      return yield* fail("The CLI isn't signed in to a Hub: run kndl login <hub-url>")
     }
     const check = yield* checkToken(config.hub, config.token)
     switch (check._tag) {
       case "Refused":
         return yield* fail(
-          `${config.hub} doesn't accept this machine's CLI token: it was revoked. Run claude-hub login to sign in again.`,
+          `${config.hub} doesn't accept this machine's CLI token: it was revoked. Run kndl login to sign in again.`,
         )
       case "Unreachable":
         return yield* fail(`Couldn't reach the Hub at ${config.hub} (${check.detail}).`)

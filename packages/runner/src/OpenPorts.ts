@@ -12,8 +12,8 @@
 // - A process is named by its program and, for a runtime, its script (`node vite`), never by its
 //   whole command line, whose arguments may hold secrets; `comm` is `MainThread` for Node 22+.
 
-import type { OpenPort, SessionId } from "@claude-hub/protocol"
-import { RunnerToHub } from "@claude-hub/protocol"
+import type { OpenPort, SessionId } from "@kndl/protocol"
+import { RunnerToHub } from "@kndl/protocol"
 import { Context, Data, Duration, Effect, Fiber, Layer, Schedule, Semaphore } from "effect"
 import { HubLink } from "./HubLink.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
@@ -221,7 +221,7 @@ export class OpenPorts extends Context.Service<
     /** Sends each watched Session's Open ports again, as after reconnecting to the Hub. */
     readonly resendAll: Effect.Effect<void>
   }
->()("@claude-hub/runner/OpenPorts") {}
+>()("@kndl/runner/OpenPorts") {}
 
 /** The exec naming the owners of the Sandbox's sockets failed. */
 class SocketOwnersUnknown extends Data.TaggedError("SocketOwnersUnknown")<{

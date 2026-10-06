@@ -1,4 +1,4 @@
-import { HubHealth } from "@claude-hub/protocol"
+import { HubHealth } from "@kndl/protocol"
 import { Effect } from "effect"
 import { HttpRouter, HttpServerResponse } from "effect/http"
 import { SqlClient } from "effect/sql"

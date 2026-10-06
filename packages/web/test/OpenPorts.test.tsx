@@ -70,7 +70,7 @@ const rows = () =>
 test("the short id is a Session id's first 6 characters", () => {
   const summary = { id: "0b9256b9c0609f5a73defb11" } as Parameters<typeof shortSessionId>[0]
   expect(shortSessionId(summary)).toBe("0b9256")
-  expect(forwardCommand(summary)).toBe("claude-hub forward 0b9256")
+  expect(forwardCommand(summary)).toBe("kndl forward 0b9256")
 })
 
 test("lists an Active Session's Open ports, a Docker one labelled, with the command to forward them", async () => {
@@ -88,7 +88,7 @@ test("lists an Active Session's Open ports, a Docker one labelled, with the comm
     "5432docker-proxyDocker0.0.0.0, ::",
   ])
   const command = document.querySelector('[aria-label="Forward command"]')?.textContent
-  expect(command).toBe(`claude-hub forward ${demoSessionId.slice(0, 6)}`)
+  expect(command).toBe(`kndl forward ${demoSessionId.slice(0, 6)}`)
 
   const copied: Array<string> = []
   Object.defineProperty(navigator, "clipboard", {

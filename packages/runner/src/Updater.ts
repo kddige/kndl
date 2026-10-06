@@ -13,9 +13,9 @@ import {
   RunnerToHub,
   type UpdateFailure,
   type UpdateStep,
-} from "@claude-hub/protocol"
-import { thisCheckout } from "@claude-hub/protocol/checkout"
-import { HomeConfig } from "@claude-hub/protocol/home"
+} from "@kndl/protocol"
+import { thisCheckout } from "@kndl/protocol/checkout"
+import { HomeConfig } from "@kndl/protocol/home"
 import { Clock, Context, Effect, Layer, Schema, Semaphore } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { HubLink } from "./HubLink.ts"
@@ -80,7 +80,7 @@ export class Updater extends Context.Service<
      */
     readonly rejected: (hub: BuildVersion | undefined) => Effect.Effect<void>
   }
->()("@claude-hub/runner/Updater") {
+>()("@kndl/runner/Updater") {
   /** For tests and checkouts that never update: a Runner that updates by hand. */
   static readonly manual = (reason = "it runs in a test") =>
     Layer.succeed(
@@ -225,7 +225,7 @@ export const makeUpdater = Effect.fn("makeUpdater")(function* (
             )
       const plan = applyPlan(from, target, onBranch)
       if (plan._tag === "Restart") {
-        // The Hub's machine: `claude-hub update` moved and built the checkout both run. Never
+        // The Hub's machine: `kndl update` moved and built the checkout both run. Never
         // move it back from here.
         yield* report("Restarting")
         const loaded = yield* edge.loadCheck.pipe(Effect.result)
@@ -331,7 +331,7 @@ export const makeUpdater = Effect.fn("makeUpdater")(function* (
       const last = lastUpdateOf(yield* edge.readMarker)
       if (triedRejected === hubVersion.commit || last?.target.commit === hubVersion.commit) {
         return yield* Effect.logError(
-          `The Hub runs ${hubVersion.commit}, which this Runner failed to update to: run \`claude-hub update\` on this machine. Retrying meanwhile.`,
+          `The Hub runs ${hubVersion.commit}, which this Runner failed to update to: run \`kndl update\` on this machine. Retrying meanwhile.`,
         )
       }
       triedRejected = hubVersion.commit

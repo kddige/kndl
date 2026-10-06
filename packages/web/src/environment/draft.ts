@@ -20,7 +20,7 @@ import {
   type ValueNeeded,
   valuesNeededText,
   variableNameProblem,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Redacted } from "effect"
 
 export type VariableKind = "Plain" | "Sensitive" | "Link"
@@ -299,7 +299,7 @@ export function draftProblems(edit: EnvironmentEdit, saved: Saved): DraftProblem
 
 // ── Kept across reloads ────────────────────────────────────────────────────
 
-const storageKey = (repo: string) => `claude-hub:environment-draft:${repo}`
+const storageKey = (repo: string) => `kndl:environment-draft:${repo}`
 
 /** The draft saved for `repo`, if any; never with Sensitive values. */
 export function loadEdit(repo: string): EnvironmentEdit | null {

@@ -35,8 +35,8 @@ import type {
   TestBuild,
   TestBuildId,
   TestBuildResult,
-} from "@claude-hub/protocol"
-import { repoKey, sameRepo } from "@claude-hub/protocol"
+} from "@kndl/protocol"
+import { repoKey, sameRepo } from "@kndl/protocol"
 import type { SignInOptions } from "./config.ts"
 
 /** Where the connection to the Hub is. */

@@ -1,5 +1,5 @@
 // The GitHub App's permissions (issue #86): the one list of what the App needs, which makes the
-// manifest `claude-hub onboard` creates the App from, and the check of the App and each of its
+// manifest `kndl onboard` creates the App from, and the check of the App and each of its
 // installations against it. The docs' list is tested against this one.
 //
 // An App's permissions and its installations' drift apart: changing the App's permissions on
@@ -13,7 +13,7 @@ import {
   describeMissing,
   type InstallationDrift,
   type PermissionAccess,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 
 /** A permission the App needs, and the feature that needs it. */
 export interface RequiredPermission extends AppPermission {
@@ -28,7 +28,7 @@ export interface RequiredPermission extends AppPermission {
 /**
  * Every permission the App needs. Each Session's Sandbox gets a token with all the installation's
  * permissions (ADR 0010), so this is also what Claude can do on a Repo: add a permission only for
- * something claude-hub or a Session needs.
+ * something kndl or a Session needs.
  */
 export const RequiredPermissions: ReadonlyArray<RequiredPermission> = [
   // Runners' clones and WIP pushes, and git in the Sandbox, with the tokens GitHubApp.ts mints.

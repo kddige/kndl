@@ -1,4 +1,4 @@
-import { Participant, ParticipantId } from "@claude-hub/protocol"
+import { Participant, ParticipantId } from "@kndl/protocol"
 import { Clock, Context, Duration, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
@@ -26,7 +26,7 @@ export class SignIns extends Context.Service<
     readonly authenticate: (token: string) => Effect.Effect<Option.Option<Participant>, SqlError>
     readonly signOut: (token: string) => Effect.Effect<void, SqlError>
   }
->()("@claude-hub/hub/SignIns") {
+>()("@kndl/hub/SignIns") {
   static readonly layer = Layer.effect(
     SignIns,
     Effect.gen(function* () {

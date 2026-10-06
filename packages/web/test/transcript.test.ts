@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionLogEntry } from "@claude-hub/protocol"
+import type { SessionLogEntry } from "@kndl/protocol"
 import {
   agentsOf,
   buildTranscript,

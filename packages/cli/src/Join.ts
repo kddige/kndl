@@ -1,7 +1,7 @@
-// `claude-hub runner join '<hub-url>#<code>'`, and `onboard --pair`: what the Hub's answers to a
+// `kndl runner join '<hub-url>#<code>'`, and `onboard --pair`: what the Hub's answers to a
 // redemption and to a connection check mean, decided apart from asking (HubClient.ts asks). The
 // link itself is read by the protocol's parsePairing, which the Runners page writes it for.
-import { Paired, RunnerConnection } from "@claude-hub/protocol"
+import { Paired, RunnerConnection } from "@kndl/protocol"
 import { Schema } from "effect"
 
 /** The Runner name a join asks for when none is given: the host name up to its first dot. */
@@ -28,11 +28,11 @@ export function readPairAnswer(hubUrl: string, status: number, body: unknown): P
   if (status === 200) {
     const paired = decodePaired(body)
     if (paired._tag === "Some") return { _tag: "Paired", paired: paired.value }
-    return refused(`${hubUrl} answered, but not with a Runner token: is it a claude-hub Hub?`)
+    return refused(`${hubUrl} answered, but not with a Runner token: is it a kndl Hub?`)
   }
   if (status === 404) {
     return refused(
-      `${hubUrl} doesn't pair Runners with codes: it runs a claude-hub from before them. Update the Hub (\`claude-hub update\` on its machine), or issue a token there with \`claude-hub runner token <name>\` and run \`claude-hub onboard --role runner --hub-url ${hubUrl} --token <token>\` here.`,
+      `${hubUrl} doesn't pair Runners with codes: it runs a kndl from before them. Update the Hub (\`kndl update\` on its machine), or issue a token there with \`kndl runner token <name>\` and run \`kndl onboard --role runner --hub-url ${hubUrl} --token <token>\` here.`,
     )
   }
   const error = hubError(body)
@@ -74,7 +74,7 @@ export function describeConnectionCheck(check: ConnectionCheck, seconds?: number
     case "Online":
       return `connected to the Hub as ${check.name} (${check.runnerId})`
     case "Offline":
-      return `not connected to the Hub${seconds === undefined ? "" : ` after ${seconds} seconds`}: see \`claude-hub logs runner\``
+      return `not connected to the Hub${seconds === undefined ? "" : ` after ${seconds} seconds`}: see \`kndl logs runner\``
     case "TokenRefused":
       return "the Hub doesn't accept this Runner's token: it was removed, or paired again elsewhere. Pair it again with a new code."
     case "Unsupported":

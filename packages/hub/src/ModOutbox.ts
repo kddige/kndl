@@ -3,7 +3,7 @@ import {
   ModCommandSeq,
   type QueuedModCommand,
   type SessionId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Deferred, type Duration, Effect, Layer } from "effect"
 
 /**
@@ -31,7 +31,7 @@ export class ModOutbox extends Context.Service<
     /** Drops the Session's outbox, as when the Session ends, and answers any waiting poll. */
     readonly clear: (sessionId: SessionId) => Effect.Effect<void>
   }
->()("@claude-hub/hub/ModOutbox") {
+>()("@kndl/hub/ModOutbox") {
   static readonly layer = Layer.sync(ModOutbox, () => {
     interface Outbox {
       lastSeq: number

@@ -71,7 +71,7 @@ describe("hub.env", () => {
       PORT: "7777",
       HUB_PUBLIC_URL: "http://127.0.0.1:7777",
       HUB_INSECURE_COOKIES: undefined,
-      CLAUDE_HUB_DEV_LOGIN: "1",
+      KNDL_DEV_LOGIN: "1",
       HUB_SECRETS_KEY: key,
     })
   })
@@ -93,7 +93,7 @@ describe("hub.env", () => {
       PORT: "8080",
       HUB_PUBLIC_URL: "http://192.168.1.20:8080",
       HUB_INSECURE_COOKIES: "1",
-      CLAUDE_HUB_DEV_LOGIN: undefined,
+      KNDL_DEV_LOGIN: undefined,
     })
   })
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { ModelSwitched, RunnerModels } from "@claude-hub/protocol"
+import type { ModelSwitched, RunnerModels } from "@kndl/protocol"
 import { fakeModels } from "../src/hub/fake/script.ts"
 import {
   effortsOf,

@@ -10,7 +10,7 @@
 //   volume too (ADR 0013), so it survives the Sandbox being made anew.
 
 import { posix } from "node:path"
-import type { SessionId } from "@claude-hub/protocol"
+import type { SessionId } from "@kndl/protocol"
 import type { Mount, SandboxSpec } from "./SandboxBackend.ts"
 
 export const workspaceGuestPath = "/workspace"
@@ -26,7 +26,7 @@ export const hostFromGuest = "host.microsandbox.internal"
  * its config, settings and transcripts. Not under ~/.claude, as microsandbox can't put a volume at
  * a path with a dot in it.
  */
-export const claudeStateGuestPath = "/var/lib/claude-hub/claude"
+export const claudeStateGuestPath = "/var/lib/kndl/claude"
 
 /**
  * The key of the volume holding Claude Code's state. Archiving keeps it, as it keeps the
@@ -39,7 +39,7 @@ export const claudeStateVolumeKey = "claude"
  * `<copy>/` (SessionMod.ts). Not where a Sandbox made before #159 mounted the Runner's own mod, so such a
  * Sandbox is made anew at its next start.
  */
-export const modGuestPath = "/opt/claude-hub/mod"
+export const modGuestPath = "/opt/kndl/mod"
 
 /**
  * The mod's plugins, each loaded with its own `--plugin-dir`: hub-link reports the Session to the
@@ -92,7 +92,7 @@ export const dependencyVolumeKey = (dir: string) =>
  * Where the package caches live. Not ~/.cache: microsandbox can't put a volume at a path with a
  * dot in it, so tools are pointed here through the environment instead.
  */
-export const cacheGuestPath = "/var/cache/claude-hub"
+export const cacheGuestPath = "/var/cache/kndl"
 
 /**
  * Points Bun and npm into the cache volume; most other tools follow XDG_CACHE_HOME. Stored with a

@@ -68,13 +68,13 @@ test("says what the App and each installation lack, linking to where to fix it",
   await eventually(() => expect(banner()).toBeDefined())
   const text = banner()?.textContent ?? ""
   expect(text).toContain("The GitHub App is missing permissions")
-  expect(text).toContain("The App claude-hub-alice lacks Issues: read and write.")
+  expect(text).toContain("The App kndl-alice lacks Issues: read and write.")
   expect(text).toContain(
     "Then, on acme, accept Pull requests: read and write, Issues: read and write.",
   )
   const links = [...(banner()?.querySelectorAll("a") ?? [])]
   expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
-    ["Edit its permissions", "https://github.com/settings/apps/claude-hub-alice/permissions"],
+    ["Edit its permissions", "https://github.com/settings/apps/kndl-alice/permissions"],
     [
       "Review the request",
       "https://github.com/organizations/acme/settings/installations/42/permissions/update",
@@ -90,7 +90,7 @@ test("an installation behind an App that has it all is the only step", async () 
   const { banner } = await open({ ...driftedAppPermissions(), missing: [] })
   await eventually(() => expect(banner()).toBeDefined())
   const text = banner()?.textContent ?? ""
-  expect(text).not.toContain("The App claude-hub-alice lacks")
+  expect(text).not.toContain("The App kndl-alice lacks")
   expect(text).toContain("On acme, accept")
 })
 

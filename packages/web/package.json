@@ -1,5 +1,5 @@
 {
-  "name": "@claude-hub/web",
+  "name": "@kndl/web",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
-    "@claude-hub/protocol": "workspace:*",
+    "@kndl/protocol": "workspace:*",
     "@stylexjs/stylex": "0.19.1",
     "@tanstack/react-router": "1.170.41",
     "@xterm/addon-fit": "0.11.0",

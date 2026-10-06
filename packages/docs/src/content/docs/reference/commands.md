@@ -1,40 +1,40 @@
 ---
 title: Commands
-description: The claude-hub command for installed Hubs and Runners, and the bun run scripts at a checkout's root.
+description: The kndl command for installed Hubs and Runners, and the bun run scripts at a checkout's root.
 sidebar:
   order: 1
 ---
 
-An installed Hub or Runner is run with the [`claude-hub` command](#the-claude-hub-command). A Hub also serves the command, as one binary, to [install from it](#the-claude-hub-command-from-a-hub) on machines that run neither. A checkout, for working on claude-hub itself, is run with the [`bun run` scripts](#scripts-in-a-checkout) at its root.
+An installed Hub or Runner is run with the [`kndl` command](#the-kndl-command). A Hub also serves the command, as one binary, to [install from it](#the-kndl-command-from-a-hub) on machines that run neither. A checkout, for working on kndl itself, is run with the [`bun run` scripts](#scripts-in-a-checkout) at its root.
 
-## The `claude-hub` command
+## The `kndl` command
 
-[install.sh](/how-to/install/#install) writes it to `~/.local/bin/claude-hub`. It runs the CLI from the install, `~/.claude-hub/app`. From a checkout, `bun run cli <command>` runs the same CLI.
+[install.sh](/how-to/install/#install) writes it to `~/.local/bin/kndl`. It runs the CLI from the install, `~/.kndl/app`. From a checkout, `bun run cli <command>` runs the same CLI.
 
-Either way it manages the installed home: `CLAUDE_HUB_HOME`, or else `~/.claude-hub`. It never touches a checkout's dev home. Where there's no install in that home, `status`, `doctor`, `update`, `onboard`, `logs` and `hub|runner install` say so and how to install, and exit 1, without creating anything.
+Either way it manages the installed home: `KNDL_HOME`, or else `~/.kndl`. It never touches a checkout's dev home. Where there's no install in that home, `status`, `doctor`, `update`, `onboard`, `logs` and `hub|runner install` say so and how to install, and exit 1, without creating anything.
 
 | Command | What it does |
 |---|---|
-| `claude-hub onboard` | Sets the machine up as a Hub, a Runner or both: prerequisites, `hub.env` and `runner.env`, builds, services. See [below](#claude-hub-onboard). |
-| `claude-hub status` | What's installed (commit, and the branch it follows or that it's pinned), each service's state, the Hub's URL and `/health`, and whether the Runner is connected. Exits 1 only when there's no install; `doctor` is the check. |
-| `claude-hub logs [hub\|runner] [-f] [-n <lines>]` | Prints the last 100 lines (`-n`) of the service's log, and with `-f` follows it. The role can be left out when the machine has only one. |
-| `claude-hub doctor [--fix] [--yes]` | Checks the prerequisites, the env files and their permissions, that the Hub and Runner accept their configuration, the web UI and mod builds, claude-hub data in the home without its env file, the services, the Hub's health, whether the Runner reaches the Hub, and, with a GitHub App in `hub.env`, that the App and each installation have [the permissions the Hub needs](/how-to/set-up-the-github-app/#keep-the-permissions-in-step), or, with GitHub sign-in on and no App, fails, since no one signed in with GitHub can then see a Session. Prints `ok`, `!!` (a warning) or `XX` (a failure) for each, and exits 1 on a failure. `--fix` repairs what it can, after asking (`--yes` doesn't ask), then checks again. It moves old data aside only when you confirm it in a terminal, even with `--yes`. |
-| `claude-hub update [--ref <ref>] [--no-update-runners] [--now]` | Updates the install: fetches, moves to the target, runs `bun install`, rebuilds the web UI and the mod, rewrites and restarts the installed services, and runs `doctor`. On the Hub's machine, its Runners follow. `upgrade` is the same command. See [below](#claude-hub-update). |
-| `claude-hub uninstall [--purge] [--yes]` | Stops and removes the services, removes the `claude-hub` command and the install, and keeps the home's data. `--purge` removes the whole home. Asks first; without a terminal it needs `--yes`. |
-| `claude-hub hub install\|start\|stop\|status` | The Hub's service. `install` writes the service file and (re)starts it; `stop` stops it until the next `start` or login; `status` exits 1 unless it runs. |
-| `claude-hub runner join '<link>'` | Makes the machine a Runner with a pairing link from the Hub's Runners page, without touching the Hub's machine. See [below](#claude-hub-runner-join). |
-| `claude-hub runner install\|start\|stop\|status` | The same for the Runner's service. |
-| `claude-hub runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. For a Runner the Hub has, it replaces that Runner's token. Run it on the Hub's machine. A [pairing link](#claude-hub-runner-join) needs no access to it. |
-| `claude-hub secrets key` | Prints a new `HUB_SECRETS_KEY`, as [`bun run secrets-key`](#bun-run-secrets-key) does. It changes nothing. |
-| `claude-hub login [<hub>] [--no-browser]` | Signs the CLI in to a Hub as you, approving it in a browser. See [below](#claude-hub-login). |
-| `claude-hub logout` | Signs the CLI out: the Hub revokes its CLI token, and the CLI forgets it. |
-| `claude-hub whoami` | Which Hub the CLI is signed in to, as whom, and on which machine. Exits 1 when it isn't signed in, or the Hub refuses or doesn't answer. |
-| `claude-hub forward [<session>] [<port>...] [--bind <address>]` | Opens a Session's Open ports on `localhost` here, as they open and close, until stopped. See [below](#claude-hub-forward). |
-| `claude-hub secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `claude-hub hub stop` first. Asks first; without a terminal it needs `--yes`. |
+| `kndl onboard` | Sets the machine up as a Hub, a Runner or both: prerequisites, `hub.env` and `runner.env`, builds, services. See [below](#kndl-onboard). |
+| `kndl status` | What's installed (commit, and the branch it follows or that it's pinned), each service's state, the Hub's URL and `/health`, and whether the Runner is connected. Exits 1 only when there's no install; `doctor` is the check. |
+| `kndl logs [hub\|runner] [-f] [-n <lines>]` | Prints the last 100 lines (`-n`) of the service's log, and with `-f` follows it. The role can be left out when the machine has only one. |
+| `kndl doctor [--fix] [--yes]` | Checks the prerequisites, the env files and their permissions, that the Hub and Runner accept their configuration, the web UI and mod builds, kndl data in the home without its env file, the services, the Hub's health, whether the Runner reaches the Hub, and, with a GitHub App in `hub.env`, that the App and each installation have [the permissions the Hub needs](/how-to/set-up-the-github-app/#keep-the-permissions-in-step), or, with GitHub sign-in on and no App, fails, since no one signed in with GitHub can then see a Session. Prints `ok`, `!!` (a warning) or `XX` (a failure) for each, and exits 1 on a failure. `--fix` repairs what it can, after asking (`--yes` doesn't ask), then checks again. It moves old data aside only when you confirm it in a terminal, even with `--yes`. |
+| `kndl update [--ref <ref>] [--no-update-runners] [--now]` | Updates the install: fetches, moves to the target, runs `bun install`, rebuilds the web UI and the mod, rewrites and restarts the installed services, and runs `doctor`. On the Hub's machine, its Runners follow. `upgrade` is the same command. See [below](#kndl-update). |
+| `kndl uninstall [--purge] [--yes]` | Stops and removes the services, removes the `kndl` command and the install, and keeps the home's data. `--purge` removes the whole home. Asks first; without a terminal it needs `--yes`. |
+| `kndl hub install\|start\|stop\|status` | The Hub's service. `install` writes the service file and (re)starts it; `stop` stops it until the next `start` or login; `status` exits 1 unless it runs. |
+| `kndl runner join '<link>'` | Makes the machine a Runner with a pairing link from the Hub's Runners page, without touching the Hub's machine. See [below](#kndl-runner-join). |
+| `kndl runner install\|start\|stop\|status` | The same for the Runner's service. |
+| `kndl runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. For a Runner the Hub has, it replaces that Runner's token. Run it on the Hub's machine. A [pairing link](#kndl-runner-join) needs no access to it. |
+| `kndl secrets key` | Prints a new `HUB_SECRETS_KEY`, as [`bun run secrets-key`](#bun-run-secrets-key) does. It changes nothing. |
+| `kndl login [<hub>] [--no-browser]` | Signs the CLI in to a Hub as you, approving it in a browser. See [below](#kndl-login). |
+| `kndl logout` | Signs the CLI out: the Hub revokes its CLI token, and the CLI forgets it. |
+| `kndl whoami` | Which Hub the CLI is signed in to, as whom, and on which machine. Exits 1 when it isn't signed in, or the Hub refuses or doesn't answer. |
+| `kndl forward [<session>] [<port>...] [--bind <address>]` | Opens a Session's Open ports on `localhost` here, as they open and close, until stopped. See [below](#kndl-forward). |
+| `kndl secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `kndl hub stop` first. Asks first; without a terminal it needs `--yes`. |
 
-`--help` on any command lists its flags, and `--version` prints the commit the CLI runs from, as `claude-hub v<commit>`.
+`--help` on any command lists its flags, and `--version` prints the commit the CLI runs from, as `kndl v<commit>`.
 
-### `claude-hub onboard`
+### `kndl onboard`
 
 Each question has a flag, and a flag that's given isn't asked. Onboard also keeps what `hub.env` and `runner.env` already answer, unless `--reset`.
 
@@ -45,30 +45,30 @@ Each question has a flag, and a flag that's given isn't asked. Onboard also keep
 | `--port <port>` | The Hub's `PORT`, `7777` by default. |
 | `--public-url <url>` | The Hub's `HUB_PUBLIC_URL`. `local` uses `http://127.0.0.1:<port>`; `lan` suggests this machine's network address; `https` needs an `https:` URL. |
 | `--insecure-cookies` | `lan` only: sets `HUB_INSECURE_COOKIES=1`. Off by default. |
-| `--dev-login` | `local` only: sets `CLAUDE_HUB_DEV_LOGIN=1`. |
-| `--github-app create\|manual\|skip` | The GitHub App. `create` creates it on GitHub from claude-hub's manifest, in a browser, and saves its settings and private key; `manual` asks for the settings of an App you made yourself; `skip` leaves `hub.env`'s as they are. Both `create` and `manual` need a terminal. See [Set up the GitHub App](/how-to/set-up-the-github-app/). |
-| `--pair '<link>'` | A Runner's pairing link, from **Add a Runner** or **Re-pair** on the Hub's Runners page: onboard redeems it for the Runner's token and `HUB_URL`, as [`runner join`](#claude-hub-runner-join) does. Instead of `--hub-url` and `--token`; with `--hub-url`, the code alone is enough. Runner only. |
+| `--dev-login` | `local` only: sets `KNDL_DEV_LOGIN=1`. |
+| `--github-app create\|manual\|skip` | The GitHub App. `create` creates it on GitHub from kndl's manifest, in a browser, and saves its settings and private key; `manual` asks for the settings of an App you made yourself; `skip` leaves `hub.env`'s as they are. Both `create` and `manual` need a terminal. See [Set up the GitHub App](/how-to/set-up-the-github-app/). |
+| `--pair '<link>'` | A Runner's pairing link, from **Add a Runner** or **Re-pair** on the Hub's Runners page: onboard redeems it for the Runner's token and `HUB_URL`, as [`runner join`](#kndl-runner-join) does. Instead of `--hub-url` and `--token`; with `--hub-url`, the code alone is enough. Runner only. |
 | `--hub-url <url>` | A Runner's `HUB_URL`, for a Hub on another machine. With `--role both` it's the Hub's loopback URL. |
-| `--token <chr_…>` | A Runner's `RUNNER_TOKEN`, from `claude-hub runner token <name>` on the Hub's machine. With `--role both`, onboard issues one when it's left out. |
+| `--token <chr_…>` | A Runner's `RUNNER_TOKEN`, from `kndl runner token <name>` on the Hub's machine. With `--role both`, onboard issues one when it's left out. |
 | `--runner-name <name>` | The Runner's `RUNNER_NAME`, by default the short hostname. |
 | `--install-prerequisites` | Install what's missing without asking. Some steps use `sudo`. |
 | `--no-services` | Write the settings and build, but don't install or start the services. |
 | `--linger`, `--no-linger` | Linux: run `loginctl enable-linger`, so the services run while you're logged out and start at boot. |
 | `--non-interactive` | Never ask. A yes-or-no question takes its default, and any other missing answer fails with the flag it needs. Onboard also never asks without a terminal. |
 | `--reset` | Ask again instead of keeping the existing settings. Keeps `HUB_SECRETS_KEY`. |
-| `--move-old-data` | When the home holds claude-hub data without its env file, such as a checkout's old `sessions/`, rename each entry to `<name>.old-<YYYYMMDD>` without asking. Nothing is deleted. See [Troubleshooting](/troubleshooting/install/#the-home-holds-old-claude-hub-data). |
+| `--move-old-data` | When the home holds kndl data without its env file, such as a checkout's old `sessions/`, rename each entry to `<name>.old-<YYYYMMDD>` without asking. Nothing is deleted. See [Troubleshooting](/troubleshooting/install/#the-home-holds-old-kndl-data). |
 
 Every yes-or-no flag has a `--no-` form, such as `--no-install-prerequisites`.
 
 Onboard asks every question before it writes anything, and writes each file whole, so Esc or Ctrl-C at a question leaves the home as it was, and exits 130. Ctrl-C during a long step (an install, a build, starting a service) stops that step's command and exits 130 too.
 
-### `claude-hub runner join`
+### `kndl runner join`
 
 ```sh
-claude-hub runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
+kndl runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
 ```
 
-Makes this machine a Runner with a pairing link: **Add a Runner** on the Hub's Runners page makes one, and **Re-pair** one for a Runner that's already there. It's [onboard](#claude-hub-onboard) with `--role runner --pair '<link>'`: it checks the prerequisites, redeems the code with the Hub (`POST /runner/pair`) for the Runner's token, writes `runner.env` whole, installs and starts the Runner's service, and asks the Hub (`GET /runner/connection`) until it says the Runner is connected, for up to 30 seconds.
+Makes this machine a Runner with a pairing link: **Add a Runner** on the Hub's Runners page makes one, and **Re-pair** one for a Runner that's already there. It's [onboard](#kndl-onboard) with `--role runner --pair '<link>'`: it checks the prerequisites, redeems the code with the Hub (`POST /runner/pair`) for the Runner's token, writes `runner.env` whole, installs and starts the Runner's service, and asks the Hub (`GET /runner/connection`) until it says the Runner is connected, for up to 30 seconds.
 
 | Flag | Answers |
 |---|---|
@@ -78,17 +78,17 @@ Makes this machine a Runner with a pairing link: **Add a Runner** on the Hub's R
 | `--no-services` | Write `runner.env` and build, but don't install or start the service. |
 | `--linger`, `--no-linger` | Linux: keep the service running while you're logged out. |
 | `--non-interactive` | Never ask. |
-| `--move-old-data` | As for [onboard](#claude-hub-onboard). |
+| `--move-old-data` | As for [onboard](#kndl-onboard). |
 
-The code is redeemed before anything is installed or built, so a later step that fails doesn't waste it: `claude-hub onboard` finishes the job with the token `runner.env` already holds. A code that can't be used fails before anything is written. See [Troubleshooting](/troubleshooting/runners/#the-pairing-code-cant-be-used).
+The code is redeemed before anything is installed or built, so a later step that fails doesn't waste it: `kndl onboard` finishes the job with the token `runner.env` already holds. A code that can't be used fails before anything is written. See [Troubleshooting](/troubleshooting/runners/#the-pairing-code-cant-be-used).
 
-### `claude-hub update`
+### `kndl update`
 
 | Command | What it does |
 |---|---|
-| `claude-hub update` | Moves to the latest commit of the branch the install follows, `main` by default. A pinned install stays where it is, and says how to follow `main` again. |
-| `claude-hub update --ref <branch>` | Moves to that branch, and follows it from then on. `--branch` is the same flag. |
-| `claude-hub update --ref <tag or commit>` | Moves to it, and pins the install there. |
+| `kndl update` | Moves to the latest commit of the branch the install follows, `main` by default. A pinned install stays where it is, and says how to follow `main` again. |
+| `kndl update --ref <branch>` | Moves to that branch, and follows it from then on. `--branch` is the same flag. |
+| `kndl update --ref <tag or commit>` | Moves to it, and pins the install there. |
 | `--no-update-runners` | On the Hub's machine: leaves Runners on other machines on their commit. The Runner on this machine follows anyway, as it shares the install. |
 | `--now` | Runners following the Hub stop their running Turns at once, rather than giving them up to ten minutes to end. |
 
@@ -96,22 +96,22 @@ The install's checkout belongs to the CLI: `update` discards changes made in it.
 
 On the Hub's machine, `update` leaves the Hub a note of its new commit before restarting it, and the restarted Hub asks each connected Runner that updates itself to follow ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)): the Runner checks the commit is on `origin/main`, the Hub puts its Sessions to sleep, and it moves, builds and restarts. The Runner on the Hub's machine is drained the same way rather than restarted under its Sessions; `update` restarts it at once instead when it can't follow (it's from before Runners followed the Hub, or its service file changed). Its running Sessions keep the copy of the mod each started with, so the mod `update` has already rebuilt in the checkout doesn't reach a Turn still running. On a machine with only a Runner, `update` moves that Runner and restarts it.
 
-### `claude-hub login`
+### `kndl login`
 
 Signs the CLI in to a Hub, as the person who approves it there; see [Sign in the CLI](/how-to/sign-in-the-cli/). It works on any machine, with or without an install, and for any account on the Hub.
 
 | Argument or flag | What it does |
 |---|---|
-| `<hub>` | The Hub's URL, its `HUB_PUBLIC_URL`. A URL without a scheme is read as `https://`. Default: the Hub in `cli.json`, the one a `claude-hub` [installed from a Hub](#the-claude-hub-command-from-a-hub) came from. |
+| `<hub>` | The Hub's URL, its `HUB_PUBLIC_URL`. A URL without a scheme is read as `https://`. Default: the Hub in `cli.json`, the one a `kndl` [installed from a Hub](#the-kndl-command-from-a-hub) came from. |
 | `--no-browser` | Doesn't wait for a browser on this machine: prints the sign-in page's address, and asks for the code the page shows. Needs a terminal. Over SSH (`SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` set), it does this anyway. |
 
 Without `--no-browser`, it opens the Hub's `/cli-login` page in the browser (`open` on macOS, `xdg-open` on Linux with a display) and waits on a free port on `127.0.0.1` for the page to send the browser back with a Login code. In a terminal, it also asks for the code, in case the browser can't come back. It waits up to 10 minutes, as long as a Login code lasts.
 
 It trades the code for a CLI token, named after the machine's short hostname, and writes the Hub's URL and the token to [`cli.json`](/reference/files-and-paths/), readable only by you. The CLI is signed in to one Hub at a time: signing in again replaces the token, and the Hub revokes the one before. The token is never printed.
 
-`claude-hub logout` asks the Hub to revoke the token, and removes it from `cli.json`, keeping the Hub's URL. When the Hub can't be reached, it removes the token anyway and says to revoke the machine under **CLI tokens** on your **Account** page.
+`kndl logout` asks the Hub to revoke the token, and removes it from `cli.json`, keeping the Hub's URL. When the Hub can't be reached, it removes the token anyway and says to revoke the machine under **CLI tokens** on your **Account** page.
 
-### `claude-hub forward`
+### `kndl forward`
 
 Forwards a Session's Open ports to this machine, as the person the CLI is signed in as; see [Forward a Session's ports](/how-to/forward-a-sessions-ports/). It runs in the foreground until stopped. It works on any machine where the CLI is signed in, with or without an install.
 
@@ -125,7 +125,7 @@ Each connection to a forwarded port is a [tunnel](/reference/protocol/#tunnels) 
 
 In a terminal, it redraws the list as it changes. Esc closes the Session's forward and goes back to the picker, and Ctrl-C stops, exiting 0. Without a terminal it prints a line for each change. It exits 1, saying why, when the Session goes to sleep, is archived or can't be woken, when the CLI token is revoked, or when you lose access to the Session's Repo. When the Hub restarts or can't be reached, it keeps the ports open and reconnects.
 
-## The `claude-hub` command from a Hub
+## The `kndl` command from a Hub
 
 A Hub serves the same CLI, built from the commit it runs with `bun build --compile` into one binary, for macOS and Linux on arm64 and x64. Install it with the Hub's install script; see [Install the CLI from a Hub](/how-to/install-the-cli-from-a-hub/).
 
@@ -133,9 +133,9 @@ A Hub serves the same CLI, built from the commit it runs with `bun build --compi
 curl -fsSL https://hub.example.com/cli | sh
 ```
 
-It has the same commands, but runs none of the ones above that set up and run a Hub or a Runner from an install's checkout: only `login`, `logout`, `whoami` and `forward`. Each says it needs a claude-hub install and how to get one, or, on a machine with an install, which command runs it, and exits 1. `--help` and `--version` work.
+It has the same commands, but runs none of the ones above that set up and run a Hub or a Runner from an install's checkout: only `login`, `logout`, `whoami` and `forward`. Each says it needs a kndl install and how to get one, or, on a machine with an install, which command runs it, and exits 1. `--help` and `--version` work.
 
-Each run first asks the Hub it was installed from for its commit, waiting up to two seconds. When the Hub runs another commit, it downloads that commit's binary, checks that it runs, renames it over itself and runs the command again. [`CLAUDE_HUB_NO_SELF_UPDATE`](/reference/configuration/#the-claude-hub-command-from-a-hub) turns that off. The CLI from an install never updates itself: `claude-hub update` updates it with the install.
+Each run first asks the Hub it was installed from for its commit, waiting up to two seconds. When the Hub runs another commit, it downloads that commit's binary, checks that it runs, renames it over itself and runs the command again. [`KNDL_NO_SELF_UPDATE`](/reference/configuration/#the-kndl-command-from-a-hub) turns that off. The CLI from an install never updates itself: `kndl update` updates it with the install.
 
 The Hub serves it on these routes, with no sign-in:
 
@@ -143,15 +143,15 @@ The Hub serves it on these routes, with no sign-in:
 |---|---|
 | `GET /cli` | The install script, with the Hub's `HUB_PUBLIC_URL` origin in it. |
 | `GET /cli/version` | `{"commit":"<commit>"}`: the commit the Hub serves the CLI at, its own. `503` when the Hub doesn't run from a git checkout. |
-| `GET /cli/<os>-<arch>` | The binary, for `darwin-arm64`, `darwin-x64`, `linux-x64` or `linux-arm64`, with its commit in the `x-claude-hub-commit` header. Any other platform is a `404`. The Hub builds a platform's binary the first time it's asked for, one build at a time, and keeps it in `<home>/cli/<commit>/`. |
+| `GET /cli/<os>-<arch>` | The binary, for `darwin-arm64`, `darwin-x64`, `linux-x64` or `linux-arm64`, with its commit in the `x-kndl-commit` header. Any other platform is a `404`. The Hub builds a platform's binary the first time it's asked for, one build at a time, and keeps it in `<home>/cli/<commit>/`. |
 
-The install script and the binary read [their own variables](/reference/configuration/#the-claude-hub-command-from-a-hub).
+The install script and the binary read [their own variables](/reference/configuration/#the-kndl-command-from-a-hub).
 
 ## Scripts in a checkout
 
-Every script runs from the root of a claude-hub checkout. They keep their state in the dev home, `~/.claude-hub-dev`, and the Hub's settings in `packages/hub/.env.local`.
+Every script runs from the root of a kndl checkout. They keep their state in the dev home, `~/.kndl-dev`, and the Hub's settings in `packages/hub/.env.local`.
 
-### Running claude-hub
+### Running kndl
 
 | Command | What it does |
 |---|---|
@@ -159,7 +159,7 @@ Every script runs from the root of a claude-hub checkout. They keep their state 
 | `bun run runner` | Builds the mod, then starts a Runner. Needs `RUNNER_TOKEN`. |
 | `bun run web` | Starts Vite's dev server for the web UI on <http://localhost:5173>, passing `/auth`, `/health`, `/runner/` and `/ws` through to the Hub. |
 | `bun run web:build` | Builds the web UI into `packages/web/dist`, which the Hub serves. |
-| `bun run cli <command>` | Runs the [`claude-hub` command](#the-claude-hub-command) from the checkout. It manages the installed home, not the dev home. |
+| `bun run cli <command>` | Runs the [`kndl` command](#the-kndl-command) from the checkout. It manages the installed home, not the dev home. |
 
 ### Setting up
 
@@ -187,7 +187,7 @@ For when `HUB_SECRETS_KEY` is lost, and the Hub refuses to start without it. Cle
 
 ```
 This clears 3 Sensitive values, keeping each variable, its "available at build" and its Links:
-  - kddige/claude-hub: NPM_TOKEN, ANTHROPIC_API_KEY
+  - kddige/kndl: NPM_TOKEN, ANTHROPIC_API_KEY
   - shared variables: GITHUB_TOKEN
 Each then needs a value: the Sessions of a Repo that has, or links, one don't start until it gets one.
 It also drops the record of 1 Test build: the lost key protects them.
@@ -207,7 +207,7 @@ A running Hub holds `hub.db.lock`, beside the database, so the reset knows it ru
 
 | Command | What it does |
 |---|---|
-| `bun test` | Runs every package's tests. `CLAUDE_HUB_SANDBOX_IT=1` adds the ones that boot real Sandboxes. |
+| `bun test` | Runs every package's tests. `KNDL_SANDBOX_IT=1` adds the ones that boot real Sandboxes. |
 | `bun run typecheck` | Runs each package's `typecheck` script: `tsc --noEmit` for the Hub, Runner, CLI, protocol and web UI, a script for the mod, and `astro check` for this site. |
 | `bun run lint` | Lints with oxlint; a warning fails it. |
 | `bun run format` | Formats with oxfmt. `bun run format:check` only checks. |
@@ -218,6 +218,6 @@ A running Hub holds `hub.db.lock`, beside the database, so the reset knows it ru
 
 | Command | What it does |
 |---|---|
-| `bun run docs:dev` | Serves this site with hot reload on <http://localhost:4321/claude-hub/>. |
+| `bun run docs:dev` | Serves this site with hot reload on <http://localhost:4321/kndl/>. |
 | `bun run docs:build` | Builds it into `packages/docs/dist`. |
-| `bun run --filter @claude-hub/docs brand` | Makes the logo's PNG and ICO files from the SVGs in `brand/`, and copies the favicons into the site's and the web UI's `public/` folders. |
+| `bun run --filter @kndl/docs brand` | Makes the logo's PNG and ICO files from the SVGs in `brand/`, and copies the favicons into the site's and the web UI's `public/` folders. |

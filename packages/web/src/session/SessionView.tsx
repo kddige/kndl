@@ -6,7 +6,7 @@ import {
   type SessionStateChanged,
   type SessionSummary,
   sessionTitle,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useNavigate } from "@tanstack/react-router"
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"

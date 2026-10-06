@@ -6,7 +6,7 @@ import {
   type Participant,
   type RepoName,
   type SessionSummary,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Effect, Layer } from "effect"
 import { GitHubApp, noreplyEmail } from "./GitHubApp.ts"
 
@@ -41,7 +41,7 @@ export class SessionGit extends Context.Service<
      */
     readonly cloneAccess: (repo: RepoName) => Effect.Effect<GitAnswer>
   }
->()("@claude-hub/hub/SessionGit") {
+>()("@kndl/hub/SessionGit") {
   static readonly layer = Layer.effect(
     SessionGit,
     Effect.gen(function* () {

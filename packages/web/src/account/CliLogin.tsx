@@ -1,4 +1,4 @@
-// The pages `claude-hub login` opens (issue #179). `/cli-login` asks the signed-in person to approve
+// The pages `kndl login` opens (issue #179). `/cli-login` asks the signed-in person to approve
 // the CLI on a machine, and gets a Login code for it. With the CLI's `port`, the browser then goes
 // back to the CLI on `localhost` with the code, and the CLI trades it for its token; when the
 // browser can't reach it, as when the CLI runs over SSH, going back a page shows the code to paste.
@@ -11,7 +11,7 @@ import {
   formatCliLoginCode,
   MachineName,
   type Participant,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { Schema } from "effect"
@@ -71,7 +71,7 @@ const styles = stylex.create({
   error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
 })
 
-/** What `claude-hub login` put in the page's address. */
+/** What `kndl login` put in the page's address. */
 export interface CliLoginSearch {
   machine?: string
   challenge?: string
@@ -124,7 +124,7 @@ export function callbackUrl(callback: { port: number; state: string }, code: str
 
 // The code is kept in this tab while it is good, keyed by the CLI's challenge: going back a page
 // after the browser couldn't reach the CLI shows it again, rather than approving a second time.
-const storedPrefix = "claude-hub:cli-login:"
+const storedPrefix = "kndl:cli-login:"
 
 function storedCode(challenge: string): CliLoginApproved | undefined {
   try {
@@ -173,7 +173,7 @@ type Step =
       readonly sending: boolean
     }
 
-/** `/cli-login`: approve `claude-hub login` on a machine. */
+/** `/cli-login`: approve `kndl login` on a machine. */
 export function CliLoginPage({
   search,
   goTo = (url) => window.location.assign(url),
@@ -216,7 +216,7 @@ export function CliLoginPage({
     return (
       <AuthCard
         title="This sign-in link isn't whole"
-        lede="Run claude-hub login again, and open the link it prints as it is."
+        lede="Run kndl login again, and open the link it prints as it is."
       />
     )
   }
@@ -232,8 +232,8 @@ export function CliLoginPage({
         title="Not approved"
         lede={
           <>
-            claude-hub on {machineName} isn't signed in. Stop claude-hub login there with Ctrl-C,
-            and close this tab.
+            kndl on {machineName} isn't signed in. Stop kndl login there with Ctrl-C, and close this
+            tab.
           </>
         }
       />
@@ -256,7 +256,7 @@ export function CliLoginPage({
       return (
         <SignIn
           options={signedIn.options}
-          lede={`Sign in to approve claude-hub on ${machine}.`}
+          lede={`Sign in to approve kndl on ${machine}.`}
           returnTo={`${window.location.pathname}${window.location.search}`}
           onSignedIn={check}
         />
@@ -287,10 +287,10 @@ export function CliLoginPage({
   return (
     <AuthCard
       wide
-      title={<>Sign in claude-hub on {machine}?</>}
+      title={<>Sign in kndl on {machine}?</>}
       lede={
         <>
-          claude-hub login on {machineName} asks to act on this Hub as you,{" "}
+          kndl login on {machineName} asks to act on this Hub as you,{" "}
           <span {...stylex.props(styles.strong)}>
             {you.name === you.login ? `@${you.login}` : `${you.name} (@${you.login})`}
           </span>
@@ -300,8 +300,8 @@ export function CliLoginPage({
       }
     >
       <Banner intent="warning" icon={<WarningIcon />} title="Only if you ran it yourself">
-        Approve only if you just ran claude-hub login on {machine}. Someone who sent you this link
-        could act as you.
+        Approve only if you just ran kndl login on {machine}. Someone who sent you this link could
+        act as you.
       </Banner>
       {error && (
         <p role="alert" {...stylex.props(styles.error)}>
@@ -355,19 +355,18 @@ function ApprovedCard({
       title={sending ? "Approved" : "Paste this code in the terminal"}
       lede={
         sending ? (
-          <>Sending you back to claude-hub on {machine}…</>
+          <>Sending you back to kndl on {machine}…</>
         ) : (
           <>
-            claude-hub login on <span {...stylex.props(styles.strong)}>{machine}</span> is waiting
-            for it.
+            kndl login on <span {...stylex.props(styles.strong)}>{machine}</span> is waiting for it.
           </>
         )
       }
     >
       {sending && (
         <p {...stylex.props(styles.note)}>
-          If the browser can't reach it, as when claude-hub runs over SSH, paste this code in the
-          terminal instead:
+          If the browser can't reach it, as when kndl runs over SSH, paste this code in the terminal
+          instead:
         </p>
       )}
       <div {...stylex.props(styles.codeRow)}>
@@ -380,7 +379,7 @@ function ApprovedCard({
       </div>
       <p {...stylex.props(styles.note)}>
         It works once, for the next {minutes === 1 ? "minute" : `${minutes} minutes`}, and only for
-        the claude-hub login that asked for it. Then close this tab.
+        the kndl login that asked for it. Then close this tab.
       </p>
     </AuthCard>
   )
@@ -391,10 +390,10 @@ export function CliLoginDonePage({ machine }: { machine?: string }) {
   useEffect(forgetCodes, [])
   return (
     <AuthCard
-      title="claude-hub is signed in"
+      title="kndl is signed in"
       lede={
         <>
-          claude-hub
+          kndl
           {machine !== undefined && (
             <>
               {" "}

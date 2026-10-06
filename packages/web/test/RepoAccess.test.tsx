@@ -81,7 +81,7 @@ test("New Session says, as the Repo is entered, that the App isn't installed on 
     ),
   )
   const link = [...dialog().querySelectorAll("a")].find((a) => a.textContent === "Install the App")
-  expect(link?.getAttribute("href")).toBe("https://github.com/apps/claude-hub/installations/new")
+  expect(link?.getAttribute("href")).toBe("https://github.com/apps/kndl/installations/new")
   expect(link?.getAttribute("target")).toBe("_blank")
   expect(field.getAttribute("aria-invalid")).toBe("true")
 
@@ -108,12 +108,12 @@ test("New Session says when the person has no access to the Repo", async () => {
 
 test("New Session checks a Repo once typing pauses, and says nothing of one in reach", async () => {
   const { hub, dialog, field } = await enterRepo("kddige/claude-h")
-  await step(() => typeInto(field, "kddige/claude-hub"))
+  await step(() => typeInto(field, "kddige/kndl"))
   await eventually(() =>
     expect(hub.received.filter((message) => message._tag === "CheckRepo")).toHaveLength(1),
   )
   expect(hub.received).toContainEqual(
-    expect.objectContaining({ _tag: "CheckRepo", repo: "kddige/claude-hub" }),
+    expect.objectContaining({ _tag: "CheckRepo", repo: "kddige/kndl" }),
   )
   expect(field.getAttribute("aria-invalid")).not.toBe("true")
   expect(dialog().textContent).not.toContain("access")
@@ -126,17 +126,17 @@ test("an Environment screen says why the person can't use its Repo", async () =>
       "The GitHub App isn't installed on someone-else/their-repo, or there's no such Repo.",
     ),
   )
-  const install = 'a[href="https://github.com/apps/claude-hub/installations/new"]'
+  const install = 'a[href="https://github.com/apps/kndl/installations/new"]'
   expect(page.querySelector(install)).not.toBeNull()
 })
 
 test("an Environment screen goes once the person loses access to its Repo", async () => {
-  const { hub, page } = await open("/repos/kddige/claude-hub/environment")
+  const { hub, page } = await open("/repos/kddige/kndl/environment")
   await eventually(() => expect(page.textContent).toContain("Version 2"))
 
-  await step(() => hub.revokeRepo("kddige/claude-hub"))
+  await step(() => hub.revokeRepo("kddige/kndl"))
   await eventually(() =>
-    expect(page.textContent).toContain("You don't have access to kddige/claude-hub on GitHub."),
+    expect(page.textContent).toContain("You don't have access to kddige/kndl on GitHub."),
   )
   expect(page.textContent).not.toContain("Version 2")
 })

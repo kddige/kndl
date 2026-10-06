@@ -1,4 +1,4 @@
-// `claude-hub forward` (#180, ADR 0016): see Forward.ts in the protocol.
+// `kndl forward` (#180, ADR 0016): see Forward.ts in the protocol.
 //
 // - `GET /ws/forward/<session id>`, by a CLI token only: a forward is presence, named after the
 //   machine the token is. The caller's access to the Session's Repo is checked as for a tunnel
@@ -16,7 +16,7 @@ import {
   HubToForward,
   ProtocolVersion,
   SessionId,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Effect } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"

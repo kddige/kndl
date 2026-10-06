@@ -2,17 +2,17 @@ import { describe, expect, test } from "bun:test"
 import { isWrapperFor, resolveLayout, shellQuote, wrapperScript } from "./Layout.ts"
 
 describe("the installed home", () => {
-  test("is ~/.claude-hub by default, never the dev home", () => {
+  test("is ~/.kndl by default, never the dev home", () => {
     const layout = resolveLayout({}, "/Users/ada")
 
-    expect(layout.home.dir).toBe("/Users/ada/.claude-hub")
-    expect(layout.home.tmuxSocket).toBe("claude-hub")
-    expect(layout.app).toBe("/Users/ada/.claude-hub/app")
-    expect(layout.wrapper).toBe("/Users/ada/.local/bin/claude-hub")
+    expect(layout.home.dir).toBe("/Users/ada/.kndl")
+    expect(layout.home.tmuxSocket).toBe("kndl")
+    expect(layout.app).toBe("/Users/ada/.kndl/app")
+    expect(layout.wrapper).toBe("/Users/ada/.local/bin/kndl")
   })
 
-  test("is CLAUDE_HUB_HOME when set", () => {
-    const layout = resolveLayout({ CLAUDE_HUB_HOME: "/srv/hub" }, "/Users/ada")
+  test("is KNDL_HOME when set", () => {
+    const layout = resolveLayout({ KNDL_HOME: "/srv/hub" }, "/Users/ada")
 
     expect(layout.home.dir).toBe("/srv/hub")
     expect(layout.envFile("runner")).toBe("/srv/hub/runner.env")
@@ -21,17 +21,17 @@ describe("the installed home", () => {
   })
 })
 
-describe("the claude-hub wrapper", () => {
-  test("runs the home's CLI with Bun, in this home unless CLAUDE_HUB_HOME says otherwise", () => {
+describe("the kndl wrapper", () => {
+  test("runs the home's CLI with Bun, in this home unless KNDL_HOME says otherwise", () => {
     const script = wrapperScript(resolveLayout({}, "/Users/ada"), "/Users/ada/.bun/bin/bun")
 
     expect(script).toBe(
       [
         "#!/bin/sh",
-        "# claude-hub: written by install.sh. Runs the CLI from the installed checkout.",
-        ': "${CLAUDE_HUB_HOME:=/Users/ada/.claude-hub}"',
-        "export CLAUDE_HUB_HOME",
-        'exec /Users/ada/.bun/bin/bun "$CLAUDE_HUB_HOME/app/packages/cli/src/main.ts" "$@"',
+        "# kndl: written by install.sh. Runs the CLI from the installed checkout.",
+        ': "${KNDL_HOME:=/Users/ada/.kndl}"',
+        "export KNDL_HOME",
+        'exec /Users/ada/.bun/bin/bun "$KNDL_HOME/app/packages/cli/src/main.ts" "$@"',
         "",
       ].join("\n"),
     )
@@ -39,7 +39,7 @@ describe("the claude-hub wrapper", () => {
 
   test("is recognised whichever Bun it runs, but only for its own home", () => {
     const layout = resolveLayout({}, "/Users/ada")
-    const other = resolveLayout({ CLAUDE_HUB_HOME: "/srv/hub" }, "/Users/ada")
+    const other = resolveLayout({ KNDL_HOME: "/srv/hub" }, "/Users/ada")
     const script = wrapperScript(layout, "/opt/homebrew/bin/bun")
 
     expect(isWrapperFor(script, layout)).toBe(true)

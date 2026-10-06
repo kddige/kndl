@@ -1,6 +1,6 @@
 // The Account page against the fake Hub: pasting a Claude credential, which the fake checks as the
 // Hub does, seeing it write-only once saved, and removing it (ADR 0015); and listing and revoking
-// the CLI tokens `claude-hub login` made (issue #179). Every secret is made up.
+// the CLI tokens `kndl login` made (issue #179). Every secret is made up.
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -169,6 +169,6 @@ test("without CLI tokens, shows the command that signs the CLI in", async () => 
   await openAccount({ cliTokens: [] })
   await eventually(() => expect(tokensSection()?.textContent).toContain("None yet"))
   const command = tokensSection()?.querySelector('[aria-label="Sign-in command"]')
-  expect(command?.textContent).toBe(`claude-hub login ${window.location.origin}`)
+  expect(command?.textContent).toBe(`kndl login ${window.location.origin}`)
   expect(tokenList()).toBeNull()
 })

@@ -3,7 +3,7 @@ import type { SessionId } from "./Ids.ts"
 import { SessionSummary } from "./Session.ts"
 import { CurrentProtocolVersion } from "./Version.ts"
 
-// `claude-hub forward` (#180, ADR 0016): a Session's Open ports on the machine the CLI runs on.
+// `kndl forward` (#180, ADR 0016): a Session's Open ports on the machine the CLI runs on.
 // The CLI, signed in with a CLI token, keeps one WebSocket to the Hub per Session it forwards:
 //
 // - `GET /ws/forward/<session id>`, with the CLI token as `Authorization: Bearer`, checked with
@@ -57,7 +57,7 @@ export const ForwardToHub = Schema.Never
 export const ForwardCloseCode = {
   /** The Hub is shutting down. */
   GoingAway: 1001,
-  /** The CLI token was revoked: on the Account page, or by `claude-hub logout`. */
+  /** The CLI token was revoked: on the Account page, or by `kndl logout`. */
   SignedOut: 4401,
   /**
    * No such Session, or none the caller may reach: alike, as for joining one (ADR 0003). Also once

@@ -1,11 +1,11 @@
 ---
-title: How claude-hub works
+title: How kndl works
 description: The Hub, Runners, Sandboxes and the mod, how a prompt travels between them, and how Claude Code runs in the Sandbox while the Claude credential stays on the Runner.
 sidebar:
   order: 1
 ---
 
-claude-hub lets a team run Claude Code Sessions on their own machines and work in them together from a browser, the way two people pair-program at one screen. It has three kinds of part.
+kndl lets a team run Claude Code Sessions on their own machines and work in them together from a browser, the way two people pair-program at one screen. It has three kinds of part.
 
 ```mermaid
 flowchart LR
@@ -50,15 +50,15 @@ Because the Hub holds the queue, Participants can send prompts while a Turn runs
 Each Session's Claude Code runs inside its Sandbox, so its tools run where it runs and nothing is routed ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Bash, Read, Edit, WebFetch, the `!` shortcut, hooks, the Repo's `settings.json`, skills, nested `CLAUDE.md` files and Claude Code's own subagents all behave as they do on a laptop, and all of them stay in the VM.
 
 - **It runs in tmux in the VM,** started through the Sandbox backend's own exec, in `/workspace` with Claude Code's normal setting sources and `--dangerously-skip-permissions` ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). Claude runs as root there, so the Runner sets `IS_SANDBOX=1`.
-- **Its state is on a disk of the Session's own,** `/var/lib/claude-hub/claude`, as `CLAUDE_CONFIG_DIR`. The conversation, `--resume` and Claude Code's settings survive sleep. Before each start the Runner seeds it with onboarding done, `/workspace` trusted and bypass-permissions mode accepted, so no dialog waits for a person.
+- **Its state is on a disk of the Session's own,** `/var/lib/kndl/claude`, as `CLAUDE_CONFIG_DIR`. The conversation, `--resume` and Claude Code's settings survive sleep. Before each start the Runner seeds it with onboarding done, `/workspace` trusted and bypass-permissions mode accepted, so no dialog waits for a person.
 - **It holds no Claude credential.** It sends every request to the Runner's [credential proxy](/explanation/security-model/#the-credential-proxy) with a token for its Session alone, and the proxy puts the real credential in its place. The token is given to the Claude Code process, never written to the VM.
-- **The mod loads read-only** from `/opt/claude-hub/mod`, each of its plugins with its own `--plugin-dir`, and reaches the Hub through the same proxy, which adds the Session's mod token on the way. It is the Session's own copy of the Runner's mod, made each time Claude Code starts, so an update never changes the mod under a running Turn: a new mod reaches each Session at its next start, wake or change of model ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/#what-a-running-sessions-claude-code-loads-amended-in-159)).
+- **The mod loads read-only** from `/opt/kndl/mod`, each of its plugins with its own `--plugin-dir`, and reaches the Hub through the same proxy, which adds the Session's mod token on the way. It is the Session's own copy of the Runner's mod, made each time Claude Code starts, so an update never changes the mod under a running Turn: a new mod reaches each Session at its next start, wake or change of model ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/#what-a-running-sessions-claude-code-loads-amended-in-159)).
 - **Auto memory is off.** Each Session has its own state, so Sessions would never share what it remembers.
 - **Agent view is off.** One Claude Code runs the Session. A background job of Claude Code's, from its agent view, `/background` or `--bg`, would be a second one that runs each prompt again. The mod's plugins don't link to the Hub from such a process either.
 
 ### How the Sandbox gets `claude`
 
-The Runner downloads the Linux build of a pinned Claude Code version from the npm registry once, checks it against the registry's integrity hash, keeps it in the home's `claude-code/` ([Files and paths](/reference/files-and-paths/)), and mounts it read-only into every Sandbox at `/opt/claude-hub/claude-code`. There is a musl build, for Alpine-like images, and a glibc build, for Debian, Ubuntu and the like; an Environment's build checks its image and records which one its Sandboxes use.
+The Runner downloads the Linux build of a pinned Claude Code version from the npm registry once, checks it against the registry's integrity hash, keeps it in the home's `claude-code/` ([Files and paths](/reference/files-and-paths/)), and mounts it read-only into every Sandbox at `/opt/kndl/claude-code`. There is a musl build, for Alpine-like images, and a glibc build, for Debian, Ubuntu and the like; an Environment's build checks its image and records which one its Sandboxes use.
 
 The version is pinned rather than following the host's, because Claude Code learns its plan from variables that are not a public interface. A new version is pinned only after a smoke test passes: its banner names the plan, `/status` answers, and a Turn runs a Bash command.
 

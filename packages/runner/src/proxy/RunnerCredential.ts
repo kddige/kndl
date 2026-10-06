@@ -14,7 +14,7 @@ import {
   type ClaudePlan,
   ClaudeSubscriptionType,
   credentialFromSecret,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Context, Data, Effect, Layer, Schema, Semaphore } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { accountFromClaudeConfig, claudeConfigPath, planFromClaudeConfig } from "../ClaudeConfig.ts"
@@ -134,7 +134,7 @@ export class RunnerCredential extends Context.Service<
     /** Reads it as `current` does, and says where it came from. */
     readonly describe: Effect.Effect<CredentialRead, NoClaudeCredential>
   }
->()("@claude-hub/runner/RunnerCredential") {}
+>()("@kndl/runner/RunnerCredential") {}
 
 /** Claude Code's login is read again this long before it expires. */
 const refreshMargin = 5 * 60_000

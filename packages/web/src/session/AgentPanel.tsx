@@ -1,4 +1,4 @@
-import type { AgentId, SessionSummary } from "@claude-hub/protocol"
+import type { AgentId, SessionSummary } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useHub } from "../app/hub.tsx"
 import type { AgentView } from "../hub/transcript.ts"

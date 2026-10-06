@@ -36,7 +36,7 @@ export const pageCacheControl = "no-cache"
 export const notBuiltMessage = [
   "The Hub's web UI isn't built.",
   "",
-  "Run `bun run web:build` in the claude-hub checkout, then reload this page.",
+  "Run `bun run web:build` in the kndl checkout, then reload this page.",
   "In development, run `bun run web` instead and open http://localhost:5173.",
 ].join("\n")
 

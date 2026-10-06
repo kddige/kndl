@@ -1,5 +1,5 @@
 {
-  "name": "@claude-hub/docs",
+  "name": "@kndl/docs",
   "private": true,
   "type": "module",
   "scripts": {

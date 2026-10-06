@@ -18,18 +18,18 @@ describe("the proxy's settings", () => {
       port: 7779,
       credential: { _tag: "Auto" },
       plan: undefined,
-      home: join(homedir(), ".claude-hub-dev"),
+      home: join(homedir(), ".kndl-dev"),
     })
-    expect((await settingsIn({ CLAUDE_HUB_HOME: "/srv/claude-hub" })).port).toBe(7778)
+    expect((await settingsIn({ KNDL_HOME: "/srv/kndl" })).port).toBe(7778)
   })
 
   test("follow RUNNER_PROXY_PORT and RUNNER_CLAUDE_CREDENTIAL", async () => {
     const settings = await settingsIn({
       RUNNER_PROXY_PORT: "9000",
-      RUNNER_CLAUDE_CREDENTIAL: "file:/etc/claude-hub/token",
+      RUNNER_CLAUDE_CREDENTIAL: "file:/etc/kndl/token",
     })
     expect(settings.port).toBe(9000)
-    expect(settings.credential).toEqual({ _tag: "File", path: "/etc/claude-hub/token" })
+    expect(settings.credential).toEqual({ _tag: "File", path: "/etc/kndl/token" })
   })
 
   test("take a plan with Claude Code's tier for it, unless one is given", async () => {

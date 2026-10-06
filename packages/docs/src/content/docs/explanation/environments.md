@@ -40,7 +40,7 @@ A Session's Sandbox boots from its version's Build, with:
 
 - the Workspace mounted at `/workspace`;
 - one disk for all its dependency folders, bound at each boot to every folder the Environment's patterns match, and to where one would be beside each **Next to** file, so the first install already lands on the disk;
-- one disk for package caches, at `/var/cache/claude-hub`, with `XDG_CACHE_HOME`, `BUN_INSTALL_CACHE_DIR` and `npm_config_cache` pointing into it;
+- one disk for package caches, at `/var/cache/kndl`, with `XDG_CACHE_HOME`, `BUN_INSTALL_CACHE_DIR` and `npm_config_cache` pointing into it;
 - one disk for Docker's data, when Docker is on.
 
 A new Sandbox then runs the Start script in `/workspace`. CPUs and memory are the Environment's, capped by the Runner's `RUNNER_SANDBOX_MAX_CPUS` and `RUNNER_SANDBOX_MAX_MEMORY_MIB`, with a note in the Session when it gives less.
@@ -49,7 +49,7 @@ A new Sandbox then runs the Start script in `/workspace`. CPUs and memory are th
 
 Installers such as mise, rustup, nvm and bun's put themselves on `PATH` through `~/.bashrc` or `~/.profile`, which nothing the Runner starts would read on its own. So each process the Runner starts in a Sandbox gets the environment a terminal on your own machine would, the way VS Code dev containers' `userEnvProbe` does it:
 
-- After the Bootstrap script, the Build runs one interactive login shell, `bash -lic` (`sh -lc` on an image without bash), and keeps the environment it ends with in the Build, at `/var/lib/claude-hub/login-env.json`.
+- After the Bootstrap script, the Build runs one interactive login shell, `bash -lic` (`sh -lc` on an image without bash), and keeps the environment it ends with in the Build, at `/var/lib/kndl/login-env.json`.
 - Each new Sandbox probes again in `/workspace` once its Start script has run, so tools set up by the Repo's own files, such as a `mise.toml`, are picked up too.
 - The Start script and Claude Code, and so every command Claude runs, get that environment, with the Environment's Variables over it.
 

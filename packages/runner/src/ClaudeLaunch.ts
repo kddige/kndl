@@ -1,5 +1,5 @@
 import { posix } from "node:path"
-import type { ClaudeSessionId, EffortLevel, ModelName, SessionId } from "@claude-hub/protocol"
+import type { ClaudeSessionId, EffortLevel, ModelName, SessionId } from "@kndl/protocol"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
 
 /**
@@ -7,9 +7,9 @@ import { modPlugins } from "./sandbox/SessionLayout.ts"
  * the credential proxy's (proxy/ClaudeEnvironment.ts); the launch sets the rest.
  */
 export const ModEnvironment = {
-  hubUrl: "CLAUDE_HUB_URL",
-  sessionId: "CLAUDE_HUB_SESSION_ID",
-  modToken: "CLAUDE_HUB_MOD_TOKEN",
+  hubUrl: "KNDL_URL",
+  sessionId: "KNDL_SESSION_ID",
+  modToken: "KNDL_MOD_TOKEN",
 } as const
 
 export interface ClaudeLaunchOptions {

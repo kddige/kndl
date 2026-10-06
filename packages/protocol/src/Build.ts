@@ -1,8 +1,8 @@
 import { Schema } from "effect"
 
-// Which commit of claude-hub a Hub or Runner runs (ADR 0011): a Runner says in its RunnerHello,
+// Which commit of kndl a Hub or Runner runs (ADR 0011): a Runner says in its RunnerHello,
 // and the Hub knows its own, so the Runners page can show each Runner's and whether it is behind.
-// Reading it from a checkout is `@claude-hub/protocol/checkout`'s.
+// Reading it from a checkout is `@kndl/protocol/checkout`'s.
 
 /** A full commit id, as `git rev-parse` prints it: 40 hex digits (SHA-1) or 64 (SHA-256). */
 export const CommitIdPattern = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/

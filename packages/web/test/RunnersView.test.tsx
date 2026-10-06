@@ -81,7 +81,7 @@ test("adds a Runner: shows the join command, then the Runner once the code is us
   await step(() => button("Add a Runner").click())
   await eventually(() =>
     expect(document.querySelector('[aria-label="Pairing command"]')?.textContent).toMatch(
-      /^claude-hub runner join 'http:\/\/[^#]+#[0-9A-Z]{5}(-[0-9A-Z]{5}){3}'$/,
+      /^kndl runner join 'http:\/\/[^#]+#[0-9A-Z]{5}(-[0-9A-Z]{5}){3}'$/,
     ),
   )
   expect(hub.received.filter((m) => m._tag === "CreatePairingCode")).toHaveLength(1)

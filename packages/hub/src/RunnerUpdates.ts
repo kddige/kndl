@@ -12,7 +12,7 @@
 //              back on its old commit (or not, which it says), as its UpdateFailed or hello says.
 //
 // The state is the Hub's memory only: a Hub restart forgets an update under way, which its
-// Runner's next hello settles (a failure it reports in `lastUpdate`), and `claude-hub update`'s
+// Runner's next hello settles (a failure it reports in `lastUpdate`), and `kndl update`'s
 // push (RunnerUpdatePush.ts) starts again for Runners that connect behind.
 //
 // The transitions and the drain plan are pure, below; makeRunnerUpdates runs them under the
@@ -36,7 +36,7 @@ import {
   UpdateDrainMillis,
   type UpdateProgress,
   updateUnderWay,
-} from "@claude-hub/protocol"
+} from "@kndl/protocol"
 import { Clock, Effect } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { pushCovers, type UpdatePush } from "./RunnerUpdatePush.ts"
@@ -65,7 +65,7 @@ export function updateRequestRefusal(
   }
   if (!runner.isOnline) return `${runner.name} is offline: it can update once it is back.`
   if (runner.updater === undefined) {
-    return `${runner.name} is too old to update itself: run \`claude-hub update\` on it once.`
+    return `${runner.name} is too old to update itself: run \`kndl update\` on it once.`
   }
   if (!runner.updater.self) {
     return `${runner.name} doesn't update itself${runner.updater.reason === undefined ? "" : `: ${runner.updater.reason}`}.`
@@ -215,7 +215,7 @@ export function drainPlan(
 
 /**
  * Whether the Hub tells a Runner that just said hello to follow its commit, from the push
- * `claude-hub update` left: the push covers it, it updates itself, it runs another commit, it
+ * `kndl update` left: the push covers it, it updates itself, it runs another commit, it
  * wasn't told already, and its last try at this commit didn't fail (which would loop).
  */
 export function pushApplies(
@@ -248,7 +248,7 @@ export interface UpdatingRunner {
 export function makeRunnerUpdates(deps: {
   readonly hub: BuildVersion | undefined
   readonly statusOf: (version: BuildVersion | undefined) => RunnerVersionStatus
-  /** The push `claude-hub update` left for the Hub's commit, if any. */
+  /** The push `kndl update` left for the Hub's commit, if any. */
   readonly push: UpdatePush | undefined
   readonly online: (id: RunnerId) => UpdatingRunner | undefined
   /** The Runner's Sessions, with what a drain needs of each. */
@@ -413,7 +413,7 @@ export function makeRunnerUpdates(deps: {
 
   /**
    * A Runner said hello: settles an update it restarted for, and tells it to follow the Hub's
-   * commit if `claude-hub update`'s push covers it.
+   * commit if `kndl update`'s push covers it.
    */
   const hello = Effect.fn("RunnerUpdates.hello")(function* (
     runner: UpdatingRunner,
