@@ -31,6 +31,7 @@ import {
   ProtocolVersion,
   type RepoStatus,
   runnerRemovalRefusal,
+  sameRepo,
   sessionNameFrom,
   UpdateDrainMillis,
   WebToHub,
@@ -404,7 +405,7 @@ export class FakeHub implements HubTransport {
     const latestVersion = this.environments.latestVersion(repo)
     if (latestVersion === undefined) return
     for (const session of this.sessions.values()) {
-      if (session.summary.repo !== repo) continue
+      if (!sameRepo(session.summary.repo, repo)) continue
       session.summary = {
         ...session.summary,
         environment: { version: session.summary.environment?.version ?? null, latestVersion },
@@ -434,7 +435,7 @@ export class FakeHub implements HubTransport {
   revokeRepo(repo: string): void {
     this.repoAccess.set(repo, "NoAccess")
     for (const session of this.sessions.values()) {
-      if (session.summary.repo !== repo) continue
+      if (!sameRepo(session.summary.repo, repo)) continue
       this.sessions.delete(session.summary.id)
       this.#toAll({ _tag: "SessionRemoved", sessionId: session.summary.id })
     }
@@ -454,9 +455,15 @@ export class FakeHub implements HubTransport {
     this.#setState(session, "Asleep", `Claude Code exited with code ${exitCode}`)
   }
 
+  /** What GitHub says of the signed-in person and `repo`, however its name is spelled (#197). */
+  #repoStatus(repo: string): RepoStatus {
+    for (const [known, status] of this.repoAccess) if (sameRepo(known, repo)) return status
+    return "Allowed"
+  }
+
   /** Refuses a command about a Repo out of reach, as the real Hub does; whether it did. */
   #refusedRepo(socket: FakeSocket, command: string, requestId: string, repo: string): boolean {
-    if ((this.repoAccess.get(repo) ?? "Allowed") === "Allowed") return false
+    if (this.#repoStatus(repo) === "Allowed") return false
     this.#refuse(
       socket,
       command,
@@ -591,7 +598,7 @@ export class FakeHub implements HubTransport {
         })
         break
       case "CheckRepo": {
-        const status = this.repoAccess.get(message.repo) ?? "Allowed"
+        const status = this.#repoStatus(message.repo)
         socket.deliver({
           _tag: "RepoChecked",
           requestId: message.requestId,

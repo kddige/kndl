@@ -36,6 +36,7 @@ import type {
   TestBuildId,
   TestBuildResult,
 } from "@claude-hub/protocol"
+import { repoKey, sameRepo } from "@claude-hub/protocol"
 import type { SignInOptions } from "./config.ts"
 
 /** Where the connection to the Hub is. */
@@ -123,11 +124,14 @@ export interface HubState {
   readonly sessions: ReadonlyArray<SessionSummary> | null
   readonly joined: Readonly<Record<SessionId, JoinedSession>>
   readonly terminals: Readonly<Record<SessionId, OpenTerminal>>
-  /** The Environments of the Repos the client asked about, kept current as versions are applied. */
+  /**
+   * The Environments of the Repos the client asked about, kept current as versions are applied.
+   * By {@link repoKey}, as a Repo's name is the same Repo however it is spelled (#197).
+   */
   readonly environments: Readonly<Record<string, RepoEnvironment>>
   /**
    * The Repos the person lost access to while connected (#104), until the Hub sends their
-   * Environment again: a screen of one asks why.
+   * Environment again: a screen of one asks why. By {@link repoKey}.
    */
   readonly lostRepos: Readonly<Record<string, true>>
   /** Null until the client first asks for them; then kept current. */
@@ -304,14 +308,15 @@ export function reduce(state: HubState, action: HubAction): HubState {
       // Refusals are the client's to report.
       return state
     case "EnvironmentState": {
-      const { [action.repo]: _, ...lostRepos } = state.lostRepos
+      const key = repoKey(action.repo)
+      const { [key]: _, ...lostRepos } = state.lostRepos
       return {
         ...state,
         environments: {
           ...state.environments,
-          [action.repo]: { environment: action.environment, versions: action.versions },
+          [key]: { environment: action.environment, versions: action.versions },
         },
-        lostRepos: action.repo in state.lostRepos ? lostRepos : state.lostRepos,
+        lostRepos: key in state.lostRepos ? lostRepos : state.lostRepos,
       }
     }
     case "EnvironmentDraftChecked":
@@ -359,13 +364,14 @@ export function reduce(state: HubState, action: HubAction): HubState {
  * builds of it, and notes the loss. Its Sessions go with a SessionRemoved each.
  */
 function forgetRepo(state: HubState, repo: string): HubState {
-  const { [repo]: _, ...environments } = state.environments
+  const key = repoKey(repo)
+  const { [key]: _, ...environments } = state.environments
   const builds = Object.entries(state.testBuilds) as Array<[TestBuildId, TestBuildRun]>
-  const kept = builds.filter(([, run]) => run.testBuild.repo !== repo)
+  const kept = builds.filter(([, run]) => !sameRepo(run.testBuild.repo, repo))
   return {
     ...state,
     environments,
-    lostRepos: { ...state.lostRepos, [repo]: true },
+    lostRepos: { ...state.lostRepos, [key]: true },
     testBuilds:
       kept.length === builds.length
         ? state.testBuilds

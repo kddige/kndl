@@ -2145,6 +2145,12 @@ describe("git", () => {
       })
     }
 
+    /**
+     * The Sandbox tokens minted, oldest first. The first token minted is the Hub's own for the
+     * Repo, with which it asked how GitHub spells the Repo's name as the Session was created.
+     */
+    const sandboxTokens = () => github.mintedTokens.slice(1)
+
     test("Repo access is an installation token, with the App's bot as author", async () => {
       const { runner, sessionId } = await sessionScene(await appHub())
       const access = await ask(runner, sessionId, { _tag: "GitAccess" })
@@ -2167,19 +2173,19 @@ describe("git", () => {
       const { runner, sessionId } = await sessionScene(await appHub())
       const answer = await ask(runner, sessionId, { _tag: "SandboxToken" })
 
-      expect(answer).toMatchObject({ _tag: "SandboxToken", token: github.mintedTokens[0] })
-      const mint = github.requests.find((request) => request.path.endsWith("/access_tokens"))
+      expect(answer).toMatchObject({ _tag: "SandboxToken", token: sandboxTokens()[0] })
+      const mint = github.requests.findLast((request) => request.path.endsWith("/access_tokens"))
       expect(mint?.body).toEqual({ repositories: ["claude-hub"] })
       // A refresh is a new token.
       const again = await ask(runner, sessionId, { _tag: "SandboxToken" })
-      expect((again as { token: string }).token).toBe(github.mintedTokens[1] ?? "")
-      expect(github.mintedTokens[1]).not.toBe(github.mintedTokens[0])
+      expect((again as { token: string }).token).toBe(sandboxTokens()[1] ?? "")
+      expect(sandboxTokens()[1]).not.toBe(sandboxTokens()[0])
     })
 
     test("a Sandbox token is redacted from the name of a process listening on a port (#175)", async () => {
       const { runner, web, sessionId } = await sessionScene(await appHub())
       await ask(runner, sessionId, { _tag: "SandboxToken" })
-      const [token = ""] = github.mintedTokens
+      const [token = ""] = sandboxTokens()
 
       runner.send({
         _tag: "SessionPorts",
@@ -2201,7 +2207,7 @@ describe("git", () => {
 
       await ask(runner, sessionId, { _tag: "SandboxToken" })
       await ask(runner, sessionId, { _tag: "SandboxToken" })
-      const [previous = "", current = ""] = github.mintedTokens
+      const [previous = "", current = ""] = sandboxTokens()
 
       await mod.post(
         turnSaying("t-1", `push with ${current}`),
@@ -2247,7 +2253,7 @@ describe("git", () => {
       joinSession(web, sessionId)
       await web.take("SessionHistory")
       for (let index = 0; index < 3; index++) await ask(runner, sessionId, { _tag: "SandboxToken" })
-      const [oldest = "", previous = ""] = github.mintedTokens
+      const [oldest = "", previous = ""] = sandboxTokens()
 
       await mod.post(turnSaying("t-1", `${oldest} ${previous}`))
       expect((await web.take("SessionEventLogged")).entry.event).toMatchObject({

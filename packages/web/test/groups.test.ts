@@ -39,3 +39,15 @@ test("no Sessions, no groups", () => {
 test("every Repo with a Session is known once, in alphabetical order", () => {
   expect(knownRepos(sessions)).toEqual(["Acme/beta", "kddige/alpha", "kddige/zeta"])
 })
+
+test("spellings of a Repo's name that differ only in case are one Repo (#197)", () => {
+  const spelled = [...sessions, session("f", "KDDIGE/Zeta", 6), session("g", "acme/BETA", 7)]
+  expect(
+    groupByRepo(spelled).map((group) => [group.repo, group.sessions.map((s) => String(s.id))]),
+  ).toEqual([
+    ["Acme/beta", ["d", "g"]],
+    ["kddige/alpha", ["b", "e"]],
+    ["kddige/zeta", ["a", "c", "f"]],
+  ])
+  expect(knownRepos(spelled)).toEqual(["Acme/beta", "kddige/alpha", "kddige/zeta"])
+})

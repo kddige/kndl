@@ -21,7 +21,7 @@ What follows is git's own message, such as `fatal: could not read Username for '
 
 - **Without the GitHub App**, the Runner clones with its host's own git credentials, over HTTPS by default, and can't ask for a password. If the user that runs the Runner can't `git clone https://github.com/owner/name.git` without typing anything, neither can the Runner.
 - **With the GitHub App**, the Hub mints a token for the clone, and the App must be installed on that Repo.
-- The Repo name or branch is wrong. The Repo is `owner/name`, as on GitHub.
+- The Repo name or branch is wrong. The Repo is `owner/name`, as on GitHub, in any case.
 
 **Fix.** Without the App, sign the Runner's user in to GitHub for HTTPS git, for example with `gh auth login` and `gh auth setup-git`, and check a manual clone works. With the App, see the next entry. To clone from somewhere else, such as a mirror, set `RUNNER_REPO_URL`, where `{repo}` stands for `owner/name`.
 

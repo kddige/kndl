@@ -1,3 +1,4 @@
+import { sameRepo } from "@claude-hub/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useMemo } from "react"
@@ -75,7 +76,8 @@ export function EnvironmentList() {
         ? null
         : knownRepos(sessions).map((repo) => ({
             repo,
-            listed: sessions.filter((session) => session.repo === repo && isListed(session)).length,
+            listed: sessions.filter((session) => sameRepo(session.repo, repo) && isListed(session))
+              .length,
           })),
     [sessions],
   )

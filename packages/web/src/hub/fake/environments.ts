@@ -1,10 +1,13 @@
 // The fake Hub's Environments (ADR 0009): each Repo's versions, the Hub-wide shared variables,
 // and which drafts passed a Test build. It refuses what the real Hub refuses, with its words, so
-// the screens can be tried against it; it keeps Sensitive values only to know they are set.
+// the screens can be tried against it; it keeps Sensitive values only to know they are set. A
+// Repo's name is the same Repo however it is spelled (#197), and keeps the spelling it was first
+// applied by.
 
 import {
   type EnvironmentDraft,
   environmentDraftProblems,
+  repoKey,
   type SharedVariableInput,
   variableNameProblem,
   sensitiveValueProblem,
@@ -90,7 +93,7 @@ export class FakeEnvironments {
 
   /** The Repo's Environment, or null before its first, and its versions. */
   state(repo: string) {
-    const found = this.#environments.get(repo)
+    const found = this.#environments.get(repoKey(repo))
     return {
       _tag: "EnvironmentState" as const,
       repo,
@@ -100,14 +103,14 @@ export class FakeEnvironments {
   }
 
   latestVersion(repo: string): number | undefined {
-    return this.#environments.get(repo)?.environment.version
+    return this.#environments.get(repoKey(repo))?.environment.version
   }
 
   /** What building the draft takes, or why the Hub would refuse it. */
   prepare(repo: string, draft: EnvironmentDraft): Prepared | string {
     const problems = environmentDraftProblems(draft)
     if (problems.length > 0) return problems.join(" ")
-    const current = this.#environments.get(repo)
+    const current = this.#environments.get(repoKey(repo))
     const atBuild: Array<[string, string]> = []
     for (const variable of draft.variables) {
       switch (variable._tag) {
@@ -180,7 +183,7 @@ export class FakeEnvironments {
 
   /** The variables of the Repo's Environment that need a value, its own or linked (#57). */
   valuesNeeded(repo: string): ReadonlyArray<ValueNeeded> {
-    const variables = this.#environments.get(repo)?.environment.variables ?? []
+    const variables = this.#environments.get(repoKey(repo))?.environment.variables ?? []
     return variables.flatMap((variable): ReadonlyArray<ValueNeeded> => {
       if (variable._tag === "Sensitive" && variable.needsValue) return [variable]
       if (variable._tag === "Link" && this.#shared.get(variable.sharedVariable)?.value === null) {
@@ -211,11 +214,11 @@ export class FakeEnvironments {
   }
 
   testBuildPassed(repo: string, digest: string): boolean {
-    return this.#passed.has(`${repo} ${digest}`)
+    return this.#passed.has(`${repoKey(repo)} ${digest}`)
   }
 
   recordPassed(repo: string, digest: string): void {
-    this.#passed.add(`${repo} ${digest}`)
+    this.#passed.add(`${repoKey(repo)} ${digest}`)
   }
 
   /** Applies the draft as the Repo's next version, or says why not. */
@@ -225,7 +228,7 @@ export class FakeEnvironments {
     draft: EnvironmentDraft,
     by: ParticipantWire,
   ): string | undefined {
-    const current = this.#environments.get(repo)
+    const current = this.#environments.get(repoKey(repo))
     const currentVersion = current?.environment.version ?? null
     if (currentVersion !== baseVersion) {
       return currentVersion === null
@@ -247,9 +250,9 @@ export class FakeEnvironments {
       if (value !== undefined) sensitive.set(variable.name, value)
     }
     const version = (currentVersion ?? 0) + 1
-    this.#environments.set(repo, {
+    this.#environments.set(repoKey(repo), {
       environment: {
-        repo,
+        repo: current?.environment.repo ?? repo,
         version,
         image: draft.image,
         bootstrapScript: draft.bootstrapScript,

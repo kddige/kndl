@@ -5,6 +5,8 @@ import {
   MaxSessionNameLength,
   OpenPort,
   Participant,
+  repoKey,
+  sameRepo,
   SessionName,
   SessionSummary,
   sessionNameFrom,
@@ -111,5 +113,13 @@ describe("Session names", () => {
     expect(sessionNameFrom("x".repeat(MaxSessionNameLength + 1))).toBe(
       `A Session name can be at most ${MaxSessionNameLength} characters; this one is ${MaxSessionNameLength + 1}.`,
     )
+  })
+})
+
+describe("Repo names (#197)", () => {
+  test("spellings that differ only in case are one Repo", () => {
+    expect(sameRepo("Entria-io/PEP", "entria-io/pep")).toBe(true)
+    expect(sameRepo("entria-io/pep", "entria-io/pep2")).toBe(false)
+    expect(repoKey("Entria-io/PEP")).toBe(repoKey("ENTRIA-IO/pep"))
   })
 })

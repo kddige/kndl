@@ -8,6 +8,7 @@ import {
   type EnvironmentVersionInfo,
   type ModelName,
   type RunnerId,
+  repoKey,
   type RunnerSummary,
   type SharedVariable,
   valuesNeededText,
@@ -192,10 +193,10 @@ export function EnvironmentView({
   pendingSession?: PendingSession | undefined
 }) {
   const hub = useHub()
-  const saved = useHubState((state) => state.environments[repo])
+  const saved = useHubState((state) => state.environments[repoKey(repo)])
   const sharedVariables = useHubState((state) => state.sharedVariables)
   const online = useHubState((state) => state.connection.status === "online")
-  const lost = useHubState((state) => state.lostRepos[repo] === true)
+  const lost = useHubState((state) => state.lostRepos[repoKey(repo)] === true)
   const [loadError, setLoadError] = useState<string | null>(null)
   /** Why the person can't use the Repo, when the Hub refused its Environment for that (#104). */
   const [refusal, setRefusal] = useState<RepoCheck | null>(null)

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { AgentId, ParticipantId, SessionId } from "@claude-hub/protocol"
+import { AgentId, EnvironmentVersion, ParticipantId, SessionId } from "@claude-hub/protocol"
 import { ConfigProvider, Effect, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { DatabaseFile, databaseAt } from "./Database.ts"
@@ -40,11 +40,23 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0019, CLI tokens: the migrator runs only the
- * migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0020, Repo names ignoring case: the migrator runs
+ * only the migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeRepoNocase = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP INDEX environments_repo_nocase`
+  yield* sql`DROP INDEX test_builds_digest`
+  yield* sql`CREATE INDEX test_builds_digest ON test_builds (repo, digest)`
+  yield* sql`DROP INDEX retired_values_repo`
+  yield* sql`CREATE INDEX retired_values_repo ON retired_values (repo)`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'repo_nocase'`
+})
+
+/** Takes the database back to before migration 0019, CLI tokens, as above. */
 const beforeCliTokens = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeRepoNocase
   yield* sql`DROP TABLE cli_tokens`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'cli_tokens'`
 })
@@ -351,6 +363,60 @@ describe("migration 0018, Keep awake", () => {
         at: 5,
       },
       off: undefined,
+    })
+  })
+})
+
+describe("migration 0020, Repo names ignoring case", () => {
+  test("leaves the rows there were, and finds a Repo's Environment by any spelling", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-hub-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* beforeRepoNocase
+        // From before #197: two spellings of one Repo, each with an Environment.
+        yield* sql`
+          INSERT INTO environments (
+            repo, version, build_version, image, bootstrap_script, docker, dependency_folders,
+            cpus, memory_mib
+          ) VALUES ('Entria-io/PEP', 3, 1, 'debian', '', 0, '[]', 2, 4096),
+            ('entria-io/PEP', 1, 1, 'debian', '', 0, '[]', 2, 4096)
+        `
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
+            creator_id, created_at
+          ) VALUES ('s-1', 'entria-io/pep', 'main', 'claude/s-1', 'Asleep', 'r-1',
+            'a@example.com', 'p-1', 1)
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const sessions = yield* Sessions
+        const session = Option.getOrThrow(yield* sessions.get(SessionId.make("s-1")))
+        return {
+          environments: yield* sql`SELECT repo, version FROM environments ORDER BY repo`,
+          environment: session.environment,
+        }
+      }).pipe(Effect.provide(Sessions.layer)),
+    )
+    expect(after).toEqual({
+      environments: [
+        { repo: "Entria-io/PEP", version: 3 },
+        { repo: "entria-io/PEP", version: 1 },
+      ],
+      // Neither spelling is the Session's own, so the first of them, as SQLite orders them.
+      environment: { version: null, latestVersion: EnvironmentVersion.make(3) },
     })
   })
 })
