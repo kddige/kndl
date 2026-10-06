@@ -14,7 +14,7 @@ claude-hub is one Bun workspace in TypeScript, on [Effect](https://effect.websit
 | `packages/protocol` | The messages the Hub, Runners, the mod and the web UI exchange, as Effect Schemas; and, as `@claude-hub/protocol/home`, which home a Hub or Runner keeps its state in. Imported from source by the other packages. |
 | `packages/hub` | The Hub: an Effect HTTP server on Bun, with its data in SQLite. Signs people in, issues Runner and mod tokens, accepts the Runner and web WebSockets, serves the mod's HTTP endpoints and the web UI's build. |
 | `packages/runner` | A Runner: connects to the Hub, runs each Session's Claude Code in tmux in a microsandbox Sandbox, and the credential proxy it reaches Anthropic and the Hub through. |
-| `packages/mod` | `hub-link`, the Claude Code mod a Runner loads into each Session. Sends the Session's Turns to the Hub, delivers prompts from the web UI, shows the Participants above the prompt, and runs the file and command tools in the Sandbox, leaving WebSearch to Claude Code and denying every other tool. |
+| `packages/mod` | The Claude Code mod a Runner loads into each Session, as two plugins ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)): `hub-link` sends the Session's Turns and subagents to the Hub; `hub-link-commands` delivers prompts from the web UI, stops Turns, messages and stops subagents, and shows the Participants above the prompt. They are two because a plugin's hooks don't see the work it causes, such as an agent it resumes. |
 | `packages/cli` | The `claude-hub` command, on Effect's `effect/cli` for its commands and flags, and [`@clack/prompts`](https://github.com/bombshell-dev/clack) for its questions and spinners, behind a small `Ui` service with a scripted test layer: onboard, the launchd and systemd services, status, doctor, update and uninstall. Its decisions (the prerequisite plan, the service files, onboard's answers, the update target, the guards on what uninstall may delete) are pure modules with tests; `Host.ts` and `Shell.ts` are the I/O. `CLAUDE_HUB_DRY_RUN=1` prints the commands that change the system (package managers, `sudo`, `launchctl`, `systemctl`, `loginctl`) instead of running them. `install.sh`, at the repository's root, installs it. |
 | `packages/web` | The web UI: React on Vite, built from [Base UI](https://base-ui.com) primitives and styled with StyleX, on a typed client for the web channel (`src/hub`). |
 | `packages/docs` | This site: Astro Starlight. |
@@ -35,7 +35,7 @@ You need Bun 1.4 or newer, and Claude Code (`claude`) on `PATH` for the mod's ch
 | Command | What it does |
 |---|---|
 | `bun test` | Bun's test runner over every package, including the mod's pure modules (`packages/mod/src/*.spec.ts`). `CLAUDE_HUB_SANDBOX_IT=1` adds the tests that boot real microsandbox Sandboxes. |
-| `bun run typecheck` | Each package's `typecheck` script: `tsc --noEmit` (TypeScript 7) in the code packages, and `astro check` in `packages/docs`. The mod's first loads it into a throwaway Claude Code print session (`claude -p /cost`, no model call), which writes the plugin API's types to `packages/mod/.claude-plugin/types/`. |
+| `bun run typecheck` | Each package's `typecheck` script: `tsc --noEmit` (TypeScript 7) in the code packages, and `astro check` in `packages/docs`. The mod's first loads it into a throwaway Claude Code print session (`claude -p /cost`, no model call), which writes the plugin API's types to each plugin's `.claude-plugin/types/`. |
 | `bun run lint` | [oxlint](https://oxc.rs/docs/guide/usage/linter), configured in `.oxlintrc.json`. |
 | `bun run format:check` | [oxfmt](https://oxc.rs/docs/guide/usage/formatter): formatting and import order. `bun run format` applies it. Configured in `.oxfmtrc.json`. |
 
@@ -59,9 +59,9 @@ The UI kit, every component in its states, is at `/kit`.
 
 | Command | What it does |
 |---|---|
-| `bun run mod:build` | Bundles the mod's logic, with Effect and the protocol, into `packages/mod/hooks/hub-link-lib.js` (git-ignored). `bun run runner` runs it first. It writes the bundle only when it changed: running Sessions reload the mod when its files change, and a reload in the middle of a Turn loses that Turn's end. |
-| `bun run mod:check` | Builds the mod, then runs `claude plugin validate` and `claude plugin test` on it. |
-| `claude --plugin-dir packages/mod` | Claude Code with the mod loaded, after `bun run mod:build`. |
+| `bun run mod:build` | Bundles the mod's logic, with Effect and the protocol, into each plugin's `hooks/hub-link-lib.js` (git-ignored). `bun run runner` runs it first. It writes the bundle only when it changed: running Sessions reload the mod when its files change, and a reload in the middle of a Turn loses that Turn's end. |
+| `bun run mod:check` | Builds the mod, then runs `claude plugin validate` and `claude plugin test` on each plugin. |
+| `claude --plugin-dir packages/mod/plugins/hub-link --plugin-dir packages/mod/plugins/hub-link-commands` | Claude Code with the mod loaded, after `bun run mod:build`. |
 
 ## Work on this site
 

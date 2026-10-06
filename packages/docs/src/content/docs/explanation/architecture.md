@@ -39,9 +39,9 @@ A Session is one Claude Code conversation working on one Repo, on its own Work b
 
 1. The browser sends `CreateSession` to the Hub, which picks the Runner (or the one you chose), records the Session and sends the Runner `StartSession` with the Repo, Work branch, Environment and a mod token for this run.
 2. The Runner clones the Repo into the Session's Workspace on the Work branch, builds the Repo's Environment if it hasn't yet, and boots the Sandbox from that build with the Workspace mounted at `/workspace`.
-3. It starts Claude Code in the Sandbox, in a tmux session `hub-<session id>`, with the `hub-link` mod loaded. The mod says hello to the Hub through the Runner, which adds the Session's mod token.
+3. It starts Claude Code in the Sandbox, in a tmux session `hub-<session id>`, with the mod's two plugins loaded: `hub-link` reports to the Hub, and `hub-link-commands` runs the Hub's commands. Each says hello to the Hub through the Runner, which adds the Session's mod token.
 4. A prompt from any Participant goes to the Hub, into the Session's Prompt queue. When Claude Code is idle, the Hub hands the next prompt to the mod, which submits it to Claude Code as that Participant's prompt.
-5. As Claude works, the mod reports each Event (its text, every tool call and result, the Turn's start and end) to the Hub, which redacts Sensitive values and sends them to everyone in the Session.
+5. As Claude works, the mod reports each Event (its text, every tool call and result, the Turn's start and end, and each subagent's) to the Hub, which redacts Sensitive values and sends them to everyone in the Session.
 
 Because the Hub holds the queue, Participants can send prompts while a Turn runs, and they run in order, one Turn at a time.
 
@@ -52,7 +52,7 @@ Each Session's Claude Code runs inside its Sandbox, so its tools run where it ru
 - **It runs in tmux in the VM,** started through the Sandbox backend's own exec, in `/workspace` with Claude Code's normal setting sources and `--dangerously-skip-permissions` ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). Claude runs as root there, so the Runner sets `IS_SANDBOX=1`.
 - **Its state is on a disk of the Session's own,** `/var/lib/claude-hub/claude`, as `CLAUDE_CONFIG_DIR`. The conversation, `--resume` and Claude Code's settings survive sleep. Before each start the Runner seeds it with onboarding done, `/workspace` trusted and bypass-permissions mode accepted, so no dialog waits for a person.
 - **It holds no Claude credential.** It sends every request to the Runner's [credential proxy](/explanation/security-model/#the-credential-proxy) with a token for its Session alone, and the proxy puts the real credential in its place. The token is given to the Claude Code process, never written to the VM.
-- **The mod loads read-only** from `/opt/claude-hub/hub-link`, with `--plugin-dir`, and reaches the Hub through the same proxy, which adds the Session's mod token on the way.
+- **The mod loads read-only** from `/opt/claude-hub/hub-link`, each of its plugins with its own `--plugin-dir`, and reaches the Hub through the same proxy, which adds the Session's mod token on the way.
 - **Auto memory is off.** Each Session has its own state, so Sessions would never share what it remembers.
 
 ### How the Sandbox gets `claude`

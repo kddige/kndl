@@ -19,7 +19,7 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `GET /ws/runner` | a Runner | `Authorization: Bearer <Runner token>` |
 | `POST /runner/pair` | `claude-hub runner join` | none: the [Pairing code](#pairing) in the body is the credential. |
 | `GET /runner/connection` | `claude-hub runner join`, onboard | `Authorization: Bearer <Runner token>` |
-| `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands`, `POST /mod/children` | one Session's mod | `Authorization: Bearer <mod token>` |
+| `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands` | one Session's mod | `Authorization: Bearer <mod token>` |
 | anything else | a browser | none: the web UI's build. |
 
 Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair` and the web UI needs a credential. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
@@ -84,7 +84,7 @@ A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self":
 
 `claude-hub update` on the Hub's machine leaves the Hub a note of the commit it moved to, in its database, before restarting it; the restarted Hub sends `CheckUpdate` to each Runner the note covers as it says hello, unless the Runner already runs the commit or last failed to update to it.
 
-`StartSession` carries what the Runner needs to start or wake a Session: its Repo, Work branch and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/explanation/git-from-sessions/#in-the-sandbox)). `gitIdentity` is optional, so a Runner still starts Sessions for a Hub from before it, without setting an identity. For a Child Session it also carries `parent`, its Parent Session's `id` and `title`: the Runner tells Claude Code whose child it is, and sets `CLAUDE_HUB_PARENT_SESSION_ID` ([What a Runner gives Claude Code](/reference/configuration/#what-a-runner-gives-claude-code)).
+`StartSession` carries what the Runner needs to start or wake a Session: its Repo, Work branch and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/explanation/git-from-sessions/#in-the-sandbox)). `gitIdentity` is optional, so a Runner still starts Sessions for a Hub from before it, without setting an identity.
 
 `SessionStopped` says why Claude Code stopped: `Requested`, after a `StopSession`, or `Exited` on its own, with its exit code. For `Exited` it may carry `output`, the last lines Claude Code's terminal showed, as plain text of at most 4,000 characters. `output` is optional, so a Runner from before it still connects. The Hub redacts it as it does terminal frames and shows it on the Session while it is Asleep.
 
@@ -104,10 +104,10 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential` |
 | Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; terminal frames; `CommandFailed` |
 
-Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `parentId` when it is a Child Session: its Parent Session's id. No message creates a Child Session from the browser.
+Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)).
 
 ### Claude credentials
 
@@ -127,18 +127,34 @@ Each Runner in `RunnerList` carries the `models` its hello said ([Models and eff
 
 Each Session carries its `model` and `effort` when set, and `modelPending: true` while its Claude Code still runs the setting from before a change. Each change is logged as `ModelSwitched { by, model?, modelLabel?, effort? }`, where `modelLabel` is the Runner's name for the model then, such as `Sonnet 5.5`, or for no model the default's. A Turn's `TurnEnded.usage.model` is the model it ran.
 
-### Prompts from other Sessions
+### Subagents
 
-A prompt one Session sends another, a Parent Session's message or a Child Session's Report or message ([ADR 0012](/reference/decisions/0012-parent-and-child-sessions/)), goes through the Prompt queue like a person's. Its `QueuedPrompt` carries `fromSession`: `FromParentSession`, `FromChildSession` (a Report) or `FromChildSessionMessage` (a Child Session's `message_parent`), whose `session` is the sending Session's `id` and `title`; its `sender` is the Creator the Sessions run for; and its `text` is what the model reads, a note from the Hub, then a blank line, then the message:
+A Session's subagents are Claude Code's own ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)). The mod reports them as Events, which the Hub logs and sends in `SessionEventLogged` like the rest:
 
-```
-[Report from Child Session "API docs" (s-2)]
-This is a Report, not a prompt from a person: the final message of a Turn your Child Session just ended. The people in this Session don't see Reports, so relay what matters to them. More Reports may follow while it works.
+| Event | What it says |
+|---|---|
+| `AgentStarted { turnId, agentId, toolCallId, agentType, description, model, background }` | The Agent call `toolCallId`, in the main loop's Turn `turnId`, started the agent `agentId`. Only agents started this way are the Session's: the Hub drops the status of any other, such as those Claude Code starts for itself. |
+| `AgentStatusChanged { agentId, status, worktree? }` | `Running`, `Done`, `Stopped` or `Interrupted`. `worktree`, its `path` and `branch`, once it works in one. |
+| `AgentMessaged { agentId, sender, text }` | A Participant messaged it. Logged by the Hub, since Claude Code doesn't keep the message among the agent's own. |
+| `TextDelta`, `ToolCallStarted`, `ToolCallEnded`, `TurnEnded` with `agentId` | The agent's own work. Their `turnId` is the agent's run, new each time it resumes, so the web UI groups them by `agentId`. |
 
-The reference covers every protocol message now.
-```
+A `TurnStarted` whose `sender` is `FromAgent { agentId }` is the Turn Claude Code starts when a background agent is done or stopped. Its `text` is Claude Code's `<task-notification>` about it; the web UI shows its summary and result. Claude Code notifies a background command's end the same way, so an `agentId` the Session never started is a task's, not an agent's: the web UI shows that Turn as from a background task.
 
-A Parent Session's message starts `[Message from your Parent Session "<title>" (<id>)]` instead, with no note after it. A Child Session's message starts `[Message from Child Session "<title>" (<id>)]`, and its note says it isn't a Report, that the Report still comes when the child's Turn ends, and that `message_child` answers it. From the 20th Turn in a row a Child Session's Parent Session prompted, with no person's prompt to either Session in between, the Report's note has one more line, asking the parent to check that the work is still making progress. A Child Session's message neither counts toward those Turns nor resets them, and carries the same line while they're at 20 or more. The Turn the prompt starts has the same `fromSession` as its `sender` in `TurnStarted`, and the web UI shows the message without the note.
+The Hub marks a Session's Running agents `Interrupted` when its Claude Code stops: on sleep, a restart, an exit, or a Runner that comes back without it. A Frozen Session's agents stay as they were.
+
+`MessageAgent { sessionId, agentId, text }` messages an agent, and `StopAgent { sessionId, agentId }` stops a running one. The Hub sends the mod `DeliverAgentMessage { sessionId, agentId, text, sender }` or `StopAgent`. A `MessageAgent` to an Asleep Session wakes it first. The Hub refuses with a `CommandFailed`:
+
+| Refused | Message |
+|---|---|
+| An agent the Session has none of | `The Session has no such agent.` |
+| `MessageAgent` to an Archived Session | `The Session is archived: restore it to message agents.` |
+| `MessageAgent` to a Frozen Session | `The Session's Runner is offline: message the agent once it is back.` |
+| `MessageAgent` while the Session goes to sleep | `The Session is going to sleep: message the agent once it is Asleep.` |
+| `StopAgent` for an agent that isn't Running, or a Session that isn't Active | `The agent isn't running.` |
+
+When the mod can't carry out a command, it reports `AgentCommandFailed { agentId, command, senderId?, message }`, and the Hub passes it on as a `CommandFailed` to whoever sent it: `Your message could not be delivered to the agent: …` or `The agent could not be stopped: …`.
+
+Events and queued prompts from before ADR 0014, from another Session, decode with the sender `FromSession { session }`, which nothing sends any more. The web UI shows them as from that Session's name.
 
 `UpdateRunner { runnerId, now }` updates a Runner from the Runners page; sent again with `now: true` while it waits for Turns, it stops them. Each Runner in `RunnerList` carries its `updater` and, while one is under way or after it ended badly, `update`: `Checking`, `Draining` (with `waitingFor`, the Sessions still Active, and `deadline`), `Applying` (with `step`), `Restarting`, `Refused` (with `refusal`) or `Failed` (with `failure`).
 
@@ -146,28 +162,11 @@ Every Session and Environment command is checked against the person's access to 
 
 ## Mod channel: `/mod/*`
 
-Plain HTTP from the `hub-link` mod inside each Session's Claude Code, in its Sandbox. The mod sends it to its Runner's credential proxy with the Session token, and the proxy relays it to the Hub with the mod token:
+Plain HTTP from the mod inside each Session's Claude Code, in its Sandbox. Its two plugins each say hello: `hub-link` reports the Session's Events, and `hub-link-commands` polls for the Hub's commands and runs them, since a plugin's hooks don't see the work it causes, such as an agent it resumes ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)). The mod sends it to its Runner's credential proxy with the Session token, and the proxy relays it to the Hub with the mod token:
 
 - `POST /mod/hello` once at start, answered with `ModWelcome`.
-- `POST /mod/events` with the Session's Events as they happen: prompts, tool calls and results, Turn starts and ends.
-- `GET /mod/commands`, a long poll: the Hub answers with commands such as `DeliverPrompt` when it has some, or with none after a while. The mod answers a prompt it can't deliver with `PromptFailed`. A `DeliverPrompt` with `fromSession` is from another Session: the mod submits its `text` as it is, without the sender's name.
-- `POST /mod/children` with a Child Session tool's request, answered `200` with the Hub's reply.
+- `POST /mod/events` with the Session's Events as they happen: prompts, tool calls and results, Turn starts and ends, and [subagents](#subagents).
+- `GET /mod/commands`, a long poll: the Hub answers with commands such as `DeliverPrompt` when it has some, or with none after a while. The mod answers a prompt it can't deliver with `PromptFailed`.
 
 Each route answers `409` until the mod has said hello.
 
-### Child Session tools
-
-A Session's mod registers these tools for Claude, unless the Session is a Child Session, which gets `message_parent` alone. Claude Code names each `mcp__hub-link__<tool>`. The mod sends each call to the Hub as the body of `POST /mod/children`, and gives Claude the reply as text, or as the tool's error for `ChildRefused`.
-
-| Tool | Input | Request | Reply |
-|---|---|---|---|
-| `create_child` | `task`; optional `name` (its Session name) and `base` (default: the Repo's default branch) | `CreateChild { prompt, name?, baseBranch? }` | `ChildCreated { child }`. The task is queued as the child's first prompt. |
-| `message_child` | `child_id`, `message` | `MessageChild { childId, text }` | `ChildMessaged { child }`. Queued as a prompt; wakes the child if it is Asleep. |
-| `list_children` | none | `ListChildren` | `ChildList { children }`: the caller's Child Sessions that aren't Archived, oldest first. |
-| `read_child` | `child_id` | `ReadChild { childId }` | `ChildRead { child, conversation }`: its recent Turns as text, redacted as its history is, at most 24,000 characters. |
-| `archive_child` | `child_id` | `ArchiveChild { childId }` | `ChildArchived { child }` |
-| `message_parent` (a Child Session's only tool) | `message` | `MessageParent { text }` | `ParentMessaged { parent, working }`: `parent` is the Parent Session's `id` and `title`, and `working` says a Turn was running there. Queued as a prompt; wakes the parent if it is Asleep. |
-
-Each `child` is a `ChildSummary`: `id`, `title`, `baseBranch`, `workBranch`, `state`, `working` (a Turn is running), `queued` (prompts in its Prompt queue) and, once a Turn has ended, `lastReport` with its `text` and `at`.
-
-Any request can get `ChildRefused { message }` instead: from a Child Session ("A Child Session can't create Child Sessions of its own: Sessions nest one level deep. …"), for a Session that isn't one of the caller's Child Sessions, or for a Creator who can't use the Repo. `MessageParent` is refused from a Session that isn't a Child Session ("This Session isn't a Child Session: it has no Parent Session to message.") and when the Parent Session is Archived or gone. When the Parent Session is Asleep and can't wake, the message stays in its Prompt queue and the reply is a `ChildRefused` that says so. The Hub checks `create_child` against the Parent Session's Creator's access to the Repo.

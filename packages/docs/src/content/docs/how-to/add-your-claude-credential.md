@@ -49,4 +49,4 @@ A Session that is awake keeps the credential it started with until it next sleep
 
 ## See whose account a Session runs on
 
-A Session's header says whose Claude account it runs on: **on Alice's Claude account** for its Creator's, or **on the Runner's Claude account** with the Runner login, when its Creator has none. A Child Session runs on its Parent Session's Creator's.
+A Session's header says whose Claude account it runs on: **on Alice's Claude account** for its Creator's, or **on the Runner's Claude account** with the Runner login, when its Creator has none. Its subagents run on the same account.

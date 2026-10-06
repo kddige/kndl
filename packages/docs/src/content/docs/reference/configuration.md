@@ -47,7 +47,7 @@ Each person can store one Claude credential on the Hub, on their **Account** pag
 | `RUNNER_LOGIN` | the account Claude Code is signed in with | How the Runner login is shown. Read from `oauthAccount.emailAddress` in Claude Code's config file when unset; the Runner refuses to start if it finds none. |
 | `RUNNER_SESSIONS_ROOT` | `~/.claude-hub-dev/sessions` | Where each Session's directory goes. |
 | `RUNNER_TMUX_SOCKET` | `claude-hub-dev` | With `RUNNER_SESSIONS_ROOT`, marks the Sandboxes this Runner makes, so Runners sharing a machine keep to their own. A tmux server of that name on the host, left from when Sessions ran there, is stopped as the Runner starts. |
-| `RUNNER_MOD_DIR` | `packages/mod` in the checkout | The `hub-link` mod, mounted read-only in each Sandbox and loaded into Claude Code with `--plugin-dir`. The Runner refuses to start if it isn't built. |
+| `RUNNER_MOD_DIR` | `packages/mod` in the checkout | The mod, mounted read-only in each Sandbox, whose two plugins, `hub-link` and `hub-link-commands`, Claude Code loads with `--plugin-dir`. The Runner refuses to start if it isn't built. |
 | `CLAUDE_BIN` | `claude` | The Claude Code executable on the host, which the Runner asks which models it offers. |
 | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` | Where Repos are cloned from; `{repo}` is `owner/name`. |
 | `RUNNER_SANDBOX_IMAGE` | `docker:dind` | The image of a Session whose Repo has no Environment. Every new Session needs one today, so this only matters for older Sessions. |
@@ -105,17 +105,15 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Claude Code's normal setting sources, so the Repo's `CLAUDE.md`, skills, hooks, settings and `.mcp.json` apply as they would on a developer's machine ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Its command line is `claude` with:
 
 - `--session-id` for a new Session, or `--resume` to wake one.
-- `--plugin-dir /opt/claude-hub/hub-link`, the mod, mounted read-only from `RUNNER_MOD_DIR`.
+- `--plugin-dir /opt/claude-hub/hub-link/plugins/hub-link` and `--plugin-dir /opt/claude-hub/hub-link/plugins/hub-link-commands`, the mod's plugins, mounted read-only from `RUNNER_MOD_DIR` ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)).
 - `--dangerously-skip-permissions`: the Sandbox is the boundary ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)).
 - `--model` and `--effort` when the Session's [model and effort](/how-to/work-in-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
-- For a Child Session, `--append-system-prompt` with a paragraph saying whose child it is and that its final message of each Turn goes to its Parent Session as a Report ([ADR 0012](/reference/decisions/0012-parent-and-child-sessions/)).
 
 Its environment is what the Start script gets: the package cache variables and, for a Repo with an Environment, the image's login environment with the Environment's Variables over it ([ADR 0009](/reference/decisions/0009-environments/)). On top of it go these, the mod's and Claude Code's:
 
 | Variable | What it is |
 |---|---|
 | `CLAUDE_HUB_SESSION_ID` | The Session's id. |
-| `CLAUDE_HUB_PARENT_SESSION_ID` | Its Parent Session's id, for a Child Session only. The mod offers the [Child Session tools](/reference/protocol/#child-session-tools) only without it. |
 | `CLAUDE_CONFIG_DIR` | `/var/lib/claude-hub/claude`, Claude Code's state, on a disk of the Session's own. The Runner seeds it so Claude Code asks nothing before the conversation. |
 | `IS_SANDBOX` | `1`, which lets `--dangerously-skip-permissions` run as root. |
 | `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | `1`, since each Session would keep notes only for itself. It wins over any setting. |

@@ -17,7 +17,7 @@ The Claude account a Runner has of its own, signed in or stored on its host. A S
 _Avoid_: owner's subscription, credentials
 
 **Claude credential**:
-A person's own Claude subscription token or Anthropic API key, stored write-only and encrypted on the Hub. The Sessions they create, and their Child Sessions, run on it on any Runner, and each Session shows whose account it runs on.
+A person's own Claude subscription token or Anthropic API key, stored write-only and encrypted on the Hub. The Sessions they create, and their subagents, run on it on any Runner, and each Session shows whose account it runs on.
 _Avoid_: login, OAuth token, Claude key
 
 **Pairing code**:
