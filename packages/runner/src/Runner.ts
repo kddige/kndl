@@ -43,7 +43,8 @@ export const CredentialProxyHost = CredentialProxyLive.pipe(
 
 /**
  * Sessions on this host: each Session's Claude Code runs in tmux in its own microsandbox VM, with
- * a Session token for the credential proxy, and its Workspace is cloned with host git. Tunnels into those Sandboxes (#177) share the Sessions' sandbox backend.
+ * a Session token for the credential proxy, and its Workspace is cloned with host git. Tunnels
+ * into those Sandboxes (#177) share the Sessions' sandbox backend.
  */
 export const SessionsHost = TunnelsLive.pipe(
   Layer.provideMerge(

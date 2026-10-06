@@ -1476,7 +1476,7 @@ export class SessionRelay extends Context.Service<
 
       // ── Archive, restore and purge ───────────────────────────────────────
 
-      /** Asks the Runner to stop the Archived Session for good: destroy its Sandbox, keep its Workspace. */
+      /** Asks the Runner to stop the Archived Session for good: its Sandbox goes, its Workspace stays. */
       const stopForArchive = (runner: OnlineRunner, sessionId: SessionId) => {
         archiving.add(sessionId)
         runner.peer.send(StopSession.make({ sessionId, reason: "Archive" }))

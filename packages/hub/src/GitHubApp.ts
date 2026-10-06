@@ -1,9 +1,10 @@
 // The GitHub App (ADR 0010): the Hub, and only the Hub, holds the App's private key. It signs a
 // short JWT with it and mints installation tokens scoped to one Repo: one with `contents:read`
 // that Runners hand to host git for the clone, and one per Session with every permission the
-// installation has, which the Runner keeps in the Session's Sandbox for `git` and `gh`. As the installation, it also answers who has access to a Repo
-// (RepoAccess.ts). As the App, it reads its own permissions and its installations', to check them
-// against what the Hub needs (AppPermissions.ts).
+// installation has, which the Runner keeps in the Session's Sandbox for `git` and `gh`. As the
+// installation, it also answers who has access to a Repo (RepoAccess.ts). As the App, it reads its
+// own permissions and its installations', to check them against what the Hub needs
+// (AppPermissions.ts).
 //
 // It also makes the App in the first place: `kndl onboard` registers it on GitHub from a
 // manifest, and trades the code GitHub hands back for its credentials (convertManifest).
