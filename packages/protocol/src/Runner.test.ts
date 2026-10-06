@@ -113,7 +113,9 @@ const runnerToHub = [
     sessions: [],
     models: runnerModels,
     relaunches: true,
+    forwardsPorts: true,
   },
+  { _tag: "TunnelFailed", tunnelId: "t-1", message: "Nothing listens on port 3000" },
 ]
 
 const hubToRunner = [
@@ -247,6 +249,7 @@ const hubToRunner = [
   { _tag: "ClaudeCredentialRefused", requestId: "c-4", message: "Not a Session this Runner runs" },
   { _tag: "CheckUpdate", target: { commit: "a".repeat(40), branch: "main" } },
   { _tag: "ApplyUpdate", target: { commit: "a".repeat(40) } },
+  { _tag: "OpenTunnel", tunnelId: "t-1", sessionId: "s-1", port: 3000, address: "::1" },
   {
     _tag: "StartSession",
     sessionId: "s-1",
@@ -327,6 +330,7 @@ describe("RunnerToHub", () => {
       ports: [{ port: 65536, addresses: ["0.0.0.0"] }],
     })
     expectRejected(RunnerToHub, { _tag: "SessionPorts", sessionId: "s-1", ports: [{ port: 80 }] })
+    expectRejected(RunnerToHub, { _tag: "TunnelFailed", tunnelId: "", message: "refused" })
   })
 })
 
@@ -338,6 +342,13 @@ describe("HubToRunner", () => {
 
   test("rejects malformed messages", () => {
     expectRejected(HubToRunner, { ...hubToRunner[2], repo: "claude-hub" })
+    expectRejected(HubToRunner, {
+      _tag: "OpenTunnel",
+      tunnelId: "t-1",
+      sessionId: "s-1",
+      port: 0,
+      address: "127.0.0.1",
+    })
     expectRejected(HubToRunner, { _tag: "ModTokenReissued", sessionId: "s-1", modToken: "" })
     expectRejected(HubToRunner, { ...hubToRunner[2], workBranch: "" })
     expectRejected(HubToRunner, { ...hubToRunner[2], modToken: undefined })
