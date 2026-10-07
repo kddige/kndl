@@ -54,6 +54,32 @@ const webToHub = [
   { _tag: "StopTurn", sessionId: "s-1" },
   { _tag: "MessageAgent", sessionId: "s-1", agentId: "a-1", text: "also cover the edge cases" },
   { _tag: "StopAgent", sessionId: "s-1", agentId: "a-1" },
+  {
+    _tag: "AnswerQuestion",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    answer: { _tag: "Answered", answers: { "Which date library?": "date-fns" } },
+  },
+  {
+    _tag: "AnswerQuestion",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    answer: { _tag: "Replied", text: "neither" },
+  },
+  {
+    _tag: "AnswerQuestion",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    answer: { _tag: "Dismissed" },
+  },
+  {
+    _tag: "PickAnswer",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    question: "Which date library?",
+    answer: "Temporal",
+  },
+  { _tag: "PickAnswer", sessionId: "s-1", toolCallId: "toolu_ask", question: "Q?", answer: "" },
   { _tag: "SleepSession", sessionId: "s-1" },
   { _tag: "WakeSession", sessionId: "s-1" },
   { _tag: "SetKeepAwake", sessionId: "s-1", on: true },
@@ -241,6 +267,33 @@ const hubToWeb = [
     _tag: "SessionUpdated",
     session: { ...sessionSummary, keepAwake: { by: bob, at: 1_790_000_000_000 } },
   },
+  {
+    _tag: "SessionUpdated",
+    session: {
+      ...sessionSummary,
+      currentTurn: "t-1",
+      openQuestion: {
+        turnId: "t-1",
+        toolCallId: "toolu_ask",
+        questions: [
+          {
+            question: "Which date library?",
+            header: "Library",
+            options: [{ label: "date-fns", description: "Small" }, { label: "Temporal" }],
+            multiSelect: false,
+          },
+        ],
+        askedAt: 1_790_000_000_000,
+      },
+    },
+  },
+  {
+    _tag: "QuestionPicks",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    picks: [{ participant: bob, question: "Which date library?", answer: "Temporal" }],
+  },
+  { _tag: "QuestionPicks", sessionId: "s-1", toolCallId: "toolu_ask", picks: [] },
   {
     _tag: "RunnerList",
     runners: [
@@ -475,6 +528,17 @@ describe("WebToHub", () => {
     expectRejected(WebToHub, { _tag: "SendPrompt", sessionId: "s-1", text: "" })
     expectRejected(WebToHub, { _tag: "SendPrompt", text: "hi" })
     expectRejected(WebToHub, { _tag: "SleepSession" })
+    expectRejected(WebToHub, {
+      _tag: "AnswerQuestion",
+      sessionId: "s-1",
+      toolCallId: "toolu_ask",
+      answer: { _tag: "Cancelled" },
+    })
+    expectRejected(WebToHub, {
+      _tag: "AnswerQuestion",
+      sessionId: "s-1",
+      answer: { _tag: "Dismissed" },
+    })
     expectRejected(WebToHub, { _tag: "WakeSession", sessionId: 7 })
     expectRejected(WebToHub, {
       _tag: "CreateSession",

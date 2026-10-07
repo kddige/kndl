@@ -16,8 +16,15 @@
 import { atom, read, update } from "claude-code"
 import type { EngineInterface, On } from "claude-code"
 import type { HubLinkBand } from "../types"
-import { HubLink, promptFromParticipant, steeredPrompt } from "./hub-link-lib.js"
-import type { LinkStatus, ModCommand } from "./hub-link-lib.js"
+import {
+  answerResult,
+  askedQuestions,
+  HubLink,
+  promptFromParticipant,
+  steeredPrompt,
+  terminalOutcome,
+} from "./hub-link-lib.js"
+import type { LinkStatus, ModCommand, Participant, QuestionAnswer } from "./hub-link-lib.js"
 
 const band = atom(
   { plugin: "hub-link-commands", key: "band" } as const,
@@ -36,6 +43,11 @@ const state = {
   link: undefined as HubLink | undefined,
   /** The Turn running on the main loop, which StopTurn stops. */
   mainTurn: undefined as string | undefined,
+  /**
+   * The AskUserQuestion calls waiting for an answer, by id (#193): each takes a Participant's
+   * answer, and says whether it came first.
+   */
+  asking: new Map<string, (answer: QuestionAnswer, sender: Participant) => boolean>(),
 }
 
 const report = (event: Record<string, unknown>) => state.link?.report(event)
@@ -154,6 +166,17 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
     case "StopTurn":
       if (state.mainTurn !== undefined) await $.turn.abort({ turnId: state.mainTurn })
       return
+    case "DeliverAnswer":
+      // Too late: answered at the terminal or by someone else first, or cancelled. The Hub tells
+      // the sender which.
+      if (state.asking.get(command.toolCallId)?.(command.answer, command.sender) !== true)
+        report({
+          _tag: "AnswerFailed",
+          toolCallId: command.toolCallId,
+          senderId: command.sender.id,
+          message: "The question was answered or closed already.",
+        })
+      return
     case "PresenceChanged":
       // Someone forwarding a port is here too, from a machine (#180).
       await setBand($, {
@@ -215,6 +238,55 @@ export function register(on: On) {
   on("turn.complete", async ($, e, next) => {
     if (e.agentId === undefined && e.turnId === state.mainTurn) state.mainTurn = undefined
     return next(e)
+  })
+
+  // Claude's question on the main loop is the Session's Open question (#193): its dialog opens at
+  // the terminal as ever, and any Participant may answer it from the web UI meanwhile. The first
+  // answer is the one Claude reads; one from the web closes the dialog, by settling this call
+  // while it is still open. A subagent's questions are answered at the terminal alone.
+  on("tool.call", { tool: "AskUserQuestion" }, async ($, e, next) => {
+    const turnId = state.mainTurn
+    const toolCallId = e.tool_use_id
+    if (e.agentId !== undefined || state.link === undefined || turnId === undefined || !toolCallId)
+      return next(e)
+    report({ _tag: "QuestionAsked", turnId, toolCallId, questions: askedQuestions(e.questions) })
+    const closed = (outcome: Record<string, unknown>, by?: Participant) =>
+      report({
+        _tag: "QuestionClosed",
+        turnId,
+        toolCallId,
+        outcome,
+        ...(by === undefined ? {} : { by }),
+      })
+    let settled = false
+    const settle = () => {
+      if (settled) return false
+      settled = true
+      state.asking.delete(toolCallId)
+      return true
+    }
+    // Stopped, or settled by a hook above: Claude reads no answer, and the Hub hears so now.
+    next.signal.addEventListener("abort", () => {
+      if (settle()) closed({ _tag: "Cancelled" })
+    })
+    return new Promise<Awaited<ReturnType<typeof next>>>((resolve, reject) => {
+      state.asking.set(toolCallId, (answer, sender) => {
+        if (!settle()) return false
+        closed(answer, sender)
+        resolve(answerResult(e.questions, answer, sender) as never)
+        return true
+      })
+      next(e).then(
+        (done) => {
+          if (settle()) closed(terminalOutcome(done))
+          resolve(done)
+        },
+        (error: unknown) => {
+          if (settle()) closed({ _tag: "Cancelled" })
+          reject(error)
+        },
+      )
+    })
   })
 
   on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {

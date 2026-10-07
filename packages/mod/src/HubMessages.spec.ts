@@ -3,20 +3,25 @@ import { MaxToolSummaryLength, ModEvents, ModHello, ProtocolVersion } from "@knd
 import { Schema } from "effect"
 import {
   agentWorktree,
+  answerResult,
+  askedQuestions,
   backgroundedByStop,
   checkEvent,
   clip,
+  dismissedText,
   eventsBody,
   helloBody,
   Outbox,
   promptFromParticipant,
   readCommands,
   readHelloReply,
+  repliedPrefix,
   resultSummary,
   sharedSessionNote,
   startsDelivered,
   steeredPrompt,
   taskNotificationAgent,
+  terminalOutcome,
   toolArguments,
   turnEndReason,
 } from "./HubMessages.ts"
@@ -113,6 +118,33 @@ const events: Array<Record<string, unknown>> = [
     senderId: "p1",
     message: "No agent a1",
   },
+  {
+    _tag: "QuestionAsked",
+    turnId: "t1",
+    toolCallId: "toolu_4",
+    questions: [
+      {
+        question: "Which library?",
+        header: "Library",
+        options: [{ label: "date-fns", description: "Small" }, { label: "Temporal" }],
+        multiSelect: false,
+      },
+    ],
+  },
+  {
+    _tag: "QuestionClosed",
+    turnId: "t1",
+    toolCallId: "toolu_4",
+    outcome: { _tag: "Answered", answers: { "Which library?": "Temporal" } },
+    by: participant,
+  },
+  { _tag: "QuestionClosed", turnId: "t1", toolCallId: "toolu_4", outcome: { _tag: "Dismissed" } },
+  {
+    _tag: "AnswerFailed",
+    toolCallId: "toolu_4",
+    senderId: "p1",
+    message: "The question was answered or closed already.",
+  },
 ]
 
 describe("checkEvent", () => {
@@ -206,6 +238,16 @@ describe("reading the Hub's replies", () => {
             seq: 3,
             message: { _tag: "PresenceChanged", sessionId: "s1", participants: [participant] },
           },
+          {
+            seq: 4,
+            message: {
+              _tag: "DeliverAnswer",
+              sessionId: "s1",
+              toolCallId: "toolu_4",
+              answer: { _tag: "Replied", text: "Neither" },
+              sender: participant,
+            },
+          },
         ],
       }),
     )
@@ -213,6 +255,7 @@ describe("reading the Hub's replies", () => {
       "1 DeliverPrompt",
       "2 StopTurn",
       "3 PresenceChanged",
+      "4 DeliverAnswer",
     ])
     expect(
       readCommands(JSON.stringify({ messages: [{ seq: 1, message: { _tag: "Explode" } }] })),
@@ -357,4 +400,66 @@ test("toolArguments drops the keys Claude Code adds beside a tool's own", () => 
       timeout: 5,
     }),
   ).toEqual({ command: "ls", timeout: 5 })
+})
+
+describe("AskUserQuestion (#193)", () => {
+  const ada = { name: "Ada" }
+  const asked = [
+    {
+      question: "Which library?",
+      header: "Library",
+      options: [
+        { label: "date-fns", description: "Small", preview: "import …" },
+        { label: "Temporal", description: "" },
+      ],
+      multiSelect: false,
+    },
+  ]
+
+  test("its questions as the protocol carries them", () => {
+    expect(askedQuestions(asked)).toEqual([
+      {
+        question: "Which library?",
+        header: "Library",
+        options: [{ label: "date-fns", description: "Small" }, { label: "Temporal" }],
+        multiSelect: false,
+      },
+    ])
+    expect(askedQuestions([{ question: "Name?", kind: "text" }, 7])).toEqual([
+      { question: "Name?", header: "", options: [], multiSelect: false },
+    ])
+    expect(askedQuestions(undefined)).toEqual([])
+  })
+
+  test("a Participant's answer, as Claude Code's dialog would give it", () => {
+    expect(
+      answerResult(asked, { _tag: "Answered", answers: { "Which library?": "Temporal" } }, ada),
+    ).toEqual({
+      result: { questions: asked, answers: { "Which library?": "Temporal" }, annotations: {} },
+    })
+    expect(answerResult(asked, { _tag: "Replied", text: "Neither, use Intl" }, ada)).toEqual({
+      deny: `${repliedPrefix}[Ada] Neither, use Intl`,
+    })
+    expect(answerResult(asked, { _tag: "Dismissed" }, ada)).toEqual({ deny: dismissedText })
+  })
+
+  test("how one answered at the terminal closed", () => {
+    expect(
+      terminalOutcome({
+        result: { questions: asked, answers: { "Which library?": "date-fns" }, annotations: {} },
+      }),
+    ).toEqual({ _tag: "Answered", answers: { "Which library?": "date-fns" } })
+    expect(terminalOutcome({ result: { questions: asked, answers: {} } })).toEqual({
+      _tag: "Answered",
+      answers: {},
+    })
+    expect(terminalOutcome({ deny: `${repliedPrefix}Ask me later` })).toEqual({
+      _tag: "Replied",
+      text: "Ask me later",
+    })
+    expect(terminalOutcome({ deny: dismissedText })).toEqual({ _tag: "Dismissed" })
+    expect(terminalOutcome({ isError: true, result: "Interrupted" })).toEqual({
+      _tag: "Dismissed",
+    })
+  })
 })

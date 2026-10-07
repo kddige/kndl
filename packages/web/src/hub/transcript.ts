@@ -3,7 +3,8 @@
 // 0014) is a card at the Agent call that started it: its events are grouped by agentId, whichever
 // run they come in, so a background agent keeps filling its card after its Turn ended. A prompt
 // steered into a Turn (#195) is shown where Claude read it. State changes between Turns, notes
-// about the Sandbox, and a change of model (#128) become notices.
+// about the Sandbox, and a change of model (#128) become notices. A question Claude asked with
+// AskUserQuestion (#193) is a block of its own, in place of its tool call, with how it closed.
 
 import type {
   AgentId,
@@ -14,6 +15,8 @@ import type {
   Participant,
   PromptId,
   PromptSender,
+  Question,
+  QuestionClosed,
   SessionLogEntry,
   SessionStateChanged,
   ToolCallId,
@@ -38,6 +41,7 @@ export type Block =
   | { readonly kind: "text"; readonly key: string; readonly text: string }
   | { readonly kind: "tool"; readonly key: string; readonly call: ToolCallView }
   | { readonly kind: "agent"; readonly key: string; readonly agent: AgentView }
+  | { readonly kind: "question"; readonly key: string; readonly question: QuestionView }
   /** A person's message to the agent whose blocks these are. */
   | {
       readonly kind: "message"
@@ -55,6 +59,14 @@ export interface SteeredPrompt {
   readonly sender: Participant
   /** As its sender wrote it. */
   readonly text: string
+}
+
+/** A question Claude asked with AskUserQuestion on the main loop (#193), and how it closed. */
+export interface QuestionView {
+  readonly toolCallId: ToolCallId
+  readonly questions: ReadonlyArray<Question>
+  /** How it closed, and who closed it from the web UI; absent while it's open. */
+  readonly closed?: Pick<QuestionClosed, "outcome" | "by">
 }
 
 /** A subagent, as AgentStarted described it, with its status and everything it said and did. */
@@ -115,6 +127,8 @@ export interface Transcript {
   readonly items: ReadonlyArray<TranscriptItem>
   /** The Session's subagents, by agentId, in the order they started. */
   readonly agents: ReadonlyMap<AgentId, AgentView>
+  /** The questions Claude asked (#193), by their AskUserQuestion call. */
+  readonly questions: ReadonlyMap<ToolCallId, QuestionView>
 }
 
 interface MutableAgent {
@@ -151,6 +165,8 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
   const tools = new Map<ToolCallId, { list: Array<Block>; index: number }>()
   /** The Agent calls that started a subagent: its card stands for the call. */
   const agentCalls = new Set<ToolCallId>()
+  /** Where each question's block is: it stands for its AskUserQuestion call. */
+  const questions = new Map<ToolCallId, { list: Array<Block>; index: number }>()
   let latest: MutableTurn | undefined
 
   const turnFor = (entry: SessionLogEntry, turnId: TurnId): MutableTurn => {
@@ -232,7 +248,7 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
         break
       }
       case "ToolCallStarted": {
-        if (agentCalls.has(event.toolCallId)) break
+        if (agentCalls.has(event.toolCallId) || questions.has(event.toolCallId)) break
         const blocks = blocksFor(entry, event.turnId, event.agentId)
         blocks.push({
           kind: "tool",
@@ -243,7 +259,7 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
         break
       }
       case "ToolCallEnded": {
-        if (agentCalls.has(event.toolCallId)) break
+        if (agentCalls.has(event.toolCallId) || questions.has(event.toolCallId)) break
         const ended = { outcome: event.outcome, output: event.output }
         const started = tools.get(event.toolCallId)
         const block = started?.list[started.index]
@@ -280,6 +296,33 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
         const call = tools.get(event.toolCallId)
         if (call && call.list[call.index]?.kind === "tool") call.list[call.index] = card
         else (turns.get(event.turnId) ?? latest ?? turnFor(entry, event.turnId)).blocks.push(card)
+        break
+      }
+      case "QuestionAsked": {
+        if (questions.has(event.toolCallId)) break
+        const block: Block = {
+          kind: "question",
+          key: `question-${event.toolCallId}`,
+          question: { toolCallId: event.toolCallId, questions: event.questions },
+        }
+        // In place of its AskUserQuestion call, or at the end of its Turn if that wasn't seen.
+        const call = tools.get(event.toolCallId)
+        if (call && call.list[call.index]?.kind === "tool") {
+          call.list[call.index] = block
+          questions.set(event.toolCallId, call)
+        } else {
+          const blocks = turnFor(entry, event.turnId).blocks
+          blocks.push(block)
+          questions.set(event.toolCallId, { list: blocks, index: blocks.length - 1 })
+        }
+        break
+      }
+      case "QuestionClosed": {
+        const at = questions.get(event.toolCallId)
+        const block = at?.list[at.index]
+        if (!at || block?.kind !== "question") break
+        const closed = { outcome: event.outcome, ...(event.by && { by: event.by }) }
+        at.list[at.index] = { ...block, question: { ...block.question, closed } }
         break
       }
       case "AgentStatusChanged": {
@@ -370,7 +413,12 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
   const shown = new Map<AgentId, AgentView>()
   for (const agent of agents.values())
     if (agent.placed) shown.set(agent.agentId, freezeAgent(agent))
-  return { items: frozenItems, agents: shown }
+  const asked = new Map<ToolCallId, QuestionView>()
+  for (const [toolCallId, at] of questions) {
+    const block = at.list[at.index]
+    if (block?.kind === "question") asked.set(toolCallId, block.question)
+  }
+  return { items: frozenItems, agents: shown, questions: asked }
 }
 
 /**

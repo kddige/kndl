@@ -7,6 +7,7 @@ import {
   PromptId,
   RunnerId,
   SessionId,
+  ToolCallId,
   TurnId,
 } from "./Ids.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
@@ -239,6 +240,92 @@ export const DockerProxy = "docker-proxy"
 /** Whether an Open port is one a Docker container publishes, which the web UI labels Docker. */
 export const isDockerPort = (port: OpenPort): boolean => port.process === DockerProxy
 
+// ── Open questions (#193) ──────────────────────────────────────────────────
+
+/** One option of a question Claude asks with AskUserQuestion. */
+export const QuestionOption = Schema.Struct({
+  /** What the option says, which is also its answer. */
+  label: Schema.String,
+  /** What choosing it means; absent when Claude gave none. */
+  description: Schema.optionalKey(Schema.String),
+})
+export type QuestionOption = typeof QuestionOption.Type
+
+/** One question of an AskUserQuestion call, as Claude Code's dialog shows it. */
+export const Question = Schema.Struct({
+  /** The question, which the answers are keyed by. */
+  question: Schema.String,
+  /** A short label for it, such as `Auth method`. */
+  header: Schema.String,
+  /** Its options, without "Other": any answer may be typed instead. None for a free-text question. */
+  options: Schema.Array(QuestionOption),
+  /** Whether more than one option may be picked, their labels joined with ", ". */
+  multiSelect: Schema.Boolean,
+})
+export type Question = typeof Question.Type
+
+/**
+ * The answers to an AskUserQuestion call, as Claude Code's dialog submits them: each keyed by its
+ * question's text, an option's label, several joined with ", ", or text typed under Other. A
+ * question skipped has none.
+ */
+export const QuestionAnswers = Schema.Record(Schema.String, Schema.String)
+export type QuestionAnswers = typeof QuestionAnswers.Type
+
+/**
+ * Several options picked for a multi-select question, as one answer the way Claude Code's dialog
+ * joins them: with ", ", a label that holds ", " or a quote written as a JSON string.
+ */
+export const joinAnswers = (labels: ReadonlyArray<string>): string =>
+  labels
+    .map((label) => (label.includes(", ") || label.includes('"') ? JSON.stringify(label) : label))
+    .join(", ")
+
+/** The question was answered: Claude reads the answers, keyed by question. */
+export const QuestionAnswered = Schema.TaggedStruct("Answered", { answers: QuestionAnswers })
+export type QuestionAnswered = typeof QuestionAnswered.Type
+
+/** Someone replied in their own words instead of answering, which Claude reads as their response. */
+export const QuestionReplied = Schema.TaggedStruct("Replied", { text: Schema.NonEmptyString })
+export type QuestionReplied = typeof QuestionReplied.Type
+
+/** Someone dismissed the question, as Esc does in Claude Code's dialog: Claude is told no. */
+export const QuestionDismissed = Schema.TaggedStruct("Dismissed", {})
+export type QuestionDismissed = typeof QuestionDismissed.Type
+
+/** A Participant's answer to an Open question, from the web UI. */
+export const QuestionAnswer = Schema.Union([
+  QuestionAnswered,
+  QuestionReplied,
+  QuestionDismissed,
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type QuestionAnswer = typeof QuestionAnswer.Type
+
+/**
+ * How an Open question closed: answered, replied to or dismissed by a Participant or at the
+ * terminal, or Cancelled, when its Turn was stopped or its Claude Code stopped first.
+ */
+export const QuestionOutcome = Schema.Union([
+  QuestionAnswered,
+  QuestionReplied,
+  QuestionDismissed,
+  Schema.TaggedStruct("Cancelled", {}),
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type QuestionOutcome = typeof QuestionOutcome.Type
+
+/**
+ * An Open question (GLOSSARY.md): Claude asked with AskUserQuestion on the main loop, and nobody
+ * has answered yet. Claude Code waits on it, and so does the Session, which doesn't sleep.
+ */
+export const OpenQuestion = Schema.Struct({
+  turnId: TurnId,
+  /** The AskUserQuestion call, which an answer names. */
+  toolCallId: ToolCallId,
+  questions: Schema.Array(Question),
+  askedAt: EpochMillis,
+})
+export type OpenQuestion = typeof OpenQuestion.Type
+
 /** A Session as the web UI lists it. */
 export const SessionSummary = Schema.Struct({
   id: SessionId,
@@ -307,6 +394,11 @@ export const SessionSummary = Schema.Struct({
    * access to its Repo may turn it on or off; pressing Sleep turns it off.
    */
   keepAwake: Schema.optionalKey(KeepAwake),
+  /**
+   * Its Open question (#193): present while Claude waits for an answer to an AskUserQuestion call
+   * on its main loop, which any Participant may give.
+   */
+  openQuestion: Schema.optionalKey(OpenQuestion),
 })
 export type SessionSummary = typeof SessionSummary.Type
 

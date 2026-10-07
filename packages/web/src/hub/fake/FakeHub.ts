@@ -19,6 +19,8 @@ import {
   CliLoginCodeLength,
   CliLoginCodeLifetimeMs,
   type EffortLevel,
+  QuestionClosed,
+  questionClosedText,
   findModel,
   formatCliLoginCode,
   formatPairingCode,
@@ -66,6 +68,8 @@ import type {
   ParticipantWire,
   PresentParticipantWire,
   PendingPairingCodeWire,
+  QuestionAnswerWire,
+  QuestionPickWire,
   QueuedPromptWire,
   RunnerSummaryWire,
   SessionEventWire,
@@ -73,6 +77,7 @@ import type {
 } from "./wire.ts"
 
 const decodeParticipant = Schema.decodeUnknownSync(Participant)
+const decodeQuestionClosed = Schema.decodeUnknownSync(QuestionClosed)
 const decodeApproval = Schema.decodeUnknownSync(CliLoginApproval)
 
 export interface FakeHubOptions {
@@ -114,6 +119,17 @@ interface FakeSession {
   agents: Map<string, FakeAgent>
   /** What listens in its Sandbox once Claude Code is up (#175); none while it isn't Active. */
   ports: ReadonlyArray<OpenPortWire>
+  /** Its Open question (#193), while Claude waits for an answer. */
+  asking?: FakeQuestion | null
+}
+
+/** An Open question, as the mod and the Hub hold it (#193). */
+interface FakeQuestion {
+  readonly toolCallId: string
+  /** What people have picked so far, as the Hub shares it. */
+  picks: Array<QuestionPickWire>
+  /** Settles it with the first answer, as the mod does, and goes on with the Turn. */
+  readonly answer: (answer: QuestionAnswerWire, by: ParticipantWire) => void
 }
 
 interface FakeAgent {
@@ -682,6 +698,14 @@ export class FakeHub implements HubTransport {
           sessionId: message.sessionId,
           queue: session.queue,
         })
+        if (session.asking && session.asking.picks.length > 0) {
+          socket.deliver({
+            _tag: "QuestionPicks",
+            sessionId: message.sessionId,
+            toolCallId: session.asking.toolCallId,
+            picks: session.asking.picks,
+          })
+        }
         const starting = session.summary.starting
         if (starting && session.startLog !== "") {
           socket.deliver({
@@ -770,6 +794,37 @@ export class FakeHub implements HubTransport {
         if (!session?.stopTurn) break
         this.#append(session, { _tag: "TurnStopRequested", by: this.#you })
         session.stopTurn()
+        break
+      }
+      // As the Hub and the mod do (#193): the first answer is Claude's; a later one is refused,
+      // saying who answered first.
+      case "AnswerQuestion": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        if (session.asking?.toolCallId !== message.toolCallId) {
+          const closed = session.log.findLast(
+            ({ event }) =>
+              event._tag === "QuestionClosed" && event.toolCallId === message.toolCallId,
+          )
+          this.#fail(
+            socket,
+            message._tag,
+            closed
+              ? `${questionClosedText(decodeQuestionClosed(closed.event), true)}.`
+              : "The question was answered or closed already.",
+            message.sessionId,
+          )
+          break
+        }
+        session.asking.answer(message.answer, this.#you)
+        break
+      }
+      case "PickAnswer": {
+        const session = this.sessions.get(message.sessionId)
+        const asking = session?.asking
+        if (!session || asking?.toolCallId !== message.toolCallId) break
+        const { question, answer } = message
+        this.#pick(session, { participant: this.#you, question, answer })
         break
       }
       // As the Hub does (ADR 0014): anyone may message an agent, which resumes one that has
@@ -1491,6 +1546,8 @@ export class FakeHub implements HubTransport {
         this.#timers.delete(timer)
       }
       for (const agentId of foreground) session.agents.get(agentId)?.stop?.("Stopped")
+      // A Stop cancels the Open question, as the Hub does when its Turn ends.
+      this.#closeQuestion(session, turnId, { _tag: "Cancelled" })
       for (const [toolCallId, tool] of openTools) {
         this.#append(session, {
           _tag: "ToolCallEnded",
@@ -1535,72 +1592,171 @@ export class FakeHub implements HubTransport {
       at += delay
       timers.push(this.#after(at, fn))
     }
-    for (const step of steps) {
-      switch (step.kind) {
-        case "text":
-        case "tool":
-        case "pause":
-          at = this.#layoutStep(session, { turnId }, step, at, schedule, openTools)
-          break
-        case "agent": {
-          // The Agent call, and the subagent it starts: a foreground one's work is the call's,
-          // and the Turn waits for it; a background one's call returns at once.
-          const toolCallId = `tool-${++this.#ids}`
-          const input = JSON.stringify({
-            description: step.description,
-            prompt: step.prompt,
-            subagent_type: step.agentType,
-            ...(step.background && { run_in_background: true }),
-          })
-          const run = () => this.#runAgent(session, step.agentId, step.steps)
-          let length = 0
-          schedule(1, () => {
-            openTools.set(toolCallId, "Agent")
-            this.#append(session, {
-              _tag: "ToolCallStarted",
-              turnId,
-              toolCallId,
-              tool: "Agent",
-              input,
+    // Lays out the steps from `rest` on; a question waits for its answer to lay out the others.
+    const play = (rest: ReadonlyArray<ReplyStep>): void => {
+      for (const [index, step] of rest.entries()) {
+        switch (step.kind) {
+          case "text":
+          case "tool":
+          case "pause":
+            at = this.#layoutStep(session, { turnId }, step, at, schedule, openTools)
+            break
+          case "question":
+            schedule(1, () =>
+              this.#ask(session, turnId, step, openTools, () => {
+                at = 0
+                play(rest.slice(index + 1))
+              }),
+            )
+            return
+          case "agent": {
+            // The Agent call, and the subagent it starts: a foreground one's work is the call's,
+            // and the Turn waits for it; a background one's call returns at once.
+            const toolCallId = `tool-${++this.#ids}`
+            const input = JSON.stringify({
+              description: step.description,
+              prompt: step.prompt,
+              subagent_type: step.agentType,
+              ...(step.background && { run_in_background: true }),
             })
-            this.#startAgent(session, turnId, toolCallId, step)
-            if (step.background) {
-              this.#runAgent(session, step.agentId, step.steps, () =>
-                this.#fromAgent(session, step.agentId, step.result, step.relay),
-              )
-            } else {
-              foreground.add(step.agentId)
-              run()
+            const run = () => this.#runAgent(session, step.agentId, step.steps)
+            let length = 0
+            schedule(1, () => {
+              openTools.set(toolCallId, "Agent")
+              this.#append(session, {
+                _tag: "ToolCallStarted",
+                turnId,
+                toolCallId,
+                tool: "Agent",
+                input,
+              })
+              this.#startAgent(session, turnId, toolCallId, step)
+              if (step.background) {
+                this.#runAgent(session, step.agentId, step.steps, () =>
+                  this.#fromAgent(session, step.agentId, step.result, step.relay),
+                )
+              } else {
+                foreground.add(step.agentId)
+                run()
+              }
+            })
+            if (!step.background) {
+              // The steps it takes: its run's own schedule, laid out the same way.
+              let agentAt = 0
+              for (const inner of step.steps)
+                agentAt = this.#layoutStep(session, null, inner, agentAt, () => {}, null)
+              length = agentAt + 2
             }
-          })
-          if (!step.background) {
-            // The steps it takes: its run's own schedule, laid out the same way.
-            let agentAt = 0
-            for (const inner of step.steps)
-              agentAt = this.#layoutStep(session, null, inner, agentAt, () => {}, null)
-            length = agentAt + 2
-          }
-          schedule(Math.max(1, length), () => {
-            openTools.delete(toolCallId)
-            this.#append(session, {
-              _tag: "ToolCallEnded",
-              turnId,
-              toolCallId,
-              tool: "Agent",
-              outcome: "Succeeded",
-              output: step.background
-                ? `Async agent launched successfully. agentId: ${step.agentId}`
-                : step.result,
+            schedule(Math.max(1, length), () => {
+              openTools.delete(toolCallId)
+              this.#append(session, {
+                _tag: "ToolCallEnded",
+                turnId,
+                toolCallId,
+                tool: "Agent",
+                outcome: "Succeeded",
+                output: step.background
+                  ? `Async agent launched successfully. agentId: ${step.agentId}`
+                  : step.result,
+              })
             })
-          })
-          break
+            break
+          }
+          case "queue":
+            schedule(0, () => this.#prompt(session, step.sender, step.text, replyTo(step.text)))
+            break
         }
-        case "queue":
-          schedule(0, () => this.#prompt(session, step.sender, step.text, replyTo(step.text)))
-          break
       }
+      schedule(1, () => end("Answered"))
     }
-    schedule(1, () => end("Answered"))
+    play(steps)
+  }
+
+  /**
+   * Claude asks with AskUserQuestion (#193): its tool call, and the Session's Open question until
+   * the first answer, which goes on with the Turn. Someone else's pick is shared a few steps in.
+   */
+  #ask(
+    session: FakeSession,
+    turnId: string,
+    step: Extract<ReplyStep, { kind: "question" }>,
+    openTools: Map<string, string>,
+    then: () => void,
+  ): void {
+    const toolCallId = `tool-${++this.#ids}`
+    const tool = "AskUserQuestion"
+    openTools.set(toolCallId, tool)
+    const input = JSON.stringify({ questions: step.questions })
+    this.#append(session, { _tag: "ToolCallStarted", turnId, toolCallId, tool, input })
+    this.#append(session, { _tag: "QuestionAsked", turnId, toolCallId, questions: step.questions })
+    session.summary = {
+      ...session.summary,
+      openQuestion: { turnId, toolCallId, questions: step.questions, askedAt: Date.now() },
+    }
+    this.#summaryChanged(session)
+    session.asking = {
+      toolCallId,
+      picks: [],
+      answer: (answer, by) => {
+        this.#closeQuestion(session, turnId, answer, by)
+        openTools.delete(toolCallId)
+        this.#append(session, {
+          _tag: "ToolCallEnded",
+          turnId,
+          toolCallId,
+          tool,
+          outcome: answer._tag === "Dismissed" ? "Denied" : "Succeeded",
+          output: answerOutput(answer),
+        })
+        then()
+      },
+    }
+    const pick = step.pick
+    if (pick) {
+      this.#after(6, () => {
+        if (session.asking?.toolCallId === toolCallId) this.#pick(session, pick)
+      })
+    }
+  }
+
+  /** Closes the Session's Open question, if it has one, with how it closed. */
+  #closeQuestion(
+    session: FakeSession,
+    turnId: string,
+    outcome: Extract<SessionEventWire, { _tag: "QuestionClosed" }>["outcome"],
+    by?: ParticipantWire,
+  ): void {
+    const asking = session.asking
+    if (!asking) return
+    session.asking = null
+    this.#append(session, {
+      _tag: "QuestionClosed",
+      turnId,
+      toolCallId: asking.toolCallId,
+      outcome,
+      ...(by && { by }),
+    })
+    const { openQuestion: _, ...summary } = session.summary
+    session.summary = summary
+    this.#summaryChanged(session)
+  }
+
+  /** Someone's pick for one of the Open question's questions, in place of theirs before. */
+  #pick(session: FakeSession, pick: QuestionPickWire): void {
+    const asking = session.asking
+    if (!asking) return
+    asking.picks = asking.picks.filter(
+      (held) => held.participant.id !== pick.participant.id || held.question !== pick.question,
+    )
+    if (pick.answer !== "") asking.picks.push(pick)
+    for (const socket of this.#joinedSockets(session)) {
+      socket.deliver({
+        _tag: "QuestionPicks",
+        sessionId: session.summary.id,
+        toolCallId: asking.toolCallId,
+        picks: [...asking.picks],
+      })
+    }
   }
 
   /**
@@ -2076,6 +2232,22 @@ export class FakeHub implements HubTransport {
     }, steps * this.stepMs)
     this.#timers.add(timer)
     return timer
+  }
+}
+
+/** What Claude reads back from AskUserQuestion, as Claude Code words it. */
+function answerOutput(answer: QuestionAnswerWire): string {
+  switch (answer._tag) {
+    case "Answered": {
+      const said = Object.entries(answer.answers)
+        .map(([question, picked]) => `"${question}"="${picked}"`)
+        .join(", ")
+      return `User has answered your questions: ${said}. You can now continue with the user's answers in mind.`
+    }
+    case "Replied":
+      return `The user responded: ${answer.text}`
+    case "Dismissed":
+      return "User declined to answer questions"
   }
 }
 

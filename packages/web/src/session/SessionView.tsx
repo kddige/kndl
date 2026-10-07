@@ -25,6 +25,7 @@ import { buildTranscript, runningTurn } from "../hub/transcript.ts"
 import { restoreSession } from "../sessions/ArchivedSessions.tsx"
 import { renameSession } from "../sessions/rename.ts"
 import {
+  Badge,
   Banner,
   Button,
   Dialog,
@@ -59,6 +60,8 @@ import { modelName, otherTurnModel } from "./models.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
 import { Presence } from "./Presence.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
+import { QuestionDock } from "./QuestionCard.tsx"
+import { WaitingDot } from "./QuestionChip.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { Transcript } from "./Transcript.tsx"
 
@@ -190,6 +193,7 @@ export function SessionView({
       presence={joined.presence}
       queue={joined.queue}
       startLog={joined.startLog}
+      questionPicks={joined.questionPicks}
     />
   )
 }
@@ -204,6 +208,7 @@ function LoadedSession({
   presence,
   queue,
   startLog,
+  questionPicks,
 }: {
   tab: SessionTab
   onTabChange: ((tab: SessionTab) => void) | undefined
@@ -214,6 +219,7 @@ function LoadedSession({
   presence: JoinedSession["presence"]
   queue: JoinedSession["queue"]
   startLog: JoinedSession["startLog"]
+  questionPicks: JoinedSession["questionPicks"]
 }) {
   const hub = useHub()
   const navigate = useNavigate()
@@ -271,7 +277,17 @@ function LoadedSession({
           ? "Frozen: prompts wait in the queue until its Runner is back."
           : undefined
 
-  const send = (prompt: string) => command(hub.sendPrompt(summary.id, prompt))
+  // While Claude asks a question (#193), what is sent declines it and goes to Claude instead.
+  const asking = summary.openQuestion
+  const send = (prompt: string) =>
+    asking
+      ? command(
+          hub.answerQuestion(summary.id, asking.toolCallId, {
+            _tag: "Replied",
+            text: prompt.trim(),
+          }),
+        )
+      : command(hub.sendPrompt(summary.id, prompt))
   // A prompt can be steered into a Turn the Hub has running and isn't stopping (#195). One being
   // steered leaves the queue once it has joined the Turn, or stays, with the Hub's reason.
   const steerable =
@@ -339,6 +355,11 @@ function LoadedSession({
               </IconButton>
             )}
             <SessionStatus state={statusOf(state)} />
+            {summary.openQuestion && (
+              <Badge intent="warning" icon={<WaitingDot />}>
+                Waiting on you
+              </Badge>
+            )}
           </span>
         }
         description={
@@ -478,6 +499,11 @@ function LoadedSession({
               </div>
 
               <div {...stylex.props(styles.column, styles.dock)}>
+                <QuestionDock
+                  summary={summary}
+                  questions={transcript.questions}
+                  picks={questionPicks}
+                />
                 <PromptQueue
                   queue={queue}
                   onCancel={(prompt) => {
@@ -500,7 +526,12 @@ function LoadedSession({
                   onStop={() => hub.stopTurn(summary.id)}
                   running={running}
                   disabledReason={disabledReason}
-                  hint={hint}
+                  hint={
+                    asking
+                      ? "Claude is waiting on an answer: a reply here declines its question."
+                      : hint
+                  }
+                  {...(asking && { copy: replyCopy })}
                   picker={
                     <ModelPicker
                       models={models}
@@ -553,6 +584,14 @@ function claudeAccountText(summary: SessionSummary): string {
       return `on ${summary.runnerLogin.account}`
   }
 }
+
+/** The prompt box's words while Claude waits on an answer to its question (#193). */
+const replyCopy = {
+  field: "Reply",
+  placeholder: "Or reply directly…",
+  send: "Reply",
+  stop: "Stop",
+} as const
 
 /** Says so when a command couldn't be sent for want of a connection to the Hub. */
 function command(sent: boolean): boolean {

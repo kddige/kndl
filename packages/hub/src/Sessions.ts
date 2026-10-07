@@ -6,6 +6,7 @@ import {
   EffortLevel,
   EnvironmentVersion,
   ModelName,
+  OpenQuestion,
   ParticipantId,
   RunnerId,
   SessionId,
@@ -81,6 +82,7 @@ interface SessionRow {
   readonly keepAwakeByName: string | null
   readonly keepAwakeByAvatarUrl: string | null
   readonly keepAwakeAt: number | null
+  readonly openQuestion: string | null
 }
 
 /** Turning a Session's Keep awake on (ADR 0016): who did it, and when. */
@@ -100,6 +102,9 @@ const decodeState = Schema.decodeUnknownSync(SessionState)
 const decodeAgentStatus = Schema.decodeUnknownSync(AgentStatus)
 const decodeModel = Schema.decodeUnknownOption(ModelName)
 const decodeEffort = Schema.decodeUnknownOption(EffortLevel)
+const OpenQuestionJson = Schema.fromJsonString(OpenQuestion)
+const decodeOpenQuestion = Schema.decodeUnknownOption(OpenQuestionJson)
+const encodeOpenQuestion = Schema.encodeSync(OpenQuestionJson)
 
 /** The model and effort a row holds, without a value the Hub would no longer take. */
 const settingOf = (row: { readonly model: string | null; readonly effort: string | null }) => {
@@ -167,7 +172,15 @@ const toSummary = (row: SessionRow, agents: ReadonlyArray<AgentSummary> = []): S
           at: row.keepAwakeAt,
         },
       }),
+    ...openQuestionOf(row),
   })
+
+/** The Open question a row holds, if any the Hub can still read. */
+const openQuestionOf = (row: SessionRow) => {
+  if (row.openQuestion === null) return {}
+  const question = Option.getOrUndefined(decodeOpenQuestion(row.openQuestion))
+  return question === undefined ? {} : { openQuestion: question }
+}
 
 /**
  * Every Session the Hub knows, in SQLite: its Repo and branches, lifecycle state, Runner,
@@ -221,6 +234,11 @@ export class Sessions extends Context.Service<
     readonly setKeepAwake: (
       id: SessionId,
       keepingAwake: KeepingAwake | null,
+    ) => Effect.Effect<void, SqlError>
+    /** Its Open question (#193), or null once it has closed. */
+    readonly setOpenQuestion: (
+      id: SessionId,
+      question: OpenQuestion | null,
     ) => Effect.Effect<void, SqlError>
     /** The Turn running now, or null once the Session is idle. */
     readonly setCurrentTurn: (id: SessionId, turn: TurnId | null) => Effect.Effect<void, SqlError>
@@ -322,7 +340,7 @@ export class Sessions extends Context.Service<
           s.last_output AS lastOutput, s.model, s.effort, s.model_pending AS modelPending,
           s.keep_awake_by AS keepAwakeById, k.login AS keepAwakeByLogin,
           k.name AS keepAwakeByName, k.avatar_url AS keepAwakeByAvatarUrl,
-          s.keep_awake_at AS keepAwakeAt
+          s.keep_awake_at AS keepAwakeAt, s.open_question AS openQuestion
         FROM sessions s JOIN participants p ON p.id = s.creator_id
           LEFT JOIN participants a ON a.id = s.archived_by
           LEFT JOIN participants k ON k.id = s.keep_awake_by
@@ -445,6 +463,14 @@ export class Sessions extends Context.Service<
         yield* sql`UPDATE sessions SET current_turn = ${turn} WHERE id = ${id}`
       })
 
+      const setOpenQuestion = Effect.fn("Sessions.setOpenQuestion")(function* (
+        id: SessionId,
+        question: OpenQuestion | null,
+      ) {
+        const json = question === null ? null : encodeOpenQuestion(question)
+        yield* sql`UPDATE sessions SET open_question = ${json} WHERE id = ${id}`
+      })
+
       const setClaudeSessionId = Effect.fn("Sessions.setClaudeSessionId")(function* (
         id: SessionId,
         claudeSessionId: ClaudeSessionId,
@@ -491,7 +517,7 @@ export class Sessions extends Context.Service<
         archiving: Archiving,
       ) {
         yield* sql`
-          UPDATE sessions SET state = 'Archived', current_turn = NULL,
+          UPDATE sessions SET state = 'Archived', current_turn = NULL, open_question = NULL,
             archived_by = ${archiving.by}, archived_at = ${archiving.at},
             purge_at = ${archiving.purgeAt}, archive_stopped = 0, last_output = NULL,
             keep_awake_by = NULL, keep_awake_at = NULL
@@ -577,6 +603,7 @@ export class Sessions extends Context.Service<
         setModel,
         setModelPending,
         setKeepAwake,
+        setOpenQuestion,
         setCurrentTurn,
         setClaudeSessionId,
         setEnvironmentVersion,

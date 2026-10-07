@@ -23,6 +23,7 @@ import type {
   Participant,
   PresentParticipant,
   PendingPairingCode,
+  QuestionPick,
   QueuedPrompt,
   RunnerId,
   RunnerSummary,
@@ -35,6 +36,7 @@ import type {
   TestBuild,
   TestBuildId,
   TestBuildResult,
+  ToolCallId,
 } from "@kndl/protocol"
 import { repoKey, sameRepo } from "@kndl/protocol"
 import type { SignInOptions } from "./config.ts"
@@ -62,6 +64,17 @@ export interface JoinedSession {
   readonly queue: ReadonlyArray<QueuedPrompt>
   /** The output of its latest start the client has seen, or null before any. */
   readonly startLog: StartLog | null
+  /**
+   * What the Participants have picked for its Open question so far (#193), or null before the Hub
+   * shares any. For the question `toolCallId` names, which may have closed since.
+   */
+  readonly questionPicks: QuestionPicksState | null
+}
+
+/** The Participants' picks for an Open question, as the Hub last shared them (#193). */
+export interface QuestionPicksState {
+  readonly toolCallId: ToolCallId
+  readonly picks: ReadonlyArray<QuestionPick>
 }
 
 /**
@@ -187,6 +200,7 @@ const emptyJoined: JoinedSession = {
   presence: [],
   queue: [],
   startLog: null,
+  questionPicks: null,
 }
 
 export function reduce(state: HubState, action: HubAction): HubState {
@@ -249,6 +263,8 @@ export function reduce(state: HubState, action: HubAction): HubState {
         ...session,
         historyLoaded: true,
         log: appendEntries(session.log, action.entries),
+        // The picks follow the history, if any are still shared.
+        questionPicks: null,
       }))
     case "SessionEventLogged": {
       const next = updateJoined(state, action.sessionId, (session) => ({
@@ -271,6 +287,11 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return updateJoined(state, action.sessionId, (session) => ({
         ...session,
         queue: action.queue,
+      }))
+    case "QuestionPicks":
+      return updateJoined(state, action.sessionId, (session) => ({
+        ...session,
+        questionPicks: { toolCallId: action.toolCallId, picks: action.picks },
       }))
     case "SessionStartLogged":
       return updateJoined(state, action.sessionId, (session) => {

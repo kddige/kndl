@@ -150,6 +150,64 @@ describe("Redacting a text", () => {
         { _tag: "SandboxNoted", message: `bad url ${secret}` },
         { _tag: "SandboxNoted", message: `bad url ${masked}` },
       ],
+      [
+        {
+          _tag: "QuestionAsked",
+          turnId,
+          toolCallId,
+          questions: [
+            {
+              question: `Rotate ${secret}?`,
+              header: secret,
+              options: [{ label: secret, description: `keep ${secret}` }, { label: "No" }],
+              multiSelect: false,
+            },
+          ],
+        },
+        {
+          _tag: "QuestionAsked",
+          turnId,
+          toolCallId,
+          questions: [
+            {
+              question: `Rotate ${masked}?`,
+              header: masked,
+              options: [{ label: masked, description: `keep ${masked}` }, { label: "No" }],
+              multiSelect: false,
+            },
+          ],
+        },
+      ],
+      [
+        {
+          _tag: "QuestionClosed",
+          turnId,
+          toolCallId,
+          outcome: { _tag: "Answered", answers: { [`Rotate ${secret}?`]: secret } },
+        },
+        {
+          _tag: "QuestionClosed",
+          turnId,
+          toolCallId,
+          outcome: { _tag: "Answered", answers: { [`Rotate ${masked}?`]: masked } },
+        },
+      ],
+      [
+        {
+          _tag: "QuestionClosed",
+          turnId,
+          toolCallId,
+          outcome: { _tag: "Replied", text: `use ${secret}` },
+          by: sender,
+        },
+        {
+          _tag: "QuestionClosed",
+          turnId,
+          toolCallId,
+          outcome: { _tag: "Replied", text: `use ${masked}` },
+          by: sender,
+        },
+      ],
     ]
     for (const [event, redacted] of events) expect(redactEvent(needles, event)).toEqual(redacted)
   })

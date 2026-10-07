@@ -78,6 +78,10 @@ _Avoid_: backlog, inbox
 To take a queued prompt out of the Prompt queue and feed it into the running Turn, which reads it at its next step, as Claude Code does with a prompt typed while it works. The Turn stays the one its first prompt started.
 _Avoid_: interrupt, inject, push
 
+**Open question**:
+A question Claude asked in a Turn, with AskUserQuestion, that no one has answered yet. Any Participant may answer it, from the web UI or at the terminal; the first answer is the one Claude reads. While it is open, the Session is waiting on its Participants and doesn't go to sleep.
+_Avoid_: prompt, dialog, permission request
+
 **Workspace**:
 The Session's checkout of its Repo, which outlives any single Sandbox.
 _Avoid_: working directory, volume, clone

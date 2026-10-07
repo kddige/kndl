@@ -214,6 +214,48 @@ export const turnEvents = [
     sender: { _tag: "FromAgent", agentId: "a-1" },
   },
   {
+    _tag: "QuestionAsked",
+    turnId: "t-5",
+    toolCallId: "toolu_ask",
+    questions: [
+      {
+        question: "Which date library?",
+        header: "Library",
+        options: [
+          { label: "date-fns", description: "Small, tree-shakeable" },
+          { label: "Temporal" },
+        ],
+        multiSelect: false,
+      },
+      { question: "What else?", header: "Notes", options: [], multiSelect: true },
+    ],
+  },
+  {
+    _tag: "QuestionClosed",
+    turnId: "t-5",
+    toolCallId: "toolu_ask",
+    outcome: { _tag: "Answered", answers: { "Which date library?": "date-fns" } },
+    by: bob,
+  },
+  {
+    _tag: "QuestionClosed",
+    turnId: "t-5",
+    toolCallId: "toolu_ask",
+    outcome: { _tag: "Replied", text: "neither, use the platform" },
+  },
+  {
+    _tag: "QuestionClosed",
+    turnId: "t-5",
+    toolCallId: "toolu_ask",
+    outcome: { _tag: "Dismissed" },
+  },
+  {
+    _tag: "QuestionClosed",
+    turnId: "t-5",
+    toolCallId: "toolu_ask",
+    outcome: { _tag: "Cancelled" },
+  },
+  {
     _tag: "PromptSteered",
     turnId: "t-1",
     promptId: "p-2",

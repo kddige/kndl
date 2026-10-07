@@ -338,3 +338,172 @@ describe("subagents (ADR 0014)", () => {
     ])
   })
 })
+
+/**
+ * A session whose Hub answers the first AskUserQuestion call with `webAnswer` from Ada, once
+ * Claude Code's dialog for it is open; the dialog answers with `atTerminal`, or stays open.
+ * Returns the call's id, the dialog's signal, and the events posted.
+ */
+const askedSession = (
+  on: On,
+  webAnswer: Record<string, unknown>,
+  atTerminal?: Record<string, unknown>,
+) => {
+  const commands: Array<Record<string, unknown>> = []
+  let opened: ((id: string) => void) | undefined
+  const dialog = { id: "", signal: undefined as AbortSignal | undefined }
+  const { posted } = linkedSession(
+    on,
+    commands,
+    new Promise<void>((resolve) => {
+      opened = (id) => {
+        commands.push({
+          _tag: "DeliverAnswer",
+          sessionId: "s1",
+          toolCallId: id,
+          answer: webAnswer,
+          sender: ada,
+        })
+        resolve()
+      }
+    }),
+  )
+  on("turn.start", (_, e) => ({ turnId: e.turnId }))
+  on("tool.call", (_, e, next) => {
+    dialog.id = e.tool_use_id ?? ""
+    dialog.signal = next.signal
+    opened?.(dialog.id)
+    return (atTerminal === undefined ? new Promise(() => undefined) : atTerminal) as never
+  })
+  return { dialog, posted }
+}
+
+describe("Open questions (#193)", () => {
+  const questions = [
+    {
+      question: "Which library?",
+      header: "Library",
+      options: [
+        { label: "date-fns", description: "Small and familiar" },
+        { label: "Temporal", description: "The platform's own" },
+      ],
+      multiSelect: false,
+    },
+  ]
+  const asked = {
+    _tag: "QuestionAsked",
+    turnId: "t1",
+    questions: [
+      {
+        question: "Which library?",
+        header: "Library",
+        options: [
+          { label: "date-fns", description: "Small and familiar" },
+          { label: "Temporal", description: "The platform's own" },
+        ],
+        multiSelect: false,
+      },
+    ],
+  }
+
+  test("a Participant's answer is Claude's, and closes the dialog", async ($, on) => {
+    const { dialog, posted } = askedSession(on, {
+      _tag: "Answered",
+      answers: { "Which library?": "Temporal" },
+    })
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
+    const call = $.tool.call({ tool: "AskUserQuestion", questions } as never)
+    await clock.advance(200)
+
+    expect(await call).toEqual(
+      expect.objectContaining({
+        result: expect.objectContaining({
+          answers: { "Which library?": "Temporal" },
+          annotations: {},
+        }),
+      }),
+    )
+    expect(dialog.signal?.aborted).toBe(true)
+    expect(posted()).toEqual([
+      { ...asked, toolCallId: dialog.id },
+      {
+        _tag: "QuestionClosed",
+        turnId: "t1",
+        toolCallId: dialog.id,
+        outcome: { _tag: "Answered", answers: { "Which library?": "Temporal" } },
+        by: ada,
+      },
+    ])
+  })
+
+  test("one dismissed is refused, as Esc refuses it", async ($, on) => {
+    const { dialog, posted } = askedSession(on, { _tag: "Dismissed" })
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
+    const call = $.tool.call({ tool: "AskUserQuestion", questions } as never)
+    await clock.advance(200)
+
+    expect(await call).toEqual(
+      expect.objectContaining({
+        deny: expect.stringContaining("The user doesn't want to proceed with this tool use."),
+      }),
+    )
+    expect(posted().at(-1)).toEqual({
+      _tag: "QuestionClosed",
+      turnId: "t1",
+      toolCallId: dialog.id,
+      outcome: { _tag: "Dismissed" },
+      by: ada,
+    })
+  })
+
+  test("one answered at the terminal first is reported, and a later one refused", async ($, on) => {
+    const atTerminal = {
+      result: { questions, answers: { "Which library?": "date-fns" }, annotations: {} },
+    }
+    const { dialog, posted } = askedSession(on, { _tag: "Replied", text: "Neither" }, atTerminal)
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
+    const done = await $.tool.call({ tool: "AskUserQuestion", questions } as never)
+    await clock.advance(200)
+
+    expect(done).toEqual(expect.objectContaining(atTerminal))
+    expect(posted()).toEqual([
+      { ...asked, toolCallId: dialog.id },
+      {
+        _tag: "QuestionClosed",
+        turnId: "t1",
+        toolCallId: dialog.id,
+        outcome: { _tag: "Answered", answers: { "Which library?": "date-fns" } },
+      },
+      {
+        _tag: "AnswerFailed",
+        toolCallId: dialog.id,
+        senderId: "p1",
+        message: "The question was answered or closed already.",
+      },
+    ])
+  })
+
+  test("one asked with no Turn on the main loop, a background agent's, is the terminal's alone", async ($, on) => {
+    const { posted } = askedSession(on, { _tag: "Dismissed" })
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    void $.tool.call({ tool: "AskUserQuestion", questions } as never)
+    await clock.advance(200)
+
+    expect(posted()).toEqual([expect.objectContaining({ _tag: "AnswerFailed", senderId: "p1" })])
+  })
+})

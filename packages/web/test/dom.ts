@@ -4,6 +4,11 @@ import { join } from "node:path"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { createStylexBunPlugin } from "@stylexjs/unplugin/bun"
 
+// effect's Schema keeps the URL class it finds when it loads, for Schema.URL. Loaded here, before
+// happy-dom's window goes on the globals, that is Bun's own: a later test file in the same process
+// (the CLI's doctor's, reading HUB_PUBLIC_URL) makes its URLs with it.
+await import("effect/Schema")
+
 // Set-up for the web package's component tests, which run under the repo-wide `bun test`.
 //
 // StyleX has no runtime: `stylex.create()` throws unless the compiler rewrote it. So this registers

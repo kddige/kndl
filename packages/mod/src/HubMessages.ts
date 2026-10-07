@@ -10,7 +10,15 @@ import {
   ModHelloReply,
   ProtocolVersion,
 } from "@kndl/protocol"
-import type { ModEventsEncoded, Participant, TurnEndReason, TurnUsage } from "@kndl/protocol"
+import type {
+  ModEventsEncoded,
+  Participant,
+  Question,
+  QuestionAnswer,
+  QuestionOutcome,
+  TurnEndReason,
+  TurnUsage,
+} from "@kndl/protocol"
 import { Exit, Schema } from "effect"
 
 export type ModEventEncoded = typeof ModEvent.Encoded
@@ -199,6 +207,103 @@ export const agentWorktree = (
   const match = /^(.*\/\.claude\/worktrees\/([^/]+))\/?$/.exec(cwd)
   if (match?.[1] === undefined || match[2] === undefined) return undefined
   return { path: match[1], branch: `worktree-${match[2]}` }
+}
+
+// ── AskUserQuestion (#193) ─────────────────────────────────────────────────
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const text = (value: unknown) => (typeof value === "string" ? value : "")
+
+/**
+ * AskUserQuestion's `questions` input as the protocol carries them: each question with its
+ * header, options and whether several may be picked. An entry that isn't a question is left out.
+ */
+export const askedQuestions = (questions: unknown): Array<Question> =>
+  (Array.isArray(questions) ? questions : []).filter(isRecord).map((question) => ({
+    question: text(question.question),
+    header: text(question.header),
+    options: (Array.isArray(question.options) ? question.options : [])
+      .filter(isRecord)
+      .map((option) => {
+        const description = text(option.description)
+        return { label: text(option.label), ...(description === "" ? {} : { description }) }
+      }),
+    multiSelect: question.multiSelect === true,
+  }))
+
+/**
+ * What Claude reads when Esc closes Claude Code's dialog, as when a permission prompt is refused.
+ * A Participant's Dismissed answers with it.
+ */
+export const dismissedText =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+
+/**
+ * How Claude Code tells Claude that the user refused a tool call and said something instead, which
+ * follows it. A Participant's Replied answers with it, with their name: a refusal reaches Claude
+ * whatever the tool's result looks like.
+ */
+export const repliedPrefix =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n"
+
+/** An AskUserQuestion call's result from a hook, as Claude Code's dialog would have it. */
+export type AnswerResult =
+  | { readonly deny: string }
+  | {
+      readonly result: {
+        readonly questions: unknown
+        readonly answers: Readonly<Record<string, string>>
+        readonly annotations?: Readonly<Record<string, never>>
+      }
+    }
+
+/**
+ * What an AskUserQuestion call answers with a Participant's answer, as Claude Code's dialog
+ * would: the answers keyed by question, with no annotations, as its Submit does; a reply, as the
+ * call refused with what the sender said instead; or, dismissed, what Esc does.
+ */
+export const answerResult = (
+  questions: unknown,
+  answer: QuestionAnswer,
+  sender: Pick<Participant, "name">,
+): AnswerResult => {
+  switch (answer._tag) {
+    case "Answered":
+      return { result: { questions, answers: answer.answers, annotations: {} } }
+    case "Replied":
+      return { deny: `${repliedPrefix}${promptFromParticipant(sender, answer.text)}` }
+    case "Dismissed":
+      return { deny: dismissedText }
+  }
+}
+
+/**
+ * How an AskUserQuestion call answered at the terminal closed its question: with the answers
+ * chosen; refused with something said instead, replied; or otherwise refused (Esc, or "Chat about
+ * this"), dismissed.
+ */
+export const terminalOutcome = (done: {
+  readonly deny?: string | undefined
+  readonly isError?: true | undefined
+  readonly result?: unknown
+}): QuestionOutcome => {
+  if (done.deny?.startsWith(repliedPrefix) === true) {
+    const said = done.deny.slice(repliedPrefix.length)
+    if (said.trim() !== "") return { _tag: "Replied", text: said }
+  }
+  if (done.deny !== undefined || done.isError === true || !isRecord(done.result))
+    return { _tag: "Dismissed" }
+  const answers = isRecord(done.result.answers) ? done.result.answers : {}
+  return {
+    _tag: "Answered",
+    answers: Object.fromEntries(
+      Object.entries(answers).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+  }
 }
 
 const maxQueued = 5_000

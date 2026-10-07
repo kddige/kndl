@@ -13,6 +13,9 @@ import type {
   Participant,
   PendingPairingCode,
   PresentParticipant,
+  Question,
+  QuestionAnswer,
+  QuestionPick,
   QueuedPrompt,
   RunnerSummary,
   SessionEvent,
@@ -38,3 +41,6 @@ export type AppPermissionsCheckWire = (typeof AppPermissionsCheck)["Encoded"]
 export type PendingPairingCodeWire = (typeof PendingPairingCode)["Encoded"]
 export type ClaudeCredentialInfoWire = (typeof ClaudeCredentialInfo)["Encoded"]
 export type CliTokenInfoWire = (typeof CliTokenInfo)["Encoded"]
+export type QuestionWire = (typeof Question)["Encoded"]
+export type QuestionAnswerWire = (typeof QuestionAnswer)["Encoded"]
+export type QuestionPickWire = (typeof QuestionPick)["Encoded"]

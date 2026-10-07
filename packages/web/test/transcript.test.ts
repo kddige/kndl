@@ -385,7 +385,72 @@ describe("buildTranscript", () => {
   })
 
   test("an empty log is an empty transcript", () => {
-    expect(buildTranscript([])).toEqual({ items: [], agents: new Map() })
+    expect(buildTranscript([])).toEqual({ items: [], agents: new Map(), questions: new Map() })
+  })
+})
+
+describe("questions (#193)", () => {
+  const questions = [
+    {
+      question: "Which library?",
+      header: "Library",
+      multiSelect: false,
+      options: [{ label: "date-fns", description: "Small." }, { label: "Luxon" }],
+    },
+  ]
+  const started = { _tag: "TurnStarted", turnId: "t-1", text: "hi", sender: fromAlice } as const
+  const call = {
+    _tag: "ToolCallStarted",
+    turnId: "t-1",
+    toolCallId: "q-1",
+    tool: "AskUserQuestion",
+    input: "{}",
+  } as const
+  const asked = { _tag: "QuestionAsked", turnId: "t-1", toolCallId: "q-1", questions } as const
+  const answered = {
+    _tag: "QuestionClosed",
+    turnId: "t-1",
+    toolCallId: "q-1",
+    outcome: { _tag: "Answered", answers: { "Which library?": "Luxon" } },
+    by: bob,
+  } as const
+  const ended = {
+    _tag: "ToolCallEnded",
+    turnId: "t-1",
+    toolCallId: "q-1",
+    tool: "AskUserQuestion",
+    outcome: "Succeeded",
+    output: "answered",
+  } as const
+
+  test("a question stands in place of its AskUserQuestion call, and says how it closed", () => {
+    const transcript = buildTranscript(
+      entries([started, { _tag: "TextDelta", turnId: "t-1", text: "One thing:" }, call, asked]),
+    )
+    const [turn] = turns(transcript.items)
+    expect(turn?.blocks.map((block) => block.kind)).toEqual(["text", "question"])
+    expect(transcript.questions.get("q-1" as never)?.closed).toBeUndefined()
+
+    const later = buildTranscript(
+      entries([started, call, asked, answered, ended, { ...call, toolCallId: "other" }]),
+    )
+    const blocks = turns(later.items)[0]?.blocks ?? []
+    expect(blocks.map((block) => block.kind)).toEqual(["question", "tool"])
+    const [block] = blocks
+    expect(block?.kind === "question" && block.question.closed?.by?.name).toBe("Bob")
+    expect(later.questions.get("q-1" as never)?.closed?.outcome).toEqual(answered.outcome)
+  })
+
+  test("a question reported before its tool call hides the call", () => {
+    const [turn] = turns(build(entries([started, asked, call, answered, ended])))
+    expect(turn?.blocks).toHaveLength(1)
+    expect(turn?.blocks[0]?.kind).toBe("question")
+    expect(turn?.blocks[0]?.key).toBe("question-q-1")
+  })
+
+  test("a close for a question not in the log changes nothing", () => {
+    const [turn] = turns(build(entries([started, answered])))
+    expect(turn?.blocks).toEqual([])
   })
 })
 

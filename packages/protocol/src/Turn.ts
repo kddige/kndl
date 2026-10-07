@@ -1,6 +1,13 @@
 import { Schema } from "effect"
 import { AgentId, PromptId, ToolCallId, TurnId } from "./Ids.ts"
-import { AgentStatus, BranchName, FromSession, Participant } from "./Session.ts"
+import {
+  AgentStatus,
+  BranchName,
+  FromSession,
+  Participant,
+  Question,
+  QuestionOutcome,
+} from "./Session.ts"
 
 // Turn events: what happens in a Turn, as the mod reports it to the Hub. The Hub appends each to
 // the Session's event log and relays it to web clients unchanged.
@@ -181,6 +188,32 @@ export const AgentStatusChanged = Schema.TaggedStruct("AgentStatusChanged", {
 })
 export type AgentStatusChanged = typeof AgentStatusChanged.Type
 
+/**
+ * Claude asked a question with AskUserQuestion on the main loop (#193): the Session's Open
+ * question until a QuestionClosed for the same call. Claude Code shows its dialog at the terminal
+ * meanwhile, and the first answer, there or from the web UI, is the one Claude reads. A subagent's
+ * questions are answered at the terminal only, and not reported.
+ */
+export const QuestionAsked = Schema.TaggedStruct("QuestionAsked", {
+  turnId: TurnId,
+  toolCallId: ToolCallId,
+  questions: Schema.Array(Question),
+})
+export type QuestionAsked = typeof QuestionAsked.Type
+
+/**
+ * The Open question closed: answered, replied to or dismissed, or Cancelled. The mod reports it
+ * when an answer settles it; the Hub when its Turn or its Claude Code ended with it open.
+ */
+export const QuestionClosed = Schema.TaggedStruct("QuestionClosed", {
+  turnId: TurnId,
+  toolCallId: ToolCallId,
+  outcome: QuestionOutcome,
+  /** The Participant who answered from the web UI; absent when it was at the terminal, or none. */
+  by: Schema.optionalKey(Participant),
+})
+export type QuestionClosed = typeof QuestionClosed.Type
+
 /** Every Turn event. New kinds of event are added here as members. */
 export const TurnEvent = Schema.Union([
   TurnStarted,
@@ -190,7 +223,38 @@ export const TurnEvent = Schema.Union([
   TurnEnded,
   AgentStarted,
   AgentStatusChanged,
+  QuestionAsked,
+  QuestionClosed,
   PromptSteered,
   SteeredPromptRead,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type TurnEvent = typeof TurnEvent.Type
+
+/**
+ * What a closed question says (#193), as "Bob answered: date-fns" or "Someone at the terminal
+ * dismissed the question"; with `first`, as told to someone whose answer came after it.
+ */
+export const questionClosedText = (
+  closed: { readonly outcome: QuestionOutcome; readonly by?: Participant | undefined },
+  first = false,
+): string => {
+  const who = closed.by?.name ?? "Someone at the terminal"
+  const then = first ? " first" : ""
+  const { outcome } = closed
+  switch (outcome._tag) {
+    case "Answered": {
+      const answers = Object.entries(outcome.answers)
+      if (answers.length === 0) return `${who} skipped the questions${then}`
+      const what = answers
+        .map(([question, answer]) => (answers.length === 1 ? answer : `${question} ${answer}`))
+        .join("; ")
+      return `${who} answered${then}: ${what}`
+    }
+    case "Replied":
+      return `${who} replied${then}: “${outcome.text}”`
+    case "Dismissed":
+      return `${who} dismissed the question${then}`
+    case "Cancelled":
+      return first ? "The question was cancelled first" : "The question was cancelled"
+  }
+}
