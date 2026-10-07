@@ -1,0 +1,668 @@
+---
+// The landing page, at the site root. A drawn campsite (Kip is the fire) and real screenshots of
+// the web UI in one composition: the viewer is the third person at the fire, and the laptop in
+// the foreground runs the real web UI. Going down through the ground, each layer shows what you'd
+// see there. Standalone page, not the Starlight layout, so it carries the head tags that
+// astro.config.mjs gives the docs pages. Conventions: docs/design/docs-style.md, "Landing page".
+const base = import.meta.env.BASE_URL
+const site = "https://kddige.github.io"
+const doc = (path: string) => `${base}${path}`
+const img = (name: string) => `${base}landing/${name}.webp`
+
+const installCmd =
+  "gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh"
+
+// Stars: fixed positions from a tiny seeded generator, so the sky is the same on every build.
+let seed = 11
+const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+const stars = Array.from({ length: 34 }, () => ({
+  x: Math.round(160 + rand() * 1440),
+  y: Math.round(rand() * 430),
+  r: rand() > 0.9 ? 1.8 : 1.1,
+  o: 0.2 + rand() * 0.35,
+}))
+
+// Two marshmallows sit at the fire, one each side, on a log seat; the third at the fire is the
+// viewer, at the laptop in the foreground. `dir` 1 faces right, towards the fire.
+const mallows = [
+  { x: 560, y: 836, dir: 1, delay: "0s" },
+  { x: 880, y: 836, dir: -1, delay: "-3.1s" },
+]
+
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>kndl · Multiplayer agentic sessions, self-hosted</title>
+    <meta name="description" content="kndl is a Hub you host. A team runs Claude Code Sessions in Sandboxes on machines you own, and watches and drives them together from the web." />
+    <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
+    <link rel="icon" href={`${base}favicon.ico`} sizes="32x32" />
+    <link rel="apple-touch-icon" href={`${base}apple-touch-icon.png`} />
+    <meta property="og:title" content="kndl · Multiplayer agentic sessions, self-hosted" />
+    <meta property="og:image" content={`${site}${base}og.png`} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="kndl: multiplayer agentic sessions, self-hosted." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content={`${site}${base}og.png`} />
+    <meta name="theme-color" content="#fbf6ea" />
+    <!-- The theme, before first paint: the same localStorage key as the docs pages
+         ('dark' | 'light' | '' for auto), so a choice made on either carries to the other.
+         Auto is cream paper unless the system asks for dark. -->
+    <script is:inline>
+      (() => {
+        let t
+        try { t = localStorage.getItem("starlight-theme") } catch {}
+        const dark = t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches)
+        document.documentElement.dataset.theme = dark ? "dark" : "light"
+        document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#1b1823" : "#fbf6ea")
+      })()
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..800,0..100&family=JetBrains+Mono:wght@400;600&display=swap"
+    />
+  </head>
+  <body>
+    <!-- 1. The fire, and you at it. -->
+    <section class="hero">
+      <header class="top">
+        <a class="brand" href={doc("")} aria-label="kndl docs">
+          <svg viewBox="24 8 80 114" width="20" height="28" aria-hidden="true">
+            <rect x="28" y="100" width="72" height="13" rx="6.5" fill="#6B4A3A" transform="rotate(-11 64 106)" />
+            <rect x="28" y="100" width="72" height="13" rx="6.5" fill="#8C5F47" transform="rotate(11 64 106)" />
+            <path class="flame" d="M64 12C74 30 100 46 100 74c0 22-16 34-36 34S28 96 28 74c0-16 8-26 16-34 1 12 6 18 13 20-3-16-1-34 7-48z" fill="#F6C445" />
+            <path d="M64 50c6 12 21 20 21 36 0 12-9 19-21 19s-21-7-21-19c0-11 9-20 21-36z" fill="#FFEDB5" />
+          </svg>
+          kndl
+        </a>
+        <nav aria-label="Docs">
+          <a href={doc("tutorials/first-session/")}>Tutorial</a>
+          <a href={doc("how-to/install/")}>Install</a>
+          <a href={doc("explanation/architecture/")}>How it works</a>
+          <a href="https://github.com/kddige/kndl">GitHub</a>
+          <label class="theme">
+            <span class="sr">Theme</span>
+            <select id="theme">
+              <option value="auto">Auto</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+        </nav>
+      </header>
+
+      <div class="pitch">
+        <div class="pitch-head">
+          <h1>Multiplayer agentic sessions.</h1>
+        </div>
+        <div class="pitch-body">
+          <p class="lede">
+            kndl is a self-hosted Hub for Claude Code Sessions. Each Session works in its own Sandbox
+            on a machine you own, and everyone with access to its Repo can watch it live and send it
+            prompts.
+          </p>
+          <div class="install">
+            <code><span class="p">$</span> <span id="cmd">{installCmd}</span></code>
+            <button type="button" id="copy" aria-label="Copy the install command">Copy</button>
+          </div>
+          <p class="install-note">
+            Needs the GitHub CLI, signed in with access to the private repo.{" "}
+            <a href={doc("how-to/install/")}>What it installs</a>
+          </p>
+        </div>
+      </div>
+
+      <div class="stage">
+        <svg class="scene" viewBox="160 0 1440 900" preserveAspectRatio="xMidYMax slice" role="img"
+          aria-label="An illustration: a campfire with a face, labelled Session, with two marshmallows with faces sitting on logs either side of it, toasting sticks held towards the flames. On the hill behind are a tent labelled Sandbox and a small fire labelled Runner.">
+          <rect class="sky" x="100" width="1560" height="900" />
+          <g class="stars" fill="#FFEDB5">
+            {stars.map((s) => <circle cx={s.x} cy={s.y} r={s.r} opacity={s.o} />)}
+          </g>
+
+          <path d="M100 620 L300 560 L540 600 L760 520 L980 590 L1240 500 L1460 570 L1660 530 V760 H100 Z" class="ridge" />
+
+          <g>
+            <path d="M100 650 C200 620 320 630 440 660 C560 690 640 694 720 694 C860 694 980 660 1120 644 C1260 628 1360 640 1440 664 L1660 650 V900 H100 Z" class="hill" />
+
+            <!-- The tent: a Sandbox. -->
+            <g class="aside" transform="translate(405 694) scale(0.78)">
+              <path class="tent" d="M-96 0 L0 -108 L96 0 Z" />
+              <path class="tent-shade" d="M-96 0 L0 -108 L-8 0 Z" />
+              <path d="M-30 0 L0 -60 L30 0 Z" fill="#F6C445" />
+              <path d="M-14 0 L0 -32 L14 0 Z" fill="#FFEDB5" />
+            </g>
+            <text class="tag aside" x="405" y="716" text-anchor="middle">Sandbox</text>
+
+            <!-- The far fire: a Runner. -->
+            <g transform="translate(290 680)" class="far aside">
+              <rect x="-24" y="0" width="48" height="8" rx="4" fill="#6B4A3A" transform="rotate(-8)" />
+              <rect x="-24" y="0" width="48" height="8" rx="4" fill="#8C5F47" transform="rotate(8)" />
+              <g class="flick">
+                <path class="flame" d="M0 -42 C7 -28 22 -18 22 -4 C22 6 12 10 0 10 S-22 6 -22 -4 C-22 -14 -14 -22 -9 -26 C-8 -16 -5 -12 -1 -10 C-3 -22 -3 -34 0 -42Z" fill="#F6C445" />
+                <path d="M0 -20 C4 -12 12 -8 12 0 C12 6 7 8 0 8 S-12 6 -12 0 C-12 -7 -5 -12 0 -20Z" fill="#FFEDB5" />
+              </g>
+            </g>
+            <text class="tag aside" x="290" y="716" text-anchor="middle">Runner</text>
+
+            <path d="M100 730 C240 712 520 726 720 728 C940 730 1200 712 1440 732 L1660 722 V900 H100 Z" class="front" />
+            <ellipse cx="720" cy="838" rx="300" ry="40" class="hearth" />
+
+            <defs>
+              <clipPath id="mallow-body"><rect x="-28" y="-86" width="56" height="74" rx="18" /></clipPath>
+            </defs>
+            {mallows.map((m) => (
+              <g transform={`translate(${m.x} ${m.y}) scale(${m.dir} 1)`}>
+                <rect x="-34" y="-13" width="68" height="13" rx="6.5" fill="#6B4A3A" />
+                <g class="mallow" style={`animation-delay: ${m.delay}`}>
+                  <path d="M17 -46 L52 -86" stroke="#8C5F47" stroke-width="3.4" stroke-linecap="round" />
+                  <g clip-path="url(#mallow-body)">
+                    <rect x="-28" y="-86" width="56" height="74" rx="18" fill="#FFEDB5" />
+                    <rect x="15" y="-86" width="14" height="74" fill="#F6C445" opacity="0.5" />
+                  </g>
+                  <rect class="edge" x="-28" y="-86" width="56" height="74" rx="18" />
+                  <g fill="#2A1F3D"><ellipse cx="-1" cy="-58" rx="3.2" ry="4.2" /><ellipse cx="14" cy="-58" rx="3.2" ry="4.2" /></g>
+                  <g fill="#fff"><circle cx="0.2" cy="-59.6" r="1" /><circle cx="15.2" cy="-59.6" r="1" /></g>
+                  <g fill="#F59C8B"><circle cx="-8" cy="-49" r="3.2" /><circle cx="21" cy="-49" r="3.2" /></g>
+                  <path d="M3.5 -49q3.5 4.2 7 0" fill="none" stroke="#2A1F3D" stroke-width="2.2" stroke-linecap="round" />
+                </g>
+              </g>
+            ))}
+
+            <!-- Kip, the Session. -->
+            <g transform="translate(720 622) scale(2.1) translate(-64 -12)">
+              <rect x="28" y="100" width="72" height="13" rx="6.5" fill="#6B4A3A" transform="rotate(-11 64 106)" />
+              <rect x="28" y="100" width="72" height="13" rx="6.5" fill="#8C5F47" transform="rotate(11 64 106)" />
+              <g class="flick kip">
+                <path class="flame" d="M64 12C74 30 100 46 100 74c0 22-16 34-36 34S28 96 28 74c0-16 8-26 16-34 1 12 6 18 13 20-3-16-1-34 7-48z" fill="#F6C445" />
+                <path d="M64 50c6 12 21 20 21 36 0 12-9 19-21 19s-21-7-21-19c0-11 9-20 21-36z" fill="#FFEDB5" />
+              </g>
+              <g fill="#2A1F3D"><ellipse cx="56" cy="85" rx="3.4" ry="4.4" /><ellipse cx="72" cy="85" rx="3.4" ry="4.4" /></g>
+              <g fill="#fff"><circle cx="57.2" cy="83.4" r="1.1" /><circle cx="73.2" cy="83.4" r="1.1" /></g>
+              <g fill="#F59C8B"><circle cx="49.5" cy="93" r="3.4" /><circle cx="78.5" cy="93" r="3.4" /></g>
+              <path d="M59 94q5 5.5 10 0" fill="none" stroke="#2A1F3D" stroke-width="2.6" stroke-linecap="round" />
+            </g>
+            <text class="tag" x="720" y="878" text-anchor="middle">Session</text>
+
+            <g class="sparks">
+              <circle class="sp s1" cx="704" cy="640" r="2.4" />
+              <circle class="sp s2" cx="740" cy="650" r="1.9" />
+              <circle class="sp s3" cx="718" cy="630" r="1.7" />
+            </g>
+          </g>
+        </svg>
+      </div>
+
+      <div class="deskwrap">
+        <figure class="laptop">
+          <div class="lid">
+            <img src={img("laptop")} width="1588" height="1400" alt="kndl's web UI: a Session named Retry payment calls on timeout, active, with three Participants. Claude is mid-Turn, two prompts wait in the Prompt queue with Steer buttons, and a Runners and Environments sidebar lists the Repos." />
+          </div>
+          <div class="deck" aria-hidden="true"></div>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 2. At the fire: the Prompt queue, for real. -->
+    <section class="fire" aria-labelledby="fire-h">
+      <div class="text">
+        <h2 id="fire-h">Working in a Session together</h2>
+        <p>
+          Anyone with access to the Session's Repo can open it, follow Claude's Turn in the
+          transcript and send prompts. Everyone in it has the same rights.
+        </p>
+        <p>
+          While a Turn is running, prompts from anyone wait in the Prompt queue, and Claude takes
+          them in order. Press <b>Steer</b> on a queued prompt and it joins the running Turn
+          instead: Claude reads it at its next step.
+        </p>
+        <p class="more"><a href={doc("how-to/work-in-a-session/")}>Work in a Session</a></p>
+      </div>
+
+      <figure class="shot">
+        <div class="frame"><img src={img("queue")} width="1520" height="440" loading="lazy" alt="The Prompt queue in the web UI: Queued, runs when the current Turn ends. Prompt 1 from SI: Also log each retry with the order id, at warn level. Prompt 2 from JO: Mention the double-charge in the PR description. Each has Steer and remove buttons. Below it, the prompt box says Queue a prompt for after this Turn." /></div>
+        <figcaption>Two queued prompts, from SI and JO, each with Steer.</figcaption>
+      </figure>
+    </section>
+
+    <!-- 3. Underground, with what you'd see down there. One line runs down through the layers. -->
+    <section class="ground" aria-label="What runs where">
+      <div class="layer">
+        <div class="rail" aria-hidden="true"></div>
+        <div class="text">
+          <h2>The Hub</h2>
+          <p>
+            One Bun process with its data in SQLite. It keeps every Session, signs people in with
+            GitHub, serves the web UI and relays prompts and Events between people and Runners.
+            Runners connect to it, so it never has to reach them.
+          </p>
+          <p class="more"><a href={doc("how-to/run-the-hub/")}>Run the Hub</a></p>
+        </div>
+        <figure class="shot narrow">
+          <div class="frame"><img src={img("hub")} width="510" height="830" loading="lazy" alt="The web UI's sidebar: Runners, Environments, Shared variables and Archived Sessions, then Sessions grouped by Repo: acme/billing, acme/docs and acme/shop. Two of two Runners are online." /></div>
+          <figcaption>The sidebar, with Sessions grouped by Repo.</figcaption>
+        </figure>
+      </div>
+
+      <div class="layer">
+        <div class="rail" aria-hidden="true"></div>
+        <div class="text">
+          <h2>Runners</h2>
+          <p>
+            A Runner is a Mac with Apple Silicon or a Linux machine with KVM. It clones the Repo,
+            boots the Sandboxes and keeps each Session's Workspace on its own disk.
+          </p>
+          <p class="more"><a href={doc("how-to/add-a-runner/")}>Add a Runner</a></p>
+        </div>
+        <figure class="shot">
+          <div class="frame"><img src={img("runners")} width="1530" height="300" loading="lazy" alt="The Runners page: build-box and studio-mac, both online, each with Re-pair and Remove, and a count of two Sessions." /></div>
+          <figcaption>The Runners page, with two Runners online.</figcaption>
+        </figure>
+      </div>
+
+      <div class="layer">
+        <div class="rail" aria-hidden="true"></div>
+        <div class="text">
+          <h2>The credential proxy</h2>
+          <p>
+            Claude Code in the Sandbox sends its requests to a proxy on the Runner, with a Session
+            token. The proxy adds the Creator's Claude credential, or else the Runner's own, on the
+            way to Anthropic, so the Sandbox never holds one.
+          </p>
+          <p class="more"><a href={doc("explanation/security-model/#the-credential-proxy")}>The security model</a></p>
+        </div>
+        <figure class="shot crop">
+          <div class="frame"><div class="sheet">
+            <img src={img("credential")} width="1550" height="185" loading="lazy" alt="A Session's header: its name, an Active badge, Keep awake and Sleep now, then the Repo, the Work branch and the line: on the Runner's Claude account, Subscription token ending 9f3b." />
+            <span class="pin" style="left: 38%; top: 33%; width: 47%; height: 24%" aria-hidden="true"></span>
+          </div></div>
+          <figcaption>The Session header names the Claude account it runs on, here the Runner's.</figcaption>
+        </figure>
+      </div>
+
+      <div class="layer">
+        <div class="rail" aria-hidden="true"></div>
+        <div class="text">
+          <h2>The Sandbox</h2>
+          <p>
+            Each Session has its own Sandbox, a microsandbox microVM. Claude Code and the tools it
+            starts run in it, on the Workspace at <code>/workspace</code>. It is built from the
+            Repo's Environment: an image, a Bootstrap script and a Start script.
+          </p>
+          <p class="more"><a href={doc("how-to/set-up-an-environment/")}>Set up an Environment</a></p>
+        </div>
+        <figure class="shot">
+          <div class="frame"><img src={img("env")} width="1530" height="660" loading="lazy" alt="The Environment form for acme/shop, version 3: Image oven/bun:1.4, a Bootstrap script that runs bun install and installs Chromium, a Start script that runs bun run dev, and a Docker in every Sandbox switch." /></div>
+          <figcaption>The Environment form for acme/shop.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- 4. Embers. -->
+    <section class="embers">
+      <svg class="sleep" viewBox="0 0 160 110" aria-hidden="true">
+        <rect x="14" y="80" width="132" height="22" rx="11" fill="#6B4A3A" transform="rotate(-4 80 90)" />
+        <rect x="18" y="84" width="124" height="20" rx="10" fill="#8C5F47" transform="rotate(3 80 94)" />
+        <g transform="translate(80 86) scale(0.5) translate(-64 -108)">
+          <path class="flame" d="M64 12C74 30 100 46 100 74c0 22-16 34-36 34S28 96 28 74c0-16 8-26 16-34 1 12 6 18 13 20-3-16-1-34 7-48z" fill="#F6C445" />
+          <path d="M64 50c6 12 21 20 21 36 0 12-9 19-21 19s-21-7-21-19c0-11 9-20 21-36z" fill="#FFEDB5" />
+          <g fill="#F59C8B"><circle cx="49.5" cy="93" r="3.4" /><circle cx="78.5" cy="93" r="3.4" /></g>
+          <path d="M51 84q5 4 10 0M67 84q5 4 10 0" fill="none" stroke="#2A1F3D" stroke-width="2.8" stroke-linecap="round" />
+          <path d="M60 95q4 3.5 8 0" fill="none" stroke="#2A1F3D" stroke-width="2.6" stroke-linecap="round" />
+        </g>
+        <text class="zz" x="104" y="38">z</text>
+        <text class="zz" x="118" y="24">z</text>
+      </svg>
+      <div class="text">
+        <h2>When a Session is idle</h2>
+        <p>
+          An Active Session that is idle for 15 minutes goes Asleep, unless Keep awake is on. Its
+          Sandbox stops and its disks stay, with the Workspace. The next prompt wakes it, and
+          Claude Code resumes the conversation.
+        </p>
+        <p class="more"><a href={doc("explanation/session-lifecycle/")}>A Session's lifecycle</a></p>
+      </div>
+    </section>
+
+    <!-- 5. Close. -->
+    <section class="close">
+      <div class="text">
+        <h2>Run it on one machine</h2>
+        <p>
+          The tutorial runs a Hub and a Runner on one machine with dev login, so you need no GitHub
+          App. It takes about twenty minutes, most of it waiting for the first Build.
+        </p>
+        <p class="ctas">
+          <a class="btn" href={doc("tutorials/first-session/")}>Run your first Session</a>
+          <a href={doc("how-to/install/")}>Or install it as services</a>
+        </p>
+      </div>
+      <pre class="term" aria-label="Commands to start a Hub from a checkout"><span class="c"># from a checkout of kddige/kndl</span>
+<span class="p">$</span> bun install
+<span class="p">$</span> bun run web:build
+<span class="p">$</span> HUB_PUBLIC_URL=http://127.0.0.1:7777 \
+  KNDL_DEV_LOGIN=1 bun run hub</pre>
+    </section>
+
+    <footer>
+      <span>kndl is said "kindle". The screenshots are the real web UI showing made-up Sessions, Repos and people (acme/shop, mira, sione, jo). No Claude ran.</span>
+      <span><a href={doc("reference/glossary/")}>Glossary</a> · <a href={doc("reference/commands/")}>Commands</a> · <a href="https://github.com/kddige/kndl">GitHub</a></span>
+    </footer>
+
+    <script is:inline>
+      const copy = document.getElementById("copy")
+      const cmd = document.getElementById("cmd")
+      copy?.addEventListener("click", async () => {
+        const text = cmd.textContent.trim()
+        try {
+          await navigator.clipboard.writeText(text)
+        } catch {
+          const area = document.createElement("textarea")
+          area.value = text
+          area.setAttribute("readonly", "")
+          area.style.position = "fixed"
+          area.style.opacity = "0"
+          document.body.append(area)
+          area.select()
+          document.execCommand("copy")
+          area.remove()
+        }
+        copy.textContent = "Copied"
+        setTimeout(() => (copy.textContent = "Copy"), 1800)
+      })
+
+      // The theme picker: the docs pages' three choices, under the same localStorage key.
+      const key = "starlight-theme"
+      const picker = document.getElementById("theme")
+      const darkScheme = matchMedia("(prefers-color-scheme: dark)")
+      const stored = () => {
+        try { return localStorage.getItem(key) } catch { return null }
+      }
+      const current = () => (stored() === "light" || stored() === "dark" ? stored() : "auto")
+      const apply = (choice) => {
+        const dark = choice === "dark" || (choice === "auto" && darkScheme.matches)
+        document.documentElement.dataset.theme = dark ? "dark" : "light"
+        document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#1b1823" : "#fbf6ea")
+      }
+      picker.value = current()
+      picker.addEventListener("change", () => {
+        const choice = picker.value
+        try { localStorage.setItem(key, choice === "auto" ? "" : choice) } catch {}
+        apply(choice)
+      })
+      darkScheme.addEventListener("change", () => current() === "auto" && apply("auto"))
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  /* Two themes, the docs' "Paper" palette: cream paper by default, a quiet night under
+     [data-theme="dark"]. The values are the docs theme's own; the scene's colours are here too,
+     so the campsite is a day scene on paper and a night scene in the dark. */
+  :root {
+    color-scheme: light;
+    --bg: #fbf6ea;
+    --ink: #271d18;
+    --ink-2: #3f332d;
+    --muted: #6b5c51;
+    --link: #7a4f38;
+    --underline: #e3b032;
+    --hover: #271d18;
+    --line: #e0d2b8;
+    --code-bg: #f4ead6;
+    --code-ink: #3a2e28;
+    --prompt: #8c5f47;
+    --flame: #f6c445;
+    --core: #ffedb5;
+    --log: #8c5f47;
+    --log-dark: #6b4a3a;
+    --on-flame: #271d18;
+    --shadow: 0 1.1rem 2.6rem -1.6rem rgb(58 40 30 / 0.45);
+
+    /* The day scene. */
+    --s-sky: #fbf6ea;
+    --s-ridge: #ece0c8;
+    --s-hill: #e4d5bb;
+    --s-front: #d4bf9f;
+    --s-hearth: #c9b08f;
+    --s-tent: #c2a88d;
+    --s-tent-shade: #ab9078;
+    --s-tag: #3f332d;
+    --s-tag-o: 1;
+    --s-edge: #6b4a3a;
+    --s-edge-w: 1.45;
+    --s-spark: #d49a2a;
+    --s-stars: 0;
+    --lid: #3a2e28;
+    --lid-line: #2f241f;
+    --deck: #6b5c51;
+
+    /* The soil under it, going down towards the logs' brown. */
+    --soil: linear-gradient(#ece0c9, #e6d6bb 45%, #dcc7a6);
+    --rail: color-mix(in srgb, var(--log) 55%, transparent);
+
+    --pad: clamp(1.2rem, 6vw, 5rem);
+    --serif: "Fraunces", Georgia, serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1b1823;
+    --ink: #f6eee0;
+    --ink-2: #d8cfc2;
+    --muted: #a59dab;
+    --link: #e3b48f;
+    --underline: #b98a2c;
+    --hover: #f6c445;
+    --line: #332d3b;
+    --code-bg: #221e2a;
+    --code-ink: #e2d9cb;
+    --prompt: #f6c445;
+    --on-flame: #1b1823;
+    --shadow: 0 1.2rem 3rem -1.5rem rgb(0 0 0 / 0.6);
+
+    /* The night scene. */
+    --s-sky: #1b1823;
+    --s-ridge: #211d29;
+    --s-hill: #27222f;
+    --s-front: #15131c;
+    --s-hearth: #221e2a;
+    --s-tent: #3a3443;
+    --s-tent-shade: #322c3b;
+    --s-tag: #f6eee0;
+    --s-tag-o: 0.6;
+    --s-edge: transparent;
+    --s-edge-w: 0;
+    --s-spark: #f6c445;
+    --s-stars: 1;
+    --lid: #27222f;
+    --lid-line: #3a3443;
+    --deck: #3a3443;
+
+    --soil: linear-gradient(#1f1b27, #241f29 45%, #2e2420);
+    --rail: color-mix(in srgb, var(--flame) 35%, transparent);
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--bg);
+    font-family: var(--serif);
+    font-variation-settings: "SOFT" 100;
+    font-size: 1.125rem;
+    line-height: 1.6;
+  }
+  a { color: var(--link); text-underline-offset: 0.2em; text-decoration-thickness: 2px; text-decoration-color: var(--underline); }
+  a:hover { color: var(--hover); }
+  :focus-visible { outline: 2px solid #e3b032; outline-offset: 2px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  h1, h2 { font-family: var(--serif); font-variation-settings: "SOFT" 100; margin: 0; line-height: 1.08; letter-spacing: -0.015em; text-wrap: balance; }
+  h2 { font-size: clamp(1.7rem, 1.1rem + 1.6vw, 2.4rem); font-weight: 700; margin-bottom: 1rem; }
+  p { margin: 0 0 1em; }
+  code { font-family: var(--mono); font-size: 0.82em; }
+  img { display: block; max-width: 100%; height: auto; }
+  .text { max-width: 30rem; }
+  .text p { color: var(--ink-2); }
+  .text b { font-weight: 600; color: var(--ink); }
+  .more { margin: 1.4rem 0 0; font-size: 1rem; }
+  .btn { display: inline-block; padding: 0.7rem 1.3rem; border-radius: 999px; background: var(--flame); color: var(--on-flame); font-weight: 700; text-decoration: none; }
+  .btn:hover { background: var(--core); color: var(--on-flame); }
+  .ctas { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem 1.6rem; margin: 1.6rem 0 0; }
+
+  /* 1. Hero: on a wide screen the scene fills it and the laptop sits on the ground at the
+     right; on a narrow one it stacks: headline, fire, install, laptop. */
+  .hero { position: relative; display: flex; flex-direction: column; background: var(--s-sky); overflow: hidden; }
+  .top { position: relative; z-index: 3; display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.4rem clamp(1.2rem, 4vw, 3rem); }
+  .brand { display: inline-flex; align-items: center; gap: 0.55rem; font-weight: 800; font-size: 1.4rem; text-decoration: none; color: var(--ink); }
+  .brand:hover { color: var(--ink); }
+  .top nav { display: flex; align-items: center; gap: 1.6rem; font-size: 0.95rem; }
+  .top nav a { text-decoration: none; color: var(--ink-2); }
+  .top nav a:hover { color: var(--hover); }
+  :root[data-theme="dark"] .top nav a { color: color-mix(in srgb, var(--ink) 78%, var(--bg)); }
+  :root[data-theme="dark"] .top nav a:hover { color: var(--hover); }
+
+  /* The theme picker: a native select, quiet, with the docs' three choices. */
+  .theme { position: relative; display: inline-flex; align-items: center; }
+  .theme select {
+    appearance: none; font: inherit; font-family: var(--mono); font-size: 0.75rem; line-height: 1;
+    color: var(--ink-2); background: transparent; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 999px; padding: 0.4rem 1.6rem 0.4rem 0.7rem;
+  }
+  .theme select:hover { border-color: var(--muted); }
+  .theme select option { color: var(--ink); background: var(--bg); }
+  .theme::after { content: ""; position: absolute; right: 0.7rem; top: 50%; width: 0.32rem; height: 0.32rem; margin-top: -0.25rem; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); pointer-events: none; }
+
+  .pitch { display: contents; }
+  .pitch-head, .pitch-body { position: relative; z-index: 2; padding-inline: clamp(1.2rem, 4vw, 3rem); }
+  .pitch h1 { font-size: clamp(2.2rem, 1rem + 3.4vw, 4rem); font-weight: 800; color: var(--ink); }
+  .lede { max-width: 30rem; margin: 1.1rem 0 1.6rem; font-size: clamp(1.05rem, 0.95rem + 0.3vw, 1.25rem); color: var(--ink-2); }
+  .install { display: flex; align-items: stretch; max-width: 44rem; border: 1px solid color-mix(in srgb, var(--flame) 70%, var(--log)); border-radius: 0.7rem; background: var(--code-bg); overflow: hidden; }
+  :root[data-theme="dark"] .install { border-color: color-mix(in srgb, var(--flame) 40%, transparent); }
+  .install code { flex: 1; min-width: 0; padding: 0.8rem 1rem; font-size: 0.74rem; line-height: 1.5; white-space: nowrap; overflow-x: auto; color: var(--code-ink); scrollbar-width: thin; }
+  .install .p { color: var(--prompt); user-select: none; }
+  .install button { flex: none; font: inherit; font-family: var(--mono); font-size: 0.8rem; font-weight: 600; padding: 0 1.1rem; border: 0; background: var(--flame); color: var(--on-flame); cursor: pointer; }
+  .install button:hover { background: var(--core); }
+  .install-note { margin: 0.75rem 0 0; font-size: 0.9rem; line-height: 1.5; color: var(--muted); max-width: 40rem; }
+
+  .stage { position: relative; height: 280px; margin-top: 0.8rem; order: 1; }
+  .scene { position: absolute; bottom: 0; height: 480px; width: calc(480px * 1.6); left: calc(50% - 299px); }
+  .scene .sky { fill: var(--s-sky); }
+  .scene .stars { opacity: var(--s-stars); }
+  .scene .ridge { fill: var(--s-ridge); }
+  .scene .hill { fill: var(--s-hill); }
+  .scene .front { fill: var(--s-front); }
+  .scene .hearth { fill: var(--s-hearth); }
+  .scene .tent { fill: var(--s-tent); }
+  .scene .tent-shade { fill: var(--s-tent-shade); }
+  .scene .tag { font-family: var(--mono); font-size: 13px; fill: var(--s-tag); opacity: var(--s-tag-o); }
+  .scene .edge { fill: none; stroke: var(--s-edge); stroke-width: 1.6; }
+  .sparks { fill: var(--s-spark); }
+  /* By day the flame gets a log-brown edge, or flame yellow would melt into the paper. */
+  .flame { stroke: var(--s-edge); stroke-width: calc(var(--s-edge-w) * 1px); stroke-linejoin: round; paint-order: stroke; }
+  .far .flame { stroke-width: calc(var(--s-edge-w) * 1.6px); }
+  .sleep .flame { stroke-width: calc(var(--s-edge-w) * 3px); }
+  .brand .flame { stroke-width: calc(var(--s-edge-w) * 3.5px); }
+
+  .pitch-body { order: 2; padding-top: 1.2rem; }
+  .deskwrap { order: 3; background: var(--s-front); padding: 0 clamp(1rem, 4vw, 2rem) 2.5rem; margin-top: -1px; }
+
+  .laptop { position: relative; margin: 1.5rem auto 0; width: min(100%, 640px); z-index: 1; }
+  .lid { padding: 10px 10px 12px; border-radius: 14px 14px 4px 4px; background: var(--lid); border: 1px solid var(--lid-line); }
+  .lid img { width: 100%; aspect-ratio: 1.134; object-fit: cover; object-position: top left; border-radius: 4px; }
+  .deck { position: relative; height: 12px; width: 112%; margin-left: -6%; border-radius: 2px 2px 14px 14px; background: var(--deck); }
+  .deck::after { content: ""; position: absolute; left: 50%; top: 0; width: 18%; height: 4px; transform: translateX(-50%); border-radius: 0 0 8px 8px; background: var(--lid); }
+  :root:not([data-theme="dark"]) .laptop { filter: drop-shadow(0 1.2rem 1.4rem rgb(58 40 30 / 0.28)); }
+
+  @media (min-width: 62rem) {
+    .hero { display: block; height: 100svh; min-height: 680px; max-height: 1000px; }
+    .pitch { display: block; position: relative; z-index: 2; padding-top: clamp(1rem, 6vh, 3.5rem); }
+    .stage { position: absolute; inset: 0; height: auto; margin: 0; }
+    .scene { inset: 0; width: 100%; height: 100%; left: 0; }
+    .deskwrap { position: absolute; right: 3vw; bottom: 5svh; width: min(40vw, 620px); padding: 0; background: none; margin: 0; z-index: 2; }
+    .laptop { margin: 0; width: 100%; }
+    .lid { padding: 0.6vw 0.6vw 0.7vw; }
+    .pitch-body { padding-top: 0; }
+    .pitch h1 { font-size: clamp(2.6rem, 0.6rem + 3.2vw, 3.75rem); }
+  }
+
+  /* Screenshots: one treatment everywhere. They are of the dark web UI, so on paper they sit
+     in a thin line with a soft shadow. */
+  .shot { margin: 0; min-width: 0; }
+  .frame { border: 1px solid var(--line); border-radius: 0.7rem; overflow: hidden; background: #111215; box-shadow: var(--shadow); }
+  .sheet { position: relative; }
+  .shot figcaption { margin-top: 0.8rem; font-size: 0.9rem; line-height: 1.5; color: var(--muted); }
+  .pin { position: absolute; border: 1.5px solid var(--flame); border-radius: 0.4rem; }
+
+  /* 2, 3, 4: text beside a picture, the same grid each time. */
+  .fire, .layer, .embers, .close { display: grid; gap: 2.5rem; align-items: center; padding: clamp(4rem, 9vw, 7rem) var(--pad); }
+  .fire { background: var(--bg); }
+
+  /* 3. Underground: the soil darkens towards the logs' brown as it goes down, and one line
+     runs through the layers like a cable. */
+  .ground { position: relative; padding-top: 2.5rem; background: var(--soil); }
+  .ground::before { content: ""; position: absolute; inset: -1px 0 auto 0; height: 26px; background: var(--bg); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 26' preserveAspectRatio='none'%3E%3Cpath d='M0 0H240V10C200 24 168 12 128 18S56 26 0 12Z'/%3E%3C/svg%3E") 0 0 / 240px 26px repeat-x; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 26' preserveAspectRatio='none'%3E%3Cpath d='M0 0H240V10C200 24 168 12 128 18S56 26 0 12Z'/%3E%3C/svg%3E") 0 0 / 240px 26px repeat-x; }
+  .ground .shot figcaption { color: color-mix(in srgb, var(--muted) 80%, var(--ink)); }
+  :root:not([data-theme="dark"]) .ground a { color: #5a3b2c; }
+  .layer { position: relative; --lp: clamp(2.5rem, 5vw, 4rem); padding-block: var(--lp); align-items: start; }
+  .ground .layer:last-child { padding-bottom: clamp(4rem, 9vw, 7rem); }
+  .rail { display: none; }
+  .narrow { max-width: 16rem; }
+
+  @media (min-width: 62rem) {
+    .fire, .layer, .embers, .close { grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); gap: clamp(3rem, 6vw, 6rem); }
+    .layer { grid-template-columns: 1.5rem minmax(0, 26rem) minmax(0, 1fr); padding-inline-start: calc(var(--pad) - 2.5rem); column-gap: clamp(2rem, 4vw, 4rem); }
+    .rail { display: block; position: absolute; top: 0; bottom: 0; left: calc(var(--pad) - 2.5rem + 0.75rem - 1px); border-inline-start: 2px dashed var(--rail); }
+    .rail::after { content: ""; position: absolute; left: -6px; top: calc(var(--lp) + 0.9rem); width: 10px; height: 10px; border-radius: 50%; background: var(--flame); box-shadow: 0 0 0 1.5px var(--s-edge); }
+    .layer:first-child .rail { top: calc(var(--lp) + 0.9rem); }
+    .layer:first-child .rail::after { top: 0; }
+    .layer:last-child .rail { bottom: auto; height: calc(var(--lp) + 0.9rem + 10px); }
+    .layer .text { grid-column: 2; }
+    .layer .shot { grid-column: 3; }
+    .shot.narrow { max-width: 17rem; }
+    .embers .sleep { order: 2; }
+    .close { align-items: center; }
+  }
+
+  /* 4. Embers */
+  .embers { background: var(--bg); }
+  .sleep { width: min(100%, 16rem); justify-self: center; order: 2; }
+  .zz { font-family: var(--serif); font-size: 12px; font-weight: 700; fill: var(--ink); opacity: 0.6; }
+
+  /* 5. Close */
+  .close { background: var(--bg); padding-top: 0; }
+  .term { margin: 0; padding: 1.4rem 1.6rem; border-radius: 0.7rem; background: var(--code-bg); font-family: var(--mono); font-size: 0.85rem; line-height: 1.8; color: var(--code-ink); overflow-x: auto; border: 1px solid var(--line); }
+  .term .p { color: var(--prompt); user-select: none; }
+  .term .c { color: var(--muted); }
+  footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.6rem 2rem; padding: 2rem var(--pad) 2.5rem; font-size: 0.85rem; line-height: 1.6; color: var(--muted); background: var(--bg); border-top: 1px solid var(--line); }
+  footer > span:first-child { max-width: 44rem; }
+
+  @media (max-width: 40rem) {
+    .top nav { gap: 1.1rem; }
+    .top nav a:not(:first-child):not(:nth-child(2)) { display: none; }
+    .aside { display: none; }
+    .fire, .embers, .close { padding-block: 3.5rem; }
+    .text p { font-size: 1.05rem; }
+    /* The header shot is too wide to read here: show the part around the account line. */
+    .crop .sheet { width: 190%; margin-left: -66%; }
+  }
+
+  /* Motion: the flame breathes and three sparks rise, only when asked for. */
+  @media (prefers-reduced-motion: no-preference) {
+    .flick { transform-box: fill-box; transform-origin: 50% 100%; animation: flick 2.8s ease-in-out infinite; }
+    .far .flick { animation-duration: 2.1s; }
+    .sp { animation: rise 4s ease-out infinite; opacity: 0; }
+    .s2 { animation-delay: 1.3s; animation-duration: 3.4s; }
+    .s3 { animation-delay: 2.4s; animation-duration: 4.6s; }
+    @keyframes flick { 0%, 100% { transform: scale(1, 1); } 40% { transform: scale(0.985, 1.025); } 70% { transform: scale(1.01, 0.985); } }
+    .mallow { transform-box: fill-box; transform-origin: 50% 100%; animation: lean 6.2s ease-in-out infinite; }
+    @keyframes lean { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(2.2deg); } }
+    @keyframes rise { 0% { transform: translateY(0); opacity: 0.9; } 100% { transform: translateY(-120px) translateX(14px); opacity: 0; } }
+  }
+</style>

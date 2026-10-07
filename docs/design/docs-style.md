@@ -72,6 +72,36 @@ From the Google guide's [code in text](https://developers.google.com/style/code-
 
 Use Starlight's asides sparingly, for what the reader must not miss: `:::danger` for data loss (the secrets key), `:::caution` for a security cost, `:::note` for a side path. Not for ordinary detail.
 
+## Landing page
+
+The landing page is `packages/docs/src/pages/index.astro`: one standalone page with its own markup and CSS, not the Starlight layout, so it repeats the `<head>` tags `astro.config.mjs` gives the other pages. What it settled:
+
+- **Voice.** The same plain voice as the pages, and the sample is `README.md`. The headline is the product's own tagline. A section heading names what the section holds ("The Hub", "Runners"), not a claim. No slogans, no labels staged from the illustration ("At the fire", "Overnight"), no figurative verbs ("dials the Hub"). A block says what a thing is and one detail the reader can check, and does not restate its heading. Tells to cut: "not X but Y", one-line closers, a triad that exists only to be three, dashes as connectors, and words like "pivotal" or "seamless".
+- **Brand.** Night `#1D1733`, flame `#F6C445`, core `#FFEDB5`, logs `#8C5F47` and `#6B4A3A`, cheeks `#F59C8B` (`brand/drafts/README.md`); one accent, at most three hues. Fraunces (soft) for headings, JetBrains Mono for code and the scene's labels. The fonts load from Google Fonts. Motion is the flame, the sparks and the marshmallows' lean, all off under `prefers-reduced-motion`.
+- **Real product.** The pictures of the web UI are real screenshots in `packages/docs/public/landing/`, and the footer says they show made-up Sessions, Repos and people. They were taken with Playwright at 2x, about 1040 px wide, from a throwaway Hub started with `KNDL_DEV_LOGIN=1`: its SQLite rows (Sessions, events, queued prompts) were written directly, two fake Runner connections were held open so the Runners show online, and three dev-login browsers gave the presence. No script for this is in the repo. To redo the screenshots, seed a Hub the same way and crop to WebP.
+- **Leave out.** Card grids, feature icon sets, gradients and glows, stock indigo, a centered template hero.
+- **Self-audit before a change ships.** Are the fonts chosen, or defaults? Does each colour mean something? Does the layout break the three-card reflex? Does the headline say something only kndl could say? Is anything on the page there to decorate and not to inform?
+
+## Theme
+
+The docs pages use the palette "Paper", in `packages/docs/src/styles/theme.css`: cream paper first, a muted night second, in the brand's colours. Light is `:root[data-theme="light"]`, dark is Starlight's `:root`, and a first visit follows `prefers-color-scheme`.
+
+| Token                     | Light     | Dark      |
+| ------------------------- | --------- | --------- |
+| Page (`--sl-color-black`) | `#fbf6ea` | `#1b1823` |
+| Sidebar                   | `#f6eedd` | `#1f1b27` |
+| Code block                | `#f6eedd` | `#221e2a` |
+| Body text (`gray-2`)      | `#3f332d` | `#d8cfc2` |
+| Headings (`white`)        | `#271d18` | `#f6eee0` |
+| Link text                 | `#7a4f38` | `#e3b48f` |
+| Link underline            | `#e3b032` | `#b98a2c` |
+| Current page fill         | `#6b4a3a` | `#4a362b` |
+| Aside fill (every kind)   | `#f5ecda` | `#231f2b` |
+
+- **Contrast.** Every text colour is at least 4.5:1 on its background, and code at least 5.5:1. Flame is never text on cream: it is only a fill or a rule (link underlines, focus rings, the tip aside's rule).
+- **Fonts.** Fraunces (variable, `SOFT` 100, weight 600 to 800) on every heading, the sidebar's group labels and "On this page"; JetBrains Mono for code; the system sans for body text. They load from Google Fonts with `display=swap`, and a size-adjusted Times fallback keeps the headings from jumping. Self-hosting them needs a new dependency, which is still open.
+- **Code.** Expressive Code themes in `packages/docs/src/styles/expressiveCodeThemes.ts`, set as `expressiveCode.themes` in `astro.config.mjs`. A change to them leaves stale colours in Markdown pages Astro has cached: delete `node_modules/.astro/data-store.json` before a build, or `.astro/data-store.json` and restart the dev server.
+
 ## Sources
 
 - [Diátaxis](https://diataxis.fr): [how-to guides](https://diataxis.fr/how-to-guides/), [reference](https://diataxis.fr/reference/).

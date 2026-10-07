@@ -3,9 +3,16 @@ import { unified } from "@astrojs/markdown-remark"
 import starlight from "@astrojs/starlight"
 import { defineConfig } from "astro/config"
 import { rehypeBaseLinks } from "./src/plugins/rehypeBaseLinks.ts"
+import { paperDark, paperLight } from "./src/styles/expressiveCodeThemes.ts"
 
 const site = "https://kddige.github.io"
 const base = "/kndl/"
+
+// Fraunces (variable, with the SOFT axis) and JetBrains Mono, the landing page's families, from
+// Google Fonts. Self-hosting them needs a new dependency (or vendored files), which is an open
+// decision; theme.css carries a size-adjusted local fallback so headings don't jump on swap.
+const fontsCss =
+  "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,600..800,0..100&family=JetBrains+Mono:wght@400;600&display=swap"
 
 export default defineConfig({
   site,
@@ -42,10 +49,18 @@ export default defineConfig({
         { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
         { tag: "meta", attrs: { name: "twitter:image", content: `${site}${base}og.png` } },
         { tag: "meta", attrs: { name: "theme-color", content: "#1D1733" } },
+        { tag: "link", attrs: { rel: "preconnect", href: "https://fonts.googleapis.com" } },
+        {
+          tag: "link",
+          attrs: { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: true },
+        },
+        { tag: "link", attrs: { rel: "stylesheet", href: fontsCss } },
       ],
       customCss: ["./src/styles/theme.css"],
+      // The Paper palette's code themes; the first is the base (dark), the second follows
+      // Starlight's light theme.
+      expressiveCode: { themes: [paperDark, paperLight] },
       components: {
-        Hero: "./src/components/Hero.astro",
         Footer: "./src/components/Footer.astro",
       },
       credits: false,
