@@ -282,7 +282,8 @@ export const answerResult = (
 /**
  * How an AskUserQuestion call answered at the terminal closed its question: with the answers
  * chosen; refused with something said instead, replied; or otherwise refused (Esc, or "Chat about
- * this"), dismissed.
+ * this"), dismissed. A dialog that timed out with nobody at the keyboard, set to, closed it with no
+ * answer from anyone: cancelled (#206).
  */
 export const terminalOutcome = (done: {
   readonly deny?: string | undefined
@@ -295,15 +296,15 @@ export const terminalOutcome = (done: {
   }
   if (done.deny !== undefined || done.isError === true || !isRecord(done.result))
     return { _tag: "Dismissed" }
-  const answers = isRecord(done.result.answers) ? done.result.answers : {}
-  return {
-    _tag: "Answered",
-    answers: Object.fromEntries(
-      Object.entries(answers).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
+  const given = isRecord(done.result.answers) ? done.result.answers : {}
+  const answers = Object.fromEntries(
+    Object.entries(given).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
-  }
+  )
+  if (Object.keys(answers).length === 0 && done.result.afkTimeoutMs !== undefined)
+    return { _tag: "Cancelled" }
+  return { _tag: "Answered", answers }
 }
 
 const maxQueued = 5_000

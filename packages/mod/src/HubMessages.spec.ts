@@ -462,4 +462,20 @@ describe("AskUserQuestion (#193)", () => {
       _tag: "Dismissed",
     })
   })
+
+  test("a dialog that timed out on its own was answered by nobody (#206)", () => {
+    expect(
+      terminalOutcome({ result: { questions: asked, answers: {}, afkTimeoutMs: 60_000 } }),
+    ).toEqual({ _tag: "Cancelled" })
+    // What was chosen before it timed out is what Claude reads.
+    expect(
+      terminalOutcome({
+        result: {
+          questions: asked,
+          answers: { "Which library?": "date-fns" },
+          afkTimeoutMs: 60_000,
+        },
+      }),
+    ).toEqual({ _tag: "Answered", answers: { "Which library?": "date-fns" } })
+  })
 })

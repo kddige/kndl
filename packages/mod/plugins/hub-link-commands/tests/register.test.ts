@@ -379,6 +379,8 @@ const askedSession = (
 }
 
 describe("Open questions (#193)", () => {
+  /** What the dialog's call ends with once its Turn is stopped. */
+  const refused = "Error: The user doesn't want to proceed with this tool use."
   const questions = [
     {
       question: "Which library?",
@@ -493,6 +495,81 @@ describe("Open questions (#193)", () => {
         message: "The question was answered or closed already.",
       },
     ])
+  })
+
+  test("one dismissed with Esc at the terminal, which stops the Turn, is dismissed (#206)", async ($, on) => {
+    const escaped = { isError: true, result: refused }
+    const { dialog, posted } = askedSession(on, { _tag: "Dismissed" }, escaped)
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
+    await $.tool.call({ tool: "AskUserQuestion", questions } as never)
+    await clock.advance(200)
+
+    expect(posted()[1]).toEqual({
+      _tag: "QuestionClosed",
+      turnId: "t1",
+      toolCallId: dialog.id,
+      outcome: { _tag: "Dismissed" },
+    })
+  })
+
+  test("one whose Turn is stopped from the web UI is cancelled (#206)", async ($, on) => {
+    let opened: (() => void) | undefined
+    const { posted } = linkedSession(
+      on,
+      [{ _tag: "StopTurn", sessionId: "s1" }],
+      new Promise((resolve) => (opened = resolve)),
+    )
+    const clock = mock.clock(on)
+    on("turn.start", (_, e) => ({ turnId: e.turnId }))
+    // Claude Code's Stop ends the dialog's call refused, as Esc does.
+    let stop: (() => void) | undefined
+    on("turn.abort", () => {
+      stop?.()
+      return {} as never
+    })
+    on("tool.call", () => {
+      opened?.()
+      return new Promise((resolve) => {
+        stop = () => resolve({ isError: true, result: refused })
+      }) as never
+    })
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
+    await $.tool.call({ tool: "AskUserQuestion", questions } as never)
+    await clock.advance(200)
+
+    expect(posted()[1]).toEqual({
+      _tag: "QuestionClosed",
+      turnId: "t1",
+      toolCallId: expect.any(String),
+      outcome: { _tag: "Cancelled" },
+    })
+  })
+
+  test("one whose dialog timed out on its own is cancelled, not skipped at the terminal (#206)", async ($, on) => {
+    const timedOut = { result: { questions, answers: {}, afkTimeoutMs: 60_000 } }
+    const { dialog, posted } = askedSession(on, { _tag: "Dismissed" }, timedOut)
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
+    const done = await $.tool.call({ tool: "AskUserQuestion", questions } as never)
+    await clock.advance(200)
+
+    expect(done).toEqual(expect.objectContaining(timedOut))
+    expect(posted()[1]).toEqual({
+      _tag: "QuestionClosed",
+      turnId: "t1",
+      toolCallId: dialog.id,
+      outcome: { _tag: "Cancelled" },
+    })
   })
 
   test("one asked with no Turn on the main loop, a background agent's, is the terminal's alone", async ($, on) => {
