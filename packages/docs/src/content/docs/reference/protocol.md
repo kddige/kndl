@@ -200,8 +200,8 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken` |
-| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; terminal frames; `CommandFailed` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `AnswerQuestion`, `PickAnswer`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken` |
+| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `QuestionPicks`; `SessionStateChanged`; `TurnStopRequested`; `WipNotPushed`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
 
@@ -230,6 +230,24 @@ Each Runner in `RunnerList` carries the `models` its hello said ([Models and eff
 | `SetSessionModel` on an Archived Session | `The Session is archived: restore it to change its model.` |
 
 Each Session carries its `model` and `effort` when set, and `modelPending: true` while its Claude Code still runs the setting from before a change. Each change is logged as `ModelSwitched { by, model?, modelLabel?, effort? }`, where `modelLabel` is the Runner's name for the model then, such as `Sonnet 5.5`, or for no model the default's. A Turn's `TurnEnded.usage.model` is the model it ran.
+
+### Questions
+
+When Claude asks with `AskUserQuestion` on the main loop, the mod reports `QuestionAsked { turnId, toolCallId, questions }`, each question with its `question`, `header`, `options` (`label`, `description?`) and `multiSelect`. Until it closes, the Session carries it as `openQuestion: { turnId, toolCallId, questions, askedAt }`, and it doesn't go to sleep. A subagent's questions aren't reported: they are answered at the terminal.
+
+Claude Code shows its dialog at the terminal meanwhile, and the mod's `tool.call` hook waits for an answer from the web UI. The first answer to reach the mod, from either, is the one Claude reads, and the mod reports `QuestionClosed { turnId, toolCallId, outcome, by? }`. `by` is the Participant who answered from the web UI, absent for the terminal. The Hub closes the question as `Cancelled` itself when its Turn or its Claude Code ends with it open, as on a Stop.
+
+`AnswerQuestion { sessionId, toolCallId, answer }` answers the Open question, with one of these, and the Hub sends the mod `DeliverAnswer { sessionId, toolCallId, answer, sender }`:
+
+| `answer` | What Claude reads, as from Claude Code's dialog |
+|---|---|
+| `Answered { answers }` | `answers`, keyed by question text. A multi-select question's labels are joined with `", "`; a label holding `", "` or `"` is written as a JSON string. A question left out was skipped. |
+| `Replied { text }` | No answers, and `text` as the person's own response: what the prompt box sends while a question is open. |
+| `Dismissed {}` | The tool call rejected, as Esc at the terminal does. |
+
+An `AnswerQuestion` for a question that isn't the Session's Open question is refused with a `CommandFailed` that says how it closed, such as `Bob Lee answered first: Luxon.` So is an answer that reaches the mod after another: the mod reports `AnswerFailed { toolCallId, senderId, message }`, and the Hub tells the sender.
+
+`PickAnswer { sessionId, toolCallId, question, answer }` shares what someone has picked so far for one question, as an answer would carry it; `""` takes it back. The Hub keeps the Open question's picks in memory and sends them to everyone in the Session as `QuestionPicks { sessionId, toolCallId, picks }`, each pick `{ participant, question, answer }`, and after `SessionHistory` to someone joining. A pick for a question that has closed is dropped.
 
 ### Subagents
 

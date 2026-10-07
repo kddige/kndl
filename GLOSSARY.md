@@ -74,6 +74,10 @@ _Avoid_: message, run, step
 The ordered prompts from Participants waiting for the Session to finish its current Turn.
 _Avoid_: backlog, inbox
 
+**Open question**:
+A question Claude asked in a Turn, with AskUserQuestion, that no one has answered yet. Any Participant may answer it, from the web UI or at the terminal; the first answer is the one Claude reads. While it is open, the Session is waiting on its Participants and doesn't go to sleep.
+_Avoid_: prompt, dialog, permission request
+
 **Workspace**:
 The Session's checkout of its Repo, which outlives any single Sandbox.
 _Avoid_: working directory, volume, clone

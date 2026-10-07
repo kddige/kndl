@@ -1,6 +1,6 @@
 ---
 title: Work in a Session
-description: Start, find and rename a Session, prompt it with others, choose its model and effort, use the Repo's skills and CLAUDE.md, use its terminal, put it to sleep, delete and restore it, and get its work out.
+description: Start, find and rename a Session, prompt it with others, answer Claude's questions, choose its model and effort, use the Repo's skills and CLAUDE.md, use its terminal, put it to sleep, delete and restore it, and get its work out.
 sidebar:
   order: 8
 ---
@@ -38,6 +38,23 @@ The Participants in a Session are shown at the top, and to Claude Code too, abov
 
 Claude Code runs in the Session's Sandbox, so Claude has its usual tools, and all of them run there: Bash, with background commands, file edits, WebFetch, subagents and the rest. It never asks for a permission ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). The `! <command>` shortcut in the **Terminal** runs in the Sandbox too. Its subagents show live in the transcript and the sidebar, and anyone can message or stop them: see [Work with subagents](/how-to/work-with-subagents/).
 
+## Answer Claude's questions
+
+When Claude asks a question with AskUserQuestion, the Session is waiting on you: the sidebar marks its row with an amber dot, its header says **Waiting on you**, and the transcript shows **Asking a question**, which opens to show the questions. A card above the prompt box asks them one at a time, with **1 of 2** and arrows when there are several. Anyone in the Session can answer:
+
+- **Pick an option**: click it or press its number. A question that takes several options toggles each one, and **Next** or **Submit** confirms them.
+- **Something else**: type your own answer in the last row and press Enter.
+- **Skip** leaves a question unanswered and moves on.
+- Use ↑ and ↓ to move between options, Enter to pick one, and ← and → to go between questions.
+
+Answering the last question sends all the answers to Claude. Until then, everyone sees the options the others have picked, with their avatars.
+
+To answer in your own words instead, type in the prompt box, which reads **Or reply directly…** while a question is open, and press **Reply**. Claude gets your text as your response and no answers. The **×** on the card dismisses the question, as Esc does at the terminal: Claude stops and waits for a prompt.
+
+Claude Code's own dialog is in the **Terminal** at the same time, and the first answer, from either place, is the one Claude reads. If someone answered first, the card closes and says who answered and what; an answer sent too late isn't passed on, and a toast says so. The transcript shows how each question closed: who answered and what, or that someone at the terminal did. **Stop** cancels the question with the Turn. A Session with an Open question doesn't go to sleep.
+
+A subagent's questions show only in the **Terminal**: answer them there.
+
 ## Choose the model and effort
 
 A Session's model and effort level are one setting for everyone in it. The button at the left of the prompt box shows it, such as **Sonnet 5.5 · High**; it shows only the model while the effort is Claude Code's default.
@@ -61,7 +78,7 @@ To change them, edit them in the Repo like any other file. Claude Code reads the
 
 ## Use the terminal
 
-The **Terminal** tab shows the Session's Claude Code screen, live, and everyone watching can type into it. Use it for what the chat doesn't handle: answering Claude Code's dialogs, Esc, Ctrl-C, arrow keys.
+The **Terminal** tab shows the Session's Claude Code screen, live, and everyone watching can type into it. Use it for what the chat doesn't handle: Claude Code's other dialogs, a subagent's questions, Esc, Ctrl-C, arrow keys.
 
 The terminal has one size. Whoever last typed into it, or pressed **Fit to my window**, sets it; everyone else sees it scaled down to fit. Only an Active Session has a terminal to type into.
 
@@ -73,7 +90,7 @@ A port shows within about 2 seconds of a server starting to listen, and goes as 
 
 ## Sleep and wake
 
-A Session with no Turn or subagent running, no prompt queued and no one present, in the web UI or [forwarding its ports](/how-to/forward-a-sessions-ports/), goes to sleep after 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`). **Sleep now** in the Session's header does it at once, after asking while subagents are running. Sleeping stops Claude Code and the Sandbox, and keeps the Workspace and the Sandbox's disks; the subagents that were running are Interrupted, and resume when messaged (see [After sleep or a restart](/how-to/work-with-subagents/#after-sleep-or-a-restart)).
+A Session with no Turn or subagent running, no prompt queued, no [Open question](#answer-claudes-questions) and no one present, in the web UI or [forwarding its ports](/how-to/forward-a-sessions-ports/), goes to sleep after 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`). **Sleep now** in the Session's header does it at once, after asking while subagents are running. Sleeping stops Claude Code and the Sandbox, and keeps the Workspace and the Sandbox's disks; the subagents that were running are Interrupted, and resume when messaged (see [After sleep or a restart](/how-to/work-with-subagents/#after-sleep-or-a-restart)).
 
 To keep a Session up while nobody is in it, for a dev server or a long background command, turn on **Keep awake** in its header. The header then says who turned it on, such as "Kept awake by Bob Lee", and the sidebar and the Runners page mark the Session with a sun. Anyone with access to the Repo can turn it off again, and **Sleep now** turns it off too. Turning it on wakes an Asleep Session. See [Keep awake](/explanation/session-lifecycle/#keep-awake) for what it outlives.
 
