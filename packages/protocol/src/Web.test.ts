@@ -169,10 +169,17 @@ const webToHub = [
   { _tag: "RemoveClaudeCredential", requestId: "q-21" },
   { _tag: "SetSessionModel", sessionId: "s-1" },
   { _tag: "RevokeCliToken", requestId: "q-22", cliTokenId: "ct-1" },
+  { _tag: "CreateInvite", requestId: "q-23" },
+  { _tag: "CreateInvite", requestId: "q-24", login: "Octo-Cat" },
+  { _tag: "ListInvites", requestId: "q-25" },
+  { _tag: "RevokeInvite", requestId: "q-26", inviteId: "inv-1" },
+  { _tag: "ListMembers", requestId: "q-27" },
+  { _tag: "RemoveMember", requestId: "q-28", participantId: "u-2" },
 ]
 
 const hubToWeb = [
   { _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice },
+  { _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice, owner: true },
   {
     _tag: "WebWelcome",
     protocolVersion: ProtocolVersion,
@@ -504,6 +511,43 @@ const hubToWeb = [
       { id: "ct-2", machine: "build-box", createdAt: 1_700_000_000_000 },
     ],
   },
+  {
+    _tag: "InviteCreated",
+    requestId: "q-23",
+    id: "inv-1",
+    link: "https://hub.example.com/invite#chi_inv-1.secret",
+    expiresAt: 1_700_604_800_000,
+  },
+  {
+    _tag: "InviteCreated",
+    requestId: "q-24",
+    id: "inv-2",
+    link: "https://hub.example.com/invite#chi_inv-2.secret",
+    login: "Octo-Cat",
+    expiresAt: 1_700_604_800_000,
+  },
+  { _tag: "InviteList", invites: [] },
+  {
+    _tag: "InviteList",
+    requestId: "q-25",
+    invites: [
+      {
+        id: "inv-2",
+        login: "Octo-Cat",
+        createdBy: alice,
+        createdAt: 1_700_000_000_000,
+        expiresAt: 1_700_604_800_000,
+      },
+    ],
+  },
+  {
+    _tag: "MemberList",
+    requestId: "q-27",
+    members: [
+      { participant: alice, owner: true, admittedAt: 1_700_000_000_000 },
+      { participant: bob, owner: false, admittedAt: 1_700_000_060_000 },
+    ],
+  },
 ]
 
 describe("SessionEvent", () => {
@@ -556,6 +600,12 @@ describe("WebToHub", () => {
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", effort: "extra" })
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", effort: "auto" })
     expectRejected(WebToHub, { ...webToHub[1], model: "son net" })
+    // An Invite's login is a GitHub login, or none at all.
+    for (const login of ["", "-octocat", "octo--cat", "octo cat", "x".repeat(40)]) {
+      expectRejected(WebToHub, { _tag: "CreateInvite", requestId: "q-1", login })
+    }
+    expectRejected(WebToHub, { _tag: "RevokeInvite", requestId: "q-1", inviteId: "" })
+    expectRejected(WebToHub, { _tag: "RemoveMember", requestId: "q-1" })
   })
 })
 
@@ -592,5 +642,10 @@ describe("HubToWeb", () => {
       queue: [{ id: "p-2", text: "x", sender: bob }],
     })
     expectRejected(HubToWeb, { _tag: "RunnerList", runners: [{ id: "r-1", name: "studio" }] })
+    expectRejected(HubToWeb, { _tag: "MemberList", members: [{ participant: alice }] })
+    expectRejected(HubToWeb, {
+      _tag: "InviteList",
+      invites: [{ id: "inv-1", createdBy: alice, createdAt: 0 }],
+    })
   })
 })

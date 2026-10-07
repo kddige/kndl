@@ -30,6 +30,7 @@ import {
 } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
 import { HubVersion } from "./HubVersion.ts"
+import { Members } from "./Members.ts"
 
 export const webOrigin = "http://localhost:5173"
 
@@ -197,6 +198,52 @@ export const devSignIn = (hub: TestHub, login = "alice") =>
     headers: { origin: webOrigin, "content-type": "application/json" },
     body: JSON.stringify({ login }),
   })
+
+/** The value of the cookie `name` a response set, if it set one. */
+const setCookie = (response: Response, name: string) =>
+  response.headers
+    .getSetCookie()
+    .map((cookie) => new RegExp(`^${name}=([^;]*)`).exec(cookie)?.[1])
+    .find((value) => value !== undefined && value !== "")
+
+/**
+ * Signs in through the stand-in GitHub (GitHub.layerTest) with `code`, `good-code` by default, as
+ * the web UI's /setup and /invite pages do with `ticket` (a Setup link's or Invite's secret) when
+ * given, from the web UI at `origin`: the callback's response.
+ */
+export async function githubSignIn(
+  hub: TestHub,
+  options: { readonly ticket?: string; readonly code?: string; readonly origin?: string } = {},
+): Promise<Response> {
+  const { ticket, code = "good-code", origin = webOrigin } = options
+  const cookies: Array<string> = []
+  if (ticket !== undefined) {
+    const handed = await fetch(`${hub.url}/auth/github/admission`, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify({ ticket }),
+    })
+    if (handed.status !== 204) throw new Error(`the ticket was answered ${handed.status}`)
+    cookies.push(`kndl_oauth_admission=${setCookie(handed, "kndl_oauth_admission")}`)
+  }
+  const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
+  const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
+  cookies.push(`kndl_oauth_state=${setCookie(start, "kndl_oauth_state")}`)
+  return fetch(`${hub.url}/auth/github/callback?code=${code}&state=${encodeURIComponent(state)}`, {
+    redirect: "manual",
+    headers: { cookie: cookies.join("; ") },
+  })
+}
+
+/** A new Setup link's secret for the Hub, as `kndl hub setup-link` makes. */
+export const setupSecret = (hub: TestHub) =>
+  hub.run(Effect.flatMap(Members, (members) => members.newSetupLink))
+
+/** Signs in through the stand-in GitHub with a new Setup link, as the Hub's Owner. */
+export const ownerSignIn = async (
+  hub: TestHub,
+  options: { readonly code?: string; readonly origin?: string } = {},
+) => githubSignIn(hub, { ...options, ticket: await setupSecret(hub) })
 
 /**
  * Gives `repo` its first Environment version, applied by `by` (someone signed in), as if a Test

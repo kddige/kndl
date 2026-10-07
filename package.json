@@ -13,6 +13,7 @@
     "cli": "bun packages/cli/src/main.ts",
     "hub": "bun run --filter @kndl/hub start",
     "runner-token": "bun run --filter @kndl/hub runner-token",
+    "setup-link": "bun run --filter @kndl/hub setup-link",
     "secrets-key": "bun run --filter @kndl/hub secrets-key",
     "secrets-reset": "bun run --filter @kndl/hub secrets-reset",
     "runner": "bun run mod:build && bun run --filter @kndl/runner start",

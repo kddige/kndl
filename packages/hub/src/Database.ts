@@ -437,6 +437,44 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE sessions ADD COLUMN open_question TEXT`
   }),
+  // Invites decide who gets in (#209, ADR 0019). A Participant is a Member while `admitted_at` is
+  // set; removing one clears it. One Member at most is the Owner. Everyone who signed in before
+  // stays admitted, and the earliest to sign in with GitHub becomes the Owner. An Invite and a
+  // Setup link are kept as their secret's hash, the way a Pairing code is; a Hub has one Setup
+  // link at most, and only while it has no Owner.
+  "0023_members": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE participants ADD COLUMN admitted_at INTEGER`
+    yield* sql`ALTER TABLE participants ADD COLUMN owner INTEGER NOT NULL DEFAULT 0`
+    yield* sql`CREATE UNIQUE INDEX participants_owner ON participants (owner) WHERE owner = 1`
+    yield* sql`UPDATE participants SET admitted_at = created_at`
+    yield* sql`
+      UPDATE participants SET owner = 1
+      WHERE id = (
+        SELECT id FROM participants WHERE id LIKE 'github:%' ORDER BY created_at, id LIMIT 1
+      )
+    `
+    yield* sql`
+      CREATE TABLE invites (
+        id TEXT PRIMARY KEY,
+        secret_hash TEXT NOT NULL,
+        login TEXT,
+        created_by TEXT NOT NULL REFERENCES participants (id),
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER,
+        used_by TEXT REFERENCES participants (id),
+        revoked_at INTEGER
+      )
+    `
+    yield* sql`
+      CREATE TABLE setup_links (
+        id TEXT PRIMARY KEY,
+        secret_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

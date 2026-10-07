@@ -5,6 +5,7 @@
   "scripts": {
     "start": "bun src/main.ts",
     "runner-token": "bun src/main.ts runner-token",
+    "setup-link": "bun src/main.ts setup-link",
     "secrets-key": "bun src/main.ts secrets-key",
     "secrets-reset": "bun src/main.ts secrets-reset",
     "typecheck": "tsc --noEmit"

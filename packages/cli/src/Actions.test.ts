@@ -4,9 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { databaseAt } from "@kndl/hub/src/Database.ts"
 import { holdHubLock } from "@kndl/hub/src/HubLock.ts"
-import { Effect, Exit } from "effect"
+import { Effect, Exit, Option } from "effect"
 import { SqlClient } from "effect/sql"
-import { resetHubSecrets } from "./Actions.ts"
+import { newSetupLink, resetHubSecrets } from "./Actions.ts"
 import { type Layout, resolveLayout } from "./Layout.ts"
 import { scriptedUi, Ui } from "./Ui.ts"
 
@@ -113,5 +113,53 @@ describe("kndl secrets reset", () => {
     const { exit } = await reset({ yes: true }, [])
 
     expect(failure(exit)).toContain("No Hub is set up")
+  })
+})
+
+/** How many Setup links the home's database keeps. */
+const setupLinkCount = () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      const rows = yield* sql<{ readonly count: number }>`SELECT count(*) AS count FROM setup_links`
+      return rows[0]?.count
+    }).pipe(Effect.provide(databaseAt(database))),
+  )
+
+const setupLink = () => Effect.runPromise(Effect.exit(newSetupLink(layout)))
+
+describe("kndl hub setup-link", () => {
+  test("makes a link to the Hub's Setup page, which a new one replaces", async () => {
+    writeFileSync(layout.envFile("hub"), "PORT=7777\nHUB_PUBLIC_URL=https://hub.example.com\n")
+
+    const first = await setupLink()
+    const second = await setupLink()
+
+    for (const exit of [first, second]) {
+      expect(Exit.isSuccess(exit) && Option.getOrUndefined(exit.value)).toMatch(
+        /^https:\/\/hub\.example\.com\/setup#cho_/,
+      )
+    }
+    expect(await setupLinkCount()).toBe(1)
+  })
+
+  test("makes none once the Hub has an Owner", async () => {
+    await Effect.runPromise(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql`UPDATE participants SET owner = 1, admitted_at = 0 WHERE id = 'p1'`,
+      ).pipe(Effect.provide(databaseAt(database))),
+    )
+
+    const exit = await setupLink()
+
+    expect(Exit.isSuccess(exit) && exit.value).toEqual(Option.none())
+    expect(await setupLinkCount()).toBe(0)
+  })
+
+  test("is refused where no Hub is set up", async () => {
+    rmSync(layout.envFile("hub"))
+
+    expect(failure(await setupLink())).toContain("No Hub is set up")
   })
 })

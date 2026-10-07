@@ -1,10 +1,16 @@
 // What an operator does to a Hub from the command line, outside the server: issue a Runner's
-// token and make a secrets key. `bun run runner-token` and `bun run secrets-key` (main.ts) and the
-// kndl CLI (`kndl runner token`, `kndl secrets key`) share it.
+// token, make a secrets key, and make the Setup link its Owner signs in with first (#209).
+// `bun run runner-token`, `bun run secrets-key` and `bun run setup-link` (main.ts) and the kndl CLI
+// (`kndl runner token`, `kndl secrets key`, `kndl hub setup-link`) share it.
+import { admissionLink, SetupPath } from "@kndl/protocol"
 import { Effect, Layer } from "effect"
+import { CliTokens } from "./CliTokens.ts"
 import { DatabaseLive } from "./Database.ts"
+import { PublicUrlConfig } from "./HubConfig.ts"
+import { Members } from "./Members.ts"
 import { type RunnerIdentity, RunnerTokens } from "./RunnerTokens.ts"
 import { generateSecretsKey } from "./Secrets.ts"
+import { SignIns } from "./SignIns.ts"
 
 /** A Runner and its new token, shown once. */
 export type IssuedRunnerToken = RunnerIdentity & { readonly token: string }
@@ -38,5 +44,33 @@ export function secretsKeyNotice(destination: string, key: string = generateSecr
     `  HUB_SECRETS_KEY=${key}`,
     "",
     "Keep a copy somewhere safe: without it, the Sensitive values saved under it can't be read, and the Hub won't start.",
+  ].join("\n")
+}
+
+/**
+ * A new Setup link for the Hub whose database is at `DatabaseFile`, at its `HUB_PUBLIC_URL`:
+ * whoever signs in with it first becomes the Owner. Replaces any earlier one. Refused
+ * (SetupLinkRefused) once the Hub has an Owner.
+ */
+export const issueSetupLink = Effect.gen(function* () {
+  const secret = yield* (yield* Members).newSetupLink
+  return admissionLink((yield* PublicUrlConfig).href, SetupPath, secret)
+}).pipe(
+  Effect.provide(
+    Members.layer.pipe(
+      Layer.provide(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
+      Layer.provideMerge(DatabaseLive),
+    ),
+  ),
+)
+
+/** What `setup-link` prints: the link, once, and what to do with it. */
+export function setupLinkNotice(link: string): string {
+  return [
+    "The Hub has no Owner yet. Its Setup link, shown only now:",
+    "",
+    `  ${link}`,
+    "",
+    "Open it and sign in with GitHub to become the Hub's Owner, then invite everyone else from the People page. It works once, and only until the Hub has an Owner; a new one replaces it.",
   ].join("\n")
 }

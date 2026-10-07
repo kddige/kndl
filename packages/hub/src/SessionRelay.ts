@@ -250,6 +250,12 @@ import { Environments } from "./Environments.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubVersion } from "./HubVersion.ts"
+import {
+  isMemberCommand,
+  type MemberCommand,
+  makeMemberRelay,
+  RemovedCloseCode,
+} from "./MemberRelay.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
@@ -430,6 +436,11 @@ export class SessionRelay extends Context.Service<
      * and the forwards of a token revoked are closed.
      */
     readonly cliTokensChanged: (participantId: ParticipantId) => Effect.Effect<void>
+    /**
+     * The Members or the pending Invites changed, as when someone is admitted with an Invite
+     * (#209): the Owner's web clients are sent them.
+     */
+    readonly membersChanged: Effect.Effect<void>
     /**
      * A `kndl forward`, once welcomed, by a caller already checked for access (#180): sends
      * it the Session, now and whenever it changes, and counts it as presence until the scope
@@ -641,6 +652,25 @@ export class SessionRelay extends Context.Service<
         toWeb: (message, to) => toWeb(message, to),
         runnersChanged: Effect.map(runnerList, (list) => toWeb(list)),
         disconnect: (id, code, reason) => onlineRunners.get(id)?.peer.close(code, reason),
+      })
+
+      const memberRelay = yield* makeMemberRelay({
+        toWeb: (message, to) => toWeb(message, to),
+        removed: (participantId) =>
+          serialized(
+            Effect.gen(function* () {
+              for (const client of webClients) {
+                if (client.you.id === participantId) {
+                  client.peer.close(RemovedCloseCode, "You were removed from this Hub")
+                }
+              }
+              yield* endForwards(
+                (forward) => forward.you.id === participantId,
+                ForwardCloseCode.SignedOut,
+                "You were removed from this Hub.",
+              )
+            }),
+          ),
       })
 
       // Runners follow the Hub's commit (#87): RunnerUpdates.ts drains a Runner and moves it.
@@ -1736,14 +1766,15 @@ export class SessionRelay extends Context.Service<
       /** A web command the relay handles under its lock, once Repo access allows it. */
       type RelayedCommand = Exclude<
         WebToHub,
-        {
-          readonly _tag:
-            | "CheckAppPermissions"
-            | "CheckRepo"
-            | "SetClaudeCredential"
-            | "RemoveClaudeCredential"
-            | "RevokeCliToken"
-        }
+        | {
+            readonly _tag:
+              | "CheckAppPermissions"
+              | "CheckRepo"
+              | "SetClaudeCredential"
+              | "RemoveClaudeCredential"
+              | "RevokeCliToken"
+          }
+        | MemberCommand
       >
 
       const receiveWeb = (client: WebClient): Receive<WebToHub> => {
@@ -2603,50 +2634,52 @@ export class SessionRelay extends Context.Service<
         })
 
         return (message) =>
-          message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
-            ? claudeCredentialCommand(message)
-            : message._tag === "RevokeCliToken"
-              ? revokeCliToken(message)
-              : message._tag === "CheckAppPermissions"
-                ? checkAppPermissions(message.requestId)
-                : message._tag === "CheckRepo"
-                  ? checkRepo(message).pipe(
-                      Effect.catchTag("SqlError", (error) =>
-                        Effect.logError("A Repo check failed", error).pipe(
-                          Effect.andThen(
-                            Effect.sync(() =>
-                              refuse(message, "The Hub could not do that; try again."),
+          isMemberCommand(message)
+            ? memberRelay.receiveWeb(client, message)
+            : message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
+              ? claudeCredentialCommand(message)
+              : message._tag === "RevokeCliToken"
+                ? revokeCliToken(message)
+                : message._tag === "CheckAppPermissions"
+                  ? checkAppPermissions(message.requestId)
+                  : message._tag === "CheckRepo"
+                    ? checkRepo(message).pipe(
+                        Effect.catchTag("SqlError", (error) =>
+                          Effect.logError("A Repo check failed", error).pipe(
+                            Effect.andThen(
+                              Effect.sync(() =>
+                                refuse(message, "The Hub could not do that; try again."),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    )
-                  : authorize(message).pipe(
-                      Effect.flatMap((verdict) =>
-                        Effect.gen(function* () {
-                          const command =
-                            verdict.refusal === undefined ? yield* respelled(message) : message
-                          return yield* serialized(
-                            Effect.gen(function* () {
-                              const { learned, refusal } = verdict
-                              if (learned !== undefined)
-                                yield* accessKnown(you, learned.repo, learned.allowed)
-                              if (refusal !== undefined) return refuse(message, refusal)
-                              return yield* handle(command)
-                            }),
-                          )
-                        }),
-                      ),
-                      Effect.catchTag("SqlError", (error) =>
-                        Effect.logError("A web command failed", error).pipe(
-                          Effect.andThen(
-                            Effect.sync(() =>
-                              refuse(message, "The Hub could not do that; try again."),
+                      )
+                    : authorize(message).pipe(
+                        Effect.flatMap((verdict) =>
+                          Effect.gen(function* () {
+                            const command =
+                              verdict.refusal === undefined ? yield* respelled(message) : message
+                            return yield* serialized(
+                              Effect.gen(function* () {
+                                const { learned, refusal } = verdict
+                                if (learned !== undefined)
+                                  yield* accessKnown(you, learned.repo, learned.allowed)
+                                if (refusal !== undefined) return refuse(message, refusal)
+                                return yield* handle(command)
+                              }),
+                            )
+                          }),
+                        ),
+                        Effect.catchTag("SqlError", (error) =>
+                          Effect.logError("A web command failed", error).pipe(
+                            Effect.andThen(
+                              Effect.sync(() =>
+                                refuse(message, "The Hub could not do that; try again."),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    )
+                      )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
@@ -3524,6 +3557,7 @@ export class SessionRelay extends Context.Service<
         redeemPairing,
         runnerOnline: (id) => onlineRunners.has(id),
         cliTokensChanged,
+        membersChanged: memberRelay.membersChanged,
         modHello,
         modEvents,
         openTunnel,

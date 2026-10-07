@@ -10,6 +10,7 @@ import { Environments } from "./Environments.ts"
 import { ForwardRoutes } from "./ForwardRoutes.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
+import { Members } from "./Members.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModRoutes } from "./ModRoutes.ts"
 import { ModTokens } from "./ModTokens.ts"
@@ -52,7 +53,9 @@ export const HubRoutes = Layer.mergeAll(
  * Claude credentials (ClaudeCheck) and the Hub's version (HubVersion.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(SessionGit.layer, RepoAccess.layer, PermissionDrift.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(SessionGit.layer, RepoAccess.layer, PermissionDrift.layer, Members.layer),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       SignIns.layer,
