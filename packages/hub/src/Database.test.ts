@@ -38,11 +38,19 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0020, Repo names ignoring case: the migrator runs
- * only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0021, Open questions: the migrator runs only the
+ * migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeOpenQuestion = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE sessions DROP COLUMN open_question`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'open_question'`
+})
+
+/** Takes the database back to before migration 0020, Repo names ignoring case, as above. */
 const beforeRepoNocase = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeOpenQuestion
   yield* sql`DROP INDEX environments_repo_nocase`
   yield* sql`DROP INDEX test_builds_digest`
   yield* sql`CREATE INDEX test_builds_digest ON test_builds (repo, digest)`
