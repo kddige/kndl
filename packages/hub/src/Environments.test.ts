@@ -2,6 +2,7 @@
 // WebSockets. The real Runner side of Test builds and variable fetches is #49.
 
 import { afterEach, describe, expect, test } from "bun:test"
+import { createHmac } from "node:crypto"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -264,6 +265,71 @@ describe("Secrets", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  test("a check saved before the rename, or since, still takes its key (#196)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const secretsWith = (secretsKey: string) =>
+        Layer.provideMerge(
+          Secrets.layer,
+          Layer.merge(database, HubConfig.layerFrom({ ...baseConfig, ...withKey(secretsKey) })),
+        )
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          const ciphertext = yield* (yield* Secrets).encrypt(Redacted.make("x"), "shared:X")
+          yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+            VALUES ('dev:a', 'a', 'a', 0, 0)`
+          yield* sql`INSERT INTO shared_variables (name, kind, value, updated_by, updated_at)
+            VALUES ('X', 'Sensitive', ${ciphertext}, 'dev:a', 0)`
+        }).pipe(Effect.provide(secretsWith(keyA))),
+      )
+      for (const text of ["claude-hub secrets check", "kndl secrets check"]) {
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient
+            const check = encryptValue(key, text, "secrets-check")
+            yield* sql`UPDATE secrets_check SET ciphertext = ${check} WHERE id = 1`
+          }).pipe(Effect.provide(database)),
+        )
+        expect(
+          (await Effect.runPromiseExit(Effect.provide(Effect.void, secretsWith(keyA))))._tag,
+        ).toBe("Success")
+        expect(
+          (await Effect.runPromiseExit(Effect.provide(Effect.void, secretsWith(keyB))))._tag,
+        ).toBe("Failure")
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("an Environment's digest is the one it had before the rename (#196)", async () => {
+    // Test builds are recorded against it: a new one would ask for every Test build again.
+    const fixed = Buffer.alloc(32, 7).toString("base64")
+    const digest = await Effect.runPromise(
+      Effect.map(Secrets, (secrets) => secrets.digest("recipe")).pipe(
+        Effect.provide(
+          Layer.provideMerge(
+            Secrets.layer,
+            Layer.merge(
+              databaseAt(":memory:"),
+              HubConfig.layerFrom({ ...baseConfig, ...withKey(fixed) }),
+            ),
+          ),
+        ),
+      ),
+    )
+    expect(digest).toBe(
+      createHmac(
+        "sha256",
+        createHmac("sha256", Buffer.alloc(32, 7)).update("claude-hub environment digest").digest(),
+      )
+        .update("recipe")
+        .digest("hex"),
+    )
   })
 })
 
