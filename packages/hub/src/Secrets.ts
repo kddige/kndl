@@ -11,8 +11,13 @@ import { HubConfig, HubConfigError, SecretsKeyBytes } from "./HubConfig.ts"
 // when the Hub starts rather than when a Session first needs a value.
 
 const format = "v1"
-const checkText = "kndl secrets check"
+// The check's text and the digest's label are in what every Hub has stored, so they keep kndl's
+// former name: renamed, they'd make a Hub's own key look wrong (#196).
+const checkText = "claude-hub secrets check"
+/** The check a Hub set up between the rename and its fix saved. */
+const renamedCheckText = "kndl secrets check"
 const checkContext = "secrets-check"
+const digestLabel = "claude-hub environment digest"
 
 /** Encrypts `plaintext` under `key`, bound to `context`. */
 export function encryptValue(key: Uint8Array, plaintext: string, context: string): string {
@@ -119,8 +124,9 @@ export class Secrets extends Context.Service<
           })
         }
       } else {
-        const matches =
-          check !== undefined && decryptValue(key.value, check, checkContext) === checkText
+        const checked =
+          check === undefined ? undefined : decryptValue(key.value, check, checkContext)
+        const matches = checked === checkText || checked === renamedCheckText
         if (!matches && stored > 0) {
           return yield* new HubConfigError({
             message: `HUB_SECRETS_KEY is not the key the Hub's ${stored} secret value${stored === 1 ? " was" : "s were"} (Sensitive variable values and Claude credentials) saved with. Set it to that key. ${lostKey}`,
@@ -137,8 +143,8 @@ export class Secrets extends Context.Service<
       }
 
       const digestKey = Option.match(key, {
-        onNone: () => Buffer.from("kndl environment digest"),
-        onSome: (bytes) => createHmac("sha256", bytes).update("kndl environment digest").digest(),
+        onNone: () => Buffer.from(digestLabel),
+        onSome: (bytes) => createHmac("sha256", bytes).update(digestLabel).digest(),
       })
 
       return Secrets.of({
