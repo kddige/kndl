@@ -186,6 +186,7 @@ describe("joining and leaving", () => {
       presence: [],
       queue: [],
       startLog: null,
+      questionPicks: null,
     })
   })
 
@@ -328,7 +329,30 @@ describe("presence and the Prompt queue", () => {
       presence: [],
       queue: [],
       startLog: null,
+      questionPicks: null,
     })
+  })
+})
+
+function picks(answers: ReadonlyArray<string>) {
+  return hub({
+    _tag: "QuestionPicks",
+    sessionId: "s-1",
+    toolCallId: "call-1",
+    picks: answers.map((answer) => ({ participant: bob, question: "Which?", answer })),
+  })
+}
+
+describe("an Open question's picks (#193)", () => {
+  test("QuestionPicks replaces what was picked, for its question", () => {
+    const state = run(joined, history([turnStart]), picks(["date-fns"]), picks(["luxon"]))
+    expect(state.joined[s1]?.questionPicks?.toolCallId).toBe("call-1" as never)
+    expect(state.joined[s1]?.questionPicks?.picks.map((pick) => pick.answer)).toEqual(["luxon"])
+  })
+
+  test("a history after a reconnect forgets them, until the Hub shares them again", () => {
+    const state = run(joined, history([turnStart]), picks(["date-fns"]), history([]))
+    expect(state.joined[s1]?.questionPicks).toBeNull()
   })
 })
 

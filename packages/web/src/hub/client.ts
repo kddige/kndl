@@ -22,6 +22,7 @@ import {
   type PairingCodeCreated,
   type PairingCodeId,
   ProtocolVersion,
+  type QuestionAnswer,
   RequestId,
   type RunnerId,
   type PromptId,
@@ -33,6 +34,7 @@ import {
   type TerminalFrame,
   type TerminalSize,
   type TestBuild,
+  type ToolCallId,
   WebToHub,
 } from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
@@ -226,6 +228,27 @@ export class HubClient {
 
   stopAgent(sessionId: SessionId, agentId: AgentId): boolean {
     return this.#send({ _tag: "StopAgent", sessionId, agentId })
+  }
+
+  /**
+   * Answers the Session's Open question (#193), named by its call: the first answer to reach
+   * Claude Code is Claude's, and a later one is refused, saying who answered first.
+   */
+  answerQuestion(sessionId: SessionId, toolCallId: ToolCallId, answer: QuestionAnswer): boolean {
+    return this.#send({ _tag: "AnswerQuestion", sessionId, toolCallId, answer })
+  }
+
+  /**
+   * Shows the others what you have picked for one of the Open question's questions so far (#193);
+   * "" takes it back.
+   */
+  pickAnswer(
+    sessionId: SessionId,
+    toolCallId: ToolCallId,
+    question: string,
+    answer: string,
+  ): boolean {
+    return this.#send({ _tag: "PickAnswer", sessionId, toolCallId, question, answer })
   }
 
   /**

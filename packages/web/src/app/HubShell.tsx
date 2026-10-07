@@ -87,11 +87,18 @@ export function HubShell() {
   useEffect(
     () =>
       hub.onCommandFailed((failure) =>
-        toast.show({
-          title: "The Hub refused that",
-          description: failure.message,
-          intent: "danger",
-        }),
+        // An answer to a question already closed (#193) says who closed it, and how.
+        failure.command === "AnswerQuestion"
+          ? toast.show({
+              title: "The question had closed",
+              description: failure.message,
+              intent: "warning",
+            })
+          : toast.show({
+              title: "The Hub refused that",
+              description: failure.message,
+              intent: "danger",
+            }),
       ),
     [hub],
   )

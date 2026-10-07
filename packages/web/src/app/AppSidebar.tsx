@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
 import { agentsOf, recentAgents } from "../hub/transcript.ts"
 import { keptAwakeText } from "../session/keepAwake.ts"
+import { WaitingDot } from "../session/QuestionChip.tsx"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
 import { setFolded, useFolded } from "../sessions/folds.ts"
 import { groupByRepo } from "../sessions/groups.ts"
@@ -89,6 +90,12 @@ const styles = stylex.create({
   warning: { display: "inline-flex", color: color.warning },
   busy: { display: "inline-flex", color: color.textMuted },
   keptAwake: { display: "inline-flex", color: color.textMuted },
+  waiting: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "1rem",
+  },
 })
 
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
@@ -376,10 +383,12 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
           : session.agents?.some((agent) => agent.status === "Running") === true
             ? "Agents working"
             : null
+  // Claude asked a question (#193): it waits on someone to answer rather than working.
+  const waiting = session.openQuestion !== undefined
   const changed = environmentChanged(session)
   const keptAwake =
     session.keepAwake === undefined ? null : keptAwakeText(session.keepAwake, you?.id)
-  if (busy === null && !changed && keptAwake === null) return null
+  if (busy === null && !waiting && !changed && keptAwake === null) return null
   return (
     <>
       {keptAwake && (
@@ -394,12 +403,25 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
           </span>
         </NavSlot>
       )}
-      {busy && (
+      {waiting ? (
         <NavSlot>
-          <span role="img" aria-label={busy} title={busy} {...stylex.props(styles.busy)}>
-            <Spinner size="sm" />
+          <span
+            role="img"
+            aria-label="Waiting on you"
+            title="Waiting on you: Claude asked a question"
+            {...stylex.props(styles.waiting)}
+          >
+            <WaitingDot />
           </span>
         </NavSlot>
+      ) : (
+        busy && (
+          <NavSlot>
+            <span role="img" aria-label={busy} title={busy} {...stylex.props(styles.busy)}>
+              <Spinner size="sm" />
+            </span>
+          </NavSlot>
+        )
       )}
       {changed && (
         <NavSlot>

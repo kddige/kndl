@@ -24,6 +24,7 @@ import {
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { modelSwitchedText } from "./models.ts"
+import { QuestionChip } from "./QuestionChip.tsx"
 import { ToolCall } from "./ToolCall.tsx"
 
 /**
@@ -375,6 +376,8 @@ function BlockView({ block, ended }: { block: Block; ended: boolean }) {
       return <ToolCall call={block.call} cutShort={ended && block.call.outcome === undefined} />
     case "agent":
       return <AgentCard agent={block.agent} />
+    case "question":
+      return <QuestionChip question={block.question} />
     case "message":
       return (
         <div {...stylex.props(styles.message)}>
