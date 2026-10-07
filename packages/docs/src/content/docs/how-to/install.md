@@ -59,6 +59,8 @@ If the home already holds kndl data that onboard didn't set up there, such as a 
 
 Then it writes `hub.env` and `runner.env` in the home (each readable only by you), makes a `HUB_SECRETS_KEY` if there is none, builds the web UI and the `hub-link` mod, installs and starts the services, and checks that the Hub answers and the Runner connects.
 
+A Hub with GitHub sign-in is invite-only. While it has no Owner, onboard ends with its Setup link, shown only then: open it and sign in with GitHub to become the Hub's Owner, then invite everyone else. `kndl hub setup-link` prints a new one. See [Let people in](/how-to/let-people-in/).
+
 Back up `hub.env` together with `hub.db`: the key in it is the only way to read the Sensitive values in the database.
 
 Run onboard again to change something. It keeps what `hub.env` and `runner.env` already answer and asks only the rest; `--reset` asks everything again. Flags answer questions too: see [Commands](/reference/commands/#kndl-onboard).

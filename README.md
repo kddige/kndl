@@ -17,7 +17,7 @@ kndl is early: v1 is being built, and things change quickly.
 
 ## How it works
 
-- The **Hub** keeps the Sessions, signs people in with GitHub, and serves the web UI.
+- The **Hub** keeps the Sessions, signs people in with GitHub, and serves the web UI. It is invite-only: its **Owner** signs in first with a Setup link made on the Hub's machine, and invites everyone else.
 - A **Runner**, on each machine that runs Sessions, starts each Session's Claude Code in tmux in the Session's **Sandbox**, a microsandbox microVM built from its Repo's **Environment**, so nothing Claude runs touches the host.
 - The Sandbox never holds a Claude credential: the Runner's credential proxy adds its Creator's, or else the Runner's own, to each request on its way to Anthropic.
 - Everyone signed in sees each Session live, prompts it, and can type into its terminal.
@@ -54,7 +54,7 @@ bun run runner-token "$(hostname -s)"   # prints a Runner token, chr_…
 RUNNER_TOKEN=chr_… bun run runner
 ```
 
-Open <http://127.0.0.1:7777>, sign in with dev login, give a Repo its Environment, and start a Session on it. The [tutorial](https://kddige.github.io/kndl/tutorials/first-session/) walks through it, and the [how-to guides](https://kddige.github.io/kndl/how-to/install/) cover GitHub sign-in, more Runners and reaching the Hub from other machines.
+Open <http://127.0.0.1:7777>, sign in with dev login, give a Repo its Environment, and start a Session on it. The [tutorial](https://kddige.github.io/kndl/tutorials/first-session/) walks through it, and the [how-to guides](https://kddige.github.io/kndl/how-to/install/) cover GitHub sign-in, [letting people in](https://kddige.github.io/kndl/how-to/let-people-in/), more Runners and reaching the Hub from other machines.
 
 ## Development
 

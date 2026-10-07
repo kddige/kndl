@@ -40,6 +40,24 @@ _Avoid_: port forward, tunnel
 The long-lived credential the `kndl` CLI signs in to a Hub with, made by `kndl login` and listed and revocable on its owner's Account page.
 _Avoid_: API key, access token, session cookie
 
+## Who gets in
+
+**Member**:
+A person the Hub let in: its Owner, someone who used an Invite, or someone who signed in before the Hub was invite-only. Only a Member can sign in, to the web UI or the CLI. Being one grants no Repo access: that is still GitHub's to decide. Every Participant is a Member, but a Member is a Participant only while in a Session.
+_Avoid_: user, account, Participant (for someone not in a Session)
+
+**Owner**:
+The one Member who decides who gets in: they make Invites, and list and remove Members. A Hub has one Owner, who can't be removed; they have no other rights the other Members lack.
+_Avoid_: admin, operator, Creator
+
+**Setup link**:
+A one-time link, made on the Hub's machine, that a Hub without an Owner lets in with GitHub: whoever signs in with it becomes the Owner. A new one replaces the last, and none is made once the Hub has an Owner.
+_Avoid_: bootstrap token, claim link
+
+**Invite**:
+A link the Owner makes that admits one person as a Member, once, within 7 days: anyone with the link, or only the GitHub login it names. Using it, revoking it or its expiring ends it.
+_Avoid_: invitation code, Pairing code, join link
+
 ## Sessions
 
 **Session**:
@@ -59,8 +77,8 @@ The person who started a Session. It grants no special rights in the Session, bu
 _Avoid_: owner
 
 **Participant**:
-Anyone currently in a Session. All Participants have equal rights, including deleting the Session.
-_Avoid_: collaborator, member, viewer, guest
+Anyone currently in a Session. All Participants have equal rights, including deleting the Session. Each is a Member of the Hub; "Member" names the person whether or not they are in a Session.
+_Avoid_: collaborator, viewer, guest
 
 **Contributor**:
 A Participant who has sent at least one prompt in a Session.

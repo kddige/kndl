@@ -12,7 +12,8 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | Endpoint | Caller | Credential |
 |---|---|---|
 | `GET /health` | anyone | none. Answers `{"status":"ok"}` once the database does. |
-| `GET /auth/github`, `GET /auth/github/callback` | a browser | none: GitHub sign-in. `?return=<path>` comes back to that path on the Hub once signed in, rather than to the web UI's start. |
+| `GET /auth/github`, `GET /auth/github/callback` | a browser | none: GitHub sign-in. `?return=<path>` comes back to that path on the Hub once signed in, rather than to the web UI's start. The callback lets in only Members, the Owner with the Setup link, and people with an Invite ([People](#people)); anyone else is sent to `/invite-only`. |
+| `POST /auth/github/admission` | the web UI's `/setup` and `/invite` pages, from `HUB_PUBLIC_URL`'s origin | none: `{ ticket }`, the Setup link's or Invite's secret, which the Hub keeps in a cookie for the GitHub sign-in that follows, and checks only then. Answers `204`. |
 | `POST /auth/dev` | a browser on loopback | none: dev login, only with `KNDL_DEV_LOGIN`. |
 | `GET /auth/me`, `POST /auth/sign-out` | a browser | the sign-in cookie |
 | `POST /auth/cli/approve` | the `/cli-login` page | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin |
@@ -32,7 +33,7 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 
 Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair`, `/auth/cli/token`, `/cli` and the web UI needs a credential. `/cli` serves only what the Hub's checkout already holds, built; a request for a platform can start a build, one at a time. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
 
-The Hub mints four kinds of token, each `<kind>_<id>.<secret>`, and stores only a SHA-256 of the secret:
+The Hub mints six kinds of token, each `<kind>_<id>.<secret>`, and stores only a SHA-256 of the secret:
 
 | Prefix | Token | Issued |
 |---|---|---|
@@ -40,6 +41,8 @@ The Hub mints four kinds of token, each `<kind>_<id>.<secret>`, and stores only 
 | `chm_` | mod token | by the Hub for each run of a Session's Claude Code, and kept by its Runner's [credential proxy](/explanation/security-model/#the-credential-proxy), which relays the mod's calls with it |
 | `chs_` | sign-in token | at sign-in, in the `kndl_sign_in` cookie |
 | `chc_` | CLI token | by `kndl login`, one per sign-in, named after the machine; it lasts until it is revoked |
+| `cho_` | Setup link | by `kndl onboard`, `kndl hub setup-link` or `bun run setup-link`, while the Hub has no Owner; one at a time, used once ([People](#people)) |
+| `chi_` | Invite | by the Owner's `CreateInvite`; used once, within 7 days ([People](#people)) |
 
 ## Signing in the CLI
 
@@ -202,8 +205,8 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`, `SteerPrompt`; `MessageAgent`, `StopAgent`; `AnswerQuestion`, `PickAnswer`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken` |
-| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `QuestionPicks`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; terminal frames; `CommandFailed` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`, `SteerPrompt`; `MessageAgent`, `StopAgent`; `AnswerQuestion`, `PickAnswer`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken`; `CreateInvite`, `ListInvites`, `RevokeInvite`, `ListMembers`, `RemoveMember` |
+| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `QuestionPicks`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; `InviteCreated`, `InviteList`, `MemberList`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
 
@@ -231,6 +234,17 @@ If the mod can't add the prompt to the Turn, the prompt stays in its place, and 
 ### CLI tokens
 
 `CliTokenList { requestId?, tokens }` lists the signed-in person's [CLI tokens](#signing-in-the-cli), newest first, each `{ id, machine, createdAt, lastUsedAt? }`, never the token. It follows `WebWelcome`, and goes to the person's tabs, to them alone, whenever one is made or revoked. `RevokeCliToken { requestId, cliTokenId }` revokes one of their own, and is answered with a `CliTokenList` carrying its `requestId`; any other id gets a `CommandFailed`.
+
+### People
+
+The Hub is invite-only ([ADR 0019](/reference/decisions/0019-invites-decide-who-gets-in/), [Let people in](/how-to/let-people-in/)). `WebWelcome` carries `owner: true` for the Hub's Owner, and only the Owner may send these; anyone else gets a `CommandFailed`, `Only the Hub's Owner can do that.`
+
+- `CreateInvite { requestId, login? }` makes an Invite, for anyone with its link or, with `login`, only that GitHub login, ignoring case. It is answered with `InviteCreated { requestId, id, link, login?, expiresAt }`, the only message that carries the link: the web UI's `/invite` page with the `chi_` token as its fragment.
+- `ListInvites { requestId }` and `RevokeInvite { requestId, inviteId }` are answered with `InviteList { requestId?, invites }`: the Invites not yet used, revoked or expired, oldest first, each `{ id, login?, createdBy, createdAt, expiresAt }`, never the link.
+- `ListMembers { requestId }` and `RemoveMember { requestId, participantId }` are answered with `MemberList { requestId?, members }`: the Owner first, then by when each was admitted, each `{ participant, owner, admittedAt }`. Removing the Owner is refused with `The Hub's Owner can't be removed.`, and anyone who isn't a Member with `There is no such Member.`
+- `InviteList` and `MemberList` go to the Owner's tabs alone, without a `requestId`, whenever an Invite is made, used or revoked, or someone is admitted or removed.
+
+A removed Member's sign-ins and CLI tokens are revoked at once. The Hub closes their web connections with `4401` and their Forwards, and refuses their next request. A Setup link's or Invite's `/setup` or `/invite` page sends `POST /auth/github/admission { ticket }`, then goes to `GET /auth/github`; the callback lets the person in as a Member already, else with the Setup link while there is no Owner, else with an Invite. Anyone else, whatever ticket they brought, is sent to `/invite-only`, with no Participant or sign-in created.
 
 ### Model and effort
 

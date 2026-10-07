@@ -61,6 +61,24 @@ Sign-in failed: the sign-in expired or came from elsewhere. Try again.
 
 **Fix.** Start again from the web UI at exactly `HUB_PUBLIC_URL`. If it keeps happening, fix the address or HTTPS as above.
 
+## "This Hub is invite-only"
+
+**What you see.** After GitHub, the browser lands on a page that says **You weren't let in**:
+
+```
+This Hub is invite-only. Ask its owner for an invite.
+```
+
+The Hub logs `Turned away <login>, who has no Invite`.
+
+**Why.** GitHub signed you in, but the Hub lets in only its Owner and the people the Owner invited ([Let people in](/how-to/let-people-in/)). You weren't one of them, and the link you came with, if any, didn't work: an Invite that was used, revoked or expired, one tied to another GitHub login, or a Setup link that was replaced or used. The page says the same for each, so it doesn't tell anyone which Invites exist. A Member the Owner removed is turned away too.
+
+**Fix.**
+
+- **On a new Hub, with no Owner yet,** sign in with its Setup link: run `kndl hub setup-link` on the Hub's machine (`bun run setup-link` from a checkout), and open the link it prints.
+- **Otherwise,** ask the Hub's Owner for a new Invite, and open it in the browser where you'll sign in. If it was tied to a login, sign in to GitHub as that account: sign out of github.com first if your browser is signed in to another.
+- **If you are the Owner and are turned away,** you signed in to GitHub as another account. Sign out of github.com and sign in as the Owner's.
+
 ## GitHub refuses the sign-in
 
 **What you see.** GitHub shows an error about the `redirect_uri` instead of asking you to authorize the App, or the Hub answers:

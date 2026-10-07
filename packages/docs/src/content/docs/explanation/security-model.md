@@ -29,6 +29,7 @@ Sessions never ask for tool approval: everything inside the Sandbox is allowed (
 | Mod tokens, one per run of a Session | the Runner's memory; the Hub keeps a hash | Never ([The credential proxy](#the-credential-proxy)) |
 | Sign-in cookies | the browser; the Hub keeps a hash | Never |
 | CLI tokens, one per machine signed in with `kndl login` | that machine's `cli.json`, readable only by its user; the Hub keeps a hash | Never |
+| The Setup link and Invites ([Who gets in](#who-gets-in)) | the link, with whoever it was given to; the Hub keeps a hash | Never |
 | The Sandbox token, for `git` and `gh` | the Sandbox's memory | Yes, by design ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)) |
 | A Test build's clone token, read-only and for one Repo | the environment of the Runner's one `git clone` | Never |
 | Environment Variables | encrypted on the Hub if Sensitive; in the Runner's memory while needed | Yes, by design: in every process's environment |
@@ -70,10 +71,21 @@ The Repo's Environment follows the same access ([ADR 0009](/reference/decisions/
 - **Answers are cached** for `HUB_REPO_ACCESS_TTL_MS`, 5 minutes by default, to stay well within GitHub's rate limit. A refusal is cached for at most 30 seconds, so a Repo that was just shared with you or had the App installed works again soon. As often as the TTL, the Hub checks everyone connected again. So someone who loses access on GitHub is taken out of the Repo's Sessions and its Environment within twice the TTL: they leave its Sessions' presence and terminals, and the Sessions and the Environment screen leave their view. When GitHub can't answer, people keep the access they had, and no one gains any until it can.
 - **A Test build clones with a token for its Repo only**, minted by the Hub with read access to the code and nothing else. The Runner passes it to git for that one clone and never writes it down. Only without the GitHub App does a Runner clone with its host's own git credentials, as it does for Sessions.
 
-GitHub sign-in admits anyone with a GitHub account who can reach the Hub's sign-in page. They see no Session without access to its Repo, but still keep the Hub on a network, tailnet or proxy that only your team can reach.
+## Who gets in
+
+GitHub proves who someone is, and the Hub decides whether they get in ([ADR 0019](/reference/decisions/0019-invites-decide-who-gets-in/)). A GitHub sign-in gets in only as a Member already, as the Owner with the Hub's Setup link while it has no Owner, or with an Invite from the Owner. See [Let people in](/how-to/let-people-in/).
+
+- **Everyone else is refused alike,** whatever they brought: an Invite used, expired, revoked, for another login or never made, or none. The page says only that the Hub is invite-only, and the Hub creates no Participant or sign-in for them.
+- **A Setup link and an Invite are secrets** in the link's fragment, which browsers never send to a server. The web UI hands one to the Hub in a `POST` just before going to GitHub, and the Hub keeps it in a cookie until GitHub sends the browser back. The Hub keeps only SHA-256 hashes of them, as it does of tokens.
+- **Being a Member grants no Repo access.** That is GitHub's to decide, as above. Members can do the Hub-wide things anyone signed in can: pair and remove Runners, and manage the Shared variables.
+- **Only the Owner** makes, lists and revokes Invites, and lists and removes Members. The Hub refuses those commands from anyone else.
+- **Removing a Member** revokes their sign-ins and CLI tokens at once, and closes their web connections and Forwards. A tunnel already open stays open until it closes.
+- **Dev login** lets anyone on loopback in, without an Invite.
+
+Because of this, the GitHub App can be public: anyone on GitHub can install it and try to sign in, and only Members get in. Still keep the Hub on a network, tailnet or proxy that only your team can reach where you can.
 
 :::caution[Known gaps]
-There are no roles: everyone with access to a Repo can do everything with its Sessions and Environment, and any signed-in person can manage the Shared variables. A prompt already queued still runs after its sender loses access.
+There are no roles but Owner: everyone with access to a Repo can do everything with its Sessions and Environment, and every Member can pair and remove Runners and manage the Shared variables. A prompt already queued still runs after its sender loses access or is removed.
 :::
 
 ## Whose Claude account a Session spends
