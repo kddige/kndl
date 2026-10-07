@@ -135,6 +135,54 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   await eventually(() => expect(conversation()).toContain("Disclosure is the one"))
 })
 
+test("a queued prompt steered into the running Turn leaves the queue and joins it (#195)", async () => {
+  // Slow enough steps that the Turn is still running when Steer is pressed.
+  const hub = new FakeHub({ stepMs: 100, autoplay: false })
+  const client = new HubClient(hub, { retryDelay: () => 1 })
+  const router = createAppRouter(
+    createMemoryHistory({ initialEntries: [`/sessions/${demoSessionId}`] }),
+  )
+  const view = await render(
+    <HubProvider client={client}>
+      <RouterProvider router={router} />
+    </HubProvider>,
+  )
+  cleanup = async () => {
+    await view.unmount()
+    client.stop()
+    hub.dispose()
+  }
+  const page = view.container
+  const conversation = () => page.querySelector('[aria-label="Conversation"]')?.textContent ?? ""
+  const queue = () => page.querySelector('[aria-label="Prompt queue"]')?.textContent ?? ""
+  const steerButtons = () =>
+    [...page.querySelectorAll("button")].filter((el) => el.textContent?.trim() === "Steer")
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/web-client"))
+  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
+  if (!prompt) throw new Error("no prompt field")
+
+  await step(() => typeInto(prompt, "Rename the flag"))
+  await step(() => button("Send prompt", page).click())
+  await eventually(() => expect(button("Queue prompt", page)).toBeDefined())
+  await step(() => typeInto(prompt, "And a line in the changelog"))
+  await step(() => button("Queue prompt", page).click())
+  await eventually(() => expect(queue()).toContain("And a line in the changelog"))
+  expect(steerButtons()).toHaveLength(1)
+
+  await step(() => button("Steer Alice Kim's prompt into the running Turn", page).click())
+  expect(hub.received.map((message) => message._tag)).toContain("SteerPrompt")
+  await eventually(() => expect(page.querySelector('[aria-label="Prompt queue"]')).toBeNull())
+  // It joins the running Turn, the one Alice's first prompt started, under her name.
+  const steered = () => page.querySelector("[data-steered]")
+  await eventually(() => expect(steered()?.textContent).toContain("And a line in the changelog"))
+  expect(steered()?.textContent).toContain("Alice Kim")
+  expect(steered()?.closest("[data-turn]")?.textContent).toContain("Rename the flag")
+  // Then Claude reads it, at the Turn's next step.
+  await eventually(() => expect(steered()?.textContent).toContain("Steered into the Turn"))
+  // It started no Turn of its own.
+  expect(conversation().split("And a line in the changelog")).toHaveLength(2)
+})
+
 /**
  * The whole app on one of the fake Hub's seeded Sessions, its script not playing, once a banner
  * starting with `bannerStart` shows.
