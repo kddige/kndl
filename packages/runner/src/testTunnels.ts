@@ -47,7 +47,6 @@ import { SessionsLive } from "./Sessions.ts"
 import {
   FakeCredentialProxy,
   FakeSandboxes,
-  FakeWorkspaceGit,
   FakeWorkspaces,
   hostTmuxBackend,
   writeFakeMod,
@@ -270,7 +269,6 @@ export async function tunnelScene(options: {
       ),
       new FakeWorkspaces(sessionsRoot).layer,
       new FakeSandboxes(fakeClaude).layer,
-      new FakeWorkspaceGit().layer,
       new FakeCredentialProxy().layer,
     ]),
     Layer.provideMerge(

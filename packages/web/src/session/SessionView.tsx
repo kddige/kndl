@@ -1,6 +1,7 @@
 import {
   type AgentId,
   MaxSessionNameLength,
+  type PromptId,
   type SessionId,
   type SessionLogEntry,
   type SessionStateChanged,
@@ -287,6 +288,21 @@ function LoadedSession({
           }),
         )
       : command(hub.sendPrompt(summary.id, prompt))
+  // A prompt can be steered into a Turn the Hub has running and isn't stopping (#195). One being
+  // steered leaves the queue once it has joined the Turn, or stays, with the Hub's reason.
+  const steerable =
+    state === "Active" &&
+    summary.currentTurn !== null &&
+    (runningTurn(items)?.stopRequests.length ?? 0) === 0
+  const [steering, setSteering] = useState<ReadonlySet<PromptId>>(new Set())
+  useEffect(
+    () =>
+      hub.onCommandFailed((failure) => {
+        if (failure.command === "SteerPrompt" && failure.sessionId === summary.id)
+          setSteering(new Set())
+      }),
+    [hub, summary.id],
+  )
   // An Archived Session has no terminal to open: it shows its conversation only.
   const archived = state === "Archived"
   const view: SessionTab = archived ? "chat" : tab
@@ -495,6 +511,15 @@ function LoadedSession({
                       toast.show({ title: "Not connected to the Hub", intent: "warning" })
                     }
                   }}
+                  onSteer={
+                    steerable
+                      ? (prompt) => {
+                          if (command(hub.steerPrompt(summary.id, prompt.id)))
+                            setSteering((ids) => new Set(ids).add(prompt.id))
+                        }
+                      : undefined
+                  }
+                  steering={steering}
                 />
                 <Composer
                   onSend={send}

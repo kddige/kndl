@@ -1,10 +1,10 @@
 // The GitHub App (ADR 0010): the Hub, and only the Hub, holds the App's private key. It signs a
-// short JWT with it and mints installation tokens scoped to one Repo: one with `contents:write`
-// that Runners hand to host git per command for the clone and WIP pushes, and one per Session
-// with every permission the installation has, which the Runner keeps in the Session's Sandbox
-// for `git` and `gh`. As the installation, it also answers who has access to a Repo
-// (RepoAccess.ts). As the App, it reads its own permissions and its installations', to check them
-// against what the Hub needs (AppPermissions.ts).
+// short JWT with it and mints installation tokens scoped to one Repo: one with `contents:read`
+// that Runners hand to host git for the clone, and one per Session with every permission the
+// installation has, which the Runner keeps in the Session's Sandbox for `git` and `gh`. As the
+// installation, it also answers who has access to a Repo (RepoAccess.ts). As the App, it reads its
+// own permissions and its installations', to check them against what the Hub needs
+// (AppPermissions.ts).
 //
 // It also makes the App in the first place: `kndl onboard` registers it on GitHub from a
 // manifest, and trades the code GitHub hands back for its credentials (convertManifest).
@@ -113,16 +113,16 @@ const InstallationDetails = Schema.Struct({
   suspended_at: Schema.optional(Schema.NullOr(Schema.String)),
 })
 /**
- * What the Hub's own token for a Repo may do: push its WIP refs and branches and, where the
- * installation has it, read the organization's members. Without that, GitHub leaves out of a
- * Repo's collaborators everyone with access through its organization (owners, the base
+ * What the Hub's own token for a Repo may do: read its contents, for the Runner's clone, and,
+ * where the installation has it, read the organization's members. Without that, GitHub leaves
+ * out of a Repo's collaborators everyone with access through its organization (owners, the base
  * permission, teams), so `isCollaborator` says no to them (#189). Asked for only where granted,
  * since GitHub refuses a token a permission its installation lacks, as on a personal account.
  */
 export const hostTokenPermissions = (
   granted: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> =>
-  granted.members === undefined ? { contents: "write" } : { contents: "write", members: "read" }
+  granted.members === undefined ? { contents: "read" } : { contents: "read", members: "read" }
 
 /** The most installations GitHub lists on one page. */
 const installationsPerPage = 100
@@ -148,7 +148,10 @@ export class GitHubApp extends Context.Service<
     readonly isConfigured: boolean
     /** An installation token for the Repo only, cached until shortly before it expires. */
     readonly repoToken: (repo: RepoName) => Effect.Effect<RepoToken, GitHubAppError>
-    /** The App's bot, which commits made through the App are authored by. */
+    /**
+     * The App's bot, which Repo access still carries: a Runner from before #194 needs it to decode
+     * Repo access.
+     */
     readonly botIdentity: (repo: RepoName) => Effect.Effect<GitIdentity, GitHubAppError>
     /**
      * A fresh installation token for a Session's Sandbox: scoped to the Repo, with no permissions

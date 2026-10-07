@@ -1,6 +1,6 @@
-import type { QueuedPrompt } from "@kndl/protocol"
+import type { PromptId, QueuedPrompt } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Avatar, CloseIcon, IconButton } from "../ui/index.ts"
+import { Avatar, Button, CloseIcon, IconButton, SteerIcon, Tooltip } from "../ui/index.ts"
 import { color, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
 const styles = stylex.create({
@@ -54,13 +54,22 @@ const styles = stylex.create({
   },
 })
 
-/** The prompts waiting for the current Turn to end, in order. Any Participant may cancel one. */
+/**
+ * The prompts waiting for the current Turn to end, in order. Any Participant may cancel one, or,
+ * while a Turn runs, steer it into that Turn now (#195).
+ */
 export function PromptQueue({
   queue,
   onCancel,
+  onSteer,
+  steering = new Set(),
 }: {
   queue: ReadonlyArray<QueuedPrompt>
   onCancel: (prompt: QueuedPrompt) => void
+  /** Steers a prompt into the running Turn; absent when no Turn is running. */
+  onSteer?: ((prompt: QueuedPrompt) => void) | undefined
+  /** The prompts on their way into the running Turn, which leave the queue once they joined it. */
+  steering?: ReadonlySet<PromptId>
 }) {
   if (queue.length === 0) return null
   return (
@@ -74,6 +83,20 @@ export function PromptQueue({
             <span {...stylex.props(styles.text)} title={prompt.text}>
               {prompt.text}
             </span>
+            {onSteer && (
+              <Tooltip content="Send it into the running Turn now, as Claude Code does with a prompt typed while it works">
+                <Button
+                  size="sm"
+                  intent="ghost"
+                  icon={<SteerIcon />}
+                  aria-label={`Steer ${prompt.sender.name}'s prompt into the running Turn`}
+                  loading={steering.has(prompt.id)}
+                  onClick={() => onSteer(prompt)}
+                >
+                  Steer
+                </Button>
+              </Tooltip>
+            )}
             <IconButton
               size="sm"
               label={`Cancel ${prompt.sender.name}'s prompt`}

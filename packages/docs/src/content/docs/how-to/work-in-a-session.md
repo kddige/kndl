@@ -32,6 +32,10 @@ Everyone with the Session open sees the new name at once. A name is at most 80 c
 
 Type a prompt and send it. While a Turn is running, a prompt from anyone waits in the Prompt queue, and Claude takes the queue in order. Each prompt in the transcript shows who sent it.
 
+Waiting is the default. To have Claude read a queued prompt now, press **Steer** on it. Anyone in the Session can. The prompt leaves the queue and joins the running Turn, as a prompt typed into Claude Code while it works does, and Claude reads it at its next step, usually after the tool call it's in. It doesn't start a Turn of its own. The transcript shows it in the running Turn under its sender's name: first as *Steered in*, then, once Claude has read it, where Claude read it. Steer shows only while a Turn is running and no one has pressed Stop.
+
+A Turn can end before Claude reads a steered prompt, because it was stopped or was already writing its last answer. The prompt then stays in the conversation, marked as not read, and Claude reads it with the next prompt. If the Hub can't hand a prompt over, the prompt keeps its place in the queue and you're told why. One case is a Session whose Claude Code runs a mod from before steering ([ADR 0018](/reference/decisions/0018-steering-a-prompt-into-the-running-turn/)).
+
 **Stop** in the prompt box stops the running Turn, for anyone in the Session. A tool call it was in the middle of shows as cut short. A Bash command isn't killed: Claude Code moves it to the background, where it runs to its end, and then starts a Turn of its own to read its output, as it does for any background command.
 
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.
@@ -102,7 +106,7 @@ A Session whose Runner is offline is Frozen: you can read it, and prompts you se
 
 ## Delete and restore
 
-**Delete Session**, the trash button in the Session's header, archives the Session at once: the Runner stops Claude Code, pushes the WIP ref, and destroys the Sandbox, keeping the Workspace and Claude Code's state. Any Participant can do it.
+**Delete Session**, the trash button in the Session's header, archives the Session at once: the Runner stops Claude Code and destroys the Sandbox, keeping the Workspace and Claude Code's state. Any Participant can do it.
 
 - **Undo** in the toast restores it straight away.
 - **Archived Sessions**, in the sidebar, lists the Archived Sessions of every Repo, with who deleted each and when, and a **Restore** button.
@@ -115,11 +119,4 @@ A restored Session is Asleep, and the next prompt wakes it in a fresh Sandbox, o
 
 Claude can commit, push and open pull requests with plain `git` and `gh`, once the Hub has the GitHub App: see [Git from Sessions](/explanation/git-from-sessions/).
 
-Whatever happens, the Runner pushes the Workspace's whole state, uncommitted and untracked files included, to a WIP ref on origin: after each Turn that changed it, before sleep and before archiving. To get it:
-
-```sh
-git fetch origin refs/kndl/wip/<session id>
-git switch --detach FETCH_HEAD
-```
-
-The Session id is the last part of its URL, `/sessions/<session id>`.
+Work reaches GitHub only when something pushes it to a branch. Until then it is in the Workspace on the Runner: sleep, wake, delete and restore keep it, but if the Runner's host or its disk is lost, whatever wasn't pushed is lost with it. To keep work safe off the Runner, ask Claude to commit and push the Work branch.

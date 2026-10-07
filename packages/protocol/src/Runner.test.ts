@@ -43,7 +43,6 @@ const runnerToHub = [
   { _tag: "TerminalFrame", sessionId: "s-1", kind: "Output", data: "x", size },
   { _tag: "GitRequest", requestId: "g-1", sessionId: "s-1", ask: { _tag: "GitAccess" } },
   { _tag: "GitRequest", requestId: "g-2", sessionId: "s-1", ask: { _tag: "SandboxToken" } },
-  { _tag: "WipPushFailed", sessionId: "s-1", message: "git push exited with 128" },
   { _tag: "SessionPurged", sessionId: "s-1" },
   { _tag: "SandboxNote", sessionId: "s-1", message: "Memory capped at 8192 MiB by the Runner" },
   {
@@ -206,7 +205,6 @@ const hubToRunner = [
     requestId: "g-3",
     answer: { _tag: "CloneAccess", credentials: { _tag: "HostCredentials" } },
   },
-  { _tag: "SessionTurnEnded", sessionId: "s-1" },
   {
     _tag: "StartSession",
     sessionId: "s-1",

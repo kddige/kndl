@@ -67,7 +67,6 @@ Under the sessions root, `<session id>/` holds:
 |---|---|
 | `claude/` | Only in a Session from before Claude Code ran in its Sandbox: the empty directory it ran in on the host. The Session's first wake copies its conversation from there into the Sandbox. |
 | `workspace/` | The Workspace: the Repo's checkout on the Session's Work branch, mounted into the Sandbox at `/workspace`. |
-| `host-git/` | The Runner's own git directory for the Workspace. Never mounted into the Sandbox, so nothing in the Sandbox can change the config or hooks the Runner's git runs with. |
 | `mod/` | The copy of the mod the Session's Claude Code runs with, in a directory named for that start, made anew each time it starts: an update changes the mod a running Session uses only at its next start. Mounted read-only into the Sandbox at `/opt/kndl/mod`. |
 
 Archiving a Session keeps its directory, and the volume with Claude Code's state; purging it deletes both.

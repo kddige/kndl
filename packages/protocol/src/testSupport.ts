@@ -255,4 +255,12 @@ export const turnEvents = [
     toolCallId: "toolu_ask",
     outcome: { _tag: "Cancelled" },
   },
+  {
+    _tag: "PromptSteered",
+    turnId: "t-1",
+    promptId: "p-2",
+    text: "use the README's port",
+    sender: bob,
+  },
+  { _tag: "SteeredPromptRead", turnId: "t-1", promptId: "p-2" },
 ]

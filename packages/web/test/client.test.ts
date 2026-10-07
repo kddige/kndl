@@ -238,6 +238,42 @@ describe("a joined Session", () => {
     })
   })
 
+  test("a queued prompt steered into the running Turn joins it, and leaves the queue (#195)", async () => {
+    const { hub, client } = setUp({ autoplay: false, stepMs: 5 })
+    client.start()
+    client.join(demo)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+    client.sendPrompt(demo, "First")
+    client.sendPrompt(demo, "Second")
+    await eventually(() =>
+      expect(client.getState().joined[demo]?.queue.map((prompt) => prompt.text)).toEqual([
+        "Second",
+      ]),
+    )
+    const queued = client.getState().joined[demo]?.queue[0]
+    if (!queued) throw new Error("expected a queued prompt")
+    client.steerPrompt(demo, queued.id)
+    await eventually(() => expect(client.getState().joined[demo]?.queue).toEqual([]))
+    expect(hub.received).toContainEqual({
+      _tag: "SteerPrompt",
+      sessionId: demo,
+      promptId: queued.id,
+    })
+    await eventually(() =>
+      expect(client.getState().joined[demo]?.log.map((entry) => entry.event._tag)).toContain(
+        "SteeredPromptRead",
+      ),
+    )
+    // It joined the Turn "First" started, and started none of its own.
+    const events = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.event)
+    const started = events.flatMap((event) => (event._tag === "TurnStarted" ? [event] : []))
+    const steered = events.find((event) => event._tag === "PromptSteered")
+    expect(steered).toMatchObject({ promptId: queued.id, text: "Second" })
+    expect(started.some((event) => event.text.endsWith("Second"))).toBe(false)
+    const turnId = steered?._tag === "PromptSteered" ? steered.turnId : undefined
+    expect(turnId).toBe(started.at(-1)?.turnId)
+  })
+
   test("Stop ends the running Turn as Stopped, after recording who asked", async () => {
     const { client } = setUp({ autoplay: false, stepMs: 5 })
     client.start()

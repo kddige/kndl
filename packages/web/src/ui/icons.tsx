@@ -133,6 +133,15 @@ export function ArrowUpIcon(props: IconProps) {
   )
 }
 
+/** Steer: a queued prompt sent into the running Turn, joining it (#195). */
+export function SteerIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 3v4.5a2 2 0 0 0 2 2h6.5m-2.5-2.5 2.5 2.5-2.5 2.5" />
+    </Icon>
+  )
+}
+
 export function WarningIcon(props: IconProps) {
   return (
     <Icon {...props}>

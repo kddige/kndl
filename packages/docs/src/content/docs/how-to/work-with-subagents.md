@@ -84,7 +84,7 @@ A Session that's Frozen keeps its agents Running: its Claude Code may still be r
 
 An agent in a worktree works in `/workspace/.claude/worktrees/agent-<agent id>`, on the branch `worktree-agent-<agent id>`, which its card shows. Claude Code keeps the worktree after the agent ends if it has changes.
 
-To get its work onto the Session's Work branch, ask the Session, in a prompt, to merge the branch. Until then, the branch is a local branch of the Session's, like any other it makes: it lasts while the Session does, but it isn't in the WIP ref. The Runner keeps `.claude/worktrees/` out of the WIP ref, so worktrees never reach it as plain files.
+To get its work onto the Session's Work branch, ask the Session, in a prompt, to merge the branch. Until then, the branch is a local branch of the Session's, like any other it makes: it lasts while the Session does, and reaches GitHub only if the Session pushes it. The Runner keeps `.claude/worktrees/` out of the Workspace's git status, so a `git add -A` never takes a worktree in.
 
 ## Next
 

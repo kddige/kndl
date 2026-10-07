@@ -212,6 +212,14 @@ export class HubClient {
     return this.#send({ _tag: "CancelPrompt", sessionId, promptId })
   }
 
+  /**
+   * Steers a queued prompt into the running Turn (#195): it leaves the queue once it has joined
+   * the Turn, and stays in its place if it can't.
+   */
+  steerPrompt(sessionId: SessionId, promptId: PromptId): boolean {
+    return this.#send({ _tag: "SteerPrompt", sessionId, promptId })
+  }
+
   stopTurn(sessionId: SessionId): boolean {
     return this.#send({ _tag: "StopTurn", sessionId })
   }

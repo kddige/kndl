@@ -29,12 +29,6 @@ export interface SessionDirectories {
   /** The Workspace: the Repo's checkout on the Work branch, mounted into the Sandbox. */
   readonly workspace: string
   /**
-   * The Runner's own git directory for the Workspace, never mounted into the Sandbox. Host git
-   * runs with it as `GIT_DIR`, so it reads the Runner's config and hooks, not the Workspace's
-   * `.git/config` and `.git/hooks`, which the Sandbox can write (HostGit.ts).
-   */
-  readonly hostGit: string
-  /**
    * The mod as the Session's Claude Code last started with it, copied from the Runner's at each
    * start (SessionMod.ts), and mounted read-only into the Sandbox.
    */
@@ -47,7 +41,6 @@ export function sessionDirectories(sessionsRoot: string, id: SessionId): Session
     session,
     claude: join(session, "claude"),
     workspace: join(session, "workspace"),
-    hostGit: join(session, "host-git"),
     mod: join(session, "mod"),
   }
 }

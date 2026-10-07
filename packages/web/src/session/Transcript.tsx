@@ -9,7 +9,14 @@ import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, memo, type ReactNode, useContext, useState } from "react"
 import { clock, count, duration, statusOf } from "../app/format.ts"
-import type { AgentView, Block, NoticeEvent, TranscriptItem, TurnView } from "../hub/transcript.ts"
+import type {
+  AgentView,
+  Block,
+  NoticeEvent,
+  SteeredPrompt,
+  TranscriptItem,
+  TurnView,
+} from "../hub/transcript.ts"
 import {
   AgentIcon,
   AgentStatus,
@@ -20,6 +27,7 @@ import {
   Markdown,
   SessionStatus,
   Spinner,
+  SteerIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -186,6 +194,16 @@ const styles = stylex.create({
     overflowWrap: "anywhere",
     lineHeight: leading.normal,
   },
+  // Steered in, but not read yet.
+  messageUnread: { borderStyle: "dashed", borderColor: color.borderStrong },
+  steerNote: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1,
+    minWidth: 0,
+    color: color.textSubtle,
+    fontSize: text.xs,
+  },
   footer: {
     display: "flex",
     alignItems: "center",
@@ -266,6 +284,18 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
       </div>
       <div {...stylex.props(styles.reply)}>
         <Blocks blocks={turn.blocks} ended={turn.end !== null} />
+        {turn.unread.map((prompt) => (
+          <Steered
+            key={prompt.key}
+            prompt={prompt}
+            note={
+              turn.end === null
+                ? "Steered in · Claude reads it at its next step"
+                : "Steered in, not read before the Turn ended · Claude reads it with the next prompt"
+            }
+            unread
+          />
+        ))}
         <TurnFooter turn={turn} />
       </div>
     </article>
@@ -388,7 +418,34 @@ function BlockView({ block, ended }: { block: Block; ended: boolean }) {
           <div {...stylex.props(styles.messageText)}>{block.text}</div>
         </div>
       )
+    case "steered":
+      return <Steered prompt={block} note="Steered into the Turn" />
   }
+}
+
+/** A queued prompt a person steered into the running Turn (#195), with what became of it. */
+function Steered({
+  prompt,
+  note,
+  unread = false,
+}: {
+  prompt: SteeredPrompt
+  note: string
+  unread?: boolean
+}) {
+  return (
+    <div {...stylex.props(styles.message)} data-steered={prompt.promptId}>
+      <div {...stylex.props(styles.speaker)}>
+        <Avatar name={prompt.sender.name} src={prompt.sender.avatarUrl} size="sm" />
+        <span {...stylex.props(styles.name)}>{prompt.sender.name}</span>
+        <span {...stylex.props(styles.steerNote)}>
+          <SteerIcon />
+          {note}
+        </span>
+      </div>
+      <div {...stylex.props(styles.messageText, unread && styles.messageUnread)}>{prompt.text}</div>
+    </div>
+  )
 }
 
 /** The one-line summary of a subagent: what it's for, its status, branch and tool calls. */
@@ -521,8 +578,6 @@ function Notice({ at, event }: { at: number; event: NoticeEvent }) {
             {event.by ? `${event.message ? "," : ""} by ${event.by.name}` : ""}
           </span>
         </>
-      ) : event._tag === "WipNotPushed" ? (
-        <span>The WIP ref could not be pushed: {event.message}</span>
       ) : event._tag === "ModelSwitched" ? (
         <>
           <Avatar name={event.by.name} src={event.by.avatarUrl} size="sm" />

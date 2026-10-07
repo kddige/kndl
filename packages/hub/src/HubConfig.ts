@@ -12,8 +12,8 @@ export interface GitHubOAuthConfig {
 }
 
 /**
- * The GitHub App's own credentials, which mint installation tokens: for the Runner's clone and
- * WIP pushes, and for git and gh in the Sandbox (issue #73, ADR 0010). Only the Hub holds them.
+ * The GitHub App's own credentials, which mint installation tokens: for the Runner's clone, and
+ * for git and gh in the Sandbox (issue #73, ADR 0010). Only the Hub holds them.
  */
 export interface GitHubAppConfig {
   readonly appId: string
@@ -155,8 +155,8 @@ export class HubConfig extends Context.Service<
     /** GitHub sign-in, or none while the GitHub App isn't configured: sign-in is then off. */
     readonly github: Option.Option<GitHubOAuthConfig>
     /**
-     * The GitHub App's credentials, or none (dev mode): the Runner then clones and pushes WIP
-     * refs with its host's own credentials, and the Sandbox gets no GitHub token.
+     * The GitHub App's credentials, or none (dev mode): the Runner then clones with its host's
+     * own credentials, and the Sandbox gets no GitHub token.
      */
     readonly githubApp: Option.Option<GitHubAppConfig>
     /** Dev login: sign in as a local Participant without GitHub. Loopback only. */

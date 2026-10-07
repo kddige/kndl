@@ -36,7 +36,6 @@ import { copySessionMod } from "./SessionMod.ts"
 import { isSafeSessionId, type SessionDirectories, sessionDirectories } from "./SessionNames.ts"
 import { type Pane, Tmux } from "./Tmux.ts"
 import { Workspaces } from "./Workspace.ts"
-import { WorkspaceGit } from "./WorkspaceGit.ts"
 
 /** The terminal size a Session starts with, until a viewer resizes it. */
 export const InitialTerminalSize: TerminalSize = { cols: 120, rows: 40 }
@@ -107,7 +106,6 @@ export const SessionsLive = Layer.effect(
     const workspaces = yield* Workspaces
     const sandboxes = yield* Sandboxes
     const hub = yield* HubLink
-    const git = yield* WorkspaceGit
     const hubGit = yield* HubGit
     const hubVariables = yield* HubVariables
     const hubClaudeCredential = yield* HubClaudeCredential
@@ -254,7 +252,6 @@ export const SessionsLive = Layer.effect(
           )
           yield* tmux.kill(sessionId)
           yield* ports.unwatch(sessionId)
-          yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
           yield* sandboxes.stop(sessionId, "Sleep")
           yield* hub.send(
             RunnerToHub.cases.SessionStopped.make({
@@ -418,7 +415,6 @@ export const SessionsLive = Layer.effect(
           yield* Effect.logWarning(`Session ${sessionId} failed to restart: ${reason}`)
           yield* tmux.kill(sessionId)
           yield* ports.unwatch(sessionId)
-          yield* git.pushWip(sessionId, sessionDirectories(config.sessionsRoot, sessionId), "Sleep")
           yield* sandboxes.stop(sessionId, "Sleep")
           yield* hub.send(RunnerToHub.cases.SessionStartFailed.make({ sessionId, message: reason }))
         }),
@@ -441,14 +437,8 @@ export const SessionsLive = Layer.effect(
           yield* forget(sessionId)
           yield* tmux.kill(sessionId)
           yield* ports.unwatch(sessionId)
-          // The Workspace's last state goes to its WIP ref before the Session sleeps, and before
-          // it is archived: the archive hook. Archiving destroys the Sandbox and its volumes and
-          // keeps the Workspace, for a restore; purging removes the Workspace later.
-          yield* git.pushWip(
-            sessionId,
-            sessionDirectories(config.sessionsRoot, sessionId),
-            request.reason === "Archive" ? "Archive" : "Sleep",
-          )
+          // Archiving destroys the Sandbox and its volumes and keeps the Workspace, for a restore;
+          // purging removes the Workspace later.
           yield* sandboxes.stop(sessionId, request.reason)
           yield* Effect.logInfo(`Session ${sessionId} stopped (${request.reason})`)
           yield* hub.send(
@@ -608,16 +598,6 @@ export const SessionsLive = Layer.effect(
           return running.get(incoming.sessionId)?.pane.snapshot ?? Effect.void
         case "GitReply":
           return hubGit.receive(incoming)
-        case "SessionTurnEnded":
-          return running.has(incoming.sessionId)
-            ? background(
-                git.pushWip(
-                  incoming.sessionId,
-                  sessionDirectories(config.sessionsRoot, incoming.sessionId),
-                  "TurnEnded",
-                ),
-              )
-            : Effect.void
         case "RunTestBuild":
           return background(testBuild(incoming))
         case "VariablesFetched":

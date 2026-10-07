@@ -51,6 +51,13 @@ const hubToMod = [
     message: "update",
   },
   { _tag: "DeliverPrompt", sessionId: "s-1", promptId: "p-1", text: "add tests", sender: alice },
+  {
+    _tag: "DeliverIntoTurn",
+    sessionId: "s-1",
+    promptId: "p-2",
+    text: "use the README's port",
+    sender: bob,
+  },
   { _tag: "StopTurn", sessionId: "s-1" },
   {
     _tag: "DeliverAgentMessage",
@@ -109,6 +116,20 @@ describe("ModToHub", () => {
     })
   })
 
+  test("reads a hello that says the mod steers, and one from a mod from before", () => {
+    const hello = modToHub[0] as Record<string, unknown>
+    expectRoundTrips(ModToHub, [{ ...hello, steers: true }])
+    expect(Schema.decodeUnknownSync(ModToHub)(hello)).not.toHaveProperty("steers")
+    expectRejected(ModToHub, { ...hello, steers: false })
+  })
+
+  test("rejects a steered prompt without its text or sender", () => {
+    const steered = turnEvents.find((event) => event._tag === "PromptSteered")
+    expectRejected(ModToHub, { ...steered, text: "" })
+    expectRejected(ModToHub, { ...steered, sender: { _tag: "FromTerminal" } })
+    expectRejected(ModToHub, { _tag: "SteeredPromptRead", turnId: "t-1" })
+  })
+
   test("rejects a hello without Claude Code's session id", () => {
     const { claudeSessionId: _, ...hello } = modToHub[0] as Record<string, unknown>
     expectRejected(ModToHub, hello)
@@ -124,6 +145,8 @@ describe("HubToMod", () => {
   test("rejects malformed messages", () => {
     expectRejected(HubToMod, { ...hubToMod[2], text: "" })
     expectRejected(HubToMod, { ...hubToMod[2], sender: { id: "u-1" } })
+    expectRejected(HubToMod, { ...hubToMod[3], text: "" })
+    expectRejected(HubToMod, { _tag: "DeliverIntoTurn", sessionId: "s-1", promptId: "p-2" })
     expectRejected(HubToMod, { _tag: "StopTurn" })
     expectRejected(HubToMod, { _tag: "PresenceChanged", sessionId: "s-1", participants: [{}] })
     expectRejected(HubToMod, { _tag: "SendPrompt", sessionId: "s-1", text: "web-only message" })

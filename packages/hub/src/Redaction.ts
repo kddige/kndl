@@ -309,7 +309,7 @@ export function redactOutcome(needles: Needles, outcome: QuestionOutcome): Quest
 }
 
 /**
- * A Session event with its free text redacted: the prompt, Claude's text, tool input and output,
+ * A Session event with its free text redacted: a prompt, Claude's text, tool input and output,
  * an agent's description, the messages people send it, and questions and their answers.
  */
 export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent {
@@ -319,6 +319,7 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
     case "TurnStarted":
     case "TextDelta":
     case "AgentMessaged":
+    case "PromptSteered":
       return { ...event, text: redact(event.text) }
     case "AgentStarted":
       return { ...event, description: redact(event.description) }
@@ -328,7 +329,6 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
       return { ...event, output: redact(event.output) }
     case "SessionStateChanged":
       return event.message === undefined ? event : { ...event, message: redact(event.message) }
-    case "WipNotPushed":
     case "SandboxNoted":
       return { ...event, message: redact(event.message) }
     case "QuestionAsked":
@@ -339,6 +339,7 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
     case "TurnStopRequested":
     case "ModelSwitched":
     case "AgentStatusChanged":
+    case "SteeredPromptRead":
       return event
   }
 }

@@ -4,8 +4,10 @@
 // hub-link's (spike #148).
 //
 // - The Hub: says hello and long-polls for commands (see HubLink.ts): prompts from the Prompt
-//   queue, stopping the Turn, messages to subagents and stopping one, and presence.
-// - hub-link: reads which prompt it delivered last, and who sent it, to report the Turn it starts.
+//   queue, prompts steered into the running Turn, stopping the Turn, messages to subagents and
+//   stopping one, and presence.
+// - hub-link: reads which prompt it delivered last, and who sent it, to report the Turn it starts;
+//   and which it is steering, to report it joining the Turn.
 // - The person at the terminal: a band above the prompt shows the link and the Participants.
 //
 // The rest of the plugin, with Effect and the protocol, is bundled from the mod package's src/
@@ -19,6 +21,7 @@ import {
   askedQuestions,
   HubLink,
   promptFromParticipant,
+  steeredPrompt,
   terminalOutcome,
 } from "./hub-link-lib.js"
 import type { LinkStatus, ModCommand, Participant, QuestionAnswer } from "./hub-link-lib.js"
@@ -33,6 +36,7 @@ const band = atom(
 )
 
 const delivered = { plugin: "hub-link-commands", key: "delivered" } as const
+const steering = { plugin: "hub-link-commands", key: "steering" } as const
 
 /** The module's own state; a reload starts it over, and fires `session.start` again. */
 const state = {
@@ -72,6 +76,31 @@ const deliverPrompt = async ($: EngineInterface, command: Command<"DeliverPrompt
     if (entered.drop !== undefined) failed(`a hook dropped the prompt: ${entered.drop}`)
   } catch (error) {
     failed(String(error))
+  }
+}
+
+/**
+ * A queued prompt a Participant steered into the running Turn (#195, ADR 0018): a row of the
+ * Turn's conversation, which Claude reads at its next step, as Claude Code adds a prompt typed
+ * while it works. hub-link sees it join, and reports it. Once the Turn has ended it can't join:
+ * the Hub keeps it queued.
+ */
+const deliverIntoTurn = async ($: EngineInterface, command: Command<"DeliverIntoTurn">) => {
+  const failed = (message: string) =>
+    report({ _tag: "PromptFailed", promptId: command.promptId, message })
+  if (state.mainTurn === undefined) return failed("no Turn is running")
+  const { promptId, sender, text } = command
+  try {
+    // Said before it is appended, so hub-link knows the row.
+    await $.state.set(steering, { promptId, sender, text })
+    const appended = await $.session.append({
+      message: { type: "user", content: [{ type: "text", text: steeredPrompt(sender, text) }] },
+    })
+    if (appended.deny !== undefined) failed(appended.deny)
+  } catch (error) {
+    failed(String(error))
+  } finally {
+    await $.state.set(steering, null).catch(() => undefined)
   }
 }
 
@@ -126,6 +155,10 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
       return
     case "DeliverAgentMessage":
       void messageAgent($, command)
+      return
+    // Appended at once, so one steered prompt is told from the next.
+    case "DeliverIntoTurn":
+      await deliverIntoTurn($, command)
       return
     case "StopAgent":
       await stopAgent($, command)

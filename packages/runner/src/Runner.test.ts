@@ -24,7 +24,6 @@ import {
   FakeOpenPorts,
   FakeSandboxes,
   FakeTmux,
-  FakeWorkspaceGit,
   FakeWorkspaces,
   sessionId,
   writeFakeMod,
@@ -116,7 +115,6 @@ interface Harness {
   readonly tmux: FakeTmux
   readonly workspaces: FakeWorkspaces
   readonly sandboxes: FakeSandboxes
-  readonly git: FakeWorkspaceGit
   readonly proxy: FakeCredentialProxy
   readonly openPorts: FakeOpenPorts
   /** The Runner's HubGit, once its layer is built. */
@@ -216,8 +214,6 @@ function runOn(
   claudeModels: Layer.Layer<ClaudeModels> = StaticClaudeModels(models),
 ): Harness {
   const { hub, tmux, sandboxes, workspaces, settings } = machine
-  // One record of Sandbox and git calls, in the order they ran.
-  const git = new FakeWorkspaceGit(sandboxes.calls)
   const proxy = new FakeCredentialProxy()
   const openPorts = new FakeOpenPorts()
   let hubGit: HubGit["Service"] | undefined
@@ -234,7 +230,7 @@ function runOn(
     Layer.provideMerge(updater),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(claudeModels),
-    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, git.layer, proxy.layer]),
+    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, proxy.layer]),
     Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
     Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
   )
@@ -249,7 +245,6 @@ function runOn(
     tmux,
     workspaces,
     sandboxes,
-    git,
     proxy,
     openPorts,
     hubGit: () => {
@@ -887,8 +882,9 @@ describe("Sessions", () => {
       { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested", exitCode: 143 },
     ])
     expect(h.tmux.panes.size).toBe(0)
-    // The Workspace's WIP ref is pushed before the Sandbox goes: the archive hook.
-    expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Archive", "stop s-1 Archive"])
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Archive"])
+    // Nothing is pushed (#194): the Runner didn't even ask how to reach the Repo.
+    expect(h.hub.all("GitRequest")).toEqual([])
   })
 
   test("reports a running Session's Open ports, and none before it says it stopped (#175)", async () => {
@@ -924,7 +920,8 @@ describe("Sessions", () => {
     expect(h.hub.all("SessionStopped")).toEqual([
       { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested" },
     ])
-    expect(h.sandboxes.calls).toEqual(["pushWip s-1 Archive", "stop s-1 Archive"])
+    expect(h.sandboxes.calls).toEqual(["stop s-1 Archive"])
+    expect(h.hub.all("GitRequest")).toEqual([])
   })
 
   test("purges a Session: its Sandbox and volumes, then its directory and Claude Code state", async () => {
@@ -939,12 +936,7 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionPurged").length === 1)
 
     expect(h.hub.all("SessionPurged")).toEqual([{ _tag: "SessionPurged", sessionId: "s-1" }])
-    expect(h.sandboxes.calls).toEqual([
-      "start s-1",
-      "pushWip s-1 Archive",
-      "stop s-1 Archive",
-      "purge s-1",
-    ])
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Archive", "purge s-1"])
     expect(h.workspaces.removed).toEqual([sessionId("s-1")])
   })
 
@@ -1007,19 +999,14 @@ describe("Sessions", () => {
       { _tag: "SessionStopped", sessionId: "s-1", reason: "Requested", exitCode: 143 },
     ])
     expect(h.tmux.panes.size).toBe(0)
-    // The WIP ref is pushed first; then the Sandbox is stopped, not destroyed: its volumes stay
-    // for the wake.
-    expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Sleep", "stop s-1 Sleep"])
+    // The Sandbox is stopped, not destroyed: its volumes stay for the wake. Nothing is pushed.
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+    expect(h.hub.all("GitRequest")).toEqual([])
 
     writeTranscript(h, "3c1f6f0e-claude")
     h.hub.send(startSession("s-1", { modToken: "chm_woken.secret", resume: "3c1f6f0e-claude" }))
     await eventually(() => h.hub.all("SessionStarted").length === 2)
-    expect(h.sandboxes.calls).toEqual([
-      "start s-1",
-      "pushWip s-1 Sleep",
-      "stop s-1 Sleep",
-      "start s-1",
-    ])
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep", "start s-1"])
     expect(h.workspaces.prepared.map((start) => start.resume)).toEqual([
       undefined,
       ClaudeSessionId.make("3c1f6f0e-claude"),
@@ -1068,7 +1055,8 @@ describe("Sessions", () => {
       output: `Error: The current working directory was deleted\ntoken ${"*".repeat(sessionToken.length)}`,
     })
     expect(h.tmux.panes.size).toBe(0)
-    expect(h.sandboxes.calls).toEqual(["start s-1", "pushWip s-1 Sleep", "stop s-1 Sleep"])
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+    expect(h.hub.all("GitRequest")).toEqual([])
   })
 
   test("sends no output for a Session that exited without printing anything", async () => {
@@ -1083,17 +1071,20 @@ describe("Sessions", () => {
     expect(h.hub.all("SessionStopped")[0]).not.toHaveProperty("output")
   })
 
-  test("pushes a running Session's WIP ref when the Hub says its Turn ended", async () => {
+  test("ignores a Hub from before #194 saying a Turn ended, and pushes nothing", async () => {
     const h = startRunner()
     await connected(h)
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     h.hub.send({ _tag: "SessionTurnEnded", sessionId: "s-1" })
-    h.hub.send({ _tag: "SessionTurnEnded", sessionId: "s-unknown" })
-    await eventually(() => h.git.calls.includes("pushWip s-1 TurnEnded"))
+    // The Runner drops what it can't decode, and goes on with the Hub's next message.
+    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Sleep" })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
 
-    expect(h.git.calls).toEqual(["start s-1", "pushWip s-1 TurnEnded"])
+    expect(h.hub.connections).toHaveLength(1)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
+    expect(h.hub.all("GitRequest")).toEqual([])
   })
 
   test("asks the Hub git questions and matches its replies", async () => {

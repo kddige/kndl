@@ -17,6 +17,7 @@ export {
   resultSummary,
   sharedSessionNote,
   startsDelivered,
+  steeredPrompt,
   taskNotificationAgent,
   terminalOutcome,
   toolArguments,

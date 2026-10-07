@@ -156,6 +156,7 @@ describe("the Hub link", () => {
       sessionId: "s1",
       claudeSessionId: "claude-1",
       model: "claude-test",
+      steers: true,
     })
   })
 
@@ -288,6 +289,52 @@ describe("who a Turn is from", () => {
     expect(posted()).toEqual([
       { _tag: "TurnStarted", turnId: "t1", text, sender: { _tag: "FromAgent", agentId: "a1" } },
     ])
+  })
+})
+
+describe("a prompt steered into the running Turn (#195)", () => {
+  const ada = { id: "p1", login: "ada", name: "Ada Lovelace" }
+  const framed = [
+    "<system-reminder>",
+    "Ada Lovelace sent a new message while you were working:",
+    "[Ada Lovelace] Also the changelog.",
+    "",
+    "Address the message above as you continue this turn.",
+    "</system-reminder>",
+  ].join("\n")
+
+  // A kept row is reported as joining the Turn; `claude plugin test` has nothing beneath
+  // session.append to keep one, so the refusals are what is tested here.
+  test("is refused once the Turn has ended, so it waits in the queue", async ($, on) => {
+    const { posted } = linkedSession(on)
+    const clock = mock.clock(on)
+    on("state.get", (_, e) => {
+      const value =
+        e.key === "steering" ? { promptId: "pr-2", sender: ada, text: "Also the changelog." } : null
+      return { value: { value, version: 1 } } as never
+    })
+    on("turn.start", (_, e) => ({ turnId: e.turnId }))
+    on("turn.complete", () => ({ text: "done" }) as never)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "long job" } as never)
+    await $.turn.complete(turnEnded("t1"))
+    const appended = await $.session.append({
+      message: {
+        type: "user",
+        role: "user",
+        isMeta: true,
+        content: [{ type: "text", text: framed }],
+      },
+      door: "note",
+      origin: { kind: "plugin", plugin: "hub-link-commands" },
+      uuid: "u1",
+    } as never)
+    await clock.advance(200)
+
+    expect(appended).toEqual({ deny: "the Turn ended before the prompt could join it" })
+    expect(posted().map((event) => event._tag)).toEqual(["TurnStarted", "TurnEnded"])
   })
 })
 

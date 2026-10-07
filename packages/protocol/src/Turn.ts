@@ -51,6 +51,32 @@ export const TurnStarted = Schema.TaggedStruct("TurnStarted", {
 })
 export type TurnStarted = typeof TurnStarted.Type
 
+/**
+ * A Participant steered a queued prompt into the Turn running on the main loop (#195, ADR 0018):
+ * the mod added it to the Turn's conversation, with the sender's name, as Claude Code adds a prompt
+ * typed while it works. It starts no Turn, and the Turn's sender stays who it was. Claude reads it
+ * at the Turn's next step ({@link SteeredPromptRead}).
+ */
+export const PromptSteered = Schema.TaggedStruct("PromptSteered", {
+  turnId: TurnId,
+  /** The Prompt queue entry it came from. */
+  promptId: PromptId,
+  /** The prompt as its sender wrote it. */
+  text: Schema.NonEmptyString,
+  sender: Participant,
+})
+export type PromptSteered = typeof PromptSteered.Type
+
+/**
+ * Claude read a steered prompt: the Turn's first step after it joined. A Turn that ends with none
+ * leaves it unread in the conversation, and Claude reads it with the next prompt.
+ */
+export const SteeredPromptRead = Schema.TaggedStruct("SteeredPromptRead", {
+  turnId: TurnId,
+  promptId: PromptId,
+})
+export type SteeredPromptRead = typeof SteeredPromptRead.Type
+
 /** A piece of the text Claude is streaming. Consecutive pieces may be merged before sending. */
 export const TextDelta = Schema.TaggedStruct("TextDelta", {
   turnId: TurnId,
@@ -199,6 +225,8 @@ export const TurnEvent = Schema.Union([
   AgentStatusChanged,
   QuestionAsked,
   QuestionClosed,
+  PromptSteered,
+  SteeredPromptRead,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type TurnEvent = typeof TurnEvent.Type
 

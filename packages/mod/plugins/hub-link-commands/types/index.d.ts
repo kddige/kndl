@@ -1,5 +1,5 @@
-// hub-link-commands' contract: the state its band draws from, and the prompt it delivered last,
-// which hub-link reads.
+// hub-link-commands' contract: the state its band draws from, and the prompts it delivered and
+// steered last, which hub-link reads.
 
 /** What the band above the prompt shows. */
 export type HubLinkBand = {
@@ -27,8 +27,23 @@ export type HubLinkDelivered = {
   text: string
 }
 
+/**
+ * The prompt from the Prompt queue being steered into the running Turn (#195): hub-link reports it
+ * joined when its row is appended.
+ */
+export type HubLinkSteering = {
+  promptId: string
+  sender: HubLinkParticipant
+  /** As its sender wrote it. */
+  text: string
+}
+
 declare module "claude-code" {
   interface PluginState {
-    "hub-link-commands": { band: HubLinkBand; delivered: HubLinkDelivered | null }
+    "hub-link-commands": {
+      band: HubLinkBand
+      delivered: HubLinkDelivered | null
+      steering: HubLinkSteering | null
+    }
   }
 }

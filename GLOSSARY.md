@@ -71,8 +71,12 @@ One prompt and Claude's full response to it, including every tool call it made.
 _Avoid_: message, run, step
 
 **Prompt queue**:
-The ordered prompts from Participants waiting for the Session to finish its current Turn.
+The ordered prompts from Participants waiting for the Session to finish its current Turn. A queued prompt waits unless someone steers it.
 _Avoid_: backlog, inbox
+
+**Steer**:
+To take a queued prompt out of the Prompt queue and feed it into the running Turn, which reads it at its next step, as Claude Code does with a prompt typed while it works. The Turn stays the one its first prompt started.
+_Avoid_: interrupt, inject, push
 
 **Open question**:
 A question Claude asked in a Turn, with AskUserQuestion, that no one has answered yet. Any Participant may answer it, from the web UI or at the terminal; the first answer is the one Claude reads. While it is open, the Session is waiting on its Participants and doesn't go to sleep.
@@ -85,10 +89,6 @@ _Avoid_: working directory, volume, clone
 **Work branch**:
 The git branch a Session commits to, created from the base branch chosen when the Session started.
 _Avoid_: session branch, feature branch
-
-**WIP ref**:
-A hidden git ref on the Repo's remote holding a Session's uncommitted work, so the work survives losing the Runner.
-_Avoid_: backup, stash, snapshot
 
 **Sandbox token**:
 A short-lived GitHub App installation token for one Session's Repo, kept in that Session's Sandbox so plain `git` and `gh` reach GitHub. It has every permission the App's installation has, so anything in the Sandbox can push and merge in that Repo; a GitHub ruleset on the default branch is the guardrail (ADR 0010).
