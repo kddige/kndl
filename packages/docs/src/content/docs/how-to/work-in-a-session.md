@@ -32,6 +32,10 @@ Everyone with the Session open sees the new name at once. A name is at most 80 c
 
 Type a prompt and send it. While a Turn is running, a prompt from anyone waits in the Prompt queue, and Claude takes the queue in order. Each prompt in the transcript shows who sent it.
 
+Waiting is the default. To have Claude read a queued prompt now, press **Steer** on it. Anyone in the Session can. The prompt leaves the queue and joins the running Turn, as a prompt typed into Claude Code while it works does, and Claude reads it at its next step, usually after the tool call it's in. It doesn't start a Turn of its own. The transcript shows it in the running Turn under its sender's name: first as *Steered in*, then, once Claude has read it, where Claude read it. Steer shows only while a Turn is running and no one has pressed Stop.
+
+A Turn can end before Claude reads a steered prompt, because it was stopped or was already writing its last answer. The prompt then stays in the conversation, marked as not read, and Claude reads it with the next prompt. If the Hub can't hand a prompt over, the prompt keeps its place in the queue and you're told why. One case is a Session whose Claude Code runs a mod from before steering ([ADR 0018](/reference/decisions/0018-steering-a-prompt-into-the-running-turn/)).
+
 **Stop** in the prompt box stops the running Turn, for anyone in the Session. A tool call it was in the middle of shows as cut short. A Bash command isn't killed: Claude Code moves it to the background, where it runs to its end, and then starts a Turn of its own to read its output, as it does for any background command.
 
 The Participants in a Session are shown at the top, and to Claude Code too, above its prompt box.

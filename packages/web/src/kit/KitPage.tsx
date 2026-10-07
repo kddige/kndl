@@ -53,6 +53,7 @@ import {
   setTheme,
   Sidebar,
   Spinner,
+  SteerIcon,
   StopIcon,
   Switch,
   Tab,
@@ -674,6 +675,7 @@ function Toggles() {
         <CopyIcon aria-label="Copy" />
         <PlugIcon aria-label="Plug" />
         <SunIcon aria-label="Sun" />
+        <SteerIcon aria-label="Steer" />
       </Row>
     </Section>
   )

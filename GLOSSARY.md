@@ -71,8 +71,12 @@ One prompt and Claude's full response to it, including every tool call it made.
 _Avoid_: message, run, step
 
 **Prompt queue**:
-The ordered prompts from Participants waiting for the Session to finish its current Turn.
+The ordered prompts from Participants waiting for the Session to finish its current Turn. A queued prompt waits unless someone steers it.
 _Avoid_: backlog, inbox
+
+**Steer**:
+To take a queued prompt out of the Prompt queue and feed it into the running Turn, which reads it at its next step, as Claude Code does with a prompt typed while it works. The Turn stays the one its first prompt started.
+_Avoid_: interrupt, inject, push
 
 **Workspace**:
 The Session's checkout of its Repo, which outlives any single Sandbox.

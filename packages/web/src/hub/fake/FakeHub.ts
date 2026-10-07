@@ -724,6 +724,47 @@ export class FakeHub implements HubTransport {
         this.#queueChanged(session)
         break
       }
+      // As the Hub and the mod do (#195): the prompt joins the running Turn, which reads it at
+      // its next step; one the Turn ends before reading stays unread.
+      case "SteerPrompt": {
+        const session = this.sessions.get(message.sessionId)
+        if (!session) break
+        const turnId = session.summary.currentTurn
+        const prompt = session.queue.find((queued) => queued.id === message.promptId)
+        if (turnId === null || !session.stopTurn) {
+          this.#fail(
+            socket,
+            message._tag,
+            "No Turn is running to steer the prompt into: it goes next.",
+            message.sessionId,
+          )
+          break
+        }
+        if (!prompt) {
+          this.#fail(
+            socket,
+            message._tag,
+            "The prompt is not in the Prompt queue.",
+            message.sessionId,
+          )
+          break
+        }
+        session.queue = session.queue.filter((queued) => queued !== prompt)
+        this.#replies.delete(prompt.id)
+        this.#queueChanged(session)
+        this.#append(session, {
+          _tag: "PromptSteered",
+          turnId,
+          promptId: prompt.id,
+          text: prompt.text,
+          sender: prompt.sender,
+        })
+        this.#after(3, () => {
+          if (session.summary.currentTurn !== turnId) return
+          this.#append(session, { _tag: "SteeredPromptRead", turnId, promptId: prompt.id })
+        })
+        break
+      }
       case "StopTurn": {
         const session = this.sessions.get(message.sessionId)
         if (!session?.stopTurn) break

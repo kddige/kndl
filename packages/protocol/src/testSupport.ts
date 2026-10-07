@@ -213,4 +213,12 @@ export const turnEvents = [
     text: "<task-notification>…</task-notification>",
     sender: { _tag: "FromAgent", agentId: "a-1" },
   },
+  {
+    _tag: "PromptSteered",
+    turnId: "t-1",
+    promptId: "p-2",
+    text: "use the README's port",
+    sender: bob,
+  },
+  { _tag: "SteeredPromptRead", turnId: "t-1", promptId: "p-2" },
 ]

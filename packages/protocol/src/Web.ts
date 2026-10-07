@@ -182,6 +182,17 @@ export const CancelPrompt = Schema.TaggedStruct("CancelPrompt", {
 export type CancelPrompt = typeof CancelPrompt.Type
 
 /**
+ * Hand a queued prompt to the running Turn instead of waiting for it to end (#195): it leaves the
+ * Prompt queue, and Claude reads it at the Turn's next step. Any Participant may, while a Turn
+ * runs on the main loop.
+ */
+export const SteerPrompt = Schema.TaggedStruct("SteerPrompt", {
+  sessionId: SessionId,
+  promptId: PromptId,
+})
+export type SteerPrompt = typeof SteerPrompt.Type
+
+/**
  * Message one of the Session's subagents (ADR 0014): a running one reads it at its next tool call,
  * and one that has stopped resumes with it. Any Participant may; an Asleep Session is woken first.
  * The message carries the sender's name, as a prompt does.
@@ -372,6 +383,7 @@ export const WebToHub = Schema.Union([
   LeaveSession,
   SendPrompt,
   CancelPrompt,
+  SteerPrompt,
   StopTurn,
   MessageAgent,
   StopAgent,

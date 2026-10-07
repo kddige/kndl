@@ -85,6 +85,7 @@ describe("the Hub link", () => {
       sessionId: "s1",
       claudeSessionId: "claude-1",
       model: "claude-test",
+      steers: true,
     })
     expect(requests[1]?.url).toBe(`${hubUrl}/mod/commands?after=0&waitMs=25000`)
   })
@@ -204,6 +205,65 @@ describe("prompts", () => {
     await clock.advance(0)
 
     expect(aborted).toEqual(["t1"])
+  })
+})
+
+/** What the plugin says it is steering, each time it says it. */
+function steeringWrites(on: On) {
+  const writes: Array<unknown> = []
+  on("state.set", { plugin: "hub-link-commands", key: "steering" }, (_, e, next) => {
+    writes.push(e.value)
+    return next(e)
+  })
+  return writes
+}
+
+describe("steering a prompt into the running Turn (#195)", () => {
+  const steer = {
+    _tag: "DeliverIntoTurn",
+    sessionId: "s1",
+    promptId: "pr-2",
+    text: "Also the changelog.",
+    sender: ada,
+  }
+
+  test("fails with no Turn running, adding nothing", async ($, on) => {
+    const { posted } = linkedSession(on, [steer])
+    const clock = mock.clock(on)
+    const writes = steeringWrites(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(200)
+
+    expect(posted()).toEqual([
+      { _tag: "PromptFailed", promptId: "pr-2", message: "no Turn is running" },
+    ])
+    expect(writes).toEqual([])
+  })
+
+  // The row itself is Claude Code's to keep: `claude plugin test` has nothing beneath a plugin's
+  // own session.append (a test's hook there is skipped), so it fails here, as a refused one does.
+  test("says what it steers while it adds the row, and reports a row not kept", async ($, on) => {
+    let turnStarted: (() => void) | undefined
+    const { posted } = linkedSession(on, [steer], new Promise((resolve) => (turnStarted = resolve)))
+    const clock = mock.clock(on)
+    const writes = steeringWrites(on)
+    on("turn.start", (_, e) => ({ turnId: e.turnId }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "long job" } as never)
+    turnStarted?.()
+    await clock.advance(200)
+
+    expect(writes).toEqual([{ promptId: "pr-2", sender: ada, text: "Also the changelog." }, null])
+    expect(posted()).toEqual([
+      {
+        _tag: "PromptFailed",
+        promptId: "pr-2",
+        message: expect.stringContaining("session.append"),
+      },
+    ])
   })
 })
 

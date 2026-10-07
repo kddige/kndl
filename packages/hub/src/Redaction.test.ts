@@ -1,7 +1,14 @@
 // Redacting Sensitive values from text and streams (issue #48), on made-up values.
 
 import { describe, expect, test } from "bun:test"
-import { AgentId, ParticipantId, type SessionEvent, ToolCallId, TurnId } from "@kndl/protocol"
+import {
+  AgentId,
+  ParticipantId,
+  PromptId,
+  type SessionEvent,
+  ToolCallId,
+  TurnId,
+} from "@kndl/protocol"
 import { everything, needlesOf, redactEvent, redactText, StreamRedactor } from "./Redaction.ts"
 
 const secret = "sk_TEST_9f3a2b"
@@ -73,6 +80,7 @@ describe("Redacting a text", () => {
     const turnId = TurnId.make("turn-1")
     const toolCallId = ToolCallId.make("call-1")
     const agentId = AgentId.make("agent-1")
+    const promptId = PromptId.make("prompt-1")
     const sender = { id: ParticipantId.make("dev:alice"), login: "alice", name: "alice" }
     const agentStarted = {
       _tag: "AgentStarted",
@@ -129,6 +137,10 @@ describe("Redacting a text", () => {
       [
         { ...agentStarted, description: `use ${secret}` },
         { ...agentStarted, description: `use ${masked}` },
+      ],
+      [
+        { _tag: "PromptSteered", turnId, promptId, sender, text: `use ${secret}` },
+        { _tag: "PromptSteered", turnId, promptId, sender, text: `use ${masked}` },
       ],
       [
         { _tag: "AgentMessaged", agentId, sender, text: `try ${secret}` },

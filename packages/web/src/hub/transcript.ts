@@ -1,8 +1,9 @@
 // Folds a Session's event log into what the chat shows: Turns with their prompt and sender, the
 // streamed text merged into blocks, and each tool call's start and end joined. A subagent (ADR
 // 0014) is a card at the Agent call that started it: its events are grouped by agentId, whichever
-// run they come in, so a background agent keeps filling its card after its Turn ended. State
-// changes between Turns, notes about the Sandbox, and a change of model (#128) become notices.
+// run they come in, so a background agent keeps filling its card after its Turn ended. A prompt
+// steered into a Turn (#195) is shown where Claude read it. State changes between Turns, notes
+// about the Sandbox, and a change of model (#128) become notices.
 
 import type {
   AgentId,
@@ -44,6 +45,17 @@ export type Block =
       readonly sender: Participant
       readonly text: string
     }
+  /** A queued prompt steered into the Turn (#195), where Claude read it. */
+  | ({ readonly kind: "steered" } & SteeredPrompt)
+
+/** A queued prompt a person steered into a running Turn (#195). */
+export interface SteeredPrompt {
+  readonly key: string
+  readonly promptId: PromptId
+  readonly sender: Participant
+  /** As its sender wrote it. */
+  readonly text: string
+}
 
 /** A subagent, as AgentStarted described it, with its status and everything it said and did. */
 export interface AgentView {
@@ -77,6 +89,12 @@ export interface TurnView {
   readonly blocks: ReadonlyArray<Block>
   /** Who asked to stop this Turn, in order. */
   readonly stopRequests: ReadonlyArray<Participant>
+  /**
+   * The prompts steered into it that Claude hasn't read yet: it reads them at its next step. One
+   * a Turn ends without reading stays in the conversation, and Claude reads it with the next
+   * prompt, as Claude Code does.
+   */
+  readonly unread: ReadonlyArray<SteeredPrompt>
   /** How the Turn ended; null while it runs. */
   readonly end: TurnEnded | null
 }
@@ -121,6 +139,7 @@ interface MutableTurn {
   promptId?: PromptId
   blocks: Array<Block>
   stopRequests: Array<Participant>
+  unread: Array<SteeredPrompt>
   end: TurnEnded | null
 }
 
@@ -157,6 +176,7 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
       ...(promptId !== undefined && { promptId }),
       blocks: [],
       stopRequests: [],
+      unread: [],
       end: null,
     }
     turns.set(turnId, turn)
@@ -280,6 +300,22 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
       case "TurnStopRequested":
         if (latest && latest.end === null) latest.stopRequests.push(event.by)
         break
+      case "PromptSteered":
+        turnFor(entry, event.turnId).unread.push({
+          key: `steered-${entry.seq}`,
+          promptId: event.promptId,
+          sender: event.sender,
+          text: event.text,
+        })
+        break
+      case "SteeredPromptRead": {
+        // Claude read it here, after what the Turn had said and done so far.
+        const turn = turns.get(event.turnId)
+        const index = turn?.unread.findIndex((prompt) => prompt.promptId === event.promptId) ?? -1
+        const [read] = index === -1 ? [] : (turn?.unread.splice(index, 1) ?? [])
+        if (turn && read) turn.blocks.push({ kind: "steered", ...read })
+        break
+      }
       case "SessionStateChanged":
       case "SandboxNoted":
       case "ModelSwitched":
@@ -326,6 +362,7 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
         ...(turn.promptId !== undefined && { promptId: turn.promptId }),
         blocks: freezeBlocks(turn.blocks),
         stopRequests: [...turn.stopRequests],
+        unread: [...turn.unread],
         end: turn.end,
       },
     }

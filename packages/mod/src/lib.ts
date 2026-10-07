@@ -14,6 +14,7 @@ export {
   resultSummary,
   sharedSessionNote,
   startsDelivered,
+  steeredPrompt,
   taskNotificationAgent,
   toolArguments,
   turnEndReason,

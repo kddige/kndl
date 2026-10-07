@@ -50,6 +50,7 @@ const webToHub = [
   { _tag: "LeaveSession", sessionId: "s-1" },
   { _tag: "SendPrompt", sessionId: "s-1", text: "add a health check" },
   { _tag: "CancelPrompt", sessionId: "s-1", promptId: "p-2" },
+  { _tag: "SteerPrompt", sessionId: "s-1", promptId: "p-2" },
   { _tag: "StopTurn", sessionId: "s-1" },
   { _tag: "MessageAgent", sessionId: "s-1", agentId: "a-1", text: "also cover the edge cases" },
   { _tag: "StopAgent", sessionId: "s-1", agentId: "a-1" },
@@ -483,6 +484,7 @@ describe("WebToHub", () => {
     expectRejected(WebToHub, { ...webToHub[1], repo: "kddige/kndl/extra" })
     expectRejected(WebToHub, { _tag: "JoinSession", sessionId: "s-1", afterSeq: -1 })
     expectRejected(WebToHub, { _tag: "CancelPrompt", sessionId: "s-1" })
+    expectRejected(WebToHub, { _tag: "SteerPrompt", sessionId: "s-1" })
     expectRejected(WebToHub, { _tag: "DeliverPrompt", sessionId: "s-1", promptId: "p", text: "x" })
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "" })
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "-p" })

@@ -272,6 +272,48 @@ describe("buildTranscript", () => {
     expect(second?.end?.reason).toBe("Stopped")
   })
 
+  test("a steered prompt shows where Claude read it, and until then after the Turn (#195)", () => {
+    const log = entries([
+      { _tag: "TurnStarted", turnId: "t-1", text: "[Alice] one", sender: fromAlice },
+      { _tag: "TextDelta", turnId: "t-1", text: "Working on it." },
+      { _tag: "PromptSteered", turnId: "t-1", promptId: "p-2", text: "and two", sender: bob },
+      { _tag: "TextDelta", turnId: "t-1", text: " Still." },
+      { _tag: "SteeredPromptRead", turnId: "t-1", promptId: "p-2" },
+      { _tag: "TextDelta", turnId: "t-1", text: "Two as well." },
+      { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+    ])
+    const steered = { key: "steered-2", promptId: "p-2", sender: bob, text: "and two" }
+
+    // Joined, it waits for the next step; the Turn is still Alice's.
+    const [joined] = turns(build(log.slice(0, 4)))
+    expect(joined?.sender).toEqual(fromAlice as never)
+    expect(joined?.unread).toEqual([steered] as never)
+    expect(joined?.blocks.map((block) => block.kind)).toEqual(["text"])
+
+    const [read] = turns(build(log))
+    expect(read?.unread).toEqual([])
+    expect(read?.blocks).toEqual([
+      { kind: "text", key: "text-1", text: "Working on it. Still." },
+      { kind: "steered", ...steered },
+      { kind: "text", key: "text-5", text: "Two as well." },
+    ] as never)
+  })
+
+  test("a steered prompt the Turn ended without reading stays unread (#195)", () => {
+    const [turn] = turns(
+      build(
+        entries([
+          { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
+          { _tag: "PromptSteered", turnId: "t-1", promptId: "p-2", text: "two", sender: alice },
+          { _tag: "TurnStopRequested", by: alice },
+          { _tag: "TurnEnded", turnId: "t-1", reason: "Stopped", durationMs: 1 },
+        ]),
+      ),
+    )
+    expect(turn?.unread.map((prompt) => prompt.text)).toEqual(["two"])
+    expect(turn?.end?.reason).toBe("Stopped")
+  })
+
   test("state changes become notices between Turns", () => {
     const items = build(
       entries([
