@@ -303,7 +303,8 @@ export type QuestionAnswer = typeof QuestionAnswer.Type
 
 /**
  * How an Open question closed: answered, replied to or dismissed by a Participant or at the
- * terminal, or Cancelled, when its Turn was stopped or its Claude Code stopped first.
+ * terminal, or Cancelled, when its Turn was stopped or its Claude Code stopped first, or its dialog
+ * timed out with nobody at the keyboard.
  */
 export const QuestionOutcome = Schema.Union([
   QuestionAnswered,

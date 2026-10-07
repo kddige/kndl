@@ -43,6 +43,8 @@ const state = {
   link: undefined as HubLink | undefined,
   /** The Turn running on the main loop, which StopTurn stops. */
   mainTurn: undefined as string | undefined,
+  /** The Turn StopTurn stopped last. */
+  stoppedTurn: undefined as string | undefined,
   /**
    * The AskUserQuestion calls waiting for an answer, by id (#193): each takes a Participant's
    * answer, and says whether it came first.
@@ -164,7 +166,9 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
       await stopAgent($, command)
       return
     case "StopTurn":
-      if (state.mainTurn !== undefined) await $.turn.abort({ turnId: state.mainTurn })
+      if (state.mainTurn === undefined) return
+      state.stoppedTurn = state.mainTurn
+      await $.turn.abort({ turnId: state.mainTurn })
       return
     case "DeliverAnswer":
       // Too late: answered at the terminal or by someone else first, or cancelled. The Hub tells
@@ -265,9 +269,12 @@ export function register(on: On) {
       state.asking.delete(toolCallId)
       return true
     }
-    // Stopped, or settled by a hook above: Claude reads no answer, and the Hub hears so now.
+    // Stopped from the web UI: Claude reads no answer, and the Hub hears so now. Esc at the
+    // terminal stops the Turn too, and the call then ends refused, as dismissed (#206). One
+    // stopped otherwise that never ends, the Hub closes as cancelled with its Turn.
+    const isStopped = () => state.stoppedTurn === turnId
     next.signal.addEventListener("abort", () => {
-      if (settle()) closed({ _tag: "Cancelled" })
+      if (isStopped() && settle()) closed({ _tag: "Cancelled" })
     })
     return new Promise<Awaited<ReturnType<typeof next>>>((resolve, reject) => {
       state.asking.set(toolCallId, (answer, sender) => {
@@ -278,7 +285,7 @@ export function register(on: On) {
       })
       next(e).then(
         (done) => {
-          if (settle()) closed(terminalOutcome(done))
+          if (settle()) closed(isStopped() ? { _tag: "Cancelled" } : terminalOutcome(done))
           resolve(done)
         },
         (error: unknown) => {

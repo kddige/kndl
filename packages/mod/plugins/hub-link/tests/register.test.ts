@@ -69,6 +69,14 @@ describe("tools", () => {
     for (const tool of ["Bash", "WebFetch", "Agent", "mcp__github__create_issue"])
       expect((await $.tool.check({ tool, input: {} } as never)).decision).toBe("allow")
   })
+
+  test("Claude's question is left to Claude Code, which opens its dialog (#206)", async ($, on) => {
+    on("tool.check", () => ({ decision: "ask", reason: "Answer questions?" }))
+
+    const check = await $.tool.check({ tool: "AskUserQuestion", input: { questions: [] } } as never)
+
+    expect(check.decision).toBe("ask")
+  })
 })
 
 const welcome = { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 2 }) }
