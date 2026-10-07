@@ -191,6 +191,17 @@ export function ServerIcon(props: IconProps) {
   )
 }
 
+/** People: the Hub's Members and Invites (#209). */
+export function PeopleIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="6" cy="5.25" r="2.5" />
+      <path d="M1.75 13.5c.4-2.35 2.1-3.75 4.25-3.75s3.85 1.4 4.25 3.75" />
+      <path d="M10.5 3a2.25 2.25 0 0 1 0 4.5M12 9.9c1.2.5 2 1.7 2.25 3.6" />
+    </Icon>
+  )
+}
+
 export function CopyIcon(props: IconProps) {
   return (
     <Icon {...props}>

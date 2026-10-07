@@ -35,6 +35,11 @@ export interface HubTransport {
    * trades for its token (issue #179). Throws with the Hub's reason when it refuses.
    */
   approveCli(request: CliLoginApproval): Promise<CliLoginApproved>
+  /**
+   * Hands the Hub a Setup link's or Invite's secret, for the GitHub sign-in that follows to admit
+   * the person by (issue #209). Throws with the Hub's reason when it refuses.
+   */
+  admit(ticket: string): Promise<void>
 }
 
 const decodeParticipant = Schema.decodeUnknownSync(Participant)
@@ -104,6 +109,19 @@ export function browserTransport(): HubTransport {
       })
       if (!response.ok) throw await refusal(response, hubPaths.cliApprove)
       return decodeApproved(await response.json())
+    },
+
+    async admit(ticket) {
+      const response = await fetch(hubPaths.admission, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticket }),
+      })
+      if (!response.ok) {
+        const reason = await response.text().catch(() => "")
+        throw new Error(reason || `The Hub answered ${response.status} to ${hubPaths.admission}`)
+      }
     },
   }
 }

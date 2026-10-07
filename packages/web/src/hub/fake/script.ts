@@ -8,8 +8,10 @@
 import type {
   AppPermissionsCheckWire,
   CliTokenInfoWire,
+  MemberWire,
   OpenPortWire,
   ParticipantWire,
+  PendingInviteWire,
   QuestionPickWire,
   QuestionWire,
   RunnerSummaryWire,
@@ -97,6 +99,29 @@ export function seedCliTokens(): Array<CliTokenInfoWire> {
       lastUsedAt: now - 4 * 60_000,
     },
     { id: "ct-devbox", machine: "devbox", createdAt: now - 40 * 86_400_000 },
+  ]
+}
+
+/** The Hub's Members (#209): Alice, its Owner, and Bob, whom she invited. */
+export function seedMembers(): Array<MemberWire> {
+  const now = Date.now()
+  return [
+    { participant: you, owner: true, admittedAt: now - 60 * 86_400_000 },
+    { participant: bob, owner: false, admittedAt: now - 12 * 86_400_000 },
+  ]
+}
+
+/** The Invites not used yet: one Alice made for Carol two days ago. */
+export function seedInvites(): Array<PendingInviteWire> {
+  const now = Date.now()
+  return [
+    {
+      id: "inv-carol",
+      login: "carol-dev",
+      createdBy: you,
+      createdAt: now - 2 * 86_400_000,
+      expiresAt: now + 5 * 86_400_000,
+    },
   ]
 }
 

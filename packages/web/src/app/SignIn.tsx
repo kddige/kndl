@@ -56,6 +56,7 @@ const styles = stylex.create({
   },
   form: { display: "flex", flexDirection: "column", gap: space.s3 },
   full: { width: "100%" },
+  note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
   error: { margin: 0, color: color.dangerSubtleText, fontSize: text.sm },
 })
 
@@ -138,6 +139,11 @@ export function SignIn({
         >
           Sign in with GitHub
         </Button>
+      )}
+      {options.github && (
+        <p {...stylex.props(styles.note)}>
+          This Hub is invite-only. New here? Open the invite its Owner sent you.
+        </p>
       )}
       {options.github && options.dev && <div {...stylex.props(styles.divider)}>or</div>}
       {options.dev && (

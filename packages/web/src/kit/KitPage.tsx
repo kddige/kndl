@@ -42,6 +42,7 @@ import {
   NavSlot,
   PageHeader,
   PencilIcon,
+  PeopleIcon,
   PlugIcon,
   PlusIcon,
   Popover,
@@ -672,6 +673,7 @@ function Toggles() {
         <MenuIcon aria-label="Menu" />
         <ArchiveIcon aria-label="Archive" />
         <ServerIcon aria-label="Server" />
+        <PeopleIcon aria-label="People" />
         <CopyIcon aria-label="Copy" />
         <PlugIcon aria-label="Plug" />
         <SunIcon aria-label="Sun" />

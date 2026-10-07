@@ -615,3 +615,35 @@ describe("Environments", () => {
     expect(reduce(initialState, checked)).toBe(initialState)
   })
 })
+
+describe("People (#209)", () => {
+  const member = { participant: alice, owner: true, admittedAt: 1 }
+  const invite = { id: "inv-1", createdBy: alice, createdAt: 1, expiresAt: 2 }
+
+  test("the welcome says whether you are the Hub's Owner", () => {
+    expect(run(welcome()).owner).toBe(false)
+    const owned = run(
+      hub({ _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice, owner: true }),
+    )
+    expect(owned.owner).toBe(true)
+  })
+
+  test("MemberList and InviteList replace what was known; a new Invite's link isn't kept", () => {
+    const state = run(
+      hub({ _tag: "MemberList", members: [member] }),
+      hub({ _tag: "InviteList", invites: [invite] }),
+    )
+    expect(state.members?.map((m) => m.participant.login)).toEqual([alice.login])
+    expect(state.invites?.map((i) => i.id as string)).toEqual(["inv-1"])
+
+    const created = hub({
+      _tag: "InviteCreated",
+      requestId: "q-1",
+      id: "inv-2",
+      link: "https://hub.example.com/invite#chi_inv-2.secret",
+      expiresAt: 3,
+    })
+    expect(reduce(state, created)).toBe(state)
+    expect(reduce(state, hub({ _tag: "InviteList", invites: [] })).invites).toEqual([])
+  })
+})

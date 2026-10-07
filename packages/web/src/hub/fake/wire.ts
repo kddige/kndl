@@ -9,8 +9,10 @@ import type {
   Environment,
   EnvironmentVersionInfo,
   HubToWeb,
+  Member,
   OpenPort,
   Participant,
+  PendingInvite,
   PendingPairingCode,
   PresentParticipant,
   Question,
@@ -41,6 +43,8 @@ export type AppPermissionsCheckWire = (typeof AppPermissionsCheck)["Encoded"]
 export type PendingPairingCodeWire = (typeof PendingPairingCode)["Encoded"]
 export type ClaudeCredentialInfoWire = (typeof ClaudeCredentialInfo)["Encoded"]
 export type CliTokenInfoWire = (typeof CliTokenInfo)["Encoded"]
+export type MemberWire = (typeof Member)["Encoded"]
+export type PendingInviteWire = (typeof PendingInvite)["Encoded"]
 export type QuestionWire = (typeof Question)["Encoded"]
 export type QuestionAnswerWire = (typeof QuestionAnswer)["Encoded"]
 export type QuestionPickWire = (typeof QuestionPick)["Encoded"]
