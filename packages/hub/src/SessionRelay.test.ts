@@ -440,11 +440,11 @@ describe("the Prompt queue", () => {
   })
 })
 
-describe("steering (#195)", () => {
-  /** The prompts sent to join the running Turn since the last poll. */
-  const steers = async (mod: Mod, waitMs = 0) =>
-    (await mod.poll(waitMs)).filter((command) => command._tag === "DeliverIntoTurn")
+/** The prompts sent to join the running Turn since the last poll. */
+const steers = async (mod: Mod, waitMs = 0) =>
+  (await mod.poll(waitMs)).filter((command) => command._tag === "DeliverIntoTurn")
 
+describe("steering (#195)", () => {
   test("hands a queued prompt to the running Turn, where it leaves the queue once it joined", async () => {
     const { hub, web, sessionId, mod } = await sessionScene()
     expect((await mod.hello({ steers: true })).status).toBe(200)

@@ -208,6 +208,16 @@ describe("prompts", () => {
   })
 })
 
+/** What the plugin says it is steering, each time it says it. */
+function steeringWrites(on: On) {
+  const writes: Array<unknown> = []
+  on("state.set", { plugin: "hub-link-commands", key: "steering" }, (_, e, next) => {
+    writes.push(e.value)
+    return next(e)
+  })
+  return writes
+}
+
 describe("steering a prompt into the running Turn (#195)", () => {
   const steer = {
     _tag: "DeliverIntoTurn",
@@ -215,16 +225,6 @@ describe("steering a prompt into the running Turn (#195)", () => {
     promptId: "pr-2",
     text: "Also the changelog.",
     sender: ada,
-  }
-
-  /** What the plugin says it is steering, each time it says it. */
-  const steeringWrites = (on: On) => {
-    const writes: Array<unknown> = []
-    on("state.set", { plugin: "hub-link-commands", key: "steering" }, (_, e, next) => {
-      writes.push(e.value)
-      return next(e)
-    })
-    return writes
   }
 
   test("fails with no Turn running, adding nothing", async ($, on) => {
