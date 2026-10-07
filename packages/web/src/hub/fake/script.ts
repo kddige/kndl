@@ -2,13 +2,16 @@
 // some history, and the Turns it streams. All made up; the people are Alice (you) and Bob. The
 // demo's Turn starts a subagent in the foreground and one in the background that outlives it, and
 // Release 0.4 has subagents that finished, were stopped and were interrupted (ADR 0014). The demo
-// has dev servers listening in its Sandbox: a Docker one, and one on `::1` only (#175).
+// has dev servers listening in its Sandbox: a Docker one, and one on `::1` only (#175). A prompt
+// that says "ask me" gets a question to answer (#193), which Bob picks an answer for too.
 
 import type {
   AppPermissionsCheckWire,
   CliTokenInfoWire,
   OpenPortWire,
   ParticipantWire,
+  QuestionPickWire,
+  QuestionWire,
   RunnerSummaryWire,
   SessionEventWire,
   SessionSummaryWire,
@@ -54,6 +57,15 @@ export type ReplyStep =
   /** Someone else queues a prompt while the Turn runs. */
   | { readonly kind: "queue"; readonly sender: ParticipantWire; readonly text: string }
   | { readonly kind: "pause"; readonly steps: number }
+  /**
+   * Claude asks with AskUserQuestion on the main loop (#193), and the Turn waits for an answer.
+   * `pick` is someone else's pick, shared a few steps in.
+   */
+  | {
+      readonly kind: "question"
+      readonly questions: ReadonlyArray<QuestionWire>
+      readonly pick?: QuestionPickWire
+    }
 
 /**
  * Claude Code's prompt to itself when a background agent is done, which starts a Turn from the
@@ -673,8 +685,43 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
   },
 ]
 
-/** A short reply to any prompt someone types. */
+const libraryQuestion = "Which date library should the web UI use?"
+
+/** A reply that asks first (#193): one question to pick one answer for, one to pick several. */
+export const questionReply: ReadonlyArray<ReplyStep> = [
+  { kind: "text", text: "Before I start, two things to settle." },
+  {
+    kind: "question",
+    questions: [
+      {
+        question: libraryQuestion,
+        header: "Library",
+        multiSelect: false,
+        options: [
+          { label: "date-fns", description: "Small functions, imported one at a time." },
+          { label: "Luxon", description: "An immutable DateTime, with time zones built in." },
+          { label: "Temporal polyfill", description: "The coming standard; the heaviest." },
+        ],
+      },
+      {
+        question: "Which views should show relative times?",
+        header: "Views",
+        multiSelect: true,
+        options: [
+          { label: "Sessions list", description: "How long ago each Session was active." },
+          { label: "Transcript", description: "When each Turn started." },
+          { label: "Runners page" },
+        ],
+      },
+    ],
+    pick: { participant: bob, question: libraryQuestion, answer: "Luxon" },
+  },
+  { kind: "text", text: "\n\nThanks. Going with that." },
+]
+
+/** A short reply to any prompt someone types; one that says "ask me" gets a question first. */
 export function replyTo(text: string): ReadonlyArray<ReplyStep> {
+  if (/\bask me\b/i.test(text)) return questionReply
   const quoted = text.length > 60 ? `${text.slice(0, 57)}…` : text
   return [
     { kind: "text", text: `On it: "${quoted}". Let me check the repo first.` },
