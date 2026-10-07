@@ -240,6 +240,14 @@ export const askedQuestions = (questions: unknown): Array<Question> =>
 export const dismissedText =
   "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
 
+/**
+ * How Claude Code tells Claude that the user refused a tool call and said something instead, which
+ * follows it. A Participant's Replied answers with it, with their name: a refusal reaches Claude
+ * whatever the tool's result looks like.
+ */
+export const repliedPrefix =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n"
+
 /** An AskUserQuestion call's result from a hook, as Claude Code's dialog would have it. */
 export type AnswerResult =
   | { readonly deny: string }
@@ -248,21 +256,24 @@ export type AnswerResult =
         readonly questions: unknown
         readonly answers: Readonly<Record<string, string>>
         readonly annotations?: Readonly<Record<string, never>>
-        readonly response?: string
       }
     }
 
 /**
  * What an AskUserQuestion call answers with a Participant's answer, as Claude Code's dialog
- * would: the answers keyed by question, with no annotations, as its Submit does; the reply, as
- * text typed instead of choosing; or, dismissed, what Esc does.
+ * would: the answers keyed by question, with no annotations, as its Submit does; a reply, as the
+ * call refused with what the sender said instead; or, dismissed, what Esc does.
  */
-export const answerResult = (questions: unknown, answer: QuestionAnswer): AnswerResult => {
+export const answerResult = (
+  questions: unknown,
+  answer: QuestionAnswer,
+  sender: Pick<Participant, "name">,
+): AnswerResult => {
   switch (answer._tag) {
     case "Answered":
       return { result: { questions, answers: answer.answers, annotations: {} } }
     case "Replied":
-      return { result: { questions, answers: {}, response: answer.text } }
+      return { deny: `${repliedPrefix}${promptFromParticipant(sender, answer.text)}` }
     case "Dismissed":
       return { deny: dismissedText }
   }
@@ -270,17 +281,20 @@ export const answerResult = (questions: unknown, answer: QuestionAnswer): Answer
 
 /**
  * How an AskUserQuestion call answered at the terminal closed its question: with the answers
- * chosen, with text typed instead, or, refused (Esc, or "Chat about this"), dismissed.
+ * chosen; refused with something said instead, replied; or otherwise refused (Esc, or "Chat about
+ * this"), dismissed.
  */
 export const terminalOutcome = (done: {
   readonly deny?: string | undefined
   readonly isError?: true | undefined
   readonly result?: unknown
 }): QuestionOutcome => {
+  if (done.deny?.startsWith(repliedPrefix) === true) {
+    const said = done.deny.slice(repliedPrefix.length)
+    if (said.trim() !== "") return { _tag: "Replied", text: said }
+  }
   if (done.deny !== undefined || done.isError === true || !isRecord(done.result))
     return { _tag: "Dismissed" }
-  const response = text(done.result.response)
-  if (response.trim() !== "") return { _tag: "Replied", text: response }
   const answers = isRecord(done.result.answers) ? done.result.answers : {}
   return {
     _tag: "Answered",

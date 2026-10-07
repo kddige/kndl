@@ -15,6 +15,7 @@ import {
   promptFromParticipant,
   readCommands,
   readHelloReply,
+  repliedPrefix,
   resultSummary,
   sharedSessionNote,
   startsDelivered,
@@ -402,6 +403,7 @@ test("toolArguments drops the keys Claude Code adds beside a tool's own", () => 
 })
 
 describe("AskUserQuestion (#193)", () => {
+  const ada = { name: "Ada" }
   const asked = [
     {
       question: "Which library?",
@@ -431,14 +433,14 @@ describe("AskUserQuestion (#193)", () => {
 
   test("a Participant's answer, as Claude Code's dialog would give it", () => {
     expect(
-      answerResult(asked, { _tag: "Answered", answers: { "Which library?": "Temporal" } }),
+      answerResult(asked, { _tag: "Answered", answers: { "Which library?": "Temporal" } }, ada),
     ).toEqual({
       result: { questions: asked, answers: { "Which library?": "Temporal" }, annotations: {} },
     })
-    expect(answerResult(asked, { _tag: "Replied", text: "Neither, use Intl" })).toEqual({
-      result: { questions: asked, answers: {}, response: "Neither, use Intl" },
+    expect(answerResult(asked, { _tag: "Replied", text: "Neither, use Intl" }, ada)).toEqual({
+      deny: `${repliedPrefix}[Ada] Neither, use Intl`,
     })
-    expect(answerResult(asked, { _tag: "Dismissed" })).toEqual({ deny: dismissedText })
+    expect(answerResult(asked, { _tag: "Dismissed" }, ada)).toEqual({ deny: dismissedText })
   })
 
   test("how one answered at the terminal closed", () => {
@@ -451,9 +453,10 @@ describe("AskUserQuestion (#193)", () => {
       _tag: "Answered",
       answers: {},
     })
-    expect(
-      terminalOutcome({ result: { questions: asked, answers: {}, response: "Ask me later" } }),
-    ).toEqual({ _tag: "Replied", text: "Ask me later" })
+    expect(terminalOutcome({ deny: `${repliedPrefix}Ask me later` })).toEqual({
+      _tag: "Replied",
+      text: "Ask me later",
+    })
     expect(terminalOutcome({ deny: dismissedText })).toEqual({ _tag: "Dismissed" })
     expect(terminalOutcome({ isError: true, result: "Interrupted" })).toEqual({
       _tag: "Dismissed",

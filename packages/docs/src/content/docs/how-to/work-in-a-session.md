@@ -53,7 +53,7 @@ When Claude asks a question with AskUserQuestion, the Session is waiting on you:
 
 Answering the last question sends all the answers to Claude. Until then, everyone sees the options the others have picked, with their avatars.
 
-To answer in your own words instead, type in the prompt box, which reads **Or reply directly…** while a question is open, and press **Reply**. Claude gets your text as your response and no answers. The **×** on the card dismisses the question, as Esc does at the terminal: Claude stops and waits for a prompt.
+To answer in your own words instead, type in the prompt box, which reads **Or reply directly…** while a question is open, and press **Reply**. Claude's question is declined, and Claude reads your text, with your name, as what to do instead. The **×** on the card dismisses the question, as Esc does at the terminal: Claude stops and waits for a prompt.
 
 Claude Code's own dialog is in the **Terminal** at the same time, and the first answer, from either place, is the one Claude reads. If someone answered first, the card closes and says who answered and what; an answer sent too late isn't passed on, and a toast says so. The transcript shows how each question closed: who answered and what, or that someone at the terminal did. **Stop** cancels the question with the Turn. A Session with an Open question doesn't go to sleep.
 

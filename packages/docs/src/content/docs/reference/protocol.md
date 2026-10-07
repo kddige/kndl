@@ -257,7 +257,7 @@ Claude Code shows its dialog at the terminal meanwhile, and the mod's `tool.call
 | `answer` | What Claude reads, as from Claude Code's dialog |
 |---|---|
 | `Answered { answers }` | `answers`, keyed by question text. A multi-select question's labels are joined with `", "`; a label holding `", "` or `"` is written as a JSON string. A question left out was skipped. |
-| `Replied { text }` | No answers, and `text` as the person's own response: what the prompt box sends while a question is open. |
+| `Replied { text }` | No answers: the question is declined with `text`, the person's own words, as Claude Code declines a tool call the user answers with a message. What the prompt box sends while a question is open. |
 | `Dismissed {}` | The tool call rejected, as Esc at the terminal does. |
 
 An `AnswerQuestion` for a question that isn't the Session's Open question is refused with a `CommandFailed` that says how it closed, such as `Bob Lee answered first: Luxon.` So is an answer that reaches the mod after another: the mod reports `AnswerFailed { toolCallId, senderId, message }`, and the Hub tells the sender.

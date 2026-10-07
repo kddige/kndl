@@ -273,7 +273,7 @@ export function register(on: On) {
       state.asking.set(toolCallId, (answer, sender) => {
         if (!settle()) return false
         closed(answer, sender)
-        resolve(answerResult(e.questions, answer) as never)
+        resolve(answerResult(e.questions, answer, sender) as never)
         return true
       })
       next(e).then(
