@@ -1,26 +1,125 @@
 /*
- * The site's theme. The accent is the web UI's, oklch(52% 0.18 268) (packages/web/src/ui/tokens.stylex.ts),
- * and the greys lean the same way, so the docs and the app read as one product.
+ * The site's theme, "Paper": cream paper first, a muted night second, in the brand's colours
+ * (brand/drafts/README.md). The accent is the deep log-brown (links, the current page); flame is
+ * only ever a fill or a rule (link underlines, focus, an aside's rule), never text on cream.
+ * Fraunces (soft) for every heading, JetBrains Mono for code. Code blocks use the matching
+ * Expressive Code themes in expressiveCodeThemes.ts.
  * Dark is Starlight's :root; light is [data-theme="light"].
  */
-:root {
-  --sl-color-accent-low: #1b2450;
-  --sl-color-accent: #5874ea;
-  --sl-color-accent-high: #c3cdfd;
-  --sl-color-white: #ffffff;
-  --sl-color-gray-1: #e8e9ed;
-  --sl-color-gray-2: #c2c4cb;
-  --sl-color-gray-3: #8d909b;
-  --sl-color-gray-4: #5a5d68;
-  --sl-color-gray-5: #383b44;
-  --sl-color-gray-6: #23252c;
-  --sl-color-gray-7: #18191e;
-  --sl-color-black: #111215;
 
-  --ch-surface: #17181d;
-  --ch-surface-raised: #1d1f26;
-  --ch-line: #2b2e37;
-  --ch-glow: rgb(61 93 207 / 0.22);
+/* A metric-matched stand-in for Fraunces while it loads: Times New Roman (or its metric twin
+   Liberation Serif) scaled to Fraunces 600's width, so the headings don't reflow on swap. */
+@font-face {
+  font-family: "Fraunces Fallback";
+  src:
+    local("Times New Roman Bold"), local("TimesNewRomanPS-BoldMT"), local("Liberation Serif Bold"),
+    local("LiberationSerif-Bold");
+  font-weight: 600 800;
+  size-adjust: 112%;
+  ascent-override: 87%;
+  descent-override: 23%;
+  line-gap-override: 0%;
+}
+
+/* ---- Dark: the quiet variant, a low, greyed night with the same log accent ---- */
+:root {
+  --sl-font:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial,
+    sans-serif;
+  --sl-font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --kndl-heading-font: "Fraunces", "Fraunces Fallback", Georgia, serif;
+
+  --sl-color-accent-low: #3a2b2a;
+  --sl-color-accent: #c98a5e;
+  --sl-color-accent-high: #ebc3a3;
+  --sl-color-white: #f6eee0;
+  --sl-color-gray-1: #ebe3d6;
+  --sl-color-gray-2: #d8cfc2;
+  --sl-color-gray-3: #a59dab;
+  --sl-color-gray-4: #6c6474;
+  --sl-color-gray-5: #3a3443;
+  --sl-color-gray-6: #27222f;
+  --sl-color-gray-7: #211d29;
+  --sl-color-black: #1b1823;
+
+  --sl-color-text-accent: #e3b48f;
+  --sl-color-text-invert: #1b1823;
+  --sl-color-bg-nav: #1b1823;
+  --sl-color-bg-sidebar: #1f1b27;
+  --sl-color-bg-inline-code: #2c2733;
+  --sl-color-hairline: #2b2633;
+  --sl-color-hairline-light: #3a3443;
+  --sl-color-hairline-shade: #13111a;
+
+  --kndl-underline: #b98a2c;
+  --kndl-focus: #f6c445;
+  --kndl-aside-bg: #231f2b;
+  --kndl-current-bg: #4a362b;
+  --kndl-current-fg: #fbefdc;
+
+  /* Asides share one paper tone; the rule and the title carry the kind. */
+  --sl-color-blue-low: var(--kndl-aside-bg);
+  --sl-color-blue: #c98a5e;
+  --sl-color-blue-high: #ebc3a3;
+  --sl-color-purple-low: var(--kndl-aside-bg);
+  --sl-color-purple: #f6c445;
+  --sl-color-purple-high: #f8d98a;
+  --sl-color-orange-low: var(--kndl-aside-bg);
+  --sl-color-orange: #d98c4f;
+  --sl-color-orange-high: #f0bf96;
+  --sl-color-red-low: #2e1f26;
+  --sl-color-red: #f59c8b;
+  --sl-color-red-high: #fcc8bd;
+}
+:root ::backdrop {
+  --sl-color-backdrop-overlay: rgb(19 17 26 / 0.7);
+}
+
+/* ---- Light: the primary look ---- */
+:root[data-theme="light"] {
+  --sl-color-accent-low: #f2e3cf;
+  --sl-color-accent: #8c5f47;
+  --sl-color-accent-high: #5a3b2c;
+  --sl-color-white: #271d18;
+  --sl-color-gray-1: #2f241f;
+  --sl-color-gray-2: #3f332d;
+  --sl-color-gray-3: #6b5c51;
+  --sl-color-gray-4: #a39181;
+  --sl-color-gray-5: #dccdb4;
+  --sl-color-gray-6: #eee3cd;
+  --sl-color-gray-7: #f6eedd;
+  --sl-color-black: #fbf6ea;
+
+  --sl-color-text-accent: #7a4f38;
+  --sl-color-text-invert: #fff6e2;
+  --sl-color-bg-nav: #fbf6ea;
+  --sl-color-bg-sidebar: #f6eedd;
+  --sl-color-bg-inline-code: #f0e5cf;
+  --sl-color-hairline: #e8dcc4;
+  --sl-color-hairline-light: #e8dcc4;
+  --sl-color-hairline-shade: #e0d2b8;
+
+  --kndl-underline: #e3b032;
+  --kndl-focus: #e3b032;
+  --kndl-aside-bg: #f5ecda;
+  --kndl-current-bg: #6b4a3a;
+  --kndl-current-fg: #fff6e2;
+
+  --sl-color-blue-low: var(--kndl-aside-bg);
+  --sl-color-blue: #8c5f47;
+  --sl-color-blue-high: #5a3b2c;
+  --sl-color-purple-low: var(--kndl-aside-bg);
+  --sl-color-purple: #e3b032;
+  --sl-color-purple-high: #6b4a12;
+  --sl-color-orange-low: var(--kndl-aside-bg);
+  --sl-color-orange: #c27a45;
+  --sl-color-orange-high: #7a3f1e;
+  --sl-color-red-low: #f8e6df;
+  --sl-color-red: #d9705c;
+  --sl-color-red-high: #8a2f22;
+}
+:root[data-theme="light"] ::backdrop {
+  --sl-color-backdrop-overlay: rgb(39 29 24 / 0.35);
 }
 
 /* A calmer heading scale than Starlight's, for pages that are mostly sections and terms. Page
@@ -38,34 +137,74 @@
   }
 }
 
-:root[data-theme="light"] {
-  --sl-color-accent-low: #e2e8ff;
-  --sl-color-accent: #3d5dcf;
-  --sl-color-accent-high: #22337a;
-  --sl-color-white: #15171c;
-  --sl-color-gray-1: #23262e;
-  --sl-color-gray-2: #3b3f49;
-  --sl-color-gray-3: #5e626d;
-  --sl-color-gray-4: #8a8e99;
-  --sl-color-gray-5: #c5c8cf;
-  --sl-color-gray-6: #e7e9ee;
-  --sl-color-gray-7: #f4f5f8;
-  --sl-color-black: #ffffff;
-  /* Note asides: Starlight's light blue is louder than the rest of the page. */
-  --sl-color-blue-low: #eaeeff;
-  --sl-color-blue: #3d5dcf;
-  --sl-color-blue-high: #22337a;
-
-  --ch-surface: #fafafc;
-  --ch-surface-raised: #ffffff;
-  --ch-line: #e1e3e8;
-  --ch-glow: rgb(61 93 207 / 0.12);
+/* ---- Type: Fraunces (soft, semibold) for the headings, the sidebar's group labels and the
+   "On this page" title ---- */
+:is(
+  h1#_top,
+  .sl-markdown-content :is(h2, h3, h4, h5),
+  .sidebar summary .large,
+  starlight-toc h2,
+  mobile-starlight-toc h2
+) {
+  font-family: var(--kndl-heading-font);
+  font-variation-settings: "SOFT" 100;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+h1#_top {
+  font-weight: 650;
+}
+.sl-markdown-content :is(h2, h3, h4) code {
+  font-size: 0.82em;
 }
 
 /* The logo lockup in the header: a touch smaller than Starlight's default. */
 .site-title img {
   height: 1.75rem;
   width: auto;
+}
+
+/* ---- Links: log-brown text, a flame underline ---- */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-decoration-color: var(--kndl-underline);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.18em;
+}
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  color: var(--sl-color-white);
+}
+
+/* ---- Sidebar: the current page is a log fill with cream text ---- */
+.sidebar a[aria-current="page"] {
+  background-color: var(--kndl-current-bg);
+  color: var(--kndl-current-fg);
+}
+
+.sl-markdown-content :not(pre) > code {
+  border-radius: 0.25rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--kndl-focus);
+  outline-offset: 2px;
+}
+
+/* ---- Tables: a log rule under the header ---- */
+.sl-markdown-content th {
+  color: var(--sl-color-white);
+  border-bottom: 2px solid var(--sl-color-accent);
+}
+
+/* ---- Asides: one paper tone, a 3px rule ---- */
+.starlight-aside {
+  border-inline-start-width: 3px;
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+site-search button[data-open-modal] {
+  background-color: var(--sl-color-gray-7);
+  border-color: var(--sl-color-gray-5);
 }
 
 /* Rendered ADRs: their status, above the body. */
@@ -83,12 +222,12 @@
   letter-spacing: 0.04em;
   padding: 0.1rem 0.5rem;
   border-radius: 999px;
-  color: var(--sl-color-accent-high);
-  background: var(--sl-color-accent-low);
+  color: var(--kndl-current-fg);
+  background: var(--kndl-current-bg);
 }
 .adr-badge--superseded {
   color: var(--sl-color-orange-high);
-  background: var(--sl-color-orange-low);
+  background: var(--sl-color-accent-low);
 }
 
 /* "Rendered from ..." under a page built from a repo file. */
@@ -100,48 +239,4 @@
 /* The glossary's "Avoid" lines, quieter than the definitions. */
 .sl-markdown-content h3 + p + p > em:first-child {
   color: var(--sl-color-gray-3);
-}
-
-/* Troubleshooting entries: Symptom, Cause, Fix as run-in labels. */
-.sl-markdown-content .ts-label {
-  font-family: var(--sl-font-mono);
-  font-size: 0.8em;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--sl-color-accent-high);
-  margin-inline-end: 0.35em;
-}
-
-/* The landing page (the splash template): section headings and leads. */
-.landing-section {
-  margin-top: clamp(3rem, 8vw, 5rem);
-}
-.landing-section > h2,
-.landing-section > p {
-  max-width: 46rem;
-}
-.landing-eyebrow {
-  margin: 0;
-  font-family: var(--sl-font-mono);
-  font-size: var(--sl-text-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--sl-color-accent-high);
-}
-.sl-markdown-content .landing-section > h2,
-.landing-section > h2 {
-  margin: 0.3rem 0 0.8rem;
-  font-size: clamp(var(--sl-text-2xl), 1.1rem + 1.6vw, var(--sl-text-3xl));
-  line-height: 1.15;
-  letter-spacing: -0.015em;
-  text-wrap: balance;
-}
-.landing-lead {
-  margin: 0 0 2rem;
-  font-size: var(--sl-text-lg);
-  line-height: 1.6;
-  color: var(--sl-color-gray-2);
-}
-.sl-markdown-content .landing-section > :is(figure, ul) {
-  margin-top: 0;
 }
