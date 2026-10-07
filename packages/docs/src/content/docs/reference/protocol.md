@@ -202,10 +202,23 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`, `SteerPrompt`; `MessageAgent`, `StopAgent`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken` |
 | Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
+
+### Steering
+
+`SteerPrompt { sessionId, promptId }` asks to feed a queued prompt into the running Turn ([ADR 0018](/reference/decisions/0018-steering-a-prompt-into-the-running-turn/)). It takes the same Repo access as acting in the Session. The Hub sends the mod `DeliverIntoTurn`, and the prompt keeps its place in the queue until the mod answers. It leaves the queue when the Turn logs `PromptSteered { turnId, promptId, text, sender }`. Once Claude has read it, `SteeredPromptRead { turnId, promptId }` follows. A Turn that ends before that leaves the prompt unread, and Claude reads it with the next prompt. The Hub refuses with a `CommandFailed`:
+
+| Refused | Message |
+|---|---|
+| No Turn running, or the running one is being stopped | `No Turn is running to steer the prompt into: it goes next.` |
+| The prompt is out for delivery as the next Turn | `The prompt was already delivered to Claude Code.` |
+| A mod that didn't say `steers` | `This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.` |
+| A prompt that isn't queued | `The prompt is not in the Prompt queue.` |
+
+If the mod can't add the prompt to the Turn, the prompt stays in its place, and the person who steered it gets `The prompt could not join the running Turn, so it waits in the queue: …`. A `CancelPrompt` for a prompt that is being handed over is refused with `The prompt is being handed to the running Turn.`
 
 ### Keep awake
 
@@ -275,6 +288,8 @@ Plain HTTP from the mod inside each Session's Claude Code, in its Sandbox. Its t
 - `POST /mod/hello` once at start, answered with `ModWelcome`.
 - `POST /mod/events` with the Session's Events as they happen: prompts, tool calls and results, Turn starts and ends, and [subagents](#subagents).
 - `GET /mod/commands`, a long poll: the Hub answers with commands such as `DeliverPrompt` when it has some, or with none after a while. The mod answers a prompt it can't deliver with `PromptFailed`.
+
+A mod that can [steer](#steering) says `steers: true` in its hello. Only that mod is sent `DeliverIntoTurn { sessionId, promptId, text, sender }`, and only while a Turn runs. hub-link-commands appends the prompt to the running Turn's conversation, with its sender's name, as a user row. If no Turn is running or the append is refused, it answers `PromptFailed`. hub-link reports `PromptSteered` when the row joins the Turn, and `SteeredPromptRead` at the Turn's next step, which is the model request that reads it.
 
 Each route answers `409` until the mod has said hello.
 
