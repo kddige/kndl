@@ -173,8 +173,12 @@ export function register(on: On) {
   })
 
   // Sessions never ask for approval (ADR 0004): Claude Code runs with its permission prompts
-  // bypassed, and a mode switched to at the terminal asks for none either.
-  on("tool.check", async () => ({ decision: "allow" as const }))
+  // bypassed, and a mode switched to at the terminal asks for none either. Claude's question is no
+  // approval: its dialog is where it is answered, and one allowed past it runs with no answers, at
+  // once (#206). Claude Code decides it, as ever, and opens the dialog.
+  on("tool.check", async ($, e, next) =>
+    e.tool === "AskUserQuestion" ? next(e) : { decision: "allow" as const },
+  )
 
   on("turn.start", async ($, e, next) => {
     state.mainTurn = e.turnId
