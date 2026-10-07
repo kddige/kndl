@@ -325,6 +325,9 @@ export class Sessions extends Context.Service<
         return bySession
       })
 
+      // A Session's latest Environment version is its Repo's, the spelling it was made with first
+      // (#197). The exact match is picked in a table of its own: SQLite 3.51, macOS 26's, refuses
+      // the Session's columns in a subquery's ORDER BY.
       const selectRows = (where: Fragment) => sql<SessionRow>`
         SELECT s.id, s.repo, s.base_branch AS baseBranch, s.work_branch AS workBranch, s.name,
           s.state,
@@ -335,8 +338,10 @@ export class Sessions extends Context.Service<
           s.archived_by AS archivedById, a.login AS archivedByLogin, a.name AS archivedByName,
           a.avatar_url AS archivedByAvatarUrl, s.archived_at AS archivedAt, s.purge_at AS purgeAt,
           s.environment_version AS environmentVersion,
-          (SELECT e.version FROM environments e WHERE e.repo = s.repo COLLATE NOCASE
-            ORDER BY e.repo = s.repo DESC, e.repo LIMIT 1) AS latestEnvironmentVersion,
+          (SELECT version FROM (
+              SELECT e.version, e.repo, e.repo = s.repo AS exact FROM environments e
+              WHERE e.repo = s.repo COLLATE NOCASE
+            ) ORDER BY exact DESC, repo LIMIT 1) AS latestEnvironmentVersion,
           s.last_output AS lastOutput, s.model, s.effort, s.model_pending AS modelPending,
           s.keep_awake_by AS keepAwakeById, k.login AS keepAwakeByLogin,
           k.name AS keepAwakeByName, k.avatar_url AS keepAwakeByAvatarUrl,
