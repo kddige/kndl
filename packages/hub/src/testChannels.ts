@@ -130,7 +130,7 @@ export async function openWeb(hub: TestHub, login: string, cookie?: string) {
     { cookie: signIn, origin: webOrigin },
     { _tag: "WebHello", protocolVersion: ProtocolVersion },
   )
-  await web.take("WebWelcome")
+  const welcome = await web.take("WebWelcome")
   const runners = await web.take("RunnerList")
   const pairingCodes = await web.take("PairingCodeList")
   const sessions = await web.take("SessionList")
@@ -138,6 +138,7 @@ export async function openWeb(hub: TestHub, login: string, cookie?: string) {
   const cliTokens = await web.take("CliTokenList")
   return Object.assign(web, {
     cookie: signIn,
+    welcome,
     runners,
     pairingCodes,
     sessions,

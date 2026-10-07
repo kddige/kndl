@@ -5,7 +5,7 @@ import { existsSync } from "node:fs"
 import { chmod, mkdir, readFile } from "node:fs/promises"
 import { homedir, userInfo } from "node:os"
 import { delimiter, dirname, join } from "node:path"
-import { issueRunnerToken } from "@kndl/hub/src/Admin.ts"
+import { issueRunnerToken, issueSetupLink } from "@kndl/hub/src/Admin.ts"
 import { requestRunnerUpdates } from "@kndl/hub/src/RunnerUpdatePush.ts"
 import {
   resetSecrets,
@@ -14,7 +14,7 @@ import {
   secretsResetPlanText,
 } from "@kndl/hub/src/SecretsReset.ts"
 import { FormerName, formerHomeDir } from "@kndl/protocol/former-name"
-import { Cause, ConfigProvider, Console, Effect } from "effect"
+import { Cause, ConfigProvider, Console, Effect, Option } from "effect"
 import { fail } from "./Failure.ts"
 import {
   bunPath,
@@ -285,6 +285,27 @@ export const issueToken = (layout: Layout, name: string) =>
     return yield* issueRunnerToken(name).pipe(
       Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
       Effect.mapError((error) => fail(`Could not issue a token for ${name}: ${String(error)}`)),
+    )
+  })
+
+/**
+ * A new Setup link for this home's Hub (Admin.ts, which `bun run setup-link` shares), replacing
+ * any earlier one: whoever signs in with it first becomes the Hub's Owner. None once the Hub has
+ * an Owner. Refuses when no Hub is set up here.
+ */
+export const newSetupLink = (layout: Layout) =>
+  Effect.gen(function* () {
+    const env = homeEnvironment(layout, "hub")
+    if (!existsSync(layout.envFile("hub")) && env.HUB_DATABASE === undefined) {
+      return yield* fail(
+        `No Hub is set up in ${layout.home.dir}: make the Setup link on the Hub's machine, or run \`kndl onboard\` here first.`,
+      )
+    }
+    return yield* issueSetupLink.pipe(
+      Effect.map(Option.some),
+      Effect.catchTag("SetupLinkRefused", () => Effect.succeed(Option.none<string>())),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+      Effect.mapError((error) => fail(`Could not make a Setup link: ${String(error)}`)),
     )
   })
 

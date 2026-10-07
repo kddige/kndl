@@ -7,15 +7,17 @@
 // question leaves the home as it was.
 import { mkdir } from "node:fs/promises"
 import { hostname, networkInterfaces, userInfo } from "node:os"
+import { setupLinkNotice } from "@kndl/hub/src/Admin.ts"
 import { generateSecretsKey } from "@kndl/hub/src/Secrets.ts"
 import { type PairingTarget, parsePairing } from "@kndl/protocol"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import {
   build,
   enableLinger,
   installPrerequisites,
   installService,
   issueToken,
+  newSetupLink,
   requireInstall,
   requirePlatform,
   RoleTitle,
@@ -170,6 +172,11 @@ export const onboard = (layout: Layout, options: OnboardOptions) => {
     }
 
     yield* ui.note(summary(layout, roles), "Next")
+    // A Hub without an Owner lets nobody in with GitHub but whoever brings its Setup link.
+    if (roles.includes("hub") && signsInWithGitHub(layout) && !shell.dryRun) {
+      const link = yield* newSetupLink(layout)
+      if (Option.isSome(link)) yield* ui.note(setupLinkNotice(link.value), "Become the Owner")
+    }
     yield* ui.outro("Done.")
   })
   return options.nonInteractive ? flow.pipe(Effect.provideService(Ui, plainUi)) : flow
@@ -621,6 +628,12 @@ const runnerConnected = (layout: Layout, logFrom: number, seconds: number) =>
     return { ok: check._tag === "Online", said: describeConnectionCheck(check, seconds) }
   })
 
+/** Whether this home's Hub has GitHub sign-in: the GitHub App's client id and secret. */
+const signsInWithGitHub = (layout: Layout) => {
+  const values = readEnvValues(layout.envFile("hub"))
+  return values.GITHUB_CLIENT_ID !== undefined && values.GITHUB_CLIENT_SECRET !== undefined
+}
+
 function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
   const lines: Array<string> = []
   if (roles.includes("hub")) {
@@ -631,6 +644,11 @@ function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
         ? "GitHub sign-in needs a GitHub App: `kndl onboard --github-app create` creates one. See https://kddige.github.io/kndl/how-to/set-up-the-github-app/."
         : "Install the GitHub App on the Repos kndl works in; `kndl doctor` checks its permissions.",
     )
+    if (!signsInWithGitHub(layout)) {
+      lines.push(
+        "The Hub is invite-only: once GitHub sign-in is on, `kndl hub setup-link` prints the link you sign in with first, as its Owner.",
+      )
+    }
     lines.push(
       "Add a Runner on another machine: Add a Runner on the Hub's Runners page, and run the command it shows there.",
     )

@@ -2,16 +2,23 @@
 // Participant, and relays prompts and events between them.
 //
 // `bun src/main.ts` serves the Hub; `bun src/main.ts runner-token <name>` issues a Runner's
-// token and prints it; `bun src/main.ts secrets-key` prints a new HUB_SECRETS_KEY (both in
-// Admin.ts); `bun src/main.ts secrets-reset [--yes]` clears the Sensitive values a lost key
-// encrypted (SecretsReset.ts). The kndl CLI shares all three. Configuration is read from
+// token and prints it; `bun src/main.ts setup-link` prints a new Setup link, while the Hub has no
+// Owner; `bun src/main.ts secrets-key` prints a new HUB_SECRETS_KEY (all three in Admin.ts);
+// `bun src/main.ts secrets-reset [--yes]` clears the Sensitive values a lost key encrypted
+// (SecretsReset.ts). The kndl CLI shares all four. Configuration is read from
 // the environment: see HubConfig.ts and Database.ts.
 
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { formerServiceRole, moveFromFormerService } from "@kndl/protocol/former-name"
 import { Console, Effect, Layer, Option } from "effect"
 import { HttpRouter } from "effect/http"
-import { issueRunnerToken, runnerTokenNotice, secretsKeyNotice } from "./Admin.ts"
+import {
+  issueRunnerToken,
+  issueSetupLink,
+  runnerTokenNotice,
+  secretsKeyNotice,
+  setupLinkNotice,
+} from "./Admin.ts"
 import { ClaudeCheck } from "./ClaudeCredentials.ts"
 import { CliBuilds } from "./CliBuilds.ts"
 import { DatabaseFile, DatabaseLive } from "./Database.ts"
@@ -146,13 +153,20 @@ if (command === undefined) {
   BunRuntime.runMain(
     Effect.flatMap(issueRunnerToken(args[0]), (issued) => Console.log(runnerTokenNotice(issued))),
   )
+} else if (command === "setup-link" && args.length === 0) {
+  BunRuntime.runMain(
+    issueSetupLink.pipe(
+      Effect.flatMap((link) => Console.log(setupLinkNotice(link))),
+      Effect.catchTag("SetupLinkRefused", (error) => refused(error.message)),
+    ),
+  )
 } else if (command === "secrets-key" && args.length === 0) {
   console.log(secretsKeyNotice("packages/hub/.env.local"))
 } else if (command === "secrets-reset" && args.every((arg) => arg === "--yes")) {
   BunRuntime.runMain(secretsReset(args.length > 0))
 } else {
   console.error(
-    "Usage: bun src/main.ts [runner-token <name> | secrets-key | secrets-reset [--yes]]",
+    "Usage: bun src/main.ts [runner-token <name> | setup-link | secrets-key | secrets-reset [--yes]]",
   )
   process.exit(2)
 }

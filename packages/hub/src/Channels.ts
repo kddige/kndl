@@ -18,12 +18,13 @@ import {
   WebHello,
   WebToHub,
 } from "@kndl/protocol"
-import { Duration, Effect, Queue, Schema, type Scope } from "effect"
+import { Duration, Effect, Option, Queue, Schema, type Scope } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"
 import { authenticateParticipant, authenticateRunner, requireSameOrigin } from "./Auth.ts"
 import { HubShutdown } from "./HubShutdown.ts"
 import { HubVersion } from "./HubVersion.ts"
+import { Members } from "./Members.ts"
 import { type Peer, type Receive, SessionRelay } from "./SessionRelay.ts"
 
 /** How long a peer has to send its hello once the socket is open. */
@@ -159,6 +160,7 @@ function parseJson(text: string | undefined): unknown {
 export const ChannelRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const relay = yield* SessionRelay
+    const members = yield* Members
     const hub = (yield* HubVersion).version
 
     // A Runner, by its Runner token. Its RunnerId comes from the token, not the hello.
@@ -189,6 +191,8 @@ export const ChannelRoutes = HttpRouter.use(
       Effect.gen(function* () {
         yield* requireSameOrigin
         const you = yield* authenticateParticipant
+        // Only for the web UI to show the People page or not: the relay checks each command.
+        const owner = Option.contains(yield* Effect.orDie(members.owner), you.id)
         return yield* serveChannel({
           hello: WebHello,
           incoming: WebToHub,
@@ -197,6 +201,7 @@ export const ChannelRoutes = HttpRouter.use(
             HubToWeb.cases.WebWelcome.make({
               protocolVersion: ProtocolVersion,
               you,
+              ...(owner && { owner }),
               ...(hub !== undefined && { hub }),
             }),
           connect: (_hello, peer) => relay.connectWeb(you, peer),

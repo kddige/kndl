@@ -9,6 +9,7 @@
 //   wrong. A Hub restart drops them, and the CLI asks for a new one.
 // - A CLI token is long-lived, as a Runner token is. The Hub keeps only its hash, checks it on
 //   every request, and revoking it deletes its row, so a revoked token is refused at once.
+// - Only a Member's CLI tokens work (ADR 0019): removing someone revokes theirs.
 // - Each CLI token records when it was last used, to the minute: often enough for the Account page,
 //   rarely enough not to write on every request.
 
@@ -112,6 +113,11 @@ export class CliTokens extends Context.Service<
       participantId: ParticipantId,
       id: CliTokenId,
     ) => Effect.Effect<boolean, SqlError>
+    /**
+     * Revokes all of a person's CLI tokens, and the Login codes they approved, as when they are
+     * removed.
+     */
+    readonly revokeAll: (participantId: ParticipantId) => Effect.Effect<void, SqlError>
   }
 >()("@kndl/hub/CliTokens") {
   static readonly layer = Layer.effect(
@@ -160,7 +166,7 @@ export class CliTokens extends Context.Service<
           readonly avatarUrl: string | null
         }>`
           SELECT id, login, name, avatar_url AS avatarUrl FROM participants
-          WHERE id = ${login.participantId}
+          WHERE id = ${login.participantId} AND admitted_at IS NOT NULL
         `
         const row = rows[0]
         if (row === undefined) return yield* new LoginRefused({ message: loginRefusedMessage })
@@ -194,7 +200,7 @@ export class CliTokens extends Context.Service<
           SELECT t.secret_hash AS secretHash, t.machine, t.created_at AS createdAt,
             t.last_used_at AS lastUsedAt, p.id, p.login, p.name, p.avatar_url AS avatarUrl
           FROM cli_tokens t JOIN participants p ON p.id = t.participant_id
-          WHERE t.id = ${parsed.id}
+          WHERE t.id = ${parsed.id} AND p.admitted_at IS NOT NULL
         `
         const row = rows[0]
         if (row === undefined || !secretMatches(parsed.secret, row.secretHash)) {
@@ -237,7 +243,14 @@ export class CliTokens extends Context.Service<
         return deleted.length > 0
       })
 
-      return CliTokens.of({ approve, redeem, authenticate, list, revoke })
+      const revokeAll = Effect.fn("CliTokens.revokeAll")(function* (participantId: ParticipantId) {
+        for (const [hash, login] of pending) {
+          if (login.participantId === participantId) pending.delete(hash)
+        }
+        yield* sql`DELETE FROM cli_tokens WHERE participant_id = ${participantId}`
+      })
+
+      return CliTokens.of({ approve, redeem, authenticate, list, revoke, revokeAll })
     }),
   )
 }

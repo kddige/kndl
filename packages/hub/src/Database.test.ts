@@ -3,12 +3,15 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AgentId, EnvironmentVersion, ParticipantId, SessionId } from "@kndl/protocol"
-import { ConfigProvider, Effect, Option } from "effect"
+import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
+import { CliTokens } from "./CliTokens.ts"
 import { DatabaseFile, databaseAt } from "./Database.ts"
+import { Members } from "./Members.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { Sessions } from "./Sessions.ts"
+import { SignIns } from "./SignIns.ts"
 
 const dirs: Array<string> = []
 
@@ -38,11 +41,23 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0022, Open questions: the migrator runs only the
+ * Takes the database back to before migration 0023, Members: the migrator runs only the
  * migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeMembers = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP TABLE setup_links`
+  yield* sql`DROP TABLE invites`
+  yield* sql`DROP INDEX participants_owner`
+  yield* sql`ALTER TABLE participants DROP COLUMN owner`
+  yield* sql`ALTER TABLE participants DROP COLUMN admitted_at`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'members'`
+})
+
+/** Takes the database back to before migration 0022, Open questions, as above. */
 const beforeOpenQuestion = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeMembers
   yield* sql`ALTER TABLE sessions DROP COLUMN open_question`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'open_question'`
 })
@@ -129,6 +144,94 @@ const beforeChildSessions = Effect.gen(function* () {
   }
   yield* sql`ALTER TABLE queued_prompts DROP COLUMN from_session`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'child_sessions'`
+})
+
+const membersLayer = Members.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
+)
+
+describe("migration 0023, Members", () => {
+  test("admits everyone there was, and makes the earliest from GitHub the Owner", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    const token = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const signedIn = yield* (yield* SignIns).signIn({
+          id: ParticipantId.make("github:2"),
+          login: "bob",
+          name: "Bob",
+        })
+        yield* beforeMembers
+        // Dev login's Participant is the earliest, but never the Owner.
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('dev:alice', 'alice', 'alice', 1, 1)`
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('github:3', 'carol', 'Carol', 3, 3)`
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('github:4', 'dave', 'Dave', 4, 4)`
+        return signedIn.token
+      }).pipe(Effect.provide(SignIns.layer)),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const members = yield* Members
+        const signedIn = yield* (yield* SignIns).authenticate(token)
+        return {
+          members: (yield* members.list).map((member) => [
+            member.participant.id,
+            member.owner,
+            member.admittedAt,
+          ]),
+          owner: yield* members.owner,
+          signedIn: Option.map(signedIn, (participant) => participant.login),
+          setupLink: yield* Effect.flip(members.newSetupLink),
+        }
+      }).pipe(Effect.provide(membersLayer)),
+    )
+    expect(after.members).toEqual([
+      ["github:3", true, 3],
+      ["dev:alice", false, 1],
+      ["github:4", false, 4],
+      ["github:2", false, expect.any(Number)],
+    ])
+    expect(after.owner).toEqual(Option.some(ParticipantId.make("github:3")))
+    // Everyone signed in before stays signed in.
+    expect(after.signedIn).toEqual(Option.some("bob"))
+    expect(after.setupLink._tag).toBe("SetupLinkRefused")
+  })
+
+  test("leaves a Hub no one signed in to with GitHub without an Owner, so it takes a Setup link", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeMembers
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('dev:alice', 'alice', 'alice', 1, 1)`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const members = yield* Members
+        return {
+          owner: yield* members.owner,
+          members: (yield* members.list).map((member) => member.participant.id as string),
+          setupLink: yield* members.newSetupLink,
+        }
+      }).pipe(Effect.provide(membersLayer)),
+    )
+    expect(after.owner).toEqual(Option.none())
+    expect(after.members).toEqual(["dev:alice"])
+    expect(after.setupLink).toMatch(/^cho_/)
+  })
 })
 
 describe("migration 0013, Session names", () => {

@@ -34,6 +34,7 @@ import {
   NavSlot,
   type NestedNavItems,
   PencilIcon,
+  PeopleIcon,
   PlusIcon,
   ServerIcon,
   SessionStatus,
@@ -99,8 +100,11 @@ const styles = stylex.create({
 })
 
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
-function sectionOf(pathname: string): "runners" | "environments" | "variables" | "archive" | null {
+function sectionOf(
+  pathname: string,
+): "runners" | "environments" | "variables" | "archive" | "people" | null {
   if (pathname === "/runners") return "runners"
+  if (pathname === "/people") return "people"
   if (pathname === "/environments" || /^\/repos\/[^/]+\/[^/]+\/environment$/.test(pathname))
     return "environments"
   if (pathname === "/variables") return "variables"
@@ -122,6 +126,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const sessions = useHubState((state) => state.sessions)
   const runners = useHubState((state) => state.runners)
   const you = useHubState((state) => state.you)
+  const owner = useHubState((state) => state.owner)
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { sessionId } = useParams({ strict: false })
   const { agent: agentId } = useSearch({ strict: false })
@@ -230,6 +235,15 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         >
           Archived Sessions
         </NavItem>
+        {owner && (
+          <NavItem
+            render={<Link to="/people" />}
+            icon={<PeopleIcon />}
+            current={section === "people"}
+          >
+            People
+          </NavItem>
+        )}
       </NavSection>
       {groups === null ? (
         <NavSection>

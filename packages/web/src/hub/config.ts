@@ -21,6 +21,11 @@ export const hubPaths = {
    * on that machine, answering a Login code for it (issue #179).
    */
   cliApprove: "/auth/cli/approve",
+  /**
+   * `POST` with `{ ticket }`, from the `/setup` and `/invite` pages: keeps the link's secret for
+   * the GitHub sign-in that follows, which it admits the person by (issue #209).
+   */
+  admission: "/auth/github/admission",
 } as const
 
 /** GitHub sign-in that comes back to `returnTo`, a path on the Hub, such as the page it's on. */

@@ -62,6 +62,11 @@ export interface HubConfigInput {
   readonly cliDir: string
 }
 
+/** Where browsers reach the Hub: `HUB_PUBLIC_URL`, or the web UI's dev server. */
+export const PublicUrlConfig = Config.URL("HUB_PUBLIC_URL").pipe(
+  Config.withDefault(new URL("http://localhost:5173")),
+)
+
 /**
  * Where the Hub finds the web UI's build by default: `packages/web/dist` in this checkout, which
  * `bun run web:build` writes.
@@ -306,9 +311,7 @@ export class HubConfig extends Context.Service<
       const input = yield* Config.all({
         host: Config.String("HOST").pipe(Config.withDefault("127.0.0.1")),
         port: Config.Port("PORT").pipe(Config.withDefault(7777)),
-        publicUrl: Config.URL("HUB_PUBLIC_URL").pipe(
-          Config.withDefault(new URL("http://localhost:5173")),
-        ),
+        publicUrl: PublicUrlConfig,
         githubClientId: Config.option(Config.NonEmptyString("GITHUB_CLIENT_ID")),
         githubClientSecret: Config.option(Config.Redacted("GITHUB_CLIENT_SECRET")),
         githubAppId: Config.option(Config.NonEmptyString("GITHUB_APP_ID")),

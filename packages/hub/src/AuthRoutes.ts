@@ -1,7 +1,19 @@
 // Signing in and out. These are the only routes, with /health, /cli and the CLI's trade of a Login
 // code (CliLoginRoutes.ts), that answer without a credential.
+//
+// The Hub is invite-only (ADR 0019): a GitHub sign-in gets in only as a Member already, as the
+// Owner with the Setup link, or with an Invite (Members.ts). The web UI's /setup and /invite pages
+// hand the Hub the link's secret (`POST /auth/github/admission`) just before sending the browser to
+// GitHub, and the Hub keeps it in a cookie, beside the OAuth `state`, for when GitHub sends the
+// browser back. Anyone not let in is sent to the /invite-only page, alike whatever they brought.
 
-import { Participant, ParticipantId } from "@kndl/protocol"
+import {
+  AdmissionTicket,
+  GitHubLogin,
+  InviteOnlyPath,
+  Participant,
+  ParticipantId,
+} from "@kndl/protocol"
 import { Duration, Effect, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import {
@@ -13,6 +25,8 @@ import {
 } from "./Auth.ts"
 import { GitHub, githubAvatarUrl } from "./GitHub.ts"
 import { HubConfig, isLoopback } from "./HubConfig.ts"
+import { Members } from "./Members.ts"
+import { SessionRelay } from "./SessionRelay.ts"
 import { SignIns } from "./SignIns.ts"
 import { constantTimeEqual, hashSecret, randomSecret } from "./Tokens.ts"
 
@@ -27,6 +41,14 @@ const stateCookie = "kndl_oauth_state"
  * takes it as `?return=`, such as the `/cli-login` page asking to come back to itself.
  */
 const returnCookie = "kndl_oauth_return"
+
+/**
+ * Holds the secret of the Setup link or Invite the person came with, until GitHub sends them back.
+ */
+const admissionCookie = "kndl_oauth_admission"
+
+/** The cookies a GitHub sign-in keeps until it comes back. */
+const roundTripCookies = [stateCookie, returnCookie, admissionCookie]
 
 /**
  * A path on the Hub to come back to after signing in, or undefined for anything else: it must start
@@ -47,10 +69,7 @@ export const SignInOptions = Schema.Struct({
   dev: Schema.Boolean,
 })
 
-/** A GitHub login: letters, digits and single hyphens, at most 39 characters. */
-const Login = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}$/))
-
-const DevLoginBody = Schema.Struct({ login: Schema.optional(Login) })
+const DevLoginBody = Schema.Struct({ login: Schema.optional(GitHubLogin) })
 
 const notFound = HttpServerResponse.text("not found", { status: 404 })
 
@@ -62,6 +81,27 @@ export const AuthRoutes = HttpRouter.use(
     const config = yield* HubConfig
     const github = yield* GitHub
     const signIns = yield* SignIns
+    const members = yield* Members
+    const relay = yield* SessionRelay
+    const roundTrip = {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: config.secureCookies,
+      path: "/auth/github",
+      maxAge: Duration.minutes(10),
+    } as const
+    /** Expires the cookies a GitHub sign-in kept until it came back. */
+    const roundTripDone = Effect.fnUntraced(function* (
+      response: HttpServerResponse.HttpServerResponse,
+    ) {
+      let done = response
+      for (const cookie of roundTripCookies) {
+        done = yield* HttpServerResponse.expireCookie(done, cookie, { path: "/auth/github" }).pipe(
+          Effect.orDie,
+        )
+      }
+      return done
+    })
     const redirectUri = new URL("/auth/github/callback", config.publicUrl).href
 
     // The signed-in person, or 401 with the ways to sign in.
@@ -101,25 +141,44 @@ export const AuthRoutes = HttpRouter.use(
         if (Option.isNone(url)) return notFound
         const request = yield* HttpServerRequest.HttpServerRequest
         const back = returnPath(new URL(request.url, config.publicUrl).searchParams.get("return"))
-        const cookie = {
-          httpOnly: true,
-          sameSite: "lax",
-          secure: config.secureCookies,
-          path: "/auth/github",
-          maxAge: Duration.minutes(10),
-        } as const
         const response = yield* HttpServerResponse.redirect(url.value, { status: 302 }).pipe(
-          HttpServerResponse.setCookie(stateCookie, state, cookie),
+          HttpServerResponse.setCookie(stateCookie, state, roundTrip),
           Effect.orDie,
         )
         return back === undefined
           ? yield* HttpServerResponse.expireCookie(response, returnCookie, {
               path: "/auth/github",
             }).pipe(Effect.orDie)
-          : yield* HttpServerResponse.setCookie(response, returnCookie, back, cookie).pipe(
+          : yield* HttpServerResponse.setCookie(response, returnCookie, back, roundTrip).pipe(
               Effect.orDie,
             )
       }),
+    )
+
+    // The secret of the Setup link or Invite the person came with, from the web UI's /setup or
+    // /invite page just before it sends the browser to `GET /auth/github`. Kept as it is: the
+    // callback checks it, so nothing here says whether it is one.
+    yield* router.add(
+      "POST",
+      "/auth/github/admission",
+      Effect.gen(function* () {
+        if (!github.isEnabled) return notFound
+        yield* requireSameOrigin
+        const request = yield* HttpServerRequest.HttpServerRequest
+        const body = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(AdmissionTicket))(
+          yield* request.text,
+        )
+        return yield* HttpServerResponse.setCookie(
+          HttpServerResponse.empty({ status: 204 }),
+          admissionCookie,
+          body.ticket,
+          roundTrip,
+        ).pipe(Effect.orDie)
+      }).pipe(
+        Effect.catchTag("SchemaError", () =>
+          Effect.succeed(HttpServerResponse.text("Expected a ticket", { status: 400 })),
+        ),
+      ),
     )
 
     yield* router.add(
@@ -142,26 +201,34 @@ export const AuthRoutes = HttpRouter.use(
         }
         const user = yield* github.user({ code, redirectUri })
         const avatarUrl = githubAvatarUrl(user.avatar_url)
-        const signIn = yield* signIns.signIn(
-          Participant.make({
-            id: ParticipantId.make(`github:${user.id}`),
-            login: user.login,
-            name: user.name || user.login,
-            ...(avatarUrl !== undefined && { avatarUrl }),
-          }),
+        const participant = Participant.make({
+          id: ParticipantId.make(`github:${user.id}`),
+          login: user.login,
+          name: user.name || user.login,
+          ...(avatarUrl !== undefined && { avatarUrl }),
+        })
+        const admission = yield* members.admit(participant, request.cookies[admissionCookie])
+        if (Option.isNone(admission)) {
+          yield* Effect.logInfo(`Turned away ${user.login}, who has no Invite`)
+          return yield* roundTripDone(HttpServerResponse.redirect(InviteOnlyPath, { status: 302 }))
+        }
+        if (admission.value !== "Member") {
+          yield* Effect.logInfo(
+            admission.value === "Owner"
+              ? `${user.login} signed in with the Setup link, and is the Hub's Owner`
+              : `${user.login} signed in with an Invite, and is a Member`,
+          )
+        }
+        const signIn = yield* signIns.signIn(participant)
+        if (admission.value !== "Member") yield* relay.membersChanged
+        return yield* roundTripDone(
+          yield* setSignInCookie(
+            HttpServerResponse.redirect(returnPath(request.cookies[returnCookie]) ?? "/", {
+              status: 302,
+            }),
+            signIn,
+          ),
         )
-        const response = yield* setSignInCookie(
-          HttpServerResponse.redirect(returnPath(request.cookies[returnCookie]) ?? "/", {
-            status: 302,
-          }),
-          signIn,
-        )
-        const expired = yield* HttpServerResponse.expireCookie(response, stateCookie, {
-          path: "/auth/github",
-        }).pipe(Effect.orDie)
-        return yield* HttpServerResponse.expireCookie(expired, returnCookie, {
-          path: "/auth/github",
-        }).pipe(Effect.orDie)
       }).pipe(
         Effect.catchTag("GitHubError", (error) => Effect.succeed(errorPage(502, error.message))),
       ),
@@ -184,9 +251,14 @@ export const AuthRoutes = HttpRouter.use(
           text.trim() === "" ? "{}" : text,
         )
         const login = body.login ?? devLoginName(config.devLogin.value.defaultName)
-        const signIn = yield* signIns.signIn(
-          Participant.make({ id: ParticipantId.make(`dev:${login}`), login, name: login }),
-        )
+        const participant = Participant.make({
+          id: ParticipantId.make(`dev:${login}`),
+          login,
+          name: login,
+        })
+        // Dev login needs no Invite: it only answers on loopback.
+        yield* members.admitLocal(participant)
+        const signIn = yield* signIns.signIn(participant)
         const response = yield* HttpServerResponse.schemaJson(Participant)(signIn.participant)
         return yield* setSignInCookie(response, signIn)
       }).pipe(

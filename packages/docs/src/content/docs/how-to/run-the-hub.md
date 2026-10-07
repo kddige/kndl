@@ -87,7 +87,7 @@ Once any Sensitive value is saved, the Hub refuses to start without the same key
 
 The Hub needs at least one way to sign in:
 
-- **GitHub sign-in**, for a team. Set up the GitHub App, which gives the Hub `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`: see [Set up the GitHub App](/how-to/set-up-the-github-app/). On an install, onboard offers to create it.
+- **GitHub sign-in**, for a team. Set up the GitHub App, which gives the Hub `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`: see [Set up the GitHub App](/how-to/set-up-the-github-app/). On an install, onboard offers to create it. The Hub is invite-only: you sign in first with its Setup link, from onboard, `kndl hub setup-link` or `bun run setup-link`, and become its Owner, then invite everyone else. See [Let people in](/how-to/let-people-in/).
 - **Dev login**, for trying it on one machine. `KNDL_DEV_LOGIN=1`, which onboard offers for a `local` Hub, lets anyone who reaches the Hub sign in as any name, without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers.
 
 With neither, the sign-in page says the Hub has no way to sign in turned on.

@@ -4,7 +4,8 @@
 // asked for (ADR 0009), the Test builds it started, with their logs, and what the GitHub App's
 // permissions lack (issue #86); the Pairing codes waiting to be redeemed and the Hub's own commit,
 // for the Runners page (issue #85); and the signed-in person's Claude credential, write-only (ADR
-// 0015), and the CLI tokens they signed the CLI in with (issue #179). The terminal's output itself
+// 0015), and the CLI tokens they signed the CLI in with (issue #179); and, for the Hub's Owner alone,
+// its Members and pending Invites, for the People page (#209). The terminal's output itself
 // goes straight to the view that draws it (HubClient.openTerminal), not through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
@@ -19,9 +20,11 @@ import type {
   EnvironmentVersionInfo,
   EventSeq,
   HubToWeb,
+  Member,
   PairingCodeId,
   Participant,
   PresentParticipant,
+  PendingInvite,
   PendingPairingCode,
   QuestionPick,
   QueuedPrompt,
@@ -160,6 +163,15 @@ export interface HubState {
   readonly claudeCredential: ClaudeCredentialInfo | null | undefined
   /** The signed-in person's CLI tokens, newest first (issue #179); null until the Hub says. */
   readonly cliTokens: ReadonlyArray<CliTokenInfo> | null
+  /** Whether the signed-in person is the Hub's Owner (#209), from the welcome. */
+  readonly owner: boolean
+  /** The Members, the Owner first; null until the Hub sends them, which it does to the Owner alone. */
+  readonly members: ReadonlyArray<Member> | null
+  /**
+   * The Invites not yet used, revoked or expired, oldest first; null until the Hub sends them, to
+   * the Owner alone. One may have expired since: compare its `expiresAt` with the clock.
+   */
+  readonly invites: ReadonlyArray<PendingInvite> | null
 }
 
 /** Events the client adds to the Hub's messages. */
@@ -192,6 +204,9 @@ export const initialState: HubState = {
   appPermissions: null,
   claudeCredential: undefined,
   cliTokens: null,
+  owner: false,
+  members: null,
+  invites: null,
 }
 
 const emptyJoined: JoinedSession = {
@@ -225,6 +240,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return {
         ...state,
         you: action.you,
+        owner: action.owner === true,
         hubVersion: action.hub ?? null,
         connection: { status: "online" },
       }
@@ -377,6 +393,13 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return { ...state, claudeCredential: action.credential }
     case "CliTokenList":
       return { ...state, cliTokens: action.tokens }
+    case "InviteCreated":
+      // The link is for whoever asked: the InviteList that follows lists it, without it.
+      return state
+    case "InviteList":
+      return { ...state, invites: action.invites }
+    case "MemberList":
+      return { ...state, members: action.members }
   }
 }
 

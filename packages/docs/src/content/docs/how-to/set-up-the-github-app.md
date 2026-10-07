@@ -27,7 +27,9 @@ Onboard asks whether the App is your own account's or an organization's, then:
 3. Onboard trades the code GitHub sent back for the App's settings. It saves the private key as `github-app-<id>.pem` in the home, readable only by you, and the App ID, Client ID and client secret in `hub.env`, with `GITHUB_APP_PRIVATE_KEY_PATH` pointing at the key. It never prints them.
 4. It prints the App's install link. [Install the App](#install-the-app) on the Repos Sessions should work on.
 
-Onboard then restarts the Hub as usual, and the sign-in page offers **Sign in with GitHub**.
+Onboard then restarts the Hub as usual, and the sign-in page offers **Sign in with GitHub**. The Hub is invite-only, so onboard ends with its Setup link: open it and sign in with GitHub to become the Hub's Owner, then invite everyone else. See [Let people in](/how-to/let-people-in/).
+
+Onboard creates the App private, which installs only on the account you chose. To install it on several, [make it public](/how-to/let-people-in/#make-the-github-app-public): the Hub, not the App, decides who gets in.
 
 The App's callback is the Hub's `HUB_PUBLIC_URL`. If people also reach the Hub at another URL, add its `/auth/github/callback` under **Callback URLs** in the App's settings.
 
@@ -94,7 +96,7 @@ To use an App you made on GitHub yourself, create it at <https://github.com/sett
 | Webhook, Active | Unticked |
 | Repository permissions | [The permissions](#the-permissions) |
 | Organization permissions | Members: read-only |
-| Where can this GitHub App be installed? | Only on this account |
+| Where can this GitHub App be installed? | Only on this account. Choose **Any account** to install it on several; see [Make the GitHub App public](/how-to/let-people-in/#make-the-github-app-public). |
 
 Then note its **App ID** and **Client ID**, and generate a **client secret** and a **private key**, which GitHub downloads as a `.pem` file. Move the key somewhere only you can read, such as the home, and `chmod 600` it.
 
@@ -110,7 +112,7 @@ Only the Hub's machine needs them. Runners never see the private key: they get s
   GITHUB_APP_PRIVATE_KEY_PATH=/home/you/.kndl-dev/github-app.pem
   ```
 
-The warnings that GitHub sign-in is off and that the GitHub App is not configured are gone, and the sign-in page offers **Sign in with GitHub**. [Install the App](#install-the-app) as above.
+The warnings that GitHub sign-in is off and that the GitHub App is not configured are gone, and the sign-in page offers **Sign in with GitHub**. [Install the App](#install-the-app) as above. Onboard prints the Hub's Setup link; from a checkout, `bun run setup-link` does. Sign in with it to become the Hub's Owner ([Let people in](/how-to/let-people-in/)).
 
 ## Protect the default branch
 

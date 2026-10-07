@@ -56,6 +56,7 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 
 - Sign-in seems to work, then you're back on the sign-in page.
 - `Sign-in failed: the sign-in expired or came from elsewhere. Try again.`
+- After GitHub: `This Hub is invite-only. Ask its owner for an invite.`
 - `Sign-in failed: GitHub refused the sign-in: …`
 - There's no **Sign in with GitHub** button.
 - Requests fail with `Only the web UI at … may make this request`.

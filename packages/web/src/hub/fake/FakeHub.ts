@@ -10,6 +10,7 @@
 // message the real Hub would refuse fails here too.
 
 import {
+  admissionLink,
   cantStartText,
   checkHandshake,
   claudeCredentialKindOf,
@@ -24,7 +25,11 @@ import {
   findModel,
   formatCliLoginCode,
   formatPairingCode,
+  InviteLifetimeMs,
+  InvitePath,
+  memberRemovalRefusal,
   modelNotFoundText,
+  ownerOnlyMessage,
   PairingAlphabet,
   PairingCodeLength,
   PairingCodeLifetimeMs,
@@ -51,6 +56,8 @@ import {
   replyTo,
   scriptedTurn,
   seedCliTokens,
+  seedInvites,
+  seedMembers,
   seedRunners,
   seedSessions,
   taskNotification,
@@ -64,9 +71,11 @@ import type {
   CliTokenInfoWire,
   HubMessage,
   LogEntryWire,
+  MemberWire,
   OpenPortWire,
   ParticipantWire,
   PresentParticipantWire,
+  PendingInviteWire,
   PendingPairingCodeWire,
   QuestionAnswerWire,
   QuestionPickWire,
@@ -101,6 +110,8 @@ export interface FakeHubOptions {
   claudeCredential?: ClaudeCredentialInfoWire | null
   /** The signed-in person's CLI tokens (issue #179), newest first. Default two, on two machines. */
   cliTokens?: ReadonlyArray<CliTokenInfoWire>
+  /** Whether the signed-in person is the Hub's Owner (#209), who has the People page. Default true. */
+  owner?: boolean
 }
 
 interface FakeSession {
@@ -206,6 +217,14 @@ class FakeSocket implements HubSocket {
 
 const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 
+/** The People page's commands (#209). */
+type PeopleCommand =
+  | "CreateInvite"
+  | "ListInvites"
+  | "RevokeInvite"
+  | "ListMembers"
+  | "RemoveMember"
+
 export class FakeHub implements HubTransport {
   readonly stepMs: number
   readonly sessions = new Map<string, FakeSession>()
@@ -231,6 +250,13 @@ export class FakeHub implements HubTransport {
   #appPermissions: AppPermissionsCheckWire | null
   #claudeCredential: ClaudeCredentialInfoWire | null
   #cliTokens: Array<CliTokenInfoWire>
+  #owner: boolean
+  /** The Hub's Members (#209), the Owner first. */
+  members: Array<MemberWire> = seedMembers()
+  /** Invites not yet used or revoked; one may have expired. */
+  invites: Array<PendingInviteWire> = seedInvites()
+  /** The Setup link and Invite secrets the /setup and /invite pages handed over, in order. */
+  readonly admissions: Array<string> = []
   #scriptStarted = false
   readonly #sockets = new Set<FakeSocket>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
@@ -246,6 +272,7 @@ export class FakeHub implements HubTransport {
     this.#appPermissions = options.appPermissions ?? null
     this.#claudeCredential = options.claudeCredential ?? null
     this.#cliTokens = [...(options.cliTokens ?? seedCliTokens())]
+    this.#owner = options.owner ?? true
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       const log = seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event }))
@@ -313,6 +340,12 @@ export class FakeHub implements HubTransport {
     return { code: formatCliLoginCode(code), expiresAt: now + CliLoginCodeLifetimeMs }
   }
 
+  /** Keeps the secret, as the Hub keeps it in a cookie for the GitHub sign-in that follows. */
+  async admit(ticket: string): Promise<void> {
+    if (!this.#signInOptions.github) throw new Error("Not Found")
+    this.admissions.push(ticket)
+  }
+
   async devSignIn(login?: string): Promise<void> {
     if (!this.#signInOptions.dev) throw new Error("Dev login is off.")
     this.#signedIn = true
@@ -372,6 +405,28 @@ export class FakeHub implements HubTransport {
     })
     this.#toAll(this.#runnerList())
     this.#toAll(this.#pairingCodeList())
+  }
+
+  /**
+   * Someone signs in with the oldest Invite they can use, as GitHub sign-in would admit them: a new
+   * Member, and the Invite used up. In the browser, `fakeHub.acceptInvite("carol-dev")`.
+   */
+  acceptInvite(login = "carol-dev"): void {
+    const now = Date.now()
+    const invite = this.invites.find(
+      (candidate) =>
+        candidate.expiresAt > now &&
+        (candidate.login === undefined || candidate.login.toLowerCase() === login.toLowerCase()),
+    )
+    if (invite === undefined) return
+    this.invites = this.invites.filter((other) => other !== invite)
+    this.members.push({
+      participant: { id: `u-${login}`, login, name: login },
+      owner: false,
+      admittedAt: now,
+    })
+    this.#toOwner(this.#memberList())
+    this.#toOwner(this.#inviteList())
   }
 
   /** Drops every connection, as a network blip would. */
@@ -534,6 +589,7 @@ export class FakeHub implements HubTransport {
           protocolVersion: ProtocolVersion,
           you: this.#you,
           hub: hubVersion,
+          ...(this.#owner && { owner: true }),
         })
         socket.deliver(this.#runnerList())
         socket.deliver(this.#pairingCodeList())
@@ -597,6 +653,13 @@ export class FakeHub implements HubTransport {
         this.#toOthers(socket, { _tag: "CliTokenList", tokens: kept })
         break
       }
+      case "CreateInvite":
+      case "ListInvites":
+      case "RevokeInvite":
+      case "ListMembers":
+      case "RemoveMember":
+        this.#people(socket, message)
+        break
       case "CheckAppPermissions":
         if (this.#appPermissions === null) {
           this.#refuse(
@@ -2117,6 +2180,93 @@ export class FakeHub implements HubTransport {
   /** Refuses a command that has a request to answer. */
   #refuse(socket: FakeSocket, command: string, requestId: string, message: string): void {
     socket.deliver({ _tag: "CommandFailed", command, requestId, message })
+  }
+
+  /** The People page's commands (#209): the Owner's alone, as on the Hub. */
+  #people(socket: FakeSocket, message: Extract<WebToHub, { _tag: PeopleCommand }>): void {
+    if (!this.#owner) {
+      this.#refuse(socket, message._tag, message.requestId, ownerOnlyMessage)
+      return
+    }
+    switch (message._tag) {
+      case "CreateInvite": {
+        const createdAt = Date.now()
+        const invite: PendingInviteWire = {
+          id: `inv-${++this.#ids}`,
+          createdBy: this.#you,
+          createdAt,
+          expiresAt: createdAt + InviteLifetimeMs,
+          ...(message.login !== undefined && { login: message.login }),
+        }
+        this.invites.push(invite)
+        const secret = Math.random().toString(36).slice(2)
+        socket.deliver({
+          _tag: "InviteCreated",
+          requestId: message.requestId,
+          id: invite.id,
+          link: admissionLink(
+            globalThis.location?.origin ?? "http://localhost:5173",
+            InvitePath,
+            `chi_${invite.id}.${secret}`,
+          ),
+          ...(invite.login !== undefined && { login: invite.login }),
+          expiresAt: invite.expiresAt,
+        })
+        this.#toOwner(this.#inviteList())
+        return
+      }
+      case "ListInvites":
+        socket.deliver({ ...this.#inviteList(), requestId: message.requestId })
+        return
+      case "RevokeInvite":
+        this.invites = this.invites.filter((invite) => invite.id !== message.inviteId)
+        socket.deliver({ ...this.#inviteList(), requestId: message.requestId })
+        this.#toOthers(socket, this.#inviteList())
+        return
+      case "ListMembers":
+        socket.deliver({ ...this.#memberList(), requestId: message.requestId })
+        return
+      case "RemoveMember": {
+        const member = this.members.find(
+          (candidate) => candidate.participant.id === message.participantId,
+        )
+        const refusal = memberRemovalRefusal(member)
+        if (refusal !== undefined) {
+          this.#refuse(socket, message._tag, message.requestId, refusal)
+          return
+        }
+        this.members = this.members.filter((other) => other !== member)
+        socket.deliver({ ...this.#memberList(), requestId: message.requestId })
+        this.#toOthers(socket, this.#memberList())
+        return
+      }
+    }
+  }
+
+  /** The Invites not yet used, revoked or expired, oldest first. */
+  #inviteList(): Extract<HubMessage, { _tag: "InviteList" }> {
+    const now = Date.now()
+    return {
+      _tag: "InviteList",
+      invites: this.invites
+        .filter((invite) => invite.expiresAt > now)
+        .toSorted((a, b) => a.createdAt - b.createdAt),
+    }
+  }
+
+  /** The Members, the Owner first, then by when they were admitted. */
+  #memberList(): Extract<HubMessage, { _tag: "MemberList" }> {
+    return {
+      _tag: "MemberList",
+      members: this.members.toSorted(
+        (a, b) => Number(b.owner) - Number(a.owner) || a.admittedAt - b.admittedAt,
+      ),
+    }
+  }
+
+  /** Tells the Owner's clients: every client, when the one signed in is the Owner. */
+  #toOwner(message: HubMessage): void {
+    if (this.#owner) this.#toAll(message)
   }
 
   /** Tells every client. */

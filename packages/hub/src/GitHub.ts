@@ -127,9 +127,16 @@ export class GitHub extends Context.Service<
     }),
   ).pipe(Layer.provide(FetchHttpClient.layer))
 
-  /** A stand-in GitHub that knows one code, for tests. */
-  static readonly layerTest = (options: { readonly code: string; readonly user: GitHubUser }) =>
-    Layer.succeed(
+  /** A stand-in GitHub that knows one code, or several (`users`, by code), for tests. */
+  static readonly layerTest = (
+    options:
+      | { readonly code: string; readonly user: GitHubUser }
+      | { readonly users: Readonly<Record<string, GitHubUser>> },
+  ) => {
+    const users = new Map(
+      "users" in options ? Object.entries(options.users) : [[options.code, options.user]],
+    )
+    return Layer.succeed(
       GitHub,
       GitHub.of({
         isEnabled: true,
@@ -139,10 +146,13 @@ export class GitHub extends Context.Service<
           url.searchParams.set("state", state)
           return Option.some(url)
         },
-        user: ({ code }) =>
-          code === options.code
-            ? Effect.succeed(options.user)
-            : Effect.fail(new GitHubError({ message: "bad verification code" })),
+        user: ({ code }) => {
+          const user = users.get(code)
+          return user === undefined
+            ? Effect.fail(new GitHubError({ message: "bad verification code" }))
+            : Effect.succeed(user)
+        },
       }),
     )
+  }
 }

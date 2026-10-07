@@ -22,7 +22,17 @@ import {
   TestBuildStarted,
 } from "./Environment.ts"
 import { AppPermissionsCheck } from "./GitHubApp.ts"
-import { AgentId, EventSeq, PromptId, RequestId, RunnerId, SessionId, ToolCallId } from "./Ids.ts"
+import {
+  AgentId,
+  EventSeq,
+  ParticipantId,
+  PromptId,
+  RequestId,
+  RunnerId,
+  SessionId,
+  ToolCallId,
+} from "./Ids.ts"
+import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
 import { EffortLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
@@ -403,6 +413,51 @@ export const UpdateRunner = Schema.TaggedStruct("UpdateRunner", {
 })
 export type UpdateRunner = typeof UpdateRunner.Type
 
+// ── People (issue #209, ADR 0019) ──
+//
+// The Owner's alone: the Hub refuses each, with a CommandFailed, from anyone else.
+
+/**
+ * Make an Invite: a link that admits one person, once, within InviteLifetimeMs; with `login`, only
+ * the GitHub account of that login. Answered with an {@link InviteCreated}, the only place the
+ * link is ever shown.
+ */
+export const CreateInvite = Schema.TaggedStruct("CreateInvite", {
+  requestId: RequestId,
+  login: Schema.optionalKey(GitHubLogin),
+})
+export type CreateInvite = typeof CreateInvite.Type
+
+/** List the Invites not yet used, revoked or expired. Answered with an {@link InviteList}. */
+export const ListInvites = Schema.TaggedStruct("ListInvites", {
+  requestId: RequestId,
+})
+export type ListInvites = typeof ListInvites.Type
+
+/** Revoke an Invite not yet used. Answered with an {@link InviteList}. */
+export const RevokeInvite = Schema.TaggedStruct("RevokeInvite", {
+  requestId: RequestId,
+  inviteId: InviteId,
+})
+export type RevokeInvite = typeof RevokeInvite.Type
+
+/** List the Members. Answered with a {@link MemberList}. */
+export const ListMembers = Schema.TaggedStruct("ListMembers", {
+  requestId: RequestId,
+})
+export type ListMembers = typeof ListMembers.Type
+
+/**
+ * Remove a Member who isn't the Owner: their sign-ins and CLI tokens are revoked at once, and they
+ * can't sign in again without a new Invite. Their Sessions and Claude credential stay. Answered
+ * with a {@link MemberList}.
+ */
+export const RemoveMember = Schema.TaggedStruct("RemoveMember", {
+  requestId: RequestId,
+  participantId: ParticipantId,
+})
+export type RemoveMember = typeof RemoveMember.Type
+
 /** Every message a web client sends the Hub. */
 export const WebToHub = Schema.Union([
   WebHello,
@@ -445,6 +500,11 @@ export const WebToHub = Schema.Union([
   RemoveRunner,
   UpdateRunner,
   RevokeCliToken,
+  CreateInvite,
+  ListInvites,
+  RevokeInvite,
+  ListMembers,
+  RemoveMember,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type WebToHub = typeof WebToHub.Type
 
@@ -457,6 +517,8 @@ export const WebWelcome = Schema.TaggedStruct("WebWelcome", {
   you: Participant,
   /** The commit the Hub runs, which Runners are compared with; absent outside a git checkout. */
   hub: Schema.optionalKey(BuildVersion),
+  /** True when you are the Hub's Owner (#209), who alone may invite and remove people. */
+  owner: Schema.optionalKey(Schema.Boolean),
 })
 export type WebWelcome = typeof WebWelcome.Type
 
@@ -646,6 +708,40 @@ export const CliTokenList = Schema.TaggedStruct("CliTokenList", {
 })
 export type CliTokenList = typeof CliTokenList.Type
 
+/** Answers a {@link CreateInvite}. The link is shown here only: the Hub keeps its secret's hash. */
+export const InviteCreated = Schema.TaggedStruct("InviteCreated", {
+  requestId: RequestId,
+  id: InviteId,
+  /** The web UI's Invite page, with the secret as its fragment. */
+  link: Schema.NonEmptyString,
+  login: Schema.optionalKey(GitHubLogin),
+  expiresAt: EpochMillis,
+})
+export type InviteCreated = typeof InviteCreated.Type
+
+/**
+ * The Invites not yet used, revoked or expired, without their links, oldest first: sent to the
+ * Owner's web clients alone, in answer to a {@link ListInvites} or {@link RevokeInvite}, and
+ * whenever one is made, used or revoked. A client drops one by itself once its `expiresAt` has
+ * passed.
+ */
+export const InviteList = Schema.TaggedStruct("InviteList", {
+  requestId: Schema.optionalKey(RequestId),
+  invites: Schema.Array(PendingInvite),
+})
+export type InviteList = typeof InviteList.Type
+
+/**
+ * The Members, the Owner first, then by when they were admitted: sent to the Owner's web clients
+ * alone, in answer to a {@link ListMembers} or {@link RemoveMember}, and whenever someone is
+ * admitted or removed.
+ */
+export const MemberList = Schema.TaggedStruct("MemberList", {
+  requestId: Schema.optionalKey(RequestId),
+  members: Schema.Array(Member),
+})
+export type MemberList = typeof MemberList.Type
+
 /** Answers a {@link RemoveRunner}; the RunnerList that follows leaves the Runner out. */
 export const RunnerRemoved = Schema.TaggedStruct("RunnerRemoved", {
   requestId: RequestId,
@@ -693,5 +789,8 @@ export const HubToWeb = Schema.Union([
   RunnerRemoved,
   RunnerUpdateRequested,
   CliTokenList,
+  InviteCreated,
+  InviteList,
+  MemberList,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToWeb = typeof HubToWeb.Type

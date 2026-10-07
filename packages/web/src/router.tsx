@@ -2,8 +2,11 @@ import {
   type AgentId,
   type EffortLevel,
   EffortLevels,
+  InviteOnlyPath,
+  InvitePath,
   type RunnerId,
   type SessionId,
+  SetupPath,
 } from "@kndl/protocol"
 import {
   createRootRoute,
@@ -18,6 +21,8 @@ import { CliLoginDonePage, CliLoginPage, readCliLoginSearch } from "./account/Cl
 import { HubShell } from "./app/HubShell.tsx"
 import { EnvironmentList } from "./environment/EnvironmentList.tsx"
 import { EnvironmentView } from "./environment/EnvironmentView.tsx"
+import { AdmissionPage, InviteOnlyPage } from "./people/AdmissionPages.tsx"
+import { PeopleView } from "./people/PeopleView.tsx"
 import { RunnersView } from "./runners/RunnersView.tsx"
 import { type SessionTab, SessionView } from "./session/SessionView.tsx"
 import { AllArchivedSessions, ArchivedSessions } from "./sessions/ArchivedSessions.tsx"
@@ -184,6 +189,36 @@ const runnersRoute = createRoute({
   component: RunnersView,
 })
 
+/** Who can sign in, for the Hub's Owner: Members and Invites (issue #209). */
+const peopleRoute = createRoute({
+  getParentRoute: () => hubRoute,
+  path: "/people",
+  component: PeopleView,
+})
+
+/**
+ * Where a Setup link and an Invite land (issue #209): on their own, without the sidebar, since
+ * whoever opens one isn't signed in yet. The secret is in the fragment, which the router leaves be.
+ */
+const setupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: SetupPath,
+  component: () => <AdmissionPage kind="setup" />,
+})
+
+const inviteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: InvitePath,
+  component: () => <AdmissionPage kind="invite" />,
+})
+
+/** Where the Hub sends anyone GitHub sign-in didn't let in. */
+const inviteOnlyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: InviteOnlyPath,
+  component: InviteOnlyPage,
+})
+
 /** Every UI component in every state, for building and reviewing the kit. Loaded on demand. */
 const kitRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -230,7 +265,11 @@ const routeTree = rootRoute.addChildren([
     variablesRoute,
     accountRoute,
     runnersRoute,
+    peopleRoute,
   ]),
+  setupRoute,
+  inviteRoute,
+  inviteOnlyRoute,
   cliLoginRoute,
   cliLoginDoneRoute,
   kitRoute,

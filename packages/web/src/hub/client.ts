@@ -17,10 +17,14 @@ import {
   type EnvironmentDraftChecked,
   type EnvironmentState,
   type EnvironmentVersion,
+  type GitHubLogin,
   HubToWeb,
+  type InviteCreated,
+  type InviteId,
   type ModelName,
   type PairingCodeCreated,
   type PairingCodeId,
+  type ParticipantId,
   ProtocolVersion,
   type QuestionAnswer,
   RequestId,
@@ -467,6 +471,42 @@ export class HubClient {
     await this.#request({ _tag: "RevokeCliToken", cliTokenId }, "CliTokenList")
   }
 
+  // ── People: the Hub's Owner alone (issue #209, ADR 0019) ─────────────────
+
+  /**
+   * Makes an Invite, for anyone with its link or, with `login`, for that GitHub account alone. The
+   * answer is the only place its link is ever shown.
+   */
+  createInvite(login?: GitHubLogin): Promise<InviteCreated> {
+    return this.#request(
+      { _tag: "CreateInvite", ...(login !== undefined && { login }) },
+      "InviteCreated",
+    )
+  }
+
+  /** Asks for the Invites not yet used, revoked or expired; the store then holds them. */
+  async listInvites(): Promise<void> {
+    await this.#request({ _tag: "ListInvites" }, "InviteList")
+  }
+
+  /** Revokes an Invite not yet used: its link admits no one after. */
+  async revokeInvite(inviteId: InviteId): Promise<void> {
+    await this.#request({ _tag: "RevokeInvite", inviteId }, "InviteList")
+  }
+
+  /** Asks for the Members; the store then holds them. */
+  async listMembers(): Promise<void> {
+    await this.#request({ _tag: "ListMembers" }, "MemberList")
+  }
+
+  /**
+   * Removes a Member who isn't the Owner: they are signed out everywhere at once, and need a new
+   * Invite to get back in. Their Sessions and Claude credential stay.
+   */
+  async removeMember(participantId: ParticipantId): Promise<void> {
+    await this.#request({ _tag: "RemoveMember", participantId }, "MemberList")
+  }
+
   /** Sends `command` with a new request id; resolves with the Hub's `answer` to it. */
   #request<Tag extends AnswerTag>(
     command: Request,
@@ -568,7 +608,10 @@ export class HubClient {
       case "RunnerRemoved":
       case "RunnerUpdateRequested":
       case "ClaudeCredentialState":
-      case "CliTokenList": {
+      case "CliTokenList":
+      case "InviteCreated":
+      case "InviteList":
+      case "MemberList": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break

@@ -1,13 +1,20 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 
-// Bearer secrets the Hub mints: Runner tokens, mod tokens, CLI tokens and the sign-in cookies of
-// browsers.
+// Bearer secrets the Hub mints: Runner tokens, mod tokens, CLI tokens, the sign-in cookies of
+// browsers, and the secrets of Invites and Setup links.
 //
 // A token is `<kind>_<id>.<secret>`. The id finds the row; the secret is 32 random bytes that the
 // Hub never stores, only its SHA-256, and compares in constant time. The kind prefix keeps one
 // kind of token from being read as another, and makes a leaked token recognisable.
 
-const prefixes = { runner: "chr", mod: "chm", cli: "chc", signIn: "chs" } as const
+const prefixes = {
+  runner: "chr",
+  mod: "chm",
+  cli: "chc",
+  signIn: "chs",
+  invite: "chi",
+  setup: "cho",
+} as const
 
 export type TokenKind = keyof typeof prefixes
 

@@ -17,6 +17,7 @@ import {
   bearer,
   cookieFrom,
   devSignIn,
+  ownerSignIn,
   startHub,
   stopHubs,
   type TestHub,
@@ -580,17 +581,16 @@ describe("GitHub sign-in", () => {
     const hub = await startHub({ github })
     const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
     const location = new URL(start.headers.get("location") ?? "")
-    const state = location.searchParams.get("state") ?? ""
     const stateCookie = /kndl_oauth_state=([^;]+)/.exec(start.headers.get("set-cookie") ?? "")?.[1]
 
     expect(start.status).toBe(302)
     expect(location.searchParams.get("redirect_uri")).toBe(`${webOrigin}/auth/github/callback`)
 
-    const callback = await fetch(
-      `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-      { redirect: "manual", headers: { cookie: `kndl_oauth_state=${stateCookie}` } },
-    )
+    expect(stateCookie).toBeDefined()
+
+    const callback = await ownerSignIn(hub)
     expect(callback.status).toBe(302)
+    expect(callback.headers.get("location")).toBe("/")
 
     const me = await fetch(`${hub.url}/auth/me`, { headers: { cookie: cookieFrom(callback) } })
     expect(await me.json()).toEqual({ id: "github:42", login: "octocat", name: "octocat" })
@@ -613,11 +613,7 @@ describe("GitHub sign-in", () => {
       config: { publicUrl: new URL("https://hub.example.com") },
     })
     const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
-    const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
-    const callback = await fetch(
-      `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-      { redirect: "manual", headers: { cookie: `kndl_oauth_state=${state}` } },
-    )
+    const callback = await ownerSignIn(hub, { origin: "https://hub.example.com" })
 
     expect(start.headers.get("set-cookie")).toContain("Secure")
     expect(callback.headers.get("set-cookie")).toContain("Secure")
@@ -685,11 +681,7 @@ describe("cookies", () => {
       config: { publicUrl: new URL("http://192.168.1.10:5173"), insecureCookies: true },
     })
     const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
-    const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
-    const callback = await fetch(
-      `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-      { redirect: "manual", headers: { cookie: `kndl_oauth_state=${state}` } },
-    )
+    const callback = await ownerSignIn(hub, { origin: "http://192.168.1.10:5173" })
     const setCookies = [...start.headers.getSetCookie(), ...callback.headers.getSetCookie()]
 
     expect(setCookies.some((cookie) => cookie.startsWith(`${signInCookie}=`))).toBe(true)
@@ -706,14 +698,9 @@ const githubWith = (avatar_url: string | undefined) =>
     user: { id: 42, login: "octocat", name: "The Octocat", avatar_url },
   })
 
-/** Signs in through the stand-in GitHub; returns what `/auth/me` then says. */
+/** Signs in through the stand-in GitHub, as the Owner; returns what `/auth/me` then says. */
 async function signInAndAskMe(hub: TestHub) {
-  const start = await fetch(`${hub.url}/auth/github`, { redirect: "manual" })
-  const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
-  const callback = await fetch(
-    `${hub.url}/auth/github/callback?code=good-code&state=${encodeURIComponent(state)}`,
-    { redirect: "manual", headers: { cookie: `kndl_oauth_state=${state}` } },
-  )
+  const callback = await ownerSignIn(hub)
   const me = await fetch(`${hub.url}/auth/me`, { headers: { cookie: cookieFrom(callback) } })
   return me.json()
 }

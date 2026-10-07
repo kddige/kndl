@@ -1,11 +1,13 @@
 // The `kndl` command tree. Each command resolves the home (Layout.ts) and hands off to the
 // module that does the work; a command that ends badly sets the exit code.
-import { runnerTokenNotice, secretsKeyNotice } from "@kndl/hub/src/Admin.ts"
+import { runnerTokenNotice, secretsKeyNotice, setupLinkNotice } from "@kndl/hub/src/Admin.ts"
+import { hasOwnerMessage } from "@kndl/hub/src/Members.ts"
 import { Console, Effect, Option } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import {
   installService,
   issueToken,
+  newSetupLink,
   requireInstall,
   requirePlatform,
   resetHubSecrets,
@@ -364,9 +366,22 @@ const joinCommand = Command.make(
   ),
 )
 
+const setupLinkCommand = Command.make("setup-link", {}, () =>
+  Effect.gen(function* () {
+    const link = yield* newSetupLink(layout())
+    if (Option.isNone(link)) return yield* fail(hasOwnerMessage)
+    yield* Console.log(setupLinkNotice(link.value))
+  }),
+).pipe(
+  operator("hub setup-link"),
+  Command.withDescription(
+    "Print the link the Hub's Owner signs in with first, on the Hub's machine; replaces any earlier one",
+  ),
+)
+
 const hubCommand = Command.make("hub").pipe(
-  Command.withSubcommands(serviceCommands("hub")),
-  Command.withDescription("The Hub's service"),
+  Command.withSubcommands([...serviceCommands("hub"), setupLinkCommand]),
+  Command.withDescription("The Hub's service, and the link its Owner signs in with first"),
 )
 
 const runnerCommand = Command.make("runner").pipe(

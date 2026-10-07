@@ -15,13 +15,14 @@ Either way it manages the installed home: `KNDL_HOME`, or else `~/.kndl`. It nev
 
 | Command | What it does |
 |---|---|
-| `kndl onboard` | Sets the machine up as a Hub, a Runner or both: prerequisites, `hub.env` and `runner.env`, builds, services. See [below](#kndl-onboard). |
+| `kndl onboard` | Sets the machine up as a Hub, a Runner or both: prerequisites, `hub.env` and `runner.env`, builds, services. For a Hub with GitHub sign-in and no Owner yet, it ends with the Hub's [Setup link](/how-to/let-people-in/#become-the-owner). See [below](#kndl-onboard). |
 | `kndl status` | What's installed (commit, and the branch it follows or that it's pinned), each service's state, the Hub's URL and `/health`, and whether the Runner is connected. Exits 1 only when there's no install; `doctor` is the check. |
 | `kndl logs [hub\|runner] [-f] [-n <lines>]` | Prints the last 100 lines (`-n`) of the service's log, and with `-f` follows it. The role can be left out when the machine has only one. |
 | `kndl doctor [--fix] [--yes]` | Checks the prerequisites, the env files and their permissions, that the Hub and Runner accept their configuration, the web UI and mod builds, kndl data in the home without its env file, the services, the Hub's health, whether the Runner reaches the Hub, and, with a GitHub App in `hub.env`, that the App and each installation have [the permissions the Hub needs](/how-to/set-up-the-github-app/#keep-the-permissions-in-step), or, with GitHub sign-in on and no App, fails, since no one signed in with GitHub can then see a Session. Prints `ok`, `!!` (a warning) or `XX` (a failure) for each, and exits 1 on a failure. `--fix` repairs what it can, after asking (`--yes` doesn't ask), then checks again. It moves old data aside only when you confirm it in a terminal, even with `--yes`. |
 | `kndl update [--ref <ref>] [--no-update-runners] [--now]` | Updates the install: fetches, moves to the target, runs `bun install`, rebuilds the web UI and the mod, rewrites and restarts the installed services, and runs `doctor`. On the Hub's machine, its Runners follow. `upgrade` is the same command. See [below](#kndl-update). |
 | `kndl uninstall [--purge] [--yes]` | Stops and removes the services, removes the `kndl` command and the install, and keeps the home's data. `--purge` removes the whole home. Asks first; without a terminal it needs `--yes`. |
 | `kndl hub install\|start\|stop\|status` | The Hub's service. `install` writes the service file and (re)starts it; `stop` stops it until the next `start` or login; `status` exits 1 unless it runs. |
+| `kndl hub setup-link` | Prints the Hub's Setup link, as [`bun run setup-link`](#bun-run-setup-link) does, in the installed Hub's database: whoever signs in with it becomes the Hub's Owner. It replaces any earlier link, and is refused once the Hub has an Owner. Run it on the Hub's machine. See [Let people in](/how-to/let-people-in/). |
 | `kndl runner join '<link>'` | Makes the machine a Runner with a pairing link from the Hub's Runners page, without touching the Hub's machine. See [below](#kndl-runner-join). |
 | `kndl runner install\|start\|stop\|status` | The same for the Runner's service. |
 | `kndl runner token <name>` | Issues a token for the Runner named `<name>`, as [`bun run runner-token`](#bun-run-runner-token-name) does, in the installed Hub's database. For a Runner the Hub has, it replaces that Runner's token. Run it on the Hub's machine. A [pairing link](#kndl-runner-join) needs no access to it. |
@@ -176,6 +177,20 @@ Any earlier token for this Runner no longer works. Give the token to the Runner 
 ```
 
 The Hub stores only a hash. Issuing again for the same name keeps the Runner's id and its Sessions, and replaces its token; for a removed Runner's name, it brings that Runner back, with its Archived Sessions ([Runner names](/how-to/add-a-runner/#runner-names)). Run it on the Hub's machine: it writes to the Hub's database.
+
+#### `bun run setup-link`
+
+Prints the Hub's Setup link, once, for a Hub with no Owner yet:
+
+```
+The Hub has no Owner yet. Its Setup link, shown only now:
+
+  http://127.0.0.1:7777/setup#cho_…
+
+Open it and sign in with GitHub to become the Hub's Owner, then invite everyone else from the People page. It works once, and only until the Hub has an Owner; a new one replaces it.
+```
+
+The link is on `HUB_PUBLIC_URL`, and the Hub stores only a hash of its secret. Any earlier link stops working. Once the Hub has an Owner, it makes none and exits 1. Run it on the Hub's machine: it writes to the Hub's database. See [Let people in](/how-to/let-people-in/).
 
 #### `bun run secrets-key`
 
