@@ -11,6 +11,11 @@
 //
 // A packaged Plugin (#220) is pinned to the version it was added at: only an Upgrade changes it,
 // its name included, and it clears values as an edit does.
+//
+// The Owner can make an Installation global (#219): on in every Repo, listing none, but where a
+// Repo-scoped one of its Plugin takes its place, or the Repo turned it off on its Repo page. Only
+// the Owner creates, edits or deletes one, or edits, upgrades or deletes its Plugin; for anyone
+// else, the page says so.
 
 import {
   type HeaderSecret,
@@ -41,6 +46,7 @@ import {
   Badge,
   Banner,
   Button,
+  Checkbox,
   Dialog,
   DialogClose,
   EmptyState,
@@ -197,6 +203,7 @@ interface Deleting {
 export function PluginsView({ opening }: { opening?: string | undefined } = {}) {
   const hub = useHub()
   const state = useHubState((hubState) => hubState.plugins)
+  const owner = useHubState((hubState) => hubState.owner)
   const online = useHubState((hubState) => hubState.connection.status === "online")
   const [loadError, setLoadError] = useState<string | null>(null)
   const [editing, setEditing] = useState<Plugin | "new" | null>(null)
@@ -212,9 +219,9 @@ export function PluginsView({ opening }: { opening?: string | undefined } = {}) 
     const installation = state.installations.find((one) => one.id === opening)
     const plugin = state.plugins.find((one) => one.id === installation?.pluginId)
     if (installation === undefined || plugin === undefined) return
-    if (installation.otherRepos !== undefined) return
+    if (installation.otherRepos !== undefined || (installation.global === true && !owner)) return
     setInstalling({ plugin, installation })
-  }, [opening, opened, state])
+  }, [opening, opened, state, owner])
 
   useEffect(() => {
     if (!online) return
@@ -273,6 +280,7 @@ export function PluginsView({ opening }: { opening?: string | undefined } = {}) 
                   installations={state.installations.filter(
                     (installation) => installation.pluginId === plugin.id,
                   )}
+                  owner={owner}
                   onEdit={() => setEditing(plugin)}
                   onUpgrade={() => setPackaging({ upgrading: plugin })}
                   onInstall={(installation) => setInstalling({ plugin, installation })}
@@ -288,7 +296,7 @@ export function PluginsView({ opening }: { opening?: string | undefined } = {}) 
         installations={state?.installations ?? []}
         onClose={() => setEditing(null)}
       />
-      <InstallationDialog target={installing} onClose={() => setInstalling(null)} />
+      <InstallationDialog target={installing} owner={owner} onClose={() => setInstalling(null)} />
       <DeleteDialog deleting={deleting} onClose={() => setDeleting(null)} />
       <PackageDialog opening={packaging} onClose={() => setPackaging(null)} />
     </main>
@@ -298,6 +306,7 @@ export function PluginsView({ opening }: { opening?: string | undefined } = {}) 
 function PluginCard({
   plugin,
   installations,
+  owner,
   onEdit,
   onUpgrade,
   onInstall,
@@ -305,6 +314,7 @@ function PluginCard({
 }: {
   plugin: Plugin
   installations: ReadonlyArray<Installation>
+  owner: boolean
   onEdit: () => void
   onUpgrade: () => void
   onInstall: (installation: Installation | null) => void
@@ -313,6 +323,8 @@ function PluginCard({
   const hub = useHub()
   // Editing or upgrading a Plugin changes what the Sessions of every Repo it is on in run with.
   const hidden = installations.some((installation) => installation.otherRepos !== undefined)
+  // With a global Installation, that is every Repo's: only the Owner may (#219).
+  const ownerOnly = !owner && installations.some((installation) => installation.global === true)
   const pinned = plugin.package
   return (
     <li aria-label={`Plugin ${plugin.name}`} {...stylex.props(styles.card)}>
@@ -332,6 +344,12 @@ function PluginCard({
             <Avatar name={plugin.createdBy.name} src={plugin.createdBy.avatarUrl} size="sm" />
             Added by {plugin.createdBy.name} {timeAgo(plugin.createdAt)}
           </span>
+          {ownerOnly && (
+            <span {...stylex.props(styles.muted)}>
+              It has a global Installation, on in every Repo: only the Hub's Owner can{" "}
+              {pinned ? "upgrade" : "edit"} or delete it.
+            </span>
+          )}
         </div>
         <div {...stylex.props(styles.actions)}>
           <Button
@@ -346,7 +364,7 @@ function PluginCard({
             <Button
               size="sm"
               aria-label={`Upgrade Plugin ${plugin.name}`}
-              disabled={hidden}
+              disabled={hidden || ownerOnly}
               onClick={onUpgrade}
             >
               Upgrade
@@ -355,7 +373,7 @@ function PluginCard({
             <Button
               size="sm"
               aria-label={`Edit Plugin ${plugin.name}`}
-              disabled={hidden}
+              disabled={hidden || ownerOnly}
               onClick={onEdit}
             >
               Edit
@@ -365,6 +383,7 @@ function PluginCard({
             size="sm"
             intent="ghost"
             aria-label={`Delete Plugin ${plugin.name}`}
+            disabled={ownerOnly}
             onClick={() =>
               onDelete({
                 name: plugin.name,
@@ -391,6 +410,7 @@ function PluginCard({
               key={installation.id}
               plugin={plugin}
               installation={installation}
+              owner={owner}
               first={index === 0}
               onEdit={() => onInstall(installation)}
               onDelete={() =>
@@ -408,57 +428,86 @@ function PluginCard({
   )
 }
 
+/** Links to each Repo, separated by commas. */
+function RepoLinks({ repos }: { repos: ReadonlyArray<string> }) {
+  return repos.map((repo, index) => (
+    <span key={repo}>
+      <Link
+        to="/repos/$owner/$repo/environment"
+        params={repoParams(repo)}
+        {...stylex.props(styles.link, focus.ring)}
+      >
+        {repo}
+      </Link>
+      {index < repos.length - 1 && ","}
+    </span>
+  ))
+}
+
 function InstallationRow({
   plugin,
   installation,
+  owner,
   first,
   onEdit,
   onDelete,
 }: {
   plugin: Plugin
   installation: Installation
+  owner: boolean
   first: boolean
   onEdit: () => void
   onDelete: () => void
 }) {
   // Changing it needs access to every Repo it is on in, which the Hub doesn't name.
   const hidden = installation.otherRepos !== undefined
+  // A global one is on in every Repo: only the Owner changes it (#219).
+  const global = installation.global === true
+  const ownerOnly = global && !owner
+  const off = installation.off ?? []
   return (
     <li
       aria-label={`Installation ${installation.name}`}
       {...stylex.props(styles.installation, first && styles.firstInstallation)}
     >
       <div {...stylex.props(styles.main)}>
-        <span {...stylex.props(styles.name)}>{installation.name}</span>
-        <div {...stylex.props(styles.repos)}>
-          <span>On in</span>
-          {installation.repos.map((repo, index) => (
-            <span key={repo}>
-              <Link
-                to="/repos/$owner/$repo/environment"
-                params={repoParams(repo)}
-                {...stylex.props(styles.link, focus.ring)}
-              >
-                {repo}
-              </Link>
-              {index < installation.repos.length - 1 && ","}
-            </span>
-          ))}
-          {hidden && (
-            <span>
-              {installation.repos.length > 0 && "and "}
-              {installation.otherRepos} {installation.otherRepos === 1 ? "Repo" : "Repos"} you have
-              no access to
-            </span>
-          )}
+        <div {...stylex.props(styles.nameLine)}>
+          <span {...stylex.props(styles.name)}>{installation.name}</span>
+          {global && <Badge intent="accent">Global</Badge>}
         </div>
+        {global ? (
+          <div {...stylex.props(styles.repos)}>
+            <span>
+              On in every Repo, but where another Installation of {plugin.name} is on
+              {off.length > 0 ? "; turned off for" : "."}
+            </span>
+            {off.length > 0 && <RepoLinks repos={off} />}
+          </div>
+        ) : (
+          <div {...stylex.props(styles.repos)}>
+            <span>On in</span>
+            <RepoLinks repos={installation.repos} />
+            {hidden && (
+              <span>
+                {installation.repos.length > 0 && "and "}
+                {installation.otherRepos} {installation.otherRepos === 1 ? "Repo" : "Repos"} you
+                have no access to
+              </span>
+            )}
+          </div>
+        )}
         <SecretValues plugin={plugin} installation={installation} />
+        {ownerOnly && (
+          <span {...stylex.props(styles.muted)}>
+            Only the Hub's Owner can edit or delete it. Turn it off for a Repo on the Repo's page.
+          </span>
+        )}
       </div>
       <div {...stylex.props(styles.actions)}>
         <Button
           size="sm"
           aria-label={`Edit Installation ${installation.name}`}
-          disabled={hidden}
+          disabled={hidden || ownerOnly}
           onClick={onEdit}
         >
           Edit
@@ -467,7 +516,7 @@ function InstallationRow({
           size="sm"
           intent="ghost"
           aria-label={`Delete Installation ${installation.name}`}
-          disabled={hidden}
+          disabled={hidden || ownerOnly}
           onClick={onDelete}
         >
           Delete
@@ -799,19 +848,23 @@ const reposOf = (typed: string) => typed.split(/[\s,]+/).filter((repo) => repo !
 
 /**
  * Creates an Installation of a Plugin on Repos, or renames one, changes its Repos, and replaces
- * values of its header secrets; a value left empty stays as it is.
+ * values of its header secrets; a value left empty stays as it is. The Owner can make it global
+ * (#219), on in every Repo, instead.
  */
 function InstallationDialog({
   target,
+  owner,
   onClose,
 }: {
   target: InstallationTarget | null
+  owner: boolean
   onClose: () => void
 }) {
   const hub = useHub()
   const shown = useLastOpened(target)
   const saved = shown?.installation ?? null
   const [name, setName] = useState("")
+  const [global, setGlobal] = useState(false)
   const [repos, setRepos] = useState("")
   const [values, setValues] = useState<Readonly<Record<string, string>>>({})
   const [touched, setTouched] = useState(false)
@@ -821,6 +874,7 @@ function InstallationDialog({
   useEffect(() => {
     if (target === null) return
     setName(target.installation?.name ?? target.plugin.name)
+    setGlobal(target.installation?.global === true)
     setRepos(target.installation?.repos.join("\n") ?? "")
     setValues({})
     setTouched(false)
@@ -828,11 +882,13 @@ function InstallationDialog({
     setError(null)
   }, [target])
 
-  const listed = reposOf(repos)
+  // A global one lists no Repos.
+  const listed = global ? [] : reposOf(repos)
   const nameProblem = pluginNameProblem(name, "An Installation")
   const malformed = listed.find((repo) => !repoPattern.test(repo))
-  const reposProblem =
-    malformed !== undefined
+  const reposProblem = global
+    ? undefined
+    : malformed !== undefined
       ? `${malformed} isn't a Repo: enter each as owner/name.`
       : installationReposProblem(listed)
   const declared = shown === null ? [] : headerSecretsOf(shown.plugin.auth)
@@ -853,8 +909,8 @@ function InstallationDialog({
       .map((secret) => ({ key: secret.key, value: Redacted.make(typed(secret)) }))
     try {
       if (saved === null) {
-        await hub.createInstallation(shown.plugin.id, name.trim(), listed, entered)
-      } else await hub.editInstallation(saved.id, name.trim(), listed, entered)
+        await hub.createInstallation(shown.plugin.id, name.trim(), listed, entered, global)
+      } else await hub.editInstallation(saved.id, name.trim(), listed, entered, global)
       toast.show({ title: saved === null ? `Installed ${name.trim()}` : `Saved ${name.trim()}` })
       onClose()
     } catch (cause) {
@@ -872,7 +928,7 @@ function InstallationDialog({
       title={
         saved === null ? `Add an Installation of ${shown?.plugin.name ?? ""}` : `Edit ${saved.name}`
       }
-      description={`Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each Plugin, and you need access to every Repo listed.${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}`}
+      description={`Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each Plugin, and you need access to every Repo listed.${owner ? " A global one is on in every Repo but those with their own Installation of the Plugin, or that turned it off." : ""}${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}`}
       footer={
         <>
           <DialogClose>Cancel</DialogClose>
@@ -891,21 +947,31 @@ function InstallationDialog({
         >
           <Input value={name} onValueChange={(next: string) => setName(next)} />
         </Field>
-        <Field
-          label="Repos"
-          description="One per line, as owner/name."
-          invalid={touched && reposProblem !== undefined}
-          error={touched ? reposProblem : undefined}
-        >
-          <Textarea
-            value={repos}
-            onValueChange={(next: string) => setRepos(next)}
-            placeholder="kddige/kndl"
-            rows={4}
-            autoFocus
-            sx={styles.mono}
+        {owner && (
+          <Checkbox
+            label="Global"
+            description="On in every Repo, now and to come, for every Sandbox on the Hub. A Repo can turn it off; one with its own Installation of the Plugin has that instead. Only the Owner can change it."
+            checked={global}
+            onCheckedChange={setGlobal}
           />
-        </Field>
+        )}
+        {!global && (
+          <Field
+            label="Repos"
+            description="One per line, as owner/name."
+            invalid={touched && reposProblem !== undefined}
+            error={touched ? reposProblem : undefined}
+          >
+            <Textarea
+              value={repos}
+              onValueChange={(next: string) => setRepos(next)}
+              placeholder="kddige/kndl"
+              rows={4}
+              autoFocus
+              sx={styles.mono}
+            />
+          </Field>
+        )}
         {declared.map((secret) => {
           const set = saved?.values.find((value) => value.key === secret.key)
           const problem = valueProblem(secret)
@@ -1007,6 +1073,7 @@ function DeleteDialog({ deleting, onClose }: { deleting: Deleting | null; onClos
 
 /** The Repos an Installation is on in, as a phrase. */
 function reposText(installation: Installation): string {
+  if (installation.global === true) return "every Repo"
   const { repos } = installation
   return repos.length === 1 ? (repos[0] ?? "") : `its ${repos.length} Repos`
 }

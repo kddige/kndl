@@ -569,6 +569,28 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE plugins ADD COLUMN package TEXT`
     yield* sql`ALTER TABLE plugin_log ADD COLUMN plugin_version TEXT`
   }),
+  // Global Installations (#219): on in every Repo, listing none in installation_repos, at most one
+  // of each Plugin; and the Repos that turned one off, each once by any spelling. A change to a
+  // global Installation is logged once, under the Repo `*`, which every Repo's log reads.
+  "0028_global_installations": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE installations ADD COLUMN global INTEGER NOT NULL DEFAULT 0`
+    yield* sql`
+      CREATE UNIQUE INDEX installations_one_global_per_plugin
+      ON installations (plugin_id) WHERE global = 1
+    `
+    yield* sql`
+      CREATE TABLE installation_repo_off (
+        installation_id TEXT NOT NULL REFERENCES installations (id) ON DELETE CASCADE,
+        repo TEXT NOT NULL,
+        PRIMARY KEY (installation_id, repo)
+      )
+    `
+    yield* sql`
+      CREATE UNIQUE INDEX installation_repo_off_once
+      ON installation_repo_off (installation_id, repo COLLATE NOCASE)
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

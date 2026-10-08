@@ -8,18 +8,28 @@
 // Packaged Plugins (#220) are read from a folder upload, as the Hub reads them, or from one of the
 // fake's git repos, below, whichever ref is asked for; it doesn't unpack archives. Asana starts
 // packaged, a version behind its repo, so the Upgrade flow has something to show.
+//
+// Global Installations (#219) are on in every Repo, but where a Repo-scoped one of their Plugin is
+// on, or a Repo turned them off. Only the Owner creates, edits or deletes one, or edits, upgrades
+// or deletes a Plugin with one; their changes are logged once, and shown in every Repo's log.
 
 import {
   type CheckPluginUpgrade,
   clearedHeaderSecrets,
   gitRefProblem,
   gitUrlProblem,
+  globalOwnerOnlyRefusal,
+  globalPluginRefusal,
+  globalReposRefusal,
   type HeaderValueInput,
   headerSecretsOf,
   headerValueProblem,
   hubPluginId,
   installationReposProblem,
+  installationsFor,
+  isOn,
   mcpServerNames,
+  notGlobalRefusal,
   type PackagedPlugin,
   packagePath,
   packagePathProblem,
@@ -38,6 +48,7 @@ import {
   repoKey,
   sameRepo,
   sameSource,
+  secondGlobalRefusal,
   secondInstallationRefusal,
 } from "@kndl/protocol"
 import { Redacted, Result } from "effect"
@@ -102,7 +113,11 @@ interface FakeInstallation {
   readonly id: string
   readonly pluginId: string
   name: string
+  /** On in every Repo, listing none (#219). */
+  global: boolean
   repos: Array<string>
+  /** The Repos that turned a global one off. */
+  off: Array<string>
   /** Who set each header secret value, and when; the values themselves the fake drops. */
   values: Array<HeaderValueSetWire>
   readonly createdBy: ParticipantWire
@@ -117,8 +132,20 @@ interface SetValue {
   readonly title: string
 }
 
-/** What a change did: the Repos whose Installations changed, or why it was refused. */
-export type PluginOutcome = { readonly refused: string } | { readonly repos: ReadonlyArray<string> }
+/**
+ * What a change did: the Repos whose Installations changed, and whether every Repo's did (#219),
+ * or why it was refused.
+ */
+export type PluginOutcome =
+  | { readonly refused: string }
+  | { readonly repos: ReadonlyArray<string>; readonly everyRepo?: boolean }
+
+/** Where a change to a global Installation is logged: once, for every Repo. */
+const everyRepo = "*"
+
+/** The Repos to log a change to the Installation on. */
+const logRepos = (installation: FakeInstallation) =>
+  installation.global ? [everyRepo] : installation.repos
 
 const noRepoAccess = (repo: string) =>
   `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`
@@ -228,24 +255,38 @@ export class FakePlugins {
     return {
       _tag: "PluginsState",
       plugins: [...this.#plugins],
-      installations: this.#installations.map((installation) => {
+      installations: this.#installations.map(({ global, off: allOff, ...installation }) => {
         const repos = installation.repos.filter(allowed)
         const otherRepos = installation.repos.length - repos.length
-        return { ...installation, repos, ...(otherRepos > 0 && { otherRepos }) }
+        const off = allOff.filter(allowed)
+        return {
+          ...installation,
+          ...(global && { global }),
+          repos,
+          ...(otherRepos > 0 && { otherRepos }),
+          ...(off.length > 0 && { off }),
+        }
       }),
     }
   }
 
-  /** A Repo's Plugin change log, newest first. */
+  /** A Repo's Plugin change log, newest first: its own, and every global Installation's (#219). */
   log(repo: string): ReadonlyArray<PluginLogEntryWire> {
-    return this.#logs.get(repoKey(repo)) ?? []
+    const own = this.#logs.get(repoKey(repo)) ?? []
+    const every = (this.#logs.get(everyRepo) ?? []).map((entry) => ({ ...entry, global: true }))
+    return [...own, ...every].toSorted((a, b) => b.at - a.at)
+  }
+
+  /** The Installations on for a Repo, with a global one's place taken or turned off (#219). */
+  #on(repo: string): Array<FakeInstallation> {
+    return installationsFor(this.#installations, repo)
+      .filter(({ source }) => isOn(source))
+      .map(({ installation }) => installation)
   }
 
   /** The Installations on for a Repo, as a Session starting there runs with them. */
   forSession(repo: string): Array<SessionInstallationWire> {
-    const on = this.#installations.filter((installation) =>
-      installation.repos.some((listed) => sameRepo(listed, repo)),
-    )
+    const on = this.#on(repo)
     const servers = mcpServerNames(on.map((installation) => installation.name))
     return on.map((installation, index) => {
       const plugin = this.#find(installation.pluginId)
@@ -255,6 +296,7 @@ export class FakePlugins {
         pluginId: installation.pluginId,
         pluginName: plugin?.name ?? "",
         ...(plugin?.package && { pluginVersion: packageVersion(plugin.package) }),
+        ...(installation.global && { global: true }),
         server: servers[index] ?? "",
         ...(installation.values.length > 0 && {
           values: installation.values.map(({ key, setAt }) => ({ key, setAt })),
@@ -314,11 +356,9 @@ export class FakePlugins {
    * without a value for a header secret. The fake has no server to ask.
    */
   failing(repo: string): Array<InstallationFailureWire> {
-    return this.#installations.flatMap((installation): Array<InstallationFailureWire> => {
+    return this.#on(repo).flatMap((installation): Array<InstallationFailureWire> => {
       const plugin = this.#find(installation.pluginId)
-      if (plugin === undefined || !installation.repos.some((listed) => sameRepo(listed, repo))) {
-        return []
-      }
+      if (plugin === undefined) return []
       const missing = headerSecretsOf(plugin.auth).filter(
         (secret) => !installation.values.some((value) => value.key === secret.key),
       )
@@ -327,6 +367,7 @@ export class FakePlugins {
         {
           installationId: installation.id,
           installation: installation.name,
+          ...(installation.global && { global: true }),
           reason: "ValueNeeded",
           secrets: missing.map((secret) => secret.title),
         },
@@ -334,13 +375,22 @@ export class FakePlugins {
     })
   }
 
-  /** Applies a change by `by`, who has access to the Repos `allowed` lets through. */
+  /**
+   * Applies a change by `by`, who has access to the Repos `allowed` lets through, and is the
+   * Hub's Owner if `owner`.
+   */
   change(
     command: PluginChangeCommand,
     by: ParticipantWire,
     allowed: (repo: string) => boolean,
+    owner: boolean,
   ): PluginOutcome {
     const at = Date.now()
+    /** Why `by` can't change a Plugin with a global Installation, unless the Owner (#219). */
+    const globalPlugin = (plugin: PluginWire) =>
+      !owner && this.#installations.some((one) => one.pluginId === plugin.id && one.global)
+        ? { refused: globalPluginRefusal(plugin.name) }
+        : undefined
     switch (command._tag) {
       case "AddPluginPackage": {
         const kept = this.#reads.get(command.readId)
@@ -372,6 +422,8 @@ export class FakePlugins {
               "This Plugin has Installations on Repos you have no access to, so you can't upgrade it.",
           }
         }
+        const ownerOnly = globalPlugin(plugin)
+        if (ownerOnly !== undefined) return ownerOnly
         this.#reads.delete(command.readId)
         // As an edit does: values entered for another server, or another header, are cleared.
         const cleared = clearedHeaderSecrets(plugin, kept.read)
@@ -380,13 +432,16 @@ export class FakePlugins {
         for (const one of installed) {
           const lost = cleared.filter((secret) => one.values.some(({ key }) => key === secret.key))
           one.values = one.values.filter(({ key }) => !lost.some((secret) => secret.key === key))
-          this.#record(one.repos, "PluginUpgraded", one, by, at)
+          this.#record(logRepos(one), "PluginUpgraded", one, by, at)
           if (lost.length > 0) {
             const titles = lost.map((secret) => secret.title)
-            this.#record(one.repos, "ValuesCleared", one, by, at, titles)
+            this.#record(logRepos(one), "ValuesCleared", one, by, at, titles)
           }
         }
-        return { repos: installed.flatMap((one) => one.repos) }
+        return {
+          repos: installed.flatMap((one) => one.repos),
+          ...(installed.some((one) => one.global) && { everyRepo: true }),
+        }
       }
       case "CreatePlugin": {
         const problem =
@@ -422,22 +477,29 @@ export class FakePlugins {
         if (name === plugin.name && command.url === plugin.url && sameAuth(auth, plugin.auth)) {
           return { repos: [] }
         }
+        const ownerOnly = globalPlugin(plugin)
+        if (ownerOnly !== undefined) return ownerOnly
         const cleared = clearedHeaderSecrets(plugin, { url: command.url, auth })
         this.#plugins[this.#plugins.indexOf(plugin)] = { ...plugin, name, url: command.url, auth }
         for (const one of installed) {
           const lost = cleared.filter((secret) => one.values.some(({ key }) => key === secret.key))
           one.values = one.values.filter(({ key }) => !lost.some((secret) => secret.key === key))
-          this.#record(one.repos, "PluginEdited", one, by, at)
+          this.#record(logRepos(one), "PluginEdited", one, by, at)
           if (lost.length > 0) {
             const titles = lost.map((secret) => secret.title)
-            this.#record(one.repos, "ValuesCleared", one, by, at, titles)
+            this.#record(logRepos(one), "ValuesCleared", one, by, at, titles)
           }
         }
-        return { repos: installed.flatMap((one) => one.repos) }
+        return {
+          repos: installed.flatMap((one) => one.repos),
+          ...(installed.some((one) => one.global) && { everyRepo: true }),
+        }
       }
       case "DeletePlugin": {
         const plugin = this.#find(command.pluginId)
         if (plugin === undefined) return { refused: "There is no such Plugin." }
+        const ownerOnly = globalPlugin(plugin)
+        if (ownerOnly !== undefined) return ownerOnly
         const count = this.#installations.filter((one) => one.pluginId === plugin.id).length
         if (count > 0) return { refused: pluginInUseRefusal(plugin.name, count) }
         this.#plugins.splice(this.#plugins.indexOf(plugin), 1)
@@ -446,19 +508,28 @@ export class FakePlugins {
       case "CreateInstallation": {
         const refusedRepo = command.repos.find((repo) => !allowed(repo))
         if (refusedRepo !== undefined) return { refused: noRepoAccess(refusedRepo) }
+        const global = command.global === true
+        if (global && !owner) return { refused: globalOwnerOnlyRefusal }
         const plugin = this.#find(command.pluginId)
         if (plugin === undefined) return { refused: "There is no such Plugin." }
         const problem =
           pluginNameProblem(command.name, "An Installation") ??
-          installationReposProblem(command.repos)
+          (global
+            ? command.repos.length > 0
+              ? globalReposRefusal
+              : undefined
+            : installationReposProblem(command.repos))
         if (problem !== undefined) return { refused: problem }
         const values = this.#values(plugin, command.values ?? [])
         if ("refused" in values) return values
-        const second = this.#second(plugin, command.repos, null)
+        const second = global
+          ? this.#secondGlobal(plugin, null)
+          : this.#second(plugin, command.repos, null)
         if (second !== undefined) return { refused: second }
-        const installation = this.#install(plugin, command.name.trim(), command.repos, by, at)
-        this.#set(installation, values.set, command.repos, by, at)
-        return { repos: installation.repos }
+        const name = command.name.trim()
+        const installation = this.#install(plugin, name, command.repos, by, at, global)
+        this.#set(installation, values.set, logRepos(installation), by, at)
+        return { repos: installation.repos, ...(global && { everyRepo: true }) }
       }
       case "EditInstallation":
       case "DeleteInstallation": {
@@ -468,14 +539,21 @@ export class FakePlugins {
         const installation = this.#installations.find((one) => one.id === command.installationId)
         if (installation === undefined) return { refused: "There is no such Installation." }
         if (!installation.repos.every(allowed)) return { refused: hiddenRepos }
+        const wasGlobal = installation.global
+        const global = command._tag === "EditInstallation" && command.global === true
+        if ((wasGlobal || global) && !owner) return { refused: globalOwnerOnlyRefusal }
         if (command._tag === "DeleteInstallation") {
           this.#installations.splice(this.#installations.indexOf(installation), 1)
-          this.#record(installation.repos, "Deleted", installation, by, at)
-          return { repos: installation.repos }
+          this.#record(logRepos(installation), "Deleted", installation, by, at)
+          return { repos: installation.repos, ...(wasGlobal && { everyRepo: true }) }
         }
         const problem =
           pluginNameProblem(command.name, "An Installation") ??
-          installationReposProblem(command.repos)
+          (global
+            ? command.repos.length > 0
+              ? globalReposRefusal
+              : undefined
+            : installationReposProblem(command.repos))
         if (problem !== undefined) return { refused: problem }
         const plugin = this.#find(installation.pluginId)
         const values = plugin ? this.#values(plugin, command.values ?? []) : { set: [] }
@@ -485,10 +563,27 @@ export class FakePlugins {
         const kept = installation.repos.filter((repo) => !removed.includes(repo))
         const name = command.name.trim()
         const renamed = name !== installation.name
-        const second = plugin && this.#second(plugin, added, installation.id)
+        const rescoped = global !== wasGlobal
+        const second =
+          plugin &&
+          ((global && !wasGlobal ? this.#secondGlobal(plugin, installation.id) : undefined) ??
+            this.#second(plugin, added, installation.id))
         if (second !== undefined) return { refused: second }
         installation.name = name
         installation.repos = [...kept, ...added]
+        if (wasGlobal || global) {
+          // A change to every Repo, logged once.
+          installation.global = global
+          if (!global) installation.off = []
+          if (renamed) this.#record([everyRepo], "Renamed", installation, by, at)
+          if (rescoped) {
+            const change = global ? "MadeGlobal" : "MadeRepoScoped"
+            this.#record([everyRepo], change, installation, by, at)
+          }
+          this.#set(installation, values.set, [everyRepo], by, at)
+          const changed = renamed || rescoped || values.set.length > 0
+          return { repos: [...kept, ...added, ...removed], ...(changed && { everyRepo: true }) }
+        }
         if (renamed) this.#record(kept, "Renamed", installation, by, at)
         this.#record(added, "Added", installation, by, at)
         this.#record(removed, "Removed", installation, by, at)
@@ -500,6 +595,20 @@ export class FakePlugins {
               ? [...kept, ...added, ...removed]
               : [...added, ...removed],
         }
+      }
+      case "TurnGlobalInstallation": {
+        if (!allowed(command.repo)) return { refused: noRepoAccess(command.repo) }
+        const installation = this.#installations.find((one) => one.id === command.installationId)
+        if (installation === undefined) return { refused: "There is no such Installation." }
+        if (!installation.global) return { refused: notGlobalRefusal(installation.name) }
+        const wasOff = installation.off.some((repo) => sameRepo(repo, command.repo))
+        if (wasOff !== command.on) return { repos: [] }
+        installation.off = command.on
+          ? installation.off.filter((repo) => !sameRepo(repo, command.repo))
+          : [...installation.off, command.repo]
+        const change = command.on ? "TurnedOn" : "TurnedOff"
+        this.#record([command.repo], change, installation, by, at)
+        return { repos: [command.repo] }
       }
     }
   }
@@ -565,19 +674,30 @@ export class FakePlugins {
     repos: ReadonlyArray<string>,
     by: ParticipantWire,
     at: number,
+    global = false,
   ): FakeInstallation {
     const installation: FakeInstallation = {
       id: `inst-${++this.#ids}`,
       pluginId: plugin.id,
       name,
+      global,
       repos: [...repos],
+      off: [],
       values: [],
       createdBy: by,
       createdAt: at,
     }
     this.#installations.push(installation)
-    this.#record(repos, "Created", installation, by, at)
+    this.#record(logRepos(installation), "Created", installation, by, at)
     return installation
+  }
+
+  /** Why a second global Installation of `plugin` is refused (#219). */
+  #secondGlobal(plugin: PluginWire, except: string | null): string | undefined {
+    const existing = this.#installations.find(
+      (one) => one.pluginId === plugin.id && one.global && one.id !== except,
+    )
+    return existing && secondGlobalRefusal(existing.name, plugin.name)
   }
 
   /** Why an Installation of `plugin` on one of `repos` is refused: another is on there. */

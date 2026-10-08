@@ -1,13 +1,15 @@
 // A Session that didn't start for its Repo's Installations (#216): which failed and why, each with
 // a way out. Fix opens the Installation on the Plugins page; whoever may change it (access to every
 // Repo it lists, as the Hub requires) can take the Session's Repo off it here instead, and the
-// Session is woken at once. Retry wakes it, which checks the Installations again. Its queued
-// prompts wait meanwhile, and run once it starts.
+// Session is woken at once. A global one (#219) anyone in the Session can turn off for its Repo
+// instead, but only the Owner can fix. Retry wakes it, which checks the Installations again. Its
+// queued prompts wait meanwhile, and run once it starts.
 
 import {
   type Installation,
   type InstallationFailure,
   installationFailureText,
+  leaveText,
   sameRepo,
   type SessionSummary,
 } from "@kndl/protocol"
@@ -30,6 +32,7 @@ const styles = stylex.create({
   },
   row: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: space.s2 },
   why: { flex: "1 1 14rem", minWidth: 0, fontSize: text.sm },
+  muted: { color: color.textMuted, fontSize: text.sm },
   name: { fontWeight: weight.semibold },
   link: {
     color: color.accentSubtleText,
@@ -56,6 +59,7 @@ export function InstallationsFailedBanner({
   const hub = useHub()
   const online = useHubState((state) => state.connection.status === "online")
   const plugins = useHubState((state) => state.plugins)
+  const owner = useHubState((state) => state.owner)
   const [busy, setBusy] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<Deleting | null>(null)
 
@@ -68,10 +72,29 @@ export function InstallationsFailedBanner({
   /** The Installation, if the person may take the Session's Repo off it. */
   const changeable = (failure: InstallationFailure) => {
     const installation = plugins?.installations.find((one) => one.id === failure.installationId)
-    if (installation === undefined || installation.otherRepos !== undefined) return undefined
+    if (installation === undefined) return undefined
+    // Anyone with access to the Repo turns a global one off for it.
+    if (installation.global === true) return installation
+    if (installation.otherRepos !== undefined) return undefined
     return installation.repos.some((repo) => sameRepo(repo, summary.repo))
       ? installation
       : undefined
+  }
+
+  const turnOff = async (installation: Installation) => {
+    setBusy(installation.id)
+    try {
+      await hub.turnGlobalInstallation(installation.id, summary.repo, false)
+      onRetry()
+    } catch (error) {
+      toast.show({
+        title: `Couldn't turn ${installation.name} off for ${summary.repo}`,
+        description: error instanceof Error ? error.message : String(error),
+        intent: "danger",
+      })
+    } finally {
+      setBusy(null)
+    }
   }
 
   const takeOff = async (installation: Installation, remove: boolean) => {
@@ -115,26 +138,44 @@ export function InstallationsFailedBanner({
               return (
                 <li key={failure.installationId} {...stylex.props(styles.row)}>
                   <span {...stylex.props(styles.why)}>{installationFailureText(failure)}</span>
-                  <Link
-                    to="/plugins"
-                    search={{ installation: failure.installationId }}
-                    aria-label={`Fix ${failure.installation}`}
-                    {...stylex.props(styles.link, focus.ring)}
-                  >
-                    Fix
-                  </Link>
-                  {installation !== undefined && (
+                  {failure.global === true && !owner ? (
+                    <span {...stylex.props(styles.muted)}>
+                      It is global: only the Hub's Owner can fix it.
+                    </span>
+                  ) : (
+                    <Link
+                      to="/plugins"
+                      search={{ installation: failure.installationId }}
+                      aria-label={`Fix ${failure.installation}`}
+                      {...stylex.props(styles.link, focus.ring)}
+                    >
+                      Fix
+                    </Link>
+                  )}
+                  {installation?.global === true ? (
                     <Button
                       size="sm"
                       intent="ghost"
+                      aria-label={`Turn ${installation.name} off for ${summary.repo}`}
                       loading={busy === installation.id}
-                      onClick={() => {
-                        if (installation.repos.length > 1) void takeOff(installation, false)
-                        else setDeleting({ installation })
-                      }}
+                      onClick={() => void turnOff(installation)}
                     >
-                      Take {summary.repo} off {installation.name}
+                      Turn it off for {summary.repo}
                     </Button>
+                  ) : (
+                    installation !== undefined && (
+                      <Button
+                        size="sm"
+                        intent="ghost"
+                        loading={busy === installation.id}
+                        onClick={() => {
+                          if (installation.repos.length > 1) void takeOff(installation, false)
+                          else setDeleting({ installation })
+                        }}
+                      >
+                        Take {summary.repo} off {installation.name}
+                      </Button>
+                    )
                   )}
                 </li>
               )
@@ -143,8 +184,8 @@ export function InstallationsFailedBanner({
         }
       >
         {one ? "An Installation" : "Installations"} on for {summary.repo} can't work. Fix{" "}
-        {one ? "it" : "them"}, or take {summary.repo} off {one ? "it" : "them"}, then retry. Prompts
-        sent now wait in the queue until it starts.
+        {one ? "it" : "them"}, or {leaveText(summary.repo, failures)}, then retry. Prompts sent now
+        wait in the queue until it starts.
       </Banner>
       <Dialog
         size="sm"

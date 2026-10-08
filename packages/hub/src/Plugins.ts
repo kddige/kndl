@@ -7,10 +7,16 @@
 // - A packaged Plugin is pinned to its version, and its commit from git: only an Upgrade, to a
 //   package read again from the same source, changes it. Each Repo with an Installation of it logs
 //   the Upgrade, with the version.
-// - An Installation is Repo-scoped so far: on in the Repos it lists. A Repo has at most one
+// - A Repo-scoped Installation is on in the Repos it lists. A Repo has at most one Repo-scoped
 //   Installation of each Plugin, by any spelling of its name (#197): the second is refused,
-//   naming the first. Who may create or change one is the relay's to decide (PluginRelay.ts):
-//   this store checks only what holds whoever asks.
+//   naming the first. Who may create or change one is the relay's to decide (PluginRelay.ts), by
+//   access to its Repos.
+// - A global Installation (#219) lists no Repo: it is on in every one, existing and new, unless a
+//   Repo-scoped Installation of its Plugin lists the Repo, which takes its place, or the Repo
+//   turned it off. A Plugin has at most one. Only the Owner may create, edit or delete one, or
+//   edit, upgrade or delete its Plugin: every Sandbox on the Hub can use it. This store checks
+//   that itself, in the same transaction as the change. Anyone with access to a Repo may turn a
+//   global Installation off for it, and back on.
 // - A Plugin may declare header secrets (#215), and each Installation holds a value for each,
 //   encrypted with the secrets key (ADR 0009) and bound to its Installation and key. A Session
 //   keeps the values its Installations held when it started, which the Gateway uses until its next
@@ -21,6 +27,10 @@
 //   edited its Plugin, or set or cleared its values, and when, with the names as they were: a
 //   value's header secret by its title, never the value. Nothing here is an Environment version:
 //   Sessions pick the change up on their next wake or Restart.
+// - A change to a global Installation, or to its Plugin, affects every Repo, and the Hub knows no
+//   list of them: a Repo is seen first when someone uses it. So it is logged once, under the Repo
+//   `*`, and every Repo's log reads those entries beside its own, a Repo seen later too. Turning
+//   one off or on is logged on that Repo alone.
 
 import {
   clearedHeaderSecrets,
@@ -30,11 +40,17 @@ import {
   headerSecretsOf,
   headerValue,
   headerValueProblem,
+  globalOwnerOnlyRefusal,
+  globalPluginRefusal,
+  globalReposRefusal,
   HubPluginPrefix,
   type Installation,
   InstallationId,
   installationReposProblem,
+  installationsFor,
+  isOn,
   mcpServerNames,
+  notGlobalRefusal,
   type PackagedPlugin,
   type Participant,
   ParticipantId,
@@ -56,6 +72,7 @@ import {
   type SessionId,
   type SessionInstallation,
   sameRepo,
+  secondGlobalRefusal,
   secondInstallationRefusal,
   valueNeededRefusal,
 } from "@kndl/protocol"
@@ -81,7 +98,12 @@ export type StoredInstallation = Omit<Installation, "otherRepos">
 export interface PluginsChanged {
   /** Every Repo whose Installations or their Plugins changed. */
   readonly repos: ReadonlyArray<RepoName>
+  /** Whether every Repo's did, by a change to a global Installation or its Plugin (#219). */
+  readonly everyRepo?: boolean
 }
+
+/** The Repo a change to every Repo is logged under, once (#219): no Repo's name can be it. */
+const everyRepo = "*"
 
 /**
  * Where the Gateway sends a Session's request through an Installation: the Plugin's URL as it is
@@ -118,12 +140,24 @@ const checkPlugin = (input: {
 /** Refuses an Installation's name or Repos that break the rules the web UI shows. */
 const checkInstallation = (input: {
   readonly name: string
+  readonly global?: boolean
   readonly repos: ReadonlyArray<RepoName>
 }) => {
   const problem =
-    pluginNameProblem(input.name, "An Installation") ?? installationReposProblem(input.repos)
+    pluginNameProblem(input.name, "An Installation") ??
+    (input.global === true
+      ? input.repos.length > 0
+        ? globalReposRefusal
+        : undefined
+      : installationReposProblem(input.repos))
   return problem === undefined ? Effect.void : refuse(problem)
 }
+
+/** The Repos to log a change to the Installation on: every one, once, for a global one. */
+const logRepos = (installation: {
+  readonly global?: boolean
+  readonly repos: ReadonlyArray<string>
+}) => (installation.global === true ? [everyRepo] : installation.repos)
 
 /** A value to save, with the header secret it is for. */
 interface ValueToSave {
@@ -253,7 +287,11 @@ export class Plugins extends Context.Service<
       input: { readonly name: string; readonly url: string; readonly auth: PluginAuth },
       by: ParticipantId,
     ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
-    readonly deletePlugin: (id: PluginId) => Effect.Effect<void, PluginRefused | SqlError>
+    /** Deletes a Plugin with no Installations; refused first if one is global and `by` isn't the Owner. */
+    readonly deletePlugin: (
+      id: PluginId,
+      by: ParticipantId,
+    ) => Effect.Effect<void, PluginRefused | SqlError>
     /** Adds a packaged Plugin as the Hub read it; refused if a Plugin has its name. */
     readonly addPackage: (
       read: PackagedPlugin,
@@ -270,25 +308,27 @@ export class Plugins extends Context.Service<
     ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
     /**
      * Creates an Installation on the Repos listed, which the caller spelled as the Hub keeps them,
-     * with the values given for its Plugin's header secrets.
+     * or a global one, listing none, with the values given for its Plugin's header secrets.
      */
     readonly createInstallation: (
       input: {
         readonly pluginId: PluginId
         readonly name: string
+        readonly global?: boolean
         readonly repos: ReadonlyArray<RepoName>
         readonly values?: ReadonlyArray<HeaderValueInput>
       },
       by: ParticipantId,
     ) => Effect.Effect<StoredInstallation & PluginsChanged, PluginRefused | SqlError>
     /**
-     * Renames an Installation, sets its whole list of Repos, and sets the values given for its
-     * Plugin's header secrets, keeping the others.
+     * Renames an Installation, sets whether it is global and its whole list of Repos, and sets the
+     * values given for its Plugin's header secrets, keeping the others.
      */
     readonly editInstallation: (
       id: InstallationId,
       input: {
         readonly name: string
+        readonly global?: boolean
         readonly repos: ReadonlyArray<RepoName>
         readonly values?: ReadonlyArray<HeaderValueInput>
       },
@@ -296,6 +336,16 @@ export class Plugins extends Context.Service<
     ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
     readonly deleteInstallation: (
       id: InstallationId,
+      by: ParticipantId,
+    ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
+    /**
+     * Turns a global Installation off for the Repo, by any spelling, or back on (#219); nothing if
+     * it already is.
+     */
+    readonly turnGlobalInstallation: (
+      id: InstallationId,
+      repo: RepoName,
+      on: boolean,
       by: ParticipantId,
     ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
     /**
@@ -372,13 +422,14 @@ export class Plugins extends Context.Service<
           readonly id: string
           readonly pluginId: string
           readonly name: string
+          readonly global: number
           readonly createdAt: number
           readonly byId: string
           readonly byLogin: string
           readonly byName: string
           readonly byAvatarUrl: string | null
         }>`
-          SELECT i.id, i.plugin_id AS pluginId, i.name, i.created_at AS createdAt,
+          SELECT i.id, i.plugin_id AS pluginId, i.name, i.global, i.created_at AS createdAt,
             p.id AS byId, p.login AS byLogin, p.name AS byName, p.avatar_url AS byAvatarUrl
           FROM installations i JOIN participants p ON p.id = i.created_by
           ${where}
@@ -388,6 +439,11 @@ export class Plugins extends Context.Service<
         const ids = rows.map((row) => row.id)
         const repos = yield* sql<{ readonly installationId: string; readonly repo: string }>`
           SELECT installation_id AS installationId, repo FROM installation_repos
+          WHERE installation_id IN ${sql.in(ids)}
+          ORDER BY repo COLLATE NOCASE
+        `
+        const off = yield* sql<{ readonly installationId: string; readonly repo: string }>`
+          SELECT installation_id AS installationId, repo FROM installation_repo_off
           WHERE installation_id IN ${sql.in(ids)}
           ORDER BY repo COLLATE NOCASE
         `
@@ -407,23 +463,69 @@ export class Plugins extends Context.Service<
           WHERE v.installation_id IN ${sql.in(ids)}
           ORDER BY v.key
         `
-        return rows.map((row): StoredInstallation => ({
-          id: InstallationId.make(row.id),
-          pluginId: PluginId.make(row.pluginId),
-          name: row.name,
-          repos: repos
+        return rows.map((row): StoredInstallation => {
+          const turnedOff = off
             .filter((repo) => repo.installationId === row.id)
-            .map((repo) => RepoName.make(repo.repo)),
-          values: values
-            .filter((value) => value.installationId === row.id)
-            .map((value): HeaderValueSet => ({
-              key: value.key,
-              setBy: toParticipant(value),
-              setAt: value.setAt,
-            })),
-          createdBy: toParticipant(row),
-          createdAt: row.createdAt,
-        }))
+            .map((repo) => RepoName.make(repo.repo))
+          return {
+            id: InstallationId.make(row.id),
+            pluginId: PluginId.make(row.pluginId),
+            name: row.name,
+            ...(row.global === 1 && { global: true }),
+            repos: repos
+              .filter((repo) => repo.installationId === row.id)
+              .map((repo) => RepoName.make(repo.repo)),
+            ...(turnedOff.length > 0 && { off: turnedOff }),
+            values: values
+              .filter((value) => value.installationId === row.id)
+              .map((value): HeaderValueSet => ({
+                key: value.key,
+                setBy: toParticipant(value),
+                setAt: value.setAt,
+              })),
+            createdBy: toParticipant(row),
+            createdAt: row.createdAt,
+          }
+        })
+      })
+
+      /** Whether the person is the Hub's Owner (#219). */
+      const isOwner = Effect.fn("Plugins.isOwner")(function* (by: ParticipantId) {
+        const rows = yield* sql<{ readonly owner: number }>`
+          SELECT owner FROM participants WHERE id = ${by}
+        `
+        return rows[0]?.owner === 1
+      })
+
+      /** Refuses anyone but the Owner, saying why (#219). */
+      const ownerOnly = Effect.fn("Plugins.ownerOnly")(function* (
+        by: ParticipantId,
+        message: string,
+      ) {
+        if (!(yield* isOwner(by))) return yield* refuse(message)
+      })
+
+      /** The Plugin's global Installation, by name, if it has one (#219). */
+      const globalOf = Effect.fn("Plugins.globalOf")(function* (
+        id: PluginId,
+        except: InstallationId | null,
+      ) {
+        const rows = yield* sql<{ readonly name: string }>`
+          SELECT name FROM installations
+          WHERE plugin_id = ${id} AND global = 1 AND id IS NOT ${except}
+          LIMIT 1
+        `
+        return Option.fromNullishOr(rows[0]?.name)
+      })
+
+      /** Refuses a change to a Plugin with a global Installation, unless by the Owner (#219). */
+      const checkPluginOwner = Effect.fn("Plugins.checkPluginOwner")(function* (
+        target: Plugin,
+        by: ParticipantId,
+      ) {
+        if (Option.isSome(yield* globalOf(target.id, null))) {
+          yield* ownerOnly(by, globalPluginRefusal(target.name))
+        }
       })
 
       const list = Effect.gen(function* () {
@@ -534,7 +636,8 @@ export class Plugins extends Context.Service<
        * Changes the Plugin to `next`, clearing the values the change leaves no use for on its
        * Installations and their Sessions ({@link clearedHeaderSecrets}), and logs `change` on each
        * Repo they list, then ValuesCleared, naming the values each Installation lost. An edit and
-       * an Upgrade both change a Plugin this way.
+       * an Upgrade both change a Plugin this way: only the Owner's, for a Plugin with a global
+       * Installation, whose change is logged in every Repo's log (#219).
        */
       const changePlugin = Effect.fn("Plugins.changePlugin")(function* (
         before: Plugin,
@@ -549,6 +652,7 @@ export class Plugins extends Context.Service<
         by: ParticipantId,
       ) {
         const id = before.id
+        yield* checkPluginOwner(before, by)
         const cleared = clearedHeaderSecrets(before, next)
         const installed = yield* installationRows(sql`WHERE i.plugin_id = ${id}`)
         yield* sql`
@@ -573,7 +677,7 @@ export class Plugins extends Context.Service<
             .filter((secret) => one.values.some((value) => value.key === secret.key))
             .map((secret) => secret.title)
           yield* record(
-            withValues(one.repos, change, { change: "ValuesCleared", secrets: lost }),
+            withValues(logRepos(one), change, { change: "ValuesCleared", secrets: lost }),
             {
               plugin: {
                 id,
@@ -587,7 +691,10 @@ export class Plugins extends Context.Service<
           )
           repos.push(...one.repos)
         }
-        return { repos }
+        return {
+          repos,
+          ...(installed.some((one) => one.global === true) && { everyRepo: true }),
+        }
       })
 
       const editPlugin = Effect.fn("Plugins.editPlugin")(
@@ -622,9 +729,10 @@ export class Plugins extends Context.Service<
       )
 
       const deletePlugin = Effect.fn("Plugins.deletePlugin")(
-        function* (id: PluginId) {
+        function* (id: PluginId, by: ParticipantId) {
           const existing = yield* plugin(id)
           if (Option.isNone(existing)) return yield* refuse("There is no such Plugin.")
+          yield* checkPluginOwner(existing.value, by)
           const rows = yield* sql<{ readonly count: number }>`
             SELECT count(*) AS count FROM installations WHERE plugin_id = ${id}
           `
@@ -675,7 +783,10 @@ export class Plugins extends Context.Service<
         (effect) => sql.withTransaction(effect),
       )
 
-      /** Refuses an Installation of the Plugin on a Repo that has another one. */
+      /**
+       * Refuses a Repo-scoped Installation of the Plugin on a Repo that lists another one. A global
+       * one lists none, so a Repo-scoped one may take its place (#219).
+       */
       const checkOnePerRepo = Effect.fn("Plugins.checkOnePerRepo")(function* (
         target: Plugin,
         repos: ReadonlyArray<RepoName>,
@@ -694,27 +805,42 @@ export class Plugins extends Context.Service<
         }
       })
 
+      /** Refuses a second global Installation of the Plugin (#219). */
+      const checkOneGlobal = Effect.fn("Plugins.checkOneGlobal")(function* (
+        target: Plugin,
+        except: InstallationId | null,
+      ) {
+        const existing = yield* globalOf(target.id, except)
+        if (Option.isSome(existing)) {
+          return yield* refuse(secondGlobalRefusal(existing.value, target.name))
+        }
+      })
+
       const createInstallation = Effect.fn("Plugins.createInstallation")(
         function* (
           input: {
             readonly pluginId: PluginId
             readonly name: string
+            readonly global?: boolean
             readonly repos: ReadonlyArray<RepoName>
             readonly values?: ReadonlyArray<HeaderValueInput>
           },
           by: ParticipantId,
         ) {
+          const global = input.global === true
+          if (global) yield* ownerOnly(by, globalOwnerOnlyRefusal)
           const target = yield* plugin(input.pluginId)
           if (Option.isNone(target)) return yield* refuse("There is no such Plugin.")
           yield* checkInstallation(input)
           const values = yield* checkValues(target.value, input.values ?? [])
-          yield* checkOnePerRepo(target.value, input.repos, null)
+          if (global) yield* checkOneGlobal(target.value, null)
+          else yield* checkOnePerRepo(target.value, input.repos, null)
           const id = InstallationId.make(randomId())
           const name = input.name.trim()
           const at = yield* Clock.currentTimeMillis
           yield* sql`
-            INSERT INTO installations (id, plugin_id, name, created_by, created_at)
-            VALUES (${id}, ${input.pluginId}, ${name}, ${by}, ${at})
+            INSERT INTO installations (id, plugin_id, name, global, created_by, created_at)
+            VALUES (${id}, ${input.pluginId}, ${name}, ${global ? 1 : 0}, ${by}, ${at})
           `
           for (const repo of input.repos) {
             yield* sql`
@@ -724,7 +850,7 @@ export class Plugins extends Context.Service<
           }
           yield* saveValues(id, values, by, at)
           yield* record(
-            withValues(input.repos, "Created", {
+            withValues(logRepos({ global, repos: input.repos }), "Created", {
               change: "ValuesSet",
               secrets: values.map(({ secret }) => secret.title),
             }),
@@ -732,7 +858,10 @@ export class Plugins extends Context.Service<
             by,
             at,
           )
-          return Option.getOrThrow(yield* installation(id))
+          return {
+            ...Option.getOrThrow(yield* installation(id)),
+            ...(global && { everyRepo: true }),
+          }
         },
         (effect) => sql.withTransaction(effect),
       )
@@ -742,6 +871,7 @@ export class Plugins extends Context.Service<
           id: InstallationId,
           input: {
             readonly name: string
+            readonly global?: boolean
             readonly repos: ReadonlyArray<RepoName>
             readonly values?: ReadonlyArray<HeaderValueInput>
           },
@@ -750,6 +880,9 @@ export class Plugins extends Context.Service<
           const existing = yield* installation(id)
           if (Option.isNone(existing)) return yield* refuse("There is no such Installation.")
           const before = existing.value
+          const wasGlobal = before.global === true
+          const global = input.global === true
+          if (wasGlobal || global) yield* ownerOnly(by, globalOwnerOnlyRefusal)
           const target = Option.getOrThrow(yield* plugin(before.pluginId))
           yield* checkInstallation(input)
           const values = yield* checkValues(target, input.values ?? [])
@@ -758,9 +891,16 @@ export class Plugins extends Context.Service<
           const removed = missingFrom(input.repos, before.repos)
           const kept = before.repos.filter((repo) => !removed.includes(repo))
           const renamed = name !== before.name
+          const rescoped = global !== wasGlobal
+          if (global && !wasGlobal) yield* checkOneGlobal(target, id)
           yield* checkOnePerRepo(target, added, id)
           const at = yield* Clock.currentTimeMillis
           if (renamed) yield* sql`UPDATE installations SET name = ${name} WHERE id = ${id}`
+          if (rescoped) {
+            yield* sql`UPDATE installations SET global = ${global ? 1 : 0} WHERE id = ${id}`
+            // A Repo that turned it off had it as a global one: as a Repo-scoped one, it lists.
+            if (!global) yield* sql`DELETE FROM installation_repo_off WHERE installation_id = ${id}`
+          }
           for (const repo of removed) {
             yield* sql`
               DELETE FROM installation_repos WHERE installation_id = ${id} AND repo = ${repo}
@@ -774,6 +914,29 @@ export class Plugins extends Context.Service<
           }
           yield* saveValues(id, values, by, at)
           const titles = values.map(({ secret }) => secret.title)
+          if (wasGlobal || global) {
+            // A change to every Repo, logged once (#219). One made global is on where it was
+            // listed still, and one made Repo-scoped was on in the Repos it now lists already.
+            const entries: Array<Entry> = [
+              ...(renamed ? [{ repo: everyRepo, change: "Renamed" as const }] : []),
+              ...(rescoped
+                ? [
+                    {
+                      repo: everyRepo,
+                      change: global ? ("MadeGlobal" as const) : ("MadeRepoScoped" as const),
+                    },
+                  ]
+                : []),
+              ...(titles.length > 0
+                ? [{ repo: everyRepo, change: "ValuesSet" as const, secrets: titles }]
+                : []),
+            ]
+            yield* record(entries, { plugin: target, installation: { id, name } }, by, at)
+            return {
+              repos: [...before.repos, ...added],
+              ...(entries.length > 0 && { everyRepo: true }),
+            }
+          }
           yield* record(
             [
               ...(renamed ? kept.map((repo) => ({ repo, change: "Renamed" as const })) : []),
@@ -800,15 +963,48 @@ export class Plugins extends Context.Service<
         function* (id: InstallationId, by: ParticipantId) {
           const existing = yield* installation(id)
           if (Option.isNone(existing)) return yield* refuse("There is no such Installation.")
+          const global = existing.value.global === true
+          if (global) yield* ownerOnly(by, globalOwnerOnlyRefusal)
           const target = Option.getOrThrow(yield* plugin(existing.value.pluginId))
           yield* sql`DELETE FROM installations WHERE id = ${id}`
           yield* record(
-            existing.value.repos.map((repo) => ({ repo, change: "Deleted" as const })),
+            logRepos(existing.value).map((repo) => ({ repo, change: "Deleted" as const })),
             { plugin: target, installation: existing.value },
             by,
             yield* Clock.currentTimeMillis,
           )
-          return { repos: existing.value.repos }
+          return { repos: existing.value.repos, ...(global && { everyRepo: true }) }
+        },
+        (effect) => sql.withTransaction(effect),
+      )
+
+      const turnGlobalInstallation = Effect.fn("Plugins.turnGlobalInstallation")(
+        function* (id: InstallationId, repo: RepoName, on: boolean, by: ParticipantId) {
+          const existing = yield* installation(id)
+          if (Option.isNone(existing)) return yield* refuse("There is no such Installation.")
+          if (existing.value.global !== true) {
+            return yield* refuse(notGlobalRefusal(existing.value.name))
+          }
+          const wasOff = (existing.value.off ?? []).some((other) => sameRepo(other, repo))
+          if (wasOff !== on) return { repos: [] }
+          if (on) {
+            yield* sql`
+              DELETE FROM installation_repo_off
+              WHERE installation_id = ${id} AND repo = ${repo} COLLATE NOCASE
+            `
+          } else {
+            yield* sql`INSERT INTO installation_repo_off (installation_id, repo) VALUES (${id}, ${repo})`
+          }
+          yield* record(
+            [{ repo, change: on ? "TurnedOn" : "TurnedOff" }],
+            {
+              plugin: Option.getOrThrow(yield* plugin(existing.value.pluginId)),
+              installation: existing.value,
+            },
+            by,
+            yield* Clock.currentTimeMillis,
+          )
+          return { repos: [repo] }
         },
         (effect) => sql.withTransaction(effect),
       )
@@ -835,15 +1031,31 @@ export class Plugins extends Context.Service<
         id: InstallationId,
         session: { readonly id: SessionId; readonly repo: string },
       ) {
+        // On for the Repo as installationsFor resolves it: listing it, or global, and neither
+        // overridden by a Repo-scoped Installation of its Plugin nor turned off there (#219).
         const rows = yield* sql<{
           readonly url: string
           readonly auth: string
           readonly name: string
         }>`
-          SELECT g.url, g.auth, i.name FROM installation_repos r
-            JOIN plugins g ON g.id = r.plugin_id JOIN installations i ON i.id = r.installation_id
-          WHERE r.installation_id = ${id} AND r.repo = ${session.repo} COLLATE NOCASE
-          LIMIT 1
+          SELECT g.url, g.auth, i.name FROM installations i JOIN plugins g ON g.id = i.plugin_id
+          WHERE i.id = ${id} AND (
+            EXISTS (
+              SELECT 1 FROM installation_repos r
+              WHERE r.installation_id = i.id AND r.repo = ${session.repo} COLLATE NOCASE
+            )
+            OR (
+              i.global = 1
+              AND NOT EXISTS (
+                SELECT 1 FROM installation_repos r
+                WHERE r.plugin_id = i.plugin_id AND r.repo = ${session.repo} COLLATE NOCASE
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM installation_repo_off o
+                WHERE o.installation_id = i.id AND o.repo = ${session.repo} COLLATE NOCASE
+              )
+            )
+          )
         `
         const row = rows[0]
         if (row === undefined) return Option.none<GatewayTarget>()
@@ -887,6 +1099,11 @@ export class Plugins extends Context.Service<
             JOIN installation_repos r ON r.installation_id = v.installation_id
           WHERE r.repo = ${repo} COLLATE NOCASE
           UNION
+          -- Every global one's (#219): redacting one the Repo has off or overridden is harmless.
+          SELECT v.installation_id AS installationId, v.key, v.value
+          FROM installation_values v JOIN installations i ON i.id = v.installation_id
+          WHERE i.global = 1
+          UNION
           SELECT v.installation_id AS installationId, v.key, v.value
           FROM session_installation_values v JOIN sessions s ON s.id = v.session_id
           WHERE s.repo = ${repo} COLLATE NOCASE
@@ -898,6 +1115,7 @@ export class Plugins extends Context.Service<
 
       const log = Effect.fn("Plugins.log")(function* (repo: string) {
         const rows = yield* sql<{
+          readonly repo: string
           readonly at: number
           readonly change: string
           readonly pluginId: string
@@ -911,13 +1129,13 @@ export class Plugins extends Context.Service<
           readonly byName: string
           readonly byAvatarUrl: string | null
         }>`
-          SELECT l.at, l.change, l.plugin_id AS pluginId, l.plugin_name AS pluginName,
+          SELECT l.repo, l.at, l.change, l.plugin_id AS pluginId, l.plugin_name AS pluginName,
             l.plugin_version AS pluginVersion,
             l.installation_id AS installationId, l.installation_name AS installationName,
             l.secrets, p.id AS byId, p.login AS byLogin, p.name AS byName,
             p.avatar_url AS byAvatarUrl
           FROM plugin_log l JOIN participants p ON p.id = l.by
-          WHERE l.repo = ${repo} COLLATE NOCASE
+          WHERE l.repo = ${repo} COLLATE NOCASE OR l.repo = ${everyRepo}
           ORDER BY l.at DESC, l.id DESC
           LIMIT ${logLimit}
         `
@@ -927,6 +1145,7 @@ export class Plugins extends Context.Service<
             at: row.at,
             by: toParticipant(row),
             change: decodeChange(row.change),
+            ...(row.repo === everyRepo && { global: true }),
             pluginId: PluginId.make(row.pluginId),
             pluginName: row.pluginName,
             ...(row.pluginVersion !== null && { pluginVersion: row.pluginVersion }),
@@ -950,6 +1169,7 @@ export class Plugins extends Context.Service<
         createInstallation,
         editInstallation,
         deleteInstallation,
+        turnGlobalInstallation,
         forSession,
         gatewayTarget,
         valuesOn,
@@ -962,7 +1182,8 @@ export class Plugins extends Context.Service<
 /**
  * The Installations on for each of the Repos, by any spelling, as a Session starting now runs
  * with them: by {@link repoKey}, oldest first, each with its MCP server's name, unique in its Repo,
- * and when each value it holds was set.
+ * and when each value it holds was set. A global one is on in each, unless overridden or turned
+ * off there, as {@link installationsFor} resolves it (#219).
  */
 export const installationsOn = Effect.fn("Plugins.installationsOn")(function* (
   sql: SqlClient.SqlClient,
@@ -970,22 +1191,50 @@ export const installationsOn = Effect.fn("Plugins.installationsOn")(function* (
 ) {
   const byRepo = new Map<string, Array<SessionInstallation>>()
   if (repos.length === 0) return byRepo
-  const rows = yield* sql<{
-    readonly repo: string
+  // Each Repo-scoped Installation once for each of the Repos it lists, and each global one once.
+  const candidates = yield* sql<{
+    readonly repo: string | null
     readonly id: string
     readonly name: string
+    readonly global: number
     readonly pluginId: string
     readonly pluginName: string
     readonly version: string | null
     readonly pinnedCommit: string | null
   }>`
-    SELECT r.repo, i.id, i.name, g.id AS pluginId, g.name AS pluginName,
+    SELECT r.repo, i.id, i.name, i.global, g.id AS pluginId, g.name AS pluginName,
       json_extract(g.package, '$.version') AS version, json_extract(g.package, '$.commit') AS pinnedCommit
-    FROM installation_repos r JOIN installations i ON i.id = r.installation_id
-      JOIN plugins g ON g.id = i.plugin_id
-    WHERE r.repo COLLATE NOCASE IN ${sql.in(repos)}
+    FROM installations i JOIN plugins g ON g.id = i.plugin_id
+      LEFT JOIN installation_repos r ON r.installation_id = i.id
+        AND r.repo COLLATE NOCASE IN ${sql.in(repos)}
+    WHERE i.global = 1 OR r.repo IS NOT NULL
     ORDER BY i.created_at, i.id
   `
+  const off = candidates.some((row) => row.global === 1)
+    ? yield* sql<{ readonly installationId: string; readonly repo: string }>`
+        SELECT installation_id AS installationId, repo FROM installation_repo_off
+        WHERE repo COLLATE NOCASE IN ${sql.in(repos)}
+      `
+    : []
+  const rows: Array<(typeof candidates)[number] & { readonly repo: string }> = []
+  const asked = new Map(repos.map((repo) => [repoKey(repo), repo]))
+  for (const repo of asked.values()) {
+    const resolved = installationsFor(
+      candidates
+        .filter((row) => row.global === 1 || sameRepo(row.repo ?? "", repo))
+        .map((row) => ({
+          row,
+          pluginId: row.pluginId,
+          global: row.global === 1,
+          repos: row.repo === null ? [] : [row.repo],
+          off: off.filter((one) => one.installationId === row.id).map((one) => one.repo),
+        })),
+      repo,
+    )
+    for (const { installation, source } of resolved) {
+      if (isOn(source)) rows.push({ ...installation.row, repo })
+    }
+  }
   const values =
     rows.length === 0
       ? []
@@ -1008,6 +1257,7 @@ export const installationsOn = Effect.fn("Plugins.installationsOn")(function* (
       name: row.name,
       pluginId: PluginId.make(row.pluginId),
       pluginName: row.pluginName,
+      ...(row.global === 1 && { global: true }),
       ...(row.version !== null && {
         pluginVersion: packageVersion({
           version: row.version,

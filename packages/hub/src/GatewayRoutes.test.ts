@@ -5,6 +5,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { ProtocolVersion } from "@kndl/protocol"
 import { Duration, Effect, Exit, Option, Redacted } from "effect"
+import { SqlClient } from "effect/sql"
 import { HubConfig } from "./HubConfig.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import {
@@ -297,6 +298,50 @@ describe("the Gateway", () => {
     })
     expect((await through(hub, docs.id, { headers: token })).status).toBe(403)
     expect(seen).toEqual([])
+  })
+
+  test("reaches a global Installation, but not where it is turned off or overridden (#219)", async () => {
+    const { hub, runner, web } = await gatewayScene()
+    await hub.run(
+      Effect.flatMap(SqlClient.SqlClient, (sql) => sql`UPDATE participants SET owner = 1`),
+    )
+    // Made global once created: on in every Repo, listing none.
+    const docs = await install(web, "Docs", [other])
+    const global = await ask(web, {
+      _tag: "EditInstallation",
+      installationId: docs.id,
+      name: "Docs",
+      repos: [],
+      global: true,
+    })
+    expect(global).toMatchObject({ _tag: "PluginsState", installations: [{ global: true }] })
+    const start = await startSession(web, runner)
+    expect(start.plugins).toEqual([{ installationId: docs.id, server: "docs" }])
+    const token = bearer(start.modToken)
+    const status = async () => {
+      const response = await through(hub, docs.id, { headers: token })
+      sendSecond()
+      await response.body?.cancel()
+      return response.status
+    }
+    expect(await status()).toBe(200)
+
+    // Turned off for the Repo: stopped at once, and back once turned on.
+    const turn = (on: boolean) =>
+      ask(web, { _tag: "TurnGlobalInstallation", installationId: docs.id, repo, on })
+    await turn(false)
+    expect(await status()).toBe(403)
+    await turn(true)
+    expect(await status()).toBe(200)
+
+    // A Repo-scoped Installation of its Plugin on the Repo takes its place: stopped at once too.
+    await ask(web, {
+      _tag: "CreateInstallation",
+      pluginId: docs.pluginId,
+      name: "Team docs",
+      repos: [repo],
+    })
+    expect(await status()).toBe(403)
   })
 
   test("doesn't follow a redirect", async () => {

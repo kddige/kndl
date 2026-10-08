@@ -435,6 +435,7 @@ const failureOf = (
   installationId: installation.id,
   installation: installation.name,
   ...why,
+  ...(installation.global === true && { global: true }),
 })
 
 /** StartSession's and RelaunchSession's `model` and `effort` (#128): the Session's setting. */
@@ -1165,6 +1166,10 @@ export class SessionRelay extends Context.Service<
         serialized,
         accessKnown: (who, repo, allowed) => accessKnown(who, repo, allowed),
         repoSessionsUpdated: (repo) => repoSessionsUpdated(repo),
+        // A global Installation's change reaches every Repo's Sessions (#219).
+        everySessionUpdated: Effect.fn("SessionRelay.everySessionUpdated")(function* () {
+          for (const session of yield* sessions.list) yield* sessionToWeb(session)
+        }),
         headerValuesChanged: () => needlesByRepo.clear(),
         respell: Effect.fn("SessionRelay.respell")(function* (repo: RepoName) {
           const github = yield* access.fullName(repo)

@@ -453,29 +453,40 @@ export class HubClient {
 
   /**
    * Creates an Installation of a Plugin, on in the Repos listed, with values for its Plugin's
-   * header secrets: write-only, the Hub never sends them back.
+   * header secrets: write-only, the Hub never sends them back. A global one (#219), which only the
+   * Owner creates, lists no Repos: it is on in every Repo.
    */
   createInstallation(
     pluginId: PluginId,
     name: string,
     repos: ReadonlyArray<string>,
     values: ReadonlyArray<HeaderValueInput> = [],
+    global = false,
   ): Promise<PluginsState> {
     return this.#request(
-      { _tag: "CreateInstallation", pluginId, name, repos, ...(values.length > 0 && { values }) },
+      {
+        _tag: "CreateInstallation",
+        pluginId,
+        name,
+        repos,
+        ...(values.length > 0 && { values }),
+        ...(global && { global }),
+      },
       "PluginsState",
     )
   }
 
   /**
    * Renames an Installation, sets the whole list of Repos it is on in, and replaces the values
-   * given; the others stay.
+   * given; the others stay. `global` is whether it is global (#219), on in every Repo and listing
+   * none: only the Owner makes it so, or edits one.
    */
   editInstallation(
     installationId: InstallationId,
     name: string,
     repos: ReadonlyArray<string>,
     values: ReadonlyArray<HeaderValueInput> = [],
+    global = false,
   ): Promise<PluginsState> {
     return this.#request(
       {
@@ -484,7 +495,23 @@ export class HubClient {
         name,
         repos,
         ...(values.length > 0 && { values }),
+        ...(global && { global }),
       },
+      "PluginsState",
+    )
+  }
+
+  /**
+   * Turns a global Installation off for a Repo, or back on (#219): anyone with access to the Repo
+   * may. Its Sessions pick it up on their next wake or Restart.
+   */
+  turnGlobalInstallation(
+    installationId: InstallationId,
+    repo: string,
+    on: boolean,
+  ): Promise<PluginsState> {
+    return this.#request(
+      { _tag: "TurnGlobalInstallation", installationId, repo, on },
       "PluginsState",
     )
   }

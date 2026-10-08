@@ -591,10 +591,10 @@ export class FakeHub implements HubTransport {
   /**
    * A change to the Plugins, as the Hub makes it (ADR 0020): everyone is sent them again, each
    * changed Repo's change log, and its Sessions whether their Installations changed since they
-   * started, which a Restart applies.
+   * started, which a Restart applies. A change to a global Installation reaches every Repo (#219).
    */
   #changePlugins(socket: FakeSocket, message: PluginChangeCommand): void {
-    const outcome = this.plugins.change(message, this.#you, this.#allowed)
+    const outcome = this.plugins.change(message, this.#you, this.#allowed, this.#owner)
     if ("refused" in outcome) {
       this.#refuse(socket, message._tag, message.requestId, outcome.refused)
       return
@@ -603,6 +603,11 @@ export class FakeHub implements HubTransport {
     socket.deliver({ ...state, requestId: message.requestId })
     this.#toOthers(socket, state)
     const repos = new Map(outcome.repos.map((repo) => [repoKey(repo), repo]))
+    if (outcome.everyRepo === true) {
+      for (const session of this.sessions.values()) {
+        repos.set(repoKey(session.summary.repo), session.summary.repo)
+      }
+    }
     for (const repo of repos.values()) {
       this.#toAll({ _tag: "PluginLog", repo, entries: [...this.plugins.log(repo)] })
       const now = this.plugins.forSession(repo)
@@ -1091,6 +1096,7 @@ export class FakeHub implements HubTransport {
       case "DeleteInstallation":
       case "AddPluginPackage":
       case "UpgradePlugin":
+      case "TurnGlobalInstallation":
         this.#changePlugins(socket, message)
         break
       case "ReadPluginPackage":

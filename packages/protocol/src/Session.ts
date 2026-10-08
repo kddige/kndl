@@ -187,6 +187,8 @@ export const SessionInstallation = Schema.Struct({
   pluginName: Schema.String,
   /** The version of a packaged Plugin it started with, so an Upgrade asks for a Restart. */
   pluginVersion: Schema.optionalKey(Schema.String),
+  /** Whether it was on as a global Installation (#219); absent if Repo-scoped. */
+  global: Schema.optionalKey(Schema.Boolean),
   server: Schema.String,
   /**
    * The header secrets (#215) it held a value for, and when each was set: never the value. A

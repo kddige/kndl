@@ -2,6 +2,7 @@
 // and editing them, and the Hub's refusals shown where they were made.
 
 import { afterEach, expect, test } from "bun:test"
+import { hubPluginId, RequestId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
 
@@ -17,6 +18,7 @@ const { createMemoryHistory, RouterProvider } = await import("@tanstack/react-ro
 const { HubProvider } = await import("../src/app/hub.tsx")
 const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
+const { you } = await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
 
 async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
@@ -46,8 +48,8 @@ async function type(field: HTMLInputElement | HTMLTextAreaElement, value: string
   })
 }
 
-async function openPlugins() {
-  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+async function openPlugins(owner = true) {
+  const hub = new FakeHub({ stepMs: 2, autoplay: false, owner })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/plugins"] }))
   const view = await render(
@@ -127,6 +129,64 @@ test("adds an Installation on Repos, and shows why a second one on a Repo is ref
       "kddige/kndl already has Docs, an Installation of Docs search",
     ),
   )
+})
+
+test("the Owner makes an Installation global, on in every Repo (#219)", async () => {
+  const { hub } = await openPlugins()
+  await step(() => button("Add Installation of Linear").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Linear"))
+  expect(dialog()?.textContent).toContain("Global")
+  // Its box, as Base UI renders it.
+  const global = dialog()?.querySelector('input[type="checkbox"]') as HTMLInputElement
+  await step(() => global.click())
+  // A global one lists no Repos.
+  await eventually(() => expect(dialog()?.querySelector("textarea")).toBeNull())
+  await step(() => button("Add").click())
+  await eventually(() => expect(plugin("Linear")?.textContent).toContain("On in every Repo"))
+  expect(plugin("Linear")?.textContent).toContain("Global")
+  expect(hub.received.find((m) => m._tag === "CreateInstallation")).toMatchObject({
+    name: "Linear",
+    global: true,
+    repos: [],
+  })
+})
+
+test("only the Owner changes a global Installation, or its Plugin (#219)", async () => {
+  const { hub } = await openPlugins(false)
+  await step(() =>
+    hub.plugins.change(
+      {
+        _tag: "CreateInstallation",
+        requestId: RequestId.make("seed"),
+        pluginId: hubPluginId("linear"),
+        name: "Linear",
+        global: true,
+        repos: [],
+      },
+      you,
+      () => true,
+      true,
+    ),
+  )
+  // Seen once the page asks again.
+  await step(() => button("Add Installation of Linear").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Linear"))
+  // No one but the Owner is offered a global one.
+  expect(dialog()?.querySelector('[role="checkbox"]')).toBeNull()
+  await type(dialog()?.querySelector("input") as HTMLInputElement, "Linear here")
+  await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
+  await step(() => button("Add").click())
+  // A Repo-scoped one of its Plugin takes the global's place on its Repo.
+  await eventually(() => expect(plugin("Linear")?.textContent).toContain("kddige/kndl"))
+  expect(plugin("Linear")?.textContent).toContain("Only the Hub's Owner can edit or delete it.")
+  expect(plugin("Linear")?.textContent).toContain(
+    "It has a global Installation, on in every Repo: only the Hub's Owner can edit or delete it.",
+  )
+  expect(button("Edit Plugin Linear").disabled).toBe(true)
+  expect(button("Delete Plugin Linear").disabled).toBe(true)
+  expect(button("Edit Installation Linear").disabled).toBe(true)
+  expect(button("Delete Installation Linear").disabled).toBe(true)
+  expect(button("Edit Installation Linear here").disabled).toBe(false)
 })
 
 test("deleting a Plugin with Installations is refused, saying why", async () => {

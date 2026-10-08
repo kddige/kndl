@@ -13,6 +13,8 @@ import {
   installationFailureText,
   installationReposProblem,
   installationsCantStartText,
+  installationsFor,
+  isOn,
   mcpServerNames,
   type PluginAuth,
   pluginAuthProblem,
@@ -229,6 +231,17 @@ describe("an Installation that fails a Session (#216)", () => {
     )
   })
 
+  test("says to turn a global Installation off rather than leave it (#219)", () => {
+    const global = failure({ secrets: ["API key"], global: true })
+    expect(installationsCantStartText("acme/app", [global])).toBe(
+      "Linear needs a value for API key. Fix the Installation on the Plugins page, or turn it off for acme/app, then wake the Session.",
+    )
+    const sentry = failure({ installation: "Sentry", reason: "Rejected", status: 403 })
+    expect(installationsCantStartText("acme/app", [global, sentry])).toEndWith(
+      "Fix the Installations on the Plugins page, or take acme/app off them or turn them off for it, then wake the Session.",
+    )
+  })
+
   test("rides on events a web UI of the version before reads all the same", () => {
     const changed = {
       _tag: "SessionStateChanged",
@@ -251,5 +264,53 @@ describe("an Installation that fails a Session (#216)", () => {
       _tag: "SandboxNoted",
       message: noted.message,
     })
+  })
+})
+
+/** An Installation as {@link installationsFor} resolves it. */
+const install = (
+  id: string,
+  pluginId: string,
+  repos: ReadonlyArray<string>,
+  more: { readonly global?: boolean; readonly off?: ReadonlyArray<string> } = {},
+) => ({ id, pluginId, repos, ...more })
+
+describe("the Installations on for a Repo (#219)", () => {
+  const docs = install("docs", "hub:docs", [], { global: true, off: ["acme/Quiet"] })
+  const linear = install("linear", "hub:linear", [], { global: true })
+  const linearWork = install("linear-work", "hub:linear", ["Acme/App"])
+  const sentry = install("sentry", "hub:sentry", ["acme/other"])
+  const all = [docs, linear, linearWork, sentry]
+  const resolved = (repo: string) =>
+    installationsFor(all, repo).map(({ installation, source }) => [installation.id, source])
+
+  test("a global one is on in every Repo, even one never seen", () => {
+    expect(resolved("someone/new")).toEqual([
+      ["docs", "Global"],
+      ["linear", "Global"],
+    ])
+  })
+
+  test("a Repo-scoped one of the same Plugin takes a global's place, by any spelling", () => {
+    expect(resolved("acme/app")).toEqual([
+      ["docs", "Global"],
+      ["linear", "Overridden"],
+      ["linear-work", "Repo"],
+    ])
+  })
+
+  test("a Repo that turned a global one off has it off, by any spelling", () => {
+    expect(resolved("ACME/quiet")).toEqual([
+      ["docs", "Off"],
+      ["linear", "Global"],
+    ])
+  })
+
+  test("only the global ones and the Repo-scoped ones that list it are on", () => {
+    expect(
+      installationsFor(all, "acme/app")
+        .filter(({ source }) => isOn(source))
+        .map(({ installation }) => installation.id),
+    ).toEqual(["docs", "linear-work"])
   })
 })

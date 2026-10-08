@@ -11,7 +11,12 @@
 //   Repos of an Installation they can't see are never named, only counted.
 // - Each web client is sent the Installations with only the Repos its person has access to, as
 //   last asked. When that changes, so does what it is sent.
-// - A change tells the changed Repos' Sessions, which then show that a Restart applies it.
+// - A global Installation (#219) lists no Repo, so it needs no access to create, edit or delete:
+//   only that its person be the Owner, which the store checks. Turning one off for a Repo, or back
+//   on, needs access to that Repo alone.
+// - A change tells the changed Repos' Sessions, which then show that a Restart applies it. A change
+//   to every Repo, a global Installation's or its Plugin's, tells every Session, and sends each
+//   client the log of every Repo it is known to have access to.
 // - A packaged Plugin (#220) is read first, from git or an upload, off the lock: a fetch may take a
 //   while. The read is kept for its person, to add or upgrade to by its id once they confirm, so
 //   what they confirm is what they saw. An Upgrade is refused if the Plugin changed since.
@@ -37,7 +42,13 @@ import {
 } from "@kndl/protocol"
 import { Clock, Effect, Option } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
-import { PluginRefused, Plugins, pluginTakenRefusal, type StoredInstallation } from "./Plugins.ts"
+import {
+  PluginRefused,
+  Plugins,
+  type PluginsChanged,
+  pluginTakenRefusal,
+  type StoredInstallation,
+} from "./Plugins.ts"
 import { PluginSources } from "./PluginSources.ts"
 import { RepoAccess } from "./RepoAccess.ts"
 import type { Peer } from "./SessionRelay.ts"
@@ -55,6 +66,7 @@ const webTags = [
   "CreateInstallation",
   "EditInstallation",
   "DeleteInstallation",
+  "TurnGlobalInstallation",
   "GetPluginLog",
 ] as const satisfies ReadonlyArray<PluginCommand["_tag"]>
 
@@ -82,6 +94,8 @@ export interface PluginRelayHost {
   ) => Effect.Effect<void, SqlError>
   /** Tells web clients the Repo's Sessions changed; under the lock. */
   readonly repoSessionsUpdated: (repo: string) => Effect.Effect<void, SqlError>
+  /** Tells web clients every Session changed, as by a global Installation's change; under the lock. */
+  readonly everySessionUpdated: () => Effect.Effect<void, SqlError>
   /** Says Installations' header secret values may have changed, so what to redact did. */
   readonly headerValuesChanged: () => void
   /** The one spelling the Hub keeps of a Repo's name (#197). */
@@ -116,11 +130,21 @@ interface KeptRead {
 /** A command about Plugins that changes them, or asks about them: not a read of a package. */
 type StoreCommand = Exclude<PluginCommand, ReadPluginPackage | CheckPluginUpgrade>
 
-/** An Installation as the person may see it: only the Repos they have access to. */
+/**
+ * An Installation as the person may see it: only the Repos they have access to, of those it lists
+ * and those that turned it off.
+ */
 const seenBy = (client: PluginWebClient, installation: StoredInstallation): Installation => {
+  const { off: turnedOff, ...rest } = installation
   const repos = installation.repos.filter((repo) => client.repos.get(repo) === true)
   const otherRepos = installation.repos.length - repos.length
-  return { ...installation, repos, ...(otherRepos > 0 && { otherRepos }) }
+  const off = (turnedOff ?? []).filter((repo) => client.repos.get(repo) === true)
+  return {
+    ...rest,
+    repos,
+    ...(otherRepos > 0 && { otherRepos }),
+    ...(off.length > 0 && { off }),
+  }
 }
 
 export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHost) {
@@ -256,20 +280,33 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
     }
   })
 
-  /** Tells the Repos' Sessions and their log's readers of a change. */
-  const changed = Effect.fn("PluginRelay.changed")(function* (repos: ReadonlyArray<RepoName>) {
+  /**
+   * Tells the Repos' Sessions and their log's readers of a change. One to every Repo (#219) tells
+   * every Session, and sends each client the log of every Repo it is known to have access to.
+   */
+  const changed = Effect.fn("PluginRelay.changed")(function* (change: PluginsChanged) {
     host.headerValuesChanged()
-    const unique: Array<RepoName> = []
-    for (const repo of repos) if (!unique.some((other) => sameRepo(other, repo))) unique.push(repo)
+    const every = change.everyRepo === true
+    const unique: Array<string> = []
+    const add = (repo: string) => {
+      if (!unique.some((other) => sameRepo(other, repo))) unique.push(repo)
+    }
+    for (const repo of change.repos) add(repo)
+    if (every) {
+      for (const client of host.webClients()) {
+        for (const [repo, allowed] of client.repos) if (allowed) add(repo)
+      }
+    }
     for (const repo of unique) {
       const entries = yield* plugins.log(repo)
       for (const client of host.webClients()) {
         if (client.repos.get(repo) === true) {
-          client.peer.send(HubToWeb.cases.PluginLog.make({ repo, entries }))
+          client.peer.send(HubToWeb.cases.PluginLog.make({ repo: RepoName.make(repo), entries }))
         }
       }
-      yield* host.repoSessionsUpdated(repo)
+      if (!every) yield* host.repoSessionsUpdated(repo)
     }
+    if (every) yield* host.everySessionUpdated()
   })
 
   /**
@@ -284,6 +321,7 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
       case "AddPluginPackage":
         return { named: [], hidden: [] }
       case "GetPluginLog":
+      case "TurnGlobalInstallation":
         return { named: [message.repo], hidden: [] }
       case "EditPlugin":
       case "UpgradePlugin":
@@ -347,15 +385,15 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
 
       case "EditPlugin": {
         yield* stillChecked(yield* plugins.pluginRepos(message.pluginId))
-        const { repos } = yield* plugins.editPlugin(message.pluginId, message, you.id)
+        const change = yield* plugins.editPlugin(message.pluginId, message, you.id)
         asked.add(peer)
         yield* answer
         yield* toOthers(peer)
-        return yield* changed(repos)
+        return yield* changed(change)
       }
 
       case "DeletePlugin":
-        yield* plugins.deletePlugin(message.pluginId)
+        yield* plugins.deletePlugin(message.pluginId, you.id)
         asked.add(peer)
         yield* answer
         return yield* toOthers(peer)
@@ -386,34 +424,48 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
           })
         }
         yield* stillChecked(yield* plugins.pluginRepos(message.pluginId))
-        const { repos } = yield* plugins.upgradePlugin(kept.read, you.id)
+        const change = yield* plugins.upgradePlugin(kept.read, you.id)
         reads.delete(message.readId)
         asked.add(peer)
         yield* answer
         yield* toOthers(peer)
-        return yield* changed(repos)
+        return yield* changed(change)
       }
 
       case "CreateInstallation": {
-        const { repos } = yield* plugins.createInstallation(message, you.id)
+        const change = yield* plugins.createInstallation(message, you.id)
         asked.add(peer)
         yield* answer
         yield* toOthers(peer)
-        return yield* changed(repos)
+        return yield* changed(change)
       }
 
       case "EditInstallation":
       case "DeleteInstallation": {
         const before = yield* plugins.installation(message.installationId)
         if (Option.isSome(before)) yield* stillChecked(before.value.repos)
-        const { repos } =
+        const change =
           message._tag === "EditInstallation"
             ? yield* plugins.editInstallation(message.installationId, message, you.id)
             : yield* plugins.deleteInstallation(message.installationId, you.id)
         asked.add(peer)
         yield* answer
         yield* toOthers(peer)
-        return yield* changed(repos)
+        return yield* changed(change)
+      }
+
+      // Anyone with access to the Repo turns a global Installation off for it, or back on (#219).
+      case "TurnGlobalInstallation": {
+        const change = yield* plugins.turnGlobalInstallation(
+          message.installationId,
+          message.repo,
+          message.on,
+          you.id,
+        )
+        asked.add(peer)
+        yield* answer
+        yield* toOthers(peer)
+        return yield* changed(change)
       }
     }
   })
@@ -429,14 +481,16 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
       const command: StoreCommand =
         message._tag === "CreateInstallation" || message._tag === "EditInstallation"
           ? { ...message, repos: yield* Effect.forEach(message.repos, host.respell) }
-          : message
+          : message._tag === "TurnGlobalInstallation"
+            ? { ...message, repo: yield* host.respell(message.repo) }
+            : message
       const repos = yield* reposOf(command)
       // GetPlugins also asks about every Repo listed that the person's access to isn't known, to
       // show them those they have access to.
       const unknown =
         command._tag === "GetPlugins"
           ? (yield* plugins.list).installations
-              .flatMap((installation) => installation.repos)
+              .flatMap((installation) => [...installation.repos, ...(installation.off ?? [])])
               .filter((repo) => client.repos.get(repo) === undefined)
           : []
       const named = yield* ask(you, repos.named)

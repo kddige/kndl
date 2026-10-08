@@ -7,7 +7,9 @@
 //   a live token is answered `401`.
 // - The Installation must be one the Session started with, and still on for its Repo; any other is
 //   answered `403`, alike whether it exists or not. One removed from the Repo stops at once; one
-//   added waits for the Session's next wake or Restart.
+//   added waits for the Session's next wake or Restart. A global one (#219) is on for the Repo
+//   unless the Repo turned it off or a Repo-scoped Installation of its Plugin takes its place there:
+//   either stops it at once too.
 // - The request goes to the Plugin's URL as it is now, so an edit to it reaches running Sessions
 //   at once. Its body and the answer's stream both ways untouched: Streamable HTTP's server-sent
 //   events, compression and all. The Session token, cookies and hop-by-hop headers stay behind;

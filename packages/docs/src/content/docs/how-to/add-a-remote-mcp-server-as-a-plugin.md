@@ -1,11 +1,11 @@
 ---
 title: Add a remote MCP server as a Plugin
-description: Add a remote MCP server to the Hub as a Plugin, give it the keys it needs as header secrets, turn it on for Repos with an Installation, and call its tools from a Session.
+description: Add a remote MCP server to the Hub as a Plugin, give it the keys it needs as header secrets, turn it on for Repos, or every Repo, with an Installation, and call its tools from a Session.
 sidebar:
   order: 10
 ---
 
-A [Plugin](/reference/glossary/#plugin) is a remote MCP server the Hub can add to Sessions. An [Installation](/reference/glossary/#installation) turns a Plugin on for the Repos it lists, and Claude Code in each Session on those Repos gets its MCP server. Claude Code reaches the server through the Hub's [Gateway](/reference/glossary/#gateway), never directly. At the end of this page, Claude in a Session calls a tool of your MCP server.
+A [Plugin](/reference/glossary/#plugin) is a remote MCP server the Hub can add to Sessions. An [Installation](/reference/glossary/#installation) turns a Plugin on for the Repos it lists, or for every Repo, and Claude Code in each Session on those Repos gets its MCP server. Claude Code reaches the server through the Hub's [Gateway](/reference/glossary/#gateway), never directly. At the end of this page, Claude in a Session calls a tool of your MCP server.
 
 ## Before you start
 
@@ -55,6 +55,28 @@ A Repo has at most one Installation of each Plugin. A second one is refused, nam
 
 An Installation on in a Repo you have no access to shows `and 1 Repo you have no access to`, and only someone with access to all its Repos can change or delete it.
 
+## Turn it on for every Repo
+
+The Hub's [Owner](/reference/glossary/#owner) can make an Installation global: on in every Repo on the Hub, existing and new, without listing them. Every Sandbox on the Hub can then use its credentials, so only the Owner can create, edit or delete a global Installation, or edit, upgrade or delete its Plugin. Anyone else is refused: `Only the Hub's Owner can create, edit or delete a global Installation: every Sandbox on the Hub can use it.`
+
+1. On the Plugin, press **Install**, or press **Edit** on an Installation of it.
+2. Check **Global**: on in every Repo. The **Repos** field goes, as a global Installation lists none.
+3. Enter the values and press **Add**, or **Save**.
+
+The Installation shows **Global** and `On in every Repo`. A Plugin has at most one global Installation. To make it Repo-scoped again, edit it, uncheck **Global** and list its Repos.
+
+A Repo can still have its own Installation of the Plugin, such as one with the team's own key: anyone with access to the Repo creates it as usual, and on that Repo it takes the global one's place. A Repo still has at most one Installation of each Plugin it lists.
+
+### Turn a global Installation off for a Repo
+
+Anyone with access to a Repo can turn a global Installation off for it, and back on, without the Owner:
+
+1. Open the Repo's page.
+2. Under **Plugins**, press **Turn off for this Repo** beside the Installation. It shows **Off**.
+3. To turn it on again, press **Turn back on**.
+
+Each is logged in that Repo's change log. Sessions on the Repo pick it up on their next wake or **Restart**; the Gateway stops a running Session's requests to it at once.
+
 ### Header secret values
 
 A value is write-only, like a [Sensitive variable](/how-to/use-variables-and-secrets/)'s. The Hub encrypts it with `HUB_SECRETS_KEY` and never sends it back: the Plugin shows, for each header secret of an Installation, who set its value and when, or **needs a value**. To replace one, press **Edit** on the Installation and type the new value; a field left empty keeps the value it has. A value must be one line of plain characters, at least 4 long, so it can be redacted from output.
@@ -89,6 +111,7 @@ It shows **This Session can't start**, with each Installation and why. Prompts s
 
 - **Fix** opens it on the **Plugins** page: enter the value, then save.
 - **Take owner/name off Docs** takes the Session's Repo off the Installation and wakes the Session. It shows only for someone who can change the Installation: with access to every Repo it lists. If the Session's Repo is the only one, that deletes the Installation, so it asks first.
+- For a global Installation, **Turn it off for owner/name** turns it off for the Session's Repo and wakes the Session. Anyone in the Session can. Only the Owner can **Fix** it: the others see `It is global: only the Hub's Owner can fix it.`
 
 Then press **Retry**, or send a prompt: the Session is checked again as it wakes.
 
@@ -100,7 +123,7 @@ No message, in the Session or in the Hub's log, holds a header secret's value.
 
 ## See who changed what
 
-A Repo's page lists the Installations on for it under **Plugins**, and its **Change log**: who created, edited, added or removed an Installation there, who set its header secret values, and when an edit to the Plugin cleared them. The log names the header secrets by title, never their values. A change to Installations makes no new version of the Repo's [Environment](/how-to/set-up-an-environment/).
+A Repo's page lists the Installations for it under **Plugins**, each saying where it comes from: listing the Repo, **Global**, **Overridden** by the Repo's own Installation of its Plugin, or **Off** for the Repo. Below is its **Change log**: who created, edited, added or removed an Installation there, who set its header secret values, and when an edit to the Plugin cleared them. A change to a global Installation is in every Repo's log, a Repo new to the Hub's too, as `a global Installation`; turning it off or on is in that Repo's log alone. The log names the header secrets by title, never their values. A change to Installations makes no new version of the Repo's [Environment](/how-to/set-up-an-environment/).
 
 ## Delete it
 
