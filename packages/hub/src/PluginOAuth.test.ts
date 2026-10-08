@@ -4,11 +4,20 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { globalConnectRefusal } from "@kndl/protocol"
-import { Effect, Option, Redacted } from "effect"
+import {
+  globalConnectRefusal,
+  InstallationId,
+  OAuthConnectTtlMs,
+  ParticipantId,
+} from "@kndl/protocol"
+import { Effect, Layer, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
+import { TestClock } from "effect/testing"
+import { DatabaseTest } from "./Database.ts"
+import { MaxOAuthRequestBytes } from "./GatewayRoutes.ts"
+import { HubConfig } from "./HubConfig.ts"
 import { OAuthCallbackPath, PluginOAuth } from "./PluginOAuth.ts"
-import { generateSecretsKey } from "./Secrets.ts"
+import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import {
   type Connection,
   issueRunnerToken,
@@ -18,7 +27,14 @@ import {
   type ToRunner,
   type Web,
 } from "./testChannels.ts"
-import { bearer, seedEnvironment, startHub, type TestHub, webOrigin } from "./testSupport.ts"
+import {
+  baseConfig,
+  bearer,
+  seedEnvironment,
+  startHub,
+  type TestHub,
+  webOrigin,
+} from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -44,6 +60,14 @@ const as = {
   refreshDelay: 0,
   /** Every refresh is answered invalid_grant, as a revoked grant is. */
   revoked: false,
+  /** Fields put over the authorization server's metadata. */
+  metadata: {} as Record<string, unknown>,
+  /** The authorization servers the MCP server names, if not the stand-in. */
+  servers: undefined as ReadonlyArray<string> | undefined,
+  /** The paths answered with a redirect to the same path under `/elsewhere`. */
+  redirecting: new Set<string>(),
+  /** Each path under `/elsewhere` asked for: none, as no redirect is followed. */
+  elsewhere: [] as Array<string>,
 }
 
 /** What the MCP server was sent: each request's path and Authorization. */
@@ -78,6 +102,13 @@ beforeAll(() => {
     port: 0,
     async fetch(request) {
       const url = new URL(request.url)
+      if (as.redirecting.has(url.pathname)) {
+        return Response.redirect(`${origin()}/elsewhere${url.pathname}`, 302)
+      }
+      if (url.pathname.startsWith("/elsewhere/")) {
+        as.elsewhere.push(url.pathname)
+        return new Response(null, { status: 404 })
+      }
       switch (url.pathname) {
         case "/mcp": {
           const authorization = request.headers.get("authorization")
@@ -103,7 +134,7 @@ beforeAll(() => {
         case "/.well-known/oauth-protected-resource/mcp":
           return Response.json({
             resource: mcpUrl(),
-            authorization_servers: [issuer()],
+            authorization_servers: as.servers ?? [issuer()],
             scopes_supported: ["read", "write"],
           })
         case "/.well-known/oauth-authorization-server/as":
@@ -115,6 +146,7 @@ beforeAll(() => {
             code_challenge_methods_supported: ["S256"],
             token_endpoint_auth_methods_supported: ["client_secret_basic"],
             authorization_response_iss_parameter_supported: true,
+            ...as.metadata,
           })
         case "/as/register": {
           as.registered.push((await request.json()) as Record<string, unknown>)
@@ -169,6 +201,10 @@ afterEach(() => {
   as.expiresIn = 3600
   as.refreshDelay = 0
   as.revoked = false
+  as.metadata = {}
+  as.servers = undefined
+  as.redirecting.clear()
+  as.elsewhere.length = 0
   mcpSeen.length = 0
 })
 
@@ -471,6 +507,148 @@ describe("connecting an OAuth Installation", () => {
     expect(as.issued).toBe(0)
   })
 
+  test("takes a state only within 10 minutes of its beginning", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const oauth = yield* PluginOAuth
+        const by = ParticipantId.make("dev:alice")
+        const begin = () =>
+          oauth
+            .begin({
+              installationId: InstallationId.make("i-clock"),
+              url: mcpUrl(),
+              basis: "basis",
+              global: false,
+              repos: [repo],
+              by,
+            })
+            .pipe(Effect.map((url) => new URL(url).searchParams.get("state") ?? ""))
+        const claimOf = (begun: string) =>
+          oauth.claim(begun, by).pipe(
+            Effect.match({
+              onFailure: (refused) => refused.message,
+              onSuccess: () => "claimed",
+            }),
+          )
+
+        const onTime = yield* begin()
+        yield* TestClock.adjust(OAuthConnectTtlMs)
+        expect(yield* claimOf(onTime)).toBe("claimed")
+
+        const late = yield* begin()
+        yield* TestClock.adjust(OAuthConnectTtlMs + 1)
+        expect(yield* claimOf(late)).toBe(
+          "That connection expired or came from elsewhere: connect again.",
+        )
+        // Begun again, it is a new state, on time.
+        const again = yield* begin()
+        expect(again).not.toBe(late)
+        expect(yield* claimOf(again)).toBe("claimed")
+      }).pipe(
+        Effect.provide(
+          PluginOAuth.layer.pipe(
+            Layer.provideMerge(Secrets.layer),
+            Layer.provideMerge(
+              Layer.merge(
+                DatabaseTest,
+                HubConfig.layerFrom({
+                  ...baseConfig,
+                  secretsKey: Option.some(Redacted.make(generateSecretsKey())),
+                }),
+              ),
+            ),
+          ),
+        ),
+        Effect.provide(TestClock.layer()),
+      ),
+    ))
+
+  test("follows no redirect from the MCP server's metadata or its authorization server", async () => {
+    const { hub, web } = await scene()
+    const { installationId } = await install(web)
+    const refusal = async () => {
+      const answer = await ask(web, { _tag: "ConnectInstallation", installationId })
+      if (answer._tag !== "CommandFailed") throw new Error(JSON.stringify(answer))
+      return answer.message
+    }
+
+    // The Protected Resource Metadata, then the authorization server's: neither is found.
+    as.redirecting.add("/.well-known/oauth-protected-resource/mcp")
+    expect(await refusal()).toBe(
+      `The Hub found no OAuth metadata for the authorization server ${origin()}.`,
+    )
+    as.redirecting.clear()
+    as.redirecting.add("/.well-known/oauth-authorization-server/as")
+    expect(await refusal()).toBe(
+      `The Hub found no OAuth metadata for the authorization server ${issuer()}.`,
+    )
+    // Dynamic Client Registration.
+    as.redirecting.clear()
+    as.redirecting.add("/as/register")
+    expect(await refusal()).toBe(
+      `The authorization server ${issuer()} refused to register the Hub (302).`,
+    )
+    expect(as.registered).toEqual([])
+    // The token endpoint, trading the code.
+    as.redirecting.clear()
+    const begun = await authorize(web, installationId)
+    as.redirecting.add("/as/token")
+    const back = await callback(hub, web.cookie, {
+      code: begun.code,
+      state: begun.state,
+      iss: issuer(),
+    })
+    expect(back.searchParams.get("connectError")).toBe(
+      "The authorization server answered 302, without tokens the Hub can use.",
+    )
+
+    expect(as.elsewhere).toEqual([])
+    expect(as.issued).toBe(0)
+    expect((await installationOf(web, installationId))?.connection).toBeUndefined()
+  })
+
+  test("is refused for a server, authorization server or endpoint not on https", async () => {
+    const { web } = await scene()
+    const { pluginId, installationId } = await install(web)
+    const refusal = async () => {
+      const answer = await ask(web, { _tag: "ConnectInstallation", installationId })
+      if (answer._tag !== "CommandFailed") throw new Error(JSON.stringify(answer))
+      return answer.message
+    }
+    // Loopback is the stand-in's; any other host must be on https. None of these is asked.
+    const away = "http://auth.example.test"
+
+    as.servers = [`${away}/as`]
+    expect(await refusal()).toBe("The MCP server names no authorization server the Hub can reach.")
+    as.servers = undefined
+
+    for (const endpoint of ["authorization_endpoint", "token_endpoint"]) {
+      as.metadata = { [endpoint]: `${away}/as/${endpoint}` }
+      expect(await refusal()).toBe(
+        `The authorization server ${issuer()} lists no authorization or token endpoint on https.`,
+      )
+    }
+    as.metadata = { registration_endpoint: `${away}/as/register` }
+    expect(await refusal()).toBe(
+      `The authorization server ${issuer()} lists no registration endpoint on https.`,
+    )
+    expect(as.registered).toEqual([])
+    as.metadata = {}
+
+    // Nor the MCP server itself, though a header secret Plugin may be on http.
+    state(
+      await ask(web, {
+        _tag: "EditPlugin",
+        pluginId,
+        name: "Tracker",
+        url: "http://mcp.example.test/mcp",
+        auth: { _tag: "OAuth" },
+      }),
+    )
+    expect(await refusal()).toBe("The Hub connects only to an MCP server on https.")
+    expect(as.issued).toBe(0)
+  })
+
   test("is refused for a Plugin that doesn't use OAuth, or changed meanwhile", async () => {
     const { hub, web } = await scene()
     const { pluginId, installationId } = await install(web)
@@ -693,6 +871,47 @@ describe("an OAuth Installation's tokens", () => {
     })
     expectNoSecretIn(lost)
     expectNoSecretIn(web.texts.join("\n"))
+  })
+
+  test("go with a request the Gateway holds no more than 4 MiB of", async () => {
+    const { hub, runner, web } = await scene()
+    const { installationId } = await install(web)
+    await connect(hub, web, installationId)
+    const start = await startSession(web, runner)
+    const sent = mcpSeen.length
+    const tooLarge = `The request's body is larger than 4 MiB, the most the Gateway takes for an OAuth Installation.`
+
+    // Saying its length.
+    const said = await through(hub, installationId, start.modToken, {
+      body: "x".repeat(MaxOAuthRequestBytes + 1),
+    })
+    expect(said.status).toBe(413)
+    expect(await said.json()).toEqual({ error: tooLarge })
+
+    // In chunks, without saying: refused once past the limit, the rest never read.
+    let pulled = 0
+    const chunk = new Uint8Array(1024 * 1024)
+    const chunked = await through(hub, installationId, start.modToken, {
+      body: new ReadableStream<Uint8Array>({
+        pull(controller) {
+          // Far more than the limit, were it all read.
+          if (++pulled > 64) controller.close()
+          else controller.enqueue(chunk)
+        },
+      }),
+      duplex: "half",
+    } as RequestInit)
+    expect(chunked.status).toBe(413)
+    expect(await chunked.json()).toEqual({ error: tooLarge })
+    expect(pulled).toBeLessThan(64)
+    expect(mcpSeen).toHaveLength(sent)
+
+    // At the limit, it goes.
+    const atLimit = await through(hub, installationId, start.modToken, {
+      body: "x".repeat(MaxOAuthRequestBytes),
+    })
+    expect(atLimit.status).toBe(200)
+    expect(mcpSeen).toHaveLength(sent + 1)
   })
 
   test("are refreshed once at a time, and the rotated refresh token is kept", async () => {

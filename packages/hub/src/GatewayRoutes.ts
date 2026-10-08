@@ -27,6 +27,7 @@
 //   `409`, and noted in the Session; one whose token expired and couldn't be refreshed just now,
 //   `503`. A `401` from its server has the token refreshed and the request sent once more; then
 //   it is answered `502`, or `409` once the connection is lost.
+//   Its request's body is held, to be sent again: one over MaxOAuthRequestBytes is answered `413`.
 // - Claude Code never runs OAuth against the Gateway: no answer carries `WWW-Authenticate`, an
 //   OAuth Installation's 401 isn't passed on, and nothing under `/gateway/<id>/`, such as
 //   `/.well-known/oauth-protected-resource`, reaches a server: it is answered `404`.
@@ -41,7 +42,7 @@ import {
 import { Clock, Effect, Option } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
-import { forward, type ReadyTarget } from "./Gateway.ts"
+import { forward, type ReadyTarget, readAtMost } from "./Gateway.ts"
 import { PluginOAuth } from "./PluginOAuth.ts"
 import { type GatewayTarget, Plugins } from "./Plugins.ts"
 import type { SecretsUnavailable } from "./Secrets.ts"
@@ -54,6 +55,15 @@ const errorResponse = (status: number, error: string) =>
 /** What an OAuth Installation's server refusing its account is answered with (#217). */
 const oauthRefusal =
   "The Plugin's MCP server refused the Installation's account: reconnect it on the Plugins page."
+
+/**
+ * The most the Gateway holds of an OAuth Installation's request body (#217), to send it again once
+ * its token is refreshed. MCP's JSON-RPC messages are far smaller; a Sandbox sending a larger one
+ * mustn't make the Hub hold it all.
+ */
+export const MaxOAuthRequestBytes = 4 * 1024 * 1024
+
+const tooLarge = `The request's body is larger than ${MaxOAuthRequestBytes / 1024 / 1024} MiB, the most the Gateway takes for an OAuth Installation.`
 
 /** Lets an answer's body go unread. */
 const discard = (response: Response) =>
@@ -201,13 +211,24 @@ export const GatewayRoutes = HttpRouter.use(
         const incoming = yield* HttpServerRequest.toWeb(request)
         const headers = kept(incoming.headers, heldRequestHeaders)
         // An OAuth Installation's request is sent again once its token is refused and refreshed
-        // (#217): its body is read first. MCP's requests are small JSON-RPC messages.
+        // (#217): its body is read first, up to MaxOAuthRequestBytes, whether it says its length
+        // or comes in chunks. MCP's requests are small JSON-RPC messages.
         let body: RequestInit["body"] = incoming.body
         if (ready.oauth !== undefined && incoming.body !== null) {
-          const read = yield* Effect.tryPromise(() => incoming.arrayBuffer()).pipe(Effect.option)
+          if (Number(incoming.headers.get("content-length")) > MaxOAuthRequestBytes) {
+            yield* done(413)
+            return errorResponse(413, tooLarge)
+          }
+          const read = yield* Effect.tryPromise(() =>
+            readAtMost(incoming.body, MaxOAuthRequestBytes),
+          ).pipe(Effect.option)
           if (Option.isNone(read)) {
             yield* done(400)
             return errorResponse(400, "The request's body could not be read.")
+          }
+          if (read.value === undefined) {
+            yield* done(413)
+            return errorResponse(413, tooLarge)
           }
           body = read.value
         }

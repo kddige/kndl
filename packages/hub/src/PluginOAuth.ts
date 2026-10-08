@@ -42,6 +42,7 @@ import {
 } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
+import { readAtMost } from "./Gateway.ts"
 import { HubConfig, isLoopback } from "./HubConfig.ts"
 import { Secrets, type SecretsUnavailable } from "./Secrets.ts"
 import { randomSecret } from "./Tokens.ts"
@@ -60,7 +61,7 @@ export const OAuthCallbackPath = "/auth/plugins/callback"
 /** How long each fetch to an MCP or authorization server may take. */
 const fetchTimeoutMs = 15_000
 
-/** The most of an answer read, in characters: metadata and tokens are small. */
+/** The most of an answer read, in bytes: metadata and tokens are small. A longer one is none. */
 const maxAnswer = 256 * 1024
 
 /** A token is refreshed this long before it expires, so none is sent as it does. */
@@ -166,7 +167,16 @@ export const connectionBasis = (plugin: { readonly url: string; readonly auth: P
 
 // ── Fetching ────────────────────────────────────────────────────────────────
 
-/** Whether the Hub may fetch the URL here: https, or http to a loopback host; no credentials. */
+/**
+ * Whether the Hub may fetch the URL here: https, or http to a loopback host; no credentials.
+ *
+ * Loopback http is allowed in production too, not only in development: an MCP server, or its
+ * authorization server, may run beside the Hub on its own machine. What is sent to one (a code,
+ * the client's secret, a token) never leaves that machine, so there is no network to read it on,
+ * and a Plugin's URL may be http already. Only a literal loopback address or `localhost` counts,
+ * never a name that resolves to one, so a remote server can't pass as loopback. The browser's way
+ * back is the Hub's own HUB_PUBLIC_URL, which this doesn't touch.
+ */
 const fetchable = (text: unknown): text is string => {
   if (typeof text !== "string") return false
   try {
@@ -193,8 +203,9 @@ const call = (url: string, init: RequestInit) =>
         redirect: "manual",
         signal: AbortSignal.any([signal, AbortSignal.timeout(fetchTimeoutMs)]),
       })
-      const text = await response.text()
-      return { status: response.status, headers: response.headers, text: text.slice(0, maxAnswer) }
+      const bytes = await readAtMost(response.body, maxAnswer)
+      const text = bytes === undefined ? "" : new TextDecoder().decode(bytes)
+      return { status: response.status, headers: response.headers, text }
     },
     catch: () => new OAuthRefused({ message: `The Hub couldn't reach ${new URL(url).host}.` }),
   })
@@ -558,6 +569,11 @@ export class PluginOAuth extends Context.Service<
         >,
       ) {
         const registration = metadata["registration_endpoint"]
+        if (typeof registration === "string" && !fetchable(registration)) {
+          return yield* refuse(
+            `The authorization server ${issuer} lists no registration endpoint on https.`,
+          )
+        }
         if (!fetchable(registration)) {
           return yield* refuse(
             `The authorization server ${issuer} doesn't offer Dynamic Client Registration, which the Hub needs to connect.`,
