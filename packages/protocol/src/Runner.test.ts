@@ -113,6 +113,7 @@ const runnerToHub = [
     models: runnerModels,
     relaunches: true,
     forwardsPorts: true,
+    relaysPlugins: true,
   },
   { _tag: "TunnelFailed", tunnelId: "t-1", message: "Nothing listens on port 3000" },
 ]
@@ -149,6 +150,18 @@ const hubToRunner = [
     baseBranch: "main",
     workBranch: "claude/s-2",
     modToken: "mod-token",
+  },
+  {
+    _tag: "StartSession",
+    sessionId: "s-3",
+    repo: "kddige/kndl",
+    baseBranch: "main",
+    workBranch: "claude/s-3",
+    modToken: "mod-token",
+    plugins: [
+      { installationId: "in-1", server: "docs" },
+      { installationId: "in-2", server: "docs-2" },
+    ],
   },
   { _tag: "StopSession", sessionId: "s-1", reason: "Sleep" },
   { _tag: "StopSession", sessionId: "s-1", reason: "Archive" },
