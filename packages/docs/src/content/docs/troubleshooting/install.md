@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Start with `kndl doctor`. It checks the install, the settings, the services and the Hub's health, prints `ok`, `!!` (a warning) or `XX` (a failure) for each with what to do, and `kndl doctor --fix` repairs what it can. A service's own log is `kndl logs hub` or `kndl logs runner`.
+Start with `kndl doctor`. It prints `ok`, `!!` (a warning) or `XX` (a failure) for the install, the settings, the services and the Hub's health, with what to do. `kndl doctor --fix` repairs what it can. A service's log is `kndl logs hub` or `kndl logs runner`.
 
 ## install.sh can't clone
 
@@ -15,9 +15,9 @@ Start with `kndl doctor`. It checks the install, the settings, the services and 
 kndl install: Could not clone kddige/kndl: it's private, so install gh and run  gh auth login  first.
 ```
 
-**Why.** The repository is private. install.sh clones with the GitHub CLI's sign-in when `gh` is signed in, and otherwise with plain `git`, which has no access.
+**Why.** The repository is private, and install.sh can only clone it with the GitHub CLI's sign-in.
 
-**Fix.** Install the [GitHub CLI](https://cli.github.com), run `gh auth login` with an account that can read the repository, and run the installer again. The install keeps using `gh`'s sign-in to fetch updates.
+**Fix.** Install the [GitHub CLI](https://cli.github.com), run `gh auth login` with an account that can read the repository, and run the installer again.
 
 ## `kndl: command not found`
 
@@ -27,7 +27,7 @@ kndl install: Could not clone kddige/kndl: it's private, so install gh and run  
 !!  kndl command    ~/.local/bin/kndl isn't what `kndl` runs: put its directory first on PATH.
 ```
 
-**Why.** install.sh writes the command to `~/.local/bin` and adds that to `PATH` in your shell's startup file (`~/.zshrc`, `~/.bashrc` or `~/.profile`), which only shells started afterwards read. Or another `kndl` comes first on `PATH`.
+**Why.** install.sh adds `~/.local/bin` to `PATH` in your shell's startup file, which only new shells read. Or another `kndl` comes first on `PATH`.
 
 **Fix.** Open a new terminal, or run `export PATH="$HOME/.local/bin:$PATH"`. If another `kndl` comes first, remove it or put `~/.local/bin` before it.
 
@@ -35,50 +35,9 @@ kndl install: Could not clone kddige/kndl: it's private, so install gh and run  
 
 **What you see.** `status`, `doctor`, `update` or `onboard` says there's no install in the home, and exits 1.
 
-**Why.** The CLI manages one home: `KNDL_HOME`, or else `~/.kndl`. That home has no `app/` checkout. It never manages a checkout's dev home, `~/.kndl-dev`, even when run from a checkout with `bun run cli`.
+**Why.** The CLI manages one home, `KNDL_HOME` or else `~/.kndl`, and that home has no `app/` checkout. It never manages a checkout's `~/.kndl-dev`.
 
 **Fix.** Install with [install.sh](/how-to/install/#install), or set `KNDL_HOME` to the home you installed into.
-
-## The install is still claude-hub's
-
-**What you see.** `kndl` isn't found, or says:
-
-```
-The install in /Users/ada/.claude-hub is still under kndl's former name, claude-hub. Move it to kndl's names with `claude-hub update`, then use `kndl`.
-```
-
-**Why.** kndl was called claude-hub, and an install made under that name moves to kndl's names with its next update.
-
-**Fix.** Run `claude-hub update`. If it has no services, run it a second time. See [From claude-hub](/how-to/install/#from-claude-hub).
-
-## The move from claude-hub leaves both homes alone
-
-**What you see.** The update says:
-
-```
-claude-hub is now kndl, but its install in /Users/ada/.claude-hub can't move to /Users/ada/.kndl, which is in use. …
-```
-
-and the Hub and Runner aren't running.
-
-**Why.** Both homes hold something, and the move never merges two homes or deletes either.
-
-**Fix.** Look at what `~/.kndl` holds. Move whichever you don't want away, or set `KNDL_HOME` to the one to keep, and run `claude-hub update` again.
-
-## Sandboxes of the old name are left
-
-**What you see.** After the move from claude-hub, `bun x msb list`, run in `~/.kndl/app/packages/runner`, lists stopped Sandboxes named `claude-hub-<session>`, and `bun x msb volume list` their volumes, named `claude-hub-<session>.<what it holds>`. The move listed them at the end.
-
-**Why.** The move stopped the Sessions' Sandboxes under the old name, and kept them and their volumes rather than delete anything. Woken Sessions get new Sandboxes, named `kndl-<session>`, and Claude Code in them starts afresh with the conversation from the Hub's history. Environments' snapshots are rebuilt under the new name the same way.
-
-**Fix.** Once you no longer need them, remove each Sandbox and then its volumes, in `~/.kndl/app/packages/runner`:
-
-```sh
-bun x msb remove claude-hub-<session>
-bun x msb volume remove claude-hub-<session>.<what it holds>
-```
-
-If the move couldn't list them, it said so. A Sandbox of the old name still running then keeps running: stop it with `bun x msb stop claude-hub-<session>` first.
 
 ## Onboard needs a flag
 
@@ -88,28 +47,9 @@ If the move couldn't list them, it said so. A Sandbox of the old name still runn
 onboard can't ask, so it needs --role hub|runner|both.
 ```
 
-**Why.** Onboard never asks without a terminal, or with `--non-interactive`, and nothing else answered this question: no flag, and nothing in `hub.env` or `runner.env`.
+**Why.** Without a terminal, or with `--non-interactive`, onboard never asks, and no flag or env file answered this question.
 
 **Fix.** Give the flag it names, or run onboard in a terminal. Every flag is in [Commands](/reference/commands/#kndl-onboard).
-
-## The home holds old kndl data
-
-**What you see.** Onboard stops before it writes anything:
-
-```
-/Users/ada/.kndl holds kndl data that wasn't set up here by `kndl onboard`: sessions, claude-code, with no runner.env. It is likely a checkout's, from before checkouts kept theirs in ~/.kndl-dev. …
-```
-
-and `kndl doctor` warns `!!  Old data`.
-
-**Why.** Before checkouts got the dev home `~/.kndl-dev`, a checkout's Runner kept its Session Workspaces in the installed home's `sessions` and used the installed Runner's tmux socket: exactly what an installed Runner uses. A Runner installed over that data would carry the old Runner's mark, so it would take over the old Sessions' Sandboxes, while its new Hub database knows none of those Sessions. A Hub's `hub.db` without `hub.env` is old data in the same way. Once onboard has written a role's env file, that role's data is the install's own, and none of this applies.
-
-**Fix.** Choose one:
-
-- **Move it aside.** In a terminal, onboard offers it and asks you to confirm; `kndl onboard --move-old-data` does it without asking, and `kndl doctor --fix` asks before it does. Each entry is renamed within the home, `sessions` to `sessions.old-<YYYYMMDD>` and `claude-code` to `claude-code.old-<YYYYMMDD>`; nothing is deleted. Delete them yourself once you're sure you don't need those Sessions' work.
-- **Install somewhere else.** Set `KNDL_HOME` to another directory, and install and onboard there.
-
-Other files in the home, such as a `github-app.pem`, stay where they are.
 
 ## Onboard can't create the GitHub App
 
@@ -119,35 +59,35 @@ Other files in the home, such as a `github-app.pem`, stay where they are.
 - After creating the App on GitHub, the page GitHub sends you back to doesn't load, and onboard keeps waiting.
 - Onboard says `GitHub didn't hand over the new App's credentials: …`.
 
-**Why.** The page is served on the Hub's machine, on `127.0.0.1` only. A browser on another machine, such as yours when onboard runs over SSH, can't reach it without a tunnel. GitHub's code for the App's credentials works once, and expires after an hour.
+**Why.** The page is served on the Hub's machine, on `127.0.0.1` only, so a browser on another machine can't reach it without a tunnel. GitHub's code for the App's credentials works once, for an hour.
 
 **Fix.**
 
-- **Over SSH**, forward the port onboard names from your own machine (`ssh -L 41234:127.0.0.1:41234 hub-box`) and reload the page.
+- **Over SSH**, forward the port from your own machine (`ssh -L 41234:127.0.0.1:41234 hub-box`) and reload the page.
 - **Stuck after GitHub**, copy the address the browser was sent back to, with `code=` in it, and paste it at onboard's prompt.
-- **The code was used or expired**, the App exists on GitHub without its settings saved. Either delete it (its settings, **Advanced**, **Delete GitHub App**) and run `kndl onboard --github-app create` again; or generate a client secret and a private key in its settings, and run `kndl onboard --github-app manual`.
+- **The code was used or expired**: the App exists on GitHub without its settings saved. Delete it (its settings, **Advanced**, **Delete GitHub App**) and run `kndl onboard --github-app create` again; or generate a client secret and a private key in its settings and run `kndl onboard --github-app manual`.
 
 ## A service won't stay up
 
 **What you see.** `kndl status` or `doctor` shows the Hub's or Runner's service as not running, or `XX  Hub service … its log: kndl logs hub`.
 
-**Why.** The Hub or Runner exits, and its service starts it again a few seconds later, and again. The reason is at the end of its log, as it would be in a terminal: a setting it refuses, a port in use, a mod that isn't built.
+**Why.** The Hub or Runner exits, and its service restarts it, again and again. The reason is at the end of its log.
 
-**Fix.** Read the log with `kndl logs hub` (or `runner`), then find the message on [The Hub](/troubleshooting/hub/) or [Runners](/troubleshooting/runners/). Change the setting in `~/.kndl/hub.env` or `runner.env`, then `kndl hub start` (or `runner start`). `kndl doctor` also checks each env file with the Hub's and Runner's own configuration checks, without starting them.
+**Fix.** Read `kndl logs hub` (or `runner`) and find the message on [The Hub](/troubleshooting/hub/) or [Runners](/troubleshooting/runners/). Change the setting in `~/.kndl/hub.env` or `runner.env`, then run `kndl hub start` (or `runner start`).
 
 ## The services stop when you log out
 
-**What you see.** On Linux, the Hub or Runner is down after you log out or after a reboot, until you log in. doctor warns `Linger: The services stop when you log out, and don't start at boot until you log in.`
+**What you see.** On Linux, the Hub or Runner is down after you log out or reboot, until you log in. doctor warns `Linger: The services stop when you log out, and don't start at boot until you log in.`
 
-**Why.** The services are systemd user units, which run in your user's systemd manager. Without lingering, systemd stops that manager when your last session ends.
+**Why.** The services are systemd user units, and without lingering systemd stops them when your last session ends.
 
-**Fix.** `kndl doctor --fix` runs `loginctl enable-linger` for you, as onboard's `--linger` does.
+**Fix.** `kndl doctor --fix` runs `loginctl enable-linger` for you.
 
 ## The Runner can't use KVM
 
 **What you see.** On Linux, doctor reports `KVM access: <user> can't open /dev/kvm.`, or Sandboxes fail to start right after onboard added you to the `kvm` group.
 
-**Why.** A new group applies only to processes started after it was added. The Runner's service runs in your systemd user manager, which keeps the groups it started with; while the services linger, it keeps running across logins.
+**Why.** A new group applies only to processes started after it was added, and the systemd user manager running the Runner keeps the groups it started with.
 
 **Fix.** Reboot, then run `kndl doctor`. If there's no `/dev/kvm` at all, turn on virtualization (VT-x or AMD-V) in the firmware, or nested virtualization for a VM.
 
@@ -159,7 +99,7 @@ Other files in the home, such as a `github-app.pem`, stay where they are.
 XX  hub.env    ~/.kndl/hub.env is readable by others (mode 644); it holds secrets and should be 600.
 ```
 
-**Why.** `hub.env` holds `HUB_SECRETS_KEY`, and `runner.env` the Runner's token. Onboard writes them as `600`, but an editor or a copy may have changed that.
+**Why.** `hub.env` holds `HUB_SECRETS_KEY`, and `runner.env` the Runner's token. Something changed the mode onboard wrote.
 
 **Fix.** `kndl doctor --fix`, or `chmod 600 ~/.kndl/hub.env`.
 
@@ -171,9 +111,9 @@ XX  hub.env    ~/.kndl/hub.env is readable by others (mode 644); it holds secret
 origin has no branch or tag named v2, and it isn't a commit id.
 ```
 
-**Why.** `kndl update --ref` looks the name up on the install's origin: a branch is followed, a tag or commit pinned.
+**Why.** `kndl update --ref` looks the name up on the install's origin.
 
-**Fix.** Check the name. A commit needs to be on origin already: push it first.
+**Fix.** Check the name. A commit must be pushed to origin first.
 
 ## Update stays where it is
 
@@ -183,9 +123,9 @@ origin has no branch or tag named v2, and it isn't a commit id.
 The install is pinned at 1a2b3c4d5e6f, so update stays there. To follow main again: kndl update --ref main
 ```
 
-**Why.** An install moved to a tag or commit with `--ref` is pinned, so a plain `update` doesn't move it.
+**Why.** `--ref` with a tag or commit pins the install, so a plain `update` doesn't move it.
 
-**Fix.** `kndl update --ref main`, or another branch, to follow it again.
+**Fix.** `kndl update --ref main`, or another branch.
 
 ## Uninstall refuses the home
 
@@ -197,6 +137,6 @@ The home is /, which is never removed.
 /srv/stuff doesn't look like a kndl home: it holds none of app, hub.env, runner.env, hub.db, sessions, claude-code, logs.
 ```
 
-**Why.** Uninstall, and `--purge` most of all, deletes the home's contents. It refuses a home that is `/`, your home directory, or a directory with none of a kndl home's entries, so a wrong `KNDL_HOME` can't delete the wrong thing. Onboard refuses the same homes, since it writes there.
+**Why.** So that a wrong `KNDL_HOME` can't delete the wrong thing, uninstall refuses `/`, your home directory, and a directory with none of a kndl home's entries. Onboard refuses the same homes.
 
 **Fix.** Check `KNDL_HOME`: unset it for `~/.kndl`, or set it to the home you installed into.

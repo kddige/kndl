@@ -8,6 +8,16 @@ The site describes the code on `main`, not other docs. Check every command, flag
 
 - Document what exists. No "coming soon", "lands with #NN" or "today" notes for planned work, and no docs for designs that only have an ADR (Previews). The issue tracker holds plans.
 - A PR that changes behaviour updates the pages that describe it, in the same PR: the how-to, the reference row, the Troubleshooting entry that quotes its message.
+- Describe kndl as it is, never how it got there ([Google: Timeless documentation](https://developers.google.com/style/timeless-documentation)). No upgrade or migration notes, no former names, no "now", "new", "no longer", "existing", "older" or "since #NN", no "Fixed in #NN", and no Troubleshooting entries for states only an old install can reach. kndl is in development: what changed between commits belongs in commit messages and PRs, and the reasons behind a change in an ADR.
+
+## Say less
+
+Every sentence must help the reader do the job or understand the page's subject. Cut the rest.
+
+- One idea per sentence, and short paragraphs. Lead with what most readers need; leave out edge cases most readers never meet, or move them to Troubleshooting.
+- Don't narrate the implementation: say what the reader sees and does, and link to Explanation or an ADR for how it works.
+- Don't hedge, restate the heading, or end a section with a summary of it.
+- Say a thing once. If two pages explain the same behaviour, keep it in one and link from the other.
 
 ## Where a page goes
 
@@ -106,6 +116,7 @@ The docs pages use the palette "Paper", in `packages/docs/src/styles/theme.css`:
 
 - [Diátaxis](https://diataxis.fr): [how-to guides](https://diataxis.fr/how-to-guides/), [reference](https://diataxis.fr/reference/).
 - [Google developer documentation style guide](https://developers.google.com/style): [highlights](https://developers.google.com/style/highlights), [procedures](https://developers.google.com/style/procedures), [code in text](https://developers.google.com/style/code-in-text).
+- [Google: Timeless documentation](https://developers.google.com/style/timeless-documentation).
 - [Write the Docs: documentation principles](https://www.writethedocs.org/guide/writing/docs-principles/).
 - Comparable self-hosted tools: [Immich's quick start](https://docs.immich.app/overview/quick-start) (requirements first, one path, "where to go from here"), [Caddy's directive reference](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) (one shape per directive, defaults stated in place), [Tailscale's KB](https://tailscale.com/kb/1312/serve) (prerequisites up front, limitations in their own section).
 - [Starlight's sidebar guide](https://starlight.astro.build/guides/sidebar/).

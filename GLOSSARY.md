@@ -13,7 +13,7 @@ A host machine connected to the Hub that runs Sessions, each on its Creator's Cl
 _Avoid_: worker, agent, node, host
 
 **Claude credential**:
-A person's own Claude subscription token or Anthropic API key, stored write-only and encrypted on the Hub. The Sessions they create, and their subagents, run on it on any Runner, and each Session shows whose account it runs on. A Runner may have one of its own too, kept on its host: a Session whose Creator has none runs on that, and the Runners page shows it by its kind and last four characters, or by the account of Claude Code's login it uses. A Runner needs neither Claude Code nor a credential of its own.
+A person's own Claude subscription token or Anthropic API key, stored write-only and encrypted on the Hub. The Sessions they create run on it, on any Runner. A Runner may have one of its own, kept on its host, for Sessions whose Creator has none; a Runner needs none.
 _Avoid_: login, Runner login, OAuth token, Claude key
 
 **Pairing code**:
@@ -43,15 +43,15 @@ _Avoid_: API key, access token, session cookie
 ## Who gets in
 
 **Member**:
-A person the Hub let in: its Owner, someone who used an Invite, or someone who signed in before the Hub was invite-only. Only a Member can sign in, to the web UI or the CLI. Being one grants no Repo access: that is still GitHub's to decide. Every Participant is a Member, but a Member is a Participant only while in a Session.
+A person the Hub let in: its Owner, or someone who used an Invite. Only a Member can sign in, to the web UI or the CLI. Being one grants no Repo access: that is GitHub's to decide. A Member is a Participant only while in a Session.
 _Avoid_: user, account, Participant (for someone not in a Session)
 
 **Owner**:
-The one Member who decides who gets in: they make Invites, and list and remove Members. A Hub has one Owner, who can't be removed; they have no other rights the other Members lack.
+The one Member who decides who gets in: they make Invites, and list and remove Members. The Owner can't be removed, and has no other rights the other Members lack.
 _Avoid_: admin, operator, Creator
 
 **Setup link**:
-A one-time link, made on the Hub's machine, that a Hub without an Owner lets in with GitHub: whoever signs in with it becomes the Owner. A new one replaces the last, and none is made once the Hub has an Owner.
+A one-time link, made on the Hub's machine, that makes whoever signs in with it the Owner. Only a Hub without an Owner makes one, and a new one replaces the last.
 _Avoid_: bootstrap token, claim link
 
 **Invite**:
@@ -77,7 +77,7 @@ The person who started a Session. It grants no special rights in the Session, bu
 _Avoid_: owner
 
 **Participant**:
-Anyone currently in a Session. All Participants have equal rights, including deleting the Session. Each is a Member of the Hub; "Member" names the person whether or not they are in a Session.
+Anyone currently in a Session. All Participants have equal rights, including deleting the Session. Each is a Member of the Hub.
 _Avoid_: collaborator, viewer, guest
 
 **Contributor**:
@@ -113,7 +113,7 @@ A short-lived GitHub App installation token for one Session's Repo, kept in that
 _Avoid_: GitHub credentials, PAT, git tools
 
 **Repo**:
-A GitHub repository the platform is installed on. Access to a Repo decides who can see and join its Sessions. Its `owner/name` is one Repo however it is spelled, as on GitHub: the Hub keeps the spelling GitHub gives it, and finds a Repo's Sessions, Environment and access by any spelling.
+A GitHub repository that Sessions work on. Access to a Repo decides who can see and join its Sessions. Its `owner/name` is case-insensitive, as on GitHub.
 _Avoid_: project, codebase
 
 ## Environments

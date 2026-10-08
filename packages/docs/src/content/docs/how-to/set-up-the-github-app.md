@@ -10,7 +10,7 @@ One GitHub App does two jobs for the Hub:
 - **Sign-in.** With its client id and secret, people sign in with GitHub.
 - **Tokens.** With its App id and private key, the Hub mints short-lived installation tokens: for Runners to clone Repos, and for `git` and `gh` in each Session's Sandbox ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)).
 
-Without it, use dev login on one machine, and Runners use their host's own git credentials. Sandboxes then get no GitHub token.
+Without it, use dev login on one machine; Runners then clone with their host's own git credentials, and Sandboxes get no GitHub token.
 
 ## Create the App with onboard
 
@@ -22,34 +22,34 @@ kndl onboard --github-app create
 
 Onboard asks whether the App is your own account's or an organization's, then:
 
-1. Serves a page on a free port on `127.0.0.1` and opens it in your browser. The page sends GitHub kndl's manifest: the App's name (`kndl-<machine>`), the Hub's sign-in callback, and [the permissions below](#the-permissions). Nothing is created yet.
+1. Onboard opens a page in your browser that sends GitHub kndl's manifest: the App's name (`kndl-<machine>`), the Hub's sign-in callback, and [the permissions below](#the-permissions).
 2. On GitHub, change the name if you like, and create the App. GitHub sends the browser back to the page.
-3. Onboard trades the code GitHub sent back for the App's settings. It saves the private key as `github-app-<id>.pem` in the home, readable only by you, and the App ID, Client ID and client secret in `hub.env`, with `GITHUB_APP_PRIVATE_KEY_PATH` pointing at the key. It never prints them.
+3. Onboard saves the private key as `github-app-<id>.pem` in the home, and the App's settings in `hub.env`.
 4. It prints the App's install link. [Install the App](#install-the-app) on the Repos Sessions should work on.
 
-Onboard then restarts the Hub as usual, and the sign-in page offers **Sign in with GitHub**. The Hub is invite-only, so onboard ends with its Setup link: open it and sign in with GitHub to become the Hub's Owner, then invite everyone else. See [Let people in](/how-to/let-people-in/).
+The sign-in page then offers **Sign in with GitHub**, and onboard ends with the Hub's Setup link: [become the Owner](/how-to/let-people-in/#become-the-owner) with it.
 
-Onboard creates the App private, which installs only on the account you chose. To install it on several, [make it public](/how-to/let-people-in/#make-the-github-app-public): the Hub, not the App, decides who gets in.
+Onboard creates the App private, which installs only on the account you chose. To install it on several, [make it public](/how-to/let-people-in/#make-the-github-app-public).
 
-The App's callback is the Hub's `HUB_PUBLIC_URL`. If people also reach the Hub at another URL, add its `/auth/github/callback` under **Callback URLs** in the App's settings.
+If people also reach the Hub at a URL other than `HUB_PUBLIC_URL`, add that URL's `/auth/github/callback` under **Callback URLs** in the App's settings.
 
 ### Over SSH, or with no browser on the Hub's machine
 
-Onboard only opens a browser on a machine with a desktop, and never over SSH. Otherwise it prints the page's address, such as `http://127.0.0.1:41234/`, and the command that forwards its port. From your own machine:
+Over SSH, or on a machine without a desktop, onboard prints the page's address, such as `http://127.0.0.1:41234/`, and the command that forwards its port. From your own machine:
 
 ```sh
 ssh -L 41234:127.0.0.1:41234 hub-box
 ```
 
-Then open the address in your own browser. GitHub sends the browser back to the same address, through the tunnel.
+Then open the address in your own browser. GitHub sends the browser back through the tunnel.
 
-Without the tunnel, the page doesn't load on your machine, and neither does the one GitHub sends you back to. Forward the port and reload, or paste the address the browser was sent back to, which has `code=` in it, at onboard's prompt. A code works once, within an hour.
+If the page GitHub sends you back to doesn't load, paste its address, which has `code=` in it, at onboard's prompt within an hour.
 
 ## The permissions
 
 The App needs these repository permissions, the organization permission Members, and no webhook.
 
-Members matters only where the App is installed on an organization. There, GitHub tells the Hub about people who reach a Repo through the organization (its owners, its base permission, its teams) only if the App can read the organization's members. Without it, the Hub says those people don't have access to the Repo, even though they do. On a personal account, everyone with access is a direct collaborator, so the Hub doesn't ask for it there.
+Members matters only on an organization: without it, the Hub refuses people who reach a Repo through the organization's owners, base permission or teams.
 
 <!-- permissions:start -->
 | Permission | Access | Why |
@@ -62,7 +62,7 @@ Members matters only where the App is installed on an organization. There, GitHu
 <!-- permissions:end -->
 
 :::caution[The Sandbox token gets all of these]
-Each Session's Sandbox gets a token with every one of these permissions, on its own Repo ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)). This list is what Claude, and anything else running in a Sandbox, can do there. Issues, for example, lets a Sandbox open, edit, comment on and close its Repo's issues, as well as read them. Every permission you add beyond the list, such as **Workflows: read and write** so Sessions can change `.github/workflows`, every Sandbox gets too. On an organization, that includes Members, so a Sandbox can list the organization's members.
+Each Session's Sandbox gets a token with every one of these permissions on its own Repo ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)), so this list is what anything running in a Sandbox can do there. Issues, for example, lets it open, edit and close issues. Every permission you add, such as **Workflows: read and write**, every Sandbox gets too, and on an organization a Sandbox can list the organization's members.
 :::
 
 ## Install the App
@@ -71,18 +71,12 @@ Open the install link onboard printed, or the App's settings on GitHub and **Ins
 
 ## Keep the permissions in step
 
-When kndl comes to need a new permission, the App's settings and each installation fall behind. Changing the App's permissions on GitHub asks each account it's installed on to accept them, and until one does, its installation keeps the old ones. GitHub has no API to change either, so kndl only says what's missing and where to fix it.
-
-The Hub checks the App and every installation against [the list](#the-permissions) as it starts, then every hour:
-
-- **In the web UI**, a banner lists what's missing, with links to the App's permissions page and to each installation's review of the request. **Check again** checks at once, after you've fixed it.
-- **`kndl doctor`** fails its `GitHub App` check, with the same links.
-- **The Hub's log** has a warning for each.
+The App and each installation must grant every permission in [the list](#the-permissions). The Hub checks them at startup and every hour. When one is missing, a banner in the web UI lists it, with links to fix it, and `kndl doctor` fails its `GitHub App` check. **Check again** in the banner checks at once.
 
 To fix it:
 
 1. Open the App's permissions page (the first link), add what's missing, and **Save changes**.
-2. For each installation, open its review link, as someone who can manage the account's Apps, and **Accept new permissions**.
+2. For each installation, open its review link as someone who can manage the account's Apps, and **Accept new permissions**.
 
 ## Set it up by hand
 
@@ -98,9 +92,7 @@ To use an App you made on GitHub yourself, create it at <https://github.com/sett
 | Organization permissions | Members: read-only |
 | Where can this GitHub App be installed? | Only on this account. Choose **Any account** to install it on several; see [Make the GitHub App public](/how-to/let-people-in/#make-the-github-app-public). |
 
-Then note its **App ID** and **Client ID**, and generate a **client secret** and a **private key**, which GitHub downloads as a `.pem` file. Move the key somewhere only you can read, such as the home, and `chmod 600` it.
-
-Only the Hub's machine needs them. Runners never see the private key: they get short-lived tokens from the Hub.
+Then note its **App ID** and **Client ID**, and generate a **client secret** and a **private key**, which GitHub downloads as a `.pem` file. On the Hub's machine, move the key somewhere only you can read, such as the home, and `chmod 600` it.
 
 - **An install:** run `kndl onboard --github-app manual`, and paste them. Onboard writes them to `hub.env`.
 - **A checkout:** add them to `packages/hub/.env.local`, and restart the Hub:
@@ -112,11 +104,11 @@ Only the Hub's machine needs them. Runners never see the private key: they get s
   GITHUB_APP_PRIVATE_KEY_PATH=/home/you/.kndl-dev/github-app.pem
   ```
 
-The warnings that GitHub sign-in is off and that the GitHub App is not configured are gone, and the sign-in page offers **Sign in with GitHub**. [Install the App](#install-the-app) as above. Onboard prints the Hub's Setup link; from a checkout, `bun run setup-link` does. Sign in with it to become the Hub's Owner ([Let people in](/how-to/let-people-in/)).
+The sign-in page offers **Sign in with GitHub**. [Install the App](#install-the-app), then [become the Owner](/how-to/let-people-in/#become-the-owner) with the Setup link onboard prints, or `bun run setup-link` from a checkout.
 
 ## Protect the default branch
 
-Anything running in a Session's Sandbox can push any branch of its Repo and merge its pull requests, for as long as the Session runs. kndl doesn't stop it. The guardrail is a GitHub ruleset on each Repo's default branch:
+Anything running in a Session's Sandbox can push any branch of its Repo and merge its pull requests. To guard the default branch, add a GitHub ruleset on each Repo:
 
 1. In the Repo on GitHub, open **Settings**, **Rules**, **Rulesets**, and add a branch ruleset that targets the default branch.
 2. Require a pull request before merging, with at least one approval.

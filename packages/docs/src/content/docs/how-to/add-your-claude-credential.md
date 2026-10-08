@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-The Sessions you start run on your own Claude account, on whichever Runner they are on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). You paste a credential once, on your **Account** page, and every Runner fetches it for your Sessions. Without one, your Sessions run on their Runner's own credential, where it has one: **New Session** then picks such a Runner when you leave the choice to it, and if no online Runner has one, it asks you to add yours first.
+Paste your Claude credential once, on your **Account** page, and the Sessions you start run on your own Claude account on any Runner ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). Without one, your Sessions run on their Runner's own credential, where it has one; if no online Runner has one, **New Session** asks you to add yours first.
 
 ## Before you start
 
@@ -13,8 +13,8 @@ The Hub must have `HUB_SECRETS_KEY` set, since it stores your credential encrypt
 
 You need one of these:
 
-- **A Claude subscription** (Pro, Max, Team or Enterprise), and Claude Code installed on any machine to make a token with.
-- **An Anthropic API key** (`sk-ant-api…`), from the Claude Console. Your Sessions are then billed per token.
+- **A Claude subscription** (Pro, Max, Team or Enterprise), and Claude Code on any machine to make a token with.
+- **An Anthropic API key** (`sk-ant-api…`), from the Claude Console, billed per token.
 
 ## Make a token
 
@@ -24,29 +24,26 @@ In a terminal on any machine with Claude Code:
 claude setup-token
 ```
 
-Sign in with your Claude account in the browser it opens. It prints a token that starts with `sk-ant-oat` and is good for a year. Copy it all, on one line.
+Sign in in the browser it opens. It prints a token starting `sk-ant-oat`, good for a year. Copy it all, on one line.
 
 ## Save it on the Hub
 
-1. Open your **Account** page: press your name at the bottom of the sidebar, then **Account**. New Session links to it too, while you have no credential.
+1. Open your **Account** page: press your name at the bottom of the sidebar, then **Account**.
 2. Under **Claude**, paste the token or API key into **Token or API key**.
-3. For a token, pick your **Plan**: Pro, Max 5x, Max 20x, Team or Enterprise. Claude Code is told it, since it can't ask Anthropic through the Runner's credential proxy. An API key has no plan.
+3. For a token, pick your **Plan**: Pro, Max 5x, Max 20x, Team or Enterprise.
 4. Press **Save**.
 
-The Hub checks it with Anthropic before it stores it, with a request that costs nothing:
+The Hub checks it with Anthropic, at no cost, before storing it. If Anthropic rejects it, nothing is stored and the Hub says why, such as `Anthropic rejected this token: it is invalid.` Make a new token and paste that. If Anthropic can't be reached, the Hub stores it anyway and says so.
 
-- **Anthropic rejects it:** the Hub refuses it and says why, such as `Anthropic rejected this token: it is invalid.` Nothing is stored. Make a new token and paste that.
-- **Anthropic can't be reached:** the Hub stores it anyway and says so, under the saved credential. If it turns out to be wrong, your Sessions can't run a Turn until you replace it.
-
-Once saved, your credential is write-only. The page shows its kind, its last 4 characters, its plan and when you added it, never the token itself.
+Once saved, the page shows its kind, its last 4 characters, its plan and when you added it, never the token itself.
 
 ## Replace or remove it
 
-- **Replace**, to paste a new token, such as when the old one expires or your plan changes. Sessions pick up the new one as they next start or wake.
-- **Remove**, to take it off the Hub. Your Sessions then run on their Runner's own credential, and the Hub refuses to start one on a Runner without one.
+- **Replace**, to paste a new token, such as when the old one expires or your plan changes.
+- **Remove**, to take it off the Hub. Your Sessions then run on their Runner's own credential.
 
-A Session that is awake keeps the credential it started with until it next sleeps.
+A Session picks up the change when it next starts or wakes.
 
 ## See whose account a Session runs on
 
-A Session's header says whose Claude account it runs on: **on Alice's Claude account** for its Creator's, or **on the Runner's Claude account**, with how the Runners page shows the Runner's own credential, when its Creator has none. Its subagents run on the same account.
+A Session's header says whose Claude account it runs on: its Creator's, such as **on Alice's Claude account**, or **on the Runner's Claude account**, followed by the Runner's credential as the Runners page shows it, when its Creator has none. Its subagents run on the same account.

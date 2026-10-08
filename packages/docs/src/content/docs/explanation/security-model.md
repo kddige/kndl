@@ -5,16 +5,15 @@ sidebar:
   order: 5
 ---
 
-kndl runs an AI agent with no approval prompts, on your machines, for a team. This page says what that trusts, and what keeps each credential where it belongs.
+kndl runs an AI agent with no approval prompts, on your machines, for a team. This page says what that trusts, and where each credential lives.
 
 ## The Sandbox is the boundary
 
-Sessions never ask for tool approval: everything inside the Sandbox is allowed ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). That lets a Session run unattended, and keeps a shared Session from stalling on whoever happens to be watching. The Sandbox, a microVM per Session, is what contains it.
+Sessions never ask for tool approval: everything inside the Sandbox is allowed ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so a Session runs unattended and a shared one never stalls on whoever is watching. The Sandbox, a microVM per Session, contains it.
 
-- Claude Code runs in the Sandbox, and so does everything it runs: its tools, the `!` shortcut, hooks, MCP servers and its subagents ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Nothing a Session does runs on the Runner's host, so what a Repo can make Claude Code do, through its `settings.json`, hooks or skills, is what the Sandbox can do.
+- Claude Code runs in the Sandbox, and so does everything it runs: its tools, the `!` shortcut, hooks, MCP servers and its subagents ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Nothing a Session does runs on the Runner's host, so what a Repo can make Claude Code do is what the Sandbox can do.
 - Claude Code holds no Claude credential and no mod token there, only its Session token ([The credential proxy](#the-credential-proxy)).
-- Auto memory is off. Each Session has its own Claude Code state, so Sessions would never share what it remembers.
-- The Sandbox has **unrestricted network access**, including your LAN and the Runner's host, so agents can install packages and reach services. Treat anything a Sandbox can reach as reachable by the agent. Tightening this is a planned, additive change.
+- The Sandbox has **unrestricted network access**, including your LAN and the Runner's host, so agents can install packages and reach services. Treat anything a Sandbox can reach as reachable by the agent.
 
 ## Where each credential lives
 
@@ -34,55 +33,52 @@ Sessions never ask for tool approval: everything inside the Sandbox is allowed (
 | A Test build's clone token, read-only and for one Repo | the environment of the Runner's one `git clone` | Never |
 | Environment Variables | encrypted on the Hub if Sensitive; in the Runner's memory while needed | Yes, by design: in every process's environment |
 
-Two things deliberately do reach the Sandbox, and anything running there can read them:
+Two things reach the Sandbox by design, and anything running there can read them:
 
 - **The Sandbox token** can push any branch of the Session's Repo and merge its pull requests, with whatever permissions the App's installation has. Protect each Repo's default branch with a ruleset. See [Git from Sessions](/explanation/git-from-sessions/).
 - **Variables**, Sensitive ones included. Give a Sandbox only what its Sessions need.
 
 ## The credential proxy
 
-Claude Code runs in the Sandbox ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)), where anything Claude runs could read a credential it held. So it holds none: each Runner runs a credential proxy on its host's loopback, port `RUNNER_PROXY_PORT`, which every Sandbox reaches at `host.microsandbox.internal`, and Claude Code and its mod hold only a Session token.
+Anything Claude runs in the Sandbox could read a credential Claude Code held there, so it holds none. Each Runner runs a credential proxy on its host's loopback, port `RUNNER_PROXY_PORT`, which every Sandbox reaches at `host.microsandbox.internal`, and Claude Code and its mod hold only a Session token.
 
 - **A Session token is the only identity.** Claude Code gets it in its own process's environment, as its OAuth token and as the mod's, and it is never written to the Sandbox's disk. Every Sandbox's connection reaches the proxy from the host's own loopback address, so the proxy tells Sessions apart by token alone. A token is 32 random bytes, issued as a Session starts or wakes and revoked as it sleeps, is archived, stops or exits; the proxy keeps only its SHA-256. A request without a live token is answered 401. A restarted Runner reads the token of each Session still running back from its Claude Code, and holds it for that Session alone, answering 503 until the Hub has given the Session a new mod token.
-- **It forwards three requests to Anthropic and nothing else:** `POST /v1/messages`, `POST /v1/messages/count_tokens` and `GET /v1/models`, the ones Claude Code sends. Anything else is answered 404, its path checked after `..` is resolved. It swaps the Session token for the Session's Claude credential: a subscription token as the bearer, an API key as `x-api-key`. A response streams back as it comes, with nothing buffered.
+- **It forwards three requests to Anthropic and nothing else:** `POST /v1/messages`, `POST /v1/messages/count_tokens` and `GET /v1/models`. Anything else is answered 404, its path checked after `..` is resolved. It swaps the Session token for the Session's Claude credential: a subscription token as the bearer, an API key as `x-api-key`. Responses stream back unbuffered.
 - **It relays the mod's calls to the Hub,** `/mod/*`, swapping the Session token for the Session's mod token, so the mod token stays on the Runner too.
-- **Credentials stay in memory.** A Session's credential is its Creator's ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)), held by the proxy for as long as the Session's token lives and dropped when it is revoked, never written to disk. A Session without one uses the Runner's own, read from the owner's Keychain or a file only the Runner's user can read ([The Runner's Claude credential](/reference/configuration/#the-runners-claude-credential)).
-- **Nothing secret is logged.** The proxy logs one line per request to Anthropic, under its Session: method, path, status, time and whose credential it went with. Never a credential, a mod token or a Session token.
+- **Credentials stay in memory.** A Session's credential is its Creator's ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)), held by the proxy while the Session's token lives and never written to disk. A Session without one uses the Runner's own, read from the owner's Keychain or a file only the Runner's user can read ([The Runner's Claude credential](/reference/configuration/#the-runners-claude-credential)).
+- **Nothing secret is logged.** The proxy logs one line per request to Anthropic, under its Session: method, path, status, time and whose credential it used.
 
 Anything in a Sandbox can read its Session token, and spend its Session's credential through the proxy while the Session is awake. It can't take the credential away, use it after the Session sleeps, or reach any API path but inference.
 
 ## Every endpoint needs a credential
 
-Code in a Sandbox can reach the Hub's address, so every Hub route but sign-in, `/health`, the [`kndl` command it serves](/how-to/install-the-cli-from-a-hub/) and the web UI's files needs a credential: a sign-in cookie for people, a CLI token for a person's [`kndl` CLI](/how-to/sign-in-the-cli/) on its own endpoints, a Runner token for Runners, a mod token for one Session's mod. The Hub keeps only SHA-256 hashes of them and compares in constant time. See the [protocol reference](/reference/protocol/#endpoints).
+Code in a Sandbox can reach the Hub, so every Hub route but sign-in, `/health`, the [`kndl` command it serves](/how-to/install-the-cli-from-a-hub/) and the web UI's files needs a credential: a sign-in cookie for people, a CLI token for a person's [`kndl` CLI](/how-to/sign-in-the-cli/) on its own endpoints, a Runner token for Runners, a mod token for one Session's mod. The Hub keeps only SHA-256 hashes of them and compares in constant time. See the [protocol reference](/reference/protocol/#endpoints).
 
 Cookie-authenticated requests must come from `HUB_PUBLIC_URL`'s origin, and the cookie is `HttpOnly`, `SameSite=Lax`, host-only and `Secure` unless the Hub is on loopback over HTTP. Dev login only works with the Hub bound to loopback, and only answers loopback callers.
 
 ## Who can do what
 
-A Session belongs to its Repo, not to its Creator ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Whoever has access to the Repo on GitHub sees its Sessions, and can join, prompt, stop, type into the terminal of, put to sleep, wake, delete or restore any of them. No one else can.
+A Session belongs to its Repo, not to its Creator ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Whoever has access to the Repo on GitHub sees its Sessions, and can join, prompt, stop, type into the terminal of, put to sleep, wake, delete or restore any of them. The Repo's Environment follows the same access ([ADR 0009](/reference/decisions/0009-environments/#who-can-use-an-environment-amended-in-104)): open it, run Test builds and apply versions. No one else can do either.
 
-The Repo's Environment follows the same access ([ADR 0009](/reference/decisions/0009-environments/#who-can-use-an-environment-amended-in-104)). Whoever has access to the Repo can open its Environment, run Test builds of drafts and apply new versions. No one else can.
-
-- **Access to a Repo** means the GitHub App is installed on it, and GitHub says you are a collaborator on it: an outside collaborator, an organization member with access through a team or the organization's base permission, or its owner. A public Repo's other readers don't count. The Hub asks as the App's installation, which needs no permission beyond Metadata. Without the App (`GITHUB_APP_ID` unset), a GitHub sign-in has access to no Repo.
+- **Access to a Repo** means the GitHub App is installed on it, and GitHub says you are a collaborator on it: an outside collaborator, an organization member with access through a team or the base permission, or its owner. A public Repo's other readers don't count. The Hub asks as the App's installation, which needs only the Metadata permission. Without the App (`GITHUB_APP_ID` unset), a GitHub sign-in has access to no Repo.
 - **Dev login** has access to every Repo, while it is on.
-- **The Hub checks every Session command** before it runs, in one place: the Session list and its updates, joining and the event log, prompts, Stop, the terminal, sleep and wake, delete and restore, and starting a Session in a Repo. A Session you have no access to answers as if it didn't exist.
-- **It checks every Environment command too:** opening an Environment, checking a draft, starting a Test build and applying a version. A refusal reads the same whether the Repo exists or not, so it doesn't tell anyone which Repos exist or have an Environment.
+- **The Hub checks every Session and Environment command** before it runs. A Session you have no access to answers as if it didn't exist, and an Environment refusal reads the same whether the Repo exists or not.
 - **Shared variables belong to no Repo,** so anyone signed in can manage them. Their values are write-only, and a Link only puts one into a Repo whose Environment you can already change.
-- **Answers are cached** for `HUB_REPO_ACCESS_TTL_MS`, 5 minutes by default, to stay well within GitHub's rate limit. A refusal is cached for at most 30 seconds, so a Repo that was just shared with you or had the App installed works again soon. As often as the TTL, the Hub checks everyone connected again. So someone who loses access on GitHub is taken out of the Repo's Sessions and its Environment within twice the TTL: they leave its Sessions' presence and terminals, and the Sessions and the Environment screen leave their view. When GitHub can't answer, people keep the access they had, and no one gains any until it can.
-- **A Test build clones with a token for its Repo only**, minted by the Hub with read access to the code and nothing else. The Runner passes it to git for that one clone and never writes it down. Only without the GitHub App does a Runner clone with its host's own git credentials, as it does for Sessions.
+- **Answers are cached** for `HUB_REPO_ACCESS_TTL_MS`, 5 minutes by default, to stay within GitHub's rate limit; a refusal for at most 30 seconds. The Hub checks everyone connected again as often as the TTL, so someone who loses access on GitHub is taken out of the Repo's Sessions and its Environment within twice the TTL. When GitHub can't answer, people keep the access they had, and no one gains any.
+- **A Test build clones with a token for its Repo only**, minted by the Hub with read access to the code and nothing else, used for that one clone and never written down. Only without the GitHub App does a Runner clone with its host's own git credentials.
 
 ## Who gets in
 
 GitHub proves who someone is, and the Hub decides whether they get in ([ADR 0019](/reference/decisions/0019-invites-decide-who-gets-in/)). A GitHub sign-in gets in only as a Member already, as the Owner with the Hub's Setup link while it has no Owner, or with an Invite from the Owner. See [Let people in](/how-to/let-people-in/).
 
-- **Everyone else is refused alike,** whatever they brought: an Invite used, expired, revoked, for another login or never made, or none. The page says only that the Hub is invite-only, and the Hub creates no Participant or sign-in for them.
-- **A Setup link and an Invite are secrets** in the link's fragment, which browsers never send to a server. The web UI hands one to the Hub in a `POST` just before going to GitHub, and the Hub keeps it in a cookie until GitHub sends the browser back. The Hub keeps only SHA-256 hashes of them, as it does of tokens.
-- **Being a Member grants no Repo access.** That is GitHub's to decide, as above. Members can do the Hub-wide things anyone signed in can: pair and remove Runners, and manage the Shared variables.
+- **Everyone else is refused alike,** whatever they brought: an Invite used, expired, revoked, for another login or never made, or none. The page says only that the Hub is invite-only, and the Hub records nothing of them.
+- **A Setup link and an Invite are secrets** in the link's fragment, which browsers never send to a server. The web UI hands one to the Hub in a `POST` just before going to GitHub, and the Hub keeps it in a cookie until GitHub sends the browser back. The Hub keeps only SHA-256 hashes of them.
+- **Being a Member grants no Repo access;** GitHub decides that. Any Member can pair and remove Runners, and manage the Shared variables.
 - **Only the Owner** makes, lists and revokes Invites, and lists and removes Members. The Hub refuses those commands from anyone else.
 - **Removing a Member** revokes their sign-ins and CLI tokens at once, and closes their web connections and Forwards. A tunnel already open stays open until it closes.
 - **Dev login** lets anyone on loopback in, without an Invite.
 
-Because of this, the GitHub App can be public: anyone on GitHub can install it and try to sign in, and only Members get in. Still keep the Hub on a network, tailnet or proxy that only your team can reach where you can.
+So the GitHub App can be public: anyone on GitHub can install it and try to sign in, and only Members get in. Still, where you can, keep the Hub on a network, tailnet or proxy that only your team can reach.
 
 :::caution[Known gaps]
 There are no roles but Owner: everyone with access to a Repo can do everything with its Sessions and Environment, and every Member can pair and remove Runners and manage the Shared variables. A prompt already queued still runs after its sender loses access or is removed.
@@ -90,9 +86,9 @@ There are no roles but Owner: everyone with access to a Repo can do everything w
 
 ## Whose Claude account a Session spends
 
-A Session runs on its Creator's Claude account, whoever prompts it, on whichever Runner it is on ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). So do its subagents, which run in its Claude Code. A Session whose Creator has stored no credential runs on its Runner's own instead, if it has one, and the Hub refuses to start a Session when neither has one. Each Session's header says whose account it runs on, so everyone knows whose account a prompt spends. Only give a Runner a credential of its own if its owner is happy for the team to use that account; a Runner needs none.
+A Session, with its subagents, runs on its Creator's Claude account, whoever prompts it and on whichever Runner ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). If the Creator has stored no credential, it runs on its Runner's own; if neither has one, the Hub refuses to start it. Each Session's header says whose account it runs on. Only give a Runner a credential of its own if its owner is happy for the team to use that account.
 
-A person's credential is write-only. The Hub checks it with Anthropic as it is saved, encrypts it with `HUB_SECRETS_KEY`, and never sends it back to a browser: its owner sees only its kind, its last 4 characters and its plan. It goes to one place, a Runner asking for it for a Session of that person's that runs on that Runner, over the Runner's authenticated connection. The Runner keeps it in memory for as long as the Session is awake and never writes it to disk. `secrets-reset` clears every stored credential with the other Sensitive values.
+A person's credential is write-only. The Hub checks it with Anthropic as it is saved, encrypts it with `HUB_SECRETS_KEY`, and never sends it back to a browser: its owner sees only its kind, last 4 characters and plan. The Hub sends it only to the Runner of one of that person's Sessions, over the Runner's authenticated connection, which keeps it in memory while the Session is awake. `secrets-reset` clears every stored credential with the other Sensitive values.
 
 ## Redaction
 

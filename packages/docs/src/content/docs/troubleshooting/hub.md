@@ -15,9 +15,9 @@ The Hub checks its configuration before it listens. When it refuses, it logs one
 ERROR (#2): Error: Failed to start server. Is port 7777 in use?
 ```
 
-**Why.** Another process listens on that port, often a Hub you started earlier in another terminal.
+**Why.** Another process listens on that port, often a Hub started earlier in another terminal.
 
-**Fix.** Stop the other process, or start this Hub with another `PORT`. Remember that Runners and, in development, Vite's dev server name the port in `HUB_URL`.
+**Fix.** Stop the other process, or start this Hub with another `PORT` and change `HUB_URL` to match where it's set.
 
 ## The web UI isn't built
 
@@ -32,9 +32,9 @@ In development, run `bun run web` instead and open http://localhost:5173.
 
 At startup the Hub warned: `The web UI isn't built: there is no index.html in … (HUB_WEB_DIR).`
 
-**Why.** The Hub serves the web UI's build from `HUB_WEB_DIR`, by default `packages/web/dist`, and nothing has built it. A fresh checkout has none.
+**Why.** Nothing has built the web UI into `HUB_WEB_DIR`, by default `packages/web/dist`.
 
-**Fix.** Run `bun run web:build`, then reload. You don't need to restart the Hub. In development, run `bun run web` and open <http://localhost:5173> instead, with `HUB_PUBLIC_URL` left at its default. See [Run the Hub](/how-to/run-the-hub/).
+**Fix.** Run `bun run web:build`, then reload; the Hub needs no restart. In development, run `bun run web` and open <http://localhost:5173> instead. See [Run the Hub](/how-to/run-the-hub/).
 
 ## Dev login is refused
 
@@ -48,9 +48,9 @@ HubConfigError: Dev login (KNDL_DEV_LOGIN) is refused: the Hub is bound to 0.0.0
 HubConfigError: Dev login (KNDL_DEV_LOGIN) is refused: browsers reach the Hub at http://192.168.1.10:7777, not a loopback address. Unset KNDL_DEV_LOGIN, or set HUB_PUBLIC_URL to a localhost URL.
 ```
 
-**Why.** Dev login signs anyone in as anyone, without GitHub. The Hub only allows it when both the address it listens on (`HOST`) and the URL browsers use (`HUB_PUBLIC_URL`) are loopback, so nobody else can reach it.
+**Why.** Dev login signs anyone in as anyone, so the Hub allows it only when both `HOST` and `HUB_PUBLIC_URL` are loopback.
 
-**Fix.** For a Hub others reach, [set up the GitHub App](/how-to/set-up-the-github-app/) and unset `KNDL_DEV_LOGIN`. To try kndl alone on one machine, keep `HOST` at `127.0.0.1` and use a `localhost` or `127.0.0.1` URL.
+**Fix.** For a Hub others reach, [set up the GitHub App](/how-to/set-up-the-github-app/) and unset `KNDL_DEV_LOGIN`. To try kndl alone, keep `HOST` at `127.0.0.1` and use a `localhost` or `127.0.0.1` URL.
 
 ## The secrets key is wrong or missing
 
@@ -68,27 +68,27 @@ HubConfigError: The Hub stores 3 secret values (Sensitive variable values and Cl
 HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 secret values were (Sensitive variable values and Claude credentials) saved with. Set it to that key. If that key is lost, `bun run secrets-reset` (or `kndl secrets reset`) clears those values, keeping their variables, so a new key can be used.
 ```
 
-**Why.** Sensitive values and people's Claude credentials are encrypted with `HUB_SECRETS_KEY`. Once any are saved, the Hub won't start without the same key, because it couldn't decrypt them for Sessions. After `secrets-reset`, everyone who had stored a Claude credential pastes it again on their **Account** page.
+**Why.** Sensitive values and Claude credentials are encrypted with `HUB_SECRETS_KEY`. Once any are saved, the Hub won't start without the same key.
 
 **Fix.**
 
-- For the first message, make a key with `bun run secrets-key` and use what it prints, whole.
-- For the others, find the key the values were saved with, usually in `packages/hub/.env.local` (an install's `hub.env`), and set it. If it is lost, see [the next section](#the-secrets-key-is-lost).
+- For the first, make a key with `bun run secrets-key` and use all of what it prints.
+- For the others, set the key the values were saved with, usually in `packages/hub/.env.local` (an install's `hub.env`). If it is lost, see [the next section](#the-secrets-key-is-lost).
 
 ## The secrets key is lost
 
-**What you see.** The Hub refuses to start as in [the section above](#the-secrets-key-is-wrong-or-missing), and no copy of the key the values were saved with is left: not in `.env.local` or `hub.env`, nor in a backup.
+**What you see.** The Hub refuses to start as in [the section above](#the-secrets-key-is-wrong-or-missing), and no copy of the key is left.
 
-**Why.** The values are lost with the key: nothing can decrypt them. The Hub won't start while it stores values it can't decrypt.
+**Why.** Nothing can decrypt the values without the key, and the Hub won't start while it stores values it can't decrypt.
 
 **Fix.** Stop the Hub, then clear the values and keep their variables:
 
 ```sh
 bun run secrets-reset          # in a checkout
-kndl secrets reset       # on an installed Hub
+kndl secrets reset             # on an installed Hub
 ```
 
-Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Each cleared variable shows **needs a value**: enter the values again on each Repo's Environment and on **Shared variables**. Until then the Repo's Sessions don't start. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
 
 ## A Hub is already running on the database
 
@@ -102,9 +102,9 @@ HubLockRefused: The Hub can't start: a Hub is running on /path/to/hub.db. Stop i
 The Sensitive values can't be reset: a Hub is running on /path/to/hub.db. Stop it first.
 ```
 
-**Why.** A running Hub holds a lock on `hub.db.lock`, beside its database, so a second Hub on the same database, or a reset under a live Hub, is refused. The operating system drops the lock when the Hub ends, even if it crashed, so a stale lock can't be the cause.
+**Why.** A running Hub holds a lock on `hub.db.lock`. The lock goes when the Hub ends, even by a crash, so it is never stale.
 
-**Fix.** Stop the other Hub: `kndl hub stop` for an installed one, or the terminal running `bun run hub`. `kndl status` shows whether the installed one runs. To run two Hubs side by side, give each its own `HUB_DATABASE`.
+**Fix.** Stop the other Hub: `kndl hub stop`, or the terminal running `bun run hub`. To run two Hubs side by side, give each its own `HUB_DATABASE`.
 
 ## The GitHub settings are incomplete
 
@@ -120,26 +120,26 @@ HubConfigError: The GitHub App's private key is not an RSA key.
 
 **Why.** Each pair turns on one feature, so half of one is a mistake. The private key must be the `.pem` file GitHub downloaded for the App.
 
-**Fix.** Set both of the pair, or neither. Point `GITHUB_APP_PRIVATE_KEY_PATH` at the App's private key, as an absolute path the Hub's user can read: `~` isn't expanded. If you've lost the file, generate a new private key on the App's settings page. See [Set up the GitHub App](/how-to/set-up-the-github-app/).
+**Fix.** Set both of the pair, or neither. Point `GITHUB_APP_PRIVATE_KEY_PATH` at the App's private key as an absolute path the Hub's user can read: `~` isn't expanded. If the file is lost, generate a new private key on the App's settings page. See [Set up the GitHub App](/how-to/set-up-the-github-app/).
 
 ## The settings in `.env.local` are ignored
 
 **What you see.** You put settings in a `.env.local`, yet the Hub still warns `GitHub sign-in is off`, or acts as if they aren't there.
 
-**Why.** `bun run hub` runs the Hub in `packages/hub`, and Bun loads `.env.local` from there. A `.env.local` at the root of the checkout isn't read. Values already in your shell's environment also win over the file's.
+**Why.** `bun run hub` runs in `packages/hub`, and Bun reads `.env.local` from there, not from the checkout's root. Values in your shell's environment also win over the file's.
 
 **Fix.** Move the file to `packages/hub/.env.local`, check your shell doesn't export the same names, and restart the Hub.
 
 ## Startup warnings
 
-These don't stop the Hub. Each says what is off and how to turn it on.
+These don't stop the Hub.
 
 | Warning | What it means |
 |---|---|
 | `GitHub sign-in is off: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are not set.` | Only dev login can sign people in. |
-| `` The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `kndl onboard --github-app create` to set one up. `` | Runners clone and push with their own credentials, Sandboxes get no GitHub token, and GitHub sign-ins have access to no Repo. See [Set up the GitHub App](/how-to/set-up-the-github-app/) and [Git from Sessions](/explanation/git-from-sessions/). |
+| `` The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `kndl onboard --github-app create` to set one up. `` | See [Set up the GitHub App](/how-to/set-up-the-github-app/). |
 | `` HUB_SECRETS_KEY is not set: Environments can't hold Sensitive values. Run `bun run secrets-key` to make one. `` | Plain variables still work. |
 | `Dev login is on (KNDL_DEV_LOGIN): anyone reaching http://127.0.0.1:7777 can sign in without GitHub.` | Expected while you try kndl alone. |
 | `Browsers reach the Hub over plain HTTP at … (HUB_PUBLIC_URL), so they will drop its Secure cookies and sign-in will fail. …` | See [Sign-in doesn't stick](/troubleshooting/sign-in/#sign-in-doesnt-stick). |
-| `INSECURE COOKIES (HUB_INSECURE_COOKIES): the Hub's cookies are not Secure, so sign-in tokens travel in cleartext to …` | You set `HUB_INSECURE_COOKIES=1` over plain HTTP. It warns at every start while it's on. |
+| `INSECURE COOKIES (HUB_INSECURE_COOKIES): the Hub's cookies are not Secure, so sign-in tokens travel in cleartext to …` | You set `HUB_INSECURE_COOKIES=1` over plain HTTP. |
 | `HUB_INSECURE_COOKIES is set but does nothing: browsers reach the Hub over HTTPS (…), so its cookies stay Secure. Unset it.` | It only matters over plain HTTP. |
