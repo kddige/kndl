@@ -3,6 +3,8 @@
 // reaches it, through `/gateway/<installation id>` with the Session's mod token.
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
+import { Option, Redacted } from "effect"
+import { generateSecretsKey } from "./Secrets.ts"
 import {
   type Connection,
   issueRunnerToken,
@@ -85,30 +87,49 @@ async function ask(web: Connection<Web>, command: Record<string, unknown> & { _t
   )
 }
 
-/** Creates a Plugin at the server's `path`, and an Installation of it on the Repos. */
+/** The stand-in server's URL at `path`, on `host`. */
+const serverUrl = (path = "/mcp", host = "127.0.0.1") => `http://${host}:${server.port}${path}`
+
+/**
+ * Creates a Plugin at the server's `path`, with the header secrets of `auth`, and an Installation
+ * of it on the Repos with the `values` given.
+ */
 async function install(
   web: Connection<Web>,
   name: string,
   repos: ReadonlyArray<string>,
   path = "/mcp",
+  options: {
+    readonly auth?: Record<string, unknown>
+    readonly values?: ReadonlyArray<{ readonly key: string; readonly value: string }>
+  } = {},
 ) {
   const created = await ask(web, {
     _tag: "CreatePlugin",
     name,
-    url: `http://127.0.0.1:${server.port}${path}`,
+    url: serverUrl(path),
+    auth: options.auth ?? { _tag: "None" },
   })
   if (created._tag !== "PluginsState") throw new Error(JSON.stringify(created))
   const pluginId = created.plugins.find((plugin) => plugin.name === name)?.id
-  const answer = await ask(web, { _tag: "CreateInstallation", pluginId, name, repos })
+  const answer = await ask(web, {
+    _tag: "CreateInstallation",
+    pluginId,
+    name,
+    repos,
+    ...(options.values !== undefined && { values: options.values }),
+  })
   if (answer._tag !== "PluginsState") throw new Error(JSON.stringify(answer))
   const installation = answer.installations.find((found) => found.pluginId === pluginId)
   if (installation === undefined) throw new Error("No Installation created")
   return installation
 }
 
-/** A Hub, a Runner that relays Plugins, alice on the web, and `repo`'s Environment. */
+/** A Hub with a secrets key, a Runner that relays Plugins, alice on the web, and `repo`'s Environment. */
 async function gatewayScene() {
-  const hub = await startHub({ config: { devLogin: true } })
+  const hub = await startHub({
+    config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
+  })
   const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
     relaysPlugins: true,
   })
@@ -301,5 +322,246 @@ describe("a Session's Installations", () => {
     await install(web, "Docs", [repo])
     const start = await startSession(web, runner)
     expect(start.plugins).toBeUndefined()
+  })
+})
+
+/** Everything the Hub logs while `run` runs. */
+async function logsOf(run: () => Promise<void>) {
+  const logs: Array<string> = []
+  const spies = (["log", "info", "warn", "error", "debug"] as const).map((level) =>
+    spyOn(console, level).mockImplementation((...args: Array<unknown>) => {
+      logs.push(args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "))
+    }),
+  )
+  try {
+    await run()
+  } finally {
+    for (const spy of spies) spy.mockRestore()
+  }
+  return logs.join("\n")
+}
+
+/** What the server was sent last, of the headers. */
+const lastHeaders = () => seen.at(-1)?.headers ?? {}
+
+describe("a Plugin's header secrets", () => {
+  const apiKey = "lin_api_SECRET_7f3a9c"
+  const team = "team_SECRET_51b2"
+  const auth = {
+    _tag: "Headers",
+    headers: [
+      { key: "api_key", title: "API key", header: "Authorization", template: "Bearer {value}" },
+      { key: "team", title: "Team", header: "X-Team", template: "{value}" },
+    ],
+  }
+  const values = [
+    { key: "api_key", value: apiKey },
+    { key: "team", value: team },
+  ]
+
+  /** Edits the Plugin of `installation` to `url` and `auth`, as alice. */
+  const editPlugin = (
+    web: Connection<Web>,
+    installation: { readonly pluginId: string },
+    url: string,
+    edited: Record<string, unknown> = auth,
+  ) =>
+    ask(web, {
+      _tag: "EditPlugin",
+      pluginId: installation.pluginId,
+      name: "Linear",
+      url,
+      auth: edited,
+    })
+
+  test("are added by the Gateway from the Installation's values, over any the Sandbox sent", async () => {
+    const { hub, runner, web } = await gatewayScene()
+    const linear = await install(web, "Linear", [repo], "/mcp", { auth, values })
+    // The web is told which are set, by whom and when: never the values.
+    expect(linear.values.map((value) => [value.key, value.setBy.login])).toEqual([
+      ["api_key", "alice"],
+      ["team", "alice"],
+    ])
+    const start = await startSession(web, runner)
+    seen.length = 0
+    const logged = await logsOf(async () => {
+      const response = await through(hub, linear.id, {
+        headers: { ...bearer(start.modToken), "x-team": "forged", "X-TEAM": "forged-again" },
+      })
+      expect(response.status).toBe(200)
+      await response.body?.cancel()
+    })
+    expect(lastHeaders().authorization).toBe(`Bearer ${apiKey}`)
+    expect(lastHeaders()["x-team"]).toBe(team)
+    expect(JSON.stringify(seen)).not.toContain("forged")
+    expect(logged).toContain("Gateway POST 200")
+
+    // No value went to the web, to the Runner, or into the Hub's logs.
+    for (const value of [apiKey, team]) {
+      expect(web.texts.join("\n")).not.toContain(value)
+      expect(runner.texts.join("\n")).not.toContain(value)
+      expect(logged).not.toContain(value)
+    }
+  })
+
+  test("are redacted from what Sessions print", async () => {
+    const { runner, web } = await gatewayScene()
+    await install(web, "Linear", [repo], "/mcp", { auth, values })
+    const start = await startSession(web, runner)
+    web.send({ _tag: "JoinSession", sessionId: start.sessionId })
+    await web.take("SessionHistory")
+    runner.send({ _tag: "SandboxNote", sessionId: start.sessionId, message: `echoed ${apiKey}` })
+    const noted = await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SandboxNoted")
+    expect(noted.entry.event).toMatchObject({ message: `echoed ${"*".repeat(apiKey.length)}` })
+  })
+
+  test("without a value are answered 409, naming the Installation and the header secret", async () => {
+    const { hub, runner, web } = await gatewayScene()
+    const linear = await install(web, "Linear", [repo], "/mcp", {
+      auth,
+      values: [{ key: "team", value: team }],
+    })
+    expect(linear.values.map((value) => value.key)).toEqual(["team"])
+    // The Session starts all the same: its other MCP servers work.
+    const start = await startSession(web, runner)
+    seen.length = 0
+    const response = await through(hub, linear.id, { headers: bearer(start.modToken) })
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error:
+        "Linear needs a value for API key: enter it on the Plugins page, then Restart the Session.",
+    })
+    expect(seen).toEqual([])
+  })
+
+  test("take a new value on the Session's next start, and say so meanwhile", async () => {
+    const { hub, runner, web } = await gatewayScene()
+    const linear = await install(web, "Linear", [repo], "/mcp", { auth, values })
+    const start = await startSession(web, runner)
+    const { sessionId } = start
+    const rotated = "lin_api_ROTATED_0c4d"
+    const edited = await ask(web, {
+      _tag: "EditInstallation",
+      installationId: linear.id,
+      name: "Linear",
+      repos: [repo],
+      values: [{ key: "api_key", value: rotated }],
+    })
+    expect(edited._tag).toBe("PluginsState")
+    await web.take(
+      "SessionUpdated",
+      (m) => m.session.id === sessionId && m.session.pluginsChanged === true,
+    )
+    // The running Session goes on with the value it started with.
+    seen.length = 0
+    await (await through(hub, linear.id, { headers: bearer(start.modToken) })).body?.cancel()
+    expect(lastHeaders().authorization).toBe(`Bearer ${apiKey}`)
+
+    // The Repo's log says which was set, never the value.
+    const log = await ask(web, { _tag: "GetPluginLog", repo })
+    if (log._tag !== "PluginLog") throw new Error(log._tag)
+    expect(log.entries[0]).toMatchObject({ change: "ValuesSet", secrets: ["API key"] })
+    expect(JSON.stringify(log)).not.toContain(rotated)
+
+    // A Restart starts it with the new one.
+    web.send({ _tag: "RestartSession", sessionId })
+    await runner.take("StopSession")
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    const again = await runner.take("StartSession")
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const restarted = await web.take(
+      "SessionUpdated",
+      (m) =>
+        m.session.id === sessionId && !m.session.starting && m.session.restarting === undefined,
+    )
+    expect(restarted.session.pluginsChanged).toBeUndefined()
+    await (await through(hub, linear.id, { headers: bearer(again.modToken) })).body?.cancel()
+    expect(lastHeaders().authorization).toBe(`Bearer ${rotated}`)
+    expect(web.texts.join("\n")).not.toContain(rotated)
+  })
+
+  test("keep their values when the Plugin's path changes, and lose them to another origin", async () => {
+    const { hub, runner, web } = await gatewayScene()
+    const linear = await install(web, "Linear", [repo], "/mcp", { auth, values })
+    const start = await startSession(web, runner)
+    const token = bearer(start.modToken)
+
+    // Another path, a new title and template: the values stay, and apply at once.
+    const renamed = {
+      _tag: "Headers",
+      headers: [
+        { key: "api_key", title: "Key", header: "authorization", template: "Token {value}" },
+        auth.headers[1],
+      ],
+    }
+    const moved = await editPlugin(web, linear, serverUrl("/v2/mcp"), renamed)
+    if (moved._tag !== "PluginsState") throw new Error(JSON.stringify(moved))
+    expect(moved.installations[0]?.values.map((value) => value.key)).toEqual(["api_key", "team"])
+    seen.length = 0
+    await (await through(hub, linear.id, { headers: token })).body?.cancel()
+    expect(seen.at(-1)?.path).toBe("/v2/mcp")
+    expect(lastHeaders().authorization).toBe(`Token ${apiKey}`)
+
+    // Another host, though the same server: every value is cleared, the Session's too.
+    const elsewhere = await editPlugin(web, linear, serverUrl("/v2/mcp", "localhost"), renamed)
+    if (elsewhere._tag !== "PluginsState") throw new Error(JSON.stringify(elsewhere))
+    expect(elsewhere.installations[0]?.values).toEqual([])
+    seen.length = 0
+    const refused = await through(hub, linear.id, { headers: token })
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toEqual({
+      error:
+        "Linear needs a value for Key: enter it on the Plugins page, then Restart the Session.",
+    })
+    expect(seen).toEqual([])
+    const log = await ask(web, { _tag: "GetPluginLog", repo })
+    if (log._tag !== "PluginLog") throw new Error(log._tag)
+    expect(log.entries.slice(0, 2).map((entry) => [entry.change, entry.secrets])).toEqual([
+      ["ValuesCleared", ["Key", "Team"]],
+      ["PluginEdited", undefined],
+    ])
+  })
+
+  test("lose a value when its header changes, or its key goes", async () => {
+    const { web } = await gatewayScene()
+    const linear = await install(web, "Linear", [repo], "/mcp", { auth, values })
+    const reheadered = {
+      _tag: "Headers",
+      headers: [{ ...auth.headers[0], header: "X-Api-Key" }, auth.headers[1]],
+    }
+    const edited = await editPlugin(web, linear, serverUrl(), reheadered)
+    if (edited._tag !== "PluginsState") throw new Error(JSON.stringify(edited))
+    expect(edited.installations[0]?.values.map((value) => value.key)).toEqual(["team"])
+    const dropped = await editPlugin(web, linear, serverUrl(), { _tag: "None" })
+    if (dropped._tag !== "PluginsState") throw new Error(JSON.stringify(dropped))
+    expect(dropped.installations[0]?.values).toEqual([])
+  })
+
+  test("refuse a value too short to redact, naming the header secret only", async () => {
+    const { web } = await gatewayScene()
+    const linear = await install(web, "Linear", [repo], "/mcp", { auth })
+    expect(
+      await ask(web, {
+        _tag: "EditInstallation",
+        installationId: linear.id,
+        name: "Linear",
+        repos: [repo],
+        values: [{ key: "api_key", value: "abc" }],
+      }),
+    ).toMatchObject({
+      _tag: "CommandFailed",
+      message: "The value of API key is under 4 characters: too short to redact from output.",
+    })
+    expect(
+      await ask(web, {
+        _tag: "CreatePlugin",
+        name: "Bad",
+        url: serverUrl(),
+        auth: { _tag: "Headers", headers: [{ ...auth.headers[0], template: "Bearer" }] },
+      }),
+    ).toMatchObject({
+      _tag: "CommandFailed",
+      message: "API key's template must hold {value} exactly once, as in Bearer {value}.",
+    })
   })
 })

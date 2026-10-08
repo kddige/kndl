@@ -181,6 +181,7 @@ const webToHub = [
     requestId: "q-30",
     name: "Docs search",
     url: "https://mcp.example.com/mcp",
+    auth: { _tag: "None" },
   },
   {
     _tag: "EditPlugin",
@@ -188,6 +189,12 @@ const webToHub = [
     pluginId: "hub:docs-search",
     name: "Docs",
     url: "https://mcp.example.com/v2",
+    auth: {
+      _tag: "Headers",
+      headers: [
+        { key: "token", title: "API key", header: "Authorization", template: "Bearer {value}" },
+      ],
+    },
   },
   { _tag: "DeletePlugin", requestId: "q-32", pluginId: "hub:docs-search" },
   {
@@ -196,6 +203,7 @@ const webToHub = [
     pluginId: "hub:docs-search",
     name: "Docs",
     repos: ["kddige/kndl"],
+    values: [{ key: "token", value: "sk-live-0123" }],
   },
   {
     _tag: "EditInstallation",
@@ -603,6 +611,12 @@ const hubToWeb = [
         id: "hub:docs-search",
         name: "Docs search",
         url: "https://mcp.example.com/mcp",
+        auth: {
+          _tag: "Headers",
+          headers: [
+            { key: "token", title: "API key", header: "Authorization", template: "Bearer {value}" },
+          ],
+        },
         createdBy: alice,
         createdAt: 1_700_000_000_000,
       },
@@ -614,6 +628,7 @@ const hubToWeb = [
         name: "Docs",
         repos: ["kddige/kndl"],
         otherRepos: 1,
+        values: [{ key: "token", setBy: alice, setAt: 1_700_000_090_000 }],
         createdBy: bob,
         createdAt: 1_700_000_060_000,
       },
@@ -632,6 +647,16 @@ const hubToWeb = [
         pluginName: "Docs search",
         installationId: "in-1",
         installationName: "Docs",
+      },
+      {
+        at: 1_700_000_090_000,
+        by: alice,
+        change: "ValuesSet",
+        pluginId: "hub:docs-search",
+        pluginName: "Docs search",
+        installationId: "in-1",
+        installationName: "Docs",
+        secrets: ["API key"],
       },
     ],
   },

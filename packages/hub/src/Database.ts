@@ -528,6 +528,38 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`CREATE INDEX plugin_log_repo ON plugin_log (repo COLLATE NOCASE, at)`
     yield* sql`ALTER TABLE sessions ADD COLUMN plugins TEXT`
   }),
+  // Header secrets (#215): a Plugin's declared headers, as JSON; each Installation's values,
+  // encrypted with the secrets key; the values each Session started with, which the Gateway uses
+  // until its next wake or Restart; and the titles of the values a Plugin log entry set or cleared.
+  "0025_header_secrets": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE plugins ADD COLUMN auth TEXT NOT NULL DEFAULT '{"_tag":"None"}'`
+    yield* sql`
+      CREATE TABLE installation_values (
+        installation_id TEXT NOT NULL REFERENCES installations (id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        set_by TEXT NOT NULL REFERENCES participants (id),
+        set_at INTEGER NOT NULL,
+        PRIMARY KEY (installation_id, key)
+      )
+    `
+    yield* sql`
+      CREATE TABLE session_installation_values (
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        installation_id TEXT NOT NULL REFERENCES installations (id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        set_at INTEGER NOT NULL,
+        PRIMARY KEY (session_id, installation_id, key)
+      )
+    `
+    yield* sql`
+      CREATE INDEX session_installation_values_installation
+      ON session_installation_values (installation_id)
+    `
+    yield* sql`ALTER TABLE plugin_log ADD COLUMN secrets TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

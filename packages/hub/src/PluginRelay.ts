@@ -65,6 +65,8 @@ export interface PluginRelayHost {
   ) => Effect.Effect<void, SqlError>
   /** Tells web clients the Repo's Sessions changed; under the lock. */
   readonly repoSessionsUpdated: (repo: string) => Effect.Effect<void, SqlError>
+  /** Says Installations' header secret values may have changed, so what to redact did. */
+  readonly headerValuesChanged: () => void
   /** The one spelling the Hub keeps of a Repo's name (#197). */
   readonly respell: (repo: RepoName) => Effect.Effect<RepoName, SqlError>
 }
@@ -139,6 +141,7 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
 
   /** Tells the Repos' Sessions and their log's readers of a change. */
   const changed = Effect.fn("PluginRelay.changed")(function* (repos: ReadonlyArray<RepoName>) {
+    host.headerValuesChanged()
     const unique: Array<RepoName> = []
     for (const repo of repos) if (!unique.some((other) => sameRepo(other, repo))) unique.push(repo)
     for (const repo of unique) {

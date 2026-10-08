@@ -6,7 +6,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
 import { Participant, ParticipantId } from "@kndl/protocol"
 import { Effect, Option, Redacted } from "effect"
+import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
+import { generateSecretsKey } from "./Secrets.ts"
 import { SignIns } from "./SignIns.ts"
 import { type Connection, openWeb, stopAll, type Web } from "./testChannels.ts"
 import { appId, appKeyPair, StandInGitHub } from "./testGitHubApi.ts"
@@ -26,6 +28,7 @@ const secret = "kddige/secret"
 const missing = "kddige/no-such-repo"
 const octocat = { id: "github:1", login: "octocat", name: "octocat" }
 const url = "https://mcp.example.com/mcp"
+const none = { _tag: "None" }
 
 /** A Hub with the GitHub App on `repo` and `secret`, octocat a collaborator on `repo` only. */
 async function accessHub() {
@@ -58,6 +61,20 @@ async function openOctocat(hub: TestHub) {
 
 let requests = 0
 
+/** Every row of every table in the Hub's database, as text. */
+const databaseText = (hub: TestHub) =>
+  hub.run(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      const tables = yield* sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_master WHERE type = 'table'
+      `
+      const rows: Array<unknown> = []
+      for (const { name } of tables) rows.push(yield* sql.unsafe(`SELECT * FROM "${name}"`))
+      return JSON.stringify(rows)
+    }),
+  )
+
 /** Sends `command` with a fresh request id, and returns the Hub's answer to it. */
 async function ask(web: Connection<Web>, command: Record<string, unknown> & { _tag: string }) {
   const requestId = `q-${++requests}`
@@ -89,7 +106,7 @@ const noAccess = (command: string, about: string) =>
 
 /** alice creates a Plugin named `name`, and returns its id. */
 async function createPlugin(web: Connection<Web>, name = "Docs Search") {
-  const answer = state(await ask(web, { _tag: "CreatePlugin", name, url }))
+  const answer = state(await ask(web, { _tag: "CreatePlugin", auth: none, name, url }))
   const plugin = answer.plugins.find((found) => found.name === name)
   if (plugin === undefined) throw new Error("No Plugin created")
   return plugin.id
@@ -122,6 +139,7 @@ describe("a Hub-only Plugin", () => {
     const edited = state(
       await ask(web, {
         _tag: "EditPlugin",
+        auth: none,
         pluginId: id,
         name: "Docs",
         url: "https://docs.example.com/mcp",
@@ -141,11 +159,16 @@ describe("a Hub-only Plugin", () => {
   test("is refused a name or URL that breaks the rules", async () => {
     const hub = await accessHub()
     const web = await openWeb(hub, "alice")
-    expect(await ask(web, { _tag: "CreatePlugin", name: " ", url })).toEqual(
+    expect(await ask(web, { _tag: "CreatePlugin", auth: none, name: " ", url })).toEqual(
       refused("CreatePlugin", "A Plugin needs a name."),
     )
     expect(
-      await ask(web, { _tag: "CreatePlugin", name: "Docs", url: "https://me:pw@example.com" }),
+      await ask(web, {
+        _tag: "CreatePlugin",
+        auth: none,
+        name: "Docs",
+        url: "https://me:pw@example.com",
+      }),
     ).toMatchObject({ _tag: "CommandFailed", command: "CreatePlugin" })
   })
 
@@ -278,7 +301,13 @@ describe("an Installation", () => {
     )
     // Nor its Plugin edited: its URL is where their MCP traffic goes.
     expect(
-      await ask(web, { _tag: "EditPlugin", pluginId, name: "Docs", url: "https://evil.example" }),
+      await ask(web, {
+        _tag: "EditPlugin",
+        auth: none,
+        pluginId,
+        name: "Docs",
+        url: "https://evil.example",
+      }),
     ).toEqual(
       refused(
         "EditPlugin",
@@ -286,6 +315,73 @@ describe("an Installation", () => {
       ),
     )
     expect(JSON.stringify(await web.untaken("PluginsState"))).not.toContain(secret)
+  })
+})
+
+describe("an Installation's header secret values", () => {
+  const value = "sk-live-0123456789"
+  const headers = {
+    _tag: "Headers" as const,
+    headers: [
+      { key: "token", title: "API key", header: "Authorization", template: "Bearer {value}" },
+    ],
+  }
+
+  test("are write-only, encrypted at rest, and logged by title", async () => {
+    const hub = await startHub({
+      config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
+    })
+    const web = await openWeb(hub, "alice")
+    const created = state(
+      await ask(web, { _tag: "CreatePlugin", auth: headers, name: "Docs Search", url }),
+    )
+    const pluginId = created.plugins[0]?.id
+    expect(created.plugins[0]?.auth).toEqual(headers)
+    const answer = state(
+      await ask(web, {
+        _tag: "CreateInstallation",
+        pluginId,
+        name: "Docs",
+        repos: [repo],
+        values: [{ key: "token", value }],
+      }),
+    )
+    expect(answer.installations[0]?.values).toEqual([
+      {
+        key: "token",
+        setBy: expect.objectContaining({ login: "alice" }),
+        setAt: expect.any(Number),
+      },
+    ])
+    const log = await ask(web, { _tag: "GetPluginLog", repo })
+    if (log._tag !== "PluginLog") throw new Error("No log")
+    expect(log.entries.map((entry) => [entry.change, entry.secrets])).toEqual([
+      ["ValuesSet", ["API key"]],
+      ["Created", undefined],
+    ])
+    expect(web.texts.join("\n")).not.toContain(value)
+    expect(JSON.stringify(log)).not.toContain(value)
+    expect(await databaseText(hub)).not.toContain(value)
+  })
+
+  test("are refused without a secrets key, and for a key the Plugin doesn't declare", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const web = await openWeb(hub, "alice")
+    const created = state(
+      await ask(web, { _tag: "CreatePlugin", auth: headers, name: "Docs Search", url }),
+    )
+    const pluginId = created.plugins[0]?.id
+    const create = (values: ReadonlyArray<{ key: string; value: string }>) =>
+      ask(web, { _tag: "CreateInstallation", pluginId, name: "Docs", repos: [repo], values })
+    expect(await create([{ key: "other", value }])).toEqual(
+      refused("CreateInstallation", "Docs Search has no header secret other."),
+    )
+    expect(await create([{ key: "token", value }])).toMatchObject({
+      _tag: "CommandFailed",
+      command: "CreateInstallation",
+    })
+    // Without a value, the Installation is made, and needs one.
+    expect(state(await create([])).installations[0]?.values).toEqual([])
   })
 })
 
@@ -301,7 +397,13 @@ describe("a Repo's Plugin change log", () => {
       name: "Team docs",
       repos: [repo],
     })
-    await ask(web, { _tag: "EditPlugin", pluginId, name: "Docs Search", url: `${url}/v2` })
+    await ask(web, {
+      _tag: "EditPlugin",
+      auth: none,
+      pluginId,
+      name: "Docs Search",
+      url: `${url}/v2`,
+    })
     await ask(web, {
       _tag: "EditInstallation",
       installationId: id,

@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { MinSensitiveValueLength, SecretValue } from "./Environment.ts"
 import { InstallationId, PluginId, RequestId } from "./Ids.ts"
 import { EpochMillis, Participant, RepoName, repoKey } from "./Session.ts"
 
@@ -8,9 +9,12 @@ import { EpochMillis, Participant, RepoName, repoKey } from "./Session.ts"
 // Runner's relay and the Hub's Gateway: `/gateway/<installationId>`, authenticated by the Session
 // token, as `/mod/*` is (ADR 0013).
 //
-// So far a Plugin is Hub-only, made in the web UI, and needs no auth; an Installation is
-// Repo-scoped. Header secrets and OAuth (held by the Installation), global Installations and
-// packages come later, and slot in here.
+// A Plugin may declare header secrets (#215): headers, such as `Authorization: Bearer <api key>`,
+// that the Gateway adds to each request, each from a value its Installation holds. The values are
+// write-only, like Sensitive Variables: the web is told only which are set, by whom and when.
+//
+// So far a Plugin is Hub-only, made in the web UI; an Installation is Repo-scoped. OAuth, global
+// Installations and packages come later, and slot in here.
 
 // ── Plugins and Installations ──────────────────────────────────────────────
 
@@ -45,6 +49,42 @@ export function pluginSlug(name: string): string {
 /** A Hub-only Plugin's id: `hub:<slug>`. */
 export const hubPluginId = (slug: string): PluginId => PluginId.make(`${HubPluginPrefix}${slug}`)
 
+/** The text of a header secret's template that its value takes the place of. */
+export const ValuePlaceholder = "{value}"
+
+/** The header secrets one Plugin declares, at most. */
+export const MaxHeaderSecrets = 10
+
+/** A header secret's value, at most this long. */
+export const MaxHeaderValueLength = 4096
+
+/**
+ * A header the Gateway adds to each request to a Plugin's MCP server, from a value each
+ * Installation holds: `template` with its value in place of `{value}`, such as `Bearer {value}`.
+ */
+export const HeaderSecret = Schema.Struct({
+  /** Its identifier, unique in the Plugin, which its Installations' values are kept under. */
+  key: Schema.String,
+  /** What the web UI calls it, such as "API key". */
+  title: Schema.String,
+  /** The HTTP header's name, unique in the Plugin by any case. */
+  header: Schema.String,
+  /** The header's value, holding `{value}` exactly once. */
+  template: Schema.String,
+})
+export type HeaderSecret = typeof HeaderSecret.Type
+
+/** The auth a Plugin's MCP server needs: none, or header secrets. OAuth comes later. */
+export const PluginAuth = Schema.Union([
+  Schema.TaggedStruct("None", {}),
+  Schema.TaggedStruct("Headers", { headers: Schema.Array(HeaderSecret) }),
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type PluginAuth = typeof PluginAuth.Type
+
+/** The header secrets `auth` declares; none for other auth. */
+export const headerSecretsOf = (auth: PluginAuth): ReadonlyArray<HeaderSecret> =>
+  auth._tag === "Headers" ? auth.headers : []
+
 /** A remote MCP server, as the Hub adds it to Sessions. */
 export const Plugin = Schema.Struct({
   id: PluginId,
@@ -52,10 +92,20 @@ export const Plugin = Schema.Struct({
   name: Schema.String,
   /** Its MCP server's URL, which only the Hub reaches (Streamable HTTP). */
   url: Schema.String,
+  auth: PluginAuth,
   createdBy: Participant,
   createdAt: EpochMillis,
 })
 export type Plugin = typeof Plugin.Type
+
+/** That an Installation holds a value for one of its Plugin's header secrets: never the value. */
+export const HeaderValueSet = Schema.Struct({
+  /** The header secret's key. */
+  key: Schema.String,
+  setBy: Participant,
+  setAt: EpochMillis,
+})
+export type HeaderValueSet = typeof HeaderValueSet.Type
 
 /**
  * A named copy of a Plugin, on in the Repos it lists. A web client is sent only the Repos its
@@ -68,10 +118,22 @@ export const Installation = Schema.Struct({
   repos: Schema.Array(RepoName),
   /** How many Repos it lists that the person has no access to; absent for none. */
   otherRepos: Schema.optionalKey(Schema.Int),
+  /**
+   * The header secrets of its Plugin it holds a value for. One its Plugin declares that isn't
+   * here needs a value.
+   */
+  values: Schema.Array(HeaderValueSet),
   createdBy: Participant,
   createdAt: EpochMillis,
 })
 export type Installation = typeof Installation.Type
+
+/** A value for one of a Plugin's header secrets, as the web UI sends it: write-only. */
+export const HeaderValueInput = Schema.Struct({
+  key: Schema.String,
+  value: SecretValue,
+})
+export type HeaderValueInput = typeof HeaderValueInput.Type
 
 /** What a Repo's Plugin change log records. */
 export const PluginChange = Schema.Literals([
@@ -85,8 +147,15 @@ export const PluginChange = Schema.Literals([
   "Removed",
   /** An Installation on the Repo was deleted. */
   "Deleted",
-  /** The Plugin of an Installation on the Repo was edited: its name or URL. */
+  /** The Plugin of an Installation on the Repo was edited: its name, URL or header secrets. */
   "PluginEdited",
+  /** Values of an Installation on the Repo were set: `secrets` names which. */
+  "ValuesSet",
+  /**
+   * Values of an Installation on the Repo were cleared, as its Plugin's URL moved to another
+   * origin or its header secrets changed: `secrets` names which.
+   */
+  "ValuesCleared",
 ])
 export type PluginChange = typeof PluginChange.Type
 
@@ -99,6 +168,8 @@ export const PluginLogEntry = Schema.Struct({
   pluginName: Schema.String,
   installationId: InstallationId,
   installationName: Schema.String,
+  /** The titles of the header secrets whose values were set or cleared; never a value. */
+  secrets: Schema.optionalKey(Schema.Array(Schema.String)),
 })
 export type PluginLogEntry = typeof PluginLogEntry.Type
 
@@ -151,19 +222,23 @@ export const CreatePlugin = Schema.TaggedStruct("CreatePlugin", {
   requestId: RequestId,
   name: Schema.String,
   url: Schema.String,
+  auth: PluginAuth,
 })
 export type CreatePlugin = typeof CreatePlugin.Type
 
 /**
- * Change a Hub-only Plugin's name or URL, which its Installations' Sessions pick up on their next
- * wake or Restart. Refused unless the person has access to every Repo its Installations list.
- * Answered with {@link PluginsState}.
+ * Change a Hub-only Plugin's name, URL or header secrets. Its Installations' Sessions show a new
+ * name from their next wake or Restart; the Gateway uses the rest at once. A URL on another origin
+ * clears every value its Installations hold, and a header secret removed, or given another key or
+ * header, clears theirs for it: {@link clearedHeaderSecrets}. Refused unless the person has access
+ * to every Repo its Installations list. Answered with {@link PluginsState}.
  */
 export const EditPlugin = Schema.TaggedStruct("EditPlugin", {
   requestId: RequestId,
   pluginId: PluginId,
   name: Schema.String,
   url: Schema.String,
+  auth: PluginAuth,
 })
 export type EditPlugin = typeof EditPlugin.Type
 
@@ -184,19 +259,23 @@ export const CreateInstallation = Schema.TaggedStruct("CreateInstallation", {
   pluginId: PluginId,
   name: Schema.String,
   repos: Schema.Array(RepoName),
+  /** Values for its Plugin's header secrets; one left out needs a value. */
+  values: Schema.optionalKey(Schema.Array(HeaderValueInput)),
 })
 export type CreateInstallation = typeof CreateInstallation.Type
 
 /**
- * Rename an Installation, and set the Repos it is on in: `repos` is the whole new list. Refused
- * unless the person has access to every Repo it lists, before and after. Answered with
- * {@link PluginsState}.
+ * Rename an Installation, set the Repos it is on in, and set values for its Plugin's header
+ * secrets: `repos` is the whole new list, and `values` only those to set, the others kept. A
+ * Session uses a new value from its next wake or Restart. Refused unless the person has access to
+ * every Repo it lists, before and after. Answered with {@link PluginsState}.
  */
 export const EditInstallation = Schema.TaggedStruct("EditInstallation", {
   requestId: RequestId,
   installationId: InstallationId,
   name: Schema.String,
   repos: Schema.Array(RepoName),
+  values: Schema.optionalKey(Schema.Array(HeaderValueInput)),
 })
 export type EditInstallation = typeof EditInstallation.Type
 
@@ -302,6 +381,132 @@ export function installationReposProblem(repos: ReadonlyArray<string>): string |
   }
   return undefined
 }
+
+/** A header secret's key: letters, digits and underscores, starting with a letter. */
+const headerKeyPattern = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+
+/** An HTTP header's name: a token (RFC 9110). */
+const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/
+
+/** One line of printable ASCII, tabs allowed: what a header's value may hold. */
+const plainLine = /^[\t -~]*$/
+
+/**
+ * Headers a header secret can't be: those of the connection and its framing, which the Gateway
+ * sets itself, and those MCP's Streamable HTTP uses.
+ */
+const reservedHeaders = new Map(
+  [
+    "Connection",
+    "Content-Encoding",
+    "Content-Length",
+    "Content-Type",
+    "Accept",
+    "Host",
+    "Keep-Alive",
+    "Last-Event-ID",
+    "Mcp-Protocol-Version",
+    "Mcp-Session-Id",
+    "Proxy-Authorization",
+    "Proxy-Connection",
+    "TE",
+    "Trailer",
+    "Transfer-Encoding",
+    "Upgrade",
+  ].map((name) => [name.toLowerCase(), name]),
+)
+
+/** How many times `{value}` is in a template. */
+const placeholders = (template: string) => template.split(ValuePlaceholder).length - 1
+
+/** Why a Plugin's auth is refused, if it is: the header secrets it declares break a rule. */
+export function pluginAuthProblem(auth: PluginAuth): string | undefined {
+  if (auth._tag === "None") return undefined
+  const { headers } = auth
+  if (headers.length === 0) return "Declare at least one header secret, or none."
+  if (headers.length > MaxHeaderSecrets) {
+    return `A Plugin declares at most ${MaxHeaderSecrets} header secrets.`
+  }
+  const keys = new Set<string>()
+  const names = new Set<string>()
+  for (const secret of headers) {
+    if (!headerKeyPattern.test(secret.key)) {
+      return `"${secret.key}" isn't a key: use letters, digits and underscores, starting with a letter.`
+    }
+    const titleProblem = pluginNameProblem(secret.title, "A header secret")
+    if (titleProblem !== undefined) {
+      return titleProblem === "A header secret needs a name."
+        ? "A header secret needs a title."
+        : titleProblem.replace("'s name", "'s title")
+    }
+    if (!headerNamePattern.test(secret.header)) return `"${secret.header}" isn't a header name.`
+    const reserved = reservedHeaders.get(secret.header.toLowerCase())
+    if (reserved !== undefined) return `The Gateway sets ${reserved} itself: use another header.`
+    if (secret.template.length > 1024 || !plainLine.test(secret.template)) {
+      return `${secret.title}'s template must be one line of plain characters.`
+    }
+    if (placeholders(secret.template) !== 1) {
+      return `${secret.title}'s template must hold ${ValuePlaceholder} exactly once, as in Bearer ${ValuePlaceholder}.`
+    }
+    if (keys.has(secret.key)) return `The key ${secret.key} is declared twice.`
+    if (names.has(secret.header.toLowerCase())) {
+      return `The header ${secret.header} is declared twice.`
+    }
+    keys.add(secret.key)
+    names.add(secret.header.toLowerCase())
+  }
+  return undefined
+}
+
+/** Why a value for the header secret titled `title` is refused, if it is; never naming it. */
+export function headerValueProblem(title: string, value: string): string | undefined {
+  if (value.length > MaxHeaderValueLength || !plainLine.test(value)) {
+    return `The value of ${title} must be one line of plain characters.`
+  }
+  if (value.trim().length < MinSensitiveValueLength) {
+    return `The value of ${title} is under ${MinSensitiveValueLength} characters: too short to redact from output.`
+  }
+  return undefined
+}
+
+/** A header secret's header value: its template with `value` in place of `{value}`. */
+export const headerValue = (secret: HeaderSecret, value: string) =>
+  secret.template.split(ValuePlaceholder).join(value)
+
+/** A URL's origin, its scheme, host and port; or the URL itself, if it isn't one. */
+const originOf = (url: string) => {
+  try {
+    return new URL(url).origin
+  } catch {
+    return url
+  }
+}
+
+/**
+ * The header secrets of `before` whose values an edit to `after` clears on every Installation,
+ * as the Hub clears them: all of them when the URL moves to another origin (scheme, host or port),
+ * so no value goes to a server it wasn't entered for; else each whose key is gone, or whose header
+ * is another. A new path, title or template keeps them.
+ */
+export function clearedHeaderSecrets(
+  before: { readonly url: string; readonly auth: PluginAuth },
+  after: { readonly url: string; readonly auth: PluginAuth },
+): ReadonlyArray<HeaderSecret> {
+  const declared = headerSecretsOf(before.auth)
+  if (originOf(before.url) !== originOf(after.url)) return declared
+  const now = headerSecretsOf(after.auth)
+  return declared.filter((secret) => {
+    const kept = now.find((other) => other.key === secret.key)
+    return kept === undefined || kept.header.toLowerCase() !== secret.header.toLowerCase()
+  })
+}
+
+/**
+ * What the Gateway answers a request through an Installation that has no value for one of its
+ * Plugin's header secrets, as the Session started with them.
+ */
+export const valueNeededRefusal = (installation: string, title: string) =>
+  `${installation} needs a value for ${title}: enter it on the Plugins page, then Restart the Session.`
 
 /** Why a second Installation of a Plugin on a Repo is refused, as the Hub says it. */
 export const secondInstallationRefusal = (repo: string, existing: string, plugin: string) =>

@@ -12,6 +12,10 @@
 //   at once. Its body and the answer's stream both ways untouched: Streamable HTTP's server-sent
 //   events, compression and all. The Session token, cookies and hop-by-hop headers stay behind;
 //   the server's cookies don't come back. A redirect isn't followed: it is answered `502`.
+// - The Plugin's header secrets (#215) are added as its declarations say now, from the values the
+//   Session started with, which only the Hub holds: a header of the same name from the Sandbox, by
+//   any case, is dropped. An Installation without a value for one is answered `409`, naming it and
+//   the header secret's title.
 // - Each request is logged with its Session, Installation, method, status and time taken, and
 //   nothing of what it carries.
 
@@ -20,7 +24,7 @@ import {
   InstallationId as InstallationIdSchema,
   type SessionId,
 } from "@kndl/protocol"
-import { Clock, Effect, Option } from "effect"
+import { Clock, Effect, Option, Redacted } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
 import { Plugins } from "./Plugins.ts"
@@ -90,8 +94,8 @@ export const GatewayRoutes = HttpRouter.use(
       if (Option.isNone(session) || session.value.state !== "Active") return 401
       const startedWith = session.value.plugins ?? []
       if (!startedWith.some((installation) => installation.id === installationId)) return 403
-      const on = yield* plugins.gatewayTarget(installationId, session.value.repo)
-      return Option.isSome(on) ? on.value.url : 403
+      const on = yield* plugins.gatewayTarget(installationId, session.value)
+      return Option.isSome(on) ? on.value : 403
     })
 
     yield* router.add(
@@ -112,22 +116,43 @@ export const GatewayRoutes = HttpRouter.use(
             )
           })
 
-        const url = yield* target(grant.sessionId, installationId)
-        if (url === 401) {
+        const found = yield* target(grant.sessionId, installationId).pipe(
+          Effect.catchTag("SecretsUnavailable", (error) =>
+            Effect.as(
+              Effect.logError("Could not decrypt an Installation's header secret values", error),
+              500 as const,
+            ),
+          ),
+        )
+        if (found === 401) {
           yield* done(401)
           return errorResponse(401, "Expected the mod token of an Active Session")
         }
-        if (url === 403) {
+        if (found === 403) {
           yield* done(403)
           return errorResponse(403, "This Installation isn't on for the Session's Repo.")
         }
+        if (found === 500) {
+          yield* done(500)
+          return errorResponse(
+            500,
+            "The Hub could not read this Installation's header secret values: check HUB_SECRETS_KEY.",
+          )
+        }
+        if (found._tag === "NeedsValue") {
+          yield* done(409)
+          return errorResponse(409, found.message)
+        }
         const incoming = yield* HttpServerRequest.toWeb(request)
+        const headers = kept(incoming.headers, heldRequestHeaders)
+        // Headers.set replaces one of the same name, by any case.
+        for (const { header, value } of found.headers) headers.set(header, Redacted.value(value))
         const hasBody = !["GET", "HEAD"].includes(request.method)
         const answer = yield* Effect.tryPromise({
           try: (signal) =>
-            fetch(url, {
+            fetch(found.url, {
               method: request.method,
-              headers: kept(incoming.headers, heldRequestHeaders),
+              headers,
               ...(hasBody && { body: incoming.body, duplex: "half" }),
               redirect: "manual",
               // Answers stream back as they come, compressed or not.

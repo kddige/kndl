@@ -61,11 +61,11 @@ HubConfigError: HUB_SECRETS_KEY must be 32 random bytes in base64, as `bun run s
 ```
 
 ```
-HubConfigError: The Hub stores 3 secret values (Sensitive variable values and Claude credentials), encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with. If that key is lost, `bun run secrets-reset` (or `kndl secrets reset`) clears those values, keeping their variables, so a new key can be used.
+HubConfigError: The Hub stores 3 secret values (Sensitive variable values, Claude credentials and Installation values), encrypted, but HUB_SECRETS_KEY is not set. Set it to the key they were saved with. If that key is lost, `bun run secrets-reset` (or `kndl secrets reset`) clears those values, keeping their variables and Installations, so a new key can be used.
 ```
 
 ```
-HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 secret values were (Sensitive variable values and Claude credentials) saved with. Set it to that key. If that key is lost, `bun run secrets-reset` (or `kndl secrets reset`) clears those values, keeping their variables, so a new key can be used.
+HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 secret values were (Sensitive variable values, Claude credentials and Installation values) saved with. Set it to that key. If that key is lost, `bun run secrets-reset` (or `kndl secrets reset`) clears those values, keeping their variables and Installations, so a new key can be used.
 ```
 
 **Why.** Sensitive values and Claude credentials are encrypted with `HUB_SECRETS_KEY`. Once any are saved, the Hub won't start without the same key.
