@@ -1,8 +1,12 @@
 // Plugins on the Hub (#221, ADR 0020): remote MCP servers, the Installations that put them on
 // Repos, and each Repo's log of its Plugin changes.
 //
-// - A Plugin is Hub-only so far: made in the web UI, with the id `hub:<slug>`, which no npm
-//   package's name can be. Any Member may create one. One with Installations can't be deleted.
+// - A Plugin is Hub-only, made in the web UI, with the id `hub:<slug>`, which no npm package's
+//   name can be; or packaged (#220), read from git or an upload, with its `package.json` name for
+//   its id. Any Member may add either. One with Installations can't be deleted.
+// - A packaged Plugin is pinned to its version, and its commit from git: only an Upgrade, to a
+//   package read again from the same source, changes it. Each Repo with an Installation of it logs
+//   the Upgrade, with the version.
 // - An Installation is Repo-scoped so far: on in the Repos it lists. A Repo has at most one
 //   Installation of each Plugin, by any spelling of its name (#197): the second is refused,
 //   naming the first. Who may create or change one is the relay's to decide (PluginRelay.ts):
@@ -31,6 +35,7 @@ import {
   InstallationId,
   installationReposProblem,
   mcpServerNames,
+  type PackagedPlugin,
   type Participant,
   ParticipantId,
   type Plugin,
@@ -40,6 +45,8 @@ import {
   PluginId,
   type PluginLogEntry,
   pluginAuthProblem,
+  PluginPackage,
+  packageVersion,
   pluginInUseRefusal,
   pluginNameProblem,
   pluginSlug,
@@ -177,6 +184,18 @@ const decodeTitles = Schema.decodeUnknownOption(TitlesJson)
 const authOf = (stored: string): PluginAuth =>
   Option.getOrElse(decodeAuth(stored), (): PluginAuth => ({ _tag: "None" }))
 
+const PackageJson = Schema.fromJsonString(PluginPackage)
+const decodePackage = Schema.decodeUnknownSync(PackageJson)
+const encodePackage = Schema.encodeSync(PackageJson)
+
+/** Why a packaged Plugin's edit is refused: it changes only by an Upgrade. */
+export const packagedPluginRefusal = (plugin: string) =>
+  `${plugin} is a packaged Plugin, pinned to its version: upgrade it to change it.`
+
+/** Why adding a package whose name a Plugin on the Hub has is refused. */
+export const pluginTakenRefusal = (id: string) =>
+  `A Plugin named ${id} is already on the Hub, from another source: only a package from the same source can upgrade it.`
+
 /** The Repos of `after` not in `before`, by any spelling. */
 const missingFrom = (before: ReadonlyArray<string>, after: ReadonlyArray<RepoName>) =>
   after.filter((repo) => !before.some((other) => sameRepo(other, repo)))
@@ -230,6 +249,20 @@ export class Plugins extends Context.Service<
       by: ParticipantId,
     ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
     readonly deletePlugin: (id: PluginId) => Effect.Effect<void, PluginRefused | SqlError>
+    /** Adds a packaged Plugin as the Hub read it; refused if a Plugin has its name. */
+    readonly addPackage: (
+      read: PackagedPlugin,
+      by: ParticipantId,
+    ) => Effect.Effect<Plugin, PluginRefused | SqlError>
+    /**
+     * Upgrades a packaged Plugin to a package read again from its source, logging the Upgrade on
+     * every Repo its Installations list, and clearing values as {@link editPlugin} does. Whether
+     * the package is from the same source is the relay's to check.
+     */
+    readonly upgradePlugin: (
+      read: PackagedPlugin,
+      by: ParticipantId,
+    ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
     /**
      * Creates an Installation on the Repos listed, which the caller spelled as the Hub keeps them,
      * with the values given for its Plugin's header secrets.
@@ -300,15 +333,17 @@ export class Plugins extends Context.Service<
           readonly id: string
           readonly name: string
           readonly url: string
+          readonly description: string | null
           readonly auth: string
+          readonly package: string | null
           readonly createdAt: number
           readonly byId: string
           readonly byLogin: string
           readonly byName: string
           readonly byAvatarUrl: string | null
         }>`
-          SELECT g.id, g.name, g.url, g.auth, g.created_at AS createdAt, p.id AS byId,
-            p.login AS byLogin, p.name AS byName, p.avatar_url AS byAvatarUrl
+          SELECT g.id, g.name, g.url, g.description, g.auth, g.package, g.created_at AS createdAt,
+            p.id AS byId, p.login AS byLogin, p.name AS byName, p.avatar_url AS byAvatarUrl
           FROM plugins g JOIN participants p ON p.id = g.created_by
           ${where}
           ORDER BY g.created_at, g.id
@@ -317,8 +352,10 @@ export class Plugins extends Context.Service<
             rows.map((row): Plugin => ({
               id: PluginId.make(row.id),
               name: row.name,
+              ...(row.description !== null && { description: row.description }),
               url: row.url,
               auth: authOf(row.auth),
+              ...(row.package !== null && { package: decodePackage(row.package) }),
               createdBy: toParticipant(row),
               createdAt: row.createdAt,
             })),
@@ -413,20 +450,29 @@ export class Plugins extends Context.Service<
       const record = Effect.fn("Plugins.record")(function* (
         entries: ReadonlyArray<Entry>,
         about: {
-          readonly plugin: { readonly id: string; readonly name: string }
+          readonly plugin: {
+            readonly id: string
+            readonly name: string
+            readonly package?: { readonly version: string; readonly commit?: string }
+          }
           readonly installation: { readonly id: string; readonly name: string }
         },
         by: ParticipantId,
         at: number,
       ) {
         for (const { repo, change, secrets: titles } of entries) {
+          // Only an Upgrade records the version, which is what it changed.
+          const version =
+            change === "PluginUpgraded" && about.plugin.package !== undefined
+              ? packageVersion(about.plugin.package)
+              : null
           yield* sql`
             INSERT INTO plugin_log (
-              repo, at, by, change, plugin_id, plugin_name, installation_id, installation_name,
-              secrets
+              repo, at, by, change, plugin_id, plugin_name, plugin_version, installation_id,
+              installation_name, secrets
             ) VALUES (
               ${repo}, ${at}, ${by}, ${change}, ${about.plugin.id}, ${about.plugin.name},
-              ${about.installation.id}, ${about.installation.name},
+              ${version}, ${about.installation.id}, ${about.installation.name},
               ${titles === undefined ? null : encodeTitles(titles)}
             )
           `
@@ -479,6 +525,66 @@ export class Plugins extends Context.Service<
         (effect) => sql.withTransaction(effect),
       )
 
+      /**
+       * Changes the Plugin to `next`, clearing the values the change leaves no use for on its
+       * Installations and their Sessions ({@link clearedHeaderSecrets}), and logs `change` on each
+       * Repo they list, then ValuesCleared, naming the values each Installation lost. An edit and
+       * an Upgrade both change a Plugin this way.
+       */
+      const changePlugin = Effect.fn("Plugins.changePlugin")(function* (
+        before: Plugin,
+        next: {
+          readonly name: string
+          readonly description?: string
+          readonly url: string
+          readonly auth: PluginAuth
+          readonly package?: PluginPackage
+        },
+        change: "PluginEdited" | "PluginUpgraded",
+        by: ParticipantId,
+      ) {
+        const id = before.id
+        const cleared = clearedHeaderSecrets(before, next)
+        const installed = yield* installationRows(sql`WHERE i.plugin_id = ${id}`)
+        yield* sql`
+          UPDATE plugins SET name = ${next.name}, description = ${next.description ?? null},
+            url = ${next.url}, auth = ${encodeAuth(next.auth)},
+            package = ${next.package === undefined ? null : encodePackage(next.package)}
+          WHERE id = ${id}
+        `
+        if (cleared.length > 0) {
+          const keys = cleared.map((secret) => secret.key)
+          const ofPlugin = sql`
+            installation_id IN (SELECT id FROM installations WHERE plugin_id = ${id})
+              AND key IN ${sql.in(keys)}
+          `
+          yield* sql`DELETE FROM installation_values WHERE ${ofPlugin}`
+          yield* sql`DELETE FROM session_installation_values WHERE ${ofPlugin}`
+        }
+        const at = yield* Clock.currentTimeMillis
+        const repos: Array<RepoName> = []
+        for (const one of installed) {
+          const lost = cleared
+            .filter((secret) => one.values.some((value) => value.key === secret.key))
+            .map((secret) => secret.title)
+          yield* record(
+            withValues(one.repos, change, { change: "ValuesCleared", secrets: lost }),
+            {
+              plugin: {
+                id,
+                name: next.name,
+                ...(next.package !== undefined && { package: next.package }),
+              },
+              installation: one,
+            },
+            by,
+            at,
+          )
+          repos.push(...one.repos)
+        }
+        return { repos }
+      })
+
       const editPlugin = Effect.fn("Plugins.editPlugin")(
         function* (
           id: PluginId,
@@ -487,6 +593,9 @@ export class Plugins extends Context.Service<
         ) {
           const existing = yield* plugin(id)
           if (Option.isNone(existing)) return yield* refuse("There is no such Plugin.")
+          if (existing.value.package !== undefined) {
+            return yield* refuse(packagedPluginRefusal(existing.value.name))
+          }
           yield* checkPlugin(input)
           const name = input.name.trim()
           const auth = encodeAuth(normalizedAuth(input.auth))
@@ -497,35 +606,12 @@ export class Plugins extends Context.Service<
           ) {
             return { repos: [] }
           }
-          const cleared = clearedHeaderSecrets(existing.value, input)
-          const installed = yield* installationRows(sql`WHERE i.plugin_id = ${id}`)
-          yield* sql`
-            UPDATE plugins SET name = ${name}, url = ${input.url}, auth = ${auth} WHERE id = ${id}
-          `
-          if (cleared.length > 0) {
-            const keys = cleared.map((secret) => secret.key)
-            const ofPlugin = sql`
-              installation_id IN (SELECT id FROM installations WHERE plugin_id = ${id})
-                AND key IN ${sql.in(keys)}
-            `
-            yield* sql`DELETE FROM installation_values WHERE ${ofPlugin}`
-            yield* sql`DELETE FROM session_installation_values WHERE ${ofPlugin}`
-          }
-          const at = yield* Clock.currentTimeMillis
-          const repos: Array<RepoName> = []
-          for (const one of installed) {
-            const lost = cleared
-              .filter((secret) => one.values.some((value) => value.key === secret.key))
-              .map((secret) => secret.title)
-            yield* record(
-              withValues(one.repos, "PluginEdited", { change: "ValuesCleared", secrets: lost }),
-              { plugin: { id, name }, installation: one },
-              by,
-              at,
-            )
-            repos.push(...one.repos)
-          }
-          return { repos }
+          return yield* changePlugin(
+            existing.value,
+            { ...existing.value, name, url: input.url, auth: normalizedAuth(input.auth) },
+            "PluginEdited",
+            by,
+          )
         },
         (effect) => sql.withTransaction(effect),
       )
@@ -540,6 +626,46 @@ export class Plugins extends Context.Service<
           const count = rows[0]?.count ?? 0
           if (count > 0) return yield* refuse(pluginInUseRefusal(existing.value.name, count))
           yield* sql`DELETE FROM plugins WHERE id = ${id}`
+        },
+        (effect) => sql.withTransaction(effect),
+      )
+
+      const addPackage = Effect.fn("Plugins.addPackage")(
+        function* (read: PackagedPlugin, by: ParticipantId) {
+          if (Option.isSome(yield* plugin(read.id)))
+            return yield* refuse(pluginTakenRefusal(read.id))
+          yield* checkPlugin(read)
+          yield* sql`
+            INSERT INTO plugins (id, name, url, description, auth, package, created_by, created_at)
+            VALUES (
+              ${read.id}, ${read.name}, ${read.url}, ${read.description ?? null},
+              ${encodeAuth(read.auth)}, ${encodePackage(read.package)}, ${by},
+              ${yield* Clock.currentTimeMillis}
+            )
+          `
+          return Option.getOrThrow(yield* plugin(read.id))
+        },
+        (effect) => sql.withTransaction(effect),
+      )
+
+      const upgradePlugin = Effect.fn("Plugins.upgradePlugin")(
+        function* (read: PackagedPlugin, by: ParticipantId) {
+          const existing = yield* plugin(read.id)
+          if (Option.isNone(existing) || existing.value.package === undefined) {
+            return yield* refuse("There is no such packaged Plugin.")
+          }
+          yield* checkPlugin(read)
+          const before = existing.value
+          if (
+            encodePackage(read.package) === encodePackage(existing.value.package) &&
+            encodeAuth(read.auth) === encodeAuth(before.auth) &&
+            read.name === before.name &&
+            read.url === before.url &&
+            read.description === before.description
+          ) {
+            return { repos: [] }
+          }
+          return yield* changePlugin(before, read, "PluginUpgraded", by)
         },
         (effect) => sql.withTransaction(effect),
       )
@@ -771,12 +897,14 @@ export class Plugins extends Context.Service<
           readonly installationId: string
           readonly installationName: string
           readonly secrets: string | null
+          readonly pluginVersion: string | null
           readonly byId: string
           readonly byLogin: string
           readonly byName: string
           readonly byAvatarUrl: string | null
         }>`
           SELECT l.at, l.change, l.plugin_id AS pluginId, l.plugin_name AS pluginName,
+            l.plugin_version AS pluginVersion,
             l.installation_id AS installationId, l.installation_name AS installationName,
             l.secrets, p.id AS byId, p.login AS byLogin, p.name AS byName,
             p.avatar_url AS byAvatarUrl
@@ -793,6 +921,7 @@ export class Plugins extends Context.Service<
             change: decodeChange(row.change),
             pluginId: PluginId.make(row.pluginId),
             pluginName: row.pluginName,
+            ...(row.pluginVersion !== null && { pluginVersion: row.pluginVersion }),
             installationId: InstallationId.make(row.installationId),
             installationName: row.installationName,
             ...(Option.isSome(titles) && { secrets: titles.value }),
@@ -808,6 +937,8 @@ export class Plugins extends Context.Service<
         createPlugin,
         editPlugin,
         deletePlugin,
+        addPackage,
+        upgradePlugin,
         createInstallation,
         editInstallation,
         deleteInstallation,
@@ -837,8 +968,11 @@ export const installationsOn = Effect.fn("Plugins.installationsOn")(function* (
     readonly name: string
     readonly pluginId: string
     readonly pluginName: string
+    readonly version: string | null
+    readonly pinnedCommit: string | null
   }>`
-    SELECT r.repo, i.id, i.name, g.id AS pluginId, g.name AS pluginName
+    SELECT r.repo, i.id, i.name, g.id AS pluginId, g.name AS pluginName,
+      json_extract(g.package, '$.version') AS version, json_extract(g.package, '$.commit') AS pinnedCommit
     FROM installation_repos r JOIN installations i ON i.id = r.installation_id
       JOIN plugins g ON g.id = i.plugin_id
     WHERE r.repo COLLATE NOCASE IN ${sql.in(repos)}
@@ -866,6 +1000,12 @@ export const installationsOn = Effect.fn("Plugins.installationsOn")(function* (
       name: row.name,
       pluginId: PluginId.make(row.pluginId),
       pluginName: row.pluginName,
+      ...(row.version !== null && {
+        pluginVersion: packageVersion({
+          version: row.version,
+          ...(row.pinnedCommit !== null && { commit: row.pinnedCommit }),
+        }),
+      }),
       server: "",
       ...(held.length > 0 && { values: held }),
     })
@@ -890,6 +1030,7 @@ const runsWith = (installation: SessionInstallation) =>
     installation.id,
     installation.name,
     installation.pluginName,
+    installation.pluginVersion ?? null,
     installation.server,
     (installation.values ?? []).map((value) => [value.key, value.setAt]),
   ])

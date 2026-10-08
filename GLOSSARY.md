@@ -164,6 +164,10 @@ _Avoid_: reference, import, binding
 A remote MCP server that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. kndl's own pieces that each Session's Claude Code loads are the mod, not Plugins.
 _Avoid_: integration, extension, connector, mod
 
+**Upgrade**:
+Moving a packaged Plugin to what its source holds now, once someone has seen what that changes. A packaged Plugin is pinned to its version, and changes only by an Upgrade.
+_Avoid_: update, sync, refresh
+
 **Installation**:
 A named, configured copy of one Plugin, holding the credentials of the account it acts as. It is global, on in every Repo, or on in the Repos it lists, and a Repo has at most one Installation of each Plugin.
 _Avoid_: connection, instance, config, plugin (for a configured copy)

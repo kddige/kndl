@@ -53,7 +53,8 @@ export const HubRoutes = Layer.mergeAll(
  * The credential stores, each person's Claude credential, the mod outbox, Environments, Repo
  * access, the GitHub App's permission check, the Pairing codes, the Session relay, the tunnels
  * waiting for their Runner and the shutdown signal the routes use, given a database, the GitHub App (GitHubApp.ts), the check of
- * Claude credentials (ClaudeCheck) and the Hub's version (HubVersion.ts).
+ * Claude credentials (ClaudeCheck), where Plugin packages are read from (PluginSources.ts) and the
+ * Hub's version (HubVersion.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
   Layer.provideMerge(

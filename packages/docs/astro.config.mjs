@@ -83,6 +83,7 @@ export default defineConfig({
             { slug: "how-to/work-in-a-session" },
             { slug: "how-to/work-with-subagents" },
             { slug: "how-to/add-a-remote-mcp-server-as-a-plugin" },
+            { slug: "how-to/publish-and-add-a-plugin-package" },
             { slug: "how-to/install-the-cli-from-a-hub" },
             { slug: "how-to/sign-in-the-cli" },
             { slug: "how-to/forward-a-sessions-ports" },
@@ -97,6 +98,7 @@ export default defineConfig({
             { slug: "reference/configuration" },
             { slug: "reference/files-and-paths" },
             { slug: "reference/glossary" },
+            { slug: "reference/plugin-packages" },
             { slug: "reference/protocol" },
             {
               label: "Decisions (ADRs)",

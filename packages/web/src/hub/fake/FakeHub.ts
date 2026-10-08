@@ -37,7 +37,6 @@ import {
   pairingLink,
   Participant,
   ProtocolVersion,
-  type PluginCommand,
   type RepoStatus,
   repoKey,
   runnerRemovalRefusal,
@@ -50,7 +49,7 @@ import { Redacted, Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
 import { FakeEnvironments, sessionStartScript, testBuildScript } from "./environments.ts"
-import { FakePlugins } from "./plugins.ts"
+import { FakePlugins, type PluginChangeCommand } from "./plugins.ts"
 import {
   archiveRetentionMs,
   bob,
@@ -228,7 +227,14 @@ const withPlugins = (plugins: ReadonlyArray<SessionInstallationWire>) =>
 
 /** What a Session runs with of an Installation: a change to any of it takes a Restart. */
 const runsWith = (one: SessionInstallationWire) =>
-  JSON.stringify([one.id, one.name, one.pluginName, one.server, one.values ?? []])
+  JSON.stringify([
+    one.id,
+    one.name,
+    one.pluginName,
+    one.pluginVersion ?? "",
+    one.server,
+    one.values ?? [],
+  ])
 
 /** Whether a Session's Installations differ from its Repo's, in what it runs with. */
 function differ(
@@ -563,10 +569,7 @@ export class FakeHub implements HubTransport {
    * changed Repo's change log, and its Sessions whether their Installations changed since they
    * started, which a Restart applies.
    */
-  #changePlugins(
-    socket: FakeSocket,
-    message: Exclude<PluginCommand, { _tag: "GetPlugins" | "GetPluginLog" }>,
-  ): void {
+  #changePlugins(socket: FakeSocket, message: PluginChangeCommand): void {
     const outcome = this.plugins.change(message, this.#you, this.#allowed)
     if ("refused" in outcome) {
       this.#refuse(socket, message._tag, message.requestId, outcome.refused)
@@ -1062,8 +1065,17 @@ export class FakeHub implements HubTransport {
       case "CreateInstallation":
       case "EditInstallation":
       case "DeleteInstallation":
+      case "AddPluginPackage":
+      case "UpgradePlugin":
         this.#changePlugins(socket, message)
         break
+      case "ReadPluginPackage":
+      case "CheckPluginUpgrade": {
+        const read = this.plugins.read(message, this.#you)
+        if ("refused" in read) this.#refuse(socket, message._tag, message.requestId, read.refused)
+        else socket.deliver(read)
+        break
+      }
       case "GetEnvironment":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         socket.deliver({ ...this.environments.state(message.repo), requestId: message.requestId })

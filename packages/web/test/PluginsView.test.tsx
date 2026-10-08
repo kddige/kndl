@@ -242,3 +242,127 @@ test("says whose values an edit to a Plugin clears, before saving it", async () 
     url: "https://linear.example/mcp",
   })
 })
+
+const dialogInput = (label: string) =>
+  [...(dialog()?.querySelectorAll("label") ?? [])]
+    .find((one) => one.textContent?.startsWith(label))
+    ?.parentElement?.querySelector("input") as HTMLInputElement
+
+const folder = () =>
+  dialog()?.querySelector('input[aria-label="The package\'s folder"]') as HTMLInputElement
+
+/** Chooses `files` in a file input, as a browser would, each named from its folder as given. */
+async function chooseFiles(input: HTMLInputElement, files: Record<string, string>) {
+  const chosen = Object.entries(files).map(([path, content]) => {
+    const file = new File([content], path.split("/").at(-1) ?? path)
+    Object.defineProperty(file, "webkitRelativePath", { value: path })
+    return file
+  })
+  await step(() => {
+    Object.defineProperty(input, "files", { value: chosen, configurable: true })
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+  })
+  await settle(20)
+}
+
+test("adds a Plugin package from git, once what the Hub read is confirmed", async () => {
+  const { hub } = await openPlugins()
+  await step(() => button("Add package").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add a Plugin package"))
+  await type(dialogInput("Git repo URL"), "git@github.com:acme/notion-mcp.git")
+  await step(() => button("Read package").click())
+  expect(dialog()?.textContent).toContain("The git URL isn't a URL")
+  expect(hub.received.some((m) => m._tag === "ReadPluginPackage")).toBe(false)
+
+  await type(dialogInput("Git repo URL"), "https://github.com/acme/notion-mcp")
+  await type(dialogInput("Folder"), "../elsewhere")
+  await step(() => button("Read package").click())
+  expect(dialog()?.textContent).toContain("isn't a folder inside the repo")
+  await type(dialogInput("Folder"), "")
+  await step(() => button("Read package").click())
+  // What the Hub read, before anything is added.
+  await eventually(() => expect(dialog()?.textContent).toContain("@acme/notion-mcp"))
+  const read = dialog()?.querySelector('[aria-label="The package"]')?.textContent
+  expect(read).toContain("Notion")
+  expect(read).toContain("0.3.0 (51c0a7e)")
+  expect(read).toContain("https://mcp.notion.example/mcp")
+  expect(plugin("Notion")).toBeNull()
+
+  await step(() => button("Add").click())
+  await eventually(() => expect(plugin("Notion")?.textContent).toContain("@acme/notion-mcp"))
+  expect(plugin("Notion")?.textContent).toContain("0.3.0 (51c0a7e)")
+  expect(plugin("Notion")?.textContent).toContain("https://github.com/acme/notion-mcp")
+  expect(hub.received.some((m) => m._tag === "AddPluginPackage")).toBe(true)
+})
+
+test("upgrades a packaged Plugin from git only once its changes are confirmed", async () => {
+  const { hub } = await openPlugins()
+  // Pinned: only an Upgrade changes it.
+  expect(plugin("Asana")?.textContent).toContain("1.0.0 (3f2c9a1)")
+  expect(() => button("Edit Plugin Asana")).toThrow()
+  await step(() => button("Add Installation of Asana").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Asana"))
+  await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
+  await type(dialog()?.querySelector('input[type="password"]') as HTMLInputElement, "made-up")
+  await step(() => button("Add").click())
+  await eventually(() => expect(plugin("Asana")?.textContent).toContain("set by"))
+
+  await settle(300)
+  await step(() => button("Upgrade Plugin Asana").click())
+  const table = () => dialog()?.querySelector('[aria-label="What upgrading changes"]')
+  await eventually(() => expect(table()).not.toBeNull())
+  const changes = table()?.textContent
+  expect(changes).toContain("1.0.0")
+  expect(changes).toContain("1.1.0")
+  expect(changes).toContain("https://mcp.asana.example/v2/mcp")
+  expect(changes).toContain("Header secrets: API key (Authorization: Bearer {value})")
+  expect(dialog()?.textContent).toContain("It asks for new header secrets")
+  // Its Token is gone from the package: the value entered for it is cleared, as an edit would.
+  expect(dialog()?.textContent).toContain("Upgrading clears header secret values")
+  expect(dialog()?.textContent).toContain("Asana: Token")
+  expect(plugin("Asana")?.textContent).toContain("https://mcp.asana.example/mcp")
+
+  await step(() => button("Upgrade").click())
+  await eventually(() => expect(plugin("Asana")?.textContent).toContain("1.1.0 (9b41e07)"))
+  expect(plugin("Asana")?.textContent).toContain("https://mcp.asana.example/v2/mcp")
+  expect(plugin("Asana")?.textContent).toContain("needs a value")
+  expect(hub.received.find((m) => m._tag === "UpgradePlugin")).toMatchObject({
+    pluginId: "@acme/asana-mcp",
+  })
+
+  await settle(300)
+  await step(() => button("Upgrade Plugin Asana").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Asana is up to date: 1.1.0"))
+  expect(() => button("Upgrade", dialog() ?? document)).toThrow()
+})
+
+test("adds an uploaded folder, and refuses a name a Plugin from another source has", async () => {
+  await openPlugins()
+  await step(() => button("Add package").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add a Plugin package"))
+  await step(() => button("Upload").click())
+  await chooseFiles(folder(), {
+    "asana/package.json": JSON.stringify({ name: "@acme/asana-mcp", version: "2.0.0" }),
+    "asana/kndl.json": JSON.stringify({
+      displayName: "Asana",
+      mcp: { url: "https://x.dev/mcp" },
+    }),
+  })
+  await step(() => button("Read package").click())
+  await eventually(() =>
+    expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain(
+      "@acme/asana-mcp is already on the Hub, from another source",
+    ),
+  )
+
+  await chooseFiles(folder(), {
+    "jira/package.json": JSON.stringify({ name: "@acme/jira-mcp", version: "1.0.0" }),
+    "jira/kndl.json": JSON.stringify({ displayName: "Jira", mcp: { url: "https://jira.dev/mcp" } }),
+    "jira/src/kndl.json": "not the manifest",
+  })
+  await step(() => button("Read package").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Uploaded jira"))
+  await step(() => button("Add").click())
+  await eventually(() => expect(plugin("Jira")?.textContent).toContain("@acme/jira-mcp"))
+  expect(plugin("Jira")?.textContent).toContain("Uploaded jira")
+})

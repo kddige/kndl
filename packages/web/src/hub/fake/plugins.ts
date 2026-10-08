@@ -4,27 +4,43 @@
 // needs access to a Repo the person lacks. A Repo is the same however its name is spelled (#197).
 // Header secret values (#215) are taken as the Hub takes them, and kept as the Hub shows them:
 // who set each and when, never the value.
+//
+// Packaged Plugins (#220) are read from a folder upload, as the Hub reads them, or from one of the
+// fake's git repos, below, whichever ref is asked for; it doesn't unpack archives. Asana starts
+// packaged, a version behind its repo, so the Upgrade flow has something to show.
 
 import {
+  type CheckPluginUpgrade,
   clearedHeaderSecrets,
+  gitRefProblem,
+  gitUrlProblem,
   type HeaderValueInput,
   headerSecretsOf,
   headerValueProblem,
   hubPluginId,
   installationReposProblem,
   mcpServerNames,
+  type PackagedPlugin,
+  packagePath,
+  packagePathProblem,
   type PluginAuth,
   pluginAuthProblem,
   type PluginCommand,
+  type PluginPackageFrom,
+  type PluginSource,
+  packageVersion,
   pluginInUseRefusal,
   pluginNameProblem,
   pluginSlug,
   pluginUrlProblem,
+  type ReadPluginPackage,
+  readPluginPackage,
   repoKey,
   sameRepo,
+  sameSource,
   secondInstallationRefusal,
 } from "@kndl/protocol"
-import { Redacted } from "effect"
+import { Redacted, Result } from "effect"
 import { bob, you } from "./script.ts"
 import type {
   HeaderValueSetWire,
@@ -34,6 +50,51 @@ import type {
   PluginWire,
   SessionInstallationWire,
 } from "./wire.ts"
+
+/** The fake's git repos of Plugin packages, each at its default branch's head. */
+const gitRepos: Record<string, { packageJson: string; manifest: string; commit: string }> = {
+  "https://github.com/acme/asana-mcp": {
+    packageJson: JSON.stringify({ name: "@acme/asana-mcp", version: "1.1.0" }),
+    manifest: JSON.stringify({
+      displayName: "Asana",
+      description: "Asana's tasks and projects.",
+      mcp: { url: "https://mcp.asana.example/v2/mcp" },
+      auth: {
+        type: "headers",
+        headers: [
+          { key: "apiKey", title: "API key", header: "Authorization", template: "Bearer {value}" },
+        ],
+      },
+    }),
+    commit: "9b41e07c2d5a8f3e1b6c4d7a0e9f2b5c8d1a4e7f",
+  },
+  "https://github.com/acme/notion-mcp": {
+    packageJson: JSON.stringify({ name: "@acme/notion-mcp", version: "0.3.0" }),
+    manifest: JSON.stringify({
+      displayName: "Notion",
+      description: "Search and read the team's Notion pages.",
+      mcp: { url: "https://mcp.notion.example/mcp" },
+    }),
+    commit: "51c0a7e3f9b2d84c6e1a0f7b3d5c9e2a8b4f6d10",
+  },
+}
+
+/** A package the fake read for someone, kept until they add or upgrade to it. */
+interface KeptRead {
+  readonly by: string
+  readonly read: PackagedPlugin
+  readonly upgrades?: string
+  readonly basis?: string
+}
+
+/** A command that reads a package, rather than changing the Plugins. */
+type ReadCommand = ReadPluginPackage | CheckPluginUpgrade
+
+/** A command that changes the Plugins. */
+export type PluginChangeCommand = Exclude<
+  PluginCommand,
+  { _tag: "GetPlugins" | "GetPluginLog" } | ReadCommand
+>
 
 /** An Installation as the fake keeps it: every Repo it lists, whoever asks. */
 interface FakeInstallation {
@@ -78,6 +139,33 @@ const normalizedAuth = (auth: PluginAuth): PluginAuth =>
 
 const sameAuth = (a: PluginAuth, b: PluginAuth) => JSON.stringify(a) === JSON.stringify(b)
 
+/** The package `from` holds, as the Hub would read it; the fake reads no archives. */
+function readFrom(from: PluginPackageFrom): Result.Result<PackagedPlugin, string> {
+  switch (from._tag) {
+    case "Folder":
+      return readPluginPackage(from, { _tag: "Upload", fileName: from.folderName })
+    case "Archive":
+      return Result.fail("The fake Hub doesn't unpack archives: upload the folder instead.")
+    case "Git": {
+      const problem =
+        gitUrlProblem(from.url) ??
+        (from.ref === undefined ? undefined : gitRefProblem(from.ref)) ??
+        (from.path === undefined ? undefined : packagePathProblem(from.path))
+      if (problem !== undefined) return Result.fail(problem)
+      const repo = gitRepos[from.url.replace(/\.git$/, "").replace(/\/+$/, "")]
+      if (repo === undefined || packagePath(from.path ?? "") !== "") {
+        return Result.fail(`There is no package at ${from.url}.`)
+      }
+      const source = {
+        _tag: "Git",
+        url: from.url,
+        ...(from.ref !== undefined && { ref: from.ref }),
+      }
+      return readPluginPackage(repo, source as PluginSource, repo.commit)
+    }
+  }
+}
+
 const minute = 60_000
 const day = 24 * 60 * minute
 
@@ -87,6 +175,7 @@ export class FakePlugins {
   /** Each Repo's log, newest first, by repoKey. */
   readonly #logs = new Map<string, Array<PluginLogEntryWire>>()
   #ids = 0
+  readonly #reads = new Map<string, KeptRead>()
 
   constructor(now = Date.now()) {
     const docs = this.#plugin("Docs search", "https://docs-mcp.example.com/mcp", bob, now - 9 * day)
@@ -102,6 +191,24 @@ export class FakePlugins {
       headers: [
         { key: "token", title: "Auth token", header: "X-Sentry-Token", template: "{value}" },
       ],
+    })
+    // Packaged, a version behind its git repo.
+    this.#plugins.push({
+      id: "@acme/asana-mcp",
+      name: "Asana",
+      description: "Asana's tasks and projects.",
+      url: "https://mcp.asana.example/mcp",
+      auth: {
+        _tag: "Headers",
+        headers: [{ key: "token", title: "Token", header: "X-Asana-Token", template: "{value}" }],
+      },
+      package: {
+        version: "1.0.0",
+        commit: "3f2c9a14b8e7d6c5a4f3e2d1c0b9a8f7e6d5c4b3",
+        source: { _tag: "Git", url: "https://github.com/acme/asana-mcp" },
+      },
+      createdBy: you,
+      createdAt: now - 2 * day,
     })
     this.#install(docs, "Docs", ["kddige/kndl"], bob, now - 8 * day)
     // On a Repo Alice can't see too: she sees it, but can't change it.
@@ -139,26 +246,122 @@ export class FakePlugins {
       installation.repos.some((listed) => sameRepo(listed, repo)),
     )
     const servers = mcpServerNames(on.map((installation) => installation.name))
-    return on.map((installation, index) => ({
-      id: installation.id,
-      name: installation.name,
-      pluginId: installation.pluginId,
-      pluginName: this.#find(installation.pluginId)?.name ?? "",
-      server: servers[index] ?? "",
-      ...(installation.values.length > 0 && {
-        values: installation.values.map(({ key, setAt }) => ({ key, setAt })),
-      }),
-    }))
+    return on.map((installation, index) => {
+      const plugin = this.#find(installation.pluginId)
+      return {
+        id: installation.id,
+        name: installation.name,
+        pluginId: installation.pluginId,
+        pluginName: plugin?.name ?? "",
+        ...(plugin?.package && { pluginVersion: packageVersion(plugin.package) }),
+        server: servers[index] ?? "",
+        ...(installation.values.length > 0 && {
+          values: installation.values.map(({ key, setAt }) => ({ key, setAt })),
+        }),
+      }
+    })
+  }
+
+  /**
+   * Reads a package for `by`, as the Hub does: what it would add, or upgrade a Plugin from the
+   * same source to, kept by the read's id; or why it is refused.
+   */
+  read(
+    command: ReadCommand,
+    by: ParticipantWire,
+  ): { readonly refused: string } | Extract<HubMessage, { _tag: "PluginPackageRead" }> {
+    let from: PluginPackageFrom
+    if (command._tag === "CheckPluginUpgrade") {
+      const plugin = this.#find(command.pluginId)
+      if (plugin?.package === undefined) return { refused: "There is no such packaged Plugin." }
+      const { source } = plugin.package
+      if (source._tag === "Upload") {
+        return { refused: `${plugin.name} was uploaded: upload its new version to upgrade it.` }
+      }
+      from = { ...source, _tag: "Git" }
+    } else {
+      from = command.from
+    }
+    const read = readFrom(from)
+    if (Result.isFailure(read)) return { refused: read.failure }
+    const existing = this.#find(read.success.id)
+    if (
+      existing &&
+      (!existing.package || !sameSource(existing.package.source, read.success.package.source))
+    ) {
+      return {
+        refused: `A Plugin named ${read.success.id} is already on the Hub, from another source: only a package from the same source can upgrade it.`,
+      }
+    }
+    const readId = `read-${++this.#ids}`
+    this.#reads.set(readId, {
+      by: by.id,
+      read: read.success,
+      ...(existing && { upgrades: existing.id, basis: JSON.stringify(existing.package) }),
+    })
+    return {
+      _tag: "PluginPackageRead",
+      requestId: command.requestId,
+      readId,
+      read: read.success,
+      ...(existing && { upgrades: existing.id }),
+    }
   }
 
   /** Applies a change by `by`, who has access to the Repos `allowed` lets through. */
   change(
-    command: Exclude<PluginCommand, { _tag: "GetPlugins" | "GetPluginLog" }>,
+    command: PluginChangeCommand,
     by: ParticipantWire,
     allowed: (repo: string) => boolean,
   ): PluginOutcome {
     const at = Date.now()
     switch (command._tag) {
+      case "AddPluginPackage": {
+        const kept = this.#reads.get(command.readId)
+        if (kept?.by !== by.id) return { refused: "That package read has expired; read it again." }
+        if (kept.upgrades !== undefined) {
+          return {
+            refused: `A Plugin named ${kept.upgrades} is already on the Hub, from this source: upgrade it instead.`,
+          }
+        }
+        this.#reads.delete(command.readId)
+        this.#plugins.push({ ...kept.read, createdBy: by, createdAt: at })
+        return { repos: [] }
+      }
+      case "UpgradePlugin": {
+        const kept = this.#reads.get(command.readId)
+        if (kept?.by !== by.id || kept.upgrades !== command.pluginId) {
+          return { refused: "That package read has expired; read it again." }
+        }
+        const plugin = this.#find(command.pluginId)
+        if (plugin === undefined || JSON.stringify(plugin.package) !== kept.basis) {
+          return {
+            refused: `${plugin?.name ?? "The Plugin"} changed since that read; check for an upgrade again.`,
+          }
+        }
+        const installed = this.#installations.filter((one) => one.pluginId === plugin.id)
+        if (installed.some((one) => !one.repos.every(allowed))) {
+          return {
+            refused:
+              "This Plugin has Installations on Repos you have no access to, so you can't upgrade it.",
+          }
+        }
+        this.#reads.delete(command.readId)
+        // As an edit does: values entered for another server, or another header, are cleared.
+        const cleared = clearedHeaderSecrets(plugin, kept.read)
+        const { description: _, ...rest } = plugin
+        this.#plugins[this.#plugins.indexOf(plugin)] = { ...rest, ...kept.read }
+        for (const one of installed) {
+          const lost = cleared.filter((secret) => one.values.some(({ key }) => key === secret.key))
+          one.values = one.values.filter(({ key }) => !lost.some((secret) => secret.key === key))
+          this.#record(one.repos, "PluginUpgraded", one, by, at)
+          if (lost.length > 0) {
+            const titles = lost.map((secret) => secret.title)
+            this.#record(one.repos, "ValuesCleared", one, by, at, titles)
+          }
+        }
+        return { repos: installed.flatMap((one) => one.repos) }
+      }
       case "CreatePlugin": {
         const problem =
           pluginNameProblem(command.name) ??
@@ -176,6 +379,11 @@ export class FakePlugins {
           return {
             refused:
               "This Plugin has Installations on Repos you have no access to, so you can't edit it.",
+          }
+        }
+        if (plugin.package) {
+          return {
+            refused: `${plugin.name} is a packaged Plugin, pinned to its version: upgrade it to change it.`,
           }
         }
         const problem =
@@ -381,6 +589,8 @@ export class FakePlugins {
         change,
         pluginId: installation.pluginId,
         pluginName: plugin?.name ?? "",
+        ...(change === "PluginUpgraded" &&
+          plugin?.package && { pluginVersion: packageVersion(plugin.package) }),
         installationId: installation.id,
         installationName: installation.name,
         ...(secrets !== undefined && { secrets: [...secrets] }),

@@ -59,7 +59,9 @@ export function pluginChangeText(entry: PluginLogEntry): string {
     case "ValuesSet":
       return `set ${installation}'s ${valuesText(entry.secrets)}`
     case "ValuesCleared":
-      return `cleared ${installation}'s ${valuesText(entry.secrets)}, editing ${plugin}`
+      return `cleared ${installation}'s ${valuesText(entry.secrets)}, as ${plugin} changed`
+    case "PluginUpgraded":
+      return `upgraded ${plugin}, the Plugin of ${installation}, to ${entry.pluginVersion ?? "a new version"}`
   }
 }
 

@@ -12,29 +12,46 @@
 // - Each web client is sent the Installations with only the Repos its person has access to, as
 //   last asked. When that changes, so does what it is sent.
 // - A change tells the changed Repos' Sessions, which then show that a Restart applies it.
+// - A packaged Plugin (#220) is read first, from git or an upload, off the lock: a fetch may take a
+//   while. The read is kept for its person, to add or upgrade to by its id once they confirm, so
+//   what they confirm is what they saw. An Upgrade is refused if the Plugin changed since.
 
 import {
+  type CheckPluginUpgrade,
   CommandFailed,
   HubToWeb,
   type Installation,
+  type PackagedPlugin,
   type Participant,
+  type ParticipantId,
   type PluginCommand,
+  type PluginId,
+  type PluginPackageFrom,
+  PluginPackageReadTtlMs,
   type PluginsState,
+  type ReadPluginPackage,
   RepoName,
   sameRepo,
+  sameSource,
   type WebToHub,
 } from "@kndl/protocol"
-import { Effect, Option } from "effect"
+import { Clock, Effect, Option } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
-import { PluginRefused, Plugins, type StoredInstallation } from "./Plugins.ts"
+import { PluginRefused, Plugins, pluginTakenRefusal, type StoredInstallation } from "./Plugins.ts"
+import { PluginSources } from "./PluginSources.ts"
 import { RepoAccess } from "./RepoAccess.ts"
 import type { Peer } from "./SessionRelay.ts"
+import { randomId } from "./Tokens.ts"
 
 const webTags = [
   "GetPlugins",
   "CreatePlugin",
   "EditPlugin",
   "DeletePlugin",
+  "ReadPluginPackage",
+  "CheckPluginUpgrade",
+  "AddPluginPackage",
+  "UpgradePlugin",
   "CreateInstallation",
   "EditInstallation",
   "DeleteInstallation",
@@ -79,6 +96,26 @@ const noRepoAccess = (repo: string) =>
 const hiddenRepos =
   "This Installation is on in Repos you have no access to, so you can't change it."
 
+/** Why adding or upgrading by a read the Hub no longer keeps for the person is refused. */
+const staleRead = "That package read has expired; read it again."
+
+/** The package reads kept, at most; past it, the oldest is dropped. */
+const maxReads = 100
+
+/** A package the Hub read for a person, kept until they add or upgrade to it. */
+interface KeptRead {
+  readonly by: ParticipantId
+  readonly read: PackagedPlugin
+  /** The Plugin it upgrades, from the same source. */
+  readonly upgrades?: PluginId
+  /** That Plugin's package when read, which it must still be to upgrade. */
+  readonly basis?: string
+  readonly at: number
+}
+
+/** A command about Plugins that changes them, or asks about them: not a read of a package. */
+type StoreCommand = Exclude<PluginCommand, ReadPluginPackage | CheckPluginUpgrade>
+
 /** An Installation as the person may see it: only the Repos they have access to. */
 const seenBy = (client: PluginWebClient, installation: StoredInstallation): Installation => {
   const repos = installation.repos.filter((repo) => client.repos.get(repo) === true)
@@ -89,8 +126,88 @@ const seenBy = (client: PluginWebClient, installation: StoredInstallation): Inst
 export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHost) {
   const plugins = yield* Plugins
   const access = yield* RepoAccess
+  const sources = yield* PluginSources
   /** The connections that asked for Plugins, which are sent them again as they change. */
   const asked = new WeakSet<Peer<HubToWeb>>()
+  /** The package reads kept, by id, oldest first. */
+  const reads = new Map<string, KeptRead>()
+
+  /** The read the Hub keeps for the person by that id, if it hasn't expired. */
+  const keptRead = Effect.fn("PluginRelay.keptRead")(function* (by: ParticipantId, readId: string) {
+    const now = yield* Clock.currentTimeMillis
+    for (const [id, kept] of reads) {
+      if (now - kept.at > PluginPackageReadTtlMs) reads.delete(id)
+    }
+    const kept = reads.get(readId)
+    return kept?.by === by ? kept : yield* new PluginRefused({ message: staleRead })
+  })
+
+  /** Where to read a packaged Plugin again, at the ref it was added from: only from git. */
+  const gitSourceOf = Effect.fn("PluginRelay.gitSourceOf")(function* (id: PluginId) {
+    const plugin = Option.getOrUndefined(yield* plugins.plugin(id))
+    if (plugin?.package === undefined) {
+      return yield* new PluginRefused({ message: "There is no such packaged Plugin." })
+    }
+    const { source } = plugin.package
+    if (source._tag === "Upload") {
+      return yield* new PluginRefused({
+        message: `${plugin.name} was uploaded: upload its new version to upgrade it.`,
+      })
+    }
+    const from: PluginPackageFrom = { ...source, _tag: "Git" }
+    return { from, plugin: plugin.id }
+  })
+
+  /**
+   * Reads a package for the person, off the lock, and keeps it for them to add, or to upgrade a
+   * Plugin from the same source to. Refused if a Plugin from another source has its name.
+   */
+  const readPackage = Effect.fn("PluginRelay.readPackage")(function* (
+    client: PluginWebClient,
+    message: ReadPluginPackage | CheckPluginUpgrade,
+  ) {
+    const checked =
+      message._tag === "CheckPluginUpgrade"
+        ? yield* gitSourceOf(message.pluginId)
+        : { from: message.from, plugin: undefined }
+    const read = yield* sources.read(checked.from)
+    if (checked.plugin !== undefined && read.id !== checked.plugin) {
+      return yield* new PluginRefused({
+        message: `The package there is now named ${read.id}, not ${checked.plugin}: add it as a Plugin of its own.`,
+      })
+    }
+    const existing = Option.getOrUndefined(yield* plugins.plugin(read.id))
+    if (existing !== undefined) {
+      if (
+        existing.package === undefined ||
+        !sameSource(existing.package.source, read.package.source)
+      ) {
+        return yield* new PluginRefused({ message: pluginTakenRefusal(read.id) })
+      }
+    }
+    const readId = randomId()
+    reads.set(readId, {
+      by: client.you.id,
+      read,
+      ...(existing !== undefined && {
+        upgrades: existing.id,
+        basis: JSON.stringify(existing.package),
+      }),
+      at: yield* Clock.currentTimeMillis,
+    })
+    for (const id of reads.keys()) {
+      if (reads.size <= maxReads) break
+      reads.delete(id)
+    }
+    client.peer.send(
+      HubToWeb.cases.PluginPackageRead.make({
+        requestId: message.requestId,
+        readId,
+        read,
+        ...(existing !== undefined && { upgrades: existing.id }),
+      }),
+    )
+  })
 
   const stateFor = (
     client: PluginWebClient,
@@ -159,15 +276,17 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
    * The Repos a command needs access to, off the lock: those it names, which a refusal may name,
    * and those of what it changes now, which a refusal never names.
    */
-  const reposOf = Effect.fn("PluginRelay.reposOf")(function* (message: PluginCommand) {
+  const reposOf = Effect.fn("PluginRelay.reposOf")(function* (message: StoreCommand) {
     switch (message._tag) {
       case "GetPlugins":
       case "CreatePlugin":
       case "DeletePlugin":
+      case "AddPluginPackage":
         return { named: [], hidden: [] }
       case "GetPluginLog":
         return { named: [message.repo], hidden: [] }
       case "EditPlugin":
+      case "UpgradePlugin":
         return { named: [], hidden: yield* plugins.pluginRepos(message.pluginId) }
       case "CreateInstallation":
         return { named: message.repos, hidden: [] }
@@ -190,7 +309,7 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
   /** Handles a command whose Repos the person has access to, under the lock. */
   const handle = Effect.fn("PluginRelay.handle")(function* (
     client: PluginWebClient,
-    message: PluginCommand,
+    message: StoreCommand,
     checked: ReadonlyArray<string>,
   ) {
     const { you, peer } = client
@@ -241,6 +360,40 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
         yield* answer
         return yield* toOthers(peer)
 
+      case "AddPluginPackage": {
+        const kept = yield* keptRead(you.id, message.readId)
+        if (kept.upgrades !== undefined) {
+          return yield* new PluginRefused({
+            message: `A Plugin named ${kept.upgrades} is already on the Hub, from this source: upgrade it instead.`,
+          })
+        }
+        yield* plugins.addPackage(kept.read, you.id)
+        reads.delete(message.readId)
+        asked.add(peer)
+        yield* answer
+        return yield* toOthers(peer)
+      }
+
+      case "UpgradePlugin": {
+        const kept = yield* keptRead(you.id, message.readId)
+        if (kept.upgrades !== message.pluginId) {
+          return yield* new PluginRefused({ message: staleRead })
+        }
+        const now = Option.getOrUndefined(yield* plugins.plugin(message.pluginId))
+        if (now === undefined || JSON.stringify(now.package) !== kept.basis) {
+          return yield* new PluginRefused({
+            message: `${now?.name ?? "The Plugin"} changed since that read; check for an upgrade again.`,
+          })
+        }
+        yield* stillChecked(yield* plugins.pluginRepos(message.pluginId))
+        const { repos } = yield* plugins.upgradePlugin(kept.read, you.id)
+        reads.delete(message.readId)
+        asked.add(peer)
+        yield* answer
+        yield* toOthers(peer)
+        return yield* changed(repos)
+      }
+
       case "CreateInstallation": {
         const { repos } = yield* plugins.createInstallation(message, you.id)
         asked.add(peer)
@@ -269,8 +422,11 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
   const receiveWeb = Effect.fn("PluginRelay.receiveWeb")(
     function* (client: PluginWebClient, message: PluginCommand) {
       const { you } = client
+      if (message._tag === "ReadPluginPackage" || message._tag === "CheckPluginUpgrade") {
+        return yield* readPackage(client, message)
+      }
       // The Repos it names, under the one spelling the Hub keeps of each (#197).
-      const command: PluginCommand =
+      const command: StoreCommand =
         message._tag === "CreateInstallation" || message._tag === "EditInstallation"
           ? { ...message, repos: yield* Effect.forEach(message.repos, host.respell) }
           : message
@@ -301,8 +457,8 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
             if (hidden.unknown !== undefined || hidden.learned.some((answer) => !answer.allowed)) {
               return yield* new PluginRefused({
                 message:
-                  command._tag === "EditPlugin"
-                    ? "This Plugin has Installations on Repos you have no access to, so you can't edit it."
+                  command._tag === "EditPlugin" || command._tag === "UpgradePlugin"
+                    ? `This Plugin has Installations on Repos you have no access to, so you can't ${command._tag === "EditPlugin" ? "edit" : "upgrade"} it.`
                     : hiddenRepos,
               })
             }

@@ -560,6 +560,15 @@ const migrations = SqliteMigrator.fromRecord({
     `
     yield* sql`ALTER TABLE plugin_log ADD COLUMN secrets TEXT`
   }),
+  // Packaged Plugins (#220): a manifest's description, and the version, commit and source a
+  // packaged Plugin is pinned to, as JSON; null for a Hub-only one. The log records the version an
+  // Upgrade went to.
+  "0026_plugin_packages": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE plugins ADD COLUMN description TEXT`
+    yield* sql`ALTER TABLE plugins ADD COLUMN package TEXT`
+    yield* sql`ALTER TABLE plugin_log ADD COLUMN plugin_version TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
