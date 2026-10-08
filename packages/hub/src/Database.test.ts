@@ -41,11 +41,21 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0026, Plugin packages: the migrator runs only the
- * migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0028, global Installations: the migrator runs only
+ * the migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeGlobalInstallations = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP TABLE installation_repo_off`
+  yield* sql`DROP INDEX installations_one_global_per_plugin`
+  yield* sql`ALTER TABLE installations DROP COLUMN global`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'global_installations'`
+})
+
+/** Takes the database back to before migration 0026, Plugin packages, as above. */
 const beforePluginPackages = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeGlobalInstallations
   yield* sql`ALTER TABLE plugins DROP COLUMN description`
   yield* sql`ALTER TABLE plugins DROP COLUMN package`
   yield* sql`ALTER TABLE plugin_log DROP COLUMN plugin_version`
@@ -254,6 +264,45 @@ describe("migration 0026, Plugin packages", () => {
     expect(after).toEqual({
       plugins: [{ id: "hub:docs", description: null, package: null }],
       log: [{ change: "PluginEdited", pluginVersion: null }],
+    })
+  })
+})
+
+describe("migration 0028, global Installations", () => {
+  test("leaves the Installations there were Repo-scoped, on in the Repos they list", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeGlobalInstallations
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('github:1', 'octocat', 'Octocat', 1, 1)`
+        yield* sql`INSERT INTO plugins (id, name, url, created_by, created_at)
+          VALUES ('hub:docs', 'Docs', 'https://mcp.example.com/mcp', 'github:1', 2)`
+        yield* sql`INSERT INTO installations (id, plugin_id, name, created_by, created_at)
+          VALUES ('in-1', 'hub:docs', 'Docs', 'github:1', 3)`
+        yield* sql`INSERT INTO installation_repos (installation_id, plugin_id, repo)
+          VALUES ('in-1', 'hub:docs', 'acme/app')`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        return {
+          installations: yield* sql`SELECT id, global FROM installations`,
+          repos: yield* sql`SELECT installation_id AS id, repo FROM installation_repos`,
+          off: yield* sql`SELECT * FROM installation_repo_off`,
+        }
+      }),
+    )
+    expect(after).toEqual({
+      installations: [{ id: "in-1", global: 0 }],
+      repos: [{ id: "in-1", repo: "acme/app" }],
+      off: [],
     })
   })
 })

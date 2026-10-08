@@ -2,7 +2,7 @@
 // Hub playing its script fast.
 
 import { expect, test } from "bun:test"
-import { hubPluginId } from "@kndl/protocol"
+import { hubPluginId, RequestId } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
@@ -15,7 +15,7 @@ const { createMemoryHistory, RouterProvider } = await import("@tanstack/react-ro
 const { HubProvider } = await import("../src/app/hub.tsx")
 const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
-const { demoSessionId, releaseSessionId } = await import("../src/hub/fake/script.ts")
+const { demoSessionId, releaseSessionId, you } = await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
 
 /** Waits, letting React render, until `check` stops throwing. */
@@ -189,8 +189,13 @@ test("a queued prompt steered into the running Turn leaves the queue and joins i
  * The whole app on one of the fake Hub's seeded Sessions, its script not playing, once a banner
  * starting with `bannerStart` shows.
  */
-async function openSession(sessionId: string, bannerStart = "This Session is", stepMs = 2) {
-  const hub = new FakeHub({ stepMs, autoplay: false })
+async function openSession(
+  sessionId: string,
+  bannerStart = "This Session is",
+  stepMs = 2,
+  owner = true,
+) {
+  const hub = new FakeHub({ stepMs, autoplay: false, owner })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(
     createMemoryHistory({ initialEntries: [`/sessions/${sessionId}`] }),
@@ -383,6 +388,48 @@ test("a prompt queued while an Installation keeps the Session from starting runs
   await eventually(() => expect(queue()).toBe(""))
   const conversation = () => page.querySelector('[aria-label="Conversation"]')?.textContent ?? ""
   await eventually(() => expect(conversation()).toContain("Summarize the open issues"))
+})
+
+test("a Session a global Installation keeps from starting turns it off for its Repo, and starts (#219)", async () => {
+  const { hub, client, page, banner, header, sent } = await openSession("s-readme", "This Session")
+  await step(() => client.createInstallation(hubPluginId("linear"), "Linear", [], [], true))
+  await eventually(() => expect(linearOf(hub)?.global).toBe(true))
+
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(banner()).toContain("This Session can't start"))
+  expect(banner()).toContain("Fix it, or turn it off for kddige/kndl, then retry.")
+  // The Owner can fix it.
+  expect(page.querySelector('a[aria-label="Fix Linear"]')).not.toBeNull()
+
+  // Anyone in the Session turns it off for its Repo in one click, and the Session starts.
+  await eventually(() => expect(button("Turn Linear off for kddige/kndl", page)).toBeDefined())
+  await step(() => button("Turn Linear off for kddige/kndl", page).click())
+  await eventually(() => expect(header()).toContain("Active"))
+  expect(sent()).toContain("TurnGlobalInstallation")
+  expect(linearOf(hub)?.off).toEqual(["kddige/kndl"])
+  expect(linearOf(hub)?.global).toBe(true)
+})
+
+test("only the Owner can fix a global Installation that keeps a Session from starting (#219)", async () => {
+  const { hub, page, banner } = await openSession("s-readme", "This Session", 2, false)
+  hub.plugins.change(
+    {
+      _tag: "CreateInstallation",
+      requestId: RequestId.make("seed"),
+      pluginId: hubPluginId("linear"),
+      name: "Linear",
+      global: true,
+      repos: [],
+    },
+    you,
+    () => true,
+    true,
+  )
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(banner()).toContain("This Session can't start"))
+  expect(banner()).toContain("It is global: only the Hub's Owner can fix it.")
+  expect(page.querySelector('a[aria-label="Fix Linear"]')).toBeNull()
+  await eventually(() => expect(button("Turn Linear off for kddige/kndl", page)).toBeDefined())
 })
 
 test("Fix opens the Installation that keeps a Session from starting (#216)", async () => {

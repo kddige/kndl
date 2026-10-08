@@ -4,18 +4,24 @@ import { InstallationId, PluginId, RequestId } from "./Ids.ts"
 import { EpochMillis, Participant, RepoName, repoKey } from "./Session.ts"
 
 // Plugins (ADR 0020): remote MCP servers the Hub adds to Sessions. A Plugin is the server's
-// definition; an Installation is a named copy of one, on in the Repos it lists. Claude Code in a
-// Session gets one MCP server per Installation on for its Repo, which it reaches through the
-// Runner's relay and the Hub's Gateway: `/gateway/<installationId>`, authenticated by the Session
-// token, as `/mod/*` is (ADR 0013).
+// definition; an Installation is a named copy of one, global or on in the Repos it lists. Claude
+// Code in a Session gets one MCP server per Installation on for its Repo, which it reaches through
+// the Runner's relay and the Hub's Gateway: `/gateway/<installationId>`, authenticated by the
+// Session token, as `/mod/*` is (ADR 0013).
 //
 // A Plugin may declare header secrets (#215): headers, such as `Authorization: Bearer <api key>`,
 // that the Gateway adds to each request, each from a value its Installation holds. The values are
 // write-only, like Sensitive Variables: the web is told only which are set, by whom and when.
 //
 // A Plugin is Hub-only, made in the web UI, or packaged: read from a git repo or an upload, pinned
-// to its version and changed only by an Upgrade (see PluginPackage.ts). An Installation is
-// Repo-scoped. OAuth and global Installations come later, and slot in here.
+// to its version and changed only by an Upgrade (see PluginPackage.ts). OAuth comes later, and
+// slots in here.
+//
+// An Installation is global (#219), on in every Repo, existing and new, or Repo-scoped, on in the
+// Repos it lists. On a Repo with a Repo-scoped Installation of a global one's Plugin, that one
+// takes the global's place; a Repo can also turn a global Installation off, and back on. Only the
+// Hub's Owner creates, edits or deletes a global Installation, or edits, upgrades or deletes its
+// Plugin: every Sandbox on the Hub can use it. See `installationsFor`.
 
 // ── Plugins and Installations ──────────────────────────────────────────────
 
@@ -142,16 +148,24 @@ export const HeaderValueSet = Schema.Struct({
 export type HeaderValueSet = typeof HeaderValueSet.Type
 
 /**
- * A named copy of a Plugin, on in the Repos it lists. A web client is sent only the Repos its
- * person has access to: `otherRepos` counts the rest, without naming them.
+ * A named copy of a Plugin, global or on in the Repos it lists. A web client is sent only the
+ * Repos its person has access to: `otherRepos` counts the rest, without naming them.
  */
 export const Installation = Schema.Struct({
   id: InstallationId,
   pluginId: PluginId,
   name: Schema.String,
+  /** Whether it is global (#219): on in every Repo, listing none. Absent for Repo-scoped. */
+  global: Schema.optionalKey(Schema.Boolean),
+  /** The Repos it lists, for a Repo-scoped one; none for a global one. */
   repos: Schema.Array(RepoName),
   /** How many Repos it lists that the person has no access to; absent for none. */
   otherRepos: Schema.optionalKey(Schema.Int),
+  /**
+   * For a global one, the Repos that turned it off (#219), of those the person has access to;
+   * absent for none.
+   */
+  off: Schema.optionalKey(Schema.Array(RepoName)),
   /**
    * The header secrets of its Plugin it holds a value for. One its Plugin declares that isn't
    * here needs a value.
@@ -192,14 +206,27 @@ export const PluginChange = Schema.Literals([
   "ValuesCleared",
   /** The packaged Plugin of an Installation on the Repo was upgraded to another version. */
   "PluginUpgraded",
+  /** A Repo-scoped Installation was made global (#219): on in every Repo. */
+  "MadeGlobal",
+  /** A global Installation was made Repo-scoped (#219): on in only the Repos it lists. */
+  "MadeRepoScoped",
+  /** A global Installation was turned off for the Repo (#219). */
+  "TurnedOff",
+  /** A global Installation turned off for the Repo was turned back on (#219). */
+  "TurnedOn",
 ])
 export type PluginChange = typeof PluginChange.Type
 
-/** One entry of a Repo's Plugin change log, with the names as they were then. */
+/**
+ * One entry of a Repo's Plugin change log, with the names as they were then. A change to a global
+ * Installation is in every Repo's log, once (#219): `global` says so.
+ */
 export const PluginLogEntry = Schema.Struct({
   at: EpochMillis,
   by: Participant,
   change: PluginChange,
+  /** Whether it is a change to a global Installation, in every Repo's log; absent if not. */
+  global: Schema.optionalKey(Schema.Boolean),
   pluginId: PluginId,
   pluginName: Schema.String,
   installationId: InstallationId,
@@ -284,8 +311,9 @@ export type CreatePlugin = typeof CreatePlugin.Type
  * name from their next wake or Restart; the Gateway uses the rest at once. A URL on another origin
  * clears every value its Installations hold, and a header secret removed, or given another key or
  * header, clears theirs for it: {@link clearedHeaderSecrets}. Refused unless the person has access
- * to every Repo its Installations list, and for a packaged Plugin, which changes only by an
- * Upgrade. Answered with {@link PluginsState}.
+ * to every Repo its Installations list, for a packaged Plugin, which changes only by an Upgrade,
+ * and unless the person is the Owner, for a Plugin with a global Installation (#219). Answered with
+ * {@link PluginsState}.
  */
 export const EditPlugin = Schema.TaggedStruct("EditPlugin", {
   requestId: RequestId,
@@ -296,7 +324,10 @@ export const EditPlugin = Schema.TaggedStruct("EditPlugin", {
 })
 export type EditPlugin = typeof EditPlugin.Type
 
-/** Delete a Plugin with no Installations. Answered with {@link PluginsState}. */
+/**
+ * Delete a Plugin with no Installations. Unless the person is the Owner, refused for one with a
+ * global Installation (#219), first. Answered with {@link PluginsState}.
+ */
 export const DeletePlugin = Schema.TaggedStruct("DeletePlugin", {
   requestId: RequestId,
   pluginId: PluginId,
@@ -366,7 +397,8 @@ export type AddPluginPackage = typeof AddPluginPackage.Type
  * Upgrade a packaged Plugin to the package the person read, which its Installations' Sessions pick
  * up on their next wake or Restart. It clears Installations' values as {@link EditPlugin} does:
  * {@link clearedHeaderSecrets}. Refused unless the person has access to every Repo its
- * Installations list, and if the Plugin changed since the read. Answered with {@link PluginsState}.
+ * Installations list, if the Plugin changed since the read, and unless the person is the Owner,
+ * for a Plugin with a global Installation (#219). Answered with {@link PluginsState}.
  */
 export const UpgradePlugin = Schema.TaggedStruct("UpgradePlugin", {
   requestId: RequestId,
@@ -376,14 +408,18 @@ export const UpgradePlugin = Schema.TaggedStruct("UpgradePlugin", {
 export type UpgradePlugin = typeof UpgradePlugin.Type
 
 /**
- * Create a Repo-scoped Installation of a Plugin, on the Repos listed. Refused unless the person
- * has access to every one, and for a Repo that already has an Installation of the Plugin.
- * Answered with {@link PluginsState}.
+ * Create an Installation of a Plugin: Repo-scoped, on the Repos listed, refused unless the person
+ * has access to every one, and for a Repo that already has a Repo-scoped Installation of the
+ * Plugin; or global (#219), listing none, refused unless the person is the Owner, and for a Plugin
+ * that already has a global Installation. Answered with {@link PluginsState}.
  */
 export const CreateInstallation = Schema.TaggedStruct("CreateInstallation", {
   requestId: RequestId,
   pluginId: PluginId,
   name: Schema.String,
+  /** Whether it is global; absent for Repo-scoped. */
+  global: Schema.optionalKey(Schema.Boolean),
+  /** The Repos it is on in, for a Repo-scoped one; none for a global one. */
   repos: Schema.Array(RepoName),
   /** Values for its Plugin's header secrets; one left out needs a value. */
   values: Schema.optionalKey(Schema.Array(HeaderValueInput)),
@@ -391,29 +427,46 @@ export const CreateInstallation = Schema.TaggedStruct("CreateInstallation", {
 export type CreateInstallation = typeof CreateInstallation.Type
 
 /**
- * Rename an Installation, set the Repos it is on in, and set values for its Plugin's header
- * secrets: `repos` is the whole new list, and `values` only those to set, the others kept. A
- * Session uses a new value from its next wake or Restart. Refused unless the person has access to
- * every Repo it lists, before and after. Answered with {@link PluginsState}.
+ * Rename an Installation, set whether it is global and the Repos it is on in, and set values for
+ * its Plugin's header secrets: `global` and `repos` as the whole new setting, and `values` only
+ * those to set, the others kept. A Session uses a new value from its next wake or Restart. Refused
+ * unless the person has access to every Repo it lists, before and after, and unless the person is
+ * the Owner, if it is global before or after (#219). Answered with {@link PluginsState}.
  */
 export const EditInstallation = Schema.TaggedStruct("EditInstallation", {
   requestId: RequestId,
   installationId: InstallationId,
   name: Schema.String,
+  /** Whether it is global; absent for Repo-scoped. */
+  global: Schema.optionalKey(Schema.Boolean),
   repos: Schema.Array(RepoName),
   values: Schema.optionalKey(Schema.Array(HeaderValueInput)),
 })
 export type EditInstallation = typeof EditInstallation.Type
 
 /**
- * Delete an Installation, taking it off every Repo it lists. Refused unless the person has access
- * to every one. Answered with {@link PluginsState}.
+ * Delete an Installation, taking it off every Repo it is on in. Refused unless the person has
+ * access to every Repo it lists, and unless the person is the Owner, for a global one (#219).
+ * Answered with {@link PluginsState}.
  */
 export const DeleteInstallation = Schema.TaggedStruct("DeleteInstallation", {
   requestId: RequestId,
   installationId: InstallationId,
 })
 export type DeleteInstallation = typeof DeleteInstallation.Type
+
+/**
+ * Turn a global Installation off for a Repo, or back on (#219). Anyone with access to the Repo
+ * may. Refused for a Repo-scoped Installation: take the Repo off it instead. Its Sessions pick the
+ * change up on their next wake or Restart. Answered with {@link PluginsState}.
+ */
+export const TurnGlobalInstallation = Schema.TaggedStruct("TurnGlobalInstallation", {
+  requestId: RequestId,
+  installationId: InstallationId,
+  repo: RepoName,
+  on: Schema.Boolean,
+})
+export type TurnGlobalInstallation = typeof TurnGlobalInstallation.Type
 
 /** Ask for a Repo's Plugin change log. Answered with {@link PluginLog}. */
 export const GetPluginLog = Schema.TaggedStruct("GetPluginLog", {
@@ -435,6 +488,7 @@ export const PluginCommand = Schema.Union([
   CreateInstallation,
   EditInstallation,
   DeleteInstallation,
+  TurnGlobalInstallation,
   GetPluginLog,
 ])
 export type PluginCommand = typeof PluginCommand.Type
@@ -685,6 +739,8 @@ export const InstallationFailure = Schema.Struct({
   secrets: Schema.optionalKey(Schema.Array(Schema.String)),
   /** For `Rejected` and `Errored`: the status its MCP server answered. */
   status: Schema.optionalKey(Schema.Int),
+  /** Whether the Installation is global (#219), which a Repo turns off rather than leaves. */
+  global: Schema.optionalKey(Schema.Boolean),
 })
 export type InstallationFailure = typeof InstallationFailure.Type
 
@@ -730,12 +786,101 @@ export const installationsCantStartText = (
   failures: ReadonlyArray<Omit<InstallationFailure, "installationId">>,
 ) => {
   const one = failures.length === 1
-  return `${failures.map(installationFailureText).join(" ")} Fix the ${one ? "Installation" : "Installations"} on the Plugins page, or take ${repo} off ${one ? "it" : "them"}, then wake the Session.`
+  return `${failures.map(installationFailureText).join(" ")} Fix the ${one ? "Installation" : "Installations"} on the Plugins page, or ${leaveText(repo, failures)}, then wake the Session.`
+}
+
+/**
+ * How `repo` does without the Installations that fail it: it is taken off a Repo-scoped one, and
+ * turns a global one off (#219).
+ */
+export const leaveText = (
+  repo: string,
+  failures: ReadonlyArray<{ readonly global?: boolean | undefined }>,
+) => {
+  const them = failures.length === 1 ? "it" : "them"
+  if (failures.every((failure) => failure.global === true)) return `turn ${them} off for ${repo}`
+  if (failures.some((failure) => failure.global === true)) {
+    return `take ${repo} off ${them} or turn ${them} off for it`
+  }
+  return `take ${repo} off ${them}`
 }
 
 /** Why a second Installation of a Plugin on a Repo is refused, as the Hub says it. */
 export const secondInstallationRefusal = (repo: string, existing: string, plugin: string) =>
   `${repo} already has ${existing}, an Installation of ${plugin}: a Repo has at most one Installation of each Plugin.`
+
+/** Why a second global Installation of a Plugin is refused, as the Hub says it (#219). */
+export const secondGlobalRefusal = (existing: string, plugin: string) =>
+  `${existing} is already a global Installation of ${plugin}: a Plugin has at most one global Installation.`
+
+/** Why anyone but the Owner is refused a change to a global Installation (#219). */
+export const globalOwnerOnlyRefusal =
+  "Only the Hub's Owner can create, edit or delete a global Installation: every Sandbox on the Hub can use it."
+
+/** Why anyone but the Owner is refused a change to a Plugin with a global Installation (#219). */
+export const globalPluginRefusal = (plugin: string) =>
+  `${plugin} has a global Installation, on in every Repo: only the Hub's Owner can edit, upgrade or delete it.`
+
+/** Why turning a Repo-scoped Installation off for a Repo is refused (#219). */
+export const notGlobalRefusal = (installation: string) =>
+  `${installation} isn't global: take the Repo off it instead.`
+
+/** Why a global Installation that lists Repos is refused (#219). */
+export const globalReposRefusal = "A global Installation is on in every Repo: it lists none."
+
+/** Where an Installation on a Repo comes from, as the Repo shows it (#219). */
+export type InstallationSource =
+  /** Repo-scoped, listing the Repo: on. */
+  | "Repo"
+  /** Global: on. */
+  | "Global"
+  /** Global, but a Repo-scoped Installation of its Plugin lists the Repo, and is on instead. */
+  | "Overridden"
+  /** Global, but the Repo turned it off. */
+  | "Off"
+
+/** What {@link installationsFor} needs of an Installation. */
+export interface ResolvableInstallation {
+  readonly pluginId: string
+  readonly global?: boolean | undefined
+  readonly repos: ReadonlyArray<string>
+  readonly off?: ReadonlyArray<string> | undefined
+}
+
+/**
+ * The Installations that are, or would be, on for `repo`, by any spelling, in the order given,
+ * each with where it comes from (#219): every Repo-scoped one that lists it, and every global one,
+ * which is on unless a Repo-scoped Installation of its Plugin lists the Repo (overridden) or the
+ * Repo turned it off. The Hub resolves a Session's Installations, and the Gateway its requests,
+ * the same way.
+ */
+export const installationsFor = <I extends ResolvableInstallation>(
+  installations: ReadonlyArray<I>,
+  repo: string,
+): Array<{ readonly installation: I; readonly source: InstallationSource }> => {
+  const key = repoKey(repo)
+  const lists = (one: ResolvableInstallation) => one.repos.some((name) => repoKey(name) === key)
+  const resolved: Array<{ readonly installation: I; readonly source: InstallationSource }> = []
+  for (const installation of installations) {
+    if (installation.global === true) {
+      const overridden = installations.some(
+        (other) =>
+          other.global !== true && other.pluginId === installation.pluginId && lists(other),
+      )
+      const off = (installation.off ?? []).some((name) => repoKey(name) === key)
+      resolved.push({
+        installation,
+        source: overridden ? "Overridden" : off ? "Off" : "Global",
+      })
+    } else if (lists(installation)) {
+      resolved.push({ installation, source: "Repo" })
+    }
+  }
+  return resolved
+}
+
+/** Whether an Installation from that source is on for the Repo. */
+export const isOn = (source: InstallationSource) => source === "Repo" || source === "Global"
 
 /** Why deleting a Plugin with Installations is refused, as the Hub says it. */
 export const pluginInUseRefusal = (plugin: string, installations: number) =>

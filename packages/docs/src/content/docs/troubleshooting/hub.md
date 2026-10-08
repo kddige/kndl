@@ -106,9 +106,11 @@ Claude Code could not start: Docs's MCP server refused its credential (401). Fix
 Claude Code could not start: The Hub could not read Docs's header secret values: check HUB_SECRETS_KEY. Fix the Installation on the Plugins page, or take owner/name off it, then wake the Session.
 ```
 
+For a [global Installation](/how-to/add-a-remote-mcp-server-as-a-plugin/#turn-it-on-for-every-repo), the way out reads `or turn it off for owner/name, then wake the Session.`
+
 **Why.** The Hub checks each Installation on for the Session's Repo as the Session starts, and doesn't start it with one that surely can't work: one without a value for a header secret, one whose MCP server refuses its value with `401` or `403`, or one whose values the Hub can't decrypt. See [When an Installation fails a Session](/how-to/add-a-remote-mcp-server-as-a-plugin/#when-an-installation-fails-a-session).
 
-**Fix.** Press **Fix** beside the Installation, enter the value its server takes, and save; then press **Retry**. Or, with access to every Repo the Installation lists, press **Take owner/name off Docs**, which wakes the Session at once. For the third, set `HUB_SECRETS_KEY` to the key the values were saved with, or see [The secrets key is lost](#the-secrets-key-is-lost). Prompts sent meanwhile wait in the Session's queue, and run once it starts.
+**Fix.** Press **Fix** beside the Installation, enter the value its server takes, and save; then press **Retry**. Or, with access to every Repo the Installation lists, press **Take owner/name off Docs**, which wakes the Session at once. A global Installation only the Hub's Owner can fix; anyone in the Session can press **Turn it off for owner/name**, which turns it off for the Repo alone and wakes the Session, and turn it back on later on the Repo's page. For the third, set `HUB_SECRETS_KEY` to the key the values were saved with, or see [The secrets key is lost](#the-secrets-key-is-lost). Prompts sent meanwhile wait in the Session's queue, and run once it starts.
 
 ## A Plugin's MCP server fails in a Session
 
@@ -129,6 +131,22 @@ Docs needs a value for API key. Its tools fail until the Installation is fixed a
 **Why.** The first is from the Session's start: the server didn't answer within `HUB_PLUGIN_CHECK_TIMEOUT_MS`, couldn't be reached from the Hub, or answered with an error such as `503`. A server that may only be down doesn't keep a Session from starting. The others are from the Gateway, while the Session ran: the server refused the Installation's value, or an edit to its Plugin cleared the value. The Session runs on, with its other servers, and says so once until the Installation works again.
 
 **Fix.** For the first, check that the Hub can reach the Plugin's URL; a slow server may need a higher `HUB_PLUGIN_CHECK_TIMEOUT_MS`. Its tools work as soon as it answers. For the others, press **Fix**, enter a value the server takes, and save; then **Restart** the Session, which starts it with the new value.
+
+## A global Installation, or its Plugin, can't be changed
+
+**What you see.** On **Plugins**, **Edit** and **Delete** are disabled on an Installation marked **Global**, or on its Plugin, or saving is refused with one of:
+
+```
+Only the Hub's Owner can create, edit or delete a global Installation: every Sandbox on the Hub can use it.
+```
+
+```
+Docs search has a global Installation, on in every Repo: only the Hub's Owner can edit, upgrade or delete it.
+```
+
+**Why.** A global Installation is on in every Repo, so every Sandbox on the Hub can use its credentials. Only the Hub's Owner creates, edits or deletes one, or edits, upgrades or deletes its Plugin.
+
+**Fix.** Ask the Owner. Meanwhile, anyone with access to a Repo can press **Turn off for this Repo** on the Repo's page, or create the Repo's own Installation of the Plugin, which takes the global one's place there. See [Turn it on for every Repo](/how-to/add-a-remote-mcp-server-as-a-plugin/#turn-it-on-for-every-repo).
 
 ## A Hub is already running on the database
 

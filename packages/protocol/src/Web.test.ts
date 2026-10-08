@@ -215,6 +215,21 @@ const webToHub = [
   { _tag: "DeleteInstallation", requestId: "q-35", installationId: "in-1" },
   { _tag: "GetPluginLog", requestId: "q-36", repo: "kddige/kndl" },
   {
+    _tag: "CreateInstallation",
+    requestId: "q-43",
+    pluginId: "hub:docs-search",
+    name: "Docs",
+    global: true,
+    repos: [],
+  },
+  {
+    _tag: "TurnGlobalInstallation",
+    requestId: "q-44",
+    installationId: "in-1",
+    repo: "kddige/kndl",
+    on: false,
+  },
+  {
     _tag: "ReadPluginPackage",
     requestId: "q-37",
     from: {

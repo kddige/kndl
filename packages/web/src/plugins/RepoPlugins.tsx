@@ -1,15 +1,24 @@
-// A Repo's Plugins, on its Repo page (ADR 0020): the Installations on for it, whose MCP servers
-// Claude Code in its Sessions gets, each saying which of its header secrets need a value; and its
-// Plugin change log: who created, edited, added or removed an Installation here, or set or cleared
-// its header secret values (by title, never the values), and when.
+// A Repo's Plugins, on its Repo page (ADR 0020): the Installations for it, whose MCP servers
+// Claude Code in its Sessions gets, each saying which of its header secrets need a value, and
+// where it comes from (#219): listed for this Repo, or global, on in every Repo but where a
+// Repo-scoped one of its Plugin takes its place or the Repo turned it off. Anyone with access to
+// the Repo turns a global one off for it, or back on. And its Plugin change log: who created,
+// edited, added or removed an Installation here, or set or cleared its header secret values (by
+// title, never the values), and when; a global one's changes show in every Repo's.
 
-import { type PluginLogEntry, repoKey, sameRepo } from "@kndl/protocol"
+import {
+  type Installation,
+  type InstallationSource,
+  installationsFor,
+  type PluginLogEntry,
+  repoKey,
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { andList, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
-import { Avatar, Badge, Spinner } from "../ui/index.ts"
+import { Avatar, Badge, type BadgeIntent, Button, Spinner, toast } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { neededText, valuesNeeded } from "./headerSecrets.ts"
@@ -31,6 +40,7 @@ const styles = stylex.create({
   },
   first: { borderTopWidth: 0 },
   name: { fontWeight: weight.semibold },
+  notOn: { opacity: 0.7 },
   muted: { color: color.textMuted, fontSize: text.sm },
   grow: { flex: 1, minWidth: 0 },
   link: {
@@ -43,17 +53,26 @@ const styles = stylex.create({
 /** What a change log entry says happened, after who did it. */
 export function pluginChangeText(entry: PluginLogEntry): string {
   const { installationName: installation, pluginName: plugin } = entry
+  const an = entry.global === true ? "a global Installation" : "an Installation"
   switch (entry.change) {
     case "Created":
-      return `created ${installation}, an Installation of ${plugin}`
+      return `created ${installation}, ${an} of ${plugin}`
     case "Added":
       return `put ${installation}, an Installation of ${plugin}, on in this Repo`
     case "Renamed":
-      return `renamed an Installation of ${plugin} to ${installation}`
+      return `renamed ${an} of ${plugin} to ${installation}`
     case "Removed":
       return `took ${installation}, an Installation of ${plugin}, off this Repo`
     case "Deleted":
-      return `deleted ${installation}, an Installation of ${plugin}`
+      return `deleted ${installation}, ${an} of ${plugin}`
+    case "MadeGlobal":
+      return `made ${installation}, an Installation of ${plugin}, global: on in every Repo`
+    case "MadeRepoScoped":
+      return `made ${installation}, an Installation of ${plugin}, on only in the Repos it lists`
+    case "TurnedOff":
+      return `turned ${installation}, a global Installation of ${plugin}, off for this Repo`
+    case "TurnedOn":
+      return `turned ${installation}, a global Installation of ${plugin}, back on for this Repo`
     case "PluginEdited":
       return `edited ${plugin}, the Plugin of ${installation}`
     case "ValuesSet":
@@ -71,12 +90,21 @@ const valuesText = (secrets: ReadonlyArray<string> | undefined) =>
     ? "header secret values"
     : `${secrets.length === 1 ? "value" : "values"} of ${andList(secrets)}`
 
-/** The Installations on for `repo`, and its Plugin change log, both kept fresh by the Hub. */
+/** How the badge of an Installation from that source reads, if it has one. */
+const sourceBadges: Record<InstallationSource, { label: string; intent: BadgeIntent } | null> = {
+  Repo: null,
+  Global: { label: "Global", intent: "accent" },
+  Overridden: { label: "Overridden", intent: "neutral" },
+  Off: { label: "Off", intent: "neutral" },
+}
+
+/** The Installations for `repo`, and its Plugin change log, both kept fresh by the Hub. */
 export function RepoPlugins({ repo }: { repo: string }) {
   const hub = useHub()
   const online = useHubState((state) => state.connection.status === "online")
   const plugins = useHubState((state) => state.plugins)
   const log = useHubState((state) => state.pluginLogs[repoKey(repo)])
+  const [busy, setBusy] = useState<string | null>(null)
 
   useEffect(() => {
     if (!online) return
@@ -85,11 +113,33 @@ export function RepoPlugins({ repo }: { repo: string }) {
     hub.getPluginLog(repo).catch(() => undefined)
   }, [hub, repo, online])
 
-  const on =
-    plugins?.installations.filter((installation) =>
-      installation.repos.some((listed) => sameRepo(listed, repo)),
-    ) ?? null
+  /** Turns a global Installation off for this Repo, or back on (#219). */
+  const turn = async (installation: Installation, on: boolean) => {
+    setBusy(installation.id)
+    try {
+      await hub.turnGlobalInstallation(installation.id, repo, on)
+      toast.show({
+        title: `Turned ${installation.name} ${on ? "back on" : "off"} for ${repo}`,
+        description: "Its Sessions pick it up on their next wake or Restart.",
+      })
+    } catch (error) {
+      toast.show({
+        title: `Couldn't turn ${installation.name} ${on ? "on" : "off"}`,
+        description: error instanceof Error ? error.message : String(error),
+        intent: "danger",
+      })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const on = plugins === null ? null : installationsFor(plugins.installations, repo)
   const pluginOf = (id: string) => plugins?.plugins.find((plugin) => plugin.id === id)
+  /** The Repo-scoped Installation of the Plugin that takes a global one's place here. */
+  const overriddenBy = (installation: Installation) =>
+    on?.find(
+      (other) => other.source === "Repo" && other.installation.pluginId === installation.pluginId,
+    )?.installation.name
   return (
     <>
       <div {...stylex.props(styles.part)}>
@@ -103,20 +153,39 @@ export function RepoPlugins({ repo }: { repo: string }) {
             </Link>
           </p>
         ) : (
-          <ul aria-label="Installations on for this Repo" {...stylex.props(styles.list)}>
-            {on.map((installation, index) => {
+          <ul aria-label="Installations for this Repo" {...stylex.props(styles.list)}>
+            {on.map(({ installation, source }, index) => {
               const plugin = pluginOf(installation.pluginId)
               const needed = plugin === undefined ? [] : valuesNeeded(plugin, installation)
+              const badge = sourceBadges[source]
+              const isOn = source === "Repo" || source === "Global"
               return (
                 <li
                   key={installation.id}
+                  aria-label={installation.name}
                   {...stylex.props(styles.row, index === 0 && styles.first)}
                 >
-                  <span {...stylex.props(styles.name)}>{installation.name}</span>
-                  <span {...stylex.props(styles.muted)}>
-                    {plugin?.name ?? installation.pluginId}
+                  <span {...stylex.props(styles.name, !isOn && styles.notOn)}>
+                    {installation.name}
                   </span>
-                  {needed.length > 0 && <Badge intent="danger">{neededText(needed)}</Badge>}
+                  <span {...stylex.props(styles.muted, styles.grow)}>
+                    {plugin?.name ?? installation.pluginId}
+                    {source === "Overridden" &&
+                      `: ${overriddenBy(installation) ?? "a Repo-scoped Installation"} takes its place here`}
+                    {source === "Off" && ", turned off for this Repo"}
+                  </span>
+                  {badge !== null && <Badge intent={badge.intent}>{badge.label}</Badge>}
+                  {isOn && needed.length > 0 && <Badge intent="danger">{neededText(needed)}</Badge>}
+                  {(source === "Global" || source === "Off") && (
+                    <Button
+                      size="sm"
+                      intent="ghost"
+                      loading={busy === installation.id}
+                      onClick={() => void turn(installation, source === "Off")}
+                    >
+                      {source === "Off" ? "Turn back on" : "Turn off for this Repo"}
+                    </Button>
+                  )}
                 </li>
               )
             })}
