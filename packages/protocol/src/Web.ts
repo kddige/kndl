@@ -35,7 +35,13 @@ import {
 import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
 import { EffortLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
-import { PluginCommand, PluginLog, PluginPackageRead, PluginsState } from "./Plugin.ts"
+import {
+  InstallationFailure,
+  PluginCommand,
+  PluginLog,
+  PluginPackageRead,
+  PluginsState,
+} from "./Plugin.ts"
 import {
   BranchName,
   EpochMillis,
@@ -72,6 +78,11 @@ export const SessionStateChanged = Schema.TaggedStruct("SessionStateChanged", {
    * needs a value (#57), so the web can lead to where it's entered.
    */
   valuesNeeded: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Set when the Session didn't start because Installations on for its Repo can't work (#216):
+   * which, and why, so the web can lead to fixing each.
+   */
+  installationsFailed: Schema.optionalKey(Schema.Array(InstallationFailure)),
 })
 export type SessionStateChanged = typeof SessionStateChanged.Type
 
@@ -96,9 +107,14 @@ export type AgentMessaged = typeof AgentMessaged.Type
  * Something the Runner wants the Session's Participants to know about its Sandbox, such as its
  * CPU or memory being capped below what the Environment asks for (ADR 0009), or about the Claude
  * Code in it, such as a wake that couldn't resume the conversation (#191).
+ *
+ * The Hub notes an Installation that fails the Session too (#216): one whose MCP server didn't
+ * answer as it started, or that the Gateway found failing since. The Session runs on.
  */
 export const SandboxNoted = Schema.TaggedStruct("SandboxNoted", {
   message: Schema.String,
+  /** The Installation that failed, when it is about one (#216). */
+  installationFailed: Schema.optionalKey(InstallationFailure),
 })
 export type SandboxNoted = typeof SandboxNoted.Type
 

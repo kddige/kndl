@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
+import { InstallationId } from "./Ids.ts"
 import {
   clearedHeaderSecrets,
+  failureBlocksStart,
   GatewayServer,
   gatewayPath,
   type HeaderSecret,
   headerValueProblem,
   hubPluginId,
+  type InstallationFailure,
+  installationFailureText,
   installationReposProblem,
   mcpServerNames,
   type PluginAuth,
@@ -15,7 +19,7 @@ import {
   pluginSlug,
   pluginUrlProblem,
 } from "./Plugin.ts"
-import { WebToHub } from "./Web.ts"
+import { SandboxNoted, SessionStateChanged, WebToHub } from "./Web.ts"
 
 describe("a Hub-only Plugin's id", () => {
   test("is hub: and a slug of its name", () => {
@@ -175,5 +179,66 @@ describe("a Plugin's header secrets", () => {
     expect(keys({ ...before, auth: headers(team) })).toEqual(["api_key"])
     expect(keys({ ...before, auth: headers({ ...apiKey, key: "key" }, team) })).toEqual(["api_key"])
     expect(keys({ ...before, auth: { _tag: "None" } })).toEqual(["api_key", "team"])
+  })
+})
+
+/** Linear failing a Session, as `fields` say. */
+const failure = (fields: Partial<InstallationFailure>): InstallationFailure => ({
+  installationId: InstallationId.make("ins-1"),
+  installation: "Linear",
+  reason: "ValueNeeded",
+  ...fields,
+})
+
+describe("an Installation that fails a Session (#216)", () => {
+  test("says which, and why, without a value", () => {
+    expect(
+      installationFailureText(failure({ reason: "ValueNeeded", secrets: ["API key", "Team"] })),
+    ).toBe("Linear needs a value for API key and Team.")
+    expect(installationFailureText(failure({ reason: "Rejected", status: 401 }))).toBe(
+      "Linear's MCP server refused its credential (401).",
+    )
+    expect(installationFailureText(failure({ reason: "Unreachable" }))).toBe(
+      "Linear's MCP server could not be reached.",
+    )
+    expect(installationFailureText(failure({ reason: "Errored", status: 503 }))).toBe(
+      "Linear's MCP server answered 503.",
+    )
+    expect(installationFailureText(failure({ reason: "Unreadable" }))).toBe(
+      "The Hub could not read Linear's header secret values: check HUB_SECRETS_KEY.",
+    )
+  })
+
+  test("blocks a start when it is sure the Installation can't work", () => {
+    expect(failureBlocksStart(failure({ reason: "ValueNeeded" }))).toBe(true)
+    expect(failureBlocksStart(failure({ reason: "Rejected", status: 403 }))).toBe(true)
+    expect(failureBlocksStart(failure({ reason: "Unreadable" }))).toBe(true)
+    // A flaky server doesn't block work.
+    expect(failureBlocksStart(failure({ reason: "Unreachable" }))).toBe(false)
+    expect(failureBlocksStart(failure({ reason: "Errored", status: 500 }))).toBe(false)
+  })
+
+  test("rides on events a web UI of the version before reads all the same", () => {
+    const changed = {
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      message: "Claude Code could not start: Linear needs a value for API key.",
+      installationsFailed: [failure({ secrets: ["API key"] })],
+    }
+    expect(Schema.decodeUnknownSync(SessionStateChanged)(changed)).toEqual(
+      changed as SessionStateChanged,
+    )
+    const noted = {
+      _tag: "SandboxNoted",
+      message: "Linear's MCP server could not be reached.",
+      installationFailed: failure({ reason: "Unreachable" }),
+    }
+    expect(Schema.decodeUnknownSync(SandboxNoted)(noted)).toEqual(noted as SandboxNoted)
+    // The version before has neither field: it ignores them, and shows the message.
+    const before = Schema.Struct({ _tag: Schema.Literal("SandboxNoted"), message: Schema.String })
+    expect(Schema.decodeUnknownSync(before)(noted)).toEqual({
+      _tag: "SandboxNoted",
+      message: noted.message,
+    })
   })
 })
