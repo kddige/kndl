@@ -16,6 +16,9 @@
 //   Session started with, which only the Hub holds: a header of the same name from the Sandbox, by
 //   any case, is dropped. An Installation without a value for one is answered `409`, naming it and
 //   the header secret's title.
+// - A server that refuses the Session's credential (401 or 403), or an Installation without a value
+//   for one, is shown in the Session as an error (#216), once until it works again. The Session
+//   runs on: its other MCP servers may well work.
 // - Each request is logged with its Session, Installation, method, status and time taken, and
 //   nothing of what it carries.
 
@@ -24,10 +27,12 @@ import {
   InstallationId as InstallationIdSchema,
   type SessionId,
 } from "@kndl/protocol"
-import { Clock, Effect, Option, Redacted } from "effect"
+import { Clock, Effect, Option } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
+import { forward } from "./Gateway.ts"
 import { Plugins } from "./Plugins.ts"
+import { SessionRelay } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 
 const errorResponse = (status: number, error: string) =>
@@ -80,6 +85,7 @@ export const GatewayRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const sessions = yield* Sessions
     const plugins = yield* Plugins
+    const relay = yield* SessionRelay
 
     /**
      * Where the Session may reach the Installation's MCP server: the Plugin's URL, or the status
@@ -140,27 +146,20 @@ export const GatewayRoutes = HttpRouter.use(
           )
         }
         if (found._tag === "NeedsValue") {
+          yield* relay.installationFailed(grant.sessionId, installationId, {
+            reason: "ValueNeeded",
+            secrets: found.secrets,
+          })
           yield* done(409)
           return errorResponse(409, found.message)
         }
         const incoming = yield* HttpServerRequest.toWeb(request)
-        const headers = kept(incoming.headers, heldRequestHeaders)
-        // Headers.set replaces one of the same name, by any case.
-        for (const { header, value } of found.headers) headers.set(header, Redacted.value(value))
-        const hasBody = !["GET", "HEAD"].includes(request.method)
-        const answer = yield* Effect.tryPromise({
-          try: (signal) =>
-            fetch(found.url, {
-              method: request.method,
-              headers,
-              ...(hasBody && { body: incoming.body, duplex: "half" }),
-              redirect: "manual",
-              // Answers stream back as they come, compressed or not.
-              decompress: false,
-              signal: AbortSignal.any([signal, incoming.signal]),
-            } as RequestInit),
-          catch: (error) => error,
-        }).pipe(Effect.option)
+        const answer = yield* forward(found, {
+          method: request.method,
+          headers: kept(incoming.headers, heldRequestHeaders),
+          body: incoming.body,
+          signal: incoming.signal,
+        })
         if (Option.isNone(answer)) {
           yield* done(502)
           return errorResponse(502, "The Plugin's MCP server could not be reached.")
@@ -173,6 +172,14 @@ export const GatewayRoutes = HttpRouter.use(
             502,
             "The Plugin's MCP server redirected, which the Gateway doesn't follow.",
           )
+        }
+        if (response.status === 401 || response.status === 403) {
+          yield* relay.installationFailed(grant.sessionId, installationId, {
+            reason: "Rejected",
+            status: response.status,
+          })
+        } else if (response.ok) {
+          relay.installationWorks(grant.sessionId, installationId)
         }
         yield* done(response.status)
         return HttpServerResponse.raw(

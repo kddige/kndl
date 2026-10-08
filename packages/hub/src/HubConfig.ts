@@ -54,6 +54,11 @@ export interface HubConfigInput {
   readonly archiveRetentionMs: number
   /** How long the Hub trusts what GitHub said about a person's access to a Repo, in milliseconds. */
   readonly repoAccessTtlMs: number
+  /**
+   * How long a Session's start waits on each of its Installations' MCP servers to answer, in
+   * milliseconds (#216); DefaultPluginCheckTimeout if unset.
+   */
+  readonly pluginCheckTimeoutMs?: number
   /** The key Sensitive variable values are encrypted with: 32 bytes, base64. */
   readonly secretsKey: Option.Option<Redacted.Redacted<string>>
   /** The web UI's build: the directory holding its `index.html`. */
@@ -86,6 +91,12 @@ export const DefaultArchiveRetention = Duration.days(30)
  * more: five minutes keeps a team of 15 with Sessions in 10 Repos under 2,000 an hour.
  */
 export const DefaultRepoAccessTtl = Duration.minutes(5)
+
+/**
+ * How long a Session's start waits on each of its Installations' MCP servers by default (#216): a
+ * server that hasn't answered by then doesn't hold the Session up, which starts with a warning.
+ */
+export const DefaultPluginCheckTimeout = Duration.seconds(5)
 
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
 export class HubConfigError extends Schema.TaggedError<HubConfigError>()("HubConfigError", {
@@ -185,6 +196,8 @@ export class HubConfig extends Context.Service<
      * everyone connected are checked again (RepoAccess.ts).
      */
     readonly repoAccessTtl: Duration.Duration
+    /** How long a Session's start waits on each of its Installations' MCP servers (#216). */
+    readonly pluginCheckTimeout: Duration.Duration
     /**
      * The key Sensitive variable values are encrypted with at rest (ADR 0009), or none: Sensitive
      * values can't then be saved, and the Hub refuses to start if any are stored.
@@ -222,6 +235,13 @@ export class HubConfig extends Context.Service<
     if (!Number.isSafeInteger(input.repoAccessTtlMs) || input.repoAccessTtlMs <= 0) {
       return yield* new HubConfigError({
         message: `HUB_REPO_ACCESS_TTL_MS must be a whole number of milliseconds above 0, not ${input.repoAccessTtlMs}.`,
+      })
+    }
+    const pluginCheckTimeoutMs =
+      input.pluginCheckTimeoutMs ?? Duration.toMillis(DefaultPluginCheckTimeout)
+    if (!Number.isSafeInteger(pluginCheckTimeoutMs) || pluginCheckTimeoutMs <= 0) {
+      return yield* new HubConfigError({
+        message: `HUB_PLUGIN_CHECK_TIMEOUT_MS must be a whole number of milliseconds above 0, not ${pluginCheckTimeoutMs}.`,
       })
     }
     if (Option.isSome(input.githubClientId) !== Option.isSome(input.githubClientSecret)) {
@@ -280,6 +300,7 @@ export class HubConfig extends Context.Service<
       sleepAfter: Duration.millis(input.sleepAfterMs),
       archiveRetention: Duration.millis(input.archiveRetentionMs),
       repoAccessTtl: Duration.millis(input.repoAccessTtlMs),
+      pluginCheckTimeout: Duration.millis(pluginCheckTimeoutMs),
       secretsKey,
       webDir: input.webDir,
       cliDir: input.cliDir,
@@ -292,6 +313,7 @@ export class HubConfig extends Context.Service<
    * off), `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY_PATH` (unset: the Runner uses its host's
    * git credentials, and the Sandbox gets no GitHub token), `KNDL_DEV_LOGIN` (off), `KNDL_DEV_USER` (`$USER`), `HUB_INSECURE_COOKIES` (off), `HUB_SLEEP_AFTER_MS`
    * (15 minutes), `HUB_ARCHIVE_RETENTION_MS` (30 days), `HUB_REPO_ACCESS_TTL_MS` (5 minutes),
+   * `HUB_PLUGIN_CHECK_TIMEOUT_MS` (5 seconds),
    * `HUB_SECRETS_KEY` (unset: Sensitive values can't be saved) and `HUB_WEB_DIR` (DefaultWebDir).
    * The CLI binaries go in `cli/` in the home (`KNDL_HOME`, or the dev home).
    */
@@ -329,6 +351,9 @@ export class HubConfig extends Context.Service<
         ),
         repoAccessTtlMs: Config.Int("HUB_REPO_ACCESS_TTL_MS").pipe(
           Config.withDefault(Duration.toMillis(DefaultRepoAccessTtl)),
+        ),
+        pluginCheckTimeoutMs: Config.Int("HUB_PLUGIN_CHECK_TIMEOUT_MS").pipe(
+          Config.withDefault(Duration.toMillis(DefaultPluginCheckTimeout)),
         ),
         secretsKey: Config.option(Config.Redacted("HUB_SECRETS_KEY")),
         webDir: Config.NonEmptyString("HUB_WEB_DIR").pipe(Config.withDefault(DefaultWebDir)),

@@ -97,7 +97,12 @@ export type GatewayTarget =
         readonly value: Redacted.Redacted<string>
       }>
     }
-  | { readonly _tag: "NeedsValue"; readonly message: string }
+  | {
+      readonly _tag: "NeedsValue"
+      readonly message: string
+      /** The titles of the header secrets without a value (#216). */
+      readonly secrets: ReadonlyArray<string>
+    }
 
 /** Refuses a Plugin's name, URL or header secrets that break the rules the web UI shows. */
 const checkPlugin = (input: {
@@ -850,15 +855,18 @@ export class Plugins extends Context.Service<
                 SELECT key, value FROM session_installation_values
                 WHERE session_id = ${session.id} AND installation_id = ${id}
               `
+        const missing = declared.filter((secret) => !held.some((one) => one.key === secret.key))
+        if (missing.length > 0) {
+          return Option.some<GatewayTarget>({
+            _tag: "NeedsValue",
+            message: valueNeededRefusal(row.name, missing[0]?.title ?? ""),
+            secrets: missing.map((secret) => secret.title),
+          })
+        }
         const headers: Array<{ header: string; value: Redacted.Redacted<string> }> = []
         for (const secret of declared) {
           const stored = held.find((one) => one.key === secret.key)
-          if (stored === undefined) {
-            return Option.some<GatewayTarget>({
-              _tag: "NeedsValue",
-              message: valueNeededRefusal(row.name, secret.title),
-            })
-          }
+          if (stored === undefined) continue
           const value = yield* secrets.decrypt(stored.value, valueContext(id, secret.key))
           headers.push({
             header: secret.header,
