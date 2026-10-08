@@ -7,17 +7,17 @@ kndl (said "kindle") runs multiplayer agentic sessions that you host yourself, w
 
 ## Status
 
-kndl is young and moving fast: expect its setup and settings to change between versions. The `kndl` command installs a Hub, a Runner or both as services, and keeps them up to date: see [Install kndl](/how-to/install/). To work on kndl itself, run it from a checkout with `bun run`: see [Develop kndl](/how-to/develop-kndl/).
+kndl is in early development: expect its setup and settings to change between versions. To install it, see [Install kndl](/how-to/install/); to work on it, see [Develop kndl](/how-to/develop-kndl/).
 
 ## Not affiliated with Anthropic
 
-kndl is an independent project. It is not affiliated with, endorsed by or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC; kndl uses the names only to say what it works with.
+kndl is an independent project, not affiliated with, endorsed by or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC; kndl uses the names only to say what it works with.
 
-kndl runs Claude Code, as Anthropic publishes it, on your own Claude account, under Anthropic's terms for that account. Each Runner downloads Claude Code from Anthropic into its Sandboxes; kndl doesn't change or redistribute it.
+kndl runs Claude Code as Anthropic publishes it, on your own Claude account and under Anthropic's terms for it. kndl doesn't change or redistribute Claude Code.
 
 ## How these docs are organised
 
-The docs follow [Diátaxis](https://diataxis.fr), with troubleshooting alongside:
+The docs follow [Diátaxis](https://diataxis.fr), plus Troubleshooting:
 
 | Section | Read it to |
 |---|---|
@@ -27,15 +27,15 @@ The docs follow [Diátaxis](https://diataxis.fr), with troubleshooting alongside
 | [Explanation](/explanation/architecture/) | Understand how kndl works and why. |
 | [Troubleshooting](/troubleshooting/) | Fix something, starting from what you see. |
 
-The [glossary](/reference/glossary/) and the [decision records](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) are rendered from `GLOSSARY.md` and `docs/adr/` in the repository at build time, so they always match it.
+The [glossary](/reference/glossary/) and the [decision records](/reference/decisions/0001-claude-on-host-tools-in-sandbox/) are rendered from `GLOSSARY.md` and `docs/adr/` in the repository.
 
 ## The name
 
-kndl is said "kindle" and always written lowercase, even at the start of a sentence; the command is `kndl` too. It is short for kindling, the small things that get a fire going. It was called claude-hub until it was renamed, as a product's name can't use "Claude": see [ADR 0017](/reference/decisions/0017-the-name-is-kndl/). An install made under the old name moves to the new one with its next update: see [Update from claude-hub](/how-to/install/#from-claude-hub).
+kndl is said "kindle" and always written lowercase, even at the start of a sentence; the command is `kndl` too. It is short for kindling, the small things that get a fire going. See [ADR 0017](/reference/decisions/0017-the-name-is-kndl/).
 
 ## The mark
 
-The kndl mark is Kip, a friendly flame on two crossed logs: the small fire that kindling gets going, which everyone gathers around. Kip is drawn from scratch for this project in a night violet, a warm yellow flame with a pale core, and brown logs, and the wordmark is set in Fraunces with its soft, rounded strokes. Kip's friend Mallow, a marshmallow, joins on the social card. The source files are in `brand/` in the repository.
+The kndl mark is Kip, a friendly flame on two crossed logs: the fire everyone gathers around. The wordmark is set in Fraunces. Kip's friend Mallow, a marshmallow, joins on the social card. The source files are in `brand/` in the repository.
 
 ## Contributing
 

@@ -5,11 +5,9 @@ sidebar:
   order: 10
 ---
 
-A Hub serves the `kndl` command, built from the commit the Hub runs, to anyone who can reach it. At the end of this page you have `kndl` in `~/.local/bin`, and it keeps itself on the Hub's commit.
+A Hub serves the `kndl` command, built from the commit the Hub runs. At the end of this page you have `kndl` in `~/.local/bin`, and it keeps itself on the Hub's commit.
 
-:::note
-The command from a Hub doesn't set up or run a Hub or a Runner. To make a machine one, [install kndl](/how-to/install/) instead: that install's `kndl` has every command.
-:::
+It doesn't set up or run a Hub or a Runner. To make a machine one, [install kndl](/how-to/install/) instead.
 
 ## Before you start
 
@@ -17,7 +15,7 @@ The command from a Hub doesn't set up or run a Hub or a Runner. To make a machin
 - macOS or Linux, on arm64 or x64. On Windows, install it in WSL.
 - `curl` or `wget`.
 
-Nothing needs setting up on the Hub's machine: a Hub serves the command as long as it runs from a git checkout, as an install does. You don't need to sign in to install it.
+You don't need to sign in to install it.
 
 ## Install
 
@@ -27,7 +25,7 @@ Nothing needs setting up on the Hub's machine: a Hub serves the command as long 
    curl -fsSL https://hub.example.com/cli | sh
    ```
 
-   The script asks the Hub for the binary for your platform. The first time anyone asks for a platform, the Hub builds it, which can take a minute.
+   The first install for a platform can take a minute while the Hub builds it.
 
 2. Check what it says at the end:
 
@@ -57,24 +55,18 @@ To install it in another directory, set `KNDL_BIN_DIR`:
 curl -fsSL https://hub.example.com/cli | KNDL_BIN_DIR="$HOME/bin" sh
 ```
 
-On a machine with a kndl install, `~/.local/bin/kndl` is that install's command, and the script leaves it alone:
-
-```
-kndl install: /home/ada/.local/bin/kndl is the command of the kndl install on this machine, which has every command this one has and updates with the install. To install this one elsewhere, set KNDL_BIN_DIR.
-```
+On a machine with a kndl install, the script leaves the install's `~/.local/bin/kndl` alone and stops: set `KNDL_BIN_DIR` to install this one elsewhere.
 
 ## Updates
 
-Each time you run it, `kndl` asks the Hub it was installed from for its commit, and waits up to two seconds for an answer. When the Hub runs another commit, `kndl` downloads that commit's binary, puts it in its own place, and runs your command again with it:
+Each time you run it, `kndl` checks the Hub it was installed from. When the Hub runs another commit, `kndl` updates itself and runs your command with the new version:
 
 ```
 kndl: updating to 1e9cf127d5c2 from https://hub.example.com...
 kndl: updated to 1e9cf127d5c2.
 ```
 
-If the Hub doesn't answer, or the update fails, it runs your command as it is. To turn updates off, set `KNDL_NO_SELF_UPDATE=1`.
-
-The Hub it updates from is in `~/.config/kndl/cli.json`. To move to another Hub, run that Hub's install script.
+If the Hub doesn't answer within two seconds, or the update fails, it runs your command as it is. To turn updates off, set `KNDL_NO_SELF_UPDATE=1`. To move to another Hub, run that Hub's install script.
 
 ## Commands that need an install
 
@@ -82,11 +74,8 @@ The commands that set up and look after a Hub or a Runner, such as `onboard`, `s
 
 ```
 `kndl status` needs a kndl install, and there is none in /home/ada/.kndl.
-This kndl, installed from a Hub, doesn't set up or run a Hub or a Runner itself. To make this machine one, install kndl with:
 …
 ```
-
-On a machine with an install, it names the install's own command to run instead.
 
 ## Remove it
 

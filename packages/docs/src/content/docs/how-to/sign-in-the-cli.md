@@ -5,13 +5,13 @@ sidebar:
   order: 11
 ---
 
-`kndl login` signs the `kndl` command on a machine in to a Hub as you, so it can act on the Hub in your name. You approve it in a browser, and the CLI gets a CLI token: it lasts until you sign it out, and it is listed under **CLI tokens** on your **Account** page, where you can revoke it. At the end of this page, `kndl whoami` names the Hub and your account.
+`kndl login` signs the `kndl` command on a machine in to a Hub as you, so it can act on the Hub in your name. You approve it in a browser. At the end of this page, `kndl whoami` names the Hub and your account.
 
 ## Before you start
 
 - The `kndl` command on the machine: [installed from a Hub](/how-to/install-the-cli-from-a-hub/), or from a [kndl install](/how-to/install/).
-- The Hub's URL, its `HUB_PUBLIC_URL`, such as `https://hub.example.com`. The page you approve on must be at that address for the Hub to accept the approval. See [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/).
-- An account on the Hub: anyone who can sign in to its web UI can sign the CLI in. It needn't be the account that set the Hub up.
+- The Hub's URL, its `HUB_PUBLIC_URL`, such as `https://hub.example.com`. See [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/).
+- An account you can sign in to the Hub's web UI with.
 
 ## Sign in on a machine with a browser
 
@@ -21,7 +21,7 @@ sidebar:
    kndl login https://hub.example.com
    ```
 
-   For a `kndl` installed from a Hub, you can leave the URL out: it signs in to the Hub it was installed from.
+   A `kndl` installed from a Hub can leave the URL out.
 
 2. The CLI opens the Hub's sign-in page in your browser. If you aren't signed in to the Hub there, sign in first; the page comes back after.
 3. Check that the page names the machine you ran it on, then press **Approve**. Approve only a sign-in you started yourself: someone who sends you such a link could act as you.
@@ -31,13 +31,13 @@ sidebar:
    Signed in to https://hub.example.com as ada, on laptop. The CLI token is in /home/ada/.config/kndl/cli.json, readable only by you.
    ```
 
-You type nothing after **Approve**. The CLI waits up to 10 minutes for it.
+The CLI waits up to 10 minutes for **Approve**.
 
-If the browser can't go back to the CLI, as when it runs on another machine, it shows an error page. Go back a page: the sign-in page shows a Login code. Paste it where the CLI asks `Waiting for the browser. Or paste the code the page shows`.
+If the browser can't go back to the CLI, it shows an error page. Go back a page, and paste the Login code the sign-in page shows where the CLI asks `Waiting for the browser. Or paste the code the page shows`.
 
 ## Sign in over SSH
 
-Over SSH, a browser that opens would be on the other machine, so the CLI doesn't open one. It does the same with `--no-browser`:
+Over SSH, the CLI doesn't open a browser. To get the same anywhere, add `--no-browser`:
 
 ```sh
 kndl login https://hub.example.com --no-browser
@@ -47,13 +47,7 @@ kndl login https://hub.example.com --no-browser
 2. Check the machine's name on the page, then press **Approve**. The page shows **Paste this code in the terminal**, and a code such as `ABCD-EFGH-JKMN-PQRS`.
 3. In the terminal, paste the code where it asks `Paste the code the page shows`, and press Enter.
 
-The code works once, for 10 minutes, and only for the `kndl login` that opened the page. A mistyped code can be pasted again, up to three times in all.
-
-Pasting needs a terminal. Without one, `--no-browser` and SSH stop with:
-
-```
-kndl login needs a terminal to paste the code into. Run it in one, or without --no-browser on a machine with a browser.
-```
+The code works once, for 10 minutes. You get three tries to paste it.
 
 ## Check who you are
 
@@ -77,9 +71,9 @@ On the machine:
 kndl logout
 ```
 
-The Hub revokes the CLI token, and the CLI removes it from `cli.json`. It keeps the Hub's URL there, which a `kndl` installed from a Hub updates itself from.
+The Hub revokes the machine's CLI token.
 
-To sign out a machine you can't reach, or one you no longer have, open your **Account** page, find the machine under **CLI tokens**, and press **Revoke**. The Hub refuses the token from its next request on.
+To sign out a machine you can't reach, open your **Account** page, find the machine under **CLI tokens**, and press **Revoke**.
 
 ## Next steps
 

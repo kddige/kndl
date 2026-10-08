@@ -6,7 +6,7 @@ sidebar:
   order: 0
 ---
 
-Each entry on these pages starts with what you see, quotes the message where kndl prints one, says why it happens, and how to fix it.
+Each entry says what you see, why, and how to fix it.
 
 ## Where to look
 
@@ -32,7 +32,7 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 - `kndl: command not found` after installing.
 - `kndl is not installed in …`
 - `onboard can't ask, so it needs --role hub|runner|both.`
-- Onboard stops: ``… holds kndl data that wasn't set up here by `kndl onboard` …``
+- Onboard can't create the GitHub App.
 - A service won't stay up.
 - On Linux, the services stop when you log out.
 - The Runner can't use KVM after onboard added you to the `kvm` group.
@@ -44,22 +44,23 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 ### [The Hub](/troubleshooting/hub/)
 
 - The Hub exits at startup: `Failed to start server. Is port 7777 in use?`
-- The Hub exits at startup with `HubConfigError: …`.
 - The browser shows `The Hub's web UI isn't built.`
 - The Hub refuses dev login: `Dev login (KNDL_DEV_LOGIN) is refused: …`
 - The Hub refuses to start because of `HUB_SECRETS_KEY`.
 - The secrets key is lost.
 - `… a Hub is running on …/hub.db. Stop it first.`
+- The Hub exits with `HubConfigError: …` about the GitHub settings.
 - The Hub's settings in `.env.local` are ignored.
+- A warning at startup.
 
 ### [Signing in](/troubleshooting/sign-in/)
 
+- Requests fail with `Only the web UI at … may make this request`.
 - Sign-in seems to work, then you're back on the sign-in page.
 - `Sign-in failed: the sign-in expired or came from elsewhere. Try again.`
 - After GitHub: `This Hub is invite-only. Ask its owner for an invite.`
 - `Sign-in failed: GitHub refused the sign-in: …`
 - There's no **Sign in with GitHub** button.
-- Requests fail with `Only the web UI at … may make this request`.
 - **Sign in as dev** answers `Dev login only answers on loopback`.
 - After **Approve** for `kndl login`, the browser can't connect to `127.0.0.1`.
 - `kndl login` says `That code isn't valid: …`
@@ -71,35 +72,39 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 - The Runner exits with `The hub-link mod isn't built: …`.
 - The Runner keeps logging `Hub connection: could not connect to …`.
 - A Runner on another machine never shows up.
+- `kndl runner join` says `That pairing code can't be used: …`
+- `kndl runner join` pairs, then says the Runner is `not connected to the Hub after 30 seconds`.
+- The Runner logs `The Hub doesn't accept this Runner's token: …`
+- **Remove** says the Runner has Sessions that aren't Archived.
 - `… this Runner needs an update. Update it on the Runners page.`, or a Runner is **behind the Hub**.
 - A Runner's row says **refuses: not on main**.
 - A Runner's row says **update failed**.
 - The Runner logs `The Hub turned this Runner away: …`.
-- Running Sessions went to sleep after an update.
 - A Session is Frozen.
-- Sessions from before an update are gone.
-- The Runner warns about Sandboxes it doesn't know.
+- The Runner warns `Unknown Sandbox for Session …`.
 
 ### [Sessions and Sandboxes](/troubleshooting/sessions/)
 
 - A new Session goes straight to Asleep: `Claude Code could not start on …`.
-- A Session is Asleep with `Claude Code exited with code N`: reading why.
+- A Session is Asleep with `Claude Code exited with code N`.
+- A woken Session's conversation starts over.
 - A Session can't start: `… need values`.
-- `The Sandbox failed: host path … is not a directory`.
-- Claude's tools are refused: `… could not run in this Session's Sandbox (…), so it did not run at all.`
-- `… may have run in this Session's Sandbox, but its result was lost (…). Check before running it again.`
-- Tool calls over 30 seconds fail: `… aborted: no complete answer within 30000ms`.
-- Claude doesn't follow the Repo's `CLAUDE.md`, or a skill is missing: `… left out of the Repo's skills and CLAUDE.md: …`.
+- `The Session is Asleep: The Sandbox failed: …`
+- The Test build fails.
+- The Environment won't open, or **New Session** refuses the Repo.
+- A Sensitive variable can't be saved.
+- `Neither you nor … has a Claude credential`.
+- A Claude credential can't be saved.
+- A Session is missing, or `There is no such Session.`
 - A Session doesn't go to sleep.
 - **Restart** or **Sleep now** is refused.
-- The Test build fails.
-- A Sensitive variable can't be saved.
 - The **Environment changed** banner stays.
 
 ### [GitHub and git](/troubleshooting/github-and-git/)
 
 - The Runner can't clone a Repo.
 - `The GitHub App is not installed on owner/name, or can't see it: …`
+- **The GitHub App is missing permissions**.
 - `git push` or `gh` in a Session fails: the Sandbox has no GitHub token.
 - Claude pushed to the default branch.
 

@@ -31,7 +31,7 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `GET /cli`, `GET /cli/version`, `GET /cli/<os>-<arch>` | `curl … \| sh`, the [`kndl` command from a Hub](/reference/commands/#the-kndl-command-from-a-hub) | none: the install script, the Hub's commit, and the binary built from it. |
 | anything else | a browser | none: the web UI's build. |
 
-Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair`, `/auth/cli/token`, `/cli` and the web UI needs a credential. `/cli` serves only what the Hub's checkout already holds, built; a request for a platform can start a build, one at a time. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
+Sandboxes can reach the Hub's address ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)), so every route but sign-in, `/health`, `/runner/pair`, `/auth/cli/token`, `/cli` and the web UI needs a credential. A missing or wrong credential gets `401`; a cookie-authenticated request from another origin gets `403`.
 
 The Hub mints six kinds of token, each `<kind>_<id>.<secret>`, and stores only a SHA-256 of the secret:
 
@@ -49,19 +49,19 @@ The Hub mints six kinds of token, each `<kind>_<id>.<secret>`, and stores only a
 `kndl login` ([Sign in the CLI](/how-to/sign-in-the-cli/)) gets a CLI token with a Login code, approved by a signed-in person in the browser, and PKCE ([RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), `S256`):
 
 1. The CLI makes a random verifier, and opens the web UI's `/cli-login` page with its SHA-256, the challenge: `/cli-login?machine=<machine>&challenge=<challenge>`, and `&port=<port>&state=<state>` when it waits for the browser on `127.0.0.1:<port>`.
-2. The person approves it there. The page sends `POST /auth/cli/approve { machine, challenge }` with the sign-in cookie, and the Hub answers `{ code, expiresAt }`: a Login code of 16 characters of [Crockford's base 32](https://www.crockford.com/base32.html), shown as `ABCD-EFGH-JKMN-PQRS`. Any account may approve, not only the Hub's operators.
+2. The person approves it there. The page sends `POST /auth/cli/approve { machine, challenge }` with the sign-in cookie, and the Hub answers `{ code, expiresAt }`: a Login code of 16 characters of [Crockford's base 32](https://www.crockford.com/base32.html), shown as `ABCD-EFGH-JKMN-PQRS`. Any account may approve.
 3. With a `port`, the page sends the browser to `http://127.0.0.1:<port>/callback?code=<code>&state=<state>`. The CLI checks the `state` and the `Host`, and once signed in answers with a redirect to `/cli-login/done?machine=<machine>`. Without a `port`, or when the browser can't reach the CLI, the page shows the code to paste.
 4. The CLI sends `POST /auth/cli/token { code, verifier }`, and the Hub answers `{ you, id, machine, createdAt, token }`.
 
-A Login code is held in the Hub's memory, for 10 minutes, and spent by its first trade, right or wrong. Only the verifier whose SHA-256 is the challenge it was approved with can trade it, so a code read off the screen is no use without the CLI that asked for it. A code that is unknown, expired, already spent, or traded with the wrong verifier gets the same `400`: `That code isn't valid: it may have expired or been used. Run kndl login again.`
+A Login code is held in the Hub's memory for 10 minutes, and spent by its first trade, right or wrong. Only the verifier whose SHA-256 is the challenge it was approved with can trade it. A code that is unknown, expired, already spent, or traded with the wrong verifier gets the same `400`: `That code isn't valid: it may have expired or been used. Run kndl login again.`
 
-The Hub keeps a SHA-256 of each CLI token, with its machine, when it was made, and when it was last used, to the minute. `GET /auth/cli/me` answers `{ you, id, machine, createdAt }`, and `POST /auth/cli/sign-out` revokes the token it is sent with, answering `204`. The Hub checks a CLI token against its database on every request, so one revoked, by either, or on the Account page, is refused from the next request on, `401`. CLI tokens act only on the CLI's own endpoints, [forwards](#forwards) and [tunnels](#tunnels): the web channel, the Runner channel and the mod channel don't take them. No token is logged, only its id and machine.
+The Hub keeps each CLI token's machine, when it was made, and when it was last used, to the minute. `GET /auth/cli/me` answers `{ you, id, machine, createdAt }`, and `POST /auth/cli/sign-out` revokes the token it is sent with, answering `204`. A revoked token, by sign-out or on the Account page, gets `401` from the next request on. CLI tokens act only on the CLI's own endpoints, [forwards](#forwards) and [tunnels](#tunnels), not on the web, Runner or mod channels. No token is logged, only its id and machine.
 
 ## Handshake
 
-Each channel opens with a hello carrying the peer's `protocolVersion` (now `1`). The Hub answers with a welcome, or with `HandshakeRejected` and a message naming the side to update, then closes the connection. The welcome is checked the same way, so a mismatch is caught on whichever side is newer.
+Each channel opens with a hello carrying the peer's `protocolVersion` (`1`). The Hub answers with a welcome, or with `HandshakeRejected` and a message naming the side to update, then closes the connection. The peer checks the welcome's version the same way.
 
-`HandshakeRejected` has the same shape in every protocol version, so any peer can read why it was turned away: `reason` (`ProtocolVersionMismatch` or `MalformedHandshake`), the rejecting side's `protocolVersion`, `message`, and, when the Hub turns a Runner away, `hubVersion`, the commit the Hub runs. A Runner that updates itself moves to that commit and restarts, so a protocol change doesn't strand it; one that doesn't logs what to do. Either way it never exits on a rejection: it tries again every minute.
+`HandshakeRejected` has the same shape in every protocol version: `reason` (`ProtocolVersionMismatch` or `MalformedHandshake`), the rejecting side's `protocolVersion`, `message`, and, when the Hub turns a Runner away, `hubVersion`, the commit the Hub runs. A Runner that updates itself moves to that commit and restarts; one that doesn't logs what to do. Neither exits: it tries again every minute.
 
 ## Pairing
 
@@ -70,10 +70,10 @@ A Pairing code is minted on the web channel (`CreatePairingCode`) by anyone sign
 `POST /runner/pair` with `{"code": "…", "name": "build-box"}` redeems it, once:
 
 - `200` with `{"runnerId", "name", "token", "repaired"}`: a new Runner by that name, or, for a code made by **Re-pair**, the same Runner with a new token (`repaired: true`; the name asked for is ignored). Its old token stops working, and a connection made with it is closed with code `4411`.
-- `403` with `{"error"}` for any code that can't be used: never made, mistyped, expired, used or revoked all get the same answer, so a guess learns nothing. 100 bits can't be guessed in 15 minutes, so there's no rate limit to lock others out with.
+- `403` with `{"error"}` for any code that can't be used: never made, mistyped, expired, used or revoked all get the same answer.
 - `400` for a name that can't be a Runner's (up to 63 letters, digits, dots, dashes and underscores), and `409` for the name of a Runner the Hub already has. Neither uses up the code. A removed Runner's name is free: the new Runner takes the removed one's place, with its Archived Sessions.
 
-`GET /runner/connection` with a Runner token answers `{"runnerId", "name", "online"}`, so `runner join` can tell when its service has connected; a token that no longer works gets `401`.
+`GET /runner/connection` with a Runner token answers `{"runnerId", "name", "online"}`, so `runner join` can tell when its service has connected; a revoked token gets `401`.
 
 Removing a Runner (`RemoveRunner`) revokes its token and closes its connection with code `4410`. The Hub refuses it while the Runner has Sessions that aren't Archived.
 
@@ -86,19 +86,19 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 | Runner to Hub | `RunnerHello`; `SessionStarted`, `SessionStartFailed`, `SessionStopped`, `SessionPurged`; `SandboxStateReport`, `SandboxNote`; `SessionPorts`, `TunnelFailed`; terminal frames; git requests; `FetchVariables`, `FetchCloneAccess`, `FetchClaudeCredential`; Test build logs and results; `UpdateChecked`, `UpdateProgress`, `UpdateFailed` |
 | Hub to Runner | `RunnerWelcome` or `HandshakeRejected`; `StartSession`, `RelaunchSession`, `ModTokenReissued`, `StopSession`, `PurgeSession`; `OpenTunnel`; terminal input, resizes and snapshot requests; git replies; `RunTestBuild`; `VariablesFetched` or `VariablesRefused`; `ClaudeCredentialFetched` or `ClaudeCredentialRefused`; `CheckUpdate`, `ApplyUpdate` |
 
-The Runner pushes nothing to the Repo itself any more (#194), so `WipPushFailed` and `SessionTurnEnded` are gone. A peer from before may still send them: the other side drops a message it can't decode and carries on, so the protocol version didn't change. The Hub still puts the App's bot, `author`, in a `GitAccess` answer's `AppToken`, which nothing reads now, so a Runner from before still decodes it.
+A side drops a message it can't decode and carries on.
 
-`RunnerHello` carries the Runner's name, `login`, the Sessions it still runs, and `version`: the commit its checkout is on and the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). `version` is optional, so a Runner from before it still connects, listed with its version unknown. The Hub compares it with its own commit: it starts and wakes no Session on a Runner behind it, which keeps the Sessions it runs.
+`RunnerHello` carries the Runner's name, `login`, the Sessions it runs, and `version`: the commit its checkout is on and the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). The Hub starts and wakes no Session on a Runner behind its own commit, and leaves the Sessions it runs alone.
 
-A Runner that restarted lists, in `withoutModToken`, the Sessions it kept running across the restart (#157): their Claude Code still holds its Session token, which the Runner read back, but the mod token it stood for went with the old process, and the Hub keeps only a hash of it. For each one the Hub issues a new mod token, revoking the old, and sends it in `ModTokenReissued { sessionId, modToken }` before marking the Session Active. Until it arrives the Runner's credential proxy answers that Session's requests 503 with `retry-after`, which Claude Code and the mod both retry. A Runner that loses the message lists the Session again in its next hello.
+After a restart, a Runner lists in `withoutModToken` the Sessions it kept running: their mod tokens went with the old process. For each one the Hub issues a new mod token, revoking the old, and sends it in `ModTokenReissued { sessionId, modToken }` before marking the Session Active. Until it arrives the Runner's credential proxy answers that Session's requests `503` with `retry-after`, which Claude Code and the mod retry. A Runner that loses the message lists the Session again in its next hello.
 
-`RunnerHello` also says, in `ownClaudeCredential`, whether the Runner has a Claude credential of its own, never the credential. `login.account` says how the Hub shows it: its kind and last four characters (`Subscription token …x7Qa`), the account of the Claude Code login it uses, or `No Claude credential`. An older Runner sent the account Claude Code was signed in with on its host, and refused to start without one. `login` stays required, so a Hub from before still takes a Runner's hello. The Hub refuses to create a Session on a Runner without one for a Creator without one either. As each Session starts or wakes, the Runner sends `FetchClaudeCredential` for it; the Hub answers `ClaudeCredentialFetched` with the Session's Creator's credential, or none, only for a Session on that Runner, and `ClaudeCredentialRefused` otherwise ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)).
+`ownClaudeCredential` says whether the Runner has a Claude credential of its own, and `login.account` how the Hub shows it: its kind and last four characters (`Subscription token …x7Qa`), the account of the Claude Code login it uses, or `No Claude credential`. Neither carries the credential. The Hub refuses to create a Session when neither the Runner nor the Creator has a credential. As each Session starts or wakes, the Runner sends `FetchClaudeCredential` for it; the Hub answers `ClaudeCredentialFetched` with the Creator's credential, or none, for a Session on that Runner, and `ClaudeCredentialRefused` otherwise ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)).
 
-Every commit in a message, in `version`, `target`, `hubVersion` or an update's failure, is a full commit id in lowercase: 40 hex digits, or 64 in a SHA-256 repository. A message carrying anything else, a short id or text git would read as an option, doesn't decode. A Runner hands the Hub's commit to git, so this keeps a Hub from making it run a command, and the Runner also puts `--end-of-options` before every commit it passes to git.
+Every commit in a message, in `version`, `target`, `hubVersion` or an update's failure, is a full lowercase commit id: 40 hex digits, or 64 in a SHA-256 repository. A message carrying anything else, such as a short id or text git would read as an option, doesn't decode. The Runner also puts `--end-of-options` before every commit it passes to git.
 
 ### Updates
 
-A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self": true}` for one installed as the kndl service, or `{"self": false, "reason": "…"}`, and carries `"anyCommit": true` when `RUNNER_UPDATE_ANY_COMMIT=1`. `lastUpdate` is its last update when that failed (`target`, `message`, `rolledBack`, `at`), so a Hub that restarted meanwhile still shows it. Both are optional: the Hub never asks a Runner that doesn't send `updater` to update.
+A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self": true}` for one installed as the kndl service, or `{"self": false, "reason": "…"}`, and carries `"anyCommit": true` when `RUNNER_UPDATE_ANY_COMMIT=1`. `lastUpdate` is its last update when that failed (`target`, `message`, `rolledBack`, `at`). The Hub asks only a Runner that sends `updater` to update.
 
 | Step | Message | |
 |---|---|---|
@@ -111,21 +111,21 @@ A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self":
 
 `kndl update` on the Hub's machine leaves the Hub a note of the commit it moved to, in its database, before restarting it; the restarted Hub sends `CheckUpdate` to each Runner the note covers as it says hello, unless the Runner already runs the commit or last failed to update to it.
 
-`StartSession` carries what the Runner needs to start or wake a Session: its Repo, Work branch and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/explanation/git-from-sessions/#in-the-sandbox)). `gitIdentity` is optional, so a Runner still starts Sessions for a Hub from before it, without setting an identity.
+`StartSession` carries what the Runner needs to start or wake a Session: its Repo, Work branch and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/explanation/git-from-sessions/#in-the-sandbox)).
 
-`SessionStopped` says why Claude Code stopped: `Requested`, after a `StopSession`, or `Exited` on its own, with its exit code. For `Exited` it may carry `output`, the last lines Claude Code's terminal showed, as plain text of at most 4,000 characters. `output` is optional, so a Runner from before it still connects. The Hub redacts it as it does terminal frames and shows it on the Session while it is Asleep.
+`SessionStopped` says why Claude Code stopped: `Requested`, after a `StopSession`, or `Exited` on its own, with its exit code. For `Exited` it may carry `output`, the last lines Claude Code's terminal showed, as plain text of at most 4,000 characters. The Hub redacts it as it does terminal frames and shows it on the Session while it is Asleep.
 
-`SessionPorts { sessionId, ports }` is the Session's whole list of Open ports, sent while it is Active whenever the list changes, and an empty one when Claude Code stops after it sent any. Each port has `port`, `addresses` (as written: `0.0.0.0`, `::`, `127.0.0.1`, `::1`) and `process` when the Runner could name the process holding it: a runtime with its script (`node vite`), or the program (`docker-proxy` for a port Docker publishes). The Runner sends none while disconnected, and sends its lists again after reconnecting. The Hub keeps only the latest list, in memory, drops one for a Session that isn't Active, and redacts process names like terminal frames. A Hub from before it drops the message with a warning ([Session lifecycle](/explanation/session-lifecycle/#open-ports)).
+`SessionPorts { sessionId, ports }` is the Session's whole list of Open ports, sent while it is Active whenever the list changes, and an empty one when Claude Code stops after it sent any. Each port has `port`, `addresses` (as written: `0.0.0.0`, `::`, `127.0.0.1`, `::1`) and `process` when the Runner could name the process holding it: a runtime with its script (`node vite`), or the program (`docker-proxy` for a port Docker publishes). The Runner sends its lists again after reconnecting. The Hub keeps only the latest list, in memory, drops one for a Session that isn't Active, and redacts process names like terminal frames ([Session lifecycle](/explanation/session-lifecycle/#open-ports)).
 
-Before it clones a Test build's Repo, the Runner asks how with `FetchCloneAccess`. The git reply is a `CloneToken`, a read-only installation token for that one Repo that the Runner hands to git for the clone and never stores; `HostCredentials` when the Hub has no GitHub App, to clone with the host's own; or `GitFailed` with why, such as the App not being installed on the Repo, which fails the Test build before cloning. A Runner that asks says so with `asksCloneAccess` in `RunnerHello`. A Hub with the GitHub App refuses a Test build on a Runner that doesn't, since it would clone with its host's credentials.
+A Runner that says `asksCloneAccess` in `RunnerHello` asks how to clone a Test build's Repo with `FetchCloneAccess`. The git reply is a `CloneToken`, a read-only installation token for that one Repo that the Runner hands to git for the clone and never stores; `HostCredentials` when the Hub has no GitHub App, to clone with the host's own; or `GitFailed` with why, such as the App not being installed on the Repo, which fails the Test build. A Hub with the GitHub App sends Test builds only to a Runner that says `asksCloneAccess`.
 
 ### Models and effort
 
-`RunnerHello` carries `models`, what the Runner's Claude Code takes: `default`, the model it runs when given none; `models`, the other aliases `--model` takes, most capable first; and `efforts`, the effort levels `--effort` takes, lowest first. Each model has its `alias` (`sonnet`), the `id` Claude Code resolves it to now (`claude-sonnet-5-5`), its `label` (`Sonnet 5.5`), a one-line `description`, and `effort`, whether it takes an effort level. Both fields are optional: the Hub runs a Runner's Sessions on Claude Code's defaults only when it doesn't send `models`.
+`RunnerHello` carries `models`, what the Runner's Claude Code takes: `default`, the model it runs when given none; `models`, the other aliases `--model` takes, most capable first; and `efforts`, the effort levels `--effort` takes, lowest first. Each model has its `alias` (`sonnet`), the `id` Claude Code resolves it to (`claude-sonnet-5-5`), its `label` (`Sonnet 5.5`), a one-line `description`, and `effort`, whether it takes an effort level. A Runner that sends no `models` runs its Sessions on Claude Code's defaults.
 
-Claude Code's models are fixed for a version, so the Runner sends a table of the pinned version's, `PinnedClaudeModels` in `packages/runner/src/ClaudeModels.ts`, beside `PinnedClaudeVersion` ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). A Runner told to run another version (`RUNNER_SANDBOX_CLAUDE_VERSION`) sends no `models`. Claude Code has no command that lists its models, so the pinned version's smoke test checks the table in a real Sandbox: it runs `claude -p /model` once without `--model`, for the default and the aliases, then once per alias with `--model`, and `claude -p /effort` for the levels, none of which calls the API or saves a conversation. `-p /model` doesn't print the line Claude Code's own `/model` picker shows for each model, so those lines are copied from the picker by hand.
+The Runner sends the table of the pinned Claude Code version's models, `PinnedClaudeModels` in `packages/runner/src/ClaudeModels.ts` ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). A Runner told to run another version (`RUNNER_SANDBOX_CLAUDE_VERSION`) sends no `models`.
 
-`StartSession` carries the Session's `model` and `effort` when they are set, which the Runner passes as `--model` and `--effort`. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which the Hub sends once the setting changed while Claude Code ran and no Turn runs: the Runner stops Claude Code and starts it again with `--resume` and the new flags, in the same Sandbox, with the fresh mod token the message carries. It answers as it does a `StartSession`, with `SessionStarted` or `SessionStartFailed`, and the Hub delivers the next prompt once the new mod has said hello. Restarting between Turns is the one way that is sure to switch: `--model` and `--effort` are fixed for the life of the process, and typing `/model` into a running Claude Code would write the choice to the host's `~/.claude/settings.json`, for every other Session on the Runner. A Runner without `relaunches` gets the setting when the Session next wakes.
+`StartSession` carries the Session's `model` and `effort` when they are set, which the Runner passes as `--model` and `--effort`. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which the Hub sends once the setting changed while Claude Code ran and no Turn runs: the Runner restarts Claude Code with `--resume` and the new flags, in the same Sandbox, with the fresh mod token the message carries. It answers as it does a `StartSession`, and the Hub delivers the next prompt once the new mod has said hello. On a Runner without `relaunches`, the setting takes effect when the Session next wakes.
 
 ## Forwards
 
@@ -184,7 +184,7 @@ The same on both sockets of a tunnel:
 | `4409` | The Session isn't Active: it is Asleep, Archived, or going to sleep. |
 | `4410` | Nothing listens on the port in the Session's Sandbox, or the path's port isn't a port. |
 | `4424` | GitHub couldn't say whether the caller has access to the Session's Repo; try again. |
-| `4426` | The Session's Runner runs a version from before tunnels. |
+| `4426` | The Session's Runner doesn't say `forwardsPorts`. |
 | `4429` | The client read too slowly ([below](#on-the-runner)). |
 | `4500` | The other side went away without closing, such as the connection into the Sandbox being lost. |
 | `4502` | The Runner couldn't connect to the port: the close's message is its `TunnelFailed` message. |
@@ -193,11 +193,9 @@ The same on both sockets of a tunnel:
 
 ### On the Runner
 
-The Runner connects into the Sandbox through microsandbox's guest agent, agentd, the way microsandbox forwards SSH, so it reaches a server bound to loopback with nothing installed in the guest. A Sandbox's connections share one agentd client, apart from the Runner's commands, and a Sandbox has at most 128 connections at once.
+The Runner connects into the Sandbox through microsandbox's guest agent, agentd, so it reaches a server bound to loopback with nothing installed in the guest. A Sandbox has at most 128 connections at once.
 
-agentd can't hold one connection back without holding up every other into the Sandbox, new ones too. So the Runner never holds the guest's server back: it reads every connection as fast as the server writes, and keeps what the client hasn't taken yet, past the 1 MiB in flight. It closes a connection with `4429` once it keeps more than 8 MiB for it, `The client read too slowly: the Runner held too much for it.`, or once the client has taken nothing for 30 seconds while bytes wait for it, `The client took nothing for 30 s.` Other connections, and the Session's terminal and Turns, don't wait on it.
-
-So a client that reads more slowly than the guest's server writes, such as one far away fetching a large file, loses the connection once it falls more than 8 MiB behind.
+The Runner reads every connection as fast as the guest's server writes, and keeps what the client hasn't taken yet, past the 1 MiB in flight. It closes a connection with `4429` once it keeps more than 8 MiB for it, `The client read too slowly: the Runner held too much for it.`, or once the client has taken nothing for 30 seconds while bytes wait for it, `The client took nothing for 30 s.` Other connections, and the Session's terminal and Turns, don't wait on it.
 
 ## Web channel: `/ws/web`
 
@@ -304,10 +302,6 @@ The Hub marks a Session's Running agents `Interrupted` when its Claude Code stop
 | `StopAgent` for an agent that isn't Running, or a Session that isn't Active | `The agent isn't running.` |
 
 When the mod can't carry out a command, it reports `AgentCommandFailed { agentId, command, senderId?, message }`, and the Hub passes it on as a `CommandFailed` to whoever sent it: `Your message could not be delivered to the agent: …` or `The agent could not be stopped: …`.
-
-Events and queued prompts from before ADR 0014, from another Session, decode with the sender `FromSession { session }`, which nothing sends any more. The web UI shows them as from that Session's name.
-
-`WipNotPushed`, the note that the Runner couldn't push a Session's uncommitted work, went with that push (#194). The Hub deleted those notes from Sessions' histories as it updated.
 
 `UpdateRunner { runnerId, now }` updates a Runner from the Runners page; sent again with `now: true` while it waits for Turns, it stops them. Each Runner in `RunnerList` carries its `updater` and, while one is under way or after it ended badly, `update`: `Checking`, `Draining` (with `waitingFor`, the Sessions still Active, and `deadline`), `Applying` (with `step`), `Restarting`, `Refused` (with `refusal`) or `Failed` (with `failure`).
 

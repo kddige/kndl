@@ -5,7 +5,7 @@ sidebar:
   order: 4
 ---
 
-A Runner checks its settings before it connects. Then it connects out to the Hub and keeps reconnecting while it can't, so a Runner that is running but never shows up in **New Session** is almost always a connection problem: look at its log.
+A Runner checks its settings, then connects out to the Hub and keeps reconnecting while it can't. A Runner that runs but never shows up in **New Session** almost always has a connection problem: look at its log.
 
 ## No Runner token
 
@@ -16,7 +16,7 @@ ERROR (#2): ConfigError: SchemaError(Expected string
   at ["RUNNER_TOKEN"])
 ```
 
-**Why.** `RUNNER_TOKEN` isn't set. Every Runner needs one, and the Runner doesn't read `packages/hub/.env.local`, which is the Hub's.
+**Why.** `RUNNER_TOKEN` isn't set. The Runner doesn't read `packages/hub/.env.local`, which is the Hub's.
 
 **Fix.** Pair the machine with `kndl runner join`, which writes the token, or issue one on the Hub's machine with `bun run runner-token <name>` and start the Runner with it. See [Add a Runner](/how-to/add-a-runner/).
 
@@ -28,39 +28,39 @@ ERROR (#2): ConfigError: SchemaError(Expected string
 The hub-link mod isn't built: …/packages/mod/plugins/hub-link/hooks/hub-link-lib.js is missing. Run `bun run mod:build`.
 ```
 
-**Why.** The Runner loads the mod's plugins into each Session's Claude Code, and they must be built first. `bun run runner` builds it for you; running the Runner's package directly doesn't.
+**Why.** The Runner loads the mod into each Session's Claude Code. `bun run runner` builds it; running the Runner's package directly doesn't.
 
 **Fix.** Start the Runner with `bun run runner` from the checkout's root, or run `bun run mod:build` first.
 
 ## The Runner can't reach the Hub
 
-**What you see.** The Runner starts, then logs, again and again, with longer waits up to 30 seconds:
+**What you see.** The Runner logs, again and again, with waits growing up to 30 seconds:
 
 ```
 WARN (#2): Hub connection: could not connect to ws://127.0.0.1:7777/ws/runner: An error occurred during Open
 INFO (#2): Reconnecting to the Hub in 500 ms
 ```
 
-**Why.** The Runner logs the same lines whether the Hub can't be reached or turned it away, so check the Hub's log too:
+**Why.** Check the Hub's log:
 
-- **The Hub logs nothing.** The connection never arrived: the Hub isn't running, `HUB_URL` names the wrong host, port or scheme, or something between them blocks it.
-- **The Hub logs `Unauthorized: Expected a Runner token`** with `"http.url": "/ws/runner"` and `"http.status": 401`. The Hub doesn't know the token: it was mistyped, it is from another Hub's database, or `runner-token` was run again for this name, which replaces the old token.
+- **The Hub logs nothing.** The Hub isn't running, `HUB_URL` names the wrong host, port or scheme, or something between them blocks it.
+- **The Hub logs `Unauthorized: Expected a Runner token`** for `/ws/runner`. The token was mistyped, is from another Hub's database, or was replaced by running `runner-token` again for this name.
 
 **Fix.**
 
-- Check the Hub is up from the Runner's machine: `curl <HUB_URL>/health` should answer `{"status":"ok"}`.
-- Check `HUB_URL` is the Hub's own URL, with `https:` if the Hub is behind HTTPS. The Runner adds `/ws/runner`, over `wss:` for an `https:` URL.
+- From the Runner's machine, `curl <HUB_URL>/health` should answer `{"status":"ok"}`.
+- Check `HUB_URL` is the Hub's own URL, with `https:` if the Hub is behind HTTPS.
 - For a refused token, see [The Hub doesn't accept the Runner's token](#the-hub-doesnt-accept-the-runners-token).
 
-The Runner keeps trying, so it connects on its own once the Hub is back.
+The Runner connects on its own once the Hub is reachable.
 
 ## A Runner on another machine never shows up
 
 **What you see.** The Runner on a second machine logs `could not connect to …` forever, although the Hub runs.
 
-**Why.** The Hub listens on `127.0.0.1` by default, so only its own machine can reach it. `HUB_URL` also defaults to `http://127.0.0.1:7777`, which on the second machine names that machine itself.
+**Why.** The Hub listens on `127.0.0.1` by default, and `HUB_URL` defaults to `http://127.0.0.1:7777`, which on the second machine names that machine itself.
 
-**Fix.** Make the Hub reachable from the Runner's machine, and point `HUB_URL` at it. [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/) covers HTTPS, Tailscale and SSH tunnels. A Runner only needs to reach the Hub; nothing connects in to the Runner.
+**Fix.** Make the Hub reachable from the Runner's machine and point `HUB_URL` at it. See [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/). Nothing connects in to the Runner.
 
 ## The Pairing code can't be used
 
@@ -70,24 +70,23 @@ The Runner keeps trying, so it connects on its own once the Hub is back.
 That pairing code can't be used: it may be mistyped, expired (codes last 15 minutes), already used or revoked. Make a new one on the Hub's Runners page (Add a Runner).
 ```
 
-**Why.** The Hub gives the same answer for every code it won't take, so as not to tell a guesser which codes exist. A code works once, for 15 minutes; one made with **Re-pair** also stops working when its Runner is removed.
+**Why.** A code works once, for 15 minutes; one made with **Re-pair** also stops working when its Runner is removed. The Hub gives the same answer for every code it won't take.
 
-**Fix.** Make a new code on the Runners page and paste the new command. Pasting the whole command, quotes included, avoids typos; a code typed by hand may use any case, and dashes and spaces are optional.
+**Fix.** Make a new code on the Runners page and paste the whole command. A code typed by hand may use any case, and dashes and spaces are optional.
 
-A few other answers come before the Hub is asked, or instead:
+Other answers:
 
 - `The code after # isn't a whole pairing code …`: part of the link is missing. Copy the command again.
-- `The Hub already has a Runner named build-box …`: the short hostname is taken by another Runner. Join with `--name` and another name, or, if this machine should take that Runner's place, **Re-pair** it on the Runners page and join with that code. The code isn't used up.
-- `… doesn't pair Runners with codes: it runs a kndl from before them`: update the Hub, or issue a token on its machine with `kndl runner token <name>` and run `kndl onboard --role runner --hub-url <url> --token <token>`.
-- `Couldn't reach the Hub at …`: the machine can't reach the URL in the link, the Hub's `HUB_PUBLIC_URL`. See [A Runner on another machine never shows up](#a-runner-on-another-machine-never-shows-up).
+- `The Hub already has a Runner named build-box …`: join with `--name` and another name, or, if this machine should replace that Runner, **Re-pair** it on the Runners page and join with that code. The code isn't used up.
+- `Couldn't reach the Hub at …`: the machine can't reach the Hub's `HUB_PUBLIC_URL`. See [A Runner on another machine never shows up](#a-runner-on-another-machine-never-shows-up).
 
 ## The Runner was paired but doesn't connect
 
 **What you see.** `runner join` pairs, then says `` Runner: not connected to the Hub after 30 seconds: see `kndl logs runner` ``.
 
-**Why.** The token is in `runner.env` and the Runners page lists the Runner, offline, but the service didn't start or can't reach the Hub over its WebSocket. A proxy that passes plain HTTP but not WebSockets does this.
+**Why.** The token is saved and the Runners page lists the Runner, offline, but the service didn't start or can't reach the Hub over its WebSocket, as behind a proxy that doesn't pass WebSockets.
 
-**Fix.** Read `kndl logs runner` and run `kndl doctor`. Once it's fixed, `kndl runner start` (or `kndl onboard`, which keeps the token) finishes the job: the code is already used, and the token doesn't expire.
+**Fix.** Read `kndl logs runner` and run `kndl doctor`. Once fixed, run `kndl runner start`: the token is already saved and doesn't expire.
 
 ## The Hub doesn't accept the Runner's token
 
@@ -99,17 +98,17 @@ The Hub doesn't accept this Runner's token: the Runner was removed on the Hub's 
 
 and `kndl status` says the Hub doesn't accept the token.
 
-**Why.** Someone removed the Runner on the Runners page, or Re-paired it, and another `runner join` used that code, here or on another machine. Either way, the Hub closed this Runner's connection and the token stopped working. Its Sessions keep running in their Sandboxes.
+**Why.** Someone removed the Runner on the Runners page, or Re-paired it and the code was used. Its Sessions keep running in their Sandboxes.
 
-**Fix.** If the machine should still be a Runner, make a code on the Runners page and run `kndl runner join` with it: **Re-pair** the Runner if it's still listed, to keep its Sessions; **Add a Runner** if it was removed. If it shouldn't, stop it with `kndl runner stop`, or `kndl uninstall`.
+**Fix.** To keep the machine as a Runner, make a code on the Runners page and run `kndl runner join` with it: **Re-pair** the Runner if it's still listed, to keep its Sessions; **Add a Runner** if it was removed. Otherwise run `kndl runner stop`, or `kndl uninstall`.
 
 ## A Runner can't be removed
 
 **What you see.** **Remove** on the Runners page says `Runner build-box has 2 Sessions that aren't Archived. Archive them first, then remove the Runner.`
 
-**Why.** A removed Runner can never connect again, so its Active, Asleep and Frozen Sessions would be stuck.
+**Why.** A removed Runner never connects again, so its Sessions would be stuck.
 
-**Fix.** Archive each of its Sessions (the count on the Runners page says how many), then remove it. A Frozen Session can be archived while its Runner is offline.
+**Fix.** Archive each of its Sessions, then remove it. A Frozen Session can be archived while its Runner is offline.
 
 ## A Runner is behind the Hub
 
@@ -119,12 +118,12 @@ and `kndl status` says the Hub doesn't accept the token.
 build-box: this Runner needs an update. Update it on the Runners page.
 ```
 
-**Why.** It runs an older commit of kndl than the Hub, or one the Hub's history doesn't have, such as another branch's. A new or woken Session may need what the Hub's commit added, so the Hub starts and wakes none there; Sessions already running there go on, and prompts to its Asleep Sessions wait in their queue. Runners report their commit when they connect; a Runner from before that is listed with **Version unknown**.
+**Why.** It runs an older commit of kndl than the Hub, or one the Hub's history doesn't have. The Hub starts and wakes no Session there until it matches; running Sessions go on, and prompts to Asleep ones wait in their queue.
 
-**Fix.** Press **Update** on its row ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)). A row without **Update** says why the Runner doesn't update itself:
+**Fix.** Press **Update** on its row ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)). Without **Update**, the row says why:
 
 - It runs from a checkout (`bun run runner`): pull the checkout to the Hub's commit and restart it.
-- It's from before Runners followed the Hub, or isn't run as the kndl service: run `kndl update` on its machine.
+- It isn't run as the kndl service: run `kndl update` on its machine.
 
 While it updates, Sessions fail with `build-box: this Runner is updating. Sessions start and wake there again once it is back.`
 
@@ -138,9 +137,13 @@ While it updates, Sessions fail with `build-box: this Runner is updating. Sessio
 
 or **refuses: commit not on origin** (`origin has no commit 1a2b3c4d5e6f: push it before the Hub's Runners can follow it.`), or **couldn't check the commit** (`It couldn't fetch from origin: …`).
 
-**Why.** A Runner moves only to a commit it can fetch, and by default only to one on `origin/main`, so a Hub running a branch or an unpushed commit can't move its Runners there unasked.
+**Why.** A Runner moves only to a commit it can fetch, and by default only to one on `origin/main`.
 
-**Fix.** For **not on main**: run the Hub on `main`, or, to let this Runner follow any commit, add `RUNNER_UPDATE_ANY_COMMIT=1` to its `runner.env`, restart it with `kndl runner stop` and `kndl runner start`, and press **Update** again. For **not on origin**: push the commit the Hub runs. For **couldn't check**: the Runner's machine can't fetch from origin; run `git fetch` in its install, `~/.kndl/app`, to see why (the same credentials `kndl update` uses).
+**Fix.**
+
+- **not on main**: run the Hub on `main`, or add `RUNNER_UPDATE_ANY_COMMIT=1` to the Runner's `runner.env`, restart it with `kndl runner stop` and `kndl runner start`, and press **Update** again.
+- **not on origin**: push the commit the Hub runs.
+- **couldn't check**: run `git fetch` in the Runner's install, `~/.kndl/app`, to see why.
 
 ## A Runner's update failed
 
@@ -150,9 +153,9 @@ or **refuses: commit not on origin** (`origin has no commit 1a2b3c4d5e6f: push i
 Moving to 1a2b3c4d5e6f failed, so it went back to the commit it ran: bun install failed: …
 ```
 
-**Why.** A step of the update failed: checking out the commit, `bun install`, building the mod, the check that the Runner loads, or the Runner, restarted on the new commit, didn't get the Hub's welcome in three starts. The Runner went back to the commit it ran, rebuilt it and reconnected, and its Sessions wake there. If going back failed too, the row says `and so did going back; see its log`.
+**Why.** A step of the update failed, such as `bun install`, building the mod, or the restarted Runner reaching the Hub. The Runner went back to the commit it ran. If that failed too, the row says `and so did going back; see its log`.
 
-**Fix.** Read `kndl logs runner` on its machine for the full output, fix the cause (often the network, or disk space), and press **Update** again. The Runner doesn't try the same commit again by itself. If going back failed, run `kndl update` on its machine, which puts the install back in order.
+**Fix.** Read `kndl logs runner` on its machine, fix the cause (often the network or disk space), and press **Update** again. If going back failed, run `kndl update` on its machine.
 
 ## The Hub turns the Runner away
 
@@ -169,56 +172,26 @@ or, for a Runner that doesn't update itself:
 To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f on main): run `kndl update` on this machine. Retrying meanwhile.
 ```
 
-**Why.** The Hub and the Runner speak different protocol versions. The Hub's answer always says which commit it runs, whatever the version, so a Runner that updates itself moves to it, as it would for **Update**, and restarts under its Sessions, which keep running: the Hub can't put them to sleep first while it turns the Runner away.
+**Why.** The Hub and the Runner speak different protocol versions. A Runner that updates itself moves to the Hub's commit; its Sessions keep running.
 
-**Fix.** Usually nothing: the Runner connects again on the Hub's commit. If it can't follow (the log says it failed to update to that commit, or how to update it), run `kndl update` on its machine, or for a checkout, pull it to the Hub's commit and restart `bun run runner`.
+**Fix.** Usually nothing. If the Runner can't follow, run `kndl update` on its machine, or pull a checkout to the Hub's commit and restart `bun run runner`.
 
 ## Its Sessions are Frozen
 
-**What you see.** A Session shows the banner **This Session is Frozen**: `Its Runner is offline. Prompts sent now wait in the queue until the Runner is back.`
+**What you see.** A Session shows **This Session is Frozen**: `Its Runner is offline. Prompts sent now wait in the queue until the Runner is back.`
 
-**Why.** Its Runner isn't connected to the Hub: it was stopped, its machine is asleep or offline, or it can't reconnect (see above). A Session's Sandbox and Workspace are on its Runner, so it waits for that Runner rather than moving to another.
+**Why.** Its Runner isn't connected to the Hub. A Session's Sandbox and Workspace are on its Runner, so it waits for that Runner.
 
-**Fix.** Start the Runner again, or fix its connection. Once it is back, each Session is Active again if its Claude Code still runs, whether only the connection dropped or the Runner restarted, and otherwise Asleep, woken at once if prompts are waiting. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
-
-## Running Sessions went to sleep after an update
-
-**What you see.** After updating a Runner from a version that ran Claude Code on its host, every Session that was running is Asleep, and the Runner logs once at startup:
-
-```
-WARN (#2): Stopped the tmux server kndl on the host, where Sessions ran before Claude Code moved into their Sandboxes: each wakes in its Sandbox on its next prompt
-```
-
-**Why.** Claude Code now runs in each Session's Sandbox ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). The Runner stops the tmux server its Sessions ran in on the host, since their Claude Code would go on with nothing to run its tools.
-
-**Fix.** Nothing: send a prompt, or press **Wake now**. The Session wakes in its Sandbox and `--resume` keeps its conversation: the first wake copies the conversation from the host into the Sandbox.
-
-## Sessions from before an update are gone
-
-**What you see.** After updating your checkout, Sessions that were running before don't come back: the Runner re-adopts none of them, and waking one fails because its Workspace can't be found.
-
-**Why.** Runners run from a checkout used to keep their state in `~/.kndl/sessions`, `~/.kndl/claude-code` and tmux socket `kndl`. They now use the dev home, `~/.kndl-dev`, and tmux socket `kndl-dev`, so that a dev Runner and an installed one can share a machine (see [the dev home](/reference/configuration/#homes)). Nothing is migrated. The new defaults point at a new socket and sessions root, so the Runner finds none of the old Sessions, and it has a new Runner mark, so it leaves their Sandboxes alone.
-
-**Fix.** Either delete the old Sessions, or keep running a Runner with the old values:
-
-```sh
-RUNNER_SESSIONS_ROOT=$HOME/.kndl/sessions \
-RUNNER_TMUX_SOCKET=kndl \
-RUNNER_SANDBOX_CLAUDE_CACHE=$HOME/.kndl/claude-code \
-RUNNER_TOKEN=chr_… bun run runner
-```
-
-To clean up once you no longer need them: run `tmux -L kndl kill-server`, remove their Sandboxes (named `kndl-<session id>`) with microsandbox's `msb`, and delete `~/.kndl/sessions` and `~/.kndl/claude-code`. Keep `~/.kndl/github-app.pem` if `GITHUB_APP_PRIVATE_KEY_PATH` points there.
+**Fix.** Start the Runner again, or fix its connection. Each Session is then Active if its Claude Code still runs, and otherwise Asleep, woken at once if prompts are waiting. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
 
 ## It warns about Sandboxes it doesn't know
 
-**What you see.** At startup the Runner logs one of:
+**What you see.** At startup the Runner logs:
 
 ```
 WARN (#2): Unknown Sandbox for Session 0cb88decd7211ad04f6a64a8: Stopped (stopped now); volumes: …
-WARN (#2): Sandbox for Session 9af3111eb506f54cea59b83c carries no Runner mark, so it belongs to no Runner; left Running; volumes: …
 ```
 
-**Why.** At startup a Runner reconciles the microsandbox Sandboxes on its machine. One marked as its own, whose Session it no longer runs, is left over, for example from a crash: the Runner stops it but keeps its disks. One with no mark at all was made by an older Runner, from before Sandboxes were marked, and the Runner leaves it alone.
+**Why.** The Sandbox is the Runner's own, but it no longer runs its Session, for example after a crash. The Runner stops it and keeps its disks.
 
-**Fix.** Nothing is lost: stopping never deletes a Sandbox's disks. To clean up one you no longer need, run `bun x msb list` from `packages/runner` and remove it with microsandbox's CLI.
+**Fix.** Nothing is lost. To clean up, run `bun x msb list` from `packages/runner` and remove the Sandbox with microsandbox's CLI.

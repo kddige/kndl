@@ -42,37 +42,37 @@ The Runner stops Claude Code, runs `docker stop` on the Sandbox's containers so 
 
 **Keep awake** in a Session's header stops it going to sleep when idle, for work that runs on with nobody watching, such as a dev server or a long background command. Background commands and the ports a Session listens on don't keep it awake by themselves: Keep awake does ([ADR 0016](/reference/decisions/0016-forwarding-a-sessions-ports/)).
 
-Anyone with access to the Session's Repo can turn it on or off, and everyone sees who turned it on, in the header, the sidebar and the Runners page. It is kept in the Hub's database, so it outlives a Hub restart. Turning it on wakes an Asleep Session. It stays on until someone turns it off, presses **Sleep now**, or deletes the Session; a restore doesn't turn it back on.
+Anyone with access to the Session's Repo can turn it on or off, and the header, the sidebar and the Runners page show who turned it on. It outlives a Hub restart. Turning it on wakes an Asleep Session. It stays on until someone turns it off, presses **Sleep now**, or deletes the Session; a restore doesn't turn it back on.
 
-A Runner update or restart still stops the Session, and leaves Keep awake on: the Hub wakes the Session once the Runner is back on the Hub's commit. So does a Claude Code that exits on its own: the Session stays Asleep, so that a Claude Code that keeps crashing isn't started over and over, and wakes the next time its Runner connects, or on the next prompt.
+A Runner update or restart still stops the Session, and leaves Keep awake on: the Hub wakes the Session once the Runner is back on the Hub's commit. A Claude Code that exits on its own also leaves Keep awake on, but the Session stays Asleep, so a crashing Claude Code isn't restarted over and over; it wakes when its Runner next connects, or on the next prompt.
 
-Subagents run inside the Session's Claude Code, so they stop with it, and the Hub marks the ones that were running Interrupted ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)). That's why **Sleep now**, a restart and a change of model or effort ask first while agents are running. Their transcripts are part of Claude Code's state, so a message resumes one later.
+Subagents run inside the Session's Claude Code, so they stop with it, and the Hub marks the running ones Interrupted ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)). So **Sleep now**, a restart and a change of model or effort ask first while agents are running. Their transcripts are part of Claude Code's state, so a message resumes one later.
 
 ## Waking
 
-A prompt to an Asleep Session wakes it, as do **Wake now** on its banner and a [`kndl forward`](/how-to/forward-a-sessions-ports/) of it. The Runner starts the same Sandbox again, so `node_modules`, package caches, Docker's data and Claude Code's state are as they were, and starts Claude Code in it with `--resume`, which keeps the conversation. Changing a Session's model or effort restarts its Claude Code the same way. Queued prompts are delivered once the mod has said hello. Interrupted subagents don't resume on their own: Claude Code tells Claude which ones can be, and a message to one, from its view, resumes it, waking the Session first if it's Asleep.
+A prompt to an Asleep Session wakes it, as do **Wake now** on its banner and a [`kndl forward`](/how-to/forward-a-sessions-ports/) of it. The Runner starts the same Sandbox again, with `node_modules`, package caches, Docker's data and Claude Code's state as they were, and starts Claude Code with `--resume`, which keeps the conversation. Changing a Session's model or effort restarts its Claude Code the same way. Queued prompts are delivered once the mod has said hello. Interrupted subagents don't resume on their own: a message to one, from its view, resumes it, waking the Session first if it's Asleep.
 
 A Session doesn't wake while its Runner is behind the Hub or updating: its prompts wait in the queue, and wake it once the Runner runs the Hub's commit.
 
-If the Repo's Environment has a newer version, waking makes the Sandbox afresh from the new build instead, on the same Workspace and disks. **Restart** on a Session's **Environment changed** banner does that at once: it puts the Session to sleep as soon as no Turn is running, and wakes it.
+If the Repo's Environment has a later version, waking makes the Sandbox afresh from its Build instead, on the same Workspace and disks. **Restart** on a Session's **Environment changed** banner does that at once: it puts the Session to sleep as soon as no Turn is running, and wakes it.
 
 ## Open ports
 
-While a Session is Active, its Runner watches what listens in its Sandbox. Every 2 seconds it reads the guest's `/proc/net/tcp` and `/proc/net/tcp6`, and when the set of listening sockets changes it looks up the process holding each new one, then sends the Hub the Session's whole list. Each port is listed once, with every address it listens on: `0.0.0.0`, `::`, `127.0.0.1` or `::1`. Ports Docker publishes are held by `docker-proxy`. Claude Code's own login callback port is left out, while the processes Claude Code starts are not.
+While a Session is Active, its Runner watches what listens in its Sandbox. Every 2 seconds it reads the guest's `/proc/net/tcp` and `/proc/net/tcp6`, and when the listening sockets change it looks up the process holding each new one and sends the Hub the Session's whole list. Each port is listed once, with every address it listens on. Ports Docker publishes are held by `docker-proxy`. Claude Code's own login callback port is left out.
 
-The Hub keeps the latest list in memory only, with the Session's other state, and sends it to the web UI ([Work in a Session](/how-to/work-in-a-session/#see-its-open-ports)). When Claude Code stops, for sleep, an exit or an archive, the Runner stops watching and sends an empty list if it had sent any, and the Hub drops the list as soon as the Session is no longer Active, Frozen included. A Runner that reconnects sends its lists again. Open ports don't keep a Session awake: see [ADR 0016](/reference/decisions/0016-forwarding-a-sessions-ports/).
+The Hub keeps the latest list in memory only and sends it to the web UI ([Work in a Session](/how-to/work-in-a-session/#see-its-open-ports)). It drops the list as soon as the Session is no longer Active, Frozen included. Open ports don't keep a Session awake ([ADR 0016](/reference/decisions/0016-forwarding-a-sessions-ports/)).
 
 ## When a start fails
 
 If Claude Code can't start, for a new Session or a wake, the Session is Asleep, with the Runner's reason in its history. Its queued prompts stay queued and nothing retries on its own: the next prompt, or **Wake now**, tries again. A Claude Code that exits on its own leaves the Session Asleep too, with the last lines its terminal showed folded under the banner until it wakes: see [Claude Code exited with code N](/troubleshooting/sessions/#claude-code-exited-with-code-n).
 
-A conversation Claude Code never wrote down, because it exited before it got that far, can't be resumed. Waking such a Session starts a new conversation, with the same id, on the same Workspace. A note in the Session's history says so: the history still shows the earlier conversation, which Claude Code no longer remembers.
+A conversation Claude Code never wrote down, because it exited too early, can't be resumed. Waking such a Session starts a fresh conversation, with the same id, on the same Workspace, and a note in the Session's history says so: the history still shows the earlier conversation, which Claude Code doesn't remember.
 
 ## Frozen
 
-While its Runner is offline, a Session is Frozen: still readable, with prompts waiting in its queue. Sessions belong to their Runner, because their Sandbox and Workspace are on it, so they wait for it rather than moving elsewhere.
+While its Runner is offline, a Session is Frozen: still readable, with prompts waiting in its queue. Its Sandbox and Workspace are on that Runner, so it waits for it rather than moving elsewhere. Its agents stay Running, since its Claude Code may still be running them.
 
-When the Runner is back, the Session is Active if its Claude Code is still running, and otherwise Asleep, woken at once if prompts are waiting. Claude Code keeps running both when only the Runner's connection dropped and when the Runner itself restarted, after a crash or a `kndl runner stop` and `start`: it runs in the Session's Sandbox, not in the Runner. A restarted Runner reads each Session token back from the Claude Code it was given to, and the Hub gives the Session a new mod token, since the old one went with the old process. Until then the credential proxy asks that Claude Code to retry in a moment; a Turn that was running carries on once it can. A Session whose Claude Code stopped while the Runner was down is Asleep, and its subagents that were running are Interrupted. While a Session is Frozen, its agents stay Running, since its Claude Code may still be running them.
+When the Runner is back, the Session is Active if its Claude Code is still running, and otherwise Asleep, woken at once if prompts are waiting, with its running subagents Interrupted. Claude Code runs in the Sandbox, not in the Runner, so it keeps running when the Runner's connection drops and when the Runner restarts. A restarted Runner reads each Session token back from its Claude Code, and the Hub gives the Session a fresh mod token; until then the credential proxy asks that Claude Code to retry, and a running Turn carries on once it can.
 
 ## Deleting and restoring
 
@@ -87,9 +87,7 @@ A restored Session is Asleep (Frozen while its Runner is offline), and the next 
 
 ## Purging
 
-30 days after it was archived (the Hub's `HUB_ARCHIVE_RETENTION_MS`), a Session is purged. The Hub deletes its log, Prompt queue and records, and tells its Runner, which deletes the Session's directory, with the Workspace, and anything left in microsandbox, the disk with Claude Code's state among it. A Runner that is offline is told when it is back, on every connection until it confirms.
-
-Work the Session never pushed to a branch goes with the Workspace.
+30 days after it was archived (the Hub's `HUB_ARCHIVE_RETENTION_MS`), a Session is purged. The Hub deletes its log, Prompt queue and records, and tells its Runner, which deletes the Session's directory, with the Workspace, and its disks in microsandbox, Claude Code's state among them. An offline Runner is told when it is back. Work the Session never pushed goes with the Workspace.
 
 ## History
 

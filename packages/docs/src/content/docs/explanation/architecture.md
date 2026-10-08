@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-kndl lets a team run Claude Code Sessions on their own machines and work in them together from a browser, the way two people pair-program at one screen. It has three kinds of part.
+kndl lets a team run Claude Code Sessions on their own machines and work in them together from a browser. It has three kinds of part.
 
 ```mermaid
 flowchart LR
@@ -27,9 +27,9 @@ flowchart LR
   P1 -- "/mod/* (mod token)" --> Hub
 ```
 
-- **The Hub** is the server people sign in to. It keeps every Session, its Events and its Prompt queue in SQLite, and relays prompts and Events between people and Runners. It runs nothing heavy itself: one Bun process.
-- **A Runner** is a machine that runs Sessions, each on its Creator's Claude credential, stored on the Hub, or else on the Runner's own, if it has one ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). It connects out to the Hub over a WebSocket, so the Hub never needs to reach it, and any number can connect.
-- **A Sandbox** is a microVM on a Runner, one per Session, where the Session's Claude Code runs, and with it every tool, hook and command. It is disposable: the Session's Workspace lives on the Runner and is mounted into it.
+- **The Hub** is the server people sign in to. It keeps every Session, its Events and its Prompt queue in SQLite, and relays prompts and Events between people and Runners. It is one Bun process.
+- **A Runner** is a machine that runs Sessions, each on its Creator's Claude credential or else the Runner's own ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). It connects out to the Hub over a WebSocket, so the Hub never needs to reach it.
+- **A Sandbox** is a microVM on a Runner, one per Session, where the Session's Claude Code and every tool, hook and command run. It is disposable: the Session's Workspace lives on the Runner and is mounted into it.
 
 Everything goes through the Hub. Browsers, Runners and each Session's mod connect to it and never to each other; a mod reaches it through its Runner's credential proxy. See the [protocol reference](/reference/protocol/).
 
@@ -47,41 +47,41 @@ Because the Hub holds the queue, Participants can send prompts while a Turn runs
 
 ## Claude Code in the Sandbox
 
-Each Session's Claude Code runs inside its Sandbox, so its tools run where it runs and nothing is routed ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Bash, Read, Edit, WebFetch, the `!` shortcut, hooks, the Repo's `settings.json`, skills, nested `CLAUDE.md` files and Claude Code's own subagents all behave as they do on a laptop, and all of them stay in the VM.
+Each Session's Claude Code runs inside its Sandbox, so its tools run where it runs ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Its tools, the `!` shortcut, hooks, the Repo's `settings.json`, skills, nested `CLAUDE.md` files and subagents behave as they do on a laptop, and stay in the VM.
 
 - **It runs in tmux in the VM,** started through the Sandbox backend's own exec, in `/workspace` with Claude Code's normal setting sources and `--dangerously-skip-permissions` ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)). Claude runs as root there, so the Runner sets `IS_SANDBOX=1`.
-- **Its state is on a disk of the Session's own,** `/var/lib/kndl/claude`, as `CLAUDE_CONFIG_DIR`. The conversation, `--resume` and Claude Code's settings survive sleep. Before each start the Runner seeds it with onboarding done, `/workspace` trusted and bypass-permissions mode accepted, so no dialog waits for a person.
+- **Its state is on a disk of the Session's own,** `/var/lib/kndl/claude`, as `CLAUDE_CONFIG_DIR`, so the conversation and settings survive sleep. Before each start the Runner seeds it with onboarding done, `/workspace` trusted and bypass-permissions mode accepted, so no dialog waits for a person.
 - **It holds no Claude credential.** It sends every request to the Runner's [credential proxy](/explanation/security-model/#the-credential-proxy) with a token for its Session alone, and the proxy puts the real credential in its place. The token is given to the Claude Code process, never written to the VM.
-- **The mod loads read-only** from `/opt/kndl/mod`, each of its plugins with its own `--plugin-dir`, and reaches the Hub through the same proxy, which adds the Session's mod token on the way. It is the Session's own copy of the Runner's mod, made each time Claude Code starts, so an update never changes the mod under a running Turn: a new mod reaches each Session at its next start, wake or change of model ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/#what-a-running-sessions-claude-code-loads-amended-in-159)).
+- **The mod loads read-only** from `/opt/kndl/mod`, each plugin with its own `--plugin-dir`, and reaches the Hub through the same proxy, which adds the Session's mod token. It is a copy of the Runner's mod made each time Claude Code starts, so an update never changes the mod under a running Turn; a Session picks up an updated mod at its next start, wake or change of model ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/#what-a-running-sessions-claude-code-loads-amended-in-159)).
 - **Auto memory is off.** Each Session has its own state, so Sessions would never share what it remembers.
-- **Agent view is off.** One Claude Code runs the Session. A background job of Claude Code's, from its agent view, `/background` or `--bg`, would be a second one that runs each prompt again. The mod's plugins don't link to the Hub from such a process either.
+- **Agent view is off.** A background job from Claude Code's agent view, `/background` or `--bg`, would be a second Claude Code that runs each prompt again.
 
 ### How the Sandbox gets `claude`
 
-The Runner downloads the Linux build of a pinned Claude Code version from the npm registry once, checks it against the registry's integrity hash, keeps it in the home's `claude-code/` ([Files and paths](/reference/files-and-paths/)), and mounts it read-only into every Sandbox at `/opt/kndl/claude-code`. There is a musl build, for Alpine-like images, and a glibc build, for Debian, Ubuntu and the like; an Environment's build checks its image and records which one its Sandboxes use.
+The Runner downloads the Linux build of a pinned Claude Code version from the npm registry once, checks its integrity hash, keeps it in the home's `claude-code/` ([Files and paths](/reference/files-and-paths/)), and mounts it read-only into every Sandbox at `/opt/kndl/claude-code`. Each Build checks its image and records whether its Sandboxes use the musl build (Alpine-like images) or the glibc build (Debian, Ubuntu and the like).
 
-The version is pinned rather than following the host's, because Claude Code learns its plan from variables that are not a public interface. A new version is pinned only after a smoke test passes: its banner names the plan, `/status` answers, and a Turn runs a Bash command.
+The version is pinned, rather than following the host's, because Claude Code learns its plan from variables that are not a public interface. A version is pinned only after a smoke test passes: its banner names the plan, `/status` answers, and a Turn runs a Bash command.
 
-Claude Code also needs tmux 3.2 or later and bash in the Sandbox. Every Environment build installs whichever of them its image lacks.
+Claude Code also needs tmux 3.2 or later and bash, which every Build installs if its image lacks them.
 
 ## Why Sandboxes are disposable
 
-A Session's Workspace, its dependency folders and Docker's data live on disks that outlive the Sandbox ([ADR 0006](/reference/decisions/0006-workspace-on-host-sandbox-disposable/)). So the Runner can stop a Sandbox when the Session goes to sleep, or destroy it and make a new one from a newer Environment build, and nothing is lost:
+A Session's data lives on disks that outlive the Sandbox ([ADR 0006](/reference/decisions/0006-workspace-on-host-sandbox-disposable/)), so the Runner can stop a Sandbox when the Session goes to sleep, or replace it with one from a later Build, and nothing is lost:
 
-- **Source** stays in the Workspace, a directory on the Runner mounted at `/workspace`, so it outlives every Sandbox the Session has. Only what git in the Sandbox pushes leaves the Runner.
+- **Source** stays in the Workspace, a directory on the Runner mounted at `/workspace`. Only what git in the Sandbox pushes leaves the Runner.
 - **Dependency folders** such as `node_modules`, and package caches, sit on the Session's own disk volumes inside the Sandbox, because many small files are several times slower on a host mount than on a disk.
 - **Docker's data**, when the Environment turns Docker on, has its own disk too.
 - **Claude Code's state**, its conversations and settings, has its own disk, so a woken Session resumes its conversation.
 
 ## Several people, one Session
 
-A Session belongs to its Repo, not to a person ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Anyone with access to the Repo on GitHub can join it ([Who can do what](/explanation/security-model/#who-can-do-what)). Everyone in it is a Participant with the same rights: anyone can prompt it, type into its terminal, put it to sleep or delete it. The person who started it is recorded as its Creator, for history only.
+A Session belongs to its Repo, not to a person ([ADR 0003](/reference/decisions/0003-sessions-belong-to-the-repo/)). Anyone with access to the Repo on GitHub can join it ([Who can do what](/explanation/security-model/#who-can-do-what)), and every Participant has the same rights: prompt it, type into its terminal, put it to sleep or delete it. The person who started it is its Creator, whose Claude credential and git identity it uses.
 
 ### The terminal mirror
 
-The Session view's **Terminal** tab shows the Session's Claude Code terminal, live. Everyone watching sees the same screen and can type into it: it is the escape hatch for whatever the chat doesn't handle, such as Claude Code's dialogs, Esc and Ctrl-C.
+The Session view's **Terminal** tab shows the Session's Claude Code terminal, live. Everyone watching sees the same screen and can type into it, for what the chat doesn't handle, such as Claude Code's dialogs, Esc and Ctrl-C.
 
-- The Runner attaches to the Session's tmux in the Sandbox in control mode (`tmux -C`). Opening the tab asks it for a snapshot of the pane, the whole screen with its colours and cursor, and then relays the pane's output to everyone watching. A reconnect waits for a fresh snapshot, so nothing is drawn twice.
+- The Runner attaches to the Session's tmux in control mode (`tmux -C`). Opening the tab sends a snapshot of the pane, with its colours and cursor, then relays the pane's output. A reconnect waits for a fresh snapshot, so nothing is drawn twice.
 - The terminal has one size, the tmux pane's. Whoever last typed into it or pressed **Fit to my window** sets it; everyone else sees it at that size, scaled down when it doesn't fit.
 - The Hub relays keystrokes only from someone who opened the terminal, and only while the Session is Active.
 

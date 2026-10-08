@@ -10,16 +10,16 @@ import { Steps } from "@astrojs/starlight/components"
 In this tutorial you run the whole of kndl on one machine: a Hub, the web UI and one Runner. You sign in without GitHub, give a Repo its Environment, start a Session on it, and see a second person join. It takes about twenty minutes, most of it waiting for the first Build.
 
 :::note[From a checkout]
-This tutorial runs kndl from a checkout of its repository with `bun run`, so you see each part start. To install a Hub and Runner as services instead, use the `kndl` command: see [Install kndl](/how-to/install/).
+This tutorial runs kndl from a checkout with `bun run`, so you see each part start. To install a Hub and Runner as services instead, see [Install kndl](/how-to/install/).
 :::
 
 ## What you need
 
 - **A Mac with Apple Silicon, or Linux with KVM.** Sandboxes are [microsandbox](https://github.com/microsandbox/microsandbox) microVMs, which need one of the two. microsandbox itself comes with `bun install`.
 - **[Bun](https://bun.sh) 1.4 or newer.**
-- **A Claude account.** Here, the simplest is Claude Code signed in on this machine: run `claude` once and sign in if you never have. The Runner uses that login as its own Claude credential, which Sessions run on when their Creator has added none. A Runner on another machine needs neither, once people [add their own](/how-to/add-your-claude-credential/).
+- **A Claude account,** with Claude Code signed in on this machine: run `claude` once and sign in if you never have. The Runner uses that login for Sessions whose Creator has [added no Claude credential](/how-to/add-your-claude-credential/).
 - **git**.
-- **A GitHub repository to work on** that this machine's own git can clone over HTTPS, such as one of yours. Without the GitHub App, the Runner clones with your host's git credentials.
+- **A GitHub repository** that this machine's git can clone over HTTPS. Without the GitHub App, the Runner clones with your own git credentials.
 
 ## Start the Hub
 
@@ -45,7 +45,7 @@ This tutorial runs kndl from a checkout of its repository with `bun run`, so you
    HUB_PUBLIC_URL=http://127.0.0.1:7777 KNDL_DEV_LOGIN=1 bun run hub
    ```
 
-   The Hub logs a few warnings at startup: GitHub sign-in is off, the GitHub App is not configured, `HUB_SECRETS_KEY` is not set, and dev login is on. All of them are expected here. Leave it running.
+   The Hub logs warnings that GitHub sign-in is off, the GitHub App is not configured, `HUB_SECRETS_KEY` is not set, and dev login is on. They are expected here. Leave it running.
 
 </Steps>
 
@@ -59,7 +59,7 @@ This tutorial runs kndl from a checkout of its repository with `bun run`, so you
    bun run runner-token "$(hostname -s)"
    ```
 
-   It prints a token that starts with `chr_`. It is shown once, so copy it now.
+   It prints a token that starts with `chr_`, shown once. Copy it.
 
 2. Start the Runner with that token:
 
@@ -77,7 +77,7 @@ Open [http://127.0.0.1:7777](http://127.0.0.1:7777). Under **Dev login**, type a
 
 ## Give your Repo an Environment
 
-Every Repo needs an Environment before its first Session: the recipe its Sandboxes are built from.
+Every Repo needs an Environment, the recipe its Sandboxes are built from, before its first Session.
 
 <Steps>
 
@@ -103,7 +103,7 @@ The Session opens with a **Starting…** banner. The Runner clones your Repo ont
 
    > List the files in this repository and tell me what it does.
 
-   Claude's reply streams into the transcript, with each tool call it makes. Claude Code and its tools run in the Sandbox, on the Workspace mounted at `/workspace`, not on your machine.
+   Claude's reply streams into the transcript, with each tool call. Claude Code and its tools run in the Sandbox, on the Workspace at `/workspace`.
 
 2. Open the **Terminal** tab. It mirrors Claude Code's own screen, live. You can type into it, which is how you answer a dialog the chat doesn't show.
 
@@ -113,7 +113,7 @@ The Session opens with a **Starting…** banner. The Runner clones your Repo ont
 
 ## Stop
 
-Press Ctrl-C in the Runner's terminal, then in the Hub's. The Session is Frozen while the Runner is gone. Its Claude Code runs on in its Sandbox, so when you start both again the Session is Active as it was, and takes prompts at once. Left alone, an idle Session goes to sleep after 15 minutes and wakes on the next prompt.
+Press Ctrl-C in the Runner's terminal, then in the Hub's. The Session is Frozen while the Runner is gone, but its Claude Code runs on in its Sandbox: start both again and the Session is Active as it was. Left alone, an idle Session goes to sleep after 15 minutes and wakes on the next prompt.
 
 ## What you did
 
