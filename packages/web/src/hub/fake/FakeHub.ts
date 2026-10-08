@@ -599,6 +599,18 @@ export class FakeHub implements HubTransport {
       this.#refuse(socket, message._tag, message.requestId, outcome.refused)
       return
     }
+    if ("needsClient" in outcome) {
+      // No Dynamic Client Registration (#218): a client entered by hand first, nothing changed.
+      if (message._tag !== "ConnectInstallation") return
+      socket.deliver({
+        _tag: "InstallationNeedsClient",
+        requestId: message.requestId,
+        installationId: message.installationId,
+        ...outcome.needsClient,
+        callbackUrl: `${globalThis.location?.origin ?? "http://localhost:5173"}/auth/plugins/callback`,
+      })
+      return
+    }
     const state = this.plugins.state(this.#allowed)
     if (message._tag === "ConnectInstallation" && outcome.authorizing !== undefined) {
       // Where the browser goes to connect (#217): the fake's "consent" is already given.

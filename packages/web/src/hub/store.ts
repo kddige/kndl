@@ -429,6 +429,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
       }
     case "PluginPackageRead":
     case "InstallationAuthorizing":
+    case "InstallationNeedsClient":
       return state
   }
 }

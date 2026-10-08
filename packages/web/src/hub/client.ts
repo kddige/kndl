@@ -20,7 +20,9 @@ import {
   type GitHubLogin,
   type HeaderValueInput,
   HubToWeb,
+  type InstallationAuthorizing,
   type InstallationId,
+  type InstallationNeedsClient,
   type InviteCreated,
   type InviteId,
   type ModelName,
@@ -96,7 +98,8 @@ type Answer = Extract<HubToWeb, { readonly requestId?: RequestId }>
 type AnswerTag = Exclude<Answer["_tag"], "CommandFailed">
 
 interface PendingRequest {
-  readonly answer: AnswerTag
+  /** The answers it takes. */
+  readonly answer: ReadonlyArray<AnswerTag>
   resolve(message: Answer): void
   reject(error: CommandError): void
 }
@@ -524,14 +527,34 @@ export class HubClient {
   /**
    * Begins connecting an OAuth Installation to its account (#217): where to send the browser, the
    * authorization server's page to sign in and consent. It comes back through the Hub, which keeps
-   * the tokens, to the Plugins page.
+   * the tokens, to the Plugins page. Where the authorization server offers no Dynamic Client
+   * Registration, the Hub asks for a client registered there by hand instead (#218), to begin
+   * again with; `changeClient` asks for another.
    */
-  async connectInstallation(installationId: InstallationId): Promise<string> {
-    const answer = await this.#request(
-      { _tag: "ConnectInstallation", installationId },
-      "InstallationAuthorizing",
+  connectInstallation(
+    installationId: InstallationId,
+    options: {
+      readonly client?: { readonly clientId: string; readonly clientSecret?: string }
+      readonly changeClient?: boolean
+    } = {},
+  ): Promise<InstallationAuthorizing | InstallationNeedsClient> {
+    const { client, changeClient } = options
+    return this.#request(
+      {
+        _tag: "ConnectInstallation",
+        installationId,
+        ...(client !== undefined && {
+          client: {
+            clientId: client.clientId,
+            ...(client.clientSecret !== undefined && {
+              clientSecret: Redacted.make(client.clientSecret),
+            }),
+          },
+        }),
+        ...(changeClient === true && { changeClient }),
+      },
+      ["InstallationAuthorizing", "InstallationNeedsClient"],
     )
-    return answer.url
   }
 
   /** Disconnects an OAuth Installation, so the Hub forgets its tokens (#217). */
@@ -668,7 +691,7 @@ export class HubClient {
   /** Sends `command` with a new request id; resolves with the Hub's `answer` to it. */
   #request<Tag extends AnswerTag>(
     command: Request,
-    answer: Tag,
+    answer: Tag | ReadonlyArray<Tag>,
   ): Promise<Extract<Answer, { readonly _tag: Tag }>> {
     const requestId = RequestId.make(`req-${Date.now().toString(36)}-${++this.#requestCount}`)
     return new Promise((resolve, reject) => {
@@ -677,7 +700,7 @@ export class HubClient {
         return
       }
       this.#requests.set(requestId, {
-        answer,
+        answer: typeof answer === "string" ? [answer] : answer,
         resolve: (message) => resolve(message as Extract<Answer, { readonly _tag: Tag }>),
         reject,
       })
@@ -773,10 +796,11 @@ export class HubClient {
       case "PluginsState":
       case "PluginLog":
       case "PluginPackageRead":
-      case "InstallationAuthorizing": {
+      case "InstallationAuthorizing":
+      case "InstallationNeedsClient": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
-        if (request?.answer !== message._tag) break
+        if (request === undefined || !request.answer.includes(message._tag)) break
         this.#requests.delete(message.requestId)
         request.resolve(message)
         break

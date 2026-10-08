@@ -132,7 +132,7 @@ export function secretsResetPlanText(plan: SecretsResetPlan): string {
 function connectionLines(plan: SecretsResetPlan, verb: string): ReadonlyArray<string> {
   if (plan.connections.length === 0) return []
   return [
-    `${verb} ${plural(plan.connections.length, "OAuth Installation")}, dropping its tokens and the client the Hub registered: ${plan.connections.join(", ")}.`,
+    `${verb} ${plural(plan.connections.length, "OAuth Installation")}, dropping its tokens and its client, the one the Hub registered or the one entered by hand: ${plan.connections.join(", ")}.`,
   ]
 }
 
@@ -169,7 +169,7 @@ export function secretsResetDoneText(plan: SecretsResetPlan, newKey: string): st
     ...installationLines(plan, "Cleared"),
     ...connectionLines(plan, "Disconnected"),
     "",
-    `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen${plan.installations.length > 0 ? ", and each Installation's on the Plugins page" : ""}.${plan.connections.length > 0 ? " Connect each OAuth Installation again on the Plugins page." : ""}`,
+    `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen${plan.installations.length > 0 ? ", and each Installation's on the Plugins page" : ""}.${plan.connections.length > 0 ? " Connect each OAuth Installation again on the Plugins page; one whose client was entered by hand asks for its client ID and secret again." : ""}`,
   ].join("\n")
 }
 

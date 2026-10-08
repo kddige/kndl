@@ -198,7 +198,7 @@ Prints a new `HUB_SECRETS_KEY`, 32 random bytes in base64, for encrypting Sensit
 
 #### `bun run secrets-reset [--yes]`
 
-For when `HUB_SECRETS_KEY` is lost, and the Hub refuses to start without it. It needs no key. Clears every Sensitive value the key encrypted, own and shared, keeping the variables, which then need a value. It also drops what else the key protects: the replaced values kept for redaction, the record of Test builds, people's Claude credentials, and the values of Installations' header secrets, keeping each Installation, which then needs its values again. It lists what it clears, by name, never a value, and asks:
+For when `HUB_SECRETS_KEY` is lost, and the Hub refuses to start without it. It needs no key. Clears every Sensitive value the key encrypted, own and shared, keeping the variables, which then need a value. It also drops what else the key protects: the replaced values kept for redaction, the record of Test builds, people's Claude credentials, and the values of Installations' header secrets, keeping each Installation, which then needs its values again. It disconnects each OAuth Installation too, dropping its tokens and its client, the one the Hub registered or the one entered by hand: each needs connecting again, and one whose client was entered asks for its client ID and secret again. It lists what it clears, by name, never a value, and asks:
 
 ```
 This clears 3 Sensitive values, keeping each variable, its "available at build" and its Links:

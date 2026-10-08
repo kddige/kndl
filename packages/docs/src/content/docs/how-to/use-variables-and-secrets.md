@@ -57,6 +57,7 @@ The values the key encrypted are lost with it. A reset clears them and keeps eve
    - On a Repo's Environment, type each value and apply. No Test build is needed, even at build.
    - On **Shared variables**, press **Enter value** on each.
    - On **Plugins**, edit each Installation whose header secrets show **needs a value**, and type each value. See [Header secret values](/how-to/add-a-remote-mcp-server-as-a-plugin/#header-secret-values).
+   - On **Plugins**, press **Connect** on each OAuth Installation: the reset dropped its tokens and its client. One whose client was entered by hand asks for its client ID and secret again. See [Connect it to an account with OAuth](/how-to/add-a-remote-mcp-server-as-a-plugin/#connect-it-to-an-account-with-oauth).
 
 Until each variable it has or links gets a value, a Repo's Sessions and Test builds don't start: a Session that wakes stays Asleep with a message naming the variables, and its prompts stay queued. The reset also drops the record of past Test builds.
 

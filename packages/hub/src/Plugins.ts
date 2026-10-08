@@ -26,11 +26,11 @@
 // - A Plugin may use OAuth instead (#217): each Installation is connected to an account, whose
 //   tokens PluginOAuth.ts keeps and refreshes, and the Gateway sends live, not as a Session started
 //   with them. A Plugin's URL moved to another origin, or no longer using OAuth, disconnects its
-//   Installations, and forgets the client the Hub registered for them too.
+//   Installations, and forgets their clients too, the Hub registered or entered by hand (#218).
 // - Each Repo's log records who created, renamed, added, removed or deleted an Installation on it,
-//   edited its Plugin, set or cleared its values, or connected or disconnected it, and when, with
-//   the names as they were: a
-//   value's header secret by its title, never the value. Nothing here is an Environment version:
+//   edited its Plugin, set or cleared its values, set its OAuth client, or connected or disconnected
+//   it, and when, with the names as they were: a value's header secret by its title, never the
+//   value, nor a client's secret. Nothing here is an Environment version:
 //   Sessions pick the change up on their next wake or Restart.
 // - A change to a global Installation, or to its Plugin, affects every Repo, and the Hub knows no
 //   list of them: a Repo is seen first when someone uses it. So it is logged once, under the Repo
@@ -40,6 +40,7 @@
 import {
   clearedHeaderSecrets,
   clearsConnections,
+  type InstallationClient,
   type InstallationConnection,
   type HeaderSecret,
   type HeaderValueInput,
@@ -383,8 +384,10 @@ export class Plugins extends Context.Service<
     /**
      * Keeps the tokens a connection of an OAuth Installation was granted (#217), logging Connected,
      * or Reconnected if it had a connection, on each Repo it lists, or once for every Repo, for a
-     * global one. Refused if the Installation lists another Repo than the connection began with,
-     * became global or Repo-scoped since, or its Plugin's URL or auth changed since.
+     * global one; and ClientSet before it, if it was made with a client entered that the
+     * Installation didn't have (#218). Refused if the Installation lists another Repo than the
+     * connection began with, became global or Repo-scoped since, or its Plugin's URL or auth
+     * changed since.
      */
     readonly connectInstallation: (
       pending: PendingConnection,
@@ -427,7 +430,8 @@ export class Plugins extends Context.Service<
     /**
      * Every value of a header secret the Repo's Sessions may meet, to redact from what they
      * print: those of the Installations on for it, by any spelling, and those its Sessions
-     * started with; and the OAuth tokens of the Installations on for it (#217).
+     * started with; and the OAuth tokens and client secrets of the Installations on for it (#217,
+     * #218), global ones too.
      */
     readonly valuesOn: (
       repo: string,
@@ -540,6 +544,34 @@ export class Plugins extends Context.Service<
           FROM installation_oauth o JOIN participants p ON p.id = o.connected_by
           WHERE o.connected_at IS NOT NULL AND o.installation_id IN ${sql.in(ids)}
         `
+        // The client entered for each, if one was (#218): its id, and whether it has a secret.
+        const clients = yield* sql<{
+          readonly installationId: string
+          readonly clientId: string
+          readonly secret: number
+          readonly setAt: number
+          readonly byId: string
+          readonly byLogin: string
+          readonly byName: string
+          readonly byAvatarUrl: string | null
+        }>`
+          SELECT o.installation_id AS installationId, o.manual_client_id AS clientId,
+            o.manual_client_secret AS secret, o.client_set_at AS setAt, p.id AS byId,
+            p.login AS byLogin, p.name AS byName, p.avatar_url AS byAvatarUrl
+          FROM installation_oauth o JOIN participants p ON p.id = o.client_set_by
+          WHERE o.manual_client_id IS NOT NULL AND o.installation_id IN ${sql.in(ids)}
+        `
+        const clientOf = (id: string): InstallationClient | undefined => {
+          const found = clients.find((client) => client.installationId === id)
+          return found === undefined
+            ? undefined
+            : {
+                clientId: found.clientId,
+                secret: found.secret === 1,
+                setBy: toParticipant(found),
+                setAt: found.setAt,
+              }
+        }
         const connectionOf = (id: string): InstallationConnection | undefined => {
           const found = connections.find((connection) => connection.installationId === id)
           return found === undefined
@@ -553,6 +585,7 @@ export class Plugins extends Context.Service<
         }
         return rows.map((row): StoredInstallation => {
           const connection = connectionOf(row.id)
+          const client = clientOf(row.id)
           const turnedOff = off
             .filter((repo) => repo.installationId === row.id)
             .map((repo) => RepoName.make(repo.repo))
@@ -573,6 +606,7 @@ export class Plugins extends Context.Service<
                 setAt: value.setAt,
               })),
             ...(connection !== undefined && { connection }),
+            ...(client !== undefined && { client }),
             createdBy: toParticipant(row),
             createdAt: row.createdAt,
           }
@@ -1138,7 +1172,7 @@ export class Plugins extends Context.Service<
             )
           }
           yield* checkConnector(existing.value, by)
-          const { reconnected } = yield* oauth
+          const { reconnected, clientSet } = yield* oauth
             .store(pending, granted, by)
             .pipe(
               Effect.catchTag("SecretsUnavailable", (error) =>
@@ -1147,7 +1181,10 @@ export class Plugins extends Context.Service<
             )
           const change = reconnected ? ("Reconnected" as const) : ("Connected" as const)
           yield* record(
-            logRepos(existing.value).map((repo) => ({ repo, change })),
+            logRepos(existing.value).flatMap((repo) => [
+              ...(clientSet ? [{ repo, change: "ClientSet" as const }] : []),
+              { repo, change },
+            ]),
             { plugin: target, installation: existing.value },
             by,
             yield* Clock.currentTimeMillis,
@@ -1313,9 +1350,12 @@ export class Plugins extends Context.Service<
         const values = yield* Effect.forEach(rows, (row) =>
           secrets.decrypt(row.value, valueContext(row.installationId, row.key)),
         )
+        // The OAuth tokens and client secrets of each it lists, and of every global one (#219).
         const on = yield* sql<{ readonly installationId: string }>`
           SELECT installation_id AS installationId FROM installation_repos
           WHERE repo = ${repo} COLLATE NOCASE
+          UNION
+          SELECT id AS installationId FROM installations WHERE global = 1
         `
         const tokens = yield* oauth.tokensOf(on.map((row) => row.installationId))
         return [...values, ...tokens]

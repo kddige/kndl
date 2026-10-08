@@ -38,6 +38,7 @@ import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
   InstallationAuthorizing,
   InstallationFailure,
+  InstallationNeedsClient,
   PluginCommand,
   PluginLog,
   PluginPackageRead,
@@ -802,6 +803,7 @@ export const HubToWeb = Schema.Union([
   PluginLog,
   PluginPackageRead,
   InstallationAuthorizing,
+  InstallationNeedsClient,
   ClaudeCredentialState,
   AppPermissionsChecked,
   RepoChecked,

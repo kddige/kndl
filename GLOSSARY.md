@@ -169,7 +169,7 @@ Moving a packaged Plugin to what its source holds now, once someone has seen wha
 _Avoid_: update, sync, refresh
 
 **Installation**:
-A named, configured copy of one Plugin, holding the credentials of the account it acts as: header secret values, or, for an OAuth Plugin, the tokens of the account someone connected it to, which only the Hub holds. It is global, on in every Repo, or on in the Repos it lists, and a Repo has at most one Installation of each Plugin on: one that lists the Repo takes a global one's place there, and a Repo can turn a global one off.
+A named, configured copy of one Plugin, holding the credentials of the account it acts as: header secret values, or, for an OAuth Plugin, the tokens of the account someone connected it to and the client it connects with, which only the Hub holds. It is global, on in every Repo, or on in the Repos it lists, and a Repo has at most one Installation of each Plugin on: one that lists the Repo takes a global one's place there, and a Repo can turn a global one off.
 _Avoid_: connection, instance, config, plugin (for a configured copy)
 
 **Header secret**:

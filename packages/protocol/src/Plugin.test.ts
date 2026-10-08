@@ -16,6 +16,7 @@ import {
   installationsFor,
   isOn,
   mcpServerNames,
+  oauthClientProblem,
   type PluginAuth,
   pluginAuthProblem,
   pluginNameProblem,
@@ -149,6 +150,21 @@ describe("a Plugin's header secrets", () => {
     )
     expect(headerValueProblem("API key", "abc\ndef")).toBe(
       "The value of API key must be one line of plain characters.",
+    )
+  })
+
+  test("take an OAuth client entered by hand of one word each, a secret long enough to redact (#218)", () => {
+    expect(oauthClientProblem("Iv1.0a1b2c3d4e5f")).toBeUndefined()
+    expect(oauthClientProblem("Iv1.0a1b2c3d4e5f", "0123456789abcdef")).toBeUndefined()
+    expect(oauthClientProblem("  ")).toBe("Enter the client ID.")
+    expect(oauthClientProblem("my client")).toBe(
+      "The client ID must be one word of plain characters, with no spaces.",
+    )
+    expect(oauthClientProblem("Iv1", "abc")).toBe(
+      "The client secret is under 4 characters: too short to redact from output.",
+    )
+    expect(oauthClientProblem("Iv1", "abc\ndef")).toBe(
+      "The client secret must be one word of plain characters, with no spaces.",
     )
   })
 
