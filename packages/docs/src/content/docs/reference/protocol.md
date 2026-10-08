@@ -28,6 +28,7 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `GET /tunnel/<session id>/<port>` | a client reaching an Open port ([Tunnels](#tunnels)) | `Authorization: Bearer <CLI token>`, or the sign-in cookie from `HUB_PUBLIC_URL`'s origin |
 | `GET /runner/tunnel/<tunnel id>` | a Runner, dialing back for a tunnel | `Authorization: Bearer <Runner token>` |
 | `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands` | one Session's mod | `Authorization: Bearer <mod token>` |
+| `/gateway/<installation id>`, any method | one Session's Claude Code, to an Installation's MCP server ([Plugins](#plugins)) | `Authorization: Bearer <mod token>`, put in by the Runner's credential proxy |
 | `GET /cli`, `GET /cli/version`, `GET /cli/<os>-<arch>` | `curl … \| sh`, the [`kndl` command from a Hub](/reference/commands/#the-kndl-command-from-a-hub) | none: the install script, the Hub's commit, and the binary built from it. |
 | anything else | a browser | none: the web UI's build. |
 
@@ -203,8 +204,8 @@ A WebSocket per browser tab.
 
 | Direction | Messages |
 |---|---|
-| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`, `SteerPrompt`; `MessageAgent`, `StopAgent`; `AnswerQuestion`, `PickAnswer`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken`; `CreateInvite`, `ListInvites`, `RevokeInvite`, `ListMembers`, `RemoveMember` |
-| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `QuestionPicks`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; `InviteCreated`, `InviteList`, `MemberList`; terminal frames; `CommandFailed` |
+| Browser to Hub | `WebHello`; `CreatePairingCode`, `RevokePairingCode`, `RemoveRunner`, `UpdateRunner`; `CreateSession`; `JoinSession`, `LeaveSession`; `SendPrompt`, `CancelPrompt`, `SteerPrompt`; `MessageAgent`, `StopAgent`; `AnswerQuestion`, `PickAnswer`; `SleepSession`, `WakeSession`, `RestartSession`, `SetKeepAwake`; `ArchiveSession`, `RestoreSession`; `RenameSession`; `SetSessionModel`; `OpenTerminal`, `CloseTerminal`, terminal input; Environment and Variable changes, and Test builds; `CheckAppPermissions`; `CheckRepo`; `SetClaudeCredential`, `RemoveClaudeCredential`; `RevokeCliToken`; `CreateInvite`, `ListInvites`, `RevokeInvite`, `ListMembers`, `RemoveMember`; `GetPlugins`, `CreatePlugin`, `EditPlugin`, `DeletePlugin`, `CreateInstallation`, `EditInstallation`, `DeleteInstallation`, `GetPluginLog` |
+| Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `QuestionPicks`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; `InviteCreated`, `InviteList`, `MemberList`; `PluginsState`, `PluginLog`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
 
@@ -243,6 +244,43 @@ The Hub is invite-only ([ADR 0019](/reference/decisions/0019-invites-decide-who-
 - `InviteList` and `MemberList` go to the Owner's tabs alone, without a `requestId`, whenever an Invite is made, used or revoked, or someone is admitted or removed.
 
 A removed Member's sign-ins and CLI tokens are revoked at once. The Hub closes their web connections with `4401` and their Forwards, and refuses their next request. A Setup link's or Invite's `/setup` or `/invite` page sends `POST /auth/github/admission { ticket }`, then goes to `GET /auth/github`; the callback lets the person in as a Member already, else with the Setup link while there is no Owner, else with an Invite. Anyone else, whatever ticket they brought, is sent to `/invite-only`, with no Participant or sign-in created.
+
+### Plugins
+
+Plugins are remote MCP servers that Sessions reach through the Hub's Gateway ([ADR 0020](/reference/decisions/0020-plugins-are-remote-mcp-servers-behind-the-hub/), [Add a remote MCP server as a Plugin](/how-to/add-a-remote-mcp-server-as-a-plugin/)). Any Member may send these.
+
+- `GetPlugins { requestId }` and every change below are answered with `PluginsState { requestId?, plugins, installations }`, which also goes, without a `requestId`, to every other tab that asked for Plugins whenever a Plugin or Installation changes.
+  - Each Plugin is `{ id, name, url, createdBy, createdAt }`.
+  - Each Installation is `{ id, pluginId, name, repos, otherRepos?, createdBy, createdAt }`. `repos` lists only the Repos the person has access to; `otherRepos` counts the rest, without naming them.
+- `CreatePlugin { requestId, name, url }` makes a Hub-only Plugin. Its id is `hub:` and the slug of its name, with a number added if that is taken, so it never clashes with a package name. `EditPlugin { requestId, pluginId, name, url }` changes it, and `DeletePlugin { requestId, pluginId }` deletes it.
+- `CreateInstallation { requestId, pluginId, name, repos }` turns a Plugin on for the Repos it lists, `EditInstallation { requestId, installationId, name, repos }` renames it or changes its Repos, and `DeleteInstallation { requestId, installationId }` deletes it. Installations make no Environment version.
+- `GetPluginLog { requestId, repo }` is answered with `PluginLog { requestId?, repo, entries }`: the Repo's Plugin change log, newest first, each `{ change, by, at, installationId, installationName, pluginId, pluginName }`. `change` is `Created`, `Added`, `Renamed`, `Removed`, `Deleted` or `PluginEdited`. A `PluginLog` without a `requestId` goes to every tab with access to the Repo whenever its log grows.
+
+The Hub refuses with a `CommandFailed`:
+
+| Refused | Message |
+|---|---|
+| A Repo the person has no access to, whether it exists or not | `You have no access to <repo> on GitHub, or the GitHub App isn't installed on it.` |
+| Changing or deleting an Installation on in a Repo the person has no access to | `This Installation is on in Repos you have no access to, so you can't change it.` |
+| Editing a Plugin with an Installation on in such a Repo | `This Plugin has Installations on Repos you have no access to, so you can't edit it.` |
+| A second Installation of a Plugin on a Repo | `<repo> already has <name>, an Installation of <plugin>: a Repo has at most one Installation of each Plugin.` |
+| Deleting a Plugin with Installations | `<plugin> has an Installation: delete it first.` |
+| A URL that isn't `https://` or `http://`, or holds a user name, password or `#fragment` | `The URL must start with https:// (or http://).`, or what else is wrong |
+
+Each Session carries `plugins` when it runs with Installations: each `{ id, name, pluginId, pluginName, server }`, as its Claude Code last started. `server` is the name of its MCP server, which Claude Code shows as `plugin:kndl:<server>`. A Session that isn't Archived carries `pluginsChanged: true` when its Repo's Installations, or their Plugins' names, changed since: a wake or `RestartSession` applies the change.
+
+`StartSession` carries `plugins`, each `{ installationId, server }`, to a Runner whose `RunnerHello` says `relaysPlugins`. The Runner gives Claude Code a plugin of its own, `kndl`, whose `.mcp.json` points each server at `/gateway/<installation id>` through the credential proxy, with the Session token as its bearer. The proxy relays the request to the Hub with the Session's mod token in its place.
+
+The Gateway answers:
+
+| Status | When |
+|---|---|
+| `401` | No mod token of an Active Session. |
+| `403` | An Installation the Session didn't start with, or that is no longer on for its Repo; the same whether it exists or not. |
+| `502` | The Plugin's MCP server couldn't be reached, or answered with a redirect, which the Gateway doesn't follow. |
+| anything else | The MCP server's answer, streamed back as it comes. |
+
+The request goes to the Plugin's URL as it is now, its body streaming on untouched. The Session's token, cookies, `Host`, `Origin`, forwarding and hop-by-hop headers stay at the Gateway, and the server's cookies don't come back. Each request is logged with its Session, Installation, method, status and time taken, never what it carries.
 
 ### Model and effort
 
