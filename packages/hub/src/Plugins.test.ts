@@ -1,20 +1,25 @@
 // Plugins and their Installations (#221, ADR 0020): any Member creates a Plugin; an Installation
 // needs access to every Repo it lists, as Sessions check it (ADR 0003); a Repo has one
-// Installation of each Plugin; and each Repo logs its Plugin changes. A real Hub and web clients
-// over WebSockets, against the stand-in GitHub API.
+// Installation of each Plugin; each Repo logs its Plugin changes; and a packaged Plugin, read from
+// git or an upload, is pinned until upgraded (#220). A real Hub and web clients over WebSockets,
+// against the stand-in GitHub API and local git repos.
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
-import { Participant, ParticipantId } from "@kndl/protocol"
+import { Participant, ParticipantId, repoKey } from "@kndl/protocol"
 import { Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
+import { installationsDiffer, installationsOn } from "./Plugins.ts"
+import { PluginSources } from "./PluginSources.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import { SignIns } from "./SignIns.ts"
 import { type Connection, openWeb, stopAll, type Web } from "./testChannels.ts"
 import { appId, appKeyPair, StandInGitHub } from "./testGitHubApi.ts"
+import { manifest, packageJson, pluginRepo, removePluginRepos } from "./testPluginRepo.ts"
 import { startHub, type TestHub } from "./testSupport.ts"
 
 afterEach(stopAll)
+afterAll(removePluginRepos)
 
 const keys = appKeyPair()
 let github: StandInGitHub
@@ -30,7 +35,10 @@ const octocat = { id: "github:1", login: "octocat", name: "octocat" }
 const url = "https://mcp.example.com/mcp"
 const none = { _tag: "None" }
 
-/** A Hub with the GitHub App on `repo` and `secret`, octocat a collaborator on `repo` only. */
+/**
+ * A Hub with the GitHub App on `repo` and `secret`, octocat a collaborator on `repo` only, which
+ * fetches Plugin packages from local git repos too.
+ */
 async function accessHub() {
   github.reset()
   github.installedOn.add(repo)
@@ -42,7 +50,9 @@ async function accessHub() {
       githubAppId: Option.some(appId),
       githubAppPrivateKey: Option.some(Redacted.make(keys.privateKeyPem)),
       githubApiUrl: github.url,
+      secretsKey: Option.some(Redacted.make(generateSecretsKey())),
     },
+    pluginSources: PluginSources.layerWith({ protocols: ["https", "file"] }),
   })
 }
 
@@ -447,5 +457,320 @@ describe("a Repo's Plugin change log", () => {
     const sent = await web.take("PluginLog")
     expect(sent).toMatchObject({ repo, entries: [{ change: "Created" }] })
     expect(await web.untaken("PluginLog")).toEqual([])
+  })
+})
+
+/** A package the Hub read, from an answer. */
+function packageRead(answer: Web) {
+  if (answer._tag !== "PluginPackageRead") {
+    throw new Error(`Not PluginPackageRead: ${JSON.stringify(answer)}`)
+  }
+  return answer
+}
+
+/** A git repo of the Linear package at 1.0.0. */
+const linearRepo = () =>
+  pluginRepo({
+    "package.json": packageJson("1.0.0"),
+    "kndl.json": manifest("https://mcp.linear.app/mcp", { description: "Linear's issues." }),
+  })
+
+const linear = "@acme/linear-mcp"
+
+/** The Linear package at `version`, uploaded as a folder. */
+const folder = (version: string) => ({
+  _tag: "Folder",
+  folderName: "linear-mcp",
+  packageJson: packageJson(version),
+  manifest: manifest(),
+})
+
+/** Reads the package from git and adds it, returning the Plugin as added. */
+async function addFromGit(web: Connection<Web>, gitUrl: string) {
+  const read = packageRead(
+    await ask(web, { _tag: "ReadPluginPackage", from: { _tag: "Git", url: gitUrl } }),
+  )
+  const added = state(await ask(web, { _tag: "AddPluginPackage", readId: read.readId }))
+  const plugin = added.plugins.find((found) => found.id === read.read.id)
+  if (plugin === undefined) throw new Error("No Plugin added")
+  return plugin
+}
+
+/** The Installations a Session of the Repo starting now runs with. */
+const forSession = (hub: TestHub, on: string) =>
+  hub.run(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      return (yield* installationsOn(sql, [on])).get(repoKey(on)) ?? []
+    }),
+  )
+
+/** A manifest's auth: an API key, and a Team sent as `team`. */
+const secrets = (team: string) => ({
+  type: "headers",
+  headers: [
+    { key: "apiKey", title: "API key", header: "Authorization", template: "Bearer {value}" },
+    { key: "team", title: "Team", header: team },
+  ],
+})
+
+describe("a packaged Plugin", () => {
+  test("any Member adds one from git, pinned to its version and commit", async () => {
+    const hub = await accessHub()
+    const web = await openOctocat(hub)
+    const pkg = linearRepo()
+    const read = packageRead(
+      await ask(web, { _tag: "ReadPluginPackage", from: { _tag: "Git", url: pkg.url } }),
+    )
+    expect(read).toEqual({
+      _tag: "PluginPackageRead",
+      requestId: expect.any(String),
+      readId: expect.any(String),
+      read: {
+        id: linear,
+        name: "Linear",
+        description: "Linear's issues.",
+        url: "https://mcp.linear.app/mcp",
+        auth: { _tag: "None" },
+        package: { version: "1.0.0", commit: pkg.first, source: { _tag: "Git", url: pkg.url } },
+      },
+    })
+    // Reading adds nothing; only the person who read it adds it, once.
+    expect(state(await ask(web, { _tag: "GetPlugins" })).plugins).toEqual([])
+    const alice = await openWeb(hub, "alice")
+    const stale = refused("AddPluginPackage", "That package read has expired; read it again.")
+    expect(await ask(alice, { _tag: "AddPluginPackage", readId: read.readId })).toEqual(stale)
+    const added = state(await ask(web, { _tag: "AddPluginPackage", readId: read.readId }))
+    expect(added.plugins).toEqual([
+      {
+        ...read.read,
+        createdBy: expect.objectContaining({ login: "octocat" }),
+        createdAt: expect.any(Number),
+      },
+    ])
+    expect(await ask(web, { _tag: "AddPluginPackage", readId: read.readId })).toEqual(stale)
+  })
+
+  test("any Member adds one from an uploaded folder", async () => {
+    const hub = await accessHub()
+    const web = await openWeb(hub, "alice")
+    const read = packageRead(await ask(web, { _tag: "ReadPluginPackage", from: folder("1.0.0") }))
+    const added = state(await ask(web, { _tag: "AddPluginPackage", readId: read.readId }))
+    expect(added.plugins).toMatchObject([
+      {
+        id: linear,
+        package: { version: "1.0.0", source: { _tag: "Upload", fileName: "linear-mcp" } },
+      },
+    ])
+  })
+
+  test("named as a Plugin on the Hub is refused from another source, and offered as an Upgrade from the same", async () => {
+    const hub = await accessHub()
+    const web = await openWeb(hub, "alice")
+    const pkg = linearRepo()
+    pkg.tag("v1.0.0")
+    await addFromGit(web, pkg.url)
+
+    const fork = linearRepo()
+    expect(
+      await ask(web, { _tag: "ReadPluginPackage", from: { _tag: "Git", url: fork.url } }),
+    ).toEqual(
+      refused(
+        "ReadPluginPackage",
+        `A Plugin named ${linear} is already on the Hub, from another source: only a package from the same source can upgrade it.`,
+      ),
+    )
+    const again = packageRead(
+      await ask(web, {
+        _tag: "ReadPluginPackage",
+        from: { _tag: "Git", url: pkg.url, ref: "v1.0.0" },
+      }),
+    )
+    expect(again.upgrades).toBe(linear)
+    expect(await ask(web, { _tag: "AddPluginPackage", readId: again.readId })).toEqual(
+      refused(
+        "AddPluginPackage",
+        `A Plugin named ${linear} is already on the Hub, from this source: upgrade it instead.`,
+      ),
+    )
+  })
+
+  test("is upgraded only on confirmation, which its Repos log and their Sessions pick up", async () => {
+    const hub = await accessHub()
+    const web = await openWeb(hub, "alice")
+    const pkg = linearRepo()
+    const plugin = await addFromGit(web, pkg.url)
+    const installationId = await install(web, plugin.id, [repo], "Linear")
+    const before = await forSession(hub, repo)
+    expect(before).toMatchObject([{ pluginVersion: `1.0.0 (${pkg.first.slice(0, 7)})` }])
+
+    const second = pkg.commit({
+      "package.json": packageJson("2.0.0"),
+      "kndl.json": manifest("https://mcp.linear.app/v2", {
+        auth: {
+          type: "headers",
+          headers: [
+            {
+              key: "apiKey",
+              title: "API key",
+              header: "Authorization",
+              template: "Bearer {value}",
+            },
+          ],
+        },
+      }),
+    })
+    const check = packageRead(await ask(web, { _tag: "CheckPluginUpgrade", pluginId: plugin.id }))
+    expect(check.upgrades).toBe(linear)
+    expect(check.read).toMatchObject({
+      url: "https://mcp.linear.app/v2",
+      package: { version: "2.0.0", commit: second },
+    })
+    // Checking changes nothing.
+    expect(state(await ask(web, { _tag: "GetPlugins" })).plugins).toEqual([plugin])
+
+    const upgraded = state(
+      await ask(web, { _tag: "UpgradePlugin", pluginId: plugin.id, readId: check.readId }),
+    )
+    expect(upgraded.plugins).toEqual([
+      // The manifest no longer has a description, so neither has the Plugin.
+      { ...check.read, createdBy: plugin.createdBy, createdAt: plugin.createdAt },
+    ])
+    const version = `2.0.0 (${second.slice(0, 7)})`
+    const log = await ask(web, { _tag: "GetPluginLog", repo })
+    if (log._tag !== "PluginLog") throw new Error("No log")
+    expect(log.entries[0]).toMatchObject({
+      change: "PluginUpgraded",
+      by: { login: "alice" },
+      pluginId: plugin.id,
+      pluginVersion: version,
+      installationId,
+    })
+    const after = await forSession(hub, repo)
+    expect(after).toMatchObject([{ pluginVersion: version }])
+    expect(installationsDiffer(before, after)).toBe(true)
+  })
+
+  test("an Upgrade clears the values its Installations hold as an edit does", async () => {
+    const hub = await accessHub()
+    const web = await openWeb(hub, "alice")
+    const pkg = pluginRepo({
+      "package.json": packageJson("1.0.0"),
+      "kndl.json": manifest("https://mcp.linear.app/mcp", { auth: secrets("X-Team") }),
+    })
+    const plugin = await addFromGit(web, pkg.url)
+    const created = state(
+      await ask(web, {
+        _tag: "CreateInstallation",
+        pluginId: plugin.id,
+        name: "Linear",
+        repos: [repo],
+        values: [
+          { key: "apiKey", value: "lin_api_0123456789" },
+          { key: "team", value: "team-0123456789" },
+        ],
+      }),
+    )
+    expect(created.installations[0]?.values.map((value) => value.key)).toEqual(["apiKey", "team"])
+    const upgrade = async () => {
+      const check = packageRead(await ask(web, { _tag: "CheckPluginUpgrade", pluginId: plugin.id }))
+      return state(
+        await ask(web, { _tag: "UpgradePlugin", pluginId: plugin.id, readId: check.readId }),
+      )
+    }
+    const log = async () => {
+      const answer = await ask(web, { _tag: "GetPluginLog", repo })
+      if (answer._tag !== "PluginLog") throw new Error(answer._tag)
+      return answer.entries.map((entry) => [entry.change, entry.secrets, entry.pluginVersion])
+    }
+
+    // Another header for Team, on another path of the same origin: only Team's value goes.
+    const second = pkg.commit({
+      "package.json": packageJson("2.0.0"),
+      "kndl.json": manifest("https://mcp.linear.app/v2/mcp", { auth: secrets("X-Linear-Team") }),
+    })
+    const reheadered = await upgrade()
+    expect(reheadered.installations[0]?.values.map((value) => value.key)).toEqual(["apiKey"])
+    expect((await log()).slice(0, 2)).toEqual([
+      ["ValuesCleared", ["Team"], undefined],
+      ["PluginUpgraded", undefined, `2.0.0 (${second.slice(0, 7)})`],
+    ])
+
+    // Another origin: every value goes, so none reaches a server it wasn't entered for.
+    const third = pkg.commit({
+      "package.json": packageJson("3.0.0"),
+      "kndl.json": manifest("https://linear.example.com/mcp", { auth: secrets("X-Linear-Team") }),
+    })
+    const moved = await upgrade()
+    expect(moved.installations[0]?.values).toEqual([])
+    expect((await log()).slice(0, 2)).toEqual([
+      ["ValuesCleared", ["API key"], undefined],
+      ["PluginUpgraded", undefined, `3.0.0 (${third.slice(0, 7)})`],
+    ])
+  })
+
+  test("an Upgrade is refused if the Plugin changed since its read", async () => {
+    const hub = await accessHub()
+    const web = await openWeb(hub, "alice")
+    const pkg = linearRepo()
+    const plugin = await addFromGit(web, pkg.url)
+    pkg.commit({ "package.json": packageJson("2.0.0") })
+    const first = packageRead(await ask(web, { _tag: "CheckPluginUpgrade", pluginId: plugin.id }))
+    const second = packageRead(await ask(web, { _tag: "CheckPluginUpgrade", pluginId: plugin.id }))
+    state(await ask(web, { _tag: "UpgradePlugin", pluginId: plugin.id, readId: first.readId }))
+    expect(
+      await ask(web, { _tag: "UpgradePlugin", pluginId: plugin.id, readId: second.readId }),
+    ).toEqual(
+      refused("UpgradePlugin", "Linear changed since that read; check for an upgrade again."),
+    )
+  })
+
+  test("isn't edited, and is upgraded only with access to every Repo its Installations list", async () => {
+    const hub = await accessHub()
+    const alice = await openWeb(hub, "alice")
+    const pkg = linearRepo()
+    const plugin = await addFromGit(alice, pkg.url)
+    expect(
+      await ask(alice, {
+        _tag: "EditPlugin",
+        pluginId: plugin.id,
+        name: "Mine",
+        url: plugin.url,
+        auth: plugin.auth,
+      }),
+    ).toEqual(
+      refused(
+        "EditPlugin",
+        "Linear is a packaged Plugin, pinned to its version: upgrade it to change it.",
+      ),
+    )
+    await install(alice, plugin.id, [repo, secret], "Linear")
+    pkg.commit({ "package.json": packageJson("2.0.0") })
+    const web = await openOctocat(hub)
+    const check = packageRead(await ask(web, { _tag: "CheckPluginUpgrade", pluginId: plugin.id }))
+    expect(
+      await ask(web, { _tag: "UpgradePlugin", pluginId: plugin.id, readId: check.readId }),
+    ).toEqual(
+      refused(
+        "UpgradePlugin",
+        "This Plugin has Installations on Repos you have no access to, so you can't upgrade it.",
+      ),
+    )
+  })
+
+  test("from an upload is upgraded by uploading its new version, not by checking", async () => {
+    const hub = await accessHub()
+    const web = await openWeb(hub, "alice")
+    const read = packageRead(await ask(web, { _tag: "ReadPluginPackage", from: folder("1.0.0") }))
+    await ask(web, { _tag: "AddPluginPackage", readId: read.readId })
+    expect(await ask(web, { _tag: "CheckPluginUpgrade", pluginId: linear })).toEqual(
+      refused("CheckPluginUpgrade", "Linear was uploaded: upload its new version to upgrade it."),
+    )
+    const next = packageRead(await ask(web, { _tag: "ReadPluginPackage", from: folder("1.1.0") }))
+    expect(next.upgrades).toBe(linear)
+    const upgraded = state(
+      await ask(web, { _tag: "UpgradePlugin", pluginId: linear, readId: next.readId }),
+    )
+    expect(upgraded.plugins).toMatchObject([{ id: linear, package: { version: "1.1.0" } }])
   })
 })

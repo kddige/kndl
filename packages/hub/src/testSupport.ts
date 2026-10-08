@@ -31,6 +31,7 @@ import {
 import { drainFirst } from "./HubShutdown.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { Members } from "./Members.ts"
+import { PluginSources } from "./PluginSources.ts"
 
 export const webOrigin = "http://localhost:5173"
 
@@ -90,6 +91,8 @@ export async function startHub(
     readonly claudeCheck?: Layer.Layer<ClaudeCheck>
     /** The CLI binaries the Hub serves; by default ones it never builds. */
     readonly cliBuilds?: Layer.Layer<CliBuilds>
+    /** Where Plugin packages are read from; by default git over https:// and uploads. */
+    readonly pluginSources?: Layer.Layer<PluginSources>
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -105,6 +108,7 @@ export async function startHub(
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
+    Layer.provideMerge(options.pluginSources ?? PluginSources.layer),
     Layer.provideMerge(options.claudeCheck ?? ClaudeCheck.layerTest),
     Layer.provideMerge(options.githubApp ?? GitHubApp.layer),
     Layer.provideMerge(options.cliBuilds ?? CliBuilds.unused),

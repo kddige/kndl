@@ -29,6 +29,7 @@ import { HubConfig } from "./HubConfig.ts"
 import { holdHubLock } from "./HubLock.ts"
 import { drainFirst } from "./HubShutdown.ts"
 import { announceHubVersion, HubVersion } from "./HubVersion.ts"
+import { PluginSources } from "./PluginSources.ts"
 import {
   resetSecrets,
   type SecretsResetPlan,
@@ -96,6 +97,7 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(ServerLive),
   Layer.provide(GitHub.layer),
   Layer.provide(HubServices),
+  Layer.provide(PluginSources.layer),
   Layer.provide(ClaudeCheck.layer),
   Layer.provide(GitHubApp.layer),
   Layer.provide(CliBuilds.layer),
