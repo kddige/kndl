@@ -11,9 +11,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@kndl/protocol": "workspace:*",
     "@effect/platform-bun": "4.0.0",
     "@effect/sql-sqlite-bun": "4.0.0",
-    "effect": "4.0.0"
+    "@kndl/protocol": "workspace:*",
+    "effect": "4.0.0",
+    "tldts": "^7.4.18"
   }
 }
