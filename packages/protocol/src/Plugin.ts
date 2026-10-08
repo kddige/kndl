@@ -695,7 +695,7 @@ const listed = (titles: ReadonlyArray<string>) =>
     : `${titles.slice(0, -1).join(", ")} and ${titles.at(-1)}`
 
 /** What went wrong with the Installation, as one sentence. */
-export const installationFailureText = (failure: InstallationFailure) => {
+export const installationFailureText = (failure: Omit<InstallationFailure, "installationId">) => {
   const { installation } = failure
   switch (failure.reason) {
     case "ValueNeeded":
@@ -720,6 +720,18 @@ export const failureBlocksStart = (failure: InstallationFailure) =>
   failure.reason === "ValueNeeded" ||
   failure.reason === "Rejected" ||
   failure.reason === "Unreadable"
+
+/**
+ * Why a Session in `repo` didn't start, for the Installations that kept it from starting (#216),
+ * and the way out, as its SessionStateChanged says after "Claude Code could not start: ".
+ */
+export const installationsCantStartText = (
+  repo: string,
+  failures: ReadonlyArray<Omit<InstallationFailure, "installationId">>,
+) => {
+  const one = failures.length === 1
+  return `${failures.map(installationFailureText).join(" ")} Fix the ${one ? "Installation" : "Installations"} on the Plugins page, or take ${repo} off ${one ? "it" : "them"}, then wake the Session.`
+}
 
 /** Why a second Installation of a Plugin on a Repo is refused, as the Hub says it. */
 export const secondInstallationRefusal = (repo: string, existing: string, plugin: string) =>

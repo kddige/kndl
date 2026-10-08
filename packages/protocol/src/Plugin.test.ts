@@ -12,6 +12,7 @@ import {
   type InstallationFailure,
   installationFailureText,
   installationReposProblem,
+  installationsCantStartText,
   mcpServerNames,
   type PluginAuth,
   pluginAuthProblem,
@@ -216,6 +217,16 @@ describe("an Installation that fails a Session (#216)", () => {
     // A flaky server doesn't block work.
     expect(failureBlocksStart(failure({ reason: "Unreachable" }))).toBe(false)
     expect(failureBlocksStart(failure({ reason: "Errored", status: 500 }))).toBe(false)
+  })
+
+  test("says how to get the Session started", () => {
+    expect(installationsCantStartText("acme/app", [failure({ secrets: ["API key"] })])).toBe(
+      "Linear needs a value for API key. Fix the Installation on the Plugins page, or take acme/app off it, then wake the Session.",
+    )
+    const sentry = failure({ installation: "Sentry", reason: "Rejected", status: 403 })
+    expect(installationsCantStartText("acme/app", [failure({ secrets: ["Team"] }), sentry])).toBe(
+      "Linear needs a value for Team. Sentry's MCP server refused its credential (403). Fix the Installations on the Plugins page, or take acme/app off them, then wake the Session.",
+    )
   })
 
   test("rides on events a web UI of the version before reads all the same", () => {

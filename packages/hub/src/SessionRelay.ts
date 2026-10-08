@@ -210,6 +210,7 @@ import {
   failureBlocksStart,
   type InstallationFailure,
   installationFailureText,
+  installationsCantStartText,
   type InstallationId,
   type TerminalFrame,
   type TextDelta,
@@ -1513,10 +1514,8 @@ export class SessionRelay extends Context.Service<
             }
             const blocking = failures.filter(failureBlocksStart)
             if (blocking.length > 0) {
-              const one = blocking.length === 1
-              const fix = `Fix the ${one ? "Installation" : "Installations"} on the Plugins page, or take ${now.value.repo} off ${one ? "it" : "them"}, then wake the Session.`
               return yield* claudeGone(now.value, {
-                message: `Claude Code could not start: ${blocking.map(installationFailureText).join(" ")} ${fix}`,
+                message: `Claude Code could not start: ${installationsCantStartText(now.value.repo, blocking)}`,
                 installationsFailed: blocking,
               })
             }
