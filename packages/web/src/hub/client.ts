@@ -18,6 +18,7 @@ import {
   type EnvironmentState,
   type EnvironmentVersion,
   type GitHubLogin,
+  type HeaderValueInput,
   HubToWeb,
   type InstallationId,
   type InviteCreated,
@@ -26,6 +27,7 @@ import {
   type PairingCodeCreated,
   type PairingCodeId,
   type ParticipantId,
+  type PluginAuth,
   type PluginId,
   type PluginLogEntry,
   type PluginsState,
@@ -420,14 +422,26 @@ export class HubClient {
     return this.#request({ _tag: "GetPlugins" }, "PluginsState")
   }
 
-  /** Creates a Hub-only Plugin, a remote MCP server; its id is `hub:` and a slug of its name. */
-  createPlugin(name: string, url: string): Promise<PluginsState> {
-    return this.#request({ _tag: "CreatePlugin", name, url }, "PluginsState")
+  /**
+   * Creates a Hub-only Plugin, a remote MCP server, with the header secrets `auth` declares; its
+   * id is `hub:` and a slug of its name.
+   */
+  createPlugin(name: string, url: string, auth: PluginAuth): Promise<PluginsState> {
+    return this.#request({ _tag: "CreatePlugin", name, url, auth }, "PluginsState")
   }
 
-  /** Changes a Plugin's name or URL; its Sessions pick it up on their next wake or Restart. */
-  editPlugin(pluginId: PluginId, name: string, url: string): Promise<PluginsState> {
-    return this.#request({ _tag: "EditPlugin", pluginId, name, url }, "PluginsState")
+  /**
+   * Changes a Plugin's name, URL or header secrets; its Sessions pick it up on their next wake or
+   * Restart. A change to the URL's origin clears its Installations' values, and one to a header
+   * secret's key or header clears that header secret's.
+   */
+  editPlugin(
+    pluginId: PluginId,
+    name: string,
+    url: string,
+    auth: PluginAuth,
+  ): Promise<PluginsState> {
+    return this.#request({ _tag: "EditPlugin", pluginId, name, url, auth }, "PluginsState")
   }
 
   /** Deletes a Plugin; the Hub refuses while it has Installations. */
@@ -435,22 +449,42 @@ export class HubClient {
     return this.#request({ _tag: "DeletePlugin", pluginId }, "PluginsState")
   }
 
-  /** Creates an Installation of a Plugin, on in the Repos listed. */
+  /**
+   * Creates an Installation of a Plugin, on in the Repos listed, with values for its Plugin's
+   * header secrets: write-only, the Hub never sends them back.
+   */
   createInstallation(
     pluginId: PluginId,
     name: string,
     repos: ReadonlyArray<string>,
+    values: ReadonlyArray<HeaderValueInput> = [],
   ): Promise<PluginsState> {
-    return this.#request({ _tag: "CreateInstallation", pluginId, name, repos }, "PluginsState")
+    return this.#request(
+      { _tag: "CreateInstallation", pluginId, name, repos, ...(values.length > 0 && { values }) },
+      "PluginsState",
+    )
   }
 
-  /** Renames an Installation, and sets the whole list of Repos it is on in. */
+  /**
+   * Renames an Installation, sets the whole list of Repos it is on in, and replaces the values
+   * given; the others stay.
+   */
   editInstallation(
     installationId: InstallationId,
     name: string,
     repos: ReadonlyArray<string>,
+    values: ReadonlyArray<HeaderValueInput> = [],
   ): Promise<PluginsState> {
-    return this.#request({ _tag: "EditInstallation", installationId, name, repos }, "PluginsState")
+    return this.#request(
+      {
+        _tag: "EditInstallation",
+        installationId,
+        name,
+        repos,
+        ...(values.length > 0 && { values }),
+      },
+      "PluginsState",
+    )
   }
 
   /** Deletes an Installation, taking it off every Repo it lists. */

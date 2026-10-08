@@ -1,16 +1,18 @@
 // A Repo's Plugins, on its Repo page (ADR 0020): the Installations on for it, whose MCP servers
-// Claude Code in its Sessions gets, and its Plugin change log: who created, edited, added or
-// removed an Installation here, and when.
+// Claude Code in its Sessions gets, each saying which of its header secrets need a value; and its
+// Plugin change log: who created, edited, added or removed an Installation here, or set or cleared
+// its header secret values (by title, never the values), and when.
 
 import { type PluginLogEntry, repoKey, sameRepo } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useEffect } from "react"
-import { timeAgo } from "../app/format.ts"
+import { andList, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
-import { Avatar, Spinner } from "../ui/index.ts"
+import { Avatar, Badge, Spinner } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { neededText, valuesNeeded } from "./headerSecrets.ts"
 
 const styles = stylex.create({
   part: { display: "flex", flexDirection: "column", gap: space.s2 },
@@ -54,8 +56,18 @@ export function pluginChangeText(entry: PluginLogEntry): string {
       return `deleted ${installation}, an Installation of ${plugin}`
     case "PluginEdited":
       return `edited ${plugin}, the Plugin of ${installation}`
+    case "ValuesSet":
+      return `set ${installation}'s ${valuesText(entry.secrets)}`
+    case "ValuesCleared":
+      return `cleared ${installation}'s ${valuesText(entry.secrets)}, editing ${plugin}`
   }
 }
+
+/** The header secrets whose values a change set or cleared, by title: never their values. */
+const valuesText = (secrets: ReadonlyArray<string> | undefined) =>
+  secrets === undefined || secrets.length === 0
+    ? "header secret values"
+    : `${secrets.length === 1 ? "value" : "values"} of ${andList(secrets)}`
 
 /** The Installations on for `repo`, and its Plugin change log, both kept fresh by the Hub. */
 export function RepoPlugins({ repo }: { repo: string }) {
@@ -75,7 +87,7 @@ export function RepoPlugins({ repo }: { repo: string }) {
     plugins?.installations.filter((installation) =>
       installation.repos.some((listed) => sameRepo(listed, repo)),
     ) ?? null
-  const pluginName = (id: string) => plugins?.plugins.find((plugin) => plugin.id === id)?.name
+  const pluginOf = (id: string) => plugins?.plugins.find((plugin) => plugin.id === id)
   return (
     <>
       <div {...stylex.props(styles.part)}>
@@ -90,14 +102,22 @@ export function RepoPlugins({ repo }: { repo: string }) {
           </p>
         ) : (
           <ul aria-label="Installations on for this Repo" {...stylex.props(styles.list)}>
-            {on.map((installation, index) => (
-              <li key={installation.id} {...stylex.props(styles.row, index === 0 && styles.first)}>
-                <span {...stylex.props(styles.name)}>{installation.name}</span>
-                <span {...stylex.props(styles.muted)}>
-                  {pluginName(installation.pluginId) ?? installation.pluginId}
-                </span>
-              </li>
-            ))}
+            {on.map((installation, index) => {
+              const plugin = pluginOf(installation.pluginId)
+              const needed = plugin === undefined ? [] : valuesNeeded(plugin, installation)
+              return (
+                <li
+                  key={installation.id}
+                  {...stylex.props(styles.row, index === 0 && styles.first)}
+                >
+                  <span {...stylex.props(styles.name)}>{installation.name}</span>
+                  <span {...stylex.props(styles.muted)}>
+                    {plugin?.name ?? installation.pluginId}
+                  </span>
+                  {needed.length > 0 && <Badge intent="danger">{neededText(needed)}</Badge>}
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>

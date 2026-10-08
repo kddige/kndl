@@ -37,6 +37,12 @@ export function count(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`
 }
 
+/** "A", "A and B", "A, B and C". */
+export function andList(items: ReadonlyArray<string>): string {
+  if (items.length <= 1) return items[0] ?? ""
+  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
+}
+
 /** The protocol's Session state as the kit's SessionStatus takes it. */
 export function statusOf(state: SessionState): StatusState {
   switch (state) {
