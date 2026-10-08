@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
-import type { SessionId } from "@kndl/protocol"
-import { claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
+import { InstallationId, type SessionId } from "@kndl/protocol"
+import { claudeLaunch, gatewayMcpServers, ModEnvironment } from "./ClaudeLaunch.ts"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
 
 test("the mod's plugins read every variable the Runner sets for them, by the same name", async () => {
@@ -60,4 +60,40 @@ test("the Session's model and effort go as flags, so they never reach settings.j
   const { argv } = claudeLaunch({ ...options, model: "opus[1m]", effort: "xhigh" })
   expect(argv.slice(-4)).toEqual(["--model", "opus[1m]", "--effort", "xhigh"])
   expect(claudeLaunch({ ...options, effort: "low" }).argv.slice(-2)).toEqual(["--effort", "low"])
+})
+
+const servers = [
+  { installationId: InstallationId.make("inst-1"), server: "docs" },
+  { installationId: InstallationId.make("inst/2"), server: "linear" },
+]
+
+test("a Session's Installations come as one more plugin, kndl, after the mod's (ADR 0020)", () => {
+  const { argv } = claudeLaunch({ ...options, plugins: servers })
+  expect(argv.slice(3, 9)).toEqual([
+    "--plugin-dir",
+    "/opt/kndl/mod/m1/hub-link",
+    "--plugin-dir",
+    "/opt/kndl/mod/m1/hub-link-commands",
+    "--plugin-dir",
+    "/opt/kndl/mod/m1/kndl",
+  ])
+  expect(claudeLaunch({ ...options, plugins: [] }).argv).not.toContain("/opt/kndl/mod/m1/kndl")
+})
+
+test("each Installation's MCP server is the Gateway, reached with the Session token alone", () => {
+  // Claude Code fills in the variables: the credential proxy's URL, and the Session token.
+  expect(gatewayMcpServers(servers)).toEqual({
+    mcpServers: {
+      docs: {
+        type: "http",
+        url: "${KNDL_URL}/gateway/inst-1",
+        headers: { Authorization: "Bearer ${KNDL_MOD_TOKEN}" },
+      },
+      linear: {
+        type: "http",
+        url: "${KNDL_URL}/gateway/inst%2F2",
+        headers: { Authorization: "Bearer ${KNDL_MOD_TOKEN}" },
+      },
+    },
+  })
 })

@@ -3,7 +3,9 @@ import { BuildVersion, RunnerVersionStatus } from "./Build.ts"
 import {
   AgentId,
   EnvironmentVersion,
+  InstallationId,
   ParticipantId,
+  PluginId,
   PromptId,
   RunnerId,
   SessionId,
@@ -173,6 +175,19 @@ export const SessionEnvironmentStatus = Schema.Struct({
   latestVersion: EnvironmentVersion,
 })
 export type SessionEnvironmentStatus = typeof SessionEnvironmentStatus.Type
+
+/**
+ * An Installation a Session runs with (ADR 0020), with its and its Plugin's names as it started,
+ * and the name of its MCP server in Claude Code, which Claude Code shows as `plugin:kndl:<server>`.
+ */
+export const SessionInstallation = Schema.Struct({
+  id: InstallationId,
+  name: Schema.String,
+  pluginId: PluginId,
+  pluginName: Schema.String,
+  server: Schema.String,
+})
+export type SessionInstallation = typeof SessionInstallation.Type
 
 /**
  * A start of the Session's Claude Code and Sandbox the Hub is waiting on: from its StartSession
@@ -361,6 +376,16 @@ export const SessionSummary = Schema.Struct({
   archived: Schema.optionalKey(ArchiveInfo),
   /** Present once its Repo has an Environment. */
   environment: Schema.optionalKey(SessionEnvironmentStatus),
+  /**
+   * The Installations its Claude Code runs with (ADR 0020), as its last start or Restart gave
+   * them; absent for none.
+   */
+  plugins: Schema.optionalKey(Schema.Array(SessionInstallation)),
+  /**
+   * Present when its Repo's Installations, or their Plugins, changed since: they apply at its
+   * next wake or Restart.
+   */
+  pluginsChanged: Schema.optionalKey(Schema.Literal(true)),
   /**
    * Present while its Claude Code and Sandbox are being started. `environment.version` stays the
    * one it ran on before, if any, until the start is over.

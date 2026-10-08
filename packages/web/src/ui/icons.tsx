@@ -255,6 +255,15 @@ export function ArchiveIcon(props: IconProps) {
   )
 }
 
+/** A Plugin (ADR 0020): a puzzle piece, as PlugIcon is a port's. */
+export function PluginIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 5.5h2.25a1.5 1.5 0 1 1 3 0H10.5v2.25a1.5 1.5 0 1 1 0 3V13H3V5.5Z" />
+    </Icon>
+  )
+}
+
 /** A plug: a port something listens on. */
 export function PlugIcon(props: IconProps) {
   return (

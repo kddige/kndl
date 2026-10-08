@@ -8,6 +8,7 @@ import { CliRoutes } from "./CliRoutes.ts"
 import { CliTokens } from "./CliTokens.ts"
 import { Environments } from "./Environments.ts"
 import { ForwardRoutes } from "./ForwardRoutes.ts"
+import { GatewayRoutes } from "./GatewayRoutes.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
 import { Members } from "./Members.ts"
@@ -17,6 +18,7 @@ import { ModTokens } from "./ModTokens.ts"
 import { PairingCodes } from "./PairingCodes.ts"
 import { PairingRoutes } from "./PairingRoutes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
+import { Plugins } from "./Plugins.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { RepoAccess } from "./RepoAccess.ts"
 import { Runners } from "./Runners.ts"
@@ -40,6 +42,7 @@ export const HubRoutes = Layer.mergeAll(
   ChannelRoutes,
   CliRoutes,
   ForwardRoutes,
+  GatewayRoutes,
   ModRoutes,
   PairingRoutes,
   TunnelRoutes,
@@ -70,6 +73,7 @@ export const HubServices = SessionRelay.layer.pipe(
       PairingCodes.layer,
       HubShutdown.layer,
       Environments.layer,
+      Plugins.layer,
       RunnerUpdatePush.layer,
       ClaudeCredentials.layer,
       Tunnels.layer,

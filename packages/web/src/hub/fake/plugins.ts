@@ -1,0 +1,266 @@
+// The fake Hub's Plugins (ADR 0020): Hub-only Plugins, their Repo-scoped Installations, and each
+// Repo's Plugin change log. It refuses what the real Hub refuses, with its words: a second
+// Installation of a Plugin on a Repo, deleting a Plugin with Installations, and any change that
+// needs access to a Repo the person lacks. A Repo is the same however its name is spelled (#197).
+
+import {
+  hubPluginId,
+  installationReposProblem,
+  mcpServerNames,
+  type PluginCommand,
+  pluginInUseRefusal,
+  pluginNameProblem,
+  pluginSlug,
+  pluginUrlProblem,
+  repoKey,
+  sameRepo,
+  secondInstallationRefusal,
+} from "@kndl/protocol"
+import { bob, you } from "./script.ts"
+import type {
+  HubMessage,
+  ParticipantWire,
+  PluginLogEntryWire,
+  PluginWire,
+  SessionInstallationWire,
+} from "./wire.ts"
+
+/** An Installation as the fake keeps it: every Repo it lists, whoever asks. */
+interface FakeInstallation {
+  readonly id: string
+  readonly pluginId: string
+  name: string
+  repos: Array<string>
+  readonly createdBy: ParticipantWire
+  readonly createdAt: number
+}
+
+type PluginChangeWire = PluginLogEntryWire["change"]
+
+/** What a change did: the Repos whose Installations changed, or why it was refused. */
+export type PluginOutcome = { readonly refused: string } | { readonly repos: ReadonlyArray<string> }
+
+const noRepoAccess = (repo: string) =>
+  `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`
+const hiddenRepos =
+  "This Installation is on in Repos you have no access to, so you can't change it."
+
+/** The Repos of `repos` that `from` doesn't list. */
+const missingFrom = (from: ReadonlyArray<string>, repos: ReadonlyArray<string>) =>
+  repos.filter((repo) => !from.some((other) => sameRepo(other, repo)))
+
+const minute = 60_000
+const day = 24 * 60 * minute
+
+export class FakePlugins {
+  readonly #plugins: Array<PluginWire> = []
+  readonly #installations: Array<FakeInstallation> = []
+  /** Each Repo's log, newest first, by repoKey. */
+  readonly #logs = new Map<string, Array<PluginLogEntryWire>>()
+  #ids = 0
+
+  constructor(now = Date.now()) {
+    const docs = this.#plugin("Docs search", "https://docs-mcp.example.com/mcp", bob, now - 9 * day)
+    this.#plugin("Linear", "https://mcp.linear.example/mcp", you, now - 2 * day)
+    const sentry = this.#plugin("Sentry", "https://mcp.sentry.example/mcp", bob, now - 6 * day)
+    this.#install(docs, "Docs", ["kddige/kndl"], bob, now - 8 * day)
+    // On a Repo Alice can't see too: she sees it, but can't change it.
+    this.#install(sentry, "Sentry", ["kddige/kndl", "kddige/secret"], bob, now - 5 * day)
+  }
+
+  /** Every Plugin and Installation, each Installation with only the Repos `allowed` lets through. */
+  state(allowed: (repo: string) => boolean): Extract<HubMessage, { _tag: "PluginsState" }> {
+    return {
+      _tag: "PluginsState",
+      plugins: [...this.#plugins],
+      installations: this.#installations.map((installation) => {
+        const repos = installation.repos.filter(allowed)
+        const otherRepos = installation.repos.length - repos.length
+        return { ...installation, repos, ...(otherRepos > 0 && { otherRepos }) }
+      }),
+    }
+  }
+
+  /** A Repo's Plugin change log, newest first. */
+  log(repo: string): ReadonlyArray<PluginLogEntryWire> {
+    return this.#logs.get(repoKey(repo)) ?? []
+  }
+
+  /** The Installations on for a Repo, as a Session starting there runs with them. */
+  forSession(repo: string): Array<SessionInstallationWire> {
+    const on = this.#installations.filter((installation) =>
+      installation.repos.some((listed) => sameRepo(listed, repo)),
+    )
+    const servers = mcpServerNames(on.map((installation) => installation.name))
+    return on.map((installation, index) => ({
+      id: installation.id,
+      name: installation.name,
+      pluginId: installation.pluginId,
+      pluginName: this.#find(installation.pluginId)?.name ?? "",
+      server: servers[index] ?? "",
+    }))
+  }
+
+  /** Applies a change by `by`, who has access to the Repos `allowed` lets through. */
+  change(
+    command: Exclude<PluginCommand, { _tag: "GetPlugins" | "GetPluginLog" }>,
+    by: ParticipantWire,
+    allowed: (repo: string) => boolean,
+  ): PluginOutcome {
+    const at = Date.now()
+    switch (command._tag) {
+      case "CreatePlugin": {
+        const problem = pluginNameProblem(command.name) ?? pluginUrlProblem(command.url)
+        if (problem !== undefined) return { refused: problem }
+        this.#plugin(command.name.trim(), command.url, by, at)
+        return { repos: [] }
+      }
+      case "EditPlugin": {
+        const plugin = this.#find(command.pluginId)
+        if (plugin === undefined) return { refused: "There is no such Plugin." }
+        const installed = this.#installations.filter((one) => one.pluginId === plugin.id)
+        if (installed.some((one) => !one.repos.every(allowed))) {
+          return {
+            refused:
+              "This Plugin has Installations on Repos you have no access to, so you can't edit it.",
+          }
+        }
+        const problem = pluginNameProblem(command.name) ?? pluginUrlProblem(command.url)
+        if (problem !== undefined) return { refused: problem }
+        const name = command.name.trim()
+        if (name === plugin.name && command.url === plugin.url) return { repos: [] }
+        this.#plugins[this.#plugins.indexOf(plugin)] = { ...plugin, name, url: command.url }
+        for (const one of installed) this.#record(one.repos, "PluginEdited", one, by, at)
+        return { repos: installed.flatMap((one) => one.repos) }
+      }
+      case "DeletePlugin": {
+        const plugin = this.#find(command.pluginId)
+        if (plugin === undefined) return { refused: "There is no such Plugin." }
+        const count = this.#installations.filter((one) => one.pluginId === plugin.id).length
+        if (count > 0) return { refused: pluginInUseRefusal(plugin.name, count) }
+        this.#plugins.splice(this.#plugins.indexOf(plugin), 1)
+        return { repos: [] }
+      }
+      case "CreateInstallation": {
+        const refusedRepo = command.repos.find((repo) => !allowed(repo))
+        if (refusedRepo !== undefined) return { refused: noRepoAccess(refusedRepo) }
+        const plugin = this.#find(command.pluginId)
+        if (plugin === undefined) return { refused: "There is no such Plugin." }
+        const problem =
+          pluginNameProblem(command.name, "An Installation") ??
+          installationReposProblem(command.repos)
+        if (problem !== undefined) return { refused: problem }
+        const second = this.#second(plugin, command.repos, null)
+        if (second !== undefined) return { refused: second }
+        const installation = this.#install(plugin, command.name.trim(), command.repos, by, at)
+        return { repos: installation.repos }
+      }
+      case "EditInstallation":
+      case "DeleteInstallation": {
+        const named = command._tag === "EditInstallation" ? command.repos : []
+        const refusedRepo = named.find((repo) => !allowed(repo))
+        if (refusedRepo !== undefined) return { refused: noRepoAccess(refusedRepo) }
+        const installation = this.#installations.find((one) => one.id === command.installationId)
+        if (installation === undefined) return { refused: "There is no such Installation." }
+        if (!installation.repos.every(allowed)) return { refused: hiddenRepos }
+        if (command._tag === "DeleteInstallation") {
+          this.#installations.splice(this.#installations.indexOf(installation), 1)
+          this.#record(installation.repos, "Deleted", installation, by, at)
+          return { repos: installation.repos }
+        }
+        const problem =
+          pluginNameProblem(command.name, "An Installation") ??
+          installationReposProblem(command.repos)
+        if (problem !== undefined) return { refused: problem }
+        const plugin = this.#find(installation.pluginId)
+        const added = missingFrom(installation.repos, command.repos)
+        const removed = missingFrom(command.repos, installation.repos)
+        const kept = installation.repos.filter((repo) => !removed.includes(repo))
+        const name = command.name.trim()
+        const renamed = name !== installation.name
+        const second = plugin && this.#second(plugin, added, installation.id)
+        if (second !== undefined) return { refused: second }
+        installation.name = name
+        installation.repos = [...kept, ...added]
+        if (renamed) this.#record(kept, "Renamed", installation, by, at)
+        this.#record(added, "Added", installation, by, at)
+        this.#record(removed, "Removed", installation, by, at)
+        return { repos: renamed ? [...kept, ...added, ...removed] : [...added, ...removed] }
+      }
+    }
+  }
+
+  #find(id: string): PluginWire | undefined {
+    return this.#plugins.find((plugin) => plugin.id === id)
+  }
+
+  #plugin(name: string, url: string, by: ParticipantWire, at: number): PluginWire {
+    const slug = pluginSlug(name)
+    let id: string = hubPluginId(slug)
+    for (let n = 2; this.#find(id) !== undefined; n++) id = hubPluginId(`${slug}-${n}`)
+    const plugin: PluginWire = { id, name, url, createdBy: by, createdAt: at }
+    this.#plugins.push(plugin)
+    return plugin
+  }
+
+  #install(
+    plugin: PluginWire,
+    name: string,
+    repos: ReadonlyArray<string>,
+    by: ParticipantWire,
+    at: number,
+  ): FakeInstallation {
+    const installation: FakeInstallation = {
+      id: `inst-${++this.#ids}`,
+      pluginId: plugin.id,
+      name,
+      repos: [...repos],
+      createdBy: by,
+      createdAt: at,
+    }
+    this.#installations.push(installation)
+    this.#record(repos, "Created", installation, by, at)
+    return installation
+  }
+
+  /** Why an Installation of `plugin` on one of `repos` is refused: another is on there. */
+  #second(
+    plugin: PluginWire,
+    repos: ReadonlyArray<string>,
+    except: string | null,
+  ): string | undefined {
+    for (const repo of repos) {
+      const existing = this.#installations.find(
+        (one) =>
+          one.pluginId === plugin.id &&
+          one.id !== except &&
+          one.repos.some((listed) => sameRepo(listed, repo)),
+      )
+      if (existing) return secondInstallationRefusal(repo, existing.name, plugin.name)
+    }
+    return undefined
+  }
+
+  #record(
+    repos: ReadonlyArray<string>,
+    change: PluginChangeWire,
+    installation: FakeInstallation,
+    by: ParticipantWire,
+    at: number,
+  ): void {
+    const plugin = this.#find(installation.pluginId)
+    for (const repo of repos) {
+      const log = this.#logs.get(repoKey(repo)) ?? []
+      log.unshift({
+        at,
+        by,
+        change,
+        pluginId: installation.pluginId,
+        pluginName: plugin?.name ?? "",
+        installationId: installation.id,
+        installationName: installation.name,
+      })
+      this.#logs.set(repoKey(repo), log)
+    }
+  }
+}

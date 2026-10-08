@@ -41,11 +41,22 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0023, Members: the migrator runs only the
+ * Takes the database back to before migration 0024, Plugins: the migrator runs only the
  * migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforePlugins = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  for (const table of ["plugin_log", "installation_repos", "installations", "plugins"]) {
+    yield* sql.unsafe(`DROP TABLE ${table}`)
+  }
+  yield* sql`ALTER TABLE sessions DROP COLUMN plugins`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugins'`
+})
+
+/** Takes the database back to before migration 0023, Members, as above. */
 const beforeMembers = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforePlugins
   yield* sql`DROP TABLE setup_links`
   yield* sql`DROP TABLE invites`
   yield* sql`DROP INDEX participants_owner`

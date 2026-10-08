@@ -80,6 +80,12 @@ While something listens on a TCP port in an Active Session's Sandbox, such as a 
 
 A port shows within about 2 seconds of a server starting to listen. A Session that isn't Active has no Open ports.
 
+## See its Plugins
+
+**Plugins** in the Session's header (**2 Installations**) lists the [Installations](/reference/glossary/#installation) its Claude Code runs with: each one's name and Plugin, and the MCP server Claude Code knows it by, such as `plugin:kndl:docs`. They are its Repo's, the same for every Session there: see [Add a remote MCP server as a Plugin](/how-to/add-a-remote-mcp-server-as-a-plugin/).
+
+When the Repo's Installations change while the Session is Active, a **Plugins changed** banner says so. **Restart** applies the change; an Asleep Session gets it as it wakes.
+
 ## Sleep and wake
 
 A Session goes to sleep after 15 minutes (the Hub's `HUB_SLEEP_AFTER_MS`) with no Turn or subagent running, no prompt queued, no [open question](#answer-claudes-questions) and no one present, in the web UI or [forwarding its ports](/how-to/forward-a-sessions-ports/). **Sleep now** in the header does it at once. Sleeping stops Claude Code and the Sandbox and keeps the Workspace and the Sandbox's disks. Running subagents are Interrupted: see [After sleep or a restart](/how-to/work-with-subagents/#after-sleep-or-a-restart).

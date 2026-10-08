@@ -312,10 +312,11 @@ export const SessionsLive = Layer.effect(
         const launch = claudeLaunch({
           claudePath: sandbox.claude.path,
           sessionId,
-          mod: yield* copySessionMod(config.modDir, directories),
+          mod: yield* copySessionMod(config.modDir, directories, request.plugins),
           conversation: yield* conversationFor(request, directories),
           ...(request.model === undefined ? {} : { model: request.model }),
           ...(request.effort === undefined ? {} : { effort: request.effort }),
+          ...(request.plugins === undefined ? {} : { plugins: request.plugins }),
         })
         const pass = yield* admit(sessionId, request.modToken)
         yield* tmux.launch({

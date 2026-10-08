@@ -13,7 +13,7 @@ const { createMemoryHistory, RouterProvider } = await import("@tanstack/react-ro
 const { HubProvider } = await import("../src/app/hub.tsx")
 const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
-const { demoSessionId } = await import("../src/hub/fake/script.ts")
+const { demoSessionId, releaseSessionId } = await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
 
 /** Waits, letting React render, until `check` stops throwing. */
@@ -212,6 +212,7 @@ async function openSession(sessionId: string, bannerStart = "This Session is", s
   await eventually(() => expect(banner()).not.toBe(""))
   return {
     hub,
+    client,
     page,
     banner,
     header: () => page.querySelector("h1")?.closest("header")?.textContent ?? "",
@@ -345,6 +346,59 @@ test("a restart for a changed Environment shows its progress until the Session i
   await eventually(() => expect(statuses()).not.toContain("Restarting…"))
   expect(banner()).toBe("")
   expect(button("Sleep now", page).disabled).toBe(false)
+})
+
+/** The Plugins button in `page`'s header, if it shows. */
+const pluginsButton = (page: HTMLElement) =>
+  [...page.querySelectorAll("header button")].find((el) =>
+    el.getAttribute("aria-label")?.startsWith("Plugins: "),
+  ) as HTMLButtonElement | undefined
+
+/** The open list of the Session's Installations, as their rows' text. */
+const installationRows = () =>
+  [...document.querySelectorAll('[aria-label="Installations this Session runs with"] li')].map(
+    (li) => li.textContent ?? "",
+  )
+
+test("a Session shows the Installations it runs with, as Claude Code names their servers (ADR 0020)", async () => {
+  const { page } = await openSession(demoSessionId, "Environment changed")
+  await eventually(() =>
+    expect(pluginsButton(page)?.getAttribute("aria-label")).toBe("Plugins: 2 Installations"),
+  )
+  await step(() => pluginsButton(page)?.click())
+  await eventually(() => expect(installationRows()).toHaveLength(2))
+  expect(installationRows()[0]).toContain("Docs")
+  expect(installationRows()[0]).toContain("Docs search")
+  expect(installationRows()[0]).toContain("plugin:kndl:docs")
+  expect(installationRows()[1]).toContain("plugin:kndl:sentry")
+})
+
+test("a change to its Repo's Installations shows that a Restart applies it, and the Restart does", async () => {
+  const { client, page, banner } = await openSession(releaseSessionId)
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+  await eventually(() =>
+    expect(pluginsButton(page)?.getAttribute("aria-label")).toBe("Plugins: 2 Installations"),
+  )
+  const plugins = await client.getPlugins()
+  const linear = plugins.plugins.find((plugin) => plugin.name === "Linear")
+  if (linear === undefined) throw new Error("No Plugin Linear")
+  await step(() => client.createInstallation(linear.id, "Linear", ["kddige/kndl"]))
+
+  const changed = () =>
+    [...page.querySelectorAll('[role="status"]')]
+      .map((el) => el.textContent ?? "")
+      .find((content) => content.startsWith("Plugins changed")) ?? ""
+  await eventually(() => expect(changed()).toContain("A Restart applies the change"))
+  expect(banner()).toBe("")
+  // It runs with what it started with until then.
+  expect(pluginsButton(page)?.getAttribute("aria-label")).toBe("Plugins: 2 Installations, changed")
+
+  await step(() => button("Restart", page).click())
+  await eventually(() =>
+    expect(pluginsButton(page)?.getAttribute("aria-label")).toBe("Plugins: 3 Installations"),
+  )
+  await eventually(() => expect(changed()).toBe(""))
 })
 
 test("a Frozen Session takes prompts, which wait in its queue", async () => {

@@ -44,15 +44,24 @@ Anything Claude runs in the Sandbox could read a credential Claude Code held the
 
 - **A Session token is the only identity.** Claude Code gets it in its own process's environment, as its OAuth token and as the mod's, and it is never written to the Sandbox's disk. Every Sandbox's connection reaches the proxy from the host's own loopback address, so the proxy tells Sessions apart by token alone. A token is 32 random bytes, issued as a Session starts or wakes and revoked as it sleeps, is archived, stops or exits; the proxy keeps only its SHA-256. A request without a live token is answered 401. A restarted Runner reads the token of each Session still running back from its Claude Code, and holds it for that Session alone, answering 503 until the Hub has given the Session a new mod token.
 - **It forwards three requests to Anthropic and nothing else:** `POST /v1/messages`, `POST /v1/messages/count_tokens` and `GET /v1/models`. Anything else is answered 404, its path checked after `..` is resolved. It swaps the Session token for the Session's Claude credential: a subscription token as the bearer, an API key as `x-api-key`. Responses stream back unbuffered.
-- **It relays the mod's calls to the Hub,** `/mod/*`, swapping the Session token for the Session's mod token, so the mod token stays on the Runner too.
+- **It relays the mod's calls to the Hub,** `/mod/*`, swapping the Session token for the Session's mod token, so the mod token stays on the Runner too. Claude Code's MCP traffic to its Installations, `/gateway/*`, goes to the Hub's [Gateway](#the-gateway) the same way, streaming both ways.
 - **Credentials stay in memory.** A Session's credential is its Creator's ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)), held by the proxy while the Session's token lives and never written to disk. A Session without one uses the Runner's own, read from the owner's Keychain or a file only the Runner's user can read ([The Runner's Claude credential](/reference/configuration/#the-runners-claude-credential)).
 - **Nothing secret is logged.** The proxy logs one line per request to Anthropic, under its Session: method, path, status, time and whose credential it used.
 
 Anything in a Sandbox can read its Session token, and spend its Session's credential through the proxy while the Session is awake. It can't take the credential away, use it after the Session sleeps, or reach any API path but inference.
 
+## The Gateway
+
+A [Plugin](/reference/glossary/#plugin) is a remote MCP server, and Claude Code reaches it through the Hub's Gateway, never directly ([ADR 0020](/reference/decisions/0020-plugins-are-remote-mcp-servers-behind-the-hub/)). Its `.mcp.json` holds the credential proxy's address and the Session token, and nothing else secret.
+
+- **Only the Installations on for the Session's Repo.** The Gateway answers `403` for an Installation the Session didn't start with, or that was taken off its Repo since: taking one off stops it at once. It answers `401` without the mod token of an Active Session, which the credential proxy puts in for a live Session token.
+- **Turning one on takes access to its Repos.** Making or changing an Installation takes access on GitHub to every Repo it lists, as starting a Session does. A refusal reads the same whether the Repo exists or not, and an Installation on in a Repo someone can't see only says how many such Repos it lists.
+- **Untouched, and not logged.** Request and answer stream both ways as they are. The Gateway drops the Session's token, cookies and forwarding headers on the way out, and the server's cookies on the way back. It logs each request's Session, Installation, method, status and time, never its content.
+- **No Plugin credential enters a Sandbox or a Runner.** The Hub calls the server from its own address. For now, a Plugin's server must answer without credentials; once Installations hold them, the Gateway will add them on the way.
+
 ## Every endpoint needs a credential
 
-Code in a Sandbox can reach the Hub, so every Hub route but sign-in, `/health`, the [`kndl` command it serves](/how-to/install-the-cli-from-a-hub/) and the web UI's files needs a credential: a sign-in cookie for people, a CLI token for a person's [`kndl` CLI](/how-to/sign-in-the-cli/) on its own endpoints, a Runner token for Runners, a mod token for one Session's mod. The Hub keeps only SHA-256 hashes of them and compares in constant time. See the [protocol reference](/reference/protocol/#endpoints).
+Code in a Sandbox can reach the Hub, so every Hub route but sign-in, `/health`, the [`kndl` command it serves](/how-to/install-the-cli-from-a-hub/) and the web UI's files needs a credential: a sign-in cookie for people, a CLI token for a person's [`kndl` CLI](/how-to/sign-in-the-cli/) on its own endpoints, a Runner token for Runners, a mod token for one Session's mod and its MCP traffic to the [Gateway](#the-gateway). The Hub keeps only SHA-256 hashes of them and compares in constant time. See the [protocol reference](/reference/protocol/#endpoints).
 
 Cookie-authenticated requests must come from `HUB_PUBLIC_URL`'s origin, and the cookie is `HttpOnly`, `SameSite=Lax`, host-only and `Secure` unless the Hub is on loopback over HTTP. Dev login only works with the Hub bound to loopback, and only answers loopback callers.
 

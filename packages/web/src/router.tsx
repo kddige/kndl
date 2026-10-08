@@ -23,6 +23,7 @@ import { EnvironmentList } from "./environment/EnvironmentList.tsx"
 import { EnvironmentView } from "./environment/EnvironmentView.tsx"
 import { AdmissionPage, InviteOnlyPage } from "./people/AdmissionPages.tsx"
 import { PeopleView } from "./people/PeopleView.tsx"
+import { PluginsView } from "./plugins/PluginsView.tsx"
 import { RunnersView } from "./runners/RunnersView.tsx"
 import { type SessionTab, SessionView } from "./session/SessionView.tsx"
 import { AllArchivedSessions, ArchivedSessions } from "./sessions/ArchivedSessions.tsx"
@@ -182,6 +183,13 @@ const variablesRoute = createRoute({
   component: SharedVariablesView,
 })
 
+/** The Plugins, remote MCP servers, and their Installations on Repos (ADR 0020). */
+const pluginsRoute = createRoute({
+  getParentRoute: () => hubRoute,
+  path: "/plugins",
+  component: PluginsView,
+})
+
 /** The Runners paired with the Hub: adding, Re-pairing and removing them (issue #85). */
 const runnersRoute = createRoute({
   getParentRoute: () => hubRoute,
@@ -263,6 +271,7 @@ const routeTree = rootRoute.addChildren([
     environmentsRoute,
     environmentRoute,
     variablesRoute,
+    pluginsRoute,
     accountRoute,
     runnersRoute,
     peopleRoute,

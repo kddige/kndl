@@ -175,6 +175,37 @@ const webToHub = [
   { _tag: "RevokeInvite", requestId: "q-26", inviteId: "inv-1" },
   { _tag: "ListMembers", requestId: "q-27" },
   { _tag: "RemoveMember", requestId: "q-28", participantId: "u-2" },
+  { _tag: "GetPlugins", requestId: "q-29" },
+  {
+    _tag: "CreatePlugin",
+    requestId: "q-30",
+    name: "Docs search",
+    url: "https://mcp.example.com/mcp",
+  },
+  {
+    _tag: "EditPlugin",
+    requestId: "q-31",
+    pluginId: "hub:docs-search",
+    name: "Docs",
+    url: "https://mcp.example.com/v2",
+  },
+  { _tag: "DeletePlugin", requestId: "q-32", pluginId: "hub:docs-search" },
+  {
+    _tag: "CreateInstallation",
+    requestId: "q-33",
+    pluginId: "hub:docs-search",
+    name: "Docs",
+    repos: ["kddige/kndl"],
+  },
+  {
+    _tag: "EditInstallation",
+    requestId: "q-34",
+    installationId: "in-1",
+    name: "Docs",
+    repos: ["kddige/kndl", "kddige/dotfiles"],
+  },
+  { _tag: "DeleteInstallation", requestId: "q-35", installationId: "in-1" },
+  { _tag: "GetPluginLog", requestId: "q-36", repo: "kddige/kndl" },
 ]
 
 const hubToWeb = [
@@ -247,6 +278,22 @@ const hubToWeb = [
   { _tag: "SessionList", sessions: [] },
   { _tag: "SessionUpdated", session: { ...sessionSummary, state: "Asleep" } },
   { _tag: "SessionUpdated", session: { ...sessionSummary, currentTurn: "t-1" } },
+  {
+    _tag: "SessionUpdated",
+    session: {
+      ...sessionSummary,
+      plugins: [
+        {
+          id: "in-1",
+          name: "Docs",
+          pluginId: "hub:docs-search",
+          pluginName: "Docs search",
+          server: "docs",
+        },
+      ],
+      pluginsChanged: true,
+    },
+  },
   {
     _tag: "SessionUpdated",
     session: {
@@ -546,6 +593,46 @@ const hubToWeb = [
     members: [
       { participant: alice, owner: true, admittedAt: 1_700_000_000_000 },
       { participant: bob, owner: false, admittedAt: 1_700_000_060_000 },
+    ],
+  },
+  {
+    _tag: "PluginsState",
+    requestId: "q-29",
+    plugins: [
+      {
+        id: "hub:docs-search",
+        name: "Docs search",
+        url: "https://mcp.example.com/mcp",
+        createdBy: alice,
+        createdAt: 1_700_000_000_000,
+      },
+    ],
+    installations: [
+      {
+        id: "in-1",
+        pluginId: "hub:docs-search",
+        name: "Docs",
+        repos: ["kddige/kndl"],
+        otherRepos: 1,
+        createdBy: bob,
+        createdAt: 1_700_000_060_000,
+      },
+    ],
+  },
+  { _tag: "PluginsState", plugins: [], installations: [] },
+  {
+    _tag: "PluginLog",
+    repo: "kddige/kndl",
+    entries: [
+      {
+        at: 1_700_000_060_000,
+        by: bob,
+        change: "Created",
+        pluginId: "hub:docs-search",
+        pluginName: "Docs search",
+        installationId: "in-1",
+        installationName: "Docs",
+      },
     ],
   },
 ]

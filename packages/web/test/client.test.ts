@@ -839,3 +839,125 @@ describe("Environments", () => {
     expect(left.map((variable) => variable.name)).not.toContain("API_KEY")
   })
 })
+
+/** The one of `all` named `name`: the test fails without one. */
+function named<T extends { readonly name: string }>(
+  all: ReadonlyArray<T> | undefined,
+  name: string,
+): T {
+  const one = all?.find((each) => each.name === name)
+  if (one === undefined) throw new Error(`Nothing named ${name}`)
+  return one
+}
+
+describe("Plugins (ADR 0020)", () => {
+  const repo = "kddige/kndl"
+
+  test("a Member creates, edits and deletes a Hub-only Plugin, with a hub: id", async () => {
+    const { client } = await online()
+    const created = await client.createPlugin("Acme docs", "https://mcp.acme.example/mcp")
+    const plugin = named(created.plugins, "Acme docs")
+    expect(plugin).toMatchObject({ id: "hub:acme-docs", createdBy: { login: "alice" } })
+    // Another of the same name gets a number; its id never clashes with an npm package's.
+    const again = await client.createPlugin("Acme docs", "https://mcp.acme.example/two")
+    expect(again.plugins.map((one) => one.id)).toContain("hub:acme-docs-2" as never)
+    await expect(client.createPlugin("Bad", "ftp://x.example")).rejects.toThrow("https://")
+
+    const edited = await client.editPlugin(plugin.id, "Acme", "https://mcp.acme.example/v2")
+    expect(edited.plugins.find((one) => one.id === plugin.id)).toMatchObject({
+      name: "Acme",
+      url: "https://mcp.acme.example/v2",
+    })
+    const left = await client.deletePlugin(plugin.id)
+    expect(left.plugins.map((one) => one.id)).not.toContain(plugin.id)
+    expect(client.getState().plugins?.plugins).toEqual(left.plugins)
+  })
+
+  test("a Plugin with Installations can't be deleted", async () => {
+    const { client } = await online()
+    const { plugins } = await client.getPlugins()
+    const docs = named(plugins, "Docs search")
+    await expect(client.deletePlugin(docs.id)).rejects.toThrow(
+      "Docs search has an Installation: delete it first.",
+    )
+  })
+
+  test("Installations: only on Repos the person has access to, without naming the others", async () => {
+    const { client } = await online()
+    const { plugins, installations } = await client.getPlugins()
+    const linear = named(plugins, "Linear")
+    // A refusal for a Repo out of reach reads the same whether it exists or not.
+    await expect(
+      client.createInstallation(linear.id, "Linear", [repo, "kddige/secret"]),
+    ).rejects.toThrow("You have no access to kddige/secret on GitHub")
+    // One the person can see only partly: shown without the other Repos, and not changeable.
+    const sentry = named(installations, "Sentry")
+    expect(sentry).toMatchObject({ repos: [repo], otherRepos: 1 })
+    expect(JSON.stringify(client.getState().plugins)).not.toContain("kddige/secret")
+    await expect(client.deleteInstallation(sentry.id)).rejects.toThrow(
+      "This Installation is on in Repos you have no access to",
+    )
+
+    const created = await client.createInstallation(linear.id, "Linear", [repo])
+    const installation = created.installations.find((one) => one.pluginId === linear.id)
+    if (installation === undefined) throw new Error("No Installation of Linear")
+    expect(installation).toMatchObject({ name: "Linear", repos: [repo] })
+    const moved = await client.editInstallation(installation.id, "Linear", ["kddige/dotfiles"])
+    expect(moved.installations.find((one) => one.id === installation.id)?.repos).toEqual([
+      "kddige/dotfiles",
+    ])
+    const gone = await client.deleteInstallation(installation.id)
+    expect(gone.installations.map((one) => one.id)).not.toContain(installation.id)
+  })
+
+  test("a second Installation of a Plugin on a Repo is refused, naming the existing one", async () => {
+    const { client } = await online()
+    const { plugins } = await client.getPlugins()
+    const docs = named(plugins, "Docs search")
+    await expect(client.createInstallation(docs.id, "More docs", ["KDDIGE/kndl"])).rejects.toThrow(
+      "KDDIGE/kndl already has Docs, an Installation of Docs search",
+    )
+  })
+
+  test("each Repo's change log says who changed its Installations", async () => {
+    const { client } = await online()
+    const { plugins } = await client.getPlugins()
+    const linear = named(plugins, "Linear")
+    const before = await client.getPluginLog(repo)
+    expect(before.map((entry) => entry.change)).toEqual(["Created", "Created"])
+    await client.createInstallation(linear.id, "Linear", [repo])
+    await eventually(() =>
+      expect(client.getState().pluginLogs[repo]?.[0]).toMatchObject({
+        change: "Created",
+        by: { login: "alice" },
+        pluginName: "Linear",
+        installationName: "Linear",
+      }),
+    )
+    await expect(client.getPluginLog("kddige/secret")).rejects.toThrow("no access")
+  })
+
+  test("a Session shows its Installations, and that a Restart applies a change", async () => {
+    const { client } = await online()
+    await eventually(() =>
+      expect(find(client, demoSessionId)?.plugins?.map((one) => one.server)).toEqual([
+        "docs",
+        "sentry",
+      ]),
+    )
+    expect(find(client, demoSessionId)?.pluginsChanged).toBeUndefined()
+    const { plugins } = await client.getPlugins()
+    const linear = named(plugins, "Linear")
+    await client.createInstallation(linear.id, "Linear", [repo])
+    await eventually(() => expect(find(client, demoSessionId)?.pluginsChanged).toBe(true))
+
+    expect(client.restartSession(demo)).toBe(true)
+    await eventually(() => {
+      const session = find(client, demoSessionId)
+      expect(session?.restarting).toBeUndefined()
+      expect(session?.starting).toBeUndefined()
+      expect(session?.plugins?.map((one) => one.server)).toEqual(["docs", "sentry", "linear"])
+    })
+    expect(find(client, demoSessionId)?.pluginsChanged).toBeUndefined()
+  })
+})

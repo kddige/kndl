@@ -255,3 +255,25 @@ test("after a secrets-reset, a shared variable asks for its value, and entering 
   expect(needsValueBadges(row() as Element)).toHaveLength(0)
   expect(page.textContent).not.toContain("GH_READ_TOKEN needs a value")
 })
+
+test("shows the Repo's Installations and its Plugin change log, which changes keep fresh", async () => {
+  const { client, section } = await open("/repos/kddige/kndl/environment")
+  await eventually(() =>
+    expect(section("Plugins").querySelector('[aria-label="Plugin change log"]')).not.toBeNull(),
+  )
+  const plugins = () => section("Plugins").textContent
+  await eventually(() => expect(plugins()).toContain("Docs search"))
+  expect(plugins()).toContain("Bob Lee created Docs, an Installation of Docs search")
+
+  // Someone installs a Plugin here: both the list and the log show it, with no new version.
+  const linear = client.getState().plugins?.plugins.find((plugin) => plugin.name === "Linear")
+  if (linear === undefined) throw new Error("No Plugin Linear")
+  await step(() => client.createInstallation(linear.id, "Linear", ["kddige/kndl"]))
+  await eventually(() =>
+    expect(plugins()).toContain("Alice Kim created Linear, an Installation of Linear"),
+  )
+  expect(
+    section("Plugins").querySelector('[aria-label="Installations on for this Repo"]')?.textContent,
+  ).toContain("Linear")
+  expect(section("Version history").querySelectorAll("li")).toHaveLength(2)
+})
