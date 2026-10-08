@@ -52,6 +52,7 @@ import {
 } from "@kndl/protocol"
 import { Clock, Effect, Option } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
+import { PluginIcons, type IconSearch } from "./PluginIcons.ts"
 import { type BeginInput, connectionBasis, PluginOAuth } from "./PluginOAuth.ts"
 import {
   PluginRefused,
@@ -133,12 +134,21 @@ const maxReads = 100
 interface KeptRead {
   readonly by: ParticipantId
   readonly read: PackagedPlugin
+  /** The bytes of the file in the package that its manifest's `icon` names, if it names one. */
+  readonly iconFile?: Uint8Array
   /** The Plugin it upgrades, from the same source. */
   readonly upgrades?: PluginId
   /** That Plugin's package when read, which it must still be to upgrade. */
   readonly basis?: string
   readonly at: number
 }
+
+/** What to find an added or upgraded package's icon from. */
+const packageIconSearch = (kept: KeptRead): IconSearch => ({
+  url: kept.read.url,
+  ...(kept.read.icon !== undefined && { manifestIcon: kept.read.icon }),
+  ...(kept.iconFile !== undefined && { iconFile: kept.iconFile }),
+})
 
 /** A command about Plugins that changes them, or asks about them: not a read of a package. */
 type StoreCommand = Exclude<PluginCommand, ReadPluginPackage | CheckPluginUpgrade>
@@ -167,7 +177,9 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
   const plugins = yield* Plugins
   const access = yield* RepoAccess
   const sources = yield* PluginSources
+  const icons = yield* PluginIcons
   const oauth = yield* PluginOAuth
+  const scope = yield* Effect.scope
   /** The connections that asked for Plugins, which are sent them again as they change. */
   const asked = new WeakSet<Peer<HubToWeb>>()
   /** The package reads kept, by id, oldest first. */
@@ -182,6 +194,27 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
     const kept = reads.get(readId)
     return kept?.by === by ? kept : yield* new PluginRefused({ message: staleRead })
   })
+
+  /**
+   * Finds the Plugin's icon after it is saved, off the lock and off the command, so saving never
+   * waits on it, and sends the web the Plugins again when it is kept (#230). A search whose Plugin
+   * has since changed its URL is dropped. Where nothing is found, `keepOld` leaves the Plugin's
+   * icon as it was; otherwise it is cleared.
+   */
+  const findIcon = (id: PluginId, search: IconSearch, keepOld: boolean) =>
+    Effect.gen(function* () {
+      const found = Option.getOrUndefined(yield* icons.find(search))
+      if (found === undefined && keepOld) return
+      yield* host.serialized(
+        Effect.gen(function* () {
+          if (yield* plugins.setIcon(id, search.url, found)) yield* toOthers(undefined)
+        }),
+      )
+    }).pipe(
+      Effect.catchCause((cause) => Effect.logWarning("Could not keep a Plugin's icon", cause)),
+      Effect.forkIn(scope),
+      Effect.asVoid,
+    )
 
   /** Where to read a packaged Plugin again, at the ref it was added from: only from git. */
   const gitSourceOf = Effect.fn("PluginRelay.gitSourceOf")(function* (id: PluginId) {
@@ -211,7 +244,7 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
       message._tag === "CheckPluginUpgrade"
         ? yield* gitSourceOf(message.pluginId)
         : { from: message.from, plugin: undefined }
-    const read = yield* sources.read(checked.from)
+    const { plugin: read, iconFile } = yield* sources.readWithIcon(checked.from)
     if (checked.plugin !== undefined && read.id !== checked.plugin) {
       return yield* new PluginRefused({
         message: `The package there is now named ${read.id}, not ${checked.plugin}: add it as a Plugin of its own.`,
@@ -230,6 +263,7 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
     reads.set(readId, {
       by: client.you.id,
       read,
+      ...(iconFile !== undefined && { iconFile }),
       ...(existing !== undefined && {
         upgrades: existing.id,
         basis: JSON.stringify(existing.package),
@@ -402,18 +436,26 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
         )
 
       case "CreatePlugin":
-        yield* plugins.createPlugin(message, you.id)
+        const made = yield* plugins.createPlugin(message, you.id)
         asked.add(peer)
         yield* answer
-        return yield* toOthers(peer)
+        yield* toOthers(peer)
+        return yield* findIcon(made.id, { url: made.url }, true)
 
       case "EditPlugin": {
         yield* stillChecked(yield* plugins.pluginRepos(message.pluginId))
+        const before = Option.getOrUndefined(yield* plugins.plugin(message.pluginId))
         const change = yield* plugins.editPlugin(message.pluginId, message, you.id)
         asked.add(peer)
         yield* answer
         yield* toOthers(peer)
-        return yield* changed(change)
+        yield* changed(change)
+        // Only a new URL has a new icon; if the new one has none, the old one goes.
+        const after = Option.getOrUndefined(yield* plugins.plugin(message.pluginId))
+        if (after !== undefined && before !== undefined && after.url !== before.url) {
+          yield* findIcon(after.id, { url: after.url }, false)
+        }
+        return
       }
 
       case "DeletePlugin":
@@ -433,7 +475,8 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
         reads.delete(message.readId)
         asked.add(peer)
         yield* answer
-        return yield* toOthers(peer)
+        yield* toOthers(peer)
+        return yield* findIcon(kept.read.id, packageIconSearch(kept), true)
       }
 
       case "UpgradePlugin": {
@@ -453,7 +496,8 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
         asked.add(peer)
         yield* answer
         yield* toOthers(peer)
-        return yield* changed(change)
+        yield* changed(change)
+        return yield* findIcon(kept.read.id, packageIconSearch(kept), now.url === kept.read.url)
       }
 
       case "CreateInstallation": {

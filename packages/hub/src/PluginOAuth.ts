@@ -229,7 +229,7 @@ export const connectionBasis = (plugin: { readonly url: string; readonly auth: P
  * never a name that resolves to one, so a remote server can't pass as loopback. The browser's way
  * back is the Hub's own HUB_PUBLIC_URL, which this doesn't touch.
  */
-const fetchable = (text: unknown): text is string => {
+export const fetchable = (text: unknown): text is string => {
   if (typeof text !== "string") return false
   try {
     const url = new URL(text)

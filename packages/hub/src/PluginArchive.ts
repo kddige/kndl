@@ -10,7 +10,12 @@
 // - Only regular files count: a symlink, hard link or device named like either file refuses it.
 
 import { inflateRawSync, gunzipSync } from "node:zlib"
-import { MaxPluginPackageFileBytes, PluginManifestFile } from "@kndl/protocol"
+import {
+  iconPathOf,
+  manifestIconOf,
+  MaxPluginPackageFileBytes,
+  PluginManifestFile,
+} from "@kndl/protocol"
 import { Result } from "effect"
 
 /** What an archive unpacks to, at most: past it, it is refused. */
@@ -23,7 +28,12 @@ const MaxEntries = 20_000
 export interface PackageFiles {
   readonly packageJson: string
   readonly manifest: string
+  /** The bytes of the file the manifest's `icon` names in the package, if it names one (#230). */
+  readonly iconFile?: Uint8Array
 }
+
+/** The most an icon file in a package may be, in bytes: the same as an icon's. */
+const MaxIconFileBytes = 512 * 1024
 
 const notAnArchive =
   "That isn't a .tgz or .zip archive, such as npm pack or GitHub's Download ZIP makes."
@@ -224,9 +234,23 @@ export function readPackageArchive(bytes: Uint8Array): Result.Result<PackageFile
       }
       return typeof content === "string" ? content : text.decode(content)
     }
+    const manifest = fileText(manifestEntry, PluginManifestFile)
+    // A broken icon never refuses the package: its file is read if it is there, else left out.
+    const iconPath = iconPathOf(manifestIconOf(manifest) ?? "")
+    let iconFile: Uint8Array | undefined
+    try {
+      const entry = iconPath === undefined ? undefined : entries.get(`${root}${iconPath}`)
+      const file = entry?.file === true ? entry.bytes() : undefined
+      if (typeof file !== "string" && file !== undefined && file.length <= MaxIconFileBytes) {
+        iconFile = file
+      }
+    } catch {
+      iconFile = undefined
+    }
     return Result.succeed({
       packageJson: fileText(entries.get(`${root}package.json`) as Entry, "package.json"),
-      manifest: fileText(manifestEntry, PluginManifestFile),
+      manifest,
+      ...(iconFile !== undefined && { iconFile }),
     })
   } catch (error) {
     if (error instanceof Refusal) return Result.fail(error.message)

@@ -89,6 +89,7 @@ import { Clock, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import type { Fragment } from "effect/sql/Statement"
+import { type Icon, iconHash } from "./PluginIcons.ts"
 import {
   connectionBasis,
   type Granted,
@@ -302,6 +303,17 @@ export class Plugins extends Context.Service<
       SqlError
     >
     readonly plugin: (id: PluginId) => Effect.Effect<Option.Option<Plugin>, SqlError>
+    /** The Plugin's icon, if it has one (#230). */
+    readonly icon: (id: PluginId) => Effect.Effect<Option.Option<Icon>, SqlError>
+    /**
+     * Keeps the icon found for the Plugin, or clears it when `icon` is none; false, changing
+     * nothing, if the Plugin is gone or its URL is no longer `forUrl`, which the search was for.
+     */
+    readonly setIcon: (
+      id: PluginId,
+      forUrl: string,
+      icon: Icon | undefined,
+    ) => Effect.Effect<boolean, SqlError>
     readonly installation: (
       id: InstallationId,
     ) => Effect.Effect<Option.Option<StoredInstallation>, SqlError>
@@ -455,13 +467,15 @@ export class Plugins extends Context.Service<
           readonly description: string | null
           readonly auth: string
           readonly package: string | null
+          readonly iconHash: string | null
           readonly createdAt: number
           readonly byId: string
           readonly byLogin: string
           readonly byName: string
           readonly byAvatarUrl: string | null
         }>`
-          SELECT g.id, g.name, g.url, g.description, g.auth, g.package, g.created_at AS createdAt,
+          SELECT g.id, g.name, g.url, g.description, g.auth, g.package, g.icon_hash AS iconHash,
+            g.created_at AS createdAt,
             p.id AS byId, p.login AS byLogin, p.name AS byName, p.avatar_url AS byAvatarUrl
           FROM plugins g JOIN participants p ON p.id = g.created_by
           ${where}
@@ -474,6 +488,7 @@ export class Plugins extends Context.Service<
               ...(row.description !== null && { description: row.description }),
               url: row.url,
               auth: authOf(row.auth),
+              ...(row.iconHash !== null && { iconHash: row.iconHash }),
               ...(row.package !== null && { package: decodePackage(row.package) }),
               createdBy: toParticipant(row),
               createdAt: row.createdAt,
@@ -661,6 +676,36 @@ export class Plugins extends Context.Service<
 
       const plugin = Effect.fn("Plugins.plugin")(function* (id: PluginId) {
         return Option.fromNullishOr((yield* pluginRows(sql`WHERE g.id = ${id}`))[0])
+      })
+
+      const icon = Effect.fn("Plugins.icon")(function* (id: PluginId) {
+        const rows = yield* sql<{ readonly icon: Uint8Array; readonly contentType: string }>`
+          SELECT icon, icon_type AS contentType FROM plugins
+          WHERE id = ${id} AND icon IS NOT NULL AND icon_type IS NOT NULL
+        `
+        return Option.map(Option.fromNullishOr(rows[0]), (row) => ({
+          bytes: new Uint8Array(row.icon),
+          contentType: row.contentType,
+        }))
+      })
+
+      const setIcon = Effect.fn("Plugins.setIcon")(function* (
+        id: PluginId,
+        forUrl: string,
+        found: Icon | undefined,
+      ) {
+        const rows =
+          found === undefined
+            ? yield* sql<{ readonly id: string }>`
+                UPDATE plugins SET icon = NULL, icon_type = NULL, icon_hash = NULL
+                WHERE id = ${id} AND url = ${forUrl} RETURNING id
+              `
+            : yield* sql<{ readonly id: string }>`
+                UPDATE plugins SET icon = ${found.bytes}, icon_type = ${found.contentType},
+                  icon_hash = ${iconHash(found.bytes)}
+                WHERE id = ${id} AND url = ${forUrl} RETURNING id
+              `
+        return rows.length > 0
       })
 
       const installation = Effect.fn("Plugins.installation")(function* (id: InstallationId) {
@@ -1407,6 +1452,8 @@ export class Plugins extends Context.Service<
       return Plugins.of({
         list,
         plugin,
+        icon,
+        setIcon,
         installation,
         pluginRepos,
         createPlugin,

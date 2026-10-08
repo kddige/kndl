@@ -19,7 +19,7 @@ import {
 //
 //   package.json  name     the Plugin's id: an npm package name, so unique wherever npm's are
 //                 version  what it is pinned to, with the commit from git
-//   kndl.json     { "displayName": "Linear", "description": "…",
+//   kndl.json     { "displayName": "Linear", "description": "…", "icon": "assets/logo.svg",
 //                   "mcp": { "url": "https://mcp.linear.app/mcp" },
 //                   "auth": { "type": "none" } }
 //
@@ -28,6 +28,10 @@ import {
 // onto the Plugin's `Headers` auth, the template `{value}` by default; and OAuth (#217),
 // `{ "type": "oauth", "scopes"?: ["read", "write"] }`, for a server whose authorization server
 // offers Dynamic Client Registration.
+//
+// `icon` (#230) is optional: an https URL, or a path to a file in the package, which the Hub shows
+// as the Plugin's icon. Never refused: one the Hub can't use is left out, for the favicon of the
+// Plugin's URL.
 
 /** The kndl manifest's file name, beside `package.json`. */
 export const PluginManifestFile = "kndl.json"
@@ -60,7 +64,41 @@ const Manifest = Schema.Struct({
     ),
   }),
   auth: Schema.optionalKey(Schema.Unknown),
+  /** Read by {@link readIcon}, which never refuses: a broken icon never blocks a package. */
+  icon: Schema.optionalKey(Schema.Unknown),
 })
+
+/** A manifest icon, at most this long. */
+export const MaxPluginIconLength = 500
+
+/**
+ * The manifest's `icon`: an https URL, or a path to a file in the package. Anything else is left
+ * out, not refused: the Plugin gets its URL's favicon instead.
+ */
+function readIcon(icon: unknown): string | undefined {
+  if (typeof icon !== "string") return undefined
+  const trimmed = icon.trim()
+  return trimmed === "" || trimmed.length > MaxPluginIconLength || controlCharacters.test(trimmed)
+    ? undefined
+    : trimmed
+}
+
+/** The manifest text's `icon`, if it is JSON that has a usable one: for reading its file early. */
+export function manifestIconOf(manifest: string): string | undefined {
+  const parsed = parseJson(manifest)
+  if (Result.isFailure(parsed)) return undefined
+  const json = parsed.success
+  return typeof json === "object" && json !== null
+    ? readIcon((json as { readonly icon?: unknown }).icon)
+    : undefined
+}
+
+/** A manifest icon that is a path in the package, as {@link packagePath} writes it; else none. */
+export function iconPathOf(icon: string): string | undefined {
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(icon)) return undefined
+  const path = packagePath(icon)
+  return path === "" || packagePathProblem(path) !== undefined ? undefined : path
+}
 
 const AuthType = Schema.Struct({ type: Schema.Literals(["none", "headers", "oauth"]) })
 
@@ -255,11 +293,13 @@ export function readPluginPackage(
     return Result.fail(problems.join("\n"))
   }
   const { displayName, description, mcp } = manifest.success
+  const icon = readIcon(manifest.success.icon)
   return Result.succeed({
     id: PluginId.make(packageJson.success.name),
     name: displayName.trim(),
     ...(description !== undefined && { description: description.trim() }),
     url: mcp.url,
+    ...(icon !== undefined && { icon }),
     auth: auth.success,
     package: {
       version: packageJson.success.version,

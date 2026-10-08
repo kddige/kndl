@@ -18,6 +18,7 @@ import { ModTokens } from "./ModTokens.ts"
 import { PairingCodes } from "./PairingCodes.ts"
 import { PairingRoutes } from "./PairingRoutes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
+import { PluginIconRoutes } from "./PluginIconRoutes.ts"
 import { PluginOAuth } from "./PluginOAuth.ts"
 import { PluginOAuthRoutes } from "./PluginOAuthRoutes.ts"
 import { Plugins } from "./Plugins.ts"
@@ -47,6 +48,7 @@ export const HubRoutes = Layer.mergeAll(
   GatewayRoutes,
   ModRoutes,
   PairingRoutes,
+  PluginIconRoutes,
   PluginOAuthRoutes,
   TunnelRoutes,
   WebUiRoutes,

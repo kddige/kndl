@@ -67,6 +67,19 @@ async function openPlugins(owner = true) {
   return { hub, client }
 }
 
+test("shows each Plugin's letter avatar before its name when the Hub has found it no icon", async () => {
+  await openPlugins()
+  for (const [name, letter] of [
+    ["Docs search", "D"],
+    ["Linear", "L"],
+    ["Sentry", "S"],
+  ] as const) {
+    const nameLine = plugin(name)?.querySelector("span[aria-hidden='true']")?.parentElement
+    expect(nameLine?.firstElementChild?.textContent).toBe(letter)
+    expect(nameLine?.textContent?.startsWith(`${letter}${name}`)).toBe(true)
+  }
+})
+
 test("lists the Plugins and their Installations, not naming Repos out of reach", async () => {
   await openPlugins()
   const docs = plugin("Docs search")?.textContent

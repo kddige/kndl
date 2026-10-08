@@ -43,10 +43,15 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
 /**
  * Takes the database back to before migration 0029, OAuth Installations: the migrator runs only
  * the migrations after the last it ran, so a test of an earlier one undoes this first. Dropping
- * the table undoes 0030, its client entered by hand (#218), too.
+ * the table undoes 0030, its client entered by hand (#218), too, and dropping the columns undoes
+ * 0031, Plugin icons (#230).
  */
 const beforePluginOAuth = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE plugins DROP COLUMN icon`
+  yield* sql`ALTER TABLE plugins DROP COLUMN icon_type`
+  yield* sql`ALTER TABLE plugins DROP COLUMN icon_hash`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_icon'`
   yield* sql`DROP TABLE installation_oauth`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_oauth_manual_client'`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_oauth'`
@@ -201,6 +206,36 @@ const beforeChildSessions = Effect.gen(function* () {
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
+
+describe("migration 0031, Plugin icons", () => {
+  test("leaves the Plugins there were without an icon", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`ALTER TABLE plugins DROP COLUMN icon`
+        yield* sql`ALTER TABLE plugins DROP COLUMN icon_type`
+        yield* sql`ALTER TABLE plugins DROP COLUMN icon_hash`
+        yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_icon'`
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('dev:alice', 'alice', 'alice', 1, 1)`
+        yield* sql`INSERT INTO plugins (id, name, url, created_by, created_at)
+          VALUES ('hub:docs', 'Docs', 'https://mcp.example.com/mcp', 'dev:alice', 1)`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        return yield* sql`SELECT id, icon, icon_type, icon_hash FROM plugins`
+      }),
+    )
+    expect(after).toEqual([{ id: "hub:docs", icon: null, icon_type: null, icon_hash: null }])
+  })
+})
 
 describe("migration 0025, header secrets", () => {
   test("leaves the Plugins there were without header secrets, and their log without titles", async () => {

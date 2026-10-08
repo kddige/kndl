@@ -80,6 +80,7 @@ import {
 } from "./connection.tsx"
 import { type ClearedValues, clearedValues, keyFromTitle } from "./headerSecrets.ts"
 import { PackageDialog, type PackageOpening } from "./PackageDialog.tsx"
+import { PluginAvatar } from "./PluginAvatar.tsx"
 import { messageOf, useLastOpened } from "./shared.ts"
 
 const styles = stylex.create({
@@ -380,6 +381,7 @@ function PluginCard({
       <div {...stylex.props(styles.head)}>
         <div {...stylex.props(styles.main)}>
           <div {...stylex.props(styles.nameLine)}>
+            <PluginAvatar plugin={plugin} />
             <span {...stylex.props(styles.name)}>{plugin.name}</span>
             <Badge sx={styles.mono}>{plugin.id}</Badge>
             {pinned && <Badge sx={styles.mono}>{packageVersion(pinned)}</Badge>}
