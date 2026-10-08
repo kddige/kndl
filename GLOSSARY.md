@@ -168,6 +168,10 @@ _Avoid_: integration, extension, connector, mod
 A named, configured copy of one Plugin, holding the credentials of the account it acts as. It is global, on in every Repo, or on in the Repos it lists, and a Repo has at most one Installation of each Plugin.
 _Avoid_: connection, instance, config, plugin (for a configured copy)
 
+**Header secret**:
+A credential a Plugin declares its MCP server takes in an HTTP header, such as `Authorization: Bearer {value}`. Each Installation holds its own value, write-only and encrypted on the Hub, which the Gateway puts in the header.
+_Avoid_: API key setting, token field, header variable
+
 **Gateway**:
 The Hub's path from a Session to an Installation's MCP server, which adds the Installation's credentials on the way, so they never enter a Sandbox.
 _Avoid_: MCP proxy, credential proxy

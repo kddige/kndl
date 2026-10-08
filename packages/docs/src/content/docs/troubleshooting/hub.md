@@ -68,7 +68,7 @@ HubConfigError: The Hub stores 3 secret values (Sensitive variable values, Claud
 HubConfigError: HUB_SECRETS_KEY is not the key the Hub's 3 secret values were (Sensitive variable values, Claude credentials and Installation values) saved with. Set it to that key. If that key is lost, `bun run secrets-reset` (or `kndl secrets reset`) clears those values, keeping their variables and Installations, so a new key can be used.
 ```
 
-**Why.** Sensitive values and Claude credentials are encrypted with `HUB_SECRETS_KEY`. Once any are saved, the Hub won't start without the same key.
+**Why.** Sensitive values, Claude credentials and Installations' header secret values are encrypted with `HUB_SECRETS_KEY`. Once any are saved, the Hub won't start without the same key.
 
 **Fix.**
 
@@ -88,7 +88,7 @@ bun run secrets-reset          # in a checkout
 kndl secrets reset             # on an installed Hub
 ```
 
-Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. Each Installation keeps its header secrets, which show **needs a value** on **Plugins**: enter them again there; until then the Gateway answers its Sessions' requests to the Plugin with `409`. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
 
 ## A Hub is already running on the database
 

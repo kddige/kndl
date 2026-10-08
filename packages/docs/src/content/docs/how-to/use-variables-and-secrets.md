@@ -51,11 +51,12 @@ The values the key encrypted are lost with it. A reset clears them and keeps eve
    kndl secrets reset       # on an installed Hub
    ```
 
-   It lists the Sensitive variables it clears and asks first. Without a terminal it needs `--yes`.
+   It lists the Sensitive variables, and the Installations' header secrets, it clears and asks first. Without a terminal it needs `--yes`.
 3. Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it, and start the Hub.
 4. Enter the values again. Each cleared variable keeps its name, **At build** and Links, and shows **needs a value**:
    - On a Repo's Environment, type each value and apply. No Test build is needed, even at build.
    - On **Shared variables**, press **Enter value** on each.
+   - On **Plugins**, edit each Installation whose header secrets show **needs a value**, and type each value. See [Header secret values](/how-to/add-a-remote-mcp-server-as-a-plugin/#header-secret-values).
 
 Until each variable it has or links gets a value, a Repo's Sessions and Test builds don't start: a Session that wakes stays Asleep with a message naming the variables, and its prompts stay queued. The reset also drops the record of past Test builds.
 

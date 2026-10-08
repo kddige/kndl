@@ -32,6 +32,7 @@ Sessions never ask for tool approval: everything inside the Sandbox is allowed (
 | The Sandbox token, for `git` and `gh` | the Sandbox's memory | Yes, by design ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)) |
 | A Test build's clone token, read-only and for one Repo | the environment of the Runner's one `git clone` | Never |
 | Environment Variables | encrypted on the Hub if Sensitive; in the Runner's memory while needed | Yes, by design: in every process's environment |
+| An Installation's header secret values, a Plugin's keys | encrypted on the Hub with `HUB_SECRETS_KEY`, with a copy for each Session that started with them | Never ([The Gateway](#the-gateway)) |
 
 Two things reach the Sandbox by design, and anything running there can read them:
 
@@ -56,8 +57,11 @@ A [Plugin](/reference/glossary/#plugin) is a remote MCP server, and Claude Code 
 
 - **Only the Installations on for the Session's Repo.** The Gateway answers `403` for an Installation the Session didn't start with, or that was taken off its Repo since: taking one off stops it at once. It answers `401` without the mod token of an Active Session, which the credential proxy puts in for a live Session token.
 - **Turning one on takes access to its Repos.** Making or changing an Installation takes access on GitHub to every Repo it lists, as starting a Session does. A refusal reads the same whether the Repo exists or not, and an Installation on in a Repo someone can't see only says how many such Repos it lists.
-- **Untouched, and not logged.** Request and answer stream both ways as they are. The Gateway drops the Session's token, cookies and forwarding headers on the way out, and the server's cookies on the way back. It logs each request's Session, Installation, method, status and time, never its content.
-- **No Plugin credential enters a Sandbox or a Runner.** The Hub calls the server from its own address. For now, a Plugin's server must answer without credentials; once Installations hold them, the Gateway will add them on the way.
+- **Untouched, and not logged.** Request and answer stream both ways as they are. The Gateway drops the Session's token, cookies and forwarding headers on the way out, and the server's cookies on the way back. It logs each request's Session, Installation, method, status and time, never its content or headers.
+- **No Plugin credential enters a Sandbox or a Runner.** The Hub calls the server from its own address. A Plugin that needs a key declares header secrets, such as `Authorization: Bearer {value}`, and each Installation holds its own value, which the Gateway adds to every request on the way out. A header of the same name from the Sandbox, by any case, is dropped first, so code in a Sandbox can't send its own in its place.
+- **Header secret values are write-only.** The Hub encrypts them with `HUB_SECRETS_KEY` and never sends them to a browser, a Runner or a Sandbox: the web UI shows only who set each value and when, or that it needs one, and the change log names them by title. A Session runs with the values it started with, and a new one applies at its next wake or Restart. The Hub masks them in its Events and terminal frames like Sensitive values ([Redaction](#redaction)), in case a server echoes one back.
+- **A value goes only to the server it was entered for.** Moving a Plugin's URL to another origin (scheme, host or port) clears every Installation's values, and changing a header secret's key or header clears its values, so an edit can't send a key elsewhere. The web UI says whose values it clears before saving.
+- **A missing value is refused, not skipped.** A request through an Installation without a value for one of its header secrets is answered `409`, naming the Installation and the secret, and is never sent to the server without it.
 
 ## Every endpoint needs a credential
 
@@ -97,11 +101,11 @@ There are no roles but Owner: everyone with access to a Repo can do everything w
 
 A Session, with its subagents, runs on its Creator's Claude account, whoever prompts it and on whichever Runner ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). If the Creator has stored no credential, it runs on its Runner's own; if neither has one, the Hub refuses to start it. Each Session's header says whose account it runs on. Only give a Runner a credential of its own if its owner is happy for the team to use that account.
 
-A person's credential is write-only. The Hub checks it with Anthropic as it is saved, encrypts it with `HUB_SECRETS_KEY`, and never sends it back to a browser: its owner sees only its kind, last 4 characters and plan. The Hub sends it only to the Runner of one of that person's Sessions, over the Runner's authenticated connection, which keeps it in memory while the Session is awake. `secrets-reset` clears every stored credential with the other Sensitive values.
+A person's credential is write-only. The Hub checks it with Anthropic as it is saved, encrypts it with `HUB_SECRETS_KEY`, and never sends it back to a browser: its owner sees only its kind, last 4 characters and plan. The Hub sends it only to the Runner of one of that person's Sessions, over the Runner's authenticated connection, which keeps it in memory while the Session is awake. `secrets-reset` clears every stored credential with the other Sensitive values, and every Installation's header secret values.
 
 ## Redaction
 
-The Hub masks Sensitive values, each character with `*`, in everything it stores or shows: a Session's Events (prompts, Claude's text, tool input and output, subagents included), its terminal frames, and Test build logs and results. A Session's set is its Repo's Sensitive Variables and linked Sensitive Shared variables, plus any value they replaced while a Session that started with it still runs, and its current and previous Sandbox tokens.
+The Hub masks Sensitive values, each character with `*`, in everything it stores or shows: a Session's Events (prompts, Claude's text, tool input and output, subagents included), its terminal frames, and Test build logs and results. A Session's set is its Repo's Sensitive Variables and linked Sensitive Shared variables, plus any value they replaced while a Session that started with it still runs, the header secret values of the Installations it started with, and its current and previous Sandbox tokens.
 
 - Besides the value itself, it looks for it trimmed, JSON-escaped, URL-encoded and, for a multi-line value such as a key, each of its long lines. Matching skips terminal colour codes and line breaks, so a value wrapped on screen is still found.
 - Claude's text and terminal output stream in pieces, so the end of a piece that could start a value is held back until the next one, for at most 100 ms.
