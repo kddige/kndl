@@ -81,6 +81,12 @@ export function pluginChangeText(entry: PluginLogEntry): string {
       return `cleared ${installation}'s ${valuesText(entry.secrets)}, as ${plugin} changed`
     case "PluginUpgraded":
       return `upgraded ${plugin}, the Plugin of ${installation}, to ${entry.pluginVersion ?? "a new version"}`
+    case "Connected":
+      return `connected ${installation} to its account at ${plugin}`
+    case "Reconnected":
+      return `reconnected ${installation} to its account at ${plugin}`
+    case "Disconnected":
+      return `disconnected ${installation} from its account at ${plugin}`
   }
 }
 

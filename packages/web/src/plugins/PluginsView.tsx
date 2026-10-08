@@ -16,6 +16,12 @@
 // Repo-scoped one of its Plugin takes its place, or the Repo turned it off on its Repo page. Only
 // the Owner creates, edits or deletes one, or edits, upgrades or deletes its Plugin; for anyone
 // else, the page says so.
+//
+// A Plugin can use OAuth instead (#217): each Installation connects to one account, which every
+// Session in its Repos then acts as. Connect sends the browser to the server's authorization server
+// and back, through the Hub, to this page; the Hub alone holds the tokens. Moving the Plugin to
+// another origin disconnects its Installations, and the dialog says so first. Only the Owner
+// connects or disconnects a global one: every Session on the Hub acts as its account.
 
 import {
   type HeaderSecret,
@@ -35,7 +41,7 @@ import {
   sourceText,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { Link } from "@tanstack/react-router"
+import { Link, useNavigate } from "@tanstack/react-router"
 import { Redacted } from "effect"
 import { type FormEvent, useEffect, useState } from "react"
 import { andList, repoParams, timeAgo } from "../app/format.ts"
@@ -56,6 +62,7 @@ import {
   PageHeader,
   PluginIcon,
   PlusIcon,
+  Select,
   Spinner,
   Textarea,
   toast,
@@ -64,6 +71,7 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { ConnectionLine, disconnected, DisconnectsBanner, useConnect } from "./connection.tsx"
 import { type ClearedValues, clearedValues, keyFromTitle } from "./headerSecrets.ts"
 import { PackageDialog, type PackageOpening } from "./PackageDialog.tsx"
 import { messageOf, useLastOpened } from "./shared.ts"
@@ -197,11 +205,27 @@ interface Deleting {
   readonly name: string
   readonly description: string
   readonly run: () => Promise<unknown>
+  /** What it does, when not deleting: Disconnect (#217). */
+  readonly verb?: { readonly action: string; readonly done: string }
 }
 
-/** The Plugins page; `opening` names an Installation whose dialog opens once it loads (#216). */
-export function PluginsView({ opening }: { opening?: string | undefined } = {}) {
+/** How connecting an Installation came out, as the Hub sends the browser back (#217). */
+export interface ConnectReturn {
+  readonly installation?: string | undefined
+  readonly connected?: boolean | undefined
+  readonly connectError?: string | undefined
+}
+
+/**
+ * The Plugins page; `opening` names an Installation whose dialog opens once it loads (#216), and
+ * `returned` how connecting one came out (#217).
+ */
+export function PluginsView({
+  opening,
+  returned,
+}: { opening?: string | undefined; returned?: ConnectReturn | undefined } = {}) {
   const hub = useHub()
+  const navigate = useNavigate()
   const state = useHubState((hubState) => hubState.plugins)
   const owner = useHubState((hubState) => hubState.owner)
   const online = useHubState((hubState) => hubState.connection.status === "online")
@@ -211,6 +235,24 @@ export function PluginsView({ opening }: { opening?: string | undefined } = {}) 
   const [deleting, setDeleting] = useState<Deleting | null>(null)
   const [packaging, setPackaging] = useState<PackageOpening | null>(null)
   const [opened, setOpened] = useState<string | null>(null)
+
+  // Said once, then dropped from the address, so a reload doesn't say it again.
+  useEffect(() => {
+    if (returned === undefined || state === null) return
+    const name =
+      state.installations.find((one) => one.id === returned.installation)?.name ??
+      "the Installation"
+    if (returned.connectError !== undefined) {
+      toast.show({
+        title: `Couldn't connect ${name}`,
+        description: returned.connectError,
+        intent: "danger",
+      })
+    } else if (returned.connected === true) {
+      toast.show({ title: `Connected ${name}` })
+    }
+    void navigate({ to: "/plugins", search: {}, replace: true })
+  }, [returned, state, navigate])
 
   // Opened once for each Installation asked for, and only one the person can change.
   useEffect(() => {
@@ -321,6 +363,7 @@ function PluginCard({
   onDelete: (deleting: Deleting) => void
 }) {
   const hub = useHub()
+  const connect = useConnect()
   // Editing or upgrading a Plugin changes what the Sessions of every Repo it is on in run with.
   const hidden = installations.some((installation) => installation.otherRepos !== undefined)
   // With a global Installation, that is every Repo's: only the Owner may (#219).
@@ -420,6 +463,23 @@ function PluginCard({
                   run: () => hub.deleteInstallation(installation.id),
                 })
               }
+              onConnect={() =>
+                connect(installation).catch((error: unknown) =>
+                  toast.show({
+                    title: `Couldn't connect ${installation.name}`,
+                    description: messageOf(error),
+                    intent: "danger",
+                  }),
+                )
+              }
+              onDisconnect={() =>
+                onDelete({
+                  name: installation.name,
+                  description: `The Hub forgets its tokens. Sessions in ${reposText(installation)} lose its tools at once, and new ones don't start until it is connected again.`,
+                  run: () => hub.disconnectInstallation(installation.id),
+                  verb: { action: "Disconnect", done: "Disconnected" },
+                })
+              }
             />
           ))
         )}
@@ -451,6 +511,8 @@ function InstallationRow({
   first,
   onEdit,
   onDelete,
+  onConnect,
+  onDisconnect,
 }: {
   plugin: Plugin
   installation: Installation
@@ -458,13 +520,17 @@ function InstallationRow({
   first: boolean
   onEdit: () => void
   onDelete: () => void
+  onConnect: () => void
+  onDisconnect: () => void
 }) {
-  // Changing it needs access to every Repo it is on in, which the Hub doesn't name.
+  // Changing it needs access to every Repo it is on in, which the Hub doesn't name. So does
+  // connecting it: its account acts in each.
   const hidden = installation.otherRepos !== undefined
-  // A global one is on in every Repo: only the Owner changes it (#219).
+  // A global one is on in every Repo: only the Owner changes it (#219), or connects it (#217).
   const global = installation.global === true
   const ownerOnly = global && !owner
   const off = installation.off ?? []
+  const oauth = plugin.auth._tag === "OAuth"
   return (
     <li
       aria-label={`Installation ${installation.name}`}
@@ -499,11 +565,36 @@ function InstallationRow({
         <SecretValues plugin={plugin} installation={installation} />
         {ownerOnly && (
           <span {...stylex.props(styles.muted)}>
-            Only the Hub's Owner can edit or delete it. Turn it off for a Repo on the Repo's page.
+            Only the Hub's Owner can{" "}
+            {oauth ? "edit, delete, connect or disconnect" : "edit or delete"} it. Turn it off for a
+            Repo on the Repo's page.
           </span>
         )}
+        <ConnectionLine plugin={plugin} installation={installation} />
       </div>
       <div {...stylex.props(styles.actions)}>
+        {oauth && (
+          <Button
+            size="sm"
+            intent={installation.connection === undefined ? "primary" : "secondary"}
+            aria-label={`${installation.connection === undefined ? "Connect" : "Reconnect"} ${installation.name}`}
+            disabled={hidden || ownerOnly}
+            onClick={onConnect}
+          >
+            {installation.connection === undefined ? "Connect" : "Reconnect"}
+          </Button>
+        )}
+        {oauth && installation.connection !== undefined && (
+          <Button
+            size="sm"
+            intent="ghost"
+            aria-label={`Disconnect ${installation.name}`}
+            disabled={hidden || ownerOnly}
+            onClick={onDisconnect}
+          >
+            Disconnect
+          </Button>
+        )}
         <Button
           size="sm"
           aria-label={`Edit Installation ${installation.name}`}
@@ -573,8 +664,18 @@ const rowOf = (secret: HeaderSecret): SecretRow => ({
   keyTyped: true,
 })
 
-const authOf = (rows: ReadonlyArray<SecretRow>): PluginAuth =>
-  rows.length === 0
+/** How a Plugin's server takes credentials, as the dialog chooses it. */
+type AuthKind = "Headers" | "OAuth"
+
+/** The scopes typed, separated by spaces or commas. */
+const scopesOf = (typed: string) => typed.split(/[\s,]+/).filter((scope) => scope !== "")
+
+const authOf = (kind: AuthKind, rows: ReadonlyArray<SecretRow>, scopes: string): PluginAuth => {
+  if (kind === "OAuth") {
+    const listed = scopesOf(scopes)
+    return listed.length === 0 ? { _tag: "OAuth" } : { _tag: "OAuth", scopes: listed }
+  }
+  return rows.length === 0
     ? { _tag: "None" }
     : {
         _tag: "Headers",
@@ -585,6 +686,7 @@ const authOf = (rows: ReadonlyArray<SecretRow>): PluginAuth =>
           template,
         })),
       }
+}
 
 /** Adds a Hub-only Plugin, or edits one's name, URL and header secrets. */
 function PluginDialog({
@@ -602,6 +704,8 @@ function PluginDialog({
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
   const [rows, setRows] = useState<ReadonlyArray<SecretRow>>([])
+  const [kind, setKind] = useState<AuthKind>("Headers")
+  const [scopes, setScopes] = useState("")
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -611,6 +715,8 @@ function PluginDialog({
     setName(saved?.name ?? "")
     setUrl(saved?.url ?? "")
     setRows(saved === null ? [] : headerSecretsOf(saved.auth).map(rowOf))
+    setKind(saved?.auth._tag === "OAuth" ? "OAuth" : "Headers")
+    setScopes(saved?.auth._tag === "OAuth" ? (saved.auth.scopes ?? []).join(" ") : "")
     setTouched(false)
     setBusy(false)
     setError(null)
@@ -619,7 +725,7 @@ function PluginDialog({
   const nameProblem = pluginNameProblem(name)
   const urlProblem =
     url.trim() === "" ? "Enter the MCP server's URL." : pluginUrlProblem(url.trim())
-  const auth = authOf(rows)
+  const auth = authOf(kind, rows, scopes)
   const authProblem = pluginAuthProblem(auth)
   // What saving clears, said before it does.
   const cleared =
@@ -630,6 +736,11 @@ function PluginDialog({
           installations.filter((installation) => installation.pluginId === saved.id),
           { url: url.trim(), auth },
         )
+  const disconnects =
+    saved === null || urlProblem !== undefined
+      ? []
+      : disconnected(saved, installations, { url: url.trim(), auth })
+  const destructive = cleared.length > 0 || disconnects.length > 0
 
   const change = (id: number, edit: Partial<Omit<SecretRow, "id">>) =>
     setRows((current) =>
@@ -687,12 +798,18 @@ function PluginDialog({
         <>
           <DialogClose>Cancel</DialogClose>
           <Button
-            intent={cleared.length > 0 ? "danger" : "primary"}
+            intent={destructive ? "danger" : "primary"}
             type="submit"
             form="plugin"
             loading={busy}
           >
-            {saved === null ? "Add" : cleared.length > 0 ? "Save and clear values" : "Save"}
+            {saved === null
+              ? "Add"
+              : disconnects.length > 0
+                ? "Save and disconnect"
+                : cleared.length > 0
+                  ? "Save and clear values"
+                  : "Save"}
           </Button>
         </>
       }
@@ -724,86 +841,122 @@ function PluginDialog({
             sx={styles.mono}
           />
         </Field>
-        <fieldset aria-label="Header secrets" {...stylex.props(styles.section)}>
-          <div {...stylex.props(styles.sectionHead)}>
-            <h3 {...stylex.props(styles.sectionTitle)}>Header secrets</h3>
-            <p {...stylex.props(styles.muted)}>
-              For a server that takes a key in a header. Each Installation enters its own value,
-              which only the Hub holds: it adds the header to every request it sends this server.
-            </p>
-          </div>
-          {rows.map((row, index) => (
-            <div
-              key={row.id}
-              aria-label={`Header secret ${index + 1}`}
-              {...stylex.props(styles.secret)}
-            >
-              <Field label="Title">
-                <Input
-                  size="sm"
-                  value={row.title}
-                  onValueChange={(title: string) => change(row.id, { title })}
-                  placeholder="API key"
-                />
-              </Field>
-              <Field label="Header">
-                <Input
-                  size="sm"
-                  value={row.header}
-                  onValueChange={(header: string) => change(row.id, { header })}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  sx={styles.mono}
-                />
-              </Field>
-              <Field label="Value template" description={`${ValuePlaceholder} is the value.`}>
-                <Input
-                  size="sm"
-                  value={row.template}
-                  onValueChange={(template: string) => change(row.id, { template })}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  sx={styles.mono}
-                />
-              </Field>
-              <Field label="Key" description="Names its values.">
-                <Input
-                  size="sm"
-                  value={row.key}
-                  onValueChange={(key: string) => change(row.id, { key, keyTyped: true })}
-                  placeholder="api_key"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  sx={styles.mono}
-                />
-              </Field>
-              <IconButton
-                label={`Remove ${row.title.trim() === "" ? `header secret ${index + 1}` : row.title.trim()}`}
-                size="sm"
-                sx={styles.remove}
-                onClick={() => setRows((current) => current.filter((one) => one.id !== row.id))}
-              >
-                <TrashIcon />
-              </IconButton>
+        <Field
+          label="Sign-in"
+          description={
+            kind === "OAuth"
+              ? "Each Installation connects to one account, through the server's authorization server, which must offer dynamic client registration. Only the Hub holds the tokens."
+              : "None, or a key each Installation enters, sent in a header."
+          }
+        >
+          <Select<AuthKind>
+            options={[
+              { value: "Headers", label: "None or header secrets" },
+              { value: "OAuth", label: "OAuth" },
+            ]}
+            value={kind}
+            onValueChange={setKind}
+          />
+        </Field>
+        {kind === "OAuth" ? (
+          <Field
+            label="Scopes"
+            description="Optional, separated by spaces: else those the server asks for."
+            invalid={touched && authProblem !== undefined}
+            error={touched ? authProblem : undefined}
+          >
+            <Input
+              value={scopes}
+              onValueChange={(next: string) => setScopes(next)}
+              placeholder="read write"
+              spellCheck={false}
+              autoCapitalize="off"
+              sx={styles.mono}
+            />
+          </Field>
+        ) : (
+          <fieldset aria-label="Header secrets" {...stylex.props(styles.section)}>
+            <div {...stylex.props(styles.sectionHead)}>
+              <h3 {...stylex.props(styles.sectionTitle)}>Header secrets</h3>
+              <p {...stylex.props(styles.muted)}>
+                For a server that takes a key in a header. Each Installation enters its own value,
+                which only the Hub holds: it adds the header to every request it sends this server.
+              </p>
             </div>
-          ))}
-          {touched && authProblem !== undefined && (
-            <p role="alert" {...stylex.props(styles.error)}>
-              {authProblem}
-            </p>
-          )}
-          <div>
-            <Button
-              size="sm"
-              icon={<PlusIcon />}
-              disabled={rows.length >= MaxHeaderSecrets}
-              onClick={addSecret}
-            >
-              Add header secret
-            </Button>
-          </div>
-        </fieldset>
+            {rows.map((row, index) => (
+              <div
+                key={row.id}
+                aria-label={`Header secret ${index + 1}`}
+                {...stylex.props(styles.secret)}
+              >
+                <Field label="Title">
+                  <Input
+                    size="sm"
+                    value={row.title}
+                    onValueChange={(title: string) => change(row.id, { title })}
+                    placeholder="API key"
+                  />
+                </Field>
+                <Field label="Header">
+                  <Input
+                    size="sm"
+                    value={row.header}
+                    onValueChange={(header: string) => change(row.id, { header })}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    sx={styles.mono}
+                  />
+                </Field>
+                <Field label="Value template" description={`${ValuePlaceholder} is the value.`}>
+                  <Input
+                    size="sm"
+                    value={row.template}
+                    onValueChange={(template: string) => change(row.id, { template })}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    sx={styles.mono}
+                  />
+                </Field>
+                <Field label="Key" description="Names its values.">
+                  <Input
+                    size="sm"
+                    value={row.key}
+                    onValueChange={(key: string) => change(row.id, { key, keyTyped: true })}
+                    placeholder="api_key"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    sx={styles.mono}
+                  />
+                </Field>
+                <IconButton
+                  label={`Remove ${row.title.trim() === "" ? `header secret ${index + 1}` : row.title.trim()}`}
+                  size="sm"
+                  sx={styles.remove}
+                  onClick={() => setRows((current) => current.filter((one) => one.id !== row.id))}
+                >
+                  <TrashIcon />
+                </IconButton>
+              </div>
+            ))}
+            {touched && authProblem !== undefined && (
+              <p role="alert" {...stylex.props(styles.error)}>
+                {authProblem}
+              </p>
+            )}
+            <div>
+              <Button
+                size="sm"
+                icon={<PlusIcon />}
+                disabled={rows.length >= MaxHeaderSecrets}
+                onClick={addSecret}
+              >
+                Add header secret
+              </Button>
+            </div>
+          </fieldset>
+        )}
         {cleared.length > 0 && <ClearedBanner cleared={cleared} />}
+        <DisconnectsBanner names={disconnects} verb="Saving" />
         {error && (
           <p role="alert" {...stylex.props(styles.error)}>
             {error}
@@ -879,8 +1032,21 @@ function InstallationDialog({
     setValues({})
     setTouched(false)
     setBusy(false)
+    setConnecting(false)
     setError(null)
   }, [target])
+
+  const connectSaved = async () => {
+    if (saved === null) return
+    setConnecting(true)
+    setError(null)
+    try {
+      await connect(saved)
+    } catch (cause) {
+      setError(messageOf(cause))
+      setConnecting(false)
+    }
+  }
 
   // A global one lists no Repos.
   const listed = global ? [] : reposOf(repos)
@@ -891,7 +1057,16 @@ function InstallationDialog({
     : malformed !== undefined
       ? `${malformed} isn't a Repo: enter each as owner/name.`
       : installationReposProblem(listed)
+  const connect = useConnect()
+  const [connecting, setConnecting] = useState(false)
   const declared = shown === null ? [] : headerSecretsOf(shown.plugin.auth)
+  // An Installation saved can be connected from here too, as a Session's banner sends people; a
+  // global one only by the Owner (#219).
+  const connectable =
+    shown?.plugin.auth._tag === "OAuth" &&
+    saved !== null &&
+    saved.otherRepos === undefined &&
+    (saved.global !== true || owner)
   const typed = (secret: HeaderSecret) => values[secret.key] ?? ""
   const valueProblem = (secret: HeaderSecret) =>
     typed(secret) === "" ? undefined : headerValueProblem(secret.title, typed(secret))
@@ -928,7 +1103,7 @@ function InstallationDialog({
       title={
         saved === null ? `Add an Installation of ${shown?.plugin.name ?? ""}` : `Edit ${saved.name}`
       }
-      description={`Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each Plugin, and you need access to every Repo listed.${owner ? " A global one is on in every Repo but those with their own Installation of the Plugin, or that turned it off." : ""}${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}`}
+      description={`Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each Plugin, and you need access to every Repo listed.${owner ? " A global one is on in every Repo but those with their own Installation of the Plugin, or that turned it off." : ""}${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}${shown?.plugin.auth._tag === "OAuth" ? " Once added, connect it to the account its Sessions act as." : ""}`}
       footer={
         <>
           <DialogClose>Cancel</DialogClose>
@@ -1010,6 +1185,16 @@ function InstallationDialog({
             </Field>
           )
         })}
+        {connectable && shown !== null && (
+          <div {...stylex.props(styles.section)}>
+            <ConnectionLine plugin={shown.plugin} installation={saved} />
+            <div>
+              <Button size="sm" loading={connecting} onClick={() => void connectSaved()}>
+                {saved.connection === undefined ? "Connect" : "Reconnect"}
+              </Button>
+            </div>
+          </div>
+        )}
         {error && (
           <p role="alert" {...stylex.props(styles.error)}>
             {error}
@@ -1036,7 +1221,7 @@ function DeleteDialog({ deleting, onClose }: { deleting: Deleting | null; onClos
     setError(null)
     try {
       await deleting.run()
-      toast.show({ title: `Deleted ${deleting.name}` })
+      toast.show({ title: `${deleting.verb?.done ?? "Deleted"} ${deleting.name}` })
       onClose()
     } catch (cause) {
       setError(messageOf(cause))
@@ -1051,13 +1236,13 @@ function DeleteDialog({ deleting, onClose }: { deleting: Deleting | null; onClos
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
-      title={`Delete ${shown?.name ?? ""}?`}
+      title={`${shown?.verb?.action ?? "Delete"} ${shown?.name ?? ""}?`}
       description={shown?.description}
       footer={
         <>
           <DialogClose>Cancel</DialogClose>
           <Button intent="danger" loading={busy} onClick={() => void remove()}>
-            Delete
+            {shown?.verb?.action ?? "Delete"}
           </Button>
         </>
       }

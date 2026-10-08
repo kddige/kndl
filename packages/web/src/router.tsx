@@ -186,16 +186,27 @@ const variablesRoute = createRoute({
 /**
  * The Plugins, remote MCP servers, and their Installations on Repos (ADR 0020). With
  * ?installation=, that Installation's dialog opens, to fix one that keeps a Session from starting
- * (#216).
+ * (#216). With ?connected=1 or ?connectError= too, the Hub sent the browser back from connecting
+ * it (#217): the page says how that came out instead.
  */
 const pluginsRoute = createRoute({
   getParentRoute: () => hubRoute,
   path: "/plugins",
-  validateSearch: (search: Record<string, unknown>): { installation?: string } =>
-    nonEmpty(search["installation"]) ? { installation: search["installation"] } : {},
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { installation?: string; connected?: boolean; connectError?: string } => ({
+    ...(nonEmpty(search["installation"]) && { installation: search["installation"] }),
+    ...((search["connected"] === 1 || search["connected"] === "1") && { connected: true }),
+    ...(nonEmpty(search["connectError"]) && { connectError: search["connectError"] }),
+  }),
   component: function PluginsRoute() {
-    const { installation } = pluginsRoute.useSearch()
-    return <PluginsView opening={installation} />
+    const { installation, connected, connectError } = pluginsRoute.useSearch()
+    const returned = connected === true || connectError !== undefined
+    return returned ? (
+      <PluginsView returned={{ installation, connected, connectError }} />
+    ) : (
+      <PluginsView opening={installation} />
+    )
   },
 })
 

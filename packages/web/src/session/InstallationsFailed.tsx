@@ -3,7 +3,9 @@
 // Repo it lists, as the Hub requires) can take the Session's Repo off it here instead, and the
 // Session is woken at once. A global one (#219) anyone in the Session can turn off for its Repo
 // instead, but only the Owner can fix. Retry wakes it, which checks the Installations again. Its
-// queued prompts wait meanwhile, and run once it starts.
+// queued prompts wait meanwhile, and run once it starts. An OAuth Installation not connected
+// (#217) has Reconnect instead of Fix: through its authorization server and back to the Plugins
+// page.
 
 import {
   type Installation,
@@ -17,6 +19,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { useHub, useHubState } from "../app/hub.tsx"
+import { useConnect } from "../plugins/connection.tsx"
 import { Banner, Button, Dialog, DialogClose, InfoIcon, toast } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -62,6 +65,21 @@ export function InstallationsFailedBanner({
   const owner = useHubState((state) => state.owner)
   const [busy, setBusy] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<Deleting | null>(null)
+  const connect = useConnect()
+
+  const reconnect = async (installation: Installation) => {
+    setBusy(installation.id)
+    try {
+      await connect(installation)
+    } catch (error) {
+      toast.show({
+        title: `Couldn't connect ${installation.name}`,
+        description: error instanceof Error ? error.message : String(error),
+        intent: "danger",
+      })
+      setBusy(null)
+    }
+  }
 
   useEffect(() => {
     if (!online) return
@@ -142,6 +160,15 @@ export function InstallationsFailedBanner({
                     <span {...stylex.props(styles.muted)}>
                       It is global: only the Hub's Owner can fix it.
                     </span>
+                  ) : failure.reason === "NotConnected" && installation !== undefined ? (
+                    <Button
+                      size="sm"
+                      aria-label={`Reconnect ${failure.installation}`}
+                      loading={busy === installation.id}
+                      onClick={() => void reconnect(installation)}
+                    >
+                      Reconnect
+                    </Button>
                   ) : (
                     <Link
                       to="/plugins"

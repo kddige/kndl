@@ -284,8 +284,9 @@ import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
+import { PluginOAuth } from "./PluginOAuth.ts"
 import { isPluginCommand, makePluginRelay, type PluginRelay } from "./PluginRelay.ts"
-import { Plugins } from "./Plugins.ts"
+import { type GatewayTarget, Plugins } from "./Plugins.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import {
   everything,
@@ -533,6 +534,20 @@ export class SessionRelay extends Context.Service<
     ) => Effect.Effect<void>
     /** The Gateway got a good answer through the Installation: a new failure is noted again. */
     readonly installationWorks: (sessionId: SessionId, installationId: InstallationId) => void
+    /**
+     * Finishes connecting an OAuth Installation (#217), as its authorization server sent the
+     * person's browser back to the Hub: the Installation, and why it failed, if it did.
+     */
+    readonly finishPluginConnect: (
+      you: Participant,
+      response: {
+        readonly state: string
+        readonly code?: string
+        readonly error?: string
+        readonly errorDescription?: string
+        readonly iss?: string
+      },
+    ) => Effect.Effect<{ readonly installationId?: InstallationId; readonly error?: string }>
   }
 >()("@kndl/hub/SessionRelay") {
   static readonly layer = Layer.effect(
@@ -548,6 +563,7 @@ export class SessionRelay extends Context.Service<
       const sessionGit = yield* SessionGit
       const environments = yield* Environments
       const plugins = yield* Plugins
+      const oauth = yield* PluginOAuth
       const access = yield* RepoAccess
       const app = yield* GitHubApp
       const drift = yield* PermissionDrift
@@ -1453,39 +1469,62 @@ export class SessionRelay extends Context.Service<
         repo: string,
         installations: ReadonlyArray<SessionInstallation>,
       ) {
-        const targets = yield* Effect.forEach(installations, (installation) =>
+        const targetOf = (installation: SessionInstallation) =>
           plugins.gatewayTarget(installation.id, { id: sessionId, repo }).pipe(
-            Effect.map((target) => ({ installation, target: Option.getOrUndefined(target) })),
-            Effect.catchTag("SecretsUnavailable", () =>
-              Effect.succeed({ installation, target: "Unreadable" as const }),
-            ),
-          ),
+            Effect.map(Option.getOrUndefined),
+            Effect.catchTag("SecretsUnavailable", () => Effect.succeed("Unreadable" as const)),
+          )
+        const targets = yield* Effect.forEach(installations, (installation) =>
+          Effect.map(targetOf(installation), (target) => ({ installation, target })),
         )
         const sure = targets.flatMap(({ installation, target }): Array<InstallationFailure> => {
           if (target === "Unreadable") return [failureOf(installation, { reason: "Unreadable" })]
           if (target?._tag === "NeedsValue") {
             return [failureOf(installation, { reason: "ValueNeeded", secrets: target.secrets })]
           }
+          // Not connected, or the connection was lost (#217): no server is asked.
+          if (target?._tag === "NotConnected") {
+            return [failureOf(installation, { reason: "NotConnected" })]
+          }
           return []
         })
         if (sure.length > 0) return sure
+        /** Checks the server, once more with fresh tokens if it refused an OAuth token (#217). */
+        const check = Effect.fn("SessionRelay.checkInstallation")(function* (
+          installation: SessionInstallation,
+          target: GatewayTarget | "Unreadable" | undefined,
+          retried: boolean,
+        ): Effect.fn.Return<Array<InstallationFailure>, SqlError> {
+          // One taken off the Repo meanwhile isn't started with: the Gateway refuses it.
+          if (target === undefined || target === "Unreadable") return []
+          // Its token expired and its authorization server didn't answer: it may only be down.
+          if (target._tag === "Unavailable") {
+            return [failureOf(installation, { reason: "Unreachable" })]
+          }
+          if (target._tag === "NotConnected") {
+            return [failureOf(installation, { reason: "NotConnected" })]
+          }
+          if (target._tag !== "Ready") return []
+          const found = yield* checkServer(target, config.pluginCheckTimeout)
+          if (found._tag === "Works") {
+            if (target.oauth !== undefined) oauth.works(installation.id, target.oauth.generation)
+            return []
+          }
+          if (found._tag === "Unreachable") {
+            return [failureOf(installation, { reason: "Unreachable" })]
+          }
+          if (found._tag === "Rejected" && found.status === 401 && target.oauth !== undefined) {
+            const next = yield* oauth
+              .rejected(installation.id, target.oauth.generation)
+              .pipe(Effect.catchTag("SecretsUnavailable", () => Effect.succeed("Lost" as const)))
+            if (next === "Lost") return [failureOf(installation, { reason: "NotConnected" })]
+            if (!retried) return yield* check(installation, yield* targetOf(installation), true)
+          }
+          return [failureOf(installation, { reason: found._tag, status: found.status })]
+        })
         const checked = yield* Effect.forEach(
           targets,
-          ({ installation, target }) => {
-            // One taken off the Repo meanwhile isn't started with: the Gateway refuses it.
-            if (target === undefined || target === "Unreadable" || target._tag !== "Ready") {
-              return Effect.succeed<Array<InstallationFailure>>([])
-            }
-            return checkServer(target, config.pluginCheckTimeout).pipe(
-              Effect.map((check): Array<InstallationFailure> => {
-                if (check._tag === "Works") return []
-                if (check._tag === "Unreachable") {
-                  return [failureOf(installation, { reason: "Unreachable" })]
-                }
-                return [failureOf(installation, { reason: check._tag, status: check.status })]
-              }),
-            )
-          },
+          ({ installation, target }) => check(installation, target, false),
           { concurrency: "unbounded" },
         )
         return checked.flat()
@@ -1565,7 +1604,9 @@ export class SessionRelay extends Context.Service<
             yield* noteFailure(
               sessionId,
               { installationId, installation: installation.name, ...why },
-              "Its tools fail until the Installation is fixed and the Session restarted.",
+              why.reason === "NotConnected"
+                ? "Its tools fail until it is reconnected on the Plugins page."
+                : "Its tools fail until the Installation is fixed and the Session restarted.",
             )
           }),
         ).pipe(
@@ -1578,6 +1619,26 @@ export class SessionRelay extends Context.Service<
       const installationWorks = (sessionId: SessionId, installationId: InstallationId) => {
         installationTrouble.get(sessionId)?.delete(installationId)
       }
+
+      /** See the service (#217). */
+      const finishPluginConnect = (
+        you: Participant,
+        response: {
+          readonly state: string
+          readonly code?: string
+          readonly error?: string
+          readonly errorDescription?: string
+          readonly iss?: string
+        },
+      ) =>
+        pluginRelay.finishConnect(you, response).pipe(
+          Effect.catchCause((cause) =>
+            Effect.as(Effect.logError("Could not finish connecting an OAuth Installation", cause), {
+              error: "The Hub could not keep the connection; try again.",
+            }),
+          ),
+          Effect.withSpan("SessionRelay.finishPluginConnect"),
+        )
 
       /**
        * Starts the Session's Claude Code again with its model and effort as set now (#128), once
@@ -3654,6 +3715,21 @@ export class SessionRelay extends Context.Service<
         Effect.forkIn(layerScope),
       )
 
+      // An OAuth Installation's tokens changed (#217): what Sessions print is redacted of the new
+      // ones; one lost is shown so on the Plugins page.
+      const connectionChanges = yield* oauth.changes
+      yield* PubSub.take(connectionChanges).pipe(
+        Effect.flatMap((change) => {
+          needlesByRepo.clear()
+          return change.lost ? serialized(pluginRelay.connectionsChanged) : Effect.void
+        }),
+        Effect.catchCause((cause) =>
+          Effect.logError("Could not send an OAuth Installation's lost connection", cause),
+        ),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
+
       // A check that found something new, for everyone connected.
       const driftChanges = yield* drift.changes
       yield* PubSub.take(driftChanges).pipe(
@@ -3860,6 +3936,7 @@ export class SessionRelay extends Context.Service<
         openTunnel,
         installationFailed,
         installationWorks,
+        finishPluginConnect,
       })
     }),
   )

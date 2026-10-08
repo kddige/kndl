@@ -42,6 +42,7 @@ import {
   WarningIcon,
 } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { disconnected, DisconnectsBanner } from "./connection.tsx"
 import { clearedValues } from "./headerSecrets.ts"
 import { messageOf, useLastOpened } from "./shared.ts"
 
@@ -173,6 +174,7 @@ export function PackageDialog({
 }) {
   const hub = useHub()
   const plugins = useHubState((state) => state.plugins?.plugins)
+  const installations = useHubState((state) => state.plugins?.installations) ?? []
   const shown = useLastOpened(opening)
   const upgrading = shown?.upgrading
   const fromGit = upgrading?.package?.source._tag === "Git"
@@ -346,6 +348,12 @@ export function PackageDialog({
               {current && <Changes changes={changes} />}
               {current && <AddedSecrets plugin={current} read={answer} />}
               {current && <ClearedSecrets plugin={current} read={answer} />}
+              {current && (
+                <DisconnectsBanner
+                  names={disconnected(current, installations, answer.read)}
+                  verb="Upgrading"
+                />
+              )}
             </>
           )}
           {error && (

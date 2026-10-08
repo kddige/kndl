@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { ConfigProvider, Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { databaseAt } from "./Database.ts"
-import { generateSecretsKey } from "./Secrets.ts"
+import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import {
   resetSecrets,
   type SecretsResetPlan,
@@ -42,7 +42,9 @@ const signingSecret = "sig_SIGNING_SECRET_31d8"
 // A fake: ClaudeCheck.layerTest takes it without asking Anthropic.
 const claudeSecret = "sk-ant-oat01-FAKE_CLAUDE_TOKEN_0000c1a7"
 const pluginSecret = "lin_PLUGIN_SECRET_2c9d"
+const oauthSecret = "oat_OAUTH_TOKEN_SECRET_8e3a"
 const secrets = [
+  oauthSecret,
   buildSecret,
   runtimeSecret,
   sharedSecret,
@@ -156,6 +158,23 @@ async function seededDatabase() {
   env.runner.send({ _tag: "SessionStarted", sessionId: session.id, environmentVersion: 1 })
   await env.web.take("SessionUpdated", (m) => m.session.environment?.version === 1)
   await env.setShared({ _tag: "Sensitive", name: "GITHUB_TOKEN", value: "ghp_rotated_5e6f" })
+  // OAuth tokens kept for the Installation (#217), as a connection keeps them.
+  await env.hub.run(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      const sealer = yield* Secrets
+      const [installation] = yield* sql<{ readonly id: string }>`SELECT id FROM installations`
+      const id = installation?.id ?? ""
+      const tokens = yield* sealer.encrypt(
+        Redacted.make(JSON.stringify({ access: oauthSecret, resource: "http://127.0.0.1:1/mcp" })),
+        `installation-oauth-tokens:${id}`,
+      )
+      yield* sql`
+        INSERT INTO installation_oauth (installation_id, tokens, generation, connected_by, connected_at)
+        VALUES (${id}, ${tokens}, 1, (SELECT id FROM participants WHERE login = 'alice'), 1)
+      `
+    }),
+  )
   await stopAll()
   return { file, sessionId: session.id }
 }
@@ -178,6 +197,7 @@ const expectedPlan: SecretsResetPlan = {
   claudeCredentials: ["alice"],
   installations: [{ name: "Team Linear", secrets: ["API key"] }],
   sessionValues: 1,
+  connections: ["Team Linear"],
 }
 
 /** Every row of every table in the database, as text. */
@@ -257,6 +277,10 @@ describe("secrets-reset", () => {
     expect(plan).toContain("It also drops 1 header secret value that Sessions started with.")
     expect(done).toContain("Cleared the header secret values of 1 Installation")
     expect(done).toContain("and each Installation's on the Plugins page")
+    expect(plan).toContain(
+      "It disconnects 1 OAuth Installation, dropping its tokens and the client the Hub registered: Team Linear.",
+    )
+    expect(done).toContain("Connect each OAuth Installation again on the Plugins page.")
     for (const secret of secrets) expect(plan + done).not.toContain(secret)
     // Run again, there is nothing left to reset.
     expect((await reset(file, true)).outcome._tag).toBe("NothingToReset")

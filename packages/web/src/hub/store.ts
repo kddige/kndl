@@ -428,6 +428,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
         pluginLogs: { ...state.pluginLogs, [repoKey(action.repo)]: action.entries },
       }
     case "PluginPackageRead":
+    case "InstallationAuthorizing":
       return state
   }
 }

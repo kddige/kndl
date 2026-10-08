@@ -16,6 +16,9 @@
 // - So do the values of Installations' header secrets (#215), and those their Sessions started
 //   with: each Installation stays, and needs a value again on the Plugins page; until then the
 //   Gateway refuses its requests.
+// - So do OAuth Installations' tokens and the clients the Hub registered for them (#217): each
+//   stays, disconnected, and is connected again on the Plugins page; until then its Sessions
+//   don't start.
 // - Plain variables, Environments, versions, Sessions, Plugins, Installations and builds already on
 //   Runners stay.
 import { existsSync } from "node:fs"
@@ -52,6 +55,8 @@ export interface SecretsResetPlan {
   }>
   /** How many header secret values Sessions started with, kept for the Gateway. */
   readonly sessionValues: number
+  /** Each Installation with OAuth tokens or a registered client (#217), by name, in order. */
+  readonly connections: ReadonlyArray<string>
 }
 
 /** How many Sensitive values the reset clears. */
@@ -65,7 +70,8 @@ export const resetNeeded = (plan: SecretsResetPlan) =>
   plan.retiredValues > 0 ||
   plan.claudeCredentials.length > 0 ||
   plan.installations.length > 0 ||
-  plan.sessionValues > 0
+  plan.sessionValues > 0 ||
+  plan.connections.length > 0
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`
@@ -114,8 +120,20 @@ export function secretsResetPlanText(plan: SecretsResetPlan): string {
           `It also drops ${plural(plan.sessionValues, "header secret value")} that Sessions started with.`,
         ]
       : []),
+    ...connectionLines(plan, "It disconnects"),
+    ...(plan.connections.length > 0
+      ? ["Each then needs connecting again: until it is, its Repos' Sessions don't start."]
+      : []),
     "Plain variables, Environments, Sessions, Plugins, Installations and the builds on Runners stay.",
   ].join("\n")
+}
+
+/** The OAuth Installations whose tokens and clients are cleared (#217). */
+function connectionLines(plan: SecretsResetPlan, verb: string): ReadonlyArray<string> {
+  if (plan.connections.length === 0) return []
+  return [
+    `${verb} ${plural(plan.connections.length, "OAuth Installation")}, dropping its tokens and the client the Hub registered: ${plan.connections.join(", ")}.`,
+  ]
 }
 
 /** The Installations whose header secret values are cleared, and which those are. */
@@ -149,8 +167,9 @@ export function secretsResetDoneText(plan: SecretsResetPlan, newKey: string): st
     ...clearedLines(plan),
     ...claudeCredentialLines(plan),
     ...installationLines(plan, "Cleared"),
+    ...connectionLines(plan, "Disconnected"),
     "",
-    `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen${plan.installations.length > 0 ? ", and each Installation's on the Plugins page" : ""}.`,
+    `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen${plan.installations.length > 0 ? ", and each Installation's on the Plugins page" : ""}.${plan.connections.length > 0 ? " Connect each OAuth Installation again on the Plugins page." : ""}`,
   ].join("\n")
 }
 
@@ -189,6 +208,11 @@ const planOf = Effect.gen(function* () {
   const [held] = yield* sql<{ readonly count: number }>`
     SELECT COUNT(*) AS count FROM session_installation_values
   `
+  const connections = yield* sql<{ readonly name: string }>`
+    SELECT i.name FROM installation_oauth o JOIN installations i ON i.id = o.installation_id
+    WHERE o.client IS NOT NULL OR o.tokens IS NOT NULL
+    ORDER BY i.name, i.id
+  `
   const byRepo = new Map<string, Array<string>>()
   for (const row of own) byRepo.set(row.repo, [...(byRepo.get(row.repo) ?? []), row.name])
   const installations = new Map<string, { name: string; secrets: Array<string> }>()
@@ -210,6 +234,7 @@ const planOf = Effect.gen(function* () {
     claudeCredentials: credentials.map((row) => row.login),
     installations: [...installations.values()],
     sessionValues: held?.count ?? 0,
+    connections: connections.map((row) => row.name),
   } satisfies SecretsResetPlan
 })
 
@@ -226,6 +251,7 @@ const clear = Effect.gen(function* () {
       yield* sql`DELETE FROM claude_credentials`
       yield* sql`DELETE FROM installation_values`
       yield* sql`DELETE FROM session_installation_values`
+      yield* sql`DELETE FROM installation_oauth`
     }),
   )
 })

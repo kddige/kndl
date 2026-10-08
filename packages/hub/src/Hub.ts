@@ -18,6 +18,8 @@ import { ModTokens } from "./ModTokens.ts"
 import { PairingCodes } from "./PairingCodes.ts"
 import { PairingRoutes } from "./PairingRoutes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
+import { PluginOAuth } from "./PluginOAuth.ts"
+import { PluginOAuthRoutes } from "./PluginOAuthRoutes.ts"
 import { Plugins } from "./Plugins.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { RepoAccess } from "./RepoAccess.ts"
@@ -45,6 +47,7 @@ export const HubRoutes = Layer.mergeAll(
   GatewayRoutes,
   ModRoutes,
   PairingRoutes,
+  PluginOAuthRoutes,
   TunnelRoutes,
   WebUiRoutes,
 )
@@ -80,6 +83,8 @@ export const HubServices = SessionRelay.layer.pipe(
       Tunnels.layer,
     ),
   ),
+  // The OAuth Installations' tokens (#217), which Plugins sends the Gateway.
+  Layer.provideMerge(PluginOAuth.layer),
   // Checks HUB_SECRETS_KEY against the Sensitive values stored, so a Hub with the wrong key
   // refuses to start.
   Layer.provideMerge(Secrets.layer),

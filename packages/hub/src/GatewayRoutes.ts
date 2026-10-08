@@ -21,6 +21,16 @@
 // - A server that refuses the Session's credential (401 or 403), or an Installation without a value
 //   for one, is shown in the Session as an error (#216), once until it works again. The Session
 //   runs on: its other MCP servers may well work.
+// - An OAuth Installation (#217) is sent with `Authorization: Bearer` and its access token as the
+//   Hub holds it now: live, never a copy a Session started with, so a refresh or a reconnect
+//   reaches running Sessions at once, and a disconnect stops them. One not connected is answered
+//   `409`, and noted in the Session; one whose token expired and couldn't be refreshed just now,
+//   `503`. A `401` from its server has the token refreshed and the request sent once more; then
+//   it is answered `502`, or `409` once the connection is lost.
+//   Its request's body is held, to be sent again: one over MaxOAuthRequestBytes is answered `413`.
+// - Claude Code never runs OAuth against the Gateway: no answer carries `WWW-Authenticate`, an
+//   OAuth Installation's 401 isn't passed on, and nothing under `/gateway/<id>/`, such as
+//   `/.well-known/oauth-protected-resource`, reaches a server: it is answered `404`.
 // - Each request is logged with its Session, Installation, method, status and time taken, and
 //   nothing of what it carries.
 
@@ -32,13 +42,32 @@ import {
 import { Clock, Effect, Option } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
-import { forward } from "./Gateway.ts"
-import { Plugins } from "./Plugins.ts"
+import { forward, type ReadyTarget, readAtMost } from "./Gateway.ts"
+import { PluginOAuth } from "./PluginOAuth.ts"
+import { type GatewayTarget, Plugins } from "./Plugins.ts"
+import type { SecretsUnavailable } from "./Secrets.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
 
 const errorResponse = (status: number, error: string) =>
   HttpServerResponse.jsonUnsafe({ error }, { status })
+
+/** What an OAuth Installation's server refusing its account is answered with (#217). */
+const oauthRefusal =
+  "The Plugin's MCP server refused the Installation's account: reconnect it on the Plugins page."
+
+/**
+ * The most the Gateway holds of an OAuth Installation's request body (#217), to send it again once
+ * its token is refreshed. MCP's JSON-RPC messages are far smaller; a Sandbox sending a larger one
+ * mustn't make the Hub hold it all.
+ */
+export const MaxOAuthRequestBytes = 4 * 1024 * 1024
+
+const tooLarge = `The request's body is larger than ${MaxOAuthRequestBytes / 1024 / 1024} MiB, the most the Gateway takes for an OAuth Installation.`
+
+/** Lets an answer's body go unread. */
+const discard = (response: Response) =>
+  Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(Effect.ignore)
 
 /** Request headers that stay at the Gateway: the Session's own, and the connection's. */
 const heldRequestHeaders = new Set([
@@ -67,6 +96,8 @@ const heldRequestHeaders = new Set([
 /** Answer headers that stay at the Gateway: the server's cookies, and the connection's. */
 const heldResponseHeaders = new Set([
   "set-cookie",
+  // Claude Code would begin OAuth against the Gateway on a challenge (#217): only the Hub does.
+  "www-authenticate",
   "connection",
   "keep-alive",
   "proxy-authenticate",
@@ -88,6 +119,7 @@ export const GatewayRoutes = HttpRouter.use(
     const sessions = yield* Sessions
     const plugins = yield* Plugins
     const relay = yield* SessionRelay
+    const oauth = yield* PluginOAuth
 
     /**
      * Where the Session may reach the Installation's MCP server: the Plugin's URL, or the status
@@ -124,51 +156,130 @@ export const GatewayRoutes = HttpRouter.use(
             )
           })
 
-        const found = yield* target(grant.sessionId, installationId).pipe(
-          Effect.catchTag("SecretsUnavailable", (error) =>
-            Effect.as(
-              Effect.logError("Could not decrypt an Installation's header secret values", error),
-              500 as const,
-            ),
-          ),
-        )
-        if (found === 401) {
-          yield* done(401)
-          return errorResponse(401, "Expected the mod token of an Active Session")
-        }
-        if (found === 403) {
-          yield* done(403)
-          return errorResponse(403, "This Installation isn't on for the Session's Repo.")
-        }
-        if (found === 500) {
+        /** What the Gateway answers when the Installation can't be reached now. */
+        const refusal = Effect.fn("Gateway.refusal")(function* (
+          found: Exclude<GatewayTarget, ReadyTarget> | 401 | 403,
+        ) {
+          if (found === 401) {
+            yield* done(401)
+            return errorResponse(401, "Expected the mod token of an Active Session")
+          }
+          if (found === 403) {
+            yield* done(403)
+            return errorResponse(403, "This Installation isn't on for the Session's Repo.")
+          }
+          switch (found._tag) {
+            case "NeedsValue": {
+              yield* relay.installationFailed(grant.sessionId, installationId, {
+                reason: "ValueNeeded",
+                secrets: found.secrets,
+              })
+              yield* done(409)
+              return errorResponse(409, found.message)
+            }
+            case "NotConnected": {
+              yield* relay.installationFailed(grant.sessionId, installationId, {
+                reason: "NotConnected",
+              })
+              yield* done(409)
+              return errorResponse(409, found.message)
+            }
+            case "Unavailable": {
+              yield* done(503)
+              return errorResponse(503, found.message)
+            }
+          }
+        })
+        const unreadable = Effect.fn("Gateway.unreadable")(function* (error: SecretsUnavailable) {
+          yield* Effect.logError("Could not decrypt an Installation's credentials", error)
           yield* done(500)
           return errorResponse(
             500,
-            "The Hub could not read this Installation's header secret values: check HUB_SECRETS_KEY.",
+            "The Hub could not read this Installation's credentials: check HUB_SECRETS_KEY.",
           )
-        }
-        if (found._tag === "NeedsValue") {
-          yield* relay.installationFailed(grant.sessionId, installationId, {
-            reason: "ValueNeeded",
-            secrets: found.secrets,
-          })
-          yield* done(409)
-          return errorResponse(409, found.message)
-        }
-        const incoming = yield* HttpServerRequest.toWeb(request)
-        const answer = yield* forward(found, {
-          method: request.method,
-          headers: kept(incoming.headers, heldRequestHeaders),
-          body: incoming.body,
-          signal: incoming.signal,
         })
+
+        const current = target(grant.sessionId, installationId).pipe(
+          Effect.catchTag("SecretsUnavailable", (error) => Effect.succeed(error)),
+        )
+        const found = yield* current
+        if (typeof found !== "number" && found._tag === "SecretsUnavailable") {
+          return yield* unreadable(found)
+        }
+        if (typeof found === "number" || found._tag !== "Ready") return yield* refusal(found)
+        let ready = found
+        const incoming = yield* HttpServerRequest.toWeb(request)
+        const headers = kept(incoming.headers, heldRequestHeaders)
+        // An OAuth Installation's request is sent again once its token is refused and refreshed
+        // (#217): its body is read first, up to MaxOAuthRequestBytes, whether it says its length
+        // or comes in chunks. MCP's requests are small JSON-RPC messages.
+        let body: RequestInit["body"] = incoming.body
+        if (ready.oauth !== undefined && incoming.body !== null) {
+          if (Number(incoming.headers.get("content-length")) > MaxOAuthRequestBytes) {
+            yield* done(413)
+            return errorResponse(413, tooLarge)
+          }
+          const read = yield* Effect.tryPromise(() =>
+            readAtMost(incoming.body, MaxOAuthRequestBytes),
+          ).pipe(Effect.option)
+          if (Option.isNone(read)) {
+            yield* done(400)
+            return errorResponse(400, "The request's body could not be read.")
+          }
+          if (read.value === undefined) {
+            yield* done(413)
+            return errorResponse(413, tooLarge)
+          }
+          body = read.value
+        }
+        const send = (to: ReadyTarget) =>
+          forward(to, { method: request.method, headers, body, signal: incoming.signal })
+
+        let answer = yield* send(ready)
+        // The server refused an OAuth token (#217): it is refreshed and the request sent once
+        // more, or the connection is lost. The 401 never reaches Claude Code, which would begin
+        // OAuth against the Gateway itself.
+        for (let tries = 1; ready.oauth !== undefined; tries++) {
+          if (Option.isNone(answer) || answer.value.status !== 401) break
+          yield* discard(answer.value)
+          const next = yield* oauth
+            .rejected(installationId, ready.oauth.generation)
+            .pipe(
+              Effect.catchTag("SecretsUnavailable", (error) =>
+                Effect.as(
+                  Effect.logError("Could not decrypt an Installation's OAuth tokens", error),
+                  "Lost" as const,
+                ),
+              ),
+            )
+          if (next === "Retry" && tries >= 2) {
+            yield* relay.installationFailed(grant.sessionId, installationId, {
+              reason: "Rejected",
+              status: 401,
+            })
+            yield* done(502)
+            return errorResponse(502, oauthRefusal)
+          }
+          const again = yield* current
+          if (typeof again !== "number" && again._tag === "SecretsUnavailable") {
+            return yield* unreadable(again)
+          }
+          if (typeof again === "number" || again._tag !== "Ready") return yield* refusal(again)
+          if (next === "Lost") {
+            // Reconnected meanwhile: this request isn't sent again.
+            yield* done(502)
+            return errorResponse(502, oauthRefusal)
+          }
+          ready = again
+          answer = yield* send(ready)
+        }
         if (Option.isNone(answer)) {
           yield* done(502)
           return errorResponse(502, "The Plugin's MCP server could not be reached.")
         }
         const response = answer.value
         if (response.status >= 300 && response.status < 400) {
-          yield* Effect.promise(() => response.body?.cancel() ?? Promise.resolve())
+          yield* discard(response)
           yield* done(502)
           return errorResponse(
             502,
@@ -182,6 +293,7 @@ export const GatewayRoutes = HttpRouter.use(
           })
         } else if (response.ok) {
           relay.installationWorks(grant.sessionId, installationId)
+          if (ready.oauth !== undefined) oauth.works(installationId, ready.oauth.generation)
         }
         yield* done(response.status)
         return HttpServerResponse.raw(
@@ -192,6 +304,14 @@ export const GatewayRoutes = HttpRouter.use(
           }),
         )
       }).pipe(Effect.annotateLogs({ component: "Gateway" }), Effect.withSpan("Gateway.request")),
+    )
+
+    // Nothing lies under an Installation's path: not least OAuth's `/.well-known` documents, which
+    // Claude Code would look for to begin OAuth itself (#217). Not the web UI either.
+    yield* router.add(
+      "*",
+      "/gateway/:installationId/:below/*",
+      Effect.succeed(errorResponse(404, "There is nothing under an Installation's Gateway path.")),
     )
   }),
 )

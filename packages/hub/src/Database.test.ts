@@ -41,11 +41,19 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0028, global Installations: the migrator runs only
+ * Takes the database back to before migration 0029, OAuth Installations: the migrator runs only
  * the migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforePluginOAuth = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP TABLE installation_oauth`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_oauth'`
+})
+
+/** Takes the database back to before migration 0028, global Installations, as above. */
 const beforeGlobalInstallations = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforePluginOAuth
   yield* sql`DROP TABLE installation_repo_off`
   yield* sql`DROP INDEX installations_one_global_per_plugin`
   yield* sql`ALTER TABLE installations DROP COLUMN global`

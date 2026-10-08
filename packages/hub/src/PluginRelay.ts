@@ -20,12 +20,19 @@
 // - A packaged Plugin (#220) is read first, from git or an upload, off the lock: a fetch may take a
 //   while. The read is kept for its person, to add or upgrade to by its id once they confirm, so
 //   what they confirm is what they saw. An Upgrade is refused if the Plugin changed since.
+// - Connecting an OAuth Installation (#217), or disconnecting it, needs access to every Repo it
+//   lists, as editing it does, and for a global one, that its person be the Owner: every Session
+//   on the Hub acts as its account. Connecting begins under the lock, then finds the authorization
+//   server off it, and answers where to send the browser; it comes back to the Hub's callback
+//   (PluginOAuthRoutes.ts), which trades the code off the lock and keeps the tokens under it,
+//   refused if the Installation lists another Repo by then, or its Plugin changed.
 
 import {
   type CheckPluginUpgrade,
   CommandFailed,
   HubToWeb,
   type Installation,
+  type InstallationId,
   type PackagedPlugin,
   type Participant,
   type ParticipantId,
@@ -42,6 +49,7 @@ import {
 } from "@kndl/protocol"
 import { Clock, Effect, Option } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
+import { connectionBasis, PluginOAuth } from "./PluginOAuth.ts"
 import {
   PluginRefused,
   Plugins,
@@ -67,6 +75,8 @@ const webTags = [
   "EditInstallation",
   "DeleteInstallation",
   "TurnGlobalInstallation",
+  "ConnectInstallation",
+  "DisconnectInstallation",
   "GetPluginLog",
 ] as const satisfies ReadonlyArray<PluginCommand["_tag"]>
 
@@ -130,6 +140,17 @@ interface KeptRead {
 /** A command about Plugins that changes them, or asks about them: not a read of a package. */
 type StoreCommand = Exclude<PluginCommand, ReadPluginPackage | CheckPluginUpgrade>
 
+/** What to begin connecting an OAuth Installation with, once its Repos are checked (#217). */
+interface Connecting {
+  readonly installationId: InstallationId
+  readonly url: string
+  readonly scopes?: ReadonlyArray<string>
+  readonly basis: string
+  readonly global: boolean
+  readonly repos: ReadonlyArray<string>
+  readonly by: ParticipantId
+}
+
 /**
  * An Installation as the person may see it: only the Repos they have access to, of those it lists
  * and those that turned it off.
@@ -151,6 +172,7 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
   const plugins = yield* Plugins
   const access = yield* RepoAccess
   const sources = yield* PluginSources
+  const oauth = yield* PluginOAuth
   /** The connections that asked for Plugins, which are sent them again as they change. */
   const asked = new WeakSet<Peer<HubToWeb>>()
   /** The package reads kept, by id, oldest first. */
@@ -271,7 +293,9 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
   })
 
   /** Sends every client but `except` that asked for Plugins the Plugins as they are now. */
-  const toOthers = Effect.fn("PluginRelay.toOthers")(function* (except: Peer<HubToWeb>) {
+  const toOthers = Effect.fn("PluginRelay.toOthers")(function* (
+    except: Peer<HubToWeb> | undefined,
+  ) {
     const listed = yield* plugins.list
     for (const client of host.webClients()) {
       if (client.peer !== except && asked.has(client.peer)) {
@@ -329,7 +353,9 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
       case "CreateInstallation":
         return { named: message.repos, hidden: [] }
       case "EditInstallation":
-      case "DeleteInstallation": {
+      case "DeleteInstallation":
+      case "ConnectInstallation":
+      case "DisconnectInstallation": {
         const installation = yield* plugins.installation(message.installationId)
         const named = message._tag === "EditInstallation" ? message.repos : []
         return {
@@ -344,12 +370,15 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
     }
   })
 
-  /** Handles a command whose Repos the person has access to, under the lock. */
+  /**
+   * Handles a command whose Repos the person has access to, under the lock: for a connection, what
+   * to begin it with, off the lock.
+   */
   const handle = Effect.fn("PluginRelay.handle")(function* (
     client: PluginWebClient,
     message: StoreCommand,
     checked: ReadonlyArray<string>,
-  ) {
+  ): Effect.fn.Return<Connecting | void, PluginRefused | SqlError> {
     const { you, peer } = client
     const { requestId } = message
     const answer = Effect.gen(function* () {
@@ -467,6 +496,42 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
         yield* toOthers(peer)
         return yield* changed(change)
       }
+
+      case "ConnectInstallation": {
+        const installation = Option.getOrUndefined(
+          yield* plugins.installation(message.installationId),
+        )
+        if (installation === undefined) {
+          return yield* new PluginRefused({ message: "There is no such Installation." })
+        }
+        yield* stillChecked(installation.repos)
+        yield* plugins.checkConnector(installation, you.id)
+        const target = Option.getOrThrow(yield* plugins.plugin(installation.pluginId))
+        if (target.auth._tag !== "OAuth") {
+          return yield* new PluginRefused({
+            message: `${target.name} doesn't use OAuth: there is no account to connect.`,
+          })
+        }
+        return {
+          installationId: installation.id,
+          url: target.url,
+          ...(target.auth.scopes !== undefined && { scopes: target.auth.scopes }),
+          basis: connectionBasis(target),
+          global: installation.global === true,
+          repos: installation.repos,
+          by: you.id,
+        }
+      }
+
+      case "DisconnectInstallation": {
+        const before = yield* plugins.installation(message.installationId)
+        if (Option.isSome(before)) yield* stillChecked(before.value.repos)
+        const change = yield* plugins.disconnectInstallation(message.installationId, you.id)
+        asked.add(peer)
+        yield* answer
+        yield* toOthers(peer)
+        return yield* changed(change)
+      }
     }
   })
 
@@ -495,7 +560,7 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
           : []
       const named = yield* ask(you, repos.named)
       const hidden = yield* ask(you, [...repos.hidden, ...unknown])
-      yield* host.serialized(
+      const connecting = yield* host.serialized(
         Effect.gen(function* () {
           for (const { repo, allowed } of [...named.learned, ...hidden.learned]) {
             yield* host.accessKnown(you, repo, allowed)
@@ -517,9 +582,26 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
               })
             }
           }
-          yield* handle(client, command, [...repos.named, ...repos.hidden])
+          return yield* handle(client, command, [...repos.named, ...repos.hidden])
         }),
       )
+      if (connecting && command._tag === "ConnectInstallation") {
+        // Off the lock: it fetches from the MCP server and its authorization server.
+        const url = yield* oauth.begin(connecting).pipe(
+          Effect.catchTags({
+            OAuthRefused: (refused) => Effect.fail(new PluginRefused({ message: refused.message })),
+            SecretsUnavailable: (error) =>
+              Effect.fail(new PluginRefused({ message: error.message })),
+          }),
+        )
+        client.peer.send(
+          HubToWeb.cases.InstallationAuthorizing.make({
+            requestId: command.requestId,
+            installationId: command.installationId,
+            url,
+          }),
+        )
+      }
     },
     (effect, client, message) =>
       effect.pipe(
@@ -561,7 +643,73 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
     client.peer.send(stateFor(client, yield* plugins.list))
   })
 
-  return { receiveWeb, accessChanged }
+  /**
+   * Finishes a connection the person began, as the authorization server sent their browser back
+   * with `response`: the Installation it was for, and why it failed, if it did. Every client that
+   * asked for Plugins is sent them, and the Installation's Repos' log readers its entries.
+   */
+  const finishConnect = Effect.fn("PluginRelay.finishConnect")(function* (
+    you: Participant,
+    response: {
+      readonly state: string
+      readonly code?: string
+      readonly error?: string
+      readonly errorDescription?: string
+      readonly iss?: string
+    },
+  ) {
+    const claimed = yield* oauth.claim(response.state, you.id).pipe(Effect.result)
+    if (claimed._tag === "Failure") return { error: claimed.failure.message }
+    const pending = claimed.success
+    const failed = yield* Effect.gen(function* () {
+      if (response.error !== undefined || response.code === undefined) {
+        return yield* new PluginRefused({
+          message:
+            response.error === "access_denied"
+              ? "The connection wasn't allowed at the authorization server."
+              : `The authorization server refused the connection: ${(response.errorDescription ?? response.error ?? "it sent no code").slice(0, 200)}.`,
+        })
+      }
+      const granted = yield* oauth
+        .exchange(pending, {
+          code: response.code,
+          ...(response.iss !== undefined && { iss: response.iss }),
+        })
+        .pipe(
+          Effect.catchTag("OAuthRefused", (refused) =>
+            Effect.fail(new PluginRefused({ message: refused.message })),
+          ),
+        )
+      yield* host.serialized(
+        Effect.gen(function* () {
+          const change = yield* plugins.connectInstallation(pending, granted, you.id)
+          yield* toOthers(undefined)
+          yield* changed(change)
+        }),
+      )
+    }).pipe(
+      Effect.as<string | undefined>(undefined),
+      Effect.catchTag("PluginRefused", (refused) => Effect.succeed(refused.message)),
+      Effect.catchTag("SqlError", (error) =>
+        Effect.as(
+          Effect.logError("Could not keep an OAuth Installation's connection", error),
+          "The Hub could not keep the connection; try again.",
+        ),
+      ),
+    )
+    return {
+      installationId: pending.installationId,
+      ...(failed !== undefined && { error: failed }),
+    } satisfies { readonly installationId?: InstallationId; readonly error?: string }
+  })
+
+  /**
+   * Sends every client that asked for Plugins them again, as when an OAuth Installation's
+   * connection was lost; under the lock.
+   */
+  const connectionsChanged = toOthers(undefined)
+
+  return { receiveWeb, accessChanged, finishConnect, connectionsChanged }
 })
 
 export type PluginRelay = Effect.Success<ReturnType<typeof makePluginRelay>>
