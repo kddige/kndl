@@ -81,10 +81,32 @@ export function sniffIcon(bytes: Uint8Array): (typeof IconTypes)[number] | undef
 export const iconHash = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex").slice(0, 16)
 
-/** The body at `url`, after at most 3 redirects, each checked as the first was; or none. */
+/** The first `max` bytes of a body, dropping the rest. */
+async function readHead(body: ReadableStream<Uint8Array> | null, max: number) {
+  if (body === null) return new Uint8Array(0)
+  const reader = body.getReader()
+  const chunks: Array<Uint8Array> = []
+  let size = 0
+  for (let read = await reader.read(); !read.done; read = await reader.read()) {
+    const chunk = read.value.subarray(0, max - size)
+    chunks.push(chunk)
+    size += chunk.byteLength
+    if (size >= max) {
+      await reader.cancel().catch(() => undefined)
+      break
+    }
+  }
+  return Buffer.concat(chunks, size)
+}
+
+/**
+ * The body at `url`, after at most 3 redirects, each checked as the first was; or none. A body
+ * past 512 KB is none, unless `head` asks for its first 512 KB: a page's links are in its head.
+ */
 async function get(
   start: string,
   options: Required<IconOptions>,
+  head = false,
 ): Promise<{ readonly bytes: Uint8Array; readonly url: string } | undefined> {
   let url = start
   for (let hop = 0; hop <= maxRedirects; hop++) {
@@ -106,7 +128,9 @@ async function get(
         await response.body?.cancel().catch(() => undefined)
         return undefined
       }
-      const bytes = await readAtMost(response.body, MaxIconBytes)
+      const bytes = head
+        ? await readHead(response.body, MaxIconBytes)
+        : await readAtMost(response.body, MaxIconBytes)
       return bytes === undefined ? undefined : { bytes, url }
     } catch {
       return undefined
@@ -199,7 +223,7 @@ async function faviconAt(
     tried.add(url)
     return getIcon(url, options)
   }
-  const page = await get(`${origin}/`, options)
+  const page = await get(`${origin}/`, options, true)
   const links: Array<Candidate> = []
   let manifest: string | undefined
   if (page !== undefined) {

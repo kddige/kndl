@@ -301,6 +301,18 @@ describe("what the Hub fetches", () => {
     expect(typeOf(icon)).toBe("image/x-icon")
   })
 
+  test("still takes the links in the first 512 KB of a larger page", async () => {
+    const { icon } = await found(
+      {
+        "https://acme.test/": `${html(`<link rel="icon" href="/early.png">`)}${" ".repeat(600 * 1024)}`,
+        "https://acme.test/early.png": png(),
+        "https://acme.test/favicon.ico": ico,
+      },
+      "https://acme.test/mcp",
+    )
+    expect(typeOf(icon)).toBe("image/png")
+  })
+
   test("gives each fetch 5 seconds, then goes on", async () => {
     const aborted: Array<string> = []
     const fetcher: IconFetch = (url, init) =>
