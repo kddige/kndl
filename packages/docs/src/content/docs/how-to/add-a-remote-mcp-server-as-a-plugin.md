@@ -30,7 +30,7 @@ Any Member can add a Plugin.
    A Plugin declares at most 10. The Gateway sets some headers itself, such as `Host`, `Content-Type` and `Mcp-Session-Id`, and refuses them as header secrets: `The Gateway sets Host itself: use another header.`
 5. Press **Add**.
 
-The Plugin is listed with its id: `hub:` and its name in lowercase with dashes, such as `hub:docs-search`. A Plugin made on this Hub alone always has a `hub:` id, so it can't clash with a Plugin from a package, which is named after its package.
+The Plugin is listed with its id: `hub:` and its name in lowercase with dashes, such as `hub:docs-search`. A Plugin made on this Hub alone always has a `hub:` id, so it can't clash with a Plugin from a package, which is named after its package. To add a server described once for any Hub, see [Publish and add a Plugin package](/how-to/publish-and-add-a-plugin-package/).
 
 To change its name, URL or header secrets, press **Edit** on the Plugin. A new URL reaches running Sessions at once.
 
