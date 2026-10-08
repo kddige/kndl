@@ -600,7 +600,18 @@ export class FakeHub implements HubTransport {
       return
     }
     const state = this.plugins.state(this.#allowed)
-    socket.deliver({ ...state, requestId: message.requestId })
+    if (message._tag === "ConnectInstallation" && outcome.authorizing !== undefined) {
+      // Where the browser goes to connect (#217): the fake's "consent" is already given.
+      socket.deliver({
+        _tag: "InstallationAuthorizing",
+        requestId: message.requestId,
+        installationId: message.installationId,
+        url: outcome.authorizing,
+      })
+      socket.deliver(state)
+    } else {
+      socket.deliver({ ...state, requestId: message.requestId })
+    }
     this.#toOthers(socket, state)
     const repos = new Map(outcome.repos.map((repo) => [repoKey(repo), repo]))
     if (outcome.everyRepo === true) {
@@ -1097,6 +1108,8 @@ export class FakeHub implements HubTransport {
       case "AddPluginPackage":
       case "UpgradePlugin":
       case "TurnGlobalInstallation":
+      case "ConnectInstallation":
+      case "DisconnectInstallation":
         this.#changePlugins(socket, message)
         break
       case "ReadPluginPackage":

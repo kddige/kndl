@@ -12,12 +12,19 @@
 // Global Installations (#219) are on in every Repo, but where a Repo-scoped one of their Plugin is
 // on, or a Repo turned them off. Only the Owner creates, edits or deletes one, or edits, upgrades
 // or deletes a Plugin with one; their changes are logged once, and shown in every Repo's log.
+//
+// OAuth Installations (#217) connect at once: there is no authorization server, so Connect sends
+// the browser straight back to the Plugins page, connected to a made-up account. GitHub starts
+// connected; Disconnect it to see a Session kept from starting. Only the Owner connects or
+// disconnects a global one.
 
 import {
   type CheckPluginUpgrade,
   clearedHeaderSecrets,
+  clearsConnections,
   gitRefProblem,
   gitUrlProblem,
+  globalConnectRefusal,
   globalOwnerOnlyRefusal,
   globalPluginRefusal,
   globalReposRefusal,
@@ -57,6 +64,7 @@ import type {
   HeaderValueSetWire,
   HubMessage,
   InstallationFailureWire,
+  InstallationWire,
   ParticipantWire,
   PluginLogEntryWire,
   PluginWire,
@@ -120,6 +128,8 @@ interface FakeInstallation {
   off: Array<string>
   /** Who set each header secret value, and when; the values themselves the fake drops. */
   values: Array<HeaderValueSetWire>
+  /** Its account, for an OAuth Installation connected (#217). */
+  connection?: NonNullable<InstallationWire["connection"]>
   readonly createdBy: ParticipantWire
   readonly createdAt: number
 }
@@ -134,11 +144,15 @@ interface SetValue {
 
 /**
  * What a change did: the Repos whose Installations changed, and whether every Repo's did (#219),
- * or why it was refused.
+ * or why it was refused; for a Connect, where to send the browser (#217).
  */
 export type PluginOutcome =
   | { readonly refused: string }
-  | { readonly repos: ReadonlyArray<string>; readonly everyRepo?: boolean }
+  | {
+      readonly repos: ReadonlyArray<string>
+      readonly everyRepo?: boolean
+      readonly authorizing?: string
+    }
 
 /** Where a change to a global Installation is logged: once, for every Repo. */
 const everyRepo = "*"
@@ -158,12 +172,12 @@ const missingFrom = (from: ReadonlyArray<string>, repos: ReadonlyArray<string>) 
 
 /** A Plugin's auth as the Hub keeps it: titles trimmed. */
 const normalizedAuth = (auth: PluginAuth): PluginAuth =>
-  auth._tag === "None"
-    ? auth
-    : {
+  auth._tag === "Headers"
+    ? {
         _tag: "Headers",
         headers: auth.headers.map((secret) => ({ ...secret, title: secret.title.trim() })),
       }
+    : auth
 
 const sameAuth = (a: PluginAuth, b: PluginAuth) => JSON.stringify(a) === JSON.stringify(b)
 
@@ -248,6 +262,20 @@ export class FakePlugins {
       now - 5 * day,
     )
     team.values = [{ key: "token", setBy: bob, setAt: now - 5 * day }]
+    // OAuth (#217), connected to a shared account.
+    const github = this.#plugin(
+      "GitHub",
+      "https://api.githubcopilot.example/mcp/",
+      you,
+      now - 3 * day,
+      { _tag: "OAuth", scopes: ["repo"] },
+    )
+    const connected = this.#install(github, "GitHub", ["kddige/website"], you, now - 3 * day)
+    connected.connection = {
+      connectedBy: you,
+      connectedAt: now - 3 * day,
+      account: "kndl-bot@example.com",
+    }
   }
 
   /** Every Plugin and Installation, each Installation with only the Repos `allowed` lets through. */
@@ -353,12 +381,25 @@ export class FakePlugins {
 
   /**
    * The Installations on for a Repo that keep its Sessions from starting (#216): as the Hub, one
-   * without a value for a header secret. The fake has no server to ask.
+   * without a value for a header secret, or an OAuth one not connected (#217). The fake has no
+   * server to ask.
    */
   failing(repo: string): Array<InstallationFailureWire> {
     return this.#on(repo).flatMap((installation): Array<InstallationFailureWire> => {
       const plugin = this.#find(installation.pluginId)
       if (plugin === undefined) return []
+      const connected =
+        installation.connection !== undefined && installation.connection.lostAt === undefined
+      if (plugin.auth._tag === "OAuth" && !connected) {
+        return [
+          {
+            installationId: installation.id,
+            installation: installation.name,
+            ...(installation.global && { global: true }),
+            reason: "NotConnected",
+          },
+        ]
+      }
       const missing = headerSecretsOf(plugin.auth).filter(
         (secret) => !installation.values.some((value) => value.key === secret.key),
       )
@@ -427,6 +468,7 @@ export class FakePlugins {
         this.#reads.delete(command.readId)
         // As an edit does: values entered for another server, or another header, are cleared.
         const cleared = clearedHeaderSecrets(plugin, kept.read)
+        const disconnects = clearsConnections(plugin, kept.read)
         const { description: _, ...rest } = plugin
         this.#plugins[this.#plugins.indexOf(plugin)] = { ...rest, ...kept.read }
         for (const one of installed) {
@@ -437,6 +479,7 @@ export class FakePlugins {
             const titles = lost.map((secret) => secret.title)
             this.#record(logRepos(one), "ValuesCleared", one, by, at, titles)
           }
+          if (disconnects) this.#disconnect(one, by, at)
         }
         return {
           repos: installed.flatMap((one) => one.repos),
@@ -480,6 +523,8 @@ export class FakePlugins {
         const ownerOnly = globalPlugin(plugin)
         if (ownerOnly !== undefined) return ownerOnly
         const cleared = clearedHeaderSecrets(plugin, { url: command.url, auth })
+        // Another origin could take the tokens (#217).
+        const disconnects = clearsConnections(plugin, { url: command.url, auth })
         this.#plugins[this.#plugins.indexOf(plugin)] = { ...plugin, name, url: command.url, auth }
         for (const one of installed) {
           const lost = cleared.filter((secret) => one.values.some(({ key }) => key === secret.key))
@@ -489,6 +534,7 @@ export class FakePlugins {
             const titles = lost.map((secret) => secret.title)
             this.#record(logRepos(one), "ValuesCleared", one, by, at, titles)
           }
+          if (disconnects) this.#disconnect(one, by, at)
         }
         return {
           repos: installed.flatMap((one) => one.repos),
@@ -530,6 +576,46 @@ export class FakePlugins {
         const installation = this.#install(plugin, name, command.repos, by, at, global)
         this.#set(installation, values.set, logRepos(installation), by, at)
         return { repos: installation.repos, ...(global && { everyRepo: true }) }
+      }
+      case "ConnectInstallation":
+      case "DisconnectInstallation": {
+        const installation = this.#installations.find((one) => one.id === command.installationId)
+        if (installation === undefined) return { refused: "There is no such Installation." }
+        if (!installation.repos.every(allowed)) return { refused: hiddenRepos }
+        if (installation.global && !owner) return { refused: globalConnectRefusal }
+        const plugin = this.#find(installation.pluginId)
+        const every = installation.global && { everyRepo: true }
+        if (command._tag === "DisconnectInstallation") {
+          if (installation.connection === undefined) {
+            return { refused: `${installation.name} isn't connected.` }
+          }
+          this.#disconnect(installation, by, at)
+          return { repos: installation.repos, ...every }
+        }
+        if (plugin?.auth._tag !== "OAuth") {
+          return {
+            refused: `${installation.name} doesn't use OAuth: there is no account to connect.`,
+          }
+        }
+        // No authorization server: the person "consents" at once.
+        const reconnected = installation.connection !== undefined
+        installation.connection = {
+          connectedBy: by,
+          connectedAt: at,
+          account: `${by.login}@${new URL(plugin.url).hostname}`,
+        }
+        this.#record(
+          logRepos(installation),
+          reconnected ? "Reconnected" : "Connected",
+          installation,
+          by,
+          at,
+        )
+        return {
+          repos: installation.repos,
+          ...every,
+          authorizing: `/plugins?installation=${encodeURIComponent(installation.id)}&connected=1`,
+        }
       }
       case "EditInstallation":
       case "DeleteInstallation": {
@@ -611,6 +697,13 @@ export class FakePlugins {
         return { repos: [command.repo] }
       }
     }
+  }
+
+  /** Forgets an Installation's account, if it had one, and logs it. */
+  #disconnect(installation: FakeInstallation, by: ParticipantWire, at: number): void {
+    if (installation.connection === undefined) return
+    delete installation.connection
+    this.#record(logRepos(installation), "Disconnected", installation, by, at)
   }
 
   #find(id: string): PluginWire | undefined {

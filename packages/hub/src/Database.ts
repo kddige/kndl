@@ -591,6 +591,26 @@ const migrations = SqliteMigrator.fromRecord({
       ON installation_repo_off (installation_id, repo COLLATE NOCASE)
     `
   }),
+  // OAuth Installations (#217): the client the Hub registered with an Installation's authorization
+  // server, and its tokens, each encrypted with the secrets key (tokens null when not connected);
+  // a generation each rotation bumps, so a refresh never overwrites a newer one; and who connected
+  // it, when, the account it acts as, and when the connection was lost. 0029, not 0027: the
+  // migrator runs only those after the last it ran, and a Hub may have run 0028 already.
+  "0029_plugin_oauth": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE installation_oauth (
+        installation_id TEXT PRIMARY KEY REFERENCES installations (id) ON DELETE CASCADE,
+        client TEXT,
+        tokens TEXT,
+        generation INTEGER NOT NULL DEFAULT 0,
+        account TEXT,
+        connected_by TEXT REFERENCES participants (id),
+        connected_at INTEGER,
+        lost_at INTEGER
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

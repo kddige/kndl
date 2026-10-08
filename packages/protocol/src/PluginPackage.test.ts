@@ -85,6 +85,15 @@ describe("a package", () => {
     })
   })
 
+  test("maps OAuth onto the Plugin's auth, with the scopes it asks for (#217)", () => {
+    expect(Result.getOrThrow(read(pkg, { ...manifest, auth: { type: "oauth" } })).auth).toEqual({
+      _tag: "OAuth",
+    })
+    expect(
+      Result.getOrThrow(read(pkg, { ...manifest, auth: { type: "oauth", scopes: ["read"] } })).auth,
+    ).toEqual({ _tag: "OAuth", scopes: ["read"] })
+  })
+
   test("is refused a package.json that isn't an npm package's, saying why", () => {
     expect(problems("{", manifest)).toEqual(["package.json isn't JSON."])
     expect(problems([], manifest)).toEqual(["package.json must be a JSON object."])
@@ -112,8 +121,14 @@ describe("a package", () => {
       "kndl.json: displayName is missing.",
       "kndl.json: mcp.url must start with https:// (or http://).",
     ])
-    expect(problems(pkg, { ...manifest, auth: { type: "oauth" } })).toEqual([
-      'kndl.json: auth.type must be "none" or "headers".',
+    expect(problems(pkg, { ...manifest, auth: { type: "basic" } })).toEqual([
+      'kndl.json: auth.type must be "none", "headers" or "oauth".',
+    ])
+    expect(problems(pkg, { ...manifest, auth: { type: "oauth", scopes: ["a b"] } })).toEqual([
+      `kndl.json: auth.scopes: "a b" isn't an OAuth scope: one word, without quotes.`,
+    ])
+    expect(problems(pkg, { ...manifest, auth: { type: "oauth", clientId: "x" } })).toEqual([
+      "kndl.json: auth.clientId isn't a field kndl.json has.",
     ])
     expect(
       problems(pkg, {

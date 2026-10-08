@@ -318,6 +318,13 @@ describe("an Installation", () => {
     expect(await ask(web, { _tag: "DeleteInstallation", installationId: id })).toEqual(
       refused("DeleteInstallation", message),
     )
+    // Nor its account connected or disconnected (#217): its tokens reach every Repo it lists.
+    expect(await ask(web, { _tag: "ConnectInstallation", installationId: id })).toEqual(
+      refused("ConnectInstallation", message),
+    )
+    expect(await ask(web, { _tag: "DisconnectInstallation", installationId: id })).toEqual(
+      refused("DisconnectInstallation", message),
+    )
     // Nor its Plugin edited: its URL is where their MCP traffic goes.
     expect(
       await ask(web, {

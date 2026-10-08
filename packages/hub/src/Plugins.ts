@@ -23,8 +23,13 @@
 //   wake or Restart. A Plugin's URL moved to another origin clears every value its Installations
 //   and their Sessions hold, so none goes to a server it wasn't entered for; a header secret
 //   removed, or given another key or header, clears theirs for it.
+// - A Plugin may use OAuth instead (#217): each Installation is connected to an account, whose
+//   tokens PluginOAuth.ts keeps and refreshes, and the Gateway sends live, not as a Session started
+//   with them. A Plugin's URL moved to another origin, or no longer using OAuth, disconnects its
+//   Installations, and forgets the client the Hub registered for them too.
 // - Each Repo's log records who created, renamed, added, removed or deleted an Installation on it,
-//   edited its Plugin, or set or cleared its values, and when, with the names as they were: a
+//   edited its Plugin, set or cleared its values, or connected or disconnected it, and when, with
+//   the names as they were: a
 //   value's header secret by its title, never the value. Nothing here is an Environment version:
 //   Sessions pick the change up on their next wake or Restart.
 // - A change to a global Installation, or to its Plugin, affects every Repo, and the Hub knows no
@@ -34,12 +39,15 @@
 
 import {
   clearedHeaderSecrets,
+  clearsConnections,
+  type InstallationConnection,
   type HeaderSecret,
   type HeaderValueInput,
   type HeaderValueSet,
   headerSecretsOf,
   headerValue,
   headerValueProblem,
+  globalConnectRefusal,
   globalOwnerOnlyRefusal,
   globalPluginRefusal,
   globalReposRefusal,
@@ -80,6 +88,12 @@ import { Clock, Context, Effect, Layer, Option, Redacted, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import type { Fragment } from "effect/sql/Statement"
+import {
+  connectionBasis,
+  type Granted,
+  type PendingConnection,
+  PluginOAuth,
+} from "./PluginOAuth.ts"
 import { Secrets, type SecretsUnavailable } from "./Secrets.ts"
 import { randomId } from "./Tokens.ts"
 
@@ -107,8 +121,8 @@ const everyRepo = "*"
 
 /**
  * Where the Gateway sends a Session's request through an Installation: the Plugin's URL as it is
- * now, with the headers its header secrets make from the values the Session started with; or why
- * it can't, as it answers the request.
+ * now, with the headers its header secrets make from the values the Session started with, or with
+ * its OAuth token as it is now; or why it can't, as it answers the request.
  */
 export type GatewayTarget =
   | {
@@ -118,6 +132,8 @@ export type GatewayTarget =
         readonly header: string
         readonly value: Redacted.Redacted<string>
       }>
+      /** For an OAuth Installation (#217): which of its tokens is sent, to say if it's refused. */
+      readonly oauth?: { readonly generation: number }
     }
   | {
       readonly _tag: "NeedsValue"
@@ -125,6 +141,14 @@ export type GatewayTarget =
       /** The titles of the header secrets without a value (#216). */
       readonly secrets: ReadonlyArray<string>
     }
+  /** An OAuth Installation that isn't connected, or whose connection was lost (#217). */
+  | { readonly _tag: "NotConnected"; readonly message: string }
+  /** An OAuth Installation whose token expired, and couldn't be refreshed just now. */
+  | { readonly _tag: "Unavailable"; readonly message: string }
+
+/** What the Gateway answers a request through an OAuth Installation that isn't connected. */
+export const notConnectedRefusal = (installation: string) =>
+  `${installation} isn't connected to its account: reconnect it on the Plugins page.`
 
 /** Refuses a Plugin's name, URL or header secrets that break the rules the web UI shows. */
 const checkPlugin = (input: {
@@ -183,14 +207,22 @@ const checkValues = (target: Plugin, values: ReadonlyArray<HeaderValueInput>) =>
   return Effect.succeed([...set.values()])
 }
 
-/** A Plugin's auth as it is kept: titles trimmed. */
-const normalizedAuth = (auth: PluginAuth): PluginAuth =>
-  auth._tag === "None"
-    ? auth
-    : {
+/** A Plugin's auth as it is kept: titles trimmed; OAuth's scopes listed only if there are any. */
+const normalizedAuth = (auth: PluginAuth): PluginAuth => {
+  switch (auth._tag) {
+    case "None":
+      return auth
+    case "OAuth":
+      return auth.scopes === undefined || auth.scopes.length === 0
+        ? { _tag: "OAuth" }
+        : { _tag: "OAuth", scopes: auth.scopes }
+    case "Headers":
+      return {
         _tag: "Headers",
         headers: auth.headers.map((secret) => ({ ...secret, title: secret.title.trim() })),
       }
+  }
+}
 
 /** What an Installation's value of a header secret is bound to, encrypted. */
 const valueContext = (installation: string, key: string) =>
@@ -349,6 +381,33 @@ export class Plugins extends Context.Service<
       by: ParticipantId,
     ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
     /**
+     * Keeps the tokens a connection of an OAuth Installation was granted (#217), logging Connected,
+     * or Reconnected if it had a connection, on each Repo it lists, or once for every Repo, for a
+     * global one. Refused if the Installation lists another Repo than the connection began with,
+     * became global or Repo-scoped since, or its Plugin's URL or auth changed since.
+     */
+    readonly connectInstallation: (
+      pending: PendingConnection,
+      granted: Granted,
+      by: ParticipantId,
+    ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
+    /**
+     * Refuses connecting or disconnecting a global OAuth Installation, unless by the Owner (#217,
+     * #219): every Session on the Hub acts as its account. A Repo-scoped one's Repos are its gate.
+     */
+    readonly checkConnector: (
+      installation: StoredInstallation,
+      by: ParticipantId,
+    ) => Effect.Effect<void, PluginRefused | SqlError>
+    /**
+     * Forgets an OAuth Installation's tokens, logging Disconnected on each Repo it lists, or once
+     * for every Repo, for a global one.
+     */
+    readonly disconnectInstallation: (
+      id: InstallationId,
+      by: ParticipantId,
+    ) => Effect.Effect<PluginsChanged, PluginRefused | SqlError>
+    /**
      * The Installations on for the Repo, by any spelling, oldest first, as the Session starting
      * now runs with them: each with its MCP server's name, unique among them. The values they hold
      * now become the Session's, which the Gateway uses until it starts again.
@@ -368,7 +427,7 @@ export class Plugins extends Context.Service<
     /**
      * Every value of a header secret the Repo's Sessions may meet, to redact from what they
      * print: those of the Installations on for it, by any spelling, and those its Sessions
-     * started with.
+     * started with; and the OAuth tokens of the Installations on for it (#217).
      */
     readonly valuesOn: (
       repo: string,
@@ -382,6 +441,7 @@ export class Plugins extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const secrets = yield* Secrets
+      const oauth = yield* PluginOAuth
 
       const pluginRows = (where: Fragment) =>
         sql<{
@@ -463,7 +523,36 @@ export class Plugins extends Context.Service<
           WHERE v.installation_id IN ${sql.in(ids)}
           ORDER BY v.key
         `
+        // Who connected each OAuth Installation, when, and as whom (#217): never a token.
+        const connections = yield* sql<{
+          readonly installationId: string
+          readonly account: string | null
+          readonly connectedAt: number
+          readonly lostAt: number | null
+          readonly byId: string
+          readonly byLogin: string
+          readonly byName: string
+          readonly byAvatarUrl: string | null
+        }>`
+          SELECT o.installation_id AS installationId, o.account, o.connected_at AS connectedAt,
+            o.lost_at AS lostAt, p.id AS byId, p.login AS byLogin, p.name AS byName,
+            p.avatar_url AS byAvatarUrl
+          FROM installation_oauth o JOIN participants p ON p.id = o.connected_by
+          WHERE o.connected_at IS NOT NULL AND o.installation_id IN ${sql.in(ids)}
+        `
+        const connectionOf = (id: string): InstallationConnection | undefined => {
+          const found = connections.find((connection) => connection.installationId === id)
+          return found === undefined
+            ? undefined
+            : {
+                connectedBy: toParticipant(found),
+                connectedAt: found.connectedAt,
+                ...(found.account !== null && { account: found.account }),
+                ...(found.lostAt !== null && { lostAt: found.lostAt }),
+              }
+        }
         return rows.map((row): StoredInstallation => {
+          const connection = connectionOf(row.id)
           const turnedOff = off
             .filter((repo) => repo.installationId === row.id)
             .map((repo) => RepoName.make(repo.repo))
@@ -483,6 +572,7 @@ export class Plugins extends Context.Service<
                 setBy: toParticipant(value),
                 setAt: value.setAt,
               })),
+            ...(connection !== undefined && { connection }),
             createdBy: toParticipant(row),
             createdAt: row.createdAt,
           }
@@ -670,6 +760,15 @@ export class Plugins extends Context.Service<
           yield* sql`DELETE FROM installation_values WHERE ${ofPlugin}`
           yield* sql`DELETE FROM session_installation_values WHERE ${ofPlugin}`
         }
+        // Tokens and the registered client go with the origin they were for (#217), so a URL edit
+        // can't send them to another server.
+        const disconnects = clearsConnections(before, next)
+        if (disconnects) {
+          yield* sql`
+            DELETE FROM installation_oauth
+            WHERE installation_id IN (SELECT id FROM installations WHERE plugin_id = ${id})
+          `
+        }
         const at = yield* Clock.currentTimeMillis
         const repos: Array<RepoName> = []
         for (const one of installed) {
@@ -677,7 +776,12 @@ export class Plugins extends Context.Service<
             .filter((secret) => one.values.some((value) => value.key === secret.key))
             .map((secret) => secret.title)
           yield* record(
-            withValues(logRepos(one), change, { change: "ValuesCleared", secrets: lost }),
+            [
+              ...withValues(logRepos(one), change, { change: "ValuesCleared", secrets: lost }),
+              ...(disconnects && one.connection !== undefined
+                ? logRepos(one).map((repo) => ({ repo, change: "Disconnected" as const }))
+                : []),
+            ],
             {
               plugin: {
                 id,
@@ -1009,6 +1113,75 @@ export class Plugins extends Context.Service<
         (effect) => sql.withTransaction(effect),
       )
 
+      const checkConnector = Effect.fn("Plugins.checkConnector")(function* (
+        target: StoredInstallation,
+        by: ParticipantId,
+      ) {
+        if (target.global === true) yield* ownerOnly(by, globalConnectRefusal)
+      })
+
+      const connectInstallation = Effect.fn("Plugins.connectInstallation")(
+        function* (pending: PendingConnection, granted: Granted, by: ParticipantId) {
+          const existing = yield* installation(pending.installationId)
+          if (Option.isNone(existing)) return yield* refuse("There is no such Installation.")
+          const target = Option.getOrThrow(yield* plugin(existing.value.pluginId))
+          const global = existing.value.global === true
+          if (
+            global !== pending.global ||
+            existing.value.repos.some(
+              (repo) => !pending.repos.some((other) => sameRepo(other, repo)),
+            ) ||
+            connectionBasis(target) !== pending.basis
+          ) {
+            return yield* refuse(
+              `${existing.value.name} or its Plugin changed meanwhile: connect it again.`,
+            )
+          }
+          yield* checkConnector(existing.value, by)
+          const { reconnected } = yield* oauth
+            .store(pending, granted, by)
+            .pipe(
+              Effect.catchTag("SecretsUnavailable", (error) =>
+                Effect.fail(new PluginRefused({ message: error.message })),
+              ),
+            )
+          const change = reconnected ? ("Reconnected" as const) : ("Connected" as const)
+          yield* record(
+            logRepos(existing.value).map((repo) => ({ repo, change })),
+            { plugin: target, installation: existing.value },
+            by,
+            yield* Clock.currentTimeMillis,
+          )
+          return { repos: existing.value.repos, ...(global && { everyRepo: true }) }
+        },
+        (effect) => sql.withTransaction(effect),
+      )
+
+      const disconnectInstallation = Effect.fn("Plugins.disconnectInstallation")(
+        function* (id: InstallationId, by: ParticipantId) {
+          const existing = yield* installation(id)
+          if (Option.isNone(existing)) return yield* refuse("There is no such Installation.")
+          yield* checkConnector(existing.value, by)
+          if (!(yield* oauth.disconnect(id))) {
+            return yield* refuse(`${existing.value.name} isn't connected.`)
+          }
+          yield* record(
+            logRepos(existing.value).map((repo) => ({ repo, change: "Disconnected" as const })),
+            {
+              plugin: Option.getOrThrow(yield* plugin(existing.value.pluginId)),
+              installation: existing.value,
+            },
+            by,
+            yield* Clock.currentTimeMillis,
+          )
+          return {
+            repos: existing.value.repos,
+            ...(existing.value.global === true && { everyRepo: true }),
+          }
+        },
+        (effect) => sql.withTransaction(effect),
+      )
+
       const forSession = Effect.fn("Plugins.forSession")(
         function* (sessionId: SessionId, repo: string) {
           const installations = (yield* installationsOn(sql, [repo])).get(repoKey(repo)) ?? []
@@ -1059,7 +1232,36 @@ export class Plugins extends Context.Service<
         `
         const row = rows[0]
         if (row === undefined) return Option.none<GatewayTarget>()
-        const declared = headerSecretsOf(authOf(row.auth))
+        const auth = authOf(row.auth)
+        if (auth._tag === "OAuth") {
+          // The token as it is now, not as the Session started (#217): refreshes reach it at once.
+          const token = yield* oauth.accessToken(id)
+          switch (token._tag) {
+            case "NotConnected":
+              return Option.some<GatewayTarget>({
+                _tag: "NotConnected",
+                message: notConnectedRefusal(row.name),
+              })
+            case "Unavailable":
+              return Option.some<GatewayTarget>({
+                _tag: "Unavailable",
+                message: `${row.name}'s token expired, and its authorization server could not be reached to refresh it: try again.`,
+              })
+            case "Token":
+              return Option.some<GatewayTarget>({
+                _tag: "Ready",
+                url: row.url,
+                headers: [
+                  {
+                    header: "Authorization",
+                    value: Redacted.make(`Bearer ${Redacted.value(token.token)}`),
+                  },
+                ],
+                oauth: { generation: token.generation },
+              })
+          }
+        }
+        const declared = headerSecretsOf(auth)
         const held =
           declared.length === 0
             ? []
@@ -1108,9 +1310,15 @@ export class Plugins extends Context.Service<
           FROM session_installation_values v JOIN sessions s ON s.id = v.session_id
           WHERE s.repo = ${repo} COLLATE NOCASE
         `
-        return yield* Effect.forEach(rows, (row) =>
+        const values = yield* Effect.forEach(rows, (row) =>
           secrets.decrypt(row.value, valueContext(row.installationId, row.key)),
         )
+        const on = yield* sql<{ readonly installationId: string }>`
+          SELECT installation_id AS installationId FROM installation_repos
+          WHERE repo = ${repo} COLLATE NOCASE
+        `
+        const tokens = yield* oauth.tokensOf(on.map((row) => row.installationId))
+        return [...values, ...tokens]
       })
 
       const log = Effect.fn("Plugins.log")(function* (repo: string) {
@@ -1170,6 +1378,9 @@ export class Plugins extends Context.Service<
         editInstallation,
         deleteInstallation,
         turnGlobalInstallation,
+        connectInstallation,
+        checkConnector,
+        disconnectInstallation,
         forSession,
         gatewayTarget,
         valuesOn,

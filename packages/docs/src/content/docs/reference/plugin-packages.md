@@ -46,7 +46,7 @@ The Hub reads it strictly: a field it doesn't know refuses the package, and the 
 | `displayName` | Yes | The Plugin's name, as the Plugins page and Sessions show it. One line of 1 to 80 characters. |
 | `description` | No | One line of 1 to 500 characters, shown on the Plugin. |
 | `mcp.url` | Yes | The remote MCP server's URL, over [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http). It must start with `https://` (or `http://`), and can't hold a user name, password or `#fragment`. |
-| `auth` | No | What the MCP server needs to be reached: `{ "type": "none" }`, the default, or header secrets. |
+| `auth` | No | What the MCP server needs to be reached: `{ "type": "none" }`, the default, [header secrets](#header-secrets), or [OAuth](#oauth). |
 
 ### Header secrets
 
@@ -60,6 +60,18 @@ The Hub reads it strictly: a field it doesn't know refuses the package, and the 
 | `template` | No | The header's value, with `{value}` exactly once where the Installation's value goes, such as `Bearer {value}`. One line of plain characters, at most 1024. `{value}` by default. |
 
 A Plugin lists 1 to 10 headers, each key and each header name once.
+
+### OAuth
+
+`{ "type": "oauth" }` is for an MCP server that signs people in with OAuth, as the [MCP authorization spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) describes, through an authorization server that offers Dynamic Client Registration (RFC 7591). Each Installation of the Plugin is connected to one account there, from the Plugins page, and only the Hub holds its tokens: see [Connect it to an account with OAuth](/how-to/add-a-remote-mcp-server-as-a-plugin/#connect-it-to-an-account-with-oauth).
+
+```json
+"auth": { "type": "oauth", "scopes": ["read", "write"] }
+```
+
+| Field | Required | What it is |
+|---|---|---|
+| `scopes` | No | The OAuth scopes to ask for, at most 20, each one word of printable ASCII without `"` or `\`. Without it, the Hub asks for those the server names in its challenge or metadata. |
 
 ## Where the Hub reads it from
 
@@ -75,6 +87,6 @@ Each file is at most 64 KiB.
 
 A packaged Plugin stays as it was read: its name, description, URL and auth change only with an Upgrade, which shows what it changes, and whose values it clears, and applies only once confirmed. It can't be edited on the Plugins page. Only a package from the same source upgrades it: the same git repo and folder, at any ref, or another upload. A package whose name a Plugin from another source has is refused.
 
-An Upgrade clears Installations' header secret values as editing a Hub-only Plugin does: all of them when the URL moves to another origin (scheme, host or port), and a secret's when it is gone from the package or has another key or header. Each value was entered for the server and header it had, so it goes nowhere else.
+An Upgrade clears Installations' header secret values as editing a Hub-only Plugin does: all of them when the URL moves to another origin (scheme, host or port), and a secret's when it is gone from the package or has another key or header. Each value was entered for the server and header it had, so it goes nowhere else. Likewise, an Upgrade of an OAuth Plugin to another origin, or to another `auth` type, disconnects its Installations, dropping their tokens and the client the Hub registered; the Upgrade dialog says which first.
 
 An Upgrade logs `upgraded <plugin>, the Plugin of <installation>, to <version>` in each Repo with an Installation of it, and `cleared <titles> of <installation>` where it cleared values. Sessions keep running what they started with, and show that a Restart applies the change; an Asleep one gets it as it wakes.

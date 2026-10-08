@@ -13,15 +13,21 @@ import { EpochMillis, Participant, RepoName, repoKey } from "./Session.ts"
 // that the Gateway adds to each request, each from a value its Installation holds. The values are
 // write-only, like Sensitive Variables: the web is told only which are set, by whom and when.
 //
+// A Plugin may instead use OAuth (#217), for an MCP server whose authorization server offers
+// Dynamic Client Registration: each Installation is connected to one account there, by someone
+// who may edit it, and every Session on its Repos acts as that account. Only the Hub holds the
+// tokens, and refreshes them; the web is told only whether it is connected, by whom, and the
+// account, if the server says. Claude Code never runs OAuth itself: the Gateway answers it.
+//
 // A Plugin is Hub-only, made in the web UI, or packaged: read from a git repo or an upload, pinned
-// to its version and changed only by an Upgrade (see PluginPackage.ts). OAuth comes later, and
-// slots in here.
+// to its version and changed only by an Upgrade (see PluginPackage.ts).
 //
 // An Installation is global (#219), on in every Repo, existing and new, or Repo-scoped, on in the
 // Repos it lists. On a Repo with a Repo-scoped Installation of a global one's Plugin, that one
 // takes the global's place; a Repo can also turn a global Installation off, and back on. Only the
-// Hub's Owner creates, edits or deletes a global Installation, or edits, upgrades or deletes its
-// Plugin: every Sandbox on the Hub can use it. See `installationsFor`.
+// Hub's Owner creates, edits or deletes a global Installation, connects or disconnects it, or
+// edits, upgrades or deletes its Plugin: every Sandbox on the Hub can use it. See
+// `installationsFor`.
 
 // ── Plugins and Installations ──────────────────────────────────────────────
 
@@ -81,10 +87,18 @@ export const HeaderSecret = Schema.Struct({
 })
 export type HeaderSecret = typeof HeaderSecret.Type
 
-/** The auth a Plugin's MCP server needs: none, or header secrets. OAuth comes later. */
+/** The OAuth scopes one Plugin asks for, at most. */
+export const MaxOAuthScopes = 20
+
+/**
+ * The auth a Plugin's MCP server needs: none; header secrets; or OAuth (#217), each Installation
+ * connected to an account on the server's authorization server, asking for `scopes` when listed,
+ * else for those the server says it needs.
+ */
 export const PluginAuth = Schema.Union([
   Schema.TaggedStruct("None", {}),
   Schema.TaggedStruct("Headers", { headers: Schema.Array(HeaderSecret) }),
+  Schema.TaggedStruct("OAuth", { scopes: Schema.optionalKey(Schema.Array(Schema.String)) }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type PluginAuth = typeof PluginAuth.Type
 
@@ -148,6 +162,20 @@ export const HeaderValueSet = Schema.Struct({
 export type HeaderValueSet = typeof HeaderValueSet.Type
 
 /**
+ * An OAuth Installation's connection to its account (#217): who connected it and when, and the
+ * account, if the server said which. `lostAt` says when the Hub found it no longer works, as when
+ * the authorization server refused to refresh it: then it needs reconnecting. Never a token.
+ */
+export const InstallationConnection = Schema.Struct({
+  connectedBy: Participant,
+  connectedAt: EpochMillis,
+  /** The account, as the server's OpenID Connect claims name it: an email or user name. */
+  account: Schema.optionalKey(Schema.String),
+  lostAt: Schema.optionalKey(EpochMillis),
+})
+export type InstallationConnection = typeof InstallationConnection.Type
+
+/**
  * A named copy of a Plugin, global or on in the Repos it lists. A web client is sent only the
  * Repos its person has access to: `otherRepos` counts the rest, without naming them.
  */
@@ -171,10 +199,16 @@ export const Installation = Schema.Struct({
    * here needs a value.
    */
   values: Schema.Array(HeaderValueSet),
+  /** For an OAuth Plugin: its connection, absent while it was never connected or is disconnected. */
+  connection: Schema.optionalKey(InstallationConnection),
   createdBy: Participant,
   createdAt: EpochMillis,
 })
 export type Installation = typeof Installation.Type
+
+/** Whether an Installation is connected to its OAuth account, and the connection still works. */
+export const isConnected = (installation: { readonly connection?: InstallationConnection }) =>
+  installation.connection !== undefined && installation.connection.lostAt === undefined
 
 /** A value for one of a Plugin's header secrets, as the web UI sends it: write-only. */
 export const HeaderValueInput = Schema.Struct({
@@ -214,6 +248,15 @@ export const PluginChange = Schema.Literals([
   "TurnedOff",
   /** A global Installation turned off for the Repo was turned back on (#219). */
   "TurnedOn",
+  /** An OAuth Installation on the Repo was connected to its account (#217). */
+  "Connected",
+  /** An OAuth Installation on the Repo was connected again, as to replace a lost connection. */
+  "Reconnected",
+  /**
+   * An OAuth Installation on the Repo was disconnected: by someone, or as its Plugin's URL moved to
+   * another origin or its Plugin stopped using OAuth, so no token goes to a server it wasn't for.
+   */
+  "Disconnected",
 ])
 export type PluginChange = typeof PluginChange.Type
 
@@ -468,6 +511,32 @@ export const TurnGlobalInstallation = Schema.TaggedStruct("TurnGlobalInstallatio
 })
 export type TurnGlobalInstallation = typeof TurnGlobalInstallation.Type
 
+/**
+ * Connect an OAuth Installation to an account (#217), or reconnect it: the Hub finds the MCP
+ * server's authorization server, registers itself there, and answers with where to send the
+ * browser, to sign in and consent. The authorization server sends it back to the Hub, which keeps
+ * the tokens and sends it on to the Plugins page. Refused unless the person has access to every
+ * Repo the Installation lists, and unless the person is the Owner, for a global one (#219).
+ * Answered with {@link InstallationAuthorizing}.
+ */
+export const ConnectInstallation = Schema.TaggedStruct("ConnectInstallation", {
+  requestId: RequestId,
+  installationId: InstallationId,
+})
+export type ConnectInstallation = typeof ConnectInstallation.Type
+
+/**
+ * Disconnect an OAuth Installation, so the Hub forgets its tokens: its Sessions' requests are
+ * refused from now on, and they don't start until it is connected again. Refused unless the person
+ * has access to every Repo it lists, and unless the person is the Owner, for a global one (#219).
+ * Answered with {@link PluginsState}.
+ */
+export const DisconnectInstallation = Schema.TaggedStruct("DisconnectInstallation", {
+  requestId: RequestId,
+  installationId: InstallationId,
+})
+export type DisconnectInstallation = typeof DisconnectInstallation.Type
+
 /** Ask for a Repo's Plugin change log. Answered with {@link PluginLog}. */
 export const GetPluginLog = Schema.TaggedStruct("GetPluginLog", {
   requestId: RequestId,
@@ -489,6 +558,8 @@ export const PluginCommand = Schema.Union([
   EditInstallation,
   DeleteInstallation,
   TurnGlobalInstallation,
+  ConnectInstallation,
+  DisconnectInstallation,
   GetPluginLog,
 ])
 export type PluginCommand = typeof PluginCommand.Type
@@ -531,6 +602,21 @@ export const PluginPackageRead = Schema.TaggedStruct("PluginPackageRead", {
   upgrades: Schema.optionalKey(PluginId),
 })
 export type PluginPackageRead = typeof PluginPackageRead.Type
+
+/**
+ * Where to send the browser to connect the Installation (#217): its authorization server's page to
+ * sign in and consent, which sends it back to the Hub within {@link OAuthConnectTtlMs}. Answers
+ * {@link ConnectInstallation}.
+ */
+export const InstallationAuthorizing = Schema.TaggedStruct("InstallationAuthorizing", {
+  requestId: RequestId,
+  installationId: InstallationId,
+  url: Schema.String,
+})
+export type InstallationAuthorizing = typeof InstallationAuthorizing.Type
+
+/** How long a connection the Hub began waits for the authorization server to send the browser back. */
+export const OAuthConnectTtlMs = 10 * 60_000
 
 /** How long the Hub keeps a package it read for adding or upgrading. */
 export const PluginPackageReadTtlMs = 30 * 60_000
@@ -620,9 +706,22 @@ const reservedHeaders = new Map(
 /** How many times `{value}` is in a template. */
 const placeholders = (template: string) => template.split(ValuePlaceholder).length - 1
 
-/** Why a Plugin's auth is refused, if it is: the header secrets it declares break a rule. */
+/** An OAuth scope: printable ASCII but space, `"` and `\` (RFC 6749). */
+const scopePattern = /^[!#-[\]-~]{1,200}$/
+
+/**
+ * Why a Plugin's auth is refused, if it is: the header secrets it declares break a rule, or the
+ * OAuth scopes it asks for.
+ */
 export function pluginAuthProblem(auth: PluginAuth): string | undefined {
   if (auth._tag === "None") return undefined
+  if (auth._tag === "OAuth") {
+    const scopes = auth.scopes ?? []
+    if (scopes.length > MaxOAuthScopes) return `A Plugin asks for at most ${MaxOAuthScopes} scopes.`
+    const bad = scopes.find((scope) => !scopePattern.test(scope))
+    if (bad !== undefined) return `"${bad}" isn't an OAuth scope: one word, without quotes.`
+    return undefined
+  }
   const { headers } = auth
   if (headers.length === 0) return "Declare at least one header secret, or none."
   if (headers.length > MaxHeaderSecrets) {
@@ -703,6 +802,18 @@ export function clearedHeaderSecrets(
 }
 
 /**
+ * Whether an edit or Upgrade of a Plugin from `before` to `after` disconnects its OAuth
+ * Installations (#217), as the Hub does: when its URL moves to another origin, so no token goes to
+ * a server it wasn't issued for, or it stops using OAuth.
+ */
+export const clearsConnections = (
+  before: { readonly url: string; readonly auth: PluginAuth },
+  after: { readonly url: string; readonly auth: PluginAuth },
+) =>
+  before.auth._tag === "OAuth" &&
+  (after.auth._tag !== "OAuth" || originOf(before.url) !== originOf(after.url))
+
+/**
  * What the Gateway answers a request through an Installation that has no value for one of its
  * Plugin's header secrets, as the Session started with them.
  */
@@ -719,6 +830,8 @@ export const valueNeededRefusal = (installation: string, title: string) =>
  * - `Unreadable`: the Hub could not decrypt its values, as when HUB_SECRETS_KEY changed.
  * - `Unreachable`: its MCP server could not be reached, or didn't answer in time.
  * - `Errored`: its MCP server answered another error.
+ * - `NotConnected`: it uses OAuth, and isn't connected to its account, or the connection was lost
+ *   (#217): someone must Reconnect it.
  */
 export const InstallationFailureReason = Schema.Literals([
   "ValueNeeded",
@@ -726,6 +839,7 @@ export const InstallationFailureReason = Schema.Literals([
   "Unreadable",
   "Unreachable",
   "Errored",
+  "NotConnected",
 ])
 export type InstallationFailureReason = typeof InstallationFailureReason.Type
 
@@ -764,6 +878,8 @@ export const installationFailureText = (failure: Omit<InstallationFailure, "inst
       return `${installation}'s MCP server could not be reached.`
     case "Errored":
       return `${installation}'s MCP server answered ${failure.status ?? "an error"}.`
+    case "NotConnected":
+      return `${installation} isn't connected to its account.`
   }
 }
 
@@ -775,7 +891,8 @@ export const installationFailureText = (failure: Omit<InstallationFailure, "inst
 export const failureBlocksStart = (failure: InstallationFailure) =>
   failure.reason === "ValueNeeded" ||
   failure.reason === "Rejected" ||
-  failure.reason === "Unreadable"
+  failure.reason === "Unreadable" ||
+  failure.reason === "NotConnected"
 
 /**
  * Why a Session in `repo` didn't start, for the Installations that kept it from starting (#216),
@@ -820,6 +937,13 @@ export const globalOwnerOnlyRefusal =
 /** Why anyone but the Owner is refused a change to a Plugin with a global Installation (#219). */
 export const globalPluginRefusal = (plugin: string) =>
   `${plugin} has a global Installation, on in every Repo: only the Hub's Owner can edit, upgrade or delete it.`
+
+/**
+ * Why anyone but the Owner is refused connecting or disconnecting a global OAuth Installation
+ * (#217, #219): every Session on the Hub acts as its account.
+ */
+export const globalConnectRefusal =
+  "Only the Hub's Owner can connect or disconnect a global Installation: every Session on the Hub acts as its account."
 
 /** Why turning a Repo-scoped Installation off for a Repo is refused (#219). */
 export const notGlobalRefusal = (installation: string) =>

@@ -36,6 +36,7 @@ import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
 import { EffortLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
+  InstallationAuthorizing,
   InstallationFailure,
   PluginCommand,
   PluginLog,
@@ -800,6 +801,7 @@ export const HubToWeb = Schema.Union([
   PluginsState,
   PluginLog,
   PluginPackageRead,
+  InstallationAuthorizing,
   ClaudeCredentialState,
   AppPermissionsChecked,
   RepoChecked,

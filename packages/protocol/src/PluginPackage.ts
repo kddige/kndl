@@ -23,9 +23,11 @@ import {
 //                   "mcp": { "url": "https://mcp.linear.app/mcp" },
 //                   "auth": { "type": "none" } }
 //
-// `auth` is optional and none by default; its other form is header secrets,
+// `auth` is optional and none by default; its other forms are header secrets,
 // `{ "type": "headers", "headers": [{ "key", "title", "header", "template"? }] }`, which maps 1:1
-// onto the Plugin's `Headers` auth, the template `{value}` by default.
+// onto the Plugin's `Headers` auth, the template `{value}` by default; and OAuth (#217),
+// `{ "type": "oauth", "scopes"?: ["read", "write"] }`, for a server whose authorization server
+// offers Dynamic Client Registration.
 
 /** The kndl manifest's file name, beside `package.json`. */
 export const PluginManifestFile = "kndl.json"
@@ -60,9 +62,14 @@ const Manifest = Schema.Struct({
   auth: Schema.optionalKey(Schema.Unknown),
 })
 
-const AuthType = Schema.Struct({ type: Schema.Literals(["none", "headers"]) })
+const AuthType = Schema.Struct({ type: Schema.Literals(["none", "headers", "oauth"]) })
 
 const NoAuth = Schema.Struct({ type: Schema.Literal("none") })
+
+const OAuthAuth = Schema.Struct({
+  type: Schema.Literal("oauth"),
+  scopes: Schema.optionalKey(Schema.Array(Schema.String)),
+})
 
 const HeadersAuth = Schema.Struct({
   type: Schema.Literal("headers"),
@@ -117,13 +124,25 @@ function manifestProblems(issue: SchemaIssue.Issue, prefix = ""): Array<string> 
 function readAuth(auth: unknown): Result.Result<PluginAuth, Array<string>> {
   if (auth === undefined) return Result.succeed({ _tag: "None" })
   if (Result.isFailure(Schema.decodeUnknownResult(AuthType)(auth))) {
-    return Result.fail([`${PluginManifestFile}: auth.type must be "none" or "headers".`])
+    return Result.fail([`${PluginManifestFile}: auth.type must be "none", "headers" or "oauth".`])
   }
-  const type = (auth as { readonly type: "none" | "headers" }).type
+  const type = (auth as { readonly type: "none" | "headers" | "oauth" }).type
   if (type === "none") {
     return Schema.decodeUnknownResult(NoAuth)(auth, strict).pipe(
       Result.map((): PluginAuth => ({ _tag: "None" })),
       Result.mapError((error) => manifestProblems(error.issue, "auth")),
+    )
+  }
+  if (type === "oauth") {
+    return Schema.decodeUnknownResult(OAuthAuth)(auth, strict).pipe(
+      Result.mapError((error) => manifestProblems(error.issue, "auth")),
+      Result.flatMap(({ scopes }) => {
+        const mapped: PluginAuth = { _tag: "OAuth", ...(scopes !== undefined && { scopes }) }
+        const problem = pluginAuthProblem(mapped)
+        return problem === undefined
+          ? Result.succeed(mapped)
+          : Result.fail([`${PluginManifestFile}: auth.scopes: ${problem}`])
+      }),
     )
   }
   return Schema.decodeUnknownResult(HeadersAuth)(auth, strict).pipe(
@@ -338,6 +357,11 @@ export function sourceText(source: PluginSource): string {
 /** A Plugin's auth, as the web UI says it. */
 export function authText(auth: PluginAuth): string {
   if (auth._tag === "None") return "None"
+  if (auth._tag === "OAuth") {
+    return auth.scopes === undefined || auth.scopes.length === 0
+      ? "OAuth"
+      : `OAuth: ${auth.scopes.join(" ")}`
+  }
   return `Header secrets: ${auth.headers
     .map(({ title, header, template }) => `${title} (${header}: ${template})`)
     .join(", ")}`

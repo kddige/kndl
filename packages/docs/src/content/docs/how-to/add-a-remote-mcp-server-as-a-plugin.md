@@ -1,6 +1,6 @@
 ---
 title: Add a remote MCP server as a Plugin
-description: Add a remote MCP server to the Hub as a Plugin, give it the keys it needs as header secrets, turn it on for Repos, or every Repo, with an Installation, and call its tools from a Session.
+description: Add a remote MCP server to the Hub as a Plugin, give it the keys it needs as header secrets or connect it to an account with OAuth, turn it on for Repos, or every Repo, with an Installation, and call its tools from a Session.
 sidebar:
   order: 10
 ---
@@ -10,7 +10,7 @@ A [Plugin](/reference/glossary/#plugin) is a remote MCP server the Hub can add t
 ## Before you start
 
 - A remote MCP server that speaks [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) at an `https://` URL the Hub can reach, such as `https://mcp.example.com/mcp`. The Hub calls it from its own address, not from the Runner's.
-- If the server needs a key, it must take it in an HTTP header, such as `Authorization: Bearer <key>`. Its Installations hold the keys, encrypted, so the Hub needs a `HUB_SECRETS_KEY` ([Use variables and secrets](/how-to/use-variables-and-secrets/)). A server that needs an OAuth sign-in can't be a Plugin yet.
+- If the server needs a key, it must take it in an HTTP header, such as `Authorization: Bearer <key>`. If it needs a sign-in instead, its authorization server must speak OAuth as MCP specifies it, with [Dynamic Client Registration](https://datatracker.ietf.org/doc/html/rfc7591): see [Connect it to an account with OAuth](#connect-it-to-an-account-with-oauth). Either way, its Installations hold the credentials, encrypted, so the Hub needs a `HUB_SECRETS_KEY` ([Use variables and secrets](/how-to/use-variables-and-secrets/)).
 - Access on GitHub to every Repo you turn it on for, as for starting a Session there.
 - A Runner that relays Plugins: one updated since Plugins came. A Session on an older Runner starts without its Repo's Installations.
 
@@ -28,6 +28,8 @@ Any Member can add a Plugin.
    - its **Key**, which follows the title until you type one: letters, digits and underscores, starting with a letter. The Installations' values are kept under it.
 
    A Plugin declares at most 10. The Gateway sets some headers itself, such as `Host`, `Content-Type` and `Mcp-Session-Id`, and refuses them as header secrets: `The Gateway sets Host itself: use another header.`
+
+   If the server signs people in with OAuth instead, set **Sign-in** to **OAuth**, and leave **Scopes** empty to ask for those the server names, or list them, such as `read write`. See [Connect it to an account with OAuth](#connect-it-to-an-account-with-oauth).
 5. Press **Add**.
 
 The Plugin is listed with its id: `hub:` and its name in lowercase with dashes, such as `hub:docs-search`. A Plugin made on this Hub alone always has a `hub:` id, so it can't clash with a Plugin from a package, which is named after its package. To add a server described once for any Hub, see [Publish and add a Plugin package](/how-to/publish-and-add-a-plugin-package/).
@@ -85,6 +87,30 @@ Only the Hub holds the values. It adds the header to each request a Session send
 
 An Installation can be saved without a value, so you can make it before you have the key. A Repo's page shows such an Installation with **API key needs a value**, and its Repos' Sessions don't start until it has one: see [When an Installation fails a Session](#when-an-installation-fails-a-session).
 
+## Connect it to an account with OAuth
+
+A Plugin whose **Sign-in** is **OAuth** has no header secrets. Instead, each of its Installations is connected to one account at the MCP server's authorization server, and every Session on its Repos acts as that account: what Claude does through it, it does as whoever connected it. A global Installation's account is used by every Session on the Hub.
+
+The Hub connects it as the [MCP authorization spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) describes. It asks the MCP server for its Protected Resource Metadata (RFC 9728), then its authorization server for its metadata (RFC 8414, or OpenID Connect discovery), registers itself there as a client with Dynamic Client Registration (RFC 7591), and signs you in with PKCE (`S256`), asking for a token for the server's URL alone (RFC 8707). The server, and every address it names, must be on `https://`, or plain `http://` to a loopback host such as `localhost`, for testing. An authorization server without Dynamic Client Registration can't be connected yet.
+
+1. Add the Installation as above, then press **Connect** on it on **Plugins**.
+2. Your browser goes to the authorization server. Sign in there, and allow kndl access.
+3. It comes back to **Plugins**, which shows `Connected Docs`. The Installation shows **connected**, the account the server names, such as `as you@example.com`, and who connected it and when.
+
+Connecting needs access to every Repo the Installation lists, as editing it does; only the Hub's [Owner](/reference/glossary/#owner) connects or disconnects a global Installation: `Only the Hub's Owner can connect or disconnect a global Installation: every Session on the Hub acts as its account.` A sign-in you begin must finish within 10 minutes, in the same browser, signed in to kndl as you: else it is refused with `That connection expired or came from elsewhere: connect again.`
+
+The authorization server sends the browser back to the Hub at `<HUB_PUBLIC_URL>/auth/plugins/callback`, which it registered with. If you change `HUB_PUBLIC_URL`, the Hub registers again at the next **Connect**.
+
+Only the Hub holds the tokens, and the client it registered, encrypted with `HUB_SECRETS_KEY`. They never reach the web UI, a Runner or a Sandbox. The Gateway adds `Authorization: Bearer <token>` to each request a Session sends to the server, with the token as the Hub holds it then: a refresh or a reconnect reaches running Sessions at once, and a disconnect stops their requests at once. The Hub refreshes the token itself, before it expires or when the server refuses it, and keeps the new refresh token if the server sends one. Claude Code never signs in itself: the Gateway answers it without `WWW-Authenticate`, and never sends on a request for the server's OAuth discovery.
+
+- **Reconnect** connects it again, to the same account or another, as when the connection was lost.
+- **Disconnect** makes the Hub forget the tokens. Its Repos' Sessions don't start until it is connected again, and their requests to the server are refused at once.
+- When the authorization server refuses to refresh the token, as when the grant was revoked there, the Installation shows **connection lost**, and its Repos' Sessions don't start until someone presses **Reconnect**.
+
+Each connect, reconnect and disconnect is in the change log of each Repo the Installation lists, or of every Repo for a global one, as `connected Docs to its account at Docs search`.
+
+The tokens are for the server's origin alone. An edit that moves the Plugin's URL to another origin (scheme, host or port), or sets its **Sign-in** to something else, disconnects every Installation of it, and drops the client the Hub registered, so no token is ever sent to another server. Before it does, the dialog says which it disconnects, and its button says **Save and disconnect**. A packaged Plugin's Upgrade does the same. Another path on the same server keeps them connected.
+
 ## Use it in a Session
 
 New Sessions on the Repo, and Sessions that wake, start with the Installation. Claude Code gets one MCP server for each Installation on for the Repo, named after it, such as `docs` for `Docs`. It shows them as `plugin:kndl:docs`, so they never clash with the servers in the Repo's own `.mcp.json`, and their tools as `mcp__plugin_kndl_docs__<tool>`.
@@ -106,10 +132,12 @@ The Session doesn't start, and stays Asleep, when an Installation surely can't w
 | `Docs needs a value for API key.` | The Installation has no value for a header secret its Plugin declares. The Hub asks no server then. |
 | `Docs's MCP server refused its credential (401).` | The server answered `401` or `403`: the value is wrong, expired or revoked. |
 | `The Hub could not read Docs's header secret values: check HUB_SECRETS_KEY.` | The values can't be decrypted with the Hub's key. |
+| `Docs isn't connected to its account.` | An OAuth Installation was never connected, was disconnected, or lost its connection. The Hub asks no server then. |
 
 It shows **This Session can't start**, with each Installation and why. Prompts sent meanwhile wait in its queue, and run once it starts. For each Installation:
 
 - **Fix** opens it on the **Plugins** page: enter the value, then save.
+- For an OAuth Installation that isn't connected, **Reconnect** replaces **Fix**: it signs you in at its authorization server, as **Connect** does.
 - **Take owner/name off Docs** takes the Session's Repo off the Installation and wakes the Session. It shows only for someone who can change the Installation: with access to every Repo it lists. If the Session's Repo is the only one, that deletes the Installation, so it asks first.
 - For a global Installation, **Turn it off for owner/name** turns it off for the Session's Repo and wakes the Session. Anyone in the Session can. Only the Owner can **Fix** it: the others see `It is global: only the Hub's Owner can fix it.`
 
@@ -123,7 +151,7 @@ No message, in the Session or in the Hub's log, holds a header secret's value.
 
 ## See who changed what
 
-A Repo's page lists the Installations for it under **Plugins**, each saying where it comes from: listing the Repo, **Global**, **Overridden** by the Repo's own Installation of its Plugin, or **Off** for the Repo. Below is its **Change log**: who created, edited, added or removed an Installation there, who set its header secret values, and when an edit to the Plugin cleared them. A change to a global Installation is in every Repo's log, a Repo new to the Hub's too, as `a global Installation`; turning it off or on is in that Repo's log alone. The log names the header secrets by title, never their values. A change to Installations makes no new version of the Repo's [Environment](/how-to/set-up-an-environment/).
+A Repo's page lists the Installations for it under **Plugins**, each saying where it comes from: listing the Repo, **Global**, **Overridden** by the Repo's own Installation of its Plugin, or **Off** for the Repo. Below is its **Change log**: who created, edited, added or removed an Installation there, who set its header secret values, and when an edit to the Plugin cleared them, and who connected, reconnected or disconnected an OAuth Installation. A change to a global Installation is in every Repo's log, a Repo new to the Hub's too, as `a global Installation`; turning it off or on is in that Repo's log alone. The log names the header secrets by title, never their values. A change to Installations makes no new version of the Repo's [Environment](/how-to/set-up-an-environment/).
 
 ## Delete it
 
@@ -134,6 +162,6 @@ A Plugin with Installations can't be deleted: `Docs search has an Installation: 
 
 ## Next steps
 
-- [Security model](/explanation/security-model/#the-gateway): what the Gateway lets through, where header secret values go, and what it logs.
+- [Security model](/explanation/security-model/#the-gateway): what the Gateway lets through, where header secret values and OAuth tokens go, and what it logs.
 - [Protocol](/reference/protocol/#plugins): the Plugin messages and the Gateway's endpoint.
 - [ADR 0020](/reference/decisions/0020-plugins-are-remote-mcp-servers-behind-the-hub/): why Plugins are remote MCP servers behind the Hub.

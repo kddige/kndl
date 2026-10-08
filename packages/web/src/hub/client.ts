@@ -522,6 +522,24 @@ export class HubClient {
   }
 
   /**
+   * Begins connecting an OAuth Installation to its account (#217): where to send the browser, the
+   * authorization server's page to sign in and consent. It comes back through the Hub, which keeps
+   * the tokens, to the Plugins page.
+   */
+  async connectInstallation(installationId: InstallationId): Promise<string> {
+    const answer = await this.#request(
+      { _tag: "ConnectInstallation", installationId },
+      "InstallationAuthorizing",
+    )
+    return answer.url
+  }
+
+  /** Disconnects an OAuth Installation, so the Hub forgets its tokens (#217). */
+  disconnectInstallation(installationId: InstallationId): Promise<PluginsState> {
+    return this.#request({ _tag: "DisconnectInstallation", installationId }, "PluginsState")
+  }
+
+  /**
    * Reads a Plugin package from git or an upload (#220), changing nothing: what adding it would
    * make, or, if a Plugin from the same source has its name, what upgrading that would change.
    */
@@ -754,7 +772,8 @@ export class HubClient {
       case "MemberList":
       case "PluginsState":
       case "PluginLog":
-      case "PluginPackageRead": {
+      case "PluginPackageRead":
+      case "InstallationAuthorizing": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break
