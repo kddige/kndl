@@ -38,7 +38,7 @@ function site(pages: Record<string, Page>) {
     const page = pages[url]
     if (page === undefined) return new Response("not found", { status: 404 })
     if (page instanceof Uint8Array || typeof page === "string") return new Response(page)
-    return new Response(page.body ?? null, { status: page.status, headers: page.headers })
+    return new Response(page.body ?? null, { status: page.status, headers: page.headers ?? {} })
   }
   return { fetcher, asked }
 }
@@ -223,6 +223,11 @@ describe("a favicon of the Plugin's URL", () => {
   })
 })
 
+const failingPage: IconFetch = async (url) => {
+  if (url === "https://acme.test/") throw new Error("connection refused")
+  return new Response(ico)
+}
+
 describe("what the Hub fetches", () => {
   test("is https, or http to loopback, and never credentials or other schemes", async () => {
     for (const url of [
@@ -328,11 +333,7 @@ describe("what the Hub fetches", () => {
   })
 
   test("goes on when a fetch fails outright", async () => {
-    const fetcher: IconFetch = async (url) => {
-      if (url === "https://acme.test/") throw new Error("connection refused")
-      return new Response(ico)
-    }
-    expect(typeOf(await findIcon({ url: "https://acme.test/mcp" }, { fetch: fetcher }))).toBe(
+    expect(typeOf(await findIcon({ url: "https://acme.test/mcp" }, { fetch: failingPage }))).toBe(
       "image/x-icon",
     )
   })

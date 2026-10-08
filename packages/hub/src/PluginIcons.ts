@@ -231,7 +231,7 @@ async function faviconAt(
         )
   const rest = [...links.filter((link) => !link.svg), ...fromManifest]
     .map((candidate, order) => ({ candidate, order }))
-    .sort((a, b) => b.candidate.size - a.candidate.size || a.order - b.order)
+    .toSorted((a, b) => b.candidate.size - a.candidate.size || a.order - b.order)
     .slice(0, maxCandidates)
   for (const { candidate } of rest) {
     const icon = await attempt(candidate.url)

@@ -621,6 +621,14 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE installation_oauth ADD COLUMN client_set_by TEXT REFERENCES participants (id)`
     yield* sql`ALTER TABLE installation_oauth ADD COLUMN client_set_at INTEGER`
   }),
+  // A Plugin's icon (#230, ADR 0021): the bytes the Hub found, what they are, and a hash of them
+  // for the web to bust its cache with. All NULL for a Plugin with none.
+  "0031_plugin_icon": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE plugins ADD COLUMN icon BLOB`
+    yield* sql`ALTER TABLE plugins ADD COLUMN icon_type TEXT`
+    yield* sql`ALTER TABLE plugins ADD COLUMN icon_hash TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.
