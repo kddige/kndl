@@ -3,7 +3,9 @@
 // reaches it, through `/gateway/<installation id>` with the Session's mod token.
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
-import { Option, Redacted } from "effect"
+import { ProtocolVersion } from "@kndl/protocol"
+import { Duration, Effect, Exit, Option, Redacted } from "effect"
+import { HubConfig } from "./HubConfig.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import {
   type Connection,
@@ -14,7 +16,7 @@ import {
   type ToRunner,
   type Web,
 } from "./testChannels.ts"
-import { bearer, seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
+import { baseConfig, bearer, seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -36,6 +38,10 @@ interface Seen {
 let server: ReturnType<typeof Bun.serve>
 const seen: Array<Seen> = []
 let sendSecond: () => void = () => {}
+/** The status the server answers everything with, when set: as a credential revoked meanwhile. */
+let refuseWith: number | undefined
+/** Requests to `/hang`, which the server answers only once the test is over. */
+const hanging: Array<() => void> = []
 beforeAll(() => {
   server = Bun.serve({
     hostname: "127.0.0.1",
@@ -48,8 +54,20 @@ beforeAll(() => {
         headers: Object.fromEntries(request.headers),
         body: await request.text(),
       })
+      if (refuseWith !== undefined) return new Response(null, { status: refuseWith })
+      if (url.pathname === "/unauthorized") return new Response(null, { status: 401 })
+      if (url.pathname === "/hang") {
+        await new Promise<void>((resolve) => hanging.push(resolve))
+        return new Response(null, { status: 504 })
+      }
       if (url.pathname === "/redirect") return Response.redirect("https://example.com/", 302)
       if (request.method !== "POST") return new Response(null, { status: 405 })
+      if (seen.at(-1)?.body.includes('"method":"initialize"')) {
+        return Response.json(
+          { jsonrpc: "2.0", id: 0, result: { protocolVersion: "2025-06-18", capabilities: {} } },
+          { headers: { "mcp-session-id": "mcp-check" } },
+        )
+      }
       const second = Promise.withResolvers<void>()
       sendSecond = second.resolve
       const encoder = new TextEncoder()
@@ -72,8 +90,12 @@ beforeAll(() => {
   })
 })
 afterAll(() => server.stop(true))
-// No answer is left waiting on its second event.
-afterEach(() => sendSecond())
+// No answer is left waiting on its second event, or at all.
+afterEach(() => {
+  sendSecond()
+  refuseWith = undefined
+  for (const answer of hanging.splice(0)) answer()
+})
 
 let requests = 0
 
@@ -128,7 +150,12 @@ async function install(
 /** A Hub with a secrets key, a Runner that relays Plugins, alice on the web, and `repo`'s Environment. */
 async function gatewayScene() {
   const hub = await startHub({
-    config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
+    config: {
+      devLogin: true,
+      secretsKey: Option.some(Redacted.make(generateSecretsKey())),
+      // The start's check of each MCP server gives up quickly (#216).
+      pluginCheckTimeoutMs: 300,
+    },
   })
   const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
     relaysPlugins: true,
@@ -415,25 +442,6 @@ describe("a Plugin's header secrets", () => {
     expect(noted.entry.event).toMatchObject({ message: `echoed ${"*".repeat(apiKey.length)}` })
   })
 
-  test("without a value are answered 409, naming the Installation and the header secret", async () => {
-    const { hub, runner, web } = await gatewayScene()
-    const linear = await install(web, "Linear", [repo], "/mcp", {
-      auth,
-      values: [{ key: "team", value: team }],
-    })
-    expect(linear.values.map((value) => value.key)).toEqual(["team"])
-    // The Session starts all the same: its other MCP servers work.
-    const start = await startSession(web, runner)
-    seen.length = 0
-    const response = await through(hub, linear.id, { headers: bearer(start.modToken) })
-    expect(response.status).toBe(409)
-    expect(await response.json()).toEqual({
-      error:
-        "Linear needs a value for API key: enter it on the Plugins page, then Restart the Session.",
-    })
-    expect(seen).toEqual([])
-  })
-
   test("take a new value on the Session's next start, and say so meanwhile", async () => {
     const { hub, runner, web } = await gatewayScene()
     const linear = await install(web, "Linear", [repo], "/mcp", { auth, values })
@@ -514,6 +522,21 @@ describe("a Plugin's header secrets", () => {
         "Linear needs a value for Key: enter it on the Plugins page, then Restart the Session.",
     })
     expect(seen).toEqual([])
+    // The Session says so, once, and runs on (#216).
+    await through(hub, linear.id, { headers: token })
+    expect(await notesOf(web, start.sessionId)).toEqual([
+      {
+        _tag: "SandboxNoted",
+        message:
+          "Linear needs a value for Key and Team. Its tools fail until the Installation is fixed and the Session restarted.",
+        installationFailed: {
+          installationId: linear.id,
+          installation: "Linear",
+          reason: "ValueNeeded",
+          secrets: ["Key", "Team"],
+        },
+      },
+    ])
     const log = await ask(web, { _tag: "GetPluginLog", repo })
     if (log._tag !== "PluginLog") throw new Error(log._tag)
     expect(log.entries.slice(0, 2).map((entry) => [entry.change, entry.secrets])).toEqual([
@@ -563,5 +586,220 @@ describe("a Plugin's header secrets", () => {
       _tag: "CommandFailed",
       message: "API key's template must hold {value} exactly once, as in Bearer {value}.",
     })
+  })
+})
+
+/** The Session's history, as a web client joining it now is sent it. */
+async function historyOf(web: Connection<Web>, sessionId: string) {
+  web.send({ _tag: "JoinSession", sessionId })
+  const history = await web.take("SessionHistory", (m) => m.sessionId === sessionId)
+  return history.entries.map((entry) => entry.event)
+}
+
+/** What the Session's history notes besides its Turns: its SandboxNoted events. */
+const notesOf = async (web: Connection<Web>, sessionId: string) =>
+  (await historyOf(web, sessionId)).filter((event) => event._tag === "SandboxNoted")
+
+/** The Session's last state change. */
+const lastChangeOf = async (web: Connection<Web>, sessionId: string) =>
+  (await historyOf(web, sessionId)).filter((event) => event._tag === "SessionStateChanged").at(-1)
+
+/** Creates a Session of `repo` without playing its Runner's start: its id. */
+async function createSession(web: Connection<Web>) {
+  const created = await ask(web, { _tag: "CreateSession", repo, baseBranch: "main" })
+  if (created._tag !== "SessionCreated") throw new Error(JSON.stringify(created))
+  return created.session.id
+}
+
+/** The Hub's configuration, checked, with the start's wait on each server (#216). */
+const configWith = (pluginCheckTimeoutMs?: number) =>
+  Effect.runPromiseExit(
+    HubConfig.make({
+      ...baseConfig,
+      ...(pluginCheckTimeoutMs === undefined ? {} : { pluginCheckTimeoutMs }),
+    }),
+  )
+
+const asleep = (web: Connection<Web>, sessionId: string) =>
+  web.take("SessionUpdated", (m) => m.session.id === sessionId && m.session.state === "Asleep")
+
+describe("a Session's start (#216)", () => {
+  const apiKey = "lin_api_SECRET_7f3a9c"
+  const auth = {
+    _tag: "Headers",
+    headers: [
+      { key: "api_key", title: "API key", header: "Authorization", template: "Bearer {value}" },
+    ],
+  }
+  const values = [{ key: "api_key", value: apiKey }]
+  const wayOut = `Fix the Installation on the Plugins page, or take ${repo} off it, then wake the Session.`
+
+  test("waits for an Installation's missing value, says which and why, then runs what was queued", async () => {
+    const { hub, runner, web } = await gatewayScene()
+    await install(web, "Docs", [repo])
+    const linear = await install(web, "Linear", [repo], "/mcp", { auth })
+    seen.length = 0
+    const sessionId = await createSession(web)
+    await asleep(web, sessionId)
+    expect(await runner.untaken("StartSession")).toEqual([])
+    expect(await lastChangeOf(web, sessionId)).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      message: `Claude Code could not start: Linear needs a value for API key. ${wayOut}`,
+      installationsFailed: [
+        {
+          installationId: linear.id,
+          installation: "Linear",
+          reason: "ValueNeeded",
+          secrets: ["API key"],
+        },
+      ],
+    })
+    // A value missing is sure: no server was asked anything.
+    expect(seen).toEqual([])
+
+    // A prompt sent meanwhile waits in the queue: the wake it asks for fails the same way.
+    web.send({ _tag: "SendPrompt", sessionId, text: "Look up the open issues" })
+    await web.take(
+      "SessionEventLogged",
+      (m) => m.entry.event._tag === "SessionStateChanged" && m.entry.event.state === "Asleep",
+    )
+    expect(await runner.untaken("StartSession")).toEqual([])
+
+    // Fixed, a Retry starts it, and the prompt runs.
+    await ask(web, {
+      _tag: "EditInstallation",
+      installationId: linear.id,
+      name: "Linear",
+      repos: [repo],
+      values,
+    })
+    web.send({ _tag: "WakeSession", sessionId })
+    const start = await runner.take("StartSession")
+    expect(start.plugins?.map((relayed) => relayed.server).toSorted()).toEqual(["docs", "linear"])
+    runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
+    const mod = (path: string, body?: unknown) =>
+      fetch(`${hub.url}${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: { ...bearer(start.modToken), "content-type": "application/json" },
+        ...(body !== undefined && { body: JSON.stringify(body) }),
+      })
+    await mod("/mod/hello", {
+      _tag: "ModHello",
+      protocolVersion: ProtocolVersion,
+      sessionId,
+      claudeSessionId: "claude-1",
+      model: "claude-opus",
+    })
+    const commands = (await (await mod("/mod/commands?after=0&waitMs=1000")).json()) as {
+      messages: Array<{ message: { _tag: string; text?: string } }>
+    }
+    expect(
+      commands.messages.map(({ message }) => message).filter((m) => m._tag === "DeliverPrompt"),
+    ).toMatchObject([{ text: "Look up the open issues" }])
+  })
+
+  test("doesn't start when a server refuses its credential, nor show the credential", async () => {
+    const { runner, web } = await gatewayScene()
+    const linear = await install(web, "Linear", [repo], "/unauthorized", { auth, values })
+    seen.length = 0
+    let sessionId = ""
+    const logged = await logsOf(async () => {
+      sessionId = await createSession(web)
+      await asleep(web, sessionId)
+    })
+    expect(await runner.untaken("StartSession")).toEqual([])
+    // Checked once, as Claude Code starts with it: an MCP initialize, with the credential.
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ method: "POST", path: "/unauthorized" })
+    expect(JSON.parse(seen[0]?.body ?? "{}")).toMatchObject({ method: "initialize" })
+    expect(lastHeaders().authorization).toBe(`Bearer ${apiKey}`)
+    expect(await lastChangeOf(web, sessionId)).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      message: `Claude Code could not start: Linear's MCP server refused its credential (401). ${wayOut}`,
+      installationsFailed: [
+        { installationId: linear.id, installation: "Linear", reason: "Rejected", status: 401 },
+      ],
+    })
+    expect(web.texts.join("\n")).not.toContain(apiKey)
+    expect(logged).not.toContain(apiKey)
+
+    // Taken off the Repo, the Session starts without it.
+    await ask(web, { _tag: "DeleteInstallation", installationId: linear.id })
+    web.send({ _tag: "WakeSession", sessionId })
+    expect((await runner.take("StartSession")).plugins).toBeUndefined()
+  })
+
+  test("goes ahead past a server that doesn't answer, and says so", async () => {
+    const { runner, web } = await gatewayScene()
+    const down = await install(web, "Down", [repo], "/hang")
+    const sessionId = await createSession(web)
+    // Once the check gives up.
+    const started = await runner.take("StartSession")
+    expect(started.sessionId).toBe(sessionId)
+    expect(await notesOf(web, sessionId)).toEqual([
+      {
+        _tag: "SandboxNoted",
+        message:
+          "Down's MCP server could not be reached. Claude Code started all the same: its tools fail until it answers.",
+        installationFailed: {
+          installationId: down.id,
+          installation: "Down",
+          reason: "Unreachable",
+        },
+      },
+    ])
+  })
+
+  test("waits on each server HUB_PLUGIN_CHECK_TIMEOUT_MS, above 0", async () => {
+    const byDefault = await configWith()
+    expect(Exit.isSuccess(byDefault) && Duration.toMillis(byDefault.value.pluginCheckTimeout)).toBe(
+      5_000,
+    )
+    expect(Exit.isFailure(await configWith(0))).toBe(true)
+  })
+
+  test("asks no server anything for a Session without Installations", async () => {
+    const { runner, web } = await gatewayScene()
+    seen.length = 0
+    await createSession(web)
+    expect((await runner.take("StartSession")).plugins).toBeUndefined()
+    expect(seen).toEqual([])
+  })
+})
+
+describe("an Installation failing mid-Session (#216)", () => {
+  test("shows as an error in the Session, once, which runs on", async () => {
+    const { hub, runner, web } = await gatewayScene()
+    const docs = await install(web, "Docs", [repo])
+    const start = await startSession(web, runner)
+    const token = bearer(start.modToken)
+    refuseWith = 403
+    expect((await through(hub, docs.id, { headers: token })).status).toBe(403)
+    expect((await through(hub, docs.id, { headers: token })).status).toBe(403)
+    expect(await notesOf(web, start.sessionId)).toEqual([
+      {
+        _tag: "SandboxNoted",
+        message:
+          "Docs's MCP server refused its credential (403). Its tools fail until the Installation is fixed and the Session restarted.",
+        installationFailed: {
+          installationId: docs.id,
+          installation: "Docs",
+          reason: "Rejected",
+          status: 403,
+        },
+      },
+    ])
+    expect(await runner.untaken("StopSession")).toEqual([])
+
+    // Once it works again, a new failure is said again.
+    refuseWith = undefined
+    await (await through(hub, docs.id, { headers: token })).body?.cancel()
+    refuseWith = 401
+    await through(hub, docs.id, { headers: token })
+    const notes = await notesOf(web, start.sessionId)
+    expect(notes).toHaveLength(2)
+    expect(notes[1]).toMatchObject({ installationFailed: { reason: "Rejected", status: 401 } })
   })
 })

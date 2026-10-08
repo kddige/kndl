@@ -61,7 +61,7 @@ A value is write-only, like a [Sensitive variable](/how-to/use-variables-and-sec
 
 Only the Hub holds the values. It adds the header to each request a Session sends through the Gateway, and they never reach the web UI, a Runner or a Sandbox. A Session runs with the values it started with: a new value applies at its next wake or Restart.
 
-An Installation can be saved without a value, so you can make it before you have the key. Its Sessions still start, but the Gateway answers each request to the server with `409` and `` Docs needs a value for API key: enter it on the Plugins page, then Restart the Session. ``, so Claude Code can't use its tools. A Repo's page shows such an Installation with **API key needs a value**.
+An Installation can be saved without a value, so you can make it before you have the key. A Repo's page shows such an Installation with **API key needs a value**, and its Repos' Sessions don't start until it has one: see [When an Installation fails a Session](#when-an-installation-fails-a-session).
 
 ## Use it in a Session
 
@@ -72,6 +72,31 @@ New Sessions on the Repo, and Sessions that wake, start with the Installation. C
 3. Ask Claude to use the server, such as `Search the docs for "rate limits"`. Claude calls its tools like any other MCP tool.
 
 A Session that was Active when the Installation was made keeps running without it, and shows a **Plugins changed** banner: **Restart** applies the change, with the Workspace and conversation as they are. A header secret value set since it started shows the same banner. An Asleep Session gets it as it wakes. Participants can't turn an Installation on or off for one Session: they are the Repo's.
+
+## When an Installation fails a Session
+
+As a Session starts or wakes, the Hub checks each Installation on for its Repo before Claude Code starts. It sends each MCP server an MCP `initialize` request, with the header secrets, as the Gateway would, and waits on it up to `HUB_PLUGIN_CHECK_TIMEOUT_MS` (5 seconds by default). The Session shows as starting meanwhile.
+
+The Session doesn't start, and stays Asleep, when an Installation surely can't work:
+
+| The Session says | Why |
+| --- | --- |
+| `Docs needs a value for API key.` | The Installation has no value for a header secret its Plugin declares. The Hub asks no server then. |
+| `Docs's MCP server refused its credential (401).` | The server answered `401` or `403`: the value is wrong, expired or revoked. |
+| `The Hub could not read Docs's header secret values: check HUB_SECRETS_KEY.` | The values can't be decrypted with the Hub's key. |
+
+It shows **This Session can't start**, with each Installation and why. Prompts sent meanwhile wait in its queue, and run once it starts. For each Installation:
+
+- **Fix** opens it on the **Plugins** page: enter the value, then save.
+- **Take owner/name off Docs** takes the Session's Repo off the Installation and wakes the Session. It shows only for someone who can change the Installation: with access to every Repo it lists. If the Session's Repo is the only one, that deletes the Installation, so it asks first.
+
+Then press **Retry**, or send a prompt: the Session is checked again as it wakes.
+
+A server that is only down, or slow, doesn't stop the work: it may be back in a moment. When it doesn't answer in time, can't be reached, or answers with another error, such as `503`, the Session starts all the same, with a warning in its conversation, such as `Docs's MCP server could not be reached. Claude Code started all the same: its tools fail until it answers.`
+
+The check runs once, as the Session starts. While the Session runs, an Installation that fails shows as an error in its conversation, with **Fix**, and the Session runs on, with its other servers: when the server answers the Gateway with `401` or `403`, or an edit to its Plugin left it needing a value, which the Gateway answers with `409`. It says so once, until the Installation works again. A new value applies at the Session's next wake or **Restart**.
+
+No message, in the Session or in the Hub's log, holds a header secret's value.
 
 ## See who changed what
 

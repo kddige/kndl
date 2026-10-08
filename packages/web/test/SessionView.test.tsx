@@ -2,6 +2,8 @@
 // Hub playing its script fast.
 
 import { expect, test } from "bun:test"
+import { hubPluginId } from "@kndl/protocol"
+import { Redacted } from "effect"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
 
@@ -319,6 +321,109 @@ test("a Session that can't start for values a secrets-reset cleared leads to its
   await eventually(() => expect(page.textContent).toContain("NPM_TOKEN needs a value: enter one."))
 })
 
+/** Puts Linear, an Installation without its API key, on in `repos` (#216). */
+const installLinear = (client: InstanceType<typeof HubClient>, repos: ReadonlyArray<string>) =>
+  step(() => client.createInstallation(hubPluginId("linear"), "Linear", repos))
+
+const linearOf = (hub: InstanceType<typeof FakeHub>) =>
+  hub.plugins.state(() => true).installations.find((one) => one.name === "Linear")
+
+test("a Session an Installation keeps from starting takes its Repo off it, and starts (#216)", async () => {
+  const { hub, client, page, banner, header, sent } = await openSession("s-readme", "This Session")
+  await installLinear(client, ["kddige/kndl", "kddige/website"])
+
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(banner()).toContain("This Session can't start"))
+  expect(banner()).toContain("Linear needs a value for API key.")
+  expect(banner()).toContain("Prompts sent now wait in the queue until it starts.")
+  expect(header()).toContain("Asleep")
+  // Fix opens that Installation on the Plugins page.
+  expect(page.querySelector('a[aria-label="Fix Linear"]')?.getAttribute("href")).toBe(
+    `/plugins?installation=${linearOf(hub)?.id}`,
+  )
+
+  // Retry checks it again: still no value.
+  const wakes = () => sent().filter((tag) => tag === "WakeSession").length
+  await step(() => button("Retry", page).click())
+  await eventually(() => expect(wakes()).toBe(2))
+  expect(header()).toContain("Asleep")
+
+  // Whoever may change it takes this Repo off it in one click, and the Session starts.
+  await eventually(() => expect(button("Take kddige/kndl off Linear", page)).toBeDefined())
+  await step(() => button("Take kddige/kndl off Linear", page).click())
+  await eventually(() => expect(header()).toContain("Active"))
+  expect(sent()).toContain("EditInstallation")
+  expect(linearOf(hub)?.repos).toEqual(["kddige/website"])
+})
+
+test("a prompt queued while an Installation keeps the Session from starting runs once it starts (#216)", async () => {
+  const { hub, client, page, banner, sent } = await openSession("s-readme", "This Session")
+  await installLinear(client, ["kddige/kndl"])
+
+  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
+  if (!prompt) throw new Error("no prompt field")
+  await step(() => typeInto(prompt, "Summarize the open issues"))
+  await step(() => button("Send prompt", page).click())
+  await eventually(() => expect(banner()).toContain("This Session can't start"))
+  const queue = () => page.querySelector('[aria-label="Prompt queue"]')?.textContent ?? ""
+  expect(queue()).toContain("Summarize the open issues")
+
+  // Its only Repo: taking it off deletes the Installation, so that is confirmed first.
+  await eventually(() => expect(button("Take kddige/kndl off Linear", page)).toBeDefined())
+  await step(() => button("Take kddige/kndl off Linear", page).click())
+  expect(sent()).not.toContain("DeleteInstallation")
+  await eventually(() =>
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "kddige/kndl is the only Repo it is on in",
+    ),
+  )
+  await step(() => button("Delete Installation").click())
+  await eventually(() => expect(sent()).toContain("DeleteInstallation"))
+  expect(linearOf(hub)).toBeUndefined()
+  await eventually(() => expect(queue()).toBe(""))
+  const conversation = () => page.querySelector('[aria-label="Conversation"]')?.textContent ?? ""
+  await eventually(() => expect(conversation()).toContain("Summarize the open issues"))
+})
+
+test("Fix opens the Installation that keeps a Session from starting (#216)", async () => {
+  const { client, page, banner } = await openSession("s-readme", "This Session")
+  await installLinear(client, ["kddige/kndl"])
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(banner()).toContain("This Session can't start"))
+
+  await step(() => page.querySelector<HTMLAnchorElement>('a[aria-label="Fix Linear"]')?.click())
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("Plugins"))
+  await eventually(() =>
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Edit Linear"),
+  )
+})
+
+test("an Installation that fails mid-Session shows as an error in it, which runs on (#216)", async () => {
+  const { hub, page, header } = await openSession(releaseSessionId)
+  await step(() => button("Wake now", page).click())
+  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+
+  await step(() => hub.installationFails(releaseSessionId, "Sentry", 401))
+  const notes = () =>
+    [...page.querySelectorAll('[aria-label="Conversation"] [role="note"]')].map(
+      (note) => note.textContent ?? "",
+    )
+  await eventually(() =>
+    expect(
+      notes().some((note) =>
+        note.includes(
+          "Sentry's MCP server refused its credential (401). Its tools fail until the Installation is fixed and the Session restarted.",
+        ),
+      ),
+    ).toBe(true),
+  )
+  const fix = page.querySelector<HTMLAnchorElement>(
+    '[aria-label="Conversation"] a[aria-label="Fix Sentry"]',
+  )
+  expect(fix?.getAttribute("href")).toStartWith("/plugins?installation=")
+  expect(header()).toContain("Active")
+})
+
 test("a restart for a changed Environment shows its progress until the Session is back", async () => {
   // Slow enough to see each step of the restart.
   const { page, banner, sent } = await openSession(demoSessionId, "Environment changed", 15)
@@ -383,7 +488,9 @@ test("a change to its Repo's Installations shows that a Restart applies it, and 
   const plugins = await client.getPlugins()
   const linear = plugins.plugins.find((plugin) => plugin.name === "Linear")
   if (linear === undefined) throw new Error("No Plugin Linear")
-  await step(() => client.createInstallation(linear.id, "Linear", ["kddige/kndl"]))
+  // With its API key: one without keeps the Session from starting (#216).
+  const key = [{ key: "api_key", value: Redacted.make("made-up-linear-key") }]
+  await step(() => client.createInstallation(linear.id, "Linear", ["kddige/kndl"], key))
 
   const changed = () =>
     [...page.querySelectorAll('[role="status"]')]

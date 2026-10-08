@@ -129,7 +129,8 @@ async function seededDatabase() {
   const created = await env.request({
     _tag: "CreatePlugin",
     name: "Linear",
-    url: "https://mcp.example.com/mcp",
+    // Nothing listens there: a Session's start goes ahead past it at once (#216).
+    url: "http://127.0.0.1:1/mcp",
     auth: {
       _tag: "Headers",
       headers: [
@@ -392,6 +393,30 @@ describe("secrets-reset", () => {
         ]),
       },
     })
+
+    // The Installation's header secret value too (#216): without it the Session doesn't start.
+    web.send({ _tag: "WakeSession", sessionId })
+    const unplugged = await web.take(
+      "SessionEventLogged",
+      (m) =>
+        m.entry.event._tag === "SessionStateChanged" &&
+        m.entry.event.installationsFailed !== undefined,
+    )
+    expect(unplugged.entry.event).toMatchObject({
+      state: "Asleep",
+      installationsFailed: [{ installation: "Team Linear", reason: "ValueNeeded" }],
+    })
+    const plugins = await env.request({ _tag: "GetPlugins" })
+    if (plugins._tag !== "PluginsState") throw new Error(plugins._tag)
+    expect(
+      await env.request({
+        _tag: "EditInstallation",
+        installationId: plugins.installations[0]?.id,
+        name: "Team Linear",
+        repos: [repo],
+        values: [{ key: "token", value: "lin_NEW_0001" }],
+      }),
+    ).toMatchObject({ _tag: "PluginsState" })
 
     // Every value is back: the Session wakes for its prompt, and new ones start.
     web.send({ _tag: "WakeSession", sessionId })

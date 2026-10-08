@@ -28,6 +28,7 @@ import {
   SessionStatus,
   Spinner,
   SteerIcon,
+  WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -228,6 +229,13 @@ const styles = stylex.create({
     color: color.textMuted,
     fontSize: text.sm,
     textAlign: "center",
+  },
+  noticeError: { color: color.dangerSubtleText },
+  noticeLink: {
+    color: "inherit",
+    fontWeight: weight.semibold,
+    textDecoration: { default: "underline", ":hover": "none" },
+    borderRadius: radius.sm,
   },
 })
 
@@ -567,6 +575,27 @@ const stateWords: Record<SessionStateChanged["state"], string> = {
 }
 
 function Notice({ at, event }: { at: number; event: NoticeEvent }) {
+  // An Installation that fails the Session (#216): an error, with a way to fix it.
+  if (event._tag === "SandboxNoted" && event.installationFailed !== undefined) {
+    const failed = event.installationFailed
+    return (
+      <p role="note" {...stylex.props(styles.notice, styles.noticeError)}>
+        <WarningIcon aria-hidden="true" />
+        <span>{event.message}</span>
+        <Link
+          to="/plugins"
+          search={{ installation: failed.installationId }}
+          aria-label={`Fix ${failed.installation}`}
+          {...stylex.props(styles.noticeLink, focus.ring)}
+        >
+          Fix
+        </Link>
+        <time {...stylex.props(styles.time)} dateTime={new Date(at).toISOString()}>
+          {clock(at)}
+        </time>
+      </p>
+    )
+  }
   return (
     <p role="note" {...stylex.props(styles.notice)}>
       {event._tag === "SessionStateChanged" ? (

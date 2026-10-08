@@ -655,6 +655,84 @@ export function clearedHeaderSecrets(
 export const valueNeededRefusal = (installation: string, title: string) =>
   `${installation} needs a value for ${title}: enter it on the Plugins page, then Restart the Session.`
 
+// ── An Installation that fails a Session (#216) ─────────────────────────────
+
+/**
+ * Why an Installation failed its Session, as the Hub found at its start or the Gateway since:
+ *
+ * - `ValueNeeded`: a header secret of its Plugin has no value.
+ * - `Rejected`: its MCP server answered 401 or 403, refusing the credential.
+ * - `Unreadable`: the Hub could not decrypt its values, as when HUB_SECRETS_KEY changed.
+ * - `Unreachable`: its MCP server could not be reached, or didn't answer in time.
+ * - `Errored`: its MCP server answered another error.
+ */
+export const InstallationFailureReason = Schema.Literals([
+  "ValueNeeded",
+  "Rejected",
+  "Unreadable",
+  "Unreachable",
+  "Errored",
+])
+export type InstallationFailureReason = typeof InstallationFailureReason.Type
+
+/** An Installation that failed its Session: which, and why. Never a value. */
+export const InstallationFailure = Schema.Struct({
+  installationId: InstallationId,
+  /** The Installation's name, as the Session started with it. */
+  installation: Schema.String,
+  reason: InstallationFailureReason,
+  /** For `ValueNeeded`: the titles of the header secrets without a value. */
+  secrets: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** For `Rejected` and `Errored`: the status its MCP server answered. */
+  status: Schema.optionalKey(Schema.Int),
+})
+export type InstallationFailure = typeof InstallationFailure.Type
+
+/** "API key", "API key and Team", "API key, Team and Region". */
+const listed = (titles: ReadonlyArray<string>) =>
+  titles.length <= 1
+    ? (titles[0] ?? "a header secret")
+    : `${titles.slice(0, -1).join(", ")} and ${titles.at(-1)}`
+
+/** What went wrong with the Installation, as one sentence. */
+export const installationFailureText = (failure: Omit<InstallationFailure, "installationId">) => {
+  const { installation } = failure
+  switch (failure.reason) {
+    case "ValueNeeded":
+      return `${installation} needs a value for ${listed(failure.secrets ?? [])}.`
+    case "Rejected":
+      return `${installation}'s MCP server refused its credential (${failure.status ?? 401}).`
+    case "Unreadable":
+      return `The Hub could not read ${installation}'s header secret values: check HUB_SECRETS_KEY.`
+    case "Unreachable":
+      return `${installation}'s MCP server could not be reached.`
+    case "Errored":
+      return `${installation}'s MCP server answered ${failure.status ?? "an error"}.`
+  }
+}
+
+/**
+ * Whether the failure keeps a Session from starting: only when the Installation surely can't work
+ * until someone fixes it. A server that is down or slow may be back in a moment, and shouldn't
+ * block work: the Session starts, with a warning.
+ */
+export const failureBlocksStart = (failure: InstallationFailure) =>
+  failure.reason === "ValueNeeded" ||
+  failure.reason === "Rejected" ||
+  failure.reason === "Unreadable"
+
+/**
+ * Why a Session in `repo` didn't start, for the Installations that kept it from starting (#216),
+ * and the way out, as its SessionStateChanged says after "Claude Code could not start: ".
+ */
+export const installationsCantStartText = (
+  repo: string,
+  failures: ReadonlyArray<Omit<InstallationFailure, "installationId">>,
+) => {
+  const one = failures.length === 1
+  return `${failures.map(installationFailureText).join(" ")} Fix the ${one ? "Installation" : "Installations"} on the Plugins page, or take ${repo} off ${one ? "it" : "them"}, then wake the Session.`
+}
+
 /** Why a second Installation of a Plugin on a Repo is refused, as the Hub says it. */
 export const secondInstallationRefusal = (repo: string, existing: string, plugin: string) =>
   `${repo} already has ${existing}, an Installation of ${plugin}: a Repo has at most one Installation of each Plugin.`

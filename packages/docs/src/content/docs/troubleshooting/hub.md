@@ -88,7 +88,47 @@ bun run secrets-reset          # in a checkout
 kndl secrets reset             # on an installed Hub
 ```
 
-Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. Each Installation keeps its header secrets, which show **needs a value** on **Plugins**: enter them again there; until then the Gateway answers its Sessions' requests to the Plugin with `409`. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. Each Installation keeps its header secrets, which show **needs a value** on **Plugins**: enter them again there; until then its Repos' Sessions don't start (see [A Session can't start for an Installation](#a-session-cant-start-for-an-installation)). See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+
+## A Session can't start for an Installation
+
+**What you see.** A Session that was woken or started shows **This Session can't start** and stays Asleep, with one of:
+
+```
+Claude Code could not start: Docs needs a value for API key. Fix the Installation on the Plugins page, or take owner/name off it, then wake the Session.
+```
+
+```
+Claude Code could not start: Docs's MCP server refused its credential (401). Fix the Installation on the Plugins page, or take owner/name off it, then wake the Session.
+```
+
+```
+Claude Code could not start: The Hub could not read Docs's header secret values: check HUB_SECRETS_KEY. Fix the Installation on the Plugins page, or take owner/name off it, then wake the Session.
+```
+
+**Why.** The Hub checks each Installation on for the Session's Repo as the Session starts, and doesn't start it with one that surely can't work: one without a value for a header secret, one whose MCP server refuses its value with `401` or `403`, or one whose values the Hub can't decrypt. See [When an Installation fails a Session](/how-to/add-a-remote-mcp-server-as-a-plugin/#when-an-installation-fails-a-session).
+
+**Fix.** Press **Fix** beside the Installation, enter the value its server takes, and save; then press **Retry**. Or, with access to every Repo the Installation lists, press **Take owner/name off Docs**, which wakes the Session at once. For the third, set `HUB_SECRETS_KEY` to the key the values were saved with, or see [The secrets key is lost](#the-secrets-key-is-lost). Prompts sent meanwhile wait in the Session's queue, and run once it starts.
+
+## A Plugin's MCP server fails in a Session
+
+**What you see.** A running Session's conversation shows, in red, one of:
+
+```
+Docs's MCP server could not be reached. Claude Code started all the same: its tools fail until it answers.
+```
+
+```
+Docs's MCP server refused its credential (403). Its tools fail until the Installation is fixed and the Session restarted.
+```
+
+```
+Docs needs a value for API key. Its tools fail until the Installation is fixed and the Session restarted.
+```
+
+**Why.** The first is from the Session's start: the server didn't answer within `HUB_PLUGIN_CHECK_TIMEOUT_MS`, couldn't be reached from the Hub, or answered with an error such as `503`. A server that may only be down doesn't keep a Session from starting. The others are from the Gateway, while the Session ran: the server refused the Installation's value, or an edit to its Plugin cleared the value. The Session runs on, with its other servers, and says so once until the Installation works again.
+
+**Fix.** For the first, check that the Hub can reach the Plugin's URL; a slow server may need a higher `HUB_PLUGIN_CHECK_TIMEOUT_MS`. Its tools work as soon as it answers. For the others, press **Fix**, enter a value the server takes, and save; then **Restart** the Session, which starts it with the new value.
 
 ## A Hub is already running on the database
 

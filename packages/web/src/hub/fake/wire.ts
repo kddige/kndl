@@ -11,6 +11,7 @@ import type {
   HeaderValueSet,
   HubToWeb,
   Installation,
+  InstallationFailure,
   Member,
   OpenPort,
   Participant,
@@ -58,3 +59,4 @@ export type InstallationWire = (typeof Installation)["Encoded"]
 export type HeaderValueSetWire = (typeof HeaderValueSet)["Encoded"]
 export type PluginLogEntryWire = (typeof PluginLogEntry)["Encoded"]
 export type SessionInstallationWire = (typeof SessionInstallation)["Encoded"]
+export type InstallationFailureWire = (typeof InstallationFailure)["Encoded"]

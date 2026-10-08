@@ -183,11 +183,20 @@ const variablesRoute = createRoute({
   component: SharedVariablesView,
 })
 
-/** The Plugins, remote MCP servers, and their Installations on Repos (ADR 0020). */
+/**
+ * The Plugins, remote MCP servers, and their Installations on Repos (ADR 0020). With
+ * ?installation=, that Installation's dialog opens, to fix one that keeps a Session from starting
+ * (#216).
+ */
 const pluginsRoute = createRoute({
   getParentRoute: () => hubRoute,
   path: "/plugins",
-  component: PluginsView,
+  validateSearch: (search: Record<string, unknown>): { installation?: string } =>
+    nonEmpty(search["installation"]) ? { installation: search["installation"] } : {},
+  component: function PluginsRoute() {
+    const { installation } = pluginsRoute.useSearch()
+    return <PluginsView opening={installation} />
+  },
 })
 
 /** The Runners paired with the Hub: adding, Re-pairing and removing them (issue #85). */

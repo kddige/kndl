@@ -100,6 +100,17 @@
 //   Hub records them as it sends it; RelaunchSession carries the same ones again. A change to the
 //   Repo's Installations reaches the Session at its next wake or Restart; until then its summary
 //   says so. Plugin commands are handled by PluginRelay.ts.
+// - Failing loudly (#216, ADR 0020): before a start or wake sends StartSession, each Installation
+//   it starts with is checked, off the lock, while the Session shows as starting. One without a
+//   header secret's value fails without asking its server; any other has its server sent an MCP
+//   `initialize` through the Gateway's own path (Gateway.ts), waiting up to
+//   HUB_PLUGIN_CHECK_TIMEOUT_MS. A missing value, a 401 or 403 or values the Hub can't decrypt
+//   leave the Session Asleep, as a failed start does, with a SessionStateChanged naming each
+//   Installation and why; its prompts stay queued for the next wake. A server that can't be
+//   reached, is slow or answers another error doesn't hold the Session up: it starts, and a
+//   SandboxNoted warns of each. Mid-Session, the Gateway reports a server's 401 or 403 and its own
+//   409 for a value needed: each is noted in the Session once, until the Installation works again,
+//   and the Session runs on.
 // - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo, and the Sandbox
 //   tokens of its Sessions (#73), are masked in every event before it is logged, and in terminal
 //   frames before they are relayed. Claude's text
@@ -196,6 +207,11 @@ import {
   type SessionEvent,
   SessionEventLogged,
   type SessionInstallation,
+  failureBlocksStart,
+  type InstallationFailure,
+  installationFailureText,
+  installationsCantStartText,
+  type InstallationId,
   type TerminalFrame,
   type TextDelta,
   SessionId,
@@ -254,6 +270,7 @@ import {
   makeEnvironmentRelay,
 } from "./EnvironmentRelay.ts"
 import { Environments } from "./Environments.ts"
+import { checkServer } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubVersion } from "./HubVersion.ts"
@@ -314,6 +331,8 @@ export const RelayCloseCode = {
 interface Why {
   readonly by?: Participant
   readonly message?: string
+  /** The Installations that kept it from starting (#216). */
+  readonly installationsFailed?: ReadonlyArray<InstallationFailure>
 }
 
 /** Why, as one line: "Put to sleep by alice". */
@@ -408,6 +427,16 @@ const gatewayServers = (installations: ReadonlyArray<SessionInstallation>) =>
         })),
       }
 
+/** That the Installation failed its Session, and why (#216). */
+const failureOf = (
+  installation: SessionInstallation,
+  why: Omit<InstallationFailure, "installationId" | "installation">,
+): InstallationFailure => ({
+  installationId: installation.id,
+  installation: installation.name,
+  ...why,
+})
+
 /** StartSession's and RelaunchSession's `model` and `effort` (#128): the Session's setting. */
 const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.model !== undefined && { model: setting.model }),
@@ -491,6 +520,18 @@ export class SessionRelay extends Context.Service<
       sessionId: SessionId,
       port: number,
     ) => Effect.Effect<PendingTunnel, TunnelRefused | SqlError>
+    /**
+     * The Gateway found an Installation failing the Active Session (#216): its server refused the
+     * credential, or it has no value for a header secret. Noted in the Session once, until the
+     * Installation works again.
+     */
+    readonly installationFailed: (
+      sessionId: SessionId,
+      installationId: InstallationId,
+      failure: Omit<InstallationFailure, "installationId" | "installation">,
+    ) => Effect.Effect<void>
+    /** The Gateway got a good answer through the Installation: a new failure is noted again. */
+    readonly installationWorks: (sessionId: SessionId, installationId: InstallationId) => void
   }
 >()("@kndl/hub/SessionRelay") {
   static readonly layer = Layer.effect(
@@ -615,6 +656,11 @@ export class SessionRelay extends Context.Service<
        * only: a Runner that reconnects sends it again.
        */
       const openPorts = new Map<SessionId, ReadonlyArray<OpenPort>>()
+      /**
+       * The Installations each Active Session has noted failing since it started (#216), each by
+       * why, so the Gateway's failures are noted once until the Installation works again.
+       */
+      const installationTrouble = new Map<SessionId, Map<InstallationId, string>>()
       /** When each Session was last seen busy: an event logged, its queue or presence changing. */
       const lastBusy = new Map<SessionId, number>()
       /**
@@ -1355,9 +1401,9 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
-       * StartSession's MCP servers (ADR 0020): one for each Installation on for the Session's
-       * Repo, recorded as the Session's, which its summary shows. None for a Runner that doesn't
-       * relay them: its Claude Code starts without.
+       * The Installations the Session starts with (ADR 0020): those on for its Repo, recorded as
+       * the Session's, which its summary shows; StartSession carries an MCP server for each. None
+       * for a Runner that doesn't relay them: its Claude Code starts without.
        */
       const startPlugins = Effect.fn("SessionRelay.startPlugins")(function* (
         sessionId: SessionId,
@@ -1366,8 +1412,167 @@ export class SessionRelay extends Context.Service<
       ) {
         const installations = runner.relaysPlugins ? yield* plugins.forSession(sessionId, repo) : []
         yield* sessions.setPlugins(sessionId, installations)
-        return gatewayServers(installations)
+        return installations
       })
+
+      /**
+       * Notes in the Session that an Installation fails it (#216), unless it already said so since
+       * the Installation last worked. `after` says what that means for the Session.
+       */
+      const noteFailure = Effect.fn("SessionRelay.noteFailure")(function* (
+        sessionId: SessionId,
+        failure: InstallationFailure,
+        after: string,
+      ) {
+        const noted = installationTrouble.get(sessionId) ?? new Map<InstallationId, string>()
+        installationTrouble.set(sessionId, noted)
+        const why = `${failure.reason} ${failure.status ?? ""}`
+        if (noted.get(failure.installationId) === why) return
+        noted.set(failure.installationId, why)
+        yield* logEvent(
+          sessionId,
+          SandboxNoted.make({
+            message: `${installationFailureText(failure)} ${after}`,
+            installationFailed: failure,
+          }),
+        )
+      })
+
+      /**
+       * Checks each Installation the Session starts with (#216), off the lock: what fails, and
+       * why. A value missing, or values the Hub can't decrypt, are sure without asking a server;
+       * then no server is asked. Otherwise each server is sent an MCP `initialize`, at once.
+       */
+      const checkInstallations = Effect.fn("SessionRelay.checkInstallations")(function* (
+        sessionId: SessionId,
+        repo: string,
+        installations: ReadonlyArray<SessionInstallation>,
+      ) {
+        const targets = yield* Effect.forEach(installations, (installation) =>
+          plugins.gatewayTarget(installation.id, { id: sessionId, repo }).pipe(
+            Effect.map((target) => ({ installation, target: Option.getOrUndefined(target) })),
+            Effect.catchTag("SecretsUnavailable", () =>
+              Effect.succeed({ installation, target: "Unreadable" as const }),
+            ),
+          ),
+        )
+        const sure = targets.flatMap(({ installation, target }): Array<InstallationFailure> => {
+          if (target === "Unreadable") return [failureOf(installation, { reason: "Unreadable" })]
+          if (target?._tag === "NeedsValue") {
+            return [failureOf(installation, { reason: "ValueNeeded", secrets: target.secrets })]
+          }
+          return []
+        })
+        if (sure.length > 0) return sure
+        const checked = yield* Effect.forEach(
+          targets,
+          ({ installation, target }) => {
+            // One taken off the Repo meanwhile isn't started with: the Gateway refuses it.
+            if (target === undefined || target === "Unreadable" || target._tag !== "Ready") {
+              return Effect.succeed<Array<InstallationFailure>>([])
+            }
+            return checkServer(target, config.pluginCheckTimeout).pipe(
+              Effect.map((check): Array<InstallationFailure> => {
+                if (check._tag === "Works") return []
+                if (check._tag === "Unreachable") {
+                  return [failureOf(installation, { reason: "Unreachable" })]
+                }
+                return [failureOf(installation, { reason: check._tag, status: check.status })]
+              }),
+            )
+          },
+          { concurrency: "unbounded" },
+        )
+        return checked.flat()
+      })
+
+      /**
+       * Sends the Session its StartSession: at once when it starts with no Installations, else
+       * once they are checked (#216). Meanwhile it shows as starting. One that surely can't work
+       * leaves the Session Asleep instead, as a start that fails does; one whose server may only
+       * be down is noted, and the Session starts.
+       */
+      const sendStart = Effect.fn("SessionRelay.sendStart")(function* (
+        session: SessionSummary,
+        runner: OnlineRunner,
+        installations: ReadonlyArray<SessionInstallation>,
+        start: StartSession,
+      ) {
+        const under = starts.get(session.id)
+        if (installations.length === 0 || under === undefined) return runner.peer.send(start)
+        const settle = (failures: ReadonlyArray<InstallationFailure>) =>
+          Effect.gen(function* () {
+            const now = yield* sessions.get(session.id)
+            // Settled meanwhile, as by an archive or its Runner going offline.
+            if (
+              Option.isNone(now) ||
+              now.value.state !== "Active" ||
+              starts.get(session.id) !== under ||
+              onlineRunners.get(runner.id) !== runner
+            ) {
+              return
+            }
+            const blocking = failures.filter(failureBlocksStart)
+            if (blocking.length > 0) {
+              return yield* claudeGone(now.value, {
+                message: `Claude Code could not start: ${installationsCantStartText(now.value.repo, blocking)}`,
+                installationsFailed: blocking,
+              })
+            }
+            for (const failure of failures) {
+              yield* noteFailure(
+                session.id,
+                failure,
+                "Claude Code started all the same: its tools fail until it answers.",
+              )
+            }
+            runner.peer.send(start)
+          })
+        yield* checkInstallations(session.id, session.repo, installations).pipe(
+          // A check that can't be made doesn't hold the Session up.
+          Effect.catchCause((cause) =>
+            Effect.as(
+              Effect.logError("Could not check the Installations a Session starts with", cause),
+              [],
+            ),
+          ),
+          Effect.flatMap((failures) => serialized(settle(failures))),
+          Effect.catchCause((cause) =>
+            Effect.logError("Could not start a Session after checking its Installations", cause),
+          ),
+          Effect.annotateLogs({ sessionId: session.id }),
+          Effect.forkIn(layerScope),
+        )
+      })
+
+      /** See the service: the Gateway's failures, noted in the Session (#216). */
+      const installationFailed = (
+        sessionId: SessionId,
+        installationId: InstallationId,
+        why: Omit<InstallationFailure, "installationId" | "installation">,
+      ) =>
+        serialized(
+          Effect.gen(function* () {
+            const session = yield* sessions.get(sessionId)
+            if (Option.isNone(session) || session.value.state !== "Active") return
+            const installation = session.value.plugins?.find((one) => one.id === installationId)
+            if (installation === undefined) return
+            yield* noteFailure(
+              sessionId,
+              { installationId, installation: installation.name, ...why },
+              "Its tools fail until the Installation is fixed and the Session restarted.",
+            )
+          }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("Could not note an Installation failing", cause),
+          ),
+          Effect.withSpan("SessionRelay.installationFailed"),
+        )
+
+      const installationWorks = (sessionId: SessionId, installationId: InstallationId) => {
+        installationTrouble.get(sessionId)?.delete(installationId)
+      }
 
       /**
        * Starts the Session's Claude Code again with its model and effort as set now (#128), once
@@ -1423,6 +1628,7 @@ export class SessionRelay extends Context.Service<
         starting.delete(session.id)
         starts.delete(session.id)
         openPorts.delete(session.id)
+        installationTrouble.delete(session.id)
         stopping.delete(session.id)
         restarting.delete(session.id)
         if (!restartGoesOn) restarts.delete(session.id)
@@ -1491,7 +1697,7 @@ export class SessionRelay extends Context.Service<
         const resume = yield* sessions.claudeSessionId(session.id)
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
-        const servers = yield* startPlugins(session.id, session.repo, runner)
+        const installations = yield* startPlugins(session.id, session.repo, runner)
         starting.add(session.id)
         yield* startSent(session.id, environment)
         // It starts with its model and effort as set now (#128).
@@ -1503,7 +1709,10 @@ export class SessionRelay extends Context.Service<
             ? woken
             : `${woken}, with a new conversation: Claude Code's last one is unknown`,
         })
-        runner.peer.send(
+        yield* sendStart(
+          session,
+          runner,
+          installations,
           StartSession.make({
             sessionId: session.id,
             repo: session.repo,
@@ -1514,7 +1723,7 @@ export class SessionRelay extends Context.Service<
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
             ...modelFlags(session),
-            ...servers,
+            ...gatewayServers(installations),
           }),
         )
         return undefined
@@ -1812,11 +2021,14 @@ export class SessionRelay extends Context.Service<
           ...modelFlags(plan.model ?? {}),
         })
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
-        const servers = yield* startPlugins(id, session.repo, runner)
+        const installations = yield* startPlugins(id, session.repo, runner)
         starting.add(id)
         yield* startSent(id, environment)
         yield* logEvent(id, SessionStateChanged.make({ state: "Active", ...plan.why }))
-        runner.peer.send(
+        yield* sendStart(
+          session,
+          runner,
+          installations,
           StartSession.make({
             sessionId: id,
             repo: session.repo,
@@ -1826,7 +2038,7 @@ export class SessionRelay extends Context.Service<
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
             ...modelFlags(session),
-            ...servers,
+            ...gatewayServers(installations),
           }),
         )
         // As recorded now, with the Installations it starts with.
@@ -3641,6 +3853,8 @@ export class SessionRelay extends Context.Service<
         modHello,
         modEvents,
         openTunnel,
+        installationFailed,
+        installationWorks,
       })
     }),
   )
