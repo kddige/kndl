@@ -4,10 +4,17 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, posix } from "node:path"
 import { BunServices, BunSocket } from "@effect/platform-bun"
-import { ClaudeSessionId, ProtocolVersion, SessionId, TestBuildId } from "@kndl/protocol"
+import {
+  ClaudeSessionId,
+  type GatewayServer,
+  ProtocolVersion,
+  SessionId,
+  TestBuildId,
+} from "@kndl/protocol"
 import { readBuildVersion } from "@kndl/protocol/checkout"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
+import { gatewayMcpServers } from "./ClaudeLaunch.ts"
 import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGit, HubGitLive } from "./HubGit.ts"
@@ -303,6 +310,8 @@ describe("connecting", () => {
       ownClaudeCredential: false,
       // It opens tunnels to a Session's Open ports (#177).
       forwardsPorts: true,
+      // It gives Claude Code the MCP servers of its Session's Installations (#221).
+      relaysPlugins: true,
     })
   })
 
@@ -608,6 +617,28 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     expect(h.tmux.launched[0]?.argv.slice(-4)).toEqual(["--model", "sonnet", "--effort", "high"])
+  })
+
+  test("starts Claude Code with its Installations' MCP servers, at the Gateway (#221)", async () => {
+    const h = startRunner()
+    await connected(h)
+    const plugins = [{ installationId: "inst-1", server: "docs" }]
+    h.hub.send(startSession("s-1", { plugins }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    const argv = h.tmux.launched[0]?.argv ?? []
+    const pluginDir = argv[argv.indexOf("--dangerously-skip-permissions") - 1] ?? ""
+    expect(posix.basename(pluginDir)).toBe("kndl")
+    const copy = posix.relative(modGuestPath, posix.dirname(pluginDir))
+    const config = readFileSync(
+      join(h.settings.sessionsRoot, "s-1", "mod", copy, "kndl", ".mcp.json"),
+      "utf8",
+    )
+    expect(JSON.parse(config)).toEqual(
+      gatewayMcpServers(plugins as unknown as ReadonlyArray<GatewayServer>),
+    )
+    // The Session token alone reaches it, by the variable the proxy's environment sets.
+    expect(config).not.toContain("chm_mod.secret")
   })
 
   test("restarts Claude Code alone on a new model, resuming its conversation (#128)", async () => {

@@ -1,6 +1,13 @@
 import { posix } from "node:path"
-import type { ClaudeSessionId, EffortLevel, ModelName, SessionId } from "@kndl/protocol"
-import { modPlugins } from "./sandbox/SessionLayout.ts"
+import {
+  type ClaudeSessionId,
+  type EffortLevel,
+  type GatewayServer,
+  gatewayPath,
+  type ModelName,
+  type SessionId,
+} from "@kndl/protocol"
+import { gatewayPlugin, modPlugins } from "./sandbox/SessionLayout.ts"
 
 /**
  * The environment variables the mod reads to reach the Hub. The Hub's URL and the mod token are
@@ -26,6 +33,11 @@ export interface ClaudeLaunchOptions {
   readonly model?: ModelName
   /** The effort level, its `--effort` (#128); Claude Code's default when absent. */
   readonly effort?: EffortLevel
+  /**
+   * The MCP servers of the Installations it runs with (ADR 0020), in the mod's copy as the
+   * {@link gatewayPlugin} plugin (SessionMod.ts); none when absent.
+   */
+  readonly plugins?: ReadonlyArray<GatewayServer>
 }
 
 export interface ClaudeLaunch {
@@ -45,6 +57,9 @@ export interface ClaudeLaunch {
  *
  * The Session's model and effort go as `--model` and `--effort` (#128), which, unlike `/model`
  * and `/effort`, last only for the process and are never written to its settings.json.
+ *
+ * Its Installations' MCP servers come in a plugin of their own (ADR 0020), so Claude Code names
+ * each `plugin:kndl:<server>`, never the name of one in the Repo's `.mcp.json`.
  */
 export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
   const conversation =
@@ -55,7 +70,10 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
     argv: [
       options.claudePath,
       ...conversation,
-      ...modPlugins.flatMap((plugin) => ["--plugin-dir", posix.join(options.mod, plugin)]),
+      ...[...modPlugins, ...(options.plugins?.length ? [gatewayPlugin] : [])].flatMap((plugin) => [
+        "--plugin-dir",
+        posix.join(options.mod, plugin),
+      ]),
       "--dangerously-skip-permissions",
       ...(options.model === undefined ? [] : ["--model", options.model]),
       ...(options.effort === undefined ? [] : ["--effort", options.effort]),
@@ -72,5 +90,26 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       DISABLE_INSTALLATION_CHECKS: "1",
       [ModEnvironment.sessionId]: options.sessionId,
     },
+  }
+}
+
+/**
+ * The `.mcp.json` of the {@link gatewayPlugin} plugin: an MCP server for each Installation the
+ * Session runs with, at the Gateway (ADR 0020), through the credential proxy as the mod's calls
+ * go. Claude Code fills in the variables from its environment: the proxy's URL, and the Session
+ * token, which the proxy relays with the Session's mod token in its place. Nothing in it is secret.
+ */
+export function gatewayMcpServers(servers: ReadonlyArray<GatewayServer>) {
+  return {
+    mcpServers: Object.fromEntries(
+      servers.map(({ installationId, server }) => [
+        server,
+        {
+          type: "http",
+          url: `\${${ModEnvironment.hubUrl}}${gatewayPath(installationId)}`,
+          headers: { Authorization: `Bearer \${${ModEnvironment.modToken}}` },
+        },
+      ]),
+    ),
   }
 }

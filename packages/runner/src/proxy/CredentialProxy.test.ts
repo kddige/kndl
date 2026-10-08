@@ -69,9 +69,11 @@ const upstream = Bun.serve({
   },
 })
 
-/** Stands in for the Hub's mod endpoints. */
+/** Stands in for the Hub's mod endpoints, and its Gateway (#221). */
 const hub = {
   seen: [] as Array<Seen>,
+  /** Holds an MCP answer's second event back until resolved. */
+  gate: Promise.withResolvers<void>(),
 }
 
 const fakeHub = Bun.serve({
@@ -88,6 +90,21 @@ const fakeHub = Bun.serve({
     }
     if (url.pathname === "/mod/hello")
       return Response.json({ _tag: "ModWelcome", protocolVersion: 1 })
+    if (url.pathname.startsWith("/gateway/") && request.method === "POST") {
+      const encoder = new TextEncoder()
+      const gate = hub.gate.promise
+      return new Response(
+        new ReadableStream({
+          async start(controller) {
+            controller.enqueue(encoder.encode('data: {"first":true}\n\n'))
+            await gate
+            controller.enqueue(encoder.encode('data: {"second":true}\n\n'))
+            controller.close()
+          },
+        }),
+        { headers: { "content-type": "text/event-stream", "mcp-session-id": "mcp-1" } },
+      )
+    }
     return new Response(null, { status: 204 })
   },
 })
@@ -135,6 +152,8 @@ beforeEach(() => {
   anthropic.refused.clear()
   anthropic.gate = Promise.withResolvers<void>()
   hub.seen = []
+  hub.gate.resolve()
+  hub.gate = Promise.withResolvers<void>()
   runner.held = runnerOAuth
   runner.onHost = runnerOAuth
   runner.rereads = 0
@@ -518,6 +537,59 @@ describe("mod relay", () => {
         headers: { authorization: `Bearer ${token}` },
       })
       expect(deleted.status).toBe(404)
+      expect(hub.seen).toEqual([])
+    }))
+})
+
+describe("Gateway relay", () => {
+  test("relays Claude Code's MCP traffic to the Hub's Gateway with the mod token, streaming", () =>
+    withProxy(async ({ url, issue }) => {
+      const token = await issue("s-1")
+      const headers = {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18",
+      }
+      const body = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+      const answer = await fetch(`${url}/gateway/inst-1`, { method: "POST", headers, body })
+      expect(answer.status).toBe(200)
+      expect(answer.headers.get("mcp-session-id")).toBe("mcp-1")
+      const reader = answer.body?.getReader()
+      if (reader === undefined) throw new Error("No body")
+      const decoder = new TextDecoder()
+      // The first event arrives while the second is held back.
+      expect(decoder.decode((await reader.read()).value)).toContain('{"first":true}')
+      hub.gate.resolve()
+      let rest = ""
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read())
+        rest += decoder.decode(chunk.value)
+      expect(rest).toContain('{"second":true}')
+
+      // Any method: Streamable HTTP ends its session with DELETE.
+      const ended = await fetch(`${url}/gateway/inst-1`, { method: "DELETE", headers })
+      expect(ended.status).toBe(204)
+
+      expect(hub.seen.map((seen) => [seen.method, seen.path, seen.body])).toEqual([
+        ["POST", "/gateway/inst-1", body],
+        ["DELETE", "/gateway/inst-1", ""],
+      ])
+      for (const seen of hub.seen) {
+        expect(seen.headers.authorization).toBe(`Bearer ${modToken}`)
+        expect(seen.headers["mcp-protocol-version"]).toBe("2025-06-18")
+        expect(JSON.stringify(seen.headers)).not.toContain(token)
+      }
+      expect(anthropic.seen).toEqual([])
+    }))
+
+  test("refuses MCP traffic without a live Session token", () =>
+    withProxy(async ({ url }) => {
+      const refused = await fetch(`${url}/gateway/inst-1`, {
+        method: "POST",
+        headers: { authorization: "Bearer chp_guessed" },
+        body: "{}",
+      })
+      expect(refused.status).toBe(401)
       expect(hub.seen).toEqual([])
     }))
 })

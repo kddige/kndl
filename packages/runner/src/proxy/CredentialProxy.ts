@@ -10,6 +10,8 @@
 //   answers 404 to anything else;
 // - relays the mod's calls, `/mod/*`, to the Hub with the Session's mod token in the token's
 //   place, so no mod token enters a Sandbox (ADR 0004, amended);
+// - relays Claude Code's MCP traffic to its Installations, `/gateway/*` in any method, to the
+//   Hub's Gateway (ADR 0020) the same way, its body streaming as it comes;
 // - streams every response back as it comes, with no buffering and no idle timeout: a Turn
 //   streams for minutes, and the mod's command polls wait up to 25 s.
 //
@@ -101,6 +103,12 @@ const isModCall = (method: string, path: string) =>
   (method === "GET" || method === "POST") && path.startsWith("/mod/")
 
 /**
+ * Claude Code's MCP traffic to its Installations (ADR 0020), relayed to the Hub's Gateway with the
+ * mod token, in whatever method Streamable HTTP sends it.
+ */
+const isGatewayCall = (path: string) => path.startsWith("/gateway/")
+
+/**
  * Headers never passed on: per-connection ones, the credentials replaced, a length the stream
  * sets itself, and `accept-encoding`, so the response comes back uncompressed and the client
  * reads it as is.
@@ -183,18 +191,27 @@ const returned = (response: Response) => {
  */
 const streaming = { timeout: false, decompress: false } as unknown as RequestInit
 
-/** Sends a request on, its response streaming back. */
-const send = (url: string, request: Request, headers: Headers, body: ArrayBuffer | undefined) =>
+/**
+ * Sends a request on, its response streaming back. A body read whole, or the request's own,
+ * streaming on as it comes.
+ */
+const send = (
+  url: string,
+  request: Request,
+  headers: Headers,
+  body: ArrayBuffer | ReadableStream<Uint8Array> | null | undefined,
+) =>
   Effect.tryPromise({
     try: () =>
       fetch(url, {
         method: request.method,
         headers,
         body,
+        ...(body instanceof ReadableStream && { duplex: "half" }),
         redirect: "manual",
         signal: request.signal,
         ...streaming,
-      }),
+      } as RequestInit),
     // Fetch's error names the URL at most, never a header.
     catch: (error) => new CredentialProxyError({ message: String(error) }),
   })
@@ -288,16 +305,20 @@ export const makeProxyHandler = (options: ProxyHandlerOptions) =>
         }),
       )
 
-    /** Relays a mod's call to the Hub, with the Session's mod token. */
+    /**
+     * Relays a mod's call, or Claude Code's MCP traffic, to the Hub, with the Session's mod token.
+     * MCP traffic's body streams on as it comes.
+     */
     const toHub = (request: Request, url: URL, grant: SessionGrant) =>
       Effect.gen(function* () {
         const headers = new Headers()
         for (const [name, value] of request.headers)
           if (!notForwarded.has(name)) headers.set(name, value)
         headers.set("authorization", `Bearer ${Redacted.value(grant.modToken)}`)
-        const body = yield* readBody(request)
+        const body = isGatewayCall(url.pathname) ? request.body : yield* readBody(request)
         const response = yield* send(`${hub}${url.pathname}${url.search}`, request, headers, body)
-        if (response.status === 401 || response.status === 403)
+        // The Gateway answers 403 for an Installation the Session doesn't run with.
+        if (response.status === 401 || (response.status === 403 && !isGatewayCall(url.pathname)))
           yield* Effect.logWarning(
             `Session ${grant.sessionId}: the Hub refused its mod token (${response.status} on ${url.pathname})`,
           )
@@ -333,7 +354,7 @@ export const makeProxyHandler = (options: ProxyHandlerOptions) =>
           answer.headers.set("retry-after", "1")
           return answer
         }
-        if (isModCall(method, path)) return yield* toHub(request, url, grant)
+        if (isModCall(method, path) || isGatewayCall(path)) return yield* toHub(request, url, grant)
         if (!isAllowed(method, path)) {
           yield* Effect.logWarning(`Session ${grant.sessionId}: refused ${method} ${path}`)
           return apiError(404, "not_found_error", `${method} ${path} is not forwarded`)

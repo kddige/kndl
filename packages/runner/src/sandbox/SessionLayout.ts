@@ -47,6 +47,12 @@ export const modGuestPath = "/opt/kndl/mod"
  */
 export const modPlugins = ["hub-link", "hub-link-commands"] as const
 
+/**
+ * The plugin the Runner writes beside the mod's for a Session with Installations (ADR 0020): the
+ * MCP server of each, which Claude Code names `plugin:kndl:<server>`.
+ */
+export const gatewayPlugin = "kndl"
+
 export interface SessionLayoutOptions {
   readonly sessionId: SessionId
   readonly image: string
