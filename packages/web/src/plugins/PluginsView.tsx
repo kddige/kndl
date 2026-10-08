@@ -193,7 +193,8 @@ interface Deleting {
   readonly run: () => Promise<unknown>
 }
 
-export function PluginsView() {
+/** The Plugins page; `opening` names an Installation whose dialog opens once it loads (#216). */
+export function PluginsView({ opening }: { opening?: string | undefined } = {}) {
   const hub = useHub()
   const state = useHubState((hubState) => hubState.plugins)
   const online = useHubState((hubState) => hubState.connection.status === "online")
@@ -202,6 +203,18 @@ export function PluginsView() {
   const [installing, setInstalling] = useState<InstallationTarget | null>(null)
   const [deleting, setDeleting] = useState<Deleting | null>(null)
   const [packaging, setPackaging] = useState<PackageOpening | null>(null)
+  const [opened, setOpened] = useState<string | null>(null)
+
+  // Opened once for each Installation asked for, and only one the person can change.
+  useEffect(() => {
+    if (opening === undefined || opening === opened || state === null) return
+    setOpened(opening)
+    const installation = state.installations.find((one) => one.id === opening)
+    const plugin = state.plugins.find((one) => one.id === installation?.pluginId)
+    if (installation === undefined || plugin === undefined) return
+    if (installation.otherRepos !== undefined) return
+    setInstalling({ plugin, installation })
+  }, [opening, opened, state])
 
   useEffect(() => {
     if (!online) return

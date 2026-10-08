@@ -1014,7 +1014,13 @@ describe("Plugins (ADR 0020)", () => {
     expect(find(client, demoSessionId)?.pluginsChanged).toBeUndefined()
     const { plugins } = await client.getPlugins()
     const linear = named(plugins, "Linear")
-    await client.createInstallation(linear.id, "Linear", [repo])
+    // With its API key: one without keeps the Session from starting (#216).
+    await client.createInstallation(
+      linear.id,
+      "Linear",
+      [repo],
+      [{ key: "api_key", value: Redacted.make("made-up-linear-key") }],
+    )
     await eventually(() => expect(find(client, demoSessionId)?.pluginsChanged).toBe(true))
 
     expect(client.restartSession(demo)).toBe(true)

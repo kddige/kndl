@@ -45,6 +45,7 @@ import { bob, you } from "./script.ts"
 import type {
   HeaderValueSetWire,
   HubMessage,
+  InstallationFailureWire,
   ParticipantWire,
   PluginLogEntryWire,
   PluginWire,
@@ -306,6 +307,31 @@ export class FakePlugins {
       read: read.success,
       ...(existing && { upgrades: existing.id }),
     }
+  }
+
+  /**
+   * The Installations on for a Repo that keep its Sessions from starting (#216): as the Hub, one
+   * without a value for a header secret. The fake has no server to ask.
+   */
+  failing(repo: string): Array<InstallationFailureWire> {
+    return this.#installations.flatMap((installation): Array<InstallationFailureWire> => {
+      const plugin = this.#find(installation.pluginId)
+      if (plugin === undefined || !installation.repos.some((listed) => sameRepo(listed, repo))) {
+        return []
+      }
+      const missing = headerSecretsOf(plugin.auth).filter(
+        (secret) => !installation.values.some((value) => value.key === secret.key),
+      )
+      if (missing.length === 0) return []
+      return [
+        {
+          installationId: installation.id,
+          installation: installation.name,
+          reason: "ValueNeeded",
+          secrets: missing.map((secret) => secret.title),
+        },
+      ]
+    })
   }
 
   /** Applies a change by `by`, who has access to the Repos `allowed` lets through. */

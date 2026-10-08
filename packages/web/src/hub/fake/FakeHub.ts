@@ -26,6 +26,8 @@ import {
   findModel,
   formatCliLoginCode,
   formatPairingCode,
+  installationFailureText,
+  installationsCantStartText,
   InviteLifetimeMs,
   InvitePath,
   memberRemovalRefusal,
@@ -553,6 +555,28 @@ export class FakeHub implements HubTransport {
     const { starting: _, restarting: __, ...summary } = session.summary
     session.summary = { ...summary, currentTurn: null, lastOutput: output }
     this.#setState(session, "Asleep", `Claude Code exited with code ${exitCode}`)
+  }
+
+  /**
+   * A running Session's Installation fails (#216), as the Gateway notes a server refusing its
+   * credential: an error in the Session, which runs on. In the browser,
+   * `fakeHub.installationFails("s-demo", "Sentry", 401)` in the console.
+   */
+  installationFails(sessionId: string, name: string, status: number): void {
+    const session = this.sessions.get(sessionId)
+    const installation = session?.summary.plugins?.find((one) => one.name === name)
+    if (!session || !installation) return
+    const failure = {
+      installationId: installation.id,
+      installation: installation.name,
+      reason: "Rejected" as const,
+      status,
+    }
+    this.#append(session, {
+      _tag: "SandboxNoted",
+      message: `${installationFailureText(failure)} Its tools fail until the Installation is fixed and the Session restarted.`,
+      installationFailed: failure,
+    })
   }
 
   /** What GitHub says of the signed-in person and `repo`, however its name is spelled (#197). */
@@ -1611,6 +1635,18 @@ export class FakeHub implements HubTransport {
         state: "Asleep",
         message: `Claude Code could not start: ${cantStartText(session.summary.repo, needed)}`,
         valuesNeeded: true,
+      })
+      this.#summaryChanged(session)
+      return
+    }
+    // And while an Installation on for its Repo can't work (#216).
+    const failing = this.plugins.failing(session.summary.repo)
+    if (failing.length > 0) {
+      this.#append(session, {
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        message: `Claude Code could not start: ${installationsCantStartText(session.summary.repo, failing)}`,
+        installationsFailed: failing,
       })
       this.#summaryChanged(session)
       return

@@ -55,6 +55,7 @@ import {
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import { AgentPanel } from "./AgentPanel.tsx"
 import { Composer } from "./Composer.tsx"
+import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker } from "./ModelPicker.tsx"
 import { modelName, otherTurnModel } from "./models.ts"
@@ -780,6 +781,16 @@ function StateBanner({
             {why ? sentence(why) : ""}
             Prompts sent now wait in the queue until it starts.
           </Banner>
+        )
+      }
+      // It didn't start for its Repo's Installations (#216): fixing them, or taking it off, will.
+      if (change?.state === "Asleep" && (change.installationsFailed?.length ?? 0) > 0) {
+        return (
+          <InstallationsFailedBanner
+            summary={summary}
+            failures={change.installationsFailed ?? []}
+            onRetry={onWake}
+          />
         )
       }
       return (
