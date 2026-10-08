@@ -49,6 +49,23 @@ describe("a package", () => {
     } as PackagedPlugin)
   })
 
+  test("keeps the manifest's icon, an https URL or a path in the package", () => {
+    expect(
+      Result.getOrThrow(read(pkg, { ...manifest, icon: "https://acme.test/i.png" })).icon,
+    ).toBe("https://acme.test/i.png")
+    expect(Result.getOrThrow(read(pkg, { ...manifest, icon: " assets/logo.svg " })).icon).toBe(
+      "assets/logo.svg",
+    )
+    expect("icon" in Result.getOrThrow(read(pkg, manifest))).toBe(false)
+  })
+
+  test("is never refused for a broken icon: it is left out", () => {
+    for (const icon of [42, null, ["a.png"], "", "   ", "x".repeat(501), "a\nb.png"]) {
+      const plugin = Result.getOrThrow(read(pkg, { ...manifest, icon }))
+      expect("icon" in plugin).toBe(false)
+    }
+  })
+
   test("maps header secrets 1:1 onto the Plugin's auth, the template {value} by default", () => {
     const headers = Result.getOrThrow(
       readPluginPackage(

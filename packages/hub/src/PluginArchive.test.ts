@@ -105,6 +105,60 @@ const refusal = (bytes: Uint8Array) => {
   return result.failure
 }
 
+const archiveWith = (icon: string, extra: ReadonlyArray<Entry> = []) =>
+  readPackageArchive(
+    tgz([
+      { name: "package.json", content: packageJson },
+      {
+        name: "kndl.json",
+        content: JSON.stringify({ displayName: "L", mcp: { url: "https://a.test/" }, icon }),
+      },
+      ...extra,
+    ]),
+  )
+
+describe("a package's icon file (#230)", () => {
+  const withIcon = JSON.stringify({
+    displayName: "Linear",
+    mcp: { url: "https://mcp.linear.app/mcp" },
+    icon: "assets/logo.svg",
+  })
+  const logo = new TextEncoder().encode("<svg/>")
+
+  test("is read from the archive's package folder, in a .tgz and a .zip", () => {
+    const fromTgz = Result.getOrThrow(
+      readPackageArchive(
+        tgz([
+          { name: "package/package.json", content: packageJson },
+          { name: "package/kndl.json", content: withIcon },
+          { name: "package/assets/logo.svg", content: logo },
+        ]),
+      ),
+    )
+    expect(fromTgz.iconFile).toEqual(logo)
+    const fromZip = Result.getOrThrow(
+      readPackageArchive(
+        zip([
+          { name: "repo-main/package.json", content: packageJson },
+          { name: "repo-main/kndl.json", content: withIcon },
+          { name: "repo-main/assets/logo.svg", content: "<svg/>" },
+        ]),
+      ),
+    )
+    expect(fromZip.iconFile).toEqual(logo)
+  })
+
+  test("is left out, never refusing the archive, when missing, too large or outside it", () => {
+    for (const result of [
+      archiveWith("assets/logo.svg"),
+      archiveWith("../logo.svg"),
+      archiveWith("big.png", [{ name: "big.png", content: new Uint8Array(512 * 1024 + 1) }]),
+    ]) {
+      expect(Result.getOrThrow(result).iconFile).toBeUndefined()
+    }
+  })
+})
+
 describe("a .tgz", () => {
   test("is read for its package.json and kndl.json in npm pack's package folder", () => {
     expect(

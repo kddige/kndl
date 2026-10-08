@@ -148,6 +148,11 @@ export const Plugin = Schema.Struct({
   /** Its MCP server's URL, which only the Hub reaches (Streamable HTTP). */
   url: Schema.String,
   auth: PluginAuth,
+  /**
+   * A hash of its icon, which the Hub serves at `/plugins/<id>/icon` (#230); absent while it has
+   * none. A new hash is a new icon, so the web puts it in the URL to bust its cache.
+   */
+  iconHash: Schema.optionalKey(Schema.String),
   /** What a packaged Plugin is pinned to; absent for a Hub-only one. */
   package: Schema.optionalKey(PluginPackage),
   createdBy: Participant,
@@ -318,6 +323,8 @@ export const PackagedPlugin = Schema.Struct({
   name: Schema.String,
   description: Schema.optionalKey(Schema.String),
   url: Schema.String,
+  /** The manifest's `icon`: an https URL, or a path in the package (#230). */
+  icon: Schema.optionalKey(Schema.String),
   auth: PluginAuth,
   package: PluginPackage,
 })

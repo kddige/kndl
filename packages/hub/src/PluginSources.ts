@@ -18,6 +18,8 @@ import { join } from "node:path"
 import {
   gitRefProblem,
   gitUrlProblem,
+  iconPathOf,
+  manifestIconOf,
   MaxPluginArchiveBytes,
   type PackagedPlugin,
   type PluginPackageFrom,
@@ -29,6 +31,7 @@ import {
 } from "@kndl/protocol"
 import { Context, Effect, Layer, Result, Semaphore } from "effect"
 import { readPackageArchive, type PackageFiles } from "./PluginArchive.ts"
+import { MaxIconBytes } from "./PluginIcons.ts"
 import { PluginRefused } from "./Plugins.ts"
 
 export interface PluginSourcesOptions {
@@ -162,8 +165,8 @@ async function fetchFiles(
     }
     const poll = watchSize ? setInterval(() => void measure(), sizePollMs) : undefined
     try {
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(child.stdout).text(),
+      const [out, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).bytes(),
         new Response(child.stderr).text(),
         child.exited,
       ])
@@ -174,7 +177,7 @@ async function fetchFiles(
         )
       }
       if (child.signalCode !== null || Date.now() >= deadline) throw new GitRefusal(tooSlow)
-      return { stdout, stderr, exitCode }
+      return { stdout: new TextDecoder().decode(out), bytes: out, stderr, exitCode }
     } finally {
       if (poll !== undefined) clearInterval(poll)
     }
@@ -217,7 +220,7 @@ async function fetchFiles(
     if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new GitRefusal(`${ref} isn't a commit.`)
     const folder = packagePath(source.path ?? "")
     const where = folder === "" ? "at its root" : `in ${folder}/`
-    const read = async (name: string) => {
+    const read = async (name: string, limit = 64 * 1024) => {
       const path = folder === "" ? name : `${folder}/${name}`
       const listed = await run([
         "--git-dir",
@@ -239,17 +242,29 @@ async function fetchFiles(
       if (mode !== "100644" && mode !== "100755") {
         throw new GitRefusal(`The repo's ${name} isn't a file.`)
       }
-      if (Number(size) > 64 * 1024) {
-        throw new GitRefusal(`The repo's ${name} is larger than 64 KiB.`)
+      if (Number(size) > limit) {
+        throw new GitRefusal(`The repo's ${name} is larger than ${limit / 1024} KiB.`)
       }
       const blob = await run(["--git-dir", repo, "cat-file", "blob", object as string])
       if (blob.exitCode !== 0) throw new Error(`git cat-file failed: ${blob.stderr}`)
-      return blob.stdout
+      return blob
     }
     // Both missing names package.json first.
-    const packageJson = await read("package.json")
-    const manifest = await read(PluginManifestFile)
-    return { files: { packageJson, manifest }, commit }
+    const packageJson = (await read("package.json")).stdout
+    const manifest = (await read(PluginManifestFile)).stdout
+    // A broken icon never refuses the package: its file is read if it is there, else left out.
+    const iconPath = iconPathOf(manifestIconOf(manifest) ?? "")
+    const iconFile =
+      iconPath === undefined
+        ? undefined
+        : await read(iconPath, MaxIconBytes).then(
+            (blob) => blob.bytes,
+            () => undefined,
+          )
+    return {
+      files: { packageJson, manifest, ...(iconFile !== undefined && { iconFile }) },
+      commit,
+    }
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -264,6 +279,24 @@ const uploadName = (name: string) =>
     ?.replace(/[\u0000-\u001f\u007f]/g, "")
     .slice(0, 200) || "upload"
 
+/** A package as the Hub read it, with its icon file's bytes if it has one. */
+export interface PackageRead {
+  readonly plugin: PackagedPlugin
+  readonly iconFile?: Uint8Array
+}
+
+const readOf = (files: PackageFiles, source: PluginSource, commit?: string) =>
+  readPluginPackage(files, source, commit).pipe(
+    Result.match({
+      onSuccess: (plugin): Effect.Effect<PackageRead> =>
+        Effect.succeed({
+          plugin,
+          ...(files.iconFile !== undefined && { iconFile: files.iconFile }),
+        }),
+      onFailure: refuse,
+    }),
+  )
+
 export class PluginSources extends Context.Service<
   PluginSources,
   {
@@ -272,6 +305,11 @@ export class PluginSources extends Context.Service<
      * words to show the person.
      */
     readonly read: (from: PluginPackageFrom) => Effect.Effect<PackagedPlugin, PluginRefused>
+    /**
+     * Reads a package as {@link read} does, with the bytes of the file in it that the manifest's
+     * `icon` names, if it names one the Hub could read (#230).
+     */
+    readonly readWithIcon: (from: PluginPackageFrom) => Effect.Effect<PackageRead, PluginRefused>
   }
 >()("@kndl/hub/PluginSources") {
   static readonly layerWith = (overrides: Partial<PluginSourcesOptions> = {}) =>
@@ -314,20 +352,19 @@ export class PluginSources extends Context.Service<
                     }),
             }),
           )
-          return yield* readPluginPackage(files, source, commit).pipe(
-            Result.match({ onSuccess: Effect.succeed, onFailure: refuse }),
-          )
+          return yield* readOf(files, source, commit)
         })
 
-        const read = Effect.fn("PluginSources.read")(function* (from: PluginPackageFrom) {
+        const readWithIcon = Effect.fn("PluginSources.read")(function* (from: PluginPackageFrom) {
           switch (from._tag) {
             case "Git":
               return yield* fromGit(from)
+            // A folder is its two files only: a manifest icon that is a path has no file here.
             case "Folder":
-              return yield* readPluginPackage(from, {
+              return yield* readOf(from, {
                 _tag: "Upload",
                 fileName: uploadName(from.folderName),
-              }).pipe(Result.match({ onSuccess: Effect.succeed, onFailure: refuse }))
+              })
             case "Archive": {
               const bytes = Buffer.from(from.data, "base64")
               if (bytes.length > MaxPluginArchiveBytes) {
@@ -337,15 +374,18 @@ export class PluginSources extends Context.Service<
               }
               const files = readPackageArchive(bytes)
               if (Result.isFailure(files)) return yield* refuse(files.failure)
-              return yield* readPluginPackage(files.success, {
+              return yield* readOf(files.success, {
                 _tag: "Upload",
                 fileName: uploadName(from.fileName),
-              }).pipe(Result.match({ onSuccess: Effect.succeed, onFailure: refuse }))
+              })
             }
           }
         })
 
-        return PluginSources.of({ read })
+        return PluginSources.of({
+          read: (from) => Effect.map(readWithIcon(from), ({ plugin }) => plugin),
+          readWithIcon,
+        })
       }),
     )
 
