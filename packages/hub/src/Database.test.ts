@@ -41,11 +41,21 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0025, header secrets: the migrator runs only the
+ * Takes the database back to before migration 0026, Plugin packages: the migrator runs only the
  * migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforePluginPackages = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE plugins DROP COLUMN description`
+  yield* sql`ALTER TABLE plugins DROP COLUMN package`
+  yield* sql`ALTER TABLE plugin_log DROP COLUMN plugin_version`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_packages'`
+})
+
+/** Takes the database back to before migration 0025, header secrets, as above. */
 const beforeHeaderSecrets = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforePluginPackages
   yield* sql`DROP TABLE session_installation_values`
   yield* sql`DROP TABLE installation_values`
   yield* sql`ALTER TABLE plugins DROP COLUMN auth`
@@ -208,6 +218,42 @@ describe("migration 0025, header secrets", () => {
       plugins: [{ id: "hub:docs", auth: '{"_tag":"None"}' }],
       log: [{ id: 1, secrets: null }],
       values: [],
+    })
+  })
+})
+
+describe("migration 0026, Plugin packages", () => {
+  test("leaves the Plugins there were Hub-only, and their logs as they were", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforePluginPackages
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('github:1', 'octocat', 'Octocat', 1, 1)`
+        yield* sql`INSERT INTO plugins (id, name, url, created_by, created_at)
+          VALUES ('hub:docs', 'Docs', 'https://mcp.example.com/mcp', 'github:1', 2)`
+        yield* sql`INSERT INTO plugin_log (
+            repo, at, by, change, plugin_id, plugin_name, installation_id, installation_name
+          ) VALUES ('acme/app', 3, 'github:1', 'PluginEdited', 'hub:docs', 'Docs', 'in-1', 'Docs')`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        return {
+          plugins: yield* sql`SELECT id, description, package FROM plugins`,
+          log: yield* sql`SELECT change, plugin_version AS pluginVersion FROM plugin_log`,
+        }
+      }),
+    )
+    expect(after).toEqual({
+      plugins: [{ id: "hub:docs", description: null, package: null }],
+      log: [{ change: "PluginEdited", pluginVersion: null }],
     })
   })
 })

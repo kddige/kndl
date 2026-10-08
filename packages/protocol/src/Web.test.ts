@@ -214,6 +214,34 @@ const webToHub = [
   },
   { _tag: "DeleteInstallation", requestId: "q-35", installationId: "in-1" },
   { _tag: "GetPluginLog", requestId: "q-36", repo: "kddige/kndl" },
+  {
+    _tag: "ReadPluginPackage",
+    requestId: "q-37",
+    from: {
+      _tag: "Git",
+      url: "https://github.com/acme/linear-mcp.git",
+      ref: "v1.2.0",
+      path: "packages/linear",
+    },
+  },
+  {
+    _tag: "ReadPluginPackage",
+    requestId: "q-38",
+    from: { _tag: "Archive", fileName: "linear-mcp-1.2.0.tgz", data: "H4sIAAAAAAAAAw==" },
+  },
+  {
+    _tag: "ReadPluginPackage",
+    requestId: "q-39",
+    from: {
+      _tag: "Folder",
+      folderName: "linear-mcp",
+      packageJson: '{"name":"linear-mcp","version":"1.2.0"}',
+      manifest: '{"displayName":"Linear","mcp":{"url":"https://mcp.linear.app/mcp"}}',
+    },
+  },
+  { _tag: "CheckPluginUpgrade", requestId: "q-40", pluginId: "@acme/linear-mcp" },
+  { _tag: "AddPluginPackage", requestId: "q-41", readId: "read-1" },
+  { _tag: "UpgradePlugin", requestId: "q-42", pluginId: "@acme/linear-mcp", readId: "read-2" },
 ]
 
 const hubToWeb = [
@@ -620,6 +648,30 @@ const hubToWeb = [
         createdBy: alice,
         createdAt: 1_700_000_000_000,
       },
+      {
+        id: "@acme/linear-mcp",
+        name: "Linear",
+        description: "Linear's issues",
+        url: "https://mcp.linear.app/mcp",
+        auth: {
+          _tag: "Headers",
+          headers: [
+            {
+              key: "apiKey",
+              title: "API key",
+              header: "Authorization",
+              template: "Bearer {value}",
+            },
+          ],
+        },
+        package: {
+          version: "1.2.0",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+          source: { _tag: "Git", url: "https://github.com/acme/linear-mcp.git", ref: "v1.2.0" },
+        },
+        createdBy: bob,
+        createdAt: 1_700_000_030_000,
+      },
     ],
     installations: [
       {
@@ -658,7 +710,30 @@ const hubToWeb = [
         installationName: "Docs",
         secrets: ["API key"],
       },
+      {
+        at: 1_700_000_120_000,
+        by: alice,
+        change: "PluginUpgraded",
+        pluginId: "@acme/linear-mcp",
+        pluginName: "Linear",
+        pluginVersion: "1.3.0",
+        installationId: "in-2",
+        installationName: "Linear",
+      },
     ],
+  },
+  {
+    _tag: "PluginPackageRead",
+    requestId: "q-40",
+    readId: "read-2",
+    read: {
+      id: "@acme/linear-mcp",
+      name: "Linear",
+      url: "https://mcp.linear.app/mcp",
+      auth: { _tag: "None" },
+      package: { version: "1.3.0", source: { _tag: "Upload", fileName: "linear-mcp-1.3.0.zip" } },
+    },
+    upgrades: "@acme/linear-mcp",
   },
 ]
 

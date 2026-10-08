@@ -13,8 +13,9 @@ import { EpochMillis, Participant, RepoName, repoKey } from "./Session.ts"
 // that the Gateway adds to each request, each from a value its Installation holds. The values are
 // write-only, like Sensitive Variables: the web is told only which are set, by whom and when.
 //
-// So far a Plugin is Hub-only, made in the web UI; an Installation is Repo-scoped. OAuth, global
-// Installations and packages come later, and slot in here.
+// A Plugin is Hub-only, made in the web UI, or packaged: read from a git repo or an upload, pinned
+// to its version and changed only by an Upgrade (see PluginPackage.ts). An Installation is
+// Repo-scoped. OAuth and global Installations come later, and slot in here.
 
 // ── Plugins and Installations ──────────────────────────────────────────────
 
@@ -85,14 +86,47 @@ export type PluginAuth = typeof PluginAuth.Type
 export const headerSecretsOf = (auth: PluginAuth): ReadonlyArray<HeaderSecret> =>
   auth._tag === "Headers" ? auth.headers : []
 
+// ── Packages ───────────────────────────────────────────────────────────────
+
+/**
+ * Where a packaged Plugin came from: a git repo over HTTPS, at a ref (its default branch when
+ * absent) and in a subfolder (its root when absent); or an upload, by its file or folder name.
+ */
+export const PluginSource = Schema.Union([
+  Schema.TaggedStruct("Git", {
+    url: Schema.String,
+    ref: Schema.optionalKey(Schema.String),
+    path: Schema.optionalKey(Schema.String),
+  }),
+  Schema.TaggedStruct("Upload", { fileName: Schema.String }),
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type PluginSource = typeof PluginSource.Type
+
+/**
+ * What a packaged Plugin is pinned to: its `package.json` version and, from git, the exact commit,
+ * with where it came from. Only an Upgrade moves it.
+ */
+export const PluginPackage = Schema.Struct({
+  version: Schema.String,
+  /** The commit it was read at, from git. */
+  commit: Schema.optionalKey(Schema.String),
+  source: PluginSource,
+})
+export type PluginPackage = typeof PluginPackage.Type
+
 /** A remote MCP server, as the Hub adds it to Sessions. */
 export const Plugin = Schema.Struct({
+  /** `hub:<slug>` for a Hub-only Plugin; a package's `package.json` name. */
   id: PluginId,
   /** Its display name. */
   name: Schema.String,
+  /** What it does, from a package's manifest. */
+  description: Schema.optionalKey(Schema.String),
   /** Its MCP server's URL, which only the Hub reaches (Streamable HTTP). */
   url: Schema.String,
   auth: PluginAuth,
+  /** What a packaged Plugin is pinned to; absent for a Hub-only one. */
+  package: Schema.optionalKey(PluginPackage),
   createdBy: Participant,
   createdAt: EpochMillis,
 })
@@ -156,6 +190,8 @@ export const PluginChange = Schema.Literals([
    * origin or its header secrets changed: `secrets` names which.
    */
   "ValuesCleared",
+  /** The packaged Plugin of an Installation on the Repo was upgraded to another version. */
+  "PluginUpgraded",
 ])
 export type PluginChange = typeof PluginChange.Type
 
@@ -170,8 +206,25 @@ export const PluginLogEntry = Schema.Struct({
   installationName: Schema.String,
   /** The titles of the header secrets whose values were set or cleared; never a value. */
   secrets: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** The version a packaged Plugin was upgraded to, for PluginUpgraded. */
+  pluginVersion: Schema.optionalKey(Schema.String),
 })
 export type PluginLogEntry = typeof PluginLogEntry.Type
+
+/**
+ * A package as the Hub read it, from git or an upload, not yet added: the Plugin it would be, or
+ * upgrade one to.
+ */
+export const PackagedPlugin = Schema.Struct({
+  /** Its `package.json` name. */
+  id: PluginId,
+  name: Schema.String,
+  description: Schema.optionalKey(Schema.String),
+  url: Schema.String,
+  auth: PluginAuth,
+  package: PluginPackage,
+})
+export type PackagedPlugin = typeof PackagedPlugin.Type
 
 // ── Hub to Runner ──────────────────────────────────────────────────────────
 
@@ -231,7 +284,8 @@ export type CreatePlugin = typeof CreatePlugin.Type
  * name from their next wake or Restart; the Gateway uses the rest at once. A URL on another origin
  * clears every value its Installations hold, and a header secret removed, or given another key or
  * header, clears theirs for it: {@link clearedHeaderSecrets}. Refused unless the person has access
- * to every Repo its Installations list. Answered with {@link PluginsState}.
+ * to every Repo its Installations list, and for a packaged Plugin, which changes only by an
+ * Upgrade. Answered with {@link PluginsState}.
  */
 export const EditPlugin = Schema.TaggedStruct("EditPlugin", {
   requestId: RequestId,
@@ -248,6 +302,78 @@ export const DeletePlugin = Schema.TaggedStruct("DeletePlugin", {
   pluginId: PluginId,
 })
 export type DeletePlugin = typeof DeletePlugin.Type
+
+/** An uploaded archive, at most this many bytes. */
+export const MaxPluginArchiveBytes = 4 * 1024 * 1024
+
+/** A package's `package.json` or manifest, at most this many bytes. */
+export const MaxPluginPackageFileBytes = 64 * 1024
+
+/**
+ * Where the Hub reads a package from: a git repo; an uploaded `.tgz` or `.zip` archive, base64,
+ * of which it reads only `package.json` and `kndl.json`; or those two files of an uploaded folder.
+ */
+export const PluginPackageFrom = Schema.Union([
+  Schema.TaggedStruct("Git", {
+    url: Schema.String,
+    ref: Schema.optionalKey(Schema.String),
+    path: Schema.optionalKey(Schema.String),
+  }),
+  Schema.TaggedStruct("Archive", {
+    fileName: Schema.String,
+    data: Schema.String.check(Schema.isMaxLength(Math.ceil(MaxPluginArchiveBytes / 3) * 4)),
+  }),
+  Schema.TaggedStruct("Folder", {
+    folderName: Schema.String,
+    packageJson: Schema.String.check(Schema.isMaxLength(MaxPluginPackageFileBytes)),
+    manifest: Schema.String.check(Schema.isMaxLength(MaxPluginPackageFileBytes)),
+  }),
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type PluginPackageFrom = typeof PluginPackageFrom.Type
+
+/**
+ * Read a package, to add it or upgrade a Plugin to it; any Member may. Refused when its name is a
+ * Plugin's from another source; offered as an Upgrade of one from the same source. Answered with
+ * {@link PluginPackageRead}.
+ */
+export const ReadPluginPackage = Schema.TaggedStruct("ReadPluginPackage", {
+  requestId: RequestId,
+  from: PluginPackageFrom,
+})
+export type ReadPluginPackage = typeof ReadPluginPackage.Type
+
+/**
+ * Read a packaged Plugin's git source again, at the ref it was added from, for an Upgrade.
+ * Answered with {@link PluginPackageRead}.
+ */
+export const CheckPluginUpgrade = Schema.TaggedStruct("CheckPluginUpgrade", {
+  requestId: RequestId,
+  pluginId: PluginId,
+})
+export type CheckPluginUpgrade = typeof CheckPluginUpgrade.Type
+
+/**
+ * Add the package the person read, by its {@link PluginPackageRead}'s `readId`; any Member may.
+ * Answered with {@link PluginsState}.
+ */
+export const AddPluginPackage = Schema.TaggedStruct("AddPluginPackage", {
+  requestId: RequestId,
+  readId: Schema.String,
+})
+export type AddPluginPackage = typeof AddPluginPackage.Type
+
+/**
+ * Upgrade a packaged Plugin to the package the person read, which its Installations' Sessions pick
+ * up on their next wake or Restart. It clears Installations' values as {@link EditPlugin} does:
+ * {@link clearedHeaderSecrets}. Refused unless the person has access to every Repo its
+ * Installations list, and if the Plugin changed since the read. Answered with {@link PluginsState}.
+ */
+export const UpgradePlugin = Schema.TaggedStruct("UpgradePlugin", {
+  requestId: RequestId,
+  pluginId: PluginId,
+  readId: Schema.String,
+})
+export type UpgradePlugin = typeof UpgradePlugin.Type
 
 /**
  * Create a Repo-scoped Installation of a Plugin, on the Repos listed. Refused unless the person
@@ -302,6 +428,10 @@ export const PluginCommand = Schema.Union([
   CreatePlugin,
   EditPlugin,
   DeletePlugin,
+  ReadPluginPackage,
+  CheckPluginUpgrade,
+  AddPluginPackage,
+  UpgradePlugin,
   CreateInstallation,
   EditInstallation,
   DeleteInstallation,
@@ -333,6 +463,23 @@ export const PluginLog = Schema.TaggedStruct("PluginLog", {
   entries: Schema.Array(PluginLogEntry),
 })
 export type PluginLog = typeof PluginLog.Type
+
+/**
+ * A package the Hub read for the person, which they add or upgrade a Plugin to by its `readId`
+ * within {@link PluginPackageReadTtlMs}. Answers {@link ReadPluginPackage} and
+ * {@link CheckPluginUpgrade}.
+ */
+export const PluginPackageRead = Schema.TaggedStruct("PluginPackageRead", {
+  requestId: RequestId,
+  readId: Schema.String,
+  read: PackagedPlugin,
+  /** The Plugin it would upgrade, which came from the same source; absent for a new one. */
+  upgrades: Schema.optionalKey(PluginId),
+})
+export type PluginPackageRead = typeof PluginPackageRead.Type
+
+/** How long the Hub keeps a package it read for adding or upgrading. */
+export const PluginPackageReadTtlMs = 30 * 60_000
 
 // ── Rules, shared with the web UI ──────────────────────────────────────────
 
