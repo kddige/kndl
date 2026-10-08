@@ -8,6 +8,9 @@
 // Installation enters its own values, write-only: the page shows only who set each and when, or
 // that it needs a value. Before an edit to the Plugin clears values (a URL on another server, or a
 // header secret's key or header changed), the dialog says whose.
+//
+// A packaged Plugin (#220) is pinned to the version it was added at: only an Upgrade changes it,
+// its name included, and it clears values as an edit does.
 
 import {
   type HeaderSecret,
@@ -17,12 +20,14 @@ import {
   type Installation,
   installationReposProblem,
   MaxHeaderSecrets,
+  packageVersion,
   type Plugin,
   type PluginAuth,
   pluginAuthProblem,
   pluginNameProblem,
   pluginUrlProblem,
   ValuePlaceholder,
+  sourceText,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
@@ -54,6 +59,8 @@ import {
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { type ClearedValues, clearedValues, keyFromTitle } from "./headerSecrets.ts"
+import { PackageDialog, type PackageOpening } from "./PackageDialog.tsx"
+import { messageOf, useLastOpened } from "./shared.ts"
 
 const styles = stylex.create({
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
@@ -194,6 +201,7 @@ export function PluginsView() {
   const [editing, setEditing] = useState<Plugin | "new" | null>(null)
   const [installing, setInstalling] = useState<InstallationTarget | null>(null)
   const [deleting, setDeleting] = useState<Deleting | null>(null)
+  const [packaging, setPackaging] = useState<PackageOpening | null>(null)
 
   useEffect(() => {
     if (!online) return
@@ -204,9 +212,14 @@ export function PluginsView() {
   }, [hub, online])
 
   const add = (
-    <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
-      Add Plugin
-    </Button>
+    <div {...stylex.props(styles.actions)}>
+      <Button size="sm" icon={<PlusIcon />} onClick={() => setPackaging({})}>
+        Add package
+      </Button>
+      <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
+        Add Plugin
+      </Button>
+    </div>
   )
   return (
     <main {...stylex.props(styles.view)}>
@@ -235,7 +248,7 @@ export function PluginsView() {
               size="page"
               icon={<PluginIcon />}
               title="No Plugins yet"
-              description="Add a remote MCP server by its URL, then install it on the Repos whose Sessions should have its tools."
+              description="Add a remote MCP server by its URL, or a Plugin package from git or an upload, then install it on the Repos whose Sessions should have its tools."
               action={add}
             />
           ) : (
@@ -248,6 +261,7 @@ export function PluginsView() {
                     (installation) => installation.pluginId === plugin.id,
                   )}
                   onEdit={() => setEditing(plugin)}
+                  onUpgrade={() => setPackaging({ upgrading: plugin })}
                   onInstall={(installation) => setInstalling({ plugin, installation })}
                   onDelete={setDeleting}
                 />
@@ -263,6 +277,7 @@ export function PluginsView() {
       />
       <InstallationDialog target={installing} onClose={() => setInstalling(null)} />
       <DeleteDialog deleting={deleting} onClose={() => setDeleting(null)} />
+      <PackageDialog opening={packaging} onClose={() => setPackaging(null)} />
     </main>
   )
 }
@@ -271,18 +286,21 @@ function PluginCard({
   plugin,
   installations,
   onEdit,
+  onUpgrade,
   onInstall,
   onDelete,
 }: {
   plugin: Plugin
   installations: ReadonlyArray<Installation>
   onEdit: () => void
+  onUpgrade: () => void
   onInstall: (installation: Installation | null) => void
   onDelete: (deleting: Deleting) => void
 }) {
   const hub = useHub()
-  // Editing a Plugin changes what the Sessions of every Repo it is on in run with.
+  // Editing or upgrading a Plugin changes what the Sessions of every Repo it is on in run with.
   const hidden = installations.some((installation) => installation.otherRepos !== undefined)
+  const pinned = plugin.package
   return (
     <li aria-label={`Plugin ${plugin.name}`} {...stylex.props(styles.card)}>
       <div {...stylex.props(styles.head)}>
@@ -290,10 +308,13 @@ function PluginCard({
           <div {...stylex.props(styles.nameLine)}>
             <span {...stylex.props(styles.name)}>{plugin.name}</span>
             <Badge sx={styles.mono}>{plugin.id}</Badge>
+            {pinned && <Badge sx={styles.mono}>{packageVersion(pinned)}</Badge>}
           </div>
+          {plugin.description && <span {...stylex.props(styles.muted)}>{plugin.description}</span>}
           <span title={plugin.url} {...stylex.props(styles.url)}>
             {plugin.url}
           </span>
+          {pinned && <span {...stylex.props(styles.muted)}>{sourceText(pinned.source)}</span>}
           <span {...stylex.props(styles.meta)}>
             <Avatar name={plugin.createdBy.name} src={plugin.createdBy.avatarUrl} size="sm" />
             Added by {plugin.createdBy.name} {timeAgo(plugin.createdAt)}
@@ -308,14 +329,25 @@ function PluginCard({
           >
             Install
           </Button>
-          <Button
-            size="sm"
-            aria-label={`Edit Plugin ${plugin.name}`}
-            disabled={hidden}
-            onClick={onEdit}
-          >
-            Edit
-          </Button>
+          {pinned ? (
+            <Button
+              size="sm"
+              aria-label={`Upgrade Plugin ${plugin.name}`}
+              disabled={hidden}
+              onClick={onUpgrade}
+            >
+              Upgrade
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              aria-label={`Edit Plugin ${plugin.name}`}
+              disabled={hidden}
+              onClick={onEdit}
+            >
+              Edit
+            </Button>
+          )}
           <Button
             size="sm"
             intent="ghost"
@@ -964,15 +996,4 @@ function DeleteDialog({ deleting, onClose }: { deleting: Deleting | null; onClos
 function reposText(installation: Installation): string {
   const { repos } = installation
   return repos.length === 1 ? (repos[0] ?? "") : `its ${repos.length} Repos`
-}
-
-/** `value`, or while it is null (a dialog closing), the last value it wasn't. */
-function useLastOpened<T>(value: T | null): T | null {
-  const [last, setLast] = useState(value)
-  if (value !== null && value !== last) setLast(value)
-  return value ?? last
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

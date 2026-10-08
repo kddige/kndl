@@ -30,6 +30,8 @@ import {
   type PluginAuth,
   type PluginId,
   type PluginLogEntry,
+  type PluginPackageFrom,
+  type PluginPackageRead,
   type PluginsState,
   ProtocolVersion,
   type QuestionAnswer,
@@ -492,6 +494,29 @@ export class HubClient {
     return this.#request({ _tag: "DeleteInstallation", installationId }, "PluginsState")
   }
 
+  /**
+   * Reads a Plugin package from git or an upload (#220), changing nothing: what adding it would
+   * make, or, if a Plugin from the same source has its name, what upgrading that would change.
+   */
+  readPluginPackage(from: PluginPackageFrom): Promise<PluginPackageRead> {
+    return this.#request({ _tag: "ReadPluginPackage", from }, "PluginPackageRead")
+  }
+
+  /** Reads a packaged Plugin's git ref again, for what upgrading it would change. */
+  checkPluginUpgrade(pluginId: PluginId): Promise<PluginPackageRead> {
+    return this.#request({ _tag: "CheckPluginUpgrade", pluginId }, "PluginPackageRead")
+  }
+
+  /** Adds the package a read found, as it was read. */
+  addPluginPackage(readId: string): Promise<PluginsState> {
+    return this.#request({ _tag: "AddPluginPackage", readId }, "PluginsState")
+  }
+
+  /** Upgrades a packaged Plugin to the package a read found; its Sessions pick it up on Restart. */
+  upgradePlugin(pluginId: PluginId, readId: string): Promise<PluginsState> {
+    return this.#request({ _tag: "UpgradePlugin", pluginId, readId }, "PluginsState")
+  }
+
   /** Asks for a Repo's Plugin change log, newest first; the store then holds it. */
   async getPluginLog(repo: string): Promise<ReadonlyArray<PluginLogEntry>> {
     return (await this.#request({ _tag: "GetPluginLog", repo }, "PluginLog")).entries
@@ -701,7 +726,8 @@ export class HubClient {
       case "InviteList":
       case "MemberList":
       case "PluginsState":
-      case "PluginLog": {
+      case "PluginLog":
+      case "PluginPackageRead": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break
