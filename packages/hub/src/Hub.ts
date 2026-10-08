@@ -17,6 +17,7 @@ import { ModTokens } from "./ModTokens.ts"
 import { PairingCodes } from "./PairingCodes.ts"
 import { PairingRoutes } from "./PairingRoutes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
+import { Plugins } from "./Plugins.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { RepoAccess } from "./RepoAccess.ts"
 import { Runners } from "./Runners.ts"
@@ -70,6 +71,7 @@ export const HubServices = SessionRelay.layer.pipe(
       PairingCodes.layer,
       HubShutdown.layer,
       Environments.layer,
+      Plugins.layer,
       RunnerUpdatePush.layer,
       ClaudeCredentials.layer,
       Tunnels.layer,

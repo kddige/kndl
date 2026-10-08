@@ -64,3 +64,14 @@ export type EnvironmentVersion = typeof EnvironmentVersion.Type
 /** A Runner's request for a Session's Claude credential, minted by the Runner (ADR 0015). */
 export const CredentialRequestId = Schema.NonEmptyString.pipe(Schema.brand("CredentialRequestId"))
 export type CredentialRequestId = typeof CredentialRequestId.Type
+
+/**
+ * A Plugin (ADR 0020): a package's `package.json` name, or `hub:<slug>` for one made on this Hub
+ * alone, which no npm name can be.
+ */
+export const PluginId = Schema.NonEmptyString.pipe(Schema.brand("PluginId"))
+export type PluginId = typeof PluginId.Type
+
+/** An Installation of a Plugin, minted by the Hub. */
+export const InstallationId = Schema.NonEmptyString.pipe(Schema.brand("InstallationId"))
+export type InstallationId = typeof InstallationId.Type

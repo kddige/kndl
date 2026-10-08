@@ -166,6 +166,7 @@ import {
   OpenQuestion,
   type Participant,
   type ParticipantId,
+  type PluginCommand,
   PresenceChanged,
   type PresentParticipant,
   PromptId,
@@ -260,6 +261,7 @@ import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
+import { isPluginCommand, makePluginRelay, type PluginRelay } from "./PluginRelay.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import {
   everything,
@@ -1059,21 +1061,39 @@ export class SessionRelay extends Context.Service<
         )
       })
 
+      /** Tells web clients the Repo's Sessions changed, as when its Environment has a new version. */
+      const repoSessionsUpdated = Effect.fn("SessionRelay.repoSessionsUpdated")(function* (
+        repo: string,
+      ) {
+        for (const session of yield* sessions.list) {
+          if (sameRepo(session.repo, repo)) yield* sessionToWeb(session)
+        }
+      })
+
       /** Moves the Session to `state`, if it isn't there, logging why. */
       const environmentRelay = yield* makeEnvironmentRelay({
         hasGitHubApp: app.isConfigured,
         onlineRunner: (id) => onlineRunners.get(id),
         toWeb: (message, to: (client: EnvironmentWebClient) => boolean) => toWeb(message, to),
-        repoSessionsUpdated: Effect.fn("SessionRelay.repoSessionsUpdated")(function* (repo) {
-          for (const session of yield* sessions.list) {
-            if (sameRepo(session.repo, repo)) yield* sessionToWeb(session)
-          }
-        }),
+        repoSessionsUpdated: (repo) => repoSessionsUpdated(repo),
         sensitiveValuesChanged: (repo) => {
           if (repo === undefined) needlesByRepo.clear()
           else needlesByRepo.delete(repo)
         },
         afterHold,
+      })
+
+      const pluginRelay: PluginRelay = yield* makePluginRelay({
+        webClients: () => webClients,
+        serialized,
+        accessKnown: (who, repo, allowed) => accessKnown(who, repo, allowed),
+        repoSessionsUpdated: (repo) => repoSessionsUpdated(repo),
+        respell: Effect.fn("SessionRelay.respell")(function* (repo: RepoName) {
+          const github = yield* access.fullName(repo)
+          return Option.isSome(github)
+            ? github.value
+            : RepoName.make(yield* environments.storedName(repo))
+        }),
       })
 
       const changeState = Effect.fn("SessionRelay.changeState")(function* (
@@ -1164,7 +1184,7 @@ export class SessionRelay extends Context.Service<
         who: Participant,
         repo: string,
         allowed: boolean,
-      ) {
+      ): Effect.fn.Return<void, SqlError> {
         if (!allowed) {
           yield* endForwards(
             (forward) => forward.you.id === who.id && sameRepo(forward.repo, repo),
@@ -1180,6 +1200,7 @@ export class SessionRelay extends Context.Service<
         for (const client of changed) {
           const before = client.repos.get(repo)
           client.repos.set(repo, allowed)
+          yield* pluginRelay.accessChanged(client)
           if (allowed) {
             for (const session of ofRepo) {
               client.peer.send(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) }))
@@ -1775,6 +1796,7 @@ export class SessionRelay extends Context.Service<
               | "RevokeCliToken"
           }
         | MemberCommand
+        | PluginCommand
       >
 
       const receiveWeb = (client: WebClient): Receive<WebToHub> => {
@@ -2636,50 +2658,52 @@ export class SessionRelay extends Context.Service<
         return (message) =>
           isMemberCommand(message)
             ? memberRelay.receiveWeb(client, message)
-            : message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
-              ? claudeCredentialCommand(message)
-              : message._tag === "RevokeCliToken"
-                ? revokeCliToken(message)
-                : message._tag === "CheckAppPermissions"
-                  ? checkAppPermissions(message.requestId)
-                  : message._tag === "CheckRepo"
-                    ? checkRepo(message).pipe(
-                        Effect.catchTag("SqlError", (error) =>
-                          Effect.logError("A Repo check failed", error).pipe(
-                            Effect.andThen(
-                              Effect.sync(() =>
-                                refuse(message, "The Hub could not do that; try again."),
+            : isPluginCommand(message)
+              ? pluginRelay.receiveWeb(client, message)
+              : message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
+                ? claudeCredentialCommand(message)
+                : message._tag === "RevokeCliToken"
+                  ? revokeCliToken(message)
+                  : message._tag === "CheckAppPermissions"
+                    ? checkAppPermissions(message.requestId)
+                    : message._tag === "CheckRepo"
+                      ? checkRepo(message).pipe(
+                          Effect.catchTag("SqlError", (error) =>
+                            Effect.logError("A Repo check failed", error).pipe(
+                              Effect.andThen(
+                                Effect.sync(() =>
+                                  refuse(message, "The Hub could not do that; try again."),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      )
-                    : authorize(message).pipe(
-                        Effect.flatMap((verdict) =>
-                          Effect.gen(function* () {
-                            const command =
-                              verdict.refusal === undefined ? yield* respelled(message) : message
-                            return yield* serialized(
-                              Effect.gen(function* () {
-                                const { learned, refusal } = verdict
-                                if (learned !== undefined)
-                                  yield* accessKnown(you, learned.repo, learned.allowed)
-                                if (refusal !== undefined) return refuse(message, refusal)
-                                return yield* handle(command)
-                              }),
-                            )
-                          }),
-                        ),
-                        Effect.catchTag("SqlError", (error) =>
-                          Effect.logError("A web command failed", error).pipe(
-                            Effect.andThen(
-                              Effect.sync(() =>
-                                refuse(message, "The Hub could not do that; try again."),
+                        )
+                      : authorize(message).pipe(
+                          Effect.flatMap((verdict) =>
+                            Effect.gen(function* () {
+                              const command =
+                                verdict.refusal === undefined ? yield* respelled(message) : message
+                              return yield* serialized(
+                                Effect.gen(function* () {
+                                  const { learned, refusal } = verdict
+                                  if (learned !== undefined)
+                                    yield* accessKnown(you, learned.repo, learned.allowed)
+                                  if (refusal !== undefined) return refuse(message, refusal)
+                                  return yield* handle(command)
+                                }),
+                              )
+                            }),
+                          ),
+                          Effect.catchTag("SqlError", (error) =>
+                            Effect.logError("A web command failed", error).pipe(
+                              Effect.andThen(
+                                Effect.sync(() =>
+                                  refuse(message, "The Hub could not do that; try again."),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      )
+                        )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>

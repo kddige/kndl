@@ -18,6 +18,7 @@ import {
 import { GitIdentity, GitReply, GitRequest } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
+import { GatewayServer } from "./Plugin.ts"
 import { BranchName, OpenPort, RepoName, RunnerAccount } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
@@ -95,6 +96,12 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * tunnel to its Sessions.
    */
   forwardsPorts: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * Whether it gives a Session's Claude Code the MCP servers of its Installations, reached through
+   * its relay at `/gateway/<installationId>` (ADR 0020). A Runner from before doesn't say so: the
+   * Hub sends it none.
+   */
+  relaysPlugins: Schema.optionalKey(Schema.Literal(true)),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
@@ -255,6 +262,11 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
   model: Schema.optionalKey(ModelName),
   /** The effort level to start Claude Code at, its `--effort` (#128); absent for its default. */
   effort: Schema.optionalKey(EffortLevel),
+  /**
+   * An MCP server for each Installation on for its Repo (ADR 0020); absent for none. Sent only to
+   * a Runner whose hello says it `relaysPlugins`.
+   */
+  plugins: Schema.optionalKey(Schema.Array(GatewayServer)),
 })
 export type StartSession = typeof StartSession.Type
 
@@ -275,6 +287,8 @@ export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   modToken: Schema.NonEmptyString,
   model: Schema.optionalKey(ModelName),
   effort: Schema.optionalKey(EffortLevel),
+  /** The Session's MCP servers, as its last start gave them: a relaunch changes none. */
+  plugins: Schema.optionalKey(Schema.Array(GatewayServer)),
 })
 export type RelaunchSession = typeof RelaunchSession.Type
 

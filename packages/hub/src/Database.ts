@@ -475,6 +475,59 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+  // Plugins (#221, ADR 0020): remote MCP servers, and the Installations that put them on Repos. A
+  // Repo has at most one Installation of each Plugin, by any spelling of its name. Each Repo keeps
+  // a log of its Plugin changes, with the names as they were, which outlives what it names. A
+  // Session records the Installations it started with, as JSON, null from before.
+  "0024_plugins": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE plugins (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        created_by TEXT NOT NULL REFERENCES participants (id),
+        created_at INTEGER NOT NULL
+      )
+    `
+    yield* sql`
+      CREATE TABLE installations (
+        id TEXT PRIMARY KEY,
+        plugin_id TEXT NOT NULL REFERENCES plugins (id),
+        name TEXT NOT NULL,
+        created_by TEXT NOT NULL REFERENCES participants (id),
+        created_at INTEGER NOT NULL
+      )
+    `
+    yield* sql`CREATE INDEX installations_plugin_id ON installations (plugin_id)`
+    yield* sql`
+      CREATE TABLE installation_repos (
+        installation_id TEXT NOT NULL REFERENCES installations (id) ON DELETE CASCADE,
+        plugin_id TEXT NOT NULL REFERENCES plugins (id),
+        repo TEXT NOT NULL,
+        PRIMARY KEY (installation_id, repo)
+      )
+    `
+    yield* sql`
+      CREATE UNIQUE INDEX installation_repos_one_per_plugin
+      ON installation_repos (plugin_id, repo COLLATE NOCASE)
+    `
+    yield* sql`
+      CREATE TABLE plugin_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        by TEXT NOT NULL REFERENCES participants (id),
+        change TEXT NOT NULL,
+        plugin_id TEXT NOT NULL,
+        plugin_name TEXT NOT NULL,
+        installation_id TEXT NOT NULL,
+        installation_name TEXT NOT NULL
+      )
+    `
+    yield* sql`CREATE INDEX plugin_log_repo ON plugin_log (repo COLLATE NOCASE, at)`
+    yield* sql`ALTER TABLE sessions ADD COLUMN plugins TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

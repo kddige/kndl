@@ -35,6 +35,7 @@ import {
 import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
 import { EffortLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
+import { PluginCommand, PluginLog, PluginsState } from "./Plugin.ts"
 import {
   BranchName,
   EpochMillis,
@@ -491,6 +492,7 @@ export const WebToHub = Schema.Union([
   GetSharedVariables,
   SetSharedVariable,
   DeleteSharedVariable,
+  PluginCommand,
   SetClaudeCredential,
   RemoveClaudeCredential,
   CheckAppPermissions,
@@ -779,6 +781,8 @@ export const HubToWeb = Schema.Union([
   TestBuildLogged,
   TestBuildEnded,
   SharedVariables,
+  PluginsState,
+  PluginLog,
   ClaudeCredentialState,
   AppPermissionsChecked,
   RepoChecked,
