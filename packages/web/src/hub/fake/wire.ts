@@ -8,6 +8,7 @@ import type {
   CliTokenInfo,
   Environment,
   EnvironmentVersionInfo,
+  HeaderValueSet,
   HubToWeb,
   Installation,
   Member,
@@ -54,5 +55,6 @@ export type QuestionAnswerWire = (typeof QuestionAnswer)["Encoded"]
 export type QuestionPickWire = (typeof QuestionPick)["Encoded"]
 export type PluginWire = (typeof Plugin)["Encoded"]
 export type InstallationWire = (typeof Installation)["Encoded"]
+export type HeaderValueSetWire = (typeof HeaderValueSet)["Encoded"]
 export type PluginLogEntryWire = (typeof PluginLogEntry)["Encoded"]
 export type SessionInstallationWire = (typeof SessionInstallation)["Encoded"]

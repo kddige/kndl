@@ -25,7 +25,7 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. |
 | `HUB_ARCHIVE_RETENTION_MS` | `2592000000` (30 days) | How long an Archived Session can be restored before the Hub purges it. |
 | `HUB_REPO_ACCESS_TTL_MS` | `300000` (5 minutes) | How long the Hub trusts what GitHub said about a person's access to a Repo, and how often it checks everyone connected again. Someone who loses access is out of the Repo's Sessions within twice this. See [Who can do what](/explanation/security-model/#who-can-do-what). |
-| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values and people's [Claude credentials](#peoples-claude-credentials) are encrypted with. Unset, neither can be saved; once any are saved, the Hub refuses to start without the same key. If it is lost, see [`bun run secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes). |
+| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values, people's [Claude credentials](#peoples-claude-credentials) and Installations' [header secret values](/how-to/add-a-remote-mcp-server-as-a-plugin/#header-secret-values) are encrypted with. Unset, none can be saved; once any are saved, the Hub refuses to start without the same key. If it is lost, see [`bun run secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes). |
 | `KNDL_HOME` | unset | See [Homes](#homes). |
 
 ### People's Claude credentials
@@ -35,7 +35,7 @@ Each person can store one Claude credential on their **Account** page: a subscri
 - The Hub checks it as it is saved with one free `POST https://api.anthropic.com/v1/messages/count_tokens`, and refuses one Anthropic rejects. When Anthropic can't be reached in time, it is saved anyway, with a warning.
 - The plan picked for a token is passed to Claude Code as `CLAUDE_CODE_SUBSCRIPTION_TYPE` and its rate-limit tier. An API key has no plan.
 - A Session whose Creator has none runs on [the Runner's own](#the-runners-claude-credential); the Hub refuses to create one when neither has a credential.
-- `bun run secrets-reset` clears every stored credential with the other Sensitive values.
+- `bun run secrets-reset` clears every stored credential with the other Sensitive values and the Installations' header secret values.
 
 ## Runner
 

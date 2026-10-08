@@ -250,11 +250,11 @@ A removed Member's sign-ins and CLI tokens are revoked at once. The Hub closes t
 Plugins are remote MCP servers that Sessions reach through the Hub's Gateway ([ADR 0020](/reference/decisions/0020-plugins-are-remote-mcp-servers-behind-the-hub/), [Add a remote MCP server as a Plugin](/how-to/add-a-remote-mcp-server-as-a-plugin/)). Any Member may send these.
 
 - `GetPlugins { requestId }` and every change below are answered with `PluginsState { requestId?, plugins, installations }`, which also goes, without a `requestId`, to every other tab that asked for Plugins whenever a Plugin or Installation changes.
-  - Each Plugin is `{ id, name, url, createdBy, createdAt }`.
-  - Each Installation is `{ id, pluginId, name, repos, otherRepos?, createdBy, createdAt }`. `repos` lists only the Repos the person has access to; `otherRepos` counts the rest, without naming them.
-- `CreatePlugin { requestId, name, url }` makes a Hub-only Plugin. Its id is `hub:` and the slug of its name, with a number added if that is taken, so it never clashes with a package name. `EditPlugin { requestId, pluginId, name, url }` changes it, and `DeletePlugin { requestId, pluginId }` deletes it.
-- `CreateInstallation { requestId, pluginId, name, repos }` turns a Plugin on for the Repos it lists, `EditInstallation { requestId, installationId, name, repos }` renames it or changes its Repos, and `DeleteInstallation { requestId, installationId }` deletes it. Installations make no Environment version.
-- `GetPluginLog { requestId, repo }` is answered with `PluginLog { requestId?, repo, entries }`: the Repo's Plugin change log, newest first, each `{ change, by, at, installationId, installationName, pluginId, pluginName }`. `change` is `Created`, `Added`, `Renamed`, `Removed`, `Deleted` or `PluginEdited`. A `PluginLog` without a `requestId` goes to every tab with access to the Repo whenever its log grows.
+  - Each Plugin is `{ id, name, url, auth, createdBy, createdAt }`. `auth` is `{ _tag: "None" }`, or `{ _tag: "Headers", headers }` for a server that takes keys in headers: each header secret is `{ key, title, header, template }`, its `template` holding `{value}` exactly once, such as `Bearer {value}`.
+  - Each Installation is `{ id, pluginId, name, repos, otherRepos?, values, createdBy, createdAt }`. `repos` lists only the Repos the person has access to; `otherRepos` counts the rest, without naming them. `values` says which header secrets it holds a value for, each `{ key, setBy, setAt }`: never the value.
+- `CreatePlugin { requestId, name, url, auth }` makes a Hub-only Plugin. Its id is `hub:` and the slug of its name, with a number added if that is taken, so it never clashes with a package name. `EditPlugin { requestId, pluginId, name, url, auth }` changes it, and `DeletePlugin { requestId, pluginId }` deletes it. An edit that moves the URL to another origin (scheme, host or port) clears every Installation's values; one that removes a header secret, or changes its key or header, clears that secret's values.
+- `CreateInstallation { requestId, pluginId, name, repos, values? }` turns a Plugin on for the Repos it lists, `EditInstallation { requestId, installationId, name, repos, values? }` renames it, changes its Repos and replaces the values it lists, and `DeleteInstallation { requestId, installationId }` deletes it. Each value is `{ key, value }`, for a header secret of its Plugin; one left out keeps the value it has. Installations make no Environment version.
+- `GetPluginLog { requestId, repo }` is answered with `PluginLog { requestId?, repo, entries }`: the Repo's Plugin change log, newest first, each `{ change, by, at, installationId, installationName, pluginId, pluginName, secrets? }`. `change` is `Created`, `Added`, `Renamed`, `Removed`, `Deleted`, `PluginEdited`, `ValuesSet` or `ValuesCleared`; the last two carry `secrets`, the titles of the header secrets whose values were set, or cleared by an edit to the Plugin. A `PluginLog` without a `requestId` goes to every tab with access to the Repo whenever its log grows.
 
 The Hub refuses with a `CommandFailed`:
 
@@ -266,10 +266,14 @@ The Hub refuses with a `CommandFailed`:
 | A second Installation of a Plugin on a Repo | `<repo> already has <name>, an Installation of <plugin>: a Repo has at most one Installation of each Plugin.` |
 | Deleting a Plugin with Installations | `<plugin> has an Installation: delete it first.` |
 | A URL that isn't `https://` or `http://`, or holds a user name, password or `#fragment` | `The URL must start with https:// (or http://).`, or what else is wrong |
+| Header secrets that break a rule: a key that isn't letters, digits and underscores starting with a letter, a key or header declared twice, a header the Gateway sets itself, a template without `{value}` exactly once, or more than 10 | `<title>'s template must hold {value} exactly once, as in Bearer {value}.`, or what else is wrong |
+| A value for a header secret the Plugin doesn't declare | `<plugin> has no header secret <key>.` |
+| A value under 4 characters, or not one line of plain characters | `The value of <title> is under 4 characters: too short to redact from output.`, or what else is wrong |
+| A value while the Hub has no `HUB_SECRETS_KEY` | `` Sensitive values need HUB_SECRETS_KEY in the Hub's configuration: run `bun run secrets-key`, put the key in packages/hub/.env.local, and restart the Hub. `` |
 
-Each Session carries `plugins` when it runs with Installations: each `{ id, name, pluginId, pluginName, server }`, as its Claude Code last started. `server` is the name of its MCP server, which Claude Code shows as `plugin:kndl:<server>`. A Session that isn't Archived carries `pluginsChanged: true` when its Repo's Installations, or their Plugins' names, changed since: a wake or `RestartSession` applies the change.
+Each Session carries `plugins` when it runs with Installations: each `{ id, name, pluginId, pluginName, server, values? }`, as its Claude Code last started, `values` saying which header secret values it started with and when each was set. `server` is the name of its MCP server, which Claude Code shows as `plugin:kndl:<server>`. A Session that isn't Archived carries `pluginsChanged: true` when its Repo's Installations, or their Plugins' names, changed since: a wake or `RestartSession` applies the change.
 
-`StartSession` carries `plugins`, each `{ installationId, server }`, to a Runner whose `RunnerHello` says `relaysPlugins`. The Runner gives Claude Code a plugin of its own, `kndl`, whose `.mcp.json` points each server at `/gateway/<installation id>` through the credential proxy, with the Session token as its bearer. The proxy relays the request to the Hub with the Session's mod token in its place.
+`StartSession` carries `plugins`, each `{ installationId, server }`, to a Runner whose `RunnerHello` says `relaysPlugins`: never a header secret value, which stays on the Hub. The Runner gives Claude Code a plugin of its own, `kndl`, whose `.mcp.json` points each server at `/gateway/<installation id>` through the credential proxy, with the Session token as its bearer. The proxy relays the request to the Hub with the Session's mod token in its place.
 
 The Gateway answers:
 
@@ -277,10 +281,12 @@ The Gateway answers:
 |---|---|
 | `401` | No mod token of an Active Session. |
 | `403` | An Installation the Session didn't start with, or that is no longer on for its Repo; the same whether it exists or not. |
+| `409` | The Session started without a value for one of the Installation's header secrets, or the value was cleared since: `<installation> needs a value for <title>: enter it on the Plugins page, then Restart the Session.` |
+| `500` | The Hub can't decrypt the values: `The Hub could not read this Installation's header secret values: check HUB_SECRETS_KEY.` |
 | `502` | The Plugin's MCP server couldn't be reached, or answered with a redirect, which the Gateway doesn't follow. |
 | anything else | The MCP server's answer, streamed back as it comes. |
 
-The request goes to the Plugin's URL as it is now, its body streaming on untouched. The Session's token, cookies, `Host`, `Origin`, forwarding and hop-by-hop headers stay at the Gateway, and the server's cookies don't come back. Each request is logged with its Session, Installation, method, status and time taken, never what it carries.
+The request goes to the Plugin's URL as it is now, its body streaming on untouched. The Session's token, cookies, `Host`, `Origin`, forwarding and hop-by-hop headers stay at the Gateway, and the server's cookies don't come back. The Gateway adds each header secret as its `header`, its value the `template` with the value the Session started with in place of `{value}`, replacing a header of the same name from the Session, by any case. Each request is logged with its Session, Installation, method, status and time taken, never what it carries.
 
 ### Model and effort
 

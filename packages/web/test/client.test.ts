@@ -850,20 +850,23 @@ function named<T extends { readonly name: string }>(
   return one
 }
 
+/** A Plugin's auth when it declares no header secrets. */
+const none = { _tag: "None" } as const
+
 describe("Plugins (ADR 0020)", () => {
   const repo = "kddige/kndl"
 
   test("a Member creates, edits and deletes a Hub-only Plugin, with a hub: id", async () => {
     const { client } = await online()
-    const created = await client.createPlugin("Acme docs", "https://mcp.acme.example/mcp")
+    const created = await client.createPlugin("Acme docs", "https://mcp.acme.example/mcp", none)
     const plugin = named(created.plugins, "Acme docs")
     expect(plugin).toMatchObject({ id: "hub:acme-docs", createdBy: { login: "alice" } })
     // Another of the same name gets a number; its id never clashes with an npm package's.
-    const again = await client.createPlugin("Acme docs", "https://mcp.acme.example/two")
+    const again = await client.createPlugin("Acme docs", "https://mcp.acme.example/two", none)
     expect(again.plugins.map((one) => one.id)).toContain("hub:acme-docs-2" as never)
-    await expect(client.createPlugin("Bad", "ftp://x.example")).rejects.toThrow("https://")
+    await expect(client.createPlugin("Bad", "ftp://x.example", none)).rejects.toThrow("https://")
 
-    const edited = await client.editPlugin(plugin.id, "Acme", "https://mcp.acme.example/v2")
+    const edited = await client.editPlugin(plugin.id, "Acme", "https://mcp.acme.example/v2", none)
     expect(edited.plugins.find((one) => one.id === plugin.id)).toMatchObject({
       name: "Acme",
       url: "https://mcp.acme.example/v2",
@@ -871,6 +874,69 @@ describe("Plugins (ADR 0020)", () => {
     const left = await client.deletePlugin(plugin.id)
     expect(left.plugins.map((one) => one.id)).not.toContain(plugin.id)
     expect(client.getState().plugins?.plugins).toEqual(left.plugins)
+  })
+
+  test("header secrets: values are write-only, and a URL on another server clears them", async () => {
+    const { client } = await online()
+    const auth = {
+      _tag: "Headers",
+      headers: [
+        { key: "api_key", title: "API key", header: "Authorization", template: "Bearer {value}" },
+      ],
+    } as const
+    await expect(
+      client.createPlugin("Acme", "https://mcp.acme.example/mcp", {
+        _tag: "Headers",
+        headers: [{ ...auth.headers[0], template: "Bearer" }],
+      }),
+    ).rejects.toThrow("{value}")
+    const created = await client.createPlugin("Acme", "https://mcp.acme.example/mcp", auth)
+    const plugin = named(created.plugins, "Acme")
+    expect(plugin.auth).toEqual(auth)
+
+    const value = Redacted.make("made-up-acme-key")
+    await expect(
+      client.createInstallation(
+        plugin.id,
+        "Acme",
+        [repo],
+        [{ key: "nope", value: Redacted.make("made-up") }],
+      ),
+    ).rejects.toThrow("Acme has no header secret nope.")
+    const installed = await client.createInstallation(
+      plugin.id,
+      "Acme",
+      [repo],
+      [{ key: "api_key", value }],
+    )
+    const installation = named(installed.installations, "Acme")
+    expect(installation.values).toEqual([
+      {
+        key: "api_key",
+        setBy: expect.objectContaining({ login: "alice" }),
+        setAt: expect.any(Number),
+      },
+    ])
+    await eventually(() =>
+      expect(client.getState().pluginLogs[repo]?.[0]).toMatchObject({
+        change: "ValuesSet",
+        installationName: "Acme",
+        secrets: ["API key"],
+      }),
+    )
+    expect(JSON.stringify(client.getState())).not.toContain("made-up-acme-key")
+
+    // Another path on the same server keeps the values; another server clears them.
+    const moved = await client.editPlugin(plugin.id, "Acme", "https://mcp.acme.example/v2", auth)
+    expect(named(moved.installations, "Acme").values).toHaveLength(1)
+    const elsewhere = await client.editPlugin(plugin.id, "Acme", "https://acme.example/mcp", auth)
+    expect(named(elsewhere.installations, "Acme").values).toEqual([])
+    await eventually(() =>
+      expect(client.getState().pluginLogs[repo]?.[0]).toMatchObject({
+        change: "ValuesCleared",
+        secrets: ["API key"],
+      }),
+    )
   })
 
   test("a Plugin with Installations can't be deleted", async () => {

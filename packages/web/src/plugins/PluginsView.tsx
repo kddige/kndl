@@ -3,28 +3,44 @@
 // lists, as a Session does, and a Repo has at most one Installation of each Plugin. Claude Code in
 // a Session reaches each through the Hub's Gateway, so no Plugin's address or credential is ever
 // in a Sandbox. A change applies to a Session at its next wake or Restart.
+//
+// A Plugin can declare header secrets (#215): a header, and a template its value goes in. Each
+// Installation enters its own values, write-only: the page shows only who set each and when, or
+// that it needs a value. Before an edit to the Plugin clears values (a URL on another server, or a
+// header secret's key or header changed), the dialog says whose.
 
 import {
+  type HeaderSecret,
+  type HeaderValueInput,
+  headerSecretsOf,
+  headerValueProblem,
   type Installation,
   installationReposProblem,
+  MaxHeaderSecrets,
   type Plugin,
+  type PluginAuth,
+  pluginAuthProblem,
   pluginNameProblem,
   pluginUrlProblem,
+  ValuePlaceholder,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
+import { Redacted } from "effect"
 import { type FormEvent, useEffect, useState } from "react"
-import { repoParams, timeAgo } from "../app/format.ts"
+import { andList, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { repoPattern } from "../app/repoAccess.tsx"
 import {
   Avatar,
   Badge,
+  Banner,
   Button,
   Dialog,
   DialogClose,
   EmptyState,
   Field,
+  IconButton,
   Input,
   PageHeader,
   PluginIcon,
@@ -32,10 +48,12 @@ import {
   Spinner,
   Textarea,
   toast,
+  TrashIcon,
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { type ClearedValues, clearedValues, keyFromTitle } from "./headerSecrets.ts"
 
 const styles = stylex.create({
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
@@ -131,6 +149,32 @@ const styles = stylex.create({
   mono: { fontFamily: font.mono },
   actions: { display: "flex", flexWrap: "wrap", gap: space.s2 },
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
+  secretValues: {
+    display: "flex",
+    flexWrap: "wrap",
+    columnGap: space.s3,
+    rowGap: space.s1,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+  },
+  section: { display: "flex", flexDirection: "column", gap: space.s3, margin: 0, padding: 0 },
+  sectionHead: { display: "flex", flexDirection: "column", gap: space.s1 },
+  sectionTitle: { margin: 0, fontSize: text.sm, fontWeight: weight.semibold },
+  secret: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(10rem, 1fr)) auto",
+    alignItems: "start",
+    gap: space.s3,
+    padding: space.s3,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    borderRadius: radius.md,
+  },
+  remove: { alignSelf: "end" },
+  clearedList: { margin: 0, paddingInlineStart: space.s4 },
+  valueLine: { display: "inline-flex", alignItems: "center", gap: space.s2 },
   error: { color: color.dangerSubtleText, fontSize: text.sm, lineHeight: leading.snug },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
@@ -212,7 +256,11 @@ export function PluginsView() {
           )}
         </div>
       </div>
-      <PluginDialog editing={editing} onClose={() => setEditing(null)} />
+      <PluginDialog
+        editing={editing}
+        installations={state?.installations ?? []}
+        onClose={() => setEditing(null)}
+      />
       <InstallationDialog target={installing} onClose={() => setInstalling(null)} />
       <DeleteDialog deleting={deleting} onClose={() => setDeleting(null)} />
     </main>
@@ -296,6 +344,7 @@ function PluginCard({
           installations.map((installation, index) => (
             <InstallationRow
               key={installation.id}
+              plugin={plugin}
               installation={installation}
               first={index === 0}
               onEdit={() => onInstall(installation)}
@@ -315,11 +364,13 @@ function PluginCard({
 }
 
 function InstallationRow({
+  plugin,
   installation,
   first,
   onEdit,
   onDelete,
 }: {
+  plugin: Plugin
   installation: Installation
   first: boolean
   onEdit: () => void
@@ -356,6 +407,7 @@ function InstallationRow({
             </span>
           )}
         </div>
+        <SecretValues plugin={plugin} installation={installation} />
       </div>
       <div {...stylex.props(styles.actions)}>
         <Button
@@ -380,12 +432,74 @@ function InstallationRow({
   )
 }
 
-/** Adds a Hub-only Plugin, or edits one's name and URL. */
+/** Each header secret of an Installation's Plugin: who set its value and when, or that it needs one. */
+function SecretValues({ plugin, installation }: { plugin: Plugin; installation: Installation }) {
+  const declared = headerSecretsOf(plugin.auth)
+  if (declared.length === 0) return null
+  return (
+    <ul
+      aria-label={`Header secrets of ${installation.name}`}
+      {...stylex.props(styles.secretValues)}
+    >
+      {declared.map((secret) => {
+        const set = installation.values.find((value) => value.key === secret.key)
+        return (
+          <li key={secret.key} {...stylex.props(styles.meta)}>
+            <span>{secret.title}</span>
+            {set === undefined ? (
+              <Badge intent="danger">needs a value</Badge>
+            ) : (
+              <span title={new Date(set.setAt).toLocaleString()}>
+                set by {set.setBy.name} {timeAgo(set.setAt)}
+              </span>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** A header secret as the Plugin dialog edits it. */
+interface SecretRow {
+  readonly id: number
+  readonly key: string
+  readonly title: string
+  readonly header: string
+  readonly template: string
+  /** Whether its key was typed, or was saved: until then it follows the title. */
+  readonly keyTyped: boolean
+}
+
+let secretRows = 0
+
+const rowOf = (secret: HeaderSecret): SecretRow => ({
+  id: ++secretRows,
+  ...secret,
+  keyTyped: true,
+})
+
+const authOf = (rows: ReadonlyArray<SecretRow>): PluginAuth =>
+  rows.length === 0
+    ? { _tag: "None" }
+    : {
+        _tag: "Headers",
+        headers: rows.map(({ key, title, header, template }) => ({
+          key,
+          title: title.trim(),
+          header: header.trim(),
+          template,
+        })),
+      }
+
+/** Adds a Hub-only Plugin, or edits one's name, URL and header secrets. */
 function PluginDialog({
   editing,
+  installations,
   onClose,
 }: {
   editing: Plugin | "new" | null
+  installations: ReadonlyArray<Installation>
   onClose: () => void
 }) {
   const hub = useHub()
@@ -393,6 +507,7 @@ function PluginDialog({
   const saved = shown === "new" ? null : shown
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
+  const [rows, setRows] = useState<ReadonlyArray<SecretRow>>([])
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -401,6 +516,7 @@ function PluginDialog({
     if (editing === null) return
     setName(saved?.name ?? "")
     setUrl(saved?.url ?? "")
+    setRows(saved === null ? [] : headerSecretsOf(saved.auth).map(rowOf))
     setTouched(false)
     setBusy(false)
     setError(null)
@@ -409,16 +525,50 @@ function PluginDialog({
   const nameProblem = pluginNameProblem(name)
   const urlProblem =
     url.trim() === "" ? "Enter the MCP server's URL." : pluginUrlProblem(url.trim())
+  const auth = authOf(rows)
+  const authProblem = pluginAuthProblem(auth)
+  // What saving clears, said before it does.
+  const cleared =
+    saved === null || urlProblem !== undefined
+      ? []
+      : clearedValues(
+          saved,
+          installations.filter((installation) => installation.pluginId === saved.id),
+          { url: url.trim(), auth },
+        )
+
+  const change = (id: number, edit: Partial<Omit<SecretRow, "id">>) =>
+    setRows((current) =>
+      current.map((row) => {
+        if (row.id !== id) return row
+        const next = { ...row, ...edit }
+        return edit.title !== undefined && !row.keyTyped
+          ? { ...next, key: keyFromTitle(edit.title) }
+          : next
+      }),
+    )
+  const addSecret = () =>
+    setRows((current) => [
+      ...current,
+      {
+        id: ++secretRows,
+        key: "",
+        title: "",
+        header: "Authorization",
+        template: `Bearer ${ValuePlaceholder}`,
+        keyTyped: false,
+      },
+    ])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setTouched(true)
-    if (nameProblem !== undefined || urlProblem !== undefined) return
+    if (nameProblem !== undefined || urlProblem !== undefined || authProblem !== undefined) return
     setBusy(true)
     setError(null)
     try {
-      if (saved === null) await hub.createPlugin(name.trim(), url.trim())
-      else await hub.editPlugin(saved.id, name.trim(), url.trim())
+      if (saved === null) await hub.createPlugin(name.trim(), url.trim(), auth)
+      else await hub.editPlugin(saved.id, name.trim(), url.trim(), auth)
       toast.show({ title: saved === null ? `Added ${name.trim()}` : `Saved ${name.trim()}` })
       onClose()
     } catch (cause) {
@@ -436,14 +586,19 @@ function PluginDialog({
       title={saved === null ? "Add Plugin" : `Edit ${saved.name}`}
       description={
         saved === null
-          ? "A remote MCP server, over Streamable HTTP, that needs no sign-in. Only the Hub reaches it: Sessions reach it through the Hub."
-          : "The Hub sends its Sessions' requests to the new URL at once; they show a new name from their next wake or Restart."
+          ? "A remote MCP server, over Streamable HTTP. Only the Hub reaches it: Sessions reach it through the Hub."
+          : "The Hub sends its Sessions' requests to the new URL, with the header secrets as declared, at once; they show a new name from their next wake or Restart."
       }
       footer={
         <>
           <DialogClose>Cancel</DialogClose>
-          <Button intent="primary" type="submit" form="plugin" loading={busy}>
-            {saved === null ? "Add" : "Save"}
+          <Button
+            intent={cleared.length > 0 ? "danger" : "primary"}
+            type="submit"
+            form="plugin"
+            loading={busy}
+          >
+            {saved === null ? "Add" : cleared.length > 0 ? "Save and clear values" : "Save"}
           </Button>
         </>
       }
@@ -475,6 +630,86 @@ function PluginDialog({
             sx={styles.mono}
           />
         </Field>
+        <fieldset aria-label="Header secrets" {...stylex.props(styles.section)}>
+          <div {...stylex.props(styles.sectionHead)}>
+            <h3 {...stylex.props(styles.sectionTitle)}>Header secrets</h3>
+            <p {...stylex.props(styles.muted)}>
+              For a server that takes a key in a header. Each Installation enters its own value,
+              which only the Hub holds: it adds the header to every request it sends this server.
+            </p>
+          </div>
+          {rows.map((row, index) => (
+            <div
+              key={row.id}
+              aria-label={`Header secret ${index + 1}`}
+              {...stylex.props(styles.secret)}
+            >
+              <Field label="Title">
+                <Input
+                  size="sm"
+                  value={row.title}
+                  onValueChange={(title: string) => change(row.id, { title })}
+                  placeholder="API key"
+                />
+              </Field>
+              <Field label="Header">
+                <Input
+                  size="sm"
+                  value={row.header}
+                  onValueChange={(header: string) => change(row.id, { header })}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  sx={styles.mono}
+                />
+              </Field>
+              <Field label="Value template" description={`${ValuePlaceholder} is the value.`}>
+                <Input
+                  size="sm"
+                  value={row.template}
+                  onValueChange={(template: string) => change(row.id, { template })}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  sx={styles.mono}
+                />
+              </Field>
+              <Field label="Key" description="Names its values.">
+                <Input
+                  size="sm"
+                  value={row.key}
+                  onValueChange={(key: string) => change(row.id, { key, keyTyped: true })}
+                  placeholder="api_key"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  sx={styles.mono}
+                />
+              </Field>
+              <IconButton
+                label={`Remove ${row.title.trim() === "" ? `header secret ${index + 1}` : row.title.trim()}`}
+                size="sm"
+                sx={styles.remove}
+                onClick={() => setRows((current) => current.filter((one) => one.id !== row.id))}
+              >
+                <TrashIcon />
+              </IconButton>
+            </div>
+          ))}
+          {touched && authProblem !== undefined && (
+            <p role="alert" {...stylex.props(styles.error)}>
+              {authProblem}
+            </p>
+          )}
+          <div>
+            <Button
+              size="sm"
+              icon={<PlusIcon />}
+              disabled={rows.length >= MaxHeaderSecrets}
+              onClick={addSecret}
+            >
+              Add header secret
+            </Button>
+          </div>
+        </fieldset>
+        {cleared.length > 0 && <ClearedBanner cleared={cleared} />}
         {error && (
           <p role="alert" {...stylex.props(styles.error)}>
             {error}
@@ -482,6 +717,29 @@ function PluginDialog({
         )}
       </form>
     </Dialog>
+  )
+}
+
+/** Says whose header secret values saving clears, before it does. */
+function ClearedBanner({ cleared }: { cleared: ReadonlyArray<ClearedValues> }) {
+  return (
+    <Banner
+      intent="warning"
+      icon={<WarningIcon />}
+      title="Saving clears header secret values"
+      detail={
+        <ul {...stylex.props(styles.clearedList)}>
+          {cleared.map(({ installation, secrets }) => (
+            <li key={installation}>
+              {installation}: {andList(secrets)}
+            </li>
+          ))}
+        </ul>
+      }
+    >
+      They were entered for the server and header as they are, so they don't go anywhere else. Each
+      needs a value again: until it gets one, the Hub refuses its Sessions' requests to this server.
+    </Banner>
   )
 }
 
@@ -494,7 +752,10 @@ interface InstallationTarget {
 /** The Repos typed, one per line or separated by commas or spaces. */
 const reposOf = (typed: string) => typed.split(/[\s,]+/).filter((repo) => repo !== "")
 
-/** Creates an Installation of a Plugin on Repos, or renames one and changes its Repos. */
+/**
+ * Creates an Installation of a Plugin on Repos, or renames one, changes its Repos, and replaces
+ * values of its header secrets; a value left empty stays as it is.
+ */
 function InstallationDialog({
   target,
   onClose,
@@ -507,6 +768,7 @@ function InstallationDialog({
   const saved = shown?.installation ?? null
   const [name, setName] = useState("")
   const [repos, setRepos] = useState("")
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({})
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -515,6 +777,7 @@ function InstallationDialog({
     if (target === null) return
     setName(target.installation?.name ?? target.plugin.name)
     setRepos(target.installation?.repos.join("\n") ?? "")
+    setValues({})
     setTouched(false)
     setBusy(false)
     setError(null)
@@ -527,16 +790,26 @@ function InstallationDialog({
     malformed !== undefined
       ? `${malformed} isn't a Repo: enter each as owner/name.`
       : installationReposProblem(listed)
+  const declared = shown === null ? [] : headerSecretsOf(shown.plugin.auth)
+  const typed = (secret: HeaderSecret) => values[secret.key] ?? ""
+  const valueProblem = (secret: HeaderSecret) =>
+    typed(secret) === "" ? undefined : headerValueProblem(secret.title, typed(secret))
+  const valuesProblem = declared.some((secret) => valueProblem(secret) !== undefined)
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setTouched(true)
     if (shown === null || nameProblem !== undefined || reposProblem !== undefined) return
+    if (valuesProblem) return
     setBusy(true)
     setError(null)
+    const entered: ReadonlyArray<HeaderValueInput> = declared
+      .filter((secret) => typed(secret) !== "")
+      .map((secret) => ({ key: secret.key, value: Redacted.make(typed(secret)) }))
     try {
-      if (saved === null) await hub.createInstallation(shown.plugin.id, name.trim(), listed)
-      else await hub.editInstallation(saved.id, name.trim(), listed)
+      if (saved === null) {
+        await hub.createInstallation(shown.plugin.id, name.trim(), listed, entered)
+      } else await hub.editInstallation(saved.id, name.trim(), listed, entered)
       toast.show({ title: saved === null ? `Installed ${name.trim()}` : `Saved ${name.trim()}` })
       onClose()
     } catch (cause) {
@@ -554,7 +827,7 @@ function InstallationDialog({
       title={
         saved === null ? `Add an Installation of ${shown?.plugin.name ?? ""}` : `Edit ${saved.name}`
       }
-      description="Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each Plugin, and you need access to every Repo listed."
+      description={`Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each Plugin, and you need access to every Repo listed.${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}`}
       footer={
         <>
           <DialogClose>Cancel</DialogClose>
@@ -588,6 +861,44 @@ function InstallationDialog({
             sx={styles.mono}
           />
         </Field>
+        {declared.map((secret) => {
+          const set = saved?.values.find((value) => value.key === secret.key)
+          const problem = valueProblem(secret)
+          return (
+            <Field
+              key={secret.key}
+              label={
+                <span {...stylex.props(styles.valueLine)}>
+                  {secret.title}
+                  {saved !== null && typed(secret) === "" && set !== undefined && (
+                    <Badge intent="success">set</Badge>
+                  )}
+                  {typed(secret) === "" && set === undefined && (
+                    <Badge intent="danger">needs a value</Badge>
+                  )}
+                </span>
+              }
+              description={`Sent as ${secret.header}: ${secret.template}`}
+              invalid={touched && problem !== undefined}
+              error={touched ? problem : undefined}
+            >
+              <Input
+                type="password"
+                value={typed(secret)}
+                onValueChange={(value: string) =>
+                  setValues((current) => ({ ...current, [secret.key]: value }))
+                }
+                placeholder={
+                  set === undefined
+                    ? "Enter a value"
+                    : `Set by ${set.setBy.name} ${timeAgo(set.setAt)}: type to replace it`
+                }
+                autoComplete="off"
+                sx={styles.mono}
+              />
+            </Field>
+          )
+        })}
         {error && (
           <p role="alert" {...stylex.props(styles.error)}>
             {error}

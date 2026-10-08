@@ -228,7 +228,7 @@ const withPlugins = (plugins: ReadonlyArray<SessionInstallationWire>) =>
 
 /** What a Session runs with of an Installation: a change to any of it takes a Restart. */
 const runsWith = (one: SessionInstallationWire) =>
-  JSON.stringify([one.id, one.name, one.pluginName, one.server])
+  JSON.stringify([one.id, one.name, one.pluginName, one.server, one.values ?? []])
 
 /** Whether a Session's Installations differ from its Repo's, in what it runs with. */
 function differ(

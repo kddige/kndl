@@ -140,3 +140,105 @@ test("deleting a Plugin with Installations is refused, saying why", async () => 
     ),
   )
 })
+
+test("declares a header secret on a new Plugin, its key following its title", async () => {
+  const { hub } = await openPlugins()
+  await step(() => button("Add Plugin").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Header secrets"))
+  const [name, url] = [...(dialog()?.querySelectorAll("input") ?? [])] as [
+    HTMLInputElement,
+    HTMLInputElement,
+  ]
+  await type(name, "Acme")
+  await type(url, "https://mcp.acme.example/mcp")
+  await step(() => button("Add header secret").click())
+  const [title, header, template, key] = [
+    ...(document.querySelector('[aria-label="Header secret 1"]')?.querySelectorAll("input") ?? []),
+  ] as [HTMLInputElement, HTMLInputElement, HTMLInputElement, HTMLInputElement]
+  expect(header.value).toBe("Authorization")
+  expect(template.value).toBe("Bearer {value}")
+  await type(title, "API key")
+  expect(key.value).toBe("api_key")
+
+  await type(template, "Bearer")
+  await step(() => button("Add").click())
+  expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain("{value}")
+  expect(hub.received.some((m) => m._tag === "CreatePlugin")).toBe(false)
+
+  await type(template, "Bearer {value}")
+  await step(() => button("Add").click())
+  await eventually(() => expect(plugin("Acme")?.textContent).toContain("hub:acme"))
+  expect(hub.received.find((m) => m._tag === "CreatePlugin")).toMatchObject({
+    auth: {
+      _tag: "Headers",
+      headers: [
+        { key: "api_key", title: "API key", header: "Authorization", template: "Bearer {value}" },
+      ],
+    },
+  })
+})
+
+test("an Installation's header secret values are write-only: entered, never shown", async () => {
+  const { hub } = await openPlugins()
+  // Who set Sentry's, and when; never the value.
+  const sentry = plugin("Sentry")?.querySelector('[aria-label="Header secrets of Sentry"]')
+  expect(sentry?.textContent).toContain("Auth token")
+  expect(sentry?.textContent).toContain("set by")
+
+  await step(() => button("Add Installation of Linear").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Linear"))
+  expect(dialog()?.textContent).toContain("Sent as Authorization: Bearer {value}")
+  expect(dialog()?.textContent).toContain("needs a value")
+  await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
+  const value = dialog()?.querySelector('input[type="password"]') as HTMLInputElement
+  await type(value, "made-up-linear-key")
+  await step(() => button("Add").click())
+  await eventually(() =>
+    expect(
+      plugin("Linear")?.querySelector('[aria-label="Header secrets of Linear"]')?.textContent,
+    ).toContain("set by"),
+  )
+  expect(hub.received.find((m) => m._tag === "CreateInstallation")).toMatchObject({
+    values: [{ key: "api_key" }],
+  })
+  expect(document.body.textContent).not.toContain("made-up-linear-key")
+
+  // Saved again with the value left empty: it keeps the one it has, sending none.
+  await settle(300)
+  await step(() => button("Edit Installation Linear").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Edit"))
+  const again = dialog()?.querySelector('input[type="password"]') as HTMLInputElement
+  expect(again.value).toBe("")
+  expect(again.placeholder).toContain("type to replace it")
+  await step(() => button("Save").click())
+  await eventually(() => expect(hub.received.some((m) => m._tag === "EditInstallation")).toBe(true))
+  expect(hub.received.find((m) => m._tag === "EditInstallation")).not.toHaveProperty("values")
+})
+
+test("says whose values an edit to a Plugin clears, before saving it", async () => {
+  const { hub } = await openPlugins()
+  await step(() => button("Add Installation of Linear").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Linear"))
+  await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
+  await type(dialog()?.querySelector('input[type="password"]') as HTMLInputElement, "made-up")
+  await step(() => button("Add").click())
+  await eventually(() => expect(plugin("Linear")?.textContent).toContain("set by"))
+
+  await settle(300)
+  await step(() => button("Edit Plugin Linear").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Header secrets"))
+  const url = [...(dialog()?.querySelectorAll("input") ?? [])][1] as HTMLInputElement
+  // Another path on the same server keeps them.
+  await type(url, "https://mcp.linear.example/v2")
+  expect(dialog()?.textContent).not.toContain("Saving clears header secret values")
+  expect(button("Save").textContent).toBe("Save")
+
+  await type(url, "https://linear.example/mcp")
+  expect(dialog()?.textContent).toContain("Saving clears header secret values")
+  expect(dialog()?.textContent).toContain("Linear: API key")
+  await step(() => button("Save and clear values").click())
+  await eventually(() => expect(plugin("Linear")?.textContent).toContain("needs a value"))
+  expect(hub.received.find((m) => m._tag === "EditPlugin")).toMatchObject({
+    url: "https://linear.example/mcp",
+  })
+})

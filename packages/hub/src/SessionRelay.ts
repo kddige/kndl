@@ -875,8 +875,8 @@ export class SessionRelay extends Context.Service<
       // ── Redaction (#48) ──────────────────────────────────────────────────
 
       /**
-       * What to redact from each Repo's Sessions, until its Sensitive values or the Sandbox tokens
-       * of its Sessions change.
+       * What to redact from each Repo's Sessions, until its Sensitive values, its Installations'
+       * header secret values (#215) or the Sandbox tokens of its Sessions change.
        */
       const needlesByRepo = new RepoMap<Needles>()
 
@@ -904,14 +904,24 @@ export class SessionRelay extends Context.Service<
       const needlesFor = Effect.fn("SessionRelay.needlesFor")(function* (repo: string) {
         const known = needlesByRepo.get(repo)
         if (known !== undefined) return known
-        const values = yield* environments.sensitiveValues(repo).pipe(
-          Effect.map(Option.some),
-          Effect.catchTag("EnvironmentRefused", (error) =>
-            Effect.logError(
-              `Could not read the Sensitive values of ${repo}: masking everything its Sessions print`,
-              error,
-            ).pipe(Effect.as(Option.none())),
+        const unreadable = (error: { readonly message: string }) =>
+          Effect.logError(
+            `Could not read the Sensitive values of ${repo}: masking everything its Sessions print`,
+            error,
+          ).pipe(Effect.as(Option.none<ReadonlyArray<Redacted.Redacted<string>>>()))
+        const values = yield* Effect.all([
+          environments.sensitiveValues(repo),
+          // The values of its Installations' header secrets (#215), which only the Gateway sends,
+          // but which a server may echo back.
+          plugins.valuesOn(repo),
+        ]).pipe(
+          Effect.map(([sensitive, headers]) =>
+            Option.some<ReadonlyArray<Redacted.Redacted<string>>>([...sensitive, ...headers]),
           ),
+          Effect.catchTags({
+            EnvironmentRefused: unreadable,
+            SecretsUnavailable: unreadable,
+          }),
         )
         // Values that can't be read are tried again next time.
         if (Option.isNone(values)) return everything
@@ -1109,6 +1119,7 @@ export class SessionRelay extends Context.Service<
         serialized,
         accessKnown: (who, repo, allowed) => accessKnown(who, repo, allowed),
         repoSessionsUpdated: (repo) => repoSessionsUpdated(repo),
+        headerValuesChanged: () => needlesByRepo.clear(),
         respell: Effect.fn("SessionRelay.respell")(function* (repo: RepoName) {
           const github = yield* access.fullName(repo)
           return Option.isSome(github)
@@ -1353,7 +1364,7 @@ export class SessionRelay extends Context.Service<
         repo: string,
         runner: OnlineRunner,
       ) {
-        const installations = runner.relaysPlugins ? yield* plugins.forSession(repo) : []
+        const installations = runner.relaysPlugins ? yield* plugins.forSession(sessionId, repo) : []
         yield* sessions.setPlugins(sessionId, installations)
         return gatewayServers(installations)
       })

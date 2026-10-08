@@ -186,6 +186,13 @@ export const SessionInstallation = Schema.Struct({
   pluginId: PluginId,
   pluginName: Schema.String,
   server: Schema.String,
+  /**
+   * The header secrets (#215) it held a value for, and when each was set: never the value. A
+   * value set since shows that a Restart applies it. Absent for none.
+   */
+  values: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ key: Schema.String, setAt: EpochMillis })),
+  ),
 })
 export type SessionInstallation = typeof SessionInstallation.Type
 

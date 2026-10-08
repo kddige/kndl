@@ -41,6 +41,7 @@ const sharedSecret = "ghp_SHARED_SECRET_77b0"
 const signingSecret = "sig_SIGNING_SECRET_31d8"
 // A fake: ClaudeCheck.layerTest takes it without asking Anthropic.
 const claudeSecret = "sk-ant-oat01-FAKE_CLAUDE_TOKEN_0000c1a7"
+const pluginSecret = "lin_PLUGIN_SECRET_2c9d"
 const secrets = [
   buildSecret,
   runtimeSecret,
@@ -48,6 +49,7 @@ const secrets = [
   signingSecret,
   "ghp_rotated_5e6f",
   claudeSecret,
+  pluginSecret,
 ]
 const lostKey = generateSecretsKey()
 const newKey = generateSecretsKey()
@@ -81,10 +83,10 @@ const variables = (values: { readonly build?: string; readonly runtime?: string 
   { _tag: "Link", name: "REGISTRY", sharedVariable: "REGISTRY", availableAtBuild: true },
 ]
 
-/** The scene on a Hub over `database`: a Runner online and alice on the web. */
+/** The scene on a Hub over `database`: a Runner relaying Plugins online, and alice on the web. */
 async function scene(hub: TestHub) {
   const issued = await issueRunnerToken(hub)
-  const runner = await openRunner(hub, issued.token)
+  const runner = await openRunner(hub, issued.token, [], undefined, true, { relaysPlugins: true })
   const web = await openWeb(hub, "alice")
   const request = async (message: { readonly _tag: string } & Record<string, unknown>) => {
     const requestId = nextRequest()
@@ -123,16 +125,38 @@ async function seededDatabase() {
   const draft = { ...recipe, variables: variables({ build: buildSecret, runtime: runtimeSecret }) }
   expect((await env.testBuild(draft))._tag).toBe("TestBuildEnded")
   expect((await env.apply(draft, null))._tag).toBe("EnvironmentState")
+  // An Installation with a header secret value, which the Session starts with.
+  const created = await env.request({
+    _tag: "CreatePlugin",
+    name: "Linear",
+    url: "https://mcp.example.com/mcp",
+    auth: {
+      _tag: "Headers",
+      headers: [
+        { key: "token", title: "API key", header: "Authorization", template: "Bearer {value}" },
+      ],
+    },
+  })
+  if (created._tag !== "PluginsState") throw new Error(JSON.stringify(created))
+  expect(
+    await env.request({
+      _tag: "CreateInstallation",
+      pluginId: created.plugins[0]?.id,
+      name: "Team Linear",
+      repos: [repo],
+      values: [{ key: "token", value: pluginSecret }],
+    }),
+  ).toMatchObject({ _tag: "PluginsState" })
   // A Session, and a value replaced while it runs: retired, kept to redact what it prints.
   const requestId = nextRequest()
   env.web.send({ _tag: "CreateSession", requestId, repo, baseBranch: "main" })
   await env.runner.take("StartSession")
-  const created = await env.web.take("SessionCreated", (m) => m.requestId === requestId)
-  env.runner.send({ _tag: "SessionStarted", sessionId: created.session.id, environmentVersion: 1 })
+  const session = (await env.web.take("SessionCreated", (m) => m.requestId === requestId)).session
+  env.runner.send({ _tag: "SessionStarted", sessionId: session.id, environmentVersion: 1 })
   await env.web.take("SessionUpdated", (m) => m.session.environment?.version === 1)
   await env.setShared({ _tag: "Sensitive", name: "GITHUB_TOKEN", value: "ghp_rotated_5e6f" })
   await stopAll()
-  return { file, sessionId: created.session.id }
+  return { file, sessionId: session.id }
 }
 
 /** Runs the reset on `file`, as the configuration names it, answering `confirm`. */
@@ -151,6 +175,8 @@ const expectedPlan: SecretsResetPlan = {
   retiredValues: 1,
   testBuilds: 1,
   claudeCredentials: ["alice"],
+  installations: [{ name: "Team Linear", secrets: ["API key"] }],
+  sessionValues: 1,
 }
 
 /** Every row of every table in the database, as text. */
@@ -224,6 +250,12 @@ describe("secrets-reset", () => {
     expect(done).toContain("It removes the Claude credential of alice")
     expect(done).toContain("Cleared 5 Sensitive values")
     expect(done).toContain("`bun run secrets-key`")
+    expect(plan).toContain(
+      "It clears the header secret values of 1 Installation, keeping each Installation:\n  - Team Linear: API key",
+    )
+    expect(plan).toContain("It also drops 1 header secret value that Sessions started with.")
+    expect(done).toContain("Cleared the header secret values of 1 Installation")
+    expect(done).toContain("and each Installation's on the Plugins page")
     for (const secret of secrets) expect(plan + done).not.toContain(secret)
     // Run again, there is nothing left to reset.
     expect((await reset(file, true)).outcome._tag).toBe("NothingToReset")
@@ -284,6 +316,10 @@ describe("secrets-reset", () => {
       }),
     )
     expect(left).toEqual([{ builds: 0, retired: 0 }])
+    // Each Installation stays, and needs a value again.
+    const plugins = await env.request({ _tag: "GetPlugins" })
+    if (plugins._tag !== "PluginsState") throw new Error(plugins._tag)
+    expect(plugins.installations).toMatchObject([{ name: "Team Linear", values: [] }])
   })
 
   test("Sessions don't start, nor Test builds, until every value is entered again", async () => {

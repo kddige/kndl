@@ -31,7 +31,7 @@ Either way it manages the installed home, `KNDL_HOME` or else `~/.kndl`, never a
 | `kndl logout` | Signs the CLI out: the Hub revokes its CLI token, and the CLI forgets it. |
 | `kndl whoami` | Which Hub the CLI is signed in to, as whom, and on which machine. Exits 1 when it isn't signed in, or the Hub refuses or doesn't answer. |
 | `kndl forward [<session>] [<port>...] [--bind <address>]` | Opens a Session's Open ports on `localhost` here, as they open and close, until stopped. See [below](#kndl-forward). |
-| `kndl secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `kndl hub stop` first. Asks first; without a terminal it needs `--yes`. |
+| `kndl secrets reset [--yes]` | After losing `HUB_SECRETS_KEY`, clears the Sensitive values and Installations' header secret values it encrypted in the installed Hub's database, as [`bun run secrets-reset`](#bun-run-secrets-reset---yes) does. Refused while the Hub runs: stop it with `kndl hub stop` first. Asks first; without a terminal it needs `--yes`. |
 
 `--help` on any command lists its flags, and `--version` prints the commit the CLI runs from, as `kndl v<commit>`.
 
@@ -198,7 +198,7 @@ Prints a new `HUB_SECRETS_KEY`, 32 random bytes in base64, for encrypting Sensit
 
 #### `bun run secrets-reset [--yes]`
 
-For when `HUB_SECRETS_KEY` is lost, and the Hub refuses to start without it. It needs no key. Clears every Sensitive value the key encrypted, own and shared, keeping the variables, which then need a value. It also drops what else the key protects: the replaced values kept for redaction, and the record of Test builds. It lists what it clears, by name, and asks:
+For when `HUB_SECRETS_KEY` is lost, and the Hub refuses to start without it. It needs no key. Clears every Sensitive value the key encrypted, own and shared, keeping the variables, which then need a value. It also drops what else the key protects: the replaced values kept for redaction, the record of Test builds, people's Claude credentials, and the values of Installations' header secrets, keeping each Installation, which then needs its values again. It lists what it clears, by name, never a value, and asks:
 
 ```
 This clears 3 Sensitive values, keeping each variable, its "available at build" and its Links:
@@ -206,7 +206,11 @@ This clears 3 Sensitive values, keeping each variable, its "available at build" 
   - shared variables: GITHUB_TOKEN
 Each then needs a value: the Sessions of a Repo that has, or links, one don't start until it gets one.
 It also drops the record of 1 Test build: the lost key protects them.
-Plain variables, Environments, Sessions and the builds on Runners stay.
+It clears the header secret values of 1 Installation, keeping each Installation:
+  - Team Linear: API key
+Each then needs a value again: until it gets one, the Gateway refuses its Sessions' requests to the Plugin's MCP server.
+It also drops 1 header secret value that Sessions started with.
+Plain variables, Environments, Sessions, Plugins, Installations and the builds on Runners stay.
 Type yes to clear them:
 ```
 
@@ -216,7 +220,7 @@ Type yes to clear them:
 The Sensitive values can't be reset: a Hub is running on /path/to/hub.db. Stop it first.
 ```
 
-It knows from the lock a running Hub holds, `hub.db.lock` beside the database. After the reset, make a new key with `bun run secrets-key`, set it, start the Hub, and enter the values again. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+It knows from the lock a running Hub holds, `hub.db.lock` beside the database. After the reset, make a new key with `bun run secrets-key`, set it, start the Hub, and enter the values again: the variables' on each Environment and on **Shared variables**, and the Installations' on **Plugins**. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
 
 ### Checks
 

@@ -13,9 +13,14 @@
 //   digests are keyed from it, so none could match again.
 // - Each person's Claude credential goes too (ADR 0015): they add theirs again on the Account
 //   page, and until then their Sessions run on their Runner's own credential, if it has one.
-// - Plain variables, Environments, versions, Sessions and builds already on Runners stay.
+// - So do the values of Installations' header secrets (#215), and those their Sessions started
+//   with: each Installation stays, and needs a value again on the Plugins page; until then the
+//   Gateway refuses its requests.
+// - Plain variables, Environments, versions, Sessions, Plugins, Installations and builds already on
+//   Runners stay.
 import { existsSync } from "node:fs"
-import { Effect, Schema } from "effect"
+import { headerSecretsOf, PluginAuth } from "@kndl/protocol"
+import { Effect, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import { DatabaseFile, databaseAt } from "./Database.ts"
 import { holdHubLock } from "./HubLock.ts"
@@ -40,6 +45,13 @@ export interface SecretsResetPlan {
   readonly testBuilds: number
   /** Who stored a Claude credential, by GitHub login, in order. */
   readonly claudeCredentials: ReadonlyArray<string>
+  /** Each Installation with header secret values, and the titles of those, in order. */
+  readonly installations: ReadonlyArray<{
+    readonly name: string
+    readonly secrets: ReadonlyArray<string>
+  }>
+  /** How many header secret values Sessions started with, kept for the Gateway. */
+  readonly sessionValues: number
 }
 
 /** How many Sensitive values the reset clears. */
@@ -49,7 +61,11 @@ export const clearedCount = (plan: SecretsResetPlan) =>
 
 /** Whether there is anything the lost key protects: if not, a new key just works. */
 export const resetNeeded = (plan: SecretsResetPlan) =>
-  clearedCount(plan) > 0 || plan.retiredValues > 0 || plan.claudeCredentials.length > 0
+  clearedCount(plan) > 0 ||
+  plan.retiredValues > 0 ||
+  plan.claudeCredentials.length > 0 ||
+  plan.installations.length > 0 ||
+  plan.sessionValues > 0
 
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`
@@ -87,8 +103,28 @@ export function secretsResetPlanText(plan: SecretsResetPlan): string {
       ? [`It also drops ${also.join(" and ")}: the lost key protects them.`]
       : []),
     ...claudeCredentialLines(plan),
-    "Plain variables, Environments, Sessions and the builds on Runners stay.",
+    ...installationLines(plan, "It clears"),
+    ...(plan.installations.length > 0
+      ? [
+          "Each then needs a value again: until it gets one, the Gateway refuses its Sessions' requests to the Plugin's MCP server.",
+        ]
+      : []),
+    ...(plan.sessionValues > 0
+      ? [
+          `It also drops ${plural(plan.sessionValues, "header secret value")} that Sessions started with.`,
+        ]
+      : []),
+    "Plain variables, Environments, Sessions, Plugins, Installations and the builds on Runners stay.",
   ].join("\n")
+}
+
+/** The Installations whose header secret values are cleared, and which those are. */
+function installationLines(plan: SecretsResetPlan, verb: string): ReadonlyArray<string> {
+  if (plan.installations.length === 0) return []
+  return [
+    `${verb} the header secret values of ${plural(plan.installations.length, "Installation")}, keeping each Installation:`,
+    ...plan.installations.map(({ name, secrets }) => `  - ${name}: ${secrets.join(", ")}`),
+  ]
 }
 
 /** The Claude credentials removed, by whose they were. */
@@ -112,10 +148,13 @@ export function secretsResetDoneText(plan: SecretsResetPlan, newKey: string): st
       : "Cleared what the lost key protected.",
     ...clearedLines(plan),
     ...claudeCredentialLines(plan),
+    ...installationLines(plan, "Cleared"),
     "",
-    `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen.`,
+    `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen${plan.installations.length > 0 ? ", and each Installation's on the Plugins page" : ""}.`,
   ].join("\n")
 }
+
+const decodeAuth = Schema.decodeUnknownOption(Schema.fromJsonString(PluginAuth))
 
 /** What the lost key protects in the database. */
 const planOf = Effect.gen(function* () {
@@ -137,14 +176,40 @@ const planOf = Effect.gen(function* () {
     JOIN participants ON participants.id = claude_credentials.participant_id
     ORDER BY participants.login
   `
+  const values = yield* sql<{
+    readonly id: string
+    readonly name: string
+    readonly auth: string
+    readonly key: string
+  }>`
+    SELECT i.id, i.name, g.auth, v.key FROM installation_values v
+    JOIN installations i ON i.id = v.installation_id JOIN plugins g ON g.id = i.plugin_id
+    ORDER BY i.name, i.id, v.key
+  `
+  const [held] = yield* sql<{ readonly count: number }>`
+    SELECT COUNT(*) AS count FROM session_installation_values
+  `
   const byRepo = new Map<string, Array<string>>()
   for (const row of own) byRepo.set(row.repo, [...(byRepo.get(row.repo) ?? []), row.name])
+  const installations = new Map<string, { name: string; secrets: Array<string> }>()
+  for (const row of values) {
+    const declared = Option.match(decodeAuth(row.auth), {
+      onNone: () => [],
+      onSome: headerSecretsOf,
+    })
+    const title = declared.find((secret) => secret.key === row.key)?.title ?? row.key
+    const installation = installations.get(row.id) ?? { name: row.name, secrets: [] }
+    installation.secrets.push(title)
+    installations.set(row.id, installation)
+  }
   return {
     environments: [...byRepo].map(([repo, names]) => ({ repo, names })),
     sharedVariables: shared.map((row) => row.name),
     retiredValues: counts?.retired ?? 0,
     testBuilds: counts?.builds ?? 0,
     claudeCredentials: credentials.map((row) => row.login),
+    installations: [...installations.values()],
+    sessionValues: held?.count ?? 0,
   } satisfies SecretsResetPlan
 })
 
@@ -159,6 +224,8 @@ const clear = Effect.gen(function* () {
       yield* sql`DELETE FROM retired_values`
       yield* sql`DELETE FROM test_builds`
       yield* sql`DELETE FROM claude_credentials`
+      yield* sql`DELETE FROM installation_values`
+      yield* sql`DELETE FROM session_installation_values`
     }),
   )
 })
