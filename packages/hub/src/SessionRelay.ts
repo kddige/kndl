@@ -95,6 +95,11 @@
 // - Environments (#47, ADR 0009): StartSession carries the Repo's Environment as last applied,
 //   and the Runner reports the version it started the Session on. Environment commands, Test
 //   builds and variable fetches are handled by EnvironmentRelay.ts.
+// - Plugins (#221, ADR 0020): StartSession carries an MCP server for each Installation on for the
+//   Session's Repo, which its Claude Code reaches through the Gateway (GatewayRoutes.ts), and the
+//   Hub records them as it sends it; RelaunchSession carries the same ones again. A change to the
+//   Repo's Installations reaches the Session at its next wake or Restart; until then its summary
+//   says so. Plugin commands are handled by PluginRelay.ts.
 // - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo, and the Sandbox
 //   tokens of its Sessions (#73), are masked in every event before it is logged, and in terminal
 //   frames before they are relayed. Claude's text
@@ -190,6 +195,7 @@ import {
   sessionsRefusal,
   type SessionEvent,
   SessionEventLogged,
+  type SessionInstallation,
   type TerminalFrame,
   type TextDelta,
   SessionId,
@@ -262,6 +268,7 @@ import { ModTokens } from "./ModTokens.ts"
 import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
 import { isPluginCommand, makePluginRelay, type PluginRelay } from "./PluginRelay.ts"
+import { Plugins } from "./Plugins.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import {
   everything,
@@ -390,6 +397,17 @@ const noRepoAccess = (repo: string) =>
 const notInstalledForTestBuild = (repo: string) =>
   `The GitHub App isn't installed on ${repo}, so a Test build can't clone it: install the App on the Repo, then try again.`
 
+/** StartSession's and RelaunchSession's MCP servers, for the Installations (ADR 0020). */
+const gatewayServers = (installations: ReadonlyArray<SessionInstallation>) =>
+  installations.length === 0
+    ? {}
+    : {
+        plugins: installations.map((installation) => ({
+          installationId: installation.id,
+          server: installation.server,
+        })),
+      }
+
 /** StartSession's and RelaunchSession's `model` and `effort` (#128): the Session's setting. */
 const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.model !== undefined && { model: setting.model }),
@@ -487,6 +505,7 @@ export class SessionRelay extends Context.Service<
       const config = yield* HubConfig
       const sessionGit = yield* SessionGit
       const environments = yield* Environments
+      const plugins = yield* Plugins
       const access = yield* RepoAccess
       const app = yield* GitHubApp
       const drift = yield* PermissionDrift
@@ -530,6 +549,8 @@ export class SessionRelay extends Context.Service<
         readonly ownClaudeCredential: boolean
         /** Whether it takes an OpenTunnel (#177). */
         readonly forwardsPorts: boolean
+        /** Whether it gives Claude Code the MCP servers of its Session's Installations (#221). */
+        readonly relaysPlugins: boolean
       }
 
       /** A `kndl forward` of one Session (#180), by a CLI token. */
@@ -1323,6 +1344,21 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
+       * StartSession's MCP servers (ADR 0020): one for each Installation on for the Session's
+       * Repo, recorded as the Session's, which its summary shows. None for a Runner that doesn't
+       * relay them: its Claude Code starts without.
+       */
+      const startPlugins = Effect.fn("SessionRelay.startPlugins")(function* (
+        sessionId: SessionId,
+        repo: string,
+        runner: OnlineRunner,
+      ) {
+        const installations = runner.relaysPlugins ? yield* plugins.forSession(repo) : []
+        yield* sessions.setPlugins(sessionId, installations)
+        return gatewayServers(installations)
+      })
+
+      /**
        * Starts the Session's Claude Code again with its model and effort as set now (#128), once
        * they changed while it ran: Claude Code alone, resuming its conversation, its Sandbox left
        * running. Only between Turns: `deliverNext` asks, when the Session is Active and idle.
@@ -1350,6 +1386,8 @@ export class SessionRelay extends Context.Service<
             resume: resume.value,
             modToken,
             ...modelFlags(session),
+            // The same as before: a change to the Repo's waits for its next wake or Restart.
+            ...gatewayServers(session.plugins ?? []),
           }),
         )
         // Its agents stop with the old Claude Code.
@@ -1442,6 +1480,7 @@ export class SessionRelay extends Context.Service<
         const resume = yield* sessions.claudeSessionId(session.id)
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
+        const servers = yield* startPlugins(session.id, session.repo, runner)
         starting.add(session.id)
         yield* startSent(session.id, environment)
         // It starts with its model and effort as set now (#128).
@@ -1464,6 +1503,7 @@ export class SessionRelay extends Context.Service<
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
             ...modelFlags(session),
+            ...servers,
           }),
         )
         return undefined
@@ -1761,6 +1801,7 @@ export class SessionRelay extends Context.Service<
           ...modelFlags(plan.model ?? {}),
         })
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
+        const servers = yield* startPlugins(id, session.repo, runner)
         starting.add(id)
         yield* startSent(id, environment)
         yield* logEvent(id, SessionStateChanged.make({ state: "Active", ...plan.why }))
@@ -1774,12 +1815,15 @@ export class SessionRelay extends Context.Service<
             ...environment,
             gitIdentity: creatorIdentity(session.creator),
             ...modelFlags(session),
+            ...servers,
           }),
         )
-        plan.created?.(session)
+        // As recorded now, with the Installations it starts with.
+        const recorded = Option.getOrElse(yield* sessions.get(id), () => session)
+        plan.created?.(recorded)
         toWeb(yield* runnerList)
-        yield* sessionToWeb(session)
-        return session
+        yield* sessionToWeb(recorded)
+        return recorded
       })
 
       // ── The web channel ──────────────────────────────────────────────────
@@ -3024,6 +3068,7 @@ export class SessionRelay extends Context.Service<
             relaunches: hello.relaunches === true,
             ownClaudeCredential: hello.ownClaudeCredential !== false,
             forwardsPorts: hello.forwardsPorts === true,
+            relaysPlugins: hello.relaysPlugins === true,
           }
           yield* serialized(
             Effect.gen(function* () {

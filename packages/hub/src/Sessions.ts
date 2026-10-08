@@ -8,8 +8,10 @@ import {
   ModelName,
   OpenQuestion,
   ParticipantId,
+  repoKey,
   RunnerId,
   SessionId,
+  SessionInstallation,
   type SessionName,
   SessionState,
   SessionSummary,
@@ -19,6 +21,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import type { Fragment } from "effect/sql/Statement"
+import { installationsDiffer, installationsOn } from "./Plugins.ts"
 
 /** A Session to record, as CreateSession makes it. */
 export interface NewSession {
@@ -83,6 +86,7 @@ interface SessionRow {
   readonly keepAwakeByAvatarUrl: string | null
   readonly keepAwakeAt: number | null
   readonly openQuestion: string | null
+  readonly plugins: string | null
 }
 
 /** Turning a Session's Keep awake on (ADR 0016): who did it, and when. */
@@ -105,6 +109,9 @@ const decodeEffort = Schema.decodeUnknownOption(EffortLevel)
 const OpenQuestionJson = Schema.fromJsonString(OpenQuestion)
 const decodeOpenQuestion = Schema.decodeUnknownOption(OpenQuestionJson)
 const encodeOpenQuestion = Schema.encodeSync(OpenQuestionJson)
+const InstallationsJson = Schema.fromJsonString(Schema.Array(SessionInstallation))
+const decodeInstallations = Schema.decodeUnknownOption(InstallationsJson)
+const encodeInstallations = Schema.encodeSync(InstallationsJson)
 
 /** The model and effort a row holds, without a value the Hub would no longer take. */
 const settingOf = (row: { readonly model: string | null; readonly effort: string | null }) => {
@@ -116,7 +123,11 @@ const settingOf = (row: { readonly model: string | null; readonly effort: string
   }
 }
 
-const toSummary = (row: SessionRow, agents: ReadonlyArray<AgentSummary> = []): SessionSummary =>
+const toSummary = (
+  row: SessionRow,
+  agents: ReadonlyArray<AgentSummary> = [],
+  installations: ReadonlyArray<SessionInstallation> = [],
+): SessionSummary =>
   SessionSummary.make({
     id: SessionId.make(row.id),
     repo: row.repo,
@@ -173,7 +184,23 @@ const toSummary = (row: SessionRow, agents: ReadonlyArray<AgentSummary> = []): S
         },
       }),
     ...openQuestionOf(row),
+    ...pluginsOf(row, installations),
   })
+
+/**
+ * The Installations a row says the Session's Claude Code last started with (ADR 0020), none if it
+ * never started since Plugins came; and whether its Repo's, `installations`, changed since. An
+ * Archived Session's don't: it starts again only once restored.
+ */
+const pluginsOf = (row: SessionRow, installations: ReadonlyArray<SessionInstallation>) => {
+  const recorded =
+    row.plugins === null ? [] : Option.getOrElse(decodeInstallations(row.plugins), () => [])
+  return {
+    ...(recorded.length > 0 && { plugins: recorded }),
+    ...(row.state !== "Archived" &&
+      installationsDiffer(recorded, installations) && { pluginsChanged: true as const }),
+  }
+}
 
 /** The Open question a row holds, if any the Hub can still read. */
 const openQuestionOf = (row: SessionRow) => {
@@ -290,6 +317,14 @@ export class Sessions extends Context.Service<
      * null to forget it. Its summary shows it while the Session is Asleep.
      */
     readonly setLastOutput: (id: SessionId, output: string | null) => Effect.Effect<void, SqlError>
+    /**
+     * The Installations its Claude Code starts with (ADR 0020), recorded as the Hub sends its
+     * StartSession: its summary shows them, and whether its Repo's changed since.
+     */
+    readonly setPlugins: (
+      id: SessionId,
+      installations: ReadonlyArray<SessionInstallation>,
+    ) => Effect.Effect<void, SqlError>
   }
 >()("@kndl/hub/Sessions") {
   static readonly layer = Layer.effect(
@@ -345,7 +380,7 @@ export class Sessions extends Context.Service<
           s.last_output AS lastOutput, s.model, s.effort, s.model_pending AS modelPending,
           s.keep_awake_by AS keepAwakeById, k.login AS keepAwakeByLogin,
           k.name AS keepAwakeByName, k.avatar_url AS keepAwakeByAvatarUrl,
-          s.keep_awake_at AS keepAwakeAt, s.open_question AS openQuestion
+          s.keep_awake_at AS keepAwakeAt, s.open_question AS openQuestion, s.plugins
         FROM sessions s JOIN participants p ON p.id = s.creator_id
           LEFT JOIN participants a ON a.id = s.archived_by
           LEFT JOIN participants k ON k.id = s.keep_awake_by
@@ -358,7 +393,10 @@ export class Sessions extends Context.Service<
         const rows = yield* selectRows(where)
         if (rows.length === 0) return []
         const agents = yield* activeAgents(rows.map((row) => row.id))
-        return rows.map((row) => toSummary(row, agents.get(row.id)))
+        const installations = yield* installationsOn(sql, [...new Set(rows.map((row) => row.repo))])
+        return rows.map((row) =>
+          toSummary(row, agents.get(row.id), installations.get(repoKey(row.repo))),
+        )
       })
 
       const get = Effect.fn("Sessions.get")(function* (id: SessionId) {
@@ -506,6 +544,15 @@ export class Sessions extends Context.Service<
         yield* sql`UPDATE sessions SET last_output = ${output} WHERE id = ${id}`
       })
 
+      const setPlugins = Effect.fn("Sessions.setPlugins")(function* (
+        id: SessionId,
+        installations: ReadonlyArray<SessionInstallation>,
+      ) {
+        yield* sql`
+          UPDATE sessions SET plugins = ${encodeInstallations(installations)} WHERE id = ${id}
+        `
+      })
+
       const setKeepAwake = Effect.fn("Sessions.setKeepAwake")(function* (
         id: SessionId,
         keepingAwake: KeepingAwake | null,
@@ -614,6 +661,7 @@ export class Sessions extends Context.Service<
         setEnvironmentVersion,
         claudeSessionId,
         setLastOutput,
+        setPlugins,
       })
     }),
   )

@@ -29,6 +29,7 @@ import {
   pluginSlug,
   pluginUrlProblem,
   RepoName,
+  repoKey,
   type SessionInstallation,
   sameRepo,
   secondInstallationRefusal,
@@ -452,26 +453,7 @@ export class Plugins extends Context.Service<
       )
 
       const forSession = Effect.fn("Plugins.forSession")(function* (repo: string) {
-        const rows = yield* sql<{
-          readonly id: string
-          readonly name: string
-          readonly pluginId: string
-          readonly pluginName: string
-        }>`
-          SELECT i.id, i.name, g.id AS pluginId, g.name AS pluginName
-          FROM installation_repos r JOIN installations i ON i.id = r.installation_id
-            JOIN plugins g ON g.id = i.plugin_id
-          WHERE r.repo = ${repo} COLLATE NOCASE
-          ORDER BY i.created_at, i.id
-        `
-        const servers = mcpServerNames(rows.map((row) => row.name))
-        return rows.map((row, index): SessionInstallation => ({
-          id: InstallationId.make(row.id),
-          name: row.name,
-          pluginId: PluginId.make(row.pluginId),
-          pluginName: row.pluginName,
-          server: servers[index] ?? "",
-        }))
+        return (yield* installationsOn(sql, [repo])).get(repoKey(repo)) ?? []
       })
 
       const gatewayTarget = Effect.fn("Plugins.gatewayTarget")(function* (
@@ -536,6 +518,53 @@ export class Plugins extends Context.Service<
     }),
   )
 }
+
+/**
+ * The Installations on for each of the Repos, by any spelling, as a Session starting now runs
+ * with them: by {@link repoKey}, oldest first, each with its MCP server's name, unique in its Repo.
+ */
+export const installationsOn = Effect.fn("Plugins.installationsOn")(function* (
+  sql: SqlClient.SqlClient,
+  repos: ReadonlyArray<string>,
+) {
+  const byRepo = new Map<string, Array<SessionInstallation>>()
+  if (repos.length === 0) return byRepo
+  const rows = yield* sql<{
+    readonly repo: string
+    readonly id: string
+    readonly name: string
+    readonly pluginId: string
+    readonly pluginName: string
+  }>`
+    SELECT r.repo, i.id, i.name, g.id AS pluginId, g.name AS pluginName
+    FROM installation_repos r JOIN installations i ON i.id = r.installation_id
+      JOIN plugins g ON g.id = i.plugin_id
+    WHERE r.repo COLLATE NOCASE IN ${sql.in(repos)}
+    ORDER BY i.created_at, i.id
+  `
+  for (const row of rows) {
+    const installations = byRepo.get(repoKey(row.repo)) ?? []
+    installations.push({
+      id: InstallationId.make(row.id),
+      name: row.name,
+      pluginId: PluginId.make(row.pluginId),
+      pluginName: row.pluginName,
+      server: "",
+    })
+    byRepo.set(repoKey(row.repo), installations)
+  }
+  for (const [key, installations] of byRepo) {
+    const servers = mcpServerNames(installations.map((installation) => installation.name))
+    byRepo.set(
+      key,
+      installations.map((installation, index) => ({
+        ...installation,
+        server: servers[index] ?? "",
+      })),
+    )
+  }
+  return byRepo
+})
 
 /** What of an Installation a Session runs with. */
 const runsWith = (installation: SessionInstallation) =>
