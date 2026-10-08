@@ -202,7 +202,8 @@ const mallows = [
       <div class="deskwrap">
         <figure class="laptop">
           <div class="lid">
-            <img src={img("laptop")} width="1588" height="1400" alt="kndl's web UI: a Session named Retry payment calls on timeout, active, with three Participants. Claude is mid-Turn, two prompts wait in the Prompt queue with Steer buttons, and a Runners and Environments sidebar lists the Repos." />
+            <img class="t-light" src={img("laptop")} width="1588" height="1400" alt="kndl's web UI: a Session named Retry payment calls on timeout, active, with three Participants. Claude is mid-Turn, two prompts wait in the Prompt queue with Steer buttons, and a Runners and Environments sidebar lists the Repos." />
+<img class="t-dark" src={img("laptop-dark")} width="1588" height="1400" loading="lazy" alt="" aria-hidden="true" />
           </div>
           <div class="deck" aria-hidden="true"></div>
         </figure>
@@ -226,7 +227,8 @@ const mallows = [
       </div>
 
       <figure class="shot">
-        <div class="frame"><img src={img("queue")} width="1520" height="440" loading="lazy" alt="The Prompt queue in the web UI: Queued, runs when the current Turn ends. Prompt 1 from SI: Also log each retry with the order id, at warn level. Prompt 2 from JO: Mention the double-charge in the PR description. Each has Steer and remove buttons. Below it, the prompt box says Queue a prompt for after this Turn." /></div>
+        <div class="frame"><img class="t-light" src={img("queue")} width="1520" height="440" loading="lazy" alt="The Prompt queue in the web UI: Queued, runs when the current Turn ends. Prompt 1 from SI: Also log each retry with the order id, at warn level. Prompt 2 from JO: Mention the double-charge in the PR description. Each has Steer and remove buttons. Below it, the prompt box says Queue a prompt for after this Turn." />
+<img class="t-dark" src={img("queue-dark")} width="1520" height="440" loading="lazy" alt="" aria-hidden="true" /></div>
         <figcaption>Two queued prompts, from SI and JO, each with Steer.</figcaption>
       </figure>
     </section>
@@ -245,7 +247,8 @@ const mallows = [
           <p class="more"><a href={doc("how-to/run-the-hub/")}>Run the Hub</a></p>
         </div>
         <figure class="shot narrow">
-          <div class="frame"><img src={img("hub")} width="510" height="830" loading="lazy" alt="The web UI's sidebar: Runners, Environments, Shared variables and Archived Sessions, then Sessions grouped by Repo: acme/billing, acme/docs and acme/shop. Two of two Runners are online." /></div>
+          <div class="frame"><img class="t-light" src={img("hub")} width="510" height="830" loading="lazy" alt="The web UI's sidebar: Runners, Environments, Shared variables and Archived Sessions, then Sessions grouped by Repo: acme/billing, acme/docs and acme/shop. Two of two Runners are online." />
+<img class="t-dark" src={img("hub-dark")} width="510" height="830" loading="lazy" alt="" aria-hidden="true" /></div>
           <figcaption>The sidebar, with Sessions grouped by Repo.</figcaption>
         </figure>
       </div>
@@ -261,7 +264,8 @@ const mallows = [
           <p class="more"><a href={doc("how-to/add-a-runner/")}>Add a Runner</a></p>
         </div>
         <figure class="shot">
-          <div class="frame"><img src={img("runners")} width="1530" height="300" loading="lazy" alt="The Runners page: build-box and studio-mac, both online, each with Re-pair and Remove, and a count of two Sessions." /></div>
+          <div class="frame"><img class="t-light" src={img("runners")} width="1530" height="300" loading="lazy" alt="The Runners page: build-box and studio-mac, both online, each with Re-pair and Remove, and a count of two Sessions." />
+<img class="t-dark" src={img("runners-dark")} width="1530" height="300" loading="lazy" alt="" aria-hidden="true" /></div>
           <figcaption>The Runners page, with two Runners online.</figcaption>
         </figure>
       </div>
@@ -279,7 +283,8 @@ const mallows = [
         </div>
         <figure class="shot crop">
           <div class="frame"><div class="sheet">
-            <img src={img("credential")} width="1550" height="185" loading="lazy" alt="A Session's header: its name, an Active badge, Keep awake and Sleep now, then the Repo, the Work branch and the line: on the Runner's Claude account, Subscription token ending 9f3b." />
+            <img class="t-light" src={img("credential")} width="1550" height="185" loading="lazy" alt="A Session's header: its name, an Active badge, Keep awake and Sleep now, then the Repo, the Work branch and the line: on the Runner's Claude account, Subscription token ending 9f3b." />
+<img class="t-dark" src={img("credential-dark")} width="1550" height="185" loading="lazy" alt="" aria-hidden="true" />
             <span class="pin" style="left: 38%; top: 33%; width: 47%; height: 24%" aria-hidden="true"></span>
           </div></div>
           <figcaption>The Session header names the Claude account it runs on, here the Runner's.</figcaption>
@@ -298,7 +303,8 @@ const mallows = [
           <p class="more"><a href={doc("how-to/set-up-an-environment/")}>Set up an Environment</a></p>
         </div>
         <figure class="shot">
-          <div class="frame"><img src={img("env")} width="1530" height="660" loading="lazy" alt="The Environment form for acme/shop, version 3: Image oven/bun:1.4, a Bootstrap script that runs bun install and installs Chromium, a Start script that runs bun run dev, and a Docker in every Sandbox switch." /></div>
+          <div class="frame"><img class="t-light" src={img("env")} width="1530" height="660" loading="lazy" alt="The Environment form for acme/shop, version 3: Image oven/bun:1.4, a Bootstrap script that runs bun install and installs Chromium, a Start script that runs bun run dev, and a Docker in every Sandbox switch." />
+<img class="t-dark" src={img("env-dark")} width="1530" height="660" loading="lazy" alt="" aria-hidden="true" /></div>
           <figcaption>The Environment form for acme/shop.</figcaption>
         </figure>
       </div>
@@ -508,6 +514,10 @@ const mallows = [
   p { margin: 0 0 1em; }
   code { font-family: var(--mono); font-size: 0.82em; }
   img { display: block; max-width: 100%; height: auto; }
+  /* A screenshot has a light and a dark copy, and the page's theme picks one. */
+  .t-dark { display: none; }
+  :root[data-theme="dark"] .t-light { display: none; }
+  :root[data-theme="dark"] .t-dark { display: block; }
   .text { max-width: 30rem; }
   .text p { color: var(--ink-2); }
   .text b { font-weight: 600; color: var(--ink); }
