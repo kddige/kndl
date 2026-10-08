@@ -47,7 +47,7 @@ A person the Hub let in: its Owner, or someone who used an Invite. Only a Member
 _Avoid_: user, account, Participant (for someone not in a Session)
 
 **Owner**:
-The one Member who decides who gets in: they make Invites, and list and remove Members. The Owner can't be removed, and has no other rights the other Members lack.
+The one Member who decides who gets in: they make Invites, and list and remove Members. They alone manage global Installations. The Owner can't be removed, and has no other rights the other Members lack.
 _Avoid_: admin, operator, Creator
 
 **Setup link**:
@@ -157,6 +157,20 @@ _Avoid_: global secret, org secret
 **Link**:
 A Shared variable placed into one Environment under a name chosen there.
 _Avoid_: reference, import, binding
+
+## Plugins
+
+**Plugin**:
+A remote MCP server that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. kndl's own pieces that each Session's Claude Code loads are the mod, not Plugins.
+_Avoid_: integration, extension, connector, mod
+
+**Installation**:
+A named, configured copy of one Plugin, holding the credentials of the account it acts as. It is global, on in every Repo, or on in the Repos it lists, and a Repo has at most one Installation of each Plugin.
+_Avoid_: connection, instance, config, plugin (for a configured copy)
+
+**Gateway**:
+The Hub's path from a Session to an Installation's MCP server, which adds the Installation's credentials on the way, so they never enter a Sandbox.
+_Avoid_: MCP proxy, credential proxy
 
 ## Session lifecycle
 
