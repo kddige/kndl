@@ -5,7 +5,7 @@
 // instead, but only the Owner can fix. Retry wakes it, which checks the Installations again. Its
 // queued prompts wait meanwhile, and run once it starts. An OAuth Installation not connected
 // (#217) has Reconnect instead of Fix: through its authorization server and back to the Plugins
-// page.
+// page, or first asking for a client entered by hand, where that offers no registration (#218).
 
 import {
   type Installation,
@@ -65,7 +65,7 @@ export function InstallationsFailedBanner({
   const owner = useHubState((state) => state.owner)
   const [busy, setBusy] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<Deleting | null>(null)
-  const connect = useConnect()
+  const { connect, clientDialog } = useConnect()
 
   const reconnect = async (installation: Installation) => {
     setBusy(installation.id)
@@ -77,8 +77,9 @@ export function InstallationsFailedBanner({
         description: error instanceof Error ? error.message : String(error),
         intent: "danger",
       })
-      setBusy(null)
     }
+    // Still here while a client is asked for, or after a refusal.
+    setBusy(null)
   }
 
   useEffect(() => {
@@ -237,6 +238,7 @@ export function InstallationsFailedBanner({
           </>
         }
       />
+      {clientDialog}
     </>
   )
 }

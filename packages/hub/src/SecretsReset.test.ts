@@ -278,9 +278,9 @@ describe("secrets-reset", () => {
     expect(done).toContain("Cleared the header secret values of 1 Installation")
     expect(done).toContain("and each Installation's on the Plugins page")
     expect(plan).toContain(
-      "It disconnects 1 OAuth Installation, dropping its tokens and the client the Hub registered: Team Linear.",
+      "It disconnects 1 OAuth Installation, dropping its tokens and its client, the one the Hub registered or the one entered by hand: Team Linear.",
     )
-    expect(done).toContain("Connect each OAuth Installation again on the Plugins page.")
+    expect(done).toContain("Connect each OAuth Installation again on the Plugins page;")
     for (const secret of secrets) expect(plan + done).not.toContain(secret)
     // Run again, there is nothing left to reset.
     expect((await reset(file, true)).outcome._tag).toBe("NothingToReset")

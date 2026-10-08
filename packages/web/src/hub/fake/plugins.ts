@@ -17,6 +17,10 @@
 // the browser straight back to the Plugins page, connected to a made-up account. GitHub starts
 // connected; Disconnect it to see a Session kept from starting. Only the Owner connects or
 // disconnects a global one.
+//
+// GitHub's authorization server, as the fake plays it, offers no Dynamic Client Registration
+// (#218): a new GitHub Installation asks for a client ID and secret first, which the fake takes
+// as the Hub would, keeping only who set it, when, and whether it has a secret.
 
 import {
   type CheckPluginUpgrade,
@@ -37,6 +41,7 @@ import {
   isOn,
   mcpServerNames,
   notGlobalRefusal,
+  oauthClientProblem,
   type PackagedPlugin,
   packagePath,
   packagePathProblem,
@@ -130,6 +135,8 @@ interface FakeInstallation {
   values: Array<HeaderValueSetWire>
   /** Its account, for an OAuth Installation connected (#217). */
   connection?: NonNullable<InstallationWire["connection"]>
+  /** The client entered by hand (#218), without its secret. */
+  client?: NonNullable<InstallationWire["client"]>
   readonly createdBy: ParticipantWire
   readonly createdAt: number
 }
@@ -144,7 +151,8 @@ interface SetValue {
 
 /**
  * What a change did: the Repos whose Installations changed, and whether every Repo's did (#219),
- * or why it was refused; for a Connect, where to send the browser (#217).
+ * or why it was refused; for a Connect, where to send the browser (#217), or the client it needs
+ * entered first (#218).
  */
 export type PluginOutcome =
   | { readonly refused: string }
@@ -153,6 +161,19 @@ export type PluginOutcome =
       readonly everyRepo?: boolean
       readonly authorizing?: string
     }
+  | { readonly needsClient: NeedsClient }
+
+/** What a Connect needs entered first: a client registered by hand with `issuer` (#218). */
+export interface NeedsClient {
+  readonly issuer: string
+  readonly publicClient: boolean
+  readonly reason?: string
+}
+
+/** The fake's authorization servers that offer no Dynamic Client Registration, by MCP host. */
+const withoutRegistration: Record<string, string> = {
+  "api.githubcopilot.example": "https://github.example/login/oauth",
+}
 
 /** Where a change to a global Installation is logged: once, for every Repo. */
 const everyRepo = "*"
@@ -275,6 +296,13 @@ export class FakePlugins {
       connectedBy: you,
       connectedAt: now - 3 * day,
       account: "kndl-bot@example.com",
+    }
+    // Its authorization server offers no Dynamic Client Registration: a client entered (#218).
+    connected.client = {
+      clientId: "Ov23liKndlBot0a1b2c3",
+      secret: true,
+      setBy: you,
+      setAt: now - 3 * day,
     }
   }
 
@@ -479,7 +507,7 @@ export class FakePlugins {
             const titles = lost.map((secret) => secret.title)
             this.#record(logRepos(one), "ValuesCleared", one, by, at, titles)
           }
-          if (disconnects) this.#disconnect(one, by, at)
+          if (disconnects) this.#disconnect(one, by, at, true)
         }
         return {
           repos: installed.flatMap((one) => one.repos),
@@ -534,7 +562,7 @@ export class FakePlugins {
             const titles = lost.map((secret) => secret.title)
             this.#record(logRepos(one), "ValuesCleared", one, by, at, titles)
           }
-          if (disconnects) this.#disconnect(one, by, at)
+          if (disconnects) this.#disconnect(one, by, at, true)
         }
         return {
           repos: installed.flatMap((one) => one.repos),
@@ -597,12 +625,45 @@ export class FakePlugins {
             refused: `${installation.name} doesn't use OAuth: there is no account to connect.`,
           }
         }
+        // A server without Dynamic Client Registration needs a client entered (#218).
+        const issuer = withoutRegistration[new URL(plugin.url).hostname]
+        const entered = command.client
+        if (entered !== undefined) {
+          const clientId = entered.clientId.trim()
+          const secret =
+            entered.clientSecret === undefined ? undefined : Redacted.value(entered.clientSecret)
+          const problem = oauthClientProblem(clientId, secret)
+          if (problem !== undefined) return { refused: problem }
+          // The fake's servers take confidential clients only.
+          if (secret === undefined) {
+            return {
+              refused: `The authorization server ${issuer ?? new URL(plugin.url).origin} takes no public client: enter the client's secret too.`,
+            }
+          }
+        } else if (
+          issuer !== undefined &&
+          (command.changeClient === true || !installation.client)
+        ) {
+          return { needsClient: { issuer, publicClient: false } }
+        } else if (command.changeClient === true) {
+          return { needsClient: { issuer: new URL(plugin.url).origin, publicClient: false } }
+        }
         // No authorization server: the person "consents" at once.
         const reconnected = installation.connection !== undefined
         installation.connection = {
           connectedBy: by,
           connectedAt: at,
           account: `${by.login}@${new URL(plugin.url).hostname}`,
+        }
+        if (entered !== undefined) {
+          // Keeping no secret to compare, the fake logs every client entered as set.
+          installation.client = {
+            clientId: entered.clientId.trim(),
+            secret: entered.clientSecret !== undefined,
+            setBy: by,
+            setAt: at,
+          }
+          this.#record(logRepos(installation), "ClientSet", installation, by, at)
         }
         this.#record(
           logRepos(installation),
@@ -699,8 +760,17 @@ export class FakePlugins {
     }
   }
 
-  /** Forgets an Installation's account, if it had one, and logs it. */
-  #disconnect(installation: FakeInstallation, by: ParticipantWire, at: number): void {
+  /**
+   * Forgets an Installation's account, if it had one, and logs it; on an origin change, the client
+   * entered for it too (#218).
+   */
+  #disconnect(
+    installation: FakeInstallation,
+    by: ParticipantWire,
+    at: number,
+    forgetClient = false,
+  ): void {
+    if (forgetClient) delete installation.client
     if (installation.connection === undefined) return
     delete installation.connection
     this.#record(logRepos(installation), "Disconnected", installation, by, at)

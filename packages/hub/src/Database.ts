@@ -611,6 +611,16 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+  // A client someone entered for an OAuth Installation whose authorization server offers no
+  // Dynamic Client Registration (#218): its id, whether it has a secret, and who set it when. The
+  // client itself, with its secret, stays in `client`, encrypted. All NULL for a registered one.
+  "0030_plugin_oauth_manual_client": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE installation_oauth ADD COLUMN manual_client_id TEXT`
+    yield* sql`ALTER TABLE installation_oauth ADD COLUMN manual_client_secret INTEGER`
+    yield* sql`ALTER TABLE installation_oauth ADD COLUMN client_set_by TEXT REFERENCES participants (id)`
+    yield* sql`ALTER TABLE installation_oauth ADD COLUMN client_set_at INTEGER`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

@@ -426,3 +426,37 @@ test("adds an uploaded folder, and refuses a name a Plugin from another source h
   await eventually(() => expect(plugin("Jira")?.textContent).toContain("@acme/jira-mcp"))
   expect(plugin("Jira")?.textContent).toContain("Uploaded jira")
 })
+
+/** What an OAuth Installation's client line says (#218). */
+const clientLine = (name: string) =>
+  document.querySelector(`[aria-label="Client of ${name}"]`)?.textContent ?? ""
+
+test("asks for a client entered by hand where the server registers none, showing the callback URL (#218)", async () => {
+  const { hub } = await openPlugins()
+  // GitHub's has one, whose secret the page never sees.
+  await eventually(() => expect(clientLine("GitHub")).toContain("Ov23liKndlBot0a1b2c3"))
+  expect(clientLine("GitHub")).toContain("with a secret")
+
+  await step(() => button("Change client of GitHub").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Enter a client for GitHub"))
+  expect(dialog()?.querySelector('[aria-label="Callback URL"]')?.textContent).toEndWith(
+    "/auth/plugins/callback",
+  )
+  expect(() => button("Copy the callback URL", dialog() ?? document)).not.toThrow()
+  // Its authorization server takes no public client: the secret is needed too.
+  await step(() => button("Connect", dialog() ?? document).click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Enter the client ID."))
+  await type(dialogInput("Client ID"), "Ov23liNewClient9z8y7")
+  await step(() => button("Connect", dialog() ?? document).click())
+  await eventually(() =>
+    expect(dialog()?.textContent).toContain("the authorization server takes no public client"),
+  )
+  await type(dialogInput("Client secret"), "made-up-github-secret")
+  await step(() => button("Connect", dialog() ?? document).click())
+  await eventually(() => expect(clientLine("GitHub")).toContain("Ov23liNewClient9z8y7"))
+  expect(hub.received.filter((m) => m._tag === "ConnectInstallation")).toMatchObject([
+    { changeClient: true },
+    { client: { clientId: "Ov23liNewClient9z8y7" } },
+  ])
+  expect(document.body.textContent).not.toContain("made-up-github-secret")
+})

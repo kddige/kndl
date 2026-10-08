@@ -214,6 +214,13 @@ const webToHub = [
   },
   { _tag: "DeleteInstallation", requestId: "q-35", installationId: "in-1" },
   { _tag: "ConnectInstallation", requestId: "q-35a", installationId: "in-2" },
+  {
+    _tag: "ConnectInstallation",
+    requestId: "q-35c",
+    installationId: "in-2",
+    client: { clientId: "Iv1.0a1b2c", clientSecret: "gh-secret-0123" },
+  },
+  { _tag: "ConnectInstallation", requestId: "q-35d", installationId: "in-2", changeClient: true },
   { _tag: "DisconnectInstallation", requestId: "q-35b", installationId: "in-2" },
   { _tag: "GetPluginLog", requestId: "q-36", repo: "kddige/kndl" },
   {
@@ -722,6 +729,7 @@ const hubToWeb = [
           account: "kndl-bot@example.com",
           lostAt: 1_700_000_200_000,
         },
+        client: { clientId: "Iv1.0a1b2c", secret: true, setBy: alice, setAt: 1_700_000_090_000 },
         createdBy: alice,
         createdAt: 1_700_000_070_000,
       },
@@ -732,6 +740,15 @@ const hubToWeb = [
     requestId: "q-35a",
     installationId: "in-2",
     url: "https://github.com/login/oauth/authorize?client_id=x&state=y",
+  },
+  {
+    _tag: "InstallationNeedsClient",
+    requestId: "q-35c",
+    installationId: "in-2",
+    issuer: "https://github.com/login/oauth",
+    callbackUrl: "https://hub.example.com/auth/plugins/callback",
+    publicClient: false,
+    reason: "The client entered before was registered with another callback URL.",
   },
   { _tag: "PluginsState", plugins: [], installations: [] },
   {

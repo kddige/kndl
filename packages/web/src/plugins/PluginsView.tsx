@@ -71,7 +71,13 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
-import { ConnectionLine, disconnected, DisconnectsBanner, useConnect } from "./connection.tsx"
+import {
+  ClientLine,
+  ConnectionLine,
+  disconnected,
+  DisconnectsBanner,
+  useConnect,
+} from "./connection.tsx"
 import { type ClearedValues, clearedValues, keyFromTitle } from "./headerSecrets.ts"
 import { PackageDialog, type PackageOpening } from "./PackageDialog.tsx"
 import { messageOf, useLastOpened } from "./shared.ts"
@@ -363,7 +369,7 @@ function PluginCard({
   onDelete: (deleting: Deleting) => void
 }) {
   const hub = useHub()
-  const connect = useConnect()
+  const { connect, clientDialog } = useConnect()
   // Editing or upgrading a Plugin changes what the Sessions of every Repo it is on in run with.
   const hidden = installations.some((installation) => installation.otherRepos !== undefined)
   // With a global Installation, that is every Repo's: only the Owner may (#219).
@@ -463,8 +469,8 @@ function PluginCard({
                   run: () => hub.deleteInstallation(installation.id),
                 })
               }
-              onConnect={() =>
-                connect(installation).catch((error: unknown) =>
+              onConnect={(changeClient) =>
+                connect(installation, { changeClient }).catch((error: unknown) =>
                   toast.show({
                     title: `Couldn't connect ${installation.name}`,
                     description: messageOf(error),
@@ -484,6 +490,7 @@ function PluginCard({
           ))
         )}
       </ul>
+      {clientDialog}
     </li>
   )
 }
@@ -520,7 +527,8 @@ function InstallationRow({
   first: boolean
   onEdit: () => void
   onDelete: () => void
-  onConnect: () => void
+  /** Connects it; with `changeClient`, asking for another client entered by hand (#218). */
+  onConnect: (changeClient: boolean) => void
   onDisconnect: () => void
 }) {
   // Changing it needs access to every Repo it is on in, which the Hub doesn't name. So does
@@ -571,6 +579,7 @@ function InstallationRow({
           </span>
         )}
         <ConnectionLine plugin={plugin} installation={installation} />
+        {oauth && <ClientLine installation={installation} />}
       </div>
       <div {...stylex.props(styles.actions)}>
         {oauth && (
@@ -579,9 +588,20 @@ function InstallationRow({
             intent={installation.connection === undefined ? "primary" : "secondary"}
             aria-label={`${installation.connection === undefined ? "Connect" : "Reconnect"} ${installation.name}`}
             disabled={hidden || ownerOnly}
-            onClick={onConnect}
+            onClick={() => onConnect(false)}
           >
             {installation.connection === undefined ? "Connect" : "Reconnect"}
+          </Button>
+        )}
+        {oauth && installation.client !== undefined && (
+          <Button
+            size="sm"
+            intent="ghost"
+            aria-label={`Change client of ${installation.name}`}
+            disabled={hidden || ownerOnly}
+            onClick={() => onConnect(true)}
+          >
+            Change client
           </Button>
         )}
         {oauth && installation.connection !== undefined && (
@@ -845,7 +865,7 @@ function PluginDialog({
           label="Sign-in"
           description={
             kind === "OAuth"
-              ? "Each Installation connects to one account, through the server's authorization server, which must offer dynamic client registration. Only the Hub holds the tokens."
+              ? "Each Installation connects to one account, through the server's authorization server. Where that offers no dynamic client registration, connecting asks for a client registered there by hand. Only the Hub holds the tokens and the client."
               : "None, or a key each Installation enters, sent in a header."
           }
         >
@@ -1044,8 +1064,9 @@ function InstallationDialog({
       await connect(saved)
     } catch (cause) {
       setError(messageOf(cause))
-      setConnecting(false)
     }
+    // Still here while a client is asked for (#218), or after a refusal.
+    setConnecting(false)
   }
 
   // A global one lists no Repos.
@@ -1057,7 +1078,7 @@ function InstallationDialog({
     : malformed !== undefined
       ? `${malformed} isn't a Repo: enter each as owner/name.`
       : installationReposProblem(listed)
-  const connect = useConnect()
+  const { connect, clientDialog } = useConnect()
   const [connecting, setConnecting] = useState(false)
   const declared = shown === null ? [] : headerSecretsOf(shown.plugin.auth)
   // An Installation saved can be connected from here too, as a Session's banner sends people; a
@@ -1188,6 +1209,7 @@ function InstallationDialog({
         {connectable && shown !== null && (
           <div {...stylex.props(styles.section)}>
             <ConnectionLine plugin={shown.plugin} installation={saved} />
+            <ClientLine installation={saved} />
             <div>
               <Button size="sm" loading={connecting} onClick={() => void connectSaved()}>
                 {saved.connection === undefined ? "Connect" : "Reconnect"}
@@ -1201,6 +1223,7 @@ function InstallationDialog({
           </p>
         )}
       </form>
+      {clientDialog}
     </Dialog>
   )
 }

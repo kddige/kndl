@@ -13,11 +13,14 @@ import { EpochMillis, Participant, RepoName, repoKey } from "./Session.ts"
 // that the Gateway adds to each request, each from a value its Installation holds. The values are
 // write-only, like Sensitive Variables: the web is told only which are set, by whom and when.
 //
-// A Plugin may instead use OAuth (#217), for an MCP server whose authorization server offers
-// Dynamic Client Registration: each Installation is connected to one account there, by someone
-// who may edit it, and every Session on its Repos acts as that account. Only the Hub holds the
-// tokens, and refreshes them; the web is told only whether it is connected, by whom, and the
-// account, if the server says. Claude Code never runs OAuth itself: the Gateway answers it.
+// A Plugin may instead use OAuth (#217): each Installation is connected to one account on its MCP
+// server's authorization server, by someone who may edit it, and every Session on its Repos acts
+// as that account. The Hub registers itself there as a client by Dynamic Client Registration; where
+// the server offers none, the person connecting enters a client they registered by hand (#218),
+// whose secret is write-only. Only the Hub holds the tokens, and refreshes them; the web is told
+// only whether it is connected, by whom, and the account, if the server says; and for a client
+// entered, its id and whether it has a secret. Claude Code never runs OAuth itself: the Gateway
+// answers it.
 //
 // A Plugin is Hub-only, made in the web UI, or packaged: read from a git repo or an upload, pinned
 // to its version and changed only by an Upgrade (see PluginPackage.ts).
@@ -176,6 +179,20 @@ export const InstallationConnection = Schema.Struct({
 export type InstallationConnection = typeof InstallationConnection.Type
 
 /**
+ * The OAuth client someone entered for an Installation whose authorization server offers no
+ * Dynamic Client Registration (#218): its id, whether it has a secret, and who set it when. Never
+ * the secret.
+ */
+export const InstallationClient = Schema.Struct({
+  clientId: Schema.String,
+  /** Whether it has a client secret: a public client has none. */
+  secret: Schema.Boolean,
+  setBy: Participant,
+  setAt: EpochMillis,
+})
+export type InstallationClient = typeof InstallationClient.Type
+
+/**
  * A named copy of a Plugin, global or on in the Repos it lists. A web client is sent only the
  * Repos its person has access to: `otherRepos` counts the rest, without naming them.
  */
@@ -201,6 +218,11 @@ export const Installation = Schema.Struct({
   values: Schema.Array(HeaderValueSet),
   /** For an OAuth Plugin: its connection, absent while it was never connected or is disconnected. */
   connection: Schema.optionalKey(InstallationConnection),
+  /**
+   * For an OAuth Plugin: the client entered for it (#218), kept when it is disconnected; absent
+   * for one the Hub registered itself, or none yet.
+   */
+  client: Schema.optionalKey(InstallationClient),
   createdBy: Participant,
   createdAt: EpochMillis,
 })
@@ -250,6 +272,11 @@ export const PluginChange = Schema.Literals([
   "TurnedOn",
   /** An OAuth Installation on the Repo was connected to its account (#217). */
   "Connected",
+  /**
+   * An OAuth Installation on the Repo was given another client entered by hand (#218), as it was
+   * connected with it: never its secret.
+   */
+  "ClientSet",
   /** An OAuth Installation on the Repo was connected again, as to replace a lost connection. */
   "Reconnected",
   /**
@@ -512,16 +539,35 @@ export const TurnGlobalInstallation = Schema.TaggedStruct("TurnGlobalInstallatio
 export type TurnGlobalInstallation = typeof TurnGlobalInstallation.Type
 
 /**
+ * A client registered by hand with an authorization server that offers no Dynamic Client
+ * Registration (#218), as the web UI sends it: the secret is write-only. None for a public client.
+ */
+export const OAuthClientInput = Schema.Struct({
+  clientId: Schema.String,
+  clientSecret: Schema.optionalKey(SecretValue),
+})
+export type OAuthClientInput = typeof OAuthClientInput.Type
+
+/**
  * Connect an OAuth Installation to an account (#217), or reconnect it: the Hub finds the MCP
- * server's authorization server, registers itself there, and answers with where to send the
- * browser, to sign in and consent. The authorization server sends it back to the Hub, which keeps
- * the tokens and sends it on to the Plugins page. Refused unless the person has access to every
- * Repo the Installation lists, and unless the person is the Owner, for a global one (#219).
- * Answered with {@link InstallationAuthorizing}.
+ * server's authorization server, registers itself there unless it did, and answers with where to
+ * send the browser, to sign in and consent. The authorization server sends it back to the Hub,
+ * which keeps the tokens and sends it on to the Plugins page. Refused unless the person has access
+ * to every Repo the Installation lists, and unless the person is the Owner, for a global one
+ * (#219). Answered with {@link InstallationAuthorizing}; or, where the authorization server offers
+ * no Dynamic Client Registration and the Installation has no client entered that still fits, or
+ * `changeClient` asks for another, with {@link InstallationNeedsClient} (#218).
  */
 export const ConnectInstallation = Schema.TaggedStruct("ConnectInstallation", {
   requestId: RequestId,
   installationId: InstallationId,
+  /**
+   * The client to connect with, registered by hand (#218): kept, replacing the one before, once
+   * the connection is made.
+   */
+  client: Schema.optionalKey(OAuthClientInput),
+  /** Ask for another client to be entered, even if the Installation has one that fits (#218). */
+  changeClient: Schema.optionalKey(Schema.Boolean),
 })
 export type ConnectInstallation = typeof ConnectInstallation.Type
 
@@ -614,6 +660,25 @@ export const InstallationAuthorizing = Schema.TaggedStruct("InstallationAuthoriz
   url: Schema.String,
 })
 export type InstallationAuthorizing = typeof InstallationAuthorizing.Type
+
+/**
+ * The Installation's authorization server offers no Dynamic Client Registration (#218): connecting
+ * needs a client registered with it by hand, with `callbackUrl` as its redirect URI, which
+ * {@link ConnectInstallation} sends. Answers {@link ConnectInstallation}.
+ */
+export const InstallationNeedsClient = Schema.TaggedStruct("InstallationNeedsClient", {
+  requestId: RequestId,
+  installationId: InstallationId,
+  /** The authorization server to register with: its issuer. */
+  issuer: Schema.String,
+  /** The Hub's callback, to register as the client's redirect (callback) URL. */
+  callbackUrl: Schema.String,
+  /** Whether the server takes a public client, with no secret; else a secret is needed. */
+  publicClient: Schema.Boolean,
+  /** Why it asks again, as when the client kept is for another authorization server. */
+  reason: Schema.optionalKey(Schema.String),
+})
+export type InstallationNeedsClient = typeof InstallationNeedsClient.Type
 
 /** How long a connection the Hub began waits for the authorization server to send the browser back. */
 export const OAuthConnectTtlMs = 10 * 60_000
@@ -769,6 +834,28 @@ export function headerValueProblem(title: string, value: string): string | undef
   return undefined
 }
 
+/** The longest OAuth client id or secret entered by hand (#218). */
+export const MaxOAuthClientLength = 1000
+
+/**
+ * Why a client entered by hand for an OAuth Installation is refused (#218), if it is: its id and
+ * secret must each be one line of plain characters. Never says the secret.
+ */
+export function oauthClientProblem(clientId: string, clientSecret?: string): string | undefined {
+  if (clientId.trim() === "") return "Enter the client ID."
+  if (clientId.length > MaxOAuthClientLength || !/^[!-~]+$/.test(clientId)) {
+    return "The client ID must be one word of plain characters, with no spaces."
+  }
+  if (clientSecret === undefined) return undefined
+  if (clientSecret.length > MaxOAuthClientLength || !/^[!-~]+$/.test(clientSecret)) {
+    return "The client secret must be one word of plain characters, with no spaces."
+  }
+  if (clientSecret.length < MinSensitiveValueLength) {
+    return `The client secret is under ${MinSensitiveValueLength} characters: too short to redact from output.`
+  }
+  return undefined
+}
+
 /** A header secret's header value: its template with `value` in place of `{value}`. */
 export const headerValue = (secret: HeaderSecret, value: string) =>
   secret.template.split(ValuePlaceholder).join(value)
@@ -804,7 +891,8 @@ export function clearedHeaderSecrets(
 /**
  * Whether an edit or Upgrade of a Plugin from `before` to `after` disconnects its OAuth
  * Installations (#217), as the Hub does: when its URL moves to another origin, so no token goes to
- * a server it wasn't issued for, or it stops using OAuth.
+ * a server it wasn't issued for, or it stops using OAuth. It forgets their clients too, the Hub's
+ * own and those entered by hand (#218).
  */
 export const clearsConnections = (
   before: { readonly url: string; readonly auth: PluginAuth },

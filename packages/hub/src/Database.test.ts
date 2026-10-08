@@ -42,11 +42,13 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
 
 /**
  * Takes the database back to before migration 0029, OAuth Installations: the migrator runs only
- * the migrations after the last it ran, so a test of an earlier one undoes this first.
+ * the migrations after the last it ran, so a test of an earlier one undoes this first. Dropping
+ * the table undoes 0030, its client entered by hand (#218), too.
  */
 const beforePluginOAuth = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   yield* sql`DROP TABLE installation_oauth`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_oauth_manual_client'`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_oauth'`
 })
 

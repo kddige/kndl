@@ -83,6 +83,8 @@ export function pluginChangeText(entry: PluginLogEntry): string {
       return `upgraded ${plugin}, the Plugin of ${installation}, to ${entry.pluginVersion ?? "a new version"}`
     case "Connected":
       return `connected ${installation} to its account at ${plugin}`
+    case "ClientSet":
+      return `entered the OAuth client ${installation} connects to ${plugin} with`
     case "Reconnected":
       return `reconnected ${installation} to its account at ${plugin}`
     case "Disconnected":

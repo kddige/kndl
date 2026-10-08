@@ -141,10 +141,6 @@ Docs needs a value for API key. Its tools fail until the Installation is fixed a
 **What you see.** Pressing **Connect** or **Reconnect** on **Plugins**, or **Reconnect** in a Session, shows **Couldn't connect Docs**, with one of:
 
 ```
-The authorization server https://auth.example.com doesn't offer Dynamic Client Registration, which the Hub needs to connect.
-```
-
-```
 The Hub connects only to an MCP server on https.
 ```
 
@@ -162,9 +158,43 @@ Connecting an Installation needs HUB_SECRETS_KEY in the Hub's configuration, to 
 
 Or a Plugin's Installation shows **connection lost**, and its Sessions say `Docs isn't connected to its account.`
 
-**Why.** The Hub connects only as the MCP authorization spec describes: it finds the authorization server from the MCP server's Protected Resource Metadata, registers itself there with Dynamic Client Registration, and signs you in with PKCE, all over `https`. A server without registration, or one not on `https`, can't be connected. A sign-in must come back within 10 minutes, to the browser that began it, signed in to kndl as the person who pressed **Connect**, and is used once. **connection lost** means the authorization server refused to refresh the token, as when the grant was revoked there or the account was removed.
+**Why.** The Hub connects only as the MCP authorization spec describes: it finds the authorization server from the MCP server's Protected Resource Metadata, registers itself there with Dynamic Client Registration or uses a client entered by hand, and signs you in with PKCE, all over `https`. A server not on `https` can't be connected. A sign-in must come back within 10 minutes, to the browser that began it, signed in to kndl as the person who pressed **Connect**, and is used once. **connection lost** means the authorization server refused to refresh the token, as when the grant was revoked there or the account was removed.
 
-**Fix.** For the first three, check the Plugin's URL, and that its authorization server supports Dynamic Client Registration; a server that only takes a pre-registered client can't be a Plugin yet. For an expired or stray sign-in, press **Connect** again, and finish it in the same browser. Set `HUB_SECRETS_KEY` as the last one says. For **connection lost**, press **Reconnect**. Only someone with access to every Repo the Installation lists can connect it, and only the Owner a global one. See [Connect it to an account with OAuth](/how-to/add-a-remote-mcp-server-as-a-plugin/#connect-it-to-an-account-with-oauth).
+**Fix.** For the first two, check the Plugin's URL. For an expired or stray sign-in, press **Connect** again, and finish it in the same browser. Set `HUB_SECRETS_KEY` as the last one says. For **connection lost**, press **Reconnect**. Only someone with access to every Repo the Installation lists can connect it, and only the Owner a global one. See [Connect it to an account with OAuth](/how-to/add-a-remote-mcp-server-as-a-plugin/#connect-it-to-an-account-with-oauth).
+
+## An OAuth Installation asks for a client, or refuses the one entered
+
+**What you see.** **Connect** opens **Enter a client for Docs** instead of the authorization server's sign-in, sometimes under **A client is needed again** with one of:
+
+```
+The client entered before was registered with another callback URL: register this one with it, or enter another client.
+```
+
+```
+The MCP server's authorization server is now https://auth.example.com: enter a client registered with it.
+```
+
+```
+The authorization server no longer takes the client entered before as it was: enter it again.
+```
+
+Or connecting with the client entered is refused in the dialog, or with **Couldn't connect Docs** once back on **Plugins**, with one of:
+
+```
+The authorization server https://github.com/login/oauth takes no public client: enter the client's secret too.
+```
+
+```
+The authorization server https://auth.example.com takes only public clients: leave the client secret empty.
+```
+
+```
+The authorization server refused the connection: invalid_client.
+```
+
+**Why.** The authorization server offers no Dynamic Client Registration, as GitHub's doesn't, so the Hub needs a client you registered there by hand. One entered before is asked for again when it can't be used as it was: `HUB_PUBLIC_URL` changed, so the Hub's callback URL did; the MCP server names another authorization server; or the server no longer authenticates clients as it did. `invalid_client`, or `redirect_uri` in GitHub's error page, means the authorization server doesn't know the client, its secret, or its callback URL: the secret was mistyped or rotated, or the client was registered with another callback URL.
+
+**Fix.** Register the client with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/plugins/callback`, copied with its button, and enter its client ID and secret as the authorization server issued them. For a rotated secret, press **Change client** on the Installation and enter the client with its new secret. The Hub keeps the client it had until a connection with the new one completes. See [Connect a server without Dynamic Client Registration](/how-to/add-a-remote-mcp-server-as-a-plugin/#connect-a-server-without-dynamic-client-registration).
 
 ## A global Installation, or its Plugin, can't be changed
 

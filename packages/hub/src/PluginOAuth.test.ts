@@ -1,6 +1,7 @@
 // OAuth Installations (#217), end to end: a real Hub, a fake Runner that relays Plugins, the web UI
 // over WebSockets, and a stand-in MCP server whose own authorization server offers Dynamic Client
-// Registration. Connecting follows the MCP authorization spec; only the Hub ever holds a token.
+// Registration, or doesn't, for a client entered by hand (#218). Connecting follows the MCP
+// authorization spec; only the Hub ever holds a token or a client's secret.
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { createHash } from "node:crypto"
@@ -17,6 +18,7 @@ import { DatabaseTest } from "./Database.ts"
 import { MaxOAuthRequestBytes } from "./GatewayRoutes.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { OAuthCallbackPath, PluginOAuth } from "./PluginOAuth.ts"
+import { Plugins } from "./Plugins.ts"
 import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import {
   type Connection,
@@ -47,7 +49,12 @@ const as = {
   refreshes: [] as Array<URLSearchParams>,
   codes: new Map<
     string,
-    { readonly challenge: string; readonly redirectUri: string; readonly resource: string }
+    {
+      readonly clientId: string
+      readonly challenge: string
+      readonly redirectUri: string
+      readonly resource: string
+    }
   >(),
   /** The access tokens the MCP server takes. */
   valid: new Set<string>(),
@@ -68,6 +75,10 @@ const as = {
   redirecting: new Set<string>(),
   /** Each path under `/elsewhere` asked for: none, as no redirect is followed. */
   elsewhere: [] as Array<string>,
+  /** The clients registered with it by hand (#218), by id, with their secrets: none if public. */
+  manual: new Map<string, string | undefined>(),
+  /** How each request to the token endpoint authenticated: `<method>:<client id>`. */
+  auth: [] as Array<string>,
 }
 
 /** What the MCP server was sent: each request's path and Authorization. */
@@ -81,12 +92,12 @@ const origin = () => `http://127.0.0.1:${server.port}`
 const issuer = () => `${origin()}/as`
 const mcpUrl = () => `${origin()}/mcp`
 
-/** Issues the next tokens, with an ID token naming the account. */
-function issue() {
+/** Issues the next tokens, with an ID token naming the account, for the client. */
+function issue(clientId: string) {
   const n = ++as.issued
   as.valid.add(accessToken(n))
   as.refresh = refreshToken(n)
-  const claims = { iss: issuer(), aud: "kndl-client", email: "bot@example.com", sub: "u-1" }
+  const claims = { iss: issuer(), aud: clientId, email: "bot@example.com", sub: "u-1" }
   return Response.json({
     access_token: accessToken(n),
     token_type: "Bearer",
@@ -94,6 +105,28 @@ function issue() {
     refresh_token: refreshToken(n),
     id_token: `e30.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.sig`,
   })
+}
+
+/**
+ * The client a token request authenticated as, by Basic, by its secret in the form, or as a
+ * public client, if any: the one the Hub registered, or one registered by hand.
+ */
+function authenticated(header: string | null, form: URLSearchParams) {
+  const clients = new Map([["kndl-client", clientSecret], ...as.manual])
+  if (header !== null) {
+    const [id = "", secret] = Buffer.from(header.replace(/^Basic /, ""), "base64")
+      .toString("utf8")
+      .split(":")
+      .map((part) => decodeURIComponent(part.replaceAll("+", " ")))
+    if (!header.startsWith("Basic ") || secret === undefined || clients.get(id) !== secret) return
+    as.auth.push(`client_secret_basic:${id}`)
+    return id
+  }
+  const id = form.get("client_id") ?? ""
+  const secret = form.get("client_secret") ?? undefined
+  if (!clients.has(id) || clients.get(id) !== secret) return
+  as.auth.push(`${secret === undefined ? "none" : "client_secret_post"}:${id}`)
+  return id
 }
 
 beforeAll(() => {
@@ -160,29 +193,32 @@ beforeAll(() => {
           )
         }
         case "/as/token": {
-          const basic = `Basic ${Buffer.from(`kndl-client:${clientSecret}`).toString("base64")}`
-          if (request.headers.get("authorization") !== basic) {
+          const form = new URLSearchParams(await request.text())
+          const clientId = authenticated(request.headers.get("authorization"), form)
+          if (clientId === undefined) {
             return Response.json({ error: "invalid_client" }, { status: 401 })
           }
-          const form = new URLSearchParams(await request.text())
           if (form.get("grant_type") === "authorization_code") {
             const code = as.codes.get(form.get("code") ?? "")
             as.codes.delete(form.get("code") ?? "")
             const verified =
               code !== undefined &&
+              code.clientId === clientId &&
               createHash("sha256")
                 .update(form.get("code_verifier") ?? "")
                 .digest("base64url") === code.challenge &&
               form.get("redirect_uri") === code.redirectUri &&
               form.get("resource") === code.resource
-            return verified ? issue() : Response.json({ error: "invalid_grant" }, { status: 400 })
+            return verified
+              ? issue(clientId)
+              : Response.json({ error: "invalid_grant" }, { status: 400 })
           }
           as.refreshes.push(form)
           await Bun.sleep(as.refreshDelay)
           if (as.revoked || form.get("refresh_token") !== as.refresh) {
             return Response.json({ error: "invalid_grant" }, { status: 400 })
           }
-          return issue()
+          return issue(clientId)
         }
         default:
           return new Response(null, { status: 404 })
@@ -205,6 +241,8 @@ afterEach(() => {
   as.servers = undefined
   as.redirecting.clear()
   as.elsewhere.length = 0
+  as.manual.clear()
+  as.auth.length = 0
   mcpSeen.length = 0
 })
 
@@ -272,15 +310,25 @@ async function install(web: Connection<Web>) {
 }
 
 /**
- * Begins connecting the Installation, as its Connect button does: where the Hub sends the browser.
- * The stand-in authorization server then "signs the person in", and grants a code.
+ * Begins connecting the Installation, as its Connect button does, or its client form, with
+ * `client`: where the Hub sends the browser. The stand-in authorization server then "signs the
+ * person in", and grants a code.
  */
-async function authorize(web: Connection<Web>, installationId: string) {
-  const answer = await ask(web, { _tag: "ConnectInstallation", installationId })
+async function authorize(
+  web: Connection<Web>,
+  installationId: string,
+  client?: { readonly clientId: string; readonly clientSecret?: string },
+) {
+  const answer = await ask(web, {
+    _tag: "ConnectInstallation",
+    installationId,
+    ...(client !== undefined && { client }),
+  })
   if (answer._tag !== "InstallationAuthorizing") throw new Error(JSON.stringify(answer))
   const url = new URL(answer.url)
   const code = `code-${++requests}`
   as.codes.set(code, {
+    clientId: url.searchParams.get("client_id") ?? "",
     challenge: url.searchParams.get("code_challenge") ?? "",
     redirectUri: url.searchParams.get("redirect_uri") ?? "",
     resource: url.searchParams.get("resource") ?? "",
@@ -298,9 +346,14 @@ async function callback(hub: TestHub, cookie: string | undefined, params: Record
   return new URL(response.headers.get("location") ?? "", webOrigin)
 }
 
-/** Connects the Installation all the way, as alice. */
-async function connect(hub: TestHub, web: Connection<Web> & { cookie: string }, id: string) {
-  const begun = await authorize(web, id)
+/** Connects the Installation all the way, as alice, with `client` if one is entered. */
+async function connect(
+  hub: TestHub,
+  web: Connection<Web> & { cookie: string },
+  id: string,
+  client?: { readonly clientId: string; readonly clientSecret?: string },
+) {
+  const begun = await authorize(web, id, client)
   const back = await callback(hub, web.cookie, {
     code: begun.code,
     state: begun.state,
@@ -362,9 +415,10 @@ const databaseText = (hub: TestHub) =>
     }),
   )
 
-/** Each token the stand-in issued, and the client's secret: none may leave the Hub. */
+/** Each token the stand-in issued, and the clients' secrets: none may leave the Hub. */
 const everySecret = () => [
   clientSecret,
+  ...[...as.manual.values()].filter((secret) => secret !== undefined),
   ...Array.from({ length: as.issued }, (_, i) => [accessToken(i + 1), refreshToken(i + 1)]).flat(),
 ]
 
@@ -522,7 +576,13 @@ describe("connecting an OAuth Installation", () => {
               repos: [repo],
               by,
             })
-            .pipe(Effect.map((url) => new URL(url).searchParams.get("state") ?? ""))
+            .pipe(
+              Effect.map((begun) =>
+                begun._tag === "Authorize"
+                  ? (new URL(begun.url).searchParams.get("state") ?? "")
+                  : "",
+              ),
+            )
         const claimOf = (begun: string) =>
           oauth.claim(begun, by).pipe(
             Effect.match({
@@ -628,10 +688,12 @@ describe("connecting an OAuth Installation", () => {
         `The authorization server ${issuer()} lists no authorization or token endpoint on https.`,
       )
     }
+    // A registration endpoint not on https is none: a client is entered by hand instead (#218).
     as.metadata = { registration_endpoint: `${away}/as/register` }
-    expect(await refusal()).toBe(
-      `The authorization server ${issuer()} lists no registration endpoint on https.`,
-    )
+    expect(await ask(web, { _tag: "ConnectInstallation", installationId })).toMatchObject({
+      _tag: "InstallationNeedsClient",
+      issuer: issuer(),
+    })
     expect(as.registered).toEqual([])
     as.metadata = {}
 
@@ -1010,5 +1072,247 @@ describe("an OAuth Installation's tokens", () => {
     web.send({ _tag: "WakeSession", sessionId: created.session.id })
     expect((await runner.take("StartSession")).sessionId).toBe(created.session.id)
     expectNoSecretIn(web.texts.join("\n"))
+  })
+})
+
+describe("a client entered by hand (#218)", () => {
+  const app = { clientId: "gh-app", clientSecret: "gh-SECRET-entered-5f1e" }
+  /** The authorization server offers no Dynamic Client Registration, and knows `app`. */
+  const withoutRegistration = (methods?: ReadonlyArray<string>) => {
+    as.metadata = {
+      registration_endpoint: undefined,
+      ...(methods !== undefined && { token_endpoint_auth_methods_supported: methods }),
+    }
+    as.manual.set(app.clientId, app.clientSecret)
+  }
+
+  test("is asked for where the server offers no Dynamic Client Registration, then connects and refreshes", async () => {
+    const { hub, runner, web } = await scene()
+    const { installationId } = await install(web)
+    withoutRegistration()
+
+    let logged = ""
+    logged += await logsOf(async () => {
+      // The form shows where to register the client: the Hub's callback.
+      expect(await ask(web, { _tag: "ConnectInstallation", installationId })).toEqual({
+        _tag: "InstallationNeedsClient",
+        requestId: expect.any(String),
+        installationId,
+        issuer: issuer(),
+        callbackUrl: `${webOrigin}${OAuthCallbackPath}`,
+        publicClient: false,
+      })
+      const begun = await authorize(web, installationId, app)
+      expect(begun.url.searchParams.get("client_id")).toBe("gh-app")
+      expect(begun.url.searchParams.get("redirect_uri")).toBe(`${webOrigin}${OAuthCallbackPath}`)
+      const back = await callback(hub, web.cookie, {
+        code: begun.code,
+        state: begun.state,
+        iss: issuer(),
+      })
+      expect(back.searchParams.get("connectError")).toBeNull()
+    })
+    // Basic, as the server's metadata names no other way (RFC 8414's default).
+    expect(as.auth).toEqual(["client_secret_basic:gh-app"])
+    expect(as.registered).toEqual([])
+    const installation = await installationOf(web, installationId)
+    expect(installation?.client).toEqual({
+      clientId: "gh-app",
+      secret: true,
+      setBy: { id: "dev:alice", login: "alice", name: "alice" },
+      setAt: expect.any(Number),
+    })
+    // Its ID token is for the client entered: the account is known.
+    expect(installation?.connection?.account).toBe("bot@example.com")
+    expect(await logOf(web)).toEqual(["Created", "ClientSet", "Connected"])
+
+    // Reconnecting reuses it, without asking again, nor logging it as set again.
+    as.expiresIn = 30
+    logged += await logsOf(() => connect(hub, web, installationId).then(() => undefined))
+    as.expiresIn = 3600
+    expect(await logOf(web)).toEqual(["Created", "ClientSet", "Connected", "Reconnected"])
+
+    // Refreshed as a registered one is, with the client entered.
+    const start = await startSession(web, runner)
+    expect((await through(hub, installationId, start.modToken)).status).toBe(200)
+    expect(as.refreshes).toHaveLength(1)
+    expect(as.auth.at(-1)).toBe("client_secret_basic:gh-app")
+
+    // Disconnecting keeps the client, to connect with again.
+    const disconnected = state(await ask(web, { _tag: "DisconnectInstallation", installationId }))
+    expect(disconnected.installations[0]?.connection).toBeUndefined()
+    expect(disconnected.installations[0]?.client?.clientId).toBe("gh-app")
+    expect((await ask(web, { _tag: "ConnectInstallation", installationId }))._tag).toBe(
+      "InstallationAuthorizing",
+    )
+
+    // Its secret is encrypted at rest, and reaches no web client nor any log.
+    expectNoSecretIn(await databaseText(hub))
+    expectNoSecretIn(web.texts.join("\n"))
+    expectNoSecretIn(logged)
+  })
+
+  test("authenticates as the server takes: by Basic, in the form, or as a public client", async () => {
+    const { hub, web } = await scene()
+    const { installationId } = await install(web)
+    const refusal = async (client: Record<string, unknown>) => {
+      const answer = await ask(web, { _tag: "ConnectInstallation", installationId, client })
+      if (answer._tag !== "CommandFailed") throw new Error(JSON.stringify(answer))
+      return answer.message
+    }
+
+    withoutRegistration(["client_secret_post"])
+    await connect(hub, web, installationId, app)
+    expect(as.auth).toEqual(["client_secret_post:gh-app"])
+    expect(await refusal({ clientId: "gh-app" })).toBe(
+      `The authorization server ${issuer()} takes no public client: enter the client's secret too.`,
+    )
+
+    // A server that takes public clients says so, and takes one without a secret. The client
+    // entered before, which it no longer takes, is asked for again.
+    withoutRegistration(["none"])
+    as.manual.set("gh-public", undefined)
+    expect(await ask(web, { _tag: "ConnectInstallation", installationId })).toMatchObject({
+      _tag: "InstallationNeedsClient",
+      publicClient: true,
+      reason:
+        "The authorization server no longer takes the client entered before as it was: enter it again.",
+    })
+    expect(await refusal(app)).toBe(
+      `The authorization server ${issuer()} takes only public clients: leave the client secret empty.`,
+    )
+    as.auth.length = 0
+    await connect(hub, web, installationId, { clientId: "gh-public" })
+    expect(as.auth).toEqual(["none:gh-public"])
+    expect((await installationOf(web, installationId))?.client).toMatchObject({
+      clientId: "gh-public",
+      secret: false,
+    })
+
+    // What the web UI checks, the Hub checks too.
+    expect(await refusal({ clientId: " " })).toBe("Enter the client ID.")
+    expect(await refusal({ clientId: "gh app" })).toBe(
+      "The client ID must be one word of plain characters, with no spaces.",
+    )
+    expect(await logOf(web)).toEqual([
+      "Created",
+      "ClientSet",
+      "Connected",
+      "ClientSet",
+      "Reconnected",
+    ])
+  })
+
+  test("is changed on request, kept only once it connects, and never replaced by a registered one", async () => {
+    const { hub, web } = await scene()
+    const { installationId } = await install(web)
+    withoutRegistration()
+    await connect(hub, web, installationId, app)
+
+    // Change client asks for one even where the one it has fits.
+    expect(
+      await ask(web, { _tag: "ConnectInstallation", installationId, changeClient: true }),
+    ).toMatchObject({ _tag: "InstallationNeedsClient", issuer: issuer() })
+    // One entered for a connection never finished is not kept.
+    as.manual.set("gh-wrong", "gh-SECRET-wrong-0c2a")
+    await authorize(web, installationId, {
+      clientId: "gh-wrong",
+      clientSecret: "gh-SECRET-wrong-0c2a",
+    })
+    expect((await installationOf(web, installationId))?.client?.clientId).toBe("gh-app")
+    // Nor is one the server refuses the code for: the one before still works.
+    const refused = await authorize(web, installationId, {
+      clientId: "gh-app",
+      clientSecret: "gh-SECRET-not-it",
+    })
+    const back = await callback(hub, web.cookie, {
+      code: refused.code,
+      state: refused.state,
+      iss: issuer(),
+    })
+    expect(back.searchParams.get("connectError")).toBe(
+      "The authorization server refused the connection: invalid_client.",
+    )
+    expect((await installationOf(web, installationId))?.connection).toBeDefined()
+    expect((await installationOf(web, installationId))?.client?.clientId).toBe("gh-app")
+
+    // Another client, connected, replaces it, logged.
+    as.manual.set("gh-other", "gh-SECRET-other-77d3")
+    await connect(hub, web, installationId, {
+      clientId: "gh-other",
+      clientSecret: "gh-SECRET-other-77d3",
+    })
+    expect((await installationOf(web, installationId))?.client?.clientId).toBe("gh-other")
+    expect(await logOf(web)).toEqual([
+      "Created",
+      "ClientSet",
+      "Connected",
+      "ClientSet",
+      "Reconnected",
+    ])
+
+    // Should the server offer registration later, the client entered is still the one used.
+    as.metadata = {}
+    as.auth.length = 0
+    await connect(hub, web, installationId)
+    expect(as.registered).toEqual([])
+    expect(as.auth).toEqual(["client_secret_basic:gh-other"])
+  })
+
+  test("is set only by the Owner, for a global one, and redacted from every Session's output", async () => {
+    const { hub, web } = await scene()
+    await makeOwner(hub, "alice")
+    withoutRegistration()
+    const created = state(
+      await ask(web, {
+        _tag: "CreatePlugin",
+        name: "Tracker",
+        url: mcpUrl(),
+        auth: { _tag: "OAuth" },
+      }),
+    )
+    const pluginId = created.plugins.find((plugin) => plugin.name === "Tracker")?.id
+    const installationId = state(
+      await ask(web, {
+        _tag: "CreateInstallation",
+        pluginId,
+        name: "Tracker",
+        repos: [],
+        global: true,
+      }),
+    ).installations.find((found) => found.pluginId === pluginId)?.id
+    if (installationId === undefined) throw new Error("Not installed")
+
+    const bob = await openWeb(hub, "bob")
+    expect(
+      await ask(bob, { _tag: "ConnectInstallation", installationId, client: app }),
+    ).toMatchObject({ _tag: "CommandFailed", message: globalConnectRefusal })
+    await connect(hub, web, installationId, app)
+    expect((await installationOf(bob, installationId))?.client?.clientId).toBe("gh-app")
+
+    // Only the Hub ever sends it; yet were it printed, it is redacted, on any Repo.
+    const values = await hub.run(
+      Effect.flatMap(Plugins, (plugins) => plugins.valuesOn("someone/else")),
+    )
+    expect(values.map(Redacted.value)).toContain(app.clientSecret)
+  })
+
+  test("goes, with its secret, when its Plugin's server moves to another origin", async () => {
+    const { hub, web } = await scene()
+    const { pluginId, installationId } = await install(web)
+    withoutRegistration()
+    await connect(hub, web, installationId, app)
+    await ask(web, { _tag: "DisconnectInstallation", installationId })
+    state(
+      await ask(web, {
+        _tag: "EditPlugin",
+        pluginId,
+        name: "Tracker",
+        url: `http://localhost:${server.port}/mcp`,
+        auth: { _tag: "OAuth" },
+      }),
+    )
+    expect((await installationOf(web, installationId))?.client).toBeUndefined()
+    expect(await databaseText(hub)).not.toContain("gh-app")
   })
 })

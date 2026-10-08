@@ -5,13 +5,18 @@
 // - Connecting follows the MCP authorization spec. The Hub asks the MCP server, without a token,
 //   for its Protected Resource Metadata (RFC 9728): where its `401`'s `WWW-Authenticate` says, else
 //   at its well-known paths. That names the authorization server, whose metadata (RFC 8414, or
-//   OpenID Connect's) must offer Dynamic Client Registration (RFC 7591) and PKCE with S256. The Hub
-//   registers itself there, once per Installation and authorization server, with its callback,
-//   then sends the browser to sign in and consent, with the `resource` (RFC 8707) it wants a token
-//   for, and a `state` bound to the person and the Installation, used once, within
-//   OAuthConnectTtlMs. The connection begun is kept in memory: a restarted Hub forgets it.
-// - The tokens and the client the Hub registered are encrypted with the secrets key (ADR 0009),
-//   bound to their Installation, and never sent to the web, a Runner or a Sandbox; nor logged.
+//   OpenID Connect's) must offer PKCE with S256. Where it offers Dynamic Client Registration
+//   (RFC 7591), the Hub registers itself there, once per Installation and authorization server,
+//   with its callback. Where it offers none (#218), the person connecting registers a client by
+//   hand, with the Hub's callback, and enters its id and secret, if it has one: until then, or
+//   when the one entered no longer fits, begin answers NeedsClient. A client entered is kept only
+//   once a connection with it is made, so a wrong one never replaces a working one. Then the Hub
+//   sends the browser to sign in and consent, with the `resource` (RFC 8707) it wants a token for,
+//   and a `state` bound to the person and the Installation, used once, within OAuthConnectTtlMs.
+//   The connection begun is kept in memory: a restarted Hub forgets it.
+// - The tokens and the client, registered or entered, are encrypted with the secrets key
+//   (ADR 0009), bound to their Installation, and never sent to the web, a Runner or a Sandbox; nor
+//   logged. Of a client entered, the web is told only its id and whether it has a secret.
 // - The Gateway asks for the token on each request, live: a refresh reaches running Sessions at
 //   once. Only the Hub refreshes, ahead of the token's expiry, once at a time for each Installation,
 //   and saves the refresh token it rotates to before anyone uses it. A refresh the authorization
@@ -25,6 +30,7 @@ import { createHash, randomBytes } from "node:crypto"
 import {
   type InstallationId,
   OAuthConnectTtlMs,
+  oauthClientProblem,
   type ParticipantId,
   type PluginAuth,
 } from "@kndl/protocol"
@@ -70,7 +76,10 @@ const refreshAhead = 60_000
 /** The connections begun and not yet come back, at most; past it, the oldest is dropped. */
 const maxPending = 200
 
-/** The client the Hub registered with an Installation's authorization server, kept encrypted. */
+/**
+ * The client the Hub registered with an Installation's authorization server, or the one entered
+ * for it (#218), kept encrypted.
+ */
 const Client = Schema.Struct({
   issuer: Schema.String,
   redirectUri: Schema.String,
@@ -84,8 +93,13 @@ const Client = Schema.Struct({
   userinfoEndpoint: Schema.optionalKey(Schema.String),
   /** Whether the server sends `iss` back with the code (RFC 9207), which must then match. */
   sendsIss: Schema.Boolean,
+  /** Whether someone entered it, registered by hand (#218); absent for one the Hub registered. */
+  manual: Schema.optionalKey(Schema.Boolean),
 })
 type Client = typeof Client.Type
+
+/** The ways the Hub authenticates as a client at a token endpoint, the ones it prefers first. */
+const authMethods = ["client_secret_basic", "client_secret_post", "none"] as const
 
 /** An Installation's tokens, kept encrypted. */
 const Tokens = Schema.Struct({
@@ -134,6 +148,44 @@ export interface PendingConnection {
   readonly client: Client
   readonly resource: string
   readonly at: number
+}
+
+/** A client entered to connect with (#218): its secret, if any, write-only. */
+export interface ClientInput {
+  readonly clientId: string
+  readonly clientSecret?: Redacted.Redacted<string>
+}
+
+/** What beginning a connection came to: where to send the browser, or that it needs a client. */
+export type Begun =
+  | { readonly _tag: "Authorize"; readonly url: string }
+  | {
+      /**
+       * The authorization server offers no Dynamic Client Registration (#218), and the
+       * Installation has no client entered that fits it: one must be registered with it by hand,
+       * with `callbackUrl`, and entered.
+       */
+      readonly _tag: "NeedsClient"
+      readonly issuer: string
+      readonly callbackUrl: string
+      /** Whether the server takes a public client, with no secret. */
+      readonly publicClient: boolean
+      readonly reason?: string
+    }
+
+/** What to begin connecting an Installation with. */
+export interface BeginInput {
+  readonly installationId: InstallationId
+  readonly url: string
+  readonly scopes?: ReadonlyArray<string>
+  readonly basis: string
+  readonly global: boolean
+  readonly repos: ReadonlyArray<string>
+  readonly by: ParticipantId
+  /** The client to connect with, entered by hand (#218). */
+  readonly client?: ClientInput
+  /** Ask for another client to be entered, even if it has one that fits (#218). */
+  readonly changeClient?: boolean
 }
 
 /** What the authorization server granted a connection: its tokens, and the account. */
@@ -227,6 +279,10 @@ const stringOf = (value: unknown) =>
 
 const stringsOf = (value: unknown) =>
   Array.isArray(value) ? value.filter((one): one is string => typeof one === "string") : undefined
+
+/** The ways a token endpoint authenticates clients, by its metadata: Basic if it doesn't say. */
+const authMethodsOf = (metadata: Record<string, unknown>) =>
+  stringsOf(metadata["token_endpoint_auth_methods_supported"]) ?? ["client_secret_basic"]
 
 /** A short, one-line text the server sent, to show: never a token. */
 const said = (value: unknown) =>
@@ -381,18 +437,15 @@ export class PluginOAuth extends Context.Service<
   {
     /**
      * Begins connecting the Installation, off the relay's lock: discovers the server's
-     * authorization server, registers the Hub with it unless it did before, and keeps what to
-     * finish with by a new `state`. Where to send the browser.
+     * authorization server, and takes the client entered, if one was, else the one it has if it
+     * still fits, else registers the Hub there; and keeps what to finish with by a new `state`.
+     * Where to send the browser; or, where the server offers no Dynamic Client Registration and
+     * there is no client entered that fits, or `changeClient` asks for another, that it needs one
+     * entered (#218).
      */
-    readonly begin: (input: {
-      readonly installationId: InstallationId
-      readonly url: string
-      readonly scopes?: ReadonlyArray<string>
-      readonly basis: string
-      readonly global: boolean
-      readonly repos: ReadonlyArray<string>
-      readonly by: ParticipantId
-    }) => Effect.Effect<string, OAuthRefused | SecretsUnavailable | SqlError>
+    readonly begin: (
+      input: BeginInput,
+    ) => Effect.Effect<Begun, OAuthRefused | SecretsUnavailable | SqlError>
     /**
      * The connection `state` began, if the person began it, and not too long ago; forgotten, so
      * it is finished at most once.
@@ -408,13 +461,17 @@ export class PluginOAuth extends Context.Service<
     ) => Effect.Effect<Granted, OAuthRefused>
     /**
      * Keeps the tokens and client of a connection, replacing any it had: whether it had a
-     * connection, lost or not. In the caller's transaction.
+     * connection, lost or not, and whether the client is one entered that it didn't have (#218).
+     * In the caller's transaction.
      */
     readonly store: (
       pending: PendingConnection,
       granted: Granted,
       by: ParticipantId,
-    ) => Effect.Effect<{ readonly reconnected: boolean }, SecretsUnavailable | SqlError>
+    ) => Effect.Effect<
+      { readonly reconnected: boolean; readonly clientSet: boolean },
+      SecretsUnavailable | SqlError
+    >
     /** Forgets the Installation's tokens, keeping its client: whether it had a connection. */
     readonly disconnect: (id: InstallationId) => Effect.Effect<boolean, SqlError>
     /** The token to send the Installation's server now, refreshed if it is about to expire. */
@@ -431,7 +488,10 @@ export class PluginOAuth extends Context.Service<
     ) => Effect.Effect<"Retry" | "Lost", SecretsUnavailable | SqlError>
     /** The server took the `generation` of tokens. */
     readonly works: (id: InstallationId, generation: number) => void
-    /** The access and refresh tokens the Installations hold, to redact from what Sessions print. */
+    /**
+     * The access and refresh tokens the Installations hold, and their clients' secrets, to redact
+     * from what Sessions print.
+     */
     readonly tokensOf: (
       ids: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<Redacted.Redacted<string>>, SecretsUnavailable | SqlError>
@@ -469,8 +529,12 @@ export class PluginOAuth extends Context.Service<
           readonly tokens: string | null
           readonly generation: number
           readonly connectedAt: number | null
+          readonly clientSetBy: string | null
+          readonly clientSetAt: number | null
         }>`
-          SELECT client, tokens, generation, connected_at AS connectedAt FROM installation_oauth
+          SELECT client, tokens, generation, connected_at AS connectedAt,
+            client_set_by AS clientSetBy, client_set_at AS clientSetAt
+          FROM installation_oauth
           WHERE installation_id = ${id}
         `
         return rows[0]
@@ -569,22 +633,13 @@ export class PluginOAuth extends Context.Service<
         >,
       ) {
         const registration = metadata["registration_endpoint"]
-        if (typeof registration === "string" && !fetchable(registration)) {
+        if (!fetchable(registration)) {
           return yield* refuse(
             `The authorization server ${issuer} lists no registration endpoint on https.`,
           )
         }
-        if (!fetchable(registration)) {
-          return yield* refuse(
-            `The authorization server ${issuer} doesn't offer Dynamic Client Registration, which the Hub needs to connect.`,
-          )
-        }
-        const supported = stringsOf(metadata["token_endpoint_auth_methods_supported"]) ?? [
-          "client_secret_basic",
-        ]
-        const wanted = (["client_secret_basic", "client_secret_post", "none"] as const).find(
-          (method) => supported.includes(method),
-        )
+        const supported = authMethodsOf(metadata)
+        const wanted = authMethods.find((method) => supported.includes(method))
         if (wanted === undefined) {
           return yield* refuse(
             `The authorization server ${issuer} authenticates clients only in ways the Hub doesn't support.`,
@@ -629,15 +684,48 @@ export class PluginOAuth extends Context.Service<
         } satisfies Client
       })
 
-      const begin = Effect.fn("PluginOAuth.begin")(function* (input: {
-        readonly installationId: InstallationId
-        readonly url: string
-        readonly scopes?: ReadonlyArray<string>
-        readonly basis: string
-        readonly global: boolean
-        readonly repos: ReadonlyArray<string>
-        readonly by: ParticipantId
-      }) {
+      /**
+       * The client entered (#218), authenticating as the server's metadata says it takes: with a
+       * secret, by Basic, else in the form; without one, as a public client.
+       */
+      const entered = Effect.fn("PluginOAuth.entered")(function* (
+        issuer: string,
+        metadata: Record<string, unknown>,
+        endpoints: Pick<
+          Client,
+          "authorizationEndpoint" | "tokenEndpoint" | "userinfoEndpoint" | "sendsIss"
+        >,
+        input: ClientInput,
+      ) {
+        const clientId = input.clientId.trim()
+        const clientSecret =
+          input.clientSecret === undefined ? undefined : Redacted.value(input.clientSecret)
+        const problem = oauthClientProblem(clientId, clientSecret)
+        if (problem !== undefined) return yield* refuse(problem)
+        const supported = authMethodsOf(metadata)
+        const authMethod = authMethods.find(
+          (method) =>
+            (method === "none") === (clientSecret === undefined) && supported.includes(method),
+        )
+        if (authMethod === undefined) {
+          return yield* refuse(
+            clientSecret === undefined
+              ? `The authorization server ${issuer} takes no public client: enter the client's secret too.`
+              : `The authorization server ${issuer} takes only public clients: leave the client secret empty.`,
+          )
+        }
+        return {
+          issuer,
+          redirectUri,
+          clientId,
+          ...(clientSecret !== undefined && { clientSecret }),
+          authMethod,
+          ...endpoints,
+          manual: true,
+        } satisfies Client
+      })
+
+      const begin = Effect.fn("PluginOAuth.begin")(function* (input: BeginInput) {
         if (!secrets.available) {
           return yield* refuse(
             "Connecting an Installation needs HUB_SECRETS_KEY in the Hub's configuration, to keep its tokens encrypted: run `bun run secrets-key`, put the key in packages/hub/.env.local, and restart the Hub.",
@@ -691,18 +779,47 @@ export class PluginOAuth extends Context.Service<
           sendsIss: metadata["authorization_response_iss_parameter_supported"] === true,
         }
 
-        // The client registered before, if it is for this issuer and callback, and still good.
         const row = yield* rowOf(input.installationId)
         const kept =
           row?.client == null ? undefined : yield* clientOf(input.installationId, row.client)
         const now = yield* Clock.currentTimeMillis
-        const client: Client =
+        const needsClient = (reason?: string): Begun => ({
+          _tag: "NeedsClient",
+          issuer,
+          callbackUrl: redirectUri,
+          publicClient: authMethodsOf(metadata).includes("none"),
+          ...(reason !== undefined && { reason }),
+        })
+        // The client the Installation has, if it is for this issuer and callback, and still good:
+        // one entered, if the server still takes it as it authenticates.
+        const fits =
           kept !== undefined &&
           kept.issuer === issuer &&
           kept.redirectUri === redirectUri &&
-          (kept.secretExpiresAt === undefined || kept.secretExpiresAt * 1000 > now + 60_000)
-            ? { ...kept, ...endpoints }
-            : yield* register(issuer, metadata, endpoints)
+          (kept.secretExpiresAt === undefined || kept.secretExpiresAt * 1000 > now + 60_000) &&
+          (kept.manual !== true || authMethodsOf(metadata).includes(kept.authMethod))
+        let client: Client
+        if (input.client !== undefined) {
+          client = yield* entered(issuer, metadata, endpoints, input.client)
+        } else if (input.changeClient === true) {
+          return needsClient()
+        } else if (fits) {
+          client = { ...kept, ...endpoints }
+        } else if (kept?.manual === true) {
+          // Never registers one of its own in place of a client someone entered: they choose.
+          return needsClient(
+            kept.issuer !== issuer
+              ? `The MCP server's authorization server is now ${issuer}: enter a client registered with it.`
+              : kept.redirectUri !== redirectUri
+                ? "The client entered before was registered with another callback URL: register this one with it, or enter another client."
+                : "The authorization server no longer takes the client entered before as it was: enter it again.",
+          )
+        } else if (!fetchable(metadata["registration_endpoint"])) {
+          // No Dynamic Client Registration (#218), or none on https: a client entered by hand.
+          return needsClient()
+        } else {
+          client = yield* register(issuer, metadata, endpoints)
+        }
 
         const scopes =
           input.scopes !== undefined && input.scopes.length > 0
@@ -739,7 +856,7 @@ export class PluginOAuth extends Context.Service<
         authorize.searchParams.set("state", state)
         authorize.searchParams.set("resource", resource)
         if (scopes !== undefined && scopes !== "") authorize.searchParams.set("scope", scopes)
-        return authorize.href
+        return { _tag: "Authorize", url: authorize.href } satisfies Begun
       })
 
       const claim = Effect.fn("PluginOAuth.claim")(function* (state: string, by: ParticipantId) {
@@ -811,25 +928,40 @@ export class PluginOAuth extends Context.Service<
         by: ParticipantId,
       ) {
         const id = connection.installationId
-        const client = yield* secrets.encrypt(
-          Redacted.make(encodeClient(connection.client)),
-          clientContext(id),
-        )
+        const next = connection.client
+        const client = yield* secrets.encrypt(Redacted.make(encodeClient(next)), clientContext(id))
         const tokens = yield* sealTokens(id, granted.tokens)
         const before = yield* rowOf(id)
+        const kept = before?.client == null ? undefined : yield* clientOf(id, before.client)
         const at = yield* Clock.currentTimeMillis
+        // A client entered (#218) is set anew unless it is the very one it had, secret and all.
+        const manual = next.manual === true
+        const clientSet =
+          manual &&
+          (kept?.manual !== true ||
+            kept.clientId !== next.clientId ||
+            kept.clientSecret !== next.clientSecret ||
+            kept.authMethod !== next.authMethod)
+        const setBy = !manual ? null : clientSet ? by : (before?.clientSetBy ?? by)
+        const setAt = !manual ? null : clientSet ? at : (before?.clientSetAt ?? at)
+        const secretSet = !manual ? null : next.clientSecret === undefined ? 0 : 1
         yield* sql`
           INSERT INTO installation_oauth (
             installation_id, client, tokens, generation, account, connected_by, connected_at,
-            lost_at
-          ) VALUES (${id}, ${client}, ${tokens}, 1, ${granted.account ?? null}, ${by}, ${at}, NULL)
+            lost_at, manual_client_id, manual_client_secret, client_set_by, client_set_at
+          ) VALUES (
+            ${id}, ${client}, ${tokens}, 1, ${granted.account ?? null}, ${by}, ${at}, NULL,
+            ${manual ? next.clientId : null}, ${secretSet}, ${setBy}, ${setAt}
+          )
           ON CONFLICT (installation_id) DO UPDATE SET
             client = excluded.client, tokens = excluded.tokens,
             generation = installation_oauth.generation + 1, account = excluded.account,
             connected_by = excluded.connected_by, connected_at = excluded.connected_at,
-            lost_at = NULL
+            lost_at = NULL, manual_client_id = excluded.manual_client_id,
+            manual_client_secret = excluded.manual_client_secret,
+            client_set_by = excluded.client_set_by, client_set_at = excluded.client_set_at
         `
-        return { reconnected: before?.connectedAt != null }
+        return { reconnected: before?.connectedAt != null, clientSet }
       })
 
       const disconnect = Effect.fn("PluginOAuth.disconnect")(function* (id: InstallationId) {
@@ -990,16 +1122,26 @@ export class PluginOAuth extends Context.Service<
 
       const tokensOf = Effect.fn("PluginOAuth.tokensOf")(function* (ids: ReadonlyArray<string>) {
         if (ids.length === 0) return []
-        const rows = yield* sql<{ readonly installationId: string; readonly tokens: string }>`
-          SELECT installation_id AS installationId, tokens FROM installation_oauth
-          WHERE tokens IS NOT NULL AND installation_id IN ${sql.in(ids)}
+        const rows = yield* sql<{
+          readonly installationId: string
+          readonly client: string | null
+          readonly tokens: string | null
+        }>`
+          SELECT installation_id AS installationId, client, tokens FROM installation_oauth
+          WHERE (tokens IS NOT NULL OR client IS NOT NULL) AND installation_id IN ${sql.in(ids)}
         `
         const values: Array<Redacted.Redacted<string>> = []
         for (const row of rows) {
-          const tokens = yield* tokensOfRow(row.installationId, row.tokens)
-          if (tokens === undefined) continue
-          values.push(Redacted.make(tokens.access))
-          if (tokens.refresh !== undefined) values.push(Redacted.make(tokens.refresh))
+          const tokens =
+            row.tokens === null ? undefined : yield* tokensOfRow(row.installationId, row.tokens)
+          if (tokens !== undefined) {
+            values.push(Redacted.make(tokens.access))
+            if (tokens.refresh !== undefined) values.push(Redacted.make(tokens.refresh))
+          }
+          // Its client's secret, entered or registered, though only the Hub ever sends it.
+          const client =
+            row.client === null ? undefined : yield* clientOf(row.installationId, row.client)
+          if (client?.clientSecret !== undefined) values.push(Redacted.make(client.clientSecret))
         }
         return values
       })

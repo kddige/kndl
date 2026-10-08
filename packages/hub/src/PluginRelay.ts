@@ -25,7 +25,10 @@
 //   on the Hub acts as its account. Connecting begins under the lock, then finds the authorization
 //   server off it, and answers where to send the browser; it comes back to the Hub's callback
 //   (PluginOAuthRoutes.ts), which trades the code off the lock and keeps the tokens under it,
-//   refused if the Installation lists another Repo by then, or its Plugin changed.
+//   refused if the Installation lists another Repo by then, or its Plugin changed. Where the
+//   authorization server offers no Dynamic Client Registration, it answers that a client must be
+//   entered instead (#218), which the person sends with the command again: the same people set the
+//   client as connect, and it is kept as the tokens are.
 
 import {
   type CheckPluginUpgrade,
@@ -49,7 +52,7 @@ import {
 } from "@kndl/protocol"
 import { Clock, Effect, Option } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
-import { connectionBasis, PluginOAuth } from "./PluginOAuth.ts"
+import { type BeginInput, connectionBasis, PluginOAuth } from "./PluginOAuth.ts"
 import {
   PluginRefused,
   Plugins,
@@ -141,15 +144,7 @@ interface KeptRead {
 type StoreCommand = Exclude<PluginCommand, ReadPluginPackage | CheckPluginUpgrade>
 
 /** What to begin connecting an OAuth Installation with, once its Repos are checked (#217). */
-interface Connecting {
-  readonly installationId: InstallationId
-  readonly url: string
-  readonly scopes?: ReadonlyArray<string>
-  readonly basis: string
-  readonly global: boolean
-  readonly repos: ReadonlyArray<string>
-  readonly by: ParticipantId
-}
+type Connecting = BeginInput
 
 /**
  * An Installation as the person may see it: only the Repos they have access to, of those it lists
@@ -520,7 +515,16 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
           global: installation.global === true,
           repos: installation.repos,
           by: you.id,
-        }
+          ...(message.client !== undefined && {
+            client: {
+              clientId: message.client.clientId,
+              ...(message.client.clientSecret !== undefined && {
+                clientSecret: message.client.clientSecret,
+              }),
+            },
+          }),
+          ...(message.changeClient === true && { changeClient: true }),
+        } satisfies Connecting
       }
 
       case "DisconnectInstallation": {
@@ -587,7 +591,7 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
       )
       if (connecting && command._tag === "ConnectInstallation") {
         // Off the lock: it fetches from the MCP server and its authorization server.
-        const url = yield* oauth.begin(connecting).pipe(
+        const begun = yield* oauth.begin(connecting).pipe(
           Effect.catchTags({
             OAuthRefused: (refused) => Effect.fail(new PluginRefused({ message: refused.message })),
             SecretsUnavailable: (error) =>
@@ -595,11 +599,20 @@ export const makePluginRelay = Effect.fnUntraced(function* (host: PluginRelayHos
           }),
         )
         client.peer.send(
-          HubToWeb.cases.InstallationAuthorizing.make({
-            requestId: command.requestId,
-            installationId: command.installationId,
-            url,
-          }),
+          begun._tag === "Authorize"
+            ? HubToWeb.cases.InstallationAuthorizing.make({
+                requestId: command.requestId,
+                installationId: command.installationId,
+                url: begun.url,
+              })
+            : HubToWeb.cases.InstallationNeedsClient.make({
+                requestId: command.requestId,
+                installationId: command.installationId,
+                issuer: begun.issuer,
+                callbackUrl: begun.callbackUrl,
+                publicClient: begun.publicClient,
+                ...(begun.reason !== undefined && { reason: begun.reason }),
+              }),
         )
       }
     },
