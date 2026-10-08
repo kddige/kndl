@@ -164,6 +164,10 @@ _Avoid_: reference, import, binding
 A remote MCP server that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. kndl's own pieces that each Session's Claude Code loads are the mod, not Plugins.
 _Avoid_: integration, extension, connector, mod
 
+**Plugin icon**:
+The small picture beside a Plugin on the Plugins page. The Hub finds it, from the package's manifest or the favicon of the Plugin's URL, keeps it and serves it; browsers never fetch it from the third party. A Plugin with none shows a letter.
+_Avoid_: logo, favicon (a favicon is one place it may come from)
+
 **Upgrade**:
 Moving a packaged Plugin to what its source holds now, once someone has seen what that changes. A packaged Plugin is pinned to its version, and changes only by an Upgrade.
 _Avoid_: update, sync, refresh

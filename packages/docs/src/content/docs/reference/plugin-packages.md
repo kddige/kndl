@@ -45,6 +45,7 @@ The Hub reads it strictly: a field it doesn't know refuses the package, and the 
 | `$schema` | No | Ignored, for editors that validate the file. |
 | `displayName` | Yes | The Plugin's name, as the Plugins page and Sessions show it. One line of 1 to 80 characters. |
 | `description` | No | One line of 1 to 500 characters, shown on the Plugin. |
+| `icon` | No | The Plugin's icon on the Plugins page: an `https://` URL, or a path to a file in the package, such as `assets/logo.svg`. PNG, ICO, WebP, JPEG or SVG, at most 512 KB. The Hub fetches or reads it and serves it itself, so browsers never contact the URL. It is never a reason to refuse a package: one the Hub can't use is left out, and the Plugin gets the favicon of its `mcp.url`'s website, or else a letter. A path is read from a git repo or an archive, not from a folder upload. |
 | `mcp.url` | Yes | The remote MCP server's URL, over [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http). It must start with `https://` (or `http://`), and can't hold a user name, password or `#fragment`. |
 | `auth` | No | What the MCP server needs to be reached: `{ "type": "none" }`, the default, [header secrets](#header-secrets), or [OAuth](#oauth). |
 
