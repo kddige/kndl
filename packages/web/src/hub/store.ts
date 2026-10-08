@@ -6,8 +6,9 @@
 // for the Runners page (issue #85); and the signed-in person's Claude credential, write-only (ADR
 // 0015), and the CLI tokens they signed the CLI in with (issue #179); and, for the Hub's Owner alone,
 // its Members and pending Invites, for the People page (#209); and the Plugins and their
-// Installations, and the Plugin change logs of the Repos the client asked about (#221). The terminal's output itself
-// goes straight to the view that draws it (HubClient.openTerminal), not through here.
+// Installations, and the Plugin change logs of the Repos the client asked about (#221). The
+// terminal's output itself goes straight to the view that draws it (HubClient.openTerminal), not
+// through here.
 //
 // `reduce` is pure: the HubClient feeds it every decoded HubToWeb message and its own connection
 // events, and React reads the result.

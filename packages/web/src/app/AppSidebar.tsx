@@ -35,6 +35,7 @@ import {
   type NestedNavItems,
   PencilIcon,
   PeopleIcon,
+  PluginIcon,
   PlusIcon,
   ServerIcon,
   SessionStatus,
@@ -46,7 +47,7 @@ import {
 import { focus } from "../ui/shared.ts"
 import { color, radius, space, text } from "../ui/tokens.stylex.ts"
 import { Brand } from "./Brand.tsx"
-import { environmentChanged, statusOf } from "./format.ts"
+import { environmentChanged, pluginsChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
 
 const styles = stylex.create({
@@ -102,12 +103,13 @@ const styles = stylex.create({
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
 function sectionOf(
   pathname: string,
-): "runners" | "environments" | "variables" | "archive" | "people" | null {
+): "runners" | "environments" | "variables" | "plugins" | "archive" | "people" | null {
   if (pathname === "/runners") return "runners"
   if (pathname === "/people") return "people"
   if (pathname === "/environments" || /^\/repos\/[^/]+\/[^/]+\/environment$/.test(pathname))
     return "environments"
   if (pathname === "/variables") return "variables"
+  if (pathname === "/plugins") return "plugins"
   if (pathname === "/archive" || /^\/repos\/[^/]+\/[^/]+\/archived$/.test(pathname))
     return "archive"
   return null
@@ -227,6 +229,13 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
           current={section === "variables"}
         >
           Shared variables
+        </NavItem>
+        <NavItem
+          render={<Link to="/plugins" />}
+          icon={<PluginIcon />}
+          current={section === "plugins"}
+        >
+          Plugins
         </NavItem>
         <NavItem
           render={<Link to="/archive" />}
@@ -399,10 +408,15 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
             : null
   // Claude asked a question (#193): it waits on someone to answer rather than working.
   const waiting = session.openQuestion !== undefined
+  // What a restart would apply: a newer Environment, or its Repo's Installations (ADR 0020).
   const changed = environmentChanged(session)
+    ? "Environment changed"
+    : pluginsChanged(session)
+      ? "Plugins changed"
+      : null
   const keptAwake =
     session.keepAwake === undefined ? null : keptAwakeText(session.keepAwake, you?.id)
-  if (busy === null && !waiting && !changed && keptAwake === null) return null
+  if (busy === null && !waiting && changed === null && keptAwake === null) return null
   return (
     <>
       {keptAwake && (
@@ -441,8 +455,8 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
         <NavSlot>
           <span
             role="img"
-            aria-label="Environment changed"
-            title="Environment changed: a restart picks it up"
+            aria-label={changed}
+            title={`${changed}: a restart picks it up`}
             {...stylex.props(styles.warning)}
           >
             <WarningIcon />

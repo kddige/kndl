@@ -84,6 +84,16 @@ export function environmentChanged(session: SessionSummary): boolean {
 }
 
 /**
+ * Whether an Active Session runs with other Installations than its Repo's (ADR 0020): one was
+ * created, changed or deleted since it started, and a restart applies the change. Other states
+ * pick it up as they next wake; one being started or restarted is getting it already.
+ */
+export function pluginsChanged(session: SessionSummary): boolean {
+  if (session.state !== "Active" || session.pluginsChanged !== true) return false
+  return session.starting === undefined && session.restarting === undefined
+}
+
+/**
  * Terminal output as plain text, for a log view: colours and cursor moves dropped, and a line a
  * progress bar redrew (with a carriage return) shown as it was last drawn.
  */

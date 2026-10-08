@@ -19,12 +19,16 @@ import {
   type EnvironmentVersion,
   type GitHubLogin,
   HubToWeb,
+  type InstallationId,
   type InviteCreated,
   type InviteId,
   type ModelName,
   type PairingCodeCreated,
   type PairingCodeId,
   type ParticipantId,
+  type PluginId,
+  type PluginLogEntry,
+  type PluginsState,
   ProtocolVersion,
   type QuestionAnswer,
   RequestId,
@@ -409,6 +413,56 @@ export class HubClient {
       .variables
   }
 
+  // ── Plugins (ADR 0020) ───────────────────────────────────────────────────
+
+  /** Asks for every Plugin and Installation; the store then holds them, and keeps them fresh. */
+  getPlugins(): Promise<PluginsState> {
+    return this.#request({ _tag: "GetPlugins" }, "PluginsState")
+  }
+
+  /** Creates a Hub-only Plugin, a remote MCP server; its id is `hub:` and a slug of its name. */
+  createPlugin(name: string, url: string): Promise<PluginsState> {
+    return this.#request({ _tag: "CreatePlugin", name, url }, "PluginsState")
+  }
+
+  /** Changes a Plugin's name or URL; its Sessions pick it up on their next wake or Restart. */
+  editPlugin(pluginId: PluginId, name: string, url: string): Promise<PluginsState> {
+    return this.#request({ _tag: "EditPlugin", pluginId, name, url }, "PluginsState")
+  }
+
+  /** Deletes a Plugin; the Hub refuses while it has Installations. */
+  deletePlugin(pluginId: PluginId): Promise<PluginsState> {
+    return this.#request({ _tag: "DeletePlugin", pluginId }, "PluginsState")
+  }
+
+  /** Creates an Installation of a Plugin, on in the Repos listed. */
+  createInstallation(
+    pluginId: PluginId,
+    name: string,
+    repos: ReadonlyArray<string>,
+  ): Promise<PluginsState> {
+    return this.#request({ _tag: "CreateInstallation", pluginId, name, repos }, "PluginsState")
+  }
+
+  /** Renames an Installation, and sets the whole list of Repos it is on in. */
+  editInstallation(
+    installationId: InstallationId,
+    name: string,
+    repos: ReadonlyArray<string>,
+  ): Promise<PluginsState> {
+    return this.#request({ _tag: "EditInstallation", installationId, name, repos }, "PluginsState")
+  }
+
+  /** Deletes an Installation, taking it off every Repo it lists. */
+  deleteInstallation(installationId: InstallationId): Promise<PluginsState> {
+    return this.#request({ _tag: "DeleteInstallation", installationId }, "PluginsState")
+  }
+
+  /** Asks for a Repo's Plugin change log, newest first; the store then holds it. */
+  async getPluginLog(repo: string): Promise<ReadonlyArray<PluginLogEntry>> {
+    return (await this.#request({ _tag: "GetPluginLog", repo }, "PluginLog")).entries
+  }
+
   // ── Runners (issue #85) ──────────────────────────────────────────────────
 
   /**
@@ -611,7 +665,9 @@ export class HubClient {
       case "CliTokenList":
       case "InviteCreated":
       case "InviteList":
-      case "MemberList": {
+      case "MemberList":
+      case "PluginsState":
+      case "PluginLog": {
         if (message.requestId === undefined) break
         const request = this.#requests.get(message.requestId)
         if (request?.answer !== message._tag) break

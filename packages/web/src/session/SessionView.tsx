@@ -14,6 +14,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 import {
   day,
   environmentChanged,
+  pluginsChanged,
   purgedIn,
   repoParams,
   statusOf,
@@ -62,6 +63,7 @@ import { Presence } from "./Presence.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { QuestionDock } from "./QuestionCard.tsx"
 import { WaitingDot } from "./QuestionChip.tsx"
+import { SessionPlugins } from "./SessionPlugins.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { Transcript } from "./Transcript.tsx"
 
@@ -383,6 +385,7 @@ function LoadedSession({
         actions={
           <>
             <OpenPorts summary={summary} />
+            <SessionPlugins summary={summary} />
             {state !== "Archived" && (
               // Anyone with access may turn it on or off (ADR 0016); Sleep now turns it off.
               <Tooltip content="While it's on, the Session doesn't go to sleep when idle. Sleep now turns it off.">
@@ -682,7 +685,7 @@ function StartingBanner({
 
 /**
  * Shown while the Session is starting or restarting, Frozen, Asleep or Archived, or runs on an
- * older Environment, with why from its latest state change.
+ * older Environment or other Installations than its Repo's, with why from its latest state change.
  */
 function StateBanner({
   summary,
@@ -711,30 +714,44 @@ function StateBanner({
   switch (summary.state) {
     case "Active": {
       const environment = summary.environment
-      if (!environmentChanged(summary) || environment === undefined) return null
-      return (
-        <Banner
-          intent="accent"
-          icon={<InfoIcon />}
-          title="Environment changed"
-          action={
-            <Button
-              size="sm"
-              icon={<RestartIcon />}
-              // The Hub only restarts a Session with no Turn running.
-              disabled={running}
-              loading={restart.asked}
-              onClick={restart.ask}
-            >
-              Restart
-            </Button>
-          }
+      const plugins = pluginsChanged(summary)
+      const restartButton = (
+        <Button
+          size="sm"
+          icon={<RestartIcon />}
+          // The Hub only restarts a Session with no Turn running.
+          disabled={running}
+          loading={restart.asked}
+          onClick={restart.ask}
         >
-          {environment.version === null
-            ? `This Sandbox was started before ${summary.repo} had an Environment`
-            : `This Sandbox runs version ${environment.version} of ${summary.repo}'s Environment`}
-          ; version {environment.latestVersion} is the latest. Restarting puts the Session to sleep
-          and wakes it on a fresh Sandbox, with its Workspace and conversation as they are.
+          Restart
+        </Button>
+      )
+      if (environmentChanged(summary) && environment !== undefined) {
+        return (
+          <Banner
+            intent="accent"
+            icon={<InfoIcon />}
+            title="Environment changed"
+            action={restartButton}
+          >
+            {environment.version === null
+              ? `This Sandbox was started before ${summary.repo} had an Environment`
+              : `This Sandbox runs version ${environment.version} of ${summary.repo}'s Environment`}
+            ; version {environment.latestVersion} is the latest. Restarting puts the Session to
+            sleep and wakes it on a fresh Sandbox, with its Workspace and conversation as they are.
+            {plugins && ` It applies the change to ${summary.repo}'s Installations too.`}
+            {running && " Once the running Turn ends."}
+          </Banner>
+        )
+      }
+      if (!plugins) return null
+      // Installations change no Environment version (ADR 0020): Claude Code is given them as it starts.
+      return (
+        <Banner intent="accent" icon={<InfoIcon />} title="Plugins changed" action={restartButton}>
+          {summary.repo}'s Installations changed since this Session started, and Claude Code gets
+          its MCP servers as it starts. A Restart applies the change, with the Workspace and
+          conversation as they are.
           {running && " Once the running Turn ends."}
         </Banner>
       )

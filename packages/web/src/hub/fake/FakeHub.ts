@@ -3,8 +3,9 @@
 // and plays a scripted Session: streamed text, tool calls, subagents in the foreground and the
 // background, which people can message and stop, a second Participant joining and queueing a
 // prompt, and a terminal to watch and type into; Environments, shared
-// variables and Test builds with a streaming log (environments.ts); and, when asked to, a GitHub
-// App short of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
+// variables and Test builds with a streaming log (environments.ts); Plugins and their
+// Installations, with each Repo's change log (plugins.ts); and, when asked to, a GitHub App short
+// of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
 //
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too.
@@ -36,7 +37,9 @@ import {
   pairingLink,
   Participant,
   ProtocolVersion,
+  type PluginCommand,
   type RepoStatus,
+  repoKey,
   runnerRemovalRefusal,
   sameRepo,
   sessionNameFrom,
@@ -47,6 +50,7 @@ import { Redacted, Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
 import { FakeEnvironments, sessionStartScript, testBuildScript } from "./environments.ts"
+import { FakePlugins } from "./plugins.ts"
 import {
   archiveRetentionMs,
   bob,
@@ -82,6 +86,7 @@ import type {
   QueuedPromptWire,
   RunnerSummaryWire,
   SessionEventWire,
+  SessionInstallationWire,
   SessionSummaryWire,
 } from "./wire.ts"
 
@@ -217,6 +222,22 @@ class FakeSocket implements HubSocket {
 
 const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 
+/** A summary's Installations: absent for none, as the Hub sends them. */
+const withPlugins = (plugins: ReadonlyArray<SessionInstallationWire>) =>
+  plugins.length > 0 ? { plugins } : {}
+
+/** What a Session runs with of an Installation: a change to any of it takes a Restart. */
+const runsWith = (one: SessionInstallationWire) =>
+  JSON.stringify([one.id, one.name, one.pluginName, one.server])
+
+/** Whether a Session's Installations differ from its Repo's, in what it runs with. */
+function differ(
+  a: ReadonlyArray<SessionInstallationWire>,
+  b: ReadonlyArray<SessionInstallationWire>,
+): boolean {
+  return JSON.stringify(a.map(runsWith).toSorted()) !== JSON.stringify(b.map(runsWith).toSorted())
+}
+
 /** The People page's commands (#209). */
 type PeopleCommand =
   | "CreateInvite"
@@ -233,6 +254,7 @@ export class FakeHub implements HubTransport {
   /** Pairing codes not yet redeemed or revoked; one may have expired. */
   readonly pairingCodes: Array<PendingPairingCodeWire> = []
   readonly environments = new FakeEnvironments()
+  readonly plugins = new FakePlugins()
   /**
    * What GitHub says of the signed-in person and each Repo (#104); any Repo not here is Allowed.
    * Seeded with one of each refusal for the demo.
@@ -287,6 +309,7 @@ export class FakeHub implements HubTransport {
           ...(listed.length > 0 && { agents: listed }),
           ...(seed.summary.state === "Active" &&
             seed.ports !== undefined && { openPorts: seed.ports }),
+          ...withPlugins(this.plugins.forSession(seed.summary.repo)),
         },
         log,
         queue: [],
@@ -530,6 +553,40 @@ export class FakeHub implements HubTransport {
   #repoStatus(repo: string): RepoStatus {
     for (const [known, status] of this.repoAccess) if (sameRepo(known, repo)) return status
     return "Allowed"
+  }
+
+  /** Whether the signed-in person has access to `repo`. */
+  readonly #allowed = (repo: string): boolean => this.#repoStatus(repo) === "Allowed"
+
+  /**
+   * A change to the Plugins, as the Hub makes it (ADR 0020): everyone is sent them again, each
+   * changed Repo's change log, and its Sessions whether their Installations changed since they
+   * started, which a Restart applies.
+   */
+  #changePlugins(
+    socket: FakeSocket,
+    message: Exclude<PluginCommand, { _tag: "GetPlugins" | "GetPluginLog" }>,
+  ): void {
+    const outcome = this.plugins.change(message, this.#you, this.#allowed)
+    if ("refused" in outcome) {
+      this.#refuse(socket, message._tag, message.requestId, outcome.refused)
+      return
+    }
+    const state = this.plugins.state(this.#allowed)
+    socket.deliver({ ...state, requestId: message.requestId })
+    this.#toOthers(socket, state)
+    const repos = new Map(outcome.repos.map((repo) => [repoKey(repo), repo]))
+    for (const repo of repos.values()) {
+      this.#toAll({ _tag: "PluginLog", repo, entries: [...this.plugins.log(repo)] })
+      const now = this.plugins.forSession(repo)
+      for (const session of this.sessions.values()) {
+        if (!sameRepo(session.summary.repo, repo) || session.summary.state === "Archived") continue
+        const { pluginsChanged: _, ...summary } = session.summary
+        const changed = differ(session.summary.plugins ?? [], now)
+        session.summary = changed ? { ...summary, pluginsChanged: true } : summary
+        this.#summaryChanged(session)
+      }
+    }
   }
 
   /** Refuses a command about a Repo out of reach, as the real Hub does; whether it did. */
@@ -987,6 +1044,26 @@ export class FakeHub implements HubTransport {
       case "RestartSession":
         this.#restart(socket, message.sessionId)
         break
+      case "GetPlugins":
+        socket.deliver({ ...this.plugins.state(this.#allowed), requestId: message.requestId })
+        break
+      case "GetPluginLog":
+        if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
+        socket.deliver({
+          _tag: "PluginLog",
+          requestId: message.requestId,
+          repo: message.repo,
+          entries: [...this.plugins.log(message.repo)],
+        })
+        break
+      case "CreatePlugin":
+      case "EditPlugin":
+      case "DeletePlugin":
+      case "CreateInstallation":
+      case "EditInstallation":
+      case "DeleteInstallation":
+        this.#changePlugins(socket, message)
+        break
       case "GetEnvironment":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         socket.deliver({ ...this.environments.state(message.repo), requestId: message.requestId })
@@ -1400,9 +1477,15 @@ export class FakeHub implements HubTransport {
       environment !== null && session.summary.environment?.version !== environment.version
     session.startLog = ""
     // As on the Hub, what Claude Code printed before it last exited goes once it starts again.
-    const { lastOutput: _lastOutput, ...rest } = session.summary
+    const {
+      lastOutput: _lastOutput,
+      plugins: _plugins,
+      pluginsChanged: _pluginsChanged,
+      ...rest
+    } = session.summary
     session.summary = {
       ...rest,
+      ...withPlugins(this.plugins.forSession(session.summary.repo)),
       starting: { since, ...(environment !== null && { environmentVersion: environment.version }) },
     }
     if (why) this.#setState(session, "Active", why.message, why.by)

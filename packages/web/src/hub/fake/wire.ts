@@ -9,11 +9,14 @@ import type {
   Environment,
   EnvironmentVersionInfo,
   HubToWeb,
+  Installation,
   Member,
   OpenPort,
   Participant,
   PendingInvite,
   PendingPairingCode,
+  Plugin,
+  PluginLogEntry,
   PresentParticipant,
   Question,
   QuestionAnswer,
@@ -21,6 +24,7 @@ import type {
   QueuedPrompt,
   RunnerSummary,
   SessionEvent,
+  SessionInstallation,
   SessionLogEntry,
   SessionSummary,
   SharedVariable,
@@ -48,3 +52,7 @@ export type PendingInviteWire = (typeof PendingInvite)["Encoded"]
 export type QuestionWire = (typeof Question)["Encoded"]
 export type QuestionAnswerWire = (typeof QuestionAnswer)["Encoded"]
 export type QuestionPickWire = (typeof QuestionPick)["Encoded"]
+export type PluginWire = (typeof Plugin)["Encoded"]
+export type InstallationWire = (typeof Installation)["Encoded"]
+export type PluginLogEntryWire = (typeof PluginLogEntry)["Encoded"]
+export type SessionInstallationWire = (typeof SessionInstallation)["Encoded"]
