@@ -249,6 +249,14 @@ import {
   TunnelCloseCode,
   repoKey,
   sameRepo,
+  messageAgentVerdict,
+  restartVerdict,
+  sendPromptRefusal,
+  type SessionNow,
+  sleepVerdict,
+  stopAgentRefusal,
+  stopTurnRefusal,
+  wakeVerdict,
 } from "@kndl/protocol"
 import {
   Clock,
@@ -1242,6 +1250,23 @@ export class SessionRelay extends Context.Service<
 
       // ── The Prompt queue ─────────────────────────────────────────────────
 
+      /** What the lifecycle rules (SessionRules) read of a Session, as the Hub knows it now. */
+      const sessionNow = Effect.fn("SessionRelay.sessionNow")(function* (
+        session: SessionSummary,
+      ): Effect.fn.Return<SessionNow, SqlError> {
+        const { start, restart } = live.view(session.id)
+        return {
+          state: session.state,
+          starting: start !== undefined,
+          goingToSleep: live.goingToSleep(session.id),
+          restarting: restart !== undefined,
+          turnRunning: session.currentTurn !== null,
+          promptOut: live.promptOut(session.id),
+          queued: (yield* prompts.list(session.id)).length,
+          runnerOnline: peers.runner(session.runnerId) !== undefined,
+        }
+      })
+
       /**
        * Sends the head of the Session's Prompt queue to its mod, if the Session is Active and
        * idle, its mod has said hello, it isn't going to sleep, and no other prompt is out for
@@ -2177,11 +2202,8 @@ export class SessionRelay extends Context.Service<
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
               // A Frozen Session's prompts wait in the queue for its Runner to return.
-              if (session.value.state === "Archived") {
-                return refuse(message, "The Session is archived: restore it to send prompts.", {
-                  sessionId,
-                })
-              }
+              const cantSend = sendPromptRefusal(session.value)
+              if (cantSend !== undefined) return refuse(message, cantSend.refusal, { sessionId })
               yield* prompts.add(
                 sessionId,
                 QueuedPrompt.make({
@@ -2210,29 +2232,9 @@ export class SessionRelay extends Context.Service<
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
               // Pressing Sleep turns Keep awake off (ADR 0016), even while it is going to sleep.
-              if (live.goingToSleep(sessionId)) return yield* stopKeepingAwake(session.value)
-              if (session.value.state !== "Active") {
-                return refuse(
-                  message,
-                  `Only an Active Session can be put to sleep; this one is ${session.value.state}.`,
-                  { sessionId },
-                )
-              }
-              if (live.startUnderWay(sessionId)) {
-                return refuse(
-                  message,
-                  "The Session is still starting; put it to sleep once it has started.",
-                  { sessionId },
-                )
-              }
-              if (session.value.currentTurn !== null) {
-                return refuse(message, "A Turn is running: stop it first.", { sessionId })
-              }
-              if (live.promptOut(sessionId) || (yield* prompts.list(sessionId)).length > 0) {
-                return refuse(message, "Prompts are waiting in the Session's queue.", {
-                  sessionId,
-                })
-              }
+              const verdict = sleepVerdict(yield* sessionNow(session.value))
+              if (verdict === "going") return yield* stopKeepingAwake(session.value)
+              if (verdict !== "sleep") return refuse(message, verdict.refusal, { sessionId })
               yield* stopKeepingAwake(session.value)
               return yield* putToSleep(session.value, { by: you, message: "Put to sleep" })
             }
@@ -2264,30 +2266,14 @@ export class SessionRelay extends Context.Service<
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              switch (session.value.state) {
-                case "Asleep": {
-                  const refused = yield* wake(session.value, { by: you })
-                  if (refused !== undefined) return refuse(message, refused, { sessionId })
-                  return
-                }
-                case "Active":
-                  if (live.goingToSleep(sessionId)) {
-                    return refuse(
-                      message,
-                      "The Session is still going to sleep; wake it once it is Asleep.",
-                      { sessionId },
-                    )
-                  }
-                  return
-                case "Frozen":
-                  return refuse(
-                    message,
-                    "The Session is Frozen: its Runner is offline. It wakes when the Runner returns, if prompts are waiting.",
-                    { sessionId },
-                  )
-                case "Archived":
-                  return refuse(message, "The Session is archived.", { sessionId })
-              }
+              const verdict = wakeVerdict({
+                state: session.value.state,
+                goingToSleep: live.goingToSleep(sessionId),
+              })
+              if (verdict === "awake") return
+              if (verdict !== "wake") return refuse(message, verdict.refusal, { sessionId })
+              const refused = yield* wake(session.value, { by: you })
+              if (refused !== undefined) return refuse(message, refused, { sessionId })
               return
             }
 
@@ -2296,60 +2282,23 @@ export class SessionRelay extends Context.Service<
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              if (live.view(sessionId).restart !== undefined) {
-                return refuse(message, "The Session is already restarting.", { sessionId })
+              const verdict = restartVerdict(yield* sessionNow(session.value))
+              if (verdict === "wake") {
+                // Set first, so the woken Session shows it is restarting.
+                live.restartWaking(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
+                const refused = yield* wake(session.value, { by: you })
+                live.restartOver(sessionId)
+                if (refused !== undefined) return refuse(message, refused, { sessionId })
+                return
               }
-              switch (session.value.state) {
-                case "Asleep": {
-                  // Set first, so the woken Session shows it is restarting.
-                  live.restartWaking(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
-                  const refused = yield* wake(session.value, { by: you })
-                  live.restartOver(sessionId)
-                  if (refused !== undefined) return refuse(message, refused, { sessionId })
-                  return
-                }
-                case "Active":
-                  if (live.startUnderWay(sessionId)) {
-                    // Its Sandbox is being made from the version it was sent: restarting now
-                    // would only start it again behind this start.
-                    return refuse(
-                      message,
-                      "The Session is still starting; restart it once it has started.",
-                      { sessionId },
-                    )
-                  }
-                  if (live.goingToSleep(sessionId)) {
-                    return refuse(
-                      message,
-                      "The Session is going to sleep; wake it once it is Asleep.",
-                      { sessionId },
-                    )
-                  }
-                  if (session.value.currentTurn !== null || live.promptOut(sessionId)) {
-                    return refuse(message, "A Turn is running: stop it first, then restart.", {
-                      sessionId,
-                    })
-                  }
-                  if (peers.runner(session.value.runnerId) === undefined) {
-                    return refuse(message, "The Session's Runner is offline.", { sessionId })
-                  }
-                  yield* putToSleep(
-                    session.value,
-                    { by: you, message: "Restarting for the Environment's latest version" },
-                    { by: you, since: yield* Clock.currentTimeMillis },
-                  )
-                  // Nothing in the log says so until it is Asleep: the summary does.
-                  return yield* sessionUpdated(sessionId)
-                case "Frozen":
-                  return refuse(
-                    message,
-                    "The Session is Frozen: its Runner is offline. Restart it once the Runner returns.",
-                    { sessionId },
-                  )
-                case "Archived":
-                  return refuse(message, "The Session is archived.", { sessionId })
-              }
-              return
+              if (verdict !== "stop") return refuse(message, verdict.refusal, { sessionId })
+              yield* putToSleep(
+                session.value,
+                { by: you, message: "Restarting for the Environment's latest version" },
+                { by: you, since: yield* Clock.currentTimeMillis },
+              )
+              // Nothing in the log says so until it is Asleep: the summary does.
+              return yield* sessionUpdated(sessionId)
             }
 
             case "ArchiveSession": {
@@ -2479,11 +2428,8 @@ export class SessionRelay extends Context.Service<
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              if (session.value.state === "Archived") {
-                return refuse(message, "The Session is archived: no Turn is running.", {
-                  sessionId,
-                })
-              }
+              const cantStop = stopTurnRefusal(session.value)
+              if (cantStop !== undefined) return refuse(message, cantStop.refusal, { sessionId })
               yield* logEvent(sessionId, TurnStopRequested.make({ by: you }))
               yield* outbox.enqueue(sessionId, StopTurn.make({ sessionId }))
               return
@@ -2493,40 +2439,21 @@ export class SessionRelay extends Context.Service<
               const { sessionId, agentId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              if (Option.isNone(yield* sessions.agentStatus(sessionId, agentId))) {
-                return refuse(message, "The Session has no such agent.", { sessionId })
-              }
-              switch (session.value.state) {
-                case "Archived":
-                  return refuse(message, "The Session is archived: restore it to message agents.", {
+              const verdict = messageAgentVerdict({
+                state: session.value.state,
+                goingToSleep: live.goingToSleep(sessionId),
+                agentKnown: Option.isSome(yield* sessions.agentStatus(sessionId, agentId)),
+              })
+              if (typeof verdict === "object")
+                return refuse(message, verdict.refusal, { sessionId })
+              if (verdict === "wake") {
+                // Its new Claude Code resumes the agent from its transcript.
+                const refused = yield* wake(session.value, { by: you })
+                if (refused !== undefined) return refuse(message, refused, { sessionId })
+                if (!live.awaitingHello(sessionId)) {
+                  return refuse(message, "The Session could not be woken: see its history.", {
                     sessionId,
                   })
-                case "Frozen":
-                  return refuse(
-                    message,
-                    "The Session's Runner is offline: message the agent once it is back.",
-                    { sessionId },
-                  )
-                case "Active":
-                  if (live.goingToSleep(sessionId)) {
-                    return refuse(
-                      message,
-                      "The Session is going to sleep: message the agent once it is Asleep.",
-                      {
-                        sessionId,
-                      },
-                    )
-                  }
-                  break
-                case "Asleep": {
-                  // Its new Claude Code resumes the agent from its transcript.
-                  const refused = yield* wake(session.value, { by: you })
-                  if (refused !== undefined) return refuse(message, refused, { sessionId })
-                  if (!live.awaitingHello(sessionId)) {
-                    return refuse(message, "The Session could not be woken: see its history.", {
-                      sessionId,
-                    })
-                  }
                 }
               }
               yield* logEvent(
@@ -2576,13 +2503,11 @@ export class SessionRelay extends Context.Service<
               const { sessionId, agentId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              const status = yield* sessions.agentStatus(sessionId, agentId)
-              if (Option.isNone(status)) {
-                return refuse(message, "The Session has no such agent.", { sessionId })
-              }
-              if (status.value !== "Running" || session.value.state !== "Active") {
-                return refuse(message, "The agent isn't running.", { sessionId })
-              }
+              const cantStop = stopAgentRefusal({
+                state: session.value.state,
+                agent: Option.getOrUndefined(yield* sessions.agentStatus(sessionId, agentId)),
+              })
+              if (cantStop !== undefined) return refuse(message, cantStop.refusal, { sessionId })
               yield* outbox.enqueue(sessionId, StopAgent.make({ sessionId, agentId }))
               return
             }

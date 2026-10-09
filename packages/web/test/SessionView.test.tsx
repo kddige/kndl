@@ -173,8 +173,13 @@ test("a queued prompt steered into the running Turn leaves the queue and joins i
   await eventually(() => expect(queue()).toContain("And a line in the changelog"))
   expect(steerButtons()).toHaveLength(1)
 
-  await step(() => button("Steer Alice Kim's prompt into the running Turn", page).click())
+  const steer = () => button("Steer Alice Kim's prompt into the running Turn", page)
+  await step(() => steer().click())
   expect(hub.received.map((message) => message._tag)).toContain("SteerPrompt")
+  // As on the Hub, it keeps its place in the queue, its Steer button spinning, until the mod
+  // says it joined the Turn.
+  expect(queue()).toContain("And a line in the changelog")
+  expect(steer().getAttribute("aria-busy")).toBe("true")
   await eventually(() => expect(page.querySelector('[aria-label="Prompt queue"]')).toBeNull())
   // It joins the running Turn, the one Alice's first prompt started, under her name.
   const steered = () => page.querySelector("[data-steered]")
@@ -185,6 +190,52 @@ test("a queued prompt steered into the running Turn leaves the queue and joins i
   await eventually(() => expect(steered()?.textContent).toContain("Steered into the Turn"))
   // It started no Turn of its own.
   expect(conversation().split("And a line in the changelog")).toHaveLength(2)
+})
+
+test("a steer the Turn ends before keeps the prompt in its place, and its spinner stops (#195)", async () => {
+  const hub = new FakeHub({ stepMs: 100, autoplay: false })
+  const client = new HubClient(hub, { retryDelay: () => 1 })
+  const router = createAppRouter(
+    createMemoryHistory({ initialEntries: [`/sessions/${demoSessionId}`] }),
+  )
+  const view = await render(
+    <HubProvider client={client}>
+      <RouterProvider router={router} />
+    </HubProvider>,
+  )
+  cleanup = async () => {
+    await view.unmount()
+    client.stop()
+    hub.dispose()
+  }
+  const page = view.container
+  const queue = () => page.querySelector('[aria-label="Prompt queue"]')?.textContent ?? ""
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/web-client"))
+  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
+  if (!prompt) throw new Error("no prompt field")
+  await step(() => typeInto(prompt, "Rename the flag"))
+  await step(() => button("Send prompt", page).click())
+  await eventually(() => expect(button("Queue prompt", page)).toBeDefined())
+  await step(() => typeInto(prompt, "And a line in the changelog"))
+  await step(() => button("Queue prompt", page).click())
+  await eventually(() => expect(queue()).toContain("And a line in the changelog"))
+
+  // Stopped before the mod could append it, the Turn ends with the steer unanswered.
+  const steer = "Steer Alice Kim's prompt into the running Turn"
+  await step(() => button(steer, page).click())
+  expect(button(steer, page).getAttribute("aria-busy")).toBe("true")
+  await step(() => button("Stop", page).click())
+
+  // The mod fails it, and the prompt waits as before; then it goes next, as a Turn of its own.
+  await eventually(() =>
+    expect(findToast("The prompt could not join the running Turn")).toBeDefined(),
+  )
+  expect(page.querySelector("[data-steered]")).toBeNull()
+  const lastTurn = () => [...page.querySelectorAll("[data-turn]")].at(-1)?.textContent ?? ""
+  await eventually(() => expect(lastTurn()).toContain("And a line in the changelog"))
+  expect(page.querySelector("[data-steered]")).toBeNull()
+  const { toast } = await import("../src/ui/index.ts")
+  await step(() => toast.close())
 })
 
 /**

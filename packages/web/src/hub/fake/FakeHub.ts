@@ -8,12 +8,15 @@
 // short of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
 //
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
-// message the real Hub would refuse fails here too.
+// message the real Hub would refuse fails here too. What it refuses of a Session, and how its Prompt
+// queue and Steer behave, it decides by the protocol's Session rules (SessionRules.ts), as the real
+// Hub does; HubContract.test.ts runs the same HubClient tests against both.
 
 import {
   admissionLink,
   type BranchChoice,
   branchesFor,
+  cancelRefusal,
   cantStartText,
   checkHandshake,
   claudeCredentialKindOf,
@@ -28,11 +31,14 @@ import {
   findModel,
   formatCliLoginCode,
   formatPairingCode,
+  deliveryBlocked,
   installationFailureText,
+  installationsDiffer,
   installationsCantStartText,
   InviteLifetimeMs,
   InvitePath,
   memberRemovalRefusal,
+  messageAgentVerdict,
   modelNotFoundText,
   ownerOnlyMessage,
   PairingAlphabet,
@@ -41,13 +47,22 @@ import {
   pairingLink,
   Participant,
   ProtocolVersion,
+  type PromptHandover,
   type RepoStatus,
   repoKey,
+  restartVerdict,
   runnerRemovalRefusal,
   sameRepo,
+  sendPromptRefusal,
   SessionId,
+  type SessionNow,
   sessionNameFrom,
+  sleepVerdict,
+  steerVerdict,
+  stopAgentRefusal,
+  stopTurnRefusal,
   UpdateDrainMillis,
+  wakeVerdict,
   WebToHub,
 } from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
@@ -121,12 +136,26 @@ export interface FakeHubOptions {
   cliTokens?: ReadonlyArray<CliTokenInfoWire>
   /** Whether the signed-in person is the Hub's Owner (#209), who has the People page. Default true. */
   owner?: boolean
+  /** How Claude answers a prompt from the web, as a script. Default `replyTo`'s. */
+  reply?: (text: string) => ReadonlyArray<ReplyStep>
 }
 
 interface FakeSession {
   summary: SessionSummaryWire
   log: Array<LogEntryWire>
   queue: Array<QueuedPromptWire>
+  /**
+   * The queued prompt delivered to its mod that no Turn has started from yet: it stays in the
+   * queue until one does, as on the Hub.
+   */
+  inFlight: string | null
+  /**
+   * The queued prompts sent to join the running Turn (ADR 0018), until the mod says each joined
+   * or failed: each keeps its place in the queue until then.
+   */
+  steering: Set<string>
+  /** Whether its mod said in its hello that it steers (#195): one from before steering doesn't. */
+  modSteers: boolean
   /** People the script puts in the Session, besides whoever is connected. */
   guests: Array<PresentParticipantWire>
   /** Cancels the running Turn's remaining steps. */
@@ -233,25 +262,6 @@ const notListed = "Could not list your Repos; try again."
 const withMcpServers = (mcpServers: ReadonlyArray<SessionInstallationWire>) =>
   mcpServers.length > 0 ? { mcpServers } : {}
 
-/** What a Session runs with of an Installation: a change to any of it takes a Restart. */
-const runsWith = (one: SessionInstallationWire) =>
-  JSON.stringify([
-    one.id,
-    one.name,
-    one.mcpServerName,
-    one.mcpServerVersion ?? "",
-    one.server,
-    one.values ?? [],
-  ])
-
-/** Whether a Session's Installations differ from its Repo's, in what it runs with. */
-function differ(
-  a: ReadonlyArray<SessionInstallationWire>,
-  b: ReadonlyArray<SessionInstallationWire>,
-): boolean {
-  return JSON.stringify(a.map(runsWith).toSorted()) !== JSON.stringify(b.map(runsWith).toSorted())
-}
-
 /** The People page's commands (#209). */
 type PeopleCommand =
   | "CreateInvite"
@@ -298,6 +308,7 @@ export class FakeHub implements HubTransport {
   #claudeCredential: ClaudeCredentialInfoWire | null
   #cliTokens: Array<CliTokenInfoWire>
   #owner: boolean
+  readonly #reply: (text: string) => ReadonlyArray<ReplyStep>
   /** The Hub's Members (#209), the Owner first. */
   members: Array<MemberWire> = seedMembers()
   /** Invites not yet used or revoked; one may have expired. */
@@ -320,6 +331,7 @@ export class FakeHub implements HubTransport {
     this.#claudeCredential = options.claudeCredential ?? null
     this.#cliTokens = [...(options.cliTokens ?? seedCliTokens())]
     this.#owner = options.owner ?? true
+    this.#reply = options.reply ?? replyTo
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       const log = seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event }))
@@ -338,6 +350,9 @@ export class FakeHub implements HubTransport {
         },
         log,
         queue: [],
+        inFlight: null,
+        steering: new Set(),
+        modSteers: true,
         guests: [],
         stopTurn: null,
         terminal: null,
@@ -475,6 +490,16 @@ export class FakeHub implements HubTransport {
     })
     this.#toOwner(this.#memberList())
     this.#toOwner(this.#inviteList())
+  }
+
+  /**
+   * The Session's Claude Code runs a mod from before steering (#195), as on a Runner not updated
+   * yet: its queued prompts can't be steered. In the browser,
+   * `fakeHub.modFromBeforeSteering("s-demo")` in the console.
+   */
+  modFromBeforeSteering(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session) session.modSteers = false
   }
 
   /** Drops every connection, as a network blip would. */
@@ -654,7 +679,7 @@ export class FakeHub implements HubTransport {
       for (const session of this.sessions.values()) {
         if (!sameRepo(session.summary.repo, repo) || session.summary.state === "Archived") continue
         const { mcpServersChanged: _, ...summary } = session.summary
-        const changed = differ(session.summary.mcpServers ?? [], now)
+        const changed = installationsDiffer(session.summary.mcpServers ?? [], now)
         session.summary = changed ? { ...summary, mcpServersChanged: true } : summary
         this.#summaryChanged(session)
       }
@@ -907,11 +932,8 @@ export class FakeHub implements HubTransport {
         break
       }
       case "JoinSession": {
-        const session = this.sessions.get(message.sessionId)
-        if (!session) {
-          this.#fail(socket, "JoinSession", "No such Session.", message.sessionId)
-          break
-        }
+        const session = this.#sessionFor(socket, message)
+        if (!session) break
         socket.joined.add(message.sessionId)
         const after = message.afterSeq ?? -1
         socket.deliver({
@@ -953,79 +975,68 @@ export class FakeHub implements HubTransport {
         break
       }
       case "SendPrompt": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
-        if (session.summary.state === "Archived") {
-          this.#fail(
-            socket,
-            "SendPrompt",
-            "The Session is archived: restore it to send prompts.",
-            message.sessionId,
-          )
+        const cantSend = sendPromptRefusal(session.summary)
+        if (cantSend !== undefined) {
+          this.#fail(socket, message._tag, cantSend.refusal, message.sessionId)
           break
         }
-        this.#prompt(session, this.#you, message.text, replyTo(message.text))
+        this.#prompt(session, this.#you, message.text, this.#reply(message.text))
         break
       }
+      // As the Hub does: a prompt on its way to Claude Code can't be cancelled.
       case "CancelPrompt": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
+        const cantCancel = cancelRefusal(this.#handover(session, message.promptId))
+        if (cantCancel !== undefined) {
+          this.#fail(socket, message._tag, cantCancel.refusal, message.sessionId)
+          break
+        }
         session.queue = session.queue.filter((prompt) => prompt.id !== message.promptId)
+        this.#replies.delete(message.promptId)
         this.#queueChanged(session)
         break
       }
-      // As the Hub and the mod do (#195): the prompt joins the running Turn, which reads it at
-      // its next step; one the Turn ends before reading stays unread.
+      // As the Hub and the mod do (ADR 0018): the prompt keeps its place in the queue until the
+      // mod has appended it to the running Turn, which reads it at its next step.
       case "SteerPrompt": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
-        const turnId = session.summary.currentTurn
-        const prompt = session.queue.find((queued) => queued.id === message.promptId)
-        if (turnId === null || !session.stopTurn) {
-          this.#fail(
-            socket,
-            message._tag,
-            "No Turn is running to steer the prompt into: it goes next.",
-            message.sessionId,
-          )
+        const { promptId } = message
+        const verdict = steerVerdict({
+          ...this.#handover(session, promptId),
+          turnRunning:
+            session.summary.state === "Active" &&
+            session.summary.currentTurn !== null &&
+            !this.#goingToSleep(session),
+          modSteers: session.modSteers,
+        })
+        if (typeof verdict === "object") {
+          this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
           break
         }
-        if (!prompt) {
-          this.#fail(
-            socket,
-            message._tag,
-            "The prompt is not in the Prompt queue.",
-            message.sessionId,
-          )
-          break
-        }
-        session.queue = session.queue.filter((queued) => queued !== prompt)
-        this.#replies.delete(prompt.id)
-        this.#queueChanged(session)
-        this.#append(session, {
-          _tag: "PromptSteered",
-          turnId,
-          promptId: prompt.id,
-          text: prompt.text,
-          sender: prompt.sender,
-        })
-        this.#after(3, () => {
-          if (session.summary.currentTurn !== turnId) return
-          this.#append(session, { _tag: "SteeredPromptRead", turnId, promptId: prompt.id })
-        })
+        if (verdict === "ok") this.#steer(session, promptId)
         break
       }
       case "StopTurn": {
-        const session = this.sessions.get(message.sessionId)
-        if (!session?.stopTurn) break
+        const session = this.#sessionFor(socket, message)
+        if (!session) break
+        const cantStop = stopTurnRefusal(session.summary)
+        if (cantStop !== undefined) {
+          this.#fail(socket, message._tag, cantStop.refusal, message.sessionId)
+          break
+        }
+        // Logged and sent to the mod whether or not a Turn runs, as on the Hub.
         this.#append(session, { _tag: "TurnStopRequested", by: this.#you })
-        session.stopTurn()
+        session.stopTurn?.()
         break
       }
       // As the Hub and the mod do (#193): the first answer is Claude's; a later one is refused,
       // saying who answered first.
       case "AnswerQuestion": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
         if (session.asking?.toolCallId !== message.toolCallId) {
           const closed = session.log.findLast(
@@ -1037,7 +1048,7 @@ export class FakeHub implements HubTransport {
             message._tag,
             closed
               ? `${questionClosedText(decodeQuestionClosed(closed.event), true)}.`
-              : "The question was answered or closed already.",
+              : "The question is no longer open.",
             message.sessionId,
           )
           break
@@ -1046,7 +1057,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "PickAnswer": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         const asking = session?.asking
         if (!session || asking?.toolCallId !== message.toolCallId) break
         const { question, answer } = message
@@ -1056,21 +1067,25 @@ export class FakeHub implements HubTransport {
       // As the Hub does (ADR 0014): anyone may message an agent, which resumes one that has
       // stopped, waking its Session first; a Running one can be stopped.
       case "MessageAgent": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
-        const agent = session.agents.get(message.agentId)
-        const refusal = !agent
-          ? "The Session has no such agent."
-          : session.summary.state === "Archived"
-            ? "The Session is archived: restore it to message agents."
-            : session.summary.state === "Frozen"
-              ? "The Session's Runner is offline: message the agent once it is back."
-              : undefined
-        if (refusal !== undefined) {
-          this.#fail(socket, message._tag, refusal, message.sessionId)
+        const verdict = messageAgentVerdict({
+          state: session.summary.state,
+          goingToSleep: this.#goingToSleep(session),
+          agentKnown: session.agents.has(message.agentId),
+        })
+        if (typeof verdict === "object") {
+          this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
           break
         }
-        if (session.summary.state === "Asleep") this.#wake(session, "Woken on studio", this.#you)
+        if (verdict === "wake") {
+          this.#wake(session, "Woken on studio", this.#you)
+          if (!session.summary.starting) {
+            const reason = "The Session could not be woken: see its history."
+            this.#fail(socket, message._tag, reason, message.sessionId)
+            break
+          }
+        }
         this.#append(session, {
           _tag: "AgentMessaged",
           agentId: message.agentId,
@@ -1081,44 +1096,36 @@ export class FakeHub implements HubTransport {
         break
       }
       case "StopAgent": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
         const agent = session.agents.get(message.agentId)
-        if (!agent) {
-          this.#fail(socket, message._tag, "The Session has no such agent.", message.sessionId)
+        const cantStop = stopAgentRefusal({
+          state: session.summary.state,
+          agent: agent?.summary.status,
+        })
+        if (cantStop !== undefined) {
+          this.#fail(socket, message._tag, cantStop.refusal, message.sessionId)
           break
         }
-        if (agent.summary.status !== "Running" || session.summary.state !== "Active") {
-          this.#fail(socket, message._tag, "The agent isn't running.", message.sessionId)
-          break
-        }
-        agent.stop?.("Stopped")
+        agent?.stop?.("Stopped")
         break
       }
       case "SleepSession": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
-        if (session.summary.starting) {
-          const reason = "The Session is still starting; put it to sleep once it has started."
-          this.#fail(socket, "SleepSession", reason, message.sessionId)
+        const verdict = sleepVerdict(this.#sessionNow(session))
+        // Pressing Sleep turns Keep awake off, as on the Hub (ADR 0016), even while it is going
+        // to sleep.
+        if (typeof verdict === "object") {
+          this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
           break
         }
-        if (session.summary.state !== "Active" || session.stopTurn || session.queue.length > 0) {
-          this.#fail(
-            socket,
-            "SleepSession",
-            "Only an idle Active Session can be put to sleep.",
-            message.sessionId,
-          )
-          break
-        }
-        // Pressing Sleep turns Keep awake off, as on the Hub (ADR 0016).
         this.#setKeepAwake(session, false)
-        this.#setState(session, "Asleep", "Put to sleep", this.#you)
+        if (verdict === "sleep") this.#setState(session, "Asleep", "Put to sleep", this.#you)
         break
       }
       case "SetKeepAwake": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
         if (session.summary.state === "Archived") {
           this.#fail(socket, message._tag, "The Session is archived.", message.sessionId)
@@ -1132,18 +1139,19 @@ export class FakeHub implements HubTransport {
         break
       }
       case "WakeSession": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
-        if (session.summary.state === "Asleep") {
+        const verdict = wakeVerdict({
+          state: session.summary.state,
+          goingToSleep: this.#goingToSleep(session),
+        })
+        if (typeof verdict === "object") {
+          this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
+          break
+        }
+        if (verdict === "wake") {
           this.#wake(session, "Woken on studio", this.#you)
           this.#next(session)
-        } else if (session.summary.state !== "Active") {
-          this.#fail(
-            socket,
-            "WakeSession",
-            `The Session is ${session.summary.state}.`,
-            message.sessionId,
-          )
         }
         break
       }
@@ -1422,7 +1430,7 @@ export class FakeHub implements HubTransport {
       // keystrokes and resizes reach only an Active Session, from someone watching it. An
       // Archived Session has no terminal to open.
       case "OpenTerminal": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
         if (session.summary.state === "Archived") {
           this.#fail(
@@ -1442,7 +1450,7 @@ export class FakeHub implements HubTransport {
         break
       case "TerminalInput":
       case "TerminalResize": {
-        const session = this.sessions.get(message.sessionId)
+        const session = this.#sessionFor(socket, message)
         if (!session) break
         if (!socket.terminals.has(message.sessionId)) {
           this.#fail(socket, message._tag, "Open the Session's terminal first.", message.sessionId)
@@ -1563,6 +1571,9 @@ export class FakeHub implements HubTransport {
       summary,
       log: [],
       queue: [],
+      inFlight: null,
+      steering: new Set(),
+      modSteers: true,
       guests: [],
       stopTurn: null,
       terminal: null,
@@ -1649,58 +1660,34 @@ export class FakeHub implements HubTransport {
       this.#fail(socket, "RestartSession", "There is no such Session.", sessionId)
       return
     }
-    if (session.summary.restarting) {
-      this.#fail(socket, "RestartSession", "The Session is already restarting.", sessionId)
+    const verdict = restartVerdict(this.#sessionNow(session))
+    if (typeof verdict === "object") {
+      this.#fail(socket, "RestartSession", verdict.refusal, sessionId)
       return
     }
     const restarting = { by: this.#you, since: Date.now() }
-    switch (session.summary.state) {
-      case "Asleep":
-        session.summary = { ...session.summary, restarting }
-        this.#wake(session, "Woken on studio", this.#you)
-        return
-      case "Active":
-        if (session.summary.starting) {
-          const reason = "The Session is still starting; restart it once it has started."
-          this.#fail(socket, "RestartSession", reason, sessionId)
-          return
-        }
-        if (session.stopTurn) {
-          const reason = "A Turn is running: stop it first, then restart."
-          this.#fail(socket, "RestartSession", reason, sessionId)
-          return
-        }
-        // Active until its Runner has stopped it, then Asleep, then started again.
-        session.summary = { ...session.summary, restarting }
-        this.#summaryChanged(session)
-        this.#after(3, () => {
-          if (session.summary.restarting !== restarting) return
-          this.#setState(
-            session,
-            "Asleep",
-            "Restarting for the Environment's latest version",
-            this.#you,
-          )
-        })
-        this.#after(6, () => {
-          if (session.summary.state !== "Asleep" || session.summary.restarting !== restarting) {
-            return
-          }
-          this.#wake(session, "Woken on studio", this.#you)
-        })
-        return
-      case "Frozen":
-        this.#fail(
-          socket,
-          "RestartSession",
-          "The Session is Frozen: its Runner is offline. Restart it once the Runner returns.",
-          sessionId,
-        )
-        return
-      case "Archived":
-        this.#fail(socket, "RestartSession", "The Session is archived.", sessionId)
-        return
+    session.summary = { ...session.summary, restarting }
+    if (verdict === "wake") {
+      this.#wake(session, "Woken on studio", this.#you)
+      return
     }
+    // Active until its Runner has stopped it, then Asleep, then started again.
+    this.#summaryChanged(session)
+    this.#after(3, () => {
+      if (session.summary.restarting !== restarting) return
+      this.#setState(
+        session,
+        "Asleep",
+        "Restarting for the Environment's latest version",
+        this.#you,
+      )
+    })
+    this.#after(6, () => {
+      if (session.summary.state !== "Asleep" || session.summary.restarting !== restarting) {
+        return
+      }
+      this.#wake(session, "Woken on studio", this.#you)
+    })
   }
 
   /**
@@ -1770,25 +1757,42 @@ export class FakeHub implements HubTransport {
     session.queue.push(prompt)
     this.#queueChanged(session)
     // A Frozen Session's prompts wait for its Runner.
-    if (session.stopTurn === null && session.summary.state !== "Frozen") this.#next(session)
+    this.#next(session)
   }
 
   /**
-   * Delivers the next queued prompt; an Asleep Session is woken first, and a starting or
-   * restarting one gets it once it has started.
+   * Delivers the head of the Prompt queue, as the Hub does, when the Session is Active and idle and
+   * nothing holds delivery up; an Asleep Session is woken first, and a starting or restarting one
+   * gets it once it has started. The mod starts a Turn from it a step later, and it stays in the
+   * queue until then.
    */
   #next(session: FakeSession): void {
-    const { state, starting, restarting } = session.summary
-    if (state === "Archived" || starting || restarting || session.stopTurn) return
-    if (session.queue.length === 0) return
-    if (session.summary.state === "Asleep") {
-      this.#wake(session, "Woken by a prompt")
+    const { state, starting, restarting, currentTurn } = session.summary
+    const [prompt] = session.queue
+    if (!prompt) return
+    if (state === "Asleep") {
+      // One restarting is woken by its restart.
+      if (!restarting) this.#wake(session, "Woken by a prompt")
       return
     }
-    const prompt = session.queue.shift()
-    if (!prompt) return
-    this.#queueChanged(session)
-    const reply = this.#replies.get(prompt.id) ?? replyTo(prompt.text)
+    if (state !== "Active" || currentTurn !== null || session.stopTurn) return
+    const blocked = deliveryBlocked({
+      promptOut: session.inFlight !== null,
+      awaitingHello: starting !== undefined,
+      goingToSleep: this.#goingToSleep(session),
+      steering: session.steering.size > 0,
+    })
+    if (blocked) return
+    session.inFlight = prompt.id
+    this.#after(1, () => {
+      if (session.inFlight === prompt.id) this.#turnFrom(session, prompt)
+    })
+  }
+
+  /** Claude Code starts a Turn from the prompt it was delivered: it leaves the queue. */
+  #turnFrom(session: FakeSession, prompt: QueuedPromptWire): void {
+    session.inFlight = null
+    const reply = this.#replies.get(prompt.id) ?? this.#reply(prompt.text)
     this.#replies.delete(prompt.id)
     this.#runTurn(
       session,
@@ -1800,6 +1804,51 @@ export class FakeHub implements HubTransport {
       },
       reply,
     )
+    session.queue = session.queue.filter((queued) => queued.id !== prompt.id)
+    this.#queueChanged(session)
+  }
+
+  /**
+   * The mod is sent the queued prompt to join the running Turn (DeliverIntoTurn), and appends it a
+   * step later, which hub-link reports as PromptSteered: it leaves the queue then, and the Turn
+   * reads it at its next step. A Turn that ends first leaves it unappended: the mod fails it, and
+   * it waits in its place, as any queued prompt does.
+   */
+  #steer(session: FakeSession, promptId: string): void {
+    const turnId = session.summary.currentTurn
+    if (turnId === null) return
+    session.steering.add(promptId)
+    this.#after(1, () => {
+      // Its Claude Code stopped meanwhile, and the mod with it: nothing answers.
+      if (!session.steering.delete(promptId)) return
+      const prompt = session.queue.find((queued) => queued.id === promptId)
+      if (!prompt || session.summary.currentTurn !== turnId) {
+        // PromptFailed, told to whoever steered it, as the Hub words it.
+        this.#toAll({
+          _tag: "CommandFailed",
+          command: "SteerPrompt",
+          sessionId: session.summary.id,
+          message:
+            "The prompt could not join the running Turn, so it waits in the queue: no Turn is running.",
+        })
+        this.#next(session)
+        return
+      }
+      this.#append(session, {
+        _tag: "PromptSteered",
+        turnId,
+        promptId,
+        text: prompt.text,
+        sender: prompt.sender,
+      })
+      session.queue = session.queue.filter((queued) => queued !== prompt)
+      this.#replies.delete(promptId)
+      this.#queueChanged(session)
+      this.#after(2, () => {
+        if (session.summary.currentTurn !== turnId) return
+        this.#append(session, { _tag: "SteeredPromptRead", turnId, promptId })
+      })
+    })
   }
 
   #runTurn(session: FakeSession, start: TurnStart, steps: ReadonlyArray<ReplyStep>): void {
@@ -2320,6 +2369,12 @@ export class FakeHub implements HubTransport {
   ): void {
     const wasActive = session.summary.state === "Active"
     if (wasActive && (state === "Asleep" || state === "Archived")) this.#interruptAgents(session)
+    // Its Claude Code is gone, and its mod: a delivery or steer under way is never answered, and
+    // the prompt stays in its place in the queue.
+    if (state === "Asleep" || state === "Archived") {
+      session.inFlight = null
+      session.steering.clear()
+    }
     // As on the Hub, a Session that isn't Active has no Open ports (#175).
     const { openPorts: _openPorts, ...summary } = session.summary
     session.summary = { ...(state === "Active" ? session.summary : summary), state }
@@ -2378,6 +2433,48 @@ export class FakeHub implements HubTransport {
     return [...this.#sockets].filter(
       (socket) => socket.welcomed && socket.joined.has(session.summary.id),
     )
+  }
+
+  /** The Session a command names, or none, having refused the command, as the Hub does. */
+  #sessionFor(
+    socket: FakeSocket,
+    message: Extract<WebToHub, { readonly sessionId: unknown }>,
+  ): FakeSession | undefined {
+    const session = this.sessions.get(message.sessionId)
+    if (!session) this.#fail(socket, message._tag, "There is no such Session.", message.sessionId)
+    return session
+  }
+
+  /** Where a prompt is on its way to Claude Code, as the Hub's rules read it (SessionRules). */
+  #handover(session: FakeSession, promptId: string): PromptHandover {
+    return {
+      queued: session.queue.some((prompt) => prompt.id === promptId),
+      delivered: session.inFlight === promptId,
+      steering: session.steering.has(promptId),
+    }
+  }
+
+  /** Whether it is being stopped for a restart, which the fake's Sleep, done at once, never is. */
+  #goingToSleep(session: FakeSession): boolean {
+    const { state, starting, restarting } = session.summary
+    return state === "Active" && restarting !== undefined && starting === undefined
+  }
+
+  /** What the Hub's lifecycle rules (SessionRules) read of the Session. */
+  #sessionNow(session: FakeSession): SessionNow {
+    const { summary } = session
+    return {
+      state: summary.state,
+      starting: summary.starting !== undefined,
+      goingToSleep: this.#goingToSleep(session),
+      restarting: summary.restarting !== undefined,
+      turnRunning: summary.currentTurn !== null,
+      promptOut: session.inFlight !== null,
+      queued: session.queue.length,
+      runnerOnline: this.runners.some(
+        (runner) => runner.id === summary.runnerId && runner.isOnline,
+      ),
+    }
   }
 
   #fail(socket: FakeSocket, command: string, message: string, sessionId?: string): void {
