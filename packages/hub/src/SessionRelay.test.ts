@@ -3355,4 +3355,40 @@ describe("a Session's live state ending (#243)", () => {
     web.send({ _tag: "SleepSession", sessionId })
     expect(await back.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
   })
+
+  test("archiving drops a steer under way and the Open ports, so a restore isn't held up by them", async () => {
+    const { hub, runner, runnerToken, web, sessionId, mod } = await sessionScene()
+    expect((await mod.hello({ steers: true })).status).toBe(200)
+    await mod.post(turnStarted("t-0"))
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    const ports = [{ port: 3000, addresses: ["0.0.0.0"], process: "node server" }]
+    runner.send({ _tag: "SessionPorts", sessionId, ports })
+    await web.take("SessionUpdated", (m) => m.session.openPorts !== undefined)
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    const [one] = (await web.take("PromptQueueChanged", queueIs("one"))).queue
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: defined(one).id })
+    expect(await steers(mod, 500)).toHaveLength(1)
+
+    // Archived, and its Runner gone before it stopped it; restored while it is away.
+    web.send({ _tag: "ArchiveSession", sessionId })
+    await runner.take("StopSession")
+    await web.take("SessionUpdated", (m) => m.session.state === "Archived")
+    await runner.close()
+    web.send({ _tag: "RestoreSession", sessionId })
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+
+    // It comes back from a restart with Claude Code still running, and no Open ports said yet.
+    const back = await openRunner(hub, runnerToken, [sessionId], undefined, true, {
+      withoutModToken: [sessionId],
+    })
+    const reissued = await back.take("ModTokenReissued")
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    const renewed = new Mod(hub, sessionId, reissued.modToken)
+    expect((await renewed.hello({ steers: true })).status).toBe(200)
+    await renewed.post(turnEnded("t-0"))
+    expect((await renewed.deliveries(500)).map((command) => command.text)).toEqual(["one"])
+    const later = await openWeb(hub, "alice")
+    expect(later.sessions.sessions.find((s) => s.id === sessionId)?.openPorts).toBeUndefined()
+  })
 })
