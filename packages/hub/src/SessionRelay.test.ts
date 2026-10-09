@@ -23,7 +23,7 @@ import { Environments } from "./Environments.ts"
 import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
 import { SignIns } from "./SignIns.ts"
 import {
-  type Connection,
+  Connection,
   issueRunnerToken,
   openRunner,
   openWeb,
@@ -3433,5 +3433,48 @@ describe("a Session's live state ending (#243)", () => {
       sender: alice,
     })
     expect((await mod.deliveries(500)).map((command) => command.text)).toEqual(["three"])
+  })
+})
+
+/** Makes the Hub's database refuse to record a Runner's hello, until the returned undo. */
+const refuseHellos = async (hub: TestHub) => {
+  await hub.run(
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) =>
+        sql`CREATE TRIGGER refuse_hello BEFORE UPDATE OF login_account ON runners
+            BEGIN SELECT RAISE(ABORT, 'the disk is full'); END`,
+    ),
+  )
+  return () => hub.run(Effect.flatMap(SqlClient.SqlClient, (sql) => sql`DROP TRIGGER refuse_hello`))
+}
+
+describe("connections (#243)", () => {
+  test("a Runner whose connection fails part way through isn't left online", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const { token } = await issueRunnerToken(hub)
+    const undo = await refuseHellos(hub)
+    // Welcomed, maybe, before its hello fails to be recorded: either way the connection closes.
+    const runner = await Connection.open<ToRunner>(hub, "/ws/runner", bearer(token), {
+      _tag: "RunnerHello",
+      protocolVersion: ProtocolVersion,
+      name: "mac",
+      login: runnerLogin,
+      sessions: [],
+    })
+    await runner.closed
+    await undo()
+
+    const web = await openWeb(hub, "alice")
+    expect(web.runners.runners.map((known) => known.isOnline)).toEqual([false])
+    // Its Sessions can't be sent to it either.
+    await seedEnvironment(hub, "kddige/kndl", "dev:alice")
+    web.send({
+      _tag: "CreateSession",
+      requestId: "req-1",
+      repo: "kddige/kndl",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
+    expect((await web.take("CommandFailed")).command).toBe("CreateSession")
   })
 })
