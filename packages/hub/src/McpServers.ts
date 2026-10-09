@@ -1501,14 +1501,12 @@ interface OnRow {
  * by any spelling; a global one is on in each, unless overridden or turned off there, as
  * {@link installationsFor} resolves it. A Session's start and the Gateway's check both use it.
  */
-const onFor = Effect.fn("McpServers.onFor")(function* (
-  sql: SqlClient.SqlClient,
-  repos: ReadonlyArray<string>,
-) {
-  const byRepo = new Map<string, Array<OnRow>>()
-  if (repos.length === 0) return byRepo
-  // Each Repo-scoped Installation once for each of the Repos it lists, and each global one once.
-  const candidates = yield* sql<Omit<OnRow, "repo"> & { readonly repo: string | null }>`
+const onFor = Effect.fn("McpServers.onFor")(
+  function* (sql: SqlClient.SqlClient, repos: ReadonlyArray<string>) {
+    const byRepo = new Map<string, Array<OnRow>>()
+    if (repos.length === 0) return byRepo
+    // Each Repo-scoped Installation once for each of the Repos it lists, and each global one once.
+    const candidates = yield* sql<Omit<OnRow, "repo"> & { readonly repo: string | null }>`
     SELECT r.repo, i.id, i.name, i.global, g.id AS mcpServerId, g.name AS mcpServerName,
       g.url, g.auth,
       json_extract(g.package, '$.version') AS version, json_extract(g.package, '$.commit') AS pinnedCommit
@@ -1518,33 +1516,37 @@ const onFor = Effect.fn("McpServers.onFor")(function* (
     WHERE i.global = 1 OR r.repo IS NOT NULL
     ORDER BY i.created_at, i.id
   `
-  const off = candidates.some((row) => row.global === 1)
-    ? yield* sql<{ readonly installationId: string; readonly repo: string }>`
+    const off = candidates.some((row) => row.global === 1)
+      ? yield* sql<{ readonly installationId: string; readonly repo: string }>`
         SELECT installation_id AS installationId, repo FROM installation_repo_off
         WHERE repo COLLATE NOCASE IN ${sql.in(repos)}
       `
-    : []
-  const asked = new Map(repos.map((repo) => [repoKey(repo), repo]))
-  for (const [key, repo] of asked) {
-    const resolved = installationsFor(
-      candidates
-        .filter((row) => row.global === 1 || sameRepo(row.repo ?? "", repo))
-        .map((row) => ({
-          row,
-          mcpServerId: row.mcpServerId,
-          global: row.global === 1,
-          repos: row.repo === null ? [] : [row.repo],
-          off: off.filter((one) => one.installationId === row.id).map((one) => one.repo),
-        })),
-      repo,
-    )
-    const on = resolved.flatMap(({ installation, source }) =>
-      isOn(source) ? [{ ...installation.row, repo }] : [],
-    )
-    if (on.length > 0) byRepo.set(key, on)
-  }
-  return byRepo
-})
+      : []
+    const asked = new Map(repos.map((repo) => [repoKey(repo), repo]))
+    for (const [key, repo] of asked) {
+      const resolved = installationsFor(
+        candidates
+          .filter((row) => row.global === 1 || sameRepo(row.repo ?? "", repo))
+          .map((row) => ({
+            row,
+            mcpServerId: row.mcpServerId,
+            global: row.global === 1,
+            repos: row.repo === null ? [] : [row.repo],
+            off: off.filter((one) => one.installationId === row.id).map((one) => one.repo),
+          })),
+        repo,
+      )
+      const on = resolved.flatMap(({ installation, source }) =>
+        isOn(source) ? [{ ...installation.row, repo }] : [],
+      )
+      if (on.length > 0) byRepo.set(key, on)
+    }
+    return byRepo
+  },
+  // Both reads from one snapshot, as the Gateway's single query decided before: a write between
+  // them could otherwise mix an Installation's listing with another moment's turning it off.
+  (effect, sql) => sql.withTransaction(effect),
+)
 
 /**
  * The Installations on for each of the Repos, by any spelling, as a Session starting now runs
