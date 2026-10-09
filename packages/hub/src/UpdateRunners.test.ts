@@ -100,7 +100,12 @@ type Web = Awaited<ReturnType<typeof openWeb>>
 
 /** alice starts a Session on the Runner, which says it started; returns it and its mod. */
 async function startSession(hub: TestHub, web: Web, runner: Connection<ToRunner>, n: number) {
-  web.send({ _tag: "CreateSession", requestId: `create-${n}`, repo, baseBranch: "main" })
+  web.send({
+    _tag: "CreateSession",
+    requestId: `create-${n}`,
+    repo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   const start = await runner.take("StartSession")
   const created = await web.take("SessionCreated", (m) => m.requestId === `create-${n}`)
   const sessionId = created.session.id
@@ -157,7 +162,12 @@ describe("a Runner behind the Hub", () => {
     )
     await web.take("PromptQueueChanged", (m) => m.queue.length === 0)
 
-    web.send({ _tag: "CreateSession", requestId: "create-new", repo, baseBranch: "main" })
+    web.send({
+      _tag: "CreateSession",
+      requestId: "create-new",
+      repo,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     expect(await web.take("CommandFailed", (m) => m.command === "CreateSession")).toMatchObject({
       requestId: "create-new",
       message: "studio: this Runner needs an update. Update it on the Runners page.",
@@ -221,7 +231,12 @@ describe("updating a Runner", () => {
     await listed(web, (r) => r.update?._tag === "Draining" && r.update.waitingFor === 1)
 
     // Nothing new starts there meanwhile, and prompts wait.
-    web.send({ _tag: "CreateSession", requestId: "create-new", repo, baseBranch: "main" })
+    web.send({
+      _tag: "CreateSession",
+      requestId: "create-new",
+      repo,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     expect(await web.take("CommandFailed", (m) => m.command === "CreateSession")).toMatchObject({
       message:
         "studio: this Runner is updating. Sessions start and wake there again once it is back.",

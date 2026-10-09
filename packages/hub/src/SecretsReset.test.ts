@@ -156,7 +156,12 @@ async function seededDatabase() {
   ).toMatchObject({ _tag: "McpServersState" })
   // A Session, and a value replaced while it runs: retired, kept to redact what it prints.
   const requestId = nextRequest()
-  env.web.send({ _tag: "CreateSession", requestId, repo, baseBranch: "main" })
+  env.web.send({
+    _tag: "CreateSession",
+    requestId,
+    repo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   await env.runner.take("StartSession")
   const session = (await env.web.take("SessionCreated", (m) => m.requestId === requestId)).session
   env.runner.send({ _tag: "SessionStarted", sessionId: session.id, environmentVersion: 1 })
@@ -359,7 +364,13 @@ describe("secrets-reset", () => {
     const cantStart = `${repo}'s Sessions can't start: NPM_TOKEN, API_KEY, GH_TOKEN (the shared variable GITHUB_TOKEN) and SIGNING_KEY (shared) need values. Enter them on the Repo's Environment screen and the Shared variables screen.`
 
     // A new Session is refused, naming the variables.
-    expect(await env.request({ _tag: "CreateSession", repo, baseBranch: "main" })).toMatchObject({
+    expect(
+      await env.request({
+        _tag: "CreateSession",
+        repo,
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+      }),
+    ).toMatchObject({
       _tag: "CommandFailed",
       message: cantStart,
     })
@@ -407,7 +418,13 @@ describe("secrets-reset", () => {
         expect.objectContaining({ name: "SIGNING_KEY", needsValue: false }),
       ]),
     })
-    expect(await env.request({ _tag: "CreateSession", repo, baseBranch: "main" })).toMatchObject({
+    expect(
+      await env.request({
+        _tag: "CreateSession",
+        repo,
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+      }),
+    ).toMatchObject({
       message: `${repo}'s Sessions can't start: NPM_TOKEN and API_KEY need values. Enter them on the Repo's Environment screen.`,
     })
     // The Environment's own apply straight away, even at build: they restore values.
@@ -450,7 +467,12 @@ describe("secrets-reset", () => {
     web.send({ _tag: "WakeSession", sessionId })
     expect((await runner.take("StartSession")).sessionId).toBe(sessionId)
     const requestId = nextRequest()
-    web.send({ _tag: "CreateSession", requestId, repo, baseBranch: "main" })
+    web.send({
+      _tag: "CreateSession",
+      requestId,
+      repo,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     expect(await web.take("SessionCreated", (m) => m.requestId === requestId)).toBeDefined()
   })
 })

@@ -233,7 +233,8 @@ export type RunnerWelcome = typeof RunnerWelcome.Type
 
 /**
  * Start Claude Code for a Session: for a new Session, after cloning its Repo onto its Work
- * branch; to wake an Asleep one, with `resume` and the Workspace already in place.
+ * branch, which it creates from the base branch unless it is the base branch (ADR 0023); to wake
+ * an Asleep one, with `resume` and the Workspace already in place.
  */
 export const StartSession = Schema.TaggedStruct("StartSession", {
   sessionId: SessionId,

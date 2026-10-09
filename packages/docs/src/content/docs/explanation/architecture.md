@@ -35,10 +35,10 @@ Everything goes through the Hub. Browsers, Runners and each Session's mod connec
 
 ## A Session, end to end
 
-A Session is one Claude Code conversation working on one Repo, on its own Work branch. When someone starts one:
+A Session is one Claude Code conversation working on one Repo, on a Work branch. When someone starts one:
 
-1. The browser sends `CreateSession` to the Hub, which picks the Runner (or the one you chose), records the Session and sends the Runner `StartSession` with the Repo, Work branch, Environment and a mod token for this run.
-2. The Runner clones the Repo into the Session's Workspace on the Work branch, builds the Repo's Environment if it hasn't yet, and boots the Sandbox from that build with the Workspace mounted at `/workspace`.
+1. The browser sends `CreateSession` to the Hub, which picks the Runner (or the one you chose), records the Session and sends the Runner `StartSession` with the Repo, base and Work branches, Environment and a mod token for this run.
+2. The Runner clones the Repo into the Session's Workspace on the Work branch (made from the base branch, unless they are the same), builds the Repo's Environment if it hasn't yet, and boots the Sandbox from that build with the Workspace mounted at `/workspace`.
 3. It starts Claude Code in the Sandbox, in a tmux session `hub-<session id>`, with the mod's two plugins loaded: `hub-link` reports to the Hub, and `hub-link-commands` runs the Hub's commands. Each says hello to the Hub through the Runner, which adds the Session's mod token.
 4. A prompt from any Participant goes to the Hub, into the Session's Prompt queue. When Claude Code is idle, the Hub hands the next prompt to the mod, which submits it to Claude Code as that Participant's prompt.
 5. As Claude works, the mod reports each Event (its text, every tool call and result, the Turn's start and end, and each subagent's) to the Hub, which redacts Sensitive values and sends them to everyone in the Session.

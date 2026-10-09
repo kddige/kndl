@@ -11,6 +11,11 @@
 //   The person's own GitHub token is used once at sign-in and never kept (GitHub.ts), so it isn't
 //   asked. Without the App, a GitHub sign-in's access can't be checked, so it has none; the Hub
 //   says so once, as it starts.
+// - `accessible` lists the Repos the GitHub App is installed on that the person has access to, for
+//   the web UI's Repo combo box: one collaborator check per Repo, with its installation's token,
+//   one list at a time. The App's Repos are listed once for the Hub, and each person's list is
+//   kept for `accessibleTtl`, a no as long as a yes; a list with a Repo GitHub couldn't say of
+//   isn't kept.
 // - `status` also says why not, for the web UI's check of a Repo as it is entered (#104): the App
 //   isn't installed on it (or there's no such Repo), or the person isn't a collaborator. Telling
 //   the two apart says whether the App is installed on a Repo the person can't reach; commands
@@ -24,14 +29,33 @@
 //   spells it, for the Hub to keep that spelling.
 
 import { type Participant, type RepoName, repoKey, sameRepo } from "@kndl/protocol"
-import { Cache, Context, Duration, Effect, Equal, Exit, Hash, Layer, Option, Schema } from "effect"
-import { GitHubApp, type GitHubAppError } from "./GitHubApp.ts"
+import {
+  Cache,
+  Context,
+  Duration,
+  Effect,
+  Equal,
+  Exit,
+  Hash,
+  Layer,
+  Option,
+  Schema,
+  Semaphore,
+} from "effect"
+import { GitHubApp, type GitHubAppError, type RepoBranches } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 
 /** GitHub couldn't say whether the person has access, such as in an outage. */
 // oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
 export class RepoAccessUnknown extends Schema.TaggedError<RepoAccessUnknown>()(
   "RepoAccessUnknown",
+  { message: Schema.String },
+) {}
+
+/** There is no GitHub App to list Repos or branches with. */
+// oxlint-disable-next-line unicorn/throw-new-error -- Effect makes error classes with a factory call
+export class RepoListingUnavailable extends Schema.TaggedError<RepoListingUnavailable>()(
+  "RepoListingUnavailable",
   { message: Schema.String },
 ) {}
 
@@ -55,16 +79,37 @@ const lookupTimeout = Duration.seconds(10)
  */
 export const refusedAnswerTtl = Duration.seconds(30)
 
+/** How long a person's list of Repos they have access to is kept (`accessible`). */
+export const accessibleTtl = Duration.minutes(5)
+
+/** How long a Repo's branches are kept (`branches`). */
+export const branchesTtl = Duration.seconds(60)
+
+/**
+ * How long listing every Repo may take: each of its calls is bounded on its own (GitHubApp.ts),
+ * so this only stops a long walk of a very large App.
+ */
+const listTimeout = Duration.minutes(2)
+
+/** How many people's lists are worked out at once, so a burst can't flood GitHub. */
+const accessibleListings = 1
+
+/** How many collaborator checks one person's list of Repos runs at once. */
+const accessibleConcurrency = 8
+
 /** What GitHub answers, or why it couldn't, within `lookupTimeout`. */
-const askGitHub = <A>(asked: Effect.Effect<A, GitHubAppError>) =>
+const askGitHub = <A>(
+  asked: Effect.Effect<A, GitHubAppError>,
+  timeout: Duration.Duration = lookupTimeout,
+) =>
   asked.pipe(
     Effect.mapError((error) => new RepoAccessUnknown({ message: error.message })),
     Effect.timeoutOrElse({
-      duration: lookupTimeout,
+      duration: timeout,
       orElse: () =>
         Effect.fail(
           new RepoAccessUnknown({
-            message: `GitHub didn't answer within ${Duration.format(lookupTimeout)}`,
+            message: `GitHub didn't answer within ${Duration.format(timeout)}`,
           }),
         ),
     }),
@@ -89,6 +134,19 @@ class Asked implements Equal.Equal {
   }
 }
 
+/** What a cache keeps a person's answer by: their id; `participant` is who GitHub is asked for. */
+class Person implements Equal.Equal {
+  constructor(readonly participant: Participant) {}
+
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof Person && that.participant.id === this.participant.id
+  }
+
+  [Hash.symbol](): number {
+    return Hash.string(this.participant.id)
+  }
+}
+
 export class RepoAccess extends Context.Service<
   RepoAccess,
   {
@@ -106,6 +164,23 @@ export class RepoAccess extends Context.Service<
       participant: Participant,
       repo: RepoName,
     ) => Effect.Effect<RepoStatus, RepoAccessUnknown>
+    /**
+     * The Repos the GitHub App is installed on that the person has access to, each as `check`
+     * says, kept for {@link accessibleTtl}. A Repo GitHub can't say about is left out. Fails when
+     * the App's Repos can't be listed.
+     */
+    readonly accessible: (
+      participant: Participant,
+    ) => Effect.Effect<ReadonlyArray<RepoName>, RepoAccessUnknown | RepoListingUnavailable>
+    /**
+     * The Repo's branches and its default branch, kept for {@link branchesTtl}. The caller checks
+     * the person's access first. Only an answer is kept.
+     */
+    readonly branches: (
+      repo: RepoName,
+    ) => Effect.Effect<RepoBranches, RepoAccessUnknown | RepoListingUnavailable>
+    /** Forgets the person's list of Repos (`accessible`): the next one asks GitHub again. */
+    readonly forgetAccessible: (participant: Participant) => Effect.Effect<void>
     /** Forgets what GitHub said of the person and the Repo: the next check asks again. */
     readonly forget: (participant: Participant, repo: RepoName) => Effect.Effect<void>
     /**
@@ -179,9 +254,94 @@ export class RepoAccess extends Context.Service<
       })
 
       const forget = (participant: Participant, repo: RepoName) =>
-        participant.id.startsWith("dev:")
-          ? Cache.invalidate(installed, new Asked("", repo))
-          : Cache.invalidate(answers, new Asked(participant.login, repo))
+        Effect.andThen(
+          participant.id.startsWith("dev:")
+            ? Cache.invalidate(installed, new Asked("", repo))
+            : Cache.invalidate(answers, new Asked(participant.login, repo)),
+          Cache.invalidate(accessibleRepos, new Person(participant)),
+        )
+
+      // For the whole Hub: the Repos the App is on, each with a collaborator check on its
+      // installation's token. An outage is kept briefly, so clients can't ask in a loop.
+      const installedRepos = yield* Cache.makeWith(
+        (_: "all") => askGitHub(app.listRepos, listTimeout),
+        {
+          capacity: 1,
+          timeToLive: (exit) =>
+            Exit.isSuccess(exit) && exit.value.complete ? accessibleTtl : refusedAnswerTtl,
+        },
+      )
+
+      // One list at a time asks GitHub, however many people ask.
+      const listing = yield* Semaphore.make(accessibleListings)
+
+      // By person: the Repos they have access to. `complete` is false when GitHub couldn't say of
+      // some Repo: the list is then given but not kept. A no is kept as long as a yes.
+      const accessibleRepos = yield* Cache.makeWith(
+        ({ participant }: Person) =>
+          listing.withPermits(1)(
+            Effect.gen(function* () {
+              const { repos: listed, complete: appComplete } = yield* Cache.get(
+                installedRepos,
+                "all",
+              )
+              if (participant.id.startsWith("dev:")) {
+                const all = Option.isSome(config.devLogin)
+                return { repos: all ? listed.map(({ repo }) => repo) : [], complete: appComplete }
+              }
+              if (!participant.id.startsWith("github:")) return { repos: [], complete: appComplete }
+              let complete = appComplete
+              const checked = yield* Effect.forEach(
+                listed,
+                ({ repo, isCollaborator }) =>
+                  isCollaborator(participant.login).pipe(
+                    Effect.map((allowed) => (allowed ? [repo] : [])),
+                    Effect.catchTag("GitHubAppError", (error) => {
+                      complete = false
+                      return Effect.as(Effect.logWarning(error.message), [])
+                    }),
+                  ),
+                { concurrency: accessibleConcurrency },
+              )
+              return { repos: checked.flat(), complete }
+            }),
+          ),
+        {
+          capacity: cacheCapacity,
+          timeToLive: (exit) =>
+            Exit.isFailure(exit)
+              ? refusedAnswerTtl
+              : exit.value.complete
+                ? Duration.min(accessibleTtl, config.repoAccessTtl)
+                : Duration.zero,
+        },
+      )
+
+      const unavailable = new RepoListingUnavailable({
+        message: "There is no GitHub App to list Repos with.",
+      })
+
+      const accessible = (participant: Participant) =>
+        app.isConfigured
+          ? Cache.get(accessibleRepos, new Person(participant)).pipe(
+              Effect.map(({ repos }) => repos),
+            )
+          : Effect.fail(unavailable)
+
+      // By Repo: its branches. Only an answer is kept.
+      const branchLists = yield* Cache.makeWith(
+        ({ repo }: Asked) => askGitHub(app.listBranches(repo), listTimeout),
+        {
+          capacity: cacheCapacity,
+          timeToLive: (exit) => (Exit.isSuccess(exit) ? branchesTtl : Duration.zero),
+        },
+      )
+
+      const branches = (repo: RepoName) =>
+        app.isConfigured ? Cache.get(branchLists, new Asked("", repo)) : Effect.fail(unavailable)
+
+      const forgetAccessible = (participant: Participant) =>
+        Cache.invalidate(accessibleRepos, new Person(participant))
 
       // By Repo: how GitHub spells its name. Only an answer is kept.
       const fullNames = yield* Cache.makeWith(({ repo }: Asked) => askGitHub(app.fullName(repo)), {
@@ -202,7 +362,15 @@ export class RepoAccess extends Context.Service<
             )
           : Effect.succeed(Option.none<RepoName>())
 
-      return RepoAccess.of({ check, status, forget, fullName })
+      return RepoAccess.of({
+        check,
+        status,
+        forget,
+        fullName,
+        accessible,
+        branches,
+        forgetAccessible,
+      })
     }),
   )
 }

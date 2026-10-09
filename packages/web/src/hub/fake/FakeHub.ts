@@ -12,6 +12,8 @@
 
 import {
   admissionLink,
+  type BranchChoice,
+  branchesFor,
   cantStartText,
   checkHandshake,
   claudeCredentialKindOf,
@@ -43,6 +45,7 @@ import {
   repoKey,
   runnerRemovalRefusal,
   sameRepo,
+  SessionId,
   sessionNameFrom,
   UpdateDrainMillis,
   WebToHub,
@@ -223,6 +226,9 @@ class FakeSocket implements HubSocket {
 
 const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 
+/** What a listing that fails says, as the Hub words it. */
+const notListed = "Could not list your Repos; try again."
+
 /** A summary's Installations: absent for none, as the Hub sends them. */
 const withMcpServers = (mcpServers: ReadonlyArray<SessionInstallationWire>) =>
   mcpServers.length > 0 ? { mcpServers } : {}
@@ -271,6 +277,17 @@ export class FakeHub implements HubTransport {
     ["kddige/secret", "NoAccess"],
     ["someone-else/their-repo", "NotInstalled"],
   ])
+  /**
+   * Each Repo's branches and default branch, as the Hub lists them (ADR 0023); a Repo not here has
+   * `main` alone.
+   */
+  readonly branches = new Map<string, { names: Array<string>; defaultBranch: string }>([
+    ["kddige/kndl", { names: ["main", "dev", "release/1.0"], defaultBranch: "main" }],
+  ])
+  /** While set, ListRepos and ListBranches answer that there is no GitHub App. */
+  listingDown = false
+  /** While set, they fail, as when GitHub can't answer. */
+  listingFails = false
   /** Every message each client sent, decoded, for tests to inspect. */
   readonly received: Array<WebToHub> = []
   #signedIn: boolean
@@ -801,19 +818,53 @@ export class FakeHub implements HubTransport {
         })
         break
       }
+      case "ListRepos": {
+        if (this.listingDown) {
+          socket.deliver({ _tag: "ListingUnavailable", requestId: message.requestId })
+          break
+        }
+        if (this.listingFails) {
+          this.#refuse(socket, message._tag, message.requestId, notListed)
+          break
+        }
+        const repos = new Map<string, string>()
+        for (const session of this.sessions.values()) {
+          repos.set(repoKey(session.summary.repo), session.summary.repo)
+        }
+        for (const repo of this.branches.keys()) repos.set(repoKey(repo), repo)
+        socket.deliver({
+          _tag: "ReposListed",
+          requestId: message.requestId,
+          repos: [...repos.values()].filter(this.#allowed).toSorted(),
+        })
+        break
+      }
+      case "ListBranches": {
+        if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
+        if (this.listingDown) {
+          socket.deliver({ _tag: "ListingUnavailable", requestId: message.requestId })
+          break
+        }
+        if (this.listingFails) {
+          this.#refuse(socket, message._tag, message.requestId, notListed)
+          break
+        }
+        const listed = this.branches.get(message.repo) ?? { names: ["main"], defaultBranch: "main" }
+        socket.deliver({
+          _tag: "BranchesListed",
+          requestId: message.requestId,
+          repo: message.repo,
+          branches: listed.names,
+          defaultBranch: listed.defaultBranch,
+        })
+        break
+      }
       case "CreateSession":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
-        this.#create(
-          socket,
-          message.requestId,
-          message.repo,
-          message.baseBranch,
-          message.runnerId,
-          {
-            ...(message.model !== undefined && { model: message.model }),
-            ...(message.effort !== undefined && { effort: message.effort }),
-          },
-        )
+        this.#create(socket, message.requestId, message.repo, message.branch, message.runnerId, {
+          ...(message.model !== undefined && { model: message.model }),
+          ...(message.effort !== undefined && { effort: message.effort }),
+        })
         break
       // As the Hub does (#128): anyone may, but not in an Archived Session; the Runner's Claude
       // Code must have the model and level. A running Turn finishes on the old model.
@@ -1462,7 +1513,7 @@ export class FakeHub implements HubTransport {
     socket: FakeSocket,
     requestId: string,
     repo: string,
-    baseBranch: string,
+    branch: BranchChoice,
     runnerId: string | undefined,
     asked: { readonly model?: string; readonly effort?: EffortLevel },
   ): void {
@@ -1495,8 +1546,7 @@ export class FakeHub implements HubTransport {
     const summary: SessionSummaryWire = {
       id,
       repo,
-      baseBranch,
-      workBranch: `claude/${id}`,
+      ...branchesFor(branch, SessionId.make(id)),
       state: "Active",
       runnerId: runner.id,
       runnerLogin: runner.login,

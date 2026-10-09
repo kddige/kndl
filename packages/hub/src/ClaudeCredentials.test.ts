@@ -70,7 +70,11 @@ async function scene(
 
 /** A Session alice creates on the Runner, once it says it started. */
 async function createSession(web: Connection<Web>, runner: Connection<ToRunner>) {
-  const created = await request(web, { _tag: "CreateSession", repo, baseBranch: "main" })
+  const created = await request(web, {
+    _tag: "CreateSession",
+    repo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   if (created._tag !== "SessionCreated") throw new Error(JSON.stringify(created))
   const start = await runner.take("StartSession")
   runner.send({ _tag: "SessionStarted", sessionId: start.sessionId })
@@ -241,7 +245,13 @@ describe("a Session's Claude credential", () => {
 
   test("a Session neither its Creator nor its Runner has one for doesn't start", async () => {
     const { web, runner } = await scene({ ownClaudeCredential: false })
-    expect(await request(web, { _tag: "CreateSession", repo, baseBranch: "main" })).toMatchObject({
+    expect(
+      await request(web, {
+        _tag: "CreateSession",
+        repo,
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+      }),
+    ).toMatchObject({
       _tag: "CommandFailed",
       message: "Neither you nor mac has a Claude credential: add yours on the Account page.",
     })

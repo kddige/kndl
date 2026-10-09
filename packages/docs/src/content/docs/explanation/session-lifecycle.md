@@ -30,7 +30,7 @@ stateDiagram-v2
 | **Frozen** | whatever the Runner left | whatever the Runner left | wait in the queue until the Runner is back |
 | **Archived** | destroyed, Claude Code's state kept | stopped | refused; queued ones wait for a restore |
 
-Each Session starts from a base branch onto its own Work branch, `claude/<session id>`.
+Each Session starts on a branch chosen in New Session. By default it works on its own Work branch, `claude/<session id>`, made from that base branch; it can also commit to the branch itself, or to a new branch you name ([Start a Session](/how-to/work-in-a-session/#start-a-session)).
 
 ## Going to sleep
 

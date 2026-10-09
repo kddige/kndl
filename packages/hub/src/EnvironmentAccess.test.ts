@@ -383,7 +383,11 @@ describe("Repo names ignoring case (#197)", () => {
     const { hub, runner } = await pepHub()
     await seed(hub, pep)
     const web = await openOctocat(hub)
-    const created = await ask(web, { _tag: "CreateSession", repo: typed, baseBranch: "main" })
+    const created = await ask(web, {
+      _tag: "CreateSession",
+      repo: typed,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     expect(created).toMatchObject({ _tag: "SessionCreated", session: { repo: pep } })
     expect(await runner.take("StartSession")).toMatchObject({
       repo: pep,
@@ -413,12 +417,20 @@ describe("Repo names ignoring case (#197)", () => {
     const issued = await issueRunnerToken(hub)
     const runner = await openRunner(hub, issued.token)
     const web = await seed(hub, pep)
-    const created = await ask(web, { _tag: "CreateSession", repo: typed, baseBranch: "main" })
+    const created = await ask(web, {
+      _tag: "CreateSession",
+      repo: typed,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     expect(created).toMatchObject({ _tag: "SessionCreated", session: { repo: pep } })
     expect(await runner.take("StartSession")).toMatchObject({ repo: pep })
     // A Repo with no Environment keeps the name as typed.
     expect(
-      await ask(web, { _tag: "CreateSession", repo: "Octo/Unseen", baseBranch: "main" }),
+      await ask(web, {
+        _tag: "CreateSession",
+        repo: "Octo/Unseen",
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+      }),
     ).toMatchObject({
       _tag: "CommandFailed",
       message: "Octo/Unseen has no Environment yet: set one up before its first Session.",
@@ -432,7 +444,11 @@ describe("Repo names ignoring case (#197)", () => {
     expect(await ask(web, { _tag: "CheckRepo", repo: typed })).toMatchObject({
       status: "Allowed",
     })
-    await ask(alice, { _tag: "CreateSession", repo: pep, baseBranch: "main" })
+    await ask(alice, {
+      _tag: "CreateSession",
+      repo: pep,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     expect((await web.take("SessionUpdated")).session.repo).toBe(pep)
     expect(github.collaboratorChecks("octocat")).toBe(1)
   })

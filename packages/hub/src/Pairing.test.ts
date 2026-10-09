@@ -212,7 +212,7 @@ async function runnerWithSession() {
     _tag: "CreateSession",
     requestId: "q-2",
     repo: "kddige/kndl",
-    baseBranch: "main",
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
   })
   await runner.take("StartSession")
   const created = await web.take("SessionCreated")

@@ -6,7 +6,10 @@ import type { SessionSummary } from "@kndl/protocol"
 /** A Session's short id, as the web shows it in the forward command: its first 6 characters. */
 export const shortId = (session: Pick<SessionSummary, "id">) => session.id.slice(0, 6)
 
-/** A Session as a person knows it: its name, or its Work branch until it has one. */
+/**
+ * A Session as a person knows it: its name, or its Work branch until it has one. It is always
+ * shown beside its short id, so one on its base branch needs no id in its title.
+ */
 export const sessionTitle = (session: SessionSummary) => session.name ?? session.workBranch
 
 /** One remote port, and the local one it is forwarded to. */

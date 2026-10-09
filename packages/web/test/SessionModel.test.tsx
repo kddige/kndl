@@ -112,6 +112,11 @@ test("New Session starts on the model picked in its dialog", async () => {
   const choose = button("Model and effort: Opus 5.5", dialog)
   const repo = dialog.querySelector<HTMLInputElement>('input[placeholder="kddige/kndl"]')
   await step(() => repo && typeInto(repo, "kddige/kndl"))
+  // The Repo's default branch is filled in once the Hub has listed its branches.
+  await eventually(() => {
+    const inputs = [...dialog.querySelectorAll<HTMLInputElement>('input[role="combobox"]')]
+    expect(inputs[1]?.value).toBe("main")
+  })
   await step(() => choose.click())
   await settle()
   await step(() => radio("Sonnet 5.5").click())

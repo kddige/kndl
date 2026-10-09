@@ -4,6 +4,7 @@
 // Session.
 
 import {
+  type BranchChoice,
   type EffortLevel,
   type EnvironmentVersionInfo,
   type ModelName,
@@ -21,6 +22,7 @@ import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, type RepoCheck, RepoRefusal } from "../app/repoAccess.tsx"
 import type { RepoEnvironment, TestBuildRun } from "../hub/store.ts"
 import { RepoMcpServers } from "../mcp/RepoMcpServers.tsx"
+import { branchText } from "../sessions/branches.ts"
 import {
   Avatar,
   Badge,
@@ -67,7 +69,8 @@ import {
 
 /** A Session to start once the Repo's first Environment is applied. */
 export interface PendingSession {
-  readonly baseBranch: string
+  /** The branch choice it was set up with (ADR 0023). */
+  readonly branch: BranchChoice
   readonly runnerId?: RunnerId
   readonly model?: ModelName
   readonly effort?: EffortLevel
@@ -419,7 +422,7 @@ function EnvironmentEditor({
     try {
       const session = await hub.createSession({
         repo,
-        baseBranch: pending.baseBranch,
+        branch: pending.branch,
         ...(pending.runnerId !== undefined && { runnerId: pending.runnerId }),
         ...(pending.model !== undefined && { model: pending.model }),
         ...(pending.effort !== undefined && { effort: pending.effort }),
@@ -528,7 +531,7 @@ function EnvironmentEditor({
         <Banner intent="accent" icon={<InfoIcon />} title={`Set up ${repo} to start your Session`}>
           A Repo needs an Environment before its first Session. This one starts from the defaults:
           change what you need, run a Test build, and apply it. Your Session on{" "}
-          {pendingSession.baseBranch} starts once it's applied.
+          {branchText(pendingSession.branch)} starts once it's applied.
         </Banner>
       )}
 
@@ -548,8 +551,8 @@ function EnvironmentEditor({
             </Button>
           }
         >
-          Start your Session on {pendingSession.baseBranch} on version {environment.version}, or
-          change the Environment first.
+          Start your Session on {branchText(pendingSession.branch)} on version {environment.version}
+          , or change the Environment first.
         </Banner>
       )}
 

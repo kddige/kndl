@@ -13,6 +13,7 @@ import {
   CopyIcon,
   Button,
   Checkbox,
+  Combobox,
   Dialog,
   DialogClose,
   Disclosure,
@@ -403,6 +404,59 @@ function Selects() {
           ]}
         />
       </Row>
+    </Section>
+  )
+}
+
+const BRANCH_OPTIONS = [{ value: "main" }, { value: "develop" }, { value: "release/1.0" }]
+
+function Comboboxes() {
+  const [repo, setRepo] = useState("")
+  const [branch, setBranch] = useState("main")
+  const [created, setCreated] = useState<string | null>(null)
+  return (
+    <Section
+      title="Combobox"
+      note="A text field with suggestions: free entry, narrowed as you type, optionally in groups and with an entry that creates what was typed."
+    >
+      <div {...stylex.props(styles.grid)}>
+        <Field label="Repo" description="Grouped suggestions; any text is fine.">
+          <Combobox
+            value={repo}
+            onValueChange={setRepo}
+            placeholder="kddige/kndl"
+            options={[
+              { value: "kddige/kndl", group: "Recent" },
+              { value: "kddige/dotfiles", group: "Recent" },
+              { value: "kddige/website", group: "Repositories" },
+              { value: "someone/else", group: "Repositories" },
+            ]}
+          />
+        </Field>
+        <Field
+          label="Branch"
+          description={created === null ? "Type a name nothing matches." : `Created ${created}.`}
+        >
+          <Combobox
+            value={branch}
+            onValueChange={(next) => {
+              setBranch(next)
+              setCreated(null)
+            }}
+            options={BRANCH_OPTIONS}
+            create={{
+              label: (name) => `Create branch '${name}'`,
+              onCreate: (name) => setCreated(name),
+            }}
+          />
+        </Field>
+        <Field label="Disabled" disabled>
+          <Combobox value="main" onValueChange={() => {}} options={BRANCH_OPTIONS} disabled />
+        </Field>
+        <Field label="Invalid" invalid error="Pick one of the Repo's branches.">
+          <Combobox value="nowhere" onValueChange={() => {}} options={BRANCH_OPTIONS} />
+        </Field>
+      </div>
     </Section>
   )
 }
@@ -1008,6 +1062,7 @@ export function KitPage() {
         <Fields />
         <Toggles />
         <Selects />
+        <Comboboxes />
 
         <Section title="Tabs">
           <Tabs defaultValue="chat">
