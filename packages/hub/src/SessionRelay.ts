@@ -198,14 +198,11 @@ import {
   questionClosedText,
   type RequestId,
   RequestTerminalSnapshot,
-  type BuildVersion,
   NeedsUpdateText,
   type RunnerHello,
   type RunnerList,
   type RunnerId,
-  type RunnerAccount,
   type RunnerToHub,
-  type RunnerUpdater,
   RunnerUpdateRequested,
   sessionsRefusal,
   type SessionEvent,
@@ -292,6 +289,13 @@ import {
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
+import {
+  type ForwardClient,
+  makePeers,
+  type OnlineRunner,
+  type Peer,
+  type WebClient,
+} from "./Peers.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import {
@@ -318,12 +322,7 @@ import { type ModelSetting, Sessions } from "./Sessions.ts"
 import { randomId } from "./Tokens.ts"
 import { type PendingTunnel, TunnelRefused, Tunnels } from "./Tunnels.ts"
 
-/** A connection to a peer, as its channel gives it: sending never waits. */
-export interface Peer<Out> {
-  readonly send: (message: Out) => void
-  /** Closes the connection with a WebSocket close code, after what was sent before. */
-  readonly close: (code: number, reason: string) => void
-}
+export type { Peer } from "./Peers.ts"
 
 /** Handles one message from a connected peer. */
 export type Receive<In> = (message: In) => Effect.Effect<void>
@@ -561,55 +560,8 @@ export class SessionRelay extends Context.Service<
       const lock = yield* Semaphore.make(1)
       const serialized = lock.withPermits(1)
 
-      interface WebClient {
-        readonly you: Participant
-        readonly peer: Peer<HubToWeb>
-        /** The Sessions this connection has joined. */
-        readonly joined: Set<SessionId>
-        /** The Sessions whose terminal this connection watches. */
-        readonly terminals: Set<SessionId>
-        /**
-         * Whether its person has access to each Repo, as last asked (ADR 0003). It is sent the
-         * Sessions of a Repo only once this says so. Any spelling of a Repo's name finds it.
-         */
-        readonly repos: RepoMap<boolean>
-      }
-      interface OnlineRunner {
-        readonly id: RunnerId
-        readonly name: string
-        readonly peer: Peer<HubToRunner>
-        /** Whether it asks how to clone a Test build (#104). */
-        readonly asksCloneAccess: boolean
-        /** The commit it runs, as its hello said. */
-        readonly version: BuildVersion | undefined
-        /** Whether it updates itself (#87); `undefined` from a Runner too old to say. */
-        readonly updater: RunnerUpdater | undefined
-        /** Whether it takes a RelaunchSession (#128). */
-        readonly relaunches: boolean
-        /** Its own Claude credential, as its hello showed it. */
-        readonly login: RunnerAccount
-        /** Whether it has a Claude credential of its own for Sessions whose Creator has none. */
-        readonly ownClaudeCredential: boolean
-        /** Whether it takes an OpenTunnel (#177). */
-        readonly forwardsPorts: boolean
-        /** Whether it gives Claude Code the MCP servers of its Session's Installations (#221). */
-        readonly relaysMcpServers: boolean
-      }
-
-      /** A `kndl forward` of one Session (#180), by a CLI token. */
-      interface ForwardClient {
-        readonly you: Participant
-        readonly tokenId: CliTokenId
-        /** The machine its CLI token is named after, as presence shows it. */
-        readonly machine: string
-        readonly sessionId: SessionId
-        readonly repo: string
-        readonly peer: Peer<HubToForward>
-      }
-
-      const webClients = new Set<WebClient>()
-      const forwards = new Set<ForwardClient>()
-      const onlineRunners = new Map<RunnerId, OnlineRunner>()
+      /** The web clients, forwards and Runners connected now (Peers.ts). */
+      const peers = makePeers()
       /** Each Session's live state, in memory only (LiveSessions.ts). */
       const live = makeLiveSessions()
 
@@ -627,7 +579,7 @@ export class SessionRelay extends Context.Service<
       })
 
       const toWeb = (message: HubToWeb, to: (client: WebClient) => boolean = () => true) => {
-        for (const client of webClients) if (to(client)) client.peer.send(message)
+        for (const client of peers.webClients) if (to(client)) client.peer.send(message)
       }
       const toJoined = (sessionId: SessionId, message: HubToWeb) =>
         toWeb(message, (client) => client.joined.has(sessionId))
@@ -636,7 +588,7 @@ export class SessionRelay extends Context.Service<
         const now = yield* Clock.currentTimeMillis
         return HubToWeb.cases.RunnerList.make({
           runners: (yield* runners.list).map(({ updater, models, ...runner }) => {
-            const online = onlineRunners.get(runner.id)
+            const online = peers.runner(runner.id)
             const isOnline = online !== undefined
             const update = runnerUpdates.stateOf(runner.id)
             return {
@@ -656,7 +608,7 @@ export class SessionRelay extends Context.Service<
       const runnerRelay = yield* makeRunnerRelay({
         toWeb: (message, to) => toWeb(message, to),
         runnersChanged: Effect.map(runnerList, (list) => toWeb(list)),
-        disconnect: (id, code, reason) => onlineRunners.get(id)?.peer.close(code, reason),
+        disconnect: (id, code, reason) => peers.runner(id)?.peer.close(code, reason),
       })
 
       const memberRelay = yield* makeMemberRelay({
@@ -664,16 +616,12 @@ export class SessionRelay extends Context.Service<
         removed: (participantId) =>
           serialized(
             Effect.gen(function* () {
-              for (const client of webClients) {
-                if (client.you.id === participantId) {
-                  client.peer.close(RemovedCloseCode, "You were removed from this Hub")
-                }
-              }
-              yield* endForwards(
-                (forward) => forward.you.id === participantId,
-                ForwardCloseCode.SignedOut,
+              const before = peers.closeWhere(
+                (peer) => peer.you.id === participantId,
+                { web: RemovedCloseCode, forward: ForwardCloseCode.SignedOut },
                 "You were removed from this Hub.",
               )
+              for (const [id, present] of before) yield* presenceChanged(id, present)
             }),
           ),
       })
@@ -686,7 +634,7 @@ export class SessionRelay extends Context.Service<
           hubVersion.version === undefined
             ? undefined
             : Option.getOrUndefined(yield* updatePush.forCommit(hubVersion.version.commit)),
-        online: (id) => onlineRunners.get(id),
+        online: (id) => peers.runner(id),
         drainSessions: (id) =>
           Effect.map(sessions.listByRunner(id), (list) =>
             list.map((session) => ({
@@ -745,7 +693,7 @@ export class SessionRelay extends Context.Service<
        * a Claude credential, its Creator's or its own (ADR 0015), if any can.
        */
       const anyRunnerFor = (creator: Participant): OnlineRunner | undefined => {
-        const online = [...onlineRunners.values()]
+        const online = peers.runners()
         return (
           online.find((runner) => noClaudeCredential(creator, runner) === undefined) ?? online[0]
         )
@@ -784,7 +732,7 @@ export class SessionRelay extends Context.Service<
         session: SessionSummary,
       ) {
         const message = HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) })
-        for (const client of webClients) {
+        for (const client of peers.webClients) {
           const known = client.repos.get(session.repo)
           if (known === true) client.peer.send(message)
           else if (known === undefined) yield* learnAccess(client.you, session.repo)
@@ -816,7 +764,7 @@ export class SessionRelay extends Context.Service<
           )
         }
         const message = ForwardSession.make({ session: forWeb(session) })
-        for (const forward of forwards) if (ofSession(forward)) forward.peer.send(message)
+        for (const forward of peers.forwards) if (ofSession(forward)) forward.peer.send(message)
       })
 
       /** Closes the forwards `which` picks, saying why, and updates their Sessions' presence. */
@@ -825,15 +773,12 @@ export class SessionRelay extends Context.Service<
         code: number,
         reason: string,
       ) {
-        const ended = [...forwards].filter(which)
-        if (ended.length === 0) return
-        const ofSessions = new Set(ended.map((forward) => forward.sessionId))
-        const before = new Map([...ofSessions].map((id) => [id, presenceOf(id)] as const))
-        for (const forward of ended) {
-          forwards.delete(forward)
-          forward.peer.close(code, closeReason(reason))
-        }
-        for (const id of ofSessions) yield* presenceChanged(id, before.get(id) ?? [])
+        const before = peers.closeWhere(
+          (peer) => peer.kind === "Forward" && which(peer),
+          { web: code, forward: code },
+          reason,
+        )
+        for (const [id, present] of before) yield* presenceChanged(id, present)
       })
 
       const sessionUpdated = Effect.fn("SessionRelay.sessionUpdated")(function* (id: SessionId) {
@@ -1068,7 +1013,7 @@ export class SessionRelay extends Context.Service<
       /** Moves the Session to `state`, if it isn't there, logging why. */
       const environmentRelay = yield* makeEnvironmentRelay({
         hasGitHubApp: app.isConfigured,
-        onlineRunner: (id) => onlineRunners.get(id),
+        onlineRunner: (id) => peers.runner(id),
         toWeb: (message, to: (client: EnvironmentWebClient) => boolean) => toWeb(message, to),
         repoSessionsUpdated: (repo) => repoSessionsUpdated(repo),
         sensitiveValuesChanged: (repo) => {
@@ -1079,7 +1024,7 @@ export class SessionRelay extends Context.Service<
       })
 
       const mcpServerRelay: McpServerRelay = yield* makeMcpServerRelay({
-        webClients: () => webClients,
+        webClients: () => peers.webClients,
         serialized,
         accessKnown: (who, repo, allowed) => accessKnown(who, repo, allowed),
         repoSessionsUpdated: (repo) => repoSessionsUpdated(repo),
@@ -1116,32 +1061,6 @@ export class SessionRelay extends Context.Service<
         yield* markBusy(sessionId)
       })
 
-      /**
-       * The Participants who have joined the Session or forward it, each once, in the order they
-       * connected: those in it in the web first, then those only forwarding it. Each one
-       * forwarding it says from which machines.
-       */
-      const presenceOf = (sessionId: SessionId): ReadonlyArray<PresentParticipant> => {
-        const present = new Map<ParticipantId, Participant>()
-        for (const client of webClients) {
-          if (client.joined.has(sessionId) && !present.has(client.you.id)) {
-            present.set(client.you.id, client.you)
-          }
-        }
-        const machines = new Map<ParticipantId, Array<string>>()
-        for (const forward of forwards) {
-          if (forward.sessionId !== sessionId) continue
-          if (!present.has(forward.you.id)) present.set(forward.you.id, forward.you)
-          const from = machines.get(forward.you.id) ?? []
-          if (!from.includes(forward.machine)) from.push(forward.machine)
-          machines.set(forward.you.id, from)
-        }
-        return [...present.values()].map((person) => {
-          const from = machines.get(person.id)
-          return from === undefined ? person : { ...person, forwardingFrom: from }
-        })
-      }
-
       /** Tells the Session's mod who is present, if Claude Code may be running to hear it. */
       const presenceToMod = Effect.fn("SessionRelay.presenceToMod")(function* (
         sessionId: SessionId,
@@ -1150,7 +1069,7 @@ export class SessionRelay extends Context.Service<
         if (Option.isNone(session) || session.value.state !== "Active") return
         yield* outbox.enqueue(
           sessionId,
-          PresenceChanged.make({ sessionId, participants: presenceOf(sessionId) }),
+          PresenceChanged.make({ sessionId, participants: peers.presenceOf(sessionId) }),
         )
       })
 
@@ -1159,7 +1078,7 @@ export class SessionRelay extends Context.Service<
         sessionId: SessionId,
         before: ReadonlyArray<PresentParticipant>,
       ) {
-        const after = presenceOf(sessionId)
+        const after = peers.presenceOf(sessionId)
         const same =
           before.length === after.length &&
           before.every((p, i) => {
@@ -1192,7 +1111,7 @@ export class SessionRelay extends Context.Service<
             `You no longer have access to ${repo}.`,
           )
         }
-        const changed = [...webClients].filter(
+        const changed = [...peers.webClients].filter(
           (client) => client.you.id === who.id && client.repos.get(repo) !== allowed,
         )
         if (changed.length === 0) return
@@ -1217,7 +1136,7 @@ export class SessionRelay extends Context.Service<
           for (const session of ofRepo) {
             client.terminals.delete(session.id)
             if (client.joined.has(session.id)) {
-              const presence = presenceOf(session.id)
+              const presence = peers.presenceOf(session.id)
               client.joined.delete(session.id)
               yield* presenceChanged(session.id, presence)
             }
@@ -1255,12 +1174,12 @@ export class SessionRelay extends Context.Service<
         // Each Repo once, whatever spellings it goes by.
         const repos = (yield* sessions.list).map((session) => session.repo)
         // And those someone was let into without a Session, such as an Environment being set up.
-        for (const client of webClients) {
+        for (const client of peers.webClients) {
           for (const [repo, allowed] of client.repos) if (allowed) repos.push(repo)
         }
-        const people = new Map([...webClients].map((client) => [client.you.id, client.you]))
+        const people = new Map([...peers.webClients].map((client) => [client.you.id, client.you]))
         // And everyone forwarding a Session, who may have no web client.
-        for (const forward of forwards) {
+        for (const forward of peers.forwards) {
           people.set(forward.you.id, forward.you)
           repos.push(forward.repo)
         }
@@ -1462,7 +1381,7 @@ export class SessionRelay extends Context.Service<
               Option.isNone(now) ||
               now.value.state !== "Active" ||
               live.starts.get(session.id) !== under ||
-              onlineRunners.get(runner.id) !== runner
+              peers.runner(runner.id) !== runner
             ) {
               return
             }
@@ -1559,7 +1478,7 @@ export class SessionRelay extends Context.Service<
        * conversation is known, when the setting waits for the Session's next wake instead.
        */
       const relaunch = Effect.fn("SessionRelay.relaunch")(function* (session: SessionSummary) {
-        const runner = onlineRunners.get(session.runnerId)
+        const runner = peers.runner(session.runnerId)
         if (runner === undefined || !runner.relaunches) return false
         const resume = yield* sessions.claudeSessionId(session.id)
         if (Option.isNone(resume)) return false
@@ -1643,7 +1562,7 @@ export class SessionRelay extends Context.Service<
         session: SessionSummary,
         why: Why,
       ): Effect.fn.Return<string | undefined, SqlError> {
-        const runner = onlineRunners.get(session.runnerId)
+        const runner = peers.runner(session.runnerId)
         // A restored Session still being stopped for its archive wakes once it is stopped.
         if (runner === undefined || session.state !== "Asleep" || live.archiving.has(session.id)) {
           return undefined
@@ -1768,7 +1687,7 @@ export class SessionRelay extends Context.Service<
         session: SessionSummary,
         why: Why,
       ) {
-        const runner = onlineRunners.get(session.runnerId)
+        const runner = peers.runner(session.runnerId)
         if (runner === undefined || live.stopping.has(session.id)) return
         live.stopping.set(session.id, why)
         yield* Effect.logInfo(`Putting Session ${session.id} to sleep: ${why.message ?? ""}`)
@@ -1782,12 +1701,12 @@ export class SessionRelay extends Context.Service<
         if (hasRunningAgents(session)) return false
         // Claude waits on its question (#193), as its Turn does.
         if (session.openQuestion !== undefined) return false
-        if (!onlineRunners.has(session.runnerId)) return false
+        if (peers.runner(session.runnerId) === undefined) return false
         if (live.stopping.has(session.id) || live.inFlight.has(session.id)) return false
         // A start can take minutes to build its Environment: it isn't idle until it's over.
         if (live.starts.has(session.id)) return false
         // Someone is in it, in the web or forwarding its ports (#180).
-        if (presenceOf(session.id).length > 0) return false
+        if (peers.presenceOf(session.id).length > 0) return false
         // Someone asked for it to stay up, as for a dev server (ADR 0016).
         if (session.keepAwake !== undefined) return false
         return (yield* prompts.list(session.id)).length === 0
@@ -1834,7 +1753,7 @@ export class SessionRelay extends Context.Service<
         yield* outbox.clear(session.id)
         // Its Claude Code is being stopped for good: its mod has nothing more to say.
         yield* modTokens.revoke(session.id)
-        for (const client of webClients) client.terminals.delete(session.id)
+        for (const client of peers.webClients) client.terminals.delete(session.id)
         yield* cancelQuestion(session)
         yield* sessions.archive(session.id, {
           by: by.id,
@@ -1852,7 +1771,7 @@ export class SessionRelay extends Context.Service<
         yield* sessionUpdated(session.id)
         // Its Runner has one Session fewer that keeps it from being removed.
         toWeb(yield* runnerList)
-        const runner = onlineRunners.get(session.runnerId)
+        const runner = peers.runner(session.runnerId)
         if (runner !== undefined) stopForArchive(runner, session.id)
       })
 
@@ -1861,7 +1780,7 @@ export class SessionRelay extends Context.Service<
         session: SessionSummary,
         by: Participant,
       ) {
-        const state = onlineRunners.has(session.runnerId) ? "Asleep" : "Frozen"
+        const state = peers.runner(session.runnerId) !== undefined ? "Asleep" : "Frozen"
         yield* sessions.restore(session.id, state)
         yield* logEvent(
           session.id,
@@ -1880,7 +1799,7 @@ export class SessionRelay extends Context.Service<
           yield* sessions.purge(session, now)
           live.ended(session.id, "Purged")
           yield* outbox.clear(session.id)
-          for (const client of webClients) {
+          for (const client of peers.webClients) {
             client.joined.delete(session.id)
             client.terminals.delete(session.id)
           }
@@ -1888,9 +1807,7 @@ export class SessionRelay extends Context.Service<
             SessionRemoved.make({ sessionId: session.id }),
             (client) => client.repos.get(session.repo) === true,
           )
-          onlineRunners
-            .get(session.runnerId)
-            ?.peer.send(PurgeSession.make({ sessionId: session.id }))
+          peers.runner(session.runnerId)?.peer.send(PurgeSession.make({ sessionId: session.id }))
         }
       }).pipe(Effect.withSpan("SessionRelay.purgeDue"))
 
@@ -2185,9 +2102,7 @@ export class SessionRelay extends Context.Service<
             case "CreateSession": {
               const { requestId } = message
               const runner =
-                message.runnerId === undefined
-                  ? anyRunnerFor(you)
-                  : onlineRunners.get(message.runnerId)
+                message.runnerId === undefined ? anyRunnerFor(you) : peers.runner(message.runnerId)
               if (runner === undefined) {
                 return refuse(
                   message,
@@ -2243,7 +2158,7 @@ export class SessionRelay extends Context.Service<
                   }),
                 )
               }
-              const before = presenceOf(sessionId)
+              const before = peers.presenceOf(sessionId)
               client.joined.add(sessionId)
               peer.send(
                 PromptQueueChanged.make({ sessionId, queue: yield* prompts.list(sessionId) }),
@@ -2259,7 +2174,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "LeaveSession": {
-              const before = presenceOf(message.sessionId)
+              const before = peers.presenceOf(message.sessionId)
               client.joined.delete(message.sessionId)
               yield* presenceChanged(message.sessionId, before)
               return
@@ -2423,7 +2338,7 @@ export class SessionRelay extends Context.Service<
                       sessionId,
                     })
                   }
-                  if (!onlineRunners.has(session.value.runnerId)) {
+                  if (peers.runner(session.value.runnerId) === undefined) {
                     return refuse(message, "The Session's Runner is offline.", { sessionId })
                   }
                   live.restarting.set(sessionId, you)
@@ -2720,7 +2635,7 @@ export class SessionRelay extends Context.Service<
                 })
               }
               client.terminals.add(message.sessionId)
-              const runner = onlineRunners.get(session.value.runnerId)
+              const runner = peers.runner(session.value.runnerId)
               if (session.value.state === "Active" && runner !== undefined) {
                 runner.peer.send(RequestTerminalSnapshot.make({ sessionId: message.sessionId }))
               }
@@ -2740,7 +2655,7 @@ export class SessionRelay extends Context.Service<
               if (!client.terminals.has(sessionId)) {
                 return refuse(message, "Open the Session's terminal first.", { sessionId })
               }
-              const runner = onlineRunners.get(session.value.runnerId)
+              const runner = peers.runner(session.value.runnerId)
               if (session.value.state !== "Active" || runner === undefined) {
                 return refuse(
                   message,
@@ -2777,7 +2692,7 @@ export class SessionRelay extends Context.Service<
                 needlesByRepo.clear()
                 // The asker gets its answer, with any warning; their other tabs, just the change.
                 const credential = changed.info ?? null
-                for (const other of webClients) {
+                for (const other of peers.webClients) {
                   if (other.you.id === you.id && other !== client)
                     other.peer.send(ClaudeCredentialState.make({ credential }))
                 }
@@ -2819,7 +2734,7 @@ export class SessionRelay extends Context.Service<
             yield* serialized(
               Effect.gen(function* () {
                 const tokens = yield* cliTokens.list(you.id)
-                for (const other of webClients) {
+                for (const other of peers.webClients) {
                   if (other.you.id === you.id && other !== client)
                     other.peer.send(CliTokenList.make({ tokens }))
                 }
@@ -3021,6 +2936,7 @@ export class SessionRelay extends Context.Service<
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
         Effect.gen(function* () {
           const client: WebClient = {
+            kind: "Web",
             you,
             peer,
             joined: new Set(),
@@ -3044,7 +2960,7 @@ export class SessionRelay extends Context.Service<
             )
             yield* serialized(
               Effect.gen(function* () {
-                webClients.add(client)
+                peers.addWeb(client)
                 peer.send(yield* runnerList)
                 peer.send(yield* runnerRelay.pendingList())
                 // Only the Sessions of Repos the person has access to. Archived Sessions are
@@ -3074,8 +2990,8 @@ export class SessionRelay extends Context.Service<
             serialized(
               Effect.gen(function* () {
                 const joined = [...client.joined]
-                const before = new Map(joined.map((id) => [id, presenceOf(id)] as const))
-                webClients.delete(client)
+                const before = new Map(joined.map((id) => [id, peers.presenceOf(id)] as const))
+                peers.deleteWeb(client)
                 for (const id of joined) yield* presenceChanged(id, before.get(id) ?? [])
               }),
             ).pipe(Effect.catchCause(Effect.logError)),
@@ -3345,7 +3261,7 @@ export class SessionRelay extends Context.Service<
           }
           yield* serialized(
             Effect.gen(function* () {
-              const replaced = onlineRunners.get(runner.id)
+              const replaced = peers.runner(runner.id)
               if (replaced !== undefined) {
                 replaced.peer.close(RelayCloseCode.Replaced, "Replaced by a newer connection")
                 // Its finalizer finds it replaced and settles nothing: what the old connection
@@ -3354,7 +3270,7 @@ export class SessionRelay extends Context.Service<
                   live.ended(session.id, "RunnerGone")
                 }
               }
-              onlineRunners.set(runner.id, runner)
+              peers.setRunner(runner)
               yield* runners.recordHello(
                 runner.id,
                 {
@@ -3415,8 +3331,8 @@ export class SessionRelay extends Context.Service<
           yield* Effect.addFinalizer(() =>
             serialized(
               Effect.gen(function* () {
-                if (onlineRunners.get(runner.id) !== runner) return
-                onlineRunners.delete(runner.id)
+                if (peers.runner(runner.id) !== runner) return
+                peers.deleteRunner(runner.id)
                 yield* tunnels.runnerGone(runner.id)
                 yield* runnerUpdates.gone(runner.id)
                 yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
@@ -3753,7 +3669,7 @@ export class SessionRelay extends Context.Service<
                 "The Session is going to sleep.",
               )
             }
-            const runner = onlineRunners.get(session.value.runnerId)
+            const runner = peers.runner(session.value.runnerId)
             if (runner === undefined)
               return yield* refuseTunnel(TunnelCloseCode.RunnerOffline, offline)
             if (!runner.forwardsPorts) {
@@ -3786,7 +3702,7 @@ export class SessionRelay extends Context.Service<
         serialized(
           Effect.gen(function* () {
             const tokens = yield* cliTokens.list(participantId)
-            for (const client of webClients) {
+            for (const client of peers.webClients) {
               if (client.you.id === participantId) client.peer.send(CliTokenList.make({ tokens }))
             }
             yield* forwardsSignedOut(participantId, tokens)
@@ -3821,7 +3737,7 @@ export class SessionRelay extends Context.Service<
                 const refused = yield* wake(session, { by: cli.participant })
                 const woken = Option.getOrUndefined(yield* sessions.get(sessionId))
                 if (refused !== undefined || woken === undefined || woken.state !== "Active") {
-                  const runner = onlineRunners.get(session.runnerId)
+                  const runner = peers.runner(session.runnerId)
                   const cantStart =
                     runner === undefined
                       ? undefined
@@ -3837,6 +3753,7 @@ export class SessionRelay extends Context.Service<
                 session = woken
               }
               const client: ForwardClient = {
+                kind: "Forward",
                 you: cli.participant,
                 tokenId: cli.id,
                 machine: cli.machine,
@@ -3844,8 +3761,8 @@ export class SessionRelay extends Context.Service<
                 repo: session.repo,
                 peer,
               }
-              const before = presenceOf(sessionId)
-              forwards.add(client)
+              const before = peers.presenceOf(sessionId)
+              peers.addForward(client)
               peer.send(ForwardSession.make({ session: forWeb(session) }))
               yield* Effect.logInfo(
                 `${cli.participant.login} forwards Session ${sessionId} to ${cli.machine}`,
@@ -3859,8 +3776,8 @@ export class SessionRelay extends Context.Service<
               ? Effect.void
               : serialized(
                   Effect.gen(function* () {
-                    const before = presenceOf(forward.sessionId)
-                    forwards.delete(forward)
+                    const before = peers.presenceOf(forward.sessionId)
+                    peers.deleteForward(forward)
                     yield* presenceChanged(forward.sessionId, before)
                   }),
                 ).pipe(Effect.catchCause(Effect.logError)),
@@ -3913,7 +3830,7 @@ export class SessionRelay extends Context.Service<
         connectWeb,
         connectRunner,
         redeemPairing,
-        runnerOnline: (id) => onlineRunners.has(id),
+        runnerOnline: (id) => peers.runner(id) !== undefined,
         cliTokensChanged,
         membersChanged: memberRelay.membersChanged,
         modHello,
