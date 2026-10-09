@@ -3,7 +3,9 @@
 #
 # Claude Code lays the API's declarations in each plugin's .claude-plugin/types/ each time it
 # loads the plugin; there is no command that only writes them. Loading both in a print-mode
-# session that runs the local /cost command lays them without a model call.
+# session that runs the local /cost command lays them without a model call or a sign-in, but only
+# with CLAUDE_CODE_PLUGIN_DIR_WATCH=1: a plain `claude -p` loads plugins fresh and lays nothing, so
+# a checkout no interactive session has loaded the mod in (CI's) would have no types.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,8 +20,8 @@ MSG
 fi
 
 bun run build >/dev/null
-claude --plugin-dir plugins/hub-link --plugin-dir plugins/hub-link-commands --strict-mcp-config \
-  -p /cost >/dev/null
+CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude --plugin-dir plugins/hub-link \
+  --plugin-dir plugins/hub-link-commands --strict-mcp-config -p /cost >/dev/null
 # Each plugin, against the mod runtime only; then the Bun unit tests, against Bun.
 tsc --noEmit -p plugins/hub-link
 tsc --noEmit -p plugins/hub-link-commands
