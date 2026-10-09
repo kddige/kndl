@@ -258,15 +258,26 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     // `inFlight`, `starting`, `steering`, `steers` and `installationTrouble`: kept as before; see
     // the follow-up. Going Frozen clears `openPorts`.
   ],
+  // Nothing is left of it: whatever another way left behind goes too.
   Purged: [
+    "inFlight",
+    "steering",
+    "steers",
+    "starting",
+    "stopping",
+    "restarting",
+    "starts",
+    "restarts",
     "archiving",
-    "lastBusy",
-    "asleepWhy",
     "openPorts",
+    "installationTrouble",
+    "lastBusy",
+    "questionPicks",
+    "closedQuestions",
+    "asleepWhy",
     "sandboxTokens",
-    // `inFlight`, `steering`, `steers`, `starting`, `stopping`, `restarting`, `starts`,
-    // `restarts`, `installationTrouble`, `questionPicks`, `closedQuestions`, `textStreams` and
-    // `terminalStreams`: kept as before; see the follow-up.
+    "textStreams",
+    "terminalStreams",
   ],
 }
 

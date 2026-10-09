@@ -147,21 +147,7 @@ describe("a Session's live state ending", () => {
     ])
   })
 
-  test("Purged clears what outlives the archive, keeping the rest", () => {
-    expect(keptAfter("Purged")).toEqual([
-      "inFlight",
-      "steering",
-      "steers",
-      "starting",
-      "stopping",
-      "restarting",
-      "starts",
-      "restarts",
-      "installationTrouble",
-      "questionPicks",
-      "closedQuestions",
-      "textStreams",
-      "terminalStreams",
-    ])
+  test("Purged clears every piece: nothing is left of the Session", () => {
+    expect(keptAfter("Purged")).toEqual([])
   })
 })
