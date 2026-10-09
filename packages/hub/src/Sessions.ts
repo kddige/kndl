@@ -106,6 +106,7 @@ const decodeState = Schema.decodeUnknownSync(SessionState)
 const decodeAgentStatus = Schema.decodeUnknownSync(AgentStatus)
 const decodeModel = Schema.decodeUnknownOption(ModelName)
 const decodeEffort = Schema.decodeUnknownOption(EffortLevel)
+const decodeClaudeSessionId = Schema.decodeUnknownOption(ClaudeSessionId)
 const OpenQuestionJson = Schema.fromJsonString(OpenQuestion)
 const decodeOpenQuestion = Schema.decodeUnknownOption(OpenQuestionJson)
 const encodeOpenQuestion = Schema.encodeSync(OpenQuestionJson)
@@ -308,7 +309,10 @@ export class Sessions extends Context.Service<
       id: SessionId,
       claudeSessionId: ClaudeSessionId,
     ) => Effect.Effect<void, SqlError>
-    /** The Claude Code session id last recorded, or none if its mod never said hello. */
+    /**
+     * The Claude Code session id last recorded, or none if its mod never said hello or the one
+     * recorded isn't a Claude Code session id.
+     */
     readonly claudeSessionId: (
       id: SessionId,
     ) => Effect.Effect<Option.Option<ClaudeSessionId>, SqlError>
@@ -532,9 +536,8 @@ export class Sessions extends Context.Service<
         const rows = yield* sql<{ readonly claudeSessionId: string | null }>`
           SELECT claude_session_id AS claudeSessionId FROM sessions WHERE id = ${id}
         `
-        return Option.map(Option.fromNullishOr(rows[0]?.claudeSessionId), (value) =>
-          ClaudeSessionId.make(value),
-        )
+        // One recorded before only UUIDs decoded may not be one: then it is unknown.
+        return Option.flatMap(Option.fromNullishOr(rows[0]?.claudeSessionId), decodeClaudeSessionId)
       })
 
       const setLastOutput = Effect.fn("Sessions.setLastOutput")(function* (

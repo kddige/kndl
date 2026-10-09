@@ -16,6 +16,7 @@ import {
   ProtocolVersion,
 } from "@kndl/protocol"
 import { Effect, Exit, Option, Redacted } from "effect"
+import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { databaseAt } from "./Database.ts"
 import { Environments } from "./Environments.ts"
@@ -67,7 +68,7 @@ class Mod {
       _tag: "ModHello",
       protocolVersion: ProtocolVersion,
       sessionId: this.sessionId,
-      claudeSessionId: "claude-1",
+      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-opus",
       ...more,
     })
@@ -674,7 +675,10 @@ describe("a Runner going offline", () => {
     await web.take("PromptQueueChanged", queueIs("still there?"))
 
     const back = await openRunner(hub, runnerToken, [])
-    expect(await back.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(await back.take("StartSession")).toMatchObject({
+      sessionId,
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    })
     await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
   })
@@ -797,7 +801,7 @@ describe("the Session lifecycle", () => {
       baseBranch: "main",
       workBranch: `claude/${sessionId}`,
       modToken: wake.modToken,
-      resume: "claude-1",
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       environment: expect.any(Object),
       gitIdentity: { name: "alice", email: "alice@dev-login.invalid" },
     })
@@ -848,7 +852,10 @@ describe("the Session lifecycle", () => {
     // Not retried on its own, but the prompt stays queued for the next wake.
     expect(await runner.untaken("StartSession")).toEqual([])
     web.send({ _tag: "WakeSession", sessionId })
-    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(await runner.take("StartSession")).toMatchObject({
+      sessionId,
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    })
     // Joining again sends the queue afresh: the prompt is still there.
     const bobWeb = await openWeb(scene.hub, "bob")
     joinSession(bobWeb, sessionId)
@@ -866,8 +873,39 @@ describe("the Session lifecycle", () => {
 
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested" })
     await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
-    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(await runner.take("StartSession")).toMatchObject({
+      sessionId,
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    })
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
+  })
+
+  test("a stored Claude Code session id that isn't a UUID wakes the Session in a new conversation", async () => {
+    const scene = await sessionScene()
+    const { hub, runner, web, sessionId } = scene
+    joinSession(web, sessionId)
+    await asleep(scene)
+    // As a mod could have said before only UUIDs decoded.
+    await hub.run(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) =>
+          sql`UPDATE sessions SET claude_session_id = ${"../../.claude/.credentials"} WHERE id = ${sessionId}`,
+      ),
+    )
+
+    web.send({ _tag: "WakeSession", sessionId })
+    expect(await runner.take("StartSession")).not.toHaveProperty("resume")
+    expect(
+      (
+        await web.take(
+          "SessionEventLogged",
+          (m) => m.entry.event._tag === "SessionStateChanged" && m.entry.event.state === "Active",
+        )
+      ).entry.event,
+    ).toMatchObject({
+      message: "Woken on mac, with a new conversation: Claude Code's last one is unknown",
+    })
   })
 
   test("Sleep now is refused while a Turn runs or prompts wait, and for a Session not Active", async () => {
@@ -922,7 +960,7 @@ describe("the Session lifecycle", () => {
     })
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
     const woken = await runner.take("StartSession")
-    expect(woken).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(woken).toMatchObject({ sessionId, resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f" })
     expect(woken.environment?.version).toBe(2)
     expect(await runner.untaken("StopSession")).toEqual([])
     const changes = [
@@ -1317,7 +1355,10 @@ describe("archive, restore and purge", () => {
 
     // Woken on its kept Workspace, resuming its conversation; the Runner gives it a new Sandbox.
     web.send({ _tag: "SendPrompt", sessionId, text: "back again" })
-    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(await runner.take("StartSession")).toMatchObject({
+      sessionId,
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    })
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
   })
 
@@ -1334,7 +1375,10 @@ describe("archive, restore and purge", () => {
     expect(await runner.untaken("StartSession")).toEqual([])
 
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
-    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(await runner.take("StartSession")).toMatchObject({
+      sessionId,
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    })
   })
 
   test("a Runner offline when its Session is archived stops it when it is back", async () => {
@@ -1605,7 +1649,10 @@ describe("Keep awake (ADR 0016)", () => {
     const { runner, web, sessionId } = scene
     await asleep(scene)
     web.send({ _tag: "SetKeepAwake", sessionId, on: true })
-    expect(await runner.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(await runner.take("StartSession")).toMatchObject({
+      sessionId,
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    })
     const active = await web.take(
       "SessionUpdated",
       (m) => m.session.state === "Active" && m.session.keepAwake !== undefined,
@@ -1627,7 +1674,10 @@ describe("Keep awake (ADR 0016)", () => {
       await runner.close()
       await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
       const back = await openRunner(first, runnerToken, [])
-      expect(await back.take("StartSession")).toMatchObject({ sessionId, resume: "claude-1" })
+      expect(await back.take("StartSession")).toMatchObject({
+        sessionId,
+        resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      })
       back.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
       await web.take("SessionUpdated", (m) => m.session.state === "Active" && !m.session.starting)
       await web.close()
@@ -1842,7 +1892,7 @@ describe("model and effort (#128)", () => {
       sessionId,
       repo: "kddige/kndl",
       workBranch: `claude/${sessionId}`,
-      resume: "claude-1",
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       modToken: relaunch.modToken,
       model: "opus",
       effort: "xhigh",
@@ -1889,7 +1939,10 @@ describe("model and effort (#128)", () => {
     expect(changed.session).not.toHaveProperty("modelPending")
 
     web.send({ _tag: "WakeSession", sessionId })
-    expect(await runner.take("StartSession")).toMatchObject({ resume: "claude-1", model: "haiku" })
+    expect(await runner.take("StartSession")).toMatchObject({
+      resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      model: "haiku",
+    })
     expect(await runner.untaken("RelaunchSession")).toEqual([])
   })
 
@@ -2912,7 +2965,7 @@ describe("subagents (ADR 0014)", () => {
     await asleep(scene)
     web.send({ _tag: "MessageAgent", sessionId, agentId: "a-1", text: "Carry on" })
     const wake = await runner.take("StartSession")
-    expect(wake).toMatchObject({ sessionId, resume: "claude-1" })
+    expect(wake).toMatchObject({ sessionId, resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f" })
     runner.send({ _tag: "SessionStarted", sessionId })
     const woken = new Mod(hub, sessionId, wake.modToken)
     expect((await woken.hello()).status).toBe(200)

@@ -754,7 +754,7 @@ describe("a Session's start (#216)", () => {
       _tag: "ModHello",
       protocolVersion: ProtocolVersion,
       sessionId,
-      claudeSessionId: "claude-1",
+      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-opus",
     })
     const commands = (await (await mod("/mod/commands?after=0&waitMs=1000")).json()) as {

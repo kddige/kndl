@@ -97,7 +97,11 @@ const linkTo = (current: { hub: TestHub }, modToken: string) => {
   const link = new HubLink({
     hubUrl: "http://hub.test",
     modToken,
-    hello: { sessionId, claudeSessionId: "claude-1", model: "claude-test" },
+    hello: {
+      sessionId,
+      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      model: "claude-test",
+    },
     fetch,
     // Short, so a restart is noticed at once.
     after: (ms, fn) => void setTimeout(fn, Math.min(ms, 20)),

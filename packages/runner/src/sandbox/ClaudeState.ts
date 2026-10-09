@@ -4,8 +4,10 @@
 // prompt, and copies in the transcript of a conversation Claude Code had on the host, before it
 // moved into the Sandbox, the first time that Session wakes.
 
-import { readdir, readFile } from "node:fs/promises"
-import { dirname, join, posix, relative } from "node:path"
+import { constants } from "node:fs"
+import { lstat, open, readdir, realpath } from "node:fs/promises"
+import { dirname, join, posix, relative, sep } from "node:path"
+import { ClaudeSessionIdPattern } from "@kndl/protocol"
 import type { SessionId } from "@kndl/protocol"
 import { Effect } from "effect"
 import { hostTranscriptPath } from "../ClaudeConfig.ts"
@@ -89,19 +91,48 @@ export const seedClaudeState = (backend: SandboxBackendShape, sessionId: Session
     )
   })
 
-/** Every file under `directory` on the host, relative to it; none when it is missing. */
+/**
+ * Every file under `directory` on the host, relative to it; none when it is missing or a symlink.
+ * Symlinks under it are left out too, and never followed, whatever they point at.
+ */
 const hostFiles = async (directory: string): Promise<Array<string>> => {
-  const entries = await readdir(directory, { recursive: true, withFileTypes: true }).catch(() => [])
-  return entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => relative(directory, join(entry.parentPath, entry.name)))
+  const stats = await lstat(directory).catch(() => undefined)
+  if (stats?.isDirectory() !== true) return []
+  const files: Array<string> = []
+  const walk = async (path: string): Promise<void> => {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      const child = join(path, entry.name)
+      if (entry.isDirectory()) await walk(child)
+      else if (entry.isFile()) files.push(relative(directory, child))
+    }
+  }
+  await walk(directory)
+  return files
+}
+
+/**
+ * A file on the host, read only if it is one itself, in `within`: not a symlink, nor reached
+ * through one that leads out of it.
+ */
+const readHostFile = async (path: string, within: string): Promise<Uint8Array> => {
+  const real = await realpath(path)
+  const root = await realpath(within)
+  if (!real.startsWith(`${root}${sep}`)) throw new Error(`${path} is outside ${within}`)
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    if (!(await handle.stat()).isFile()) throw new Error(`${path} is not a file`)
+    return await handle.readFile()
+  } finally {
+    await handle.close()
+  }
 }
 
 /**
  * Whether Claude Code in the running Sandbox has a transcript of conversation `id` to resume.
  * One it had on the host, in `hostCwd` under `projectsDir`, before it moved into the Sandbox, is
  * copied in first, with the directory of the same name beside it (its subagents' transcripts and
- * tool results).
+ * tool results). The id comes from the Sandbox, so there is none for one that isn't a Claude Code
+ * session id, and only files, never symlinks, are copied, from that directory alone.
  */
 export const ensureTranscript = (
   backend: SandboxBackendShape,
@@ -110,12 +141,14 @@ export const ensureTranscript = (
   host: { readonly cwd: string; readonly projectsDir: string },
 ) =>
   Effect.gen(function* () {
+    if (!ClaudeSessionIdPattern.test(id)) return false
     const transcript = posix.join(transcriptsGuestPath, `${id}.jsonl`)
     const found = yield* backend.exec(sessionId, { command: "test", args: ["-f", transcript] })
     if (found.exitCode === 0) return true
     const hostTranscript = hostTranscriptPath(host.cwd, id, host.projectsDir)
     if (hostTranscript === undefined) return false
-    const hostDirectory = join(dirname(hostTranscript), id)
+    const hostProject = dirname(hostTranscript)
+    const hostDirectory = join(hostProject, id)
     const files = yield* Effect.tryPromise({
       try: async () => {
         const nested = await hostFiles(hostDirectory)
@@ -133,7 +166,7 @@ export const ensureTranscript = (
     // The transcript itself goes last, so a copy cut short is tried again on the next start.
     for (const file of files.toReversed()) {
       const data = yield* Effect.tryPromise({
-        try: () => readFile(file.from),
+        try: () => readHostFile(file.from, hostProject),
         catch: (cause) =>
           new SandboxBackendError({ operation: "copy transcript", message: String(cause), cause }),
       })

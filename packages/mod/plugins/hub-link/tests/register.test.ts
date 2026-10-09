@@ -88,7 +88,7 @@ const linkedSession = (on: On) => {
     KNDL_SESSION_ID: "s1",
     KNDL_MOD_TOKEN: "secret",
   })
-  on("session.id", () => ({ value: "claude-1" }))
+  on("session.id", () => ({ value: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f" }))
   on("session.model", () => ({ value: "claude-test" }))
   on("ui.log", () => ({ value: undefined }))
   on("session.start", (_, e) => ({ cwd: e.cwd }))
@@ -162,7 +162,7 @@ describe("the Hub link", () => {
       _tag: "ModHello",
       protocolVersion: 2,
       sessionId: "s1",
-      claudeSessionId: "claude-1",
+      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",
       steers: true,
     })
