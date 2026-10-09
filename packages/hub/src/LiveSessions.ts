@@ -102,14 +102,8 @@ export type SessionEnd =
   | "RunnerGone"
   | "Purged"
 
-/**
- * Each Session's live state. Only the Session relay's lock (`serialized`) reads and writes it, so
- * nothing changes between a check and the change it decides; it is synchronous, so a write never
- * waits. Two writes are made off the lock, each synchronous, so neither lands inside another's
- * check: `sandboxTokens.set`, as a GitRequest's answer mints a Sandbox token (it waited on GitHub),
- * and deleting from `installationTrouble`'s inner map, as the Gateway says an Installation works.
- */
-export interface LiveSessions {
+/** Every piece of the live state, as it is kept; the interface shows only what it must. */
+interface Pieces {
   /**
    * The prompt each Session's mod has been sent and not yet started a Turn with or failed.
    * In memory only: after a Hub restart the head of the queue is delivered again (see
@@ -187,11 +181,67 @@ export interface LiveSessions {
   readonly textStreams: PerSession<Map<string, TextStream>>
   /** Each Session's terminal Output, and the last frame's size, for held text let go. */
   readonly terminalStreams: PerSession<TerminalStream>
+}
+
+type Piece = keyof Pieces
+
+/**
+ * Each Session's live state. Only the Session relay's lock (`serialized`) reads and writes it, so
+ * nothing changes between a check and the change it decides; it is synchronous, so a write never
+ * waits. Two writes are made off the lock, each synchronous, so neither lands inside another's
+ * check: `sandboxTokens.set`, as a GitRequest's answer mints a Sandbox token (it waited on GitHub),
+ * and deleting from `installationTrouble`'s inner map, as the Gateway says an Installation works.
+ */
+export interface LiveSessions extends Pick<
+  Pieces,
+  | "inFlight"
+  | "steering"
+  | "steers"
+  | "starting"
+  | "stopping"
+  | "restarting"
+  | "starts"
+  | "restarts"
+  | "archiving"
+  | "openPorts"
+  | "installationTrouble"
+  | "lastBusy"
+  | "questionPicks"
+  | "closedQuestions"
+  | "asleepWhy"
+  | "sandboxTokens"
+  | "textStreams"
+  | "terminalStreams"
+> {
+  // ── Delivery: one prompt at a time, from the Prompt queue to the mod ──
+
+  /** The mod was sent the prompt (DeliverPrompt): it is in flight until a Turn starts or it fails. */
+  readonly delivering: (id: SessionId, promptId: PromptId) => void
+  /** Whether the prompt is in flight: delivered, and no Turn started from it yet. */
+  readonly delivered: (id: SessionId, promptId: PromptId) => boolean
+  /** A Turn started, from the prompt if it names one: that prompt is no longer in flight. */
+  readonly turnStarted: (id: SessionId, promptId: PromptId) => void
+  /**
+   * The mod failed the prompt. One being steered into the Turn is no longer (ADR 0018): it stays
+   * in its place in the queue, and who steered it is returned, to be told. Any other is no
+   * longer in flight, and `undefined` is returned.
+   */
+  readonly promptFailed: (id: SessionId, promptId: PromptId) => ParticipantId | undefined
+  /** The mod said the prompt steered into the Turn joined it (PromptSteered): the steer is over. */
+  readonly promptSteered: (id: SessionId, promptId: PromptId) => void
+  /** StartSession was sent: prompts wait for the new mod's hello, and the web shows it starting. */
+  readonly startSent: (id: SessionId, start: StartUnderWay) => void
+  /**
+   * RelaunchSession was sent (#128): prompts wait for the new mod's hello, and steers the old mod
+   * was sent are dropped, since it won't answer them.
+   */
+  readonly relaunched: (id: SessionId) => void
+  /** The Session's mod said hello, saying whether it steers (#195): prompts may go to it. */
+  readonly modHello: (id: SessionId, steers: boolean) => void
+
   /** The Session's live state ended `how`: what that ends is cleared (see `clearedWhen`). */
   readonly ended: (id: SessionId, how: SessionEnd) => void
 }
-
-type Piece = Exclude<keyof LiveSessions, "ended">
 
 /**
  * What each way a Session's live state ends clears; the rest is kept. Each list is what the relay
@@ -288,8 +338,18 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
   ],
 }
 
+/** Where `piecesOf` finds the pieces: not part of the interface. */
+const piecesKey = Symbol("pieces")
+
+/**
+ * Every piece of the live state, for LiveSessions.test.ts: the clearing table is about each piece,
+ * including those the interface shows only through its decisions.
+ */
+export const piecesOf = (live: LiveSessions): Pieces =>
+  (live as LiveSessions & { readonly [piecesKey]: Pieces })[piecesKey]
+
 export const makeLiveSessions = (): LiveSessions => {
-  const pieces: { readonly [P in Piece]: LiveSessions[P] } = {
+  const pieces: Pieces = {
     inFlight: new Map(),
     steering: new Map(),
     steers: new Set(),
@@ -309,10 +369,46 @@ export const makeLiveSessions = (): LiveSessions => {
     textStreams: new Map(),
     terminalStreams: new Map(),
   }
-  return {
+  const steerAnswered = (id: SessionId, promptId: PromptId) => {
+    const steered = pieces.steering.get(id)
+    steered?.delete(promptId)
+    if (steered?.size === 0) pieces.steering.delete(id)
+  }
+
+  const live: LiveSessions & { readonly [piecesKey]: Pieces } = {
     ...pieces,
+    [piecesKey]: pieces,
+    delivering: (id, promptId) => pieces.inFlight.set(id, promptId),
+    delivered: (id, promptId) => pieces.inFlight.get(id) === promptId,
+    turnStarted: (id, promptId) => {
+      if (pieces.inFlight.get(id) === promptId) pieces.inFlight.delete(id)
+    },
+    promptFailed: (id, promptId) => {
+      const steeredBy = pieces.steering.get(id)?.get(promptId)
+      if (steeredBy !== undefined) {
+        steerAnswered(id, promptId)
+        return steeredBy
+      }
+      if (pieces.inFlight.get(id) === promptId) pieces.inFlight.delete(id)
+      return undefined
+    },
+    promptSteered: steerAnswered,
+    startSent: (id, start) => {
+      pieces.starting.add(id)
+      pieces.starts.set(id, start)
+    },
+    relaunched: (id) => {
+      pieces.steering.delete(id)
+      pieces.starting.add(id)
+    },
+    modHello: (id, steers) => {
+      if (steers) pieces.steers.add(id)
+      else pieces.steers.delete(id)
+      pieces.starting.delete(id)
+    },
     ended: (id, how) => {
       for (const piece of clearedWhen[how]) pieces[piece].delete(id)
     },
   }
+  return live
 }

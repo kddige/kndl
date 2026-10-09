@@ -1,5 +1,6 @@
-// Each Session's live state (LiveSessions.ts): what each way it ends clears, and what it keeps.
-// A change to what a way clears is a deliberate change to its row here.
+// Each Session's live state (LiveSessions.ts): its transitions and the decisions it makes, and
+// what each way it ends clears, and what it keeps. A change to what a way clears is a deliberate
+// change to its row here.
 
 import { describe, expect, test } from "bun:test"
 import {
@@ -11,7 +12,7 @@ import {
   ToolCallId,
   TurnId,
 } from "@kndl/protocol"
-import { type LiveSessions, makeLiveSessions, type SessionEnd } from "./LiveSessions.ts"
+import { type LiveSessions, makeLiveSessions, piecesOf, type SessionEnd } from "./LiveSessions.ts"
 import { needlesOf, StreamRedactor } from "./Redaction.ts"
 
 const id = SessionId.make("s-ended")
@@ -21,7 +22,8 @@ const toolCallId = ToolCallId.make("tc-1")
 const turnId = TurnId.make("t-1")
 
 /** Gives the Session every piece of live state. */
-const populate = (live: LiveSessions, sessionId: SessionId) => {
+const populate = (sessions: LiveSessions, sessionId: SessionId) => {
+  const live = piecesOf(sessions)
   const promptId = PromptId.make("pr-1")
   live.inFlight.set(sessionId, promptId)
   live.steering.set(sessionId, new Map([[promptId, alice.id]]))
@@ -73,7 +75,7 @@ const pieces = [
 
 /** The pieces of live state the Session still has. */
 const kept = (live: LiveSessions, sessionId: SessionId) =>
-  pieces.filter((piece) => live[piece].has(sessionId))
+  pieces.filter((piece) => piecesOf(live)[piece].has(sessionId))
 
 /** Populates two Sessions, ends one `how`, and says what it kept. */
 const keptAfter = (how: SessionEnd) => {
@@ -144,5 +146,69 @@ describe("a Session's live state ending", () => {
 
   test("Purged clears every piece: nothing is left of the Session", () => {
     expect(keptAfter("Purged")).toEqual([])
+  })
+})
+
+describe("delivery", () => {
+  const one = PromptId.make("pr-1")
+  const two = PromptId.make("pr-2")
+
+  test("a prompt is in flight from its delivery until a Turn starts from it", () => {
+    const live = makeLiveSessions()
+    expect(live.delivered(id, one)).toBe(false)
+    live.delivering(id, one)
+    expect(live.delivered(id, one)).toBe(true)
+    expect(live.delivered(id, two)).toBe(false)
+    expect(live.delivered(other, one)).toBe(false)
+    // A Turn from another prompt, as one steered in, leaves it in flight.
+    live.turnStarted(id, two)
+    expect(live.delivered(id, one)).toBe(true)
+    live.turnStarted(id, one)
+    expect(live.delivered(id, one)).toBe(false)
+  })
+
+  test("a prompt the mod failed is no longer in flight, and no one steered it", () => {
+    const live = makeLiveSessions()
+    live.delivering(id, one)
+    expect(live.promptFailed(id, two)).toBeUndefined()
+    expect(live.delivered(id, one)).toBe(true)
+    expect(live.promptFailed(id, one)).toBeUndefined()
+    expect(live.delivered(id, one)).toBe(false)
+  })
+
+  test("a steer the mod failed or answered is over, and a failed one says who steered it", () => {
+    const live = makeLiveSessions()
+    live.steering.set(
+      id,
+      new Map([
+        [one, alice.id],
+        [two, alice.id],
+      ]),
+    )
+    live.delivering(id, PromptId.make("pr-0"))
+    expect(live.promptFailed(id, one)).toBe(alice.id)
+    // Failing a steer leaves the prompt in flight alone.
+    expect(live.delivered(id, PromptId.make("pr-0"))).toBe(true)
+    expect(live.steering.get(id)?.has(two)).toBe(true)
+    live.promptSteered(id, two)
+    expect(live.steering.has(id)).toBe(false)
+  })
+
+  test("a start or relaunch waits for the new mod's hello, which says whether it steers", () => {
+    const live = makeLiveSessions()
+    const start = { since: 1, environmentVersion: undefined, log: "", attached: false }
+    live.startSent(id, start)
+    expect(live.starting.has(id)).toBe(true)
+    expect(live.starts.get(id)).toBe(start)
+    live.modHello(id, true)
+    expect(live.starting.has(id)).toBe(false)
+    expect(live.steers.has(id)).toBe(true)
+
+    live.steering.set(id, new Map([[one, alice.id]]))
+    live.relaunched(id)
+    expect(live.starting.has(id)).toBe(true)
+    expect(live.steering.has(id)).toBe(false)
+    live.modHello(id, false)
+    expect(live.steers.has(id)).toBe(false)
   })
 })

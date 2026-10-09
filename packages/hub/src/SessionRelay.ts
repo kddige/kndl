@@ -835,7 +835,7 @@ export class SessionRelay extends Context.Service<
         sessionId: SessionId,
         environment: { readonly environment?: { readonly version: EnvironmentVersion } },
       ) {
-        live.starts.set(sessionId, {
+        live.startSent(sessionId, {
           since: yield* Clock.currentTimeMillis,
           environmentVersion: environment.environment?.version,
           log: "",
@@ -1280,7 +1280,7 @@ export class SessionRelay extends Context.Service<
         if (session.value.modelPending === true && (yield* relaunch(session.value))) return
         const [head] = yield* prompts.list(sessionId)
         if (head === undefined) return
-        live.inFlight.set(sessionId, head.id)
+        live.delivering(sessionId, head.id)
         yield* outbox.enqueue(
           sessionId,
           DeliverPrompt.make({
@@ -1503,8 +1503,7 @@ export class SessionRelay extends Context.Service<
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         // Commands the old mod didn't collect are stale, as when it sleeps.
         yield* outbox.clear(session.id)
-        live.steering.delete(session.id)
-        live.starting.add(session.id)
+        live.relaunched(session.id)
         yield* sessions.setModelPending(session.id, false)
         yield* Effect.logInfo(`Restarting Claude Code of ${session.id} for its new model`)
         runner.peer.send(
@@ -1606,7 +1605,6 @@ export class SessionRelay extends Context.Service<
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         const installations = yield* startMcpServers(session.id, session.repo, runner)
-        live.starting.add(session.id)
         yield* startSent(session.id, environment)
         // It starts with its model and effort as set now (#128).
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
@@ -1919,7 +1917,6 @@ export class SessionRelay extends Context.Service<
         })
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
         const installations = yield* startMcpServers(id, session.repo, runner)
-        live.starting.add(id)
         yield* startSent(id, environment)
         yield* logEvent(id, SessionStateChanged.make({ state: "Active", ...plan.why }))
         yield* sendStart(
@@ -2462,7 +2459,7 @@ export class SessionRelay extends Context.Service<
             case "CancelPrompt": {
               const { sessionId, promptId } = message
               if (Option.isNone(yield* sessionFor(message))) return
-              if (live.inFlight.get(sessionId) === promptId) {
+              if (live.delivered(sessionId, promptId)) {
                 return refuse(message, "The prompt was already delivered to Claude Code.", {
                   sessionId,
                 })
@@ -2492,7 +2489,7 @@ export class SessionRelay extends Context.Service<
               ) {
                 return why("No Turn is running to steer the prompt into: it goes next.")
               }
-              if (live.inFlight.get(sessionId) === promptId) {
+              if (live.delivered(sessionId, promptId)) {
                 return why("The prompt was already delivered to Claude Code.")
               }
               if (live.steering.get(sessionId)?.has(promptId) === true) return
@@ -3376,29 +3373,19 @@ export class SessionRelay extends Context.Service<
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         yield* sessions.setClaudeSessionId(sessionId, hello.claudeSessionId)
-        if (hello.steers === true) live.steers.add(sessionId)
-        else live.steers.delete(sessionId)
-        live.starting.delete(sessionId)
+        live.modHello(sessionId, hello.steers === true)
         yield* presenceToMod(sessionId)
         yield* deliverNext(sessionId)
       }, serialized)
-
-      /** The mod answered a DeliverIntoTurn. */
-      const steerAnswered = (sessionId: SessionId, promptId: PromptId) => {
-        const steered = live.steering.get(sessionId)
-        steered?.delete(promptId)
-        if (steered?.size === 0) live.steering.delete(sessionId)
-      }
 
       const modEvent = Effect.fn("SessionRelay.modEvent")(function* (
         sessionId: SessionId,
         event: ModEvent,
       ) {
         if (event._tag === "PromptFailed") {
-          const steeredBy = live.steering.get(sessionId)?.get(event.promptId)
+          const steeredBy = live.promptFailed(sessionId, event.promptId)
           if (steeredBy !== undefined) {
             // A steer that failed leaves the prompt in its place, to wait for the Turn to end.
-            steerAnswered(sessionId, event.promptId)
             return toWeb(
               CommandFailed.make({
                 command: "SteerPrompt",
@@ -3410,7 +3397,6 @@ export class SessionRelay extends Context.Service<
           }
           // The prompt is dropped, and its sender told: put back, it would most likely fail
           // again at once, and hold up the rest of the queue.
-          if (live.inFlight.get(sessionId) === event.promptId) live.inFlight.delete(sessionId)
           const failed = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isNone(failed)) return
           toWeb(
@@ -3509,14 +3495,14 @@ export class SessionRelay extends Context.Service<
         } else if (event._tag === "TurnStarted") {
           yield* sessions.setCurrentTurn(sessionId, event.turnId)
           if (event.promptId !== undefined) {
-            if (live.inFlight.get(sessionId) === event.promptId) live.inFlight.delete(sessionId)
+            live.turnStarted(sessionId, event.promptId)
             const started = yield* prompts.remove(sessionId, event.promptId)
             if (Option.isSome(started)) yield* queueChanged(sessionId)
           }
           yield* sessionUpdated(sessionId)
         } else if (event._tag === "PromptSteered") {
           // It joined the Turn: out of the queue, and shown in the Turn instead.
-          steerAnswered(sessionId, event.promptId)
+          live.promptSteered(sessionId, event.promptId)
           const steered = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isSome(steered)) yield* queueChanged(sessionId)
         } else if (event._tag === "TurnEnded" && event.agentId === undefined) {
