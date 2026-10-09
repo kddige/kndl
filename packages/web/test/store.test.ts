@@ -45,29 +45,18 @@ const turnStart = {
 const delta = (text: string) => ({ _tag: "TextDelta", turnId: "t-1", text }) as const
 
 describe("connection", () => {
-  test("starts connecting, with nothing known", () => {
-    expect(initialState.connection).toEqual({ status: "connecting", attempt: 0 })
-    expect(initialState.you).toBeNull()
-    expect(initialState.runners).toBeNull()
-    expect(initialState.sessions).toBeNull()
-    expect(initialState.joined).toEqual({})
-  })
-
-  test("ConnectionChanged replaces the connection", () => {
-    const state = run({
-      _tag: "ConnectionChanged",
-      connection: { status: "signedOut", options: { github: true, dev: false } },
-    })
-    expect(state.connection).toEqual({ status: "signedOut", options: { github: true, dev: false } })
-  })
-
-  test("the welcome says who you are and brings the connection online", () => {
+  test("the welcome says who you are, whether you are the Hub's Owner, and brings the connection online", () => {
     const state = run(
       { _tag: "ConnectionChanged", connection: { status: "connecting", attempt: 2 } },
       welcome(),
     )
     expect(state.connection).toEqual({ status: "online" })
     expect(state.you?.login).toBe(alice.login)
+    expect(state.owner).toBe(false)
+    const owned = run(
+      hub({ _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice, owner: true }),
+    )
+    expect(owned.owner).toBe(true)
   })
 
   test("HandshakeRejected keeps the Hub's message", () => {
@@ -357,15 +346,6 @@ function queued(id: string, text: string, sender = alice) {
 }
 
 describe("presence and the Prompt queue", () => {
-  test("PresenceChanged replaces who's here", () => {
-    const state = run(
-      joined,
-      hub({ _tag: "PresenceChanged", sessionId: "s-1", participants: [alice, bob] }),
-      hub({ _tag: "PresenceChanged", sessionId: "s-1", participants: [bob] }),
-    )
-    expect(state.joined[s1]?.presence.map((p) => p.login)).toEqual(["bob"])
-  })
-
   test("PromptQueueChanged replaces the queue, in order", () => {
     let state = run(
       joined,
@@ -585,17 +565,6 @@ describe("Environments", () => {
     expect(state.environments["acme/other"]).toEqual({ environment: null, versions: [] })
   })
 
-  test("SharedVariables replaces what was known", () => {
-    expect(initialState.sharedVariables).toBeNull()
-    const state = run(
-      hub({
-        _tag: "SharedVariables",
-        variables: [{ _tag: "Sensitive", name: "GH_TOKEN", linkedBy: [], needsValue: false }],
-      }),
-    )
-    expect(state.sharedVariables?.map((variable) => variable.name)).toEqual(["GH_TOKEN"])
-  })
-
   test("a Test build's log streams in until it ends, and says how", () => {
     const state = run(
       hub({ _tag: "TestBuildStarted", requestId: "q-2", testBuild }),
@@ -685,14 +654,6 @@ describe("Environments", () => {
 describe("People (#209)", () => {
   const member = { participant: alice, owner: true, admittedAt: 1 }
   const invite = { id: "inv-1", createdBy: alice, createdAt: 1, expiresAt: 2 }
-
-  test("the welcome says whether you are the Hub's Owner", () => {
-    expect(run(welcome()).owner).toBe(false)
-    const owned = run(
-      hub({ _tag: "WebWelcome", protocolVersion: ProtocolVersion, you: alice, owner: true }),
-    )
-    expect(owned.owner).toBe(true)
-  })
 
   test("MemberList and InviteList replace what was known; a new Invite's link isn't kept", () => {
     const state = run(

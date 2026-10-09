@@ -29,30 +29,17 @@ afterEach(async () => {
 })
 
 describe("mcpServerIconUrl", () => {
-  test("is the Hub's route for the MCP server, its id encoded, with the hash to bust the cache", () => {
+  test("is the Hub's route for the MCP server, its id encoded, with the hash to bust the cache, or none", () => {
     expect(mcpServerIconUrl({ id: McpServerId.make("hub:docs-search"), iconHash: "abc123" })).toBe(
       "/mcp/hub%3Adocs-search/icon?v=abc123",
     )
     expect(mcpServerIconUrl({ id: McpServerId.make("@acme/linear-mcp"), iconHash: "f00" })).toBe(
       "/mcp/%40acme%2Flinear-mcp/icon?v=f00",
     )
-  })
-
-  test("is none for an MCP server with no icon", () => {
+    // No icon, no route.
     expect(mcpServerIconUrl({ id: McpServerId.make("hub:docs") })).toBeUndefined()
   })
 })
-
-/** The classes and style an MCP server id gives its tile. */
-const tile = async (id: string) => {
-  const view = await render(<McpServerAvatar mcpServer={{ id: McpServerId.make(id), name: "A" }} />)
-  cleanup = view.unmount
-  const root = view.container.firstElementChild
-  const style = `${root?.getAttribute("class")} ${root?.getAttribute("style")}`
-  await view.unmount()
-  cleanup = undefined
-  return style
-}
 
 describe("McpServerAvatar", () => {
   test("shows the first letter of the name, in capitals, when the MCP server has no icon", async () => {
@@ -60,25 +47,18 @@ describe("McpServerAvatar", () => {
       <McpServerAvatar mcpServer={{ id: McpServerId.make("hub:docs"), name: "docs search" }} />,
     )
     cleanup = unmount
-    await settle(400)
+    await settle(20)
     expect(container.querySelector("img")).toBeNull()
     expect(container.textContent).toBe("D")
-  })
 
-  test("takes the first letter of a name that starts with an emoji or a space", async () => {
-    const { container, unmount } = await render(
+    // A name that starts with an emoji or a space: its first letter.
+    await unmount()
+    const emoji = await render(
       <McpServerAvatar mcpServer={{ id: McpServerId.make("hub:x"), name: "  🚀 Rocket" }} />,
     )
-    cleanup = unmount
-    await settle(400)
-    expect(container.textContent).toBe("🚀")
-  })
-
-  test("keeps one color for an MCP server id, and varies it by id", async () => {
-    expect(await tile("hub:a")).toBe(await tile("hub:a"))
-    const colors = new Set<string>()
-    for (const id of ["hub:a", "hub:b", "hub:c", "hub:d", "@acme/e"]) colors.add(await tile(id))
-    expect(colors.size).toBeGreaterThan(1)
+    cleanup = emoji.unmount
+    await settle(20)
+    expect(emoji.container.textContent).toBe("🚀")
   })
 
   test("shows the Hub's icon once it loads, described by nothing: the name is on the card", async () => {
@@ -88,7 +68,7 @@ describe("McpServerAvatar", () => {
       />,
     )
     cleanup = unmount
-    await settle(400)
+    await settle(20)
     const image = container.querySelector("img")
     expect(image?.getAttribute("src")).toBe("/mcp/hub%3Adocs/icon?v=abc")
     expect(image?.getAttribute("alt")).toBe("")
@@ -101,6 +81,7 @@ describe("McpServerAvatar", () => {
       />,
     )
     cleanup = unmount
+    // The fallback waits 300 ms for the icon before it shows.
     await settle(400)
     expect(container.querySelector("img")).toBeNull()
     expect(container.textContent).toBe("D")

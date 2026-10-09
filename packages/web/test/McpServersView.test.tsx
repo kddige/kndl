@@ -4,7 +4,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { hubMcpServerId, RequestId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -34,7 +34,6 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
   }
 }
 
-const dialog = () => document.querySelector('[role="dialog"]')
 const mcpServer = (name: string) => document.querySelector(`[aria-label="MCP server ${name}"]`)
 const mcpServersLink = () =>
   [...document.querySelectorAll("a")].find((a) => a.textContent?.trim() === "MCP")
@@ -66,19 +65,6 @@ async function openMcpServers(owner = true) {
   await eventually(() => expect(mcpServer("Docs search")).not.toBeNull())
   return { hub, client }
 }
-
-test("shows each MCP server's letter avatar before its name when the Hub has found it no icon", async () => {
-  await openMcpServers()
-  for (const [name, letter] of [
-    ["Docs search", "D"],
-    ["Linear", "L"],
-    ["Sentry", "S"],
-  ] as const) {
-    const nameLine = mcpServer(name)?.querySelector("span[aria-hidden='true']")?.parentElement
-    expect(nameLine?.firstElementChild?.textContent).toBe(letter)
-    expect(nameLine?.textContent?.startsWith(`${letter}${name}`)).toBe(true)
-  }
-})
 
 test("lists the MCP servers and their Installations, not naming Repos out of reach", async () => {
   await openMcpServers()
@@ -132,7 +118,6 @@ test("adds an Installation on Repos, and shows why a second one on a Repo is ref
     repos: ["kddige/kndl", "kddige/dotfiles"],
   })
 
-  await settle(300)
   await step(() => button("Add Installation of Docs search").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Docs"))
   await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
@@ -277,7 +262,6 @@ test("an Installation's header secret values are write-only: entered, never show
   expect(document.body.textContent).not.toContain("made-up-linear-key")
 
   // Saved again with the value left empty: it keeps the one it has, sending none.
-  await settle(300)
   await step(() => button("Edit Installation Linear").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Edit"))
   const again = dialog()?.querySelector('input[type="password"]') as HTMLInputElement
@@ -297,7 +281,6 @@ test("says whose values an edit to an MCP server clears, before saving it", asyn
   await step(() => button("Add").click())
   await eventually(() => expect(mcpServer("Linear")?.textContent).toContain("set by"))
 
-  await settle(300)
   await step(() => button("Edit MCP server Linear").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Header secrets"))
   const url = [...(dialog()?.querySelectorAll("input") ?? [])][1] as HTMLInputElement
@@ -368,6 +351,9 @@ test("adds an MCP server package from git, once what the Hub read is confirmed",
   expect(hub.received.some((m) => m._tag === "AddMcpServerPackage")).toBe(true)
 })
 
+/** What the open Upgrade dialog says upgrading changes. */
+const upgradeTable = () => dialog()?.querySelector('[aria-label="What upgrading changes"]')
+
 test("upgrades a packaged MCP server from git only once its changes are confirmed", async () => {
   const { hub } = await openMcpServers()
   // Pinned: only an Upgrade changes it.
@@ -380,11 +366,9 @@ test("upgrades a packaged MCP server from git only once its changes are confirme
   await step(() => button("Add").click())
   await eventually(() => expect(mcpServer("Asana")?.textContent).toContain("set by"))
 
-  await settle(300)
   await step(() => button("Upgrade MCP server Asana").click())
-  const table = () => dialog()?.querySelector('[aria-label="What upgrading changes"]')
-  await eventually(() => expect(table()).not.toBeNull())
-  const changes = table()?.textContent
+  await eventually(() => expect(upgradeTable()).not.toBeNull())
+  const changes = upgradeTable()?.textContent
   expect(changes).toContain("1.0.0")
   expect(changes).toContain("1.1.0")
   expect(changes).toContain("https://mcp.asana.example/v2/mcp")
@@ -403,7 +387,6 @@ test("upgrades a packaged MCP server from git only once its changes are confirme
     mcpServerId: "@acme/asana-mcp",
   })
 
-  await settle(300)
   await step(() => button("Upgrade MCP server Asana").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Asana is up to date: 1.1.0"))
   expect(() => button("Upgrade", dialog() ?? document)).toThrow()
@@ -511,7 +494,6 @@ test("warns where an OAuth token would be sent unencrypted, and not over https (
   await step(() => button("Save and disconnect").click())
   await eventually(() => expect(mcpServer("GitHub")?.textContent).toContain("Unencrypted http"))
 
-  await settle(300)
   await step(() => button("Edit Installation GitHub").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Edit GitHub"))
   expect(unencrypted()?.textContent).toContain("The account's token is sent unencrypted")

@@ -22,13 +22,10 @@ const installation = (name: string, keys: ReadonlyArray<string>) =>
   ({ name, values: keys.map((key) => ({ key, setBy: by, setAt: 0 })) }) as unknown as Installation
 
 describe("keyFromTitle", () => {
-  test("joins a title's letters and digits with underscores", () => {
+  test("joins a title's letters and digits with underscores, starting with a letter", () => {
     expect(keyFromTitle("API key")).toBe("api_key")
     expect(keyFromTitle("  Sentry auth-token!")).toBe("sentry_auth_token")
     expect(keyFromTitle("Clé d'accès")).toBe("cle_d_acces")
-  })
-
-  test("starts with a letter, as a key must", () => {
     expect(keyFromTitle("2nd key")).toBe("secret_2nd_key")
     expect(keyFromTitle("")).toBe("secret")
     expect(keyFromTitle("🔑")).toBe("secret")

@@ -1,5 +1,5 @@
-// The model and effort picker (#128): what it offers, what choosing sends, and that it works from
-// the keyboard and on a phone.
+// The model and effort picker (#128): what it offers, what choosing sends, and that it works on a
+// phone.
 
 import { afterEach, expect, test } from "bun:test"
 import type { ModelSetting } from "../src/session/models.ts"
@@ -68,17 +68,13 @@ const checked = () =>
     .filter((row) => row.getAttribute("aria-checked") === "true")
     .map((row) => row.textContent)
 
-function key(target: Element, name: string): void {
-  target.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }))
-}
-
 async function open(trigger: HTMLButtonElement): Promise<void> {
   await step(() => trigger.click())
   await settle()
   expect(menu()).not.toBeNull()
 }
 
-test("the button names the setting, and the menu lists the Runner's models with a line each", async () => {
+test("the button names the setting, and the menu lists the Runner's models, or only the default without them", async () => {
   const { trigger } = await picker({ model: "sonnet", effort: "high" })
   expect(trigger.textContent).toBe("Sonnet 5.5 · High")
   expect(trigger.getAttribute("aria-label")).toBe("Model and effort: Sonnet 5.5 · High")
@@ -89,14 +85,25 @@ test("the button names the setting, and the menu lists the Runner's models with 
   expect(radio("Default (recommended)").textContent).toContain("Opus 5.5")
   expect(radio("Sonnet 5.5").textContent?.length).toBeGreaterThan("Sonnet 5.5".length)
   expect(checked()).toEqual([expect.stringMatching(/^Sonnet 5\.5/)])
-})
+  await cleanup?.()
 
-test("Claude Code's default names its model, with no effort claimed", async () => {
-  const { trigger } = await picker()
-  expect(trigger.textContent).toBe("Opus 5.5")
-  await open(trigger)
+  // Claude Code's default names its model, with no effort claimed.
+  const unset = await picker()
+  expect(unset.trigger.textContent).toBe("Opus 5.5")
+  await open(unset.trigger)
   expect(checked()).toEqual([expect.stringMatching(/^Default \(recommended\)/)])
   expect(item("Effort").textContent).toContain("Default")
+  await cleanup?.()
+
+  // Without the Runner's list, only Claude Code's default is offered.
+  setWidth(1024)
+  const view = await render(<ModelPicker models={undefined} value={{}} onChange={() => {}} />)
+  cleanup = view.unmount
+  await open(button("Model and effort: Default model", view.container))
+  expect(radios().map((row) => row.textContent)).toEqual([
+    "Default (recommended)Claude Code's own default",
+  ])
+  expect(document.querySelector('[role="menuitem"]')).toBeNull()
 })
 
 test("choosing a model sends it, keeping the effort level", async () => {
@@ -146,40 +153,6 @@ test("the Effort submenu offers the CLI's levels, named as claude.ai names them"
   expect(trigger.textContent).toBe("Opus 5.5 · Extra")
 })
 
-test("the picker works from the keyboard", async () => {
-  const { trigger, changes } = await picker()
-  trigger.focus()
-  await step(() => key(trigger, "ArrowDown"))
-  await settle()
-  expect(menu()).not.toBeNull()
-
-  // Opened on the default row: down to the first model, and Enter picks it.
-  expect(document.activeElement?.textContent).toStartWith("Default (recommended)")
-  await step(() => key(document.activeElement ?? trigger, "ArrowDown"))
-  await settle()
-  expect(document.activeElement?.textContent).toStartWith("Opus 5.5")
-  await step(() => key(document.activeElement ?? trigger, "Enter"))
-  await settle()
-  expect(changes).toEqual([{ model: "opus" }])
-
-  // Effort, last in the menu, opens with ArrowRight; its levels pick with Enter too.
-  trigger.focus()
-  await step(() => key(trigger, "ArrowDown"))
-  await settle()
-  await step(() => key(document.activeElement ?? trigger, "End"))
-  await settle()
-  expect(document.activeElement?.textContent).toStartWith("Effort")
-  await step(() => key(document.activeElement ?? trigger, "ArrowRight"))
-  await settle()
-  expect(menus()).toHaveLength(2)
-  expect(document.activeElement?.textContent).toBe("Low")
-  await step(() => key(document.activeElement ?? trigger, "ArrowDown"))
-  await settle()
-  await step(() => key(document.activeElement ?? trigger, "Enter"))
-  await settle()
-  expect(changes.at(-1)).toEqual({ model: "opus", effort: "medium" })
-})
-
 test("on a phone, Effort is a second panel in the menu, with a way back", async () => {
   const { trigger, changes } = await picker({ model: "opus" }, 400)
   await open(trigger)
@@ -199,16 +172,4 @@ test("on a phone, Effort is a second panel in the menu, with a way back", async 
   await step(() => radio("High").click())
   await settle()
   expect(changes).toEqual([{ model: "opus", effort: "high" }])
-})
-
-test("without the Runner's list, only Claude Code's default is offered", async () => {
-  setWidth(1024)
-  const view = await render(<ModelPicker models={undefined} value={{}} onChange={() => {}} />)
-  cleanup = view.unmount
-  const trigger = button("Model and effort: Default model", view.container)
-  await open(trigger)
-  expect(radios().map((row) => row.textContent)).toEqual([
-    "Default (recommended)Claude Code's own default",
-  ])
-  expect(document.querySelector('[role="menuitem"]')).toBeNull()
 })

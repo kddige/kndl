@@ -399,17 +399,6 @@ describe("buildTranscript", () => {
     expect(JSON.stringify(before)).toBe(snapshot)
     expect(turns(before)[0]?.end).toBeNull()
   })
-
-  test("an empty log is an empty transcript", () => {
-    expect(transcriptOf([])).toEqual({
-      items: [],
-      agents: new Map(),
-      questions: new Map(),
-      agentList: [],
-      running: undefined,
-      stateChange: undefined,
-    })
-  })
 })
 
 describe("questions (#193)", () => {

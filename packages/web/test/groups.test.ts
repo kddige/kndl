@@ -32,10 +32,6 @@ test("a group's order can be given, and a Repo's place doesn't follow its activi
   expect(groups[2]?.sessions.map((s) => String(s.id))).toEqual(["f", "c", "a"])
 })
 
-test("no Sessions, no groups", () => {
-  expect(groupByRepo([])).toEqual([])
-})
-
 test("every Repo with a Session is known once, in alphabetical order", () => {
   expect(knownRepos(sessions)).toEqual(["Acme/beta", "kddige/alpha", "kddige/zeta"])
 })

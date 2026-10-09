@@ -5,7 +5,7 @@ import { expect, test } from "bun:test"
 import { hubMcpServerId, RequestId } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -431,9 +431,7 @@ test("a prompt queued while an Installation keeps the Session from starting runs
   await step(() => button("Take kddige/kndl off Linear", page).click())
   expect(sent()).not.toContain("DeleteInstallation")
   await eventually(() =>
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
-      "kddige/kndl is the only Repo it is on in",
-    ),
+    expect(dialog()?.textContent).toContain("kddige/kndl is the only Repo it is on in"),
   )
   await step(() => button("Delete Installation").click())
   await eventually(() => expect(sent()).toContain("DeleteInstallation"))
@@ -493,9 +491,7 @@ test("Fix opens the Installation that keeps a Session from starting (#216)", asy
 
   await step(() => page.querySelector<HTMLAnchorElement>('a[aria-label="Fix Linear"]')?.click())
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("MCP"))
-  await eventually(() =>
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Edit Linear"),
-  )
+  await eventually(() => expect(dialog()?.textContent).toContain("Edit Linear"))
 })
 
 test("an Installation that fails mid-Session shows as an error in it, which runs on (#216)", async () => {

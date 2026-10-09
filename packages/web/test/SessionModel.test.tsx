@@ -3,7 +3,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -105,25 +105,25 @@ test("New Session starts on the model picked in its dialog", async () => {
   const { hub, router, picker } = await open("/sessions/s-readme")
   await eventually(() => expect(picker()).not.toBeNull())
   await step(() => button("New Session", document).click())
-  await eventually(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull())
-  const dialog = document.querySelector('[role="dialog"]') as HTMLElement
+  await eventually(() => expect(dialog()).not.toBeNull())
+  const newSession = dialog() as HTMLElement
 
   // Claude Code's default until one is picked.
-  const choose = button("Model and effort: Opus 5.5", dialog)
-  const repo = dialog.querySelector<HTMLInputElement>('input[placeholder="kddige/kndl"]')
+  const choose = button("Model and effort: Opus 5.5", newSession)
+  const repo = newSession.querySelector<HTMLInputElement>('input[placeholder="kddige/kndl"]')
   await step(() => repo && typeInto(repo, "kddige/kndl"))
   // The Repo's default branch is filled in once the Hub has listed its branches.
   await eventually(() => {
-    const inputs = [...dialog.querySelectorAll<HTMLInputElement>('input[role="combobox"]')]
+    const inputs = [...newSession.querySelectorAll<HTMLInputElement>('input[role="combobox"]')]
     expect(inputs[1]?.value).toBe("main")
   })
   await step(() => choose.click())
   await settle()
   await step(() => radio("Sonnet 5.5").click())
   await settle()
-  expect(button("Model and effort: Sonnet 5.5", dialog)).toBeDefined()
+  expect(button("Model and effort: Sonnet 5.5", newSession)).toBeDefined()
 
-  await step(() => button("Start Session", dialog).click())
+  await step(() => button("Start Session", newSession).click())
   await eventually(() => expect(hub.received.some((m) => m._tag === "CreateSession")).toBe(true))
   const created = hub.received.find((m) => m._tag === "CreateSession")
   expect(created && "model" in created ? created.model : undefined).toBe("sonnet")

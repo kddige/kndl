@@ -3,7 +3,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -202,8 +202,6 @@ test("shared variables: linked ones show who links them, and can't be deleted", 
   )
 })
 
-const dialog = () => document.querySelector('[role="dialog"]') as HTMLElement
-
 /** The "needs a value" badges in `within`. */
 const needsValueBadges = (within: ParentNode) =>
   [...within.querySelectorAll("span")].filter((span) => span.textContent === "needs a value")
@@ -244,13 +242,14 @@ test("after a secrets-reset, a shared variable asks for its value, and entering 
 
   await step(() => button("Edit GH_READ_TOKEN").click())
   await eventually(() => expect(dialog()).not.toBeNull())
-  const value = dialog().querySelector('input[type="password"]') as HTMLInputElement
+  const editor = dialog() as HTMLElement
+  const value = editor.querySelector('input[type="password"]') as HTMLInputElement
   expect(value.getAttribute("placeholder")).toBe("Cleared: enter it again")
   // Kept blank, it is refused: there is nothing to keep.
-  await step(() => button("Save", dialog()).click())
-  expect(dialog().textContent).toContain("under 4 characters")
+  await step(() => button("Save", editor).click())
+  expect(editor.textContent).toContain("under 4 characters")
   await step(() => typeInto(value, "made-up-new-gh-token"))
-  await step(() => button("Save", dialog()).click())
+  await step(() => button("Save", editor).click())
   await eventually(() => expect(row()?.textContent).toContain("set"))
   expect(needsValueBadges(row() as Element)).toHaveLength(0)
   expect(page.textContent).not.toContain("GH_READ_TOKEN needs a value")
