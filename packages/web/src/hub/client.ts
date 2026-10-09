@@ -7,6 +7,8 @@
 import {
   type AgentId,
   type AppPermissionsCheck,
+  type BranchChoice,
+  type BranchesListed,
   checkHandshake,
   type ClaudeCredentialState,
   type ClaudePlanChoice,
@@ -69,7 +71,8 @@ export interface HubClientOptions {
 
 export interface NewSession {
   readonly repo: string
-  readonly baseBranch: string
+  /** The branch it works on (ADR 0023); the Hub resolves it to a base branch and a Work branch. */
+  readonly branch: BranchChoice
   readonly runnerId?: RunnerId
   /** The model to start it on; Claude Code's default without one (#128). */
   readonly model?: ModelName
@@ -347,7 +350,7 @@ export class HubClient {
       {
         _tag: "CreateSession",
         repo: input.repo,
-        baseBranch: input.baseBranch,
+        branch: input.branch,
         ...(input.runnerId !== undefined && { runnerId: input.runnerId }),
         ...(input.model !== undefined && { model: input.model }),
         ...(input.effort !== undefined && { effort: input.effort }),
@@ -402,6 +405,19 @@ export class HubClient {
    */
   checkRepo(repo: string, fresh = false): Promise<RepoChecked> {
     return this.#request({ _tag: "CheckRepo", repo, ...(fresh && { fresh }) }, "RepoChecked")
+  }
+
+  /**
+   * The Repos the signed-in person may start a Session on, from the GitHub App's installations
+   * (ADR 0023); rejects with the Hub's reason where it can't say, such as without the App.
+   */
+  async listRepos(): Promise<ReadonlyArray<string>> {
+    return (await this.#request({ _tag: "ListRepos" }, "ReposListed")).repos
+  }
+
+  /** A Repo's branches and its default branch, through the GitHub App; rejects as `listRepos`. */
+  async listBranches(repo: string): Promise<BranchesListed> {
+    return this.#request({ _tag: "ListBranches", repo }, "BranchesListed")
   }
 
   /** Every shared variable, which the store then keeps current. */
@@ -789,6 +805,8 @@ export class HubClient {
       case "SharedVariables":
       case "AppPermissionsChecked":
       case "RepoChecked":
+      case "ReposListed":
+      case "BranchesListed":
       case "PairingCodeCreated":
       case "PairingCodeList":
       case "RunnerRemoved":

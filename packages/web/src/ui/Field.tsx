@@ -136,6 +136,13 @@ export function Field({
   )
 }
 
+/** The look of a text field, for kit components that are one (Combobox). */
+export const fieldControl = {
+  control: styles.control,
+  input: styles.input,
+  focus: styles.controlFocus,
+}
+
 export type InputSize = "sm" | "md"
 
 export interface InputProps extends Omit<

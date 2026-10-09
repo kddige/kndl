@@ -368,8 +368,14 @@ function LoadedSession({
         description={
           <>
             {summary.repo} <span aria-hidden="true">·</span>{" "}
-            {/* Named, the title no longer says which branch it works on. */}
-            {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}{" "}
+            {summary.workBranch === summary.baseBranch ? (
+              `on ${summary.baseBranch}`
+            ) : (
+              <>
+                {/* Named, the title no longer says which branch it works on. */}
+                {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}
+              </>
+            )}{" "}
             <span aria-hidden="true">·</span> {claudeAccountText(summary)}
             {summary.keepAwake !== undefined && (
               <>

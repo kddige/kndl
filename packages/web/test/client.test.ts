@@ -355,15 +355,47 @@ describe("commands", () => {
     await eventually(() => expect(client.getState().connection.status).toBe("online"))
     const session = await client.createSession({
       repo: "kddige/kndl",
-      baseBranch: "main",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
       runnerId: RunnerId.make("r-studio"),
     })
     expect(session).toMatchObject({
       repo: "kddige/kndl",
       baseBranch: "main",
+      workBranch: `claude/${session.id}`,
       state: "Active",
     })
     expect(client.getState().sessions?.some((listed) => listed.id === session.id)).toBe(true)
+  })
+
+  test("createSession works on a branch directly, or on a new one (ADR 0023)", async () => {
+    const { client } = setUp()
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    const repo = "kddige/kndl"
+    const direct = await client.createSession({
+      repo,
+      branch: { _tag: "Existing", name: "dev", newWorkBranch: false },
+    })
+    expect(direct).toMatchObject({ baseBranch: "dev", workBranch: "dev" })
+    const created = await client.createSession({
+      repo,
+      branch: { _tag: "Create", name: "feature/health", from: "dev" },
+    })
+    expect(created).toMatchObject({ baseBranch: "dev", workBranch: "feature/health" })
+  })
+
+  test("lists Repos and a Repo's branches, and rejects with the Hub's reason", async () => {
+    const { client, hub } = setUp()
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    expect(await client.listRepos()).toContain("kddige/kndl")
+    expect(await client.listBranches("kddige/kndl")).toMatchObject({
+      branches: ["main", "dev", "release/1.0"],
+      defaultBranch: "main",
+    })
+    hub.listingDown = true
+    await expect(client.listRepos()).rejects.toThrow("GitHub App")
+    await expect(client.listBranches("kddige/kndl")).rejects.toThrow("GitHub App")
   })
 
   test("createSession rejects with the Hub's reason", async () => {
@@ -373,7 +405,7 @@ describe("commands", () => {
     await expect(
       client.createSession({
         repo: "kddige/kndl",
-        baseBranch: "main",
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
         runnerId: RunnerId.make("r-ci"),
       }),
     ).rejects.toThrow("ci-box is offline.")
@@ -383,9 +415,12 @@ describe("commands", () => {
     const { client } = setUp()
     expect(client.sendPrompt(demo, "hello")).toBe(false)
     expect(client.stopTurn(demo)).toBe(false)
-    await expect(client.createSession({ repo: "a/b", baseBranch: "main" })).rejects.toThrow(
-      "Not connected",
-    )
+    await expect(
+      client.createSession({
+        repo: "a/b",
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+      }),
+    ).rejects.toThrow("Not connected")
   })
 
   test("a refused command is reported to onCommandFailed", async () => {
@@ -753,14 +788,20 @@ describe("Environments", () => {
 
   test("a Repo's first Environment, from the default draft, lets it have Sessions", async () => {
     const { client } = await online()
-    await expect(client.createSession({ repo: "acme/new", baseBranch: "main" })).rejects.toThrow(
-      "acme/new has no Environment yet",
-    )
+    await expect(
+      client.createSession({
+        repo: "acme/new",
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+      }),
+    ).rejects.toThrow("acme/new has no Environment yet")
     const build = await client.startTestBuild("acme/new", studio, DefaultEnvironmentDraft)
     await eventually(() => expect(client.getState().testBuilds[build.id]?.result).toBe("Passed"))
     const applied = await client.applyEnvironment("acme/new", null, DefaultEnvironmentDraft)
     expect(applied.environment?.version).toBe(1 as never)
-    const session = await client.createSession({ repo: "acme/new", baseBranch: "main" })
+    const session = await client.createSession({
+      repo: "acme/new",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     // Being started on version 1, it runs on none until its Runner says it started (#70).
     expect(session.environment).toEqual({ version: null, latestVersion: 1 as never })
     expect(session.starting?.environmentVersion).toBe(1 as never)

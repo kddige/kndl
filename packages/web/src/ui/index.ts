@@ -8,6 +8,12 @@ export { Avatar, AvatarStack, type AvatarPerson, type AvatarSize } from "./Avata
 export { Badge, type BadgeIntent } from "./Badge.tsx"
 export { Banner, type BannerIntent } from "./Banner.tsx"
 export { Button, IconButton, type ButtonIntent, type ButtonSize } from "./Button.tsx"
+export {
+  Combobox,
+  type ComboboxCreate,
+  type ComboboxOption,
+  type ComboboxProps,
+} from "./Combobox.tsx"
 export { Checkbox, Switch, type CheckboxProps } from "./Checkbox.tsx"
 export { Dialog, DialogClose, type DialogSize } from "./Dialog.tsx"
 export { Disclosure } from "./Disclosure.tsx"

@@ -27,6 +27,7 @@ import { PeopleView } from "./people/PeopleView.tsx"
 import { RunnersView } from "./runners/RunnersView.tsx"
 import { type SessionTab, SessionView } from "./session/SessionView.tsx"
 import { AllArchivedSessions, ArchivedSessions } from "./sessions/ArchivedSessions.tsx"
+import { branchFromSearch } from "./sessions/branches.ts"
 import { Home } from "./sessions/Home.tsx"
 import type { ThemeMode } from "./ui/theme.ts"
 import { UIProvider } from "./ui/UIProvider.tsx"
@@ -121,8 +122,10 @@ const environmentsRoute = createRoute({
 
 /** The Session to start once a Repo's first Environment is applied. */
 interface SetupSearch {
-  /** Its base branch. */
+  /** Its branch choice (ADR 0023): the branch, and `from` or `direct` as `branchSearch` says. */
   branch?: string
+  from?: string
+  direct?: true
   runner?: string
   /** Its model and effort (#128); the Hub checks them when it starts it. */
   model?: string
@@ -131,16 +134,19 @@ interface SetupSearch {
 
 /**
  * A Repo's Environment (ADR 0009). With ?branch=, it's the setup before the Repo's first Session,
- * which starts on that branch (and ?runner=, ?model=, ?effort=) once the Environment is applied.
+ * which starts on that branch (and ?from=, ?direct=, ?runner=, ?model=, ?effort=) once the Environment is applied.
  */
 const environmentRoute = createRoute({
   getParentRoute: () => hubRoute,
   path: "/repos/$owner/$repo/environment",
   validateSearch: (search: Record<string, unknown>): SetupSearch => {
-    const { branch, runner, model, effort } = search
+    const { branch, from, direct, runner, model, effort } = search
     return nonEmpty(branch)
       ? {
           branch,
+          ...(nonEmpty(from) && { from }),
+          ...((direct === true || direct === "true") &&
+            !nonEmpty(from) && { direct: true as const }),
           ...(nonEmpty(runner) && { runner }),
           ...(nonEmpty(model) && { model }),
           ...(EffortLevels.some((level) => level === effort) && { effort: effort as EffortLevel }),
@@ -149,7 +155,7 @@ const environmentRoute = createRoute({
   },
   component: function EnvironmentRoute() {
     const { owner, repo } = environmentRoute.useParams()
-    const { branch, runner, model, effort } = environmentRoute.useSearch()
+    const { branch, from, direct, runner, model, effort } = environmentRoute.useSearch()
     return (
       <EnvironmentView
         key={`${owner}/${repo}`}
@@ -158,7 +164,11 @@ const environmentRoute = createRoute({
           branch === undefined
             ? undefined
             : {
-                baseBranch: branch,
+                branch: branchFromSearch({
+                  branch,
+                  ...(from !== undefined && { from }),
+                  ...(direct !== undefined && { direct }),
+                }),
                 ...(runner !== undefined && { runnerId: runner as RunnerId }),
                 ...(model !== undefined && { model }),
                 ...(effort !== undefined && { effort }),

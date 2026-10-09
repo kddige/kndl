@@ -22,6 +22,10 @@ const { createAppRouter } = await import("../src/router.tsx")
 /** Opens New Session as alice, who has stored no Claude credential. */
 async function openDialog(runnerHasOwn: boolean) {
   const hub = new FakeHub({ stepMs: 2, autoplay: false })
+  return open(hub, runnerHasOwn)
+}
+
+async function open(hub: InstanceType<typeof FakeHub>, runnerHasOwn = true) {
   hub.patchRunner("r-studio", { ownClaudeCredential: runnerHasOwn })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/runners"] }))
@@ -39,8 +43,43 @@ async function openDialog(runnerHasOwn: boolean) {
   await step(() => button("New Session", document).click())
   await settle()
   const dialog = document.querySelector('[role="dialog"]') as HTMLElement
-  return { dialog, start: button("Start Session", dialog) }
+  return { dialog, hub, router, start: button("Start Session", dialog) }
 }
+
+/** Waits until `check` stops throwing, or fails with its last error. */
+async function eventually(check: () => void, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      check()
+      return
+    } catch (error) {
+      if (Date.now() > deadline) throw error
+      await settle(10)
+    }
+  }
+}
+
+/** Types into the field labelled `label`, as a person does. */
+async function type(dialog: HTMLElement, label: string, value: string) {
+  const field = [...dialog.querySelectorAll("label")].find((each) => each.textContent === label)
+  const input = dialog.querySelector(
+    `input[id="${field?.getAttribute("for")}"]`,
+  ) as HTMLInputElement
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set
+  await step(() => {
+    input.focus()
+    setValue?.call(input, value)
+    // With an inputType, as typing has: Base UI opens the list for typing, not for autofill.
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }))
+  })
+  return input
+}
+
+const inputOf = (dialog: HTMLElement, label: string) =>
+  dialog.querySelector(
+    `input[id="${[...dialog.querySelectorAll("label")].find((each) => each.textContent === label)?.getAttribute("for")}"]`,
+  ) as HTMLInputElement | null
 
 test("runs on its Runner's own credential when the Runner has one", async () => {
   const { dialog, start } = await openDialog(true)
@@ -55,4 +94,125 @@ test("says before the form is filled in that no Runner can run it, and can't be 
     "No online Runner has a Claude credential of its own to run this one on.",
   )
   expect(start.disabled).toBe(true)
+})
+
+test("the Branch is disabled until a Repo is picked, then prefills the Repo's default branch", async () => {
+  const { dialog } = await openDialog(true)
+  expect(inputOf(dialog, "Branch")?.disabled).toBe(true)
+
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  expect(inputOf(dialog, "Branch")?.disabled).toBe(false)
+
+  // Another Repo resets it.
+  await type(dialog, "Repo", "kddige/other")
+  expect(inputOf(dialog, "Branch")?.value).toBe("")
+  expect(inputOf(dialog, "Branch")?.disabled).toBe(true)
+})
+
+test("starts a Session directly on the branch when Work on a new branch is off", async () => {
+  const { dialog, hub, start } = await openDialog(true)
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  await type(dialog, "Branch", "dev")
+  const box = dialog.querySelector('input[type="checkbox"]') as HTMLElement
+  await step(() => box.click())
+  expect(dialog.textContent).toContain("Claude commits directly to dev.")
+  await step(() => start.click())
+  await settle(100)
+
+  const sent = hub.received.find((message) => message["_tag"] === "CreateSession")
+  expect(sent).toMatchObject({
+    repo: "kddige/kndl",
+    branch: { _tag: "Existing", name: "dev", newWorkBranch: false },
+  })
+})
+
+test("offers to create a branch that is none of the Repo's, from one of them", async () => {
+  const { dialog, hub, start } = await openDialog(true)
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  await type(dialog, "Branch", "feature/health")
+  await eventually(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+  const create = [...document.querySelectorAll('[role="option"]')].find((option) =>
+    option.textContent?.includes("Create branch 'feature/health'"),
+  ) as HTMLElement
+  await step(() => create.click())
+  expect(inputOf(dialog, "From")?.value).toBe("main")
+  // A new branch is its own Work branch: there is nothing to choose.
+  expect(dialog.querySelector('[role="checkbox"]')).toBeNull()
+
+  await type(dialog, "From", "nowhere")
+  expect(dialog.textContent).toContain("Pick one of the Repo's branches.")
+  await type(dialog, "From", "dev")
+  await step(() => start.click())
+  await settle(100)
+  expect(hub.received.find((message) => message["_tag"] === "CreateSession")).toMatchObject({
+    branch: { _tag: "Create", name: "feature/health", from: "dev" },
+  })
+})
+
+test("says why git would refuse a new branch's name", async () => {
+  const { dialog } = await openDialog(true)
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  await type(dialog, "Branch", "bad..name")
+  await eventually(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+  const create = [...document.querySelectorAll('[role="option"]')].find((option) =>
+    option.textContent?.includes("Create branch"),
+  ) as HTMLElement
+  await step(() => create.click())
+  expect(dialog.textContent).toContain("A branch name can't have two dots in a row.")
+})
+
+test("without the GitHub App, suggests from Sessions, says so, and never blocks", async () => {
+  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+  hub.listingDown = true
+  const { dialog, start } = await open(hub)
+  expect(dialog.textContent).toContain("Couldn't load the Repos")
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(dialog.textContent).toContain("Couldn't load the branches"))
+  // The branch is taken as existing: the usual default, and no Create entry to offer.
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  await type(dialog, "Branch", "whatever")
+  expect(document.querySelector('[role="option"]')).toBeNull()
+  expect(start.disabled).toBe(false)
+})
+
+test("warns when sessions are already on the branch it would commit to", async () => {
+  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+  // One of kddige/kndl's Active Sessions works on main itself.
+  const session = [...hub.sessions.values()].find(
+    ({ summary }) => summary.repo === "kddige/kndl" && summary.state === "Active",
+  )
+  if (session) session.summary = { ...session.summary, workBranch: "main" }
+  const { dialog } = await open(hub)
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  await step(() => (dialog.querySelector('input[type="checkbox"]') as HTMLElement).click())
+  expect(dialog.textContent).toMatch(/\d+ active Sessions? (is|are) already on main/)
+})
+
+test("suggests the Repos from the Hub, with the person's own Sessions' Repos on top", async () => {
+  const { dialog } = await openDialog(true)
+  await type(dialog, "Repo", "kddige/")
+  await eventually(() => expect(document.querySelector('[role="listbox"]')).not.toBeNull())
+  const listbox = document.querySelector('[role="listbox"]') as HTMLElement
+  expect(listbox.textContent).toContain("Recent")
+  expect(listbox.textContent).toContain("kddige/kndl")
+  // Narrowed in the browser by what is typed.
+  expect(listbox.textContent).not.toContain("someone-else")
+})
+
+test("carries the whole branch choice through the Environment setup of a Repo's first Session", async () => {
+  const { dialog, router, start } = await openDialog(true)
+  await type(dialog, "Repo", "acme/fresh")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  await step(() => (dialog.querySelector('input[type="checkbox"]') as HTMLElement).click())
+  await step(() => start.click())
+  await eventually(() =>
+    expect(router.state.location.pathname).toBe("/repos/acme/fresh/environment"),
+  )
+  expect(router.state.location.search).toMatchObject({ branch: "main", direct: true })
+  await eventually(() => expect(document.body.textContent).toContain("Your Session on main"))
 })
