@@ -386,9 +386,12 @@ describe("connecting", () => {
         hubVersion,
       })
     }, updater.layer)
-    // A service would only restart a Runner that exits, in a loop: it keeps trying, slowly.
-    await eventually(() => h.hub.connections.length >= 2)
+    // A service would only restart a Runner that exits, in a loop: it keeps trying, slowly. Waits
+    // for the second rejection itself: the Hub sees the second connection before the Runner has
+    // read the answer to it.
+    await eventually(() => updater.rejected.length >= 2)
 
+    expect(h.hub.connections.length).toBeGreaterThanOrEqual(2)
     expect(updater.rejected.slice(0, 2)).toEqual([hubVersion, hubVersion])
     expect(h.runner.pollUnsafe()).toBeUndefined()
   })
