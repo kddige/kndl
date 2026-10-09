@@ -89,9 +89,27 @@ class Mod {
     return body.messages.map((command) => command.message)
   }
 
+  /**
+   * The commands tagged `tag` queued since the last poll, waiting up to `waitMs` for the first.
+   * Any command ends a poll, and others (a join's PresenceChanged) may be queued before the one
+   * awaited, so it polls again until one comes, rather than filtering the first answer to nothing.
+   */
+  async next<T extends Command["_tag"]>(
+    tag: T,
+    waitMs = 0,
+  ): Promise<Array<Extract<Command, { _tag: T }>>> {
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      const found = (await this.poll(Math.max(0, deadline - Date.now()))).filter(
+        (command): command is Extract<Command, { _tag: T }> => command._tag === tag,
+      )
+      if (found.length > 0 || Date.now() >= deadline) return found
+    }
+  }
+
   /** The prompts delivered since the last poll. */
-  async deliveries(waitMs = 0) {
-    return (await this.poll(waitMs)).filter((command) => command._tag === "DeliverPrompt")
+  deliveries(waitMs = 0) {
+    return this.next("DeliverPrompt", waitMs)
   }
 }
 
@@ -474,8 +492,7 @@ describe("the Prompt queue", () => {
 })
 
 /** The prompts sent to join the running Turn since the last poll. */
-const steers = async (mod: Mod, waitMs = 0) =>
-  (await mod.poll(waitMs)).filter((command) => command._tag === "DeliverIntoTurn")
+const steers = (mod: Mod, waitMs = 0) => mod.next("DeliverIntoTurn", waitMs)
 
 describe("steering (#195)", () => {
   test("hands a queued prompt to the running Turn, where it leaves the queue once it joined", async () => {
