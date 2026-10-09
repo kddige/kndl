@@ -116,13 +116,9 @@ describe("a Session's live state ending", () => {
     ])
   })
 
-  test("Archived clears deliveries, starts and stops, keeping steering, Open ports and Installation trouble", () => {
+  test("Archived clears deliveries, steers, starts, stops, Open ports and Installation trouble", () => {
     expect(keptAfter("Archived")).toEqual([
-      "steering",
-      "steers",
       "archiving",
-      "openPorts",
-      "installationTrouble",
       "lastBusy",
       "questionPicks",
       "closedQuestions",

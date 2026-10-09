@@ -236,8 +236,13 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "stopping",
     "restarting",
     "restarts",
-    // `steering`, `steers`, `openPorts` and `installationTrouble`: kept as before; see the
-    // follow-up.
+    // Its mod token is revoked: a steer under way is never answered, by a mod that is gone.
+    "steering",
+    "steers",
+    // Its Sandbox is destroyed, and what listened or failed in it with it: a Runner that
+    // drops off before it stops it leaves nothing to show after a restore.
+    "openPorts",
+    "installationTrouble",
     // `archiving` is kept: the stop for good is asked for after this.
     // `questionPicks` is cleared as its question is cancelled.
     // `textStreams` and `terminalStreams`: kept as before; see the follow-up.
