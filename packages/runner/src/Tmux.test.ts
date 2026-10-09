@@ -34,6 +34,8 @@ describe("lastOutputOf", () => {
       "\n\u001b[1m\u001b[31mError:\u001b[0m The current working directory was deleted   \n" +
       "\u001b]0;title\u0007bye\n\n\nPane is dead (status 1, Mon Oct  5 12:00:00 2026)\n\n"
     expect(lastOutputOf(screen)).toBe("Error: The current working directory was deleted\nbye")
+    // Nothing, for a blank pane.
+    expect(lastOutputOf("\n\n  \n")).toBe("")
   })
 
   test("keeps only the last lines, and at most so many characters of them", () => {
@@ -42,10 +44,6 @@ describe("lastOutputOf", () => {
       Array.from({ length: 40 }, (_, i) => `line ${60 + i}`),
     )
     expect(lastOutputOf(screen, 40, 12)).toBe("e 98\nline 99")
-  })
-
-  test("is empty for a blank pane", () => {
-    expect(lastOutputOf("\n\n  \n")).toBe("")
   })
 })
 

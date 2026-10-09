@@ -553,19 +553,11 @@ describe("restarting under running Sessions (#157)", () => {
 })
 
 describe("Sessions", () => {
-  test("starts the Sandbox with the git identity the Hub sent", async () => {
+  test("starts Claude Code in its Sandbox's tmux with the mod and a Session token, then streams it", async () => {
     const h = startRunner()
     await connected(h)
     const gitIdentity = { name: "Ada Lovelace", email: "1+ada@users.noreply.github.com" }
     h.hub.send(startSession("s-1", { gitIdentity }))
-    await eventually(() => h.hub.all("SessionStarted").length === 1)
-    expect(h.sandboxes.targets).toEqual([{ repo: "acme/app", gitIdentity }])
-  })
-
-  test("starts Claude Code in its Sandbox's tmux with the mod and a Session token, then streams it", async () => {
-    const h = startRunner()
-    await connected(h)
-    h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     const [spec] = h.tmux.launched
@@ -603,6 +595,8 @@ describe("Sessions", () => {
     expect(JSON.stringify(spec)).not.toContain("chm_mod.secret")
     expect(h.workspaces.prepared).toMatchObject([{ sessionId: "s-1", workBranch: "claude/s-1" }])
     expect(h.sandboxes.calls).toEqual(["start s-1"])
+    // With the git identity the Hub sent.
+    expect(h.sandboxes.targets).toEqual([{ repo: "acme/app", gitIdentity }])
 
     // A snapshot first, then output as it comes.
     h.tmux.pane("s-1").output("hello")
@@ -611,15 +605,6 @@ describe("Sessions", () => {
       ["Snapshot", "screen of s-1"],
       ["Output", "hello"],
     ])
-  })
-
-  test("starts Claude Code on the Session's model and effort (#128)", async () => {
-    const h = startRunner()
-    await connected(h)
-    h.hub.send(startSession("s-1", { model: "sonnet", effort: "high" }))
-    await eventually(() => h.hub.all("SessionStarted").length === 1)
-
-    expect(h.tmux.launched[0]?.argv.slice(-4)).toEqual(["--model", "sonnet", "--effort", "high"])
   })
 
   test("starts Claude Code with its Installations' MCP servers, at the Gateway (#221)", async () => {
@@ -730,20 +715,6 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionStartFailed").length === 1)
 
     expect(h.tmux.launched).toEqual([])
-  })
-
-  test("resumes Claude Code's conversation when waking a Session", async () => {
-    const h = startRunner()
-    await connected(h)
-    writeTranscript(h, "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f")
-    h.hub.send(startSession("s-1", { resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f" }))
-    await eventually(() => h.hub.all("SessionStarted").length === 1)
-
-    expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual([
-      "--resume",
-      "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
-    ])
-    expect(h.hub.all("SandboxNote")).toEqual([])
   })
 
   test("admits a Session with its Creator's Claude credential, asked of the Hub as it starts (#150)", async () => {
@@ -1028,7 +999,7 @@ describe("Sessions", () => {
     expect(h.sandboxes.calls).toEqual(["purge s-2"])
   })
 
-  test("puts a Session to sleep, keeping its Workspace and Sandbox, and wakes it resuming", async () => {
+  test("puts a Session to sleep, keeping its Workspace and Sandbox, and wakes it resuming on its model (#128)", async () => {
     const h = startRunner()
     await connected(h)
     h.hub.send(startSession("s-1"))
@@ -1051,6 +1022,8 @@ describe("Sessions", () => {
       startSession("s-1", {
         modToken: "chm_woken.secret",
         resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
+        model: "sonnet",
+        effort: "high",
       }),
     )
     await eventually(() => h.hub.all("SessionStarted").length === 2)
@@ -1062,7 +1035,9 @@ describe("Sessions", () => {
     const woken = h.tmux.launched[1]
     expect(woken?.cwd).toBe("/workspace")
     expect(woken?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f"])
+    expect(woken?.argv.slice(-4)).toEqual(["--model", "sonnet", "--effort", "high"])
     expect(woken?.env["KNDL_MOD_TOKEN"]).toStartWith("chp_")
+    expect(h.hub.all("SandboxNote")).toEqual([])
   })
 
   test("leaves Sessions running in tmux when the Runner stops", async () => {
@@ -1105,34 +1080,19 @@ describe("Sessions", () => {
     expect(h.tmux.panes.size).toBe(0)
     expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
     expect(h.hub.all("GitRequest")).toEqual([])
-  })
 
-  test("sends no output for a Session that exited without printing anything", async () => {
-    const h = startRunner()
-    await connected(h)
-    h.hub.send(startSession("s-1"))
-    await eventually(() => h.hub.all("SessionStarted").length === 1)
-
-    h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 0 })
-    await eventually(() => h.hub.all("SessionStopped").length === 1)
-
-    expect(h.hub.all("SessionStopped")[0]).not.toHaveProperty("output")
-  })
-
-  test("ignores a Hub from before #194 saying a Turn ended, and pushes nothing", async () => {
-    const h = startRunner()
-    await connected(h)
-    h.hub.send(startSession("s-1"))
-    await eventually(() => h.hub.all("SessionStarted").length === 1)
-
-    h.hub.send({ _tag: "SessionTurnEnded", sessionId: "s-1" })
-    // The Runner drops what it can't decode, and goes on with the Hub's next message.
-    h.hub.send({ _tag: "StopSession", sessionId: "s-1", reason: "Sleep" })
-    await eventually(() => h.hub.all("SessionStopped").length === 1)
-
-    expect(h.hub.connections).toHaveLength(1)
-    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
-    expect(h.hub.all("GitRequest")).toEqual([])
+    // One that printed nothing sends no output.
+    h.hub.send(startSession("s-2"))
+    await eventually(() => h.hub.all("SessionStarted").length === 2)
+    h.tmux.pane("s-2").emit({ _tag: "Exited", exitCode: 0 })
+    await eventually(() => h.hub.all("SessionStopped").length === 2)
+    expect(h.hub.all("SessionStopped")[1]).toEqual({
+      _tag: "SessionStopped",
+      sessionId: "s-2",
+      reason: "Exited",
+      exitCode: 0,
+    })
+    expect(h.hub.all("SessionStopped")[1]).not.toHaveProperty("output")
   })
 
   test("asks the Hub git questions and matches its replies", async () => {

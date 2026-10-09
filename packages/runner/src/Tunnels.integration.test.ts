@@ -21,7 +21,7 @@ import {
   tmuxMissing,
   tunnelScene,
 } from "./testTunnels.ts"
-import { TunnelBufferCap, TunnelStallMs } from "./Tunnels.ts"
+import { TunnelBufferCap } from "./Tunnels.ts"
 
 const enabled = process.env.KNDL_SANDBOX_IT === "1" && !tmuxMissing
 if (process.env.KNDL_SANDBOX_IT === "1" && tmuxMissing) {
@@ -103,7 +103,8 @@ const ports = [
   { port: 3001, addresses: ["::1"], hostPort: 0 },
 ]
 
-const scene = () => tunnelScene({ ports, connectTcp: intoSandbox })
+const scene = (stallMs?: number) =>
+  tunnelScene({ ports, connectTcp: intoSandbox, ...(stallMs !== undefined && { stallMs }) })
 
 let sandbox: Sandbox | undefined
 
@@ -166,7 +167,7 @@ describe.skipIf(!enabled)("tunnels into a real Sandbox", () => {
     expect(closed.reason).toStartWith("Could not connect to port 3999: ")
   }, 60_000)
 
-  test("a WebSocket served in the guest stays up for over a minute", async () => {
+  test("a WebSocket served in the guest stays up past Bun's 10 s idle timeout", async () => {
     const { tunnelUrl, headers } = await scene()
     const forward = await forwardLocally(tunnelUrl(3001), headers)
     const socket = new WebSocket(`ws://127.0.0.1:${forward.port}/ws`)
@@ -176,7 +177,9 @@ describe.skipIf(!enabled)("tunnels into a real Sandbox", () => {
     socket.addEventListener("close", () => (closed = true))
     await new Promise((resolve) => socket.addEventListener("open", resolve))
     socket.send("hello")
-    await Bun.sleep(65_000)
+    // Longer than Bun's default 10 s idle timeout, which would close it on any hop that kept it
+    // (ADR 0016).
+    await Bun.sleep(12_000)
     socket.send("still there?")
     const deadline = Date.now() + 5_000
     while (messages.length < 2 && Date.now() < deadline) await Bun.sleep(10)
@@ -184,12 +187,13 @@ describe.skipIf(!enabled)("tunnels into a real Sandbox", () => {
     expect(closed).toBe(false)
     expect(forward.closes).toEqual([])
     socket.close()
-  }, 120_000)
+  }, 60_000)
 
   test("one stalled reader doesn't slow the others, and one that takes nothing is closed alone", async () => {
     // agentd holds up every connection into the Sandbox behind one read slowly, new ones too, so
     // the Runner reads each as it comes and keeps what its client hasn't taken, to a cap.
-    const { tunnelUrl, headers } = await scene()
+    const stallMs = 10_000
+    const { tunnelUrl, headers } = await scene(stallMs)
     const url = tunnelUrl(3000)
 
     const { promise: stalled, resolve: resume } = Promise.withResolvers<void>()
@@ -211,7 +215,7 @@ describe.skipIf(!enabled)("tunnels into a real Sandbox", () => {
         timings.push(Date.now() - t0)
       }
     }
-    await fetchFor(6_000)
+    await fetchFor(2_000)
     expect((await flooded.closed).code).toBe(TunnelCloseCode.TooSlow)
     expect(flooded.received()).toBeLessThan(TunnelBufferCap)
 
@@ -222,15 +226,15 @@ describe.skipIf(!enabled)("tunnels into a real Sandbox", () => {
     expect(body.byteLength).toBe(4 * MiB)
     expect(isPattern(body)).toBe(true)
 
-    const [closed] = await Promise.all([stuck.closed, fetchFor(TunnelStallMs - 6_000)])
+    const [closed] = await Promise.all([stuck.closed, fetchFor(stallMs - 2_000)])
     expect(closed).toEqual({
       code: TunnelCloseCode.TooSlow,
-      reason: `The client took nothing for ${TunnelStallMs / 1000} s.`,
+      reason: `The client took nothing for ${stallMs / 1000} s.`,
     })
-    expect(timings.length).toBeGreaterThan(20)
+    expect(timings.length).toBeGreaterThan(5)
     expect(Math.max(...timings)).toBeLessThan(1_500)
     expect(forward.closes).toEqual([])
-  }, 120_000)
+  }, 60_000)
 
   test("a 50 MiB download doesn't delay the Session's terminal frames", async () => {
     const { web, sessionId, tunnelUrl, headers } = await scene()

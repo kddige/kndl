@@ -52,7 +52,7 @@ import {
   writeFakeMod,
 } from "./testSupport.ts"
 import { makeTmux, Tmux } from "./Tmux.ts"
-import { TunnelsLive } from "./Tunnels.ts"
+import { TunnelsLive, TunnelStallMs } from "./Tunnels.ts"
 import { Updater } from "./Updater.ts"
 
 export const tmuxMissing = Bun.which("tmux") === null
@@ -204,6 +204,8 @@ export async function tunnelScene(options: {
   readonly connectTcp?: SandboxBackendShape["connectTcp"]
   /** How long the Hub lets an idle Session be before it puts it to sleep. */
   readonly sleepAfterMs?: number
+  /** How long the Runner lets a client take nothing while bytes wait for it. */
+  readonly stallMs?: number
 }): Promise<TunnelScene> {
   const hub = await startHub({
     config: {
@@ -292,6 +294,7 @@ export async function tunnelScene(options: {
     Effect.runFork(
       runRunner().pipe(
         Effect.provide(layer),
+        Effect.provideService(TunnelStallMs, options.stallMs ?? TunnelStallMs.defaultValue()),
         Effect.provideService(References.MinimumLogLevel, "None"),
       ),
     ),

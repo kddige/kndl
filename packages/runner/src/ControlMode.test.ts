@@ -14,6 +14,8 @@ describe("ControlModeParser", () => {
     const [event] = new ControlModeParser().push(bytes("%output %0 hé\\033[1m\\134\\015\\012\n"))
     expect(event?._tag).toBe("Output")
     expect(event?._tag === "Output" && text(event.bytes)).toBe("hé\x1b[1m\\\r\n")
+    // A backslash that isn't an escape is left alone.
+    expect(text(unescapeOutput(bytes("a\\9b\\01")))).toBe("a\\9b\\01")
   })
 
   test("joins lines split across chunks, even mid character", () => {
@@ -65,10 +67,6 @@ describe("ControlModeParser", () => {
       { _tag: "Exit", reason: undefined },
     ])
   })
-})
-
-test("unescapeOutput leaves a backslash that isn't an escape alone", () => {
-  expect(text(unescapeOutput(bytes("a\\9b\\01")))).toBe("a\\9b\\01")
 })
 
 test("parseCursorState reads display-message's answer", () => {

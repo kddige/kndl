@@ -109,61 +109,44 @@ describe("forgetting directories", () => {
 const none = () => false
 const legacyOnly = (path: string) => path.endsWith("/.config.json")
 
-describe("Claude Code's config file", () => {
-  test("is ~/.claude.json by default", () => {
-    expect(claudeConfigPath({}, none)).toBe(join(homedir(), ".claude.json"))
-  })
-
-  test("is in CLAUDE_CONFIG_DIR when set, as Claude Code reads it", () => {
-    expect(claudeConfigPath({ CLAUDE_CONFIG_DIR: "/cfg" }, none)).toBe("/cfg/.claude.json")
-  })
-
-  test("is a legacy .config.json in the config directory when one exists", () => {
-    expect(claudeConfigPath({ CLAUDE_CONFIG_DIR: "/cfg" }, legacyOnly)).toBe("/cfg/.config.json")
-    expect(claudeConfigPath({}, legacyOnly)).toBe(join(homedir(), ".claude", ".config.json"))
-  })
-
-  test("has a suffix under a custom OAuth URL", () => {
-    expect(
-      claudeConfigPath(
-        { CLAUDE_CONFIG_DIR: "/cfg", CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://x" },
-        none,
-      ),
-    ).toBe("/cfg/.claude-custom-oauth.json")
-  })
+test("Claude Code's config file is where Claude Code reads it", () => {
+  // ~/.claude.json by default, or in CLAUDE_CONFIG_DIR when set.
+  expect(claudeConfigPath({}, none)).toBe(join(homedir(), ".claude.json"))
+  expect(claudeConfigPath({ CLAUDE_CONFIG_DIR: "/cfg" }, none)).toBe("/cfg/.claude.json")
+  // A legacy .config.json in the config directory when one exists.
+  expect(claudeConfigPath({ CLAUDE_CONFIG_DIR: "/cfg" }, legacyOnly)).toBe("/cfg/.config.json")
+  expect(claudeConfigPath({}, legacyOnly)).toBe(join(homedir(), ".claude", ".config.json"))
+  // With a suffix under a custom OAuth URL.
+  expect(
+    claudeConfigPath(
+      { CLAUDE_CONFIG_DIR: "/cfg", CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://x" },
+      none,
+    ),
+  ).toBe("/cfg/.claude-custom-oauth.json")
 })
 
-describe("planFromClaudeConfig", () => {
-  test("is the signed-in account's plan, with its rate-limit tier", () => {
-    expect(
-      planFromClaudeConfig({
-        oauthAccount: {
-          organizationType: "claude_max",
-          organizationRateLimitTier: "default_claude_max_20x",
-        },
-      }),
-    ).toEqual({ subscriptionType: "max", rateLimitTier: "default_claude_max_20x" })
-    expect(planFromClaudeConfig({ oauthAccount: { organizationType: "claude_pro" } })).toEqual({
-      subscriptionType: "pro",
-    })
+test("the config names the signed-in account, and its plan with its rate-limit tier", () => {
+  expect(
+    planFromClaudeConfig({
+      oauthAccount: {
+        organizationType: "claude_max",
+        organizationRateLimitTier: "default_claude_max_20x",
+      },
+    }),
+  ).toEqual({ subscriptionType: "max", rateLimitTier: "default_claude_max_20x" })
+  expect(planFromClaudeConfig({ oauthAccount: { organizationType: "claude_pro" } })).toEqual({
+    subscriptionType: "pro",
   })
-
-  test("is unknown without a subscription", () => {
-    expect(planFromClaudeConfig({})).toBeUndefined()
-    expect(planFromClaudeConfig({ oauthAccount: { organizationType: "api" } })).toBeUndefined()
-    expect(
-      planFromClaudeConfig({ oauthAccount: { organizationType: "constructor" } }),
-    ).toBeUndefined()
-  })
-})
-
-describe("accountFromClaudeConfig", () => {
-  test("is the signed-in account", () => {
-    expect(accountFromClaudeConfig({ oauthAccount: { emailAddress: "a@example.com" } })).toBe(
-      "a@example.com",
-    )
-    expect(accountFromClaudeConfig({})).toBeUndefined()
-  })
+  // Unknown without a subscription.
+  expect(planFromClaudeConfig({})).toBeUndefined()
+  expect(planFromClaudeConfig({ oauthAccount: { organizationType: "api" } })).toBeUndefined()
+  expect(
+    planFromClaudeConfig({ oauthAccount: { organizationType: "constructor" } }),
+  ).toBeUndefined()
+  expect(accountFromClaudeConfig({ oauthAccount: { emailAddress: "a@example.com" } })).toBe(
+    "a@example.com",
+  )
+  expect(accountFromClaudeConfig({})).toBeUndefined()
 })
 
 /** A Session's `claude` directory, also reached through a symlink, as macOS's /tmp is. */

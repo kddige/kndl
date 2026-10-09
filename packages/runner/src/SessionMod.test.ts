@@ -30,16 +30,13 @@ function scene() {
 /** Where the copy is on the host, from where the Sandbox sees it. */
 const onHost = (mod: string, guest: string) => join(mod, posix.relative(modGuestPath, guest))
 
-test("copies the mod's plugins, and no kndl plugin for a Session without Installations", async () => {
-  const { modDir, directories } = scene()
-  const guest = await Effect.runPromise(copySessionMod(modDir, directories))
-  expect(readdirSync(onHost(directories.mod, guest)).toSorted()).toEqual([...modPlugins])
-})
-
-test("writes the kndl plugin with each Installation's MCP server, and nothing secret (ADR 0020)", async () => {
+test("copies the mod's plugins, with a kndl plugin of each Installation's MCP server, nothing secret (ADR 0020)", async () => {
   const { modDir, directories } = scene()
   const servers = [{ installationId: InstallationId.make("inst-1"), server: "docs" }]
   const guest = await Effect.runPromise(copySessionMod(modDir, directories, servers))
+  expect(readdirSync(onHost(directories.mod, guest)).toSorted()).toEqual(
+    [...modPlugins, gatewayPlugin].toSorted(),
+  )
   const plugin = join(onHost(directories.mod, guest), gatewayPlugin)
   expect(
     JSON.parse(readFileSync(join(plugin, ".claude-plugin", "plugin.json"), "utf8")),
@@ -53,5 +50,5 @@ test("writes the kndl plugin with each Installation's MCP server, and nothing se
   // The next start without Installations leaves none behind.
   const next = await Effect.runPromise(copySessionMod(modDir, directories))
   expect(readdirSync(directories.mod)).toEqual([posix.basename(next)])
-  expect(readdirSync(onHost(directories.mod, next))).not.toContain(gatewayPlugin)
+  expect(readdirSync(onHost(directories.mod, next)).toSorted()).toEqual([...modPlugins])
 })
