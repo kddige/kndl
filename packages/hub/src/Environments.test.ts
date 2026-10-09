@@ -609,6 +609,25 @@ describe("Applying an Environment", () => {
     })
     expectRefused(await apply(env, draft(), null), /Test build/)
   })
+
+  test("a Test build fails when its Runner connects again before its old connection closed (#243)", async () => {
+    const env = await scene()
+    const requestId = nextRequest()
+    env.web.send({
+      _tag: "StartTestBuild",
+      requestId,
+      repo,
+      runnerId: env.runnerId,
+      draft: draft(),
+    })
+    const run = await env.runner.take("RunTestBuild")
+    await openRunner(env.hub, env.runnerToken)
+    expect(await env.web.take("TestBuildEnded")).toMatchObject({
+      testBuildId: run.testBuildId,
+      result: "Failed",
+      message: expect.stringContaining("went offline"),
+    })
+  })
 })
 
 describe("Shared variables", () => {

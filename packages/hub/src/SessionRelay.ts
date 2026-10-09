@@ -3259,11 +3259,9 @@ export class SessionRelay extends Context.Service<
               const replaced = yield* peers.attachRunner(runner, runnerGone(runner))
               if (replaced !== undefined) {
                 replaced.peer.close(RelayCloseCode.Replaced, "Replaced by a newer connection")
-                // Its finalizer finds it replaced and settles nothing: what the old connection
-                // was asked is settled here, by what this hello says, as after it went offline.
-                for (const session of yield* sessions.listByRunner(runner.id)) {
-                  live.ended(session.id, "RunnerGone")
-                }
+                // Its removal finds it replaced and does nothing: it is settled here, as if it
+                // had gone offline just before, its Sessions left to what this hello says.
+                yield* runnerGone(replaced, { replaced: true })
               }
               yield* runners.recordHello(
                 runner.id,
@@ -3325,22 +3323,31 @@ export class SessionRelay extends Context.Service<
           return receiveRunner(runner)
         })
 
-      /** The Runner's connection is gone: its Sessions are Frozen until it is back. */
-      const runnerGone = Effect.fn("SessionRelay.runnerGone")(function* (runner: OnlineRunner) {
+      /**
+       * The Runner's connection is gone: the tunnels it was asked to open fail, its update goes on
+       * as after a disconnect (ADR 0011), its Test builds fail, and its Sessions are Frozen until
+       * it is back. One a newer connection `replaced` leaves its Sessions to that one's hello,
+       * which runs next and says which are running.
+       */
+      const runnerGone = Effect.fn("SessionRelay.runnerGone")(function* (
+        runner: OnlineRunner,
+        options: { readonly replaced: boolean } = { replaced: false },
+      ) {
         yield* tunnels.runnerGone(runner.id)
         yield* runnerUpdates.gone(runner.id)
-        yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
+        if (!options.replaced) yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
         yield* environmentRelay.runnerGone(runner)
         for (const session of yield* sessions.listByRunner(runner.id)) {
           // A stop or start it was asked for is settled by what it says when it is back.
           live.ended(session.id, "RunnerGone")
+          if (options.replaced) continue
           if (session.state === "Active" || session.state === "Asleep") {
             yield* changeState(session, "Frozen", {
               message: `${runner.name} went offline`,
             })
           }
         }
-        toWeb(yield* runnerList)
+        if (!options.replaced) toWeb(yield* runnerList)
       })
 
       // ── The mod channel ──────────────────────────────────────────────────

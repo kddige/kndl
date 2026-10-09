@@ -431,6 +431,16 @@ describe("the client's endpoint", () => {
     expect((await waiting.closed).code).toBe(TunnelCloseCode.RunnerOffline)
   })
 
+  test("fails a tunnel its Runner's old connection was asked to open, when a new one replaces it (#243)", async () => {
+    const scene = await tunnelScene()
+    const waiting = openClient(scene.hub, scene.sessionId, 3000, scene.asAlice)
+    await scene.runner.take("OpenTunnel")
+    await openRunner(scene.hub, scene.runnerToken, [scene.sessionId], undefined, true, {
+      forwardsPorts: true,
+    })
+    expect((await waiting.closed).code).toBe(TunnelCloseCode.RunnerOffline)
+  })
+
   test("closes a tunnel whose side breaks the protocol, on both sides", async () => {
     const scene = await tunnelScene()
     const pastWindow = await tunnelTo(scene)
