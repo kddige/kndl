@@ -262,7 +262,11 @@ describe("stopping and restarting", () => {
     expect(live.restarts.has(id)).toBe(false)
     live.ended(id, "ClaudeGone")
     expect(live.stopAsked(id, { message: "Restarting" }, restart)).toBe(true)
-    expect(live.restarting.get(id)).toBe(alice)
+    expect(live.stopped(id)).toEqual({
+      _tag: "Stop",
+      asked: { message: "Restarting" },
+      restartBy: alice,
+    })
     expect(live.restarts.get(id)).toBe(restart)
   })
 
@@ -282,5 +286,28 @@ describe("stopping and restarting", () => {
     live.restartWaking(id, restart)
     expect(live.restartOver(id)).toBe(true)
     expect(live.restarts.has(id)).toBe(false)
+  })
+})
+
+describe("a Runner saying a Session stopped", () => {
+  test("settles the stop for good of an archive first, once", () => {
+    const live = makeLiveSessions()
+    live.stopAsked(id, { message: "Idle" })
+    live.archiveStopAsked(id)
+    expect(live.stopped(id)).toEqual({ _tag: "Archive" })
+    // The stop for sleep is read next time, until Claude Code being gone clears it.
+    expect(live.stopped(id)).toEqual({
+      _tag: "Stop",
+      asked: { message: "Idle" },
+      restartBy: undefined,
+    })
+    live.ended(id, "ClaudeGone")
+    expect(live.stopped(id)).toEqual({ _tag: "Stop", asked: undefined, restartBy: undefined })
+  })
+
+  test("says no restart for a stop not asked, whatever else is under way", () => {
+    const live = makeLiveSessions()
+    expect(live.stopped(id)).toEqual({ _tag: "Stop", asked: undefined, restartBy: undefined })
+    expect(live.stopped(other)).toEqual({ _tag: "Stop", asked: undefined, restartBy: undefined })
   })
 })

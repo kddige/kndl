@@ -1753,7 +1753,7 @@ export class SessionRelay extends Context.Service<
 
       /** Asks the Runner to stop the Archived Session for good: its Sandbox goes, its Workspace stays. */
       const stopForArchive = (runner: OnlineRunner, sessionId: SessionId) => {
-        live.archiving.add(sessionId)
+        live.archiveStopAsked(sessionId)
         runner.peer.send(StopSession.make({ sessionId, reason: "Archive" }))
       }
 
@@ -3115,7 +3115,8 @@ export class SessionRelay extends Context.Service<
                 message: `Claude Code could not start on ${runner.name}: ${message.message}`,
               })
             case "SessionStopped": {
-              if (live.archiving.delete(message.sessionId)) {
+              const settled = live.stopped(message.sessionId)
+              if (settled._tag === "Archive") {
                 if (session.value.state === "Archived") {
                   // Stopped for good: its Sandbox is destroyed.
                   yield* sessions.setArchiveStopped(message.sessionId)
@@ -3125,9 +3126,7 @@ export class SessionRelay extends Context.Service<
                 yield* claudeGone(session.value, {})
                 return yield* wakeIfWaiting(message.sessionId)
               }
-              const asked = live.stopping.get(message.sessionId)
-              const restartBy =
-                asked === undefined ? undefined : live.restarting.get(message.sessionId)
+              const { asked, restartBy } = settled
               // What Claude Code printed before it exited on its own (#105), redacted as its
               // terminal is: a Sensitive value it printed must not reach the summary.
               yield* sessions.setLastOutput(

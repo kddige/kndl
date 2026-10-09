@@ -99,6 +99,19 @@ export interface Refusal {
   readonly refusal: string
 }
 
+/** What a SessionStopped settles: see `stopped`. */
+export type Stopped =
+  /** The stop for good of an archive (or of one restored since). */
+  | { readonly _tag: "Archive" }
+  /** Its Claude Code stopped: as asked for sleep, and for a restart, or on its own. */
+  | {
+      readonly _tag: "Stop"
+      /** Why it was asked to stop, if it was. */
+      readonly asked: Why | undefined
+      /** Who asked to restart it, if it was asked to stop for a restart. */
+      readonly restartBy: Participant | undefined
+    }
+
 /** How a Session's live state ends: see the top of this file. */
 export type SessionEnd =
   | "ClaudeGone"
@@ -203,7 +216,6 @@ export interface LiveSessions extends Pick<
   | "steering"
   | "starting"
   | "stopping"
-  | "restarting"
   | "starts"
   | "restarts"
   | "archiving"
@@ -278,6 +290,14 @@ export interface LiveSessions extends Pick<
    * for the web to be told.
    */
   readonly restartOver: (id: SessionId) => boolean
+  /** The Hub asked its Runner to stop the Archived Session for good (StopSession `Archive`). */
+  readonly archiveStopAsked: (id: SessionId) => void
+  /**
+   * Its Runner said it stopped (SessionStopped): what that settles. The stop for good of an
+   * archive comes first, and is over now. Otherwise, the stop it was asked for, if any, is read
+   * here and cleared as Claude Code is gone (`ended`), which the caller says next.
+   */
+  readonly stopped: (id: SessionId) => Stopped
   /** Its Runner said Claude Code started (SessionStarted): its start and restart are over. */
   readonly claudeStarted: (id: SessionId) => void
 
@@ -488,6 +508,16 @@ export const makeLiveSessions = (): LiveSessions => {
     },
     restartWaking: (id, restart) => pieces.restarts.set(id, restart),
     restartOver: (id) => !pieces.starts.has(id) && pieces.restarts.delete(id),
+    archiveStopAsked: (id) => pieces.archiving.add(id),
+    stopped: (id) => {
+      if (pieces.archiving.delete(id)) return { _tag: "Archive" }
+      const asked = pieces.stopping.get(id)
+      return {
+        _tag: "Stop",
+        asked,
+        restartBy: asked === undefined ? undefined : pieces.restarting.get(id),
+      }
+    },
     claudeStarted: (id) => {
       pieces.starts.delete(id)
       pieces.restarts.delete(id)
