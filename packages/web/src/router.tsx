@@ -134,7 +134,8 @@ interface SetupSearch {
 
 /**
  * A Repo's Environment (ADR 0009). With ?branch=, it's the setup before the Repo's first Session,
- * which starts on that branch (and ?from=, ?direct=, ?runner=, ?model=, ?effort=) once the Environment is applied.
+ * which starts on that branch (and ?from=, ?direct=, ?runner=, ?model=, ?effort=) once the
+ * Environment is applied.
  */
 const environmentRoute = createRoute({
   getParentRoute: () => hubRoute,

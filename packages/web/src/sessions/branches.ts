@@ -3,7 +3,10 @@
 
 import type { BranchChoice } from "@kndl/protocol"
 
-/** The branch choice as search params: `?branch=`, with `from` for a new branch, `direct` for no Work branch. */
+/**
+ * The branch choice as search params: `?branch=`, with `from` for a new branch, `direct` for no
+ * Work branch.
+ */
 export interface BranchSearch {
   branch: string
   /** Set when `branch` is new, made from this one. */

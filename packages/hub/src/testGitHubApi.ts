@@ -85,6 +85,8 @@ export class StandInGitHub {
   readonly branches = new Map<string, { names: Array<string>; defaultBranch: string }>()
   /** While set, collaborator checks answer 503, as in an outage. */
   collaboratorsDown = false
+  /** While set, `GET /app/installations` answers 503, as in an outage. */
+  installationsDown = false
   /** While set, `GET /app` answers 503, as in an outage. */
   appDown = false
   /** How long the tokens it mints last. */
@@ -217,6 +219,7 @@ export class StandInGitHub {
     this.branches.clear()
     this.collaboratorsDown = false
     this.appDown = false
+    this.installationsDown = false
     this.tokenLifetimeMs = 60 * 60 * 1000
     this.appPermissions = { ...manifestPermissions() }
     this.appEvents = [...RequiredEvents]
@@ -383,6 +386,7 @@ export class StandInGitHub {
     }
     if (request.method === "GET" && path === "/app/installations") {
       if (!this.isApp(authorization)) return unauthorized
+      if (this.installationsDown) return this.json(503, { message: "Service Unavailable" })
       const perPage = Number(url.searchParams.get("per_page") ?? 30)
       const page = Number(url.searchParams.get("page") ?? 1)
       return this.json(

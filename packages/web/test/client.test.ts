@@ -11,7 +11,7 @@ import {
 } from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
 import { editFrom, toDraft } from "../src/environment/draft.ts"
-import { HubClient } from "../src/hub/client.ts"
+import { HubClient, ListingUnavailableError } from "../src/hub/client.ts"
 import { FakeHub } from "../src/hub/fake/FakeHub.ts"
 import { demoSessionId } from "../src/hub/fake/script.ts"
 import { findSession } from "../src/hub/store.ts"
@@ -393,9 +393,13 @@ describe("commands", () => {
       branches: ["main", "dev", "release/1.0"],
       defaultBranch: "main",
     })
+    hub.listingFails = true
+    await expect(client.listRepos()).rejects.toThrow("Could not list your Repos; try again.")
+    hub.listingFails = false
+    // Without the GitHub App asking again can't help, and the error says so.
     hub.listingDown = true
-    await expect(client.listRepos()).rejects.toThrow("GitHub App")
-    await expect(client.listBranches("kddige/kndl")).rejects.toThrow("GitHub App")
+    await expect(client.listRepos()).rejects.toBeInstanceOf(ListingUnavailableError)
+    await expect(client.listBranches("kddige/kndl")).rejects.toBeInstanceOf(ListingUnavailableError)
   })
 
   test("createSession rejects with the Hub's reason", async () => {

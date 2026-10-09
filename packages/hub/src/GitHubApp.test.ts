@@ -231,15 +231,28 @@ const listBranches = (of: RepoName) =>
   withApp(Effect.flatMap(GitHubApp, (app) => app.listBranches(of)))
 
 describe("listing Repos", () => {
-  test("is every Repo the App is installed on, in every page, asked with a Metadata-only token", async () => {
+  test("is every Repo the App is installed on, in every page, with one token for the installation", async () => {
     const others = Array.from({ length: 120 }, (_, i) => `octo/repo-${i}`)
     for (const other of others) github.installedOn.add(other)
-    const listed = await listRepos()
-    expect(listed).toHaveLength(121)
-    expect(listed).toContain(repo)
-    expect(listed).toContain("octo/repo-119")
+    github.grant("octo/repo-119", "octocat")
+    const listed = await withApp(
+      Effect.gen(function* () {
+        const found = yield* (yield* GitHubApp).listRepos
+        const last = found.find((each) => each.repo === "octo/repo-119")
+        return {
+          repos: found.map((each) => each.repo),
+          octocat: yield* last?.isCollaborator("octocat") ?? Effect.succeed(false),
+          hubot: yield* last?.isCollaborator("hubot") ?? Effect.succeed(true),
+        }
+      }),
+    )
+    expect(listed.repos).toHaveLength(121)
+    expect(listed.repos).toContain(repo)
+    expect(listed.octocat).toBe(true)
+    expect(listed.hubot).toBe(false)
+    // One token, with the Hub's own permissions, however many Repos were listed and checked.
     const minted = github.requests.filter((request) => request.path.endsWith("/access_tokens"))
-    expect(minted.map((request) => request.body)).toEqual([{ permissions: { metadata: "read" } }])
+    expect(minted.map((request) => request.body)).toEqual([{ permissions: { contents: "read" } }])
   })
 
   test("leaves out a suspended installation", async () => {
@@ -247,6 +260,19 @@ describe("listing Repos", () => {
     if (installation === undefined) throw new Error("the stand-in has no installation")
     github.installations[0] = { ...installation, suspended: true }
     expect(await listRepos()).toEqual([])
+  })
+
+  test("leaves out an installation GitHub fails on, and lists the rest", async () => {
+    github.installations.push({
+      id: 77,
+      account: "other",
+      accountType: "User",
+      permissions: {},
+      events: [],
+      suspended: false,
+    })
+    // The stand-in mints tokens for its one installation only: 77's token is refused.
+    expect((await listRepos()).map((each) => each.repo)).toEqual([repo])
   })
 })
 
@@ -263,6 +289,15 @@ describe("listing branches", () => {
     const names = Array.from({ length: 230 }, (_, i) => `b-${i}`)
     github.branches.set(repo, { names, defaultBranch: "b-0" })
     expect((await listBranches(repo)).branches).toEqual(names)
+  })
+
+  test("always lists the default branch, even past the cap", async () => {
+    const names = Array.from({ length: 2001 }, (_, i) => `b-${i}`)
+    github.branches.set(repo, { names, defaultBranch: "b-2000" })
+    const listed = await listBranches(repo)
+    expect(listed.branches).toContain("b-2000")
+    expect(listed.branches).toHaveLength(2001)
+    expect(listed.defaultBranch).toBe("b-2000")
   })
 
   test("fails with status 404 on a Repo the App isn't installed on", async () => {

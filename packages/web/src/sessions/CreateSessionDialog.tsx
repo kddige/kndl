@@ -1,6 +1,6 @@
 import {
   type BranchChoice,
-  branchNameProblem,
+  newBranchProblem,
   repoKey,
   type RunnerId,
   sameRepo,
@@ -12,6 +12,7 @@ import { type FormEvent, type ReactElement, useEffect, useState } from "react"
 import { repoParams, runnerLabel } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, RepoRefusal, repoPattern, useRepoCheck } from "../app/repoAccess.tsx"
+import { ListingUnavailableError } from "../hub/client.ts"
 import { ModelPicker } from "../session/ModelPicker.tsx"
 import { fitSetting, type ModelSetting, sharedModels } from "../session/models.ts"
 import {
@@ -51,12 +52,15 @@ type Branches =
   | { readonly status: "Loading" }
   | { readonly status: "Loaded"; readonly names: ReadonlyArray<string>; readonly default: string }
   | { readonly status: "Failed"; readonly message: string }
+  /** The Hub has no GitHub App: there is no point in asking again. */
+  | { readonly status: "Unavailable"; readonly message: string }
 
 /** What the Hub said of the Repos to pick from. */
 type Repos =
   | { readonly status: "Loading" }
   | { readonly status: "Loaded"; readonly names: ReadonlyArray<string> }
   | { readonly status: "Failed"; readonly message: string }
+  | { readonly status: "Unavailable"; readonly message: string }
 
 /** The branches the Repo's Sessions were started on, the newest Session's first. */
 const branchesOfSessions = (sessions: ReadonlyArray<SessionSummary>, repo: string) => [
@@ -67,6 +71,10 @@ const branchesOfSessions = (sessions: ReadonlyArray<SessionSummary>, repo: strin
       .map((session) => session.baseBranch),
   ),
 ]
+
+/** Whether a listing failed for want of the GitHub App, which asking again won't mend. */
+const failure = (cause: unknown) =>
+  cause instanceof ListingUnavailableError ? ("Unavailable" as const) : ("Failed" as const)
 
 const messageOf = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
 
@@ -115,10 +123,10 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   // The branch is picked once the Repo is: one that looks right and that GitHub hasn't refused.
   const repoPicked = repoPattern.test(repoValue) && !repoRefused && repoCheck?.status !== "Checking"
   const creating = from !== null
-  const newBranchProblem = creating ? branchNameProblem(branchValue) : undefined
+  const newNameProblem = creating ? newBranchProblem(branchValue, from) : undefined
   const fromListed = branches?.status === "Loaded" && branches.names.includes(from ?? "")
   const branchInvalid =
-    (touched && branchValue === "") || (creating && newBranchProblem !== undefined)
+    (touched && branchValue === "") || (creating && newNameProblem !== undefined)
   const fromInvalid = creating && !fromListed
   const online = (runners ?? []).filter((candidate) => candidate.isOnline)
   // The models it can run: the chosen Runner's, or for any Runner, what every online one has.
@@ -155,6 +163,12 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   // The Repo's branches: the Hub's list, or, without one, those its Sessions in the Hub began on.
   const historyBranches = branchesOfSessions(sessions, repoValue)
   const listedBranches = branches?.status === "Loaded" ? branches : null
+  // A branch typed that the loaded list lacks: said, not refused, since the list can be cut short.
+  const notListed =
+    listedBranches !== null &&
+    !creating &&
+    branchValue !== "" &&
+    !listedBranches.names.includes(branchValue)
   const branchNames = listedBranches?.names ?? historyBranches
   const branchOptions: Array<ComboboxOption> = (
     listedBranches === null
@@ -179,7 +193,8 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
     setRepos({ status: "Loading" })
     hub.listRepos().then(
       (names) => current && setRepos({ status: "Loaded", names }),
-      (cause: unknown) => current && setRepos({ status: "Failed", message: messageOf(cause) }),
+      (cause: unknown) =>
+        current && setRepos({ status: failure(cause), message: messageOf(cause) }),
     )
     return () => {
       current = false
@@ -203,7 +218,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
       },
       (cause: unknown) => {
         if (!current) return
-        setBranches({ status: "Failed", message: messageOf(cause) })
+        setBranches({ status: failure(cause), message: messageOf(cause) })
         setBranch((typed) =>
           typed === "" ? (branchesOfSessions(sessions, pickedRepo)[0] ?? fallbackBranch) : typed,
         )
@@ -233,7 +248,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
     event.preventDefault()
     setTouched(true)
     if (!repoPattern.test(repoValue) || repoRefused || branchValue === "") return
-    if (creating && (newBranchProblem !== undefined || !fromListed)) return
+    if (creating && (newNameProblem !== undefined || !fromListed)) return
     const choice: BranchChoice =
       from === null
         ? { _tag: "Existing", name: branchValue, newWorkBranch }
@@ -336,12 +351,15 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         <Field
           label="Repo"
           description={
-            repos.status === "Failed" ? (
+            repos.status === "Failed" || repos.status === "Unavailable" ? (
               <span {...stylex.props(styles.note)}>
-                Couldn't load the Repos: {repos.message} Suggestions are from your Sessions.
-                <Button size="sm" onClick={() => setReposAsked((asked) => asked + 1)}>
-                  Retry
-                </Button>
+                Couldn't load the Repos: {repos.message} Suggestions are from the Sessions you can
+                see.
+                {repos.status === "Failed" && (
+                  <Button size="sm" onClick={() => setReposAsked((asked) => asked + 1)}>
+                    Retry
+                  </Button>
+                )}
               </span>
             ) : (
               "The GitHub repository, as owner/name."
@@ -374,15 +392,21 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         <Field
           label="Branch"
           description={
-            branches?.status === "Failed" ? (
+            branches?.status === "Failed" || branches?.status === "Unavailable" ? (
               <span {...stylex.props(styles.note)}>
-                Couldn't load the branches: {branches.message} Suggestions are from your Sessions.
-                <Button size="sm" onClick={() => setBranchesAsked((asked) => asked + 1)}>
-                  Retry
-                </Button>
+                Couldn't load the branches: {branches.message} Suggestions are from the Sessions you
+                can see.
+                {branches.status === "Failed" && (
+                  <Button size="sm" onClick={() => setBranchesAsked((asked) => asked + 1)}>
+                    Retry
+                  </Button>
+                )}
               </span>
             ) : creating ? (
               "A new branch, made from the one below."
+            ) : notListed ? (
+              // The list can be cut short, so this doesn't stop the Session from starting.
+              "Branch not found on GitHub. Pick one, or create it."
             ) : (
               "The branch Claude starts from."
             )
@@ -390,8 +414,8 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
           disabled={!repoPicked}
           invalid={branchInvalid}
           error={
-            creating && newBranchProblem !== undefined
-              ? newBranchProblem
+            creating && newNameProblem !== undefined
+              ? newNameProblem
               : branchInvalid
                 ? "Enter a branch."
                 : undefined

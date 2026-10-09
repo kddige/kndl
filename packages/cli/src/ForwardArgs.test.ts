@@ -117,4 +117,11 @@ describe("which Session", () => {
       "77ab12  Docs  kddige/kndl  Asleep  no open ports",
     )
   })
+
+  test("a Session on its base branch is not given its id twice", () => {
+    const line = sessionLine(
+      summary({ id: "3f9668393285", baseBranch: "main", workBranch: "main" } as never),
+    )
+    expect(line).toBe("3f9668  main  kddige/kndl  no open ports")
+  })
 })

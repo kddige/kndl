@@ -14,7 +14,7 @@ A Session is one Claude Code conversation working on one Repo, on a Work branch,
 3. Pick the **Branch**. It is filled in with the Repo's default branch once you pick the Repo, and its list holds the Repo's branches.
    - To commit to a new branch made from it, leave **Work on a new branch** on. Claude works on `claude/<session id>`.
    - To commit to the branch itself, turn **Work on a new branch** off. If other Sessions are already on it, the form says how many.
-   - To start a branch of your own, type its name and pick **Create branch 'name'**. Choose the branch to make it **From**; it starts as the Repo's default branch. The name must be one git accepts, and the form says why when it isn't.
+   - To start a branch of your own, type its name and pick **Create branch 'name'**. Choose the branch to make it **From**; it starts as the Repo's default branch. The name must be one git accepts, not under `claude/`, and not the branch it is made from; the form says why when it isn't.
 4. Leave **Runner** on **Any online Runner**, or pick one. The Session runs on that Runner for its whole life, on your [Claude credential](/how-to/add-your-claude-credential/), or on the Runner's own if you have none.
 5. Leave **Model** on Claude Code's default, or pick a model and effort level: see [Choose the model and effort](#choose-the-model-and-effort).
 6. Press **Start Session**.

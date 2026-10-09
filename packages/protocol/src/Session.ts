@@ -34,8 +34,11 @@ export const repoKey = (repo: string): string => repo.toLowerCase()
 /** Whether two names are the same Repo: GitHub's names ignore case. */
 export const sameRepo = (a: string, b: string): boolean => repoKey(a) === repoKey(b)
 
+/** The longest a branch name may be, in characters. */
+export const MaxBranchNameLength = 255
+
 /** A git branch name: a Session's base branch or its Work branch. */
-export const BranchName = Schema.NonEmptyString
+export const BranchName = Schema.NonEmptyString.check(Schema.isMaxLength(MaxBranchNameLength))
 export type BranchName = typeof BranchName.Type
 
 /**
@@ -44,6 +47,9 @@ export type BranchName = typeof BranchName.Type
  */
 export function branchNameProblem(name: string): string | undefined {
   if (name === "") return "A branch name can't be empty."
+  if (name.length > MaxBranchNameLength) {
+    return `A branch name can be at most ${MaxBranchNameLength} characters; this one is ${name.length}.`
+  }
   if (name === "@") return "A branch can't be named just @."
   if (name === "HEAD") return "A branch can't be named HEAD."
   if (name.startsWith("-")) return "A branch name can't start with -."
@@ -63,13 +69,38 @@ export function branchNameProblem(name: string): string | undefined {
   return undefined
 }
 
-/** The name of a branch to create: a {@link BranchName} that git accepts, by {@link branchNameProblem}. */
-export const NewBranchName = BranchName.check(Schema.makeFilter((name) => branchNameProblem(name)))
+/** Where kndl's own Work branches live: a branch under it can't be made by hand. */
+export const WorkBranchPrefix = "claude/"
+
+/** The work branch a new Session commits to, unless it works directly on a branch. */
+export const workBranchFor = (sessionId: SessionId): BranchName => `${WorkBranchPrefix}${sessionId}`
+
+/**
+ * Why `name` can't be a new branch made from `from`, or undefined when it can: git must accept
+ * it ({@link branchNameProblem}), it can't be under the Work branches' prefix, and it can't be
+ * the branch it is made from. Without `from`, only the name is checked.
+ */
+export function newBranchProblem(name: string, from?: string): string | undefined {
+  const problem = branchNameProblem(name)
+  if (problem !== undefined) return problem
+  if (name.startsWith(WorkBranchPrefix)) {
+    return `Names under ${WorkBranchPrefix} are for the Work branches kndl makes.`
+  }
+  if (name === from) return "A new branch can't be made from a branch of the same name."
+  return undefined
+}
+
+/** A branch name git accepts, by {@link branchNameProblem}: one that is already there. */
+export const GitBranchName = BranchName.check(Schema.makeFilter((name) => branchNameProblem(name)))
+export type GitBranchName = typeof GitBranchName.Type
+
+/** The name of a branch to create: one git accepts, and not under the Work branches' prefix. */
+export const NewBranchName = BranchName.check(Schema.makeFilter((name) => newBranchProblem(name)))
 export type NewBranchName = typeof NewBranchName.Type
 
 /** A New Session on a branch that is already there: on it directly, or on a new Work branch. */
 export const ExistingBranch = Schema.TaggedStruct("Existing", {
-  name: BranchName,
+  name: GitBranchName,
   /** True to work on a new `claude/<id>` branch made from it; false to commit to it directly. */
   newWorkBranch: Schema.Boolean,
 })
@@ -78,8 +109,8 @@ export type ExistingBranch = typeof ExistingBranch.Type
 /** A New Session on a branch to create, from `from`, which is its base branch. */
 export const CreateBranch = Schema.TaggedStruct("Create", {
   name: NewBranchName,
-  from: BranchName,
-})
+  from: GitBranchName,
+}).check(Schema.makeFilter((branch) => newBranchProblem(branch.name, branch.from)))
 export type CreateBranch = typeof CreateBranch.Type
 
 /**
@@ -90,6 +121,21 @@ export const BranchChoice = Schema.Union([ExistingBranch, CreateBranch]).pipe(
   Schema.toTaggedUnion("_tag"),
 )
 export type BranchChoice = typeof BranchChoice.Type
+
+/**
+ * The branches a New Session's branch choice comes to (ADR 0023): the one its Repo is cloned on,
+ * and the one it commits to.
+ */
+export const branchesFor = (
+  choice: BranchChoice,
+  sessionId: SessionId,
+): { readonly baseBranch: BranchName; readonly workBranch: BranchName } => {
+  if (choice._tag === "Create") return { baseBranch: choice.from, workBranch: choice.name }
+  return {
+    baseBranch: choice.name,
+    workBranch: choice.newWorkBranch ? workBranchFor(sessionId) : choice.name,
+  }
+}
 
 /** The longest a Session name may be, in characters. */
 export const MaxSessionNameLength = 80

@@ -13,6 +13,7 @@
 import {
   admissionLink,
   type BranchChoice,
+  branchesFor,
   cantStartText,
   checkHandshake,
   claudeCredentialKindOf,
@@ -44,6 +45,7 @@ import {
   repoKey,
   runnerRemovalRefusal,
   sameRepo,
+  SessionId,
   sessionNameFrom,
   UpdateDrainMillis,
   WebToHub,
@@ -224,9 +226,8 @@ class FakeSocket implements HubSocket {
 
 const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 
-/** Why a listing fails while `listingDown` is set. */
-const notListed =
-  "This needs the GitHub App, which the Hub doesn't have: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH on the Hub."
+/** What a listing that fails says, as the Hub words it. */
+const notListed = "Could not list your Repos; try again."
 
 /** A summary's Installations: absent for none, as the Hub sends them. */
 const withMcpServers = (mcpServers: ReadonlyArray<SessionInstallationWire>) =>
@@ -283,8 +284,10 @@ export class FakeHub implements HubTransport {
   readonly branches = new Map<string, { names: Array<string>; defaultBranch: string }>([
     ["kddige/kndl", { names: ["main", "dev", "release/1.0"], defaultBranch: "main" }],
   ])
-  /** While set, ListRepos and ListBranches fail, as without the GitHub App. */
+  /** While set, ListRepos and ListBranches answer that there is no GitHub App. */
   listingDown = false
+  /** While set, they fail, as when GitHub can't answer. */
+  listingFails = false
   /** Every message each client sent, decoded, for tests to inspect. */
   readonly received: Array<WebToHub> = []
   #signedIn: boolean
@@ -817,6 +820,10 @@ export class FakeHub implements HubTransport {
       }
       case "ListRepos": {
         if (this.listingDown) {
+          socket.deliver({ _tag: "ListingUnavailable", requestId: message.requestId })
+          break
+        }
+        if (this.listingFails) {
           this.#refuse(socket, message._tag, message.requestId, notListed)
           break
         }
@@ -835,6 +842,10 @@ export class FakeHub implements HubTransport {
       case "ListBranches": {
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         if (this.listingDown) {
+          socket.deliver({ _tag: "ListingUnavailable", requestId: message.requestId })
+          break
+        }
+        if (this.listingFails) {
           this.#refuse(socket, message._tag, message.requestId, notListed)
           break
         }
@@ -1535,13 +1546,7 @@ export class FakeHub implements HubTransport {
     const summary: SessionSummaryWire = {
       id,
       repo,
-      // As the Hub resolves it (ADR 0023).
-      ...(branch._tag === "Create"
-        ? { baseBranch: branch.from, workBranch: branch.name }
-        : {
-            baseBranch: branch.name,
-            workBranch: branch.newWorkBranch ? `claude/${id}` : branch.name,
-          }),
+      ...branchesFor(branch, SessionId.make(id)),
       state: "Active",
       runnerId: runner.id,
       runnerLogin: runner.login,

@@ -380,8 +380,8 @@ export type CheckRepo = typeof CheckRepo.Type
 
 /**
  * The Repos the person may start a Session on, for New Session's Repo combo box: those the GitHub
- * App is installed on and the person has access to. Answered with a {@link ReposListed}, or a
- * CommandFailed when GitHub can't say, or there is no GitHub App.
+ * App is installed on and the person has access to. Answered with a {@link ReposListed}, a
+ * {@link ListingUnavailable} without a GitHub App, or a CommandFailed when GitHub can't say.
  */
 export const ListRepos = Schema.TaggedStruct("ListRepos", {
   requestId: RequestId,
@@ -390,8 +390,8 @@ export type ListRepos = typeof ListRepos.Type
 
 /**
  * A Repo's branches and its default branch, through the GitHub App, for New Session's Branch combo
- * box. Answered with a {@link BranchesListed}, or a CommandFailed when the person has no access to
- * the Repo, or GitHub can't say, or there is no GitHub App.
+ * box. Answered with a {@link BranchesListed}, a {@link ListingUnavailable} without a GitHub App,
+ * or a CommandFailed when the person has no access to the Repo or GitHub can't say.
  */
 export const ListBranches = Schema.TaggedStruct("ListBranches", {
   requestId: RequestId,
@@ -700,6 +700,17 @@ export const RepoChecked = Schema.TaggedStruct("RepoChecked", {
 })
 export type RepoChecked = typeof RepoChecked.Type
 
+/**
+ * Answers a {@link ListRepos} or {@link ListBranches} when the Hub has no GitHub App to list with,
+ * so the web UI can fall back to its Sessions without offering a retry. `hint` says what to set,
+ * and is sent to a dev login only.
+ */
+export const ListingUnavailable = Schema.TaggedStruct("ListingUnavailable", {
+  requestId: RequestId,
+  hint: Schema.optionalKey(Schema.String),
+})
+export type ListingUnavailable = typeof ListingUnavailable.Type
+
 /** Answers a {@link ListRepos}. */
 export const ReposListed = Schema.TaggedStruct("ReposListed", {
   requestId: RequestId,
@@ -853,6 +864,7 @@ export const HubToWeb = Schema.Union([
   RepoChecked,
   ReposListed,
   BranchesListed,
+  ListingUnavailable,
   RepoAccessLost,
   PairingCodeCreated,
   PairingCodeList,

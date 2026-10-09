@@ -559,6 +559,8 @@ const hubToWeb = [
     credential: { kind: "OAuthToken", last4: "ONLY", plan: "max5x", addedAt: 1_700_000_000_000 },
     warning: "Saved without checking it: Anthropic couldn't be reached.",
   },
+  { _tag: "ListingUnavailable", requestId: "q-14" },
+  { _tag: "ListingUnavailable", requestId: "q-14", hint: "Set GITHUB_APP_ID on the Hub." },
   { _tag: "ReposListed", requestId: "q-14", repos: [] },
   { _tag: "ReposListed", requestId: "q-14", repos: ["kddige/kndl", "kddige/other"] },
   {

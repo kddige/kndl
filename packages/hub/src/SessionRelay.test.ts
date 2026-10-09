@@ -2588,14 +2588,39 @@ describe("Repo access", () => {
     expect((await aliceWeb.take("ReposListed")).repos.toSorted()).toEqual([secret, repo].toSorted())
   })
 
-  test("refuses to list Repos without the GitHub App, saying so", async () => {
+  test("answers that listing is unavailable without the GitHub App, with the hint for a dev login only", async () => {
     const hub = await startHub({ config: { devLogin: true } })
     const web = await openWeb(hub, "alice")
     web.send({ _tag: "ListRepos", requestId: "l-1" })
-    expect(await web.take("CommandFailed")).toMatchObject({
+    expect(await web.take("ListingUnavailable")).toEqual({
+      _tag: "ListingUnavailable",
+      requestId: "l-1",
+      hint: expect.stringContaining("GITHUB_APP_ID"),
+    })
+    web.send({ _tag: "ListBranches", requestId: "l-2", repo: "kddige/kndl" })
+    expect(await web.take("ListingUnavailable")).toMatchObject({ requestId: "l-2" })
+  })
+
+  test("says nothing of GitHub's answer or the Hub's set-up when a listing fails", async () => {
+    const hub = await accessHub()
+    github.grant(repo, "octocat")
+    github.installationsDown = true
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+
+    octocatWeb.send({ _tag: "ListRepos", requestId: "l-1" })
+    expect(await octocatWeb.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
       command: "ListRepos",
       requestId: "l-1",
-      message: expect.stringContaining("GITHUB_APP_ID"),
+      message: "Could not list your Repos; try again.",
+    })
+    // No hint for someone signed in with GitHub, who can't act on it.
+    const noApp = await startHub({ config: { devLogin: true } })
+    const viaGitHub = await openGitHubWeb(noApp, octocat)
+    viaGitHub.send({ _tag: "ListRepos", requestId: "l-2" })
+    expect(await viaGitHub.take("ListingUnavailable")).toEqual({
+      _tag: "ListingUnavailable",
+      requestId: "l-2",
     })
   })
 

@@ -127,7 +127,7 @@ const excludeAgentWorktrees = (workspace: string) =>
 
 /**
  * Clones `url` into `workspace` on `baseBranch`, then creates and checks out `workBranch`, with
- * subagents' worktrees excluded. A `workBranch` that is the `baseBranch` is already checked out:
+ * subagents' worktrees excluded. A new `workBranch` that the Repo already has fails. A `workBranch` that is the `baseBranch` is already checked out:
  * the Session commits to it directly.
  */
 export const cloneWorkspace = (options: {
@@ -144,6 +144,24 @@ export const cloneWorkspace = (options: {
       run,
     )
     if (options.workBranch !== options.baseBranch) {
+      // A new branch must be new: made over one that is on the remote, a later push could
+      // overwrite it.
+      const exists = yield* git([
+        "-C",
+        options.workspace,
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/remotes/origin/${options.workBranch}`,
+      ]).pipe(
+        Effect.as(true),
+        Effect.catchTag("GitError", () => Effect.succeed(false)),
+      )
+      if (exists) {
+        return yield* new GitError({
+          message: `the branch ${options.workBranch} already exists in the Repo: pick another name, or work on it directly`,
+        })
+      }
       yield* git(["-C", options.workspace, "switch", "--quiet", "--create", options.workBranch])
     }
     yield* excludeAgentWorktrees(options.workspace)

@@ -165,11 +165,12 @@ test("says why git would refuse a new branch's name", async () => {
   expect(dialog.textContent).toContain("A branch name can't have two dots in a row.")
 })
 
-test("without the GitHub App, suggests from Sessions, says so, and never blocks", async () => {
+test("without the GitHub App, suggests from Sessions, says so, offers no retry, and never blocks", async () => {
   const hub = new FakeHub({ stepMs: 2, autoplay: false })
   hub.listingDown = true
   const { dialog, start } = await open(hub)
-  expect(dialog.textContent).toContain("Couldn't load the Repos")
+  await eventually(() => expect(dialog.textContent).toContain("Couldn't load the Repos"))
+  expect(dialog.textContent).not.toContain("Retry")
   await type(dialog, "Repo", "kddige/kndl")
   await eventually(() => expect(dialog.textContent).toContain("Couldn't load the branches"))
   // The branch is taken as existing: the usual default, and no Create entry to offer.
@@ -177,6 +178,41 @@ test("without the GitHub App, suggests from Sessions, says so, and never blocks"
   await type(dialog, "Branch", "whatever")
   expect(document.querySelector('[role="option"]')).toBeNull()
   expect(start.disabled).toBe(false)
+})
+
+test("when GitHub can't answer, says so and offers a retry that asks again", async () => {
+  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+  hub.listingFails = true
+  const { dialog } = await open(hub)
+  await eventually(() =>
+    expect(dialog.textContent).toContain("Could not list your Repos; try again."),
+  )
+  hub.listingFails = false
+  await step(() => button("Retry", dialog).click())
+  await eventually(() => expect(dialog.textContent).not.toContain("Couldn't load the Repos"))
+})
+
+test("says, without stopping, that a branch typed is not on GitHub's list", async () => {
+  const { dialog, start } = await openDialog(true)
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  expect(dialog.textContent).not.toContain("Branch not found on GitHub")
+  await type(dialog, "Branch", "nope")
+  expect(dialog.textContent).toContain("Branch not found on GitHub. Pick one, or create it.")
+  expect(start.disabled).toBe(false)
+})
+
+test("says why a new branch's name can't be used, under claude/ or as its own base", async () => {
+  const { dialog } = await openDialog(true)
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  await type(dialog, "Branch", "claude/mine")
+  await eventually(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+  const create = [...document.querySelectorAll('[role="option"]')].find((option) =>
+    option.textContent?.includes("Create branch"),
+  ) as HTMLElement
+  await step(() => create.click())
+  expect(dialog.textContent).toContain("Names under claude/ are for the Work branches kndl makes.")
 })
 
 test("warns when sessions are already on the branch it would commit to", async () => {

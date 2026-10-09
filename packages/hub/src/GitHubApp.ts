@@ -52,6 +52,12 @@ export interface RepoBranches {
   readonly defaultBranch: BranchName
 }
 
+/** A Repo the App is installed on, with a collaborator check made with its installation's token. */
+export interface InstalledRepo {
+  readonly repo: RepoName
+  readonly isCollaborator: (login: string) => Effect.Effect<boolean, GitHubAppError>
+}
+
 /** An installation token for one Repo. */
 export interface RepoToken {
   readonly token: Redacted.Redacted<string>
@@ -155,6 +161,12 @@ const listedPerPage = 100
 /** The most pages of a Repo's branches the Hub reads: past this many, the rest are left out. */
 const maxBranchPages = 20
 
+/** How many installations `listRepos` walks at once. */
+const installationConcurrency = 4
+
+/** How long one HTTP call of a listing waits on GitHub. */
+const listCallTimeout = Duration.seconds(10)
+
 const notConfigured = new GitHubAppError({
   message:
     "This needs the GitHub App, which the Hub doesn't have: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH on the Hub.",
@@ -223,15 +235,16 @@ export class GitHubApp extends Context.Service<
     readonly checkPermissions: Effect.Effect<AppPermissionsCheck, GitHubAppError>
     /**
      * Every Repo the App is installed on, over all its installations that aren't suspended:
-     * `GET /installation/repositories`, every page, with a token for each installation that has
-     * only the Metadata permission every App has. For New Session's Repo combo box, which
-     * RepoAccess filters by person.
+     * `GET /installation/repositories`, every page, with one token per installation (the Hub's
+     * own permissions, `hostTokenPermissions`), which each Repo's collaborator check then uses,
+     * so no token is minted per Repo. An installation GitHub fails on is logged and left out.
+     * For New Session's Repo combo box, which RepoAccess filters by person.
      */
-    readonly listRepos: Effect.Effect<ReadonlyArray<RepoName>, GitHubAppError>
+    readonly listRepos: Effect.Effect<ReadonlyArray<InstalledRepo>, GitHubAppError>
     /**
      * The Repo's branches and its default branch, asked as the Repo's installation. Fails with
      * status 404 where the App isn't installed on the Repo. Reads at most {@link maxBranchPages}
-     * pages of branches.
+     * pages of branches; the default branch is among them whatever that leaves out.
      */
     readonly listBranches: (repo: RepoName) => Effect.Effect<RepoBranches, GitHubAppError>
   }
@@ -424,10 +437,10 @@ export class GitHubApp extends Context.Service<
         : Effect.succeed(appHtmlUrl),
     ).pipe(Effect.map((htmlUrl) => appInstallUrl({ htmlUrl })))
 
-    const isCollaborator = Effect.fn("GitHubApp.isCollaborator")(
-      function* (repo: RepoName, login: string) {
+    /** Whether `login` collaborates on the Repo, asked with `token`, an installation token. */
+    const collaboratorWith = (token: Redacted.Redacted<string>, repo: RepoName, login: string) =>
+      Effect.gen(function* () {
         const { owner, name } = splitRepo(repo)
-        const { token } = yield* repoToken(repo)
         const response = yield* http.execute(
           yield* request(
             "GET",
@@ -442,11 +455,19 @@ export class GitHubApp extends Context.Service<
           message: `Could not check ${login}'s access to ${repo}: GitHub answered ${response.status}${apiMessage(yield* response.text)}`,
           status: response.status,
         })
-      },
-      Effect.catchTag("HttpClientError", (error) =>
-        Effect.fail(new GitHubAppError({ message: `Could not check access: ${error.message}` })),
-      ),
-    )
+      }).pipe(
+        Effect.catchTag("HttpClientError", (error) =>
+          Effect.fail(new GitHubAppError({ message: `Could not check access: ${error.message}` })),
+        ),
+      )
+
+    const isCollaborator = Effect.fn("GitHubApp.isCollaborator")(function* (
+      repo: RepoName,
+      login: string,
+    ) {
+      const { token } = yield* repoToken(repo)
+      return yield* collaboratorWith(token, repo, login)
+    })
 
     const checkPermissions = Effect.gen(function* () {
       const app = yield* call(
@@ -489,45 +510,81 @@ export class GitHubApp extends Context.Service<
       return checkAppPermissions(facts, installations, yield* Clock.currentTimeMillis)
     }).pipe(Effect.withSpan("GitHubApp.checkPermissions"))
 
-    const listRepos = Effect.gen(function* () {
-      const repos: Array<RepoName> = []
-      for (let installations = 1; ; installations++) {
-        const listed = yield* call(
-          "Could not list the GitHub App's installations",
-          Schema.Array(InstallationDetails),
-          request(
-            "GET",
-            `/app/installations?per_page=${installationsPerPage}&page=${installations}`,
-            { jwt: true },
-          ),
-        )
-        for (const installation of listed) {
-          if (installation.suspended_at != null) continue
-          const minted = yield* call(
+    /** One installation's Repos, each with a collaborator check on the installation's token. */
+    const installationRepos = (installation: typeof InstallationDetails.Type) =>
+      Effect.gen(function* () {
+        const what = `Could not list the Repos of installation ${installation.id}`
+        const minted = yield* bounded(
+          what,
+          call(
             `Could not get a token for installation ${installation.id}`,
             AccessToken,
             request("POST", `/app/installations/${installation.id}/access_tokens`, {
               jwt: true,
             }).pipe(
-              Effect.map(HttpClientRequest.bodyJsonUnsafe({ permissions: { metadata: "read" } })),
+              Effect.map(
+                HttpClientRequest.bodyJsonUnsafe({
+                  permissions: hostTokenPermissions(installation.permissions),
+                }),
+              ),
             ),
-          )
-          const token = Redacted.make(minted.token)
-          for (let page = 1; ; page++) {
-            const found = yield* call(
-              `Could not list the Repos of installation ${installation.id}`,
+          ),
+        )
+        const token = Redacted.make(minted.token)
+        const repos: Array<InstalledRepo> = []
+        for (let page = 1; ; page++) {
+          const found = yield* bounded(
+            what,
+            call(
+              what,
               InstallationRepositories,
               request("GET", `/installation/repositories?per_page=${listedPerPage}&page=${page}`, {
                 token,
               }),
-            )
-            repos.push(...found.repositories.map((repo) => repo.full_name))
-            if (found.repositories.length < listedPerPage) break
+            ),
+          )
+          for (const { full_name: repo } of found.repositories) {
+            repos.push({
+              repo,
+              isCollaborator: (login) =>
+                bounded(`Could not check ${login}'s access`, collaboratorWith(token, repo, login)),
+            })
           }
+          if (found.repositories.length < listedPerPage) break
         }
+        return repos
+      })
+
+    const listRepos = Effect.gen(function* () {
+      const installations: Array<typeof InstallationDetails.Type> = []
+      for (let page = 1; ; page++) {
+        const listed = yield* bounded(
+          "Could not list the GitHub App's installations",
+          call(
+            "Could not list the GitHub App's installations",
+            Schema.Array(InstallationDetails),
+            request("GET", `/app/installations?per_page=${installationsPerPage}&page=${page}`, {
+              jwt: true,
+            }),
+          ),
+        )
+        installations.push(...listed.filter((installation) => installation.suspended_at == null))
         if (listed.length < installationsPerPage) break
       }
-      return repos
+      const found = yield* Effect.forEach(
+        installations,
+        (installation) =>
+          installationRepos(installation).pipe(
+            Effect.catchTag("GitHubAppError", (error) =>
+              Effect.as(
+                Effect.logWarning(`Left installation ${installation.id} out: ${error.message}`),
+                [] as Array<InstalledRepo>,
+              ),
+            ),
+          ),
+        { concurrency: installationConcurrency },
+      )
+      return found.flat()
     }).pipe(Effect.withSpan("GitHubApp.listRepos"))
 
     const listBranches = Effect.fn("GitHubApp.listBranches")(function* (repo: RepoName) {
@@ -552,6 +609,8 @@ export class GitHubApp extends Context.Service<
         branches.push(...found.map((branch) => branch.name))
         if (found.length < listedPerPage) break
       }
+      // Past the cap, the default branch may be left out of the pages: it is always offered.
+      if (!branches.includes(defaultBranch)) branches.unshift(defaultBranch)
       return { branches, defaultBranch }
     })
 
@@ -571,6 +630,20 @@ export class GitHubApp extends Context.Service<
     })
   })
 }
+
+/** `effect`, failing if GitHub takes longer than `listCallTimeout` to answer. */
+const bounded = <A>(what: string, effect: Effect.Effect<A, GitHubAppError>) =>
+  effect.pipe(
+    Effect.timeoutOrElse({
+      duration: listCallTimeout,
+      orElse: () =>
+        Effect.fail(
+          new GitHubAppError({
+            message: `${what}: GitHub didn't answer within ${Duration.format(listCallTimeout)}`,
+          }),
+        ),
+    }),
+  )
 
 /** Sends `request` and decodes a 2xx answer; any other is a GitHubAppError with GitHub's words. */
 const callWith = <A, I>(

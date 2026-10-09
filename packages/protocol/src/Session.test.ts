@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
+import { SessionId } from "./Ids.ts"
 import {
   BranchChoice,
+  branchesFor,
   branchNameProblem,
+  MaxBranchNameLength,
+  newBranchProblem,
+  workBranchFor,
   isDockerPort,
   joinAnswers,
   MaxSessionNameLength,
@@ -160,6 +165,48 @@ describe("BranchChoice", () => {
     }
     expectRejected(BranchChoice, { _tag: "Create", name: "ok", from: "" })
     expectRejected(BranchChoice, { _tag: "Existing", name: "main" })
+  })
+
+  test("an existing branch, and the one a new branch is made from, have names git accepts", () => {
+    expectRejected(BranchChoice, { _tag: "Existing", name: "a..b", newWorkBranch: true })
+    expectRejected(BranchChoice, { _tag: "Create", name: "ok", from: "-x" })
+    expectRejected(BranchChoice, { _tag: "Existing", name: "x".repeat(256), newWorkBranch: true })
+    expectRoundTrips(BranchChoice, [
+      { _tag: "Existing", name: "x".repeat(MaxBranchNameLength), newWorkBranch: false },
+    ])
+  })
+
+  test("a new branch isn't under claude/, which is for Work branches, nor its own base", () => {
+    expectRejected(BranchChoice, { _tag: "Create", name: "claude/s-1", from: "main" })
+    expectRejected(BranchChoice, { _tag: "Create", name: "main", from: "main" })
+    expect(newBranchProblem("claude/x")).toBe(
+      "Names under claude/ are for the Work branches kndl makes.",
+    )
+    expect(newBranchProblem("main", "main")).toBe(
+      "A new branch can't be made from a branch of the same name.",
+    )
+    expect(newBranchProblem("feature/x", "main")).toBeUndefined()
+  })
+
+  test("comes to the base and Work branches a Session has", () => {
+    const id = Schema.decodeUnknownSync(SessionId)("s-1")
+    expect(workBranchFor(id)).toBe("claude/s-1")
+    expect(
+      branchesFor({ _tag: "Existing", name: "dev", newWorkBranch: true } as never, id),
+    ).toEqual({
+      baseBranch: "dev",
+      workBranch: "claude/s-1",
+    })
+    expect(
+      branchesFor({ _tag: "Existing", name: "dev", newWorkBranch: false } as never, id),
+    ).toEqual({
+      baseBranch: "dev",
+      workBranch: "dev",
+    })
+    expect(branchesFor({ _tag: "Create", name: "feat", from: "dev" } as never, id)).toEqual({
+      baseBranch: "dev",
+      workBranch: "feat",
+    })
   })
 })
 

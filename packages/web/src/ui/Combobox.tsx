@@ -86,7 +86,9 @@ function grouped(options: ReadonlyArray<ComboboxOption>, query: string) {
   const groups = new Map<string | undefined, Array<ComboboxOption>>()
   for (const option of options) {
     if (!option.value.toLowerCase().includes(needle)) continue
-    groups.set(option.group, [...(groups.get(option.group) ?? []), option])
+    const group = groups.get(option.group)
+    if (group === undefined) groups.set(option.group, [option])
+    else group.push(option)
   }
   return [...groups]
 }

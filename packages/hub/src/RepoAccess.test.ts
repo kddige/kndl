@@ -21,6 +21,11 @@ const octocat = Participant.make({
   login: "octocat",
   name: "octocat",
 })
+const hubot = Participant.make({
+  id: ParticipantId.make("github:2"),
+  login: "hubot",
+  name: "hubot",
+})
 const dev = Participant.make({ id: ParticipantId.make("dev:alice"), login: "alice", name: "alice" })
 
 beforeEach(() => github.reset())
@@ -112,6 +117,126 @@ describe("Repo access", () => {
     )
     expect(answers).toEqual({ first: [repo], cached: [repo] })
     expect(github.requests.filter((r) => r.path === "/app/installations")).toHaveLength(1)
+  })
+
+  test("lists each person their own Repos, from one listing of the App's", async () => {
+    const other = RepoName.make("octo/other")
+    github.installedOn.add(repo)
+    github.installedOn.add(other)
+    github.grant(repo, "octocat")
+    github.grant(other, "hubot")
+    const lists = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        return {
+          octocat: yield* access.accessible(octocat),
+          hubot: yield* access.accessible(hubot),
+          dev: yield* access.accessible(dev),
+        }
+      }),
+    )
+    expect(lists.octocat).toEqual([repo])
+    expect(lists.hubot).toEqual([other])
+    expect(lists.dev.toSorted()).toEqual([other, repo])
+    expect(github.requests.filter((r) => r.path === "/app/installations")).toHaveLength(1)
+    // One token for the installation, not one per Repo.
+    expect(github.mintCount).toBe(1)
+  })
+
+  test("keeps a no as long as a yes", async () => {
+    github.installedOn.add(repo)
+    const lists = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        const first = yield* access.accessible(octocat)
+        github.grant(repo, "octocat")
+        yield* TestClock.adjust(Duration.minutes(4))
+        return { first, later: yield* access.accessible(octocat) }
+      }),
+    )
+    // Not asked again after a no's own short TTL.
+    expect(lists).toEqual({ first: [], later: [] })
+    expect(github.collaboratorChecks("octocat")).toBe(1)
+  })
+
+  test("gives a list with a Repo GitHub couldn't say of, and doesn't keep it", async () => {
+    github.installedOn.add(repo)
+    github.grant(repo, "octocat")
+    const lists = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        github.collaboratorsDown = true
+        const partial = yield* access.accessible(octocat)
+        github.collaboratorsDown = false
+        return { partial, whole: yield* access.accessible(octocat) }
+      }),
+    )
+    expect(lists).toEqual({ partial: [], whole: [repo] })
+  })
+
+  test("forgets a list when asked to, or when access to a Repo is forgotten", async () => {
+    github.installedOn.add(repo)
+    const lists = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        const first = yield* access.accessible(octocat)
+        github.grant(repo, "octocat")
+        const kept = yield* access.accessible(octocat)
+        yield* access.forget(octocat, repo)
+        const afterForget = yield* access.accessible(octocat)
+        github.revoke(repo, "octocat")
+        yield* access.forgetAccessible(octocat)
+        return { first, kept, afterForget, afterRevoke: yield* access.accessible(octocat) }
+      }),
+    )
+    expect(lists).toEqual({ first: [], kept: [], afterForget: [repo], afterRevoke: [] })
+  })
+
+  test("caches a failure to list briefly, so clients can't ask in a loop", async () => {
+    github.installedOn.add(repo)
+    github.grant(repo, "octocat")
+    const results = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        github.installationsDown = true
+        const failed = yield* Effect.flip(access.accessible(octocat))
+        github.installationsDown = false
+        const again = yield* Effect.flip(access.accessible(octocat))
+        yield* TestClock.adjust(Duration.subtract(refusedAnswerTtl, Duration.seconds(-1)))
+        return { failed, again, later: yield* access.accessible(octocat) }
+      }),
+    )
+    expect(results.failed._tag).toBe("RepoAccessUnknown")
+    expect(results.again._tag).toBe("RepoAccessUnknown")
+    expect(results.later).toEqual([repo])
+    expect(github.requests.filter((r) => r.path === "/app/installations")).toHaveLength(2)
+  })
+
+  test("can't list without the GitHub App", async () => {
+    const result = await withAccess(
+      Effect.flatMap(RepoAccess, (access) => Effect.flip(access.accessible(octocat))),
+      { ...baseConfig, devLogin: true },
+    )
+    expect(result._tag).toBe("RepoListingUnavailable")
+  })
+
+  test("lists a Repo's branches, kept for a minute", async () => {
+    github.installedOn.add(repo)
+    github.branches.set(repo, { names: ["main", "dev"], defaultBranch: "main" })
+    const lists = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        const first = yield* access.branches(repo)
+        github.branches.set(repo, { names: ["main"], defaultBranch: "main" })
+        yield* TestClock.adjust(Duration.seconds(30))
+        const kept = yield* access.branches(repo)
+        yield* TestClock.adjust(Duration.seconds(40))
+        return { first, kept }
+      }),
+    )
+    expect(lists.first.branches).toEqual(["main", "dev"])
+    expect(lists.kept.branches).toEqual(["main", "dev"])
+    expect(github.requests.filter((r) => r.path.endsWith("/branches"))).toHaveLength(1)
   })
 
   test("forget asks GitHub again at once", async () => {

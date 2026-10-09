@@ -130,7 +130,8 @@
 //   refused alike whether the Repo exists or not. A person who loses access is told the Repo's
 //   Environment is gone from them with a RepoAccessLost. CheckRepo asks for a Repo as it is
 //   entered, before a new Session or Environment is set up; ListRepos and ListBranches fill in
-//   New Session's Repo and branch choices (ADR 0023), off the lock too. Shared variables aren't any Repo's.
+//   New Session's Repo and branch choices (ADR 0023), off the lock too. Shared variables aren't
+//   any Repo's.
 // - Claude credentials (ADR 0015, ClaudeCredentials.ts): each person stores their own, checked
 //   with Anthropic off the lock, and is sent what they can see of it (ClaudeCredentialState)
 //   after the welcome and whenever it changes. A Session runs on its Creator's, else on its
@@ -160,7 +161,7 @@ import {
   AgentStatusChanged,
   BranchesListed,
   type BranchChoice,
-  type BranchName,
+  branchesFor,
   ClaudeCredentialFetched,
   ClaudeCredentialRefused,
   ClaudeCredentialState,
@@ -234,6 +235,7 @@ import {
   RepoAccessLost,
   RepoChecked,
   ReposListed,
+  ListingUnavailable,
   TurnStopRequested,
   type WebToHub,
   cantStartText,
@@ -303,7 +305,7 @@ import {
   redactText,
   StreamRedactor,
 } from "./Redaction.ts"
-import { RepoAccess } from "./RepoAccess.ts"
+import { RepoAccess, type RepoAccessUnknown, type RepoListingUnavailable } from "./RepoAccess.ts"
 import { RepoMap, uniqueRepos } from "./RepoMap.ts"
 import { isRunnerCommand, makeRunnerRelay } from "./RunnerRelay.ts"
 import { Runners } from "./Runners.ts"
@@ -414,6 +416,10 @@ const refuseTunnel = (code: TunnelCloseCode, message: string) =>
   Effect.fail(new TunnelRefused({ code, message }))
 
 /** Why a command about a Repo is refused: alike whether the Repo exists or not (ADR 0003). */
+/** What a dev login is told when a listing needs the GitHub App, which the Hub doesn't have. */
+const noGitHubAppHint =
+  "This needs the GitHub App, which the Hub doesn't have: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH on the Hub."
+
 const noRepoAccess = (repo: string) =>
   `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`
 
@@ -448,24 +454,6 @@ const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.model !== undefined && { model: setting.model }),
   ...(setting.effort !== undefined && { effort: setting.effort }),
 })
-
-/** The work branch a new Session commits to, unless it works directly on a branch. */
-export const workBranchFor = (sessionId: SessionId) => `claude/${sessionId}`
-
-/**
- * The branches a New Session's branch choice comes to (ADR 0023): the one its Repo is cloned on,
- * and the one it commits to.
- */
-export const branchesFor = (
-  choice: BranchChoice,
-  sessionId: SessionId,
-): { readonly baseBranch: BranchName; readonly workBranch: BranchName } => {
-  if (choice._tag === "Create") return { baseBranch: choice.from, workBranch: choice.name }
-  return {
-    baseBranch: choice.name,
-    workBranch: choice.newWorkBranch ? workBranchFor(sessionId) : choice.name,
-  }
-}
 
 /** Whether a subagent of the Session is running (ADR 0014): it is working, Turn or not. */
 const hasRunningAgents = (session: SessionSummary) =>
@@ -1304,6 +1292,8 @@ export class SessionRelay extends Context.Service<
         allowed: boolean,
       ): Effect.fn.Return<void, SqlError> {
         if (!allowed) {
+          // Their list of Repos to start a Session on no longer holds it.
+          yield* access.forgetAccessible(who)
           yield* endForwards(
             (forward) => forward.you.id === who.id && sameRepo(forward.repo, repo),
             ForwardCloseCode.NoSuchSession,
@@ -3019,6 +3009,30 @@ export class SessionRelay extends Context.Service<
         })
 
         /**
+         * What a listing says when it can't: a fixed message, with the details in the Hub's log
+         * (GitHub's own words and the Hub's set-up hints aren't for the browser). Without the
+         * GitHub App, a distinct answer, for the web UI to fall back without offering a retry; a
+         * dev login, who runs the Hub, is told what to set.
+         */
+        const listingFailed = (
+          message: Extract<WebToHub, { readonly _tag: "ListRepos" | "ListBranches" }>,
+          failure: RepoAccessUnknown | RepoListingUnavailable,
+          fixed: string,
+        ) =>
+          Effect.gen(function* () {
+            if (failure._tag === "RepoListingUnavailable") {
+              return peer.send(
+                ListingUnavailable.make({
+                  requestId: message.requestId,
+                  ...(you.id.startsWith("dev:") && { hint: noGitHubAppHint }),
+                }),
+              )
+            }
+            yield* Effect.logWarning(failure.message)
+            return refuse(message, fixed)
+          })
+
+        /**
          * Lists the Repos the person may start a Session on (ADR 0023), off the lock since it
          * waits on GitHub: the App's, filtered by their access and kept for a few minutes.
          */
@@ -3027,8 +3041,11 @@ export class SessionRelay extends Context.Service<
         ) {
           const listed = yield* Effect.result(access.accessible(you))
           if (listed._tag === "Failure") {
-            yield* Effect.logWarning(listed.failure.message)
-            return refuse(message, listed.failure.message)
+            return yield* listingFailed(
+              message,
+              listed.failure,
+              "Could not list your Repos; try again.",
+            )
           }
           peer.send(ReposListed.make({ requestId: message.requestId, repos: listed.success }))
         })
@@ -3044,13 +3061,16 @@ export class SessionRelay extends Context.Service<
           const allowed = yield* Effect.result(access.check(you, repo))
           if (allowed._tag === "Failure") {
             yield* Effect.logWarning(allowed.failure.message)
-            return refuse(message, allowed.failure.message)
+            return refuse(message, "Could not check your access on GitHub; try again.")
           }
           if (!allowed.success) return refuse(message, noRepoAccess(repo))
-          const listed = yield* Effect.result(app.listBranches(repo))
+          const listed = yield* Effect.result(access.branches(repo))
           if (listed._tag === "Failure") {
-            yield* Effect.logWarning(listed.failure.message)
-            return refuse(message, listed.failure.message)
+            return yield* listingFailed(
+              message,
+              listed.failure,
+              `Could not list the branches of ${repo}; try again.`,
+            )
           }
           peer.send(BranchesListed.make({ requestId, repo, ...listed.success }))
         })

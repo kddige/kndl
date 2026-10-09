@@ -406,6 +406,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return { ...state, appPermissions: action.check }
     case "RepoChecked":
     case "ReposListed":
+    case "ListingUnavailable":
     case "BranchesListed":
       // An answer for whoever asked: it says nothing that lasts.
       return state

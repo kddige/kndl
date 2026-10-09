@@ -158,6 +158,18 @@ describe.skipIf(Bun.which("git") === null)("host git", () => {
     expect(git(workspace(), "branch", "--format=%(refname:short)")).toBe("main")
   })
 
+  test("refuses to create a Work branch the Repo already has", async () => {
+    git(origin, "branch", "taken")
+    const failure = await prepare({ work: "taken" }).then(
+      () => undefined,
+      (error: unknown) => String(error),
+    )
+    expect(failure).toContain("taken already exists in the Repo")
+    // Working on it directly is the way to use it.
+    await prepare({ base: "taken", work: "taken" })
+    expect(git(workspace(), "branch", "--show-current")).toBe("taken")
+  })
+
   test("the clone pushes nothing, and has no Runner git directory beside it (#194)", async () => {
     await prepare()
 

@@ -79,10 +79,18 @@ export interface NewSession {
   readonly effort?: EffortLevel
 }
 
+/** The Hub has no GitHub App to list Repos or branches with: asking again can't help. */
+export class ListingUnavailableError extends Error {
+  override readonly name = "ListingUnavailableError"
+}
+
 /** A command the Hub refused, or that couldn't be sent. */
 export class CommandError extends Error {
   override readonly name = "CommandError"
 }
+
+const unavailableText = (answer: { readonly hint?: string }) =>
+  answer.hint ?? "The Hub has no GitHub App."
 
 const backoff = [500, 1_000, 2_000, 5_000, 10_000]
 
@@ -409,15 +417,24 @@ export class HubClient {
 
   /**
    * The Repos the signed-in person may start a Session on, from the GitHub App's installations
-   * (ADR 0023); rejects with the Hub's reason where it can't say, such as without the App.
+   * (ADR 0023); rejects with the Hub's reason where it can't say, and with a ListingUnavailableError without the App.
    */
   async listRepos(): Promise<ReadonlyArray<string>> {
-    return (await this.#request({ _tag: "ListRepos" }, "ReposListed")).repos
+    const answer = await this.#request({ _tag: "ListRepos" }, ["ReposListed", "ListingUnavailable"])
+    if (answer._tag === "ListingUnavailable")
+      throw new ListingUnavailableError(unavailableText(answer))
+    return answer.repos
   }
 
   /** A Repo's branches and its default branch, through the GitHub App; rejects as `listRepos`. */
   async listBranches(repo: string): Promise<BranchesListed> {
-    return this.#request({ _tag: "ListBranches", repo }, "BranchesListed")
+    const answer = await this.#request({ _tag: "ListBranches", repo }, [
+      "BranchesListed",
+      "ListingUnavailable",
+    ])
+    if (answer._tag === "ListingUnavailable")
+      throw new ListingUnavailableError(unavailableText(answer))
+    return answer
   }
 
   /** Every shared variable, which the store then keeps current. */
@@ -806,6 +823,7 @@ export class HubClient {
       case "AppPermissionsChecked":
       case "RepoChecked":
       case "ReposListed":
+      case "ListingUnavailable":
       case "BranchesListed":
       case "PairingCodeCreated":
       case "PairingCodeList":
