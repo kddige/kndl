@@ -439,6 +439,30 @@ describe("the Gateway, sending a request through an Installation (#254)", () => 
     expect(await notesOf(web, start.sessionId)).toEqual([])
   })
 
+  test("refreshes once more a token refreshed after a refusal, once it worked", async () => {
+    const { hub, runner, web } = await scene()
+    const id = await install(web, "Tracker", "/oauth")
+    await connect(hub, web, id)
+    const start = await startSession(web, runner)
+    const sent = async () => {
+      const response = await through(hub, id, start.modToken)
+      sendSecond()
+      await response.text()
+      return response.status
+    }
+    // Refused, its token is refreshed: the new one works.
+    as.valid.clear()
+    expect(await sent()).toBe(200)
+
+    // Refused later, the token that worked is refreshed again, not taken for a lost connection.
+    as.valid.clear()
+    seen.length = 0
+    expect(await sent()).toBe(200)
+    expect(seen.map((one) => one.authorization)).toEqual(["Bearer at-2", "Bearer at-3"])
+    expect(as.refreshes).toBe(2)
+    expect(await notesOf(web, start.sessionId)).toEqual([])
+  })
+
   test("refused the refreshed token too, answers 409 and notes it isn't connected", async () => {
     const { hub, runner, web } = await scene()
     const id = await install(web, "Tracker", "/oauth")

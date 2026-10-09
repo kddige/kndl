@@ -48,9 +48,6 @@ const errorResponse = (status: number, error: string) =>
 const oauthRefusal =
   "The MCP server refused the Installation's account: reconnect it on the MCP page."
 
-/** The most the Gateway holds of an OAuth Installation's request body (#217): see Gateway.ts. */
-export { MaxOAuthRequestBytes }
-
 const tooLarge = `The request's body is larger than ${MaxOAuthRequestBytes / 1024 / 1024} MiB, the most the Gateway takes for an OAuth Installation.`
 
 /** Request headers that stay at the Gateway: the Session's own, and the connection's. */
