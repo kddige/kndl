@@ -3327,3 +3327,32 @@ describe("Open questions (#193)", () => {
     }
   })
 })
+
+describe("a Session's live state ending (#243)", () => {
+  test("a Runner's new connection settles a stop its old one was asked for", async () => {
+    const { hub, runner, runnerToken, web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({ _tag: "SleepSession", sessionId })
+    await runner.take("StopSession")
+
+    // It restarts before it answers, its Claude Code still running in tmux: the new connection
+    // replaces the old one.
+    const back = await openRunner(hub, runnerToken, [sessionId])
+    expect((await runner.closed).code).toBe(4409)
+    web.send({ _tag: "SendPrompt", sessionId, text: "still there?" })
+    const [delivered] = await mod.deliveries(500)
+    expect(defined(delivered).text).toBe("still there?")
+    await mod.post(
+      turnStarted("t-1", defined(delivered).promptId, {
+        _tag: "FromParticipant",
+        participant: alice,
+      }),
+      turnEnded("t-1"),
+    )
+
+    // Asked again, it is stopped again.
+    web.send({ _tag: "SleepSession", sessionId })
+    expect(await back.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+  })
+})
