@@ -1,6 +1,5 @@
 // Each Session's live state (LiveSessions.ts): what each way it ends clears, and what it keeps.
-// These pin the table as SessionRelay.ts cleared it by hand before; a follow-up that closes a gap
-// changes its row here.
+// A change to what a way clears is a deliberate change to its row here.
 
 import { describe, expect, test } from "bun:test"
 import {
@@ -125,7 +124,7 @@ describe("a Session's live state ending", () => {
     ])
   })
 
-  test("RunnerGone clears what the Runner was asked, keeping deliveries", () => {
+  test("RunnerGone clears what the Runner was asked, keeping what Claude Code may outlive it with", () => {
     expect(keptAfter("RunnerGone")).toEqual([
       "inFlight",
       "steering",

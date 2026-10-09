@@ -10,8 +10,7 @@
 //   RunnerGone            Its Runner went offline: it goes Frozen.
 //   Purged                It was purged, past its archive's retention.
 //
-// This step only moves the state out of SessionRelay.ts: each way clears what the relay cleared
-// by hand before, gaps included. The gaps are marked "Kept as before" for the follow-ups.
+// Each way says, in `clearedWhen`, why it keeps what it keeps.
 
 import type {
   EnvironmentVersion,
@@ -261,8 +260,10 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     // A start under way is settled by what it says when it is back, too.
     "starts",
     "restarts",
-    // `inFlight`, `starting`, `steering`, `steers` and `installationTrouble`: kept as before; see
-    // the follow-up. Going Frozen clears `openPorts`.
+    // `inFlight`, `starting`, `steering`, `steers`, `installationTrouble` and the streams are
+    // kept: Claude Code can outlive its Runner's restart, and its mod talks to the Hub on its own,
+    // so they stay true while it is Frozen. A Runner back without it ends them with ClaudeGone.
+    // Going Frozen clears `openPorts`.
   ],
   // Nothing is left of it: whatever another way left behind goes too.
   Purged: [
