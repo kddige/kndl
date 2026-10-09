@@ -1,11 +1,11 @@
 // A Session that didn't start for its Repo's Installations (#216): which failed and why, each with
-// a way out. Fix opens the Installation on the Plugins page; whoever may change it (access to every
+// a way out. Fix opens the Installation on the MCP page; whoever may change it (access to every
 // Repo it lists, as the Hub requires) can take the Session's Repo off it here instead, and the
 // Session is woken at once. A global one (#219) anyone in the Session can turn off for its Repo
 // instead, but only the Owner can fix. Retry wakes it, which checks the Installations again. Its
 // queued prompts wait meanwhile, and run once it starts. An OAuth Installation not connected
-// (#217) has Reconnect instead of Fix: through its authorization server and back to the Plugins
-// page, or first asking for a client entered by hand, where that offers no registration (#218).
+// (#217) has Reconnect instead of Fix: through its authorization server and back to the MCP page,
+// or first asking for a client entered by hand, where that offers no registration (#218).
 
 import {
   type Installation,
@@ -19,7 +19,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { useHub, useHubState } from "../app/hub.tsx"
-import { useConnect } from "../plugins/connection.tsx"
+import { useConnect } from "../mcp/connection.tsx"
 import { Banner, Button, Dialog, DialogClose, InfoIcon, toast } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -61,7 +61,7 @@ export function InstallationsFailedBanner({
 }) {
   const hub = useHub()
   const online = useHubState((state) => state.connection.status === "online")
-  const plugins = useHubState((state) => state.plugins)
+  const mcpServers = useHubState((state) => state.mcpServers)
   const owner = useHubState((state) => state.owner)
   const [busy, setBusy] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<Deleting | null>(null)
@@ -85,12 +85,12 @@ export function InstallationsFailedBanner({
   useEffect(() => {
     if (!online) return
     // Without them, only Fix and Retry show.
-    hub.getPlugins().catch(() => undefined)
+    hub.getMcpServers().catch(() => undefined)
   }, [hub, online])
 
   /** The Installation, if the person may take the Session's Repo off it. */
   const changeable = (failure: InstallationFailure) => {
-    const installation = plugins?.installations.find((one) => one.id === failure.installationId)
+    const installation = mcpServers?.installations.find((one) => one.id === failure.installationId)
     if (installation === undefined) return undefined
     // Anyone with access to the Repo turns a global one off for it.
     if (installation.global === true) return installation
@@ -172,7 +172,7 @@ export function InstallationsFailedBanner({
                     </Button>
                   ) : (
                     <Link
-                      to="/plugins"
+                      to="/mcp"
                       search={{ installation: failure.installationId }}
                       aria-label={`Fix ${failure.installation}`}
                       {...stylex.props(styles.link, focus.ring)}
@@ -222,7 +222,7 @@ export function InstallationsFailedBanner({
           if (!open) setDeleting(null)
         }}
         title={`Delete ${deleting?.installation.name ?? "the Installation"}?`}
-        description={`${summary.repo} is the only Repo it is on in, so taking it off deletes the Installation, with its header secret values. Its Plugin stays.`}
+        description={`${summary.repo} is the only Repo it is on in, so taking it off deletes the Installation, with its header secret values. Its MCP server stays.`}
         footer={
           <>
             <DialogClose>Cancel</DialogClose>

@@ -1,8 +1,9 @@
-// Finding a Plugin's icon (#230, ADR 0021): the manifest's icon, else a favicon of the Plugin's
-// URL, else none. The Hub's fetches are faked by a site map, so nothing reaches the internet.
+// Finding an MCP server's icon (#230, ADR 0021): the manifest's icon, else a favicon of the
+// MCP server's URL, else none. The Hub's fetches are faked by a site map, so nothing reaches the
+// internet.
 
 import { describe, expect, test } from "bun:test"
-import { type Icon, type IconFetch, findIcon, sniffIcon } from "./PluginIcons.ts"
+import { type Icon, type IconFetch, findIcon, sniffIcon } from "./McpServerIcons.ts"
 
 const png = (size = 8) => {
   const bytes = new Uint8Array(size)
@@ -73,7 +74,7 @@ describe("sniffing an icon's bytes", () => {
   })
 })
 
-describe("a favicon of the Plugin's URL", () => {
+describe("a favicon of the MCP server's URL", () => {
   test("is an SVG link icon before a larger PNG", async () => {
     const { icon } = await found(
       {

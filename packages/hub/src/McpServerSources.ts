@@ -1,5 +1,5 @@
-// Where the Hub reads Plugin packages from (#220, ADR 0020): a git repo, or an upload. Either way
-// it reads only the package's `package.json` and `kndl.json`, and runs nothing of it.
+// Where the Hub reads MCP server packages from (#220, ADR 0020): a git repo, or an upload. Either
+// way it reads only the package's `package.json` and `kndl.json`, and runs nothing of it.
 //
 // From git, it fetches one ref, shallow, into a bare repo of its own in a temporary folder, and
 // reads the two files' blobs from it: no checkout, so no working tree, filters or LFS.
@@ -10,7 +10,8 @@
 //   can't take them for options, refspecs or paths outside the repo.
 // - A fetch is killed past a timeout, or once the repo it is writing outgrows a size limit, and at
 //   most two run at once.
-// An upload is an archive (PluginArchive.ts) or the two files of a folder, picked in the browser.
+// An upload is an archive (McpServerArchive.ts) or the two files of a folder, picked in the
+// browser.
 
 import { lstat, mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -20,21 +21,21 @@ import {
   gitUrlProblem,
   iconPathOf,
   manifestIconOf,
-  MaxPluginArchiveBytes,
-  type PackagedPlugin,
-  type PluginPackageFrom,
-  PluginManifestFile,
-  type PluginSource,
+  MaxMcpServerArchiveBytes,
+  type PackagedMcpServer,
+  type McpServerPackageFrom,
+  McpServerManifestFile,
+  type McpServerSource,
   packagePath,
   packagePathProblem,
-  readPluginPackage,
+  readMcpServerPackage,
 } from "@kndl/protocol"
 import { Context, Effect, Layer, Result, Semaphore } from "effect"
-import { readPackageArchive, type PackageFiles } from "./PluginArchive.ts"
-import { MaxIconBytes } from "./PluginIcons.ts"
-import { PluginRefused } from "./Plugins.ts"
+import { readPackageArchive, type PackageFiles } from "./McpServerArchive.ts"
+import { MaxIconBytes } from "./McpServerIcons.ts"
+import { McpServerRefused } from "./McpServers.ts"
 
-export interface PluginSourcesOptions {
+export interface McpServerSourcesOptions {
   /** The transports git may use: only `https` on a Hub; tests add `file`. */
   readonly protocols: ReadonlyArray<"https" | "file">
   /** How long one fetch may take, in all. */
@@ -43,7 +44,7 @@ export interface PluginSourcesOptions {
   readonly maxBytes: number
 }
 
-const defaults: PluginSourcesOptions = {
+const defaults: McpServerSourcesOptions = {
   protocols: ["https"],
   timeoutMs: 60_000,
   maxBytes: 20_000_000,
@@ -52,7 +53,7 @@ const defaults: PluginSourcesOptions = {
 /** How often a fetch's size is measured. */
 const sizePollMs = 200
 
-const refuse = (message: string) => Effect.fail(new PluginRefused({ message }))
+const refuse = (message: string) => Effect.fail(new McpServerRefused({ message }))
 
 /** Fetches running at once, at most. */
 const concurrentFetches = 2
@@ -134,11 +135,11 @@ const lastLine = (stderr: string) =>
 
 /** Fetches the source's ref into a new bare repo and reads the package's two files from it. */
 async function fetchFiles(
-  source: Extract<PluginSource, { _tag: "Git" }>,
-  options: PluginSourcesOptions,
+  source: Extract<McpServerSource, { _tag: "Git" }>,
+  options: McpServerSourcesOptions,
   signal: AbortSignal,
 ): Promise<{ readonly files: PackageFiles; readonly commit: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "kndl-plugin-"))
+  const dir = await mkdtemp(join(tmpdir(), "kndl-mcp-server-"))
   const repo = join(dir, "repo.git")
   const deadline = Date.now() + options.timeoutMs
   const env = gitEnvironment(dir, options.protocols)
@@ -251,7 +252,7 @@ async function fetchFiles(
     }
     // Both missing names package.json first.
     const packageJson = (await read("package.json")).stdout
-    const manifest = (await read(PluginManifestFile)).stdout
+    const manifest = (await read(McpServerManifestFile)).stdout
     // A broken icon never refuses the package: its file is read if it is there, else left out.
     const iconPath = iconPathOf(manifestIconOf(manifest) ?? "")
     const iconFile =
@@ -281,40 +282,44 @@ const uploadName = (name: string) =>
 
 /** A package as the Hub read it, with its icon file's bytes if it has one. */
 export interface PackageRead {
-  readonly plugin: PackagedPlugin
+  readonly mcpServer: PackagedMcpServer
   readonly iconFile?: Uint8Array
 }
 
-const readOf = (files: PackageFiles, source: PluginSource, commit?: string) =>
-  readPluginPackage(files, source, commit).pipe(
+const readOf = (files: PackageFiles, source: McpServerSource, commit?: string) =>
+  readMcpServerPackage(files, source, commit).pipe(
     Result.match({
-      onSuccess: (plugin): Effect.Effect<PackageRead> =>
+      onSuccess: (mcpServer): Effect.Effect<PackageRead> =>
         Effect.succeed({
-          plugin,
+          mcpServer,
           ...(files.iconFile !== undefined && { iconFile: files.iconFile }),
         }),
       onFailure: refuse,
     }),
   )
 
-export class PluginSources extends Context.Service<
-  PluginSources,
+export class McpServerSources extends Context.Service<
+  McpServerSources,
   {
     /**
-     * Reads a package from git or an upload: the Plugin it would be, or why it is refused, in
+     * Reads a package from git or an upload: the MCP server it would be, or why it is refused, in
      * words to show the person.
      */
-    readonly read: (from: PluginPackageFrom) => Effect.Effect<PackagedPlugin, PluginRefused>
+    readonly read: (
+      from: McpServerPackageFrom,
+    ) => Effect.Effect<PackagedMcpServer, McpServerRefused>
     /**
      * Reads a package as {@link read} does, with the bytes of the file in it that the manifest's
      * `icon` names, if it names one the Hub could read (#230).
      */
-    readonly readWithIcon: (from: PluginPackageFrom) => Effect.Effect<PackageRead, PluginRefused>
+    readonly readWithIcon: (
+      from: McpServerPackageFrom,
+    ) => Effect.Effect<PackageRead, McpServerRefused>
   }
->()("@kndl/hub/PluginSources") {
-  static readonly layerWith = (overrides: Partial<PluginSourcesOptions> = {}) =>
+>()("@kndl/hub/McpServerSources") {
+  static readonly layerWith = (overrides: Partial<McpServerSourcesOptions> = {}) =>
     Layer.effect(
-      PluginSources,
+      McpServerSources,
       Effect.gen(function* () {
         const options = { ...defaults, ...overrides }
         const fetches = yield* Semaphore.make(concurrentFetches)
@@ -324,8 +329,8 @@ export class PluginSources extends Context.Service<
             ? undefined
             : gitUrlProblem(url)
 
-        const fromGit = Effect.fn("PluginSources.fromGit")(function* (
-          from: Extract<PluginPackageFrom, { _tag: "Git" }>,
+        const fromGit = Effect.fn("McpServerSources.fromGit")(function* (
+          from: Extract<McpServerPackageFrom, { _tag: "Git" }>,
         ) {
           const url = from.url.trim()
           const ref = from.ref?.trim() || undefined
@@ -335,7 +340,7 @@ export class PluginSources extends Context.Service<
             (ref === undefined ? undefined : gitRefProblem(ref)) ??
             packagePathProblem(from.path?.trim() ?? "")
           if (problem !== undefined) return yield* refuse(problem)
-          const source: PluginSource = {
+          const source: McpServerSource = {
             _tag: "Git",
             url,
             ...(ref !== undefined && { ref }),
@@ -346,8 +351,8 @@ export class PluginSources extends Context.Service<
               try: (signal) => fetchFiles(source, options, signal),
               catch: (error) =>
                 error instanceof GitRefusal
-                  ? new PluginRefused({ message: error.message })
-                  : new PluginRefused({
+                  ? new McpServerRefused({ message: error.message })
+                  : new McpServerRefused({
                       message: `The Hub couldn't fetch the repo: ${error instanceof Error ? error.message : String(error)}`,
                     }),
             }),
@@ -355,7 +360,9 @@ export class PluginSources extends Context.Service<
           return yield* readOf(files, source, commit)
         })
 
-        const readWithIcon = Effect.fn("PluginSources.read")(function* (from: PluginPackageFrom) {
+        const readWithIcon = Effect.fn("McpServerSources.read")(function* (
+          from: McpServerPackageFrom,
+        ) {
           switch (from._tag) {
             case "Git":
               return yield* fromGit(from)
@@ -367,9 +374,9 @@ export class PluginSources extends Context.Service<
               })
             case "Archive": {
               const bytes = Buffer.from(from.data, "base64")
-              if (bytes.length > MaxPluginArchiveBytes) {
+              if (bytes.length > MaxMcpServerArchiveBytes) {
                 return yield* refuse(
-                  `The archive is larger than ${MaxPluginArchiveBytes / 1024 / 1024} MiB.`,
+                  `The archive is larger than ${MaxMcpServerArchiveBytes / 1024 / 1024} MiB.`,
                 )
               }
               const files = readPackageArchive(bytes)
@@ -382,13 +389,13 @@ export class PluginSources extends Context.Service<
           }
         })
 
-        return PluginSources.of({
-          read: (from) => Effect.map(readWithIcon(from), ({ plugin }) => plugin),
+        return McpServerSources.of({
+          read: (from) => Effect.map(readWithIcon(from), ({ mcpServer }) => mcpServer),
           readWithIcon,
         })
       }),
     )
 
   /** Reads packages from `https://` git repos and uploads. */
-  static readonly layer = PluginSources.layerWith()
+  static readonly layer = McpServerSources.layerWith()
 }

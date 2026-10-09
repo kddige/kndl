@@ -11,6 +11,10 @@ import { ForwardRoutes } from "./ForwardRoutes.ts"
 import { GatewayRoutes } from "./GatewayRoutes.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
+import { McpServerIconRoutes } from "./McpServerIconRoutes.ts"
+import { McpServerOAuth } from "./McpServerOAuth.ts"
+import { McpServerOAuthRoutes } from "./McpServerOAuthRoutes.ts"
+import { McpServers } from "./McpServers.ts"
 import { Members } from "./Members.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModRoutes } from "./ModRoutes.ts"
@@ -18,10 +22,6 @@ import { ModTokens } from "./ModTokens.ts"
 import { PairingCodes } from "./PairingCodes.ts"
 import { PairingRoutes } from "./PairingRoutes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
-import { PluginIconRoutes } from "./PluginIconRoutes.ts"
-import { PluginOAuth } from "./PluginOAuth.ts"
-import { PluginOAuthRoutes } from "./PluginOAuthRoutes.ts"
-import { Plugins } from "./Plugins.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import { RepoAccess } from "./RepoAccess.ts"
 import { Runners } from "./Runners.ts"
@@ -48,8 +48,8 @@ export const HubRoutes = Layer.mergeAll(
   GatewayRoutes,
   ModRoutes,
   PairingRoutes,
-  PluginIconRoutes,
-  PluginOAuthRoutes,
+  McpServerIconRoutes,
+  McpServerOAuthRoutes,
   TunnelRoutes,
   WebUiRoutes,
 )
@@ -58,8 +58,8 @@ export const HubRoutes = Layer.mergeAll(
  * The credential stores, each person's Claude credential, the mod outbox, Environments, Repo
  * access, the GitHub App's permission check, the Pairing codes, the Session relay, the tunnels
  * waiting for their Runner and the shutdown signal the routes use, given a database, the GitHub App (GitHubApp.ts), the check of
- * Claude credentials (ClaudeCheck), where Plugin packages are read from (PluginSources.ts) and the
- * Hub's version (HubVersion.ts).
+ * Claude credentials (ClaudeCheck), where MCP server packages are read from (McpServerSources.ts)
+ * and the Hub's version (HubVersion.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
   Layer.provideMerge(
@@ -79,14 +79,14 @@ export const HubServices = SessionRelay.layer.pipe(
       PairingCodes.layer,
       HubShutdown.layer,
       Environments.layer,
-      Plugins.layer,
+      McpServers.layer,
       RunnerUpdatePush.layer,
       ClaudeCredentials.layer,
       Tunnels.layer,
     ),
   ),
-  // The OAuth Installations' tokens (#217), which Plugins sends the Gateway.
-  Layer.provideMerge(PluginOAuth.layer),
+  // The OAuth Installations' tokens (#217), which McpServers sends the Gateway.
+  Layer.provideMerge(McpServerOAuth.layer),
   // Checks HUB_SECRETS_KEY against the Sensitive values stored, so a Hub with the wrong key
   // refuses to start.
   Layer.provideMerge(Secrets.layer),

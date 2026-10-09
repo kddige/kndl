@@ -17,8 +17,8 @@ import {
 } from "./Environment.ts"
 import { GitIdentity, GitReply, GitRequest } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
+import { GatewayServer } from "./McpServer.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
-import { GatewayServer } from "./Plugin.ts"
 import { BranchName, OpenPort, RepoName, RunnerAccount } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
@@ -101,7 +101,7 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * its relay at `/gateway/<installationId>` (ADR 0020). A Runner from before doesn't say so: the
    * Hub sends it none.
    */
-  relaysPlugins: Schema.optionalKey(Schema.Literal(true)),
+  relaysMcpServers: Schema.optionalKey(Schema.Literal(true)),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
@@ -264,9 +264,9 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
   effort: Schema.optionalKey(EffortLevel),
   /**
    * An MCP server for each Installation on for its Repo (ADR 0020); absent for none. Sent only to
-   * a Runner whose hello says it `relaysPlugins`.
+   * a Runner whose hello says it `relaysMcpServers`.
    */
-  plugins: Schema.optionalKey(Schema.Array(GatewayServer)),
+  mcpServers: Schema.optionalKey(Schema.Array(GatewayServer)),
 })
 export type StartSession = typeof StartSession.Type
 
@@ -288,7 +288,7 @@ export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   model: Schema.optionalKey(ModelName),
   effort: Schema.optionalKey(EffortLevel),
   /** The Session's MCP servers, as its last start gave them: a relaunch changes none. */
-  plugins: Schema.optionalKey(Schema.Array(GatewayServer)),
+  mcpServers: Schema.optionalKey(Schema.Array(GatewayServer)),
 })
 export type RelaunchSession = typeof RelaunchSession.Type
 

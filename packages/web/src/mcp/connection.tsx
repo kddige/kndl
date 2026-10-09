@@ -1,6 +1,6 @@
-// An OAuth Installation's account (#217), as the Plugins page and a Session's banner show it. The
+// An OAuth Installation's account (#217), as the MCP page and a Session's banner show it. The
 // Hub connects it: Connect sends the browser to the server's authorization server to sign in and
-// consent, which sends it back through the Hub to the Plugins page. The tokens stay on the Hub, so
+// consent, which sends it back through the Hub to the MCP page. The tokens stay on the Hub, so
 // the page shows only whose account it is, who connected it and when, or that it needs connecting.
 // The account is shared: every Session in the Installation's Repos acts as it.
 //
@@ -14,8 +14,8 @@ import {
   type Installation,
   type InstallationNeedsClient,
   oauthClientProblem,
-  type Plugin,
-  type PluginAuth,
+  type McpServer,
+  type McpServerAuth,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useRouter } from "@tanstack/react-router"
@@ -306,13 +306,13 @@ export function ClientLine({ installation }: { installation: Installation }) {
 
 /** An OAuth Installation's account: whose, who connected it and when, or why it needs connecting. */
 export function ConnectionLine({
-  plugin,
+  mcpServer,
   installation,
 }: {
-  plugin: Plugin
+  mcpServer: McpServer
   installation: Installation
 }) {
-  if (plugin.auth._tag !== "OAuth") return null
+  if (mcpServer.auth._tag !== "OAuth") return null
   const { connection } = installation
   return (
     <div aria-label={`Account of ${installation.name}`} {...stylex.props(styles.line)}>
@@ -342,19 +342,19 @@ export function ConnectionLine({
   )
 }
 
-/** The connected Installations of `plugin` that saving it as `after` disconnects, by name. */
+/** The connected Installations of `mcpServer` that saving it as `after` disconnects, by name. */
 export function disconnected(
-  plugin: Plugin,
+  mcpServer: McpServer,
   installations: ReadonlyArray<Installation>,
-  after: { readonly url: string; readonly auth: PluginAuth },
+  after: { readonly url: string; readonly auth: McpServerAuth },
 ): ReadonlyArray<string> {
-  if (!clearsConnections(plugin, after)) return []
+  if (!clearsConnections(mcpServer, after)) return []
   return installations
-    .filter((one) => one.pluginId === plugin.id && one.connection !== undefined)
+    .filter((one) => one.mcpServerId === mcpServer.id && one.connection !== undefined)
     .map((one) => one.name)
 }
 
-/** Says which Installations a change to their Plugin disconnects, before it does. */
+/** Says which Installations a change to their MCP server disconnects, before it does. */
 export function DisconnectsBanner({
   names,
   verb,

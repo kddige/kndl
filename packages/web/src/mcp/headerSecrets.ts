@@ -1,23 +1,23 @@
-// A Plugin's header secrets (#215) as the Plugins page shows and edits them: which of an
+// An MCP server's header secrets (#215) as the MCP page shows and edits them: which of an
 // Installation's need a value, the key a new one gets from its title, and whose values an edit to
-// the Plugin would clear, as the Hub clears them.
+// the MCP server would clear, as the Hub clears them.
 
 import {
   clearedHeaderSecrets,
   type HeaderSecret,
   headerSecretsOf,
   type Installation,
-  type Plugin,
-  type PluginAuth,
+  type McpServer,
+  type McpServerAuth,
 } from "@kndl/protocol"
 import { andList } from "../app/format.ts"
 
-/** The header secrets of `plugin` that `installation` has no value for. */
+/** The header secrets of `mcpServer` that `installation` has no value for. */
 export const valuesNeeded = (
-  plugin: Plugin,
+  mcpServer: McpServer,
   installation: Installation,
 ): ReadonlyArray<HeaderSecret> =>
-  headerSecretsOf(plugin.auth).filter(
+  headerSecretsOf(mcpServer.auth).filter(
     (secret) => !installation.values.some((value) => value.key === secret.key),
   )
 
@@ -44,16 +44,16 @@ export interface ClearedValues {
 }
 
 /**
- * The values that saving `plugin` as `after` clears on each of its Installations: all of them
+ * The values that saving `mcpServer` as `after` clears on each of its Installations: all of them
  * for a URL on another origin, else those of each header secret whose key is gone or whose header
  * is another.
  */
 export function clearedValues(
-  plugin: Plugin,
+  mcpServer: McpServer,
   installations: ReadonlyArray<Installation>,
-  after: { readonly url: string; readonly auth: PluginAuth },
+  after: { readonly url: string; readonly auth: McpServerAuth },
 ): ReadonlyArray<ClearedValues> {
-  const cleared = clearedHeaderSecrets(plugin, after)
+  const cleared = clearedHeaderSecrets(mcpServer, after)
   return installations.flatMap((installation) => {
     const secrets = cleared
       .filter((secret) => installation.values.some((value) => value.key === secret.key))

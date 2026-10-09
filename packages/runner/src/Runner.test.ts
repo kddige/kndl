@@ -311,7 +311,7 @@ describe("connecting", () => {
       // It opens tunnels to a Session's Open ports (#177).
       forwardsPorts: true,
       // It gives Claude Code the MCP servers of its Session's Installations (#221).
-      relaysPlugins: true,
+      relaysMcpServers: true,
     })
   })
 
@@ -622,8 +622,8 @@ describe("Sessions", () => {
   test("starts Claude Code with its Installations' MCP servers, at the Gateway (#221)", async () => {
     const h = startRunner()
     await connected(h)
-    const plugins = [{ installationId: "inst-1", server: "docs" }]
-    h.hub.send(startSession("s-1", { plugins }))
+    const mcpServers = [{ installationId: "inst-1", server: "docs" }]
+    h.hub.send(startSession("s-1", { mcpServers }))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     const argv = h.tmux.launched[0]?.argv ?? []
@@ -635,7 +635,7 @@ describe("Sessions", () => {
       "utf8",
     )
     expect(JSON.parse(config)).toEqual(
-      gatewayMcpServers(plugins as unknown as ReadonlyArray<GatewayServer>),
+      gatewayMcpServers(mcpServers as unknown as ReadonlyArray<GatewayServer>),
     )
     // The Session token alone reaches it, by the variable the proxy's environment sets.
     expect(config).not.toContain("chm_mod.secret")

@@ -8,7 +8,7 @@ import {
   gatewayPath,
   type HeaderSecret,
   headerValueProblem,
-  hubPluginId,
+  hubMcpServerId,
   type InstallationFailure,
   installationFailureText,
   installationReposProblem,
@@ -17,47 +17,47 @@ import {
   isOn,
   mcpServerNames,
   oauthClientProblem,
-  type PluginAuth,
-  pluginAuthProblem,
-  pluginNameProblem,
-  pluginSlug,
-  pluginUrlProblem,
-} from "./Plugin.ts"
+  type McpServerAuth,
+  mcpServerAuthProblem,
+  mcpServerNameProblem,
+  mcpServerSlug,
+  mcpServerUrlProblem,
+} from "./McpServer.ts"
 import { SandboxNoted, SessionStateChanged, WebToHub } from "./Web.ts"
 
-describe("a Hub-only Plugin's id", () => {
+describe("a Hub-only MCP server's id", () => {
   test("is hub: and a slug of its name", () => {
-    expect(hubPluginId(pluginSlug("Docs Search"))).toBe(hubPluginId("docs-search"))
-    expect(hubPluginId("docs-search") as string).toBe("hub:docs-search")
-    expect(pluginSlug("  Linear (Work) ")).toBe("linear-work")
-    expect(pluginSlug("Ünïcode Ñame")).toBe("unicode-name")
-    expect(pluginSlug("!!!")).toBe("plugin")
-    expect(pluginSlug("a".repeat(100))).toHaveLength(40)
+    expect(hubMcpServerId(mcpServerSlug("Docs Search"))).toBe(hubMcpServerId("docs-search"))
+    expect(hubMcpServerId("docs-search") as string).toBe("hub:docs-search")
+    expect(mcpServerSlug("  Linear (Work) ")).toBe("linear-work")
+    expect(mcpServerSlug("Ünïcode Ñame")).toBe("unicode-name")
+    expect(mcpServerSlug("!!!")).toBe("mcp-server")
+    expect(mcpServerSlug("a".repeat(100))).toHaveLength(40)
   })
 
   test("is no npm package name: those can't hold a colon", () => {
     const npmName = /^(?:@[a-z0-9-*~][a-z0-9-*._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
-    expect(npmName.test(hubPluginId(pluginSlug("Docs")))).toBe(false)
+    expect(npmName.test(hubMcpServerId(mcpServerSlug("Docs")))).toBe(false)
   })
 })
 
 describe("the rules the web UI shows before sending", () => {
   test("a name is one non-empty line", () => {
-    expect(pluginNameProblem("Docs search")).toBeUndefined()
-    expect(pluginNameProblem("  ")).toBe("A Plugin needs a name.")
-    expect(pluginNameProblem("a\nb", "An Installation")).toBe(
+    expect(mcpServerNameProblem("Docs search")).toBeUndefined()
+    expect(mcpServerNameProblem("  ")).toBe("An MCP server needs a name.")
+    expect(mcpServerNameProblem("a\nb", "An Installation")).toBe(
       "An Installation's name must be one line.",
     )
-    expect(pluginNameProblem("a".repeat(81))).toContain("longer than 80")
+    expect(mcpServerNameProblem("a".repeat(81))).toContain("longer than 80")
   })
 
   test("a URL is http(s), without credentials or a fragment", () => {
-    expect(pluginUrlProblem("https://mcp.example.com/mcp")).toBeUndefined()
-    expect(pluginUrlProblem("http://127.0.0.1:8931/mcp")).toBeUndefined()
-    expect(pluginUrlProblem("mcp.example.com")).toContain("isn't a URL")
-    expect(pluginUrlProblem("ftp://mcp.example.com")).toContain("https://")
-    expect(pluginUrlProblem("https://me:secret@mcp.example.com")).toContain("user name")
-    expect(pluginUrlProblem("https://mcp.example.com/#x")).toContain("fragment")
+    expect(mcpServerUrlProblem("https://mcp.example.com/mcp")).toBeUndefined()
+    expect(mcpServerUrlProblem("http://127.0.0.1:8931/mcp")).toBeUndefined()
+    expect(mcpServerUrlProblem("mcp.example.com")).toContain("isn't a URL")
+    expect(mcpServerUrlProblem("ftp://mcp.example.com")).toContain("https://")
+    expect(mcpServerUrlProblem("https://me:secret@mcp.example.com")).toContain("user name")
+    expect(mcpServerUrlProblem("https://mcp.example.com/#x")).toContain("fragment")
   })
 
   test("an Installation lists each Repo once, by any spelling", () => {
@@ -69,10 +69,10 @@ describe("the rules the web UI shows before sending", () => {
   })
 })
 
-test("a Plugin command is a web command", () => {
+test("an MCP server command is a web command", () => {
   const decode = Schema.decodeUnknownSync(WebToHub)
-  expect(decode({ _tag: "GetPlugins", requestId: "r1" })).toEqual({
-    _tag: "GetPlugins",
+  expect(decode({ _tag: "GetMcpServers", requestId: "r1" })).toEqual({
+    _tag: "GetMcpServers",
     requestId: "r1",
   } as never)
   expect(WebToHub.cases.CreateInstallation).toBeDefined()
@@ -91,12 +91,12 @@ test("an MCP server's name is a slug, and its path the Installation's", () => {
   ])
 })
 
-const headers = (...declared: Array<HeaderSecret>): PluginAuth => ({
+const headers = (...declared: Array<HeaderSecret>): McpServerAuth => ({
   _tag: "Headers",
   headers: declared,
 })
 
-describe("a Plugin's header secrets", () => {
+describe("an MCP server's header secrets", () => {
   const apiKey: HeaderSecret = {
     key: "api_key",
     title: "API key",
@@ -106,39 +106,39 @@ describe("a Plugin's header secrets", () => {
   const team: HeaderSecret = { key: "team", title: "Team", header: "X-Team", template: "{value}" }
 
   test("are declared with a key, a title, a header and a template holding {value} once", () => {
-    expect(pluginAuthProblem({ _tag: "None" })).toBeUndefined()
-    expect(pluginAuthProblem(headers(apiKey))).toBeUndefined()
-    expect(pluginAuthProblem(headers({ ...apiKey, template: "{value}" }))).toBeUndefined()
-    expect(pluginAuthProblem(headers())).toBe("Declare at least one header secret, or none.")
-    expect(pluginAuthProblem(headers({ ...apiKey, key: "1st" }))).toBe(
+    expect(mcpServerAuthProblem({ _tag: "None" })).toBeUndefined()
+    expect(mcpServerAuthProblem(headers(apiKey))).toBeUndefined()
+    expect(mcpServerAuthProblem(headers({ ...apiKey, template: "{value}" }))).toBeUndefined()
+    expect(mcpServerAuthProblem(headers())).toBe("Declare at least one header secret, or none.")
+    expect(mcpServerAuthProblem(headers({ ...apiKey, key: "1st" }))).toBe(
       '"1st" isn\'t a key: use letters, digits and underscores, starting with a letter.',
     )
-    expect(pluginAuthProblem(headers({ ...apiKey, title: " " }))).toBe(
+    expect(mcpServerAuthProblem(headers({ ...apiKey, title: " " }))).toBe(
       "A header secret needs a title.",
     )
-    expect(pluginAuthProblem(headers({ ...apiKey, header: "Bad Header" }))).toBe(
+    expect(mcpServerAuthProblem(headers({ ...apiKey, header: "Bad Header" }))).toBe(
       '"Bad Header" isn\'t a header name.',
     )
-    expect(pluginAuthProblem(headers({ ...apiKey, header: "Content-Length" }))).toBe(
+    expect(mcpServerAuthProblem(headers({ ...apiKey, header: "Content-Length" }))).toBe(
       "The Gateway sets Content-Length itself: use another header.",
     )
-    expect(pluginAuthProblem(headers({ ...apiKey, template: "Bearer" }))).toBe(
+    expect(mcpServerAuthProblem(headers({ ...apiKey, template: "Bearer" }))).toBe(
       "API key's template must hold {value} exactly once, as in Bearer {value}.",
     )
-    expect(pluginAuthProblem(headers({ ...apiKey, template: "{value}{value}" }))).toContain(
+    expect(mcpServerAuthProblem(headers({ ...apiKey, template: "{value}{value}" }))).toContain(
       "exactly once",
     )
-    expect(pluginAuthProblem(headers({ ...apiKey, template: "Bearer\n{value}" }))).toBe(
+    expect(mcpServerAuthProblem(headers({ ...apiKey, template: "Bearer\n{value}" }))).toBe(
       "API key's template must be one line of plain characters.",
     )
   })
 
-  test("have keys and headers unique in the Plugin, headers by any case", () => {
-    expect(pluginAuthProblem(headers(apiKey, team))).toBeUndefined()
-    expect(pluginAuthProblem(headers(apiKey, { ...team, key: "api_key" }))).toBe(
+  test("have keys and headers unique in the MCP server, headers by any case", () => {
+    expect(mcpServerAuthProblem(headers(apiKey, team))).toBeUndefined()
+    expect(mcpServerAuthProblem(headers(apiKey, { ...team, key: "api_key" }))).toBe(
       "The key api_key is declared twice.",
     )
-    expect(pluginAuthProblem(headers(apiKey, { ...team, header: "authorization" }))).toBe(
+    expect(mcpServerAuthProblem(headers(apiKey, { ...team, header: "authorization" }))).toBe(
       "The header authorization is declared twice.",
     )
   })
@@ -170,7 +170,7 @@ describe("a Plugin's header secrets", () => {
 
   test("lose their values when the URL's origin changes, or their header", () => {
     const before = { url: "https://mcp.example.com/mcp", auth: headers(apiKey, team) }
-    const keys = (after: { readonly url: string; readonly auth: PluginAuth }) =>
+    const keys = (after: { readonly url: string; readonly auth: McpServerAuth }) =>
       clearedHeaderSecrets(before, after).map((secret) => secret.key)
     // The path, a title or a template may change, and the header's case.
     expect(keys({ ...before, url: "https://MCP.example.com:443/v2/mcp?x=1" })).toEqual([])
@@ -239,22 +239,22 @@ describe("an Installation that fails a Session (#216)", () => {
 
   test("says how to get the Session started", () => {
     expect(installationsCantStartText("acme/app", [failure({ secrets: ["API key"] })])).toBe(
-      "Linear needs a value for API key. Fix the Installation on the Plugins page, or take acme/app off it, then wake the Session.",
+      "Linear needs a value for API key. Fix the Installation on the MCP page, or take acme/app off it, then wake the Session.",
     )
     const sentry = failure({ installation: "Sentry", reason: "Rejected", status: 403 })
     expect(installationsCantStartText("acme/app", [failure({ secrets: ["Team"] }), sentry])).toBe(
-      "Linear needs a value for Team. Sentry's MCP server refused its credential (403). Fix the Installations on the Plugins page, or take acme/app off them, then wake the Session.",
+      "Linear needs a value for Team. Sentry's MCP server refused its credential (403). Fix the Installations on the MCP page, or take acme/app off them, then wake the Session.",
     )
   })
 
   test("says to turn a global Installation off rather than leave it (#219)", () => {
     const global = failure({ secrets: ["API key"], global: true })
     expect(installationsCantStartText("acme/app", [global])).toBe(
-      "Linear needs a value for API key. Fix the Installation on the Plugins page, or turn it off for acme/app, then wake the Session.",
+      "Linear needs a value for API key. Fix the Installation on the MCP page, or turn it off for acme/app, then wake the Session.",
     )
     const sentry = failure({ installation: "Sentry", reason: "Rejected", status: 403 })
     expect(installationsCantStartText("acme/app", [global, sentry])).toEndWith(
-      "Fix the Installations on the Plugins page, or take acme/app off them or turn them off for it, then wake the Session.",
+      "Fix the Installations on the MCP page, or take acme/app off them or turn them off for it, then wake the Session.",
     )
   })
 
@@ -286,10 +286,10 @@ describe("an Installation that fails a Session (#216)", () => {
 /** An Installation as {@link installationsFor} resolves it. */
 const install = (
   id: string,
-  pluginId: string,
+  mcpServerId: string,
   repos: ReadonlyArray<string>,
   more: { readonly global?: boolean; readonly off?: ReadonlyArray<string> } = {},
-) => ({ id, pluginId, repos, ...more })
+) => ({ id, mcpServerId, repos, ...more })
 
 describe("the Installations on for a Repo (#219)", () => {
   const docs = install("docs", "hub:docs", [], { global: true, off: ["acme/Quiet"] })
@@ -307,7 +307,7 @@ describe("the Installations on for a Repo (#219)", () => {
     ])
   })
 
-  test("a Repo-scoped one of the same Plugin takes a global's place, by any spelling", () => {
+  test("a Repo-scoped one of the same MCP server takes a global's place, by any spelling", () => {
     expect(resolved("acme/app")).toEqual([
       ["docs", "Global"],
       ["linear", "Overridden"],

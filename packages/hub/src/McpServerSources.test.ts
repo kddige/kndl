@@ -3,29 +3,32 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { gzipSync } from "node:zlib"
-import type { PluginPackageFrom } from "@kndl/protocol"
+import type { McpServerPackageFrom } from "@kndl/protocol"
 import { Effect, Layer } from "effect"
-import { PluginSources, type PluginSourcesOptions } from "./PluginSources.ts"
-import { manifest, packageJson, pluginRepo, removePluginRepos } from "./testPluginRepo.ts"
+import { McpServerSources, type McpServerSourcesOptions } from "./McpServerSources.ts"
+import { manifest, packageJson, mcpServerRepo, removeMcpServerRepos } from "./testMcpServerRepo.ts"
 
-afterAll(removePluginRepos)
+afterAll(removeMcpServerRepos)
 
-const testOptions: Partial<PluginSourcesOptions> = { protocols: ["https", "file"] }
+const testOptions: Partial<McpServerSourcesOptions> = { protocols: ["https", "file"] }
 
-const reading = (from: PluginPackageFrom, options: Partial<PluginSourcesOptions> = testOptions) =>
+const reading = (
+  from: McpServerPackageFrom,
+  options: Partial<McpServerSourcesOptions> = testOptions,
+) =>
   Effect.runPromise(
     Effect.gen(function* () {
-      return yield* (yield* PluginSources).read(from)
-    }).pipe(Effect.result, Effect.provide(Layer.fresh(PluginSources.layerWith(options)))),
+      return yield* (yield* McpServerSources).read(from)
+    }).pipe(Effect.result, Effect.provide(Layer.fresh(McpServerSources.layerWith(options)))),
   )
 
-const read = async (from: PluginPackageFrom, options?: Partial<PluginSourcesOptions>) => {
+const read = async (from: McpServerPackageFrom, options?: Partial<McpServerSourcesOptions>) => {
   const result = await reading(from, options)
   if (result._tag === "Failure") throw new Error(result.failure.message)
   return result.success
 }
 
-const refusal = async (from: PluginPackageFrom, options?: Partial<PluginSourcesOptions>) => {
+const refusal = async (from: McpServerPackageFrom, options?: Partial<McpServerSourcesOptions>) => {
   const result = await reading(from, options)
   if (result._tag === "Success") throw new Error("expected a refusal")
   return result.failure.message
@@ -33,7 +36,7 @@ const refusal = async (from: PluginPackageFrom, options?: Partial<PluginSourcesO
 
 describe("a package from git", () => {
   test("is read at the default branch, pinned to its commit", async () => {
-    const repo = pluginRepo({ "package.json": packageJson("1.0.0"), "kndl.json": manifest() })
+    const repo = mcpServerRepo({ "package.json": packageJson("1.0.0"), "kndl.json": manifest() })
     expect(await read({ _tag: "Git", url: repo.url })).toEqual({
       id: "@acme/linear-mcp" as never,
       name: "Linear",
@@ -44,7 +47,7 @@ describe("a package from git", () => {
   })
 
   test("is read at a tag, a branch or a commit, in a subfolder", async () => {
-    const repo = pluginRepo({
+    const repo = mcpServerRepo({
       "packages/linear/package.json": packageJson("1.0.0"),
       "packages/linear/kndl.json": manifest(),
     })
@@ -75,22 +78,25 @@ describe("a package from git", () => {
   })
 
   test("is refused a ref the repo doesn't have, saying so", async () => {
-    const repo = pluginRepo({ "package.json": packageJson("1.0.0"), "kndl.json": manifest() })
+    const repo = mcpServerRepo({ "package.json": packageJson("1.0.0"), "kndl.json": manifest() })
     expect(await refusal({ _tag: "Git", url: repo.url, ref: "v9" })).toStartWith(
       `git couldn't fetch v9 from ${repo.url}:`,
     )
   })
 
   test("is refused without its files, or with a symlink for one", async () => {
-    const missing = pluginRepo({ "package.json": packageJson("1.0.0") })
+    const missing = mcpServerRepo({ "package.json": packageJson("1.0.0") })
     expect(await refusal({ _tag: "Git", url: missing.url })).toBe(
       "The repo has no kndl.json at its root at that ref.",
     )
-    const nested = pluginRepo({ "a/package.json": packageJson("1.0.0"), "a/kndl.json": manifest() })
+    const nested = mcpServerRepo({
+      "a/package.json": packageJson("1.0.0"),
+      "a/kndl.json": manifest(),
+    })
     expect(await refusal({ _tag: "Git", url: nested.url, path: "b" })).toBe(
       "The repo has no package.json in b/ at that ref.",
     )
-    const linked = pluginRepo({
+    const linked = mcpServerRepo({
       "package.json": packageJson("1.0.0"),
       "kndl.json": { symlink: "/etc/hosts" },
     })
@@ -100,14 +106,14 @@ describe("a package from git", () => {
   })
 
   test("is refused a manifest that breaks the format, naming the field", async () => {
-    const repo = pluginRepo({ "package.json": packageJson("1.0.0"), "kndl.json": "{}" })
+    const repo = mcpServerRepo({ "package.json": packageJson("1.0.0"), "kndl.json": "{}" })
     expect(await refusal({ _tag: "Git", url: repo.url })).toBe(
       "kndl.json: displayName is missing.\nkndl.json: mcp is missing.",
     )
   })
 
   test("is refused a repo over the size limit, or one that takes too long", async () => {
-    const repo = pluginRepo({
+    const repo = mcpServerRepo({
       "package.json": packageJson("1.0.0"),
       "kndl.json": manifest(),
       "noise.bin": crypto.getRandomValues(new Uint8Array(60_000)).toString(),
@@ -121,7 +127,7 @@ describe("a package from git", () => {
   })
 
   test("is fetched only over https://, at a plain ref, inside the repo", async () => {
-    const repo = pluginRepo({ "package.json": packageJson("1.0.0"), "kndl.json": manifest() })
+    const repo = mcpServerRepo({ "package.json": packageJson("1.0.0"), "kndl.json": manifest() })
     expect(await refusal({ _tag: "Git", url: repo.url }, {})).toBe(
       "The git URL must start with https://.",
     )
@@ -149,7 +155,7 @@ describe("an uploaded package", () => {
   })
 
   test("is read from an archive, named by its file", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-plugin-archive-"))
+    const dir = mkdtempSync(join(tmpdir(), "kndl-mcp-server-archive-"))
     afterAll(() => rmSync(dir, { recursive: true, force: true }))
     mkdirSync(join(dir, "package"))
     writeFileSync(join(dir, "package", "package.json"), packageJson("1.0.0"))

@@ -1,10 +1,10 @@
-// Reading a Plugin package from an uploaded archive (#220): a `.tgz`, as `npm pack` makes, or a
-// `.zip`, as GitHub's "Download ZIP" does. The archive is untrusted data: nothing in it is
+// Reading an MCP server package from an uploaded archive (#220): a `.tgz`, as `npm pack` makes, or
+// a `.zip`, as GitHub's "Download ZIP" does. The archive is untrusted data: nothing in it is
 // written to disk or run, and only `package.json` and `kndl.json` are read, at its root or in its
 // one top-level folder (npm's `package/`, GitHub's `<repo>-<ref>/`).
 //
 // - It unpacks in memory, to at most MaxUnpackedBytes, so a small archive can't unpack to a large
-//   one. Each of the two files is at most MaxPluginPackageFileBytes.
+//   one. Each of the two files is at most MaxMcpServerPackageFileBytes.
 // - A path outside the archive, absolute or with a `..`, refuses it, even where the Hub wouldn't
 //   read it. So does either file twice, which tar allows and which would be ambiguous.
 // - Only regular files count: a symlink, hard link or device named like either file refuses it.
@@ -13,8 +13,8 @@ import { inflateRawSync, gunzipSync } from "node:zlib"
 import {
   iconPathOf,
   manifestIconOf,
-  MaxPluginPackageFileBytes,
-  PluginManifestFile,
+  MaxMcpServerPackageFileBytes,
+  McpServerManifestFile,
 } from "@kndl/protocol"
 import { Result } from "effect"
 
@@ -24,7 +24,7 @@ export const MaxUnpackedBytes = 32 * 1024 * 1024
 /** The entries an archive holds, at most. */
 const MaxEntries = 20_000
 
-/** A Plugin package's two files, as text. */
+/** An MCP server package's two files, as text. */
 export interface PackageFiles {
   readonly packageJson: string
   readonly manifest: string
@@ -75,7 +75,7 @@ const cString = (bytes: Uint8Array, from: number, length: number) => {
 }
 
 const octal = (bytes: Uint8Array, from: number, length: number) => {
-  // A size over 8 GiB is base-256, which no Plugin package needs.
+  // A size over 8 GiB is base-256, which no MCP server package needs.
   if ((bytes[from] ?? 0) & 0x80) refuse(notAnArchive)
   const field = cString(bytes, from, length).trim()
   if (!/^[0-7]*$/.test(field)) refuse(notAnArchive)
@@ -169,7 +169,7 @@ function* zipEntries(zip: Uint8Array): Generator<Entry> {
         if (method === 0) return data
         try {
           return inflateRawSync(data, {
-            maxOutputLength: Math.min(size, MaxPluginPackageFileBytes) + 1,
+            maxOutputLength: Math.min(size, MaxMcpServerPackageFileBytes) + 1,
           })
         } catch {
           return refuse(notAnArchive)
@@ -222,19 +222,19 @@ export function readPackageArchive(bytes: Uint8Array): Result.Result<PackageFile
       : tops.size === 1 && top !== undefined && entries.has(`${top}/package.json`)
         ? `${top}/`
         : refuse("The archive has no package.json at its root or in its one top-level folder.")
-    const manifestEntry = entries.get(`${root}${PluginManifestFile}`)
+    const manifestEntry = entries.get(`${root}${McpServerManifestFile}`)
     if (manifestEntry === undefined) {
-      return refuse(`The archive has no ${PluginManifestFile} beside its package.json.`)
+      return refuse(`The archive has no ${McpServerManifestFile} beside its package.json.`)
     }
     const fileText = (entry: Entry, name: string) => {
       if (!entry.file) refuse(`The archive's ${name} isn't a file.`)
       const content = entry.bytes()
-      if (content.length > MaxPluginPackageFileBytes) {
-        refuse(`The archive's ${name} is larger than ${MaxPluginPackageFileBytes / 1024} KiB.`)
+      if (content.length > MaxMcpServerPackageFileBytes) {
+        refuse(`The archive's ${name} is larger than ${MaxMcpServerPackageFileBytes / 1024} KiB.`)
       }
       return typeof content === "string" ? content : text.decode(content)
     }
-    const manifest = fileText(manifestEntry, PluginManifestFile)
+    const manifest = fileText(manifestEntry, McpServerManifestFile)
     // A broken icon never refuses the package: its file is read if it is there, else left out.
     const iconPath = iconPathOf(manifestIconOf(manifest) ?? "")
     let iconFile: Uint8Array | undefined

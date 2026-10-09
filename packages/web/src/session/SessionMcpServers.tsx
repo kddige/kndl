@@ -1,8 +1,8 @@
 import type { SessionInstallation, SessionSummary } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { pluginsChanged } from "../app/format.ts"
-import { Button, PluginIcon, Popover, useMediaQuery, WIDE } from "../ui/index.ts"
+import { mcpServersChanged } from "../app/format.ts"
+import { Button, McpIcon, Popover, useMediaQuery, WIDE } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 
@@ -26,7 +26,7 @@ const styles = stylex.create({
   },
   line: { display: "flex", alignItems: "baseline", gap: space.s2, minWidth: 0 },
   name: { fontWeight: weight.semibold },
-  plugin: { minWidth: 0, color: color.textMuted, fontSize: text.sm },
+  mcpServer: { minWidth: 0, color: color.textMuted, fontSize: text.sm },
   server: { color: color.textMuted, fontFamily: font.mono, fontSize: text.xs },
   note: { margin: 0, color: color.textMuted, fontSize: text.sm, lineHeight: leading.snug },
   link: {
@@ -45,13 +45,13 @@ const installationsText = (count: number) =>
 
 /**
  * The Installations a Session runs with (ADR 0020): a button in its header while it runs with any,
- * or its Repo's changed, which opens the list, each with its Plugin and the MCP server Claude Code
+ * or its Repo's changed, which opens the list, each with its MCP server and the name Claude Code
  * reaches it by. Participants can't change them per Session: they are its Repo's.
  */
-export function SessionPlugins({ summary }: { summary: SessionSummary }) {
+export function SessionMcpServers({ summary }: { summary: SessionSummary }) {
   const wide = useMediaQuery(WIDE)
-  const installations = summary.plugins ?? []
-  const changed = pluginsChanged(summary)
+  const installations = summary.mcpServers ?? []
+  const changed = mcpServersChanged(summary)
   if (summary.state === "Archived" || (installations.length === 0 && !changed)) return null
   const count = installationsText(installations.length)
   return (
@@ -60,14 +60,14 @@ export function SessionPlugins({ summary }: { summary: SessionSummary }) {
         <Button
           size="sm"
           intent="secondary"
-          icon={<PluginIcon />}
-          aria-label={`Plugins: ${count}${changed ? ", changed" : ""}`}
+          icon={<McpIcon />}
+          aria-label={`MCP servers: ${count}${changed ? ", changed" : ""}`}
         >
           {/* A phone's header has room for the count only. */}
           {wide ? count : installations.length}
         </Button>
       }
-      title="Plugins"
+      title="MCP servers"
       description={`The Installations on for ${summary.repo} as this Session last started.`}
       align="end"
       sx={styles.panel}
@@ -78,7 +78,7 @@ export function SessionPlugins({ summary }: { summary: SessionSummary }) {
             <li key={installation.id} {...stylex.props(styles.row)}>
               <span {...stylex.props(styles.line)}>
                 <span {...stylex.props(styles.name)}>{installation.name}</span>
-                <span {...stylex.props(styles.plugin)}>{installation.pluginName}</span>
+                <span {...stylex.props(styles.mcpServer)}>{installation.mcpServerName}</span>
               </span>
               <code {...stylex.props(styles.server)}>{serverName(installation)}</code>
             </li>
@@ -89,8 +89,8 @@ export function SessionPlugins({ summary }: { summary: SessionSummary }) {
         {changed
           ? `${summary.repo}'s Installations changed since it started: a Restart applies the change. `
           : ""}
-        <Link to="/plugins" {...stylex.props(styles.link, focus.ring)}>
-          Manage Plugins
+        <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
+          Manage MCP servers
         </Link>
       </p>
     </Popover>

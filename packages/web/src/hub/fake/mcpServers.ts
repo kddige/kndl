@@ -1,20 +1,21 @@
-// The fake Hub's Plugins (ADR 0020): Hub-only Plugins, their Repo-scoped Installations, and each
-// Repo's Plugin change log. It refuses what the real Hub refuses, with its words: a second
-// Installation of a Plugin on a Repo, deleting a Plugin with Installations, and any change that
-// needs access to a Repo the person lacks. A Repo is the same however its name is spelled (#197).
-// Header secret values (#215) are taken as the Hub takes them, and kept as the Hub shows them:
-// who set each and when, never the value.
+// The fake Hub's MCP servers (ADR 0020): Hub-only MCP servers, their Repo-scoped Installations, and
+// each Repo's MCP server change log. It refuses what the real Hub refuses, with its words: a second
+// Installation of an MCP server on a Repo, deleting an MCP server with Installations, and any
+// change that needs access to a Repo the person lacks. A Repo is the same however its name is
+// spelled (#197). Header secret values (#215) are taken as the Hub takes them, and kept as the Hub
+// shows them: who set each and when, never the value.
 //
-// Packaged Plugins (#220) are read from a folder upload, as the Hub reads them, or from one of the
-// fake's git repos, below, whichever ref is asked for; it doesn't unpack archives. Asana starts
+// Packaged MCP servers (#220) are read from a folder upload, as the Hub reads them, or from one of
+// the fake's git repos, below, whichever ref is asked for; it doesn't unpack archives. Asana starts
 // packaged, a version behind its repo, so the Upgrade flow has something to show.
 //
-// Global Installations (#219) are on in every Repo, but where a Repo-scoped one of their Plugin is
-// on, or a Repo turned them off. Only the Owner creates, edits or deletes one, or edits, upgrades
-// or deletes a Plugin with one; their changes are logged once, and shown in every Repo's log.
+// Global Installations (#219) are on in every Repo, but where a Repo-scoped one of their MCP server
+// is on, or a Repo turned them off. Only the Owner creates, edits or deletes one, or edits,
+// upgrades or deletes an MCP server with one; their changes are logged once, and shown in every
+// Repo's log.
 //
 // OAuth Installations (#217) connect at once: there is no authorization server, so Connect sends
-// the browser straight back to the Plugins page, connected to a made-up account. GitHub starts
+// the browser straight back to the MCP page, connected to a made-up account. GitHub starts
 // connected; Disconnect it to see a Session kept from starting. Only the Owner connects or
 // disconnects a global one.
 //
@@ -23,40 +24,40 @@
 // as the Hub would, keeping only who set it, when, and whether it has a secret.
 
 import {
-  type CheckPluginUpgrade,
+  type CheckMcpServerUpgrade,
   clearedHeaderSecrets,
   clearsConnections,
   gitRefProblem,
   gitUrlProblem,
   globalConnectRefusal,
   globalOwnerOnlyRefusal,
-  globalPluginRefusal,
+  globalMcpServerRefusal,
   globalReposRefusal,
   type HeaderValueInput,
   headerSecretsOf,
   headerValueProblem,
-  hubPluginId,
+  hubMcpServerId,
   installationReposProblem,
   installationsFor,
   isOn,
   mcpServerNames,
   notGlobalRefusal,
   oauthClientProblem,
-  type PackagedPlugin,
+  type PackagedMcpServer,
   packagePath,
   packagePathProblem,
-  type PluginAuth,
-  pluginAuthProblem,
-  type PluginCommand,
-  type PluginPackageFrom,
-  type PluginSource,
+  type McpServerAuth,
+  mcpServerAuthProblem,
+  type McpServerCommand,
+  type McpServerPackageFrom,
+  type McpServerSource,
   packageVersion,
-  pluginInUseRefusal,
-  pluginNameProblem,
-  pluginSlug,
-  pluginUrlProblem,
-  type ReadPluginPackage,
-  readPluginPackage,
+  mcpServerInUseRefusal,
+  mcpServerNameProblem,
+  mcpServerSlug,
+  mcpServerUrlProblem,
+  type ReadMcpServerPackage,
+  readMcpServerPackage,
   repoKey,
   sameRepo,
   sameSource,
@@ -71,12 +72,12 @@ import type {
   InstallationFailureWire,
   InstallationWire,
   ParticipantWire,
-  PluginLogEntryWire,
-  PluginWire,
+  McpServerLogEntryWire,
+  McpServerWire,
   SessionInstallationWire,
 } from "./wire.ts"
 
-/** The fake's git repos of Plugin packages, each at its default branch's head. */
+/** The fake's git repos of MCP server packages, each at its default branch's head. */
 const gitRepos: Record<string, { packageJson: string; manifest: string; commit: string }> = {
   "https://github.com/acme/asana-mcp": {
     packageJson: JSON.stringify({ name: "@acme/asana-mcp", version: "1.1.0" }),
@@ -107,24 +108,24 @@ const gitRepos: Record<string, { packageJson: string; manifest: string; commit: 
 /** A package the fake read for someone, kept until they add or upgrade to it. */
 interface KeptRead {
   readonly by: string
-  readonly read: PackagedPlugin
+  readonly read: PackagedMcpServer
   readonly upgrades?: string
   readonly basis?: string
 }
 
-/** A command that reads a package, rather than changing the Plugins. */
-type ReadCommand = ReadPluginPackage | CheckPluginUpgrade
+/** A command that reads a package, rather than changing the MCP servers. */
+type ReadCommand = ReadMcpServerPackage | CheckMcpServerUpgrade
 
-/** A command that changes the Plugins. */
-export type PluginChangeCommand = Exclude<
-  PluginCommand,
-  { _tag: "GetPlugins" | "GetPluginLog" } | ReadCommand
+/** A command that changes the MCP servers. */
+export type McpServerChangeCommand = Exclude<
+  McpServerCommand,
+  { _tag: "GetMcpServers" | "GetMcpServerLog" } | ReadCommand
 >
 
 /** An Installation as the fake keeps it: every Repo it lists, whoever asks. */
 interface FakeInstallation {
   readonly id: string
-  readonly pluginId: string
+  readonly mcpServerId: string
   name: string
   /** On in every Repo, listing none (#219). */
   global: boolean
@@ -141,7 +142,7 @@ interface FakeInstallation {
   readonly createdAt: number
 }
 
-type PluginChangeWire = PluginLogEntryWire["change"]
+type McpServerChangeWire = McpServerLogEntryWire["change"]
 
 /** A header secret a change sets a value for. */
 interface SetValue {
@@ -154,7 +155,7 @@ interface SetValue {
  * or why it was refused; for a Connect, where to send the browser (#217), or the client it needs
  * entered first (#218).
  */
-export type PluginOutcome =
+export type McpServerOutcome =
   | { readonly refused: string }
   | {
       readonly repos: ReadonlyArray<string>
@@ -191,8 +192,8 @@ const hiddenRepos =
 const missingFrom = (from: ReadonlyArray<string>, repos: ReadonlyArray<string>) =>
   repos.filter((repo) => !from.some((other) => sameRepo(other, repo)))
 
-/** A Plugin's auth as the Hub keeps it: titles trimmed. */
-const normalizedAuth = (auth: PluginAuth): PluginAuth =>
+/** An MCP server's auth as the Hub keeps it: titles trimmed. */
+const normalizedAuth = (auth: McpServerAuth): McpServerAuth =>
   auth._tag === "Headers"
     ? {
         _tag: "Headers",
@@ -200,13 +201,13 @@ const normalizedAuth = (auth: PluginAuth): PluginAuth =>
       }
     : auth
 
-const sameAuth = (a: PluginAuth, b: PluginAuth) => JSON.stringify(a) === JSON.stringify(b)
+const sameAuth = (a: McpServerAuth, b: McpServerAuth) => JSON.stringify(a) === JSON.stringify(b)
 
 /** The package `from` holds, as the Hub would read it; the fake reads no archives. */
-function readFrom(from: PluginPackageFrom): Result.Result<PackagedPlugin, string> {
+function readFrom(from: McpServerPackageFrom): Result.Result<PackagedMcpServer, string> {
   switch (from._tag) {
     case "Folder":
-      return readPluginPackage(from, { _tag: "Upload", fileName: from.folderName })
+      return readMcpServerPackage(from, { _tag: "Upload", fileName: from.folderName })
     case "Archive":
       return Result.fail("The fake Hub doesn't unpack archives: upload the folder instead.")
     case "Git": {
@@ -224,7 +225,7 @@ function readFrom(from: PluginPackageFrom): Result.Result<PackagedPlugin, string
         url: from.url,
         ...(from.ref !== undefined && { ref: from.ref }),
       }
-      return readPluginPackage(repo, source as PluginSource, repo.commit)
+      return readMcpServerPackage(repo, source as McpServerSource, repo.commit)
     }
   }
 }
@@ -232,31 +233,36 @@ function readFrom(from: PluginPackageFrom): Result.Result<PackagedPlugin, string
 const minute = 60_000
 const day = 24 * 60 * minute
 
-export class FakePlugins {
-  readonly #plugins: Array<PluginWire> = []
+export class FakeMcpServers {
+  readonly #mcpServers: Array<McpServerWire> = []
   readonly #installations: Array<FakeInstallation> = []
   /** Each Repo's log, newest first, by repoKey. */
-  readonly #logs = new Map<string, Array<PluginLogEntryWire>>()
+  readonly #logs = new Map<string, Array<McpServerLogEntryWire>>()
   #ids = 0
   readonly #reads = new Map<string, KeptRead>()
 
   constructor(now = Date.now()) {
-    const docs = this.#plugin("Docs search", "https://docs-mcp.example.com/mcp", bob, now - 9 * day)
+    const docs = this.#mcpServer(
+      "Docs search",
+      "https://docs-mcp.example.com/mcp",
+      bob,
+      now - 9 * day,
+    )
     // With a header secret, and no Installations yet.
-    this.#plugin("Linear", "https://mcp.linear.example/mcp", you, now - 2 * day, {
+    this.#mcpServer("Linear", "https://mcp.linear.example/mcp", you, now - 2 * day, {
       _tag: "Headers",
       headers: [
         { key: "api_key", title: "API key", header: "Authorization", template: "Bearer {value}" },
       ],
     })
-    const sentry = this.#plugin("Sentry", "https://mcp.sentry.example/mcp", bob, now - 6 * day, {
+    const sentry = this.#mcpServer("Sentry", "https://mcp.sentry.example/mcp", bob, now - 6 * day, {
       _tag: "Headers",
       headers: [
         { key: "token", title: "Auth token", header: "X-Sentry-Token", template: "{value}" },
       ],
     })
     // Packaged, a version behind its git repo.
-    this.#plugins.push({
+    this.#mcpServers.push({
       id: "@acme/asana-mcp",
       name: "Asana",
       description: "Asana's tasks and projects.",
@@ -284,7 +290,7 @@ export class FakePlugins {
     )
     team.values = [{ key: "token", setBy: bob, setAt: now - 5 * day }]
     // OAuth (#217), connected to a shared account.
-    const github = this.#plugin(
+    const github = this.#mcpServer(
       "GitHub",
       "https://api.githubcopilot.example/mcp/",
       you,
@@ -306,11 +312,14 @@ export class FakePlugins {
     }
   }
 
-  /** Every Plugin and Installation, each Installation with only the Repos `allowed` lets through. */
-  state(allowed: (repo: string) => boolean): Extract<HubMessage, { _tag: "PluginsState" }> {
+  /**
+   * Every MCP server and Installation, each Installation with only the Repos `allowed` lets
+   * through.
+   */
+  state(allowed: (repo: string) => boolean): Extract<HubMessage, { _tag: "McpServersState" }> {
     return {
-      _tag: "PluginsState",
-      plugins: [...this.#plugins],
+      _tag: "McpServersState",
+      mcpServers: [...this.#mcpServers],
       installations: this.#installations.map(({ global, off: allOff, ...installation }) => {
         const repos = installation.repos.filter(allowed)
         const otherRepos = installation.repos.length - repos.length
@@ -326,8 +335,10 @@ export class FakePlugins {
     }
   }
 
-  /** A Repo's Plugin change log, newest first: its own, and every global Installation's (#219). */
-  log(repo: string): ReadonlyArray<PluginLogEntryWire> {
+  /**
+   * A Repo's MCP server change log, newest first: its own, and every global Installation's (#219).
+   */
+  log(repo: string): ReadonlyArray<McpServerLogEntryWire> {
     const own = this.#logs.get(repoKey(repo)) ?? []
     const every = (this.#logs.get(everyRepo) ?? []).map((entry) => ({ ...entry, global: true }))
     return [...own, ...every].toSorted((a, b) => b.at - a.at)
@@ -345,13 +356,13 @@ export class FakePlugins {
     const on = this.#on(repo)
     const servers = mcpServerNames(on.map((installation) => installation.name))
     return on.map((installation, index) => {
-      const plugin = this.#find(installation.pluginId)
+      const mcpServer = this.#find(installation.mcpServerId)
       return {
         id: installation.id,
         name: installation.name,
-        pluginId: installation.pluginId,
-        pluginName: plugin?.name ?? "",
-        ...(plugin?.package && { pluginVersion: packageVersion(plugin.package) }),
+        mcpServerId: installation.mcpServerId,
+        mcpServerName: mcpServer?.name ?? "",
+        ...(mcpServer?.package && { mcpServerVersion: packageVersion(mcpServer.package) }),
         ...(installation.global && { global: true }),
         server: servers[index] ?? "",
         ...(installation.values.length > 0 && {
@@ -362,20 +373,21 @@ export class FakePlugins {
   }
 
   /**
-   * Reads a package for `by`, as the Hub does: what it would add, or upgrade a Plugin from the
+   * Reads a package for `by`, as the Hub does: what it would add, or upgrade an MCP server from the
    * same source to, kept by the read's id; or why it is refused.
    */
   read(
     command: ReadCommand,
     by: ParticipantWire,
-  ): { readonly refused: string } | Extract<HubMessage, { _tag: "PluginPackageRead" }> {
-    let from: PluginPackageFrom
-    if (command._tag === "CheckPluginUpgrade") {
-      const plugin = this.#find(command.pluginId)
-      if (plugin?.package === undefined) return { refused: "There is no such packaged Plugin." }
-      const { source } = plugin.package
+  ): { readonly refused: string } | Extract<HubMessage, { _tag: "McpServerPackageRead" }> {
+    let from: McpServerPackageFrom
+    if (command._tag === "CheckMcpServerUpgrade") {
+      const mcpServer = this.#find(command.mcpServerId)
+      if (mcpServer?.package === undefined)
+        return { refused: "There is no such packaged MCP server." }
+      const { source } = mcpServer.package
       if (source._tag === "Upload") {
-        return { refused: `${plugin.name} was uploaded: upload its new version to upgrade it.` }
+        return { refused: `${mcpServer.name} was uploaded: upload its new version to upgrade it.` }
       }
       from = { ...source, _tag: "Git" }
     } else {
@@ -389,7 +401,7 @@ export class FakePlugins {
       (!existing.package || !sameSource(existing.package.source, read.success.package.source))
     ) {
       return {
-        refused: `A Plugin named ${read.success.id} is already on the Hub, from another source: only a package from the same source can upgrade it.`,
+        refused: `An MCP server named ${read.success.id} is already on the Hub, from another source: only a package from the same source can upgrade it.`,
       }
     }
     const readId = `read-${++this.#ids}`
@@ -399,7 +411,7 @@ export class FakePlugins {
       ...(existing && { upgrades: existing.id, basis: JSON.stringify(existing.package) }),
     })
     return {
-      _tag: "PluginPackageRead",
+      _tag: "McpServerPackageRead",
       requestId: command.requestId,
       readId,
       read: read.success,
@@ -414,11 +426,11 @@ export class FakePlugins {
    */
   failing(repo: string): Array<InstallationFailureWire> {
     return this.#on(repo).flatMap((installation): Array<InstallationFailureWire> => {
-      const plugin = this.#find(installation.pluginId)
-      if (plugin === undefined) return []
+      const mcpServer = this.#find(installation.mcpServerId)
+      if (mcpServer === undefined) return []
       const connected =
         installation.connection !== undefined && installation.connection.lostAt === undefined
-      if (plugin.auth._tag === "OAuth" && !connected) {
+      if (mcpServer.auth._tag === "OAuth" && !connected) {
         return [
           {
             installationId: installation.id,
@@ -428,7 +440,7 @@ export class FakePlugins {
           },
         ]
       }
-      const missing = headerSecretsOf(plugin.auth).filter(
+      const missing = headerSecretsOf(mcpServer.auth).filter(
         (secret) => !installation.values.some((value) => value.key === secret.key),
       )
       if (missing.length === 0) return []
@@ -449,60 +461,60 @@ export class FakePlugins {
    * Hub's Owner if `owner`.
    */
   change(
-    command: PluginChangeCommand,
+    command: McpServerChangeCommand,
     by: ParticipantWire,
     allowed: (repo: string) => boolean,
     owner: boolean,
-  ): PluginOutcome {
+  ): McpServerOutcome {
     const at = Date.now()
-    /** Why `by` can't change a Plugin with a global Installation, unless the Owner (#219). */
-    const globalPlugin = (plugin: PluginWire) =>
-      !owner && this.#installations.some((one) => one.pluginId === plugin.id && one.global)
-        ? { refused: globalPluginRefusal(plugin.name) }
+    /** Why `by` can't change an MCP server with a global Installation, unless the Owner (#219). */
+    const globalMcpServer = (mcpServer: McpServerWire) =>
+      !owner && this.#installations.some((one) => one.mcpServerId === mcpServer.id && one.global)
+        ? { refused: globalMcpServerRefusal(mcpServer.name) }
         : undefined
     switch (command._tag) {
-      case "AddPluginPackage": {
+      case "AddMcpServerPackage": {
         const kept = this.#reads.get(command.readId)
         if (kept?.by !== by.id) return { refused: "That package read has expired; read it again." }
         if (kept.upgrades !== undefined) {
           return {
-            refused: `A Plugin named ${kept.upgrades} is already on the Hub, from this source: upgrade it instead.`,
+            refused: `An MCP server named ${kept.upgrades} is already on the Hub, from this source: upgrade it instead.`,
           }
         }
         this.#reads.delete(command.readId)
-        this.#plugins.push({ ...kept.read, createdBy: by, createdAt: at })
+        this.#mcpServers.push({ ...kept.read, createdBy: by, createdAt: at })
         return { repos: [] }
       }
-      case "UpgradePlugin": {
+      case "UpgradeMcpServer": {
         const kept = this.#reads.get(command.readId)
-        if (kept?.by !== by.id || kept.upgrades !== command.pluginId) {
+        if (kept?.by !== by.id || kept.upgrades !== command.mcpServerId) {
           return { refused: "That package read has expired; read it again." }
         }
-        const plugin = this.#find(command.pluginId)
-        if (plugin === undefined || JSON.stringify(plugin.package) !== kept.basis) {
+        const mcpServer = this.#find(command.mcpServerId)
+        if (mcpServer === undefined || JSON.stringify(mcpServer.package) !== kept.basis) {
           return {
-            refused: `${plugin?.name ?? "The Plugin"} changed since that read; check for an upgrade again.`,
+            refused: `${mcpServer?.name ?? "The MCP server"} changed since that read; check for an upgrade again.`,
           }
         }
-        const installed = this.#installations.filter((one) => one.pluginId === plugin.id)
+        const installed = this.#installations.filter((one) => one.mcpServerId === mcpServer.id)
         if (installed.some((one) => !one.repos.every(allowed))) {
           return {
             refused:
-              "This Plugin has Installations on Repos you have no access to, so you can't upgrade it.",
+              "This MCP server has Installations on Repos you have no access to, so you can't upgrade it.",
           }
         }
-        const ownerOnly = globalPlugin(plugin)
+        const ownerOnly = globalMcpServer(mcpServer)
         if (ownerOnly !== undefined) return ownerOnly
         this.#reads.delete(command.readId)
         // As an edit does: values entered for another server, or another header, are cleared.
-        const cleared = clearedHeaderSecrets(plugin, kept.read)
-        const disconnects = clearsConnections(plugin, kept.read)
-        const { description: _, ...rest } = plugin
-        this.#plugins[this.#plugins.indexOf(plugin)] = { ...rest, ...kept.read }
+        const cleared = clearedHeaderSecrets(mcpServer, kept.read)
+        const disconnects = clearsConnections(mcpServer, kept.read)
+        const { description: _, ...rest } = mcpServer
+        this.#mcpServers[this.#mcpServers.indexOf(mcpServer)] = { ...rest, ...kept.read }
         for (const one of installed) {
           const lost = cleared.filter((secret) => one.values.some(({ key }) => key === secret.key))
           one.values = one.values.filter(({ key }) => !lost.some((secret) => secret.key === key))
-          this.#record(logRepos(one), "PluginUpgraded", one, by, at)
+          this.#record(logRepos(one), "McpServerUpgraded", one, by, at)
           if (lost.length > 0) {
             const titles = lost.map((secret) => secret.title)
             this.#record(logRepos(one), "ValuesCleared", one, by, at, titles)
@@ -514,50 +526,59 @@ export class FakePlugins {
           ...(installed.some((one) => one.global) && { everyRepo: true }),
         }
       }
-      case "CreatePlugin": {
+      case "CreateMcpServer": {
         const problem =
-          pluginNameProblem(command.name) ??
-          pluginUrlProblem(command.url) ??
-          pluginAuthProblem(command.auth)
+          mcpServerNameProblem(command.name) ??
+          mcpServerUrlProblem(command.url) ??
+          mcpServerAuthProblem(command.auth)
         if (problem !== undefined) return { refused: problem }
-        this.#plugin(command.name.trim(), command.url, by, at, normalizedAuth(command.auth))
+        this.#mcpServer(command.name.trim(), command.url, by, at, normalizedAuth(command.auth))
         return { repos: [] }
       }
-      case "EditPlugin": {
-        const plugin = this.#find(command.pluginId)
-        if (plugin === undefined) return { refused: "There is no such Plugin." }
-        const installed = this.#installations.filter((one) => one.pluginId === plugin.id)
+      case "EditMcpServer": {
+        const mcpServer = this.#find(command.mcpServerId)
+        if (mcpServer === undefined) return { refused: "There is no such MCP server." }
+        const installed = this.#installations.filter((one) => one.mcpServerId === mcpServer.id)
         if (installed.some((one) => !one.repos.every(allowed))) {
           return {
             refused:
-              "This Plugin has Installations on Repos you have no access to, so you can't edit it.",
+              "This MCP server has Installations on Repos you have no access to, so you can't edit it.",
           }
         }
-        if (plugin.package) {
+        if (mcpServer.package) {
           return {
-            refused: `${plugin.name} is a packaged Plugin, pinned to its version: upgrade it to change it.`,
+            refused: `${mcpServer.name} is a packaged MCP server, pinned to its version: upgrade it to change it.`,
           }
         }
         const problem =
-          pluginNameProblem(command.name) ??
-          pluginUrlProblem(command.url) ??
-          pluginAuthProblem(command.auth)
+          mcpServerNameProblem(command.name) ??
+          mcpServerUrlProblem(command.url) ??
+          mcpServerAuthProblem(command.auth)
         if (problem !== undefined) return { refused: problem }
         const name = command.name.trim()
         const auth = normalizedAuth(command.auth)
-        if (name === plugin.name && command.url === plugin.url && sameAuth(auth, plugin.auth)) {
+        if (
+          name === mcpServer.name &&
+          command.url === mcpServer.url &&
+          sameAuth(auth, mcpServer.auth)
+        ) {
           return { repos: [] }
         }
-        const ownerOnly = globalPlugin(plugin)
+        const ownerOnly = globalMcpServer(mcpServer)
         if (ownerOnly !== undefined) return ownerOnly
-        const cleared = clearedHeaderSecrets(plugin, { url: command.url, auth })
+        const cleared = clearedHeaderSecrets(mcpServer, { url: command.url, auth })
         // Another origin could take the tokens (#217).
-        const disconnects = clearsConnections(plugin, { url: command.url, auth })
-        this.#plugins[this.#plugins.indexOf(plugin)] = { ...plugin, name, url: command.url, auth }
+        const disconnects = clearsConnections(mcpServer, { url: command.url, auth })
+        this.#mcpServers[this.#mcpServers.indexOf(mcpServer)] = {
+          ...mcpServer,
+          name,
+          url: command.url,
+          auth,
+        }
         for (const one of installed) {
           const lost = cleared.filter((secret) => one.values.some(({ key }) => key === secret.key))
           one.values = one.values.filter(({ key }) => !lost.some((secret) => secret.key === key))
-          this.#record(logRepos(one), "PluginEdited", one, by, at)
+          this.#record(logRepos(one), "McpServerEdited", one, by, at)
           if (lost.length > 0) {
             const titles = lost.map((secret) => secret.title)
             this.#record(logRepos(one), "ValuesCleared", one, by, at, titles)
@@ -569,14 +590,14 @@ export class FakePlugins {
           ...(installed.some((one) => one.global) && { everyRepo: true }),
         }
       }
-      case "DeletePlugin": {
-        const plugin = this.#find(command.pluginId)
-        if (plugin === undefined) return { refused: "There is no such Plugin." }
-        const ownerOnly = globalPlugin(plugin)
+      case "DeleteMcpServer": {
+        const mcpServer = this.#find(command.mcpServerId)
+        if (mcpServer === undefined) return { refused: "There is no such MCP server." }
+        const ownerOnly = globalMcpServer(mcpServer)
         if (ownerOnly !== undefined) return ownerOnly
-        const count = this.#installations.filter((one) => one.pluginId === plugin.id).length
-        if (count > 0) return { refused: pluginInUseRefusal(plugin.name, count) }
-        this.#plugins.splice(this.#plugins.indexOf(plugin), 1)
+        const count = this.#installations.filter((one) => one.mcpServerId === mcpServer.id).length
+        if (count > 0) return { refused: mcpServerInUseRefusal(mcpServer.name, count) }
+        this.#mcpServers.splice(this.#mcpServers.indexOf(mcpServer), 1)
         return { repos: [] }
       }
       case "CreateInstallation": {
@@ -584,24 +605,24 @@ export class FakePlugins {
         if (refusedRepo !== undefined) return { refused: noRepoAccess(refusedRepo) }
         const global = command.global === true
         if (global && !owner) return { refused: globalOwnerOnlyRefusal }
-        const plugin = this.#find(command.pluginId)
-        if (plugin === undefined) return { refused: "There is no such Plugin." }
+        const mcpServer = this.#find(command.mcpServerId)
+        if (mcpServer === undefined) return { refused: "There is no such MCP server." }
         const problem =
-          pluginNameProblem(command.name, "An Installation") ??
+          mcpServerNameProblem(command.name, "An Installation") ??
           (global
             ? command.repos.length > 0
               ? globalReposRefusal
               : undefined
             : installationReposProblem(command.repos))
         if (problem !== undefined) return { refused: problem }
-        const values = this.#values(plugin, command.values ?? [])
+        const values = this.#values(mcpServer, command.values ?? [])
         if ("refused" in values) return values
         const second = global
-          ? this.#secondGlobal(plugin, null)
-          : this.#second(plugin, command.repos, null)
+          ? this.#secondGlobal(mcpServer, null)
+          : this.#second(mcpServer, command.repos, null)
         if (second !== undefined) return { refused: second }
         const name = command.name.trim()
-        const installation = this.#install(plugin, name, command.repos, by, at, global)
+        const installation = this.#install(mcpServer, name, command.repos, by, at, global)
         this.#set(installation, values.set, logRepos(installation), by, at)
         return { repos: installation.repos, ...(global && { everyRepo: true }) }
       }
@@ -611,7 +632,7 @@ export class FakePlugins {
         if (installation === undefined) return { refused: "There is no such Installation." }
         if (!installation.repos.every(allowed)) return { refused: hiddenRepos }
         if (installation.global && !owner) return { refused: globalConnectRefusal }
-        const plugin = this.#find(installation.pluginId)
+        const mcpServer = this.#find(installation.mcpServerId)
         const every = installation.global && { everyRepo: true }
         if (command._tag === "DisconnectInstallation") {
           if (installation.connection === undefined) {
@@ -620,13 +641,13 @@ export class FakePlugins {
           this.#disconnect(installation, by, at)
           return { repos: installation.repos, ...every }
         }
-        if (plugin?.auth._tag !== "OAuth") {
+        if (mcpServer?.auth._tag !== "OAuth") {
           return {
             refused: `${installation.name} doesn't use OAuth: there is no account to connect.`,
           }
         }
         // A server without Dynamic Client Registration needs a client entered (#218).
-        const issuer = withoutRegistration[new URL(plugin.url).hostname]
+        const issuer = withoutRegistration[new URL(mcpServer.url).hostname]
         const entered = command.client
         if (entered !== undefined) {
           const clientId = entered.clientId.trim()
@@ -637,7 +658,7 @@ export class FakePlugins {
           // The fake's servers take confidential clients only.
           if (secret === undefined) {
             return {
-              refused: `The authorization server ${issuer ?? new URL(plugin.url).origin} takes no public client: enter the client's secret too.`,
+              refused: `The authorization server ${issuer ?? new URL(mcpServer.url).origin} takes no public client: enter the client's secret too.`,
             }
           }
         } else if (
@@ -646,14 +667,14 @@ export class FakePlugins {
         ) {
           return { needsClient: { issuer, publicClient: false } }
         } else if (command.changeClient === true) {
-          return { needsClient: { issuer: new URL(plugin.url).origin, publicClient: false } }
+          return { needsClient: { issuer: new URL(mcpServer.url).origin, publicClient: false } }
         }
         // No authorization server: the person "consents" at once.
         const reconnected = installation.connection !== undefined
         installation.connection = {
           connectedBy: by,
           connectedAt: at,
-          account: `${by.login}@${new URL(plugin.url).hostname}`,
+          account: `${by.login}@${new URL(mcpServer.url).hostname}`,
         }
         if (entered !== undefined) {
           // Keeping no secret to compare, the fake logs every client entered as set.
@@ -675,7 +696,7 @@ export class FakePlugins {
         return {
           repos: installation.repos,
           ...every,
-          authorizing: `/plugins?installation=${encodeURIComponent(installation.id)}&connected=1`,
+          authorizing: `/mcp?installation=${encodeURIComponent(installation.id)}&connected=1`,
         }
       }
       case "EditInstallation":
@@ -695,15 +716,15 @@ export class FakePlugins {
           return { repos: installation.repos, ...(wasGlobal && { everyRepo: true }) }
         }
         const problem =
-          pluginNameProblem(command.name, "An Installation") ??
+          mcpServerNameProblem(command.name, "An Installation") ??
           (global
             ? command.repos.length > 0
               ? globalReposRefusal
               : undefined
             : installationReposProblem(command.repos))
         if (problem !== undefined) return { refused: problem }
-        const plugin = this.#find(installation.pluginId)
-        const values = plugin ? this.#values(plugin, command.values ?? []) : { set: [] }
+        const mcpServer = this.#find(installation.mcpServerId)
+        const values = mcpServer ? this.#values(mcpServer, command.values ?? []) : { set: [] }
         if ("refused" in values) return values
         const added = missingFrom(installation.repos, command.repos)
         const removed = missingFrom(command.repos, installation.repos)
@@ -712,9 +733,9 @@ export class FakePlugins {
         const renamed = name !== installation.name
         const rescoped = global !== wasGlobal
         const second =
-          plugin &&
-          ((global && !wasGlobal ? this.#secondGlobal(plugin, installation.id) : undefined) ??
-            this.#second(plugin, added, installation.id))
+          mcpServer &&
+          ((global && !wasGlobal ? this.#secondGlobal(mcpServer, installation.id) : undefined) ??
+            this.#second(mcpServer, added, installation.id))
         if (second !== undefined) return { refused: second }
         installation.name = name
         installation.repos = [...kept, ...added]
@@ -776,21 +797,21 @@ export class FakePlugins {
     this.#record(logRepos(installation), "Disconnected", installation, by, at)
   }
 
-  #find(id: string): PluginWire | undefined {
-    return this.#plugins.find((plugin) => plugin.id === id)
+  #find(id: string): McpServerWire | undefined {
+    return this.#mcpServers.find((mcpServer) => mcpServer.id === id)
   }
 
   /** The header secrets `values` set, by title, or why one is refused, as the Hub says it. */
   #values(
-    plugin: PluginWire,
+    mcpServer: McpServerWire,
     values: ReadonlyArray<HeaderValueInput>,
   ): { readonly refused: string } | { readonly set: ReadonlyArray<SetValue> } {
-    const declared = headerSecretsOf(plugin.auth)
+    const declared = headerSecretsOf(mcpServer.auth)
     const set = new Map<string, SetValue>()
     for (const input of values) {
       const secret = declared.find((one) => one.key === input.key)
       if (secret === undefined) {
-        return { refused: `${plugin.name} has no header secret ${input.key}.` }
+        return { refused: `${mcpServer.name} has no header secret ${input.key}.` }
       }
       const problem = headerValueProblem(secret.title, Redacted.value(input.value))
       if (problem !== undefined) return { refused: problem }
@@ -816,23 +837,23 @@ export class FakePlugins {
     this.#record(repos, "ValuesSet", installation, by, at, titles)
   }
 
-  #plugin(
+  #mcpServer(
     name: string,
     url: string,
     by: ParticipantWire,
     at: number,
-    auth: PluginAuth = { _tag: "None" },
-  ): PluginWire {
-    const slug = pluginSlug(name)
-    let id: string = hubPluginId(slug)
-    for (let n = 2; this.#find(id) !== undefined; n++) id = hubPluginId(`${slug}-${n}`)
-    const plugin: PluginWire = { id, name, url, auth, createdBy: by, createdAt: at }
-    this.#plugins.push(plugin)
-    return plugin
+    auth: McpServerAuth = { _tag: "None" },
+  ): McpServerWire {
+    const slug = mcpServerSlug(name)
+    let id: string = hubMcpServerId(slug)
+    for (let n = 2; this.#find(id) !== undefined; n++) id = hubMcpServerId(`${slug}-${n}`)
+    const mcpServer: McpServerWire = { id, name, url, auth, createdBy: by, createdAt: at }
+    this.#mcpServers.push(mcpServer)
+    return mcpServer
   }
 
   #install(
-    plugin: PluginWire,
+    mcpServer: McpServerWire,
     name: string,
     repos: ReadonlyArray<string>,
     by: ParticipantWire,
@@ -841,7 +862,7 @@ export class FakePlugins {
   ): FakeInstallation {
     const installation: FakeInstallation = {
       id: `inst-${++this.#ids}`,
-      pluginId: plugin.id,
+      mcpServerId: mcpServer.id,
       name,
       global,
       repos: [...repos],
@@ -855,51 +876,51 @@ export class FakePlugins {
     return installation
   }
 
-  /** Why a second global Installation of `plugin` is refused (#219). */
-  #secondGlobal(plugin: PluginWire, except: string | null): string | undefined {
+  /** Why a second global Installation of `mcpServer` is refused (#219). */
+  #secondGlobal(mcpServer: McpServerWire, except: string | null): string | undefined {
     const existing = this.#installations.find(
-      (one) => one.pluginId === plugin.id && one.global && one.id !== except,
+      (one) => one.mcpServerId === mcpServer.id && one.global && one.id !== except,
     )
-    return existing && secondGlobalRefusal(existing.name, plugin.name)
+    return existing && secondGlobalRefusal(existing.name, mcpServer.name)
   }
 
-  /** Why an Installation of `plugin` on one of `repos` is refused: another is on there. */
+  /** Why an Installation of `mcpServer` on one of `repos` is refused: another is on there. */
   #second(
-    plugin: PluginWire,
+    mcpServer: McpServerWire,
     repos: ReadonlyArray<string>,
     except: string | null,
   ): string | undefined {
     for (const repo of repos) {
       const existing = this.#installations.find(
         (one) =>
-          one.pluginId === plugin.id &&
+          one.mcpServerId === mcpServer.id &&
           one.id !== except &&
           one.repos.some((listed) => sameRepo(listed, repo)),
       )
-      if (existing) return secondInstallationRefusal(repo, existing.name, plugin.name)
+      if (existing) return secondInstallationRefusal(repo, existing.name, mcpServer.name)
     }
     return undefined
   }
 
   #record(
     repos: ReadonlyArray<string>,
-    change: PluginChangeWire,
+    change: McpServerChangeWire,
     installation: FakeInstallation,
     by: ParticipantWire,
     at: number,
     secrets?: ReadonlyArray<string>,
   ): void {
-    const plugin = this.#find(installation.pluginId)
+    const mcpServer = this.#find(installation.mcpServerId)
     for (const repo of repos) {
       const log = this.#logs.get(repoKey(repo)) ?? []
       log.unshift({
         at,
         by,
         change,
-        pluginId: installation.pluginId,
-        pluginName: plugin?.name ?? "",
-        ...(change === "PluginUpgraded" &&
-          plugin?.package && { pluginVersion: packageVersion(plugin.package) }),
+        mcpServerId: installation.mcpServerId,
+        mcpServerName: mcpServer?.name ?? "",
+        ...(change === "McpServerUpgraded" &&
+          mcpServer?.package && { mcpServerVersion: packageVersion(mcpServer.package) }),
         installationId: installation.id,
         installationName: installation.name,
         ...(secrets !== undefined && { secrets: [...secrets] }),

@@ -2,7 +2,7 @@
 // Hub playing its script fast.
 
 import { expect, test } from "bun:test"
-import { hubPluginId, RequestId } from "@kndl/protocol"
+import { hubMcpServerId, RequestId } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
@@ -328,10 +328,10 @@ test("a Session that can't start for values a secrets-reset cleared leads to its
 
 /** Puts Linear, an Installation without its API key, on in `repos` (#216). */
 const installLinear = (client: InstanceType<typeof HubClient>, repos: ReadonlyArray<string>) =>
-  step(() => client.createInstallation(hubPluginId("linear"), "Linear", repos))
+  step(() => client.createInstallation(hubMcpServerId("linear"), "Linear", repos))
 
 const linearOf = (hub: InstanceType<typeof FakeHub>) =>
-  hub.plugins.state(() => true).installations.find((one) => one.name === "Linear")
+  hub.mcpServers.state(() => true).installations.find((one) => one.name === "Linear")
 
 test("a Session an Installation keeps from starting takes its Repo off it, and starts (#216)", async () => {
   const { hub, client, page, banner, header, sent } = await openSession("s-readme", "This Session")
@@ -342,9 +342,9 @@ test("a Session an Installation keeps from starting takes its Repo off it, and s
   expect(banner()).toContain("Linear needs a value for API key.")
   expect(banner()).toContain("Prompts sent now wait in the queue until it starts.")
   expect(header()).toContain("Asleep")
-  // Fix opens that Installation on the Plugins page.
+  // Fix opens that Installation on the MCP page.
   expect(page.querySelector('a[aria-label="Fix Linear"]')?.getAttribute("href")).toBe(
-    `/plugins?installation=${linearOf(hub)?.id}`,
+    `/mcp?installation=${linearOf(hub)?.id}`,
   )
 
   // Retry checks it again: still no value.
@@ -392,7 +392,7 @@ test("a prompt queued while an Installation keeps the Session from starting runs
 
 test("a Session a global Installation keeps from starting turns it off for its Repo, and starts (#219)", async () => {
   const { hub, client, page, banner, header, sent } = await openSession("s-readme", "This Session")
-  await step(() => client.createInstallation(hubPluginId("linear"), "Linear", [], [], true))
+  await step(() => client.createInstallation(hubMcpServerId("linear"), "Linear", [], [], true))
   await eventually(() => expect(linearOf(hub)?.global).toBe(true))
 
   await step(() => button("Wake now", page).click())
@@ -412,11 +412,11 @@ test("a Session a global Installation keeps from starting turns it off for its R
 
 test("only the Owner can fix a global Installation that keeps a Session from starting (#219)", async () => {
   const { hub, page, banner } = await openSession("s-readme", "This Session", 2, false)
-  hub.plugins.change(
+  hub.mcpServers.change(
     {
       _tag: "CreateInstallation",
       requestId: RequestId.make("seed"),
-      pluginId: hubPluginId("linear"),
+      mcpServerId: hubMcpServerId("linear"),
       name: "Linear",
       global: true,
       repos: [],
@@ -439,7 +439,7 @@ test("Fix opens the Installation that keeps a Session from starting (#216)", asy
   await eventually(() => expect(banner()).toContain("This Session can't start"))
 
   await step(() => page.querySelector<HTMLAnchorElement>('a[aria-label="Fix Linear"]')?.click())
-  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("Plugins"))
+  await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("MCP"))
   await eventually(() =>
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Edit Linear"),
   )
@@ -467,7 +467,7 @@ test("an Installation that fails mid-Session shows as an error in it, which runs
   const fix = page.querySelector<HTMLAnchorElement>(
     '[aria-label="Conversation"] a[aria-label="Fix Sentry"]',
   )
-  expect(fix?.getAttribute("href")).toStartWith("/plugins?installation=")
+  expect(fix?.getAttribute("href")).toStartWith("/mcp?installation=")
   expect(header()).toContain("Active")
 })
 
@@ -500,10 +500,10 @@ test("a restart for a changed Environment shows its progress until the Session i
   expect(button("Sleep now", page).disabled).toBe(false)
 })
 
-/** The Plugins button in `page`'s header, if it shows. */
-const pluginsButton = (page: HTMLElement) =>
+/** The MCP servers button in `page`'s header, if it shows. */
+const mcpServersButton = (page: HTMLElement) =>
   [...page.querySelectorAll("header button")].find((el) =>
-    el.getAttribute("aria-label")?.startsWith("Plugins: "),
+    el.getAttribute("aria-label")?.startsWith("MCP servers: "),
   ) as HTMLButtonElement | undefined
 
 /** The open list of the Session's Installations, as their rows' text. */
@@ -515,9 +515,9 @@ const installationRows = () =>
 test("a Session shows the Installations it runs with, as Claude Code names their servers (ADR 0020)", async () => {
   const { page } = await openSession(demoSessionId, "Environment changed")
   await eventually(() =>
-    expect(pluginsButton(page)?.getAttribute("aria-label")).toBe("Plugins: 2 Installations"),
+    expect(mcpServersButton(page)?.getAttribute("aria-label")).toBe("MCP servers: 2 Installations"),
   )
-  await step(() => pluginsButton(page)?.click())
+  await step(() => mcpServersButton(page)?.click())
   await eventually(() => expect(installationRows()).toHaveLength(2))
   expect(installationRows()[0]).toContain("Docs")
   expect(installationRows()[0]).toContain("Docs search")
@@ -530,11 +530,11 @@ test("a change to its Repo's Installations shows that a Restart applies it, and 
   await step(() => button("Wake now", page).click())
   await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
   await eventually(() =>
-    expect(pluginsButton(page)?.getAttribute("aria-label")).toBe("Plugins: 2 Installations"),
+    expect(mcpServersButton(page)?.getAttribute("aria-label")).toBe("MCP servers: 2 Installations"),
   )
-  const plugins = await client.getPlugins()
-  const linear = plugins.plugins.find((plugin) => plugin.name === "Linear")
-  if (linear === undefined) throw new Error("No Plugin Linear")
+  const mcpServers = await client.getMcpServers()
+  const linear = mcpServers.mcpServers.find((mcpServer) => mcpServer.name === "Linear")
+  if (linear === undefined) throw new Error("No MCP server Linear")
   // With its API key: one without keeps the Session from starting (#216).
   const key = [{ key: "api_key", value: Redacted.make("made-up-linear-key") }]
   await step(() => client.createInstallation(linear.id, "Linear", ["kddige/kndl"], key))
@@ -542,15 +542,17 @@ test("a change to its Repo's Installations shows that a Restart applies it, and 
   const changed = () =>
     [...page.querySelectorAll('[role="status"]')]
       .map((el) => el.textContent ?? "")
-      .find((content) => content.startsWith("Plugins changed")) ?? ""
+      .find((content) => content.startsWith("MCP servers changed")) ?? ""
   await eventually(() => expect(changed()).toContain("A Restart applies the change"))
   expect(banner()).toBe("")
   // It runs with what it started with until then.
-  expect(pluginsButton(page)?.getAttribute("aria-label")).toBe("Plugins: 2 Installations, changed")
+  expect(mcpServersButton(page)?.getAttribute("aria-label")).toBe(
+    "MCP servers: 2 Installations, changed",
+  )
 
   await step(() => button("Restart", page).click())
   await eventually(() =>
-    expect(pluginsButton(page)?.getAttribute("aria-label")).toBe("Plugins: 3 Installations"),
+    expect(mcpServersButton(page)?.getAttribute("aria-label")).toBe("MCP servers: 3 Installations"),
   )
   await eventually(() => expect(changed()).toBe(""))
 })

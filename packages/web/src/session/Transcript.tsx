@@ -583,7 +583,7 @@ function Notice({ at, event }: { at: number; event: NoticeEvent }) {
         <WarningIcon aria-hidden="true" />
         <span>{event.message}</span>
         <Link
-          to="/plugins"
+          to="/mcp"
           search={{ installation: failed.installationId }}
           aria-label={`Fix ${failed.installation}`}
           {...stylex.props(styles.noticeLink, focus.ring)}

@@ -1,27 +1,27 @@
-// The Plugins (ADR 0020): remote MCP servers the Hub adds to Sessions, each with the Installations
-// that put it on in Repos. Any Member adds a Plugin; an Installation needs access to every Repo it
-// lists, as a Session does, and a Repo has at most one Installation of each Plugin. Claude Code in
-// a Session reaches each through the Hub's Gateway, so no Plugin's address or credential is ever
-// in a Sandbox. A change applies to a Session at its next wake or Restart.
+// The MCP page (ADR 0020): remote MCP servers the Hub adds to Sessions, each with the Installations
+// that put it on in Repos. Any Member adds an MCP server; an Installation needs access to every
+// Repo it lists, as a Session does, and a Repo has at most one Installation of each MCP server.
+// Claude Code in a Session reaches each through the Hub's Gateway, so no MCP server's address or
+// credential is ever in a Sandbox. A change applies to a Session at its next wake or Restart.
 //
-// A Plugin can declare header secrets (#215): a header, and a template its value goes in. Each
+// An MCP server can declare header secrets (#215): a header, and a template its value goes in. Each
 // Installation enters its own values, write-only: the page shows only who set each and when, or
-// that it needs a value. Before an edit to the Plugin clears values (a URL on another server, or a
-// header secret's key or header changed), the dialog says whose.
+// that it needs a value. Before an edit to the MCP server clears values (a URL on another server,
+// or a header secret's key or header changed), the dialog says whose.
 //
-// A packaged Plugin (#220) is pinned to the version it was added at: only an Upgrade changes it,
-// its name included, and it clears values as an edit does.
+// A packaged MCP server (#220) is pinned to the version it was added at: only an Upgrade changes
+// it, its name included, and it clears values as an edit does.
 //
 // The Owner can make an Installation global (#219): on in every Repo, listing none, but where a
-// Repo-scoped one of its Plugin takes its place, or the Repo turned it off on its Repo page. Only
-// the Owner creates, edits or deletes one, or edits, upgrades or deletes its Plugin; for anyone
-// else, the page says so.
+// Repo-scoped one of its MCP server takes its place, or the Repo turned it off on its Repo page.
+// Only the Owner creates, edits or deletes one, or edits, upgrades or deletes its MCP server; for
+// anyone else, the page says so.
 //
-// A Plugin can use OAuth instead (#217): each Installation connects to one account, which every
-// Session in its Repos then acts as. Connect sends the browser to the server's authorization server
-// and back, through the Hub, to this page; the Hub alone holds the tokens. Moving the Plugin to
-// another origin disconnects its Installations, and the dialog says so first. Only the Owner
-// connects or disconnects a global one: every Session on the Hub acts as its account.
+// An MCP server can use OAuth instead (#217): each Installation connects to one account, which
+// every Session in its Repos then acts as. Connect sends the browser to the server's authorization
+// server and back, through the Hub, to this page; the Hub alone holds the tokens. Moving the
+// MCP server to another origin disconnects its Installations, and the dialog says so first. Only
+// the Owner connects or disconnects a global one: every Session on the Hub acts as its account.
 
 import {
   type HeaderSecret,
@@ -32,11 +32,11 @@ import {
   installationReposProblem,
   MaxHeaderSecrets,
   packageVersion,
-  type Plugin,
-  type PluginAuth,
-  pluginAuthProblem,
-  pluginNameProblem,
-  pluginUrlProblem,
+  type McpServer,
+  type McpServerAuth,
+  mcpServerAuthProblem,
+  mcpServerNameProblem,
+  mcpServerUrlProblem,
   ValuePlaceholder,
   sourceText,
 } from "@kndl/protocol"
@@ -60,7 +60,7 @@ import {
   IconButton,
   Input,
   PageHeader,
-  PluginIcon,
+  McpIcon,
   PlusIcon,
   Select,
   Spinner,
@@ -79,8 +79,8 @@ import {
   useConnect,
 } from "./connection.tsx"
 import { type ClearedValues, clearedValues, keyFromTitle } from "./headerSecrets.ts"
+import { McpServerAvatar } from "./McpServerAvatar.tsx"
 import { PackageDialog, type PackageOpening } from "./PackageDialog.tsx"
-import { PluginAvatar } from "./PluginAvatar.tsx"
 import { messageOf, useLastOpened } from "./shared.ts"
 
 const styles = stylex.create({
@@ -95,7 +95,7 @@ const styles = stylex.create({
     paddingBlock: space.s6,
     paddingInline: space.s4,
   },
-  plugins: {
+  mcpServers: {
     display: "flex",
     flexDirection: "column",
     gap: space.s4,
@@ -224,20 +224,20 @@ export interface ConnectReturn {
 }
 
 /**
- * The Plugins page; `opening` names an Installation whose dialog opens once it loads (#216), and
+ * The MCP page; `opening` names an Installation whose dialog opens once it loads (#216), and
  * `returned` how connecting one came out (#217).
  */
-export function PluginsView({
+export function McpServersView({
   opening,
   returned,
 }: { opening?: string | undefined; returned?: ConnectReturn | undefined } = {}) {
   const hub = useHub()
   const navigate = useNavigate()
-  const state = useHubState((hubState) => hubState.plugins)
+  const state = useHubState((hubState) => hubState.mcpServers)
   const owner = useHubState((hubState) => hubState.owner)
   const online = useHubState((hubState) => hubState.connection.status === "online")
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [editing, setEditing] = useState<Plugin | "new" | null>(null)
+  const [editing, setEditing] = useState<McpServer | "new" | null>(null)
   const [installing, setInstalling] = useState<InstallationTarget | null>(null)
   const [deleting, setDeleting] = useState<Deleting | null>(null)
   const [packaging, setPackaging] = useState<PackageOpening | null>(null)
@@ -258,7 +258,7 @@ export function PluginsView({
     } else if (returned.connected === true) {
       toast.show({ title: `Connected ${name}` })
     }
-    void navigate({ to: "/plugins", search: {}, replace: true })
+    void navigate({ to: "/mcp", search: {}, replace: true })
   }, [returned, state, navigate])
 
   // Opened once for each Installation asked for, and only one the person can change.
@@ -266,15 +266,15 @@ export function PluginsView({
     if (opening === undefined || opening === opened || state === null) return
     setOpened(opening)
     const installation = state.installations.find((one) => one.id === opening)
-    const plugin = state.plugins.find((one) => one.id === installation?.pluginId)
-    if (installation === undefined || plugin === undefined) return
+    const mcpServer = state.mcpServers.find((one) => one.id === installation?.mcpServerId)
+    if (installation === undefined || mcpServer === undefined) return
     if (installation.otherRepos !== undefined || (installation.global === true && !owner)) return
-    setInstalling({ plugin, installation })
+    setInstalling({ mcpServer, installation })
   }, [opening, opened, state, owner])
 
   useEffect(() => {
     if (!online) return
-    hub.getPlugins().then(
+    hub.getMcpServers().then(
       () => setLoadError(null),
       (error: unknown) => setLoadError(messageOf(error)),
     )
@@ -286,14 +286,14 @@ export function PluginsView({
         Add package
       </Button>
       <Button intent="primary" size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
-        Add Plugin
+        Add MCP server
       </Button>
     </div>
   )
   return (
     <main {...stylex.props(styles.view)}>
       <PageHeader
-        title="Plugins"
+        title="MCP"
         description="Remote MCP servers the Hub adds to Sessions. An Installation puts one on in the Repos it lists: Claude Code in their Sessions gets its tools, through the Hub, from their next wake or Restart."
         actions={add}
       />
@@ -304,35 +304,35 @@ export function PluginsView({
               <EmptyState
                 size="page"
                 icon={<WarningIcon />}
-                title="Can't load the Plugins"
+                title="Can't load the MCP servers"
                 description={loadError}
               />
             ) : (
               <div {...stylex.props(styles.loading)}>
-                <Spinner size="lg" label="Loading Plugins" />
+                <Spinner size="lg" label="Loading MCP servers" />
               </div>
             )
-          ) : state.plugins.length === 0 ? (
+          ) : state.mcpServers.length === 0 ? (
             <EmptyState
               size="page"
-              icon={<PluginIcon />}
-              title="No Plugins yet"
-              description="Add a remote MCP server by its URL, or a Plugin package from git or an upload, then install it on the Repos whose Sessions should have its tools."
+              icon={<McpIcon />}
+              title="No MCP servers yet"
+              description="Add a remote MCP server by its URL, or an MCP server package from git or an upload, then install it on the Repos whose Sessions should have its tools."
               action={add}
             />
           ) : (
-            <ul aria-label="Plugins" {...stylex.props(styles.plugins)}>
-              {state.plugins.map((plugin) => (
-                <PluginCard
-                  key={plugin.id}
-                  plugin={plugin}
+            <ul aria-label="MCP servers" {...stylex.props(styles.mcpServers)}>
+              {state.mcpServers.map((mcpServer) => (
+                <McpServerCard
+                  key={mcpServer.id}
+                  mcpServer={mcpServer}
                   installations={state.installations.filter(
-                    (installation) => installation.pluginId === plugin.id,
+                    (installation) => installation.mcpServerId === mcpServer.id,
                   )}
                   owner={owner}
-                  onEdit={() => setEditing(plugin)}
-                  onUpgrade={() => setPackaging({ upgrading: plugin })}
-                  onInstall={(installation) => setInstalling({ plugin, installation })}
+                  onEdit={() => setEditing(mcpServer)}
+                  onUpgrade={() => setPackaging({ upgrading: mcpServer })}
+                  onInstall={(installation) => setInstalling({ mcpServer, installation })}
                   onDelete={setDeleting}
                 />
               ))}
@@ -340,7 +340,7 @@ export function PluginsView({
           )}
         </div>
       </div>
-      <PluginDialog
+      <McpServerDialog
         editing={editing}
         installations={state?.installations ?? []}
         onClose={() => setEditing(null)}
@@ -352,8 +352,8 @@ export function PluginsView({
   )
 }
 
-function PluginCard({
-  plugin,
+function McpServerCard({
+  mcpServer,
   installations,
   owner,
   onEdit,
@@ -361,7 +361,7 @@ function PluginCard({
   onInstall,
   onDelete,
 }: {
-  plugin: Plugin
+  mcpServer: McpServer
   installations: ReadonlyArray<Installation>
   owner: boolean
   onEdit: () => void
@@ -371,29 +371,32 @@ function PluginCard({
 }) {
   const hub = useHub()
   const { connect, clientDialog } = useConnect()
-  // Editing or upgrading a Plugin changes what the Sessions of every Repo it is on in run with.
+  // Editing or upgrading an MCP server changes what the Sessions of every Repo it is on in run
+  // with.
   const hidden = installations.some((installation) => installation.otherRepos !== undefined)
   // With a global Installation, that is every Repo's: only the Owner may (#219).
   const ownerOnly = !owner && installations.some((installation) => installation.global === true)
-  const pinned = plugin.package
+  const pinned = mcpServer.package
   return (
-    <li aria-label={`Plugin ${plugin.name}`} {...stylex.props(styles.card)}>
+    <li aria-label={`MCP server ${mcpServer.name}`} {...stylex.props(styles.card)}>
       <div {...stylex.props(styles.head)}>
         <div {...stylex.props(styles.main)}>
           <div {...stylex.props(styles.nameLine)}>
-            <PluginAvatar plugin={plugin} />
-            <span {...stylex.props(styles.name)}>{plugin.name}</span>
-            <Badge sx={styles.mono}>{plugin.id}</Badge>
+            <McpServerAvatar mcpServer={mcpServer} />
+            <span {...stylex.props(styles.name)}>{mcpServer.name}</span>
+            <Badge sx={styles.mono}>{mcpServer.id}</Badge>
             {pinned && <Badge sx={styles.mono}>{packageVersion(pinned)}</Badge>}
           </div>
-          {plugin.description && <span {...stylex.props(styles.muted)}>{plugin.description}</span>}
-          <span title={plugin.url} {...stylex.props(styles.url)}>
-            {plugin.url}
+          {mcpServer.description && (
+            <span {...stylex.props(styles.muted)}>{mcpServer.description}</span>
+          )}
+          <span title={mcpServer.url} {...stylex.props(styles.url)}>
+            {mcpServer.url}
           </span>
           {pinned && <span {...stylex.props(styles.muted)}>{sourceText(pinned.source)}</span>}
           <span {...stylex.props(styles.meta)}>
-            <Avatar name={plugin.createdBy.name} src={plugin.createdBy.avatarUrl} size="sm" />
-            Added by {plugin.createdBy.name} {timeAgo(plugin.createdAt)}
+            <Avatar name={mcpServer.createdBy.name} src={mcpServer.createdBy.avatarUrl} size="sm" />
+            Added by {mcpServer.createdBy.name} {timeAgo(mcpServer.createdAt)}
           </span>
           {ownerOnly && (
             <span {...stylex.props(styles.muted)}>
@@ -406,7 +409,7 @@ function PluginCard({
           <Button
             size="sm"
             icon={<PlusIcon />}
-            aria-label={`Add Installation of ${plugin.name}`}
+            aria-label={`Add Installation of ${mcpServer.name}`}
             onClick={() => onInstall(null)}
           >
             Install
@@ -414,7 +417,7 @@ function PluginCard({
           {pinned ? (
             <Button
               size="sm"
-              aria-label={`Upgrade Plugin ${plugin.name}`}
+              aria-label={`Upgrade MCP server ${mcpServer.name}`}
               disabled={hidden || ownerOnly}
               onClick={onUpgrade}
             >
@@ -423,7 +426,7 @@ function PluginCard({
           ) : (
             <Button
               size="sm"
-              aria-label={`Edit Plugin ${plugin.name}`}
+              aria-label={`Edit MCP server ${mcpServer.name}`}
               disabled={hidden || ownerOnly}
               onClick={onEdit}
             >
@@ -433,16 +436,16 @@ function PluginCard({
           <Button
             size="sm"
             intent="ghost"
-            aria-label={`Delete Plugin ${plugin.name}`}
+            aria-label={`Delete MCP server ${mcpServer.name}`}
             disabled={ownerOnly}
             onClick={() =>
               onDelete({
-                name: plugin.name,
+                name: mcpServer.name,
                 description:
                   installations.length > 0
-                    ? "The Hub refuses to delete a Plugin while it has Installations."
+                    ? "The Hub refuses to delete an MCP server while it has Installations."
                     : "It has no Installations. It can't be brought back.",
-                run: () => hub.deletePlugin(plugin.id),
+                run: () => hub.deleteMcpServer(mcpServer.id),
               })
             }
           >
@@ -450,7 +453,7 @@ function PluginCard({
           </Button>
         </div>
       </div>
-      <ul aria-label={`Installations of ${plugin.name}`} {...stylex.props(styles.installations)}>
+      <ul aria-label={`Installations of ${mcpServer.name}`} {...stylex.props(styles.installations)}>
         {installations.length === 0 ? (
           <li {...stylex.props(styles.none, styles.muted)}>
             No Installations: install it to put it on in Repos.
@@ -459,7 +462,7 @@ function PluginCard({
           installations.map((installation, index) => (
             <InstallationRow
               key={installation.id}
-              plugin={plugin}
+              mcpServer={mcpServer}
               installation={installation}
               owner={owner}
               first={index === 0}
@@ -514,7 +517,7 @@ function RepoLinks({ repos }: { repos: ReadonlyArray<string> }) {
 }
 
 function InstallationRow({
-  plugin,
+  mcpServer,
   installation,
   owner,
   first,
@@ -523,7 +526,7 @@ function InstallationRow({
   onConnect,
   onDisconnect,
 }: {
-  plugin: Plugin
+  mcpServer: McpServer
   installation: Installation
   owner: boolean
   first: boolean
@@ -540,7 +543,7 @@ function InstallationRow({
   const global = installation.global === true
   const ownerOnly = global && !owner
   const off = installation.off ?? []
-  const oauth = plugin.auth._tag === "OAuth"
+  const oauth = mcpServer.auth._tag === "OAuth"
   return (
     <li
       aria-label={`Installation ${installation.name}`}
@@ -554,7 +557,7 @@ function InstallationRow({
         {global ? (
           <div {...stylex.props(styles.repos)}>
             <span>
-              On in every Repo, but where another Installation of {plugin.name} is on
+              On in every Repo, but where another Installation of {mcpServer.name} is on
               {off.length > 0 ? "; turned off for" : "."}
             </span>
             {off.length > 0 && <RepoLinks repos={off} />}
@@ -572,7 +575,7 @@ function InstallationRow({
             )}
           </div>
         )}
-        <SecretValues plugin={plugin} installation={installation} />
+        <SecretValues mcpServer={mcpServer} installation={installation} />
         {ownerOnly && (
           <span {...stylex.props(styles.muted)}>
             Only the Hub's Owner can{" "}
@@ -580,7 +583,7 @@ function InstallationRow({
             Repo on the Repo's page.
           </span>
         )}
-        <ConnectionLine plugin={plugin} installation={installation} />
+        <ConnectionLine mcpServer={mcpServer} installation={installation} />
         {oauth && <ClientLine installation={installation} />}
       </div>
       <div {...stylex.props(styles.actions)}>
@@ -639,9 +642,18 @@ function InstallationRow({
   )
 }
 
-/** Each header secret of an Installation's Plugin: who set its value and when, or that it needs one. */
-function SecretValues({ plugin, installation }: { plugin: Plugin; installation: Installation }) {
-  const declared = headerSecretsOf(plugin.auth)
+/**
+ * Each header secret of an Installation's MCP server: who set its value and when, or that it needs
+ * one.
+ */
+function SecretValues({
+  mcpServer,
+  installation,
+}: {
+  mcpServer: McpServer
+  installation: Installation
+}) {
+  const declared = headerSecretsOf(mcpServer.auth)
   if (declared.length === 0) return null
   return (
     <ul
@@ -667,7 +679,7 @@ function SecretValues({ plugin, installation }: { plugin: Plugin; installation: 
   )
 }
 
-/** A header secret as the Plugin dialog edits it. */
+/** A header secret as the MCP server dialog edits it. */
 interface SecretRow {
   readonly id: number
   readonly key: string
@@ -686,13 +698,13 @@ const rowOf = (secret: HeaderSecret): SecretRow => ({
   keyTyped: true,
 })
 
-/** How a Plugin's server takes credentials, as the dialog chooses it. */
+/** How an MCP server takes credentials, as the dialog chooses it. */
 type AuthKind = "Headers" | "OAuth"
 
 /** The scopes typed, separated by spaces or commas. */
 const scopesOf = (typed: string) => typed.split(/[\s,]+/).filter((scope) => scope !== "")
 
-const authOf = (kind: AuthKind, rows: ReadonlyArray<SecretRow>, scopes: string): PluginAuth => {
+const authOf = (kind: AuthKind, rows: ReadonlyArray<SecretRow>, scopes: string): McpServerAuth => {
   if (kind === "OAuth") {
     const listed = scopesOf(scopes)
     return listed.length === 0 ? { _tag: "OAuth" } : { _tag: "OAuth", scopes: listed }
@@ -710,13 +722,13 @@ const authOf = (kind: AuthKind, rows: ReadonlyArray<SecretRow>, scopes: string):
       }
 }
 
-/** Adds a Hub-only Plugin, or edits one's name, URL and header secrets. */
-function PluginDialog({
+/** Adds a Hub-only MCP server, or edits one's name, URL and header secrets. */
+function McpServerDialog({
   editing,
   installations,
   onClose,
 }: {
-  editing: Plugin | "new" | null
+  editing: McpServer | "new" | null
   installations: ReadonlyArray<Installation>
   onClose: () => void
 }) {
@@ -744,18 +756,18 @@ function PluginDialog({
     setError(null)
   }, [editing, saved])
 
-  const nameProblem = pluginNameProblem(name)
+  const nameProblem = mcpServerNameProblem(name)
   const urlProblem =
-    url.trim() === "" ? "Enter the MCP server's URL." : pluginUrlProblem(url.trim())
+    url.trim() === "" ? "Enter the MCP server's URL." : mcpServerUrlProblem(url.trim())
   const auth = authOf(kind, rows, scopes)
-  const authProblem = pluginAuthProblem(auth)
+  const authProblem = mcpServerAuthProblem(auth)
   // What saving clears, said before it does.
   const cleared =
     saved === null || urlProblem !== undefined
       ? []
       : clearedValues(
           saved,
-          installations.filter((installation) => installation.pluginId === saved.id),
+          installations.filter((installation) => installation.mcpServerId === saved.id),
           { url: url.trim(), auth },
         )
   const disconnects =
@@ -794,8 +806,8 @@ function PluginDialog({
     setBusy(true)
     setError(null)
     try {
-      if (saved === null) await hub.createPlugin(name.trim(), url.trim(), auth)
-      else await hub.editPlugin(saved.id, name.trim(), url.trim(), auth)
+      if (saved === null) await hub.createMcpServer(name.trim(), url.trim(), auth)
+      else await hub.editMcpServer(saved.id, name.trim(), url.trim(), auth)
       toast.show({ title: saved === null ? `Added ${name.trim()}` : `Saved ${name.trim()}` })
       onClose()
     } catch (cause) {
@@ -810,7 +822,7 @@ function PluginDialog({
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
-      title={saved === null ? "Add Plugin" : `Edit ${saved.name}`}
+      title={saved === null ? "Add MCP server" : `Edit ${saved.name}`}
       description={
         saved === null
           ? "A remote MCP server, over Streamable HTTP. Only the Hub reaches it: Sessions reach it through the Hub."
@@ -822,7 +834,7 @@ function PluginDialog({
           <Button
             intent={destructive ? "danger" : "primary"}
             type="submit"
-            form="plugin"
+            form="mcpServer"
             loading={busy}
           >
             {saved === null
@@ -836,7 +848,7 @@ function PluginDialog({
         </>
       }
     >
-      <form id="plugin" onSubmit={submit} noValidate {...stylex.props(styles.form)}>
+      <form id="mcpServer" onSubmit={submit} noValidate {...stylex.props(styles.form)}>
         <Field
           label="Name"
           invalid={touched && nameProblem !== undefined}
@@ -1012,9 +1024,9 @@ function ClearedBanner({ cleared }: { cleared: ReadonlyArray<ClearedValues> }) {
   )
 }
 
-/** A Plugin to install, or one of its Installations to edit. */
+/** An MCP server to install, or one of its Installations to edit. */
 interface InstallationTarget {
-  readonly plugin: Plugin
+  readonly mcpServer: McpServer
   readonly installation: Installation | null
 }
 
@@ -1022,9 +1034,9 @@ interface InstallationTarget {
 const reposOf = (typed: string) => typed.split(/[\s,]+/).filter((repo) => repo !== "")
 
 /**
- * Creates an Installation of a Plugin on Repos, or renames one, changes its Repos, and replaces
- * values of its header secrets; a value left empty stays as it is. The Owner can make it global
- * (#219), on in every Repo, instead.
+ * Creates an Installation of an MCP server on Repos, or renames one, changes its Repos, and
+ * replaces values of its header secrets; a value left empty stays as it is. The Owner can make it
+ * global (#219), on in every Repo, instead.
  */
 function InstallationDialog({
   target,
@@ -1048,7 +1060,7 @@ function InstallationDialog({
 
   useEffect(() => {
     if (target === null) return
-    setName(target.installation?.name ?? target.plugin.name)
+    setName(target.installation?.name ?? target.mcpServer.name)
     setGlobal(target.installation?.global === true)
     setRepos(target.installation?.repos.join("\n") ?? "")
     setValues({})
@@ -1073,7 +1085,7 @@ function InstallationDialog({
 
   // A global one lists no Repos.
   const listed = global ? [] : reposOf(repos)
-  const nameProblem = pluginNameProblem(name, "An Installation")
+  const nameProblem = mcpServerNameProblem(name, "An Installation")
   const malformed = listed.find((repo) => !repoPattern.test(repo))
   const reposProblem = global
     ? undefined
@@ -1082,11 +1094,11 @@ function InstallationDialog({
       : installationReposProblem(listed)
   const { connect, clientDialog } = useConnect()
   const [connecting, setConnecting] = useState(false)
-  const declared = shown === null ? [] : headerSecretsOf(shown.plugin.auth)
+  const declared = shown === null ? [] : headerSecretsOf(shown.mcpServer.auth)
   // An Installation saved can be connected from here too, as a Session's banner sends people; a
   // global one only by the Owner (#219).
   const connectable =
-    shown?.plugin.auth._tag === "OAuth" &&
+    shown?.mcpServer.auth._tag === "OAuth" &&
     saved !== null &&
     saved.otherRepos === undefined &&
     (saved.global !== true || owner)
@@ -1107,7 +1119,7 @@ function InstallationDialog({
       .map((secret) => ({ key: secret.key, value: Redacted.make(typed(secret)) }))
     try {
       if (saved === null) {
-        await hub.createInstallation(shown.plugin.id, name.trim(), listed, entered, global)
+        await hub.createInstallation(shown.mcpServer.id, name.trim(), listed, entered, global)
       } else await hub.editInstallation(saved.id, name.trim(), listed, entered, global)
       toast.show({ title: saved === null ? `Installed ${name.trim()}` : `Saved ${name.trim()}` })
       onClose()
@@ -1124,9 +1136,11 @@ function InstallationDialog({
         if (!open) onClose()
       }}
       title={
-        saved === null ? `Add an Installation of ${shown?.plugin.name ?? ""}` : `Edit ${saved.name}`
+        saved === null
+          ? `Add an Installation of ${shown?.mcpServer.name ?? ""}`
+          : `Edit ${saved.name}`
       }
-      description={`Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each Plugin, and you need access to every Repo listed.${owner ? " A global one is on in every Repo but those with their own Installation of the Plugin, or that turned it off." : ""}${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}${shown?.plugin.auth._tag === "OAuth" ? " Once added, connect it to the account its Sessions act as." : ""}`}
+      description={`Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each MCP server, and you need access to every Repo listed.${owner ? " A global one is on in every Repo but those with their own Installation of the MCP server, or that turned it off." : ""}${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}${shown?.mcpServer.auth._tag === "OAuth" ? " Once added, connect it to the account its Sessions act as." : ""}`}
       footer={
         <>
           <DialogClose>Cancel</DialogClose>
@@ -1148,7 +1162,7 @@ function InstallationDialog({
         {owner && (
           <Checkbox
             label="Global"
-            description="On in every Repo, now and to come, for every Sandbox on the Hub. A Repo can turn it off; one with its own Installation of the Plugin has that instead. Only the Owner can change it."
+            description="On in every Repo, now and to come, for every Sandbox on the Hub. A Repo can turn it off; one with its own Installation of the MCP server has that instead. Only the Owner can change it."
             checked={global}
             onCheckedChange={setGlobal}
           />
@@ -1210,7 +1224,7 @@ function InstallationDialog({
         })}
         {connectable && shown !== null && (
           <div {...stylex.props(styles.section)}>
-            <ConnectionLine plugin={shown.plugin} installation={saved} />
+            <ConnectionLine mcpServer={shown.mcpServer} installation={saved} />
             <ClientLine installation={saved} />
             <div>
               <Button size="sm" loading={connecting} onClick={() => void connectSaved()}>
@@ -1230,7 +1244,7 @@ function InstallationDialog({
   )
 }
 
-/** Deletes a Plugin or an Installation once confirmed; shows the Hub's refusal, if any. */
+/** Deletes an MCP server or an Installation once confirmed; shows the Hub's refusal, if any. */
 function DeleteDialog({ deleting, onClose }: { deleting: Deleting | null; onClose: () => void }) {
   const shown = useLastOpened(deleting)
   const [busy, setBusy] = useState(false)

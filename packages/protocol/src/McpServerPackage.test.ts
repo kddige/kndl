@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
-import type { PackagedPlugin, Plugin, PluginSource } from "./Plugin.ts"
+import type { PackagedMcpServer, McpServer, McpServerSource } from "./McpServer.ts"
 import {
   addedHeaderSecrets,
   gitRefProblem,
@@ -8,15 +8,15 @@ import {
   packageChanges,
   packageVersion,
   packagePathProblem,
-  readPluginPackage,
+  readMcpServerPackage,
   sameSource,
-} from "./PluginPackage.ts"
+} from "./McpServerPackage.ts"
 
-const upload: PluginSource = { _tag: "Upload", fileName: "linear-mcp-1.0.0.tgz" }
+const upload: McpServerSource = { _tag: "Upload", fileName: "linear-mcp-1.0.0.tgz" }
 
 /** Reads the two files as JSON: the package, or every problem, one per line. */
 function read(packageJson: unknown, manifest: unknown, commit?: string) {
-  return readPluginPackage(
+  return readMcpServerPackage(
     {
       packageJson: typeof packageJson === "string" ? packageJson : JSON.stringify(packageJson),
       manifest: typeof manifest === "string" ? manifest : JSON.stringify(manifest),
@@ -46,7 +46,7 @@ describe("a package", () => {
       url: "https://mcp.linear.app/mcp",
       auth: { _tag: "None" },
       package: { version: "1.2.0", commit: "a".repeat(40), source: upload },
-    } as PackagedPlugin)
+    } as PackagedMcpServer)
   })
 
   test("keeps the manifest's icon, an https URL or a path in the package", () => {
@@ -61,14 +61,14 @@ describe("a package", () => {
 
   test("is never refused for a broken icon: it is left out", () => {
     for (const icon of [42, null, ["a.png"], "", "   ", "x".repeat(501), "a\nb.png"]) {
-      const plugin = Result.getOrThrow(read(pkg, { ...manifest, icon }))
-      expect("icon" in plugin).toBe(false)
+      const mcpServer = Result.getOrThrow(read(pkg, { ...manifest, icon }))
+      expect("icon" in mcpServer).toBe(false)
     }
   })
 
-  test("maps header secrets 1:1 onto the Plugin's auth, the template {value} by default", () => {
+  test("maps header secrets 1:1 onto the MCP server's auth, the template {value} by default", () => {
     const headers = Result.getOrThrow(
-      readPluginPackage(
+      readMcpServerPackage(
         {
           packageJson: JSON.stringify(pkg),
           manifest: JSON.stringify({
@@ -102,7 +102,7 @@ describe("a package", () => {
     })
   })
 
-  test("maps OAuth onto the Plugin's auth, with the scopes it asks for (#217)", () => {
+  test("maps OAuth onto the MCP server's auth, with the scopes it asks for (#217)", () => {
     expect(Result.getOrThrow(read(pkg, { ...manifest, auth: { type: "oauth" } })).auth).toEqual({
       _tag: "OAuth",
     })
@@ -115,7 +115,7 @@ describe("a package", () => {
     expect(problems("{", manifest)).toEqual(["package.json isn't JSON."])
     expect(problems([], manifest)).toEqual(["package.json must be a JSON object."])
     expect(problems({ version: "1.0.0" }, manifest)).toEqual([
-      'package.json needs a "name": the Plugin\'s id.',
+      'package.json needs a "name": the MCP server\'s id.',
     ])
     expect(problems({ name: "Linear MCP", version: "1.0.0" }, manifest)).toEqual([
       "package.json's \"name\" Linear MCP isn't a valid npm package name: lowercase letters, digits, - . and _, with an optional @scope/.",
@@ -199,7 +199,7 @@ describe("a package", () => {
   })
 })
 
-const git = (url: string, path?: string, ref?: string): PluginSource => ({
+const git = (url: string, path?: string, ref?: string): McpServerSource => ({
   _tag: "Git",
   url,
   ...(path !== undefined && { path }),
@@ -269,17 +269,21 @@ describe("a git source", () => {
 })
 
 test("an Upgrade's changes are the manifest's, the version and the commit", () => {
-  const plugin: Plugin = {
-    id: "@acme/linear-mcp" as Plugin["id"],
+  const mcpServer: McpServer = {
+    id: "@acme/linear-mcp" as McpServer["id"],
     name: "Linear",
     url: "https://mcp.linear.app/mcp",
     auth: { _tag: "None" },
     package: { version: "1.0.0", commit: "a".repeat(40), source: upload },
-    createdBy: { id: "github:1" as Plugin["createdBy"]["id"], login: "octocat", name: "octocat" },
+    createdBy: {
+      id: "github:1" as McpServer["createdBy"]["id"],
+      login: "octocat",
+      name: "octocat",
+    },
     createdAt: 0,
   }
-  const next: PackagedPlugin = {
-    id: plugin.id,
+  const next: PackagedMcpServer = {
+    id: mcpServer.id,
     name: "Linear (beta)",
     url: "https://mcp.linear.app/v2",
     auth: {
@@ -290,7 +294,7 @@ test("an Upgrade's changes are the manifest's, the version and the commit", () =
     },
     package: { version: "2.0.0", commit: "b".repeat(40), source: upload },
   }
-  expect(packageChanges(plugin, next)).toEqual([
+  expect(packageChanges(mcpServer, next)).toEqual([
     { what: "Version", before: "1.0.0", after: "2.0.0" },
     { what: "Commit", before: "aaaaaaa", after: "bbbbbbb" },
     { what: "Display name", before: "Linear", after: "Linear (beta)" },
@@ -305,14 +309,14 @@ test("an Upgrade's changes are the manifest's, the version and the commit", () =
       after: "Header secrets: API key (Authorization: Bearer {value})",
     },
   ])
-  const same: PackagedPlugin = {
-    id: plugin.id,
-    name: plugin.name,
-    url: plugin.url,
-    auth: plugin.auth,
+  const same: PackagedMcpServer = {
+    id: mcpServer.id,
+    name: mcpServer.name,
+    url: mcpServer.url,
+    auth: mcpServer.auth,
     package: { version: "1.0.0", commit: "a".repeat(40), source: upload },
   }
-  expect(packageChanges(plugin, same)).toEqual([])
+  expect(packageChanges(mcpServer, same)).toEqual([])
   expect([packageVersion(same.package), packageVersion({ version: "1.0.0" })]).toEqual([
     "1.0.0 (aaaaaaa)",
     "1.0.0",
@@ -321,7 +325,7 @@ test("an Upgrade's changes are the manifest's, the version and the commit", () =
 
 const secret = (key: string) => ({ key, title: key, header: `X-${key}`, template: "{value}" })
 
-test("an Upgrade's new header secrets are those whose keys the Plugin didn't have", () => {
+test("an Upgrade's new header secrets are those whose keys the MCP server didn't have", () => {
   expect(addedHeaderSecrets({ _tag: "None" }, { _tag: "Headers", headers: [secret("a")] })).toEqual(
     [secret("a")],
   )

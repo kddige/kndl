@@ -35,7 +35,7 @@ import {
   type NestedNavItems,
   PencilIcon,
   PeopleIcon,
-  PluginIcon,
+  McpIcon,
   PlusIcon,
   ServerIcon,
   SessionStatus,
@@ -47,7 +47,7 @@ import {
 import { focus } from "../ui/shared.ts"
 import { color, radius, space, text } from "../ui/tokens.stylex.ts"
 import { Brand } from "./Brand.tsx"
-import { environmentChanged, pluginsChanged, statusOf } from "./format.ts"
+import { environmentChanged, mcpServersChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
 
 const styles = stylex.create({
@@ -103,13 +103,13 @@ const styles = stylex.create({
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
 function sectionOf(
   pathname: string,
-): "runners" | "environments" | "variables" | "plugins" | "archive" | "people" | null {
+): "runners" | "environments" | "variables" | "mcpServers" | "archive" | "people" | null {
   if (pathname === "/runners") return "runners"
   if (pathname === "/people") return "people"
   if (pathname === "/environments" || /^\/repos\/[^/]+\/[^/]+\/environment$/.test(pathname))
     return "environments"
   if (pathname === "/variables") return "variables"
-  if (pathname === "/plugins") return "plugins"
+  if (pathname === "/mcp") return "mcpServers"
   if (pathname === "/archive" || /^\/repos\/[^/]+\/[^/]+\/archived$/.test(pathname))
     return "archive"
   return null
@@ -230,12 +230,8 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         >
           Shared variables
         </NavItem>
-        <NavItem
-          render={<Link to="/plugins" />}
-          icon={<PluginIcon />}
-          current={section === "plugins"}
-        >
-          Plugins
+        <NavItem render={<Link to="/mcp" />} icon={<McpIcon />} current={section === "mcpServers"}>
+          MCP
         </NavItem>
         <NavItem
           render={<Link to="/archive" />}
@@ -411,8 +407,8 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
   // What a restart would apply: a newer Environment, or its Repo's Installations (ADR 0020).
   const changed = environmentChanged(session)
     ? "Environment changed"
-    : pluginsChanged(session)
-      ? "Plugins changed"
+    : mcpServersChanged(session)
+      ? "MCP servers changed"
       : null
   const keptAwake =
     session.keepAwake === undefined ? null : keptAwakeText(session.keepAwake, you?.id)

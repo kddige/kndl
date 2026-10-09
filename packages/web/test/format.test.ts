@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { SessionSummary } from "@kndl/protocol"
 import { Schema } from "effect"
-import { environmentChanged, pluginsChanged, terminalText } from "../src/app/format.ts"
+import { environmentChanged, mcpServersChanged, terminalText } from "../src/app/format.ts"
 import { alice, sessionSummary } from "./fixtures.ts"
 
 const summary = (fields: Partial<typeof SessionSummary.Encoded>): SessionSummary =>
@@ -42,19 +42,19 @@ describe("environmentChanged", () => {
   })
 })
 
-describe("pluginsChanged", () => {
+describe("mcpServersChanged", () => {
   test("an Active Session whose Repo's Installations changed since it started (ADR 0020)", () => {
-    expect(pluginsChanged(summary({ pluginsChanged: true }))).toBe(true)
-    expect(pluginsChanged(summary({}))).toBe(false)
+    expect(mcpServersChanged(summary({ mcpServersChanged: true }))).toBe(true)
+    expect(mcpServersChanged(summary({}))).toBe(false)
     // Other states pick the change up as they next wake.
-    expect(pluginsChanged(summary({ state: "Asleep", pluginsChanged: true }))).toBe(false)
+    expect(mcpServersChanged(summary({ state: "Asleep", mcpServersChanged: true }))).toBe(false)
   })
 
   test("a Session being started or restarted is getting its Repo's Installations already", () => {
-    const restarting = summary({ pluginsChanged: true, restarting: { by: alice, since: 1 } })
-    expect(pluginsChanged(restarting)).toBe(false)
-    const starting = summary({ pluginsChanged: true, starting: { since: 1 } })
-    expect(pluginsChanged(starting)).toBe(false)
+    const restarting = summary({ mcpServersChanged: true, restarting: { by: alice, since: 1 } })
+    expect(mcpServersChanged(restarting)).toBe(false)
+    const starting = summary({ mcpServersChanged: true, starting: { since: 1 } })
+    expect(mcpServersChanged(starting)).toBe(false)
   })
 })
 

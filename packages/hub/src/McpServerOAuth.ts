@@ -1,4 +1,4 @@
-// OAuth Installations (#217, ADR 0020): connecting an Installation of a Plugin whose MCP server
+// OAuth Installations (#217, ADR 0020): connecting an Installation of an MCP server that
 // uses OAuth to one account on its authorization server, and keeping its tokens fresh. Only the
 // Hub runs OAuth; Claude Code never does, and never sees a token.
 //
@@ -32,7 +32,7 @@ import {
   OAuthConnectTtlMs,
   oauthClientProblem,
   type ParticipantId,
-  type PluginAuth,
+  type McpServerAuth,
 } from "@kndl/protocol"
 import {
   Clock,
@@ -62,7 +62,7 @@ export class OAuthRefused extends Schema.TaggedError<OAuthRefused>()("OAuthRefus
 const refuse = (message: string) => Effect.fail(new OAuthRefused({ message }))
 
 /** Where the authorization server sends the browser back to, on the Hub. */
-export const OAuthCallbackPath = "/auth/plugins/callback"
+export const OAuthCallbackPath = "/auth/mcp/callback"
 
 /** How long each fetch to an MCP or authorization server may take. */
 const fetchTimeoutMs = 15_000
@@ -142,7 +142,7 @@ export interface PendingConnection {
   readonly global: boolean
   /** The Repos whose access was checked as it began: the Installation must list no other. */
   readonly repos: ReadonlyArray<string>
-  /** The Plugin's URL and auth as it began, which must not change before it finishes. */
+  /** The MCP server's URL and auth as it began, which must not change before it finishes. */
   readonly basis: string
   readonly verifier: string
   readonly client: Client
@@ -213,9 +213,13 @@ export interface ConnectionChanged {
   readonly lost: boolean
 }
 
-/** What a Plugin's URL and auth are as a connection begins, to see whether they changed since. */
-export const connectionBasis = (plugin: { readonly url: string; readonly auth: PluginAuth }) =>
-  JSON.stringify([plugin.url, plugin.auth])
+/**
+ * What an MCP server's URL and auth are as a connection begins, to see whether they changed since.
+ */
+export const connectionBasis = (mcpServer: {
+  readonly url: string
+  readonly auth: McpServerAuth
+}) => JSON.stringify([mcpServer.url, mcpServer.auth])
 
 // ── Fetching ────────────────────────────────────────────────────────────────
 
@@ -225,9 +229,9 @@ export const connectionBasis = (plugin: { readonly url: string; readonly auth: P
  * Loopback http is allowed in production too, not only in development: an MCP server, or its
  * authorization server, may run beside the Hub on its own machine. What is sent to one (a code,
  * the client's secret, a token) never leaves that machine, so there is no network to read it on,
- * and a Plugin's URL may be http already. Only a literal loopback address or `localhost` counts,
- * never a name that resolves to one, so a remote server can't pass as loopback. The browser's way
- * back is the Hub's own HUB_PUBLIC_URL, which this doesn't touch.
+ * and an MCP server's URL may be http already. Only a literal loopback address or `localhost`
+ * counts, never a name that resolves to one, so a remote server can't pass as loopback. The
+ * browser's way back is the Hub's own HUB_PUBLIC_URL, which this doesn't touch.
  */
 export const fetchable = (text: unknown): text is string => {
   if (typeof text !== "string") return false
@@ -432,8 +436,8 @@ const accountOfClaims = (claims: Record<string, unknown>) =>
 
 // ── The service ─────────────────────────────────────────────────────────────
 
-export class PluginOAuth extends Context.Service<
-  PluginOAuth,
+export class McpServerOAuth extends Context.Service<
+  McpServerOAuth,
   {
     /**
      * Begins connecting the Installation, off the relay's lock: discovers the server's
@@ -498,9 +502,9 @@ export class PluginOAuth extends Context.Service<
     /** Each connection refreshed or lost, from now on. */
     readonly changes: Effect.Effect<PubSub.Subscription<ConnectionChanged>, never, Scope.Scope>
   }
->()("@kndl/hub/PluginOAuth") {
+>()("@kndl/hub/McpServerOAuth") {
   static readonly layer = Layer.effect(
-    PluginOAuth,
+    McpServerOAuth,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
       const secrets = yield* Secrets
@@ -523,7 +527,7 @@ export class PluginOAuth extends Context.Service<
         return lock
       }
 
-      const rowOf = Effect.fn("PluginOAuth.rowOf")(function* (id: string) {
+      const rowOf = Effect.fn("McpServerOAuth.rowOf")(function* (id: string) {
         const rows = yield* sql<{
           readonly client: string | null
           readonly tokens: string | null
@@ -540,12 +544,12 @@ export class PluginOAuth extends Context.Service<
         return rows[0]
       })
 
-      const clientOf = Effect.fn("PluginOAuth.clientOf")(function* (id: string, stored: string) {
+      const clientOf = Effect.fn("McpServerOAuth.clientOf")(function* (id: string, stored: string) {
         const text = yield* secrets.decrypt(stored, clientContext(id))
         return Option.getOrUndefined(decodeClient(Redacted.value(text)))
       })
 
-      const tokensOfRow = Effect.fn("PluginOAuth.tokensOfRow")(function* (
+      const tokensOfRow = Effect.fn("McpServerOAuth.tokensOfRow")(function* (
         id: string,
         stored: string,
       ) {
@@ -563,7 +567,9 @@ export class PluginOAuth extends Context.Service<
        * paths; with the scopes its challenge asks for. None when it has none, as servers made to
        * an earlier MCP spec: their own origin is then their authorization server.
        */
-      const resourceMetadata = Effect.fn("PluginOAuth.resourceMetadata")(function* (url: string) {
+      const resourceMetadata = Effect.fn("McpServerOAuth.resourceMetadata")(function* (
+        url: string,
+      ) {
         const probe = yield* call(url, {
           method: "POST",
           headers: {
@@ -603,7 +609,7 @@ export class PluginOAuth extends Context.Service<
       })
 
       /** The authorization server's metadata, checked: it must be what the issuer says. */
-      const serverMetadata = Effect.fn("PluginOAuth.serverMetadata")(function* (issuer: string) {
+      const serverMetadata = Effect.fn("McpServerOAuth.serverMetadata")(function* (issuer: string) {
         for (const candidate of metadataUrls(new URL(issuer))) {
           const answer = yield* call(candidate, { headers: { accept: "application/json" } }).pipe(
             Effect.option,
@@ -624,7 +630,7 @@ export class PluginOAuth extends Context.Service<
       })
 
       /** Registers the Hub with the authorization server (RFC 7591), as a client of its own. */
-      const register = Effect.fn("PluginOAuth.register")(function* (
+      const register = Effect.fn("McpServerOAuth.register")(function* (
         issuer: string,
         metadata: Record<string, unknown>,
         endpoints: Pick<
@@ -688,7 +694,7 @@ export class PluginOAuth extends Context.Service<
        * The client entered (#218), authenticating as the server's metadata says it takes: with a
        * secret, by Basic, else in the form; without one, as a public client.
        */
-      const entered = Effect.fn("PluginOAuth.entered")(function* (
+      const entered = Effect.fn("McpServerOAuth.entered")(function* (
         issuer: string,
         metadata: Record<string, unknown>,
         endpoints: Pick<
@@ -725,7 +731,7 @@ export class PluginOAuth extends Context.Service<
         } satisfies Client
       })
 
-      const begin = Effect.fn("PluginOAuth.begin")(function* (input: BeginInput) {
+      const begin = Effect.fn("McpServerOAuth.begin")(function* (input: BeginInput) {
         if (!secrets.available) {
           return yield* refuse(
             "Connecting an Installation needs HUB_SECRETS_KEY in the Hub's configuration, to keep its tokens encrypted: run `bun run secrets-key`, put the key in packages/hub/.env.local, and restart the Hub.",
@@ -734,16 +740,16 @@ export class PluginOAuth extends Context.Service<
         if (!fetchable(input.url)) {
           return yield* refuse("The Hub connects only to an MCP server on https.")
         }
-        const pluginUrl = new URL(input.url)
+        const mcpServerUrl = new URL(input.url)
         const found = yield* resourceMetadata(input.url)
-        // The resource the token is for: the server's, which must hold the Plugin's URL (RFC 9728).
+        // The token's resource: the server's, which must hold the MCP server's URL (RFC 9728).
         const claimed = stringOf(found.metadata?.["resource"])
         let resource = input.url
         if (claimed !== undefined) {
           const holds =
             fetchable(claimed) &&
-            new URL(claimed).origin === pluginUrl.origin &&
-            (bare(pluginUrl.href) + "/").startsWith(bare(claimed) + "/")
+            new URL(claimed).origin === mcpServerUrl.origin &&
+            (bare(mcpServerUrl.href) + "/").startsWith(bare(claimed) + "/")
           if (!holds) {
             return yield* refuse(
               `The MCP server's metadata is for another resource (${claimed.slice(0, 200)}), not ${input.url}.`,
@@ -752,7 +758,7 @@ export class PluginOAuth extends Context.Service<
           resource = claimed
         }
         const servers = stringsOf(found.metadata?.["authorization_servers"]) ?? []
-        const issuer = found.metadata === undefined ? pluginUrl.origin : servers[0]
+        const issuer = found.metadata === undefined ? mcpServerUrl.origin : servers[0]
         if (issuer === undefined || !fetchable(issuer)) {
           return yield* refuse("The MCP server names no authorization server the Hub can reach.")
         }
@@ -859,7 +865,7 @@ export class PluginOAuth extends Context.Service<
         return { _tag: "Authorize", url: authorize.href } satisfies Begun
       })
 
-      const claim = Effect.fn("PluginOAuth.claim")(function* (state: string, by: ParticipantId) {
+      const claim = Effect.fn("McpServerOAuth.claim")(function* (state: string, by: ParticipantId) {
         const found = pending.get(state)
         pending.delete(state)
         const now = yield* Clock.currentTimeMillis
@@ -870,7 +876,7 @@ export class PluginOAuth extends Context.Service<
       })
 
       /** The account the access token is for, by the authorization server's userinfo, if any. */
-      const userinfo = Effect.fn("PluginOAuth.userinfo")(function* (
+      const userinfo = Effect.fn("McpServerOAuth.userinfo")(function* (
         client: Client,
         access: string,
       ) {
@@ -883,7 +889,7 @@ export class PluginOAuth extends Context.Service<
         return json === undefined ? undefined : accountOfClaims(json)
       })
 
-      const exchange = Effect.fn("PluginOAuth.exchange")(function* (
+      const exchange = Effect.fn("McpServerOAuth.exchange")(function* (
         connection: PendingConnection,
         response: { readonly code: string; readonly iss?: string },
       ) {
@@ -922,7 +928,7 @@ export class PluginOAuth extends Context.Service<
         return { tokens: read.tokens, ...(account !== undefined && { account }) } satisfies Granted
       })
 
-      const store = Effect.fn("PluginOAuth.store")(function* (
+      const store = Effect.fn("McpServerOAuth.store")(function* (
         connection: PendingConnection,
         granted: Granted,
         by: ParticipantId,
@@ -964,7 +970,7 @@ export class PluginOAuth extends Context.Service<
         return { reconnected: before?.connectedAt != null, clientSet }
       })
 
-      const disconnect = Effect.fn("PluginOAuth.disconnect")(function* (id: InstallationId) {
+      const disconnect = Effect.fn("McpServerOAuth.disconnect")(function* (id: InstallationId) {
         const before = yield* rowOf(id)
         if (before === undefined) return false
         yield* sql`
@@ -976,7 +982,7 @@ export class PluginOAuth extends Context.Service<
       })
 
       /** Loses the connection, unless its tokens changed since `generation`. */
-      const lose = Effect.fn("PluginOAuth.lose")(function* (
+      const lose = Effect.fn("McpServerOAuth.lose")(function* (
         id: InstallationId,
         generation: number,
       ) {
@@ -995,7 +1001,7 @@ export class PluginOAuth extends Context.Service<
       })
 
       /** Saves tokens over those of `generation`: whether they were still those. */
-      const replace = Effect.fn("PluginOAuth.replace")(function* (
+      const replace = Effect.fn("McpServerOAuth.replace")(function* (
         id: InstallationId,
         generation: number,
         tokens: Tokens,
@@ -1012,7 +1018,7 @@ export class PluginOAuth extends Context.Service<
       const notConnected: AccessToken = { _tag: "NotConnected" }
 
       /** The tokens now, refreshed if need be; under the Installation's lock. */
-      const refreshed = Effect.fn("PluginOAuth.refreshed")(function* (
+      const refreshed = Effect.fn("McpServerOAuth.refreshed")(function* (
         id: InstallationId,
       ): Effect.fn.Return<AccessToken, SecretsUnavailable | SqlError> {
         const row = yield* rowOf(id)
@@ -1062,7 +1068,9 @@ export class PluginOAuth extends Context.Service<
       })
 
       /** The tokens as they are, without refreshing again. */
-      const refreshedOnce = Effect.fn("PluginOAuth.refreshedOnce")(function* (id: InstallationId) {
+      const refreshedOnce = Effect.fn("McpServerOAuth.refreshedOnce")(function* (
+        id: InstallationId,
+      ) {
         const row = yield* rowOf(id)
         if (row?.tokens == null) return notConnected
         const tokens = yield* tokensOfRow(id, row.tokens)
@@ -1076,7 +1084,7 @@ export class PluginOAuth extends Context.Service<
         } satisfies AccessToken
       })
 
-      const accessToken = Effect.fn("PluginOAuth.accessToken")(function* (id: InstallationId) {
+      const accessToken = Effect.fn("McpServerOAuth.accessToken")(function* (id: InstallationId) {
         const row = yield* rowOf(id)
         if (row?.tokens == null) return notConnected
         const tokens = yield* tokensOfRow(id, row.tokens)
@@ -1091,7 +1099,7 @@ export class PluginOAuth extends Context.Service<
         return yield* lockOf(id).withPermits(1)(refreshed(id))
       })
 
-      const rejected = Effect.fn("PluginOAuth.rejected")(function* (
+      const rejected = Effect.fn("McpServerOAuth.rejected")(function* (
         id: InstallationId,
         generation: number,
       ) {
@@ -1120,7 +1128,7 @@ export class PluginOAuth extends Context.Service<
         worked.set(id, generation)
       }
 
-      const tokensOf = Effect.fn("PluginOAuth.tokensOf")(function* (ids: ReadonlyArray<string>) {
+      const tokensOf = Effect.fn("McpServerOAuth.tokensOf")(function* (ids: ReadonlyArray<string>) {
         if (ids.length === 0) return []
         const rows = yield* sql<{
           readonly installationId: string
@@ -1146,7 +1154,7 @@ export class PluginOAuth extends Context.Service<
         return values
       })
 
-      return PluginOAuth.of({
+      return McpServerOAuth.of({
         begin,
         claim,
         exchange,

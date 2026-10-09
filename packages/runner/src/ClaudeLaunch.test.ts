@@ -68,7 +68,7 @@ const servers = [
 ]
 
 test("a Session's Installations come as one more plugin, kndl, after the mod's (ADR 0020)", () => {
-  const { argv } = claudeLaunch({ ...options, plugins: servers })
+  const { argv } = claudeLaunch({ ...options, mcpServers: servers })
   expect(argv.slice(3, 9)).toEqual([
     "--plugin-dir",
     "/opt/kndl/mod/m1/hub-link",
@@ -77,7 +77,7 @@ test("a Session's Installations come as one more plugin, kndl, after the mod's (
     "--plugin-dir",
     "/opt/kndl/mod/m1/kndl",
   ])
-  expect(claudeLaunch({ ...options, plugins: [] }).argv).not.toContain("/opt/kndl/mod/m1/kndl")
+  expect(claudeLaunch({ ...options, mcpServers: [] }).argv).not.toContain("/opt/kndl/mod/m1/kndl")
 })
 
 test("each Installation's MCP server is the Gateway, reached with the Session token alone", () => {

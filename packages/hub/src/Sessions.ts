@@ -21,7 +21,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import type { Fragment } from "effect/sql/Statement"
-import { installationsDiffer, installationsOn } from "./Plugins.ts"
+import { installationsDiffer, installationsOn } from "./McpServers.ts"
 
 /** A Session to record, as CreateSession makes it. */
 export interface NewSession {
@@ -86,7 +86,7 @@ interface SessionRow {
   readonly keepAwakeByAvatarUrl: string | null
   readonly keepAwakeAt: number | null
   readonly openQuestion: string | null
-  readonly plugins: string | null
+  readonly mcpServers: string | null
 }
 
 /** Turning a Session's Keep awake on (ADR 0016): who did it, and when. */
@@ -184,21 +184,21 @@ const toSummary = (
         },
       }),
     ...openQuestionOf(row),
-    ...pluginsOf(row, installations),
+    ...mcpServersOf(row, installations),
   })
 
 /**
  * The Installations a row says the Session's Claude Code last started with (ADR 0020), none if it
- * never started since Plugins came; and whether its Repo's, `installations`, changed since. An
+ * never started since MCP servers came; and whether its Repo's, `installations`, changed since. An
  * Archived Session's don't: it starts again only once restored.
  */
-const pluginsOf = (row: SessionRow, installations: ReadonlyArray<SessionInstallation>) => {
+const mcpServersOf = (row: SessionRow, installations: ReadonlyArray<SessionInstallation>) => {
   const recorded =
-    row.plugins === null ? [] : Option.getOrElse(decodeInstallations(row.plugins), () => [])
+    row.mcpServers === null ? [] : Option.getOrElse(decodeInstallations(row.mcpServers), () => [])
   return {
-    ...(recorded.length > 0 && { plugins: recorded }),
+    ...(recorded.length > 0 && { mcpServers: recorded }),
     ...(row.state !== "Archived" &&
-      installationsDiffer(recorded, installations) && { pluginsChanged: true as const }),
+      installationsDiffer(recorded, installations) && { mcpServersChanged: true as const }),
   }
 }
 
@@ -321,7 +321,7 @@ export class Sessions extends Context.Service<
      * The Installations its Claude Code starts with (ADR 0020), recorded as the Hub sends its
      * StartSession: its summary shows them, and whether its Repo's changed since.
      */
-    readonly setPlugins: (
+    readonly setMcpServers: (
       id: SessionId,
       installations: ReadonlyArray<SessionInstallation>,
     ) => Effect.Effect<void, SqlError>
@@ -380,7 +380,7 @@ export class Sessions extends Context.Service<
           s.last_output AS lastOutput, s.model, s.effort, s.model_pending AS modelPending,
           s.keep_awake_by AS keepAwakeById, k.login AS keepAwakeByLogin,
           k.name AS keepAwakeByName, k.avatar_url AS keepAwakeByAvatarUrl,
-          s.keep_awake_at AS keepAwakeAt, s.open_question AS openQuestion, s.plugins
+          s.keep_awake_at AS keepAwakeAt, s.open_question AS openQuestion, s.mcp_servers AS mcpServers
         FROM sessions s JOIN participants p ON p.id = s.creator_id
           LEFT JOIN participants a ON a.id = s.archived_by
           LEFT JOIN participants k ON k.id = s.keep_awake_by
@@ -544,12 +544,12 @@ export class Sessions extends Context.Service<
         yield* sql`UPDATE sessions SET last_output = ${output} WHERE id = ${id}`
       })
 
-      const setPlugins = Effect.fn("Sessions.setPlugins")(function* (
+      const setMcpServers = Effect.fn("Sessions.setMcpServers")(function* (
         id: SessionId,
         installations: ReadonlyArray<SessionInstallation>,
       ) {
         yield* sql`
-          UPDATE sessions SET plugins = ${encodeInstallations(installations)} WHERE id = ${id}
+          UPDATE sessions SET mcp_servers = ${encodeInstallations(installations)} WHERE id = ${id}
         `
       })
 
@@ -661,7 +661,7 @@ export class Sessions extends Context.Service<
         setEnvironmentVersion,
         claudeSessionId,
         setLastOutput,
-        setPlugins,
+        setMcpServers,
       })
     }),
   )

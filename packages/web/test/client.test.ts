@@ -850,30 +850,35 @@ function named<T extends { readonly name: string }>(
   return one
 }
 
-/** A Plugin's auth when it declares no header secrets. */
+/** An MCP server's auth when it declares no header secrets. */
 const none = { _tag: "None" } as const
 
-describe("Plugins (ADR 0020)", () => {
+describe("MCP servers (ADR 0020)", () => {
   const repo = "kddige/kndl"
 
-  test("a Member creates, edits and deletes a Hub-only Plugin, with a hub: id", async () => {
+  test("a Member creates, edits and deletes a Hub-only MCP server, with a hub: id", async () => {
     const { client } = await online()
-    const created = await client.createPlugin("Acme docs", "https://mcp.acme.example/mcp", none)
-    const plugin = named(created.plugins, "Acme docs")
-    expect(plugin).toMatchObject({ id: "hub:acme-docs", createdBy: { login: "alice" } })
+    const created = await client.createMcpServer("Acme docs", "https://mcp.acme.example/mcp", none)
+    const mcpServer = named(created.mcpServers, "Acme docs")
+    expect(mcpServer).toMatchObject({ id: "hub:acme-docs", createdBy: { login: "alice" } })
     // Another of the same name gets a number; its id never clashes with an npm package's.
-    const again = await client.createPlugin("Acme docs", "https://mcp.acme.example/two", none)
-    expect(again.plugins.map((one) => one.id)).toContain("hub:acme-docs-2" as never)
-    await expect(client.createPlugin("Bad", "ftp://x.example", none)).rejects.toThrow("https://")
+    const again = await client.createMcpServer("Acme docs", "https://mcp.acme.example/two", none)
+    expect(again.mcpServers.map((one) => one.id)).toContain("hub:acme-docs-2" as never)
+    await expect(client.createMcpServer("Bad", "ftp://x.example", none)).rejects.toThrow("https://")
 
-    const edited = await client.editPlugin(plugin.id, "Acme", "https://mcp.acme.example/v2", none)
-    expect(edited.plugins.find((one) => one.id === plugin.id)).toMatchObject({
+    const edited = await client.editMcpServer(
+      mcpServer.id,
+      "Acme",
+      "https://mcp.acme.example/v2",
+      none,
+    )
+    expect(edited.mcpServers.find((one) => one.id === mcpServer.id)).toMatchObject({
       name: "Acme",
       url: "https://mcp.acme.example/v2",
     })
-    const left = await client.deletePlugin(plugin.id)
-    expect(left.plugins.map((one) => one.id)).not.toContain(plugin.id)
-    expect(client.getState().plugins?.plugins).toEqual(left.plugins)
+    const left = await client.deleteMcpServer(mcpServer.id)
+    expect(left.mcpServers.map((one) => one.id)).not.toContain(mcpServer.id)
+    expect(client.getState().mcpServers?.mcpServers).toEqual(left.mcpServers)
   })
 
   test("header secrets: values are write-only, and a URL on another server clears them", async () => {
@@ -885,26 +890,26 @@ describe("Plugins (ADR 0020)", () => {
       ],
     } as const
     await expect(
-      client.createPlugin("Acme", "https://mcp.acme.example/mcp", {
+      client.createMcpServer("Acme", "https://mcp.acme.example/mcp", {
         _tag: "Headers",
         headers: [{ ...auth.headers[0], template: "Bearer" }],
       }),
     ).rejects.toThrow("{value}")
-    const created = await client.createPlugin("Acme", "https://mcp.acme.example/mcp", auth)
-    const plugin = named(created.plugins, "Acme")
-    expect(plugin.auth).toEqual(auth)
+    const created = await client.createMcpServer("Acme", "https://mcp.acme.example/mcp", auth)
+    const mcpServer = named(created.mcpServers, "Acme")
+    expect(mcpServer.auth).toEqual(auth)
 
     const value = Redacted.make("made-up-acme-key")
     await expect(
       client.createInstallation(
-        plugin.id,
+        mcpServer.id,
         "Acme",
         [repo],
         [{ key: "nope", value: Redacted.make("made-up") }],
       ),
     ).rejects.toThrow("Acme has no header secret nope.")
     const installed = await client.createInstallation(
-      plugin.id,
+      mcpServer.id,
       "Acme",
       [repo],
       [{ key: "api_key", value }],
@@ -918,7 +923,7 @@ describe("Plugins (ADR 0020)", () => {
       },
     ])
     await eventually(() =>
-      expect(client.getState().pluginLogs[repo]?.[0]).toMatchObject({
+      expect(client.getState().mcpServerLogs[repo]?.[0]).toMatchObject({
         change: "ValuesSet",
         installationName: "Acme",
         secrets: ["API key"],
@@ -927,31 +932,41 @@ describe("Plugins (ADR 0020)", () => {
     expect(JSON.stringify(client.getState())).not.toContain("made-up-acme-key")
 
     // Another path on the same server keeps the values; another server clears them.
-    const moved = await client.editPlugin(plugin.id, "Acme", "https://mcp.acme.example/v2", auth)
+    const moved = await client.editMcpServer(
+      mcpServer.id,
+      "Acme",
+      "https://mcp.acme.example/v2",
+      auth,
+    )
     expect(named(moved.installations, "Acme").values).toHaveLength(1)
-    const elsewhere = await client.editPlugin(plugin.id, "Acme", "https://acme.example/mcp", auth)
+    const elsewhere = await client.editMcpServer(
+      mcpServer.id,
+      "Acme",
+      "https://acme.example/mcp",
+      auth,
+    )
     expect(named(elsewhere.installations, "Acme").values).toEqual([])
     await eventually(() =>
-      expect(client.getState().pluginLogs[repo]?.[0]).toMatchObject({
+      expect(client.getState().mcpServerLogs[repo]?.[0]).toMatchObject({
         change: "ValuesCleared",
         secrets: ["API key"],
       }),
     )
   })
 
-  test("a Plugin with Installations can't be deleted", async () => {
+  test("an MCP server with Installations can't be deleted", async () => {
     const { client } = await online()
-    const { plugins } = await client.getPlugins()
-    const docs = named(plugins, "Docs search")
-    await expect(client.deletePlugin(docs.id)).rejects.toThrow(
+    const { mcpServers } = await client.getMcpServers()
+    const docs = named(mcpServers, "Docs search")
+    await expect(client.deleteMcpServer(docs.id)).rejects.toThrow(
       "Docs search has an Installation: delete it first.",
     )
   })
 
   test("Installations: only on Repos the person has access to, without naming the others", async () => {
     const { client } = await online()
-    const { plugins, installations } = await client.getPlugins()
-    const linear = named(plugins, "Linear")
+    const { mcpServers, installations } = await client.getMcpServers()
+    const linear = named(mcpServers, "Linear")
     // A refusal for a Repo out of reach reads the same whether it exists or not.
     await expect(
       client.createInstallation(linear.id, "Linear", [repo, "kddige/secret"]),
@@ -959,13 +974,13 @@ describe("Plugins (ADR 0020)", () => {
     // One the person can see only partly: shown without the other Repos, and not changeable.
     const sentry = named(installations, "Sentry")
     expect(sentry).toMatchObject({ repos: [repo], otherRepos: 1 })
-    expect(JSON.stringify(client.getState().plugins)).not.toContain("kddige/secret")
+    expect(JSON.stringify(client.getState().mcpServers)).not.toContain("kddige/secret")
     await expect(client.deleteInstallation(sentry.id)).rejects.toThrow(
       "This Installation is on in Repos you have no access to",
     )
 
     const created = await client.createInstallation(linear.id, "Linear", [repo])
-    const installation = created.installations.find((one) => one.pluginId === linear.id)
+    const installation = created.installations.find((one) => one.mcpServerId === linear.id)
     if (installation === undefined) throw new Error("No Installation of Linear")
     expect(installation).toMatchObject({ name: "Linear", repos: [repo] })
     const moved = await client.editInstallation(installation.id, "Linear", ["kddige/dotfiles"])
@@ -976,10 +991,10 @@ describe("Plugins (ADR 0020)", () => {
     expect(gone.installations.map((one) => one.id)).not.toContain(installation.id)
   })
 
-  test("a second Installation of a Plugin on a Repo is refused, naming the existing one", async () => {
+  test("a second Installation of an MCP server on a Repo is refused, naming the existing one", async () => {
     const { client } = await online()
-    const { plugins } = await client.getPlugins()
-    const docs = named(plugins, "Docs search")
+    const { mcpServers } = await client.getMcpServers()
+    const docs = named(mcpServers, "Docs search")
     await expect(client.createInstallation(docs.id, "More docs", ["KDDIGE/kndl"])).rejects.toThrow(
       "KDDIGE/kndl already has Docs, an Installation of Docs search",
     )
@@ -987,33 +1002,33 @@ describe("Plugins (ADR 0020)", () => {
 
   test("each Repo's change log says who changed its Installations", async () => {
     const { client } = await online()
-    const { plugins } = await client.getPlugins()
-    const linear = named(plugins, "Linear")
-    const before = await client.getPluginLog(repo)
+    const { mcpServers } = await client.getMcpServers()
+    const linear = named(mcpServers, "Linear")
+    const before = await client.getMcpServerLog(repo)
     expect(before.map((entry) => entry.change)).toEqual(["Created", "Created"])
     await client.createInstallation(linear.id, "Linear", [repo])
     await eventually(() =>
-      expect(client.getState().pluginLogs[repo]?.[0]).toMatchObject({
+      expect(client.getState().mcpServerLogs[repo]?.[0]).toMatchObject({
         change: "Created",
         by: { login: "alice" },
-        pluginName: "Linear",
+        mcpServerName: "Linear",
         installationName: "Linear",
       }),
     )
-    await expect(client.getPluginLog("kddige/secret")).rejects.toThrow("no access")
+    await expect(client.getMcpServerLog("kddige/secret")).rejects.toThrow("no access")
   })
 
   test("a Session shows its Installations, and that a Restart applies a change", async () => {
     const { client } = await online()
     await eventually(() =>
-      expect(find(client, demoSessionId)?.plugins?.map((one) => one.server)).toEqual([
+      expect(find(client, demoSessionId)?.mcpServers?.map((one) => one.server)).toEqual([
         "docs",
         "sentry",
       ]),
     )
-    expect(find(client, demoSessionId)?.pluginsChanged).toBeUndefined()
-    const { plugins } = await client.getPlugins()
-    const linear = named(plugins, "Linear")
+    expect(find(client, demoSessionId)?.mcpServersChanged).toBeUndefined()
+    const { mcpServers } = await client.getMcpServers()
+    const linear = named(mcpServers, "Linear")
     // With its API key: one without keeps the Session from starting (#216).
     await client.createInstallation(
       linear.id,
@@ -1021,15 +1036,15 @@ describe("Plugins (ADR 0020)", () => {
       [repo],
       [{ key: "api_key", value: Redacted.make("made-up-linear-key") }],
     )
-    await eventually(() => expect(find(client, demoSessionId)?.pluginsChanged).toBe(true))
+    await eventually(() => expect(find(client, demoSessionId)?.mcpServersChanged).toBe(true))
 
     expect(client.restartSession(demo)).toBe(true)
     await eventually(() => {
       const session = find(client, demoSessionId)
       expect(session?.restarting).toBeUndefined()
       expect(session?.starting).toBeUndefined()
-      expect(session?.plugins?.map((one) => one.server)).toEqual(["docs", "sentry", "linear"])
+      expect(session?.mcpServers?.map((one) => one.server)).toEqual(["docs", "sentry", "linear"])
     })
-    expect(find(client, demoSessionId)?.pluginsChanged).toBeUndefined()
+    expect(find(client, demoSessionId)?.mcpServersChanged).toBeUndefined()
   })
 })

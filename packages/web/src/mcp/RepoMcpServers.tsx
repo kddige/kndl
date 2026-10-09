@@ -1,16 +1,16 @@
-// A Repo's Plugins, on its Repo page (ADR 0020): the Installations for it, whose MCP servers
+// A Repo's MCP servers, on its Repo page (ADR 0020): the Installations for it, whose MCP servers
 // Claude Code in its Sessions gets, each saying which of its header secrets need a value, and
 // where it comes from (#219): listed for this Repo, or global, on in every Repo but where a
-// Repo-scoped one of its Plugin takes its place or the Repo turned it off. Anyone with access to
-// the Repo turns a global one off for it, or back on. And its Plugin change log: who created,
-// edited, added or removed an Installation here, or set or cleared its header secret values (by
-// title, never the values), and when; a global one's changes show in every Repo's.
+// Repo-scoped one of its MCP server takes its place or the Repo turned it off. Anyone with access
+// to the Repo turns a global one off for it, or back on. And its MCP server change log: who
+// created, edited, added or removed an Installation here, or set or cleared its header secret
+// values (by title, never the values), and when; a global one's changes show in every Repo's.
 
 import {
   type Installation,
   type InstallationSource,
   installationsFor,
-  type PluginLogEntry,
+  type McpServerLogEntry,
   repoKey,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
@@ -51,44 +51,44 @@ const styles = stylex.create({
 })
 
 /** What a change log entry says happened, after who did it. */
-export function pluginChangeText(entry: PluginLogEntry): string {
-  const { installationName: installation, pluginName: plugin } = entry
+export function mcpServerChangeText(entry: McpServerLogEntry): string {
+  const { installationName: installation, mcpServerName: mcpServer } = entry
   const an = entry.global === true ? "a global Installation" : "an Installation"
   switch (entry.change) {
     case "Created":
-      return `created ${installation}, ${an} of ${plugin}`
+      return `created ${installation}, ${an} of ${mcpServer}`
     case "Added":
-      return `put ${installation}, an Installation of ${plugin}, on in this Repo`
+      return `put ${installation}, an Installation of ${mcpServer}, on in this Repo`
     case "Renamed":
-      return `renamed ${an} of ${plugin} to ${installation}`
+      return `renamed ${an} of ${mcpServer} to ${installation}`
     case "Removed":
-      return `took ${installation}, an Installation of ${plugin}, off this Repo`
+      return `took ${installation}, an Installation of ${mcpServer}, off this Repo`
     case "Deleted":
-      return `deleted ${installation}, ${an} of ${plugin}`
+      return `deleted ${installation}, ${an} of ${mcpServer}`
     case "MadeGlobal":
-      return `made ${installation}, an Installation of ${plugin}, global: on in every Repo`
+      return `made ${installation}, an Installation of ${mcpServer}, global: on in every Repo`
     case "MadeRepoScoped":
-      return `made ${installation}, an Installation of ${plugin}, on only in the Repos it lists`
+      return `made ${installation}, an Installation of ${mcpServer}, on only in the Repos it lists`
     case "TurnedOff":
-      return `turned ${installation}, a global Installation of ${plugin}, off for this Repo`
+      return `turned ${installation}, a global Installation of ${mcpServer}, off for this Repo`
     case "TurnedOn":
-      return `turned ${installation}, a global Installation of ${plugin}, back on for this Repo`
-    case "PluginEdited":
-      return `edited ${plugin}, the Plugin of ${installation}`
+      return `turned ${installation}, a global Installation of ${mcpServer}, back on for this Repo`
+    case "McpServerEdited":
+      return `edited ${mcpServer}, the MCP server of ${installation}`
     case "ValuesSet":
       return `set ${installation}'s ${valuesText(entry.secrets)}`
     case "ValuesCleared":
-      return `cleared ${installation}'s ${valuesText(entry.secrets)}, as ${plugin} changed`
-    case "PluginUpgraded":
-      return `upgraded ${plugin}, the Plugin of ${installation}, to ${entry.pluginVersion ?? "a new version"}`
+      return `cleared ${installation}'s ${valuesText(entry.secrets)}, as ${mcpServer} changed`
+    case "McpServerUpgraded":
+      return `upgraded ${mcpServer}, the MCP server of ${installation}, to ${entry.mcpServerVersion ?? "a new version"}`
     case "Connected":
-      return `connected ${installation} to its account at ${plugin}`
+      return `connected ${installation} to its account at ${mcpServer}`
     case "ClientSet":
-      return `entered the OAuth client ${installation} connects to ${plugin} with`
+      return `entered the OAuth client ${installation} connects to ${mcpServer} with`
     case "Reconnected":
-      return `reconnected ${installation} to its account at ${plugin}`
+      return `reconnected ${installation} to its account at ${mcpServer}`
     case "Disconnected":
-      return `disconnected ${installation} from its account at ${plugin}`
+      return `disconnected ${installation} from its account at ${mcpServer}`
   }
 }
 
@@ -106,19 +106,19 @@ const sourceBadges: Record<InstallationSource, { label: string; intent: BadgeInt
   Off: { label: "Off", intent: "neutral" },
 }
 
-/** The Installations for `repo`, and its Plugin change log, both kept fresh by the Hub. */
-export function RepoPlugins({ repo }: { repo: string }) {
+/** The Installations for `repo`, and its MCP server change log, both kept fresh by the Hub. */
+export function RepoMcpServers({ repo }: { repo: string }) {
   const hub = useHub()
   const online = useHubState((state) => state.connection.status === "online")
-  const plugins = useHubState((state) => state.plugins)
-  const log = useHubState((state) => state.pluginLogs[repoKey(repo)])
+  const mcpServers = useHubState((state) => state.mcpServers)
+  const log = useHubState((state) => state.mcpServerLogs[repoKey(repo)])
   const [busy, setBusy] = useState<string | null>(null)
 
   useEffect(() => {
     if (!online) return
     // Shown as empty for now: the Hub refuses only a Repo the person lost access to.
-    hub.getPlugins().catch(() => undefined)
-    hub.getPluginLog(repo).catch(() => undefined)
+    hub.getMcpServers().catch(() => undefined)
+    hub.getMcpServerLog(repo).catch(() => undefined)
   }, [hub, repo, online])
 
   /** Turns a global Installation off for this Repo, or back on (#219). */
@@ -141,12 +141,14 @@ export function RepoPlugins({ repo }: { repo: string }) {
     }
   }
 
-  const on = plugins === null ? null : installationsFor(plugins.installations, repo)
-  const pluginOf = (id: string) => plugins?.plugins.find((plugin) => plugin.id === id)
-  /** The Repo-scoped Installation of the Plugin that takes a global one's place here. */
+  const on = mcpServers === null ? null : installationsFor(mcpServers.installations, repo)
+  const mcpServerOf = (id: string) =>
+    mcpServers?.mcpServers.find((mcpServer) => mcpServer.id === id)
+  /** The Repo-scoped Installation of the MCP server that takes a global one's place here. */
   const overriddenBy = (installation: Installation) =>
     on?.find(
-      (other) => other.source === "Repo" && other.installation.pluginId === installation.pluginId,
+      (other) =>
+        other.source === "Repo" && other.installation.mcpServerId === installation.mcpServerId,
     )?.installation.name
   return (
     <>
@@ -156,15 +158,15 @@ export function RepoPlugins({ repo }: { repo: string }) {
         ) : on.length === 0 ? (
           <p {...stylex.props(styles.muted)}>
             No Installation is on for this Repo.{" "}
-            <Link to="/plugins" {...stylex.props(styles.link, focus.ring)}>
-              Install a Plugin
+            <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
+              Install a McpServer
             </Link>
           </p>
         ) : (
           <ul aria-label="Installations for this Repo" {...stylex.props(styles.list)}>
             {on.map(({ installation, source }, index) => {
-              const plugin = pluginOf(installation.pluginId)
-              const needed = plugin === undefined ? [] : valuesNeeded(plugin, installation)
+              const mcpServer = mcpServerOf(installation.mcpServerId)
+              const needed = mcpServer === undefined ? [] : valuesNeeded(mcpServer, installation)
               const badge = sourceBadges[source]
               const isOn = source === "Repo" || source === "Global"
               return (
@@ -177,7 +179,7 @@ export function RepoPlugins({ repo }: { repo: string }) {
                     {installation.name}
                   </span>
                   <span {...stylex.props(styles.muted, styles.grow)}>
-                    {plugin?.name ?? installation.pluginId}
+                    {mcpServer?.name ?? installation.mcpServerId}
                     {source === "Overridden" &&
                       `: ${overriddenBy(installation) ?? "a Repo-scoped Installation"} takes its place here`}
                     {source === "Off" && ", turned off for this Repo"}
@@ -203,11 +205,11 @@ export function RepoPlugins({ repo }: { repo: string }) {
       <div {...stylex.props(styles.part)}>
         <h3 {...stylex.props(styles.heading)}>Change log</h3>
         {log === undefined ? (
-          <Spinner label="Loading the Plugin change log" />
+          <Spinner label="Loading the MCP server change log" />
         ) : log.length === 0 ? (
           <p {...stylex.props(styles.muted)}>No Installation was ever on for this Repo.</p>
         ) : (
-          <ol aria-label="Plugin change log" {...stylex.props(styles.list)}>
+          <ol aria-label="MCP server change log" {...stylex.props(styles.list)}>
             {log.map((entry, index) => (
               <li
                 key={`${log.length - index}:${entry.installationId}:${entry.change}`}
@@ -216,7 +218,7 @@ export function RepoPlugins({ repo }: { repo: string }) {
                 <Avatar name={entry.by.name} src={entry.by.avatarUrl} size="sm" />
                 <span {...stylex.props(styles.grow)}>
                   <span {...stylex.props(styles.name)}>{entry.by.name}</span>{" "}
-                  {pluginChangeText(entry)}
+                  {mcpServerChangeText(entry)}
                 </span>
                 <span {...stylex.props(styles.muted)} title={new Date(entry.at).toLocaleString()}>
                   {timeAgo(entry.at)}

@@ -3,9 +3,9 @@
 // and plays a scripted Session: streamed text, tool calls, subagents in the foreground and the
 // background, which people can message and stop, a second Participant joining and queueing a
 // prompt, and a terminal to watch and type into; Environments, shared
-// variables and Test builds with a streaming log (environments.ts); Plugins and their
-// Installations, with each Repo's change log (plugins.ts); and, when asked to, a GitHub App short
-// of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
+// variables and Test builds with a streaming log (environments.ts); MCP servers and their
+// Installations, with each Repo's change log (mcpServers.ts); and, when asked to, a GitHub App
+// short of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
 //
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too.
@@ -51,7 +51,7 @@ import { Redacted, Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
 import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
 import { FakeEnvironments, sessionStartScript, testBuildScript } from "./environments.ts"
-import { FakePlugins, type PluginChangeCommand } from "./plugins.ts"
+import { FakeMcpServers, type McpServerChangeCommand } from "./mcpServers.ts"
 import {
   archiveRetentionMs,
   bob,
@@ -224,16 +224,16 @@ class FakeSocket implements HubSocket {
 const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 
 /** A summary's Installations: absent for none, as the Hub sends them. */
-const withPlugins = (plugins: ReadonlyArray<SessionInstallationWire>) =>
-  plugins.length > 0 ? { plugins } : {}
+const withMcpServers = (mcpServers: ReadonlyArray<SessionInstallationWire>) =>
+  mcpServers.length > 0 ? { mcpServers } : {}
 
 /** What a Session runs with of an Installation: a change to any of it takes a Restart. */
 const runsWith = (one: SessionInstallationWire) =>
   JSON.stringify([
     one.id,
     one.name,
-    one.pluginName,
-    one.pluginVersion ?? "",
+    one.mcpServerName,
+    one.mcpServerVersion ?? "",
     one.server,
     one.values ?? [],
   ])
@@ -262,7 +262,7 @@ export class FakeHub implements HubTransport {
   /** Pairing codes not yet redeemed or revoked; one may have expired. */
   readonly pairingCodes: Array<PendingPairingCodeWire> = []
   readonly environments = new FakeEnvironments()
-  readonly plugins = new FakePlugins()
+  readonly mcpServers = new FakeMcpServers()
   /**
    * What GitHub says of the signed-in person and each Repo (#104); any Repo not here is Allowed.
    * Seeded with one of each refusal for the demo.
@@ -317,7 +317,7 @@ export class FakeHub implements HubTransport {
           ...(listed.length > 0 && { agents: listed }),
           ...(seed.summary.state === "Active" &&
             seed.ports !== undefined && { openPorts: seed.ports }),
-          ...withPlugins(this.plugins.forSession(seed.summary.repo)),
+          ...withMcpServers(this.mcpServers.forSession(seed.summary.repo)),
         },
         log,
         queue: [],
@@ -564,7 +564,7 @@ export class FakeHub implements HubTransport {
    */
   installationFails(sessionId: string, name: string, status: number): void {
     const session = this.sessions.get(sessionId)
-    const installation = session?.summary.plugins?.find((one) => one.name === name)
+    const installation = session?.summary.mcpServers?.find((one) => one.name === name)
     if (!session || !installation) return
     const failure = {
       installationId: installation.id,
@@ -589,12 +589,12 @@ export class FakeHub implements HubTransport {
   readonly #allowed = (repo: string): boolean => this.#repoStatus(repo) === "Allowed"
 
   /**
-   * A change to the Plugins, as the Hub makes it (ADR 0020): everyone is sent them again, each
+   * A change to the MCP servers, as the Hub makes it (ADR 0020): everyone is sent them again, each
    * changed Repo's change log, and its Sessions whether their Installations changed since they
    * started, which a Restart applies. A change to a global Installation reaches every Repo (#219).
    */
-  #changePlugins(socket: FakeSocket, message: PluginChangeCommand): void {
-    const outcome = this.plugins.change(message, this.#you, this.#allowed, this.#owner)
+  #changeMcpServers(socket: FakeSocket, message: McpServerChangeCommand): void {
+    const outcome = this.mcpServers.change(message, this.#you, this.#allowed, this.#owner)
     if ("refused" in outcome) {
       this.#refuse(socket, message._tag, message.requestId, outcome.refused)
       return
@@ -607,11 +607,11 @@ export class FakeHub implements HubTransport {
         requestId: message.requestId,
         installationId: message.installationId,
         ...outcome.needsClient,
-        callbackUrl: `${globalThis.location?.origin ?? "http://localhost:5173"}/auth/plugins/callback`,
+        callbackUrl: `${globalThis.location?.origin ?? "http://localhost:5173"}/auth/mcp/callback`,
       })
       return
     }
-    const state = this.plugins.state(this.#allowed)
+    const state = this.mcpServers.state(this.#allowed)
     if (message._tag === "ConnectInstallation" && outcome.authorizing !== undefined) {
       // Where the browser goes to connect (#217): the fake's "consent" is already given.
       socket.deliver({
@@ -632,13 +632,13 @@ export class FakeHub implements HubTransport {
       }
     }
     for (const repo of repos.values()) {
-      this.#toAll({ _tag: "PluginLog", repo, entries: [...this.plugins.log(repo)] })
-      const now = this.plugins.forSession(repo)
+      this.#toAll({ _tag: "McpServerLog", repo, entries: [...this.mcpServers.log(repo)] })
+      const now = this.mcpServers.forSession(repo)
       for (const session of this.sessions.values()) {
         if (!sameRepo(session.summary.repo, repo) || session.summary.state === "Archived") continue
-        const { pluginsChanged: _, ...summary } = session.summary
-        const changed = differ(session.summary.plugins ?? [], now)
-        session.summary = changed ? { ...summary, pluginsChanged: true } : summary
+        const { mcpServersChanged: _, ...summary } = session.summary
+        const changed = differ(session.summary.mcpServers ?? [], now)
+        session.summary = changed ? { ...summary, mcpServersChanged: true } : summary
         this.#summaryChanged(session)
       }
     }
@@ -1099,34 +1099,34 @@ export class FakeHub implements HubTransport {
       case "RestartSession":
         this.#restart(socket, message.sessionId)
         break
-      case "GetPlugins":
-        socket.deliver({ ...this.plugins.state(this.#allowed), requestId: message.requestId })
+      case "GetMcpServers":
+        socket.deliver({ ...this.mcpServers.state(this.#allowed), requestId: message.requestId })
         break
-      case "GetPluginLog":
+      case "GetMcpServerLog":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
         socket.deliver({
-          _tag: "PluginLog",
+          _tag: "McpServerLog",
           requestId: message.requestId,
           repo: message.repo,
-          entries: [...this.plugins.log(message.repo)],
+          entries: [...this.mcpServers.log(message.repo)],
         })
         break
-      case "CreatePlugin":
-      case "EditPlugin":
-      case "DeletePlugin":
+      case "CreateMcpServer":
+      case "EditMcpServer":
+      case "DeleteMcpServer":
       case "CreateInstallation":
       case "EditInstallation":
       case "DeleteInstallation":
-      case "AddPluginPackage":
-      case "UpgradePlugin":
+      case "AddMcpServerPackage":
+      case "UpgradeMcpServer":
       case "TurnGlobalInstallation":
       case "ConnectInstallation":
       case "DisconnectInstallation":
-        this.#changePlugins(socket, message)
+        this.#changeMcpServers(socket, message)
         break
-      case "ReadPluginPackage":
-      case "CheckPluginUpgrade": {
-        const read = this.plugins.read(message, this.#you)
+      case "ReadMcpServerPackage":
+      case "CheckMcpServerUpgrade": {
+        const read = this.mcpServers.read(message, this.#you)
         if ("refused" in read) this.#refuse(socket, message._tag, message.requestId, read.refused)
         else socket.deliver(read)
         break
@@ -1546,13 +1546,13 @@ export class FakeHub implements HubTransport {
     // As on the Hub, what Claude Code printed before it last exited goes once it starts again.
     const {
       lastOutput: _lastOutput,
-      plugins: _plugins,
-      pluginsChanged: _pluginsChanged,
+      mcpServers: _mcpServers,
+      mcpServersChanged: _mcpServersChanged,
       ...rest
     } = session.summary
     session.summary = {
       ...rest,
-      ...withPlugins(this.plugins.forSession(session.summary.repo)),
+      ...withMcpServers(this.mcpServers.forSession(session.summary.repo)),
       starting: { since, ...(environment !== null && { environmentVersion: environment.version }) },
     }
     if (why) this.#setState(session, "Active", why.message, why.by)
@@ -1671,7 +1671,7 @@ export class FakeHub implements HubTransport {
       return
     }
     // And while an Installation on for its Repo can't work (#216).
-    const failing = this.plugins.failing(session.summary.repo)
+    const failing = this.mcpServers.failing(session.summary.repo)
     if (failing.length > 0) {
       this.#append(session, {
         _tag: "SessionStateChanged",

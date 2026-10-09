@@ -1,6 +1,6 @@
-// The Gateway (#221, ADR 0020), end to end: a real Hub, a fake Runner that relays Plugins, the web
-// UI over WebSockets, and a remote MCP server of the test's own, reached as a Session's Claude Code
-// reaches it, through `/gateway/<installation id>` with the Session's mod token.
+// The Gateway (#221, ADR 0020), end to end: a real Hub, a fake Runner that relays MCP servers, the
+// web UI over WebSockets, and a remote MCP server of the test's own, reached as a Session's Claude
+// Code reaches it, through `/gateway/<installation id>` with the Session's mod token.
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { ProtocolVersion } from "@kndl/protocol"
@@ -114,8 +114,8 @@ async function ask(web: Connection<Web>, command: Record<string, unknown> & { _t
 const serverUrl = (path = "/mcp", host = "127.0.0.1") => `http://${host}:${server.port}${path}`
 
 /**
- * Creates a Plugin at the server's `path`, with the header secrets of `auth`, and an Installation
- * of it on the Repos with the `values` given.
+ * Creates an MCP server at the server's `path`, with the header secrets of `auth`, and an
+ * Installation of it on the Repos with the `values` given.
  */
 async function install(
   web: Connection<Web>,
@@ -128,38 +128,41 @@ async function install(
   } = {},
 ) {
   const created = await ask(web, {
-    _tag: "CreatePlugin",
+    _tag: "CreateMcpServer",
     name,
     url: serverUrl(path),
     auth: options.auth ?? { _tag: "None" },
   })
-  if (created._tag !== "PluginsState") throw new Error(JSON.stringify(created))
-  const pluginId = created.plugins.find((plugin) => plugin.name === name)?.id
+  if (created._tag !== "McpServersState") throw new Error(JSON.stringify(created))
+  const mcpServerId = created.mcpServers.find((mcpServer) => mcpServer.name === name)?.id
   const answer = await ask(web, {
     _tag: "CreateInstallation",
-    pluginId,
+    mcpServerId,
     name,
     repos,
     ...(options.values !== undefined && { values: options.values }),
   })
-  if (answer._tag !== "PluginsState") throw new Error(JSON.stringify(answer))
-  const installation = answer.installations.find((found) => found.pluginId === pluginId)
+  if (answer._tag !== "McpServersState") throw new Error(JSON.stringify(answer))
+  const installation = answer.installations.find((found) => found.mcpServerId === mcpServerId)
   if (installation === undefined) throw new Error("No Installation created")
   return installation
 }
 
-/** A Hub with a secrets key, a Runner that relays Plugins, alice on the web, and `repo`'s Environment. */
+/**
+ * A Hub with a secrets key, a Runner that relays MCP servers, alice on the web, and `repo`'s
+ * Environment.
+ */
 async function gatewayScene() {
   const hub = await startHub({
     config: {
       devLogin: true,
       secretsKey: Option.some(Redacted.make(generateSecretsKey())),
       // The start's check of each MCP server gives up quickly (#216).
-      pluginCheckTimeoutMs: 300,
+      mcpServerCheckTimeoutMs: 300,
     },
   })
   const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
-    relaysPlugins: true,
+    relaysMcpServers: true,
   })
   const web = await openWeb(hub, "alice")
   await seedEnvironment(hub, repo, "dev:alice")
@@ -196,7 +199,7 @@ describe("the Gateway", () => {
     const { hub, runner, web } = await gatewayScene()
     const docs = await install(web, "Docs", [repo, other])
     const start = await startSession(web, runner)
-    expect(start.plugins).toEqual([{ installationId: docs.id, server: "docs" }])
+    expect(start.mcpServers).toEqual([{ installationId: docs.id, server: "docs" }])
 
     seen.length = 0
     const logs: Array<string> = []
@@ -314,9 +317,9 @@ describe("the Gateway", () => {
       repos: [],
       global: true,
     })
-    expect(global).toMatchObject({ _tag: "PluginsState", installations: [{ global: true }] })
+    expect(global).toMatchObject({ _tag: "McpServersState", installations: [{ global: true }] })
     const start = await startSession(web, runner)
-    expect(start.plugins).toEqual([{ installationId: docs.id, server: "docs" }])
+    expect(start.mcpServers).toEqual([{ installationId: docs.id, server: "docs" }])
     const token = bearer(start.modToken)
     const status = async () => {
       const response = await through(hub, docs.id, { headers: token })
@@ -334,10 +337,11 @@ describe("the Gateway", () => {
     await turn(true)
     expect(await status()).toBe(200)
 
-    // A Repo-scoped Installation of its Plugin on the Repo takes its place: stopped at once too.
+    // A Repo-scoped Installation of its MCP server on the Repo takes its place: stopped at once
+    // too.
     await ask(web, {
       _tag: "CreateInstallation",
-      pluginId: docs.pluginId,
+      mcpServerId: docs.mcpServerId,
       name: "Team docs",
       repos: [repo],
     })
@@ -361,10 +365,16 @@ describe("a Session's Installations", () => {
     await install(web, "Linear", [repo])
     const changed = await web.take(
       "SessionUpdated",
-      (m) => m.session.id === sessionId && m.session.pluginsChanged === true,
+      (m) => m.session.id === sessionId && m.session.mcpServersChanged === true,
     )
-    expect(changed.session.plugins).toEqual([
-      { id: docs.id, name: "Docs", pluginId: docs.pluginId, pluginName: "Docs", server: "docs" },
+    expect(changed.session.mcpServers).toEqual([
+      {
+        id: docs.id,
+        name: "Docs",
+        mcpServerId: docs.mcpServerId,
+        mcpServerName: "Docs",
+        server: "docs",
+      },
     ])
 
     // A Restart starts it with them.
@@ -372,15 +382,15 @@ describe("a Session's Installations", () => {
     await runner.take("StopSession")
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
     const again = await runner.take("StartSession")
-    expect(again.plugins?.map((relayed) => relayed.server)).toEqual(["docs", "linear"])
+    expect(again.mcpServers?.map((relayed) => relayed.server)).toEqual(["docs", "linear"])
     runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
     const restarted = await web.take(
       "SessionUpdated",
       (m) =>
         m.session.id === sessionId && !m.session.starting && m.session.restarting === undefined,
     )
-    expect(restarted.session.pluginsChanged).toBeUndefined()
-    expect(restarted.session.plugins?.map((installation) => installation.name)).toEqual([
+    expect(restarted.session.mcpServersChanged).toBeUndefined()
+    expect(restarted.session.mcpServers?.map((installation) => installation.name)).toEqual([
       "Docs",
       "Linear",
     ])
@@ -393,7 +403,7 @@ describe("a Session's Installations", () => {
     await seedEnvironment(hub, repo, "dev:alice")
     await install(web, "Docs", [repo])
     const start = await startSession(web, runner)
-    expect(start.plugins).toBeUndefined()
+    expect(start.mcpServers).toBeUndefined()
   })
 })
 
@@ -416,7 +426,7 @@ async function logsOf(run: () => Promise<void>) {
 /** What the server was sent last, of the headers. */
 const lastHeaders = () => seen.at(-1)?.headers ?? {}
 
-describe("a Plugin's header secrets", () => {
+describe("an MCP server's header secrets", () => {
   const apiKey = "lin_api_SECRET_7f3a9c"
   const team = "team_SECRET_51b2"
   const auth = {
@@ -431,16 +441,16 @@ describe("a Plugin's header secrets", () => {
     { key: "team", value: team },
   ]
 
-  /** Edits the Plugin of `installation` to `url` and `auth`, as alice. */
-  const editPlugin = (
+  /** Edits the MCP server of `installation` to `url` and `auth`, as alice. */
+  const editMcpServer = (
     web: Connection<Web>,
-    installation: { readonly pluginId: string },
+    installation: { readonly mcpServerId: string },
     url: string,
     edited: Record<string, unknown> = auth,
   ) =>
     ask(web, {
-      _tag: "EditPlugin",
-      pluginId: installation.pluginId,
+      _tag: "EditMcpServer",
+      mcpServerId: installation.mcpServerId,
       name: "Linear",
       url,
       auth: edited,
@@ -500,10 +510,10 @@ describe("a Plugin's header secrets", () => {
       repos: [repo],
       values: [{ key: "api_key", value: rotated }],
     })
-    expect(edited._tag).toBe("PluginsState")
+    expect(edited._tag).toBe("McpServersState")
     await web.take(
       "SessionUpdated",
-      (m) => m.session.id === sessionId && m.session.pluginsChanged === true,
+      (m) => m.session.id === sessionId && m.session.mcpServersChanged === true,
     )
     // The running Session goes on with the value it started with.
     seen.length = 0
@@ -511,8 +521,8 @@ describe("a Plugin's header secrets", () => {
     expect(lastHeaders().authorization).toBe(`Bearer ${apiKey}`)
 
     // The Repo's log says which was set, never the value.
-    const log = await ask(web, { _tag: "GetPluginLog", repo })
-    if (log._tag !== "PluginLog") throw new Error(log._tag)
+    const log = await ask(web, { _tag: "GetMcpServerLog", repo })
+    if (log._tag !== "McpServerLog") throw new Error(log._tag)
     expect(log.entries[0]).toMatchObject({ change: "ValuesSet", secrets: ["API key"] })
     expect(JSON.stringify(log)).not.toContain(rotated)
 
@@ -527,13 +537,13 @@ describe("a Plugin's header secrets", () => {
       (m) =>
         m.session.id === sessionId && !m.session.starting && m.session.restarting === undefined,
     )
-    expect(restarted.session.pluginsChanged).toBeUndefined()
+    expect(restarted.session.mcpServersChanged).toBeUndefined()
     await (await through(hub, linear.id, { headers: bearer(again.modToken) })).body?.cancel()
     expect(lastHeaders().authorization).toBe(`Bearer ${rotated}`)
     expect(web.texts.join("\n")).not.toContain(rotated)
   })
 
-  test("keep their values when the Plugin's path changes, and lose them to another origin", async () => {
+  test("keep their values when the MCP server's path changes, and lose them to another origin", async () => {
     const { hub, runner, web } = await gatewayScene()
     const linear = await install(web, "Linear", [repo], "/mcp", { auth, values })
     const start = await startSession(web, runner)
@@ -547,8 +557,8 @@ describe("a Plugin's header secrets", () => {
         auth.headers[1],
       ],
     }
-    const moved = await editPlugin(web, linear, serverUrl("/v2/mcp"), renamed)
-    if (moved._tag !== "PluginsState") throw new Error(JSON.stringify(moved))
+    const moved = await editMcpServer(web, linear, serverUrl("/v2/mcp"), renamed)
+    if (moved._tag !== "McpServersState") throw new Error(JSON.stringify(moved))
     expect(moved.installations[0]?.values.map((value) => value.key)).toEqual(["api_key", "team"])
     seen.length = 0
     await (await through(hub, linear.id, { headers: token })).body?.cancel()
@@ -556,15 +566,14 @@ describe("a Plugin's header secrets", () => {
     expect(lastHeaders().authorization).toBe(`Token ${apiKey}`)
 
     // Another host, though the same server: every value is cleared, the Session's too.
-    const elsewhere = await editPlugin(web, linear, serverUrl("/v2/mcp", "localhost"), renamed)
-    if (elsewhere._tag !== "PluginsState") throw new Error(JSON.stringify(elsewhere))
+    const elsewhere = await editMcpServer(web, linear, serverUrl("/v2/mcp", "localhost"), renamed)
+    if (elsewhere._tag !== "McpServersState") throw new Error(JSON.stringify(elsewhere))
     expect(elsewhere.installations[0]?.values).toEqual([])
     seen.length = 0
     const refused = await through(hub, linear.id, { headers: token })
     expect(refused.status).toBe(409)
     expect(await refused.json()).toEqual({
-      error:
-        "Linear needs a value for Key: enter it on the Plugins page, then Restart the Session.",
+      error: "Linear needs a value for Key: enter it on the MCP page, then Restart the Session.",
     })
     expect(seen).toEqual([])
     // The Session says so, once, and runs on (#216).
@@ -582,11 +591,11 @@ describe("a Plugin's header secrets", () => {
         },
       },
     ])
-    const log = await ask(web, { _tag: "GetPluginLog", repo })
-    if (log._tag !== "PluginLog") throw new Error(log._tag)
+    const log = await ask(web, { _tag: "GetMcpServerLog", repo })
+    if (log._tag !== "McpServerLog") throw new Error(log._tag)
     expect(log.entries.slice(0, 2).map((entry) => [entry.change, entry.secrets])).toEqual([
       ["ValuesCleared", ["Key", "Team"]],
-      ["PluginEdited", undefined],
+      ["McpServerEdited", undefined],
     ])
   })
 
@@ -597,11 +606,11 @@ describe("a Plugin's header secrets", () => {
       _tag: "Headers",
       headers: [{ ...auth.headers[0], header: "X-Api-Key" }, auth.headers[1]],
     }
-    const edited = await editPlugin(web, linear, serverUrl(), reheadered)
-    if (edited._tag !== "PluginsState") throw new Error(JSON.stringify(edited))
+    const edited = await editMcpServer(web, linear, serverUrl(), reheadered)
+    if (edited._tag !== "McpServersState") throw new Error(JSON.stringify(edited))
     expect(edited.installations[0]?.values.map((value) => value.key)).toEqual(["team"])
-    const dropped = await editPlugin(web, linear, serverUrl(), { _tag: "None" })
-    if (dropped._tag !== "PluginsState") throw new Error(JSON.stringify(dropped))
+    const dropped = await editMcpServer(web, linear, serverUrl(), { _tag: "None" })
+    if (dropped._tag !== "McpServersState") throw new Error(JSON.stringify(dropped))
     expect(dropped.installations[0]?.values).toEqual([])
   })
 
@@ -622,7 +631,7 @@ describe("a Plugin's header secrets", () => {
     })
     expect(
       await ask(web, {
-        _tag: "CreatePlugin",
+        _tag: "CreateMcpServer",
         name: "Bad",
         url: serverUrl(),
         auth: { _tag: "Headers", headers: [{ ...auth.headers[0], template: "Bearer" }] },
@@ -657,11 +666,11 @@ async function createSession(web: Connection<Web>) {
 }
 
 /** The Hub's configuration, checked, with the start's wait on each server (#216). */
-const configWith = (pluginCheckTimeoutMs?: number) =>
+const configWith = (mcpServerCheckTimeoutMs?: number) =>
   Effect.runPromiseExit(
     HubConfig.make({
       ...baseConfig,
-      ...(pluginCheckTimeoutMs === undefined ? {} : { pluginCheckTimeoutMs }),
+      ...(mcpServerCheckTimeoutMs === undefined ? {} : { mcpServerCheckTimeoutMs }),
     }),
   )
 
@@ -677,7 +686,7 @@ describe("a Session's start (#216)", () => {
     ],
   }
   const values = [{ key: "api_key", value: apiKey }]
-  const wayOut = `Fix the Installation on the Plugins page, or take ${repo} off it, then wake the Session.`
+  const wayOut = `Fix the Installation on the MCP page, or take ${repo} off it, then wake the Session.`
 
   test("waits for an Installation's missing value, says which and why, then runs what was queued", async () => {
     const { hub, runner, web } = await gatewayScene()
@@ -721,7 +730,10 @@ describe("a Session's start (#216)", () => {
     })
     web.send({ _tag: "WakeSession", sessionId })
     const start = await runner.take("StartSession")
-    expect(start.plugins?.map((relayed) => relayed.server).toSorted()).toEqual(["docs", "linear"])
+    expect(start.mcpServers?.map((relayed) => relayed.server).toSorted()).toEqual([
+      "docs",
+      "linear",
+    ])
     runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
     const mod = (path: string, body?: unknown) =>
       fetch(`${hub.url}${path}`, {
@@ -773,7 +785,7 @@ describe("a Session's start (#216)", () => {
     // Taken off the Repo, the Session starts without it.
     await ask(web, { _tag: "DeleteInstallation", installationId: linear.id })
     web.send({ _tag: "WakeSession", sessionId })
-    expect((await runner.take("StartSession")).plugins).toBeUndefined()
+    expect((await runner.take("StartSession")).mcpServers).toBeUndefined()
   })
 
   test("goes ahead past a server that doesn't answer, and says so", async () => {
@@ -797,11 +809,11 @@ describe("a Session's start (#216)", () => {
     ])
   })
 
-  test("waits on each server HUB_PLUGIN_CHECK_TIMEOUT_MS, above 0", async () => {
+  test("waits on each server HUB_MCP_SERVER_CHECK_TIMEOUT_MS, above 0", async () => {
     const byDefault = await configWith()
-    expect(Exit.isSuccess(byDefault) && Duration.toMillis(byDefault.value.pluginCheckTimeout)).toBe(
-      5_000,
-    )
+    expect(
+      Exit.isSuccess(byDefault) && Duration.toMillis(byDefault.value.mcpServerCheckTimeout),
+    ).toBe(5_000)
     expect(Exit.isFailure(await configWith(0))).toBe(true)
   })
 
@@ -809,7 +821,7 @@ describe("a Session's start (#216)", () => {
     const { runner, web } = await gatewayScene()
     seen.length = 0
     await createSession(web)
-    expect((await runner.take("StartSession")).plugins).toBeUndefined()
+    expect((await runner.take("StartSession")).mcpServers).toBeUndefined()
     expect(seen).toEqual([])
   })
 })

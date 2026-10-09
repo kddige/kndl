@@ -255,11 +255,13 @@ export function ArchiveIcon(props: IconProps) {
   )
 }
 
-/** A Plugin (ADR 0020): a puzzle piece, as PlugIcon is a port's. */
-export function PluginIcon(props: IconProps) {
+/** MCP (ADR 0022): a server, two racked units, as PlugIcon is a port's. */
+export function McpIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M3 5.5h2.25a1.5 1.5 0 1 1 3 0H10.5v2.25a1.5 1.5 0 1 1 0 3V13H3V5.5Z" />
+      <rect x="2.5" y="2.75" width="11" height="4.25" rx="1" />
+      <rect x="2.5" y="9" width="11" height="4.25" rx="1" />
+      <path d="M5 4.875h.01M5 11.125h.01M7.5 4.875h3.5M7.5 11.125h3.5" />
     </Icon>
   )
 }

@@ -41,6 +41,46 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
+ * Takes the database back to before migration 0032, Plugins named MCP servers (#232): the migrator
+ * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ */
+const beforeMcpServers = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`
+    UPDATE sessions SET mcp_servers = REPLACE(REPLACE(REPLACE(mcp_servers,
+      '"mcpServerId":', '"pluginId":'),
+      '"mcpServerName":', '"pluginName":'),
+      '"mcpServerVersion":', '"pluginVersion":')
+    WHERE mcp_servers IS NOT NULL
+  `
+  yield* sql`UPDATE mcp_server_log SET change = 'PluginEdited' WHERE change = 'McpServerEdited'`
+  yield* sql`UPDATE mcp_server_log SET change = 'PluginUpgraded' WHERE change = 'McpServerUpgraded'`
+  yield* sql`DROP INDEX mcp_server_log_repo`
+  yield* sql`DROP INDEX installations_one_global_per_mcp_server`
+  yield* sql`DROP INDEX installation_repos_one_per_mcp_server`
+  yield* sql`DROP INDEX installations_mcp_server_id`
+  yield* sql`ALTER TABLE sessions RENAME COLUMN mcp_servers TO plugins`
+  yield* sql`ALTER TABLE mcp_server_log RENAME COLUMN mcp_server_version TO plugin_version`
+  yield* sql`ALTER TABLE mcp_server_log RENAME COLUMN mcp_server_name TO plugin_name`
+  yield* sql`ALTER TABLE mcp_server_log RENAME COLUMN mcp_server_id TO plugin_id`
+  yield* sql`ALTER TABLE mcp_server_log RENAME TO plugin_log`
+  yield* sql`ALTER TABLE installation_repos RENAME COLUMN mcp_server_id TO plugin_id`
+  yield* sql`ALTER TABLE installations RENAME COLUMN mcp_server_id TO plugin_id`
+  yield* sql`ALTER TABLE mcp_servers RENAME TO plugins`
+  yield* sql`CREATE INDEX installations_plugin_id ON installations (plugin_id)`
+  yield* sql`
+    CREATE UNIQUE INDEX installation_repos_one_per_plugin
+    ON installation_repos (plugin_id, repo COLLATE NOCASE)
+  `
+  yield* sql`
+    CREATE UNIQUE INDEX installations_one_global_per_plugin
+    ON installations (plugin_id) WHERE global = 1
+  `
+  yield* sql`CREATE INDEX plugin_log_repo ON plugin_log (repo COLLATE NOCASE, at)`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'mcp_servers'`
+})
+
+/**
  * Takes the database back to before migration 0029, OAuth Installations: the migrator runs only
  * the migrations after the last it ran, so a test of an earlier one undoes this first. Dropping
  * the table undoes 0030, its client entered by hand (#218), too, and dropping the columns undoes
@@ -48,6 +88,7 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
  */
 const beforePluginOAuth = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeMcpServers
   yield* sql`ALTER TABLE plugins DROP COLUMN icon`
   yield* sql`ALTER TABLE plugins DROP COLUMN icon_type`
   yield* sql`ALTER TABLE plugins DROP COLUMN icon_hash`
@@ -207,6 +248,103 @@ const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
 
+describe("migration 0032, Plugins named MCP servers", () => {
+  test("keeps every Plugin, Installation, log entry and Session's Installations, by their new names", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    const started = JSON.stringify([
+      {
+        id: "i-1",
+        name: 'Say "pluginId": hi',
+        pluginId: "hub:docs",
+        pluginName: "Docs",
+        pluginVersion: "1.0.0",
+        server: "docs",
+      },
+    ])
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeMcpServers
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('dev:alice', 'alice', 'alice', 1, 1)`
+        yield* sql`INSERT INTO plugins (id, name, url, created_by, created_at)
+          VALUES ('hub:docs', 'Docs', 'https://mcp.example.com/mcp', 'dev:alice', 1)`
+        yield* sql`INSERT INTO installations (id, plugin_id, name, global, created_by, created_at)
+          VALUES ('i-1', 'hub:docs', 'Docs', 1, 'dev:alice', 1)`
+        yield* sql`INSERT INTO installation_repos (installation_id, plugin_id, repo)
+          VALUES ('i-1', 'hub:docs', 'acme/app')`
+        yield* sql`INSERT INTO plugin_log (repo, at, by, change, plugin_id, plugin_name,
+            plugin_version, installation_id, installation_name)
+          VALUES ('acme/app', 2, 'dev:alice', 'PluginEdited', 'hub:docs', 'Docs', NULL, 'i-1', 'Docs'),
+            ('acme/app', 3, 'dev:alice', 'PluginUpgraded', 'hub:docs', 'Docs', '1.0.0', 'i-1', 'Docs'),
+            ('acme/app', 4, 'dev:alice', 'Renamed', 'hub:docs', 'Docs', NULL, 'i-1', 'Docs')`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
+            creator_id, created_at, plugins
+          ) VALUES
+            ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'dev:alice', 1, ${started}),
+            ('s-2', 'o/r', 'main', 'claude/s-2', 'Asleep', 'r-1', 'a@example.com', 'dev:alice', 1, NULL)
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        return {
+          mcpServers: yield* sql`SELECT id FROM mcp_servers`,
+          installations: yield* sql`SELECT id, mcp_server_id AS mcpServerId FROM installations`,
+          repos: yield* sql`SELECT mcp_server_id AS mcpServerId, repo FROM installation_repos`,
+          log: yield* sql`SELECT change, mcp_server_id AS mcpServerId, mcp_server_name AS mcpServerName,
+            mcp_server_version AS mcpServerVersion FROM mcp_server_log ORDER BY at`,
+          sessions: yield* sql`SELECT id, mcp_servers AS mcpServers FROM sessions ORDER BY id`,
+          indexes: yield* sql`SELECT name FROM sqlite_master
+            WHERE type = 'index' AND sql IS NOT NULL AND (name LIKE '%plugin%' OR name LIKE '%mcp_server%') ORDER BY name`,
+        }
+      }),
+    )
+    const entry = { mcpServerId: "hub:docs", mcpServerName: "Docs" }
+    expect(after).toEqual({
+      mcpServers: [{ id: "hub:docs" }],
+      installations: [{ id: "i-1", mcpServerId: "hub:docs" }],
+      repos: [{ mcpServerId: "hub:docs", repo: "acme/app" }],
+      log: [
+        { change: "McpServerEdited", ...entry, mcpServerVersion: null },
+        { change: "McpServerUpgraded", ...entry, mcpServerVersion: "1.0.0" },
+        { change: "Renamed", ...entry, mcpServerVersion: null },
+      ],
+      sessions: [
+        {
+          id: "s-1",
+          mcpServers: JSON.stringify([
+            {
+              id: "i-1",
+              name: 'Say "pluginId": hi',
+              mcpServerId: "hub:docs",
+              mcpServerName: "Docs",
+              mcpServerVersion: "1.0.0",
+              server: "docs",
+            },
+          ]),
+        },
+        { id: "s-2", mcpServers: null },
+      ],
+      indexes: [
+        { name: "installation_repos_one_per_mcp_server" },
+        { name: "installations_mcp_server_id" },
+        { name: "installations_one_global_per_mcp_server" },
+        { name: "mcp_server_log_repo" },
+      ],
+    })
+  })
+})
+
 describe("migration 0031, Plugin icons", () => {
   test("leaves the Plugins there were without an icon", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
@@ -216,6 +354,7 @@ describe("migration 0031, Plugin icons", () => {
       file,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
+        yield* beforeMcpServers
         yield* sql`ALTER TABLE plugins DROP COLUMN icon`
         yield* sql`ALTER TABLE plugins DROP COLUMN icon_type`
         yield* sql`ALTER TABLE plugins DROP COLUMN icon_hash`
@@ -230,7 +369,7 @@ describe("migration 0031, Plugin icons", () => {
       file,
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
-        return yield* sql`SELECT id, icon, icon_type, icon_hash FROM plugins`
+        return yield* sql`SELECT id, icon, icon_type, icon_hash FROM mcp_servers`
       }),
     )
     expect(after).toEqual([{ id: "hub:docs", icon: null, icon_type: null, icon_hash: null }])
@@ -263,14 +402,14 @@ describe("migration 0025, header secrets", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         return {
-          plugins: yield* sql`SELECT id, auth FROM plugins`,
-          log: yield* sql`SELECT id, secrets FROM plugin_log`,
+          mcpServers: yield* sql`SELECT id, auth FROM mcp_servers`,
+          log: yield* sql`SELECT id, secrets FROM mcp_server_log`,
           values: yield* sql`SELECT * FROM installation_values`,
         }
       }),
     )
     expect(after).toEqual({
-      plugins: [{ id: "hub:docs", auth: '{"_tag":"None"}' }],
+      mcpServers: [{ id: "hub:docs", auth: '{"_tag":"None"}' }],
       log: [{ id: 1, secrets: null }],
       values: [],
     })
@@ -301,14 +440,14 @@ describe("migration 0026, Plugin packages", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         return {
-          plugins: yield* sql`SELECT id, description, package FROM plugins`,
-          log: yield* sql`SELECT change, plugin_version AS pluginVersion FROM plugin_log`,
+          mcpServers: yield* sql`SELECT id, description, package FROM mcp_servers`,
+          log: yield* sql`SELECT change, mcp_server_version AS mcpServerVersion FROM mcp_server_log`,
         }
       }),
     )
     expect(after).toEqual({
-      plugins: [{ id: "hub:docs", description: null, package: null }],
-      log: [{ change: "PluginEdited", pluginVersion: null }],
+      mcpServers: [{ id: "hub:docs", description: null, package: null }],
+      log: [{ change: "McpServerEdited", mcpServerVersion: null }],
     })
   })
 })

@@ -41,7 +41,7 @@ const sharedSecret = "ghp_SHARED_SECRET_77b0"
 const signingSecret = "sig_SIGNING_SECRET_31d8"
 // A fake: ClaudeCheck.layerTest takes it without asking Anthropic.
 const claudeSecret = "sk-ant-oat01-FAKE_CLAUDE_TOKEN_0000c1a7"
-const pluginSecret = "lin_PLUGIN_SECRET_2c9d"
+const mcpServerSecret = "lin_MCP_SERVER_SECRET_2c9d"
 const oauthSecret = "oat_OAUTH_TOKEN_SECRET_8e3a"
 const secrets = [
   oauthSecret,
@@ -51,7 +51,7 @@ const secrets = [
   signingSecret,
   "ghp_rotated_5e6f",
   claudeSecret,
-  pluginSecret,
+  mcpServerSecret,
 ]
 const lostKey = generateSecretsKey()
 const newKey = generateSecretsKey()
@@ -85,10 +85,14 @@ const variables = (values: { readonly build?: string; readonly runtime?: string 
   { _tag: "Link", name: "REGISTRY", sharedVariable: "REGISTRY", availableAtBuild: true },
 ]
 
-/** The scene on a Hub over `database`: a Runner relaying Plugins online, and alice on the web. */
+/**
+ * The scene on a Hub over `database`: a Runner relaying MCP servers online, and alice on the web.
+ */
 async function scene(hub: TestHub) {
   const issued = await issueRunnerToken(hub)
-  const runner = await openRunner(hub, issued.token, [], undefined, true, { relaysPlugins: true })
+  const runner = await openRunner(hub, issued.token, [], undefined, true, {
+    relaysMcpServers: true,
+  })
   const web = await openWeb(hub, "alice")
   const request = async (message: { readonly _tag: string } & Record<string, unknown>) => {
     const requestId = nextRequest()
@@ -129,7 +133,7 @@ async function seededDatabase() {
   expect((await env.apply(draft, null))._tag).toBe("EnvironmentState")
   // An Installation with a header secret value, which the Session starts with.
   const created = await env.request({
-    _tag: "CreatePlugin",
+    _tag: "CreateMcpServer",
     name: "Linear",
     // Nothing listens there: a Session's start goes ahead past it at once (#216).
     url: "http://127.0.0.1:1/mcp",
@@ -140,16 +144,16 @@ async function seededDatabase() {
       ],
     },
   })
-  if (created._tag !== "PluginsState") throw new Error(JSON.stringify(created))
+  if (created._tag !== "McpServersState") throw new Error(JSON.stringify(created))
   expect(
     await env.request({
       _tag: "CreateInstallation",
-      pluginId: created.plugins[0]?.id,
+      mcpServerId: created.mcpServers[0]?.id,
       name: "Team Linear",
       repos: [repo],
-      values: [{ key: "token", value: pluginSecret }],
+      values: [{ key: "token", value: mcpServerSecret }],
     }),
-  ).toMatchObject({ _tag: "PluginsState" })
+  ).toMatchObject({ _tag: "McpServersState" })
   // A Session, and a value replaced while it runs: retired, kept to redact what it prints.
   const requestId = nextRequest()
   env.web.send({ _tag: "CreateSession", requestId, repo, baseBranch: "main" })
@@ -276,11 +280,11 @@ describe("secrets-reset", () => {
     )
     expect(plan).toContain("It also drops 1 header secret value that Sessions started with.")
     expect(done).toContain("Cleared the header secret values of 1 Installation")
-    expect(done).toContain("and each Installation's on the Plugins page")
+    expect(done).toContain("and each Installation's on the MCP page")
     expect(plan).toContain(
       "It disconnects 1 OAuth Installation, dropping its tokens and its client, the one the Hub registered or the one entered by hand: Team Linear.",
     )
-    expect(done).toContain("Connect each OAuth Installation again on the Plugins page;")
+    expect(done).toContain("Connect each OAuth Installation again on the MCP page;")
     for (const secret of secrets) expect(plan + done).not.toContain(secret)
     // Run again, there is nothing left to reset.
     expect((await reset(file, true)).outcome._tag).toBe("NothingToReset")
@@ -342,9 +346,9 @@ describe("secrets-reset", () => {
     )
     expect(left).toEqual([{ builds: 0, retired: 0 }])
     // Each Installation stays, and needs a value again.
-    const plugins = await env.request({ _tag: "GetPlugins" })
-    if (plugins._tag !== "PluginsState") throw new Error(plugins._tag)
-    expect(plugins.installations).toMatchObject([{ name: "Team Linear", values: [] }])
+    const mcpServers = await env.request({ _tag: "GetMcpServers" })
+    if (mcpServers._tag !== "McpServersState") throw new Error(mcpServers._tag)
+    expect(mcpServers.installations).toMatchObject([{ name: "Team Linear", values: [] }])
   })
 
   test("Sessions don't start, nor Test builds, until every value is entered again", async () => {
@@ -430,17 +434,17 @@ describe("secrets-reset", () => {
       state: "Asleep",
       installationsFailed: [{ installation: "Team Linear", reason: "ValueNeeded" }],
     })
-    const plugins = await env.request({ _tag: "GetPlugins" })
-    if (plugins._tag !== "PluginsState") throw new Error(plugins._tag)
+    const mcpServers = await env.request({ _tag: "GetMcpServers" })
+    if (mcpServers._tag !== "McpServersState") throw new Error(mcpServers._tag)
     expect(
       await env.request({
         _tag: "EditInstallation",
-        installationId: plugins.installations[0]?.id,
+        installationId: mcpServers.installations[0]?.id,
         name: "Team Linear",
         repos: [repo],
         values: [{ key: "token", value: "lin_NEW_0001" }],
       }),
-    ).toMatchObject({ _tag: "PluginsState" })
+    ).toMatchObject({ _tag: "McpServersState" })
 
     // Every value is back: the Session wakes for its prompt, and new ones start.
     web.send({ _tag: "WakeSession", sessionId })

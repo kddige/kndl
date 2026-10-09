@@ -1,8 +1,8 @@
-// The Plugins page (ADR 0020) against the fake Hub: the Plugins and their Installations, adding
+// The MCP page (ADR 0020) against the fake Hub: the MCP servers and their Installations, adding
 // and editing them, and the Hub's refusals shown where they were made.
 
 import { afterEach, expect, test } from "bun:test"
-import { hubPluginId, RequestId } from "@kndl/protocol"
+import { hubMcpServerId, RequestId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
 import { button, render, settle, step } from "./render.ts"
 
@@ -35,9 +35,9 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
 }
 
 const dialog = () => document.querySelector('[role="dialog"]')
-const plugin = (name: string) => document.querySelector(`[aria-label="Plugin ${name}"]`)
-const pluginsLink = () =>
-  [...document.querySelectorAll("a")].find((a) => a.textContent?.trim() === "Plugins")
+const mcpServer = (name: string) => document.querySelector(`[aria-label="MCP server ${name}"]`)
+const mcpServersLink = () =>
+  [...document.querySelectorAll("a")].find((a) => a.textContent?.trim() === "MCP")
 
 /** Types `value` into `field`, as a browser would, so React sees it. */
 async function type(field: HTMLInputElement | HTMLTextAreaElement, value: string) {
@@ -48,10 +48,10 @@ async function type(field: HTMLInputElement | HTMLTextAreaElement, value: string
   })
 }
 
-async function openPlugins(owner = true) {
+async function openMcpServers(owner = true) {
   const hub = new FakeHub({ stepMs: 2, autoplay: false, owner })
   const client = new HubClient(hub, { retryDelay: () => 1 })
-  const router = createAppRouter(createMemoryHistory({ initialEntries: ["/plugins"] }))
+  const router = createAppRouter(createMemoryHistory({ initialEntries: ["/mcp"] }))
   const view = await render(
     <HubProvider client={client}>
       <RouterProvider router={router} />
@@ -62,46 +62,46 @@ async function openPlugins(owner = true) {
     client.stop()
     hub.dispose()
   }
-  await eventually(() => expect(document.querySelector("h1")?.textContent).toBe("Plugins"))
-  await eventually(() => expect(plugin("Docs search")).not.toBeNull())
+  await eventually(() => expect(document.querySelector("h1")?.textContent).toBe("MCP"))
+  await eventually(() => expect(mcpServer("Docs search")).not.toBeNull())
   return { hub, client }
 }
 
-test("shows each Plugin's letter avatar before its name when the Hub has found it no icon", async () => {
-  await openPlugins()
+test("shows each MCP server's letter avatar before its name when the Hub has found it no icon", async () => {
+  await openMcpServers()
   for (const [name, letter] of [
     ["Docs search", "D"],
     ["Linear", "L"],
     ["Sentry", "S"],
   ] as const) {
-    const nameLine = plugin(name)?.querySelector("span[aria-hidden='true']")?.parentElement
+    const nameLine = mcpServer(name)?.querySelector("span[aria-hidden='true']")?.parentElement
     expect(nameLine?.firstElementChild?.textContent).toBe(letter)
     expect(nameLine?.textContent?.startsWith(`${letter}${name}`)).toBe(true)
   }
 })
 
-test("lists the Plugins and their Installations, not naming Repos out of reach", async () => {
-  await openPlugins()
-  const docs = plugin("Docs search")?.textContent
+test("lists the MCP servers and their Installations, not naming Repos out of reach", async () => {
+  await openMcpServers()
+  const docs = mcpServer("Docs search")?.textContent
   expect(docs).toContain("hub:docs-search")
   expect(docs).toContain("https://docs-mcp.example.com/mcp")
   expect(docs).toContain("Docs")
   expect(docs).toContain("kddige/kndl")
-  expect(plugin("Linear")?.textContent).toContain("No Installations")
+  expect(mcpServer("Linear")?.textContent).toContain("No Installations")
 
-  const sentry = plugin("Sentry")?.textContent
+  const sentry = mcpServer("Sentry")?.textContent
   expect(sentry).toContain("and 1 Repo you have no access to")
   expect(sentry).not.toContain("kddige/secret")
   // Changing it needs access to every Repo it is on in.
   expect(button("Edit Installation Sentry").disabled).toBe(true)
   expect(button("Delete Installation Sentry").disabled).toBe(true)
-  expect(pluginsLink()?.getAttribute("aria-current")).toBe("page")
+  expect(mcpServersLink()?.getAttribute("aria-current")).toBe("page")
 })
 
-test("adds a Plugin, by name and URL, with a hub: id", async () => {
-  const { hub } = await openPlugins()
-  await step(() => button("Add Plugin").click())
-  await eventually(() => expect(dialog()?.textContent).toContain("Add Plugin"))
+test("adds an MCP server, by name and URL, with a hub: id", async () => {
+  const { hub } = await openMcpServers()
+  await step(() => button("Add MCP server").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add MCP server"))
   const [name, url] = [...(dialog()?.querySelectorAll("input") ?? [])] as [
     HTMLInputElement,
     HTMLInputElement,
@@ -110,15 +110,15 @@ test("adds a Plugin, by name and URL, with a hub: id", async () => {
   await type(url, "ftp://nope")
   await step(() => button("Add").click())
   expect(dialog()?.textContent).toContain("must start with https://")
-  expect(hub.received.some((m) => m._tag === "CreatePlugin")).toBe(false)
+  expect(hub.received.some((m) => m._tag === "CreateMcpServer")).toBe(false)
 
   await type(url, "https://mcp.acme.example/mcp")
   await step(() => button("Add").click())
-  await eventually(() => expect(plugin("Acme docs")?.textContent).toContain("hub:acme-docs"))
+  await eventually(() => expect(mcpServer("Acme docs")?.textContent).toContain("hub:acme-docs"))
 })
 
 test("adds an Installation on Repos, and shows why a second one on a Repo is refused", async () => {
-  const { hub } = await openPlugins()
+  const { hub } = await openMcpServers()
   await step(() => button("Add Installation of Linear").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Linear"))
   const name = dialog()?.querySelector("input") as HTMLInputElement
@@ -126,7 +126,7 @@ test("adds an Installation on Repos, and shows why a second one on a Repo is ref
   const repos = dialog()?.querySelector("textarea") as HTMLTextAreaElement
   await type(repos, "kddige/kndl\nkddige/dotfiles\n")
   await step(() => button("Add").click())
-  await eventually(() => expect(plugin("Linear")?.textContent).toContain("kddige/dotfiles"))
+  await eventually(() => expect(mcpServer("Linear")?.textContent).toContain("kddige/dotfiles"))
   expect(hub.received.find((m) => m._tag === "CreateInstallation")).toMatchObject({
     name: "Linear",
     repos: ["kddige/kndl", "kddige/dotfiles"],
@@ -145,7 +145,7 @@ test("adds an Installation on Repos, and shows why a second one on a Repo is ref
 })
 
 test("the Owner makes an Installation global, on in every Repo (#219)", async () => {
-  const { hub } = await openPlugins()
+  const { hub } = await openMcpServers()
   await step(() => button("Add Installation of Linear").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Linear"))
   expect(dialog()?.textContent).toContain("Global")
@@ -155,8 +155,8 @@ test("the Owner makes an Installation global, on in every Repo (#219)", async ()
   // A global one lists no Repos.
   await eventually(() => expect(dialog()?.querySelector("textarea")).toBeNull())
   await step(() => button("Add").click())
-  await eventually(() => expect(plugin("Linear")?.textContent).toContain("On in every Repo"))
-  expect(plugin("Linear")?.textContent).toContain("Global")
+  await eventually(() => expect(mcpServer("Linear")?.textContent).toContain("On in every Repo"))
+  expect(mcpServer("Linear")?.textContent).toContain("Global")
   expect(hub.received.find((m) => m._tag === "CreateInstallation")).toMatchObject({
     name: "Linear",
     global: true,
@@ -164,14 +164,14 @@ test("the Owner makes an Installation global, on in every Repo (#219)", async ()
   })
 })
 
-test("only the Owner changes a global Installation, or its Plugin (#219)", async () => {
-  const { hub } = await openPlugins(false)
+test("only the Owner changes a global Installation, or its MCP server (#219)", async () => {
+  const { hub } = await openMcpServers(false)
   await step(() =>
-    hub.plugins.change(
+    hub.mcpServers.change(
       {
         _tag: "CreateInstallation",
         requestId: RequestId.make("seed"),
-        pluginId: hubPluginId("linear"),
+        mcpServerId: hubMcpServerId("linear"),
         name: "Linear",
         global: true,
         repos: [],
@@ -189,22 +189,22 @@ test("only the Owner changes a global Installation, or its Plugin (#219)", async
   await type(dialog()?.querySelector("input") as HTMLInputElement, "Linear here")
   await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
   await step(() => button("Add").click())
-  // A Repo-scoped one of its Plugin takes the global's place on its Repo.
-  await eventually(() => expect(plugin("Linear")?.textContent).toContain("kddige/kndl"))
-  expect(plugin("Linear")?.textContent).toContain("Only the Hub's Owner can edit or delete it.")
-  expect(plugin("Linear")?.textContent).toContain(
+  // A Repo-scoped one of its MCP server takes the global's place on its Repo.
+  await eventually(() => expect(mcpServer("Linear")?.textContent).toContain("kddige/kndl"))
+  expect(mcpServer("Linear")?.textContent).toContain("Only the Hub's Owner can edit or delete it.")
+  expect(mcpServer("Linear")?.textContent).toContain(
     "It has a global Installation, on in every Repo: only the Hub's Owner can edit or delete it.",
   )
-  expect(button("Edit Plugin Linear").disabled).toBe(true)
-  expect(button("Delete Plugin Linear").disabled).toBe(true)
+  expect(button("Edit MCP server Linear").disabled).toBe(true)
+  expect(button("Delete MCP server Linear").disabled).toBe(true)
   expect(button("Edit Installation Linear").disabled).toBe(true)
   expect(button("Delete Installation Linear").disabled).toBe(true)
   expect(button("Edit Installation Linear here").disabled).toBe(false)
 })
 
-test("deleting a Plugin with Installations is refused, saying why", async () => {
-  await openPlugins()
-  await step(() => button("Delete Plugin Docs search").click())
+test("deleting an MCP server with Installations is refused, saying why", async () => {
+  await openMcpServers()
+  await step(() => button("Delete MCP server Docs search").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Delete Docs search?"))
   await step(() => button("Delete").click())
   await eventually(() =>
@@ -214,9 +214,9 @@ test("deleting a Plugin with Installations is refused, saying why", async () => 
   )
 })
 
-test("declares a header secret on a new Plugin, its key following its title", async () => {
-  const { hub } = await openPlugins()
-  await step(() => button("Add Plugin").click())
+test("declares a header secret on a new MCP server, its key following its title", async () => {
+  const { hub } = await openMcpServers()
+  await step(() => button("Add MCP server").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Header secrets"))
   const [name, url] = [...(dialog()?.querySelectorAll("input") ?? [])] as [
     HTMLInputElement,
@@ -236,12 +236,12 @@ test("declares a header secret on a new Plugin, its key following its title", as
   await type(template, "Bearer")
   await step(() => button("Add").click())
   expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain("{value}")
-  expect(hub.received.some((m) => m._tag === "CreatePlugin")).toBe(false)
+  expect(hub.received.some((m) => m._tag === "CreateMcpServer")).toBe(false)
 
   await type(template, "Bearer {value}")
   await step(() => button("Add").click())
-  await eventually(() => expect(plugin("Acme")?.textContent).toContain("hub:acme"))
-  expect(hub.received.find((m) => m._tag === "CreatePlugin")).toMatchObject({
+  await eventually(() => expect(mcpServer("Acme")?.textContent).toContain("hub:acme"))
+  expect(hub.received.find((m) => m._tag === "CreateMcpServer")).toMatchObject({
     auth: {
       _tag: "Headers",
       headers: [
@@ -252,9 +252,9 @@ test("declares a header secret on a new Plugin, its key following its title", as
 })
 
 test("an Installation's header secret values are write-only: entered, never shown", async () => {
-  const { hub } = await openPlugins()
+  const { hub } = await openMcpServers()
   // Who set Sentry's, and when; never the value.
-  const sentry = plugin("Sentry")?.querySelector('[aria-label="Header secrets of Sentry"]')
+  const sentry = mcpServer("Sentry")?.querySelector('[aria-label="Header secrets of Sentry"]')
   expect(sentry?.textContent).toContain("Auth token")
   expect(sentry?.textContent).toContain("set by")
 
@@ -268,7 +268,7 @@ test("an Installation's header secret values are write-only: entered, never show
   await step(() => button("Add").click())
   await eventually(() =>
     expect(
-      plugin("Linear")?.querySelector('[aria-label="Header secrets of Linear"]')?.textContent,
+      mcpServer("Linear")?.querySelector('[aria-label="Header secrets of Linear"]')?.textContent,
     ).toContain("set by"),
   )
   expect(hub.received.find((m) => m._tag === "CreateInstallation")).toMatchObject({
@@ -288,17 +288,17 @@ test("an Installation's header secret values are write-only: entered, never show
   expect(hub.received.find((m) => m._tag === "EditInstallation")).not.toHaveProperty("values")
 })
 
-test("says whose values an edit to a Plugin clears, before saving it", async () => {
-  const { hub } = await openPlugins()
+test("says whose values an edit to an MCP server clears, before saving it", async () => {
+  const { hub } = await openMcpServers()
   await step(() => button("Add Installation of Linear").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Linear"))
   await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
   await type(dialog()?.querySelector('input[type="password"]') as HTMLInputElement, "made-up")
   await step(() => button("Add").click())
-  await eventually(() => expect(plugin("Linear")?.textContent).toContain("set by"))
+  await eventually(() => expect(mcpServer("Linear")?.textContent).toContain("set by"))
 
   await settle(300)
-  await step(() => button("Edit Plugin Linear").click())
+  await step(() => button("Edit MCP server Linear").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Header secrets"))
   const url = [...(dialog()?.querySelectorAll("input") ?? [])][1] as HTMLInputElement
   // Another path on the same server keeps them.
@@ -310,8 +310,8 @@ test("says whose values an edit to a Plugin clears, before saving it", async () 
   expect(dialog()?.textContent).toContain("Saving clears header secret values")
   expect(dialog()?.textContent).toContain("Linear: API key")
   await step(() => button("Save and clear values").click())
-  await eventually(() => expect(plugin("Linear")?.textContent).toContain("needs a value"))
-  expect(hub.received.find((m) => m._tag === "EditPlugin")).toMatchObject({
+  await eventually(() => expect(mcpServer("Linear")?.textContent).toContain("needs a value"))
+  expect(hub.received.find((m) => m._tag === "EditMcpServer")).toMatchObject({
     url: "https://linear.example/mcp",
   })
 })
@@ -338,14 +338,14 @@ async function chooseFiles(input: HTMLInputElement, files: Record<string, string
   await settle(20)
 }
 
-test("adds a Plugin package from git, once what the Hub read is confirmed", async () => {
-  const { hub } = await openPlugins()
+test("adds an MCP server package from git, once what the Hub read is confirmed", async () => {
+  const { hub } = await openMcpServers()
   await step(() => button("Add package").click())
-  await eventually(() => expect(dialog()?.textContent).toContain("Add a Plugin package"))
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an MCP server package"))
   await type(dialogInput("Git repo URL"), "git@github.com:acme/notion-mcp.git")
   await step(() => button("Read package").click())
   expect(dialog()?.textContent).toContain("The git URL isn't a URL")
-  expect(hub.received.some((m) => m._tag === "ReadPluginPackage")).toBe(false)
+  expect(hub.received.some((m) => m._tag === "ReadMcpServerPackage")).toBe(false)
 
   await type(dialogInput("Git repo URL"), "https://github.com/acme/notion-mcp")
   await type(dialogInput("Folder"), "../elsewhere")
@@ -359,29 +359,29 @@ test("adds a Plugin package from git, once what the Hub read is confirmed", asyn
   expect(read).toContain("Notion")
   expect(read).toContain("0.3.0 (51c0a7e)")
   expect(read).toContain("https://mcp.notion.example/mcp")
-  expect(plugin("Notion")).toBeNull()
+  expect(mcpServer("Notion")).toBeNull()
 
   await step(() => button("Add").click())
-  await eventually(() => expect(plugin("Notion")?.textContent).toContain("@acme/notion-mcp"))
-  expect(plugin("Notion")?.textContent).toContain("0.3.0 (51c0a7e)")
-  expect(plugin("Notion")?.textContent).toContain("https://github.com/acme/notion-mcp")
-  expect(hub.received.some((m) => m._tag === "AddPluginPackage")).toBe(true)
+  await eventually(() => expect(mcpServer("Notion")?.textContent).toContain("@acme/notion-mcp"))
+  expect(mcpServer("Notion")?.textContent).toContain("0.3.0 (51c0a7e)")
+  expect(mcpServer("Notion")?.textContent).toContain("https://github.com/acme/notion-mcp")
+  expect(hub.received.some((m) => m._tag === "AddMcpServerPackage")).toBe(true)
 })
 
-test("upgrades a packaged Plugin from git only once its changes are confirmed", async () => {
-  const { hub } = await openPlugins()
+test("upgrades a packaged MCP server from git only once its changes are confirmed", async () => {
+  const { hub } = await openMcpServers()
   // Pinned: only an Upgrade changes it.
-  expect(plugin("Asana")?.textContent).toContain("1.0.0 (3f2c9a1)")
-  expect(() => button("Edit Plugin Asana")).toThrow()
+  expect(mcpServer("Asana")?.textContent).toContain("1.0.0 (3f2c9a1)")
+  expect(() => button("Edit MCP server Asana")).toThrow()
   await step(() => button("Add Installation of Asana").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Asana"))
   await type(dialog()?.querySelector("textarea") as HTMLTextAreaElement, "kddige/kndl")
   await type(dialog()?.querySelector('input[type="password"]') as HTMLInputElement, "made-up")
   await step(() => button("Add").click())
-  await eventually(() => expect(plugin("Asana")?.textContent).toContain("set by"))
+  await eventually(() => expect(mcpServer("Asana")?.textContent).toContain("set by"))
 
   await settle(300)
-  await step(() => button("Upgrade Plugin Asana").click())
+  await step(() => button("Upgrade MCP server Asana").click())
   const table = () => dialog()?.querySelector('[aria-label="What upgrading changes"]')
   await eventually(() => expect(table()).not.toBeNull())
   const changes = table()?.textContent
@@ -393,26 +393,26 @@ test("upgrades a packaged Plugin from git only once its changes are confirmed", 
   // Its Token is gone from the package: the value entered for it is cleared, as an edit would.
   expect(dialog()?.textContent).toContain("Upgrading clears header secret values")
   expect(dialog()?.textContent).toContain("Asana: Token")
-  expect(plugin("Asana")?.textContent).toContain("https://mcp.asana.example/mcp")
+  expect(mcpServer("Asana")?.textContent).toContain("https://mcp.asana.example/mcp")
 
   await step(() => button("Upgrade").click())
-  await eventually(() => expect(plugin("Asana")?.textContent).toContain("1.1.0 (9b41e07)"))
-  expect(plugin("Asana")?.textContent).toContain("https://mcp.asana.example/v2/mcp")
-  expect(plugin("Asana")?.textContent).toContain("needs a value")
-  expect(hub.received.find((m) => m._tag === "UpgradePlugin")).toMatchObject({
-    pluginId: "@acme/asana-mcp",
+  await eventually(() => expect(mcpServer("Asana")?.textContent).toContain("1.1.0 (9b41e07)"))
+  expect(mcpServer("Asana")?.textContent).toContain("https://mcp.asana.example/v2/mcp")
+  expect(mcpServer("Asana")?.textContent).toContain("needs a value")
+  expect(hub.received.find((m) => m._tag === "UpgradeMcpServer")).toMatchObject({
+    mcpServerId: "@acme/asana-mcp",
   })
 
   await settle(300)
-  await step(() => button("Upgrade Plugin Asana").click())
+  await step(() => button("Upgrade MCP server Asana").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Asana is up to date: 1.1.0"))
   expect(() => button("Upgrade", dialog() ?? document)).toThrow()
 })
 
-test("adds an uploaded folder, and refuses a name a Plugin from another source has", async () => {
-  await openPlugins()
+test("adds an uploaded folder, and refuses a name an MCP server from another source has", async () => {
+  await openMcpServers()
   await step(() => button("Add package").click())
-  await eventually(() => expect(dialog()?.textContent).toContain("Add a Plugin package"))
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an MCP server package"))
   await step(() => button("Upload").click())
   await chooseFiles(folder(), {
     "asana/package.json": JSON.stringify({ name: "@acme/asana-mcp", version: "2.0.0" }),
@@ -436,8 +436,8 @@ test("adds an uploaded folder, and refuses a name a Plugin from another source h
   await step(() => button("Read package").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Uploaded jira"))
   await step(() => button("Add").click())
-  await eventually(() => expect(plugin("Jira")?.textContent).toContain("@acme/jira-mcp"))
-  expect(plugin("Jira")?.textContent).toContain("Uploaded jira")
+  await eventually(() => expect(mcpServer("Jira")?.textContent).toContain("@acme/jira-mcp"))
+  expect(mcpServer("Jira")?.textContent).toContain("Uploaded jira")
 })
 
 /** What an OAuth Installation's client line says (#218). */
@@ -445,7 +445,7 @@ const clientLine = (name: string) =>
   document.querySelector(`[aria-label="Client of ${name}"]`)?.textContent ?? ""
 
 test("asks for a client entered by hand where the server registers none, showing the callback URL (#218)", async () => {
-  const { hub } = await openPlugins()
+  const { hub } = await openMcpServers()
   // GitHub's has one, whose secret the page never sees.
   await eventually(() => expect(clientLine("GitHub")).toContain("Ov23liKndlBot0a1b2c3"))
   expect(clientLine("GitHub")).toContain("with a secret")
@@ -453,7 +453,7 @@ test("asks for a client entered by hand where the server registers none, showing
   await step(() => button("Change client of GitHub").click())
   await eventually(() => expect(dialog()?.textContent).toContain("Enter a client for GitHub"))
   expect(dialog()?.querySelector('[aria-label="Callback URL"]')?.textContent).toEndWith(
-    "/auth/plugins/callback",
+    "/auth/mcp/callback",
   )
   expect(() => button("Copy the callback URL", dialog() ?? document)).not.toThrow()
   // Its authorization server takes no public client: the secret is needed too.

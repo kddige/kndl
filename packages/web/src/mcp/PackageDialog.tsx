@@ -1,8 +1,8 @@
-// Adding a packaged Plugin (#220), or upgrading one: the Hub reads a package, a `package.json` and
-// a `kndl.json` beside it, from a public git repo or an upload, and changes nothing until the
+// Adding a packaged MCP server (#220), or upgrading one: the Hub reads a package, a `package.json`
+// and a `kndl.json` beside it, from a public git repo or an upload, and changes nothing until the
 // person has seen what it read and confirms. An Upgrade shows what it changes first; the Hub
-// applies exactly what was shown, and refuses if the Plugin changed in between. An Upgrade clears
-// header secret values as an edit does (a URL on another server, or a secret's key or header
+// applies exactly what was shown, and refuses if the MCP server changed in between. An Upgrade
+// clears header secret values as an edit does (a URL on another server, or a secret's key or header
 // changed), and says whose first.
 
 import {
@@ -10,16 +10,16 @@ import {
   authText,
   gitRefProblem,
   gitUrlProblem,
-  MaxPluginArchiveBytes,
-  MaxPluginPackageFileBytes,
+  MaxMcpServerArchiveBytes,
+  MaxMcpServerPackageFileBytes,
   packageChanges,
   type PackageChange,
   packagePathProblem,
   packageVersion,
-  type Plugin,
-  PluginManifestFile,
-  type PluginPackageFrom,
-  type PluginPackageRead,
+  type McpServer,
+  McpServerManifestFile,
+  type McpServerPackageFrom,
+  type McpServerPackageRead,
   sourceText,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
@@ -96,14 +96,14 @@ const styles = stylex.create({
   scroll: { overflowX: "auto", borderRadius: radius.md },
 })
 
-/** Opens the dialog to add a package, or to upgrade a packaged Plugin. */
+/** Opens the dialog to add a package, or to upgrade a packaged MCP server. */
 export interface PackageOpening {
-  readonly upgrading?: Plugin
+  readonly upgrading?: McpServer
 }
 
 /** A file the person chose, to read as the package; or why it can't be. */
 type Chosen =
-  | { readonly from: PluginPackageFrom; readonly label: string }
+  | { readonly from: McpServerPackageFrom; readonly label: string }
   | { readonly problem: string }
 
 const archive = /\.(?:tgz|tar\.gz|zip)$/i
@@ -125,8 +125,10 @@ async function choose(files: ReadonlyArray<File>): Promise<Chosen> {
   const [first] = files
   if (first === undefined) return { problem: "Choose a package's folder or archive." }
   if (files.length === 1 && archive.test(first.name)) {
-    if (first.size > MaxPluginArchiveBytes) {
-      return { problem: `${first.name} is larger than ${MaxPluginArchiveBytes / 1024 / 1024} MiB.` }
+    if (first.size > MaxMcpServerArchiveBytes) {
+      return {
+        problem: `${first.name} is larger than ${MaxMcpServerArchiveBytes / 1024 / 1024} MiB.`,
+      }
     }
     const data = base64(new Uint8Array(await first.arrayBuffer()))
     return { from: { _tag: "Archive", fileName: first.name, data }, label: first.name }
@@ -139,15 +141,15 @@ async function choose(files: ReadonlyArray<File>): Promise<Chosen> {
       return parts.length <= 2 && parts.at(-1) === name
     })
   const packageJson = top("package.json")
-  const manifest = top(PluginManifestFile)
+  const manifest = top(McpServerManifestFile)
   if (packageJson === undefined || manifest === undefined) {
     return {
-      problem: `A package's folder has a package.json and a ${PluginManifestFile} at its top.`,
+      problem: `A package's folder has a package.json and a ${McpServerManifestFile} at its top.`,
     }
   }
-  const large = [packageJson, manifest].find((file) => file.size > MaxPluginPackageFileBytes)
+  const large = [packageJson, manifest].find((file) => file.size > MaxMcpServerPackageFileBytes)
   if (large !== undefined) {
-    return { problem: `${large.name} is larger than ${MaxPluginPackageFileBytes / 1024} KiB.` }
+    return { problem: `${large.name} is larger than ${MaxMcpServerPackageFileBytes / 1024} KiB.` }
   }
   const folderName = packageJson.webkitRelativePath.split("/")[0] || "package"
   return {
@@ -157,13 +159,14 @@ async function choose(files: ReadonlyArray<File>): Promise<Chosen> {
       packageJson: await packageJson.text(),
       manifest: await manifest.text(),
     },
-    label: `${folderName}: package.json and ${PluginManifestFile}`,
+    label: `${folderName}: package.json and ${McpServerManifestFile}`,
   }
 }
 
 /**
- * Reads a package, from git or an upload, and adds it, or upgrades the Plugin from the same source
- * to it, once the person confirms what was read. Upgrading a Plugin from git reads its ref again.
+ * Reads a package, from git or an upload, and adds it, or upgrades the MCP server from the same
+ * source to it, once the person confirms what was read. Upgrading an MCP server from git reads its
+ * ref again.
  */
 export function PackageDialog({
   opening,
@@ -173,8 +176,8 @@ export function PackageDialog({
   onClose: () => void
 }) {
   const hub = useHub()
-  const plugins = useHubState((state) => state.plugins?.plugins)
-  const installations = useHubState((state) => state.plugins?.installations) ?? []
+  const mcpServers = useHubState((state) => state.mcpServers?.mcpServers)
+  const installations = useHubState((state) => state.mcpServers?.installations) ?? []
   const shown = useLastOpened(opening)
   const upgrading = shown?.upgrading
   const fromGit = upgrading?.package?.source._tag === "Git"
@@ -186,7 +189,7 @@ export function PackageDialog({
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [answer, setAnswer] = useState<PluginPackageRead | null>(null)
+  const [answer, setAnswer] = useState<McpServerPackageRead | null>(null)
 
   useEffect(() => {
     if (opening === null) return
@@ -198,16 +201,16 @@ export function PackageDialog({
     setTouched(false)
     setError(null)
     setAnswer(null)
-    const plugin = opening.upgrading
-    if (plugin?.package?.source._tag !== "Git") {
+    const mcpServer = opening.upgrading
+    if (mcpServer?.package?.source._tag !== "Git") {
       setBusy(false)
       return
     }
-    // A Plugin from git is upgraded from its ref: read it again at once. Only this opening's
+    // An MCP server from git is upgraded from its ref: read it again at once. Only this opening's
     // answer counts; a closed or reopened dialog ignores it.
     let current = true
     setBusy(true)
-    hub.checkPluginUpgrade(plugin.id).then(
+    hub.checkMcpServerUpgrade(mcpServer.id).then(
       (read) => {
         if (!current) return
         setAnswer(read)
@@ -237,7 +240,7 @@ export function PackageDialog({
   const read = async (event: FormEvent) => {
     event.preventDefault()
     setTouched(true)
-    let from: PluginPackageFrom
+    let from: McpServerPackageFrom
     if (tab === "git") {
       if (urlProblem !== undefined || refProblem !== undefined || pathProblem !== undefined) return
       from = {
@@ -253,7 +256,7 @@ export function PackageDialog({
     setBusy(true)
     setError(null)
     try {
-      setAnswer(await hub.readPluginPackage(from))
+      setAnswer(await hub.readMcpServerPackage(from))
     } catch (cause) {
       setError(messageOf(cause))
     } finally {
@@ -264,7 +267,7 @@ export function PackageDialog({
   const current =
     answer?.upgrades === undefined
       ? undefined
-      : plugins?.find((plugin) => plugin.id === answer.upgrades)
+      : mcpServers?.find((mcpServer) => mcpServer.id === answer.upgrades)
   const changes = answer && current ? packageChanges(current, answer.read) : []
   const upToDate = answer?.upgrades !== undefined && changes.length === 0
 
@@ -274,10 +277,10 @@ export function PackageDialog({
     setError(null)
     try {
       if (answer.upgrades === undefined) {
-        await hub.addPluginPackage(answer.readId)
+        await hub.addMcpServerPackage(answer.readId)
         toast.show({ title: `Added ${answer.read.name}` })
       } else {
-        await hub.upgradePlugin(answer.upgrades, answer.readId)
+        await hub.upgradeMcpServer(answer.upgrades, answer.readId)
         toast.show({
           title: `Upgraded ${answer.read.name} to ${packageVersion(answer.read.package)}`,
           description: "Its Sessions pick it up on their next wake or Restart.",
@@ -296,7 +299,7 @@ export function PackageDialog({
     void choose(files).then(setChosen)
   }
 
-  const title = upgrading ? `Upgrade ${upgrading.name}` : "Add a Plugin package"
+  const title = upgrading ? `Upgrade ${upgrading.name}` : "Add an MCP server package"
   const description = upgrading
     ? fromGit
       ? `Reads ${upgrading.package ? sourceText(upgrading.package.source) : "its source"} again. Nothing changes until you confirm.`
@@ -306,7 +309,7 @@ export function PackageDialog({
   const action =
     answer === null ? (
       fromGit ? null : (
-        <Button intent="primary" type="submit" form="plugin-package" loading={busy}>
+        <Button intent="primary" type="submit" form="mcpServer-package" loading={busy}>
           Read package
         </Button>
       )
@@ -346,8 +349,8 @@ export function PackageDialog({
             <>
               <PackageFacts read={answer} />
               {current && <Changes changes={changes} />}
-              {current && <AddedSecrets plugin={current} read={answer} />}
-              {current && <ClearedSecrets plugin={current} read={answer} />}
+              {current && <AddedSecrets mcpServer={current} read={answer} />}
+              {current && <ClearedSecrets mcpServer={current} read={answer} />}
               {current && (
                 <DisconnectsBanner
                   names={disconnected(current, installations, answer.read)}
@@ -373,7 +376,7 @@ export function PackageDialog({
           </div>
         )
       ) : (
-        <form id="plugin-package" onSubmit={read} noValidate {...stylex.props(styles.form)}>
+        <form id="mcpServer-package" onSubmit={read} noValidate {...stylex.props(styles.form)}>
           <Tabs value={tab} onValueChange={setTab}>
             {!upgrading && (
               <TabList label="Where the package is">
@@ -451,8 +454,8 @@ export function PackageDialog({
               </label>
               <p {...stylex.props(styles.muted)}>
                 A .tgz, as npm pack makes, or a .zip, of at most{" "}
-                {MaxPluginArchiveBytes / 1024 / 1024} MiB. Only its package.json and{" "}
-                {PluginManifestFile} are read.
+                {MaxMcpServerArchiveBytes / 1024 / 1024} MiB. Only its package.json and{" "}
+                {McpServerManifestFile} are read.
               </p>
               {chosen && "label" in chosen && (
                 <p {...stylex.props(styles.chosen)}>Chosen: {chosen.label}</p>
@@ -473,8 +476,8 @@ export function PackageDialog({
   )
 }
 
-/** What the Hub read: the Plugin the package makes. */
-function PackageFacts({ read: { read } }: { read: PluginPackageRead }) {
+/** What the Hub read: the MCP server the package makes. */
+function PackageFacts({ read: { read } }: { read: McpServerPackageRead }) {
   const facts: Array<[string, string]> = [
     ["Name", read.name],
     ["Package", read.id],
@@ -532,9 +535,9 @@ function Changes({ changes }: { changes: ReadonlyArray<PackageChange> }) {
   )
 }
 
-/** A warning when an Upgrade asks for header secrets the Plugin didn't before. */
-function AddedSecrets({ plugin, read }: { plugin: Plugin; read: PluginPackageRead }) {
-  const added = addedHeaderSecrets(plugin.auth, read.read.auth)
+/** A warning when an Upgrade asks for header secrets the MCP server didn't before. */
+function AddedSecrets({ mcpServer, read }: { mcpServer: McpServer; read: McpServerPackageRead }) {
+  const added = addedHeaderSecrets(mcpServer.auth, read.read.auth)
   if (added.length === 0) return null
   return (
     <Banner intent="warning" icon={<WarningIcon />} title="It asks for new header secrets">
@@ -545,11 +548,11 @@ function AddedSecrets({ plugin, read }: { plugin: Plugin; read: PluginPackageRea
 }
 
 /** A warning naming the header secret values an Upgrade clears, as an edit would, before it does. */
-function ClearedSecrets({ plugin, read }: { plugin: Plugin; read: PluginPackageRead }) {
-  const installations = useHubState((state) => state.plugins?.installations) ?? []
+function ClearedSecrets({ mcpServer, read }: { mcpServer: McpServer; read: McpServerPackageRead }) {
+  const installations = useHubState((state) => state.mcpServers?.installations) ?? []
   const cleared = clearedValues(
-    plugin,
-    installations.filter((installation) => installation.pluginId === plugin.id),
+    mcpServer,
+    installations.filter((installation) => installation.mcpServerId === mcpServer.id),
     read.read,
   )
   if (cleared.length === 0) return null

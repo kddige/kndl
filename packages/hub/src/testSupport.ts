@@ -30,9 +30,9 @@ import {
 } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
 import { HubVersion } from "./HubVersion.ts"
+import { McpServerIcons } from "./McpServerIcons.ts"
+import { McpServerSources } from "./McpServerSources.ts"
 import { Members } from "./Members.ts"
-import { PluginIcons } from "./PluginIcons.ts"
-import { PluginSources } from "./PluginSources.ts"
 
 export const webOrigin = "http://localhost:5173"
 
@@ -92,10 +92,12 @@ export async function startHub(
     readonly claudeCheck?: Layer.Layer<ClaudeCheck>
     /** The CLI binaries the Hub serves; by default ones it never builds. */
     readonly cliBuilds?: Layer.Layer<CliBuilds>
-    /** Where Plugin packages are read from; by default git over https:// and uploads. */
-    readonly pluginSources?: Layer.Layer<PluginSources>
-    /** Where Plugin icons are found; by default nowhere, so a test never reaches the internet. */
-    readonly pluginIcons?: Layer.Layer<PluginIcons>
+    /** Where MCP server packages are read from; by default git over https:// and uploads. */
+    readonly mcpServerSources?: Layer.Layer<McpServerSources>
+    /**
+     * Where MCP server icons are found; by default nowhere, so a test never reaches the internet.
+     */
+    readonly mcpServerIcons?: Layer.Layer<McpServerIcons>
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -111,8 +113,8 @@ export async function startHub(
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
-    Layer.provideMerge(options.pluginSources ?? PluginSources.layer),
-    Layer.provideMerge(options.pluginIcons ?? PluginIcons.none),
+    Layer.provideMerge(options.mcpServerSources ?? McpServerSources.layer),
+    Layer.provideMerge(options.mcpServerIcons ?? McpServerIcons.none),
     Layer.provideMerge(options.claudeCheck ?? ClaudeCheck.layerTest),
     Layer.provideMerge(options.githubApp ?? GitHubApp.layer),
     Layer.provideMerge(options.cliBuilds ?? CliBuilds.unused),

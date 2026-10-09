@@ -1,10 +1,10 @@
-// A Plugin's icon (#230, ADR 0021). The Hub finds it and keeps it; the browser asks the Hub for it
-// and never contacts a third party.
+// An MCP server's icon (#230, ADR 0021). The Hub finds it and keeps it; the browser asks the Hub
+// for it and never contacts a third party.
 //
 // In priority order, every failure dropping silently to the next step:
-// 1. The manifest's `icon` (packaged Plugins): an https URL the Hub fetches, or a file in the
+// 1. The manifest's `icon` (packaged MCP servers): an https URL the Hub fetches, or a file in the
 //    package, whose bytes the caller read from it.
-// 2. A favicon of the Plugin's URL, at its origin first, then at its registrable apex domain:
+// 2. A favicon of the MCP server's URL, at its origin first, then at its registrable apex domain:
 //    an SVG `<link rel=icon>`, else the largest of the other `<link rel=icon>`s,
 //    `apple-touch-icon`s and web manifest icons, else `/favicon.ico`. Never an og:image.
 // 3. None, for which the web shows a letter avatar.
@@ -19,7 +19,7 @@ import { createHash } from "node:crypto"
 import { Context, Effect, Layer, Option } from "effect"
 import { getDomain } from "tldts"
 import { readAtMost } from "./Gateway.ts"
-import { fetchable } from "./PluginOAuth.ts"
+import { fetchable } from "./McpServerOAuth.ts"
 
 /** An icon as the Hub keeps it. */
 export interface Icon {
@@ -265,9 +265,9 @@ async function faviconAt(
 }
 
 /** The favicon of the URL's origin, else of its registrable apex domain. */
-async function favicon(pluginUrl: string, options: Required<IconOptions>) {
-  if (!fetchable(pluginUrl)) return undefined
-  const url = new URL(pluginUrl)
+async function favicon(mcpServerUrl: string, options: Required<IconOptions>) {
+  if (!fetchable(mcpServerUrl)) return undefined
+  const url = new URL(mcpServerUrl)
   const own = await faviconAt(url.origin, options)
   if (own !== undefined) return own
   const apex = getDomain(url.hostname)
@@ -275,9 +275,9 @@ async function favicon(pluginUrl: string, options: Required<IconOptions>) {
   return faviconAt(`${url.protocol}//${apex}`, options)
 }
 
-/** What to find a Plugin's icon from. */
+/** What to find an MCP server's icon from. */
 export interface IconSearch {
-  /** The Plugin's URL. */
+  /** The MCP server's URL. */
   readonly url: string
   /** The manifest's `icon`: an https URL, or a path in the package. */
   readonly manifestIcon?: string
@@ -285,7 +285,7 @@ export interface IconSearch {
   readonly iconFile?: Uint8Array
 }
 
-/** The Plugin's icon: the manifest's, else its URL's favicon, else none. */
+/** The MCP server's icon: the manifest's, else its URL's favicon, else none. */
 export async function findIcon(
   search: IconSearch,
   given: IconOptions = {},
@@ -306,13 +306,13 @@ export async function findIcon(
   return favicon(search.url, options)
 }
 
-/** Finds a Plugin's icon, off the lock and off the request that added the Plugin. */
-export class PluginIcons extends Context.Service<
-  PluginIcons,
+/** Finds an MCP server's icon, off the lock and off the request that added the MCP server. */
+export class McpServerIcons extends Context.Service<
+  McpServerIcons,
   { readonly find: (search: IconSearch) => Effect.Effect<Option.Option<Icon>> }
->()("@kndl/hub/PluginIcons") {
+>()("@kndl/hub/McpServerIcons") {
   static readonly layerWith = (options: IconOptions = {}) =>
-    Layer.succeed(PluginIcons, {
+    Layer.succeed(McpServerIcons, {
       find: (search) =>
         Effect.promise(() => findIcon(search, options).catch(() => undefined)).pipe(
           Effect.map(Option.fromUndefinedOr),
@@ -320,8 +320,10 @@ export class PluginIcons extends Context.Service<
     })
 
   /** Fetches from the internet. */
-  static readonly layer = PluginIcons.layerWith()
+  static readonly layer = McpServerIcons.layerWith()
 
   /** Finds none: for tests that mustn't reach the internet. */
-  static readonly none = Layer.succeed(PluginIcons, { find: () => Effect.succeed(Option.none()) })
+  static readonly none = Layer.succeed(McpServerIcons, {
+    find: () => Effect.succeed(Option.none()),
+  })
 }

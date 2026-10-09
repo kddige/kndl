@@ -182,7 +182,7 @@ const connectOnce = Effect.scoped(
         ...(models !== undefined && { models }),
         relaunches: true,
         forwardsPorts: true,
-        relaysPlugins: true,
+        relaysMcpServers: true,
         ownClaudeCredential: ownAccount !== undefined,
       }),
     ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))

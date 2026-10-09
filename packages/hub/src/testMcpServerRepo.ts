@@ -1,5 +1,5 @@
-// Git repos of Plugin packages for tests, on disk and reached by `file://` URLs, so the Hub's git
-// fetching is tested offline (PluginSources.layerWith({ protocols: ["https", "file"] })).
+// Git repos of MCP server packages for tests, on disk and reached by `file://` URLs, so the Hub's
+// git fetching is tested offline (McpServerSources.layerWith({ protocols: ["https", "file"] })).
 
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -8,7 +8,7 @@ import { dirname, join } from "node:path"
 const dirs: Array<string> = []
 
 /** Removes every repo made so far. */
-export function removePluginRepos() {
+export function removeMcpServerRepos() {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 }
 
@@ -42,8 +42,8 @@ export const manifest = (url = "https://mcp.linear.app/mcp", more: object = {}) 
   JSON.stringify({ displayName: "Linear", mcp: { url }, ...more })
 
 /** A repo with a commit of the files on its default branch, `main`. */
-export function pluginRepo(files: RepoFiles) {
-  const dir = mkdtempSync(join(tmpdir(), "kndl-plugin-repo-"))
+export function mcpServerRepo(files: RepoFiles) {
+  const dir = mkdtempSync(join(tmpdir(), "kndl-mcp-server-repo-"))
   dirs.push(dir)
   git(dir, "init", "--quiet", "--initial-branch=main")
   /** Commits the files, and returns the commit. */

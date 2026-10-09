@@ -1,13 +1,13 @@
-// A Plugin's icon on the Plugins page (#230, ADR 0021): the Hub's icon, or the first letter of
-// the Plugin's name on a colored tile, the color from the Plugin's id.
+// An MCP server's icon on the MCP page (#230, ADR 0021): the Hub's icon, or the first letter of
+// the MCP server's name on a colored tile, the color from the MCP server's id.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { PluginId } from "@kndl/protocol"
+import { McpServerId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
 import { render, settle } from "./render.ts"
 
 installDom()
-const { PluginAvatar, pluginIconUrl } = await import("../src/plugins/PluginAvatar.tsx")
+const { McpServerAvatar, mcpServerIconUrl } = await import("../src/mcp/McpServerAvatar.tsx")
 
 // Stands in for the browser's image loader: a URL containing "broken" fails, any other loads.
 class FakeImage {
@@ -28,24 +28,24 @@ afterEach(async () => {
   cleanup = undefined
 })
 
-describe("pluginIconUrl", () => {
-  test("is the Hub's route for the Plugin, its id encoded, with the hash to bust the cache", () => {
-    expect(pluginIconUrl({ id: PluginId.make("hub:docs-search"), iconHash: "abc123" })).toBe(
-      "/plugins/hub%3Adocs-search/icon?v=abc123",
+describe("mcpServerIconUrl", () => {
+  test("is the Hub's route for the MCP server, its id encoded, with the hash to bust the cache", () => {
+    expect(mcpServerIconUrl({ id: McpServerId.make("hub:docs-search"), iconHash: "abc123" })).toBe(
+      "/mcp/hub%3Adocs-search/icon?v=abc123",
     )
-    expect(pluginIconUrl({ id: PluginId.make("@acme/linear-mcp"), iconHash: "f00" })).toBe(
-      "/plugins/%40acme%2Flinear-mcp/icon?v=f00",
+    expect(mcpServerIconUrl({ id: McpServerId.make("@acme/linear-mcp"), iconHash: "f00" })).toBe(
+      "/mcp/%40acme%2Flinear-mcp/icon?v=f00",
     )
   })
 
-  test("is none for a Plugin with no icon", () => {
-    expect(pluginIconUrl({ id: PluginId.make("hub:docs") })).toBeUndefined()
+  test("is none for an MCP server with no icon", () => {
+    expect(mcpServerIconUrl({ id: McpServerId.make("hub:docs") })).toBeUndefined()
   })
 })
 
-/** The classes and style a Plugin id gives its tile. */
+/** The classes and style an MCP server id gives its tile. */
 const tile = async (id: string) => {
-  const view = await render(<PluginAvatar plugin={{ id: PluginId.make(id), name: "A" }} />)
+  const view = await render(<McpServerAvatar mcpServer={{ id: McpServerId.make(id), name: "A" }} />)
   cleanup = view.unmount
   const root = view.container.firstElementChild
   const style = `${root?.getAttribute("class")} ${root?.getAttribute("style")}`
@@ -54,10 +54,10 @@ const tile = async (id: string) => {
   return style
 }
 
-describe("PluginAvatar", () => {
-  test("shows the first letter of the name, in capitals, when the Plugin has no icon", async () => {
+describe("McpServerAvatar", () => {
+  test("shows the first letter of the name, in capitals, when the MCP server has no icon", async () => {
     const { container, unmount } = await render(
-      <PluginAvatar plugin={{ id: PluginId.make("hub:docs"), name: "docs search" }} />,
+      <McpServerAvatar mcpServer={{ id: McpServerId.make("hub:docs"), name: "docs search" }} />,
     )
     cleanup = unmount
     await settle(400)
@@ -67,14 +67,14 @@ describe("PluginAvatar", () => {
 
   test("takes the first letter of a name that starts with an emoji or a space", async () => {
     const { container, unmount } = await render(
-      <PluginAvatar plugin={{ id: PluginId.make("hub:x"), name: "  🚀 Rocket" }} />,
+      <McpServerAvatar mcpServer={{ id: McpServerId.make("hub:x"), name: "  🚀 Rocket" }} />,
     )
     cleanup = unmount
     await settle(400)
     expect(container.textContent).toBe("🚀")
   })
 
-  test("keeps one color for a Plugin id, and varies it by id", async () => {
+  test("keeps one color for an MCP server id, and varies it by id", async () => {
     expect(await tile("hub:a")).toBe(await tile("hub:a"))
     const colors = new Set<string>()
     for (const id of ["hub:a", "hub:b", "hub:c", "hub:d", "@acme/e"]) colors.add(await tile(id))
@@ -83,18 +83,22 @@ describe("PluginAvatar", () => {
 
   test("shows the Hub's icon once it loads, described by nothing: the name is on the card", async () => {
     const { container, unmount } = await render(
-      <PluginAvatar plugin={{ id: PluginId.make("hub:docs"), name: "Docs", iconHash: "abc" }} />,
+      <McpServerAvatar
+        mcpServer={{ id: McpServerId.make("hub:docs"), name: "Docs", iconHash: "abc" }}
+      />,
     )
     cleanup = unmount
     await settle(400)
     const image = container.querySelector("img")
-    expect(image?.getAttribute("src")).toBe("/plugins/hub%3Adocs/icon?v=abc")
+    expect(image?.getAttribute("src")).toBe("/mcp/hub%3Adocs/icon?v=abc")
     expect(image?.getAttribute("alt")).toBe("")
   })
 
   test("falls back to the letter when the icon fails to load", async () => {
     const { container, unmount } = await render(
-      <PluginAvatar plugin={{ id: PluginId.make("hub:docs"), name: "Docs", iconHash: "broken" }} />,
+      <McpServerAvatar
+        mcpServer={{ id: McpServerId.make("hub:docs"), name: "Docs", iconHash: "broken" }}
+      />,
     )
     cleanup = unmount
     await settle(400)

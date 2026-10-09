@@ -20,7 +20,7 @@ import { repoParams, runnerLabel, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, type RepoCheck, RepoRefusal } from "../app/repoAccess.tsx"
 import type { RepoEnvironment, TestBuildRun } from "../hub/store.ts"
-import { RepoPlugins } from "../plugins/RepoPlugins.tsx"
+import { RepoMcpServers } from "../mcp/RepoMcpServers.tsx"
 import {
   Avatar,
   Badge,
@@ -889,18 +889,18 @@ function EnvironmentEditor({
       </Section>
 
       <Section
-        title="Plugins"
+        title="MCP servers"
         note={
           <>
             The Installations on for this Repo: Claude Code in its Sessions gets their tools from
             their next wake or Restart. A change creates no Environment version.{" "}
-            <Link to="/plugins" {...stylex.props(styles.link, focus.ring)}>
-              Manage Plugins
+            <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
+              Manage MCP servers
             </Link>
           </>
         }
       >
-        <RepoPlugins repo={repo} />
+        <RepoMcpServers repo={repo} />
       </Section>
     </>
   )

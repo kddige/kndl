@@ -1,11 +1,11 @@
 // How the Hub reaches an Installation's remote MCP server (ADR 0020): the one way both the Gateway
 // (GatewayRoutes.ts) relays a Session's request, and a Session's start checks the server first
-// (#216). The Plugin's header secrets are added as the target says; a redirect isn't followed.
+// (#216). The MCP server's header secrets are added as the target says; a redirect isn't followed.
 
 import { type Duration, Effect, Option, Redacted } from "effect"
-import type { GatewayTarget } from "./Plugins.ts"
+import type { GatewayTarget } from "./McpServers.ts"
 
-/** Where a request through an Installation goes: its Plugin's URL, with its header secrets. */
+/** Where a request through an Installation goes: its MCP server's URL, with its header secrets. */
 export type ReadyTarget = Extract<GatewayTarget, { readonly _tag: "Ready" }>
 
 /**

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { deflateRawSync, gzipSync } from "node:zlib"
 import { Result } from "effect"
-import { readPackageArchive } from "./PluginArchive.ts"
+import { readPackageArchive } from "./McpServerArchive.ts"
 
 const packageJson = JSON.stringify({ name: "linear-mcp", version: "1.0.0" })
 const manifest = JSON.stringify({

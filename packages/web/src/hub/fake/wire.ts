@@ -17,8 +17,8 @@ import type {
   Participant,
   PendingInvite,
   PendingPairingCode,
-  Plugin,
-  PluginLogEntry,
+  McpServer,
+  McpServerLogEntry,
   PresentParticipant,
   Question,
   QuestionAnswer,
@@ -54,9 +54,9 @@ export type PendingInviteWire = (typeof PendingInvite)["Encoded"]
 export type QuestionWire = (typeof Question)["Encoded"]
 export type QuestionAnswerWire = (typeof QuestionAnswer)["Encoded"]
 export type QuestionPickWire = (typeof QuestionPick)["Encoded"]
-export type PluginWire = (typeof Plugin)["Encoded"]
+export type McpServerWire = (typeof McpServer)["Encoded"]
 export type InstallationWire = (typeof Installation)["Encoded"]
 export type HeaderValueSetWire = (typeof HeaderValueSet)["Encoded"]
-export type PluginLogEntryWire = (typeof PluginLogEntry)["Encoded"]
+export type McpServerLogEntryWire = (typeof McpServerLogEntry)["Encoded"]
 export type SessionInstallationWire = (typeof SessionInstallation)["Encoded"]
 export type InstallationFailureWire = (typeof InstallationFailure)["Encoded"]

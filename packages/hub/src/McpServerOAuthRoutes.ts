@@ -1,15 +1,15 @@
 // Where an OAuth Installation's authorization server sends the browser back (#217):
-// `GET /auth/plugins/callback`, the redirect URI the Hub registered there. It needs the sign-in
+// `GET /auth/mcp/callback`, the redirect URI the Hub registered there. It needs the sign-in
 // cookie of the person who began connecting, and the `state` the Hub gave them, which it takes
 // once. The Hub trades the code for tokens and keeps them, then sends the browser to the
-// Installation on the Plugins page, with what went wrong, if anything did. No token is ever in a
+// Installation on the MCP page, with what went wrong, if anything did. No token is ever in a
 // URL the Hub sends the browser to, nor logged.
 
 import { Effect } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateParticipant } from "./Auth.ts"
 import { HubConfig } from "./HubConfig.ts"
-import { OAuthCallbackPath } from "./PluginOAuth.ts"
+import { OAuthCallbackPath } from "./McpServerOAuth.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 
 /** The longest text taken from the callback's query, for each parameter. */
@@ -21,10 +21,10 @@ const backTo = (result: { readonly installationId?: string; readonly error?: str
   if (result.installationId !== undefined) search.set("installation", result.installationId)
   if (result.error === undefined) search.set("connected", "1")
   else search.set("connectError", result.error)
-  return `/plugins?${search.toString()}`
+  return `/mcp?${search.toString()}`
 }
 
-export const PluginOAuthRoutes = HttpRouter.use(
+export const McpServerOAuthRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const config = yield* HubConfig
     const relay = yield* SessionRelay
@@ -57,7 +57,7 @@ export const PluginOAuthRoutes = HttpRouter.use(
         const error = param("error")
         const errorDescription = param("error_description")
         const iss = param("iss")
-        const result = yield* relay.finishPluginConnect(you.value, {
+        const result = yield* relay.finishMcpServerConnect(you.value, {
           state,
           ...(code !== undefined && { code }),
           ...(error !== undefined && { error }),
@@ -65,7 +65,7 @@ export const PluginOAuthRoutes = HttpRouter.use(
           ...(iss !== undefined && { iss }),
         })
         return HttpServerResponse.redirect(backTo(result), { status: 302 })
-      }).pipe(Effect.withSpan("PluginOAuth.callback")),
+      }).pipe(Effect.withSpan("McpServerOAuth.callback")),
     )
   }),
 )

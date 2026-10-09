@@ -1,23 +1,23 @@
 import { Result, Schema, SchemaIssue } from "effect"
-import { PluginId } from "./Ids.ts"
+import { McpServerId } from "./Ids.ts"
 import {
   type HeaderSecret,
   headerSecretsOf,
-  MaxPluginNameLength,
-  type PackagedPlugin,
-  type Plugin,
-  type PluginAuth,
-  pluginAuthProblem,
-  type PluginSource,
-  pluginUrlProblem,
+  MaxMcpServerNameLength,
+  type PackagedMcpServer,
+  type McpServer,
+  type McpServerAuth,
+  mcpServerAuthProblem,
+  type McpServerSource,
+  mcpServerUrlProblem,
   ValuePlaceholder,
-} from "./Plugin.ts"
+} from "./McpServer.ts"
 
-// A packaged Plugin (#220, ADR 0020): a folder with a `package.json` and, beside it, a kndl
+// A packaged MCP server (#220, ADR 0020): a folder with a `package.json` and, beside it, a kndl
 // manifest, `kndl.json`, added from a git repo or an upload. The Hub reads only those two files
-// and runs nothing: a Plugin is so far only an MCP server's URL and the auth it needs.
+// and runs nothing: an MCP server is so far only a URL and the auth it needs.
 //
-//   package.json  name     the Plugin's id: an npm package name, so unique wherever npm's are
+//   package.json  name     the MCP server's id: an npm package name, so unique wherever npm's are
 //                 version  what it is pinned to, with the commit from git
 //   kndl.json     { "displayName": "Linear", "description": "…", "icon": "assets/logo.svg",
 //                   "mcp": { "url": "https://mcp.linear.app/mcp" },
@@ -25,19 +25,19 @@ import {
 //
 // `auth` is optional and none by default; its other forms are header secrets,
 // `{ "type": "headers", "headers": [{ "key", "title", "header", "template"? }] }`, which maps 1:1
-// onto the Plugin's `Headers` auth, the template `{value}` by default; and OAuth (#217),
+// onto the MCP server's `Headers` auth, the template `{value}` by default; and OAuth (#217),
 // `{ "type": "oauth", "scopes"?: ["read", "write"] }`, for a server whose authorization server
 // offers Dynamic Client Registration.
 //
 // `icon` (#230) is optional: an https URL, or a path to a file in the package, which the Hub shows
-// as the Plugin's icon. Never refused: one the Hub can't use is left out, for the favicon of the
-// Plugin's URL.
+// as the MCP server's icon. Never refused: one the Hub can't use is left out, for the favicon of
+// the MCP server's URL.
 
 /** The kndl manifest's file name, beside `package.json`. */
-export const PluginManifestFile = "kndl.json"
+export const McpServerManifestFile = "kndl.json"
 
 /** A manifest's description, at most this long. */
-export const MaxPluginDescriptionLength = 500
+export const MaxMcpServerDescriptionLength = 500
 
 // oxlint-disable-next-line no-control-regex
 const controlCharacters = /[\u0000-\u001f\u007f]/
@@ -53,12 +53,12 @@ const oneLineOf = (max: number) =>
 const Manifest = Schema.Struct({
   /** For editors that validate it. */
   $schema: Schema.optionalKey(Schema.String),
-  displayName: Schema.String.check(oneLineOf(MaxPluginNameLength)),
-  description: Schema.optionalKey(Schema.String.check(oneLineOf(MaxPluginDescriptionLength))),
+  displayName: Schema.String.check(oneLineOf(MaxMcpServerNameLength)),
+  description: Schema.optionalKey(Schema.String.check(oneLineOf(MaxMcpServerDescriptionLength))),
   mcp: Schema.Struct({
     url: Schema.String.check(
       Schema.makeFilter((url: string) => {
-        const problem = pluginUrlProblem(url)
+        const problem = mcpServerUrlProblem(url)
         return problem === undefined ? true : problem.replace(/^The URL /, "").replace(/\.$/, "")
       }),
     ),
@@ -69,16 +69,18 @@ const Manifest = Schema.Struct({
 })
 
 /** A manifest icon, at most this long. */
-export const MaxPluginIconLength = 500
+export const MaxMcpServerIconLength = 500
 
 /**
  * The manifest's `icon`: an https URL, or a path to a file in the package. Anything else is left
- * out, not refused: the Plugin gets its URL's favicon instead.
+ * out, not refused: the MCP server gets its URL's favicon instead.
  */
 function readIcon(icon: unknown): string | undefined {
   if (typeof icon !== "string") return undefined
   const trimmed = icon.trim()
-  return trimmed === "" || trimmed.length > MaxPluginIconLength || controlCharacters.test(trimmed)
+  return trimmed === "" ||
+    trimmed.length > MaxMcpServerIconLength ||
+    controlCharacters.test(trimmed)
     ? undefined
     : trimmed
 }
@@ -148,26 +150,28 @@ function manifestProblems(issue: SchemaIssue.Issue, prefix = ""): Array<string> 
       message === "Missing key"
         ? "is missing"
         : message === "Expected no excess property"
-          ? `isn't a field ${PluginManifestFile} has`
+          ? `isn't a field ${McpServerManifestFile} has`
           : message.startsWith("Expected ")
             ? `must be ${message.slice("Expected ".length)}`
             : message
     return field === ""
-      ? `${PluginManifestFile} ${said}.`
-      : `${PluginManifestFile}: ${field} ${said}.`
+      ? `${McpServerManifestFile} ${said}.`
+      : `${McpServerManifestFile}: ${field} ${said}.`
   })
 }
 
-/** The Plugin's auth from the manifest's `auth`, or each problem with it. */
-function readAuth(auth: unknown): Result.Result<PluginAuth, Array<string>> {
+/** The MCP server's auth from the manifest's `auth`, or each problem with it. */
+function readAuth(auth: unknown): Result.Result<McpServerAuth, Array<string>> {
   if (auth === undefined) return Result.succeed({ _tag: "None" })
   if (Result.isFailure(Schema.decodeUnknownResult(AuthType)(auth))) {
-    return Result.fail([`${PluginManifestFile}: auth.type must be "none", "headers" or "oauth".`])
+    return Result.fail([
+      `${McpServerManifestFile}: auth.type must be "none", "headers" or "oauth".`,
+    ])
   }
   const type = (auth as { readonly type: "none" | "headers" | "oauth" }).type
   if (type === "none") {
     return Schema.decodeUnknownResult(NoAuth)(auth, strict).pipe(
-      Result.map((): PluginAuth => ({ _tag: "None" })),
+      Result.map((): McpServerAuth => ({ _tag: "None" })),
       Result.mapError((error) => manifestProblems(error.issue, "auth")),
     )
   }
@@ -175,18 +179,18 @@ function readAuth(auth: unknown): Result.Result<PluginAuth, Array<string>> {
     return Schema.decodeUnknownResult(OAuthAuth)(auth, strict).pipe(
       Result.mapError((error) => manifestProblems(error.issue, "auth")),
       Result.flatMap(({ scopes }) => {
-        const mapped: PluginAuth = { _tag: "OAuth", ...(scopes !== undefined && { scopes }) }
-        const problem = pluginAuthProblem(mapped)
+        const mapped: McpServerAuth = { _tag: "OAuth", ...(scopes !== undefined && { scopes }) }
+        const problem = mcpServerAuthProblem(mapped)
         return problem === undefined
           ? Result.succeed(mapped)
-          : Result.fail([`${PluginManifestFile}: auth.scopes: ${problem}`])
+          : Result.fail([`${McpServerManifestFile}: auth.scopes: ${problem}`])
       }),
     )
   }
   return Schema.decodeUnknownResult(HeadersAuth)(auth, strict).pipe(
     Result.mapError((error) => manifestProblems(error.issue, "auth")),
     Result.flatMap(({ headers }) => {
-      const mapped: PluginAuth = {
+      const mapped: McpServerAuth = {
         _tag: "Headers",
         headers: headers.map((header) => ({
           ...header,
@@ -194,30 +198,30 @@ function readAuth(auth: unknown): Result.Result<PluginAuth, Array<string>> {
           template: header.template ?? ValuePlaceholder,
         })),
       }
-      // The rules for header secrets are a Hub-only Plugin's too: each header's own first, then
+      // The rules for header secrets are a Hub-only MCP server's too: each header's own first, then
       // those across them, such as unique keys.
       const each = mapped.headers.flatMap((header, index) => {
-        const problem = pluginAuthProblem({ _tag: "Headers", headers: [header] })
+        const problem = mcpServerAuthProblem({ _tag: "Headers", headers: [header] })
         return problem === undefined
           ? []
-          : [`${PluginManifestFile}: auth.headers[${index}]: ${problem}`]
+          : [`${McpServerManifestFile}: auth.headers[${index}]: ${problem}`]
       })
       if (each.length > 0) return Result.fail(each)
-      const problem = pluginAuthProblem(mapped)
+      const problem = mcpServerAuthProblem(mapped)
       return problem === undefined
         ? Result.succeed(mapped)
-        : Result.fail([`${PluginManifestFile}: auth.headers: ${problem}`])
+        : Result.fail([`${McpServerManifestFile}: auth.headers: ${problem}`])
     }),
   )
 }
 
 /**
  * An npm package name, as npm accepts a new one: lowercase, URL-safe, with an optional scope. No
- * colon, so never a Hub-only Plugin's `hub:` id.
+ * colon, so never a Hub-only MCP server's `hub:` id.
  */
 const npmName = /^(?:@[a-z0-9-][a-z0-9-._]*\/)?[a-z0-9-][a-z0-9-._]*$/
 
-/** Why a `package.json` name can't be a Plugin's id, if it can't. */
+/** Why a `package.json` name can't be an MCP server's id, if it can't. */
 export function npmNameProblem(name: string): string | undefined {
   if (name.length > 214 || !npmName.test(name) || name === "node_modules") {
     return `package.json's "name" ${name} isn't a valid npm package name: lowercase letters, digits, - . and _, with an optional @scope/.`
@@ -250,7 +254,7 @@ function readPackageJson(
   const { name, version } = json as { readonly name?: unknown; readonly version?: unknown }
   const problems: Array<string> = []
   if (typeof name !== "string" || name === "") {
-    problems.push(`package.json needs a "name": the Plugin's id.`)
+    problems.push(`package.json needs a "name": the MCP server's id.`)
   } else {
     const problem = npmNameProblem(name)
     if (problem !== undefined) problems.push(problem)
@@ -266,19 +270,19 @@ function readPackageJson(
 }
 
 /**
- * The Plugin a package's `package.json` and manifest make, read from `source` (at `commit`, from
- * git), or every problem with them, one per line.
+ * The MCP server a package's `package.json` and manifest make, read from `source` (at `commit`,
+ * from git), or every problem with them, one per line.
  */
-export function readPluginPackage(
+export function readMcpServerPackage(
   files: { readonly packageJson: string; readonly manifest: string },
-  source: PluginSource,
+  source: McpServerSource,
   commit?: string,
-): Result.Result<PackagedPlugin, string> {
+): Result.Result<PackagedMcpServer, string> {
   const packageJson = readPackageJson(files.packageJson)
   const problems = Result.isFailure(packageJson) ? [...packageJson.failure] : []
   const parsed = parseJson(files.manifest)
   if (Result.isFailure(parsed)) {
-    problems.push(`${PluginManifestFile} isn't JSON.`)
+    problems.push(`${McpServerManifestFile} isn't JSON.`)
     return Result.fail(problems.join("\n"))
   }
   const manifest = Schema.decodeUnknownResult(Manifest)(parsed.success, strict)
@@ -295,7 +299,7 @@ export function readPluginPackage(
   const { displayName, description, mcp } = manifest.success
   const icon = readIcon(manifest.success.icon)
   return Result.succeed({
-    id: PluginId.make(packageJson.success.name),
+    id: McpServerId.make(packageJson.success.name),
     name: displayName.trim(),
     ...(description !== undefined && { description: description.trim() }),
     url: mcp.url,
@@ -378,7 +382,7 @@ const gitUrlKey = (url: string) => {
  * Whether two packages came from the same source, so one may upgrade the other: the same git
  * repo and subfolder, at any ref, or both uploads.
  */
-export function sameSource(a: PluginSource, b: PluginSource): boolean {
+export function sameSource(a: McpServerSource, b: McpServerSource): boolean {
   if (a._tag === "Upload" || b._tag === "Upload") return a._tag === b._tag
   return (
     gitUrlKey(a.url) === gitUrlKey(b.url) && packagePath(a.path ?? "") === packagePath(b.path ?? "")
@@ -388,14 +392,14 @@ export function sameSource(a: PluginSource, b: PluginSource): boolean {
 // ── Showing packages ───────────────────────────────────────────────────────
 
 /** Where a package came from, as the web UI says it. */
-export function sourceText(source: PluginSource): string {
+export function sourceText(source: McpServerSource): string {
   if (source._tag === "Upload") return `Uploaded ${source.fileName}`
   const path = packagePath(source.path ?? "")
   return `${source.url}${source.ref !== undefined ? ` at ${source.ref}` : ""}${path !== "" ? ` in ${path}/` : ""}`
 }
 
-/** A Plugin's auth, as the web UI says it. */
-export function authText(auth: PluginAuth): string {
+/** An MCP server's auth, as the web UI says it. */
+export function authText(auth: McpServerAuth): string {
   if (auth._tag === "None") return "None"
   if (auth._tag === "OAuth") {
     return auth.scopes === undefined || auth.scopes.length === 0
@@ -410,7 +414,10 @@ export function authText(auth: PluginAuth): string {
 /** A commit, short. */
 export const shortCommit = (commit: string) => commit.slice(0, 7)
 
-/** What a packaged Plugin is pinned to, as Sessions and the log say it: `1.2.0 (abc1234)` from git. */
+/**
+ * What a packaged MCP server is pinned to, as Sessions and the log say it: `1.2.0 (abc1234)` from
+ * git.
+ */
 export const packageVersion = (pinned: { readonly version: string; readonly commit?: string }) =>
   pinned.commit === undefined ? pinned.version : `${pinned.version} (${shortCommit(pinned.commit)})`
 
@@ -421,20 +428,27 @@ export interface PackageChange {
   readonly after: string
 }
 
-/** What upgrading the Plugin to the package changes; none when it is the same. */
-export function packageChanges(plugin: Plugin, next: PackagedPlugin): Array<PackageChange> {
+/** What upgrading the MCP server to the package changes; none when it is the same. */
+export function packageChanges(
+  mcpServer: McpServer,
+  next: PackagedMcpServer,
+): Array<PackageChange> {
   const fields: Array<[string, string, string]> = [
-    ["Version", plugin.package?.version ?? "", next.package.version],
-    ["Commit", shortCommit(plugin.package?.commit ?? ""), shortCommit(next.package.commit ?? "")],
+    ["Version", mcpServer.package?.version ?? "", next.package.version],
+    [
+      "Commit",
+      shortCommit(mcpServer.package?.commit ?? ""),
+      shortCommit(next.package.commit ?? ""),
+    ],
     [
       "Source",
-      plugin.package === undefined ? "" : sourceText(plugin.package.source),
+      mcpServer.package === undefined ? "" : sourceText(mcpServer.package.source),
       sourceText(next.package.source),
     ],
-    ["Display name", plugin.name, next.name],
-    ["Description", plugin.description ?? "", next.description ?? ""],
-    ["MCP server URL", plugin.url, next.url],
-    ["Auth", authText(plugin.auth), authText(next.auth)],
+    ["Display name", mcpServer.name, next.name],
+    ["Description", mcpServer.description ?? "", next.description ?? ""],
+    ["MCP server URL", mcpServer.url, next.url],
+    ["Auth", authText(mcpServer.auth), authText(next.auth)],
   ]
   return fields
     .filter(([, before, after]) => before !== after)
@@ -446,8 +460,8 @@ export function packageChanges(plugin: Plugin, next: PackagedPlugin): Array<Pack
  * Sessions start again.
  */
 export function addedHeaderSecrets(
-  before: PluginAuth,
-  after: PluginAuth,
+  before: McpServerAuth,
+  after: McpServerAuth,
 ): ReadonlyArray<HeaderSecret> {
   const had = new Set(headerSecretsOf(before).map(({ key }) => key))
   return headerSecretsOf(after).filter(({ key }) => !had.has(key))

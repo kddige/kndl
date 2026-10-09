@@ -1,6 +1,6 @@
-// OAuth Installations (#217), end to end: a real Hub, a fake Runner that relays Plugins, the web UI
-// over WebSockets, and a stand-in MCP server whose own authorization server offers Dynamic Client
-// Registration, or doesn't, for a client entered by hand (#218). Connecting follows the MCP
+// OAuth Installations (#217), end to end: a real Hub, a fake Runner that relays MCP servers, the
+// web UI over WebSockets, and a stand-in MCP server whose own authorization server offers Dynamic
+// Client Registration, or doesn't, for a client entered by hand (#218). Connecting follows the MCP
 // authorization spec; only the Hub ever holds a token or a client's secret.
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
@@ -17,8 +17,8 @@ import { TestClock } from "effect/testing"
 import { DatabaseTest } from "./Database.ts"
 import { MaxOAuthRequestBytes } from "./GatewayRoutes.ts"
 import { HubConfig } from "./HubConfig.ts"
-import { OAuthCallbackPath, PluginOAuth } from "./PluginOAuth.ts"
-import { Plugins } from "./Plugins.ts"
+import { OAuthCallbackPath, McpServerOAuth } from "./McpServerOAuth.ts"
+import { McpServers } from "./McpServers.ts"
 import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import {
   type Connection,
@@ -258,23 +258,27 @@ async function ask(web: Connection<Web>, command: Record<string, unknown> & { _t
   )
 }
 
-/** The Plugins and Installations in an answer. */
+/** The MCP servers and Installations in an answer. */
 function state(answer: Web) {
-  if (answer._tag !== "PluginsState") throw new Error(`Not PluginsState: ${JSON.stringify(answer)}`)
+  if (answer._tag !== "McpServersState")
+    throw new Error(`Not McpServersState: ${JSON.stringify(answer)}`)
   return answer
 }
 
-/** A Hub with a secrets key, a Runner that relays Plugins, alice on the web, and `repo`'s Environment. */
+/**
+ * A Hub with a secrets key, a Runner that relays MCP servers, alice on the web, and `repo`'s
+ * Environment.
+ */
 async function scene() {
   const hub = await startHub({
     config: {
       devLogin: true,
       secretsKey: Option.some(Redacted.make(generateSecretsKey())),
-      pluginCheckTimeoutMs: 1000,
+      mcpServerCheckTimeoutMs: 1000,
     },
   })
   const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
-    relaysPlugins: true,
+    relaysMcpServers: true,
   })
   const web = await openWeb(hub, "alice")
   await seedEnvironment(hub, repo, "dev:alice")
@@ -290,23 +294,23 @@ const makeOwner = (hub: TestHub, login: string) =>
     }),
   )
 
-/** Creates an OAuth Plugin of the stand-in server, and an Installation of it on `repo`. */
+/** Creates an OAuth MCP server of the stand-in server, and an Installation of it on `repo`. */
 async function install(web: Connection<Web>) {
   const created = state(
     await ask(web, {
-      _tag: "CreatePlugin",
+      _tag: "CreateMcpServer",
       name: "Tracker",
       url: mcpUrl(),
       auth: { _tag: "OAuth" },
     }),
   )
-  const pluginId = created.plugins.find((plugin) => plugin.name === "Tracker")?.id
+  const mcpServerId = created.mcpServers.find((mcpServer) => mcpServer.name === "Tracker")?.id
   const answer = state(
-    await ask(web, { _tag: "CreateInstallation", pluginId, name: "Tracker", repos: [repo] }),
+    await ask(web, { _tag: "CreateInstallation", mcpServerId, name: "Tracker", repos: [repo] }),
   )
-  const installation = answer.installations.find((found) => found.pluginId === pluginId)
-  if (pluginId === undefined || installation === undefined) throw new Error("Not installed")
-  return { pluginId, installationId: installation.id }
+  const installation = answer.installations.find((found) => found.mcpServerId === mcpServerId)
+  if (mcpServerId === undefined || installation === undefined) throw new Error("Not installed")
+  return { mcpServerId, installationId: installation.id }
 }
 
 /**
@@ -426,16 +430,16 @@ const expectNoSecretIn = (text: string) => {
   for (const secret of everySecret()) expect(text).not.toContain(secret)
 }
 
-/** The Repo's Plugin change log, as its changes. */
+/** The Repo's MCP server change log, as its changes. */
 async function logOf(web: Connection<Web>) {
-  const answer = await ask(web, { _tag: "GetPluginLog", repo })
-  if (answer._tag !== "PluginLog") throw new Error(JSON.stringify(answer))
+  const answer = await ask(web, { _tag: "GetMcpServerLog", repo })
+  if (answer._tag !== "McpServerLog") throw new Error(JSON.stringify(answer))
   return answer.entries.map((entry) => entry.change).toReversed()
 }
 
 /** The Installation as the web is sent it. */
 async function installationOf(web: Connection<Web>, id: string) {
-  return state(await ask(web, { _tag: "GetPlugins" })).installations.find((one) => one.id === id)
+  return state(await ask(web, { _tag: "GetMcpServers" })).installations.find((one) => one.id === id)
 }
 
 /** The Session's history, as its events. */
@@ -490,8 +494,8 @@ describe("connecting an OAuth Installation", () => {
         iss: issuer(),
       })
     })
-    // Back to the Installation on the Plugins page.
-    expect(back.pathname).toBe("/plugins")
+    // Back to the Installation on the MCP page.
+    expect(back.pathname).toBe("/mcp")
     expect(Object.fromEntries(back.searchParams)).toEqual({
       installation: installationId,
       connected: "1",
@@ -564,7 +568,7 @@ describe("connecting an OAuth Installation", () => {
   test("takes a state only within 10 minutes of its beginning", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const oauth = yield* PluginOAuth
+        const oauth = yield* McpServerOAuth
         const by = ParticipantId.make("dev:alice")
         const begin = () =>
           oauth
@@ -606,7 +610,7 @@ describe("connecting an OAuth Installation", () => {
         expect(yield* claimOf(again)).toBe("claimed")
       }).pipe(
         Effect.provide(
-          PluginOAuth.layer.pipe(
+          McpServerOAuth.layer.pipe(
             Layer.provideMerge(Secrets.layer),
             Layer.provideMerge(
               Layer.merge(
@@ -669,7 +673,7 @@ describe("connecting an OAuth Installation", () => {
 
   test("is refused for a server, authorization server or endpoint not on https", async () => {
     const { web } = await scene()
-    const { pluginId, installationId } = await install(web)
+    const { mcpServerId, installationId } = await install(web)
     const refusal = async () => {
       const answer = await ask(web, { _tag: "ConnectInstallation", installationId })
       if (answer._tag !== "CommandFailed") throw new Error(JSON.stringify(answer))
@@ -697,11 +701,11 @@ describe("connecting an OAuth Installation", () => {
     expect(as.registered).toEqual([])
     as.metadata = {}
 
-    // Nor the MCP server itself, though a header secret Plugin may be on http.
+    // Nor the MCP server itself, though a header secret MCP server may be on http.
     state(
       await ask(web, {
-        _tag: "EditPlugin",
-        pluginId,
+        _tag: "EditMcpServer",
+        mcpServerId,
         name: "Tracker",
         url: "http://mcp.example.test/mcp",
         auth: { _tag: "OAuth" },
@@ -711,15 +715,15 @@ describe("connecting an OAuth Installation", () => {
     expect(as.issued).toBe(0)
   })
 
-  test("is refused for a Plugin that doesn't use OAuth, or changed meanwhile", async () => {
+  test("is refused for an MCP server that doesn't use OAuth, or changed meanwhile", async () => {
     const { hub, web } = await scene()
-    const { pluginId, installationId } = await install(web)
+    const { mcpServerId, installationId } = await install(web)
     const begun = await authorize(web, installationId)
-    // The Plugin's server moved meanwhile: the connection begun isn't for it.
+    // The MCP server moved meanwhile: the connection begun isn't for it.
     state(
       await ask(web, {
-        _tag: "EditPlugin",
-        pluginId,
+        _tag: "EditMcpServer",
+        mcpServerId,
         name: "Tracker",
         url: `http://localhost:${server.port}/mcp`,
         auth: { _tag: "OAuth" },
@@ -729,12 +733,12 @@ describe("connecting an OAuth Installation", () => {
       (
         await callback(hub, web.cookie, { code: begun.code, state: begun.state, iss: issuer() })
       ).searchParams.get("connectError"),
-    ).toBe("Tracker or its Plugin changed meanwhile: connect it again.")
+    ).toBe("Tracker or its MCP server changed meanwhile: connect it again.")
 
     state(
       await ask(web, {
-        _tag: "EditPlugin",
-        pluginId,
+        _tag: "EditMcpServer",
+        mcpServerId,
         name: "Tracker",
         url: mcpUrl(),
         auth: { _tag: "None" },
@@ -746,15 +750,15 @@ describe("connecting an OAuth Installation", () => {
     })
   })
 
-  test("is cleared, client and all, when its Plugin's server moves to another origin", async () => {
+  test("is cleared, client and all, when its MCP server moves to another origin", async () => {
     const { hub, web } = await scene()
-    const { pluginId, installationId } = await install(web)
+    const { mcpServerId, installationId } = await install(web)
     await connect(hub, web, installationId)
     // Another path at the same origin keeps the connection.
     state(
       await ask(web, {
-        _tag: "EditPlugin",
-        pluginId,
+        _tag: "EditMcpServer",
+        mcpServerId,
         name: "Tracker",
         url: `${mcpUrl()}/`,
         auth: { _tag: "OAuth", scopes: ["read"] },
@@ -764,8 +768,8 @@ describe("connecting an OAuth Installation", () => {
     // Another origin could take the tokens: they go, and the client registered for them.
     state(
       await ask(web, {
-        _tag: "EditPlugin",
-        pluginId,
+        _tag: "EditMcpServer",
+        mcpServerId,
         name: "Tracker",
         url: `http://localhost:${server.port}/mcp`,
         auth: { _tag: "OAuth" },
@@ -782,8 +786,8 @@ describe("connecting an OAuth Installation", () => {
     expect(await logOf(web)).toEqual([
       "Created",
       "Connected",
-      "PluginEdited",
-      "PluginEdited",
+      "McpServerEdited",
+      "McpServerEdited",
       "Disconnected",
     ])
   })
@@ -806,7 +810,7 @@ describe("connecting an OAuth Installation", () => {
     const answer = await through(hub, installationId, start.modToken)
     expect(answer.status).toBe(409)
     expect(await answer.json()).toEqual({
-      error: "Tracker isn't connected to its account: reconnect it on the Plugins page.",
+      error: "Tracker isn't connected to its account: reconnect it on the MCP page.",
     })
   })
 
@@ -815,23 +819,25 @@ describe("connecting an OAuth Installation", () => {
     await makeOwner(hub, "alice")
     const created = state(
       await ask(web, {
-        _tag: "CreatePlugin",
+        _tag: "CreateMcpServer",
         name: "Tracker",
         url: mcpUrl(),
         auth: { _tag: "OAuth" },
       }),
     )
-    const pluginId = created.plugins.find((plugin) => plugin.name === "Tracker")?.id
+    const mcpServerId = created.mcpServers.find((mcpServer) => mcpServer.name === "Tracker")?.id
     const answer = state(
       await ask(web, {
         _tag: "CreateInstallation",
-        pluginId,
+        mcpServerId,
         name: "Tracker",
         repos: [],
         global: true,
       }),
     )
-    const installationId = answer.installations.find((found) => found.pluginId === pluginId)?.id
+    const installationId = answer.installations.find(
+      (found) => found.mcpServerId === mcpServerId,
+    )?.id
     if (installationId === undefined) throw new Error("Not installed")
 
     // Every Session on the Hub would act as its account: not bob's to choose.
@@ -855,7 +861,7 @@ describe("connecting an OAuth Installation", () => {
 
     // A connection begun on a Repo-scoped one isn't finished once it is global.
     const scoped = state(
-      await ask(web, { _tag: "CreateInstallation", pluginId, name: "Scoped", repos: [repo] }),
+      await ask(web, { _tag: "CreateInstallation", mcpServerId, name: "Scoped", repos: [repo] }),
     ).installations.find((found) => found.name === "Scoped")?.id
     if (scoped === undefined) throw new Error("Not installed")
     const begun = await authorize(web, scoped)
@@ -875,7 +881,7 @@ describe("connecting an OAuth Installation", () => {
       iss: issuer(),
     })
     expect(back.searchParams.get("connectError")).toBe(
-      "Scoped or its Plugin changed meanwhile: connect it again.",
+      "Scoped or its MCP server changed meanwhile: connect it again.",
     )
     expect((await installationOf(web, scoped))?.connection).toBeUndefined()
   })
@@ -985,7 +991,7 @@ describe("an OAuth Installation's tokens", () => {
     as.expiresIn = 3600
     as.refreshDelay = 100
     const tokens = await hub.run(
-      Effect.flatMap(PluginOAuth, (oauth) =>
+      Effect.flatMap(McpServerOAuth, (oauth) =>
         Effect.all(
           Array.from({ length: 5 }, () => oauth.accessToken(installationId as never)),
           { concurrency: "unbounded" },
@@ -1003,7 +1009,7 @@ describe("an OAuth Installation's tokens", () => {
     // first no longer works.
     const generation = tokens[0]?._tag === "Token" ? tokens[0].generation : -1
     const next = await hub.run(
-      Effect.flatMap(PluginOAuth, (oauth) =>
+      Effect.flatMap(McpServerOAuth, (oauth) =>
         Effect.andThen(
           oauth.rejected(installationId as never, generation),
           oauth.accessToken(installationId as never),
@@ -1032,7 +1038,7 @@ describe("an OAuth Installation's tokens", () => {
       expect(answer.status).toBe(409)
       expect(answer.headers.get("www-authenticate")).toBeNull()
       expect(await answer.json()).toEqual({
-        error: "Tracker isn't connected to its account: reconnect it on the Plugins page.",
+        error: "Tracker isn't connected to its account: reconnect it on the MCP page.",
       })
     })
     expect(logged).toContain("invalid_grant")
@@ -1042,11 +1048,11 @@ describe("an OAuth Installation's tokens", () => {
       {
         _tag: "SandboxNoted",
         message:
-          "Tracker isn't connected to its account. Its tools fail until it is reconnected on the Plugins page.",
+          "Tracker isn't connected to its account. Its tools fail until it is reconnected on the MCP page.",
         installationFailed: { installationId, installation: "Tracker", reason: "NotConnected" },
       },
     ])
-    // Shown lost on the Plugins page.
+    // Shown lost on the MCP page.
     expect((await installationOf(web, installationId))?.connection?.lostAt).toEqual(
       expect.any(Number),
     )
@@ -1265,22 +1271,22 @@ describe("a client entered by hand (#218)", () => {
     withoutRegistration()
     const created = state(
       await ask(web, {
-        _tag: "CreatePlugin",
+        _tag: "CreateMcpServer",
         name: "Tracker",
         url: mcpUrl(),
         auth: { _tag: "OAuth" },
       }),
     )
-    const pluginId = created.plugins.find((plugin) => plugin.name === "Tracker")?.id
+    const mcpServerId = created.mcpServers.find((mcpServer) => mcpServer.name === "Tracker")?.id
     const installationId = state(
       await ask(web, {
         _tag: "CreateInstallation",
-        pluginId,
+        mcpServerId,
         name: "Tracker",
         repos: [],
         global: true,
       }),
-    ).installations.find((found) => found.pluginId === pluginId)?.id
+    ).installations.find((found) => found.mcpServerId === mcpServerId)?.id
     if (installationId === undefined) throw new Error("Not installed")
 
     const bob = await openWeb(hub, "bob")
@@ -1292,21 +1298,21 @@ describe("a client entered by hand (#218)", () => {
 
     // Only the Hub ever sends it; yet were it printed, it is redacted, on any Repo.
     const values = await hub.run(
-      Effect.flatMap(Plugins, (plugins) => plugins.valuesOn("someone/else")),
+      Effect.flatMap(McpServers, (mcpServers) => mcpServers.valuesOn("someone/else")),
     )
     expect(values.map(Redacted.value)).toContain(app.clientSecret)
   })
 
-  test("goes, with its secret, when its Plugin's server moves to another origin", async () => {
+  test("goes, with its secret, when its MCP server moves to another origin", async () => {
     const { hub, web } = await scene()
-    const { pluginId, installationId } = await install(web)
+    const { mcpServerId, installationId } = await install(web)
     withoutRegistration()
     await connect(hub, web, installationId, app)
     await ask(web, { _tag: "DisconnectInstallation", installationId })
     state(
       await ask(web, {
-        _tag: "EditPlugin",
-        pluginId,
+        _tag: "EditMcpServer",
+        mcpServerId,
         name: "Tracker",
         url: `http://localhost:${server.port}/mcp`,
         auth: { _tag: "OAuth" },

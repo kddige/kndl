@@ -5,8 +5,8 @@
 // permissions lack (issue #86); the Pairing codes waiting to be redeemed and the Hub's own commit,
 // for the Runners page (issue #85); and the signed-in person's Claude credential, write-only (ADR
 // 0015), and the CLI tokens they signed the CLI in with (issue #179); and, for the Hub's Owner alone,
-// its Members and pending Invites, for the People page (#209); and the Plugins and their
-// Installations, and the Plugin change logs of the Repos the client asked about (#221). The
+// its Members and pending Invites, for the People page (#209); and the MCP servers and their
+// Installations, and the MCP server change logs of the Repos the client asked about (#221). The
 // terminal's output itself goes straight to the view that draws it (HubClient.openTerminal), not
 // through here.
 //
@@ -29,8 +29,8 @@ import type {
   PresentParticipant,
   PendingInvite,
   PendingPairingCode,
-  Plugin,
-  PluginLogEntry,
+  McpServer,
+  McpServerLogEntry,
   QuestionPick,
   QueuedPrompt,
   RunnerId,
@@ -178,15 +178,18 @@ export interface HubState {
    */
   readonly invites: ReadonlyArray<PendingInvite> | null
   /**
-   * The Plugins and their Installations, each Installation with only the Repos the person has
+   * The MCP servers and their Installations, each Installation with only the Repos the person has
    * access to (#221); null until the client first asks for them, then kept current.
    */
-  readonly plugins: {
-    readonly plugins: ReadonlyArray<Plugin>
+  readonly mcpServers: {
+    readonly mcpServers: ReadonlyArray<McpServer>
     readonly installations: ReadonlyArray<Installation>
   } | null
-  /** The Plugin change logs of the Repos the client asked about, newest first. By {@link repoKey}. */
-  readonly pluginLogs: Readonly<Record<string, ReadonlyArray<PluginLogEntry>>>
+  /**
+   * The MCP server change logs of the Repos the client asked about, newest first. By
+   * {@link repoKey}.
+   */
+  readonly mcpServerLogs: Readonly<Record<string, ReadonlyArray<McpServerLogEntry>>>
 }
 
 /** Events the client adds to the Hub's messages. */
@@ -222,8 +225,8 @@ export const initialState: HubState = {
   owner: false,
   members: null,
   invites: null,
-  plugins: null,
-  pluginLogs: {},
+  mcpServers: null,
+  mcpServerLogs: {},
 }
 
 const emptyJoined: JoinedSession = {
@@ -417,17 +420,17 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return { ...state, invites: action.invites }
     case "MemberList":
       return { ...state, members: action.members }
-    case "PluginsState":
+    case "McpServersState":
       return {
         ...state,
-        plugins: { plugins: action.plugins, installations: action.installations },
+        mcpServers: { mcpServers: action.mcpServers, installations: action.installations },
       }
-    case "PluginLog":
+    case "McpServerLog":
       return {
         ...state,
-        pluginLogs: { ...state.pluginLogs, [repoKey(action.repo)]: action.entries },
+        mcpServerLogs: { ...state.mcpServerLogs, [repoKey(action.repo)]: action.entries },
       }
-    case "PluginPackageRead":
+    case "McpServerPackageRead":
     case "InstallationAuthorizing":
     case "InstallationNeedsClient":
       return state
@@ -441,13 +444,13 @@ export function reduce(state: HubState, action: HubAction): HubState {
 function forgetRepo(state: HubState, repo: string): HubState {
   const key = repoKey(repo)
   const { [key]: _, ...environments } = state.environments
-  const { [key]: __, ...pluginLogs } = state.pluginLogs
+  const { [key]: __, ...mcpServerLogs } = state.mcpServerLogs
   const builds = Object.entries(state.testBuilds) as Array<[TestBuildId, TestBuildRun]>
   const kept = builds.filter(([, run]) => !sameRepo(run.testBuild.repo, repo))
   return {
     ...state,
     environments,
-    pluginLogs,
+    mcpServerLogs,
     lostRepos: { ...state.lostRepos, [key]: true },
     testBuilds:
       kept.length === builds.length
