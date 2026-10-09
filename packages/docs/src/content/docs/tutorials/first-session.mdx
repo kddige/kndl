@@ -83,7 +83,7 @@ Every Repo needs an Environment, the recipe its Sandboxes are built from, before
 
 1. Press **New Session** (the plus button at the top of the sidebar).
 
-2. In **Repo**, enter your repository as `owner/name`. In **Base branch**, enter the branch Claude should start from, such as `main`. Leave **Runner** on **Any online Runner**, and press **Start Session**.
+2. In **Repo**, enter your repository as `owner/name`. In **Branch**, pick the branch Claude should start from, such as `main`; it is filled in with the Repo's default branch. Leave **Runner** on **Any online Runner**, and press **Start Session**.
 
 3. The Repo has no Environment yet, so the web UI takes you to its Environment screen, under a banner that says your Session starts once one is applied. The draft holds the defaults: Debian with the usual build tools (`buildpack-deps:bookworm`), no scripts, no Docker, 2 CPUs and 4 GiB of memory. Leave them for now.
 
@@ -95,7 +95,7 @@ Every Repo needs an Environment, the recipe its Sandboxes are built from, before
 
 ## Work in the Session
 
-The Session opens with a **Starting…** banner. The Runner clones your Repo onto a new Work branch, builds the Environment for itself the first time, boots the Session's Sandbox and starts Claude Code. **Show log** in the banner follows along.
+The Session opens with a **Starting…** banner. The Runner clones your Repo onto a new Work branch made from it, builds the Environment for itself the first time, boots the Session's Sandbox and starts Claude Code. **Show log** in the banner follows along.
 
 <Steps>
 

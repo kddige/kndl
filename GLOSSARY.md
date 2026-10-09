@@ -61,7 +61,7 @@ _Avoid_: invitation code, Pairing code, join link
 ## Sessions
 
 **Session**:
-One ongoing Claude Code conversation working on one Repo, on its own Work branch. A Session belongs to its Repo, not to a person.
+One ongoing Claude Code conversation working on one Repo, on a Work branch. A Session belongs to its Repo, not to a person.
 _Avoid_: chat, thread, agent, job
 
 **Subagent**:
@@ -69,7 +69,7 @@ A Claude Code agent that a Session's Claude starts with the Agent tool. It runs 
 _Avoid_: Child Session, sub-session, worker
 
 **Session name**:
-A Session's editable display name. It defaults to the Session's Work branch.
+A Session's editable display name. It defaults to the Session's Work branch, or, for a Session on its base branch itself, to that branch and the Session's short id.
 _Avoid_: title, label
 
 **Creator**:
@@ -105,8 +105,12 @@ The Session's checkout of its Repo, which outlives any single Sandbox.
 _Avoid_: working directory, volume, clone
 
 **Work branch**:
-The git branch a Session commits to, created from the base branch chosen when the Session started.
+The git branch a Session commits to: a new `claude/<id>` branch made from the base branch, a new branch the person named, or the base branch itself, as chosen when the Session started (ADR 0023).
 _Avoid_: session branch, feature branch
+
+**Base branch**:
+The branch a Session's Repo is cloned on when it starts, chosen in New Session. The Work branch is made from it, unless the Work branch is the base branch.
+_Avoid_: source branch, parent branch
 
 **Sandbox token**:
 A short-lived GitHub App installation token for one Session's Repo, kept in that Session's Sandbox so plain `git` and `gh` reach GitHub. It has every permission the App's installation has, so anything in the Sandbox can push and merge in that Repo; a GitHub ruleset on the default branch is the guardrail (ADR 0010).
