@@ -102,19 +102,19 @@ describe("the install script", () => {
     })
   }
 
-  for (const os of ["MINGW64_NT-10.0-19045", "MSYS_NT-10.0", "CYGWIN_NT-10.0", "Windows_NT"]) {
-    test(`refuses Windows (${os}), downloading nothing`, async () => {
-      const { hub, builds } = await hubWithBuilds()
+  test("refuses Windows, whichever shell says so, downloading nothing", async () => {
+    const { hub, builds } = await hubWithBuilds()
+    for (const os of ["MINGW64_NT-10.0-19045", "MSYS_NT-10.0", "CYGWIN_NT-10.0", "Windows_NT"]) {
       const at = await machine({ os, arch: "x86_64" })
       const result = await install(hub.url, at)
       expect(result.exitCode).toBe(1)
       expect(result.stderr).toBe(
         "kndl install: kndl doesn't run on Windows. Install it in WSL, or on a Mac or Linux machine.\n",
       )
-      expect(builds.built).toEqual([])
       expect(existsSync(at.bin)).toBe(false)
-    })
-  }
+    }
+    expect(builds.built).toEqual([])
+  })
 
   test("refuses an OS or an architecture the Hub doesn't build for", async () => {
     const { hub, builds } = await hubWithBuilds()

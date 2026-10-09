@@ -2,8 +2,7 @@
 // fake Runners over WebSockets, and a fake mod over HTTP.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { rmSync } from "node:fs"
 import { join } from "node:path"
 import { type ModCommandsEncoded, type ModEventsEncoded, ProtocolVersion } from "@kndl/protocol"
 import { Effect } from "effect"
@@ -18,7 +17,7 @@ import {
   stopAll,
   type ToRunner,
 } from "./testChannels.ts"
-import { bearer, seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
+import { bearer, seedEnvironment, startHub, type TestHub, testDatabaseDir } from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -424,7 +423,7 @@ describe("updating a Runner", () => {
 
 describe("kndl update's push", () => {
   test("tells Runners that update themselves to follow as they connect behind the Hub", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await updatesHub(database)

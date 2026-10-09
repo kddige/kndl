@@ -1,7 +1,10 @@
 // Helpers for the Hub's tests: a real Hub on 127.0.0.1 and a free port, and ways to sign in to
 // it. Not part of the Hub.
 
+import { accessSync, constants, mkdtempSync } from "node:fs"
 import { createServer } from "node:net"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { BunHttpServer } from "@effect/platform-bun"
 import {
   DefaultEnvironmentDraft,
@@ -166,6 +169,22 @@ export const freePort = () =>
       )
     })
   })
+
+const databaseRoot = (() => {
+  try {
+    accessSync("/dev/shm", constants.W_OK)
+    return "/dev/shm"
+  } catch {
+    return tmpdir()
+  }
+})()
+
+/**
+ * A new directory for a test's database files: on /dev/shm where there is one, as SQLite on disk
+ * waits on fsync, else the temp dir. Only for databases: /dev/shm is mounted noexec, so nothing
+ * that runs may go there. Remove it when done.
+ */
+export const testDatabaseDir = (prefix: string) => mkdtempSync(join(databaseRoot, prefix))
 
 const mainPath = new URL("./main.ts", import.meta.url).pathname
 

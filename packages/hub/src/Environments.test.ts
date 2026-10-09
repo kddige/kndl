@@ -3,8 +3,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHmac } from "node:crypto"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { rmSync } from "node:fs"
 import { join } from "node:path"
 import { ProtocolVersion } from "@kndl/protocol"
 import { Effect, Layer, Option, Redacted } from "effect"
@@ -22,7 +21,7 @@ import {
   type ToRunner,
   type Web,
 } from "./testChannels.ts"
-import { baseConfig, startHub, type TestHub } from "./testSupport.ts"
+import { baseConfig, startHub, type TestHub, testDatabaseDir } from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -176,7 +175,7 @@ describe("Secrets", () => {
   })
 
   test("the Hub refuses to start when Sensitive values are stored but the key is missing or wrong", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       // A key with nothing encrypted yet is taken, whichever it is.
@@ -238,7 +237,7 @@ describe("Secrets", () => {
 
   test("the Hub's Layer fails cleanly when the key is wrong, as main.ts would report it", async () => {
     // The same check, without a server: Secrets over a database holding a value under keyA.
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const store = Layer.provideMerge(
@@ -268,7 +267,7 @@ describe("Secrets", () => {
   })
 
   test("a check saved before the rename, or since, still takes its key (#196)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const secretsWith = (secretsKey: string) =>

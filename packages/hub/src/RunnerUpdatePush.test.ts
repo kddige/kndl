@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { rmSync } from "node:fs"
 import { join } from "node:path"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { issueRunnerToken } from "./Admin.ts"
 import { DatabaseLive } from "./Database.ts"
 import { Runners } from "./Runners.ts"
 import { requestRunnerUpdates, RunnerUpdatePush } from "./RunnerUpdatePush.ts"
+import { testDatabaseDir } from "./testSupport.ts"
 
 /** Runs `effect` against a fresh database file, as the CLI opens the Hub's. */
 const withDatabase = async <A, E>(effect: Effect.Effect<A, E>) => {
-  const dir = mkdtempSync(join(tmpdir(), "kndl-push-"))
+  const dir = testDatabaseDir("kndl-push-")
   try {
     return await Effect.runPromise(
       effect.pipe(

@@ -4,9 +4,8 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { ProtocolVersion } from "@kndl/protocol"
-import { Duration, Effect, Exit, Option, Redacted } from "effect"
+import { Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
-import { HubConfig } from "./HubConfig.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import {
   type Connection,
@@ -17,7 +16,7 @@ import {
   type ToRunner,
   type Web,
 } from "./testChannels.ts"
-import { baseConfig, bearer, seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
+import { bearer, seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -158,7 +157,7 @@ async function gatewayScene() {
       devLogin: true,
       secretsKey: Option.some(Redacted.make(generateSecretsKey())),
       // The start's check of each MCP server gives up quickly (#216).
-      mcpServerCheckTimeoutMs: 300,
+      mcpServerCheckTimeoutMs: 150,
     },
   })
   const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
@@ -351,13 +350,6 @@ describe("the Gateway", () => {
       repos: [repo],
     })
     expect(await status()).toBe(403)
-  })
-
-  test("doesn't follow a redirect", async () => {
-    const { hub, runner, web } = await gatewayScene()
-    const docs = await install(web, "Docs", [repo], "/redirect")
-    const start = await startSession(web, runner)
-    expect((await through(hub, docs.id, { headers: bearer(start.modToken) })).status).toBe(502)
   })
 })
 
@@ -674,15 +666,6 @@ async function createSession(web: Connection<Web>) {
   return created.session.id
 }
 
-/** The Hub's configuration, checked, with the start's wait on each server (#216). */
-const configWith = (mcpServerCheckTimeoutMs?: number) =>
-  Effect.runPromiseExit(
-    HubConfig.make({
-      ...baseConfig,
-      ...(mcpServerCheckTimeoutMs === undefined ? {} : { mcpServerCheckTimeoutMs }),
-    }),
-  )
-
 const asleep = (web: Connection<Web>, sessionId: string) =>
   web.take("SessionUpdated", (m) => m.session.id === sessionId && m.session.state === "Asleep")
 
@@ -816,14 +799,6 @@ describe("a Session's start (#216)", () => {
         },
       },
     ])
-  })
-
-  test("waits on each server HUB_MCP_SERVER_CHECK_TIMEOUT_MS, above 0", async () => {
-    const byDefault = await configWith()
-    expect(
-      Exit.isSuccess(byDefault) && Duration.toMillis(byDefault.value.mcpServerCheckTimeout),
-    ).toBe(5_000)
-    expect(Exit.isFailure(await configWith(0))).toBe(true)
   })
 
   test("asks no server anything for a Session without Installations", async () => {

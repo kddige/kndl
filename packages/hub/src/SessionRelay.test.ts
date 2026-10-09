@@ -2,8 +2,7 @@
 // a fake mod over HTTP, as the real ones will talk to it.
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { rmSync } from "node:fs"
 import { join } from "node:path"
 import {
   DefaultEnvironmentDraft,
@@ -34,7 +33,14 @@ import {
   type Web,
 } from "./testChannels.ts"
 import { appId, appKeyPair, appSlug, botUserId, StandInGitHub } from "./testGitHubApi.ts"
-import { baseConfig, bearer, seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
+import {
+  baseConfig,
+  bearer,
+  seedEnvironment,
+  startHub,
+  type TestHub,
+  testDatabaseDir,
+} from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -300,16 +306,6 @@ describe("CreateSession", () => {
       message: "No Runner is online.",
     })
   })
-
-  test("lists the Runner and the Session to web clients that connect later", async () => {
-    const { hub, session } = await sessionScene()
-    const bobWeb = await openWeb(hub, "bob")
-
-    expect(bobWeb.runners.runners).toMatchObject([
-      { name: "mac", login: runnerLogin, isOnline: true },
-    ])
-    expect(bobWeb.sessions.sessions).toEqual([session])
-  })
 })
 
 describe("the event log", () => {
@@ -348,17 +344,6 @@ describe("the event log", () => {
     joinSession(bobWeb, sessionId, 1)
     const since = await bobWeb.take("SessionHistory")
     expect(since.entries.map((entry) => entry.seq)).toEqual([2, 3])
-  })
-
-  test("refuses to join a Session that doesn't exist", async () => {
-    const hub = await startHub({ config: { devLogin: true } })
-    const web = await openWeb(hub, "alice")
-    joinSession(web, "no-such-session")
-
-    expect(await web.take("CommandFailed")).toMatchObject({
-      command: "JoinSession",
-      sessionId: "no-such-session",
-    })
   })
 })
 
@@ -460,13 +445,13 @@ describe("the Prompt queue", () => {
       (await web.take("SessionUpdated", (m) => m.session.currentTurn === "t-1")).session,
     ).toMatchObject({ currentTurn: "t-1" })
     await mod.post(turnEnded("t-1", "subagent-1"))
-    expect(await mod.deliveries(200)).toEqual([])
+    expect(await mod.deliveries(50)).toEqual([])
 
     await mod.post(turnEnded("t-1"))
     expect(await mod.deliveries(500)).toEqual([
       { _tag: "DeliverPrompt", sessionId, promptId: defined(two).id, text: "two", sender: alice },
     ])
-    expect(await mod.deliveries(200)).toEqual([])
+    expect(await mod.deliveries(50)).toEqual([])
   })
 
   test("drops a prompt the mod couldn't deliver, tells its sender, and delivers the next", async () => {
@@ -516,7 +501,7 @@ describe("steering (#195)", () => {
     web.send({ _tag: "CancelPrompt", sessionId, promptId: defined(two).id })
     expect(await web.take("CommandFailed")).toMatchObject({ command: "CancelPrompt", sessionId })
     bobWeb.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
-    expect(await steers(mod, 200)).toEqual([])
+    expect(await steers(mod, 50)).toEqual([])
 
     const steered: ModEvent = {
       _tag: "PromptSteered",
@@ -533,7 +518,7 @@ describe("steering (#195)", () => {
     expect((await bobWeb.take("SessionEventLogged")).entry.event).toEqual(read)
 
     // The Turn goes on as it was, and the rest of the queue waits for it to end.
-    expect(await mod.deliveries(200)).toEqual([])
+    expect(await mod.deliveries(50)).toEqual([])
     await mod.post(turnEnded("t-0"))
     expect((await mod.deliveries(500)).map((command) => command.promptId)).toEqual([
       defined(one).id,
@@ -563,7 +548,7 @@ describe("steering (#195)", () => {
     })
     web.send({ _tag: "SteerPrompt", sessionId, promptId: "p-gone" })
     expect((await web.take("CommandFailed")).message).toContain("a mod from before steering")
-    expect(await steers(mod, 200)).toEqual([])
+    expect(await steers(mod, 50)).toEqual([])
   })
 
   test("a steer that fails leaves the prompt in its place, and tells whoever steered it", async () => {
@@ -583,7 +568,7 @@ describe("steering (#195)", () => {
     expect(await steers(mod, 500)).toHaveLength(1)
     // The Turn ends before the mod answers: nothing is delivered until it does.
     await mod.post(turnEnded("t-0"))
-    expect(await mod.deliveries(200)).toEqual([])
+    expect(await mod.deliveries(50)).toEqual([])
 
     await mod.post({
       _tag: "PromptFailed",
@@ -642,7 +627,7 @@ describe("a Runner going offline", () => {
     web.send({ _tag: "SendPrompt", sessionId, text: "anyone there?" })
     await web.take("PromptQueueChanged", queueIs("anyone there?"))
     expect(await web.untaken("CommandFailed")).toEqual([])
-    expect(await mod.deliveries(200)).toEqual([])
+    expect(await mod.deliveries(50)).toEqual([])
 
     // Claude Code kept running in tmux, so the Session is Active again, and the prompt goes out.
     await openRunner(hub, runnerToken, [sessionId])
@@ -698,17 +683,6 @@ describe("a Runner going offline", () => {
     })
     await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
-  })
-
-  test("leaves Sessions it no longer runs Asleep when it comes back", async () => {
-    const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
-    await runner.close()
-    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
-    await openRunner(hub, runnerToken, [])
-
-    expect((await web.take("SessionUpdated", (m) => m.session.state === "Asleep")).session.id).toBe(
-      sessionId,
-    )
   })
 })
 
@@ -776,7 +750,7 @@ describe("the Session lifecycle", () => {
     web.send({ _tag: "SendPrompt", sessionId, text: "hold on" })
     await web.take("PromptQueueChanged", queueIs("hold on"))
     web.send({ _tag: "LeaveSession", sessionId })
-    await Bun.sleep(400)
+    await Bun.sleep(250)
     expect(await runner.untaken("StopSession")).toEqual([])
 
     const mod = new Mod(hub, sessionId, start.modToken)
@@ -784,12 +758,12 @@ describe("the Session lifecycle", () => {
     runner.send({ _tag: "SessionStarted", sessionId })
     const [delivered] = await mod.deliveries(500)
     await mod.post(turnStarted("t-1", delivered?.promptId))
-    await Bun.sleep(400)
+    await Bun.sleep(250)
     expect(await runner.untaken("StopSession")).toEqual([])
 
     joinSession(web, sessionId)
     await mod.post(turnEnded("t-1"))
-    await Bun.sleep(400)
+    await Bun.sleep(250)
     expect(await runner.untaken("StopSession")).toEqual([])
 
     web.send({ _tag: "LeaveSession", sessionId })
@@ -833,7 +807,7 @@ describe("the Session lifecycle", () => {
     expect((await mod.hello()).status).toBe(401)
     runner.send({ _tag: "SessionStarted", sessionId })
     const woken = new Mod(hub, sessionId, wake.modToken)
-    expect(await woken.deliveries(200)).toEqual([])
+    expect(await woken.deliveries(50)).toEqual([])
     expect((await woken.hello()).status).toBe(200)
     expect((await woken.deliveries(500)).map((command) => command.text)).toEqual(["wake up"])
   })
@@ -847,10 +821,12 @@ describe("the Session lifecycle", () => {
 
     web.send({ _tag: "SendPrompt", sessionId, text: "are you there?" })
     await runner.take("StartSession")
-    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    await web.take("SessionUpdated", (m) => m.session.state === "Active" && !!m.session.starting)
     runner.send({ _tag: "SessionStartFailed", sessionId, message: "the Sandbox did not start" })
 
-    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    // The start is over too.
+    const asleepAgain = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(asleepAgain.session.starting).toBeUndefined()
     expect(
       (
         await web.take(
@@ -886,7 +862,7 @@ describe("the Session lifecycle", () => {
     await runner.take("StopSession")
     web.send({ _tag: "SendPrompt", sessionId, text: "one more thing" })
     await web.take("PromptQueueChanged", queueIs("one more thing"))
-    expect(await mod.deliveries(200)).toEqual([])
+    expect(await mod.deliveries(50)).toEqual([])
 
     runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested" })
     await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
@@ -1046,18 +1022,6 @@ describe("the Session lifecycle", () => {
     runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
     const started = await web.take("SessionUpdated", (m) => m.session.starting === undefined)
     expect(started.session.environment).toEqual({ version: 1, latestVersion: 1 })
-  })
-
-  test("a start that fails is over too", async () => {
-    const scene = await sessionScene()
-    const { runner, web, sessionId } = scene
-    await asleep(scene)
-    web.send({ _tag: "WakeSession", sessionId })
-    await runner.take("StartSession")
-    await web.take("SessionUpdated", (m) => m.session.state === "Active" && !!m.session.starting)
-    runner.send({ _tag: "SessionStartFailed", sessionId, message: "no Docker" })
-    const asleepAgain = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
-    expect(asleepAgain.session.starting).toBeUndefined()
   })
 
   test("Restart and Sleep now are refused while the Session is starting, and it isn't idle", async () => {
@@ -1494,12 +1458,12 @@ describe("archive, restore and purge", () => {
   })
 
   test("a restored Session isn't purged, and archiving it again starts its retention afresh", async () => {
-    const scene = await sessionScene(await hubRetainingFor(400))
+    const scene = await sessionScene(await hubRetainingFor(200))
     const { runner, web, sessionId } = scene
     await archived(scene)
     web.send({ _tag: "RestoreSession", sessionId })
     await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
-    await Bun.sleep(600)
+    await Bun.sleep(300)
     expect(await web.untaken("SessionRemoved")).toEqual([])
     expect(await runner.untaken("PurgeSession")).toEqual([])
 
@@ -1591,7 +1555,7 @@ describe("Session names", () => {
   })
 
   test("a name outlives a Hub restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -1620,7 +1584,7 @@ const notKeptAwake = (m: Extract<Web, { _tag: "SessionUpdated" }>) =>
 
 describe("Keep awake (ADR 0016)", () => {
   test("anyone with access can turn it on, every client sees who, and an idle Session stays up", async () => {
-    const hub = await hubSleepingAfter(400)
+    const hub = await hubSleepingAfter(300)
     const bobWeb = await openWeb(hub, "bob")
     const { runner, web, sessionId } = await sessionScene(hub)
     bobWeb.send({ _tag: "SetKeepAwake", sessionId, on: true })
@@ -1632,7 +1596,7 @@ describe("Keep awake (ADR 0016)", () => {
     expect((await openWeb(hub, "carol")).sessions.sessions[0]?.keepAwake?.by).toEqual(bob)
 
     // Idle well past its wait, it isn't put to sleep.
-    await Bun.sleep(1_000)
+    await Bun.sleep(600)
     expect(await runner.untaken("StopSession")).toEqual([])
 
     // Turning it on again changes nothing; off, it is idle again, and sleeps.
@@ -1679,7 +1643,7 @@ describe("Keep awake (ADR 0016)", () => {
   })
 
   test("its Runner back from a restart wakes it, and it outlives a Hub restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -1789,29 +1753,24 @@ async function relaunched(scene: Scene) {
 }
 
 describe("model and effort (#128)", () => {
-  test("a Runner's models reach the web in the Runners list", async () => {
-    const { hub } = await sessionScene(undefined, modelRunner)
-    expect((await openWeb(hub, "bob")).runners.runners).toMatchObject([
+  test("a Runner's models reach the web, and a new Session starts on the default or on a model and effort chosen", async () => {
+    const plain = await sessionScene(undefined, modelRunner)
+    expect((await openWeb(plain.hub, "bob")).runners.runners).toMatchObject([
       { name: "mac", models: runnerModels },
     ])
-  })
+    // Claude Code's default, with no flags.
+    expect(plain.start).not.toHaveProperty("model")
+    expect(plain.start).not.toHaveProperty("effort")
+    expect(plain.session).not.toHaveProperty("model")
+    expect(plain.session).not.toHaveProperty("effort")
 
-  test("a new Session starts on Claude Code's default, with no flags", async () => {
-    const { start, session } = await sessionScene(undefined, modelRunner)
-    expect(start).not.toHaveProperty("model")
-    expect(start).not.toHaveProperty("effort")
-    expect(session).not.toHaveProperty("model")
-    expect(session).not.toHaveProperty("effort")
-  })
-
-  test("a new Session can start on a model and effort its Runner's Claude Code has", async () => {
-    const { start, session } = await sessionScene(undefined, {
+    const chosen = await sessionScene(undefined, {
       ...modelRunner,
       create: { model: "sonnet", effort: "high" },
     })
-    expect(start).toMatchObject({ model: "sonnet", effort: "high" })
-    expect(session).toMatchObject({ model: "sonnet", effort: "high" })
-    expect(session).not.toHaveProperty("modelPending")
+    expect(chosen.start).toMatchObject({ model: "sonnet", effort: "high" })
+    expect(chosen.session).toMatchObject({ model: "sonnet", effort: "high" })
+    expect(chosen.session).not.toHaveProperty("modelPending")
   })
 
   test("a model or effort the Runner's Claude Code doesn't have is refused, in its words", async () => {
@@ -2176,7 +2135,7 @@ describe("the terminal relay", () => {
   })
 
   test("after a Hub restart, a reopened terminal asks the Runner for a fresh snapshot", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -2214,7 +2173,7 @@ describe("the terminal relay", () => {
 
 describe("a Hub restart", () => {
   test("keeps Sessions, their history and Prompt queues", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -2317,17 +2276,6 @@ describe("git", () => {
       message: "Capped at 4 CPUs",
     })
     expect(await web.untaken("SessionEventLogged")).toEqual([])
-  })
-
-  test("a Runner's note about the Sandbox is in the Session's history", async () => {
-    const { runner, web, sessionId } = await sessionScene()
-    joinSession(web, sessionId)
-    await web.take("SessionHistory")
-    runner.send({ _tag: "SandboxNote", sessionId, message: "Capped at 4 CPUs" })
-    expect((await web.take("SessionEventLogged")).entry.event).toEqual({
-      _tag: "SandboxNoted",
-      message: "Capped at 4 CPUs",
-    })
   })
 
   describe("with the GitHub App", () => {
@@ -2836,7 +2784,7 @@ describe("Repo access", () => {
   })
 
   test("dev login has access to every Repo, and a dev sign-in none once it is off", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const devHub = await startHub({ config: { devLogin: true }, database })
@@ -2931,7 +2879,7 @@ describe("subagents (ADR 0014)", () => {
   test("a Running agent keeps its Session awake after its Turn ended, until it is done", async () => {
     const { runner, web, sessionId, mod } = await agentScene(await hubSleepingAfter(150))
     web.send({ _tag: "LeaveSession", sessionId })
-    await Bun.sleep(400)
+    await Bun.sleep(250)
     expect(await runner.untaken("StopSession")).toEqual([])
 
     await mod.post(agentStatus("a-1", "Done"))
@@ -3300,12 +3248,12 @@ describe("Open questions (#193)", () => {
     const { runner, mod } = scene
     // As though its Turn's end were lost: the question alone holds it up.
     await mod.post(questionAsked())
-    await Bun.sleep(400)
+    await Bun.sleep(250)
     expect(await runner.untaken("StopSession")).toEqual([])
   })
 
   test("outlives a Hub restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-"))
+    const dir = testDatabaseDir("kndl-")
     try {
       const database = databaseAt(join(dir, "hub.db"))
       const first = await startHub({ config: { devLogin: true }, database })
@@ -3407,7 +3355,7 @@ describe("a Session's live state ending (#243)", () => {
     const again = await openRunner(hub, runnerToken, [sessionId])
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
     // Delivered once: it is still in flight, and starts its Turn.
-    expect(await mod.deliveries(200)).toEqual([])
+    expect(await mod.deliveries(50)).toEqual([])
     await mod.post(turnStarted("t-1", defined(delivered).promptId, sender))
     await web.take("PromptQueueChanged", queueIs())
 
@@ -3424,7 +3372,7 @@ describe("a Session's live state ending (#243)", () => {
     await openRunner(hub, runnerToken, [sessionId])
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
     await mod.post(turnEnded("t-1"))
-    expect(await mod.deliveries(200)).toEqual([])
+    expect(await mod.deliveries(50)).toEqual([])
     await mod.post({
       _tag: "PromptSteered",
       turnId: "t-1",

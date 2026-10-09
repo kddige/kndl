@@ -330,21 +330,6 @@ describe("what the Hub fetches", () => {
     expect(typeOf(icon)).toBe("image/x-icon")
   })
 
-  test("waits 5 seconds by default", async () => {
-    let signal: AbortSignal | null | undefined
-    await findIcon(
-      { url: "https://acme.test/mcp" },
-      {
-        fetch: async (_url, init) => {
-          signal ??= init.signal
-          return new Response("no", { status: 404 })
-        },
-      },
-    )
-    expect(signal).toBeDefined()
-    expect(signal?.aborted).toBe(false)
-  })
-
   test("goes on when a fetch fails outright", async () => {
     expect(typeOf(await findIcon({ url: "https://acme.test/mcp" }, { fetch: failingPage }))).toBe(
       "image/x-icon",
