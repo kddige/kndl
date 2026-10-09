@@ -3391,4 +3391,47 @@ describe("a Session's live state ending (#243)", () => {
     const later = await openWeb(hub, "alice")
     expect(later.sessions.sessions.find((s) => s.id === sessionId)?.openPorts).toBeUndefined()
   })
+
+  test("a prompt in flight and a steer under way outlive a Runner restart that Claude Code outlives", async () => {
+    const { hub, runner, runnerToken, web, sessionId, mod } = await sessionScene()
+    expect((await mod.hello({ steers: true })).status).toBe(200)
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    const [delivered] = await mod.deliveries(500)
+    const sender = { _tag: "FromParticipant", participant: alice } as const
+
+    // The Runner restarts with the prompt on its way; the mod talks to the Hub on its own.
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    const again = await openRunner(hub, runnerToken, [sessionId])
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    // Delivered once: it is still in flight, and starts its Turn.
+    expect(await mod.deliveries(200)).toEqual([])
+    await mod.post(turnStarted("t-1", defined(delivered).promptId, sender))
+    await web.take("PromptQueueChanged", queueIs())
+
+    web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    web.send({ _tag: "SendPrompt", sessionId, text: "three" })
+    const [two] = (await web.take("PromptQueueChanged", queueIs("two", "three"))).queue
+    // The mod still steers: it said so in the hello before the restart.
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
+    expect(await steers(mod, 500)).toHaveLength(1)
+
+    // It restarts again with the steer on its way: nothing goes until the mod answers it.
+    await again.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    await openRunner(hub, runnerToken, [sessionId])
+    await web.take("SessionUpdated", (m) => m.session.state === "Active")
+    await mod.post(turnEnded("t-1"))
+    expect(await mod.deliveries(200)).toEqual([])
+    await mod.post({
+      _tag: "PromptSteered",
+      turnId: "t-1",
+      promptId: defined(two).id,
+      text: "two",
+      sender: alice,
+    })
+    expect((await mod.deliveries(500)).map((command) => command.text)).toEqual(["three"])
+  })
 })
