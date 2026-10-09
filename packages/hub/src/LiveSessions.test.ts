@@ -89,7 +89,7 @@ const keptAfter = (how: SessionEnd) => {
 }
 
 describe("a Session's live state ending", () => {
-  test("ClaudeGone clears what its Claude Code had going, and the restart", () => {
+  test("ClaudeGone clears what its Claude Code had going, its streams and the restart", () => {
     expect(keptAfter("ClaudeGone")).toEqual([
       "archiving",
       "lastBusy",
@@ -97,8 +97,6 @@ describe("a Session's live state ending", () => {
       "closedQuestions",
       "asleepWhy",
       "sandboxTokens",
-      "textStreams",
-      "terminalStreams",
     ])
   })
 
@@ -111,8 +109,6 @@ describe("a Session's live state ending", () => {
       "closedQuestions",
       "asleepWhy",
       "sandboxTokens",
-      "textStreams",
-      "terminalStreams",
     ])
   })
 

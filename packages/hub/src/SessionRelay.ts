@@ -1599,6 +1599,10 @@ export class SessionRelay extends Context.Service<
         /** It went to sleep for a restart, and is about to be woken: the restart goes on. */
         restartGoesOn = false,
       ) {
+        // Claude's held text is logged before what says it is gone, as the next event would.
+        for (const stream of live.textStreams.get(session.id)?.values() ?? []) {
+          yield* letTextGo(session.id, stream)
+        }
         live.ended(session.id, restartGoesOn ? "ClaudeGoneRestarting" : "ClaudeGone")
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)

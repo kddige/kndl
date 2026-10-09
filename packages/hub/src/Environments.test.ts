@@ -1026,6 +1026,29 @@ describe("Redacting Sensitive values", () => {
     }
   })
 
+  test("text held back when Claude Code exits is logged, masked, before the Session goes Asleep (#243)", async () => {
+    const env = await redactionScene()
+    const { runner, sessionId, start, web } = env
+    const turnId = "turn-1"
+    await postEvents(
+      env,
+      start.modToken,
+      { _tag: "TurnStarted", turnId, text: "go", sender: { _tag: "FromTerminal" } },
+      { _tag: "TextDelta", turnId, text: `the key is ${runtimeSecret.slice(0, 9)}` },
+    )
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Exited", exitCode: 1 })
+    const events = await loggedEvents(web, 4)
+    expect(events.map((event) => event._tag)).toEqual([
+      "TurnStarted",
+      "TextDelta",
+      "TextDelta",
+      "SessionStateChanged",
+    ])
+    expect(events[1]?.text).toBe("the key is ")
+    expect(events[2]?.text).toBe(stars(runtimeSecret.slice(0, 9)))
+    expect(events[3]).toMatchObject({ state: "Asleep" })
+  })
+
   test("are masked in terminal frames: a Snapshot, and Output split across frames", async () => {
     const env = await redactionScene()
     const { runner, sessionId, web } = env
