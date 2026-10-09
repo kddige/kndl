@@ -25,45 +25,25 @@ import { alice, expectRejected, expectRoundTrips, sessionSummary } from "./testS
 const avatarUrl = "https://avatars.githubusercontent.com/u/583231?v=4"
 
 describe("Participant", () => {
-  test("round-trips with and without an avatar", () => {
+  test("has an optional avatar, which isn't empty", () => {
     expectRoundTrips(Participant, [alice, { ...alice, avatarUrl }])
-  })
-
-  test("leaves the avatar out when there is none", () => {
-    const decoded = Schema.decodeUnknownSync(Participant)(alice)
-
-    expect("avatarUrl" in decoded).toBe(false)
-  })
-
-  test("rejects an empty or non-string avatar", () => {
+    expect("avatarUrl" in Schema.decodeUnknownSync(Participant)(alice)).toBe(false)
     expectRejected(Participant, { ...alice, avatarUrl: "" })
     expectRejected(Participant, { ...alice, avatarUrl: 7 })
-  })
-
-  test("carries the avatar inside a Session summary", () => {
-    expectRoundTrips(SessionSummary, [
-      sessionSummary,
-      { ...sessionSummary, creator: { ...alice, avatarUrl } },
-    ])
   })
 })
 
 describe("SessionSummary", () => {
-  test("round-trips the last output of a Claude Code that exited on its own", () => {
+  test("round-trips with and without each optional field", () => {
     expectRoundTrips(SessionSummary, [
+      sessionSummary,
+      { ...sessionSummary, creator: { ...alice, avatarUrl } },
+      // The last output of a Claude Code that exited on its own.
       {
         ...sessionSummary,
         state: "Asleep",
         lastOutput: "error: The current working directory was deleted",
       },
-    ])
-  })
-})
-
-describe("Open ports", () => {
-  test("a summary round-trips with them, and without", () => {
-    expectRoundTrips(SessionSummary, [
-      sessionSummary,
       {
         ...sessionSummary,
         openPorts: [
@@ -71,9 +51,12 @@ describe("Open ports", () => {
           { port: 5173, addresses: ["::1"] },
         ],
       },
+      { ...sessionSummary, name: "Health check" },
     ])
   })
+})
 
+describe("Open ports", () => {
   test("a port is between 1 and 65535 and has its addresses", () => {
     expectRoundTrips(OpenPort, [
       { port: 1, addresses: ["127.0.0.1"] },
@@ -93,9 +76,8 @@ describe("Open ports", () => {
 })
 
 describe("Session names", () => {
-  test("a summary round-trips with a name, and is shown by it", () => {
+  test("a summary with a name is shown by it", () => {
     const named = { ...sessionSummary, name: "Health check" }
-    expectRoundTrips(SessionSummary, [named])
     expect(sessionTitle(Schema.decodeUnknownSync(SessionSummary)(named))).toBe("Health check")
   })
 

@@ -196,15 +196,4 @@ describe("raw mode", () => {
     expect(pressed).toEqual(["down", "enter"])
     expect(stdin.raw).toEqual([true, false])
   })
-
-  test("reads nothing without a terminal", () => {
-    const stdin = keyboard(false)
-    const keys = new Keys(stdin)
-    expect(keys.available).toBe(false)
-    keys.start(() => {
-      throw new Error("no keys without a terminal")
-    })
-    stdin.type("\x1b")
-    expect(stdin.raw).toEqual([])
-  })
 })

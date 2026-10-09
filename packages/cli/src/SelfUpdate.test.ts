@@ -24,39 +24,45 @@ const built: Build = { commit: "a".repeat(40), target: "linux-x64" }
 const hub = "https://hub.example.com"
 
 describe("whether the CLI asks its Hub for an update", () => {
-  test("a binary the Hub built, with a Hub recorded, asks it", () => {
-    expect(planSelfUpdate({ build: built, env: {}, config: { hub } })).toEqual({
-      _tag: "Check",
-      hub,
-      build: built,
-    })
-  })
-
-  test("never from a checkout, as an install's command runs: the checkout updates with it", () => {
-    expect(planSelfUpdate({ build: undefined, env: {}, config: { hub } })).toEqual({
-      _tag: "Skip",
-      reason: "It runs from a checkout, which `kndl update` updates.",
-    })
-  })
-
-  test("never with KNDL_NO_SELF_UPDATE set", () => {
-    const env = { KNDL_NO_SELF_UPDATE: "1" }
-    expect(planSelfUpdate({ build: built, env, config: { hub } })._tag).toBe("Skip")
-    // Set empty, it isn't set.
-    const empty = { KNDL_NO_SELF_UPDATE: "" }
-    expect(planSelfUpdate({ build: built, env: empty, config: { hub } })._tag).toBe("Check")
-  })
-
-  test("not again in the run it started after updating", () => {
-    const env = { KNDL_UPDATED_TO: "b".repeat(40) }
-    expect(planSelfUpdate({ build: built, env, config: { hub } })._tag).toBe("Skip")
-  })
-
-  test("not without a Hub recorded", () => {
-    expect(planSelfUpdate({ build: built, env: {}, config: {} })).toEqual({
-      _tag: "Skip",
-      reason: "No Hub is recorded to update from.",
-    })
+  test("only a binary the Hub built, with a Hub recorded, and not told not to, asks it", () => {
+    const cases: ReadonlyArray<
+      [string, Parameters<typeof planSelfUpdate>[0], ReturnType<typeof planSelfUpdate>]
+    > = [
+      [
+        "a binary the Hub built, with a Hub recorded",
+        { build: built, env: {}, config: { hub } },
+        { _tag: "Check", hub, build: built },
+      ],
+      [
+        // An install's command runs from a checkout, which updates with it.
+        "from a checkout",
+        { build: undefined, env: {}, config: { hub } },
+        { _tag: "Skip", reason: "It runs from a checkout, which `kndl update` updates." },
+      ],
+      [
+        "with KNDL_NO_SELF_UPDATE set",
+        { build: built, env: { KNDL_NO_SELF_UPDATE: "1" }, config: { hub } },
+        { _tag: "Skip", reason: expect.any(String) },
+      ],
+      [
+        // Set empty, it isn't set.
+        "with KNDL_NO_SELF_UPDATE empty",
+        { build: built, env: { KNDL_NO_SELF_UPDATE: "" }, config: { hub } },
+        { _tag: "Check", hub, build: built },
+      ],
+      [
+        "in the run it started after updating",
+        { build: built, env: { KNDL_UPDATED_TO: "b".repeat(40) }, config: { hub } },
+        { _tag: "Skip", reason: expect.any(String) },
+      ],
+      [
+        "without a Hub recorded",
+        { build: built, env: {}, config: {} },
+        { _tag: "Skip", reason: "No Hub is recorded to update from." },
+      ],
+    ]
+    for (const [name, input, decision] of cases)
+      expect({ name, decision: planSelfUpdate(input) }).toEqual({ name, decision })
   })
 
   test("updates only to a commit the Hub says, and only when it is another", () => {
@@ -67,12 +73,11 @@ describe("whether the CLI asks its Hub for an update", () => {
 })
 
 describe("the CLI's config", () => {
-  test("is cli.json in XDG_CONFIG_HOME, or ~/.config", () => {
+  test("is cli.json in XDG_CONFIG_HOME or ~/.config, with the Hub the install script recorded", async () => {
     expect(cliConfigPath({}, "/home/ada")).toBe("/home/ada/.config/kndl/cli.json")
     expect(cliConfigPath({ XDG_CONFIG_HOME: "/xdg" }, "/home/ada")).toBe("/xdg/kndl/cli.json")
-  })
 
-  test("reads the Hub the install script recorded, and nothing from a file it can't read", async () => {
+    // Nothing from a file it can't read.
     const dir = await tempDir("cli-config-")
     const path = join(dir, "cli.json")
     expect(readCliConfig(path)).toEqual({})

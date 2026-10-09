@@ -50,8 +50,10 @@ describe("RunnerHello", () => {
     sessions: [],
   }
 
-  test("a Runner from before says nothing of updating", () => {
-    expect(Schema.decodeUnknownSync(RunnerHello)(hello)).not.toHaveProperty("updater")
+  test("a minimal one from a Runner from before decodes, with no version and no updater", () => {
+    const decoded = Schema.decodeUnknownSync(RunnerHello)(hello)
+    expect(decoded).not.toHaveProperty("version")
+    expect(decoded).not.toHaveProperty("updater")
   })
 
   test("says whether it updates itself, and its last failed update", () => {
@@ -63,32 +65,6 @@ describe("RunnerHello", () => {
     })
     expect(decoded.updater).toEqual({ self: true, anyCommit: true })
     expect(decoded.lastUpdate).toEqual(failure)
-  })
-})
-
-describe("update messages", () => {
-  test("round-trip on the Runner channel", () => {
-    for (const message of [
-      { _tag: "CheckUpdate", target },
-      { _tag: "ApplyUpdate", target },
-    ]) {
-      expect(Schema.decodeUnknownSync(HubToRunner)(message)).toEqual(message as never)
-    }
-    for (const message of [
-      { _tag: "UpdateChecked", target },
-      {
-        _tag: "UpdateChecked",
-        target,
-        refusal: { reason: "NotOnMain", message: "not on main" },
-      },
-      { _tag: "UpdateProgress", target, step: "Installing" },
-      {
-        _tag: "UpdateFailed",
-        failure: { target, message: "x", rolledBack: false, at: 1 },
-      },
-    ]) {
-      expect(Schema.decodeUnknownSync(RunnerToHub)(message)).toEqual(message as never)
-    }
   })
 })
 

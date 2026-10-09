@@ -36,56 +36,49 @@ describe("the prerequisite plan", () => {
     })
   })
 
-  test("macOS: installs with Homebrew, without sudo", () => {
-    const facts = { ...mac, tools: { ...everything, git: false, gh: false } }
-
-    expect(commands(facts, ["runner"])).toEqual(["brew install git gh"])
-    expect(prerequisitePlan(facts, ["runner"]).needsSudo).toBe(false)
+  test("installs with the package manager there is, with sudo only where it's needed", () => {
+    const cases: ReadonlyArray<[string, HostFacts, Array<string>, boolean]> = [
+      [
+        "macOS",
+        { ...mac, tools: { ...everything, git: false, gh: false } },
+        ["brew install git gh"],
+        false,
+      ],
+      // apt refreshes the lists first.
+      [
+        "apt",
+        { ...linux, tools: { ...everything, gh: false } },
+        ["sudo apt-get update", "sudo apt-get install -y gh"],
+        true,
+      ],
+      [
+        "dnf",
+        { ...linux, packageManager: "dnf", tools: { ...everything, git: false, gh: false } },
+        ["sudo dnf install -y git gh"],
+        true,
+      ],
+      [
+        "root",
+        { ...linux, root: true, tools: { ...everything, gh: false } },
+        ["apt-get update", "apt-get install -y gh"],
+        false,
+      ],
+    ]
+    for (const [name, facts, expected, needsSudo] of cases)
+      expect({
+        name,
+        commands: commands(facts, ["runner"]),
+        needsSudo: prerequisitePlan(facts, ["runner"]).needsSudo,
+      }).toEqual({ name, commands: expected, needsSudo })
   })
 
-  test("apt: refreshes the lists, then installs, with sudo", () => {
-    const facts = { ...linux, tools: { ...everything, gh: false } }
-
-    expect(commands(facts, ["runner"])).toEqual([
-      "sudo apt-get update",
-      "sudo apt-get install -y gh",
+  test("a Runner without microsandbox gets its own installer, and curl for it; a Hub needs none", () => {
+    expect(prerequisitePlan({ ...linux, microsandbox: false }, ["hub"]).steps).toEqual([])
+    expect(commands({ ...mac, microsandbox: false }, ["runner"])).toEqual([
+      `sh -c '${MicrosandboxInstaller}'`,
     ])
-    expect(prerequisitePlan(facts, ["runner"]).needsSudo).toBe(true)
-  })
-
-  test("dnf: installs with sudo", () => {
-    const facts: HostFacts = {
-      ...linux,
-      packageManager: "dnf",
-      tools: { ...everything, git: false, gh: false },
-    }
-
-    expect(commands(facts, ["runner"])).toEqual(["sudo dnf install -y git gh"])
-  })
-
-  test("as root, runs without sudo", () => {
-    const facts = { ...linux, root: true, tools: { ...everything, gh: false } }
-
-    expect(commands(facts, ["runner"])).toEqual(["apt-get update", "apt-get install -y gh"])
-    expect(prerequisitePlan(facts, ["runner"]).needsSudo).toBe(false)
-  })
-
-  test("a Hub needs no microsandbox", () => {
-    const facts = { ...linux, microsandbox: false }
-
-    expect(prerequisitePlan(facts, ["hub"]).steps).toEqual([])
-  })
-
-  test("a Runner without microsandbox gets microsandbox's own installer", () => {
-    const facts = { ...mac, microsandbox: false }
-
-    expect(commands(facts, ["runner"])).toEqual([`sh -c '${MicrosandboxInstaller}'`])
-  })
-
-  test("microsandbox's installer brings curl along when it's missing", () => {
-    const facts = { ...linux, microsandbox: false, tools: { ...everything, curl: false } }
-
-    expect(commands(facts, ["runner"])).toEqual([
+    const noCurl = { ...linux, microsandbox: false, tools: { ...everything, curl: false } }
+    expect(commands(noCurl, ["runner"])).toEqual([
       "sudo apt-get update",
       "sudo apt-get install -y curl",
       `sh -c '${MicrosandboxInstaller}'`,
@@ -100,26 +93,22 @@ describe("the prerequisite plan", () => {
     expect(plan.afterwards[0]).toContain("Reboot")
   })
 
-  test("Linux: no /dev/kvm can't be fixed, only reported", () => {
-    const facts = { ...linux, kvm: { device: false, accessible: false } }
-    const plan = prerequisitePlan(facts, ["runner"])
+  test("what can't be fixed is reported, not installed: no /dev/kvm, an Intel Mac, no package manager", () => {
+    const noKvm = prerequisitePlan({ ...linux, kvm: { device: false, accessible: false } }, [
+      "runner",
+    ])
+    expect(noKvm.steps).toEqual([])
+    expect(noKvm.missing).toMatchObject([{ name: "KVM", fixable: false }])
 
-    expect(plan.steps).toEqual([])
-    expect(plan.missing).toMatchObject([{ name: "KVM", fixable: false }])
-  })
+    const intel = prerequisitePlan({ ...mac, arch: "x64" }, ["runner"])
+    expect(intel.missing).toMatchObject([{ name: "Apple Silicon", fixable: false }])
 
-  test("an Intel Mac can't run a Runner", () => {
-    const plan = prerequisitePlan({ ...mac, arch: "x64" }, ["runner"])
-
-    expect(plan.missing).toMatchObject([{ name: "Apple Silicon", fixable: false }])
-  })
-
-  test("no package manager: what's missing is reported, not installed", () => {
-    const facts = { ...linux, packageManager: undefined, tools: { ...everything, gh: false } }
-    const plan = prerequisitePlan(facts, ["hub"])
-
-    expect(plan.steps).toEqual([])
-    expect(plan.missing).toMatchObject([{ name: "gh", fixable: false }])
+    const noManager = prerequisitePlan(
+      { ...linux, packageManager: undefined, tools: { ...everything, gh: false } },
+      ["hub"],
+    )
+    expect(noManager.steps).toEqual([])
+    expect(noManager.missing).toMatchObject([{ name: "gh", fixable: false }])
   })
 
   test("every Step is a system Step, which a dry run only prints", () => {

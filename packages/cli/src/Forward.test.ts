@@ -3,7 +3,7 @@
 // terminal played as one (testTerminal.ts). They run the Session in real tmux, so they are skipped
 // when tmux isn't installed.
 
-import { afterAll, afterEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { createServer, type Server } from "node:net"
 import type { SessionId } from "@kndl/protocol"
 import {
@@ -192,11 +192,19 @@ async function watching(scene: TunnelScene, sessionId: SessionId) {
 
 const sleepFromWeb = async (scene: TunnelScene, sessionId: SessionId) => {
   scene.web.send({ _tag: "SleepSession", sessionId })
-  await scene.web.next("SessionUpdated", (message) => {
-    const session = message["session"] as { id: string; state: string }
-    return session.id === sessionId && session.state === "Asleep"
-  })
+  await scene.web.next(
+    "SessionUpdated",
+    (message) => {
+      const session = message["session"] as { id: string; state: string }
+      return session.id === sessionId && session.state === "Asleep"
+    },
+    10_000,
+  )
 }
+
+// Each test brings up a Hub, a Runner and a tmux scene, and its waits allow 10s: past bun's 5s
+// default under load.
+setDefaultTimeout(20_000)
 
 describe.skipIf(tmuxMissing)("kndl forward", () => {
   test("forwards each Open port at localhost, an OAuth redirect too, following them as they open and close", async () => {

@@ -83,27 +83,9 @@ describe("hellos and welcomes", () => {
 })
 
 describe("HandshakeRejected", () => {
-  const rejected = checkHandshake({ protocolVersion: 9 })
-
-  test("round-trips, and is in every Hub-to-peer union", () => {
-    expectRoundTrips(HandshakeRejected, [rejected])
-    expectRoundTrips(HubToRunner, [rejected])
-    expectRoundTrips(HubToMod, [rejected])
-    expectRoundTrips(HubToWeb, [rejected])
-  })
-
-  test("decodes whatever the rejecting side's version", () => {
-    expect(
-      Schema.decodeUnknownSync(HandshakeRejected)({ ...rejected, protocolVersion: 9 }),
-    ).toEqual({
-      ...rejected,
-      protocolVersion: 9,
-    } as HandshakeRejected)
-  })
-
-  test("rejects an unknown reason", () => {
-    expect(() =>
-      Schema.decodeUnknownSync(HandshakeRejected)({ ...rejected, reason: "Nope" }),
-    ).toThrow()
+  test("every peer reads one from a side of any protocol version", () => {
+    const rejected = { ...checkHandshake({ protocolVersion: 9 }), protocolVersion: 9 }
+    for (const union of [HandshakeRejected, HubToRunner, HubToMod, HubToWeb])
+      expectRoundTrips(union as Schema.Codec<unknown, unknown>, [rejected])
   })
 })

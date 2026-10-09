@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Schema } from "effect"
 import { describeBuild, runnerVersionStatus } from "./Build.ts"
 import { checkoutHolds, readBuildVersion, thisCheckout } from "./Checkout.ts"
-import { RunnerHello } from "./Runner.ts"
-import { ProtocolVersion } from "./Version.ts"
 
 const hub = { commit: "a".repeat(40), branch: "main" }
 const older = { commit: "b".repeat(40) }
@@ -50,23 +47,5 @@ describe("the checkout's own version", () => {
   test("is unknown outside a checkout", () => {
     expect(readBuildVersion("/")).toBeUndefined()
     expect(checkoutHolds("0123456789abcdef0123456789abcdef01234567", "/")).toBeUndefined()
-  })
-})
-
-describe("RunnerHello", () => {
-  const hello = {
-    _tag: "RunnerHello",
-    protocolVersion: ProtocolVersion,
-    name: "mac",
-    login: { account: "alice@example.com" },
-    sessions: [],
-  }
-
-  test("from a Runner older than the version in it still decodes", () => {
-    expect(Schema.decodeUnknownSync(RunnerHello)(hello)).not.toHaveProperty("version")
-  })
-
-  test("carries the commit and branch", () => {
-    expect(Schema.decodeUnknownSync(RunnerHello)({ ...hello, version: hub }).version).toEqual(hub)
   })
 })

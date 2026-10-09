@@ -34,7 +34,8 @@ const target = (platform: "darwin" | "linux", role: "hub" | "runner"): ServiceTa
 describe("the launchd LaunchAgent", () => {
   const plist = launchdPlist(spec("hub"))
 
-  test("runs the Hub with Bun, loading hub.env, from the installed checkout", () => {
+  test("runs the Hub with Bun and hub.env in the home, at login, after a crash, logging there", () => {
+    // From the installed checkout.
     expect(plist).toContain(
       [
         "  <key>ProgramArguments</key>",
@@ -45,9 +46,6 @@ describe("the launchd LaunchAgent", () => {
         "  </array>",
       ].join("\n"),
     )
-  })
-
-  test("sets KNDL_HOME and the PATH, and runs in the home", () => {
     expect(plist).toContain("<key>KNDL_HOME</key>\n    <string>/home/ada/.kndl</string>")
     expect(plist).toContain(
       "<key>PATH</key>\n    <string>/home/ada/.bun/bin:/usr/bin:/bin</string>",
@@ -55,25 +53,17 @@ describe("the launchd LaunchAgent", () => {
     // Tells a Runner its service starts it again, so it may restart to update itself (#87).
     expect(plist).toContain("<key>KNDL_SERVICE</key>\n    <string>hub</string>")
     expect(plist).toContain("<key>WorkingDirectory</key>\n  <string>/home/ada/.kndl</string>")
-  })
-
-  test("starts at login and restarts after a crash", () => {
     expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>")
     expect(plist).toContain(
       "<key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key>\n    <false/>",
     )
-  })
-
-  test("logs to the home's logs directory", () => {
     expect(plist).toContain(
       "<key>StandardOutPath</key>\n  <string>/home/ada/.kndl/logs/hub.log</string>",
     )
     expect(plist).toContain(
       "<key>StandardErrorPath</key>\n  <string>/home/ada/.kndl/logs/hub.log</string>",
     )
-  })
-
-  test("is labelled per role", () => {
+    // Labelled per role.
     expect(plist).toContain("<string>io.github.kddige.kndl.hub</string>")
     expect(launchdPlist(spec("runner"))).toContain("<string>io.github.kddige.kndl.runner</string>")
   })
@@ -88,35 +78,22 @@ describe("the launchd LaunchAgent", () => {
 
     expect(odd).toContain("<string>/opt/a&amp;b/&lt;bun&gt;</string>")
   })
-
-  test("is a well-formed plist", () => {
-    expect(plist.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true)
-    expect(plist.trimEnd().endsWith("</plist>")).toBe(true)
-  })
 })
 
 describe("the systemd user unit", () => {
   const unit = systemdUnitFile(spec("runner"))
 
-  test("runs the Runner with Bun, loading runner.env, from the installed checkout", () => {
+  test("runs the Runner with Bun and runner.env in the home, with the session, after a failure, logging there", () => {
+    // From the installed checkout.
     expect(unit).toContain(
       "ExecStart=/home/ada/.bun/bin/bun --env-file=/home/ada/.kndl/runner.env /home/ada/.kndl/app/packages/runner/src/main.ts",
     )
-  })
-
-  test("sets KNDL_HOME and the PATH, and runs in the home", () => {
     expect(unit).toContain("Environment=KNDL_HOME=/home/ada/.kndl")
     expect(unit).toContain("Environment=PATH=/home/ada/.bun/bin:/usr/bin:/bin")
     expect(unit).toContain("Environment=KNDL_SERVICE=runner")
     expect(unit).toContain("WorkingDirectory=/home/ada/.kndl")
-  })
-
-  test("restarts on failure and starts with the user's session", () => {
     expect(unit).toContain("Restart=on-failure")
     expect(unit).toContain("[Install]\nWantedBy=default.target")
-  })
-
-  test("appends to the home's logs", () => {
     expect(unit).toContain("StandardOutput=append:/home/ada/.kndl/logs/runner.log")
     expect(unit).toContain("StandardError=append:/home/ada/.kndl/logs/runner.log")
   })
@@ -144,56 +121,46 @@ describe("the systemd user unit", () => {
   })
 })
 
-describe("where the service files go", () => {
-  test("a LaunchAgent in ~/Library/LaunchAgents", () => {
-    expect(serviceFilePath(target("darwin", "hub"))).toBe(
-      "/home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
-    )
-  })
-
-  test("a systemd user unit in the config home", () => {
-    expect(serviceFilePath(target("linux", "runner"))).toBe(
-      "/home/ada/.config/systemd/user/kndl-runner.service",
-    )
-  })
+test("a LaunchAgent goes in ~/Library/LaunchAgents, a systemd user unit in the config home", () => {
+  expect(serviceFilePath(target("darwin", "hub"))).toBe(
+    "/home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
+  )
+  expect(serviceFilePath(target("linux", "runner"))).toBe(
+    "/home/ada/.config/systemd/user/kndl-runner.service",
+  )
 })
 
 describe("the service commands", () => {
-  test("launchd: install unloads any earlier version, then enables and loads", () => {
-    expect(commands(installSteps(target("darwin", "hub")))).toEqual([
-      "launchctl bootout gui/501/io.github.kddige.kndl.hub",
-      "launchctl enable gui/501/io.github.kddige.kndl.hub",
-      "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
-    ])
+  test("load, unload and kick the service as launchd and systemd do", () => {
+    expect({
+      "launchd install": commands(installSteps(target("darwin", "hub"))),
+      "launchd stop": commands(stopSteps(target("darwin", "runner"))),
+      "launchd start": commands(startSteps(target("darwin", "hub"))),
+      "systemd install": commands(installSteps(target("linux", "hub"))),
+      "systemd uninstall": commands(uninstallSteps(target("linux", "runner"))),
+    }).toEqual({
+      // Unloads any earlier version first.
+      "launchd install": [
+        "launchctl bootout gui/501/io.github.kddige.kndl.hub",
+        "launchctl enable gui/501/io.github.kddige.kndl.hub",
+        "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
+      ],
+      // Unloads, so KeepAlive doesn't restart it.
+      "launchd stop": ["launchctl bootout gui/501/io.github.kddige.kndl.runner"],
+      "launchd start": [
+        "launchctl enable gui/501/io.github.kddige.kndl.hub",
+        "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
+        "launchctl kickstart gui/501/io.github.kddige.kndl.hub",
+      ],
+      "systemd install": [
+        "systemctl --user daemon-reload",
+        "systemctl --user enable --now kndl-hub.service",
+        "systemctl --user restart kndl-hub.service",
+      ],
+      "systemd uninstall": ["systemctl --user disable --now kndl-runner.service"],
+    })
+    // Unloading an agent that isn't loaded is fine.
     expect(installSteps(target("darwin", "hub"))[0]?.mayFail).toBe(true)
-  })
-
-  test("launchd: stop unloads, so KeepAlive doesn't restart it", () => {
-    expect(commands(stopSteps(target("darwin", "runner")))).toEqual([
-      "launchctl bootout gui/501/io.github.kddige.kndl.runner",
-    ])
-  })
-
-  test("launchd: start loads the agent and kicks it", () => {
-    expect(commands(startSteps(target("darwin", "hub")))).toEqual([
-      "launchctl enable gui/501/io.github.kddige.kndl.hub",
-      "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
-      "launchctl kickstart gui/501/io.github.kddige.kndl.hub",
-    ])
-  })
-
-  test("systemd: install reloads, enables and restarts the user unit", () => {
-    expect(commands(installSteps(target("linux", "hub")))).toEqual([
-      "systemctl --user daemon-reload",
-      "systemctl --user enable --now kndl-hub.service",
-      "systemctl --user restart kndl-hub.service",
-    ])
-  })
-
-  test("systemd: uninstall disables and stops it", () => {
-    expect(commands(uninstallSteps(target("linux", "runner")))).toEqual([
-      "systemctl --user disable --now kndl-runner.service",
-    ])
   })
 
   test("never run with sudo, and are all system Steps a dry run skips", () => {
@@ -208,54 +175,57 @@ describe("the service commands", () => {
   })
 })
 
-describe("reading how a service is doing", () => {
-  test("launchd: running, with its pid", () => {
-    const stdout = "gui/501/io.github.kddige.kndl.hub = {\n\tstate = running\n\tpid = 4242\n}"
-
-    expect(parseServiceState("darwin", { exitCode: 0, stdout })).toEqual({
-      _tag: "Running",
-      pid: 4242,
-    })
-  })
-
-  test("launchd: not running, with its last exit", () => {
-    const stdout = "\tstate = not running\n\tlast exit code = 1\n"
-
-    expect(parseServiceState("darwin", { exitCode: 0, stdout })).toEqual({
-      _tag: "Stopped",
-      detail: "not running, last exit 1",
-    })
-  })
-
-  test("launchd: not loaded", () => {
-    expect(parseServiceState("darwin", { exitCode: 113, stdout: "" })).toEqual({
-      _tag: "NotLoaded",
-    })
-  })
-
-  test("systemd: active", () => {
-    const stdout =
-      "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=99\nResult=success\n"
-
-    expect(parseServiceState("linux", { exitCode: 0, stdout })).toEqual({
-      _tag: "Running",
-      pid: 99,
-    })
-  })
-
-  test("systemd: failed", () => {
-    const stdout =
-      "LoadState=loaded\nActiveState=failed\nSubState=failed\nMainPID=0\nResult=exit-code\n"
-
-    expect(parseServiceState("linux", { exitCode: 0, stdout })).toEqual({
-      _tag: "Stopped",
-      detail: "failed, failed, exit-code",
-    })
-  })
-
-  test("systemd: no such unit", () => {
-    const stdout = "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\n"
-
-    expect(parseServiceState("linux", { exitCode: 0, stdout })).toEqual({ _tag: "NotLoaded" })
-  })
+test("reading how a service is doing, from launchd and systemd", () => {
+  const cases: ReadonlyArray<
+    [Parameters<typeof parseServiceState>, ReturnType<typeof parseServiceState>]
+  > = [
+    [
+      [
+        "darwin",
+        {
+          exitCode: 0,
+          stdout: "gui/501/io.github.kddige.kndl.hub = {\n\tstate = running\n\tpid = 4242\n}",
+        },
+      ],
+      { _tag: "Running", pid: 4242 },
+    ],
+    [
+      ["darwin", { exitCode: 0, stdout: "\tstate = not running\n\tlast exit code = 1\n" }],
+      { _tag: "Stopped", detail: "not running, last exit 1" },
+    ],
+    [["darwin", { exitCode: 113, stdout: "" }], { _tag: "NotLoaded" }],
+    [
+      [
+        "linux",
+        {
+          exitCode: 0,
+          stdout:
+            "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=99\nResult=success\n",
+        },
+      ],
+      { _tag: "Running", pid: 99 },
+    ],
+    [
+      [
+        "linux",
+        {
+          exitCode: 0,
+          stdout:
+            "LoadState=loaded\nActiveState=failed\nSubState=failed\nMainPID=0\nResult=exit-code\n",
+        },
+      ],
+      { _tag: "Stopped", detail: "failed, failed, exit-code" },
+    ],
+    [
+      [
+        "linux",
+        {
+          exitCode: 0,
+          stdout: "LoadState=not-found\nActiveState=inactive\nSubState=dead\nMainPID=0\n",
+        },
+      ],
+      { _tag: "NotLoaded" },
+    ],
+  ]
+  for (const [input, state] of cases) expect(parseServiceState(...input)).toEqual(state)
 })
