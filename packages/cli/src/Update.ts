@@ -82,7 +82,9 @@ export function updateTarget(
 
 /**
  * The git Steps, in the checkout, that move it to `target`. `--end-of-options` comes before the
- * ref, which the person typed, so git never reads it as an option.
+ * ref, which the person typed, so git never reads it as an option. `switch`, not `checkout`: git
+ * before 2.43 (Debian 12 has 2.39) reads checkout's `--end-of-options` as `--`, and the ref after
+ * it as a path to check out.
  */
 export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
   const fetch = step("git", ["fetch", "--prune", "--tags", "--force", "origin"], {
@@ -96,9 +98,9 @@ export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
         step(
           "git",
           [
-            "checkout",
-            "--force",
-            "-B",
+            "switch",
+            "--discard-changes",
+            "-C",
             target.name,
             "--track",
             "--end-of-options",
@@ -115,7 +117,13 @@ export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
         fetch,
         step(
           "git",
-          ["checkout", "--force", "--detach", "--end-of-options", `refs/tags/${target.name}`],
+          [
+            "switch",
+            "--discard-changes",
+            "--detach",
+            "--end-of-options",
+            `refs/tags/${target.name}`,
+          ],
           {
             cwd: app,
             why: `pin to ${target.name}`,
@@ -125,7 +133,7 @@ export function gitSteps(app: string, target: Target): ReadonlyArray<Step> {
     case "Commit":
       return [
         fetch,
-        step("git", ["checkout", "--force", "--detach", "--end-of-options", target.sha], {
+        step("git", ["switch", "--discard-changes", "--detach", "--end-of-options", target.sha], {
           cwd: app,
           why: `pin to ${target.sha}`,
         }),

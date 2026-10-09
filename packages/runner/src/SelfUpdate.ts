@@ -210,11 +210,15 @@ export const isAncestorArgs = (commit: string, ref: string): ReadonlyArray<strin
   ref,
 ]
 
-/** git's arguments that put the checkout at `position`, discarding changes to its files. */
+/**
+ * git's arguments that put the checkout at `position`, discarding changes to its files. `switch`,
+ * not `checkout`: git before 2.43 (Debian 12 has 2.39) reads checkout's `--end-of-options` as
+ * `--`, and the commit after it as a path to check out.
+ */
 export function checkoutArgs(position: Position): ReadonlyArray<string> {
   return position.branch === undefined
-    ? ["checkout", "--force", "--detach", "--end-of-options", position.commit]
-    : ["checkout", "--force", "-B", position.branch, "--end-of-options", position.commit]
+    ? ["switch", "--discard-changes", "--detach", "--end-of-options", position.commit]
+    : ["switch", "--discard-changes", "-C", position.branch, "--end-of-options", position.commit]
 }
 
 /** What the Runner keeps across its restart, in `<home>/runner-update.json`. */

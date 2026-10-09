@@ -120,16 +120,16 @@ describe("moving the checkout", () => {
   test("stays on its branch when the commit is on it", () => {
     expect(applyPlan({ commit: old, branch: "main" }, target, true)).toEqual({
       _tag: "Move",
-      checkout: ["checkout", "--force", "-B", "main", "--end-of-options", target.commit],
-      back: ["checkout", "--force", "-B", "main", "--end-of-options", old],
+      checkout: ["switch", "--discard-changes", "-C", "main", "--end-of-options", target.commit],
+      back: ["switch", "--discard-changes", "-C", "main", "--end-of-options", old],
     })
   })
 
   test("detaches at a commit not on its branch, and goes back to the branch", () => {
     expect(applyPlan({ commit: old, branch: "main" }, target, false)).toEqual({
       _tag: "Move",
-      checkout: ["checkout", "--force", "--detach", "--end-of-options", target.commit],
-      back: ["checkout", "--force", "-B", "main", "--end-of-options", old],
+      checkout: ["switch", "--discard-changes", "--detach", "--end-of-options", target.commit],
+      back: ["switch", "--discard-changes", "-C", "main", "--end-of-options", old],
     })
   })
 
@@ -152,8 +152,8 @@ describe("moving the checkout", () => {
 
   test("goes back to a detached commit detached", () => {
     expect(checkoutArgs({ commit: old })).toEqual([
-      "checkout",
-      "--force",
+      "switch",
+      "--discard-changes",
       "--detach",
       "--end-of-options",
       old,
@@ -189,7 +189,7 @@ describe("starting after an update", () => {
 
     expect(decision).toEqual({
       _tag: "RollBack",
-      back: ["checkout", "--force", "-B", "main", "--end-of-options", old],
+      back: ["switch", "--discard-changes", "-C", "main", "--end-of-options", old],
       failure: {
         target,
         message: `It started on ${target.commit.slice(0, 12)} 3 times without the Hub welcoming it, so it went back to ${old.slice(0, 12)}: see its log.`,

@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describeStep } from "./Shell.ts"
 import {
   buildSteps,
@@ -84,16 +87,16 @@ describe("the git Steps", () => {
   test("following a branch tracks origin's", () => {
     expect(gitCommands({ _tag: "Branch", name: "main" })).toEqual([
       "git fetch --prune --tags --force origin",
-      "git checkout --force -B main --track --end-of-options origin/main",
+      "git switch --discard-changes -C main --track --end-of-options origin/main",
     ])
   })
 
   test("a tag or commit detaches", () => {
     expect(gitCommands({ _tag: "Tag", name: "v0.1.0" })[1]).toBe(
-      "git checkout --force --detach --end-of-options refs/tags/v0.1.0",
+      "git switch --discard-changes --detach --end-of-options refs/tags/v0.1.0",
     )
     expect(gitCommands({ _tag: "Commit", sha: "abcdef1" })[1]).toBe(
-      "git checkout --force --detach --end-of-options abcdef1",
+      "git switch --discard-changes --detach --end-of-options abcdef1",
     )
   })
 
@@ -101,6 +104,63 @@ describe("the git Steps", () => {
     expect(
       gitSteps("/h/app", { _tag: "Branch", name: "main" }).every((s) => s.cwd === "/h/app"),
     ).toBe(true)
+  })
+})
+
+/** Runs git in `cwd`, as a test identity: its output, trimmed. Throws when it fails. */
+function git(cwd: string, ...args: ReadonlyArray<string>): string {
+  const result = Bun.spawnSync(["git", ...args], {
+    cwd,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    },
+  })
+  if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString()}`)
+  return result.stdout.toString().trim()
+}
+
+// With this machine's git, against a clone of a local origin: git before 2.43 reads checkout's
+// `--end-of-options` as `--`, so what the Steps name must still be read as a commit there.
+describe.skipIf(Bun.which("git") === null)("the git Steps, run by git", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kndl-update-"))
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+  const origin = join(dir, "origin")
+  const app = join(dir, "app")
+  let first: string
+  let second: string
+  beforeAll(() => {
+    git(dir, "init", "--quiet", "--initial-branch=main", origin)
+    git(origin, "commit", "--quiet", "--allow-empty", "-m", "first")
+    first = git(origin, "rev-parse", "HEAD")
+    git(origin, "tag", "v0.1.0")
+    git(origin, "commit", "--quiet", "--allow-empty", "-m", "second")
+    second = git(origin, "rev-parse", "HEAD")
+    git(dir, "clone", "--quiet", origin, app)
+  })
+
+  const run = (target: Parameters<typeof gitSteps>[1]) => {
+    for (const s of gitSteps(app, target)) git(s.cwd ?? app, ...s.args)
+  }
+  const head = () => ({
+    commit: git(app, "rev-parse", "HEAD"),
+    branch: Bun.spawnSync(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: app })
+      .stdout.toString()
+      .trim(),
+  })
+
+  test("pins to a tag or a commit, detached, and follows a branch again", () => {
+    run({ _tag: "Tag", name: "v0.1.0" })
+    expect(head()).toEqual({ commit: first, branch: "" })
+    run({ _tag: "Commit", sha: second })
+    expect(head()).toEqual({ commit: second, branch: "" })
+    run({ _tag: "Branch", name: "main" })
+    expect(head()).toEqual({ commit: second, branch: "main" })
+    expect(git(app, "rev-parse", "--abbrev-ref", "main@{upstream}")).toBe("origin/main")
   })
 })
 
