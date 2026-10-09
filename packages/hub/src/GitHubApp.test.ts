@@ -237,7 +237,7 @@ describe("listing Repos", () => {
     github.grant("octo/repo-119", "octocat")
     const listed = await withApp(
       Effect.gen(function* () {
-        const found = yield* (yield* GitHubApp).listRepos
+        const { repos: found } = yield* (yield* GitHubApp).listRepos
         const last = found.find((each) => each.repo === "octo/repo-119")
         return {
           repos: found.map((each) => each.repo),
@@ -259,7 +259,7 @@ describe("listing Repos", () => {
     const [installation] = github.installations
     if (installation === undefined) throw new Error("the stand-in has no installation")
     github.installations[0] = { ...installation, suspended: true }
-    expect(await listRepos()).toEqual([])
+    expect((await listRepos()).repos).toEqual([])
   })
 
   test("leaves out an installation GitHub fails on, and lists the rest", async () => {
@@ -272,7 +272,9 @@ describe("listing Repos", () => {
       suspended: false,
     })
     // The stand-in mints tokens for its one installation only: 77's token is refused.
-    expect((await listRepos()).map((each) => each.repo)).toEqual([repo])
+    const listed = await listRepos()
+    expect(listed.repos.map((each) => each.repo)).toEqual([repo])
+    expect(listed.complete).toBe(false)
   })
 })
 

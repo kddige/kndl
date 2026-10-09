@@ -2,8 +2,10 @@ import {
   type AgentId,
   type EffortLevel,
   EffortLevels,
+  branchNameProblem,
   InviteOnlyPath,
   InvitePath,
+  newBranchProblem,
   type RunnerId,
   type SessionId,
   SetupPath,
@@ -133,6 +135,26 @@ interface SetupSearch {
 }
 
 /**
+ * The setup's search, read: a branch git would refuse is left out, as if the search had none.
+ */
+function readSetupSearch(search: Record<string, unknown>): SetupSearch {
+  const { branch, from, direct, runner, model, effort } = search
+  const refused = nonEmpty(from)
+    ? newBranchProblem(String(branch), from) !== undefined || branchNameProblem(from) !== undefined
+    : branchNameProblem(String(branch)) !== undefined
+  return nonEmpty(branch) && !refused
+    ? {
+        branch,
+        ...(nonEmpty(from) && { from }),
+        ...((direct === true || direct === "true") && !nonEmpty(from) && { direct: true as const }),
+        ...(nonEmpty(runner) && { runner }),
+        ...(nonEmpty(model) && { model }),
+        ...(EffortLevels.some((level) => level === effort) && { effort: effort as EffortLevel }),
+      }
+    : {}
+}
+
+/**
  * A Repo's Environment (ADR 0009). With ?branch=, it's the setup before the Repo's first Session,
  * which starts on that branch (and ?from=, ?direct=, ?runner=, ?model=, ?effort=) once the
  * Environment is applied.
@@ -140,23 +162,13 @@ interface SetupSearch {
 const environmentRoute = createRoute({
   getParentRoute: () => hubRoute,
   path: "/repos/$owner/$repo/environment",
-  validateSearch: (search: Record<string, unknown>): SetupSearch => {
-    const { branch, from, direct, runner, model, effort } = search
-    return nonEmpty(branch)
-      ? {
-          branch,
-          ...(nonEmpty(from) && { from }),
-          ...((direct === true || direct === "true") &&
-            !nonEmpty(from) && { direct: true as const }),
-          ...(nonEmpty(runner) && { runner }),
-          ...(nonEmpty(model) && { model }),
-          ...(EffortLevels.some((level) => level === effort) && { effort: effort as EffortLevel }),
-        }
-      : {}
-  },
+  validateSearch: readSetupSearch,
   component: function EnvironmentRoute() {
     const { owner, repo } = environmentRoute.useParams()
-    const { branch, from, direct, runner, model, effort } = environmentRoute.useSearch()
+    // Read again: the router merges in its parents' search as the URL had it, whatever this refused.
+    const { branch, from, direct, runner, model, effort } = readSetupSearch(
+      environmentRoute.useSearch(),
+    )
     return (
       <EnvironmentView
         key={`${owner}/${repo}`}

@@ -58,6 +58,12 @@ export interface InstalledRepo {
   readonly isCollaborator: (login: string) => Effect.Effect<boolean, GitHubAppError>
 }
 
+/** The Repos the App is on; `complete` is false when an installation was left out. */
+export interface InstalledRepos {
+  readonly repos: ReadonlyArray<InstalledRepo>
+  readonly complete: boolean
+}
+
 /** An installation token for one Repo. */
 export interface RepoToken {
   readonly token: Redacted.Redacted<string>
@@ -240,7 +246,7 @@ export class GitHubApp extends Context.Service<
      * so no token is minted per Repo. An installation GitHub fails on is logged and left out.
      * For New Session's Repo combo box, which RepoAccess filters by person.
      */
-    readonly listRepos: Effect.Effect<ReadonlyArray<InstalledRepo>, GitHubAppError>
+    readonly listRepos: Effect.Effect<InstalledRepos, GitHubAppError>
     /**
      * The Repo's branches and its default branch, asked as the Repo's installation. Fails with
      * status 404 where the App isn't installed on the Repo. Reads at most {@link maxBranchPages}
@@ -571,39 +577,47 @@ export class GitHubApp extends Context.Service<
         installations.push(...listed.filter((installation) => installation.suspended_at == null))
         if (listed.length < installationsPerPage) break
       }
+      let complete = true
       const found = yield* Effect.forEach(
         installations,
         (installation) =>
           installationRepos(installation).pipe(
-            Effect.catchTag("GitHubAppError", (error) =>
-              Effect.as(
+            Effect.catchTag("GitHubAppError", (error) => {
+              complete = false
+              return Effect.as(
                 Effect.logWarning(`Left installation ${installation.id} out: ${error.message}`),
                 [] as Array<InstalledRepo>,
-              ),
-            ),
+              )
+            }),
           ),
         { concurrency: installationConcurrency },
       )
-      return found.flat()
+      return { repos: found.flat(), complete }
     }).pipe(Effect.withSpan("GitHubApp.listRepos"))
 
     const listBranches = Effect.fn("GitHubApp.listBranches")(function* (repo: RepoName) {
       const { owner, name } = splitRepo(repo)
-      const { token } = yield* repoToken(repo)
-      const { default_branch: defaultBranch } = yield* call(
+      const { token } = yield* bounded(`Could not get a token for ${repo}`, repoToken(repo))
+      const { default_branch: defaultBranch } = yield* bounded(
         `Could not look up ${repo}`,
-        RepositoryDefaults,
-        request("GET", `/repos/${owner}/${name}`, { token }),
+        call(
+          `Could not look up ${repo}`,
+          RepositoryDefaults,
+          request("GET", `/repos/${owner}/${name}`, { token }),
+        ),
       )
       const branches: Array<BranchName> = []
       for (let page = 1; page <= maxBranchPages; page++) {
-        const found = yield* call(
+        const found = yield* bounded(
           `Could not list the branches of ${repo}`,
-          BranchPage,
-          request(
-            "GET",
-            `/repos/${owner}/${name}/branches?per_page=${listedPerPage}&page=${page}`,
-            { token },
+          call(
+            `Could not list the branches of ${repo}`,
+            BranchPage,
+            request(
+              "GET",
+              `/repos/${owner}/${name}/branches?per_page=${listedPerPage}&page=${page}`,
+              { token },
+            ),
           ),
         )
         branches.push(...found.map((branch) => branch.name))

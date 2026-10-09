@@ -252,3 +252,28 @@ test("carries the whole branch choice through the Environment setup of a Repo's 
   expect(router.state.location.search).toMatchObject({ branch: "main", direct: true })
   await eventually(() => expect(document.body.textContent).toContain("Your Session on main"))
 })
+
+test("says why git would refuse the name of an existing branch, and sends nothing", async () => {
+  const { dialog, hub, start } = await openDialog(true)
+  await type(dialog, "Repo", "kddige/kndl")
+  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  await type(dialog, "Branch", "feature..x")
+  expect(dialog.textContent).toContain("A branch name can't have two dots in a row.")
+  await step(() => start.click())
+  await settle(100)
+  expect(hub.received.map((message) => message["_tag"])).not.toContain("CreateSession")
+  expect(hub.received.map((message) => message["_tag"])).not.toContain("GetEnvironment")
+})
+
+test("leaves a branch git would refuse out of the Environment setup's search", async () => {
+  const { router } = await openDialog(true)
+  await step(() =>
+    router.navigate({ href: "/repos/acme/fresh/environment?branch=a%20b&from=main" }),
+  )
+  await eventually(() =>
+    expect(router.state.location.pathname).toBe("/repos/acme/fresh/environment"),
+  )
+  // As if it had no branch: no Session is waiting on the setup.
+  await settle(100)
+  expect(document.body.textContent).not.toContain("starts once it's applied")
+})

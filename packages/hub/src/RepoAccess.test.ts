@@ -212,6 +212,33 @@ describe("Repo access", () => {
     expect(github.requests.filter((r) => r.path === "/app/installations")).toHaveLength(2)
   })
 
+  test("keeps a list that left an installation out only briefly", async () => {
+    github.installedOn.add(repo)
+    github.grant(repo, "octocat")
+    github.installations.push({
+      id: 77,
+      account: "other",
+      accountType: "User",
+      permissions: {},
+      events: [],
+      suspended: false,
+    })
+    const first = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        yield* access.accessible(octocat)
+        yield* access.forgetAccessible(octocat)
+        yield* access.accessible(octocat)
+        yield* access.forgetAccessible(octocat)
+        // Past a no's short TTL, the App's Repos are listed again.
+        yield* TestClock.adjust(Duration.subtract(refusedAnswerTtl, Duration.seconds(-1)))
+        return yield* access.accessible(octocat)
+      }),
+    )
+    expect(first).toEqual([repo])
+    expect(github.requests.filter((r) => r.path === "/app/installations")).toHaveLength(2)
+  })
+
   test("can't list without the GitHub App", async () => {
     const result = await withAccess(
       Effect.flatMap(RepoAccess, (access) => Effect.flip(access.accessible(octocat))),

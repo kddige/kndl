@@ -415,11 +415,11 @@ interface AccessVerdict {
 const refuseTunnel = (code: TunnelCloseCode, message: string) =>
   Effect.fail(new TunnelRefused({ code, message }))
 
-/** Why a command about a Repo is refused: alike whether the Repo exists or not (ADR 0003). */
 /** What a dev login is told when a listing needs the GitHub App, which the Hub doesn't have. */
 const noGitHubAppHint =
   "This needs the GitHub App, which the Hub doesn't have: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH on the Hub."
 
+/** Why a command about a Repo is refused: alike whether the Repo exists or not (ADR 0003). */
 const noRepoAccess = (repo: string) =>
   `You have no access to ${repo} on GitHub, or the GitHub App isn't installed on it.`
 
@@ -1292,8 +1292,6 @@ export class SessionRelay extends Context.Service<
         allowed: boolean,
       ): Effect.fn.Return<void, SqlError> {
         if (!allowed) {
-          // Their list of Repos to start a Session on no longer holds it.
-          yield* access.forgetAccessible(who)
           yield* endForwards(
             (forward) => forward.you.id === who.id && sameRepo(forward.repo, repo),
             ForwardCloseCode.NoSuchSession,
@@ -1316,6 +1314,8 @@ export class SessionRelay extends Context.Service<
             continue
           }
           if (before !== true) continue
+          // Their list of Repos to start a Session on no longer holds it.
+          yield* access.forgetAccessible(who)
           yield* Effect.logInfo(
             `${who.login} no longer has access to ${repo}: out of its Sessions and Environment`,
           )

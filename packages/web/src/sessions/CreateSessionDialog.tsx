@@ -1,5 +1,6 @@
 import {
   type BranchChoice,
+  branchNameProblem,
   newBranchProblem,
   repoKey,
   type RunnerId,
@@ -123,10 +124,15 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   // The branch is picked once the Repo is: one that looks right and that GitHub hasn't refused.
   const repoPicked = repoPattern.test(repoValue) && !repoRefused && repoCheck?.status !== "Checking"
   const creating = from !== null
-  const newNameProblem = creating ? newBranchProblem(branchValue, from) : undefined
+  // Git's rules for the name, which the Hub's protocol holds every branch to.
+  const newNameProblem =
+    branchValue === ""
+      ? undefined
+      : creating
+        ? newBranchProblem(branchValue, from)
+        : branchNameProblem(branchValue)
   const fromListed = branches?.status === "Loaded" && branches.names.includes(from ?? "")
-  const branchInvalid =
-    (touched && branchValue === "") || (creating && newNameProblem !== undefined)
+  const branchInvalid = (touched && branchValue === "") || newNameProblem !== undefined
   const fromInvalid = creating && !fromListed
   const online = (runners ?? []).filter((candidate) => candidate.isOnline)
   // The models it can run: the chosen Runner's, or for any Runner, what every online one has.
@@ -248,7 +254,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
     event.preventDefault()
     setTouched(true)
     if (!repoPattern.test(repoValue) || repoRefused || branchValue === "") return
-    if (creating && (newNameProblem !== undefined || !fromListed)) return
+    if (newNameProblem !== undefined || (creating && !fromListed)) return
     const choice: BranchChoice =
       from === null
         ? { _tag: "Existing", name: branchValue, newWorkBranch }
@@ -414,7 +420,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
           disabled={!repoPicked}
           invalid={branchInvalid}
           error={
-            creating && newNameProblem !== undefined
+            newNameProblem !== undefined
               ? newNameProblem
               : branchInvalid
                 ? "Enter a branch."

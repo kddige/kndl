@@ -188,6 +188,13 @@ describe("BranchChoice", () => {
     expect(newBranchProblem("feature/x", "main")).toBeUndefined()
   })
 
+  test("a Session keeps a branch name of any length, though one entered is capped", () => {
+    const long = "x".repeat(MaxBranchNameLength + 45)
+    const kept = { ...sessionSummary, baseBranch: long, workBranch: long }
+    expect(Schema.decodeUnknownSync(SessionSummary)(kept).workBranch).toBe(long)
+    expectRejected(BranchChoice, { _tag: "Existing", name: long, newWorkBranch: true })
+  })
+
   test("comes to the base and Work branches a Session has", () => {
     const id = Schema.decodeUnknownSync(SessionId)("s-1")
     expect(workBranchFor(id)).toBe("claude/s-1")

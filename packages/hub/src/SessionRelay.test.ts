@@ -2624,6 +2624,21 @@ describe("Repo access", () => {
     })
   })
 
+  test("keeps a person's list of Repos when a check finds no access they never had", async () => {
+    const hub = await accessHub()
+    github.grant(repo, "octocat")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+    octocatWeb.send({ _tag: "ListRepos", requestId: "l-1" })
+    expect((await octocatWeb.take("ReposListed")).repos).toEqual([repo])
+
+    // A Repo they never had: the check says no, as the recheck does for each every so often.
+    octocatWeb.send({ _tag: "CheckRepo", requestId: "c-1", repo: secret })
+    expect((await octocatWeb.take("RepoChecked")).status).toBe("NoAccess")
+    github.grant(secret, "octocat")
+    octocatWeb.send({ _tag: "ListRepos", requestId: "l-2" })
+    expect((await octocatWeb.take("ReposListed")).repos).toEqual([repo])
+  })
+
   test("lists a Repo's branches to those with access to it, and to no one else", async () => {
     const hub = await accessHub()
     github.grant(repo, "octocat")

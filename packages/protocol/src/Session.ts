@@ -34,11 +34,11 @@ export const repoKey = (repo: string): string => repo.toLowerCase()
 /** Whether two names are the same Repo: GitHub's names ignore case. */
 export const sameRepo = (a: string, b: string): boolean => repoKey(a) === repoKey(b)
 
-/** The longest a branch name may be, in characters. */
+/** The longest a branch name may be that a person enters, in characters. */
 export const MaxBranchNameLength = 255
 
 /** A git branch name: a Session's base branch or its Work branch. */
-export const BranchName = Schema.NonEmptyString.check(Schema.isMaxLength(MaxBranchNameLength))
+export const BranchName = Schema.NonEmptyString
 export type BranchName = typeof BranchName.Type
 
 /**
@@ -90,7 +90,11 @@ export function newBranchProblem(name: string, from?: string): string | undefine
   return undefined
 }
 
-/** A branch name git accepts, by {@link branchNameProblem}: one that is already there. */
+/**
+ * A branch name git accepts, by {@link branchNameProblem} and at most {@link MaxBranchNameLength}
+ * characters: one that is already there, as a person enters it. A Session keeps whatever name its
+ * branch had, so {@link BranchName} itself has no limit.
+ */
 export const GitBranchName = BranchName.check(Schema.makeFilter((name) => branchNameProblem(name)))
 export type GitBranchName = typeof GitBranchName.Type
 

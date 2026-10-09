@@ -267,7 +267,8 @@ export class RepoAccess extends Context.Service<
         (_: "all") => askGitHub(app.listRepos, listTimeout),
         {
           capacity: 1,
-          timeToLive: (exit) => (Exit.isSuccess(exit) ? accessibleTtl : refusedAnswerTtl),
+          timeToLive: (exit) =>
+            Exit.isSuccess(exit) && exit.value.complete ? accessibleTtl : refusedAnswerTtl,
         },
       )
 
@@ -280,7 +281,7 @@ export class RepoAccess extends Context.Service<
         ({ participant }: Person) =>
           listing.withPermits(1)(
             Effect.gen(function* () {
-              const listed = yield* Cache.get(installedRepos, "all")
+              const { repos: listed } = yield* Cache.get(installedRepos, "all")
               if (participant.id.startsWith("dev:")) {
                 const all = Option.isSome(config.devLogin)
                 return { repos: all ? listed.map(({ repo }) => repo) : [], complete: true }
@@ -326,7 +327,7 @@ export class RepoAccess extends Context.Service<
 
       // By Repo: its branches. Only an answer is kept.
       const branchLists = yield* Cache.makeWith(
-        ({ repo }: Asked) => askGitHub(app.listBranches(repo)),
+        ({ repo }: Asked) => askGitHub(app.listBranches(repo), listTimeout),
         {
           capacity: cacheCapacity,
           timeToLive: (exit) => (Exit.isSuccess(exit) ? branchesTtl : Duration.zero),

@@ -127,8 +127,9 @@ const excludeAgentWorktrees = (workspace: string) =>
 
 /**
  * Clones `url` into `workspace` on `baseBranch`, then creates and checks out `workBranch`, with
- * subagents' worktrees excluded. A new `workBranch` that the Repo already has fails. A `workBranch` that is the `baseBranch` is already checked out:
- * the Session commits to it directly.
+ * subagents' worktrees excluded. A new `workBranch` that the Repo already has fails. A
+ * `workBranch` that is the `baseBranch` is already checked out: the Session commits to it
+ * directly.
  */
 export const cloneWorkspace = (options: {
   readonly url: string
