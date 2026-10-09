@@ -2,8 +2,7 @@
 // gone, then a Hub with a new key, real web clients and a fake Runner over WebSockets.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { existsSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { ConfigProvider, Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
@@ -23,7 +22,7 @@ import {
   stopAll,
   type Web,
 } from "./testChannels.ts"
-import { startHub, startHubProcess, type TestHub } from "./testSupport.ts"
+import { startHub, startHubProcess, type TestHub, testDatabaseDir } from "./testSupport.ts"
 
 const dirs: Array<string> = []
 const children: Array<Bun.Subprocess> = []
@@ -117,7 +116,7 @@ async function scene(hub: TestHub) {
 
 /** A database whose key is `lostKey`, holding every kind of variable, a Session and its log. */
 async function seededDatabase() {
-  const dir = mkdtempSync(join(tmpdir(), "kndl-reset-"))
+  const dir = testDatabaseDir("kndl-reset-")
   dirs.push(dir)
   const file = join(dir, "hub.db")
   const env = await scene(await startHub({ config: withKey(lostKey), database: databaseAt(file) }))
@@ -241,7 +240,7 @@ describe("secrets-reset", () => {
   }, 20_000)
 
   test("refuses where there is no database, rather than make one", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-reset-"))
+    const dir = testDatabaseDir("kndl-reset-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     expect(await reset(file, true).catch((cause: unknown) => String(cause))).toContain(

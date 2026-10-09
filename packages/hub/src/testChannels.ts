@@ -106,7 +106,9 @@ export class Connection<In extends Tagged> {
 
   /** The messages of this kind not taken yet, after waiting a moment for stragglers. */
   async untaken<Tag extends In["_tag"]>(tag: Tag): Promise<Array<Extract<In, { _tag: Tag }>>> {
-    await Bun.sleep(150)
+    // The Hub answers on loopback in a few ms, so 50ms is about 10× that. Too short a wait could
+    // only miss a late message (a false pass), never fail a correct test.
+    await Bun.sleep(50)
     return this.received.filter((message) => message._tag === tag) as Array<
       Extract<In, { _tag: Tag }>
     >

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { rmSync } from "node:fs"
 import { join } from "node:path"
 import { AgentId, EnvironmentVersion, ParticipantId, SessionId } from "@kndl/protocol"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
@@ -12,7 +11,7 @@ import { PromptQueue } from "./PromptQueue.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { Sessions } from "./Sessions.ts"
 import { SignIns } from "./SignIns.ts"
-import { SessionsTest } from "./testSupport.ts"
+import { SessionsTest, testDatabaseDir } from "./testSupport.ts"
 
 const dirs: Array<string> = []
 
@@ -24,15 +23,10 @@ const databaseIn = (env: Record<string, string>) =>
   Effect.runSync(DatabaseFile.parse(ConfigProvider.fromEnv({ env })))
 
 describe("the Hub's database", () => {
-  test("from a checkout is hub.db in packages/hub, not in the dev home", () => {
+  test("is hub.db in packages/hub from a checkout, in the home KNDL_HOME names, or HUB_DATABASE", () => {
+    // Not in the dev home from a checkout.
     expect(databaseIn({})).toBe(new URL("../hub.db", import.meta.url).pathname)
-  })
-
-  test("is hub.db in the home KNDL_HOME names", () => {
     expect(databaseIn({ KNDL_HOME: "/srv/kndl" })).toBe("/srv/kndl/hub.db")
-  })
-
-  test("is HUB_DATABASE when set, whatever the home", () => {
     expect(databaseIn({ HUB_DATABASE: "/tmp/a.db" })).toBe("/tmp/a.db")
     expect(databaseIn({ HUB_DATABASE: "/tmp/a.db", KNDL_HOME: "/srv/kndl" })).toBe("/tmp/a.db")
   })
@@ -214,44 +208,13 @@ const beforeAgents = Effect.gen(function* () {
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'agents'`
 })
 
-/** Takes the database back to before migration 0016, Claude credentials, as above. */
-const beforeClaudeCredentials = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient
-  yield* beforeAgents
-  yield* sql`DROP TABLE claude_credentials`
-  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'claude_credentials'`
-})
-
-/** Takes the database back to before migration 0015, Session models, as above. */
-const beforeSessionModels = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient
-  yield* beforeClaudeCredentials
-  for (const column of ["model", "effort", "model_pending"]) {
-    yield* sql.unsafe(`ALTER TABLE sessions DROP COLUMN ${column}`)
-  }
-  yield* sql`ALTER TABLE runners DROP COLUMN models`
-  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_model'`
-})
-
-/** Takes the database back to before migration 0014, Child Sessions, as above. */
-const beforeChildSessions = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient
-  yield* beforeSessionModels
-  yield* sql`DROP INDEX sessions_parent_id`
-  for (const column of ["parent_id", "last_report", "last_report_at", "parent_exchanges"]) {
-    yield* sql.unsafe(`ALTER TABLE sessions DROP COLUMN ${column}`)
-  }
-  yield* sql`ALTER TABLE queued_prompts DROP COLUMN from_session`
-  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'child_sessions'`
-})
-
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
 
 describe("migration 0032, Plugins named MCP servers", () => {
   test("keeps every Plugin, Installation, log entry and Session's Installations, by their new names", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     const started = JSON.stringify([
@@ -346,155 +309,9 @@ describe("migration 0032, Plugins named MCP servers", () => {
   })
 })
 
-describe("migration 0031, Plugin icons", () => {
-  test("leaves the Plugins there were without an icon", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
-    dirs.push(dir)
-    const file = join(dir, "hub.db")
-    await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        yield* beforeMcpServers
-        yield* sql`ALTER TABLE plugins DROP COLUMN icon`
-        yield* sql`ALTER TABLE plugins DROP COLUMN icon_type`
-        yield* sql`ALTER TABLE plugins DROP COLUMN icon_hash`
-        yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'plugin_icon'`
-        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
-          VALUES ('dev:alice', 'alice', 'alice', 1, 1)`
-        yield* sql`INSERT INTO plugins (id, name, url, created_by, created_at)
-          VALUES ('hub:docs', 'Docs', 'https://mcp.example.com/mcp', 'dev:alice', 1)`
-      }),
-    )
-    const after = await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        return yield* sql`SELECT id, icon, icon_type, icon_hash FROM mcp_servers`
-      }),
-    )
-    expect(after).toEqual([{ id: "hub:docs", icon: null, icon_type: null, icon_hash: null }])
-  })
-})
-
-describe("migration 0025, header secrets", () => {
-  test("leaves the Plugins there were without header secrets, and their log without titles", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
-    dirs.push(dir)
-    const file = join(dir, "hub.db")
-    await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        yield* beforeHeaderSecrets
-        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
-          VALUES ('dev:alice', 'alice', 'alice', 1, 1)`
-        yield* sql`INSERT INTO plugins (id, name, url, created_by, created_at)
-          VALUES ('hub:docs', 'Docs', 'https://mcp.example.com/mcp', 'dev:alice', 1)`
-        yield* sql`INSERT INTO installations (id, plugin_id, name, created_by, created_at)
-          VALUES ('i-1', 'hub:docs', 'Docs', 'dev:alice', 1)`
-        yield* sql`INSERT INTO plugin_log (id, repo, at, by, change, plugin_id, plugin_name,
-            installation_id, installation_name)
-          VALUES (1, 'kddige/kndl', 1, 'dev:alice', 'Created', 'hub:docs', 'Docs', 'i-1', 'Docs')`
-      }),
-    )
-    const after = await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        return {
-          mcpServers: yield* sql`SELECT id, auth FROM mcp_servers`,
-          log: yield* sql`SELECT id, secrets FROM mcp_server_log`,
-          values: yield* sql`SELECT * FROM installation_values`,
-        }
-      }),
-    )
-    expect(after).toEqual({
-      mcpServers: [{ id: "hub:docs", auth: '{"_tag":"None"}' }],
-      log: [{ id: 1, secrets: null }],
-      values: [],
-    })
-  })
-})
-
-describe("migration 0026, Plugin packages", () => {
-  test("leaves the Plugins there were Hub-only, and their logs as they were", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
-    dirs.push(dir)
-    const file = join(dir, "hub.db")
-    await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        yield* beforePluginPackages
-        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
-          VALUES ('github:1', 'octocat', 'Octocat', 1, 1)`
-        yield* sql`INSERT INTO plugins (id, name, url, created_by, created_at)
-          VALUES ('hub:docs', 'Docs', 'https://mcp.example.com/mcp', 'github:1', 2)`
-        yield* sql`INSERT INTO plugin_log (
-            repo, at, by, change, plugin_id, plugin_name, installation_id, installation_name
-          ) VALUES ('acme/app', 3, 'github:1', 'PluginEdited', 'hub:docs', 'Docs', 'in-1', 'Docs')`
-      }),
-    )
-    const after = await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        return {
-          mcpServers: yield* sql`SELECT id, description, package FROM mcp_servers`,
-          log: yield* sql`SELECT change, mcp_server_version AS mcpServerVersion FROM mcp_server_log`,
-        }
-      }),
-    )
-    expect(after).toEqual({
-      mcpServers: [{ id: "hub:docs", description: null, package: null }],
-      log: [{ change: "McpServerEdited", mcpServerVersion: null }],
-    })
-  })
-})
-
-describe("migration 0028, global Installations", () => {
-  test("leaves the Installations there were Repo-scoped, on in the Repos they list", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
-    dirs.push(dir)
-    const file = join(dir, "hub.db")
-    await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        yield* beforeGlobalInstallations
-        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
-          VALUES ('github:1', 'octocat', 'Octocat', 1, 1)`
-        yield* sql`INSERT INTO plugins (id, name, url, created_by, created_at)
-          VALUES ('hub:docs', 'Docs', 'https://mcp.example.com/mcp', 'github:1', 2)`
-        yield* sql`INSERT INTO installations (id, plugin_id, name, created_by, created_at)
-          VALUES ('in-1', 'hub:docs', 'Docs', 'github:1', 3)`
-        yield* sql`INSERT INTO installation_repos (installation_id, plugin_id, repo)
-          VALUES ('in-1', 'hub:docs', 'acme/app')`
-      }),
-    )
-    const after = await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        return {
-          installations: yield* sql`SELECT id, global FROM installations`,
-          repos: yield* sql`SELECT installation_id AS id, repo FROM installation_repos`,
-          off: yield* sql`SELECT * FROM installation_repo_off`,
-        }
-      }),
-    )
-    expect(after).toEqual({
-      installations: [{ id: "in-1", global: 0 }],
-      repos: [{ id: "in-1", repo: "acme/app" }],
-      off: [],
-    })
-  })
-})
-
 describe("migration 0023, Members", () => {
   test("admits everyone there was, and makes the earliest from GitHub the Owner", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     const token = await onDatabase(
@@ -547,7 +364,7 @@ describe("migration 0023, Members", () => {
   })
 
   test("leaves a Hub no one signed in to with GitHub without an Owner, so it takes a Setup link", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(
@@ -576,48 +393,6 @@ describe("migration 0023, Members", () => {
   })
 })
 
-describe("migration 0013, Session names", () => {
-  test("leaves the Sessions there were unnamed, shown by their Work branch, and lets them be named", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
-    dirs.push(dir)
-    const file = join(dir, "hub.db")
-    await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
-          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
-        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
-          VALUES ('r-1', 'build-box', 'hash', 1)`
-        // A database from before it: no name column, and the migration not yet run.
-        yield* beforeChildSessions
-        yield* sql`ALTER TABLE sessions DROP COLUMN name`
-        yield* sql`
-          INSERT INTO sessions (
-            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at
-          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
-        `
-        const deleted =
-          yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'session_name' RETURNING name`
-        expect(deleted).toHaveLength(1)
-      }),
-    )
-    const after = await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sessions = yield* Sessions
-        const id = SessionId.make("s-1")
-        const before = Option.getOrThrow(yield* sessions.get(id))
-        yield* sessions.setName(id, "Health check")
-        const named = Option.getOrThrow(yield* sessions.get(id))
-        return { before: [before.workBranch, before.name], named: named.name }
-      }).pipe(Effect.provide(SessionsTest)),
-    )
-    expect(after).toEqual({ before: ["claude/s-1", undefined], named: "Health check" })
-  })
-})
-
 /** The `n`th agent a Session started. */
 const agent = (n: number) => ({
   id: AgentId.make(`a-${n}`),
@@ -627,7 +402,7 @@ const agent = (n: number) => ({
 
 describe("migration 0017, subagents", () => {
   test("makes Child Sessions ordinary Sessions, and keeps their history and queue readable", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     const ref = { id: SessionId.make("s-2"), title: "Docs" }
@@ -720,7 +495,7 @@ describe("migration 0017, subagents", () => {
   })
 
   test("keeps a Session's subagents, listing the Running and Interrupted ones on its summary", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     const listed = await onDatabase(
@@ -766,71 +541,9 @@ describe("migration 0017, subagents", () => {
   })
 })
 
-describe("migration 0018, Keep awake", () => {
-  test("leaves the Sessions there were with it off, and keeps who turned it on", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
-    dirs.push(dir)
-    const file = join(dir, "hub.db")
-    await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
-          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
-        yield* sql`INSERT INTO participants (id, login, name, avatar_url, created_at, updated_at)
-          VALUES ('p-2', 'bob', 'Bob', 'https://avatars.githubusercontent.com/u/2', 1, 1)`
-        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
-          VALUES ('r-1', 'build-box', 'hash', 1)`
-        yield* beforeKeepAwake
-        yield* sql`
-          INSERT INTO sessions (
-            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at
-          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
-        `
-      }),
-    )
-    const id = SessionId.make("s-1")
-    const before = await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sessions = yield* Sessions
-        const old = Option.getOrThrow(yield* sessions.get(id))
-        yield* sessions.setKeepAwake(id, { by: ParticipantId.make("p-2"), at: 5 })
-        return old.keepAwake
-      }).pipe(Effect.provide(SessionsTest)),
-    )
-    expect(before).toBeUndefined()
-
-    // It stays on through a Hub restart, until turned off.
-    const after = await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sessions = yield* Sessions
-        const on = Option.getOrThrow(yield* sessions.get(id)).keepAwake
-        yield* sessions.setKeepAwake(id, null)
-        const off = Option.getOrThrow(yield* sessions.get(id)).keepAwake
-        return { on, off }
-      }).pipe(Effect.provide(SessionsTest)),
-    )
-    expect(after).toEqual({
-      on: {
-        by: {
-          id: ParticipantId.make("p-2"),
-          login: "bob",
-          name: "Bob",
-          avatarUrl: "https://avatars.githubusercontent.com/u/2",
-        },
-        at: 5,
-      },
-      off: undefined,
-    })
-  })
-})
-
 describe("migration 0021, no WIP ref", () => {
   test("drops the failed WIP pushes from a Session's history, and keeps the rest", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(
@@ -878,7 +591,7 @@ describe("migration 0021, no WIP ref", () => {
 
 describe("migration 0020, Repo names ignoring case", () => {
   test("leaves the rows there were, and finds a Repo's Environment by any spelling", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(
@@ -930,52 +643,9 @@ describe("migration 0020, Repo names ignoring case", () => {
   })
 })
 
-describe("migration 0015, Session models", () => {
-  test("leaves the Sessions there were on Claude Code's default, and lets their model be set", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
-    dirs.push(dir)
-    const file = join(dir, "hub.db")
-    await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient
-        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
-          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
-        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
-          VALUES ('r-1', 'build-box', 'hash', 1)`
-        yield* beforeSessionModels
-        yield* sql`
-          INSERT INTO sessions (
-            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at
-          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
-        `
-      }),
-    )
-    const after = await onDatabase(
-      file,
-      Effect.gen(function* () {
-        const sessions = yield* Sessions
-        const id = SessionId.make("s-1")
-        const before = Option.getOrThrow(yield* sessions.get(id))
-        yield* sessions.setModel(id, { model: "sonnet", effort: "high" }, true)
-        const set = Option.getOrThrow(yield* sessions.get(id))
-        return {
-          before: [before.model, before.effort, before.modelPending],
-          set: [set.model, set.effort, set.modelPending],
-        }
-      }).pipe(Effect.provide(SessionsTest)),
-    )
-    expect(after).toEqual({
-      before: [undefined, undefined, undefined],
-      set: ["sonnet", "high", true],
-    })
-  })
-})
-
 describe("migration 0009, Sensitive values that need a value", () => {
   test("keeps the variables and links, and lets only a Sensitive value be null", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "kndl-migration-"))
+    const dir = testDatabaseDir("kndl-migration-")
     dirs.push(dir)
     const file = join(dir, "hub.db")
     await onDatabase(

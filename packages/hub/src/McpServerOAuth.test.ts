@@ -955,10 +955,13 @@ describe("an OAuth Installation's tokens", () => {
     as.valid.clear()
     const retried = await through(hub, installationId, start.modToken)
     expect(retried.status).toBe(200)
+    expect(retried.headers.get("www-authenticate")).toBeNull()
     expect(mcpSeen.slice(-2).map((seen) => seen.authorization)).toEqual([
       `Bearer ${accessToken(1)}`,
       `Bearer ${accessToken(2)}`,
     ])
+    expect(as.refreshes).toHaveLength(1)
+    expect(await notesOf(web, start.sessionId)).toEqual([])
 
     // Refused again with the refreshed one, before it ever worked: the 401 isn't passed on.
     as.valid.clear()

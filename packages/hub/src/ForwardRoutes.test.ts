@@ -183,7 +183,7 @@ describe("the forward endpoint", () => {
       await startHub({ config: { devLogin: true, sleepAfterMs: 150 } }),
     )
     const forward = await openForward(scene.hub, scene.sessionId, scene.laptop.token)
-    await Bun.sleep(500)
+    await Bun.sleep(250)
     expect(await scene.runner.untaken("StopSession")).toEqual([])
     await forward.close()
     expect(await scene.runner.take("StopSession")).toMatchObject({

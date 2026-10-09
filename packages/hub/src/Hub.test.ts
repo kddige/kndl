@@ -183,10 +183,12 @@ describe("without a credential", () => {
     expect(outcome.opened).toBe(false)
   })
 
-  test("GET /health still answers", async () => {
+  test("GET /health still answers ok", async () => {
     const hub = await startHub()
+    const response = await fetch(`${hub.url}/health`)
 
-    expect((await fetch(`${hub.url}/health`)).status).toBe(200)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ status: "ok" })
   })
 
   test("GET /auth/me says how to sign in", async () => {

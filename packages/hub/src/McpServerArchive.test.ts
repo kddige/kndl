@@ -282,20 +282,25 @@ describe("a .zip", () => {
   })
 })
 
-test("archives tar and zip make are read", () => {
+// zip isn't on every machine: without it, only tar's archive is checked.
+const archivers = [
+  { archive: "linear.tgz", command: ["tar", "-czf", "linear.tgz", "linear-mcp"] },
+  ...(Bun.which("zip") === null
+    ? []
+    : [{ archive: "linear.zip", command: ["zip", "-qr", "linear.zip", "linear-mcp"] }]),
+]
+
+test(`archives ${archivers.map(({ command }) => command[0]).join(" and ")} make are read`, () => {
   const dir = mkdtempSync(join(tmpdir(), "kndl-archive-"))
   try {
     mkdirSync(join(dir, "linear-mcp", "src"), { recursive: true })
     writeFileSync(join(dir, "linear-mcp", "package.json"), packageJson)
     writeFileSync(join(dir, "linear-mcp", "kndl.json"), manifest)
     writeFileSync(join(dir, "linear-mcp", "src", "index.js"), "export {}")
-    for (const command of [
-      ["tar", "-czf", "linear.tgz", "linear-mcp"],
-      ["zip", "-qr", "linear.zip", "linear-mcp"],
-    ]) {
+    for (const { command } of archivers) {
       expect(Bun.spawnSync(command, { cwd: dir }).exitCode).toBe(0)
     }
-    for (const archive of ["linear.tgz", "linear.zip"]) {
+    for (const { archive } of archivers) {
       expect(Result.getOrThrow(read(readFileSync(join(dir, archive))))).toEqual({
         packageJson,
         manifest,

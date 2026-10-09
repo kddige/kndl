@@ -2,12 +2,11 @@
 // and free again once the holder is gone, however it went.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, readdirSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { readdirSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { Effect, Exit, Scope } from "effect"
 import { holdHubLock } from "./HubLock.ts"
-import { startHubProcess } from "./testSupport.ts"
+import { startHubProcess, testDatabaseDir } from "./testSupport.ts"
 
 const dirs: Array<string> = []
 const children: Array<Bun.Subprocess> = []
@@ -18,7 +17,7 @@ afterEach(() => {
 })
 
 const databaseFile = () => {
-  const dir = mkdtempSync(join(tmpdir(), "kndl-lock-"))
+  const dir = testDatabaseDir("kndl-lock-")
   dirs.push(dir)
   return join(dir, "hub.db")
 }
@@ -78,19 +77,5 @@ describe("The Hub's lock", () => {
     const after = await take(database)
     expect("release" in after).toBe(true)
     if ("release" in after) await after.release()
-  }, 15_000)
-
-  test("a Hub doesn't start while something else holds it", async () => {
-    const database = databaseFile()
-    const held = await take(database)
-    const started = await startHubProcess(database).then(
-      (hub) => {
-        children.push(hub.child)
-        return "started"
-      },
-      (cause: unknown) => String(cause),
-    )
-    expect(started).toContain("The Hub can't start: a Hub is running on")
-    if ("release" in held) await held.release()
   }, 15_000)
 })

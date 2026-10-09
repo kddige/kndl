@@ -2,15 +2,14 @@
 // SIGINT, even with a mod's long poll waiting and a Runner connected (#39).
 
 import { afterEach, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { rmSync } from "node:fs"
 import { join } from "node:path"
 import { MaxCommandWaitMs, ProtocolVersion, SessionId } from "@kndl/protocol"
 import { Effect, Layer } from "effect"
 import { databaseAt } from "./Database.ts"
 import { ModTokens } from "./ModTokens.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
-import { startHubProcess } from "./testSupport.ts"
+import { startHubProcess, testDatabaseDir } from "./testSupport.ts"
 
 const dirs: Array<string> = []
 const children: Array<Bun.Subprocess> = []
@@ -41,7 +40,7 @@ async function seed(filename: string) {
 }
 
 async function startSeededHub() {
-  const dir = mkdtempSync(join(tmpdir(), "kndl-shutdown-"))
+  const dir = testDatabaseDir("kndl-shutdown-")
   dirs.push(dir)
   const database = join(dir, "hub.db")
   const tokens = await seed(database)

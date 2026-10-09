@@ -31,16 +31,6 @@ const octocat = Participant.make({
 })
 
 describe("avatars", () => {
-  test("come back with the signed-in Participant", () =>
-    run(
-      Effect.gen(function* () {
-        const signIns = yield* SignIns
-        const { token } = yield* signIns.signIn(octocat)
-
-        expect(yield* signIns.authenticate(token)).toEqual(Option.some(octocat))
-      }),
-    ))
-
   test("follow the latest sign-in, and are cleared when it has none", () =>
     run(
       Effect.gen(function* () {

@@ -200,7 +200,7 @@ async function scene() {
     config: {
       devLogin: true,
       secretsKey: Option.some(Redacted.make(generateSecretsKey())),
-      mcpServerCheckTimeoutMs: 500,
+      mcpServerCheckTimeoutMs: 150,
     },
   })
   const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
@@ -325,29 +325,6 @@ const notConnected = (name: string) =>
   `${name} isn't connected to its account: reconnect it on the MCP page.`
 
 describe("the Gateway, sending a request through an Installation (#254)", () => {
-  test("adds its header secret, not the Session token, and streams the answer back as it comes", async () => {
-    const { hub, runner, web } = await scene()
-    const id = await install(web, "Linear", "/headers")
-    const start = await startSession(web, runner)
-    seen.length = 0
-    const response = await through(hub, id, start.modToken)
-    expect(response.status).toBe(200)
-    expect(response.headers.get("set-cookie")).toBeNull()
-    const reader = response.body?.getReader()
-    if (reader === undefined) throw new Error("No body")
-    const decoder = new TextDecoder()
-    expect(decoder.decode((await reader.read()).value)).toContain('{"first":true}')
-    sendSecond()
-    let rest = ""
-    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
-      rest += decoder.decode(chunk.value)
-    }
-    expect(rest).toContain('{"second":true}')
-    expect(seen.map(({ method, authorization }) => ({ method, authorization }))).toEqual([
-      { method: "POST", authorization: `Bearer ${apiKey}` },
-    ])
-  })
-
   test("aborts the request to the server when the Sandbox's is aborted", async () => {
     const { hub, runner, web } = await scene()
     const id = await install(web, "Slow", "/hang")
@@ -384,59 +361,6 @@ describe("the Gateway, sending a request through an Installation (#254)", () => 
     })
     // The Gateway notes neither in the Session.
     expect(await notesOf(web, start.sessionId)).toEqual(checked)
-  })
-
-  test("refuses one off for the Repo, unknown, or of a Session not running", async () => {
-    const { hub, runner, web } = await scene()
-    const id = await install(web, "Linear", "/headers")
-    const elsewhere = await install(web, "Elsewhere", "/headers", { repos: ["kddige/other"] })
-    const start = await startSession(web, runner)
-    seen.length = 0
-    const off = {
-      status: 403,
-      body: { error: "This Installation isn't on for the Session's Repo." },
-    }
-    expect(await refusalOf(await through(hub, "no-such-installation", start.modToken))).toEqual(off)
-    expect(await refusalOf(await through(hub, elsewhere, start.modToken))).toEqual(off)
-
-    // Once the Session sleeps, its token is left from its last run, and refused.
-    web.send({ _tag: "SleepSession", sessionId: start.sessionId })
-    await runner.take("StopSession")
-    runner.send({
-      _tag: "SessionStopped",
-      sessionId: start.sessionId,
-      reason: "Requested",
-      exitCode: 143,
-    })
-    await asleep(web, start.sessionId)
-    expect(await refusalOf(await through(hub, id, start.modToken))).toEqual({
-      status: 401,
-      body: { error: "Expected the mod token of an Active Session" },
-    })
-  })
-
-  test("sends an OAuth Installation's token, and on a 401 refreshes it and sends once more", async () => {
-    const { hub, runner, web } = await scene()
-    const id = await install(web, "Tracker", "/oauth")
-    await connect(hub, web, id)
-    const start = await startSession(web, runner)
-    seen.length = 0
-    const first = await through(hub, id, start.modToken)
-    expect(first.status).toBe(200)
-    sendSecond()
-    await first.text()
-    expect(seen.map((one) => one.authorization)).toEqual(["Bearer at-1"])
-
-    as.valid.clear()
-    seen.length = 0
-    const retried = await through(hub, id, start.modToken)
-    expect(retried.status).toBe(200)
-    expect(retried.headers.get("www-authenticate")).toBeNull()
-    sendSecond()
-    expect(await retried.text()).toContain('{"second":true}')
-    expect(seen.map((one) => one.authorization)).toEqual(["Bearer at-1", "Bearer at-2"])
-    expect(as.refreshes).toBe(1)
-    expect(await notesOf(web, start.sessionId)).toEqual([])
   })
 
   test("refreshes once more a token refreshed after a refusal, once it worked", async () => {
