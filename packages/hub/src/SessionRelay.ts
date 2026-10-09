@@ -3341,9 +3341,15 @@ export class SessionRelay extends Context.Service<
           }
           yield* serialized(
             Effect.gen(function* () {
-              onlineRunners
-                .get(runner.id)
-                ?.peer.close(RelayCloseCode.Replaced, "Replaced by a newer connection")
+              const replaced = onlineRunners.get(runner.id)
+              if (replaced !== undefined) {
+                replaced.peer.close(RelayCloseCode.Replaced, "Replaced by a newer connection")
+                // Its finalizer finds it replaced and settles nothing: what the old connection
+                // was asked is settled here, by what this hello says, as after it went offline.
+                for (const session of yield* sessions.listByRunner(runner.id)) {
+                  live.ended(session.id, "RunnerGone")
+                }
+              }
               onlineRunners.set(runner.id, runner)
               yield* runners.recordHello(
                 runner.id,
