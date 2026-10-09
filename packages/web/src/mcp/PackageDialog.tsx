@@ -45,6 +45,7 @@ import { color, font, leading, radius, space, text, weight } from "../ui/tokens.
 import { disconnected, DisconnectsBanner } from "./connection.tsx"
 import { clearedValues } from "./headerSecrets.ts"
 import { messageOf, useLastOpened } from "./shared.ts"
+import { UnencryptedUrlBanner } from "./unencrypted.tsx"
 
 const styles = stylex.create({
   form: { display: "flex", flexDirection: "column", gap: space.s4 },
@@ -348,6 +349,7 @@ export function PackageDialog({
           ) : (
             <>
               <PackageFacts read={answer} />
+              <UnencryptedUrlBanner url={answer.read.url} />
               {current && <Changes changes={changes} />}
               {current && <AddedSecrets mcpServer={current} read={answer} />}
               {current && <ClearedSecrets mcpServer={current} read={answer} />}

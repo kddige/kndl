@@ -261,6 +261,18 @@ export class FakeMcpServers {
         { key: "token", title: "Auth token", header: "X-Sentry-Token", template: "{value}" },
       ],
     })
+    // On a LAN, over plain http: the page warns that what is sent to it is unencrypted (#255).
+    this.#mcpServer("Home Assistant", "http://192.168.1.20:8123/mcp", you, now - day, {
+      _tag: "Headers",
+      headers: [
+        {
+          key: "access_token",
+          title: "Access token",
+          header: "Authorization",
+          template: "Bearer {value}",
+        },
+      ],
+    })
     // Packaged, a version behind its git repo.
     this.#mcpServers.push({
       id: "@acme/asana-mcp",

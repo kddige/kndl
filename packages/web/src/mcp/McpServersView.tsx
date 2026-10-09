@@ -37,6 +37,7 @@ import {
   mcpServerAuthProblem,
   mcpServerNameProblem,
   mcpServerUrlProblem,
+  mcpServerUrlUnencrypted,
   ValuePlaceholder,
   sourceText,
 } from "@kndl/protocol"
@@ -82,6 +83,7 @@ import { type ClearedValues, clearedValues, keyFromTitle } from "./headerSecrets
 import { McpServerAvatar } from "./McpServerAvatar.tsx"
 import { PackageDialog, type PackageOpening } from "./PackageDialog.tsx"
 import { messageOf, useLastOpened } from "./shared.ts"
+import { UnencryptedCredentialsBanner, UnencryptedUrlBanner } from "./unencrypted.tsx"
 
 const styles = stylex.create({
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
@@ -386,6 +388,9 @@ function McpServerCard({
             <span {...stylex.props(styles.name)}>{mcpServer.name}</span>
             <Badge sx={styles.mono}>{mcpServer.id}</Badge>
             {pinned && <Badge sx={styles.mono}>{packageVersion(pinned)}</Badge>}
+            {mcpServerUrlUnencrypted(mcpServer.url) && (
+              <Badge intent="warning">Unencrypted http</Badge>
+            )}
           </div>
           {mcpServer.description && (
             <span {...stylex.props(styles.muted)}>{mcpServer.description}</span>
@@ -875,6 +880,7 @@ function McpServerDialog({
             sx={styles.mono}
           />
         </Field>
+        <UnencryptedUrlBanner url={url.trim()} />
         <Field
           label="Sign-in"
           description={
@@ -1184,6 +1190,7 @@ function InstallationDialog({
             />
           </Field>
         )}
+        {shown !== null && <UnencryptedCredentialsBanner mcpServer={shown.mcpServer} />}
         {declared.map((secret) => {
           const set = saved?.values.find((value) => value.key === secret.key)
           const problem = valueProblem(secret)

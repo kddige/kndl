@@ -14,6 +14,7 @@ import {
   installationReposProblem,
   installationsCantStartText,
   installationsFor,
+  isLoopback,
   isOn,
   mcpServerNames,
   oauthClientProblem,
@@ -22,6 +23,7 @@ import {
   mcpServerNameProblem,
   mcpServerSlug,
   mcpServerUrlProblem,
+  mcpServerUrlUnencrypted,
 } from "./McpServer.ts"
 import { SandboxNoted, SessionStateChanged, WebToHub } from "./Web.ts"
 
@@ -58,6 +60,38 @@ describe("the rules the web UI shows before sending", () => {
     expect(mcpServerUrlProblem("ftp://mcp.example.com")).toContain("https://")
     expect(mcpServerUrlProblem("https://me:secret@mcp.example.com")).toContain("user name")
     expect(mcpServerUrlProblem("https://mcp.example.com/#x")).toContain("fragment")
+  })
+
+  test("a URL is sent unencrypted when it is http to a host other than loopback", () => {
+    expect(mcpServerUrlUnencrypted("http://192.168.1.20:8931/mcp")).toBe(true)
+    expect(mcpServerUrlUnencrypted("http://10.0.0.5/mcp")).toBe(true)
+    expect(mcpServerUrlUnencrypted("http://mcp.example.com/mcp")).toBe(true)
+    expect(mcpServerUrlUnencrypted("http://nas.local:3000/mcp")).toBe(true)
+    expect(mcpServerUrlUnencrypted("http://[fe80::1]/mcp")).toBe(true)
+    // Only a literal loopback host counts, never a name that may resolve to one.
+    expect(mcpServerUrlUnencrypted("http://localhost.example.com/mcp")).toBe(true)
+    expect(mcpServerUrlUnencrypted("http://localhost:8931/mcp")).toBe(false)
+    expect(mcpServerUrlUnencrypted("http://LOCALHOST/mcp")).toBe(false)
+    expect(mcpServerUrlUnencrypted("http://127.0.0.1:8931/mcp")).toBe(false)
+    expect(mcpServerUrlUnencrypted("http://127.42.0.9/mcp")).toBe(false)
+    expect(mcpServerUrlUnencrypted("http://[::1]:8931/mcp")).toBe(false)
+    expect(mcpServerUrlUnencrypted("https://mcp.example.com/mcp")).toBe(false)
+    expect(mcpServerUrlUnencrypted("https://192.168.1.20/mcp")).toBe(false)
+    expect(mcpServerUrlUnencrypted("mcp.example.com")).toBe(false)
+    expect(mcpServerUrlUnencrypted("")).toBe(false)
+  })
+
+  test("a host is loopback when it is localhost or a loopback address, literally", () => {
+    expect(isLoopback("localhost")).toBe(true)
+    expect(isLoopback("127.0.0.1")).toBe(true)
+    expect(isLoopback("127.255.0.1")).toBe(true)
+    expect(isLoopback("[::1]")).toBe(true)
+    expect(isLoopback("::1")).toBe(true)
+    expect(isLoopback("0:0:0:0:0:0:0:1")).toBe(true)
+    expect(isLoopback("::ffff:127.0.0.1")).toBe(true)
+    expect(isLoopback("0.0.0.0")).toBe(false)
+    expect(isLoopback("192.168.1.20")).toBe(false)
+    expect(isLoopback("localhost.example.com")).toBe(false)
   })
 
   test("an Installation lists each Repo once, by any spelling", () => {

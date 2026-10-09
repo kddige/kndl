@@ -737,6 +737,38 @@ export function mcpServerUrlProblem(url: string): string | undefined {
   return undefined
 }
 
+/**
+ * True for `localhost` and loopback IP addresses (127.0.0.0/8, ::1, and 127.x mapped to IPv6),
+ * bracketed or not. Only the literal host counts, never a name that resolves to one, so a remote
+ * server can't pass as loopback.
+ */
+export function isLoopback(host: string): boolean {
+  const bare = host
+    .replace(/^\[(.*)\]$/, "$1")
+    .toLowerCase()
+    .replace(/^::ffff:(?=127\.)/, "")
+  return (
+    bare === "localhost" ||
+    bare === "::1" ||
+    bare === "0:0:0:0:0:0:0:1" ||
+    /^127(?:\.\d{1,3}){3}$/.test(bare)
+  )
+}
+
+/**
+ * Whether what is sent to an MCP server's URL crosses a network unencrypted: http, to a host
+ * other than loopback. Such URLs are allowed (an MCP server on a LAN may only speak http); the
+ * web UI warns about them (issue #255). False for a URL that doesn't parse.
+ */
+export function mcpServerUrlUnencrypted(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === "http:" && !isLoopback(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
 /** Why an Installation's list of Repos is refused, if it is. */
 export function installationReposProblem(repos: ReadonlyArray<string>): string | undefined {
   if (repos.length === 0) return "An Installation needs at least one Repo."

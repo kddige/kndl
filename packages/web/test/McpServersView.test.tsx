@@ -440,6 +440,83 @@ test("adds an uploaded folder, and refuses a name an MCP server from another sou
   expect(mcpServer("Jira")?.textContent).toContain("Uploaded jira")
 })
 
+/** The warning that what goes to the MCP server is unencrypted (#255), if one is shown. */
+const unencrypted = () =>
+  [...(dialog()?.querySelectorAll('[role="status"]') ?? [])].find((banner) =>
+    banner.textContent?.includes("unencrypted"),
+  )
+
+test("warns, as the URL is typed, that plain http to another machine is unencrypted, and still saves it (#255)", async () => {
+  const { hub } = await openMcpServers()
+  await step(() => button("Add MCP server").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add MCP server"))
+  const [name, url] = [...(dialog()?.querySelectorAll("input") ?? [])] as [
+    HTMLInputElement,
+    HTMLInputElement,
+  ]
+  await type(name, "NAS tools")
+  await type(url, "http://192.168.1.40:8931/mcp")
+  expect(unencrypted()?.textContent).toContain("anyone on the network path")
+  await type(url, "https://mcp.acme.example/mcp")
+  expect(unencrypted()).toBeUndefined()
+  await type(url, "http://localhost:8931/mcp")
+  expect(unencrypted()).toBeUndefined()
+  await type(url, "http://[::1]:8931/mcp")
+  expect(unencrypted()).toBeUndefined()
+
+  await type(url, "http://10.0.0.7/mcp")
+  expect(unencrypted()).toBeDefined()
+  await step(() => button("Add").click())
+  await eventually(() => expect(mcpServer("NAS tools")?.textContent).toContain("hub:nas-tools"))
+  expect(hub.received.find((m) => m._tag === "CreateMcpServer")).toMatchObject({
+    url: "http://10.0.0.7/mcp",
+  })
+})
+
+test("marks an MCP server at plain http to another machine as unencrypted (#255)", async () => {
+  await openMcpServers()
+  expect(mcpServer("Home Assistant")?.textContent).toContain("http://192.168.1.20:8123/mcp")
+  expect(mcpServer("Home Assistant")?.textContent).toContain("Unencrypted http")
+  expect(mcpServer("Docs search")?.textContent).not.toContain("Unencrypted")
+})
+
+test("warns most clearly where a header secret would be sent unencrypted (#255)", async () => {
+  await openMcpServers()
+  await step(() => button("Add Installation of Home Assistant").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Home"))
+  expect(unencrypted()?.textContent).toContain("Header secret values are sent unencrypted")
+  expect(unencrypted()?.textContent).toContain("Home Assistant is at an http URL")
+  await step(() => button("Cancel").click())
+  await eventually(() => expect(dialog()).toBeNull())
+
+  await step(() => button("Add Installation of Linear").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Add an Installation of Linear"))
+  expect(dialog()?.textContent).toContain("Sent as Authorization")
+  expect(unencrypted()).toBeUndefined()
+})
+
+test("warns where an OAuth token would be sent unencrypted, and not over https (#255)", async () => {
+  await openMcpServers()
+  await step(() => button("Edit Installation GitHub").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Edit GitHub"))
+  expect(dialog()?.textContent).toContain("Reconnect")
+  expect(unencrypted()).toBeUndefined()
+  await step(() => button("Cancel").click())
+  await eventually(() => expect(dialog()).toBeNull())
+
+  await step(() => button("Edit MCP server GitHub").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Edit GitHub"))
+  const url = [...(dialog()?.querySelectorAll("input") ?? [])][1] as HTMLInputElement
+  await type(url, "http://10.0.0.9/mcp/")
+  await step(() => button("Save and disconnect").click())
+  await eventually(() => expect(mcpServer("GitHub")?.textContent).toContain("Unencrypted http"))
+
+  await settle(300)
+  await step(() => button("Edit Installation GitHub").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Edit GitHub"))
+  expect(unencrypted()?.textContent).toContain("The account's token is sent unencrypted")
+})
+
 /** What an OAuth Installation's client line says (#218). */
 const clientLine = (name: string) =>
   document.querySelector(`[aria-label="Client of ${name}"]`)?.textContent ?? ""
