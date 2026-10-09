@@ -12,7 +12,13 @@ import {
   ToolCallId,
   TurnId,
 } from "@kndl/protocol"
-import { type LiveSessions, makeLiveSessions, piecesOf, type SessionEnd } from "./LiveSessions.ts"
+import {
+  type LiveSessions,
+  makeLiveSessions,
+  piecesOf,
+  type SessionEnd,
+  startLogLimit,
+} from "./LiveSessions.ts"
 import { needlesOf, StreamRedactor } from "./Redaction.ts"
 
 const id = SessionId.make("s-ended")
@@ -181,7 +187,7 @@ describe("delivery", () => {
     const start = { since: 1, environmentVersion: undefined, log: "", attached: false }
     live.startSent(id, start)
     expect(live.awaitingHello(id)).toBe(true)
-    expect(live.starts.get(id)).toBe(start)
+    expect(live.view(id).start).toBe(start)
     live.modHello(id, true)
     expect(live.awaitingHello(id)).toBe(false)
     live.relaunched(id)
@@ -259,7 +265,7 @@ describe("stopping and restarting", () => {
     expect(live.goingToSleep(id)).toBe(true)
     // Nor does a restart asked meanwhile take.
     expect(live.stopAsked(id, { message: "Restarting" }, restart)).toBe(false)
-    expect(live.restarts.has(id)).toBe(false)
+    expect(live.view(id).restart).toBeUndefined()
     live.ended(id, "ClaudeGone")
     expect(live.stopAsked(id, { message: "Restarting" }, restart)).toBe(true)
     expect(live.stopped(id)).toEqual({
@@ -267,25 +273,25 @@ describe("stopping and restarting", () => {
       asked: { message: "Restarting" },
       restartBy: alice,
     })
-    expect(live.restarts.get(id)).toBe(restart)
+    expect(live.view(id).restart).toBe(restart)
   })
 
   test("a restart is over once the Session started again, or when no start is under way", () => {
     const live = makeLiveSessions()
     live.stopAsked(id, { message: "Restarting" }, restart)
     live.ended(id, "ClaudeGoneRestarting")
-    expect(live.restarts.get(id)).toBe(restart)
+    expect(live.view(id).restart).toBe(restart)
     live.startSent(id, { since: 6, environmentVersion: undefined, log: "", attached: false })
     expect(live.restartOver(id)).toBe(false)
     live.claudeStarted(id)
-    expect(live.starts.has(id)).toBe(false)
-    expect(live.restarts.has(id)).toBe(false)
+    expect(live.startUnderWay(id)).toBe(false)
+    expect(live.view(id).restart).toBeUndefined()
     expect(live.restartOver(id)).toBe(false)
 
     // An Asleep one woken for a restart that couldn't start.
     live.restartWaking(id, restart)
     expect(live.restartOver(id)).toBe(true)
-    expect(live.restarts.has(id)).toBe(false)
+    expect(live.view(id).restart).toBeUndefined()
   })
 })
 
@@ -395,5 +401,55 @@ describe("what a Session is doing", () => {
     expect(doing(live)).toEqual({ ...nothing, archiveStopping: true })
     live.stopped(id)
     expect(doing(live)).toEqual(nothing)
+  })
+})
+
+describe("what is shown of a Session", () => {
+  const ports = [{ port: 3000, addresses: ["0.0.0.0"], process: "node" }]
+
+  test("nothing, at first", () => {
+    expect(makeLiveSessions().view(id)).toEqual({
+      start: undefined,
+      restart: undefined,
+      openPorts: undefined,
+      asleepWhy: undefined,
+    })
+  })
+
+  test("a start keeps its output until Claude Code's terminal is up, as the same start", () => {
+    const live = makeLiveSessions()
+    expect(live.startOutput(id, "nothing to keep")).toBeUndefined()
+    const sent = start()
+    live.startSent(id, sent)
+    expect(live.startOutput(id, "")).toBeUndefined()
+    expect(live.startOutput(id, "building\n")).toBe(1)
+    expect(live.startOutput(id, "x".repeat(startLogLimit))).toBe(1)
+    const shown = live.view(id).start
+    // The same start, which a check that waited compares.
+    expect(shown).toBe(sent)
+    expect(shown?.log).toBe("x".repeat(startLogLimit))
+    live.startAttached(id)
+    expect(live.startOutput(id, "Claude's")).toBeUndefined()
+    expect(live.view(id).start?.attached).toBe(true)
+  })
+
+  test("Open ports are kept as reported, until it is no longer Active", () => {
+    const live = makeLiveSessions()
+    expect(live.portsReported(id, ports)).toEqual([])
+    expect(live.view(id).openPorts).toBe(ports)
+    expect(live.portsReported(id, [])).toBe(ports)
+    expect(live.view(id).openPorts).toBeUndefined()
+    live.portsReported(id, ports)
+    live.stateChanged(id, "Active", {})
+    expect(live.view(id).openPorts).toBe(ports)
+    live.stateChanged(id, "Frozen", {})
+    expect(live.view(id).openPorts).toBeUndefined()
+  })
+
+  test("an Asleep Session shows why it last went Asleep", () => {
+    const live = makeLiveSessions()
+    live.stateChanged(id, "Asleep", { message: "Idle" })
+    live.stateChanged(id, "Active", { message: "Woken" })
+    expect(live.view(id).asleepWhy).toEqual({ message: "Idle" })
   })
 })

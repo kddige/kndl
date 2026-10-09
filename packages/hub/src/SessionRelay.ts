@@ -340,8 +340,7 @@ const whyText = (why: Why) => {
   return `${why.message ?? (by === "" ? "" : "Changed")}${by}`
 }
 
-/** How much of a start's output the Hub keeps for clients that join while it runs. */
-export const startLogLimit = 64 * 1024
+export { startLogLimit } from "./LiveSessions.ts"
 
 /**
  * A SessionStopped's `output` as the Hub keeps it (#105): redacted first, so a value cut in two by
@@ -749,9 +748,8 @@ export class SessionRelay extends Context.Service<
        * whether it is starting or restarting.
        */
       const forWeb = (session: SessionSummary): SessionSummary => {
-        const start = live.starts.get(session.id)
-        const restart = live.restarts.get(session.id)
-        const ports = session.state === "Active" ? live.openPorts.get(session.id) : undefined
+        const { start, restart, openPorts } = live.view(session.id)
+        const ports = session.state === "Active" ? openPorts : undefined
         return {
           ...session,
           ...(ports !== undefined && ports.length > 0 && { openPorts: ports }),
@@ -800,8 +798,8 @@ export class SessionRelay extends Context.Service<
             "The Session was archived.",
           )
         }
-        if (session.state === "Asleep" && !live.restarts.has(session.id)) {
-          const why = live.asleepWhy.get(session.id)
+        const { restart, asleepWhy: why } = live.view(session.id)
+        if (session.state === "Asleep" && restart === undefined) {
           return yield* endForwards(
             ofSession,
             ForwardCloseCode.WentAsleep,
@@ -1013,10 +1011,9 @@ export class SessionRelay extends Context.Service<
           // Before Claude Code's terminal is up, the output is the start's: the Environment's
           // build and start script. A terminal shows nothing until a Snapshot, so the web shows
           // it from here instead (#70).
-          const start = live.starts.get(sessionId)
-          if (start === undefined || start.attached || data === "") return
-          start.log = (start.log + data).slice(-startLogLimit)
-          toJoined(sessionId, SessionStartLogged.make({ sessionId, since: start.since, data }))
+          const since = live.startOutput(sessionId, data)
+          if (since === undefined) return
+          toJoined(sessionId, SessionStartLogged.make({ sessionId, since, data }))
         }
         let stream = live.terminalStreams.get(sessionId)
         if (stream === undefined) {
@@ -1026,8 +1023,7 @@ export class SessionRelay extends Context.Service<
         stream.redactor.needles = needles
         stream.size = frame.size
         if (frame.kind === "Snapshot") {
-          const start = live.starts.get(sessionId)
-          if (start !== undefined) start.attached = true
+          live.startAttached(sessionId)
           // The whole screen, held Output included.
           stream.redactor.reset()
           return send(redactText(needles, frame.data), frame.size)
@@ -1092,9 +1088,7 @@ export class SessionRelay extends Context.Service<
         why: Why,
       ) {
         if (session.state === state) return
-        // Nothing listens in a Sandbox whose Claude Code isn't known to run.
-        if (state !== "Active") live.openPorts.delete(session.id)
-        if (state === "Asleep") live.asleepWhy.set(session.id, why)
+        live.stateChanged(session.id, state, why)
         yield* sessions.setState(session.id, state)
         yield* logEvent(session.id, SessionStateChanged.make({ state, ...why }))
         yield* sessionUpdated(session.id)
@@ -1382,7 +1376,7 @@ export class SessionRelay extends Context.Service<
         installations: ReadonlyArray<SessionInstallation>,
         start: StartSession,
       ) {
-        const under = live.starts.get(session.id)
+        const under = live.view(session.id).start
         if (installations.length === 0 || under === undefined) return runner.peer.send(start)
         const settle = (failures: ReadonlyArray<InstallationFailure>) =>
           Effect.gen(function* () {
@@ -1391,7 +1385,7 @@ export class SessionRelay extends Context.Service<
             if (
               Option.isNone(now) ||
               now.value.state !== "Active" ||
-              live.starts.get(session.id) !== under ||
+              live.view(session.id).start !== under ||
               peers.runner(runner.id) !== runner
             ) {
               return
@@ -2160,7 +2154,7 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return
               const entries = yield* log.history(sessionId, message.afterSeq)
               peer.send(HubToWeb.cases.SessionHistory.make({ sessionId, entries }))
-              const start = live.starts.get(sessionId)
+              const { start } = live.view(sessionId)
               if (start !== undefined && start.log !== "") {
                 peer.send(
                   SessionStartLogged.make({
@@ -2317,7 +2311,7 @@ export class SessionRelay extends Context.Service<
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              if (live.restarts.has(sessionId)) {
+              if (live.view(sessionId).restart !== undefined) {
                 return refuse(message, "The Session is already restarting.", { sessionId })
               }
               switch (session.value.state) {
@@ -3198,9 +3192,7 @@ export class SessionRelay extends Context.Service<
                   ? port
                   : { ...port, process: redactText(needles, port.process) },
               )
-              const before = live.openPorts.get(message.sessionId) ?? []
-              if (ports.length === 0) live.openPorts.delete(message.sessionId)
-              else live.openPorts.set(message.sessionId, ports)
+              const before = live.portsReported(message.sessionId, ports)
               if (!samePorts(before, ports)) yield* sessionUpdated(message.sessionId)
               return
             }
@@ -3654,7 +3646,9 @@ export class SessionRelay extends Context.Service<
                 `${runner.name} runs a version from before forwarding ports: update it.`,
               )
             }
-            const open = live.openPorts.get(sessionId)?.find((listening) => listening.port === port)
+            const open = live
+              .view(sessionId)
+              .openPorts?.find((listening) => listening.port === port)
             if (open === undefined) {
               return yield* refuseTunnel(
                 TunnelCloseCode.PortNotOpen,

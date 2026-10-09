@@ -24,6 +24,7 @@ import type {
   QuestionPick,
   SessionId,
   SessionRestart,
+  SessionState,
   TerminalFrame,
   TextDelta,
   ToolCallId,
@@ -37,6 +38,9 @@ export interface Why {
   /** The Installations that kept it from starting (#216). */
   readonly installationsFailed?: ReadonlyArray<InstallationFailure>
 }
+
+/** How much of a start's output the Hub keeps for clients that join while it runs. */
+export const startLogLimit = 64 * 1024
 
 /** A StartSession its Runner hasn't answered yet (#70). */
 export interface StartUnderWay {
@@ -97,6 +101,21 @@ export interface SessionSet {
 /** Why a command is refused, as said to whoever sent it. */
 export interface Refusal {
   readonly refusal: string
+}
+
+/** What the web and forwards are shown of a Session's live state: see `view`. */
+export interface SessionView {
+  /**
+   * Its start under way, if any. The same object for as long as the start is under way, so a
+   * check that waited can tell whether it is still the same start.
+   */
+  readonly start: Readonly<StartUnderWay> | undefined
+  /** Its restart under way, if any. */
+  readonly restart: SessionRestart | undefined
+  /** What listens in its Sandbox, as its Runner last said, while it is Active. */
+  readonly openPorts: ReadonlyArray<OpenPort> | undefined
+  /** Why it last went Asleep. */
+  readonly asleepWhy: Why | undefined
 }
 
 /** What a SessionStopped settles: see `stopped`. */
@@ -212,14 +231,10 @@ type Piece = keyof Pieces
  */
 export interface LiveSessions extends Pick<
   Pieces,
-  | "starts"
-  | "restarts"
-  | "openPorts"
   | "installationTrouble"
   | "lastBusy"
   | "questionPicks"
   | "closedQuestions"
-  | "asleepWhy"
   | "sandboxTokens"
   | "textStreams"
   | "terminalStreams"
@@ -321,6 +336,26 @@ export interface LiveSessions extends Pick<
   readonly startUnderWay: (id: SessionId) => boolean
   /** Whether its Runner was asked to stop it for good, for an archive, and hasn't said it did. */
   readonly archiveStopping: (id: SessionId) => boolean
+
+  // ── What is shown of it ──
+
+  /** What the web and forwards are shown of it. */
+  readonly view: (id: SessionId) => SessionView
+  /**
+   * Its terminal printed `data` before Claude Code's terminal was up: the start's output, kept,
+   * its last `startLogLimit` characters, for clients that join while it runs. When it was kept,
+   * since when the start runs, to send it with.
+   */
+  readonly startOutput: (id: SessionId, data: string) => number | undefined
+  /** Its Runner sent a Snapshot of Claude Code's terminal: output from now on is Claude's. */
+  readonly startAttached: (id: SessionId) => void
+  /** Its Runner said what listens in its Sandbox now (#175): what it said before. */
+  readonly portsReported: (id: SessionId, ports: ReadonlyArray<OpenPort>) => ReadonlyArray<OpenPort>
+  /**
+   * It moved to `state`, for `why`. Nothing listens in a Sandbox whose Claude Code isn't known
+   * to run, and an Asleep one says why to its forwards.
+   */
+  readonly stateChanged: (id: SessionId, state: SessionState, why: Why) => void
 
   /** The Session's live state ended `how`: what that ends is cleared (see `clearedWhen`). */
   readonly ended: (id: SessionId, how: SessionEnd) => void
@@ -555,6 +590,32 @@ export const makeLiveSessions = (): LiveSessions => {
     goingToSleep: (id) => pieces.stopping.has(id),
     startUnderWay: (id) => pieces.starts.has(id),
     archiveStopping: (id) => pieces.archiving.has(id),
+    view: (id) => ({
+      start: pieces.starts.get(id),
+      restart: pieces.restarts.get(id),
+      openPorts: pieces.openPorts.get(id),
+      asleepWhy: pieces.asleepWhy.get(id),
+    }),
+    startOutput: (id, data) => {
+      const start = pieces.starts.get(id)
+      if (start === undefined || start.attached || data === "") return undefined
+      start.log = (start.log + data).slice(-startLogLimit)
+      return start.since
+    },
+    startAttached: (id) => {
+      const start = pieces.starts.get(id)
+      if (start !== undefined) start.attached = true
+    },
+    portsReported: (id, ports) => {
+      const before = pieces.openPorts.get(id) ?? []
+      if (ports.length === 0) pieces.openPorts.delete(id)
+      else pieces.openPorts.set(id, ports)
+      return before
+    },
+    stateChanged: (id, state, why) => {
+      if (state !== "Active") pieces.openPorts.delete(id)
+      if (state === "Asleep") pieces.asleepWhy.set(id, why)
+    },
     ended: (id, how) => {
       for (const piece of clearedWhen[how]) pieces[piece].delete(id)
     },
