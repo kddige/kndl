@@ -1,6 +1,6 @@
 // The Gateway (#221, ADR 0020): how a Session's Claude Code reaches the remote MCP server of each
-// Installation it runs with. MCP traffic goes through the Hub, so that a Plugin's credentials, once
-// it has them, stay on the Hub, and only the Hub decides which Session reaches which server.
+// Installation it runs with. MCP traffic goes through the Hub, so that an MCP server's credentials,
+// once it has them, stay on the Hub, and only the Hub decides which Session reaches which server.
 //
 // - `/gateway/<installation id>`, any method, by the Session's mod token alone as `Authorization:
 //   Bearer`: the token the Runner's credential proxy relays it with (ADR 0013). A request without
@@ -8,16 +8,16 @@
 // - The Installation must be one the Session started with, and still on for its Repo; any other is
 //   answered `403`, alike whether it exists or not. One removed from the Repo stops at once; one
 //   added waits for the Session's next wake or Restart. A global one (#219) is on for the Repo
-//   unless the Repo turned it off or a Repo-scoped Installation of its Plugin takes its place there:
-//   either stops it at once too.
-// - The request goes to the Plugin's URL as it is now, so an edit to it reaches running Sessions
-//   at once. Its body and the answer's stream both ways untouched: Streamable HTTP's server-sent
-//   events, compression and all. The Session token, cookies and hop-by-hop headers stay behind;
-//   the server's cookies don't come back. A redirect isn't followed: it is answered `502`.
-// - The Plugin's header secrets (#215) are added as its declarations say now, from the values the
-//   Session started with, which only the Hub holds: a header of the same name from the Sandbox, by
-//   any case, is dropped. An Installation without a value for one is answered `409`, naming it and
-//   the header secret's title.
+//   unless the Repo turned it off or a Repo-scoped Installation of its MCP server takes its place
+//   there: either stops it at once too.
+// - The request goes to the MCP server's URL as it is now, so an edit to it reaches running
+//   Sessions at once. Its body and the answer's stream both ways untouched: Streamable HTTP's
+//   server-sent events, compression and all. The Session token, cookies and hop-by-hop headers stay
+//   behind; the server's cookies don't come back. A redirect isn't followed: it is answered `502`.
+// - The MCP server's header secrets (#215) are added as its declarations say now, from the values
+//   the Session started with, which only the Hub holds: a header of the same name from the Sandbox,
+//   by any case, is dropped. An Installation without a value for one is answered `409`, naming it
+//   and the header secret's title.
 // - A server that refuses the Session's credential (401 or 403), or an Installation without a value
 //   for one, is shown in the Session as an error (#216), once until it works again. The Session
 //   runs on: its other MCP servers may well work.
@@ -43,8 +43,8 @@ import { Clock, Effect, Option } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
 import { forward, type ReadyTarget, readAtMost } from "./Gateway.ts"
-import { PluginOAuth } from "./PluginOAuth.ts"
-import { type GatewayTarget, Plugins } from "./Plugins.ts"
+import { McpServerOAuth } from "./McpServerOAuth.ts"
+import { type GatewayTarget, McpServers } from "./McpServers.ts"
 import type { SecretsUnavailable } from "./Secrets.ts"
 import { SessionRelay } from "./SessionRelay.ts"
 import { Sessions } from "./Sessions.ts"
@@ -54,7 +54,7 @@ const errorResponse = (status: number, error: string) =>
 
 /** What an OAuth Installation's server refusing its account is answered with (#217). */
 const oauthRefusal =
-  "The Plugin's MCP server refused the Installation's account: reconnect it on the Plugins page."
+  "The MCP server refused the Installation's account: reconnect it on the MCP page."
 
 /**
  * The most the Gateway holds of an OAuth Installation's request body (#217), to send it again once
@@ -117,12 +117,12 @@ const kept = (headers: Headers, held: ReadonlySet<string>) => {
 export const GatewayRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
     const sessions = yield* Sessions
-    const plugins = yield* Plugins
+    const mcpServers = yield* McpServers
     const relay = yield* SessionRelay
-    const oauth = yield* PluginOAuth
+    const oauth = yield* McpServerOAuth
 
     /**
-     * Where the Session may reach the Installation's MCP server: the Plugin's URL, or the status
+     * Where the Session may reach the Installation's MCP server: its URL, or the status
      * it is refused with. A token is live only while its Session is Active: an Asleep Session's
      * is left from its last run, until its next start replaces it.
      */
@@ -132,9 +132,9 @@ export const GatewayRoutes = HttpRouter.use(
     ) {
       const session = yield* sessions.get(sessionId)
       if (Option.isNone(session) || session.value.state !== "Active") return 401
-      const startedWith = session.value.plugins ?? []
+      const startedWith = session.value.mcpServers ?? []
       if (!startedWith.some((installation) => installation.id === installationId)) return 403
-      const on = yield* plugins.gatewayTarget(installationId, session.value)
+      const on = yield* mcpServers.gatewayTarget(installationId, session.value)
       return Option.isSome(on) ? on.value : 403
     })
 
@@ -275,16 +275,13 @@ export const GatewayRoutes = HttpRouter.use(
         }
         if (Option.isNone(answer)) {
           yield* done(502)
-          return errorResponse(502, "The Plugin's MCP server could not be reached.")
+          return errorResponse(502, "The MCP server could not be reached.")
         }
         const response = answer.value
         if (response.status >= 300 && response.status < 400) {
           yield* discard(response)
           yield* done(502)
-          return errorResponse(
-            502,
-            "The Plugin's MCP server redirected, which the Gateway doesn't follow.",
-          )
+          return errorResponse(502, "The MCP server redirected, which the Gateway doesn't follow.")
         }
         if (response.status === 401 || response.status === 403) {
           yield* relay.installationFailed(grant.sessionId, installationId, {

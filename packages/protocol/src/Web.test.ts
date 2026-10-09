@@ -175,18 +175,18 @@ const webToHub = [
   { _tag: "RevokeInvite", requestId: "q-26", inviteId: "inv-1" },
   { _tag: "ListMembers", requestId: "q-27" },
   { _tag: "RemoveMember", requestId: "q-28", participantId: "u-2" },
-  { _tag: "GetPlugins", requestId: "q-29" },
+  { _tag: "GetMcpServers", requestId: "q-29" },
   {
-    _tag: "CreatePlugin",
+    _tag: "CreateMcpServer",
     requestId: "q-30",
     name: "Docs search",
     url: "https://mcp.example.com/mcp",
     auth: { _tag: "None" },
   },
   {
-    _tag: "EditPlugin",
+    _tag: "EditMcpServer",
     requestId: "q-31",
-    pluginId: "hub:docs-search",
+    mcpServerId: "hub:docs-search",
     name: "Docs",
     url: "https://mcp.example.com/v2",
     auth: {
@@ -196,11 +196,11 @@ const webToHub = [
       ],
     },
   },
-  { _tag: "DeletePlugin", requestId: "q-32", pluginId: "hub:docs-search" },
+  { _tag: "DeleteMcpServer", requestId: "q-32", mcpServerId: "hub:docs-search" },
   {
     _tag: "CreateInstallation",
     requestId: "q-33",
-    pluginId: "hub:docs-search",
+    mcpServerId: "hub:docs-search",
     name: "Docs",
     repos: ["kddige/kndl"],
     values: [{ key: "token", value: "sk-live-0123" }],
@@ -222,11 +222,11 @@ const webToHub = [
   },
   { _tag: "ConnectInstallation", requestId: "q-35d", installationId: "in-2", changeClient: true },
   { _tag: "DisconnectInstallation", requestId: "q-35b", installationId: "in-2" },
-  { _tag: "GetPluginLog", requestId: "q-36", repo: "kddige/kndl" },
+  { _tag: "GetMcpServerLog", requestId: "q-36", repo: "kddige/kndl" },
   {
     _tag: "CreateInstallation",
     requestId: "q-43",
-    pluginId: "hub:docs-search",
+    mcpServerId: "hub:docs-search",
     name: "Docs",
     global: true,
     repos: [],
@@ -239,7 +239,7 @@ const webToHub = [
     on: false,
   },
   {
-    _tag: "ReadPluginPackage",
+    _tag: "ReadMcpServerPackage",
     requestId: "q-37",
     from: {
       _tag: "Git",
@@ -249,12 +249,12 @@ const webToHub = [
     },
   },
   {
-    _tag: "ReadPluginPackage",
+    _tag: "ReadMcpServerPackage",
     requestId: "q-38",
     from: { _tag: "Archive", fileName: "linear-mcp-1.2.0.tgz", data: "H4sIAAAAAAAAAw==" },
   },
   {
-    _tag: "ReadPluginPackage",
+    _tag: "ReadMcpServerPackage",
     requestId: "q-39",
     from: {
       _tag: "Folder",
@@ -263,9 +263,14 @@ const webToHub = [
       manifest: '{"displayName":"Linear","mcp":{"url":"https://mcp.linear.app/mcp"}}',
     },
   },
-  { _tag: "CheckPluginUpgrade", requestId: "q-40", pluginId: "@acme/linear-mcp" },
-  { _tag: "AddPluginPackage", requestId: "q-41", readId: "read-1" },
-  { _tag: "UpgradePlugin", requestId: "q-42", pluginId: "@acme/linear-mcp", readId: "read-2" },
+  { _tag: "CheckMcpServerUpgrade", requestId: "q-40", mcpServerId: "@acme/linear-mcp" },
+  { _tag: "AddMcpServerPackage", requestId: "q-41", readId: "read-1" },
+  {
+    _tag: "UpgradeMcpServer",
+    requestId: "q-42",
+    mcpServerId: "@acme/linear-mcp",
+    readId: "read-2",
+  },
 ]
 
 const hubToWeb = [
@@ -342,16 +347,16 @@ const hubToWeb = [
     _tag: "SessionUpdated",
     session: {
       ...sessionSummary,
-      plugins: [
+      mcpServers: [
         {
           id: "in-1",
           name: "Docs",
-          pluginId: "hub:docs-search",
-          pluginName: "Docs search",
+          mcpServerId: "hub:docs-search",
+          mcpServerName: "Docs search",
           server: "docs",
         },
       ],
-      pluginsChanged: true,
+      mcpServersChanged: true,
     },
   },
   {
@@ -656,9 +661,9 @@ const hubToWeb = [
     ],
   },
   {
-    _tag: "PluginsState",
+    _tag: "McpServersState",
     requestId: "q-29",
-    plugins: [
+    mcpServers: [
       {
         id: "hub:docs-search",
         name: "Docs search",
@@ -708,7 +713,7 @@ const hubToWeb = [
     installations: [
       {
         id: "in-1",
-        pluginId: "hub:docs-search",
+        mcpServerId: "hub:docs-search",
         name: "Docs",
         repos: ["kddige/kndl"],
         otherRepos: 1,
@@ -718,7 +723,7 @@ const hubToWeb = [
       },
       {
         id: "in-2",
-        pluginId: "hub:github",
+        mcpServerId: "hub:github",
         name: "GitHub",
         repos: ["kddige/kndl"],
         otherRepos: 0,
@@ -746,21 +751,21 @@ const hubToWeb = [
     requestId: "q-35c",
     installationId: "in-2",
     issuer: "https://github.com/login/oauth",
-    callbackUrl: "https://hub.example.com/auth/plugins/callback",
+    callbackUrl: "https://hub.example.com/auth/mcp/callback",
     publicClient: false,
     reason: "The client entered before was registered with another callback URL.",
   },
-  { _tag: "PluginsState", plugins: [], installations: [] },
+  { _tag: "McpServersState", mcpServers: [], installations: [] },
   {
-    _tag: "PluginLog",
+    _tag: "McpServerLog",
     repo: "kddige/kndl",
     entries: [
       {
         at: 1_700_000_060_000,
         by: bob,
         change: "Created",
-        pluginId: "hub:docs-search",
-        pluginName: "Docs search",
+        mcpServerId: "hub:docs-search",
+        mcpServerName: "Docs search",
         installationId: "in-1",
         installationName: "Docs",
       },
@@ -768,8 +773,8 @@ const hubToWeb = [
         at: 1_700_000_090_000,
         by: alice,
         change: "ValuesSet",
-        pluginId: "hub:docs-search",
-        pluginName: "Docs search",
+        mcpServerId: "hub:docs-search",
+        mcpServerName: "Docs search",
         installationId: "in-1",
         installationName: "Docs",
         secrets: ["API key"],
@@ -777,10 +782,10 @@ const hubToWeb = [
       {
         at: 1_700_000_120_000,
         by: alice,
-        change: "PluginUpgraded",
-        pluginId: "@acme/linear-mcp",
-        pluginName: "Linear",
-        pluginVersion: "1.3.0",
+        change: "McpServerUpgraded",
+        mcpServerId: "@acme/linear-mcp",
+        mcpServerName: "Linear",
+        mcpServerVersion: "1.3.0",
         installationId: "in-2",
         installationName: "Linear",
       },
@@ -788,8 +793,8 @@ const hubToWeb = [
         at: 1_700_000_130_000,
         by: alice,
         change: "Connected",
-        pluginId: "hub:github",
-        pluginName: "GitHub",
+        mcpServerId: "hub:github",
+        mcpServerName: "GitHub",
         installationId: "in-3",
         installationName: "GitHub",
       },
@@ -797,8 +802,8 @@ const hubToWeb = [
         at: 1_700_000_140_000,
         by: alice,
         change: "Reconnected",
-        pluginId: "hub:github",
-        pluginName: "GitHub",
+        mcpServerId: "hub:github",
+        mcpServerName: "GitHub",
         installationId: "in-3",
         installationName: "GitHub",
       },
@@ -806,15 +811,15 @@ const hubToWeb = [
         at: 1_700_000_150_000,
         by: bob,
         change: "Disconnected",
-        pluginId: "hub:github",
-        pluginName: "GitHub",
+        mcpServerId: "hub:github",
+        mcpServerName: "GitHub",
         installationId: "in-3",
         installationName: "GitHub",
       },
     ],
   },
   {
-    _tag: "PluginPackageRead",
+    _tag: "McpServerPackageRead",
     requestId: "q-40",
     readId: "read-2",
     read: {

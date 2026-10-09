@@ -629,6 +629,44 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE plugins ADD COLUMN icon_type TEXT`
     yield* sql`ALTER TABLE plugins ADD COLUMN icon_hash TEXT`
   }),
+  // Plugins are MCP servers (#232): every table, column and index named for a Plugin is named for
+  // an MCP server, and so are the change log's two Plugin changes and the keys of the Installations
+  // each Session started with. A key's quotes can't be in a JSON string unescaped, so replacing
+  // `"pluginId":` touches only keys.
+  "0032_mcp_servers": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE plugins RENAME TO mcp_servers`
+    yield* sql`ALTER TABLE installations RENAME COLUMN plugin_id TO mcp_server_id`
+    yield* sql`ALTER TABLE installation_repos RENAME COLUMN plugin_id TO mcp_server_id`
+    yield* sql`ALTER TABLE plugin_log RENAME TO mcp_server_log`
+    yield* sql`ALTER TABLE mcp_server_log RENAME COLUMN plugin_id TO mcp_server_id`
+    yield* sql`ALTER TABLE mcp_server_log RENAME COLUMN plugin_name TO mcp_server_name`
+    yield* sql`ALTER TABLE mcp_server_log RENAME COLUMN plugin_version TO mcp_server_version`
+    yield* sql`ALTER TABLE sessions RENAME COLUMN plugins TO mcp_servers`
+    yield* sql`DROP INDEX installations_plugin_id`
+    yield* sql`CREATE INDEX installations_mcp_server_id ON installations (mcp_server_id)`
+    yield* sql`DROP INDEX installation_repos_one_per_plugin`
+    yield* sql`
+      CREATE UNIQUE INDEX installation_repos_one_per_mcp_server
+      ON installation_repos (mcp_server_id, repo COLLATE NOCASE)
+    `
+    yield* sql`DROP INDEX installations_one_global_per_plugin`
+    yield* sql`
+      CREATE UNIQUE INDEX installations_one_global_per_mcp_server
+      ON installations (mcp_server_id) WHERE global = 1
+    `
+    yield* sql`DROP INDEX plugin_log_repo`
+    yield* sql`CREATE INDEX mcp_server_log_repo ON mcp_server_log (repo COLLATE NOCASE, at)`
+    yield* sql`UPDATE mcp_server_log SET change = 'McpServerEdited' WHERE change = 'PluginEdited'`
+    yield* sql`UPDATE mcp_server_log SET change = 'McpServerUpgraded' WHERE change = 'PluginUpgraded'`
+    yield* sql`
+      UPDATE sessions SET mcp_servers = REPLACE(REPLACE(REPLACE(mcp_servers,
+        '"pluginId":', '"mcpServerId":'),
+        '"pluginName":', '"mcpServerName":'),
+        '"pluginVersion":', '"mcpServerVersion":')
+      WHERE mcp_servers IS NOT NULL
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

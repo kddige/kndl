@@ -1,16 +1,11 @@
-// A Plugin's header secrets (#215) as the Plugins page sees them: the key a title gives, which
-// values an Installation needs, and whose values an edit to the Plugin clears.
+// An MCP server's header secrets (#215) as the MCP page sees them: the key a title gives, which
+// values an Installation needs, and whose values an edit to the MCP server clears.
 
 import { describe, expect, test } from "bun:test"
-import type { Installation, Plugin, PluginAuth } from "@kndl/protocol"
-import {
-  clearedValues,
-  keyFromTitle,
-  neededText,
-  valuesNeeded,
-} from "../src/plugins/headerSecrets.ts"
+import type { Installation, McpServer, McpServerAuth } from "@kndl/protocol"
+import { clearedValues, keyFromTitle, neededText, valuesNeeded } from "../src/mcp/headerSecrets.ts"
 
-const auth: PluginAuth = {
+const auth: McpServerAuth = {
   _tag: "Headers",
   headers: [
     { key: "api_key", title: "API key", header: "Authorization", template: "Bearer {value}" },
@@ -18,7 +13,11 @@ const auth: PluginAuth = {
   ],
 }
 const by = { login: "alice", name: "Alice", avatarUrl: "" }
-const plugin = { name: "Acme", url: "https://mcp.acme.example/mcp", auth } as unknown as Plugin
+const mcpServer = {
+  name: "Acme",
+  url: "https://mcp.acme.example/mcp",
+  auth,
+} as unknown as McpServer
 const installation = (name: string, keys: ReadonlyArray<string>) =>
   ({ name, values: keys.map((key) => ({ key, setBy: by, setAt: 0 })) }) as unknown as Installation
 
@@ -37,10 +36,10 @@ describe("keyFromTitle", () => {
 })
 
 test("says which header secrets an Installation needs a value for", () => {
-  const needed = valuesNeeded(plugin, installation("Acme", ["api_key"]))
+  const needed = valuesNeeded(mcpServer, installation("Acme", ["api_key"]))
   expect(needed.map((secret) => secret.title)).toEqual(["Team"])
   expect(neededText(needed)).toBe("Team needs a value")
-  expect(neededText(valuesNeeded(plugin, installation("Acme", [])))).toBe(
+  expect(neededText(valuesNeeded(mcpServer, installation("Acme", [])))).toBe(
     "API key and Team need values",
   )
 })
@@ -50,26 +49,26 @@ describe("clearedValues", () => {
 
   test("a URL on another server clears every value; another path keeps them", () => {
     expect(
-      clearedValues(plugin, installations, { url: "https://mcp.acme.example/v2", auth }),
+      clearedValues(mcpServer, installations, { url: "https://mcp.acme.example/v2", auth }),
     ).toEqual([])
-    expect(clearedValues(plugin, installations, { url: "https://acme.example/mcp", auth })).toEqual(
-      [{ installation: "Acme", secrets: ["API key", "Team"] }],
-    )
     expect(
-      clearedValues(plugin, installations, { url: "https://mcp.acme.example:8443/mcp", auth }),
+      clearedValues(mcpServer, installations, { url: "https://acme.example/mcp", auth }),
+    ).toEqual([{ installation: "Acme", secrets: ["API key", "Team"] }])
+    expect(
+      clearedValues(mcpServer, installations, { url: "https://mcp.acme.example:8443/mcp", auth }),
     ).toEqual([{ installation: "Acme", secrets: ["API key", "Team"] }])
   })
 
   test("a header secret removed, or sent in another header, clears its values", () => {
     const [apiKey, team] = auth._tag === "Headers" ? auth.headers : []
     if (apiKey === undefined || team === undefined) throw new Error("No header secrets")
-    const after = (headers: PluginAuth) => ({ url: plugin.url, auth: headers })
+    const after = (headers: McpServerAuth) => ({ url: mcpServer.url, auth: headers })
     expect(
-      clearedValues(plugin, installations, after({ _tag: "Headers", headers: [apiKey] })),
+      clearedValues(mcpServer, installations, after({ _tag: "Headers", headers: [apiKey] })),
     ).toEqual([{ installation: "Acme", secrets: ["Team"] }])
     expect(
       clearedValues(
-        plugin,
+        mcpServer,
         installations,
         after({ _tag: "Headers", headers: [{ ...apiKey, header: "X-Api-Key" }, team] }),
       ),
@@ -77,7 +76,7 @@ describe("clearedValues", () => {
     // A new title or template keeps the value.
     expect(
       clearedValues(
-        plugin,
+        mcpServer,
         installations,
         after({
           _tag: "Headers",

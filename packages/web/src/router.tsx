@@ -21,9 +21,9 @@ import { CliLoginDonePage, CliLoginPage, readCliLoginSearch } from "./account/Cl
 import { HubShell } from "./app/HubShell.tsx"
 import { EnvironmentList } from "./environment/EnvironmentList.tsx"
 import { EnvironmentView } from "./environment/EnvironmentView.tsx"
+import { McpServersView } from "./mcp/McpServersView.tsx"
 import { AdmissionPage, InviteOnlyPage } from "./people/AdmissionPages.tsx"
 import { PeopleView } from "./people/PeopleView.tsx"
-import { PluginsView } from "./plugins/PluginsView.tsx"
 import { RunnersView } from "./runners/RunnersView.tsx"
 import { type SessionTab, SessionView } from "./session/SessionView.tsx"
 import { AllArchivedSessions, ArchivedSessions } from "./sessions/ArchivedSessions.tsx"
@@ -184,14 +184,14 @@ const variablesRoute = createRoute({
 })
 
 /**
- * The Plugins, remote MCP servers, and their Installations on Repos (ADR 0020). With
+ * The MCP page: remote MCP servers, and their Installations on Repos (ADR 0020). With
  * ?installation=, that Installation's dialog opens, to fix one that keeps a Session from starting
  * (#216). With ?connected=1 or ?connectError= too, the Hub sent the browser back from connecting
  * it (#217): the page says how that came out instead.
  */
-const pluginsRoute = createRoute({
+const mcpServersRoute = createRoute({
   getParentRoute: () => hubRoute,
-  path: "/plugins",
+  path: "/mcp",
   validateSearch: (
     search: Record<string, unknown>,
   ): { installation?: string; connected?: boolean; connectError?: string } => ({
@@ -199,13 +199,13 @@ const pluginsRoute = createRoute({
     ...((search["connected"] === 1 || search["connected"] === "1") && { connected: true }),
     ...(nonEmpty(search["connectError"]) && { connectError: search["connectError"] }),
   }),
-  component: function PluginsRoute() {
-    const { installation, connected, connectError } = pluginsRoute.useSearch()
+  component: function McpServersRoute() {
+    const { installation, connected, connectError } = mcpServersRoute.useSearch()
     const returned = connected === true || connectError !== undefined
     return returned ? (
-      <PluginsView returned={{ installation, connected, connectError }} />
+      <McpServersView returned={{ installation, connected, connectError }} />
     ) : (
-      <PluginsView opening={installation} />
+      <McpServersView opening={installation} />
     )
   },
 })
@@ -291,7 +291,7 @@ const routeTree = rootRoute.addChildren([
     environmentsRoute,
     environmentRoute,
     variablesRoute,
-    pluginsRoute,
+    mcpServersRoute,
     accountRoute,
     runnersRoute,
     peopleRoute,

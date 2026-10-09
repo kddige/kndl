@@ -5,7 +5,7 @@ import {
   EnvironmentVersion,
   InstallationId,
   ParticipantId,
-  PluginId,
+  McpServerId,
   PromptId,
   RunnerId,
   SessionId,
@@ -177,16 +177,16 @@ export const SessionEnvironmentStatus = Schema.Struct({
 export type SessionEnvironmentStatus = typeof SessionEnvironmentStatus.Type
 
 /**
- * An Installation a Session runs with (ADR 0020), with its and its Plugin's names as it started,
- * and the name of its MCP server in Claude Code, which Claude Code shows as `plugin:kndl:<server>`.
+ * An Installation a Session runs with (ADR 0020), with its and its MCP server's names as it
+ * started, and the name Claude Code knows its server by, shown as `plugin:kndl:<server>`.
  */
 export const SessionInstallation = Schema.Struct({
   id: InstallationId,
   name: Schema.String,
-  pluginId: PluginId,
-  pluginName: Schema.String,
-  /** The version of a packaged Plugin it started with, so an Upgrade asks for a Restart. */
-  pluginVersion: Schema.optionalKey(Schema.String),
+  mcpServerId: McpServerId,
+  mcpServerName: Schema.String,
+  /** The version of a packaged MCP server it started with, so an Upgrade asks for a Restart. */
+  mcpServerVersion: Schema.optionalKey(Schema.String),
   /** Whether it was on as a global Installation (#219); absent if Repo-scoped. */
   global: Schema.optionalKey(Schema.Boolean),
   server: Schema.String,
@@ -391,12 +391,12 @@ export const SessionSummary = Schema.Struct({
    * The Installations its Claude Code runs with (ADR 0020), as its last start or Restart gave
    * them; absent for none.
    */
-  plugins: Schema.optionalKey(Schema.Array(SessionInstallation)),
+  mcpServers: Schema.optionalKey(Schema.Array(SessionInstallation)),
   /**
-   * Present when its Repo's Installations, or their Plugins, changed since: they apply at its
+   * Present when its Repo's Installations, or their MCP servers, changed since: they apply at its
    * next wake or Restart.
    */
-  pluginsChanged: Schema.optionalKey(Schema.Literal(true)),
+  mcpServersChanged: Schema.optionalKey(Schema.Literal(true)),
   /**
    * Present while its Claude Code and Sandbox are being started. `environment.version` stays the
    * one it ran on before, if any, until the start is over.

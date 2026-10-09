@@ -15,8 +15,8 @@ export default defineConfig({
       "/auth": hub,
       "^/cli(?:/|$)": hub,
       "/health": hub,
-      // A Plugin's icon (#230); the web UI's own /plugins page stays Vite's.
-      "^/plugins/.+/icon": hub,
+      // An MCP server's icon (#230); the web UI's own /mcp page stays Vite's.
+      "^/mcp/.+/icon": hub,
       "/runner/": hub,
       "/ws": { target: hub, ws: true },
     },

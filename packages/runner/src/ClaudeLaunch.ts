@@ -37,7 +37,7 @@ export interface ClaudeLaunchOptions {
    * The MCP servers of the Installations it runs with (ADR 0020), in the mod's copy as the
    * {@link gatewayPlugin} plugin (SessionMod.ts); none when absent.
    */
-  readonly plugins?: ReadonlyArray<GatewayServer>
+  readonly mcpServers?: ReadonlyArray<GatewayServer>
 }
 
 export interface ClaudeLaunch {
@@ -70,10 +70,9 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
     argv: [
       options.claudePath,
       ...conversation,
-      ...[...modPlugins, ...(options.plugins?.length ? [gatewayPlugin] : [])].flatMap((plugin) => [
-        "--plugin-dir",
-        posix.join(options.mod, plugin),
-      ]),
+      ...[...modPlugins, ...(options.mcpServers?.length ? [gatewayPlugin] : [])].flatMap(
+        (plugin) => ["--plugin-dir", posix.join(options.mod, plugin)],
+      ),
       "--dangerously-skip-permissions",
       ...(options.model === undefined ? [] : ["--model", options.model]),
       ...(options.effort === undefined ? [] : ["--effort", options.effort]),

@@ -37,7 +37,7 @@ export class SessionModError extends Data.TaggedError("SessionModError")<{
 export const copySessionMod = (
   modDir: string,
   directories: SessionDirectories,
-  plugins: ReadonlyArray<GatewayServer> = [],
+  mcpServers: ReadonlyArray<GatewayServer> = [],
 ) =>
   Effect.tryPromise({
     try: async () => {
@@ -51,7 +51,7 @@ export const copySessionMod = (
           recursive: true,
         })
       }
-      if (plugins.length > 0) {
+      if (mcpServers.length > 0) {
         const plugin = join(directories.mod, name, gatewayPlugin)
         await mkdir(join(plugin, ".claude-plugin"), { recursive: true })
         await writeFile(
@@ -61,7 +61,7 @@ export const copySessionMod = (
             description: "The MCP servers of the Installations on for this Session's Repo.",
           }),
         )
-        await writeFile(join(plugin, ".mcp.json"), JSON.stringify(gatewayMcpServers(plugins)))
+        await writeFile(join(plugin, ".mcp.json"), JSON.stringify(gatewayMcpServers(mcpServers)))
       }
       return posix.join(modGuestPath, name)
     },

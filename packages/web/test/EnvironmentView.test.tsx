@@ -256,57 +256,61 @@ test("after a secrets-reset, a shared variable asks for its value, and entering 
   expect(page.textContent).not.toContain("GH_READ_TOKEN needs a value")
 })
 
-test("shows the Repo's Installations and its Plugin change log, which changes keep fresh", async () => {
+test("shows the Repo's Installations and its MCP server change log, which changes keep fresh", async () => {
   const { client, section } = await open("/repos/kddige/kndl/environment")
   await eventually(() =>
-    expect(section("Plugins").querySelector('[aria-label="Plugin change log"]')).not.toBeNull(),
+    expect(
+      section("MCP servers").querySelector('[aria-label="MCP server change log"]'),
+    ).not.toBeNull(),
   )
-  const plugins = () => section("Plugins").textContent
-  await eventually(() => expect(plugins()).toContain("Docs search"))
-  expect(plugins()).toContain("Bob Lee created Docs, an Installation of Docs search")
+  const mcpServers = () => section("MCP servers").textContent
+  await eventually(() => expect(mcpServers()).toContain("Docs search"))
+  expect(mcpServers()).toContain("Bob Lee created Docs, an Installation of Docs search")
 
-  // Someone installs a Plugin here: both the list and the log show it, with no new version.
-  const linear = client.getState().plugins?.plugins.find((plugin) => plugin.name === "Linear")
-  if (linear === undefined) throw new Error("No Plugin Linear")
+  // Someone installs an MCP server here: both the list and the log show it, with no new version.
+  const linear = client
+    .getState()
+    .mcpServers?.mcpServers.find((mcpServer) => mcpServer.name === "Linear")
+  if (linear === undefined) throw new Error("No MCP server Linear")
   await step(() => client.createInstallation(linear.id, "Linear", ["kddige/kndl"]))
   await eventually(() =>
-    expect(plugins()).toContain("Alice Kim created Linear, an Installation of Linear"),
+    expect(mcpServers()).toContain("Alice Kim created Linear, an Installation of Linear"),
   )
   expect(
-    section("Plugins").querySelector('[aria-label="Installations for this Repo"]')?.textContent,
+    section("MCP servers").querySelector('[aria-label="Installations for this Repo"]')?.textContent,
   ).toContain("Linear")
   expect(section("Version history").querySelectorAll("li")).toHaveLength(2)
 })
 
 test("shows where each Installation comes from, and turns a global one off and on (#219)", async () => {
   const { client, section } = await open("/repos/kddige/kndl/environment")
-  const plugins = () => section("Plugins").textContent
+  const mcpServers = () => section("MCP servers").textContent
   const row = (name: string) =>
-    section("Plugins").querySelector(
+    section("MCP servers").querySelector(
       `[aria-label="Installations for this Repo"] li[aria-label="${name}"]`,
     )
-  await eventually(() => expect(plugins()).toContain("Docs search"))
+  await eventually(() => expect(mcpServers()).toContain("Docs search"))
 
   // The Owner makes one global: on here too, and logged in every Repo's log.
   await step(() =>
-    client.createPlugin("Web search", "https://mcp.search.example/mcp", { _tag: "None" }),
+    client.createMcpServer("Web search", "https://mcp.search.example/mcp", { _tag: "None" }),
   )
-  const pluginNamed = (name: string) =>
-    client.getState().plugins?.plugins.find((plugin) => plugin.name === name)
-  await eventually(() => expect(pluginNamed("Web search")).toBeDefined())
-  const search = pluginNamed("Web search")
-  if (search === undefined) throw new Error("No Plugin Web search")
+  const mcpServerNamed = (name: string) =>
+    client.getState().mcpServers?.mcpServers.find((mcpServer) => mcpServer.name === name)
+  await eventually(() => expect(mcpServerNamed("Web search")).toBeDefined())
+  const search = mcpServerNamed("Web search")
+  if (search === undefined) throw new Error("No MCP server Web search")
   await step(() => client.createInstallation(search.id, "Web search", [], [], true))
   await eventually(() =>
-    expect(plugins()).toContain(
+    expect(mcpServers()).toContain(
       "Alice Kim created Web search, a global Installation of Web search",
     ),
   )
   expect(row("Web search")?.textContent).toContain("Global")
 
-  // A global one of a Plugin with its own Installation here has that one's place taken.
-  const docs = pluginNamed("Docs search")
-  if (docs === undefined) throw new Error("No Plugin Docs search")
+  // A global one of an MCP server with its own Installation here has that one's place taken.
+  const docs = mcpServerNamed("Docs search")
+  if (docs === undefined) throw new Error("No MCP server Docs search")
   await step(() => client.createInstallation(docs.id, "Docs everywhere", [], [], true))
   await eventually(() => expect(row("Docs everywhere")?.textContent).toContain("Overridden"))
   expect(row("Docs everywhere")?.textContent).toContain("Docs takes its place here")
@@ -317,12 +321,12 @@ test("shows where each Installation comes from, and turns a global one off and o
   await eventually(() =>
     expect(row("Web search")?.textContent).toContain("turned off for this Repo"),
   )
-  expect(plugins()).toContain(
+  expect(mcpServers()).toContain(
     "Alice Kim turned Web search, a global Installation of Web search, off for this Repo",
   )
   await step(() => button("Turn back on", row("Web search") as Element).click())
   await eventually(() =>
-    expect(plugins()).toContain(
+    expect(mcpServers()).toContain(
       "Alice Kim turned Web search, a global Installation of Web search, back on for this Repo",
     ),
   )

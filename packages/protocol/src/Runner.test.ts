@@ -113,7 +113,7 @@ const runnerToHub = [
     models: runnerModels,
     relaunches: true,
     forwardsPorts: true,
-    relaysPlugins: true,
+    relaysMcpServers: true,
   },
   { _tag: "TunnelFailed", tunnelId: "t-1", message: "Nothing listens on port 3000" },
 ]
@@ -158,7 +158,7 @@ const hubToRunner = [
     baseBranch: "main",
     workBranch: "claude/s-3",
     modToken: "mod-token",
-    plugins: [
+    mcpServers: [
       { installationId: "in-1", server: "docs" },
       { installationId: "in-2", server: "docs-2" },
     ],

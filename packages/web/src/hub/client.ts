@@ -29,12 +29,12 @@ import {
   type PairingCodeCreated,
   type PairingCodeId,
   type ParticipantId,
-  type PluginAuth,
-  type PluginId,
-  type PluginLogEntry,
-  type PluginPackageFrom,
-  type PluginPackageRead,
-  type PluginsState,
+  type McpServerAuth,
+  type McpServerId,
+  type McpServerLogEntry,
+  type McpServerPackageFrom,
+  type McpServerPackageRead,
+  type McpServersState,
   ProtocolVersion,
   type QuestionAnswer,
   RequestId,
@@ -420,62 +420,64 @@ export class HubClient {
       .variables
   }
 
-  // ── Plugins (ADR 0020) ───────────────────────────────────────────────────
+  // ── MCP servers (ADR 0020) ───────────────────────────────────────────────────
 
-  /** Asks for every Plugin and Installation; the store then holds them, and keeps them fresh. */
-  getPlugins(): Promise<PluginsState> {
-    return this.#request({ _tag: "GetPlugins" }, "PluginsState")
+  /**
+   * Asks for every MCP server and Installation; the store then holds them, and keeps them fresh.
+   */
+  getMcpServers(): Promise<McpServersState> {
+    return this.#request({ _tag: "GetMcpServers" }, "McpServersState")
   }
 
   /**
-   * Creates a Hub-only Plugin, a remote MCP server, with the header secrets `auth` declares; its
+   * Creates a Hub-only MCP server, with the header secrets `auth` declares; its
    * id is `hub:` and a slug of its name.
    */
-  createPlugin(name: string, url: string, auth: PluginAuth): Promise<PluginsState> {
-    return this.#request({ _tag: "CreatePlugin", name, url, auth }, "PluginsState")
+  createMcpServer(name: string, url: string, auth: McpServerAuth): Promise<McpServersState> {
+    return this.#request({ _tag: "CreateMcpServer", name, url, auth }, "McpServersState")
   }
 
   /**
-   * Changes a Plugin's name, URL or header secrets; its Sessions pick it up on their next wake or
-   * Restart. A change to the URL's origin clears its Installations' values, and one to a header
+   * Changes an MCP server's name, URL or header secrets; its Sessions pick it up on their next wake
+   * or Restart. A change to the URL's origin clears its Installations' values, and one to a header
    * secret's key or header clears that header secret's.
    */
-  editPlugin(
-    pluginId: PluginId,
+  editMcpServer(
+    mcpServerId: McpServerId,
     name: string,
     url: string,
-    auth: PluginAuth,
-  ): Promise<PluginsState> {
-    return this.#request({ _tag: "EditPlugin", pluginId, name, url, auth }, "PluginsState")
+    auth: McpServerAuth,
+  ): Promise<McpServersState> {
+    return this.#request({ _tag: "EditMcpServer", mcpServerId, name, url, auth }, "McpServersState")
   }
 
-  /** Deletes a Plugin; the Hub refuses while it has Installations. */
-  deletePlugin(pluginId: PluginId): Promise<PluginsState> {
-    return this.#request({ _tag: "DeletePlugin", pluginId }, "PluginsState")
+  /** Deletes an MCP server; the Hub refuses while it has Installations. */
+  deleteMcpServer(mcpServerId: McpServerId): Promise<McpServersState> {
+    return this.#request({ _tag: "DeleteMcpServer", mcpServerId }, "McpServersState")
   }
 
   /**
-   * Creates an Installation of a Plugin, on in the Repos listed, with values for its Plugin's
+   * Creates an Installation of an MCP server, on in the Repos listed, with values for its
    * header secrets: write-only, the Hub never sends them back. A global one (#219), which only the
    * Owner creates, lists no Repos: it is on in every Repo.
    */
   createInstallation(
-    pluginId: PluginId,
+    mcpServerId: McpServerId,
     name: string,
     repos: ReadonlyArray<string>,
     values: ReadonlyArray<HeaderValueInput> = [],
     global = false,
-  ): Promise<PluginsState> {
+  ): Promise<McpServersState> {
     return this.#request(
       {
         _tag: "CreateInstallation",
-        pluginId,
+        mcpServerId,
         name,
         repos,
         ...(values.length > 0 && { values }),
         ...(global && { global }),
       },
-      "PluginsState",
+      "McpServersState",
     )
   }
 
@@ -490,7 +492,7 @@ export class HubClient {
     repos: ReadonlyArray<string>,
     values: ReadonlyArray<HeaderValueInput> = [],
     global = false,
-  ): Promise<PluginsState> {
+  ): Promise<McpServersState> {
     return this.#request(
       {
         _tag: "EditInstallation",
@@ -500,7 +502,7 @@ export class HubClient {
         ...(values.length > 0 && { values }),
         ...(global && { global }),
       },
-      "PluginsState",
+      "McpServersState",
     )
   }
 
@@ -512,22 +514,22 @@ export class HubClient {
     installationId: InstallationId,
     repo: string,
     on: boolean,
-  ): Promise<PluginsState> {
+  ): Promise<McpServersState> {
     return this.#request(
       { _tag: "TurnGlobalInstallation", installationId, repo, on },
-      "PluginsState",
+      "McpServersState",
     )
   }
 
   /** Deletes an Installation, taking it off every Repo it lists. */
-  deleteInstallation(installationId: InstallationId): Promise<PluginsState> {
-    return this.#request({ _tag: "DeleteInstallation", installationId }, "PluginsState")
+  deleteInstallation(installationId: InstallationId): Promise<McpServersState> {
+    return this.#request({ _tag: "DeleteInstallation", installationId }, "McpServersState")
   }
 
   /**
    * Begins connecting an OAuth Installation to its account (#217): where to send the browser, the
    * authorization server's page to sign in and consent. It comes back through the Hub, which keeps
-   * the tokens, to the Plugins page. Where the authorization server offers no Dynamic Client
+   * the tokens, to the MCP page. Where the authorization server offers no Dynamic Client
    * Registration, the Hub asks for a client registered there by hand instead (#218), to begin
    * again with; `changeClient` asks for another.
    */
@@ -558,36 +560,39 @@ export class HubClient {
   }
 
   /** Disconnects an OAuth Installation, so the Hub forgets its tokens (#217). */
-  disconnectInstallation(installationId: InstallationId): Promise<PluginsState> {
-    return this.#request({ _tag: "DisconnectInstallation", installationId }, "PluginsState")
+  disconnectInstallation(installationId: InstallationId): Promise<McpServersState> {
+    return this.#request({ _tag: "DisconnectInstallation", installationId }, "McpServersState")
   }
 
   /**
-   * Reads a Plugin package from git or an upload (#220), changing nothing: what adding it would
-   * make, or, if a Plugin from the same source has its name, what upgrading that would change.
+   * Reads an MCP server package from git or an upload (#220), changing nothing: what adding it
+   * would make, or, if an MCP server from the same source has its name, what upgrading that would
+   * change.
    */
-  readPluginPackage(from: PluginPackageFrom): Promise<PluginPackageRead> {
-    return this.#request({ _tag: "ReadPluginPackage", from }, "PluginPackageRead")
+  readMcpServerPackage(from: McpServerPackageFrom): Promise<McpServerPackageRead> {
+    return this.#request({ _tag: "ReadMcpServerPackage", from }, "McpServerPackageRead")
   }
 
-  /** Reads a packaged Plugin's git ref again, for what upgrading it would change. */
-  checkPluginUpgrade(pluginId: PluginId): Promise<PluginPackageRead> {
-    return this.#request({ _tag: "CheckPluginUpgrade", pluginId }, "PluginPackageRead")
+  /** Reads a packaged MCP server's git ref again, for what upgrading it would change. */
+  checkMcpServerUpgrade(mcpServerId: McpServerId): Promise<McpServerPackageRead> {
+    return this.#request({ _tag: "CheckMcpServerUpgrade", mcpServerId }, "McpServerPackageRead")
   }
 
   /** Adds the package a read found, as it was read. */
-  addPluginPackage(readId: string): Promise<PluginsState> {
-    return this.#request({ _tag: "AddPluginPackage", readId }, "PluginsState")
+  addMcpServerPackage(readId: string): Promise<McpServersState> {
+    return this.#request({ _tag: "AddMcpServerPackage", readId }, "McpServersState")
   }
 
-  /** Upgrades a packaged Plugin to the package a read found; its Sessions pick it up on Restart. */
-  upgradePlugin(pluginId: PluginId, readId: string): Promise<PluginsState> {
-    return this.#request({ _tag: "UpgradePlugin", pluginId, readId }, "PluginsState")
+  /**
+   * Upgrades a packaged MCP server to the package a read found; its Sessions pick it up on Restart.
+   */
+  upgradeMcpServer(mcpServerId: McpServerId, readId: string): Promise<McpServersState> {
+    return this.#request({ _tag: "UpgradeMcpServer", mcpServerId, readId }, "McpServersState")
   }
 
-  /** Asks for a Repo's Plugin change log, newest first; the store then holds it. */
-  async getPluginLog(repo: string): Promise<ReadonlyArray<PluginLogEntry>> {
-    return (await this.#request({ _tag: "GetPluginLog", repo }, "PluginLog")).entries
+  /** Asks for a Repo's MCP server change log, newest first; the store then holds it. */
+  async getMcpServerLog(repo: string): Promise<ReadonlyArray<McpServerLogEntry>> {
+    return (await this.#request({ _tag: "GetMcpServerLog", repo }, "McpServerLog")).entries
   }
 
   // ── Runners (issue #85) ──────────────────────────────────────────────────
@@ -793,9 +798,9 @@ export class HubClient {
       case "InviteCreated":
       case "InviteList":
       case "MemberList":
-      case "PluginsState":
-      case "PluginLog":
-      case "PluginPackageRead":
+      case "McpServersState":
+      case "McpServerLog":
+      case "McpServerPackageRead":
       case "InstallationAuthorizing":
       case "InstallationNeedsClient": {
         if (message.requestId === undefined) break

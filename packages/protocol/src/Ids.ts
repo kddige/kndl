@@ -66,12 +66,12 @@ export const CredentialRequestId = Schema.NonEmptyString.pipe(Schema.brand("Cred
 export type CredentialRequestId = typeof CredentialRequestId.Type
 
 /**
- * A Plugin (ADR 0020): a package's `package.json` name, or `hub:<slug>` for one made on this Hub
- * alone, which no npm name can be.
+ * An MCP server (ADR 0020): a package's `package.json` name, or `hub:<slug>` for one made on this
+ * Hub alone, which no npm name can be.
  */
-export const PluginId = Schema.NonEmptyString.pipe(Schema.brand("PluginId"))
-export type PluginId = typeof PluginId.Type
+export const McpServerId = Schema.NonEmptyString.pipe(Schema.brand("McpServerId"))
+export type McpServerId = typeof McpServerId.Type
 
-/** An Installation of a Plugin, minted by the Hub. */
+/** An Installation of an MCP server, minted by the Hub. */
 export const InstallationId = Schema.NonEmptyString.pipe(Schema.brand("InstallationId"))
 export type InstallationId = typeof InstallationId.Type

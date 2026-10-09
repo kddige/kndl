@@ -94,8 +94,8 @@ export function environmentChanged(session: SessionSummary): boolean {
  * created, changed or deleted since it started, and a restart applies the change. Other states
  * pick it up as they next wake; one being started or restarted is getting it already.
  */
-export function pluginsChanged(session: SessionSummary): boolean {
-  if (session.state !== "Active" || session.pluginsChanged !== true) return false
+export function mcpServersChanged(session: SessionSummary): boolean {
+  if (session.state !== "Active" || session.mcpServersChanged !== true) return false
   return session.starting === undefined && session.restarting === undefined
 }
 

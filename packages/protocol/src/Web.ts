@@ -32,18 +32,18 @@ import {
   SessionId,
   ToolCallId,
 } from "./Ids.ts"
-import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
-import { EffortLevel, ModelName } from "./Model.ts"
-import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
   InstallationAuthorizing,
   InstallationFailure,
   InstallationNeedsClient,
-  PluginCommand,
-  PluginLog,
-  PluginPackageRead,
-  PluginsState,
-} from "./Plugin.ts"
+  McpServerCommand,
+  McpServerLog,
+  McpServerPackageRead,
+  McpServersState,
+} from "./McpServer.ts"
+import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
+import { EffortLevel, ModelName } from "./Model.ts"
+import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
   BranchName,
   EpochMillis,
@@ -510,7 +510,7 @@ export const WebToHub = Schema.Union([
   GetSharedVariables,
   SetSharedVariable,
   DeleteSharedVariable,
-  PluginCommand,
+  McpServerCommand,
   SetClaudeCredential,
   RemoveClaudeCredential,
   CheckAppPermissions,
@@ -799,9 +799,9 @@ export const HubToWeb = Schema.Union([
   TestBuildLogged,
   TestBuildEnded,
   SharedVariables,
-  PluginsState,
-  PluginLog,
-  PluginPackageRead,
+  McpServersState,
+  McpServerLog,
+  McpServerPackageRead,
   InstallationAuthorizing,
   InstallationNeedsClient,
   ClaudeCredentialState,

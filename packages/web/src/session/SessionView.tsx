@@ -14,7 +14,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 import {
   day,
   environmentChanged,
-  pluginsChanged,
+  mcpServersChanged,
   purgedIn,
   repoParams,
   statusOf,
@@ -64,7 +64,7 @@ import { Presence } from "./Presence.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { QuestionDock } from "./QuestionCard.tsx"
 import { WaitingDot } from "./QuestionChip.tsx"
-import { SessionPlugins } from "./SessionPlugins.tsx"
+import { SessionMcpServers } from "./SessionMcpServers.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { Transcript } from "./Transcript.tsx"
 
@@ -386,7 +386,7 @@ function LoadedSession({
         actions={
           <>
             <OpenPorts summary={summary} />
-            <SessionPlugins summary={summary} />
+            <SessionMcpServers summary={summary} />
             {state !== "Archived" && (
               // Anyone with access may turn it on or off (ADR 0016); Sleep now turns it off.
               <Tooltip content="While it's on, the Session doesn't go to sleep when idle. Sleep now turns it off.">
@@ -715,7 +715,7 @@ function StateBanner({
   switch (summary.state) {
     case "Active": {
       const environment = summary.environment
-      const plugins = pluginsChanged(summary)
+      const mcpServers = mcpServersChanged(summary)
       const restartButton = (
         <Button
           size="sm"
@@ -741,15 +741,20 @@ function StateBanner({
               : `This Sandbox runs version ${environment.version} of ${summary.repo}'s Environment`}
             ; version {environment.latestVersion} is the latest. Restarting puts the Session to
             sleep and wakes it on a fresh Sandbox, with its Workspace and conversation as they are.
-            {plugins && ` It applies the change to ${summary.repo}'s Installations too.`}
+            {mcpServers && ` It applies the change to ${summary.repo}'s Installations too.`}
             {running && " Once the running Turn ends."}
           </Banner>
         )
       }
-      if (!plugins) return null
+      if (!mcpServers) return null
       // Installations change no Environment version (ADR 0020): Claude Code is given them as it starts.
       return (
-        <Banner intent="accent" icon={<InfoIcon />} title="Plugins changed" action={restartButton}>
+        <Banner
+          intent="accent"
+          icon={<InfoIcon />}
+          title="MCP servers changed"
+          action={restartButton}
+        >
           {summary.repo}'s Installations changed since this Session started, and Claude Code gets
           its MCP servers as it starts. A Restart applies the change, with the Workspace and
           conversation as they are.

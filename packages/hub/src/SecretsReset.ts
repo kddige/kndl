@@ -14,15 +14,15 @@
 // - Each person's Claude credential goes too (ADR 0015): they add theirs again on the Account
 //   page, and until then their Sessions run on their Runner's own credential, if it has one.
 // - So do the values of Installations' header secrets (#215), and those their Sessions started
-//   with: each Installation stays, and needs a value again on the Plugins page; until then the
+//   with: each Installation stays, and needs a value again on the MCP page; until then the
 //   Gateway refuses its requests.
 // - So do OAuth Installations' tokens and the clients the Hub registered for them (#217): each
-//   stays, disconnected, and is connected again on the Plugins page; until then its Sessions
+//   stays, disconnected, and is connected again on the MCP page; until then its Sessions
 //   don't start.
-// - Plain variables, Environments, versions, Sessions, Plugins, Installations and builds already on
-//   Runners stay.
+// - Plain variables, Environments, versions, Sessions, MCP servers, Installations and builds
+//   already on Runners stay.
 import { existsSync } from "node:fs"
-import { headerSecretsOf, PluginAuth } from "@kndl/protocol"
+import { headerSecretsOf, McpServerAuth } from "@kndl/protocol"
 import { Effect, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import { DatabaseFile, databaseAt } from "./Database.ts"
@@ -112,7 +112,7 @@ export function secretsResetPlanText(plan: SecretsResetPlan): string {
     ...installationLines(plan, "It clears"),
     ...(plan.installations.length > 0
       ? [
-          "Each then needs a value again: until it gets one, the Gateway refuses its Sessions' requests to the Plugin's MCP server.",
+          "Each then needs a value again: until it gets one, the Gateway refuses its Sessions' requests to the MCP server.",
         ]
       : []),
     ...(plan.sessionValues > 0
@@ -124,7 +124,7 @@ export function secretsResetPlanText(plan: SecretsResetPlan): string {
     ...(plan.connections.length > 0
       ? ["Each then needs connecting again: until it is, its Repos' Sessions don't start."]
       : []),
-    "Plain variables, Environments, Sessions, Plugins, Installations and the builds on Runners stay.",
+    "Plain variables, Environments, Sessions, MCP servers, Installations and the builds on Runners stay.",
   ].join("\n")
 }
 
@@ -169,11 +169,11 @@ export function secretsResetDoneText(plan: SecretsResetPlan, newKey: string): st
     ...installationLines(plan, "Cleared"),
     ...connectionLines(plan, "Disconnected"),
     "",
-    `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen${plan.installations.length > 0 ? ", and each Installation's on the Plugins page" : ""}.${plan.connections.length > 0 ? " Connect each OAuth Installation again on the Plugins page; one whose client was entered by hand asks for its client ID and secret again." : ""}`,
+    `Next: make a new key with ${newKey}, set HUB_SECRETS_KEY to it and start the Hub. Then enter the values again, on each Environment's screen and on the Shared variables screen${plan.installations.length > 0 ? ", and each Installation's on the MCP page" : ""}.${plan.connections.length > 0 ? " Connect each OAuth Installation again on the MCP page; one whose client was entered by hand asks for its client ID and secret again." : ""}`,
   ].join("\n")
 }
 
-const decodeAuth = Schema.decodeUnknownOption(Schema.fromJsonString(PluginAuth))
+const decodeAuth = Schema.decodeUnknownOption(Schema.fromJsonString(McpServerAuth))
 
 /** What the lost key protects in the database. */
 const planOf = Effect.gen(function* () {
@@ -202,7 +202,7 @@ const planOf = Effect.gen(function* () {
     readonly key: string
   }>`
     SELECT i.id, i.name, g.auth, v.key FROM installation_values v
-    JOIN installations i ON i.id = v.installation_id JOIN plugins g ON g.id = i.plugin_id
+    JOIN installations i ON i.id = v.installation_id JOIN mcp_servers g ON g.id = i.mcp_server_id
     ORDER BY i.name, i.id, v.key
   `
   const [held] = yield* sql<{ readonly count: number }>`

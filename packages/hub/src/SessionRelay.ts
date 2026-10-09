@@ -95,16 +95,16 @@
 // - Environments (#47, ADR 0009): StartSession carries the Repo's Environment as last applied,
 //   and the Runner reports the version it started the Session on. Environment commands, Test
 //   builds and variable fetches are handled by EnvironmentRelay.ts.
-// - Plugins (#221, ADR 0020): StartSession carries an MCP server for each Installation on for the
-//   Session's Repo, which its Claude Code reaches through the Gateway (GatewayRoutes.ts), and the
-//   Hub records them as it sends it; RelaunchSession carries the same ones again. A change to the
-//   Repo's Installations reaches the Session at its next wake or Restart; until then its summary
-//   says so. Plugin commands are handled by PluginRelay.ts.
+// - MCP servers (#221, ADR 0020): StartSession carries an MCP server for each Installation on for
+//   the Session's Repo, which its Claude Code reaches through the Gateway (GatewayRoutes.ts), and
+//   the Hub records them as it sends it; RelaunchSession carries the same ones again. A change to
+//   the Repo's Installations reaches the Session at its next wake or Restart; until then its
+//   summary says so. MCP server commands are handled by McpServerRelay.ts.
 // - Failing loudly (#216, ADR 0020): before a start or wake sends StartSession, each Installation
 //   it starts with is checked, off the lock, while the Session shows as starting. One without a
 //   header secret's value fails without asking its server; any other has its server sent an MCP
 //   `initialize` through the Gateway's own path (Gateway.ts), waiting up to
-//   HUB_PLUGIN_CHECK_TIMEOUT_MS. A missing value, a 401 or 403 or values the Hub can't decrypt
+//   HUB_MCP_SERVER_CHECK_TIMEOUT_MS. A missing value, a 401 or 403 or values the Hub can't decrypt
 //   leave the Session Asleep, as a failed start does, with a SessionStateChanged naming each
 //   Installation and why; its prompts stay queued for the next wake. A server that can't be
 //   reached, is slow or answers another error doesn't hold the Session up: it starts, and a
@@ -182,7 +182,7 @@ import {
   OpenQuestion,
   type Participant,
   type ParticipantId,
-  type PluginCommand,
+  type McpServerCommand,
   PresenceChanged,
   type PresentParticipant,
   PromptId,
@@ -274,6 +274,9 @@ import { checkServer } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubVersion } from "./HubVersion.ts"
+import { McpServerOAuth } from "./McpServerOAuth.ts"
+import { isMcpServerCommand, makeMcpServerRelay, type McpServerRelay } from "./McpServerRelay.ts"
+import { type GatewayTarget, McpServers } from "./McpServers.ts"
 import {
   isMemberCommand,
   type MemberCommand,
@@ -284,9 +287,6 @@ import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
 import { PermissionDrift } from "./PermissionDrift.ts"
-import { PluginOAuth } from "./PluginOAuth.ts"
-import { isPluginCommand, makePluginRelay, type PluginRelay } from "./PluginRelay.ts"
-import { type GatewayTarget, Plugins } from "./Plugins.ts"
 import { PromptQueue } from "./PromptQueue.ts"
 import {
   everything,
@@ -422,7 +422,7 @@ const gatewayServers = (installations: ReadonlyArray<SessionInstallation>) =>
   installations.length === 0
     ? {}
     : {
-        plugins: installations.map((installation) => ({
+        mcpServers: installations.map((installation) => ({
           installationId: installation.id,
           server: installation.server,
         })),
@@ -538,7 +538,7 @@ export class SessionRelay extends Context.Service<
      * Finishes connecting an OAuth Installation (#217), as its authorization server sent the
      * person's browser back to the Hub: the Installation, and why it failed, if it did.
      */
-    readonly finishPluginConnect: (
+    readonly finishMcpServerConnect: (
       you: Participant,
       response: {
         readonly state: string
@@ -562,8 +562,8 @@ export class SessionRelay extends Context.Service<
       const config = yield* HubConfig
       const sessionGit = yield* SessionGit
       const environments = yield* Environments
-      const plugins = yield* Plugins
-      const oauth = yield* PluginOAuth
+      const mcpServers = yield* McpServers
+      const oauth = yield* McpServerOAuth
       const access = yield* RepoAccess
       const app = yield* GitHubApp
       const drift = yield* PermissionDrift
@@ -608,7 +608,7 @@ export class SessionRelay extends Context.Service<
         /** Whether it takes an OpenTunnel (#177). */
         readonly forwardsPorts: boolean
         /** Whether it gives Claude Code the MCP servers of its Session's Installations (#221). */
-        readonly relaysPlugins: boolean
+        readonly relaysMcpServers: boolean
       }
 
       /** A `kndl forward` of one Session (#180), by a CLI token. */
@@ -976,7 +976,7 @@ export class SessionRelay extends Context.Service<
           environments.sensitiveValues(repo),
           // The values of its Installations' header secrets (#215), which only the Gateway sends,
           // but which a server may echo back.
-          plugins.valuesOn(repo),
+          mcpServers.valuesOn(repo),
         ]).pipe(
           Effect.map(([sensitive, headers]) =>
             Option.some<ReadonlyArray<Redacted.Redacted<string>>>([...sensitive, ...headers]),
@@ -1177,7 +1177,7 @@ export class SessionRelay extends Context.Service<
         afterHold,
       })
 
-      const pluginRelay: PluginRelay = yield* makePluginRelay({
+      const mcpServerRelay: McpServerRelay = yield* makeMcpServerRelay({
         webClients: () => webClients,
         serialized,
         accessKnown: (who, repo, allowed) => accessKnown(who, repo, allowed),
@@ -1299,7 +1299,7 @@ export class SessionRelay extends Context.Service<
         for (const client of changed) {
           const before = client.repos.get(repo)
           client.repos.set(repo, allowed)
-          yield* pluginRelay.accessChanged(client)
+          yield* mcpServerRelay.accessChanged(client)
           if (allowed) {
             for (const session of ofRepo) {
               client.peer.send(HubToWeb.cases.SessionUpdated.make({ session: forWeb(session) }))
@@ -1426,13 +1426,15 @@ export class SessionRelay extends Context.Service<
        * the Session's, which its summary shows; StartSession carries an MCP server for each. None
        * for a Runner that doesn't relay them: its Claude Code starts without.
        */
-      const startPlugins = Effect.fn("SessionRelay.startPlugins")(function* (
+      const startMcpServers = Effect.fn("SessionRelay.startMcpServers")(function* (
         sessionId: SessionId,
         repo: string,
         runner: OnlineRunner,
       ) {
-        const installations = runner.relaysPlugins ? yield* plugins.forSession(sessionId, repo) : []
-        yield* sessions.setPlugins(sessionId, installations)
+        const installations = runner.relaysMcpServers
+          ? yield* mcpServers.forSession(sessionId, repo)
+          : []
+        yield* sessions.setMcpServers(sessionId, installations)
         return installations
       })
 
@@ -1470,7 +1472,7 @@ export class SessionRelay extends Context.Service<
         installations: ReadonlyArray<SessionInstallation>,
       ) {
         const targetOf = (installation: SessionInstallation) =>
-          plugins.gatewayTarget(installation.id, { id: sessionId, repo }).pipe(
+          mcpServers.gatewayTarget(installation.id, { id: sessionId, repo }).pipe(
             Effect.map(Option.getOrUndefined),
             Effect.catchTag("SecretsUnavailable", () => Effect.succeed("Unreadable" as const)),
           )
@@ -1505,7 +1507,7 @@ export class SessionRelay extends Context.Service<
             return [failureOf(installation, { reason: "NotConnected" })]
           }
           if (target._tag !== "Ready") return []
-          const found = yield* checkServer(target, config.pluginCheckTimeout)
+          const found = yield* checkServer(target, config.mcpServerCheckTimeout)
           if (found._tag === "Works") {
             if (target.oauth !== undefined) oauth.works(installation.id, target.oauth.generation)
             return []
@@ -1599,13 +1601,13 @@ export class SessionRelay extends Context.Service<
           Effect.gen(function* () {
             const session = yield* sessions.get(sessionId)
             if (Option.isNone(session) || session.value.state !== "Active") return
-            const installation = session.value.plugins?.find((one) => one.id === installationId)
+            const installation = session.value.mcpServers?.find((one) => one.id === installationId)
             if (installation === undefined) return
             yield* noteFailure(
               sessionId,
               { installationId, installation: installation.name, ...why },
               why.reason === "NotConnected"
-                ? "Its tools fail until it is reconnected on the Plugins page."
+                ? "Its tools fail until it is reconnected on the MCP page."
                 : "Its tools fail until the Installation is fixed and the Session restarted.",
             )
           }),
@@ -1621,7 +1623,7 @@ export class SessionRelay extends Context.Service<
       }
 
       /** See the service (#217). */
-      const finishPluginConnect = (
+      const finishMcpServerConnect = (
         you: Participant,
         response: {
           readonly state: string
@@ -1631,13 +1633,13 @@ export class SessionRelay extends Context.Service<
           readonly iss?: string
         },
       ) =>
-        pluginRelay.finishConnect(you, response).pipe(
+        mcpServerRelay.finishConnect(you, response).pipe(
           Effect.catchCause((cause) =>
             Effect.as(Effect.logError("Could not finish connecting an OAuth Installation", cause), {
               error: "The Hub could not keep the connection; try again.",
             }),
           ),
-          Effect.withSpan("SessionRelay.finishPluginConnect"),
+          Effect.withSpan("SessionRelay.finishMcpServerConnect"),
         )
 
       /**
@@ -1669,7 +1671,7 @@ export class SessionRelay extends Context.Service<
             modToken,
             ...modelFlags(session),
             // The same as before: a change to the Repo's waits for its next wake or Restart.
-            ...gatewayServers(session.plugins ?? []),
+            ...gatewayServers(session.mcpServers ?? []),
           }),
         )
         // Its agents stop with the old Claude Code.
@@ -1763,7 +1765,7 @@ export class SessionRelay extends Context.Service<
         const resume = yield* sessions.claudeSessionId(session.id)
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
-        const installations = yield* startPlugins(session.id, session.repo, runner)
+        const installations = yield* startMcpServers(session.id, session.repo, runner)
         starting.add(session.id)
         yield* startSent(session.id, environment)
         // It starts with its model and effort as set now (#128).
@@ -2087,7 +2089,7 @@ export class SessionRelay extends Context.Service<
           ...modelFlags(plan.model ?? {}),
         })
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
-        const installations = yield* startPlugins(id, session.repo, runner)
+        const installations = yield* startMcpServers(id, session.repo, runner)
         starting.add(id)
         yield* startSent(id, environment)
         yield* logEvent(id, SessionStateChanged.make({ state: "Active", ...plan.why }))
@@ -2129,7 +2131,7 @@ export class SessionRelay extends Context.Service<
               | "RevokeCliToken"
           }
         | MemberCommand
-        | PluginCommand
+        | McpServerCommand
       >
 
       const receiveWeb = (client: WebClient): Receive<WebToHub> => {
@@ -2991,8 +2993,8 @@ export class SessionRelay extends Context.Service<
         return (message) =>
           isMemberCommand(message)
             ? memberRelay.receiveWeb(client, message)
-            : isPluginCommand(message)
-              ? pluginRelay.receiveWeb(client, message)
+            : isMcpServerCommand(message)
+              ? mcpServerRelay.receiveWeb(client, message)
               : message._tag === "SetClaudeCredential" || message._tag === "RemoveClaudeCredential"
                 ? claudeCredentialCommand(message)
                 : message._tag === "RevokeCliToken"
@@ -3357,7 +3359,7 @@ export class SessionRelay extends Context.Service<
             relaunches: hello.relaunches === true,
             ownClaudeCredential: hello.ownClaudeCredential !== false,
             forwardsPorts: hello.forwardsPorts === true,
-            relaysPlugins: hello.relaysPlugins === true,
+            relaysMcpServers: hello.relaysMcpServers === true,
           }
           yield* serialized(
             Effect.gen(function* () {
@@ -3716,12 +3718,12 @@ export class SessionRelay extends Context.Service<
       )
 
       // An OAuth Installation's tokens changed (#217): what Sessions print is redacted of the new
-      // ones; one lost is shown so on the Plugins page.
+      // ones; one lost is shown so on the MCP page.
       const connectionChanges = yield* oauth.changes
       yield* PubSub.take(connectionChanges).pipe(
         Effect.flatMap((change) => {
           needlesByRepo.clear()
-          return change.lost ? serialized(pluginRelay.connectionsChanged) : Effect.void
+          return change.lost ? serialized(mcpServerRelay.connectionsChanged) : Effect.void
         }),
         Effect.catchCause((cause) =>
           Effect.logError("Could not send an OAuth Installation's lost connection", cause),
@@ -3936,7 +3938,7 @@ export class SessionRelay extends Context.Service<
         openTunnel,
         installationFailed,
         installationWorks,
-        finishPluginConnect,
+        finishMcpServerConnect,
       })
     }),
   )
