@@ -21,6 +21,8 @@ Any Member can add an MCP server.
 1. Open **MCP** in the sidebar.
 2. Press **Add MCP server**.
 3. Enter a **Name**, such as `Docs search`, and the **MCP server URL**, such as `https://mcp.example.com/mcp`. The URL must start with `https://` (or `http://`), and can't hold a user name, password or `#fragment`.
+
+   Prefer `https://`. Over plain `http://` to another machine, everything the Hub sends the server, its header secret values or OAuth token included, crosses the network unencrypted, and anyone on the network path can read it. That can be fine for a server on a network you trust, such as a LAN: the dialog, the MCP server and its Installations say so with a warning, but it is allowed. Plain `http://` to `localhost` or a loopback address never leaves the Hub's machine, and gets no warning.
 4. If the server needs a key, declare it under **Header secrets**: press **Add header secret**, then enter
    - a **Title**, such as `API key`, which is how the Installations' value fields show it;
    - the **Header** to send it in, such as `Authorization`;
