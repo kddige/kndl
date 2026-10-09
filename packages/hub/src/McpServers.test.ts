@@ -9,16 +9,18 @@ import {
   globalOwnerOnlyRefusal,
   globalMcpServerRefusal,
   globalReposRefusal,
+  InstallationId,
   notGlobalRefusal,
   Participant,
   ParticipantId,
   repoKey,
   secondGlobalRefusal,
+  SessionId,
 } from "@kndl/protocol"
 import { Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
-import { installationsDiffer, installationsOn } from "./McpServers.ts"
+import { installationsDiffer, McpServers } from "./McpServers.ts"
 import { McpServerSources } from "./McpServerSources.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import { SignIns } from "./SignIns.ts"
@@ -410,6 +412,48 @@ describe("an Installation's header secret values", () => {
     // Without a value, the Installation is made, and needs one.
     expect(state(await create([])).installations[0]?.values).toEqual([])
   })
+
+  test("are redacted on every Repo an Installation could be on in, off or overridden there too", async () => {
+    const hub = await startHub({
+      config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
+    })
+    const web = await openWeb(hub, "alice")
+    await makeOwner(hub, "alice")
+    const created = state(
+      await ask(web, { _tag: "CreateMcpServer", auth: headers, name: "Docs Search", url }),
+    )
+    const mcpServerId = created.mcpServers[0]?.id
+    const installWith = async (name: string, token: string, repos: ReadonlyArray<string>) => {
+      const answer = state(
+        await ask(web, {
+          _tag: "CreateInstallation",
+          mcpServerId,
+          name,
+          repos,
+          ...(repos.length === 0 && { global: true }),
+          values: [{ key: "token", value: token }],
+        }),
+      )
+      const installation = answer.installations.find((found) => found.name === name)
+      if (installation === undefined) throw new Error("No Installation created")
+      return installation.id
+    }
+    const global = await installWith("Docs everywhere", "sk-global-0001", [])
+    await installWith("Team docs", "sk-team-0002", [secret])
+    await turn(web, global, repo, false)
+    const valuesOn = (on: string) =>
+      hub.run(
+        Effect.gen(function* () {
+          const mcpServers = yield* McpServers
+          return (yield* mcpServers.valuesOn(on)).map(Redacted.value).toSorted()
+        }),
+      )
+    // Off on one Repo and overridden on the other, the global one's value is redacted on both:
+    // a Session that started before may hold it still.
+    expect(await valuesOn(repo)).toEqual(["sk-global-0001"])
+    expect(await valuesOn("KDDIGE/Secret")).toEqual(["sk-global-0001", "sk-team-0002"])
+    expect(await valuesOn("kddige/brand-new")).toEqual(["sk-global-0001"])
+  })
 })
 
 describe("a Repo's MCP server change log", () => {
@@ -517,8 +561,8 @@ async function addFromGit(web: Connection<Web>, gitUrl: string) {
 const forSession = (hub: TestHub, on: string) =>
   hub.run(
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient
-      return (yield* installationsOn(sql, [on])).get(repoKey(on)) ?? []
+      const mcpServers = yield* McpServers
+      return (yield* mcpServers.installationsOn([on])).get(repoKey(on)) ?? []
     }),
   )
 
@@ -1097,5 +1141,104 @@ describe("a global Installation (#219)", () => {
 
     await ask(alice, { _tag: "DeleteInstallation", installationId: id })
     expect((await logOf(alice, "kddige/brand-new"))[0]).toEqual(["Deleted", "Docs", true])
+  })
+})
+
+/** How the Gateway answers a Session of the Repo's request through the Installation. */
+const gatewayOn = (hub: TestHub, id: string, on: string) =>
+  hub.run(
+    Effect.gen(function* () {
+      const mcpServers = yield* McpServers
+      const target = yield* mcpServers.gatewayTarget(InstallationId.make(id), {
+        id: SessionId.make("s-gateway"),
+        repo: on,
+      })
+      return Option.match(target, { onNone: () => "Off", onSome: (found) => found._tag })
+    }),
+  )
+
+/**
+ * How the Gateway answers for each Installation on each Repo, checking it reaches exactly those a
+ * Session of the Repo starting now runs with.
+ */
+const answers = async (hub: TestHub, ids: Record<string, string>, repos: ReadonlyArray<string>) => {
+  const out: Record<string, Record<string, string>> = {}
+  for (const on of repos) {
+    const started = (await forSession(hub, on)).map((installation) => installation.id as string)
+    const row: Record<string, string> = {}
+    for (const [name, id] of Object.entries(ids)) {
+      const answer = await gatewayOn(hub, id, on)
+      expect([on, name, answer !== "Off"]).toEqual([on, name, started.includes(id)])
+      row[name] = answer
+    }
+    out[on] = row
+  }
+  return out
+}
+
+describe("the Gateway's check (ADR 0020)", () => {
+  test("reaches what a Session starting now runs with: listed, or global unless overridden or off, by any spelling", async () => {
+    const hub = await accessHub()
+    const alice = await openWeb(hub, "alice")
+    await makeOwner(hub, "alice")
+    const docs = await createMcpServer(alice)
+    const global = await installGlobal(alice, docs)
+    const web = await openOctocat(hub)
+    const team = await install(web, docs, [repo], "Team docs")
+    const tracker = await install(
+      alice,
+      await createMcpServer(alice, "Tracker"),
+      [secret],
+      "Tracker",
+    )
+    const repos = [repo, "KDDIGE/KNDL", secret, "Kddige/Secret", "kddige/brand-new"]
+
+    expect(await answers(hub, { global, team, tracker }, repos)).toEqual({
+      [repo]: { global: "Off", team: "Ready", tracker: "Off" },
+      "KDDIGE/KNDL": { global: "Off", team: "Ready", tracker: "Off" },
+      [secret]: { global: "Ready", team: "Off", tracker: "Ready" },
+      "Kddige/Secret": { global: "Ready", team: "Off", tracker: "Ready" },
+      "kddige/brand-new": { global: "Ready", team: "Off", tracker: "Off" },
+    })
+
+    // Turned off on a Repo by one spelling: off there by every spelling, and there alone. The
+    // Repo-scoped one gone, the global one is on in its place.
+    await turn(alice, global, "KDDIGE/secret", false)
+    await ask(web, { _tag: "DeleteInstallation", installationId: team })
+    expect(await answers(hub, { global, tracker }, repos)).toEqual({
+      [repo]: { global: "Ready", tracker: "Off" },
+      "KDDIGE/KNDL": { global: "Ready", tracker: "Off" },
+      [secret]: { global: "Off", tracker: "Ready" },
+      "Kddige/Secret": { global: "Off", tracker: "Ready" },
+      "kddige/brand-new": { global: "Ready", tracker: "Off" },
+    })
+
+    // Turned off where a Repo-scoped one overrides it: still off once that one goes.
+    await turn(alice, global, secret, true)
+    const scoped = await install(web, docs, [repo], "Team docs")
+    await turn(alice, global, repo, false)
+    expect(await answers(hub, { global, scoped }, [repo, secret])).toEqual({
+      [repo]: { global: "Off", scoped: "Ready" },
+      [secret]: { global: "Ready", scoped: "Off" },
+    })
+    await ask(web, { _tag: "DeleteInstallation", installationId: scoped })
+    expect(await answers(hub, { global }, [repo, secret])).toEqual({
+      [repo]: { global: "Off" },
+      [secret]: { global: "Ready" },
+    })
+
+    // Made Repo-scoped, it is on where it lists, the Repos that turned it off forgotten.
+    await ask(alice, {
+      _tag: "EditInstallation",
+      installationId: global,
+      name: "Docs everywhere",
+      repos: [repo],
+    })
+    expect(await answers(hub, { global }, [repo, secret])).toEqual({
+      [repo]: { global: "Ready" },
+      [secret]: { global: "Off" },
+    })
+
+    expect(await gatewayOn(hub, "no-such-installation", repo)).toBe("Off")
   })
 })

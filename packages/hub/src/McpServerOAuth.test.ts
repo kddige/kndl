@@ -10,6 +10,7 @@ import {
   InstallationId,
   OAuthConnectTtlMs,
   ParticipantId,
+  SessionId,
 } from "@kndl/protocol"
 import { Effect, Layer, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
@@ -893,6 +894,30 @@ describe("connecting an OAuth Installation", () => {
 })
 
 describe("an OAuth Installation's tokens", () => {
+  test("are sent by the Gateway only where the Installation is on, connected or not", async () => {
+    const { hub, web } = await scene()
+    const { installationId } = await install(web)
+    const gatewayOn = (on: string) =>
+      hub.run(
+        Effect.gen(function* () {
+          const mcpServers = yield* McpServers
+          const target = yield* mcpServers.gatewayTarget(InstallationId.make(installationId), {
+            id: SessionId.make("s-gateway"),
+            repo: on,
+          })
+          return Option.match(target, { onNone: () => "Off", onSome: (found) => found._tag })
+        }),
+      )
+    expect([await gatewayOn(repo), await gatewayOn("KDDIGE/Kndl")]).toEqual([
+      "NotConnected",
+      "NotConnected",
+    ])
+    expect(await gatewayOn("someone/else")).toBe("Off")
+    await connect(hub, web, installationId)
+    expect([await gatewayOn(repo), await gatewayOn("KDDIGE/Kndl")]).toEqual(["Ready", "Ready"])
+    expect(await gatewayOn("someone/else")).toBe("Off")
+  })
+
   test("reach its server through the Gateway, live, and Claude Code never runs OAuth", async () => {
     const { hub, runner, web } = await scene()
     const { installationId } = await install(web)

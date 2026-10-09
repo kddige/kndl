@@ -9,11 +9,12 @@ import { PromptQueue } from "./PromptQueue.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 import { Sessions } from "./Sessions.ts"
 import { SignIns } from "./SignIns.ts"
+import { SessionsTest } from "./testSupport.ts"
 
 const Stores = Layer.mergeAll(
   SignIns.layer,
   RunnerTokens.layer,
-  Sessions.layer,
+  SessionsTest,
   PromptQueue.layer,
 ).pipe(Layer.provideMerge(DatabaseTest))
 

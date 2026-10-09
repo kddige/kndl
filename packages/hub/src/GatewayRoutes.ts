@@ -130,11 +130,14 @@ export const GatewayRoutes = HttpRouter.use(
       sessionId: SessionId,
       installationId: InstallationId,
     ) {
-      const session = yield* sessions.get(sessionId)
+      const session = yield* sessions.startedWith(sessionId)
       if (Option.isNone(session) || session.value.state !== "Active") return 401
-      const startedWith = session.value.mcpServers ?? []
+      const startedWith = session.value.mcpServers
       if (!startedWith.some((installation) => installation.id === installationId)) return 403
-      const on = yield* mcpServers.gatewayTarget(installationId, session.value)
+      const on = yield* mcpServers.gatewayTarget(installationId, {
+        id: sessionId,
+        repo: session.value.repo,
+      })
       return Option.isSome(on) ? on.value : 403
     })
 
