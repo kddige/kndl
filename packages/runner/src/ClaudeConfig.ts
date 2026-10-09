@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto"
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -11,6 +12,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
+import { ClaudeSessionIdPattern } from "@kndl/protocol"
 import type { ClaudePlan, ClaudeSubscriptionType } from "@kndl/protocol"
 import { Context, Data, Effect } from "effect"
 
@@ -156,19 +158,27 @@ export function claudeProjectDirName(cwd: string): string | undefined {
   return name.length <= 200 ? name : undefined
 }
 
+/** Whether `path` is a file itself, not a symlink to one. */
+const isPlainFile = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isFile() === true
+
 /**
  * Where Claude Code on the host kept the transcript of conversation `id` begun in `cwd`, the
  * directory it ran in: `<projects>/<cwd's name>/<id>.jsonl`, looked for under `cwd` as given and
  * as its real path. Undefined when there is none, as for a conversation Claude Code never wrote
  * to, or a path too long to name the way Claude Code does. Sessions ran Claude Code on the host
  * before it moved into their Sandboxes (ADR 0013), whose first wake copies it from here.
+ *
+ * The id comes from the Sandbox, by way of the mod's hello, so one that isn't a Claude Code
+ * session id finds none, as `../` would name a file elsewhere on the host, and so does a
+ * symlink in place of the transcript.
  */
 export function hostTranscriptPath(
   cwd: string,
   id: string,
   projectsDir: string = claudeProjectsDir(),
-  exists: (path: string) => boolean = existsSync,
+  exists: (path: string) => boolean = isPlainFile,
 ): string | undefined {
+  if (!ClaudeSessionIdPattern.test(id)) return undefined
   let real = cwd
   try {
     real = realpathSync(cwd)

@@ -17,7 +17,7 @@ const options = {
   claudePath: "/opt/claude-code/2.1.289-musl/claude",
   sessionId: "s-1" as SessionId,
   mod: "/opt/kndl/mod/m1",
-  conversation: { _tag: "New", id: "3c1f6f0e-claude" },
+  conversation: { _tag: "New", id: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f" },
 } as const
 
 test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a permission (ADR 0013)", () => {
@@ -25,7 +25,7 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
   expect(argv).toEqual([
     "/opt/claude-code/2.1.289-musl/claude",
     "--session-id",
-    "3c1f6f0e-claude",
+    "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
     "--plugin-dir",
     "/opt/kndl/mod/m1/hub-link",
     "--plugin-dir",
@@ -45,9 +45,9 @@ test("Claude Code can't start a second Claude Code in the Session as a backgroun
 test("waking resumes the conversation", () => {
   const { argv } = claudeLaunch({
     ...options,
-    conversation: { _tag: "Resume", id: "c-1" as never },
+    conversation: { _tag: "Resume", id: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f" as never },
   })
-  expect(argv.slice(1, 3)).toEqual(["--resume", "c-1"])
+  expect(argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f"])
 })
 
 test("Claude Code's default model and effort are left to it", () => {

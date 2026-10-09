@@ -26,7 +26,7 @@ const modToHub = [
     _tag: "ModHello",
     protocolVersion: ProtocolVersion,
     sessionId: "s-1",
-    claudeSessionId: "0b6d6c1e-claude",
+    claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     model: "claude-opus-5-5",
   },
   ...turnEvents,
@@ -133,6 +133,19 @@ describe("ModToHub", () => {
   test("rejects a hello without Claude Code's session id", () => {
     const { claudeSessionId: _, ...hello } = modToHub[0] as Record<string, unknown>
     expectRejected(ModToHub, hello)
+  })
+
+  test("rejects a Claude Code session id that isn't the UUID Claude Code mints", () => {
+    const hello = modToHub[0] as Record<string, unknown>
+    for (const claudeSessionId of [
+      "../../.claude/.credentials",
+      "0b6d6c1e-claude",
+      "0B6D6C1E-2F4A-4C3B-9D8E-7A6B5C4D3E2F",
+      "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f/../x",
+      " 0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    ]) {
+      expectRejected(ModToHub, { ...hello, claudeSessionId })
+    }
   })
 })
 

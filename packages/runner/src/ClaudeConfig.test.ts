@@ -181,28 +181,31 @@ function writeTranscript(projects: string, cwd: string, id: string) {
   writeFileSync(join(folder, `${id}.jsonl`), "{}\n")
 }
 
+const conversation = "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f"
+const otherConversation = "9f8e7d6c-5b4a-4321-8fed-cba987654321"
+
 describe("hostTranscriptPath", () => {
   test("is undefined until Claude Code wrote the conversation's transcript for the directory", () => {
     const { projects, real } = setupProjects()
-    expect(hostTranscriptPath(real, "conv-1", projects)).toBeUndefined()
-    writeTranscript(projects, real, "conv-2")
-    expect(hostTranscriptPath(real, "conv-1", projects)).toBeUndefined()
-    writeTranscript(projects, real, "conv-1")
-    expect(hostTranscriptPath(real, "conv-1", projects)).toBe(
-      join(projects, real.replace(/[^a-zA-Z0-9]/g, "-"), "conv-1.jsonl"),
+    expect(hostTranscriptPath(real, conversation, projects)).toBeUndefined()
+    writeTranscript(projects, real, otherConversation)
+    expect(hostTranscriptPath(real, conversation, projects)).toBeUndefined()
+    writeTranscript(projects, real, conversation)
+    expect(hostTranscriptPath(real, conversation, projects)).toBe(
+      join(projects, real.replace(/[^a-zA-Z0-9]/g, "-"), `${conversation}.jsonl`),
     )
   })
 
   test("finds the transcript under the directory's real path", () => {
     const { projects, real, linked } = setupProjects()
-    writeTranscript(projects, real, "conv-1")
-    expect(hostTranscriptPath(linked, "conv-1", projects)).toBe(
-      join(projects, real.replace(/[^a-zA-Z0-9]/g, "-"), "conv-1.jsonl"),
+    writeTranscript(projects, real, conversation)
+    expect(hostTranscriptPath(linked, conversation, projects)).toBe(
+      join(projects, real.replace(/[^a-zA-Z0-9]/g, "-"), `${conversation}.jsonl`),
     )
   })
 
   test("finds none for a directory too long to name the way Claude Code does", () => {
     const { projects } = setupProjects()
-    expect(hostTranscriptPath(`/${"a".repeat(240)}`, "conv-1", projects)).toBeUndefined()
+    expect(hostTranscriptPath(`/${"a".repeat(240)}`, conversation, projects)).toBeUndefined()
   })
 })

@@ -116,13 +116,15 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
     const workspace = join(sessionsRoot, "w-4", "workspace")
     writeFileSync(join(workspace, "notes.txt"), "half done")
 
-    expect(await run(start("w-4", { resume: "c-4" }))).toMatchObject({ _tag: "Success" })
+    expect(
+      await run(start("w-4", { resume: "4d2a7b1e-9c3f-4e8a-b5d6-1f2e3a4b5c6d" })),
+    ).toMatchObject({ _tag: "Success" })
     expect(readFileSync(join(workspace, "notes.txt"), "utf8")).toBe("half done")
     expect(git(workspace, "branch", "--show-current")).toBe("claude/w-1")
   })
 
   test("won't wake a Session whose Workspace is gone", async () => {
-    const result = await run(start("w-3", { resume: "c-1" }))
+    const result = await run(start("w-3", { resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f" }))
 
     expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "WorkspaceError" } })
   })

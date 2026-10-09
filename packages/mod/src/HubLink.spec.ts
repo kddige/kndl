@@ -80,7 +80,11 @@ const harness = (
   const link = new HubLink({
     hubUrl: "http://hub.test/",
     modToken: "secret",
-    hello: { sessionId: "s1", claudeSessionId: "c1", model: "claude-test" },
+    hello: {
+      sessionId: "s1",
+      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      model: "claude-test",
+    },
     fetch,
     after: (ms, fn) => {
       const fate = options.timers?.[waits.length]

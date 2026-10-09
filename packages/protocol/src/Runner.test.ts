@@ -140,7 +140,7 @@ const hubToRunner = [
     repo: "kddige/kndl",
     baseBranch: "main",
     workBranch: "claude/s-1",
-    resume: "0b6d6c1e-claude",
+    resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     modToken: "mod-token",
   },
   {
@@ -276,7 +276,7 @@ const hubToRunner = [
     sessionId: "s-1",
     repo: "kddige/kndl",
     workBranch: "claude/s-1",
-    resume: "0b6d6c1e-claude",
+    resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     modToken: "mod-2",
   },
   {
@@ -284,7 +284,7 @@ const hubToRunner = [
     sessionId: "s-2",
     repo: "kddige/kndl",
     workBranch: "claude/s-2",
-    resume: "0b6d6c1e-claude",
+    resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     modToken: "mod-3",
     model: "opus[1m]",
     effort: "max",

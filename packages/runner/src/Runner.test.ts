@@ -505,14 +505,14 @@ describe("restarting under running Sessions (#157)", () => {
     await restartRunner(h)
     h.hub.send({ _tag: "ModTokenReissued", sessionId: "s-1", modToken: "chm_mod.reissued" })
     await eventually(() => h.sandboxes.calls.includes("keep s-1"))
-    writeTranscript(h, "3c1f6f0e-claude")
+    writeTranscript(h, "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f")
 
     h.hub.send({
       _tag: "RelaunchSession",
       sessionId: "s-1",
       repo: "acme/app",
       workBranch: "claude/s-1",
-      resume: "3c1f6f0e-claude",
+      resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
       modToken: "chm_mod.third",
       model: "opus[1m]",
     })
@@ -647,14 +647,14 @@ describe("Sessions", () => {
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
     const first = h.tmux.pane("s-1")
-    writeTranscript(h, "3c1f6f0e-claude")
+    writeTranscript(h, "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f")
 
     h.hub.send({
       _tag: "RelaunchSession",
       sessionId: "s-1",
       repo: "acme/app",
       workBranch: "claude/s-1",
-      resume: "3c1f6f0e-claude",
+      resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
       modToken: "chm_mod.second",
       model: "opus[1m]",
       effort: "max",
@@ -663,7 +663,10 @@ describe("Sessions", () => {
 
     expect(first.terminated).toBe(true)
     const relaunched = h.tmux.launched[1]
-    expect(relaunched?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+    expect(relaunched?.argv.slice(1, 3)).toEqual([
+      "--resume",
+      "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
+    ])
     expect(relaunched?.argv.slice(-4)).toEqual(["--model", "opus[1m]", "--effort", "max"])
     expect(relaunched?.cwd).toBe("/workspace")
     expect(relaunched?.env).toMatchObject({ CLAUDE_CONFIG_DIR: "/claude" })
@@ -693,13 +696,13 @@ describe("Sessions", () => {
     expect(sessionMod(h, 0)).toBe("// built 1\n")
 
     // Claude Code starts again on a new copy, of the new mod, under a new name.
-    writeTranscript(h, "3c1f6f0e-claude")
+    writeTranscript(h, "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f")
     h.hub.send({
       _tag: "RelaunchSession",
       sessionId: "s-1",
       repo: "acme/app",
       workBranch: "claude/s-1",
-      resume: "3c1f6f0e-claude",
+      resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
       modToken: "chm_mod.second",
       model: "sonnet",
     })
@@ -718,7 +721,7 @@ describe("Sessions", () => {
       sessionId: "s-1",
       repo: "acme/app",
       workBranch: "claude/s-1",
-      resume: "3c1f6f0e-claude",
+      resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
       modToken: "chm_mod.second",
     })
     await eventually(() => h.hub.all("SessionStartFailed").length === 1)
@@ -729,11 +732,14 @@ describe("Sessions", () => {
   test("resumes Claude Code's conversation when waking a Session", async () => {
     const h = startRunner()
     await connected(h)
-    writeTranscript(h, "3c1f6f0e-claude")
-    h.hub.send(startSession("s-1", { resume: "3c1f6f0e-claude" }))
+    writeTranscript(h, "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f")
+    h.hub.send(startSession("s-1", { resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f" }))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
-    expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+    expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual([
+      "--resume",
+      "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
+    ])
     expect(h.hub.all("SandboxNote")).toEqual([])
   })
 
@@ -777,11 +783,14 @@ describe("Sessions", () => {
     const h = startRunner()
     await connected(h)
     // Claude Code exited before its first turn, as in a deleted working directory (#105).
-    h.hub.send(startSession("s-1", { resume: "3c1f6f0e-claude" }))
+    h.hub.send(startSession("s-1", { resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f" }))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     // The same id, so the Hub's stays right for the next wake.
-    expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual(["--session-id", "3c1f6f0e-claude"])
+    expect(h.tmux.launched[0]?.argv.slice(1, 3)).toEqual([
+      "--session-id",
+      "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
+    ])
     // The Session's history still shows the conversation, so it says Claude Code forgot it (#191).
     expect(h.hub.all("SandboxNote")).toEqual([
       {
@@ -1034,17 +1043,22 @@ describe("Sessions", () => {
     expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
     expect(h.hub.all("GitRequest")).toEqual([])
 
-    writeTranscript(h, "3c1f6f0e-claude")
-    h.hub.send(startSession("s-1", { modToken: "chm_woken.secret", resume: "3c1f6f0e-claude" }))
+    writeTranscript(h, "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f")
+    h.hub.send(
+      startSession("s-1", {
+        modToken: "chm_woken.secret",
+        resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
+      }),
+    )
     await eventually(() => h.hub.all("SessionStarted").length === 2)
     expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep", "start s-1"])
     expect(h.workspaces.prepared.map((start) => start.resume)).toEqual([
       undefined,
-      ClaudeSessionId.make("3c1f6f0e-claude"),
+      ClaudeSessionId.make("3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f"),
     ])
     const woken = h.tmux.launched[1]
     expect(woken?.cwd).toBe("/workspace")
-    expect(woken?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-claude"])
+    expect(woken?.argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f"])
     expect(woken?.env["KNDL_MOD_TOKEN"]).toStartWith("chp_")
   })
 

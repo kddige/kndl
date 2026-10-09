@@ -31,8 +31,18 @@ export type ToolCallId = typeof ToolCallId.Type
 export const AgentId = Schema.NonEmptyString.pipe(Schema.brand("AgentId"))
 export type AgentId = typeof AgentId.Type
 
-/** Claude Code's own session id, which `claude --resume` takes to wake an Asleep Session. */
-export const ClaudeSessionId = Schema.NonEmptyString.pipe(Schema.brand("ClaudeSessionId"))
+/** Claude Code's session id as it mints one: a UUID, lowercase. */
+export const ClaudeSessionIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/**
+ * Claude Code's own session id, which `claude --resume` takes to wake an Asleep Session. The mod
+ * sends it from the Sandbox, and the Runner names files on the host after it, so only an id of
+ * that form decodes: never `../` or a path.
+ */
+export const ClaudeSessionId = Schema.String.check(Schema.isPattern(ClaudeSessionIdPattern)).pipe(
+  Schema.brand("ClaudeSessionId"),
+)
 export type ClaudeSessionId = typeof ClaudeSessionId.Type
 
 /** Chosen by a web client to match the Hub's answer to its request. */
