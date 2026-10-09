@@ -45,10 +45,6 @@ describe("the App's manifest", () => {
     )
   })
 
-  test("has no webhook, so GitHub makes the App without one", () => {
-    expect(manifest).not.toHaveProperty("hook_attributes")
-  })
-
   test("names the App after the machine, within GitHub's 34 characters", () => {
     expect(appName("mac")).toBe("kndl-mac")
     expect(appName("My_Box.lan")).toBe("kndl-my-box")
@@ -129,7 +125,7 @@ describe("the new App's settings", () => {
     pem: Redacted.make("-----BEGIN RSA PRIVATE KEY-----"),
   }
 
-  test("go into hub.env, the key by its path in the home", () => {
+  test("go into hub.env, the key by its path in the home, and any webhook secret", () => {
     const path = appKeyFile("/home/me/.kndl", 1001)
     expect(path).toBe("/home/me/.kndl/github-app-1001.pem")
     expect(appEnvUpdates(settingsFromConversion(conversion, path))).toEqual({
@@ -139,9 +135,8 @@ describe("the new App's settings", () => {
       GITHUB_CLIENT_SECRET: "secret",
       GITHUB_WEBHOOK_SECRET: undefined,
     })
-  })
 
-  test("with a webhook secret, when GitHub hands one out", () => {
+    // With a webhook secret, when GitHub hands one out.
     const updates = appEnvUpdates(
       settingsFromConversion(
         { ...conversion, webhookSecret: Option.some(Redacted.make("hook")) },

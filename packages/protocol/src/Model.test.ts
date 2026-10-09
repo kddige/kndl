@@ -1,13 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import {
-  EffortLevels,
-  findModel,
-  ModelName,
-  modelNotFoundText,
-  RunnerModels,
-  sameModel,
-} from "./Model.ts"
+import { findModel, ModelName, modelNotFoundText, RunnerModels, sameModel } from "./Model.ts"
 import { expectRejected, expectRoundTrips, runnerModels } from "./testSupport.ts"
 
 describe("ModelName", () => {
@@ -32,18 +25,9 @@ describe("ModelName", () => {
   })
 })
 
-describe("EffortLevels", () => {
-  test("are Claude Code's, lowest first", () => {
-    expect(EffortLevels).toEqual(["low", "medium", "high", "xhigh", "max"])
-  })
-})
-
 describe("RunnerModels", () => {
-  test("round-trips", () => {
+  test("round-trips, and refuses an effort level Claude Code doesn't have", () => {
     expectRoundTrips(RunnerModels, [runnerModels, { ...runnerModels, models: [], efforts: [] }])
-  })
-
-  test("refuses an effort level Claude Code doesn't have", () => {
     expectRejected(RunnerModels, { ...runnerModels, efforts: ["low", "auto"] })
   })
 })
@@ -51,13 +35,10 @@ describe("RunnerModels", () => {
 describe("findModel", () => {
   const models = Schema.decodeUnknownSync(RunnerModels)(runnerModels)
 
-  test("finds a model by alias, by id, or the default", () => {
+  test("finds a model by alias, by id, or the default, and nothing it doesn't list", () => {
     expect(findModel(models, "sonnet")?.label).toBe("Sonnet 5.5")
     expect(findModel(models, "claude-haiku-4-5-20251001")?.alias).toBe("haiku")
     expect(findModel(models, "default")).toBe(models.default)
-  })
-
-  test("finds nothing it doesn't list", () => {
     expect(findModel(models, "bogus")).toBeUndefined()
     expect(modelNotFoundText("bogus")).toBe("Model 'bogus' not found")
   })

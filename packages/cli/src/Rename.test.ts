@@ -149,7 +149,7 @@ const run = (setting: MoveSetting, edges: MoveEdges, shell: Shell["Service"], se
 const describeSteps = (steps: ReadonlyArray<Step>) =>
   steps.map((s) => [s.command, ...s.args].join(" "))
 
-describe("planMove", () => {
+test("planMove moves a former home to a free place, else renames it in place, or does nothing", () => {
   const sighting = {
     from: "/u/.claude-hub",
     to: "/u/.kndl",
@@ -157,36 +157,33 @@ describe("planMove", () => {
     toUsed: false,
     leftovers: true,
   }
-
-  test("moves a former home to a free place", () => {
-    expect(planMove(sighting)).toEqual({ _tag: "Move", from: "/u/.claude-hub", to: "/u/.kndl" })
-  })
-
-  test("leaves both homes alone when the new one is in use", () => {
-    expect(planMove({ ...sighting, toUsed: true })._tag).toBe("Conflict")
-  })
-
-  test("renames in place a home that stays where it is, or has moved already", () => {
-    expect(planMove({ ...sighting, to: sighting.from })).toEqual({
-      _tag: "InPlace",
-      home: "/u/.claude-hub",
-    })
-    expect(planMove({ ...sighting, fromIsHome: false })).toEqual({
-      _tag: "InPlace",
-      home: "/u/.kndl",
-    })
-  })
-
-  test("does nothing once nothing is left of the former name", () => {
-    expect(planMove({ ...sighting, fromIsHome: false, leftovers: false })).toEqual({
-      _tag: "Nothing",
-    })
-    expect(planMove({ ...sighting, to: sighting.from, leftovers: false })._tag).toBe("Nothing")
-  })
+  const cases: ReadonlyArray<[Parameters<typeof planMove>[0], ReturnType<typeof planMove>]> = [
+    [sighting, { _tag: "Move", from: "/u/.claude-hub", to: "/u/.kndl" }],
+    // Both homes are left alone when the new one is in use.
+    [
+      { ...sighting, toUsed: true },
+      { _tag: "Conflict", from: "/u/.claude-hub", to: "/u/.kndl" },
+    ],
+    // A home that stays where it is, or has moved already.
+    [
+      { ...sighting, to: sighting.from },
+      { _tag: "InPlace", home: "/u/.claude-hub" },
+    ],
+    [
+      { ...sighting, fromIsHome: false },
+      { _tag: "InPlace", home: "/u/.kndl" },
+    ],
+    // Nothing is left of the former name.
+    [{ ...sighting, fromIsHome: false, leftovers: false }, { _tag: "Nothing" }],
+    [{ ...sighting, to: sighting.from, leftovers: false }, { _tag: "Nothing" }],
+  ]
+  for (const [input, plan] of cases) expect(planMove(input)).toEqual(plan)
 })
 
 describe("sightHome", () => {
-  test("finds the default former home, bound for ~/.kndl", () => {
+  test("finds nothing on a machine without the former name, and the default former home, bound for ~/.kndl", () => {
+    expect(planMove(sightHome(settingFor("darwin")))).toEqual({ _tag: "Nothing" })
+
     layOutFormerInstall(former, "darwin")
     expect(sightHome(settingFor("darwin"))).toEqual({
       from: former,
@@ -213,10 +210,6 @@ describe("sightHome", () => {
       from: former,
       to: elsewhere,
     })
-  })
-
-  test("finds nothing on a machine without the former name", () => {
-    expect(planMove(sightHome(settingFor("darwin")))).toEqual({ _tag: "Nothing" })
   })
 })
 

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { databaseAt } from "@kndl/hub/src/Database.ts"
@@ -14,12 +14,12 @@ let scratch: string
 let layout: Layout
 let database: string
 
-beforeEach(async () => {
-  scratch = mkdtempSync(join(tmpdir(), "kndl-actions-"))
-  layout = resolveLayout({ KNDL_HOME: join(scratch, ".kndl") }, scratch)
-  database = join(layout.home.dir, "hub.db")
-  mkdirSync(layout.home.dir)
-  writeFileSync(layout.envFile("hub"), "PORT=7777\n")
+/** A home with a Hub set up, built once and copied for each test. */
+let template: string
+
+beforeAll(async () => {
+  template = mkdtempSync(join(tmpdir(), "kndl-actions-template-"))
+  writeFileSync(join(template, "hub.env"), "PORT=7777\n")
   // A database whose key is lost: a Sensitive shared variable, encrypted under it.
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -32,8 +32,19 @@ beforeEach(async () => {
         INSERT INTO shared_variables (name, kind, value, updated_by, updated_at)
         VALUES ('GITHUB_TOKEN', 'Sensitive', 'v1:sealed', 'p1', 0)
       `
-    }).pipe(Effect.provide(databaseAt(database))),
+    }).pipe(Effect.provide(databaseAt(join(template, "hub.db")))),
   )
+})
+
+afterAll(() => {
+  rmSync(template, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  scratch = mkdtempSync(join(tmpdir(), "kndl-actions-"))
+  layout = resolveLayout({ KNDL_HOME: join(scratch, ".kndl") }, scratch)
+  database = join(layout.home.dir, "hub.db")
+  cpSync(template, layout.home.dir, { recursive: true })
 })
 
 afterEach(() => {
@@ -74,14 +85,12 @@ describe("kndl secrets reset", () => {
     expect(await sharedValue()).toBeNull()
   })
 
-  test("clears nothing when told not to", async () => {
-    const { exit } = await reset({ yes: false }, [false])
+  test("clears nothing when told not to, nor without a terminal unless given --yes", async () => {
+    const declined = await reset({ yes: false }, [false])
 
-    expect(failure(exit)).toContain("Nothing was cleared.")
+    expect(failure(declined.exit)).toContain("Nothing was cleared.")
     expect(await sharedValue()).toBe("v1:sealed")
-  })
 
-  test("without a terminal, needs --yes", async () => {
     const refused = await reset({ yes: false }, [], { interactive: false })
 
     expect(failure(refused.exit)).toContain("pass --yes")
@@ -105,14 +114,6 @@ describe("kndl secrets reset", () => {
     expect(failure(exit)).toContain(`a Hub is running on ${database}`)
     expect(failure(exit)).toContain("kndl hub stop")
     expect(await sharedValue()).toBe("v1:sealed")
-  })
-
-  test("is refused where no Hub is set up", async () => {
-    rmSync(layout.envFile("hub"))
-
-    const { exit } = await reset({ yes: true }, [])
-
-    expect(failure(exit)).toContain("No Hub is set up")
   })
 })
 
@@ -156,10 +157,11 @@ describe("kndl hub setup-link", () => {
     expect(Exit.isSuccess(exit) && exit.value).toEqual(Option.none())
     expect(await setupLinkCount()).toBe(0)
   })
+})
 
-  test("is refused where no Hub is set up", async () => {
-    rmSync(layout.envFile("hub"))
+test("kndl secrets reset and kndl hub setup-link are refused where no Hub is set up", async () => {
+  rmSync(layout.envFile("hub"))
 
-    expect(failure(await setupLink())).toContain("No Hub is set up")
-  })
+  expect(failure((await reset({ yes: true }, [])).exit)).toContain("No Hub is set up")
+  expect(failure(await setupLink())).toContain("No Hub is set up")
 })
