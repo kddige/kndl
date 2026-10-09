@@ -180,12 +180,12 @@ describe("delivery", () => {
     const live = makeLiveSessions()
     const start = { since: 1, environmentVersion: undefined, log: "", attached: false }
     live.startSent(id, start)
-    expect(live.starting.has(id)).toBe(true)
+    expect(live.awaitingHello(id)).toBe(true)
     expect(live.starts.get(id)).toBe(start)
     live.modHello(id, true)
-    expect(live.starting.has(id)).toBe(false)
+    expect(live.awaitingHello(id)).toBe(false)
     live.relaunched(id)
-    expect(live.starting.has(id)).toBe(true)
+    expect(live.awaitingHello(id)).toBe(true)
   })
 })
 
@@ -256,7 +256,7 @@ describe("stopping and restarting", () => {
     const live = makeLiveSessions()
     expect(live.stopAsked(id, { message: "Idle" })).toBe(true)
     expect(live.stopAsked(id, { message: "Put to sleep" })).toBe(false)
-    expect(live.stopping.get(id)).toEqual({ message: "Idle" })
+    expect(live.goingToSleep(id)).toBe(true)
     // Nor does a restart asked meanwhile take.
     expect(live.stopAsked(id, { message: "Restarting" }, restart)).toBe(false)
     expect(live.restarts.has(id)).toBe(false)
@@ -309,5 +309,91 @@ describe("a Runner saying a Session stopped", () => {
     const live = makeLiveSessions()
     expect(live.stopped(id)).toEqual({ _tag: "Stop", asked: undefined, restartBy: undefined })
     expect(live.stopped(other)).toEqual({ _tag: "Stop", asked: undefined, restartBy: undefined })
+  })
+})
+
+/** A StartSession just sent. */
+const start = () => ({ since: 1, environmentVersion: undefined, log: "", attached: false })
+/** The predicates' answers, by name. */
+const doing = (live: LiveSessions, sessionId = id) => ({
+  blocksDelivery: live.blocksDelivery(sessionId),
+  settling: live.settling(sessionId),
+  busy: live.busy(sessionId),
+  promptOut: live.promptOut(sessionId),
+  awaitingHello: live.awaitingHello(sessionId),
+  goingToSleep: live.goingToSleep(sessionId),
+  startUnderWay: live.startUnderWay(sessionId),
+  archiveStopping: live.archiveStopping(sessionId),
+})
+
+describe("what a Session is doing", () => {
+  const one = PromptId.make("pr-1")
+  const nothing = {
+    blocksDelivery: false,
+    settling: false,
+    busy: false,
+    promptOut: false,
+    awaitingHello: false,
+    goingToSleep: false,
+    startUnderWay: false,
+    archiveStopping: false,
+  }
+
+  test("nothing, at first", () => {
+    expect(doing(makeLiveSessions())).toEqual(nothing)
+  })
+
+  test("a prompt in flight blocks delivery and keeps it busy", () => {
+    const live = makeLiveSessions()
+    live.delivering(id, one)
+    expect(doing(live)).toEqual({ ...nothing, blocksDelivery: true, busy: true, promptOut: true })
+    expect(doing(live, other)).toEqual(nothing)
+  })
+
+  test("a start under way blocks delivery until the hello, and settles and keeps it busy until it started", () => {
+    const live = makeLiveSessions()
+    live.startSent(id, start())
+    expect(doing(live)).toEqual({
+      ...nothing,
+      blocksDelivery: true,
+      settling: true,
+      busy: true,
+      awaitingHello: true,
+      startUnderWay: true,
+    })
+    live.modHello(id, true)
+    expect(doing(live)).toEqual({ ...nothing, settling: true, busy: true, startUnderWay: true })
+    live.claudeStarted(id)
+    expect(doing(live)).toEqual(nothing)
+    // A relaunch waits for the hello, with no start to settle.
+    live.relaunched(id)
+    expect(doing(live)).toEqual({ ...nothing, blocksDelivery: true, awaitingHello: true })
+  })
+
+  test("a stop asked blocks delivery, settles and keeps it busy", () => {
+    const live = makeLiveSessions()
+    live.stopAsked(id, { message: "Idle" })
+    expect(doing(live)).toEqual({
+      ...nothing,
+      blocksDelivery: true,
+      settling: true,
+      busy: true,
+      goingToSleep: true,
+    })
+  })
+
+  test("a steer awaiting the mod's answer blocks delivery alone", () => {
+    const live = makeLiveSessions()
+    live.modHello(id, true)
+    live.steer(id, { promptId: one, by: alice.id, turnRunning: true, queued: true })
+    expect(doing(live)).toEqual({ ...nothing, blocksDelivery: true })
+  })
+
+  test("an archive's stop for good is only that", () => {
+    const live = makeLiveSessions()
+    live.archiveStopAsked(id)
+    expect(doing(live)).toEqual({ ...nothing, archiveStopping: true })
+    live.stopped(id)
+    expect(doing(live)).toEqual(nothing)
   })
 })

@@ -212,13 +212,8 @@ type Piece = keyof Pieces
  */
 export interface LiveSessions extends Pick<
   Pieces,
-  | "inFlight"
-  | "steering"
-  | "starting"
-  | "stopping"
   | "starts"
   | "restarts"
-  | "archiving"
   | "openPorts"
   | "installationTrouble"
   | "lastBusy"
@@ -300,6 +295,32 @@ export interface LiveSessions extends Pick<
   readonly stopped: (id: SessionId) => Stopped
   /** Its Runner said Claude Code started (SessionStarted): its start and restart are over. */
   readonly claudeStarted: (id: SessionId) => void
+
+  // ── What it is doing ──
+
+  /**
+   * Whether no prompt may be delivered to it now: one is in flight, its new mod hasn't said hello,
+   * it is going to sleep, or a steer awaits the mod's answer, since the prompt it is about may be
+   * the head of the queue.
+   */
+  readonly blocksDelivery: (id: SessionId) => boolean
+  /** Whether its Runner is yet to answer a start or a stop: a drain waits for it (ADR 0011). */
+  readonly settling: (id: SessionId) => boolean
+  /**
+   * Whether it is busy, so not idle: going to sleep, a prompt in flight, or a start under way,
+   * which can take minutes to build its Environment.
+   */
+  readonly busy: (id: SessionId) => boolean
+  /** Whether a prompt is in flight to its mod. */
+  readonly promptOut: (id: SessionId) => boolean
+  /** Whether its Claude Code was started or woken, and its new mod hasn't said hello yet. */
+  readonly awaitingHello: (id: SessionId) => boolean
+  /** Whether its Runner was asked to stop it for sleep, and hasn't said it stopped. */
+  readonly goingToSleep: (id: SessionId) => boolean
+  /** Whether its Runner hasn't answered its StartSession yet. */
+  readonly startUnderWay: (id: SessionId) => boolean
+  /** Whether its Runner was asked to stop it for good, for an archive, and hasn't said it did. */
+  readonly archiveStopping: (id: SessionId) => boolean
 
   /** The Session's live state ended `how`: what that ends is cleared (see `clearedWhen`). */
   readonly ended: (id: SessionId, how: SessionEnd) => void
@@ -522,6 +543,18 @@ export const makeLiveSessions = (): LiveSessions => {
       pieces.starts.delete(id)
       pieces.restarts.delete(id)
     },
+    blocksDelivery: (id) =>
+      pieces.inFlight.has(id) ||
+      pieces.starting.has(id) ||
+      pieces.stopping.has(id) ||
+      pieces.steering.has(id),
+    settling: (id) => pieces.starts.has(id) || pieces.stopping.has(id),
+    busy: (id) => pieces.stopping.has(id) || pieces.inFlight.has(id) || pieces.starts.has(id),
+    promptOut: (id) => pieces.inFlight.has(id),
+    awaitingHello: (id) => pieces.starting.has(id),
+    goingToSleep: (id) => pieces.stopping.has(id),
+    startUnderWay: (id) => pieces.starts.has(id),
+    archiveStopping: (id) => pieces.archiving.has(id),
     ended: (id, how) => {
       for (const piece of clearedWhen[how]) pieces[piece].delete(id)
     },

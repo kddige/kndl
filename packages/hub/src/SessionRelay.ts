@@ -687,9 +687,9 @@ export class SessionRelay extends Context.Service<
               state: session.state,
               turn:
                 session.currentTurn !== null ||
-                live.inFlight.has(session.id) ||
+                live.promptOut(session.id) ||
                 hasRunningAgents(session),
-              settling: live.starts.has(session.id) || live.stopping.has(session.id),
+              settling: live.settling(session.id),
             })),
           ),
         session: (id) => Effect.map(sessions.get(id), Option.getOrUndefined),
@@ -1264,14 +1264,7 @@ export class SessionRelay extends Context.Service<
        * delivery. An Asleep Session is woken instead (see `wake`).
        */
       const deliverNext = Effect.fn("SessionRelay.deliverNext")(function* (sessionId: SessionId) {
-        if (
-          live.inFlight.has(sessionId) ||
-          live.starting.has(sessionId) ||
-          live.stopping.has(sessionId)
-        )
-          return
-        // A steer's answer first: the prompt it is about may be the head.
-        if (live.steering.has(sessionId)) return
+        if (live.blocksDelivery(sessionId)) return
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         if (session.value.state !== "Active" || session.value.currentTurn !== null) return
@@ -1581,7 +1574,11 @@ export class SessionRelay extends Context.Service<
       ): Effect.fn.Return<string | undefined, SqlError> {
         const runner = peers.runner(session.runnerId)
         // A restored Session still being stopped for its archive wakes once it is stopped.
-        if (runner === undefined || session.state !== "Asleep" || live.archiving.has(session.id)) {
+        if (
+          runner === undefined ||
+          session.state !== "Asleep" ||
+          live.archiveStopping(session.id)
+        ) {
           return undefined
         }
         // Its prompts wait in its queue, and wake it once its Runner is updated.
@@ -1720,9 +1717,8 @@ export class SessionRelay extends Context.Service<
         // Claude waits on its question (#193), as its Turn does.
         if (session.openQuestion !== undefined) return false
         if (peers.runner(session.runnerId) === undefined) return false
-        if (live.stopping.has(session.id) || live.inFlight.has(session.id)) return false
-        // A start can take minutes to build its Environment: it isn't idle until it's over.
-        if (live.starts.has(session.id)) return false
+        // Going to sleep, a prompt in flight, or a start, which can take minutes.
+        if (live.busy(session.id)) return false
         // Someone is in it, in the web or forwarding its ports (#180).
         if (peers.presenceOf(session.id).length > 0) return false
         // Someone asked for it to stay up, as for a dev server (ADR 0016).
@@ -2235,7 +2231,7 @@ export class SessionRelay extends Context.Service<
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
               // Pressing Sleep turns Keep awake off (ADR 0016), even while it is going to sleep.
-              if (live.stopping.has(sessionId)) return yield* stopKeepingAwake(session.value)
+              if (live.goingToSleep(sessionId)) return yield* stopKeepingAwake(session.value)
               if (session.value.state !== "Active") {
                 return refuse(
                   message,
@@ -2243,7 +2239,7 @@ export class SessionRelay extends Context.Service<
                   { sessionId },
                 )
               }
-              if (live.starts.has(sessionId)) {
+              if (live.startUnderWay(sessionId)) {
                 return refuse(
                   message,
                   "The Session is still starting; put it to sleep once it has started.",
@@ -2253,7 +2249,7 @@ export class SessionRelay extends Context.Service<
               if (session.value.currentTurn !== null) {
                 return refuse(message, "A Turn is running: stop it first.", { sessionId })
               }
-              if (live.inFlight.has(sessionId) || (yield* prompts.list(sessionId)).length > 0) {
+              if (live.promptOut(sessionId) || (yield* prompts.list(sessionId)).length > 0) {
                 return refuse(message, "Prompts are waiting in the Session's queue.", {
                   sessionId,
                 })
@@ -2296,7 +2292,7 @@ export class SessionRelay extends Context.Service<
                   return
                 }
                 case "Active":
-                  if (live.stopping.has(sessionId)) {
+                  if (live.goingToSleep(sessionId)) {
                     return refuse(
                       message,
                       "The Session is still going to sleep; wake it once it is Asleep.",
@@ -2334,7 +2330,7 @@ export class SessionRelay extends Context.Service<
                   return
                 }
                 case "Active":
-                  if (live.starts.has(sessionId)) {
+                  if (live.startUnderWay(sessionId)) {
                     // Its Sandbox is being made from the version it was sent: restarting now
                     // would only start it again behind this start.
                     return refuse(
@@ -2343,14 +2339,14 @@ export class SessionRelay extends Context.Service<
                       { sessionId },
                     )
                   }
-                  if (live.stopping.has(sessionId)) {
+                  if (live.goingToSleep(sessionId)) {
                     return refuse(
                       message,
                       "The Session is going to sleep; wake it once it is Asleep.",
                       { sessionId },
                     )
                   }
-                  if (session.value.currentTurn !== null || live.inFlight.has(sessionId)) {
+                  if (session.value.currentTurn !== null || live.promptOut(sessionId)) {
                     return refuse(message, "A Turn is running: stop it first, then restart.", {
                       sessionId,
                     })
@@ -2533,7 +2529,7 @@ export class SessionRelay extends Context.Service<
                     { sessionId },
                   )
                 case "Active":
-                  if (live.stopping.has(sessionId)) {
+                  if (live.goingToSleep(sessionId)) {
                     return refuse(
                       message,
                       "The Session is going to sleep: message the agent once it is Asleep.",
@@ -2547,7 +2543,7 @@ export class SessionRelay extends Context.Service<
                   // Its new Claude Code resumes the agent from its transcript.
                   const refused = yield* wake(session.value, { by: you })
                   if (refused !== undefined) return refuse(message, refused, { sessionId })
-                  if (!live.starting.has(sessionId)) {
+                  if (!live.awaitingHello(sessionId)) {
                     return refuse(message, "The Session could not be woken: see its history.", {
                       sessionId,
                     })
@@ -3094,7 +3090,7 @@ export class SessionRelay extends Context.Service<
           switch (message._tag) {
             case "SessionStarted":
               // A start that raced an archive: the StopSession that follows settles it.
-              if (session.value.state === "Archived" || live.archiving.has(message.sessionId))
+              if (session.value.state === "Archived" || live.archiveStopping(message.sessionId))
                 return
               live.claudeStarted(message.sessionId)
               yield* sessions.setLastOutput(message.sessionId, null)
@@ -3643,7 +3639,7 @@ export class SessionRelay extends Context.Service<
               case "Active":
                 break
             }
-            if (live.stopping.has(sessionId)) {
+            if (live.goingToSleep(sessionId)) {
               return yield* refuseTunnel(
                 TunnelCloseCode.NotActive,
                 "The Session is going to sleep.",
