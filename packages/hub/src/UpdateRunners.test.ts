@@ -298,7 +298,10 @@ describe("updating a Runner", () => {
     web.send({ _tag: "UpdateRunner", requestId: "u-2", runnerId, now: true })
     await web.take("RunnerUpdateRequested", (m) => m.requestId === "u-2")
     await listed(web, (r) => r.update?._tag === "Draining" && r.update.now)
-    expect(await busy.mod.poll(500)).toContainEqual({ _tag: "StopTurn", sessionId: busy.sessionId })
+    expect(await busy.mod.next("StopTurn", 500)).toContainEqual({
+      _tag: "StopTurn",
+      sessionId: busy.sessionId,
+    })
     expect(
       (await web.take("SessionEventLogged", (m) => m.entry.event._tag === "TurnStopRequested"))
         .entry.event,

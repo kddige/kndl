@@ -618,7 +618,7 @@ describe("StopTurn", () => {
       _tag: "TurnStopRequested",
       by: alice,
     })
-    expect(await mod.poll(500)).toContainEqual({ _tag: "StopTurn", sessionId })
+    expect(await mod.next("StopTurn", 500)).toContainEqual({ _tag: "StopTurn", sessionId })
   })
 })
 
@@ -2986,7 +2986,7 @@ describe("subagents (ADR 0014)", () => {
     runner.send({ _tag: "SessionStarted", sessionId })
     const woken = new Mod(hub, sessionId, wake.modToken)
     expect((await woken.hello()).status).toBe(200)
-    expect(await woken.poll(500)).toContainEqual({
+    expect(await woken.next("DeliverAgentMessage", 500)).toContainEqual({
       _tag: "DeliverAgentMessage",
       sessionId,
       agentId: "a-1",
