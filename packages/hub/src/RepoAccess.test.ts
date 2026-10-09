@@ -227,9 +227,7 @@ describe("Repo access", () => {
       Effect.gen(function* () {
         const access = yield* RepoAccess
         yield* access.accessible(octocat)
-        yield* access.forgetAccessible(octocat)
         yield* access.accessible(octocat)
-        yield* access.forgetAccessible(octocat)
         // Past a no's short TTL, the App's Repos are listed again.
         yield* TestClock.adjust(Duration.subtract(refusedAnswerTtl, Duration.seconds(-1)))
         return yield* access.accessible(octocat)

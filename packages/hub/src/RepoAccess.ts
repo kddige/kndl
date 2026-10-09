@@ -281,13 +281,16 @@ export class RepoAccess extends Context.Service<
         ({ participant }: Person) =>
           listing.withPermits(1)(
             Effect.gen(function* () {
-              const { repos: listed } = yield* Cache.get(installedRepos, "all")
+              const { repos: listed, complete: appComplete } = yield* Cache.get(
+                installedRepos,
+                "all",
+              )
               if (participant.id.startsWith("dev:")) {
                 const all = Option.isSome(config.devLogin)
-                return { repos: all ? listed.map(({ repo }) => repo) : [], complete: true }
+                return { repos: all ? listed.map(({ repo }) => repo) : [], complete: appComplete }
               }
-              if (!participant.id.startsWith("github:")) return { repos: [], complete: true }
-              let complete = true
+              if (!participant.id.startsWith("github:")) return { repos: [], complete: appComplete }
+              let complete = appComplete
               const checked = yield* Effect.forEach(
                 listed,
                 ({ repo, isCollaborator }) =>
