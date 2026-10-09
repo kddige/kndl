@@ -272,14 +272,14 @@ import {
   makeEnvironmentRelay,
 } from "./EnvironmentRelay.ts"
 import { Environments } from "./Environments.ts"
-import { checkServer } from "./Gateway.ts"
+import { type Checked, Gateway } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { makeLiveSessions, type TextStream, type Why } from "./LiveSessions.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { isMcpServerCommand, makeMcpServerRelay, type McpServerRelay } from "./McpServerRelay.ts"
-import { type GatewayTarget, McpServers } from "./McpServers.ts"
+import { McpServers } from "./McpServers.ts"
 import {
   isMemberCommand,
   type MemberCommand,
@@ -426,6 +426,49 @@ const failureOf = (
   ...(installation.global === true && { global: true }),
 })
 
+/**
+ * What a Session's start found failing in checking the Installation's server (#216), or in
+ * authorising it before or after a refresh.
+ */
+const checkFailures = (
+  installation: SessionInstallation,
+  found: Checked,
+): Array<InstallationFailure> => {
+  switch (found._tag) {
+    case "Answered": {
+      const { status } = found.response
+      if (status === 401 || status === 403) {
+        return [failureOf(installation, { reason: "Rejected", status })]
+      }
+      if (status < 200 || status >= 300) {
+        return [failureOf(installation, { reason: "Errored", status })]
+      }
+      return []
+    }
+    // A redirect isn't followed.
+    case "Redirected":
+      return [failureOf(installation, { reason: "Errored", status: found.status })]
+    // Its token expired and its authorization server didn't answer: it may only be down.
+    case "Unavailable":
+    case "Unreachable":
+      return [failureOf(installation, { reason: "Unreachable" })]
+    // Its server refused its OAuth token, and the refreshed one too (#217).
+    case "Refused":
+      return [failureOf(installation, { reason: "Rejected", status: 401 })]
+    case "Lost":
+    case "NotConnected":
+      return [failureOf(installation, { reason: "NotConnected" })]
+    // One taken off the Repo meanwhile isn't started with: the Gateway refuses it. A value
+    // missing, or values the Hub can't decrypt, were sure before any server was asked; found only
+    // once a token is refreshed, they don't hold the start up.
+    case "Off":
+    case "NotActive":
+    case "NeedsValue":
+    case "Unreadable":
+      return []
+  }
+}
+
 /** StartSession's and RelaunchSession's `model` and `effort` (#128): the Session's setting. */
 const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.model !== undefined && { model: setting.model }),
@@ -548,6 +591,7 @@ export class SessionRelay extends Context.Service<
       const environments = yield* Environments
       const mcpServers = yield* McpServers
       const oauth = yield* McpServerOAuth
+      const gateway = yield* Gateway
       const access = yield* RepoAccess
       const app = yield* GitHubApp
       const drift = yield* PermissionDrift
@@ -1298,62 +1342,35 @@ export class SessionRelay extends Context.Service<
         repo: string,
         installations: ReadonlyArray<SessionInstallation>,
       ) {
-        const targetOf = (installation: SessionInstallation) =>
-          mcpServers.gatewayTarget(installation.id, { id: sessionId, repo }).pipe(
-            Effect.map(Option.getOrUndefined),
-            Effect.catchTag("SecretsUnavailable", () => Effect.succeed("Unreadable" as const)),
-          )
-        const targets = yield* Effect.forEach(installations, (installation) =>
-          Effect.map(targetOf(installation), (target) => ({ installation, target })),
+        const starting = { starting: sessionId, repo }
+        const authorised = yield* Effect.forEach(installations, (installation) =>
+          Effect.map(gateway.authorise(starting, installation.id), (found) => ({
+            installation,
+            found,
+          })),
         )
-        const sure = targets.flatMap(({ installation, target }): Array<InstallationFailure> => {
-          if (target === "Unreadable") return [failureOf(installation, { reason: "Unreadable" })]
-          if (target?._tag === "NeedsValue") {
-            return [failureOf(installation, { reason: "ValueNeeded", secrets: target.secrets })]
+        const sure = authorised.flatMap(({ installation, found }): Array<InstallationFailure> => {
+          if (found._tag === "Unreadable") {
+            return [failureOf(installation, { reason: "Unreadable" })]
+          }
+          if (found._tag === "NeedsValue") {
+            return [failureOf(installation, { reason: "ValueNeeded", secrets: found.secrets })]
           }
           // Not connected, or the connection was lost (#217): no server is asked.
-          if (target?._tag === "NotConnected") {
+          if (found._tag === "NotConnected") {
             return [failureOf(installation, { reason: "NotConnected" })]
           }
           return []
         })
         if (sure.length > 0) return sure
-        /** Checks the server, once more with fresh tokens if it refused an OAuth token (#217). */
-        const check = Effect.fn("SessionRelay.checkInstallation")(function* (
-          installation: SessionInstallation,
-          target: GatewayTarget | "Unreadable" | undefined,
-          retried: boolean,
-        ): Effect.fn.Return<Array<InstallationFailure>, SqlError> {
-          // One taken off the Repo meanwhile isn't started with: the Gateway refuses it.
-          if (target === undefined || target === "Unreadable") return []
-          // Its token expired and its authorization server didn't answer: it may only be down.
-          if (target._tag === "Unavailable") {
-            return [failureOf(installation, { reason: "Unreachable" })]
-          }
-          if (target._tag === "NotConnected") {
-            return [failureOf(installation, { reason: "NotConnected" })]
-          }
-          if (target._tag !== "Ready") return []
-          const found = yield* checkServer(target, config.mcpServerCheckTimeout)
-          if (found._tag === "Works") {
-            if (target.oauth !== undefined) oauth.works(installation.id, target.oauth.generation)
-            return []
-          }
-          if (found._tag === "Unreachable") {
-            return [failureOf(installation, { reason: "Unreachable" })]
-          }
-          if (found._tag === "Rejected" && found.status === 401 && target.oauth !== undefined) {
-            const next = yield* oauth
-              .rejected(installation.id, target.oauth.generation)
-              .pipe(Effect.catchTag("SecretsUnavailable", () => Effect.succeed("Lost" as const)))
-            if (next === "Lost") return [failureOf(installation, { reason: "NotConnected" })]
-            if (!retried) return yield* check(installation, yield* targetOf(installation), true)
-          }
-          return [failureOf(installation, { reason: found._tag, status: found.status })]
-        })
         const checked = yield* Effect.forEach(
-          targets,
-          ({ installation, target }) => check(installation, target, false),
+          authorised,
+          ({ installation, found }) =>
+            found._tag === "Authorised"
+              ? Effect.map(gateway.check(found, config.mcpServerCheckTimeout), (outcome) =>
+                  checkFailures(installation, outcome),
+                )
+              : Effect.succeed(checkFailures(installation, found)),
           { concurrency: "unbounded" },
         )
         return checked.flat()
