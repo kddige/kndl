@@ -31,8 +31,12 @@ import {
 import { drainFirst } from "./HubShutdown.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { McpServerIcons } from "./McpServerIcons.ts"
+import { McpServerOAuth } from "./McpServerOAuth.ts"
+import { McpServers } from "./McpServers.ts"
 import { McpServerSources } from "./McpServerSources.ts"
 import { Members } from "./Members.ts"
+import { Secrets } from "./Secrets.ts"
+import { Sessions } from "./Sessions.ts"
 
 export const webOrigin = "http://localhost:5173"
 
@@ -56,6 +60,17 @@ export const baseConfig: HubConfigInput = {
   // No CLI builds: CliRoutes.test.ts gives its own.
   cliDir: "/nonexistent/kndl/cli",
 }
+
+/**
+ * Sessions, given a database, with the McpServers it asks which Installations its Sessions' Repos
+ * have on, and what that needs, as baseConfig has them: no secrets key.
+ */
+export const SessionsTest = Sessions.layer.pipe(
+  Layer.provide(McpServers.layer),
+  Layer.provide(McpServerOAuth.layer),
+  Layer.provide(Secrets.layer),
+  Layer.provide(HubConfig.layerFrom(baseConfig)),
+)
 
 /** The Hub's stores and services, and its database, which tests can reach into. */
 export type Services = Layer.Success<typeof HubServices> | SqlClient.SqlClient | HubVersion

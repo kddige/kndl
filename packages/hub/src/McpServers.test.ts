@@ -20,7 +20,7 @@ import {
 import { Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
-import { installationsDiffer, installationsOn, McpServers } from "./McpServers.ts"
+import { installationsDiffer, McpServers } from "./McpServers.ts"
 import { McpServerSources } from "./McpServerSources.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import { SignIns } from "./SignIns.ts"
@@ -561,8 +561,8 @@ async function addFromGit(web: Connection<Web>, gitUrl: string) {
 const forSession = (hub: TestHub, on: string) =>
   hub.run(
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient
-      return (yield* installationsOn(sql, [on])).get(repoKey(on)) ?? []
+      const mcpServers = yield* McpServers
+      return (yield* mcpServers.installationsOn([on])).get(repoKey(on)) ?? []
     }),
   )
 

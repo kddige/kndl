@@ -21,7 +21,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import type { Fragment } from "effect/sql/Statement"
-import { installationsDiffer, installationsOn } from "./McpServers.ts"
+import { installationsDiffer, McpServers } from "./McpServers.ts"
 
 /** A Session to record, as CreateSession makes it. */
 export interface NewSession {
@@ -189,13 +189,19 @@ const toSummary = (
   })
 
 /**
- * The Installations a row says the Session's Claude Code last started with (ADR 0020), none if it
- * never started since MCP servers came; and whether its Repo's, `installations`, changed since. An
- * Archived Session's don't: it starts again only once restored.
+ * The Installations a Session's Claude Code last started with (ADR 0020), as its row's
+ * `mcp_servers` holds them: none if it never started since MCP servers came.
+ */
+const startedWithOf = (mcpServers: string | null): ReadonlyArray<SessionInstallation> =>
+  mcpServers === null ? [] : Option.getOrElse(decodeInstallations(mcpServers), () => [])
+
+/**
+ * The Installations a row says the Session's Claude Code last started with, and whether its
+ * Repo's, `installations`, changed since. An Archived Session's don't: it starts again only once
+ * restored.
  */
 const mcpServersOf = (row: SessionRow, installations: ReadonlyArray<SessionInstallation>) => {
-  const recorded =
-    row.mcpServers === null ? [] : Option.getOrElse(decodeInstallations(row.mcpServers), () => [])
+  const recorded = startedWithOf(row.mcpServers)
   return {
     ...(recorded.length > 0 && { mcpServers: recorded }),
     ...(row.state !== "Archived" &&
@@ -229,6 +235,19 @@ export class Sessions extends Context.Service<
     readonly listByRunner: (
       runnerId: RunnerId,
     ) => Effect.Effect<ReadonlyArray<SessionSummary>, SqlError>
+    /**
+     * What the Gateway checks a request against (ADR 0020): the Session's Repo, its state, and the
+     * Installations its Claude Code last started with. Unlike `get`, it doesn't ask McpServers
+     * for its Repo's now, which the Gateway asks itself.
+     */
+    readonly startedWith: (id: SessionId) => Effect.Effect<
+      Option.Option<{
+        readonly repo: string
+        readonly state: SessionState
+        readonly mcpServers: ReadonlyArray<SessionInstallation>
+      }>,
+      SqlError
+    >
     /** Records a subagent the Session's main loop started, Running. */
     readonly agentStarted: (id: SessionId, agent: NewAgent) => Effect.Effect<void, SqlError>
     /** The subagent's status, or none if the Session never started it. */
@@ -335,6 +354,8 @@ export class Sessions extends Context.Service<
     Sessions,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
+      // Which Installations are on for a Repo is McpServers' to say (ADR 0020).
+      const mcpServers = yield* McpServers
 
       /** The Running and Interrupted subagents of the Sessions `ids`, by Session. */
       const activeAgents = Effect.fn("Sessions.activeAgents")(function* (
@@ -397,7 +418,9 @@ export class Sessions extends Context.Service<
         const rows = yield* selectRows(where)
         if (rows.length === 0) return []
         const agents = yield* activeAgents(rows.map((row) => row.id))
-        const installations = yield* installationsOn(sql, [...new Set(rows.map((row) => row.repo))])
+        const installations = yield* mcpServers.installationsOn([
+          ...new Set(rows.map((row) => row.repo)),
+        ])
         return rows.map((row) =>
           toSummary(row, agents.get(row.id), installations.get(repoKey(row.repo))),
         )
@@ -421,6 +444,19 @@ export class Sessions extends Context.Service<
           )
         `
         return Option.getOrThrow(yield* get(session.id))
+      })
+
+      const startedWith = Effect.fn("Sessions.startedWith")(function* (id: SessionId) {
+        const rows = yield* sql<{
+          readonly repo: string
+          readonly state: string
+          readonly mcpServers: string | null
+        }>`SELECT repo, state, mcp_servers AS mcpServers FROM sessions WHERE id = ${id}`
+        return Option.map(Option.fromNullishOr(rows[0]), (row) => ({
+          repo: row.repo,
+          state: decodeState(row.state),
+          mcpServers: startedWithOf(row.mcpServers),
+        }))
       })
 
       const list = select(sql``).pipe(Effect.withSpan("Sessions.list"))
@@ -649,6 +685,7 @@ export class Sessions extends Context.Service<
         get,
         list,
         listByRunner,
+        startedWith,
         agentStarted,
         agentStatus,
         setAgentStatus,

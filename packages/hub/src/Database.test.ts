@@ -12,6 +12,7 @@ import { PromptQueue } from "./PromptQueue.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { Sessions } from "./Sessions.ts"
 import { SignIns } from "./SignIns.ts"
+import { SessionsTest } from "./testSupport.ts"
 
 const dirs: Array<string> = []
 
@@ -611,7 +612,7 @@ describe("migration 0013, Session names", () => {
         yield* sessions.setName(id, "Health check")
         const named = Option.getOrThrow(yield* sessions.get(id))
         return { before: [before.workBranch, before.name], named: named.name }
-      }).pipe(Effect.provide(Sessions.layer)),
+      }).pipe(Effect.provide(SessionsTest)),
     )
     expect(after).toEqual({ before: ["claude/s-1", undefined], named: "Health check" })
   })
@@ -702,7 +703,7 @@ describe("migration 0017, subagents", () => {
           parent: yield* senders("s-1"),
           child: yield* senders("s-2"),
         }
-      }).pipe(Effect.provide([Sessions.layer, PromptQueue.layer, SessionLog.layer])),
+      }).pipe(Effect.provide([SessionsTest, PromptQueue.layer, SessionLog.layer])),
     )
     expect(after).toEqual({
       sessions: [
@@ -751,7 +752,7 @@ describe("migration 0017, subagents", () => {
           agents: summary.agents,
           done: yield* sessions.agentStatus(id, AgentId.make("a-2")),
         }
-      }).pipe(Effect.provide(Sessions.layer)),
+      }).pipe(Effect.provide(SessionsTest)),
     )
     expect(listed).toEqual({
       unknown: false,
@@ -797,7 +798,7 @@ describe("migration 0018, Keep awake", () => {
         const old = Option.getOrThrow(yield* sessions.get(id))
         yield* sessions.setKeepAwake(id, { by: ParticipantId.make("p-2"), at: 5 })
         return old.keepAwake
-      }).pipe(Effect.provide(Sessions.layer)),
+      }).pipe(Effect.provide(SessionsTest)),
     )
     expect(before).toBeUndefined()
 
@@ -810,7 +811,7 @@ describe("migration 0018, Keep awake", () => {
         yield* sessions.setKeepAwake(id, null)
         const off = Option.getOrThrow(yield* sessions.get(id)).keepAwake
         return { on, off }
-      }).pipe(Effect.provide(Sessions.layer)),
+      }).pipe(Effect.provide(SessionsTest)),
     )
     expect(after).toEqual({
       on: {
@@ -916,7 +917,7 @@ describe("migration 0020, Repo names ignoring case", () => {
           environments: yield* sql`SELECT repo, version FROM environments ORDER BY repo`,
           environment: session.environment,
         }
-      }).pipe(Effect.provide(Sessions.layer)),
+      }).pipe(Effect.provide(SessionsTest)),
     )
     expect(after).toEqual({
       environments: [
@@ -963,7 +964,7 @@ describe("migration 0015, Session models", () => {
           before: [before.model, before.effort, before.modelPending],
           set: [set.model, set.effort, set.modelPending],
         }
-      }).pipe(Effect.provide(Sessions.layer)),
+      }).pipe(Effect.provide(SessionsTest)),
     )
     expect(after).toEqual({
       before: [undefined, undefined, undefined],

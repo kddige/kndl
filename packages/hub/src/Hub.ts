@@ -63,7 +63,14 @@ export const HubRoutes = Layer.mergeAll(
  */
 export const HubServices = SessionRelay.layer.pipe(
   Layer.provideMerge(
-    Layer.mergeAll(SessionGit.layer, RepoAccess.layer, PermissionDrift.layer, Members.layer),
+    Layer.mergeAll(
+      SessionGit.layer,
+      RepoAccess.layer,
+      PermissionDrift.layer,
+      Members.layer,
+      // Above McpServers, which says which Installations a Session's Repo has on now.
+      Sessions.layer,
+    ),
   ),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -72,7 +79,6 @@ export const HubServices = SessionRelay.layer.pipe(
       ModTokens.layer,
       CliTokens.layer,
       ModOutbox.layer,
-      Sessions.layer,
       SessionLog.layer,
       PromptQueue.layer,
       Runners.layer,

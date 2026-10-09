@@ -432,6 +432,14 @@ export class McpServers extends Context.Service<
       by: ParticipantId,
     ) => Effect.Effect<McpServersChanged, McpServerRefused | SqlError>
     /**
+     * The Installations on for each of the Repos, by {@link repoKey}, as a Session starting now
+     * would run with them (see `forSession`): a Repo with none has no entry. What a Session's are
+     * compared with, to say its Repo's changed since it started.
+     */
+    readonly installationsOn: (
+      repos: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyMap<string, ReadonlyArray<SessionInstallation>>, SqlError>
+    /**
      * The Installations on for the Repo, by any spelling, oldest first, as the Session starting
      * now runs with them: each with its MCP server's name, unique among them. The values they hold
      * now become the Session's, which the Gateway uses until it starts again.
@@ -1299,33 +1307,10 @@ export class McpServers extends Context.Service<
         id: InstallationId,
         session: { readonly id: SessionId; readonly repo: string },
       ) {
-        // On for the Repo as installationsFor resolves it: listing it, or global, and neither
-        // overridden by a Repo-scoped Installation of its MCP server nor turned off there (#219).
-        const rows = yield* sql<{
-          readonly url: string
-          readonly auth: string
-          readonly name: string
-        }>`
-          SELECT g.url, g.auth, i.name FROM installations i JOIN mcp_servers g ON g.id = i.mcp_server_id
-          WHERE i.id = ${id} AND (
-            EXISTS (
-              SELECT 1 FROM installation_repos r
-              WHERE r.installation_id = i.id AND r.repo = ${session.repo} COLLATE NOCASE
-            )
-            OR (
-              i.global = 1
-              AND NOT EXISTS (
-                SELECT 1 FROM installation_repos r
-                WHERE r.mcp_server_id = i.mcp_server_id AND r.repo = ${session.repo} COLLATE NOCASE
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM installation_repo_off o
-                WHERE o.installation_id = i.id AND o.repo = ${session.repo} COLLATE NOCASE
-              )
-            )
-          )
-        `
-        const row = rows[0]
+        // On for the Repo now, as a Session starting now would have it, decided where forSession's
+        // are: an Installation turned off or overridden since the Session started stops at once.
+        const on = (yield* onFor(sql, [session.repo])).get(repoKey(session.repo)) ?? []
+        const row = on.find((one) => one.id === id)
         if (row === undefined) return Option.none<GatewayTarget>()
         const auth = authOf(row.auth)
         if (auth._tag === "OAuth") {
@@ -1385,6 +1370,11 @@ export class McpServers extends Context.Service<
         return Option.some<GatewayTarget>({ _tag: "Ready", url: row.url, headers })
       })
 
+      // Not onFor's answer, on purpose: what to redact is every value a Session of the Repo may
+      // hold, not what is on now. A Session keeps the values it started with after its Repo turns
+      // a global Installation off, or a Repo-scoped one overrides it, so this takes every global
+      // one's, every one listing the Repo, and every one its Sessions started with: a superset of
+      // onFor's, where redacting too much is harmless and too little leaks a credential.
       const valuesOn = Effect.fn("McpServers.valuesOn")(function* (repo: string) {
         const rows = yield* sql<{
           readonly installationId: string
@@ -1481,6 +1471,7 @@ export class McpServers extends Context.Service<
         connectInstallation,
         checkConnector,
         disconnectInstallation,
+        installationsOn: (repos) => installationsOn(sql, repos),
         forSession,
         gatewayTarget,
         valuesOn,
@@ -1490,30 +1481,36 @@ export class McpServers extends Context.Service<
   )
 }
 
+/** An Installation on for a Repo, as {@link onFor} reads it with its MCP server. */
+interface OnRow {
+  readonly repo: string
+  readonly id: string
+  readonly name: string
+  readonly global: number
+  readonly mcpServerId: string
+  readonly mcpServerName: string
+  readonly url: string
+  readonly auth: string
+  readonly version: string | null
+  readonly pinnedCommit: string | null
+}
+
 /**
- * The Installations on for each of the Repos, by any spelling, as a Session starting now runs
- * with them: by {@link repoKey}, oldest first, each with its MCP server's name, unique in its Repo,
- * and when each value it holds was set. A global one is on in each, unless overridden or turned
- * off there, as {@link installationsFor} resolves it (#219).
+ * The one place the Hub decides which Installations are on for a Repo (ADR 0020, #219): for each
+ * of the Repos, by {@link repoKey}, oldest first. A Repo-scoped one is on where it lists the Repo,
+ * by any spelling; a global one is on in each, unless overridden or turned off there, as
+ * {@link installationsFor} resolves it. A Session's start and the Gateway's check both use it.
  */
-export const installationsOn = Effect.fn("McpServers.installationsOn")(function* (
+const onFor = Effect.fn("McpServers.onFor")(function* (
   sql: SqlClient.SqlClient,
   repos: ReadonlyArray<string>,
 ) {
-  const byRepo = new Map<string, Array<SessionInstallation>>()
+  const byRepo = new Map<string, Array<OnRow>>()
   if (repos.length === 0) return byRepo
   // Each Repo-scoped Installation once for each of the Repos it lists, and each global one once.
-  const candidates = yield* sql<{
-    readonly repo: string | null
-    readonly id: string
-    readonly name: string
-    readonly global: number
-    readonly mcpServerId: string
-    readonly mcpServerName: string
-    readonly version: string | null
-    readonly pinnedCommit: string | null
-  }>`
+  const candidates = yield* sql<Omit<OnRow, "repo"> & { readonly repo: string | null }>`
     SELECT r.repo, i.id, i.name, i.global, g.id AS mcpServerId, g.name AS mcpServerName,
+      g.url, g.auth,
       json_extract(g.package, '$.version') AS version, json_extract(g.package, '$.commit') AS pinnedCommit
     FROM installations i JOIN mcp_servers g ON g.id = i.mcp_server_id
       LEFT JOIN installation_repos r ON r.installation_id = i.id
@@ -1527,9 +1524,8 @@ export const installationsOn = Effect.fn("McpServers.installationsOn")(function*
         WHERE repo COLLATE NOCASE IN ${sql.in(repos)}
       `
     : []
-  const rows: Array<(typeof candidates)[number] & { readonly repo: string }> = []
   const asked = new Map(repos.map((repo) => [repoKey(repo), repo]))
-  for (const repo of asked.values()) {
+  for (const [key, repo] of asked) {
     const resolved = installationsFor(
       candidates
         .filter((row) => row.global === 1 || sameRepo(row.repo ?? "", repo))
@@ -1542,10 +1538,25 @@ export const installationsOn = Effect.fn("McpServers.installationsOn")(function*
         })),
       repo,
     )
-    for (const { installation, source } of resolved) {
-      if (isOn(source)) rows.push({ ...installation.row, repo })
-    }
+    const on = resolved.flatMap(({ installation, source }) =>
+      isOn(source) ? [{ ...installation.row, repo }] : [],
+    )
+    if (on.length > 0) byRepo.set(key, on)
   }
+  return byRepo
+})
+
+/**
+ * The Installations on for each of the Repos, by any spelling, as a Session starting now runs
+ * with them: by {@link repoKey}, oldest first, each with its MCP server's name, unique in its Repo,
+ * and when each value it holds was set; as {@link onFor} decides them.
+ */
+const installationsOn = Effect.fn("McpServers.installationsOn")(function* (
+  sql: SqlClient.SqlClient,
+  repos: ReadonlyArray<string>,
+) {
+  const byRepo = new Map<string, Array<SessionInstallation>>()
+  const rows = [...(yield* onFor(sql, repos)).values()].flat()
   const values =
     rows.length === 0
       ? []
