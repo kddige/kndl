@@ -176,25 +176,7 @@ describe("delivery", () => {
     expect(live.delivered(id, one)).toBe(false)
   })
 
-  test("a steer the mod failed or answered is over, and a failed one says who steered it", () => {
-    const live = makeLiveSessions()
-    live.steering.set(
-      id,
-      new Map([
-        [one, alice.id],
-        [two, alice.id],
-      ]),
-    )
-    live.delivering(id, PromptId.make("pr-0"))
-    expect(live.promptFailed(id, one)).toBe(alice.id)
-    // Failing a steer leaves the prompt in flight alone.
-    expect(live.delivered(id, PromptId.make("pr-0"))).toBe(true)
-    expect(live.steering.get(id)?.has(two)).toBe(true)
-    live.promptSteered(id, two)
-    expect(live.steering.has(id)).toBe(false)
-  })
-
-  test("a start or relaunch waits for the new mod's hello, which says whether it steers", () => {
+  test("a start or relaunch waits for the new mod's hello", () => {
     const live = makeLiveSessions()
     const start = { since: 1, environmentVersion: undefined, log: "", attached: false }
     live.startSent(id, start)
@@ -202,13 +184,67 @@ describe("delivery", () => {
     expect(live.starts.get(id)).toBe(start)
     live.modHello(id, true)
     expect(live.starting.has(id)).toBe(false)
-    expect(live.steers.has(id)).toBe(true)
-
-    live.steering.set(id, new Map([[one, alice.id]]))
     live.relaunched(id)
     expect(live.starting.has(id)).toBe(true)
-    expect(live.steering.has(id)).toBe(false)
+  })
+})
+
+/** A Session whose mod said it steers. */
+const steeringSession = () => {
+  const live = makeLiveSessions()
+  live.modHello(id, true)
+  return live
+}
+
+/** A Refusal saying `refusal`. */
+const refused = (refusal: string) => ({ refusal: expect.stringContaining(refusal) })
+
+describe("steering", () => {
+  const one = PromptId.make("pr-1")
+  const two = PromptId.make("pr-2")
+  const steering = { by: alice.id, turnRunning: true, queued: true }
+
+  test("hands a queued prompt to the running Turn once, until the mod answers", () => {
+    const live = steeringSession()
+    expect(live.steer(id, { ...steering, promptId: one })).toBe("ok")
+    expect(live.steer(id, { ...steering, promptId: one })).toBe("already")
+    expect(live.cancelRefusal(id, one)).toEqual({
+      refusal: "The prompt is being handed to the running Turn.",
+    })
+    expect(live.cancelRefusal(id, two)).toBeUndefined()
+    live.promptSteered(id, one)
+    expect(live.cancelRefusal(id, one)).toBeUndefined()
+    expect(live.steer(id, { ...steering, promptId: one })).toBe("ok")
+  })
+
+  test("a steer the mod failed is over, and says who steered it, leaving the prompt in flight", () => {
+    const live = steeringSession()
+    live.delivering(id, two)
+    expect(live.steer(id, { ...steering, promptId: one })).toBe("ok")
+    expect(live.promptFailed(id, one)).toBe(alice.id)
+    expect(live.delivered(id, two)).toBe(true)
+    expect(live.cancelRefusal(id, one)).toBeUndefined()
+  })
+
+  test("is refused without a running Turn, for a prompt delivered or not queued, and by an old mod", () => {
+    const live = steeringSession()
+    expect(live.steer(id, { ...steering, promptId: one, turnRunning: false })).toEqual(
+      refused("No Turn is running"),
+    )
+    live.delivering(id, one)
+    expect(live.steer(id, { ...steering, promptId: one })).toEqual(refused("already delivered"))
+    expect(live.cancelRefusal(id, one)).toEqual(refused("already delivered"))
+    expect(live.steer(id, { ...steering, promptId: two, queued: false })).toEqual(
+      refused("not in the Prompt queue"),
+    )
     live.modHello(id, false)
-    expect(live.steers.has(id)).toBe(false)
+    expect(live.steer(id, { ...steering, promptId: two })).toEqual(
+      refused("a mod from before steering"),
+    )
+    // A relaunch's new mod hasn't said whether it steers: its old one's steers are dropped.
+    live.modHello(id, true)
+    expect(live.steer(id, { ...steering, promptId: two })).toBe("ok")
+    live.relaunched(id)
+    expect(live.cancelRefusal(id, two)).toBeUndefined()
   })
 })

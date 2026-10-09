@@ -2459,16 +2459,9 @@ export class SessionRelay extends Context.Service<
             case "CancelPrompt": {
               const { sessionId, promptId } = message
               if (Option.isNone(yield* sessionFor(message))) return
-              if (live.delivered(sessionId, promptId)) {
-                return refuse(message, "The prompt was already delivered to Claude Code.", {
-                  sessionId,
-                })
-              }
-              if (live.steering.get(sessionId)?.has(promptId) === true) {
-                return refuse(message, "The prompt is being handed to the running Turn.", {
-                  sessionId,
-                })
-              }
+              const cantCancel = live.cancelRefusal(sessionId, promptId)
+              if (cantCancel !== undefined)
+                return refuse(message, cantCancel.refusal, { sessionId })
               const removed = yield* prompts.remove(sessionId, promptId)
               if (Option.isNone(removed)) {
                 return refuse(message, "The prompt is not in the Prompt queue.", { sessionId })
@@ -2481,28 +2474,18 @@ export class SessionRelay extends Context.Service<
               const { sessionId, promptId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              const why = (text: string) => refuse(message, text, { sessionId })
-              if (
-                session.value.state !== "Active" ||
-                session.value.currentTurn === null ||
-                live.stopping.has(sessionId)
-              ) {
-                return why("No Turn is running to steer the prompt into: it goes next.")
-              }
-              if (live.delivered(sessionId, promptId)) {
-                return why("The prompt was already delivered to Claude Code.")
-              }
-              if (live.steering.get(sessionId)?.has(promptId) === true) return
-              if (!live.steers.has(sessionId)) {
-                return why(
-                  "This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.",
-                )
-              }
               const prompt = (yield* prompts.list(sessionId)).find(({ id }) => id === promptId)
-              if (prompt === undefined) return why("The prompt is not in the Prompt queue.")
-              // It stays in its place until the mod says it joined the Turn.
-              const steered = live.steering.get(sessionId) ?? new Map<PromptId, ParticipantId>()
-              live.steering.set(sessionId, steered.set(promptId, you.id))
+              const steered = live.steer(sessionId, {
+                promptId,
+                by: you.id,
+                turnRunning: session.value.state === "Active" && session.value.currentTurn !== null,
+                queued: prompt !== undefined,
+              })
+              if (typeof steered === "object") {
+                return refuse(message, steered.refusal, { sessionId })
+              }
+              // It keeps its place in the queue until the mod says it joined the Turn.
+              if (steered === "already" || prompt === undefined) return
               yield* outbox.enqueue(
                 sessionId,
                 DeliverIntoTurn.make({

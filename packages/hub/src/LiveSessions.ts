@@ -94,6 +94,11 @@ export interface SessionSet {
   readonly delete: (id: SessionId) => boolean
 }
 
+/** Why a command is refused, as said to whoever sent it. */
+export interface Refusal {
+  readonly refusal: string
+}
+
 /** How a Session's live state ends: see the top of this file. */
 export type SessionEnd =
   | "ClaudeGone"
@@ -196,7 +201,6 @@ export interface LiveSessions extends Pick<
   Pieces,
   | "inFlight"
   | "steering"
-  | "steers"
   | "starting"
   | "stopping"
   | "restarting"
@@ -238,6 +242,26 @@ export interface LiveSessions extends Pick<
   readonly relaunched: (id: SessionId) => void
   /** The Session's mod said hello, saying whether it steers (#195): prompts may go to it. */
   readonly modHello: (id: SessionId, steers: boolean) => void
+
+  // ── Steering (ADR 0018) ──
+
+  /**
+   * Hands the queued prompt to the running Turn, if it can be: "ok", and the mod is to be sent
+   * the DeliverIntoTurn; "already", if it is on its way into the Turn, and nothing is to be done;
+   * or why not. `turnRunning` is whether the Session is Active with a Turn; one going to sleep
+   * takes no steer. `queued` is whether the prompt is in the Session's Prompt queue.
+   */
+  readonly steer: (
+    id: SessionId,
+    steer: {
+      readonly promptId: PromptId
+      readonly by: ParticipantId
+      readonly turnRunning: boolean
+      readonly queued: boolean
+    },
+  ) => "ok" | "already" | Refusal
+  /** Why the queued prompt can't be cancelled, if it can't: it is on its way to Claude Code. */
+  readonly cancelRefusal: (id: SessionId, promptId: PromptId) => Refusal | undefined
 
   /** The Session's live state ended `how`: what that ends is cleared (see `clearedWhen`). */
   readonly ended: (id: SessionId, how: SessionEnd) => void
@@ -405,6 +429,35 @@ export const makeLiveSessions = (): LiveSessions => {
       if (steers) pieces.steers.add(id)
       else pieces.steers.delete(id)
       pieces.starting.delete(id)
+    },
+    steer: (id, { promptId, by, turnRunning, queued }) => {
+      if (!turnRunning || pieces.stopping.has(id)) {
+        return { refusal: "No Turn is running to steer the prompt into: it goes next." }
+      }
+      if (pieces.inFlight.get(id) === promptId) {
+        return { refusal: "The prompt was already delivered to Claude Code." }
+      }
+      if (pieces.steering.get(id)?.has(promptId) === true) return "already"
+      if (!pieces.steers.has(id)) {
+        return {
+          refusal:
+            "This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.",
+        }
+      }
+      if (!queued) return { refusal: "The prompt is not in the Prompt queue." }
+      // It stays in its place until the mod says it joined the Turn.
+      const steered = pieces.steering.get(id) ?? new Map<PromptId, ParticipantId>()
+      pieces.steering.set(id, steered.set(promptId, by))
+      return "ok"
+    },
+    cancelRefusal: (id, promptId) => {
+      if (pieces.inFlight.get(id) === promptId) {
+        return { refusal: "The prompt was already delivered to Claude Code." }
+      }
+      if (pieces.steering.get(id)?.has(promptId) === true) {
+        return { refusal: "The prompt is being handed to the running Turn." }
+      }
+      return undefined
     },
     ended: (id, how) => {
       for (const piece of clearedWhen[how]) pieces[piece].delete(id)
