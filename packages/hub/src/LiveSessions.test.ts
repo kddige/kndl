@@ -23,7 +23,7 @@ import { needlesOf, StreamRedactor } from "./Redaction.ts"
 
 const id = SessionId.make("s-ended")
 const other = SessionId.make("s-other")
-const alice = { id: ParticipantId.make("p-alice"), login: "alice", name: "Alice", avatarUrl: "" }
+const alice = { id: ParticipantId.make("dev:alice"), login: "alice", name: "alice" }
 const toolCallId = ToolCallId.make("tc-1")
 const turnId = TurnId.make("t-1")
 
@@ -451,5 +451,76 @@ describe("what is shown of a Session", () => {
     live.stateChanged(id, "Asleep", { message: "Idle" })
     live.stateChanged(id, "Active", { message: "Woken" })
     expect(live.view(id).asleepWhy).toEqual({ message: "Idle" })
+  })
+})
+
+describe("idleness", () => {
+  test("a Session is idle from the first check that finds it so, until it is seen busy", () => {
+    const live = makeLiveSessions()
+    expect(live.idleSince(id, 10)).toBeUndefined()
+    expect(live.idleSince(id, 20)).toBe(10)
+    live.seenBusy(id, 30)
+    expect(live.idleSince(id, 40)).toBe(30)
+    expect(live.idleSince(other, 40)).toBeUndefined()
+  })
+})
+
+describe("Open questions", () => {
+  const bob = { id: ParticipantId.make("dev:bob"), login: "bob", name: "bob" }
+  const pick = { toolCallId, question: "Which library?" }
+
+  test("keeps each Participant's latest pick for each question, until the question closes", () => {
+    const live = makeLiveSessions()
+    expect(live.picks(id)).toBeUndefined()
+    live.picked(id, { ...pick, participant: alice, answer: "date-fns" })
+    live.picked(id, { ...pick, participant: bob, answer: "luxon" })
+    expect(
+      live.picked(id, { ...pick, participant: alice, answer: "dayjs" }).map((p) => p.answer),
+    ).toEqual(["luxon", "dayjs"])
+    // An empty answer takes the pick back.
+    expect(live.picked(id, { ...pick, participant: bob, answer: "" }).map((p) => p.answer)).toEqual(
+      ["dayjs"],
+    )
+    expect(live.picks(id)?.toolCallId).toBe(toolCallId)
+
+    const closed = QuestionClosed.make({ turnId, toolCallId, outcome: { _tag: "Cancelled" } })
+    live.questionClosed(id, closed)
+    expect(live.picks(id)).toBeUndefined()
+    expect(live.closedQuestion(id)).toBe(closed)
+  })
+
+  test("a new question starts with no picks, and picks for another question are dropped", () => {
+    const live = makeLiveSessions()
+    live.picked(id, { ...pick, participant: alice, answer: "date-fns" })
+    live.questionAsked(id)
+    expect(live.picks(id)).toBeUndefined()
+    live.picked(id, { ...pick, participant: alice, answer: "date-fns" })
+    const next = ToolCallId.make("tc-2")
+    expect(
+      live.picked(id, { ...pick, toolCallId: next, participant: bob, answer: "luxon" }),
+    ).toHaveLength(1)
+  })
+})
+
+describe("Sandbox tokens and Installations", () => {
+  test("a Repo's Sessions' Sandbox tokens are the current one and the one before, each", () => {
+    const live = makeLiveSessions()
+    live.sandboxTokenMinted(id, "acme/web", "ghs_1")
+    live.sandboxTokenMinted(id, "acme/web", "ghs_2")
+    live.sandboxTokenMinted(id, "acme/web", "ghs_3")
+    live.sandboxTokenMinted(other, "Acme/Web", "ghs_9")
+    live.sandboxTokenMinted(SessionId.make("s-third"), "acme/api", "ghs_x")
+    expect(live.sandboxTokensOf("ACME/web")).toEqual(["ghs_2", "ghs_3", "ghs_9"])
+  })
+
+  test("an Installation's failure is news once, until it works again or says another why", () => {
+    const live = makeLiveSessions()
+    const linear = InstallationId.make("i-1")
+    expect(live.installationFailing(id, linear, "Unauthorized 401")).toBe(true)
+    expect(live.installationFailing(id, linear, "Unauthorized 401")).toBe(false)
+    expect(live.installationFailing(other, linear, "Unauthorized 401")).toBe(true)
+    expect(live.installationFailing(id, linear, "Forbidden 403")).toBe(true)
+    live.installationWorks(id, linear)
+    expect(live.installationFailing(id, linear, "Forbidden 403")).toBe(true)
   })
 })

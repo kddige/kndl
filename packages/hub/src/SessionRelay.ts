@@ -193,7 +193,6 @@ import {
   PromptQueueChanged,
   QueuedPrompt,
   QuestionClosed,
-  QuestionPick,
   QuestionPicks,
   questionClosedText,
   type RequestId,
@@ -610,7 +609,7 @@ export class SessionRelay extends Context.Service<
       const live = makeLiveSessions()
 
       const markBusy = (sessionId: SessionId) =>
-        Effect.map(Clock.currentTimeMillis, (now) => void live.lastBusy.set(sessionId, now))
+        Effect.map(Clock.currentTimeMillis, (now) => live.seenBusy(sessionId, now))
 
       // ── Sending ──────────────────────────────────────────────────────────
 
@@ -856,18 +855,9 @@ export class SessionRelay extends Context.Service<
        * under the lock, never inside one (see LiveSessions).
        */
       const sandboxTokenMinted = (session: SessionSummary, token: string) => {
-        const before = live.sandboxTokens.get(session.id)?.tokens ?? []
-        live.sandboxTokens.set(session.id, {
-          repo: session.repo,
-          tokens: [...before.slice(-1), token],
-        })
+        live.sandboxTokenMinted(session.id, session.repo, token)
         needlesByRepo.delete(session.repo)
       }
-
-      const tokensOfRepo = (repo: string) =>
-        [...live.sandboxTokens.values()].flatMap((known) =>
-          sameRepo(known.repo, repo) ? known.tokens : [],
-        )
 
       const needlesFor = Effect.fn("SessionRelay.needlesFor")(function* (repo: string) {
         const known = needlesByRepo.get(repo)
@@ -895,7 +885,7 @@ export class SessionRelay extends Context.Service<
         if (Option.isNone(values)) return everything
         const needles = needlesOf([
           ...values.value.map(Redacted.value),
-          ...tokensOfRepo(repo),
+          ...live.sandboxTokensOf(repo),
           ...claudeCredentials.values(),
         ])
         needlesByRepo.set(repo, needles)
@@ -1306,11 +1296,8 @@ export class SessionRelay extends Context.Service<
         failure: InstallationFailure,
         after: string,
       ) {
-        const noted = live.installationTrouble.get(sessionId) ?? new Map<InstallationId, string>()
-        live.installationTrouble.set(sessionId, noted)
         const why = `${failure.reason} ${failure.status ?? ""}`
-        if (noted.get(failure.installationId) === why) return
-        noted.set(failure.installationId, why)
+        if (!live.installationFailing(sessionId, failure.installationId, why)) return
         yield* logEvent(
           sessionId,
           SandboxNoted.make({
@@ -1451,9 +1438,8 @@ export class SessionRelay extends Context.Service<
         )
 
       // Off the lock, as the Gateway calls it, and synchronous (see LiveSessions).
-      const installationWorks = (sessionId: SessionId, installationId: InstallationId) => {
-        live.installationTrouble.get(sessionId)?.delete(installationId)
-      }
+      const installationWorks = (sessionId: SessionId, installationId: InstallationId) =>
+        live.installationWorks(sessionId, installationId)
 
       /** See the service (#217). */
       const finishMcpServerConnect = (
@@ -1726,12 +1712,11 @@ export class SessionRelay extends Context.Service<
         const sleepAfter = Duration.toMillis(config.sleepAfter)
         for (const session of yield* sessions.list) {
           if (!(yield* isIdle(session))) {
-            live.lastBusy.set(session.id, now)
+            live.seenBusy(session.id, now)
             continue
           }
-          const since = live.lastBusy.get(session.id)
-          if (since === undefined) live.lastBusy.set(session.id, now)
-          else if (now - since >= sleepAfter) {
+          const since = live.idleSince(session.id, now)
+          if (since !== undefined && now - since >= sleepAfter) {
             yield* putToSleep(session, {
               message: `Idle for ${Duration.format(config.sleepAfter)}`,
             })
@@ -2170,7 +2155,7 @@ export class SessionRelay extends Context.Service<
               peer.send(
                 PromptQueueChanged.make({ sessionId, queue: yield* prompts.list(sessionId) }),
               )
-              const picked = live.questionPicks.get(sessionId)
+              const picked = live.picks(sessionId)
               if (picked !== undefined && picked.picks.length > 0) {
                 peer.send(QuestionPicks.make({ sessionId, ...picked }))
               }
@@ -2577,22 +2562,12 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return
               // A pick for a question that has closed meanwhile is moot.
               if (session.value.openQuestion?.toolCallId !== toolCallId) return
-              const before = live.questionPicks.get(sessionId)
-              const others = (before?.toolCallId === toolCallId ? before.picks : []).filter(
-                (pick) => pick.participant.id !== you.id || pick.question !== message.question,
-              )
-              const picks =
-                message.answer === ""
-                  ? others
-                  : [
-                      ...others,
-                      QuestionPick.make({
-                        participant: you,
-                        question: message.question,
-                        answer: message.answer,
-                      }),
-                    ]
-              live.questionPicks.set(sessionId, { toolCallId, picks })
+              const picks = live.picked(sessionId, {
+                toolCallId,
+                participant: you,
+                question: message.question,
+                answer: message.answer,
+              })
               toJoined(sessionId, QuestionPicks.make({ sessionId, toolCallId, picks }))
               return
             }
@@ -3399,7 +3374,7 @@ export class SessionRelay extends Context.Service<
 
         if (event._tag === "AnswerFailed") {
           // The question is as it was: closed. Told to whoever sent the answer.
-          const known = live.closedQuestions.get(sessionId)
+          const known = live.closedQuestion(sessionId)
           return toWeb(
             CommandFailed.make({
               command: "AnswerQuestion",
@@ -3431,7 +3406,7 @@ export class SessionRelay extends Context.Service<
               askedAt: yield* Clock.currentTimeMillis,
             }),
           )
-          live.questionPicks.delete(sessionId)
+          live.questionAsked(sessionId)
           return yield* sessionUpdated(sessionId)
         }
 
@@ -3492,11 +3467,10 @@ export class SessionRelay extends Context.Service<
       ) {
         yield* logEvent(sessionId, closed)
         const needles = yield* needlesForSession(sessionId)
-        live.closedQuestions.set(sessionId, {
+        live.questionClosed(sessionId, {
           ...closed,
           outcome: redactOutcome(needles, closed.outcome),
         })
-        live.questionPicks.delete(sessionId)
         yield* sessions.setOpenQuestion(sessionId, null)
       })
 
@@ -3522,7 +3496,7 @@ export class SessionRelay extends Context.Service<
 
       /** Why an answer to a question that isn't open is refused: how it closed, if it did. */
       const closedText = (sessionId: SessionId, toolCallId: ToolCallId): string => {
-        const closed = live.closedQuestions.get(sessionId)
+        const closed = live.closedQuestion(sessionId)
         return closed?.toolCallId === toolCallId
           ? `${questionClosedText(closed, true)}.`
           : "The question is no longer open."

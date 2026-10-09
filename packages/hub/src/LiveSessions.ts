@@ -12,22 +12,23 @@
 //
 // Each way says, in `clearedWhen`, why it keeps what it keeps.
 
-import type {
-  EnvironmentVersion,
-  InstallationFailure,
-  InstallationId,
-  OpenPort,
-  Participant,
-  ParticipantId,
-  PromptId,
-  QuestionClosed,
+import {
+  type EnvironmentVersion,
+  type InstallationFailure,
+  type InstallationId,
+  type OpenPort,
+  type Participant,
+  type ParticipantId,
+  type PromptId,
+  type QuestionClosed,
   QuestionPick,
-  SessionId,
-  SessionRestart,
-  SessionState,
-  TerminalFrame,
-  TextDelta,
-  ToolCallId,
+  type SessionId,
+  type SessionRestart,
+  type SessionState,
+  sameRepo,
+  type TerminalFrame,
+  type TextDelta,
+  type ToolCallId,
 } from "@kndl/protocol"
 import type { StreamRedactor } from "./Redaction.ts"
 
@@ -226,19 +227,10 @@ type Piece = keyof Pieces
  * Each Session's live state. Only the Session relay's lock (`serialized`) reads and writes it, so
  * nothing changes between a check and the change it decides; it is synchronous, so a write never
  * waits. Two writes are made off the lock, each synchronous, so neither lands inside another's
- * check: `sandboxTokens.set`, as a GitRequest's answer mints a Sandbox token (it waited on GitHub),
- * and deleting from `installationTrouble`'s inner map, as the Gateway says an Installation works.
+ * check: `sandboxTokenMinted`, as a GitRequest's answer mints a Sandbox token (it waited on
+ * GitHub), and `installationWorks`, as the Gateway says an Installation works.
  */
-export interface LiveSessions extends Pick<
-  Pieces,
-  | "installationTrouble"
-  | "lastBusy"
-  | "questionPicks"
-  | "closedQuestions"
-  | "sandboxTokens"
-  | "textStreams"
-  | "terminalStreams"
-> {
+export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStreams"> {
   // ── Delivery: one prompt at a time, from the Prompt queue to the mod ──
 
   /** The mod was sent the prompt (DeliverPrompt): it is in flight until a Turn starts or it fails. */
@@ -356,6 +348,61 @@ export interface LiveSessions extends Pick<
    * to run, and an Asleep one says why to its forwards.
    */
   readonly stateChanged: (id: SessionId, state: SessionState, why: Why) => void
+
+  // ── Idleness ──
+
+  /** It was seen busy at `now`: an event logged, its queue or presence changing. */
+  readonly seenBusy: (id: SessionId, now: number) => void
+  /**
+   * When it was last seen busy, as an idle check at `now` asks. One never seen busy is from now,
+   * and `undefined` is returned: it is idle from this check on.
+   */
+  readonly idleSince: (id: SessionId, now: number) => number | undefined
+
+  // ── Open questions (#193) ──
+
+  /** What the Participants have picked for its Open question so far, if any. */
+  readonly picks: (id: SessionId) => Picks | undefined
+  /**
+   * A Participant picked `answer` to one of the Open question's questions, or took their pick
+   * back with an empty one: every pick for it now.
+   */
+  readonly picked: (
+    id: SessionId,
+    pick: {
+      readonly toolCallId: ToolCallId
+      readonly participant: Participant
+      readonly question: string
+      readonly answer: string
+    },
+  ) => ReadonlyArray<QuestionPick>
+  /** Claude asked a new question: no one has picked anything for it. */
+  readonly questionAsked: (id: SessionId) => void
+  /** Its Open question closed, redacted: remembered, to tell an answer that comes after. */
+  readonly questionClosed: (id: SessionId, closed: QuestionClosed) => void
+  /** How its last Open question closed, if one did. */
+  readonly closedQuestion: (id: SessionId) => QuestionClosed | undefined
+
+  // ── Sandbox tokens (#73) and Installations (#216) ──
+
+  /**
+   * A Sandbox token was minted for the Session, of `repo`: it and the one before it, which a
+   * process may still hold, are redacted from now on. Called off the lock.
+   */
+  readonly sandboxTokenMinted: (id: SessionId, repo: string, token: string) => void
+  /** The Sandbox tokens of the Repo's Sessions, any spelling of its name. */
+  readonly sandboxTokensOf: (repo: string) => ReadonlyArray<string>
+  /**
+   * The Installation fails the Session, for `why`: whether that is news, to be noted in the
+   * Session, rather than what it noted last since the Installation last worked.
+   */
+  readonly installationFailing: (
+    id: SessionId,
+    installationId: InstallationId,
+    why: string,
+  ) => boolean
+  /** The Installation works for the Session: a failure is news again. Called off the lock. */
+  readonly installationWorks: (id: SessionId, installationId: InstallationId) => void
 
   /** The Session's live state ended `how`: what that ends is cleared (see `clearedWhen`). */
   readonly ended: (id: SessionId, how: SessionEnd) => void
@@ -615,6 +662,47 @@ export const makeLiveSessions = (): LiveSessions => {
     stateChanged: (id, state, why) => {
       if (state !== "Active") pieces.openPorts.delete(id)
       if (state === "Asleep") pieces.asleepWhy.set(id, why)
+    },
+    seenBusy: (id, now) => pieces.lastBusy.set(id, now),
+    idleSince: (id, now) => {
+      const since = pieces.lastBusy.get(id)
+      if (since === undefined) pieces.lastBusy.set(id, now)
+      return since
+    },
+    picks: (id) => pieces.questionPicks.get(id),
+    picked: (id, { toolCallId, participant, question, answer }) => {
+      const before = pieces.questionPicks.get(id)
+      const others = (before?.toolCallId === toolCallId ? before.picks : []).filter(
+        (pick) => pick.participant.id !== participant.id || pick.question !== question,
+      )
+      const picks =
+        answer === "" ? others : [...others, QuestionPick.make({ participant, question, answer })]
+      pieces.questionPicks.set(id, { toolCallId, picks })
+      return picks
+    },
+    questionAsked: (id) => pieces.questionPicks.delete(id),
+    questionClosed: (id, closed) => {
+      pieces.closedQuestions.set(id, closed)
+      pieces.questionPicks.delete(id)
+    },
+    closedQuestion: (id) => pieces.closedQuestions.get(id),
+    sandboxTokenMinted: (id, repo, token) => {
+      const before = pieces.sandboxTokens.get(id)?.tokens ?? []
+      pieces.sandboxTokens.set(id, { repo, tokens: [...before.slice(-1), token] })
+    },
+    sandboxTokensOf: (repo) =>
+      [...pieces.sandboxTokens.values()].flatMap((known) =>
+        sameRepo(known.repo, repo) ? known.tokens : [],
+      ),
+    installationFailing: (id, installationId, why) => {
+      const noted = pieces.installationTrouble.get(id) ?? new Map<InstallationId, string>()
+      pieces.installationTrouble.set(id, noted)
+      if (noted.get(installationId) === why) return false
+      noted.set(installationId, why)
+      return true
+    },
+    installationWorks: (id, installationId) => {
+      pieces.installationTrouble.get(id)?.delete(installationId)
     },
     ended: (id, how) => {
       for (const piece of clearedWhen[how]) pieces[piece].delete(id)
