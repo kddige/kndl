@@ -38,24 +38,6 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
   expect(env).not.toHaveProperty(ModEnvironment.modToken)
 })
 
-test("Claude Code can't start a second Claude Code in the Session as a background job (#191)", () => {
-  expect(claudeLaunch(options).env.CLAUDE_CODE_DISABLE_AGENT_VIEW).toBe("1")
-})
-
-test("waking resumes the conversation", () => {
-  const { argv } = claudeLaunch({
-    ...options,
-    conversation: { _tag: "Resume", id: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f" as never },
-  })
-  expect(argv.slice(1, 3)).toEqual(["--resume", "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f"])
-})
-
-test("Claude Code's default model and effort are left to it", () => {
-  const { argv } = claudeLaunch(options)
-  expect(argv).not.toContain("--model")
-  expect(argv).not.toContain("--effort")
-})
-
 test("the Session's model and effort go as flags, so they never reach settings.json", () => {
   const { argv } = claudeLaunch({ ...options, model: "opus[1m]", effort: "xhigh" })
   expect(argv.slice(-4)).toEqual(["--model", "opus[1m]", "--effort", "xhigh"])

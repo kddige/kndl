@@ -707,7 +707,7 @@ describe("Test builds", () => {
 })
 
 describe("The login environment's probe output", () => {
-  test("takes only what is between the markers, and leaves out the shell's own entries", () => {
+  test("takes only what is between both markers, and leaves out the shell's own entries", () => {
     const output = `bash: no job control in this shell\n${loginEnvMarker}PATH=/a:/b\0EMPTY=\0EQ=a=b\0MULTI=one\ntwo\0PWD=/root\0SHLVL=1\0_=/usr/bin/cat\0BASH_FUNC_nvm%%=() {  echo\n}\0SECRET=x\0${loginEnvMarker}`
     expect(parseLoginEnv(output, new Set(["SECRET"]))).toEqual({
       PATH: "/a:/b",
@@ -715,9 +715,7 @@ describe("The login environment's probe output", () => {
       EQ: "a=b",
       MULTI: "one\ntwo",
     })
-  })
-
-  test("is nothing without both markers", () => {
+    // Nothing without both markers.
     expect(parseLoginEnv("PATH=/a\0")).toBeUndefined()
     expect(parseLoginEnv(`${loginEnvMarker}PATH=/a\0`)).toBeUndefined()
   })

@@ -19,9 +19,7 @@ describe("CBOR", () => {
     expect(hex(encodeCbor({ a: 1, b: [2, 3] }))).toBe("a26161016162820203")
     expect(hex(encodeCbor(true))).toBe("f5")
     expect(hex(encodeCbor(null))).toBe("f6")
-  })
-
-  test("leaves out keys whose value is undefined", () => {
+    // A key whose value is undefined is left out.
     expect(hex(encodeCbor({ a: 1, b: undefined }))).toBe("a1616101")
   })
 

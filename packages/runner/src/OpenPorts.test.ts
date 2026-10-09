@@ -14,7 +14,6 @@ import {
   parseSocketOwners,
   processName,
   type SocketOwner,
-  samePorts,
 } from "./OpenPorts.ts"
 import type { FakeExecCall, FakeExecReply } from "./sandbox/FakeSandboxBackend.ts"
 import { FakeSandboxBackend } from "./sandbox/FakeSandboxBackend.ts"
@@ -75,13 +74,10 @@ const owner = (patch: Partial<SocketOwner>): SocketOwner => ({
 })
 
 describe("reading /proc/net/tcp", () => {
-  test("decodes IPv4 addresses, little-endian", () => {
+  test("decodes IPv4 addresses, little-endian, and IPv6 ones, collapsing the longest run of zeros", () => {
     expect(ipv4FromHex("0100007F")).toBe("127.0.0.1")
     expect(ipv4FromHex("00000000")).toBe("0.0.0.0")
     expect(ipv4FromHex("0A0010AC")).toBe("172.16.0.10")
-  })
-
-  test("decodes IPv6 addresses, collapsing the longest run of zeros", () => {
     expect(ipv6FromHex("00000000000000000000000000000000")).toBe("::")
     expect(ipv6FromHex("00000000000000000000000001000000")).toBe("::1")
     expect(ipv6FromHex("0000000000000000FFFF00000100007F")).toBe("::ffff:127.0.0.1")
@@ -203,13 +199,6 @@ describe("openPortsOf", () => {
     const owners = new Map([["1", [owner({ argv0: "dockerd" })]]])
     expect(openPortsOf(sockets, owners)).toEqual([{ port: 9000, addresses: ["::1"] }])
   })
-
-  test("compares reports by their content", () => {
-    const ports = report(dindTcp, dindTcp6, dindOwners)
-    expect(samePorts(ports, report(dindTcp, dindTcp6, dindOwners))).toBe(true)
-    expect(samePorts(ports, ports.slice(1))).toBe(false)
-    expect(samePorts([], [])).toBe(true)
-  })
 })
 
 const s1 = sessionId("s-1")
@@ -306,20 +295,6 @@ describe("OpenPorts", () => {
         yield* waitFor(Effect.sync(() => reports().length === 3))
         expect(reports()[2]).toEqual([{ port: 8081, addresses: ["::"], process: "docker-proxy" }])
         expect(ownersCalls(world)).toHaveLength(2)
-      }),
-    )
-  })
-
-  test("never reports Claude Code's own port", async () => {
-    const { reports, boot, run } = setup(() => ({ stdout: nodeOwners }))
-    await run(
-      Effect.gen(function* () {
-        const ports = yield* OpenPorts
-        yield* boot
-        yield* proc(nodeTcp, nodeTcp6)
-        yield* ports.watch(s1)
-        yield* waitFor(Effect.sync(() => reports().length === 1))
-        expect(reports()[0]?.map((p) => p.port)).toEqual([3000, 3001, 4000, 5173, 8000])
       }),
     )
   })

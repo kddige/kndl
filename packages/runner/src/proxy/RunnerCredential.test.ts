@@ -88,7 +88,7 @@ const failureOf = <A, E extends { readonly message: string }>(effect: Effect.Eff
   Effect.runPromise(Effect.flip(effect)).then((error) => error.message)
 
 describe("parseCredentialSource", () => {
-  test("reads each form RUNNER_CLAUDE_CREDENTIAL takes", () => {
+  test("reads each form RUNNER_CLAUDE_CREDENTIAL takes, and refuses anything else", () => {
     expect(parseCredentialSource("auto")).toEqual({ _tag: "Auto" })
     expect(parseCredentialSource("none")).toEqual({ _tag: "None" })
     expect(parseCredentialSource("claude-code")).toEqual({ _tag: "ClaudeCode" })
@@ -101,9 +101,6 @@ describe("parseCredentialSource", () => {
       _tag: "File",
       path: "/etc/kndl/token",
     })
-  })
-
-  test("refuses anything else", () => {
     for (const text of ["", "keychain:", "file:", "sk-ant-oat01-FAKE", "env"])
       expect(parseCredentialSource(text)).toBeUndefined()
   })
@@ -247,26 +244,25 @@ describe("how the Hub shows it", () => {
 })
 
 describe("the plan", () => {
-  test("is RUNNER_CLAUDE_PLAN's first", async () => {
-    const { plan, read } = await planOf({
+  test("is RUNNER_CLAUDE_PLAN's, else Claude Code's config's, else its login's, else unknown", async () => {
+    const stated = await planOf({
       plan: { subscriptionType: "team" },
       claudeConfigPath: configWith("claude_max"),
     })
-    expect(plan).toEqual({ subscriptionType: "team" })
-    expect(read.from).toContain("from RUNNER_CLAUDE_PLAN")
-  })
+    expect(stated.plan).toEqual({ subscriptionType: "team" })
+    expect(stated.read.from).toContain("from RUNNER_CLAUDE_PLAN")
 
-  test("else the one in Claude Code's config", async () => {
-    const { plan } = await planOf({ claudeConfigPath: configWith("claude_max") })
-    expect(plan).toEqual({ subscriptionType: "max", rateLimitTier: "default_claude_max_20x" })
-  })
+    expect((await planOf({ claudeConfigPath: configWith("claude_max") })).plan).toEqual({
+      subscriptionType: "max",
+      rateLimitTier: "default_claude_max_20x",
+    })
 
-  test("else the one Claude Code's login records", async () => {
-    const { plan } = await planOf({}, false)
-    expect(plan).toEqual({ subscriptionType: "pro", rateLimitTier: "default_claude_ai" })
-  })
+    expect((await planOf({}, false)).plan).toEqual({
+      subscriptionType: "pro",
+      rateLimitTier: "default_claude_ai",
+    })
 
-  test("else unknown, and the log says how to state it", async () => {
+    // Unknown, and the log says how to state it.
     const fake = fakeReaders({ [DefaultKeychainService]: setupToken })
     const read = await run(credentialOf(fake.readers, { _tag: "Auto" }).describe)
     expect(read.credential._tag === "OAuthToken" && read.credential.plan).toBeUndefined()

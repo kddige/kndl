@@ -32,8 +32,10 @@ import { Sessions } from "./Sessions.ts"
 /** The most bytes from the Sandbox the Runner keeps waiting for one connection's client. */
 export const TunnelBufferCap = 8 * 1024 * 1024
 
-/** How long a client may take nothing while bytes wait for it on the Runner. */
-export const TunnelStallMs = 30_000
+/** How long a client may take nothing while bytes wait for it on the Runner, or a test's own. */
+export const TunnelStallMs = Context.Reference<number>("@kndl/runner/TunnelStallMs", {
+  defaultValue: () => 30_000,
+})
 
 export class Tunnels extends Context.Service<
   Tunnels,
@@ -92,6 +94,7 @@ export const TunnelsLive = Layer.effect(
     const hub = yield* HubLink
     const sessions = yield* Sessions
     const makeWebSocket = yield* Socket.WebSocketConstructor
+    const stallMs = yield* TunnelStallMs
     const scope = yield* Effect.scope
     /** How to close each open tunnel, for when the Runner stops. */
     const live = new Set<() => void>()
@@ -138,8 +141,8 @@ export const TunnelsLive = Layer.effect(
       const watchStall = () => {
         if (stall !== undefined || end === undefined || end.waiting === 0) return
         stall = setTimeout(
-          () => tooSlow(`The client took nothing for ${TunnelStallMs / 1000} s.`),
-          TunnelStallMs,
+          () => tooSlow(`The client took nothing for ${stallMs / 1000} s.`),
+          stallMs,
         )
       }
       const toClient = (bytes: Uint8Array): void => {

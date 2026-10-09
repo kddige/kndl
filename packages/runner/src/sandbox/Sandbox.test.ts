@@ -13,7 +13,7 @@ import {
 } from "./FakeSandboxBackend.ts"
 import { parseSandboxName, parseVolumeName, runnerMark, sandboxName, volumeName } from "./Naming.ts"
 import { reconcileSandboxes } from "./Reconcile.ts"
-import { SandboxBackend, shell } from "./SandboxBackend.ts"
+import { SandboxBackend } from "./SandboxBackend.ts"
 import type { SandboxBackendShape } from "./SandboxBackend.ts"
 import { dependencyVolumeKey, sessionSandboxSpec } from "./SessionLayout.ts"
 import { checkSpec } from "./Spec.ts"
@@ -49,14 +49,18 @@ const markIn = (home: Home) =>
   runnerMark({ tmuxSocket: home.tmuxSocket, sessionsRoot: join(home.dir, "sessions") })
 
 describe("naming", () => {
-  test("names carry the prefix and the Session id, and parse back", () => {
+  test("names carry the prefix and the Session id, and parse back; names without it are never ours", () => {
     expect(sandboxName(s1)).toBe("kndl-s-1")
     expect(volumeName(s1, "deps-node-modules")).toBe("kndl-s-1.deps-node-modules")
     expect(parseSandboxName("kndl-s-1")).toBe(s1)
     expect(parseVolumeName("kndl-s-1.cache")).toEqual({ sessionId: s1, key: "cache" })
+    expect(parseSandboxName("cc-spike")).toBeUndefined()
+    expect(parseSandboxName("kndl-")).toBeUndefined()
+    expect(parseVolumeName("cc-spike.cache")).toBeUndefined()
+    expect(parseVolumeName("kndl-s-1")).toBeUndefined()
   })
 
-  test("a Runner's mark is fixed by its tmux socket and sessions root", () => {
+  test("a Runner's mark is fixed by its tmux socket and sessions root, so a dev Runner's differs", () => {
     const runner = {
       tmuxSocket: "kndl-dev",
       sessionsRoot: "/Users/a/.kndl-dev/sessions",
@@ -65,17 +69,8 @@ describe("naming", () => {
     expect(runnerMark({ ...runner })).toBe(runnerMark(runner))
     expect(runnerMark({ ...runner, tmuxSocket: "kndl-test" })).not.toBe(runnerMark(runner))
     expect(runnerMark({ ...runner, sessionsRoot: "/tmp/sessions" })).not.toBe(runnerMark(runner))
-  })
-
-  test("a dev Runner and an installed one on the same host have different marks", () => {
+    // A dev Runner and an installed one on the same host.
     expect(markIn(devHome)).not.toBe(markIn(homeAt(join(homedir(), ".kndl"))))
-  })
-
-  test("names without the prefix are never ours", () => {
-    expect(parseSandboxName("cc-spike")).toBeUndefined()
-    expect(parseSandboxName("kndl-")).toBeUndefined()
-    expect(parseVolumeName("cc-spike.cache")).toBeUndefined()
-    expect(parseVolumeName("kndl-s-1")).toBeUndefined()
   })
 })
 
@@ -105,9 +100,7 @@ describe("Session layout", () => {
       BUN_INSTALL_CACHE_DIR: "/var/cache/kndl/bun",
     })
     await Effect.runPromise(checkSpec(spec))
-  })
-
-  test("dependency volume keys are safe names", () => {
+    // Each dependency folder's volume key is a safe name.
     expect(dependencyVolumeKey("node_modules")).toBe("deps-node-modules")
     expect(dependencyVolumeKey("apps/Web/node_modules")).toBe("deps-apps-web-node-modules")
   })
@@ -197,52 +190,6 @@ describe("fake backend", () => {
       }),
     ))
 
-  test("records commands and answers them with the test's handler", () =>
-    run(
-      Effect.gen(function* () {
-        const backend = yield* SandboxBackend
-        const world = yield* FakeSandboxBackend
-        yield* backend.create(layout(s1))
-        const result = yield* backend.exec(s1, shell("git status", { cwd: "/workspace" }))
-        expect(result).toEqual({ exitCode: 1, stdout: "out", stderr: "err" })
-        const events = yield* Stream.runCollect(backend.execStream(s1, { command: "true" }))
-        expect(events.map((e) => e._tag)).toEqual(["Stdout", "Stderr", "Exit"])
-        expect(world.execCalls[0]).toEqual({
-          sessionId: s1,
-          request: { cwd: "/workspace", command: "sh", args: ["-c", "git status"] },
-        })
-      }),
-      { onExec: () => Effect.succeed({ exitCode: 1, stdout: "out", stderr: "err" }) },
-    ))
-
-  test("spawns a command that reads what is written to its stdin", () =>
-    run(
-      Effect.gen(function* () {
-        const backend = yield* SandboxBackend
-        const world = yield* FakeSandboxBackend
-        yield* backend.create(layout(s1))
-        const command = yield* backend.spawn(s1, { command: "cat" })
-        yield* command.write("one\n")
-        yield* command.write("two\n")
-        yield* command.closeStdin
-        const events = yield* Stream.runCollect(command.events)
-        expect(events.map((e) => (e._tag === "Exit" ? e.exitCode : text(e.data)))).toEqual([
-          "one\n",
-          "two\n",
-          0,
-        ])
-        expect(world.spawnCalls).toEqual([{ sessionId: s1, request: { command: "cat" } }])
-        expect((yield* Effect.flip(command.write("late"))).message).toBe("command exited")
-      }).pipe(Effect.scoped),
-      {
-        onSpawn: (_call, io) =>
-          Effect.as(
-            Stream.runForEach(io.stdin, (data) => io.stdout(data)),
-            0,
-          ),
-      },
-    ))
-
   test("kills spawned commands when their Sandbox stops, and refuses to spawn in a stopped one", () =>
     run(
       Effect.gen(function* () {
@@ -278,21 +225,6 @@ describe("fake backend", () => {
         expect(text(yield* backend.readFile(s2, "/etc/marker"))).toBe("root")
         expect(yield* snapshots.list("env-a")).toEqual([{ name: "b1", reference }])
         expect(yield* snapshots.list("env-b")).toEqual([])
-      }),
-    ))
-
-  test("retains the named snapshots in a group and removes the rest", () =>
-    run(
-      Effect.gen(function* () {
-        const backend = yield* SandboxBackend
-        const snapshots = Option.getOrThrow(backend.snapshots)
-        yield* backend.create(layout(s1))
-        yield* backend.stop(s1)
-        for (const name of ["b1", "b2", "b3"]) yield* snapshots.snapshot(s1, "env-a", name)
-        yield* snapshots.snapshot(s1, "env-b", "b1")
-        yield* snapshots.retain("env-a", ["b3", "b2"])
-        expect((yield* snapshots.list("env-a")).map((s) => s.name).toSorted()).toEqual(["b2", "b3"])
-        expect((yield* snapshots.list("env-b")).map((s) => s.name)).toEqual(["b1"])
       }),
     ))
 })

@@ -188,6 +188,10 @@ describe("the Runner's leg", () => {
     ])
   })
 
+  test("closes a client that takes nothing for 30 s, unless a test says otherwise", () => {
+    expect(TunnelStallMs.defaultValue()).toBe(30_000)
+  })
+
   test("answers a port it can't connect to with a TunnelFailed saying why", async () => {
     const { sent, open } = await runnerTunnels(() =>
       Effect.fail(
@@ -254,7 +258,7 @@ describe.skipIf(tmuxMissing)("through the Hub and the Runner", () => {
     expect(closed.reason).toStartWith("Could not connect to port 3000: ")
   }, 30_000)
 
-  test("a WebSocket served in the Sandbox stays up for over a minute", async () => {
+  test("a WebSocket served in the Sandbox stays up past Bun's 10 s idle timeout", async () => {
     const guest = guestServer("127.0.0.1")
     const scene = await tunnelScene({
       ports: [{ port: 3000, addresses: ["127.0.0.1"], hostPort: guest.port }],
@@ -267,8 +271,9 @@ describe.skipIf(tmuxMissing)("through the Hub and the Runner", () => {
     socket.addEventListener("close", () => (closed = true))
     await new Promise((resolve) => socket.addEventListener("open", resolve))
     socket.send("hello")
-    // Quiet for over a minute, then still answering.
-    await Bun.sleep(65_000)
+    // Quiet for longer than Bun's default 10 s idle timeout, which would close a tunnel's socket
+    // on any hop that kept it (ADR 0016), then still answering.
+    await Bun.sleep(12_000)
     socket.send("still there?")
     const deadline = Date.now() + 2_000
     while (messages.length < 2 && Date.now() < deadline) await Bun.sleep(10)
@@ -276,16 +281,18 @@ describe.skipIf(tmuxMissing)("through the Hub and the Runner", () => {
     expect(closed).toBe(false)
     expect(forward.closes).toEqual([])
     socket.close()
-  }, 90_000)
+  }, 30_000)
 
   test("one stalled reader doesn't slow the others, and one that takes nothing is closed alone", async () => {
     const guest = guestServer("127.0.0.1")
+    const stallMs = 5_000
     const scene = await tunnelScene({
       ports: [{ port: 3000, addresses: ["127.0.0.1"], hostPort: guest.port }],
+      stallMs,
     })
     const url = scene.tunnelUrl(3000)
 
-    // A reader that takes nothing for 6 s, with less coming than the Runner keeps for it.
+    // A reader that takes nothing for 1 s, with less coming than the Runner keeps for it.
     const { promise: stalled, resolve: resume } = Promise.withResolvers<void>()
     const slow = openTunnel(url, scene.headers, () => stalled)
     slow.end.send(httpGet(`/n/${4 * MiB}`))
@@ -293,7 +300,7 @@ describe.skipIf(tmuxMissing)("through the Hub and the Runner", () => {
     // its cap for it.
     const flooded = openTunnel(url, scene.headers, () => new Promise(() => {}))
     flooded.end.send(httpGet(`/n/${20 * MiB}`))
-    // And one that never takes anything, with less coming: closed after TunnelStallMs.
+    // And one that never takes anything, with less coming: closed after stallMs.
     const stuck = openTunnel(url, scene.headers, () => new Promise(() => {}))
     stuck.end.send(httpGet(`/n/${3 * MiB}`))
 
@@ -309,7 +316,7 @@ describe.skipIf(tmuxMissing)("through the Hub and the Runner", () => {
         timings.push(Date.now() - t0)
       }
     }
-    await fetchFor(6_000)
+    await fetchFor(1_000)
     expect(await flooded.closed).toEqual({
       code: TunnelCloseCode.TooSlow,
       reason: "The client read too slowly: the Runner held too much for it.",
@@ -324,16 +331,16 @@ describe.skipIf(tmuxMissing)("through the Hub and the Runner", () => {
     expect(body.byteLength).toBe(4 * MiB)
     expect(isPattern(body)).toBe(true)
 
-    const [closed] = await Promise.all([stuck.closed, fetchFor(TunnelStallMs - 6_000)])
+    const [closed] = await Promise.all([stuck.closed, fetchFor(stallMs - 1_000)])
     expect(closed).toEqual({
       code: TunnelCloseCode.TooSlow,
-      reason: `The client took nothing for ${TunnelStallMs / 1000} s.`,
+      reason: `The client took nothing for ${stallMs / 1000} s.`,
     })
     // All along the others were served as quickly.
-    expect(timings.length).toBeGreaterThan(50)
+    expect(timings.length).toBeGreaterThan(10)
     expect(Math.max(...timings)).toBeLessThan(1_000)
     expect(forward.closes).toEqual([])
-  }, 60_000)
+  }, 30_000)
 
   test("a 50 MiB download doesn't delay the Session's terminal frames", async () => {
     const guest = guestServer("127.0.0.1")

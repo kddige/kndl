@@ -66,13 +66,9 @@ describe("parseModelProbe", () => {
     expect(
       parseModelProbe(modelRun("claude-haiku-4-5-20251001", "Haiku 4.5", false)),
     ).toMatchObject({ id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", effort: false })
-  })
-
-  test("takes an effort level for any model when Claude Code doesn't say", () => {
+    // Any model takes an effort level when Claude Code doesn't say.
     expect(parseModelProbe(modelRun("claude-opus-5-5", "Opus 5.5"))?.effort).toBe(true)
-  })
-
-  test("reads past lines that aren't events", () => {
+    // Lines that aren't events are read past.
     const run = `Warning: something\n${modelRun("claude-opus-5-5", "Opus 5.5", true)}`
     expect(parseModelProbe(run)?.id).toBe("claude-opus-5-5")
   })
@@ -86,16 +82,11 @@ describe("parseModelProbe", () => {
   })
 })
 
-describe("parseEfforts", () => {
-  test("reads the levels /effort lists, without auto, which is no level", () => {
-    expect(parseEfforts(effortRun)).toEqual(["low", "medium", "high", "xhigh", "max"])
-  })
-
-  test("leaves out levels the Hub doesn't know, and is empty for anything else", () => {
-    const fewer = effortRun.replace("low|medium|high|xhigh|max|auto", "low|medium|high|ultra")
-    expect(parseEfforts(fewer)).toEqual(["low", "medium", "high"])
-    expect(parseEfforts("")).toEqual([])
-  })
+test("parseEfforts reads the levels /effort lists the Hub knows, without auto, which is no level", () => {
+  expect(parseEfforts(effortRun)).toEqual(["low", "medium", "high", "xhigh", "max"])
+  const fewer = effortRun.replace("low|medium|high|xhigh|max|auto", "low|medium|high|ultra")
+  expect(parseEfforts(fewer)).toEqual(["low", "medium", "high"])
+  expect(parseEfforts("")).toEqual([])
 })
 
 const probe = (id: string, label: string, effort = true): ModelProbe => ({
@@ -135,18 +126,6 @@ describe("runnerModels", () => {
     ])
   })
 
-  test("leaves out an alias that is another's double: best and fable[1m] are fable", () => {
-    expect(models.models.filter((model) => model.id === "claude-fable-5-1")).toHaveLength(1)
-  })
-
-  test("names a 1M-context model as such when Claude Code doesn't", () => {
-    const sonnet1m = models.models.find((model) => model.alias === "sonnet[1m]")
-    expect(sonnet1m?.label).toBe("Sonnet 5.5 (1M context)")
-    expect(models.models.find((model) => model.alias === "opus[1m]")?.label).toBe(
-      "Opus 5.5 (1M context)",
-    )
-  })
-
   test("gives each its line, the default the line of the model it is, and keeps the levels", () => {
     expect(models.models[0]).toEqual({
       alias: "opus",
@@ -167,6 +146,14 @@ describe("runnerModels", () => {
       effort: true,
     })
     expect(models.efforts).toEqual(["low", "max"])
+    // An alias that is another's double is left out: best and fable[1m] are fable.
+    expect(models.models.filter((model) => model.id === "claude-fable-5-1")).toHaveLength(1)
+    // A 1M-context model is named as such when Claude Code doesn't.
+    const sonnet1m = models.models.find((model) => model.alias === "sonnet[1m]")
+    expect(sonnet1m?.label).toBe("Sonnet 5.5 (1M context)")
+    expect(models.models.find((model) => model.alias === "opus[1m]")?.label).toBe(
+      "Opus 5.5 (1M context)",
+    )
   })
 })
 
