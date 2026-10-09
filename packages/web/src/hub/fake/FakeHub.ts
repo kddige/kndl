@@ -10,7 +10,7 @@
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too. What it refuses of a Session, and how its Prompt
 // queue and Steer behave, it decides by the protocol's Session rules (SessionRules.ts), as the real
-// Hub does.
+// Hub does; HubContract.test.ts runs the same HubClient tests against both.
 
 import {
   admissionLink,
@@ -136,6 +136,8 @@ export interface FakeHubOptions {
   cliTokens?: ReadonlyArray<CliTokenInfoWire>
   /** Whether the signed-in person is the Hub's Owner (#209), who has the People page. Default true. */
   owner?: boolean
+  /** How Claude answers a prompt from the web, as a script. Default `replyTo`'s. */
+  reply?: (text: string) => ReadonlyArray<ReplyStep>
 }
 
 interface FakeSession {
@@ -306,6 +308,7 @@ export class FakeHub implements HubTransport {
   #claudeCredential: ClaudeCredentialInfoWire | null
   #cliTokens: Array<CliTokenInfoWire>
   #owner: boolean
+  readonly #reply: (text: string) => ReadonlyArray<ReplyStep>
   /** The Hub's Members (#209), the Owner first. */
   members: Array<MemberWire> = seedMembers()
   /** Invites not yet used or revoked; one may have expired. */
@@ -328,6 +331,7 @@ export class FakeHub implements HubTransport {
     this.#claudeCredential = options.claudeCredential ?? null
     this.#cliTokens = [...(options.cliTokens ?? seedCliTokens())]
     this.#owner = options.owner ?? true
+    this.#reply = options.reply ?? replyTo
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
       const log = seed.events.map((event, seq) => ({ seq, at: seed.at + seq * 1_000, event }))
@@ -978,7 +982,7 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, cantSend.refusal, message.sessionId)
           break
         }
-        this.#prompt(session, this.#you, message.text, replyTo(message.text))
+        this.#prompt(session, this.#you, message.text, this.#reply(message.text))
         break
       }
       // As the Hub does: a prompt on its way to Claude Code can't be cancelled.
@@ -1788,7 +1792,7 @@ export class FakeHub implements HubTransport {
   /** Claude Code starts a Turn from the prompt it was delivered: it leaves the queue. */
   #turnFrom(session: FakeSession, prompt: QueuedPromptWire): void {
     session.inFlight = null
-    const reply = this.#replies.get(prompt.id) ?? replyTo(prompt.text)
+    const reply = this.#replies.get(prompt.id) ?? this.#reply(prompt.text)
     this.#replies.delete(prompt.id)
     this.#runTurn(
       session,

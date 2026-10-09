@@ -3,5 +3,7 @@
   "compilerOptions": {
     "types": ["vite/client", "bun"]
   },
-  "include": ["."]
+  "include": ["."],
+  // The contract suite runs the real Hub too, which type-checks against Bun's globals, not the DOM's.
+  "exclude": ["contract"]
 }
