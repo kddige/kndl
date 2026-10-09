@@ -12,6 +12,7 @@ import {
   reduce,
   startLogLimit,
 } from "../src/hub/store.ts"
+import { buildTranscript, emptyTranscript, type Transcript } from "../src/hub/transcript.ts"
 import {
   alice,
   bob,
@@ -183,6 +184,7 @@ describe("joining and leaving", () => {
     expect(state.joined[s1]).toEqual({
       historyLoaded: false,
       log: [],
+      transcript: emptyTranscript,
       presence: [],
       queue: [],
       startLog: null,
@@ -287,6 +289,69 @@ describe("the event log", () => {
   })
 })
 
+/** A joined Session's transcript, which must be the one its whole log makes. */
+function transcriptOf(state: HubState): Transcript {
+  const session = state.joined[s1]
+  if (!session) throw new Error("not joined")
+  const { fold: _, ...transcript } = session.transcript
+  expect(transcript).toEqual(buildTranscript(session.log))
+  return transcript
+}
+
+/** The text of each Turn's text blocks. */
+const textOf = (transcript: Transcript) =>
+  transcript.items.flatMap((item) =>
+    item.kind === "turn"
+      ? item.turn.blocks.flatMap((block) => (block.kind === "text" ? [block.text] : []))
+      : [],
+  )
+
+describe("the transcript", () => {
+  const turnTwo = { ...turnStart, turnId: "t-2" } as const
+
+  test("a joined Session's transcript grows with its log, leaving earlier Turns as they were", () => {
+    const before = run(
+      joined,
+      history([
+        turnStart,
+        delta("Hi"),
+        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+        turnTwo,
+      ]),
+    )
+    const after = reduce(before, logged(4, { _tag: "TextDelta", turnId: "t-2", text: "Again" }))
+    expect(textOf(transcriptOf(after))).toEqual(["Hi", "Again"])
+    expect(transcriptOf(after).running?.turnId).toBe("t-2" as never)
+    expect(after.joined[s1]?.transcript.items[0]).toBe(
+      before.joined[s1]?.transcript.items[0] as never,
+    )
+  })
+
+  test("the history after a reconnect adds only what's new to the transcript", () => {
+    const before = run(joined, history([turnStart, delta("a"), delta("b")]))
+    const after = reduce(before, history([delta("b"), delta("c"), delta("d")], 2))
+    expect(textOf(transcriptOf(after))).toEqual(["abcd"])
+    expect(reduce(after, logged(3, delta("c"))).joined[s1]?.transcript).toBe(
+      after.joined[s1]?.transcript as never,
+    )
+  })
+
+  test("a late entry goes in its place in the transcript", () => {
+    const state = run(joined, history([turnStart]), logged(2, delta("b")), logged(1, delta("a")))
+    expect(textOf(transcriptOf(state))).toEqual(["ab"])
+  })
+
+  test("leaving forgets it, and joining again starts empty", () => {
+    const state = run(
+      joined,
+      history([turnStart, delta("a")]),
+      { _tag: "Left", sessionId: s1 },
+      joined,
+    )
+    expect(transcriptOf(state).items).toEqual([])
+  })
+})
+
 function queued(id: string, text: string, sender = alice) {
   return { id, text, sender, queuedAt: 1_790_000_000_100 }
 }
@@ -326,6 +391,7 @@ describe("presence and the Prompt queue", () => {
     expect(state.joined[s1]).toEqual({
       historyLoaded: false,
       log: [],
+      transcript: emptyTranscript,
       presence: [],
       queue: [],
       startLog: null,

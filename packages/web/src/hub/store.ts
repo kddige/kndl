@@ -1,7 +1,7 @@
 // What the web UI knows about the Hub, built only from what the Hub sends: the Runners, the
-// Sessions, for each joined Session its event log, presence and Prompt queue, and for each open
-// terminal whether it is live and its size; the Environments and shared variables the client
-// asked for (ADR 0009), the Test builds it started, with their logs, and what the GitHub App's
+// Sessions, for each joined Session its event log, the transcript folded from it as it grows,
+// presence and Prompt queue, and for each open terminal whether it is live and its size; the
+// Environments and shared variables the client asked for (ADR 0009), the Test builds it started, with their logs, and what the GitHub App's
 // permissions lack (issue #86); the Pairing codes waiting to be redeemed and the Hub's own commit,
 // for the Runners page (issue #85); and the signed-in person's Claude credential, write-only (ADR
 // 0015), and the CLI tokens they signed the CLI in with (issue #179); and, for the Hub's Owner alone,
@@ -48,6 +48,7 @@ import type {
 } from "@kndl/protocol"
 import { repoKey, sameRepo } from "@kndl/protocol"
 import type { SignInOptions } from "./config.ts"
+import { emptyTranscript, foldTranscript, type LiveTranscript } from "./transcript.ts"
 
 /** Where the connection to the Hub is. */
 export type Connection =
@@ -68,6 +69,11 @@ export interface JoinedSession {
   readonly historyLoaded: boolean
   /** The event log, in `seq` order, without gaps the Hub didn't leave. */
   readonly log: ReadonlyArray<SessionLogEntry>
+  /**
+   * What the chat shows of the log, folded from each entry as it arrives: a Turn no new entry
+   * touched stays the same object.
+   */
+  readonly transcript: LiveTranscript
   readonly presence: ReadonlyArray<PresentParticipant>
   readonly queue: ReadonlyArray<QueuedPrompt>
   /** The output of its latest start the client has seen, or null before any. */
@@ -232,6 +238,7 @@ export const initialState: HubState = {
 const emptyJoined: JoinedSession = {
   historyLoaded: false,
   log: [],
+  transcript: emptyTranscript,
   presence: [],
   queue: [],
   startLog: null,
@@ -298,14 +305,14 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return updateJoined(state, action.sessionId, (session) => ({
         ...session,
         historyLoaded: true,
-        log: appendEntries(session.log, action.entries),
+        ...withEntries(session, action.entries),
         // The picks follow the history, if any are still shared.
         questionPicks: null,
       }))
     case "SessionEventLogged": {
       const next = updateJoined(state, action.sessionId, (session) => ({
         ...session,
-        log: appendEntries(session.log, [action.entry]),
+        ...withEntries(session, [action.entry]),
       }))
       // A live state change moves the Session at once, ahead of the SessionUpdated that follows.
       const event = action.entry.event
@@ -513,6 +520,26 @@ function updateTestBuild(
 }
 
 /**
+ * A joined Session's log with entries added, and its transcript with them folded in. Entries
+ * usually follow the log's last, and are folded into the transcript as it is; one that goes before
+ * it, arriving late, is folded in nowhere but its place, so the transcript is folded anew from the
+ * whole log.
+ */
+function withEntries(
+  session: JoinedSession,
+  entries: ReadonlyArray<SessionLogEntry>,
+): Pick<JoinedSession, "log" | "transcript"> {
+  const log = appendEntries(session.log, entries)
+  const held = session.log.length
+  // Every entry held is kept, in seq order: if the last is where it was, all are.
+  const appended = held === 0 || log[held - 1] === session.log[held - 1]
+  const transcript = appended
+    ? foldTranscript(session.transcript, log.slice(held))
+    : foldTranscript(emptyTranscript, log)
+  return { log, transcript }
+}
+
+/**
  * Adds entries to a log, by `seq`. The log is append-only on the Hub, so an entry already held is
  * the same entry: a replay after reconnecting, or history that overlaps live events, adds nothing
  * twice.
@@ -532,7 +559,7 @@ export function appendEntries(
     }
     previous = entry.seq
   }
-  if (inOrder) return log.length === 0 ? entries : [...log, ...entries]
+  if (inOrder) return log.length === 0 ? entries : log.concat(entries)
   const bySeq = new Map<number, SessionLogEntry>()
   for (const entry of log) bySeq.set(entry.seq, entry)
   for (const entry of entries) if (!bySeq.has(entry.seq)) bySeq.set(entry.seq, entry)
