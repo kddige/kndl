@@ -217,6 +217,7 @@ import {
   type TextDelta,
   SessionId,
   SessionRemoved,
+  type SessionRestart,
   SessionStartLogged,
   type SessionState,
   SessionStateChanged,
@@ -1588,7 +1589,8 @@ export class SessionRelay extends Context.Service<
         if (refusal !== undefined) return refusal
         const cantStart = yield* cantStartOn(session, runner, why.by)
         if (cantStart !== undefined) {
-          live.restarts.delete(session.id)
+          // Asleep, it has no start under way.
+          live.restartOver(session.id)
           yield* logEvent(
             session.id,
             SessionStateChanged.make({
@@ -1701,10 +1703,11 @@ export class SessionRelay extends Context.Service<
       const putToSleep = Effect.fn("SessionRelay.putToSleep")(function* (
         session: SessionSummary,
         why: Why,
+        /** Who asked to restart it, and when: it is woken again once stopped (ADR 0009). */
+        restart?: SessionRestart,
       ) {
         const runner = peers.runner(session.runnerId)
-        if (runner === undefined || live.stopping.has(session.id)) return
-        live.stopping.set(session.id, why)
+        if (runner === undefined || !live.stopAsked(session.id, why, restart)) return
         yield* Effect.logInfo(`Putting Session ${session.id} to sleep: ${why.message ?? ""}`)
         runner.peer.send(StopSession.make({ sessionId: session.id, reason: "Sleep" }))
       })
@@ -2324,9 +2327,9 @@ export class SessionRelay extends Context.Service<
               switch (session.value.state) {
                 case "Asleep": {
                   // Set first, so the woken Session shows it is restarting.
-                  live.restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
+                  live.restartWaking(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
                   const refused = yield* wake(session.value, { by: you })
-                  if (!live.starts.has(sessionId)) live.restarts.delete(sessionId)
+                  live.restartOver(sessionId)
                   if (refused !== undefined) return refuse(message, refused, { sessionId })
                   return
                 }
@@ -2355,12 +2358,11 @@ export class SessionRelay extends Context.Service<
                   if (peers.runner(session.value.runnerId) === undefined) {
                     return refuse(message, "The Session's Runner is offline.", { sessionId })
                   }
-                  live.restarting.set(sessionId, you)
-                  live.restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
-                  yield* putToSleep(session.value, {
-                    by: you,
-                    message: "Restarting for the Environment's latest version",
-                  })
+                  yield* putToSleep(
+                    session.value,
+                    { by: you, message: "Restarting for the Environment's latest version" },
+                    { by: you, since: yield* Clock.currentTimeMillis },
+                  )
                   // Nothing in the log says so until it is Asleep: the summary does.
                   return yield* sessionUpdated(sessionId)
                 case "Frozen":
@@ -3094,8 +3096,7 @@ export class SessionRelay extends Context.Service<
               // A start that raced an archive: the StopSession that follows settles it.
               if (session.value.state === "Archived" || live.archiving.has(message.sessionId))
                 return
-              live.starts.delete(message.sessionId)
-              live.restarts.delete(message.sessionId)
+              live.claudeStarted(message.sessionId)
               yield* sessions.setLastOutput(message.sessionId, null)
               yield* sessions.setEnvironmentVersion(
                 message.sessionId,
@@ -3149,10 +3150,7 @@ export class SessionRelay extends Context.Service<
                 const stopped = yield* sessions.get(message.sessionId)
                 if (Option.isSome(stopped)) yield* wake(stopped.value, { by: restartBy })
                 // Not woken after all, as for an archive meanwhile: the restart is over.
-                if (
-                  !live.starts.has(message.sessionId) &&
-                  live.restarts.delete(message.sessionId)
-                ) {
+                if (live.restartOver(message.sessionId)) {
                   yield* sessionUpdated(message.sessionId)
                 }
                 return

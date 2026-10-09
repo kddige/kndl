@@ -248,3 +248,39 @@ describe("steering", () => {
     expect(live.cancelRefusal(id, two)).toBeUndefined()
   })
 })
+
+describe("stopping and restarting", () => {
+  const restart = { by: alice, since: 5 }
+
+  test("a stop is asked once until it is settled", () => {
+    const live = makeLiveSessions()
+    expect(live.stopAsked(id, { message: "Idle" })).toBe(true)
+    expect(live.stopAsked(id, { message: "Put to sleep" })).toBe(false)
+    expect(live.stopping.get(id)).toEqual({ message: "Idle" })
+    // Nor does a restart asked meanwhile take.
+    expect(live.stopAsked(id, { message: "Restarting" }, restart)).toBe(false)
+    expect(live.restarts.has(id)).toBe(false)
+    live.ended(id, "ClaudeGone")
+    expect(live.stopAsked(id, { message: "Restarting" }, restart)).toBe(true)
+    expect(live.restarting.get(id)).toBe(alice)
+    expect(live.restarts.get(id)).toBe(restart)
+  })
+
+  test("a restart is over once the Session started again, or when no start is under way", () => {
+    const live = makeLiveSessions()
+    live.stopAsked(id, { message: "Restarting" }, restart)
+    live.ended(id, "ClaudeGoneRestarting")
+    expect(live.restarts.get(id)).toBe(restart)
+    live.startSent(id, { since: 6, environmentVersion: undefined, log: "", attached: false })
+    expect(live.restartOver(id)).toBe(false)
+    live.claudeStarted(id)
+    expect(live.starts.has(id)).toBe(false)
+    expect(live.restarts.has(id)).toBe(false)
+    expect(live.restartOver(id)).toBe(false)
+
+    // An Asleep one woken for a restart that couldn't start.
+    live.restartWaking(id, restart)
+    expect(live.restartOver(id)).toBe(true)
+    expect(live.restarts.has(id)).toBe(false)
+  })
+})

@@ -263,6 +263,24 @@ export interface LiveSessions extends Pick<
   /** Why the queued prompt can't be cancelled, if it can't: it is on its way to Claude Code. */
   readonly cancelRefusal: (id: SessionId, promptId: PromptId) => Refusal | undefined
 
+  // ── Stopping and restarting ──
+
+  /**
+   * The Hub is to ask the Session's Runner to stop it for sleep (StopSession), for `why`, and
+   * for a restart if `restart` says who asked (ADR 0009): it is woken again once stopped. False,
+   * and nothing changes, if a stop is already under way.
+   */
+  readonly stopAsked: (id: SessionId, why: Why, restart?: SessionRestart) => boolean
+  /** An Asleep Session is about to be woken for a restart: the web shows it restarting. */
+  readonly restartWaking: (id: SessionId, restart: SessionRestart) => void
+  /**
+   * The restart is over unless a start is under way: whether it was under way and is over now,
+   * for the web to be told.
+   */
+  readonly restartOver: (id: SessionId) => boolean
+  /** Its Runner said Claude Code started (SessionStarted): its start and restart are over. */
+  readonly claudeStarted: (id: SessionId) => void
+
   /** The Session's live state ended `how`: what that ends is cleared (see `clearedWhen`). */
   readonly ended: (id: SessionId, how: SessionEnd) => void
 }
@@ -458,6 +476,21 @@ export const makeLiveSessions = (): LiveSessions => {
         return { refusal: "The prompt is being handed to the running Turn." }
       }
       return undefined
+    },
+    stopAsked: (id, why, restart) => {
+      if (pieces.stopping.has(id)) return false
+      if (restart !== undefined) {
+        pieces.restarting.set(id, restart.by)
+        pieces.restarts.set(id, restart)
+      }
+      pieces.stopping.set(id, why)
+      return true
+    },
+    restartWaking: (id, restart) => pieces.restarts.set(id, restart),
+    restartOver: (id) => !pieces.starts.has(id) && pieces.restarts.delete(id),
+    claudeStarted: (id) => {
+      pieces.starts.delete(id)
+      pieces.restarts.delete(id)
     },
     ended: (id, how) => {
       for (const piece of clearedWhen[how]) pieces[piece].delete(id)
