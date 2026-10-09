@@ -312,7 +312,7 @@ describe.skipIf(Bun.which("git") === null)("the Runner's Updater", () => {
     await eventually(() => tags(h).includes("UpdateFailed"))
 
     expect(git(h.clone, "rev-parse", "HEAD")).toBe(first)
-    expect(h.calls.filter((call) => call.startsWith("git checkout"))).toEqual([])
+    expect(h.calls.filter((call) => call.startsWith("git switch"))).toEqual([])
     await h.close()
   })
 
@@ -333,7 +333,7 @@ describe.skipIf(Bun.which("git") === null)("the Runner's Updater", () => {
     await eventually(() => h.calls.includes("restart"))
 
     expect(h.calls.filter((call) => !call.startsWith("git"))).toEqual(["load check", "restart"])
-    expect(h.calls.filter((call) => call.startsWith("git checkout"))).toEqual([])
+    expect(h.calls.filter((call) => call.startsWith("git switch"))).toEqual([])
     expect(h.marker).toBeUndefined()
     await h.close()
   })
