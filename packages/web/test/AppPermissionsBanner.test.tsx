@@ -84,14 +84,15 @@ test("says what the App and each installation lack, linking to where to fix it",
     expect(link.getAttribute("target")).toBe("_blank")
     expect(link.getAttribute("rel")).toContain("noopener")
   }
-})
+  await cleanup?.()
+  cleanup = undefined
 
-test("an installation behind an App that has it all is the only step", async () => {
-  const { banner } = await open({ ...driftedAppPermissions(), missing: [] })
-  await eventually(() => expect(banner()).toBeDefined())
-  const text = banner()?.textContent ?? ""
-  expect(text).not.toContain("The App kndl-alice lacks")
-  expect(text).toContain("On acme, accept")
+  // An installation behind an App that has it all is the only step.
+  const behind = await open({ ...driftedAppPermissions(), missing: [] })
+  await eventually(() => expect(behind.banner()).toBeDefined())
+  const only = behind.banner()?.textContent ?? ""
+  expect(only).not.toContain("The App kndl-alice lacks")
+  expect(only).toContain("On acme, accept")
 })
 
 test("isn't shown when nothing is missing, or the Hub has no App", async () => {

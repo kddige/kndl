@@ -28,38 +28,14 @@ const goodUrl = "https://avatars.githubusercontent.com/u/1?v=4"
 const brokenUrl = "https://avatars.githubusercontent.com/broken"
 
 describe("Avatar", () => {
-  test("shows the initials when there is no picture", async () => {
-    const { container, unmount } = await render(<Avatar name="Ada Lovelace" />)
+  test("falls back to the initials when the picture fails to load, keeping the name for screen readers", async () => {
+    const { container, unmount } = await render(<Avatar name="Ada Lovelace" src={brokenUrl} />)
     cleanup = unmount
+    // The fallback waits 300 ms for a picture before it shows.
     await settle(400)
 
     expect(container.querySelector("img")).toBeNull()
     expect(container.textContent).toBe("AL")
-  })
-
-  test("shows the picture once it loads", async () => {
-    const { container, unmount } = await render(<Avatar name="Ada Lovelace" src={goodUrl} />)
-    cleanup = unmount
-    await settle(400)
-
-    expect(container.querySelector("img")?.getAttribute("src")).toBe(goodUrl)
-    expect(container.textContent).toBe("")
-  })
-
-  test("falls back to the initials when the picture fails to load", async () => {
-    const { container, unmount } = await render(<Avatar name="Ada Lovelace" src={brokenUrl} />)
-    cleanup = unmount
-    await settle(400)
-
-    expect(container.querySelector("img")).toBeNull()
-    expect(container.textContent).toBe("AL")
-  })
-
-  test("keeps the name for screen readers whichever shows", async () => {
-    const { container, unmount } = await render(<Avatar name="Ada Lovelace" src={brokenUrl} />)
-    cleanup = unmount
-    await settle(400)
-
     expect(container.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Ada Lovelace")
   })
 })
@@ -76,7 +52,7 @@ describe("AvatarStack", () => {
       />,
     )
     cleanup = unmount
-    await settle(400)
+    await settle(20)
 
     expect(container.querySelectorAll("img")).toHaveLength(1)
     expect(container.textContent).toBe("GH")

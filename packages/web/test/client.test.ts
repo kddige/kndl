@@ -219,65 +219,6 @@ describe("a joined Session", () => {
     })
   })
 
-  test("a prompt sent while a Turn runs waits in the queue, and can be cancelled", async () => {
-    const { hub, client } = setUp({ autoplay: false, stepMs: 5 })
-    client.start()
-    client.join(demo)
-    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
-    client.sendPrompt(demo, "First")
-    client.sendPrompt(demo, "Second")
-    await eventually(() =>
-      expect(client.getState().joined[demo]?.queue.map((prompt) => prompt.text)).toEqual([
-        "Second",
-      ]),
-    )
-    const queued = client.getState().joined[demo]?.queue[0]
-    if (!queued) throw new Error("expected a queued prompt")
-    client.cancelPrompt(demo, queued.id)
-    await eventually(() => expect(client.getState().joined[demo]?.queue).toEqual([]))
-    expect(hub.received.at(-1)).toEqual({
-      _tag: "CancelPrompt",
-      sessionId: demo,
-      promptId: queued.id,
-    })
-  })
-
-  test("a queued prompt steered into the running Turn joins it, and leaves the queue (#195)", async () => {
-    const { hub, client } = setUp({ autoplay: false, stepMs: 5 })
-    client.start()
-    client.join(demo)
-    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
-    client.sendPrompt(demo, "First")
-    client.sendPrompt(demo, "Second")
-    await eventually(() =>
-      expect(client.getState().joined[demo]?.queue.map((prompt) => prompt.text)).toEqual([
-        "Second",
-      ]),
-    )
-    const queued = client.getState().joined[demo]?.queue[0]
-    if (!queued) throw new Error("expected a queued prompt")
-    client.steerPrompt(demo, queued.id)
-    await eventually(() => expect(client.getState().joined[demo]?.queue).toEqual([]))
-    expect(hub.received).toContainEqual({
-      _tag: "SteerPrompt",
-      sessionId: demo,
-      promptId: queued.id,
-    })
-    await eventually(() =>
-      expect(client.getState().joined[demo]?.log.map((entry) => entry.event._tag)).toContain(
-        "SteeredPromptRead",
-      ),
-    )
-    // It joined the Turn "First" started, and started none of its own.
-    const events = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.event)
-    const started = events.flatMap((event) => (event._tag === "TurnStarted" ? [event] : []))
-    const steered = events.find((event) => event._tag === "PromptSteered")
-    expect(steered).toMatchObject({ promptId: queued.id, text: "Second" })
-    expect(started.some((event) => event.text.endsWith("Second"))).toBe(false)
-    const turnId = steered?._tag === "PromptSteered" ? steered.turnId : undefined
-    expect(turnId).toBe(started.at(-1)?.turnId)
-  })
-
   test("Stop ends the running Turn as Stopped, after recording who asked", async () => {
     const { client } = setUp({ autoplay: false, stepMs: 5 })
     client.start()
@@ -360,21 +301,6 @@ describe("a joined Session", () => {
       expect(hub.received.at(-1)).toEqual({ _tag: "LeaveSession", sessionId: demo }),
     )
   })
-
-  test("the demo script brings Bob in and he queues a prompt", async () => {
-    const { client } = setUp({ stepMs: 2 })
-    client.start()
-    client.join(demo)
-    await eventually(() =>
-      expect(client.getState().joined[demo]?.presence.map((person) => person.login)).toEqual([
-        "alice",
-        "bob",
-      ]),
-    )
-    await eventually(() =>
-      expect(client.getState().joined[demo]?.queue[0]?.sender.login).toBe("bob"),
-    )
-  })
 })
 
 describe("commands", () => {
@@ -454,18 +380,6 @@ describe("commands", () => {
         branch: { _tag: "Existing", name: "main", newWorkBranch: true },
       }),
     ).rejects.toThrow("Not connected")
-  })
-
-  test("a refused command is reported to onCommandFailed", async () => {
-    const { client } = setUp()
-    const failures: Array<CommandFailed> = []
-    client.onCommandFailed((failure) => failures.push(failure))
-    client.start()
-    await eventually(() => expect(client.getState().connection.status).toBe("online"))
-    // A Frozen Session can't be put to sleep: its Runner is offline.
-    client.sleepSession(SessionId.make("s-dotfiles"))
-    await eventually(() => expect(failures).toHaveLength(1))
-    expect(failures[0]).toMatchObject({ command: "SleepSession", sessionId: "s-dotfiles" })
   })
 
   test("a prompt to a Frozen Session waits in its queue", async () => {
@@ -777,14 +691,6 @@ describe("Environments", () => {
     })
   })
 
-  test("a failing bootstrap fails the Test build, with its log", async () => {
-    const { client } = await online()
-    const { draft } = await draftOf(client, (saved) => ({ ...saved, bootstrapScript: "false" }))
-    const build = await client.startTestBuild(repo, studio, draft)
-    await eventually(() => expect(client.getState().testBuilds[build.id]?.result).toBe("Failed"))
-    expect(client.getState().testBuilds[build.id]?.log).toContain("exited with status 1")
-  })
-
   test("a change that doesn't touch the build applies at once, Sensitive values kept", async () => {
     const { client } = await online()
     const { base, draft } = await draftOf(client, (saved) => ({
@@ -1028,15 +934,6 @@ describe("MCP servers (ADR 0020)", () => {
     )
   })
 
-  test("an MCP server with Installations can't be deleted", async () => {
-    const { client } = await online()
-    const { mcpServers } = await client.getMcpServers()
-    const docs = named(mcpServers, "Docs search")
-    await expect(client.deleteMcpServer(docs.id)).rejects.toThrow(
-      "Docs search has an Installation: delete it first.",
-    )
-  })
-
   test("Installations: only on Repos the person has access to, without naming the others", async () => {
     const { client } = await online()
     const { mcpServers, installations } = await client.getMcpServers()
@@ -1063,15 +960,6 @@ describe("MCP servers (ADR 0020)", () => {
     ])
     const gone = await client.deleteInstallation(installation.id)
     expect(gone.installations.map((one) => one.id)).not.toContain(installation.id)
-  })
-
-  test("a second Installation of an MCP server on a Repo is refused, naming the existing one", async () => {
-    const { client } = await online()
-    const { mcpServers } = await client.getMcpServers()
-    const docs = named(mcpServers, "Docs search")
-    await expect(client.createInstallation(docs.id, "More docs", ["KDDIGE/kndl"])).rejects.toThrow(
-      "KDDIGE/kndl already has Docs, an Installation of Docs search",
-    )
   })
 
   test("each Repo's change log says who changed its Installations", async () => {

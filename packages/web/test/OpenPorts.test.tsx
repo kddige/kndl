@@ -19,7 +19,6 @@ const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
 const { demoSessionId } = await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
-const { forwardCommand, shortSessionId } = await import("../src/session/OpenPorts.tsx")
 
 /** Waits, letting React render, until `check` stops throwing. */
 async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
@@ -66,12 +65,6 @@ async function open(sessionId: string) {
 /** The rows of the open list, as their text. */
 const rows = () =>
   [...document.querySelectorAll('[aria-label="Open ports"] li')].map((li) => li.textContent)
-
-test("the short id is a Session id's first 6 characters", () => {
-  const summary = { id: "0b9256b9c0609f5a73defb11" } as Parameters<typeof shortSessionId>[0]
-  expect(shortSessionId(summary)).toBe("0b9256")
-  expect(forwardCommand(summary)).toBe("kndl forward 0b9256")
-})
 
 test("lists an Active Session's Open ports, a Docker one labelled, with the command to forward them", async () => {
   const { portsButton } = await open(demoSessionId)

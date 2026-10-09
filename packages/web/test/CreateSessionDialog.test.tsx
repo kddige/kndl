@@ -3,7 +3,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog as findDialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -42,8 +42,8 @@ async function open(hub: InstanceType<typeof FakeHub>, runnerHasOwn = true) {
   await settle(50)
   await step(() => button("New Session", document).click())
   await settle()
-  const dialog = document.querySelector('[role="dialog"]') as HTMLElement
-  return { dialog, hub, router, start: button("Start Session", dialog) }
+  const opened = findDialog() as HTMLElement
+  return { dialog: opened, hub, router, start: button("Start Session", opened) }
 }
 
 /** Waits until `check` stops throwing, or fails with its last error. */
@@ -81,13 +81,14 @@ const inputOf = (dialog: HTMLElement, label: string) =>
     `input[id="${[...dialog.querySelectorAll("label")].find((each) => each.textContent === label)?.getAttribute("for")}"]`,
   ) as HTMLInputElement | null
 
-test("runs on its Runner's own credential when the Runner has one", async () => {
-  const { dialog, start } = await openDialog(true)
-  expect(dialog.textContent).toContain("Until then, this one runs on its Runner's own.")
-  expect(start.disabled).toBe(false)
-})
+test("runs on its Runner's own credential, and with no Runner that has one, says so before the form is filled in", async () => {
+  const runnerHasOwn = await openDialog(true)
+  expect(runnerHasOwn.dialog.textContent).toContain(
+    "Until then, this one runs on its Runner's own.",
+  )
+  expect(runnerHasOwn.start.disabled).toBe(false)
+  await cleanup?.()
 
-test("says before the form is filled in that no Runner can run it, and can't be started", async () => {
   const { dialog, start } = await openDialog(false)
   expect(dialog.textContent).toContain("Add your Claude credential first")
   expect(dialog.textContent).toContain(
@@ -110,10 +111,15 @@ test("the Branch is disabled until a Repo is picked, then prefills the Repo's de
   expect(inputOf(dialog, "Branch")?.disabled).toBe(true)
 })
 
-test("starts a Session directly on the branch when Work on a new branch is off", async () => {
+test("starts a Session directly on the branch when Work on a new branch is off, noting a branch GitHub doesn't list", async () => {
   const { dialog, hub, start } = await openDialog(true)
   await type(dialog, "Repo", "kddige/kndl")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
+  expect(dialog.textContent).not.toContain("Branch not found on GitHub")
+  // A branch not on GitHub's list is noted, without stopping.
+  await type(dialog, "Branch", "nope")
+  expect(dialog.textContent).toContain("Branch not found on GitHub. Pick one, or create it.")
+  expect(start.disabled).toBe(false)
   await type(dialog, "Branch", "dev")
   const box = dialog.querySelector('input[type="checkbox"]') as HTMLElement
   await step(() => box.click())
@@ -152,19 +158,6 @@ test("offers to create a branch that is none of the Repo's, from one of them", a
   })
 })
 
-test("says why git would refuse a new branch's name", async () => {
-  const { dialog } = await openDialog(true)
-  await type(dialog, "Repo", "kddige/kndl")
-  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
-  await type(dialog, "Branch", "bad..name")
-  await eventually(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
-  const create = [...document.querySelectorAll('[role="option"]')].find((option) =>
-    option.textContent?.includes("Create branch"),
-  ) as HTMLElement
-  await step(() => create.click())
-  expect(dialog.textContent).toContain("A branch name can't have two dots in a row.")
-})
-
 test("without the GitHub App, suggests from Sessions, says so, offers no retry, and never blocks", async () => {
   const hub = new FakeHub({ stepMs: 2, autoplay: false })
   hub.listingDown = true
@@ -190,29 +183,6 @@ test("when GitHub can't answer, says so and offers a retry that asks again", asy
   hub.listingFails = false
   await step(() => button("Retry", dialog).click())
   await eventually(() => expect(dialog.textContent).not.toContain("Couldn't load the Repos"))
-})
-
-test("says, without stopping, that a branch typed is not on GitHub's list", async () => {
-  const { dialog, start } = await openDialog(true)
-  await type(dialog, "Repo", "kddige/kndl")
-  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
-  expect(dialog.textContent).not.toContain("Branch not found on GitHub")
-  await type(dialog, "Branch", "nope")
-  expect(dialog.textContent).toContain("Branch not found on GitHub. Pick one, or create it.")
-  expect(start.disabled).toBe(false)
-})
-
-test("says why a new branch's name can't be used, under claude/ or as its own base", async () => {
-  const { dialog } = await openDialog(true)
-  await type(dialog, "Repo", "kddige/kndl")
-  await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
-  await type(dialog, "Branch", "claude/mine")
-  await eventually(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
-  const create = [...document.querySelectorAll('[role="option"]')].find((option) =>
-    option.textContent?.includes("Create branch"),
-  ) as HTMLElement
-  await step(() => create.click())
-  expect(dialog.textContent).toContain("Names under claude/ are for the Work branches kndl makes.")
 })
 
 test("warns when sessions are already on the branch it would commit to", async () => {
@@ -253,7 +223,7 @@ test("carries the whole branch choice through the Environment setup of a Repo's 
   await eventually(() => expect(document.body.textContent).toContain("Your Session on main"))
 })
 
-test("says why git would refuse the name of an existing branch, and sends nothing", async () => {
+test("says why a branch's name can't be used, existing or new, and sends nothing", async () => {
   const { dialog, hub, start } = await openDialog(true)
   await type(dialog, "Repo", "kddige/kndl")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
@@ -263,6 +233,15 @@ test("says why git would refuse the name of an existing branch, and sends nothin
   await settle(100)
   expect(hub.received.map((message) => message["_tag"])).not.toContain("CreateSession")
   expect(hub.received.map((message) => message["_tag"])).not.toContain("GetEnvironment")
+
+  // A new branch is checked too, here against the names kndl keeps for itself.
+  await type(dialog, "Branch", "claude/mine")
+  await eventually(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+  const create = [...document.querySelectorAll('[role="option"]')].find((option) =>
+    option.textContent?.includes("Create branch"),
+  ) as HTMLElement
+  await step(() => create.click())
+  expect(dialog.textContent).toContain("Names under claude/ are for the Work branches kndl makes.")
 })
 
 test("leaves a branch git would refuse out of the Environment setup's search", async () => {

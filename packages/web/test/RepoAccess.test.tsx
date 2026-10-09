@@ -4,7 +4,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog as findDialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -57,8 +57,6 @@ async function open(path: string) {
   return { hub, router, page: view.container }
 }
 
-const openDialog = () => document.querySelector('[role="dialog"]')
-
 /** Opens "New Session" and types `repo` into its Repo field. */
 async function enterRepo(repo: string) {
   const app = await open("/")
@@ -67,10 +65,10 @@ async function enterRepo(repo: string) {
     (candidate) => candidate.textContent?.trim() === "New Session",
   )
   await step(() => newSession?.click())
-  await eventually(() => expect(openDialog()).not.toBeNull())
-  const field = openDialog()?.querySelector("input") as HTMLInputElement
+  await eventually(() => expect(findDialog()).not.toBeNull())
+  const field = findDialog()?.querySelector("input") as HTMLInputElement
   await step(() => typeInto(field, repo))
-  return { ...app, dialog: () => openDialog() as HTMLElement, field }
+  return { ...app, dialog: () => findDialog() as HTMLElement, field }
 }
 
 test("New Session says, as the Repo is entered, that the App isn't installed on it", async () => {

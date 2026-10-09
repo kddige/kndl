@@ -4,7 +4,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -120,9 +120,9 @@ test("shows a saved credential, replaces it, and removes it after asking", async
   expect(saved()).not.toBeNull()
 
   await step(() => button("Remove").click())
-  const dialog = document.querySelector('[role="dialog"]') as HTMLElement
-  expect(dialog.textContent).toContain("Remove your Claude credential?")
-  await step(() => button("Remove", dialog).click())
+  const confirm = dialog() as HTMLElement
+  expect(confirm.textContent).toContain("Remove your Claude credential?")
+  await step(() => button("Remove", confirm).click())
   await eventually(() => expect(secretField()).not.toBeNull())
   expect(saved()).toBeNull()
 })
@@ -134,7 +134,7 @@ const listedMachines = () =>
     (row) => row.querySelector("[title]")?.textContent,
   )
 
-test("lists the machines the CLI is signed in on, newest first", async () => {
+test("lists the machines the CLI is signed in on, newest first, and revokes a token after asking", async () => {
   const now = Date.now()
   await openAccount({
     cliTokens: [
@@ -147,21 +147,11 @@ test("lists the machines the CLI is signed in on, newest first", async () => {
   const rows = [...(tokenList()?.querySelectorAll("li") ?? [])].map((row) => row.textContent)
   expect(rows[0]).toContain("last used 2m ago")
   expect(rows[1]).toContain("never used")
-})
 
-test("revokes a CLI token after asking", async () => {
-  const now = Date.now()
-  await openAccount({
-    cliTokens: [
-      { id: "ct-1", machine: "laptop", createdAt: now },
-      { id: "ct-2", machine: "build-box", createdAt: now },
-    ],
-  })
-  await eventually(() => expect(tokenList()).not.toBeNull())
   await step(() => button("Revoke build-box").click())
-  const dialog = document.querySelector('[role="dialog"]') as HTMLElement
-  expect(dialog.textContent).toContain("Revoke the CLI token for build-box?")
-  await step(() => button("Revoke", dialog).click())
+  const confirm = dialog() as HTMLElement
+  expect(confirm.textContent).toContain("Revoke the CLI token for build-box?")
+  await step(() => button("Revoke", confirm).click())
   await eventually(() => expect(listedMachines()).toEqual(["laptop"]))
 })
 

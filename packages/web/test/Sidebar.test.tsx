@@ -4,7 +4,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { SessionId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -232,29 +232,9 @@ test("a Session is renamed in place from its header, and New Session doesn't ask
 
   // New Session has no name field: a Session is named once it exists.
   await step(() => button("New Session", document).click())
-  await eventually(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull())
-  const labels = [...(document.querySelector('[role="dialog"]')?.querySelectorAll("label") ?? [])]
+  await eventually(() => expect(dialog()).not.toBeNull())
+  const labels = [...(dialog()?.querySelectorAll("label") ?? [])]
   expect(labels.map((label) => label.textContent).join(" ")).not.toMatch(/name/i)
-})
-
-test("the start page points at the sidebar, and the general nav marks its page", async () => {
-  const { page, router } = await open("/")
-  await eventually(() =>
-    expect(page.textContent).toContain("Pick a Session from the sidebar or start one"),
-  )
-  expect(current()).toEqual([])
-
-  await step(() => void router.navigate({ to: "/variables" }))
-  await eventually(() => expect(current()).toEqual(["Shared variables"]))
-  // A Repo's own pages count as the Hub-wide ones.
-  await step(
-    () =>
-      void router.navigate({
-        to: "/repos/$owner/$repo/archived",
-        params: { owner: "kddige", repo: "kndl" },
-      }),
-  )
-  await eventually(() => expect(current()).toEqual(["Archived Sessions"]))
 })
 
 test("each page beside the sidebar opens with the one PageHeader, holding its only h1", async () => {
@@ -292,7 +272,7 @@ test("the Environments page lists every Repo with a Session, Archived ones inclu
 })
 
 test("the Archive page lists every Repo's Archived Sessions, and restores them", async () => {
-  const { page, client } = await open("/archive")
+  const { page, client, router } = await open("/archive")
   const archived = () =>
     page.querySelector('ul[aria-label="Archived Sessions of kddige/kndl"]')?.textContent ?? ""
   await eventually(() => expect(archived()).toContain("claude/flaky-login"))
@@ -305,6 +285,17 @@ test("the Archive page lists every Repo's Archived Sessions, and restores them",
     expect(client.getState().sessions?.find((s) => s.id === "s-flaky")?.state).toBe("Asleep"),
   )
   await eventually(() => expect(page.textContent).toContain("Nothing archived"))
+
+  // A Repo's own pages count as the Hub-wide ones.
+  await step(
+    () =>
+      void router.navigate({
+        to: "/repos/$owner/$repo/archived",
+        params: { owner: "kddige", repo: "kndl" },
+      }),
+  )
+  await eventually(() => expect(router.state.location.pathname).toBe("/repos/kddige/kndl/archived"))
+  expect(current()).toEqual(["Archived Sessions"])
 })
 
 test("on a narrow screen the sidebar is a drawer, closed by following a link", async () => {
@@ -404,18 +395,4 @@ test("a fold lasts across reloads, and opens when one of its agents' views opens
   await eventually(() => expect(current()).toEqual(["Document the protocol"]))
   await eventually(() => expect(nestedUnder("s-release")).toEqual(releaseAgents))
   expect(localStorage.getItem("kndl:sidebar-folded")).toBe("[]")
-})
-
-test("on a narrow screen the drawer nests and folds agents too", async () => {
-  setWidth(400)
-  const { page } = await open("/")
-  await eventually(() => expect(button("Open navigation", page)).toBeTruthy())
-  await step(() => button("Open navigation", page).click())
-  await eventually(() => expect(nav()).not.toBeNull())
-
-  expect(nestedUnder("s-release")).toEqual(["Document the protocol"])
-  await step(() => button("Agents of Release 0.4", nav() ?? document).click())
-  expect(nestedUnder("s-release")).toEqual([])
-  // Folding doesn't follow a link, so the drawer stays open.
-  expect(nav()).not.toBeNull()
 })

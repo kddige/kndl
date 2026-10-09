@@ -4,7 +4,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -34,7 +34,6 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
   }
 }
 
-const dialog = () => document.querySelector('[role="dialog"]')
 const runners = () => document.querySelector('[aria-label="Runners"]')
 const ciBox = () => runners()?.querySelector('[aria-label="ci-box"]')?.textContent ?? ""
 

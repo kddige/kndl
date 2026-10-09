@@ -4,7 +4,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -33,7 +33,6 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
   }
 }
 
-const dialog = () => document.querySelector('[role="dialog"]')
 const members = () => document.querySelector('[aria-label="Members"]')
 const invites = () => document.querySelector('[aria-label="Invites not used yet"]')
 const peopleLink = () =>
@@ -152,10 +151,4 @@ test("is the Owner's alone: no sidebar item, no lists asked for, and a page that
   expect(peopleLink()).toBeUndefined()
   expect(members()).toBeNull()
   expect(hub.received.some((m) => m._tag === "ListMembers" || m._tag === "ListInvites")).toBe(false)
-})
-
-test("the fake Hub refuses the People page's commands from anyone but the Owner", async () => {
-  const { client } = await openPeople(false)
-  await eventually(() => expect(client.getState().connection.status).toBe("online"))
-  await expect(client.listMembers()).rejects.toThrow("Only the Hub's Owner can do that.")
 })

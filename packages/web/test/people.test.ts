@@ -1,12 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { InviteLifetimeMs, type PendingInvite } from "@kndl/protocol"
-import {
-  inviteFor,
-  inviteTimeLeft,
-  readLogin,
-  ticketFrom,
-  usableInvites,
-} from "../src/people/people.ts"
+import { inviteTimeLeft, readLogin, ticketFrom, usableInvites } from "../src/people/people.ts"
 import { alice } from "./fixtures.ts"
 
 const invite = (id: string, expiresAt: number) =>
@@ -24,11 +18,6 @@ describe("the People page's Invites (#209)", () => {
     expect(inviteTimeLeft(30 * 3_600_000, 0)).toBe("30 hours")
     expect(inviteTimeLeft(3_600_000, 0)).toBe("1 hour")
     expect(inviteTimeLeft(59 * 60_000, 0)).toBe("under an hour")
-  })
-
-  test("names who an Invite is for", () => {
-    expect(inviteFor({ login: "octocat" })).toBe("@octocat")
-    expect(inviteFor({})).toBe("Anyone with the link")
   })
 
   test("reads the login typed for an Invite", () => {

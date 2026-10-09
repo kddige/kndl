@@ -40,11 +40,17 @@ describe("the Runners list", () => {
     expect(sorted.map((r) => r.name)).toEqual(["c", "a", "b"])
   })
 
-  test("badges a Runner behind the Hub, or on a commit the Hub doesn't have", () => {
+  test("badges a Runner behind the Hub or on another commit, and says how to bring it up to date", () => {
     expect(versionNote("Behind")?.label).toBe("behind the Hub")
     expect(versionNote("Differs")?.label).toBe("not the Hub's commit")
     expect(versionNote("Current")).toBeUndefined()
     expect(versionNote("Unknown")).toBeUndefined()
+    // The badge says how to bring a Runner behind to the Hub's commit.
+    expect(versionNote("Behind", { self: true })?.title).toContain("Update moves it")
+    expect(
+      versionNote("Behind", { self: false, reason: "it runs from a dev checkout" })?.title,
+    ).toContain("It doesn't update itself: it runs from a dev checkout.")
+    expect(versionNote("Behind")?.title).toContain("too old to update itself")
   })
 })
 
@@ -161,14 +167,6 @@ describe("a Runner's update", () => {
       0,
     )
     expect(stuck?.detail).toContain("and so did going back; see its log")
-  })
-
-  test("the badge says how to bring a Runner behind to the Hub's commit", () => {
-    expect(versionNote("Behind", { self: true })?.title).toContain("Update moves it")
-    expect(
-      versionNote("Behind", { self: false, reason: "it runs from a dev checkout" })?.title,
-    ).toContain("It doesn't update itself: it runs from a dev checkout.")
-    expect(versionNote("Behind")?.title).toContain("too old to update itself")
   })
 })
 
