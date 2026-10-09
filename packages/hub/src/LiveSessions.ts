@@ -12,21 +12,23 @@
 //
 // Each way says, in `clearedWhen`, why it keeps what it keeps.
 
-import type {
-  EnvironmentVersion,
-  InstallationFailure,
-  InstallationId,
-  OpenPort,
-  Participant,
-  ParticipantId,
-  PromptId,
-  QuestionClosed,
+import {
+  type EnvironmentVersion,
+  type InstallationFailure,
+  type InstallationId,
+  type OpenPort,
+  type Participant,
+  type ParticipantId,
+  type PromptId,
+  type QuestionClosed,
   QuestionPick,
-  SessionId,
-  SessionRestart,
-  TerminalFrame,
-  TextDelta,
-  ToolCallId,
+  type SessionId,
+  type SessionRestart,
+  type SessionState,
+  sameRepo,
+  type TerminalFrame,
+  type TextDelta,
+  type ToolCallId,
 } from "@kndl/protocol"
 import type { StreamRedactor } from "./Redaction.ts"
 
@@ -37,6 +39,9 @@ export interface Why {
   /** The Installations that kept it from starting (#216). */
   readonly installationsFailed?: ReadonlyArray<InstallationFailure>
 }
+
+/** How much of a start's output the Hub keeps for clients that join while it runs. */
+export const startLogLimit = 64 * 1024
 
 /** A StartSession its Runner hasn't answered yet (#70). */
 export interface StartUnderWay {
@@ -94,6 +99,39 @@ export interface SessionSet {
   readonly delete: (id: SessionId) => boolean
 }
 
+/** Why a command is refused, as said to whoever sent it. */
+export interface Refusal {
+  readonly refusal: string
+}
+
+/** What the web and forwards are shown of a Session's live state: see `view`. */
+export interface SessionView {
+  /**
+   * Its start under way, if any. The same object for as long as the start is under way, so a
+   * check that waited can tell whether it is still the same start.
+   */
+  readonly start: Readonly<StartUnderWay> | undefined
+  /** Its restart under way, if any. */
+  readonly restart: SessionRestart | undefined
+  /** What listens in its Sandbox, as its Runner last said, while it is Active. */
+  readonly openPorts: ReadonlyArray<OpenPort> | undefined
+  /** Why it last went Asleep. */
+  readonly asleepWhy: Why | undefined
+}
+
+/** What a SessionStopped settles: see `stopped`. */
+export type Stopped =
+  /** The stop for good of an archive (or of one restored since). */
+  | { readonly _tag: "Archive" }
+  /** Its Claude Code stopped: as asked for sleep, and for a restart, or on its own. */
+  | {
+      readonly _tag: "Stop"
+      /** Why it was asked to stop, if it was. */
+      readonly asked: Why | undefined
+      /** Who asked to restart it, if it was asked to stop for a restart. */
+      readonly restartBy: Participant | undefined
+    }
+
 /** How a Session's live state ends: see the top of this file. */
 export type SessionEnd =
   | "ClaudeGone"
@@ -102,14 +140,8 @@ export type SessionEnd =
   | "RunnerGone"
   | "Purged"
 
-/**
- * Each Session's live state. Only the Session relay's lock (`serialized`) reads and writes it, so
- * nothing changes between a check and the change it decides; it is synchronous, so a write never
- * waits. Two writes are made off the lock, each synchronous, so neither lands inside another's
- * check: `sandboxTokens.set`, as a GitRequest's answer mints a Sandbox token (it waited on GitHub),
- * and deleting from `installationTrouble`'s inner map, as the Gateway says an Installation works.
- */
-export interface LiveSessions {
+/** Every piece of the live state, as it is kept; the interface shows only what it must. */
+interface Pieces {
   /**
    * The prompt each Session's mod has been sent and not yet started a Turn with or failed.
    * In memory only: after a Hub restart the head of the queue is delivered again (see
@@ -187,11 +219,194 @@ export interface LiveSessions {
   readonly textStreams: PerSession<Map<string, TextStream>>
   /** Each Session's terminal Output, and the last frame's size, for held text let go. */
   readonly terminalStreams: PerSession<TerminalStream>
+}
+
+type Piece = keyof Pieces
+
+/**
+ * Each Session's live state. Only the Session relay's lock (`serialized`) reads and writes it, so
+ * nothing changes between a check and the change it decides; it is synchronous, so a write never
+ * waits. Two writes are made off the lock, each synchronous, so neither lands inside another's
+ * check: `sandboxTokenMinted`, as a GitRequest's answer mints a Sandbox token (it waited on
+ * GitHub), and `installationWorks`, as the Gateway says an Installation works.
+ */
+export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStreams"> {
+  // ── Delivery: one prompt at a time, from the Prompt queue to the mod ──
+
+  /** The mod was sent the prompt (DeliverPrompt): it is in flight until a Turn starts or it fails. */
+  readonly delivering: (id: SessionId, promptId: PromptId) => void
+  /** Whether the prompt is in flight: delivered, and no Turn started from it yet. */
+  readonly delivered: (id: SessionId, promptId: PromptId) => boolean
+  /** A Turn started, from the prompt if it names one: that prompt is no longer in flight. */
+  readonly turnStarted: (id: SessionId, promptId: PromptId) => void
+  /**
+   * The mod failed the prompt. One being steered into the Turn is no longer (ADR 0018): it stays
+   * in its place in the queue, and who steered it is returned, to be told. Any other is no
+   * longer in flight, and `undefined` is returned.
+   */
+  readonly promptFailed: (id: SessionId, promptId: PromptId) => ParticipantId | undefined
+  /** The mod said the prompt steered into the Turn joined it (PromptSteered): the steer is over. */
+  readonly promptSteered: (id: SessionId, promptId: PromptId) => void
+  /** StartSession was sent: prompts wait for the new mod's hello, and the web shows it starting. */
+  readonly startSent: (id: SessionId, start: StartUnderWay) => void
+  /**
+   * RelaunchSession was sent (#128): prompts wait for the new mod's hello, and steers the old mod
+   * was sent are dropped, since it won't answer them.
+   */
+  readonly relaunched: (id: SessionId) => void
+  /** The Session's mod said hello, saying whether it steers (#195): prompts may go to it. */
+  readonly modHello: (id: SessionId, steers: boolean) => void
+
+  // ── Steering (ADR 0018) ──
+
+  /**
+   * Hands the queued prompt to the running Turn, if it can be: "ok", and the mod is to be sent
+   * the DeliverIntoTurn; "already", if it is on its way into the Turn, and nothing is to be done;
+   * or why not. `turnRunning` is whether the Session is Active with a Turn; one going to sleep
+   * takes no steer. `queued` is whether the prompt is in the Session's Prompt queue.
+   */
+  readonly steer: (
+    id: SessionId,
+    steer: {
+      readonly promptId: PromptId
+      readonly by: ParticipantId
+      readonly turnRunning: boolean
+      readonly queued: boolean
+    },
+  ) => "ok" | "already" | Refusal
+  /** Why the queued prompt can't be cancelled, if it can't: it is on its way to Claude Code. */
+  readonly cancelRefusal: (id: SessionId, promptId: PromptId) => Refusal | undefined
+
+  // ── Stopping and restarting ──
+
+  /**
+   * The Hub is to ask the Session's Runner to stop it for sleep (StopSession), for `why`, and
+   * for a restart if `restart` says who asked (ADR 0009): it is woken again once stopped. False,
+   * and nothing changes, if a stop is already under way.
+   */
+  readonly stopAsked: (id: SessionId, why: Why, restart?: SessionRestart) => boolean
+  /** An Asleep Session is about to be woken for a restart: the web shows it restarting. */
+  readonly restartWaking: (id: SessionId, restart: SessionRestart) => void
+  /**
+   * The restart is over unless a start is under way: whether it was under way and is over now,
+   * for the web to be told.
+   */
+  readonly restartOver: (id: SessionId) => boolean
+  /** The Hub asked its Runner to stop the Archived Session for good (StopSession `Archive`). */
+  readonly archiveStopAsked: (id: SessionId) => void
+  /**
+   * Its Runner said it stopped (SessionStopped): what that settles. The stop for good of an
+   * archive comes first, and is over now. Otherwise, the stop it was asked for, if any, is read
+   * here and cleared as Claude Code is gone (`ended`), which the caller says next.
+   */
+  readonly stopped: (id: SessionId) => Stopped
+  /** Its Runner said Claude Code started (SessionStarted): its start and restart are over. */
+  readonly claudeStarted: (id: SessionId) => void
+
+  // ── What it is doing ──
+
+  /**
+   * Whether no prompt may be delivered to it now: one is in flight, its new mod hasn't said hello,
+   * it is going to sleep, or a steer awaits the mod's answer, since the prompt it is about may be
+   * the head of the queue.
+   */
+  readonly blocksDelivery: (id: SessionId) => boolean
+  /** Whether its Runner is yet to answer a start or a stop: a drain waits for it (ADR 0011). */
+  readonly settling: (id: SessionId) => boolean
+  /**
+   * Whether it is busy, so not idle: going to sleep, a prompt in flight, or a start under way,
+   * which can take minutes to build its Environment.
+   */
+  readonly busy: (id: SessionId) => boolean
+  /** Whether a prompt is in flight to its mod. */
+  readonly promptOut: (id: SessionId) => boolean
+  /** Whether its Claude Code was started or woken, and its new mod hasn't said hello yet. */
+  readonly awaitingHello: (id: SessionId) => boolean
+  /** Whether its Runner was asked to stop it for sleep, and hasn't said it stopped. */
+  readonly goingToSleep: (id: SessionId) => boolean
+  /** Whether its Runner hasn't answered its StartSession yet. */
+  readonly startUnderWay: (id: SessionId) => boolean
+  /** Whether its Runner was asked to stop it for good, for an archive, and hasn't said it did. */
+  readonly archiveStopping: (id: SessionId) => boolean
+
+  // ── What is shown of it ──
+
+  /** What the web and forwards are shown of it. */
+  readonly view: (id: SessionId) => SessionView
+  /**
+   * Its terminal printed `data` before Claude Code's terminal was up: the start's output, kept,
+   * its last `startLogLimit` characters, for clients that join while it runs. When it was kept,
+   * since when the start runs, to send it with.
+   */
+  readonly startOutput: (id: SessionId, data: string) => number | undefined
+  /** Its Runner sent a Snapshot of Claude Code's terminal: output from now on is Claude's. */
+  readonly startAttached: (id: SessionId) => void
+  /** Its Runner said what listens in its Sandbox now (#175): what it said before. */
+  readonly portsReported: (id: SessionId, ports: ReadonlyArray<OpenPort>) => ReadonlyArray<OpenPort>
+  /**
+   * It moved to `state`, for `why`. Nothing listens in a Sandbox whose Claude Code isn't known
+   * to run, and an Asleep one says why to its forwards.
+   */
+  readonly stateChanged: (id: SessionId, state: SessionState, why: Why) => void
+
+  // ── Idleness ──
+
+  /** It was seen busy at `now`: an event logged, its queue or presence changing. */
+  readonly seenBusy: (id: SessionId, now: number) => void
+  /**
+   * When it was last seen busy, as an idle check at `now` asks. One never seen busy is from now,
+   * and `undefined` is returned: it is idle from this check on.
+   */
+  readonly idleSince: (id: SessionId, now: number) => number | undefined
+
+  // ── Open questions (#193) ──
+
+  /** What the Participants have picked for its Open question so far, if any. */
+  readonly picks: (id: SessionId) => Picks | undefined
+  /**
+   * A Participant picked `answer` to one of the Open question's questions, or took their pick
+   * back with an empty one: every pick for it now.
+   */
+  readonly picked: (
+    id: SessionId,
+    pick: {
+      readonly toolCallId: ToolCallId
+      readonly participant: Participant
+      readonly question: string
+      readonly answer: string
+    },
+  ) => ReadonlyArray<QuestionPick>
+  /** Claude asked a new question: no one has picked anything for it. */
+  readonly questionAsked: (id: SessionId) => void
+  /** Its Open question closed, redacted: remembered, to tell an answer that comes after. */
+  readonly questionClosed: (id: SessionId, closed: QuestionClosed) => void
+  /** How its last Open question closed, if one did. */
+  readonly closedQuestion: (id: SessionId) => QuestionClosed | undefined
+
+  // ── Sandbox tokens (#73) and Installations (#216) ──
+
+  /**
+   * A Sandbox token was minted for the Session, of `repo`: it and the one before it, which a
+   * process may still hold, are redacted from now on. Called off the lock.
+   */
+  readonly sandboxTokenMinted: (id: SessionId, repo: string, token: string) => void
+  /** The Sandbox tokens of the Repo's Sessions, any spelling of its name. */
+  readonly sandboxTokensOf: (repo: string) => ReadonlyArray<string>
+  /**
+   * The Installation fails the Session, for `why`: whether that is news, to be noted in the
+   * Session, rather than what it noted last since the Installation last worked.
+   */
+  readonly installationFailing: (
+    id: SessionId,
+    installationId: InstallationId,
+    why: string,
+  ) => boolean
+  /** The Installation works for the Session: a failure is news again. Called off the lock. */
+  readonly installationWorks: (id: SessionId, installationId: InstallationId) => void
+
   /** The Session's live state ended `how`: what that ends is cleared (see `clearedWhen`). */
   readonly ended: (id: SessionId, how: SessionEnd) => void
 }
-
-type Piece = Exclude<keyof LiveSessions, "ended">
 
 /**
  * What each way a Session's live state ends clears; the rest is kept. Each list is what the relay
@@ -288,8 +503,18 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
   ],
 }
 
+/** Where `piecesOf` finds the pieces: not part of the interface. */
+const piecesKey = Symbol("pieces")
+
+/**
+ * Every piece of the live state, for LiveSessions.test.ts: the clearing table is about each piece,
+ * including those the interface shows only through its decisions.
+ */
+export const piecesOf = (live: LiveSessions): Pieces =>
+  (live as LiveSessions & { readonly [piecesKey]: Pieces })[piecesKey]
+
 export const makeLiveSessions = (): LiveSessions => {
-  const pieces: { readonly [P in Piece]: LiveSessions[P] } = {
+  const pieces: Pieces = {
     inFlight: new Map(),
     steering: new Map(),
     steers: new Set(),
@@ -309,10 +534,179 @@ export const makeLiveSessions = (): LiveSessions => {
     textStreams: new Map(),
     terminalStreams: new Map(),
   }
-  return {
+  const steerAnswered = (id: SessionId, promptId: PromptId) => {
+    const steered = pieces.steering.get(id)
+    steered?.delete(promptId)
+    if (steered?.size === 0) pieces.steering.delete(id)
+  }
+
+  const live: LiveSessions & { readonly [piecesKey]: Pieces } = {
     ...pieces,
+    [piecesKey]: pieces,
+    delivering: (id, promptId) => pieces.inFlight.set(id, promptId),
+    delivered: (id, promptId) => pieces.inFlight.get(id) === promptId,
+    turnStarted: (id, promptId) => {
+      if (pieces.inFlight.get(id) === promptId) pieces.inFlight.delete(id)
+    },
+    promptFailed: (id, promptId) => {
+      const steeredBy = pieces.steering.get(id)?.get(promptId)
+      if (steeredBy !== undefined) {
+        steerAnswered(id, promptId)
+        return steeredBy
+      }
+      if (pieces.inFlight.get(id) === promptId) pieces.inFlight.delete(id)
+      return undefined
+    },
+    promptSteered: steerAnswered,
+    startSent: (id, start) => {
+      pieces.starting.add(id)
+      pieces.starts.set(id, start)
+    },
+    relaunched: (id) => {
+      pieces.steering.delete(id)
+      pieces.starting.add(id)
+    },
+    modHello: (id, steers) => {
+      if (steers) pieces.steers.add(id)
+      else pieces.steers.delete(id)
+      pieces.starting.delete(id)
+    },
+    steer: (id, { promptId, by, turnRunning, queued }) => {
+      if (!turnRunning || pieces.stopping.has(id)) {
+        return { refusal: "No Turn is running to steer the prompt into: it goes next." }
+      }
+      if (pieces.inFlight.get(id) === promptId) {
+        return { refusal: "The prompt was already delivered to Claude Code." }
+      }
+      if (pieces.steering.get(id)?.has(promptId) === true) return "already"
+      if (!pieces.steers.has(id)) {
+        return {
+          refusal:
+            "This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.",
+        }
+      }
+      if (!queued) return { refusal: "The prompt is not in the Prompt queue." }
+      // It stays in its place until the mod says it joined the Turn.
+      const steered = pieces.steering.get(id) ?? new Map<PromptId, ParticipantId>()
+      pieces.steering.set(id, steered.set(promptId, by))
+      return "ok"
+    },
+    cancelRefusal: (id, promptId) => {
+      if (pieces.inFlight.get(id) === promptId) {
+        return { refusal: "The prompt was already delivered to Claude Code." }
+      }
+      if (pieces.steering.get(id)?.has(promptId) === true) {
+        return { refusal: "The prompt is being handed to the running Turn." }
+      }
+      return undefined
+    },
+    stopAsked: (id, why, restart) => {
+      if (pieces.stopping.has(id)) return false
+      if (restart !== undefined) {
+        pieces.restarting.set(id, restart.by)
+        pieces.restarts.set(id, restart)
+      }
+      pieces.stopping.set(id, why)
+      return true
+    },
+    restartWaking: (id, restart) => pieces.restarts.set(id, restart),
+    restartOver: (id) => !pieces.starts.has(id) && pieces.restarts.delete(id),
+    archiveStopAsked: (id) => pieces.archiving.add(id),
+    stopped: (id) => {
+      if (pieces.archiving.delete(id)) return { _tag: "Archive" }
+      const asked = pieces.stopping.get(id)
+      return {
+        _tag: "Stop",
+        asked,
+        restartBy: asked === undefined ? undefined : pieces.restarting.get(id),
+      }
+    },
+    claudeStarted: (id) => {
+      pieces.starts.delete(id)
+      pieces.restarts.delete(id)
+    },
+    blocksDelivery: (id) =>
+      pieces.inFlight.has(id) ||
+      pieces.starting.has(id) ||
+      pieces.stopping.has(id) ||
+      pieces.steering.has(id),
+    settling: (id) => pieces.starts.has(id) || pieces.stopping.has(id),
+    busy: (id) => pieces.stopping.has(id) || pieces.inFlight.has(id) || pieces.starts.has(id),
+    promptOut: (id) => pieces.inFlight.has(id),
+    awaitingHello: (id) => pieces.starting.has(id),
+    goingToSleep: (id) => pieces.stopping.has(id),
+    startUnderWay: (id) => pieces.starts.has(id),
+    archiveStopping: (id) => pieces.archiving.has(id),
+    view: (id) => ({
+      start: pieces.starts.get(id),
+      restart: pieces.restarts.get(id),
+      openPorts: pieces.openPorts.get(id),
+      asleepWhy: pieces.asleepWhy.get(id),
+    }),
+    startOutput: (id, data) => {
+      const start = pieces.starts.get(id)
+      if (start === undefined || start.attached || data === "") return undefined
+      start.log = (start.log + data).slice(-startLogLimit)
+      return start.since
+    },
+    startAttached: (id) => {
+      const start = pieces.starts.get(id)
+      if (start !== undefined) start.attached = true
+    },
+    portsReported: (id, ports) => {
+      const before = pieces.openPorts.get(id) ?? []
+      if (ports.length === 0) pieces.openPorts.delete(id)
+      else pieces.openPorts.set(id, ports)
+      return before
+    },
+    stateChanged: (id, state, why) => {
+      if (state !== "Active") pieces.openPorts.delete(id)
+      if (state === "Asleep") pieces.asleepWhy.set(id, why)
+    },
+    seenBusy: (id, now) => pieces.lastBusy.set(id, now),
+    idleSince: (id, now) => {
+      const since = pieces.lastBusy.get(id)
+      if (since === undefined) pieces.lastBusy.set(id, now)
+      return since
+    },
+    picks: (id) => pieces.questionPicks.get(id),
+    picked: (id, { toolCallId, participant, question, answer }) => {
+      const before = pieces.questionPicks.get(id)
+      const others = (before?.toolCallId === toolCallId ? before.picks : []).filter(
+        (pick) => pick.participant.id !== participant.id || pick.question !== question,
+      )
+      const picks =
+        answer === "" ? others : [...others, QuestionPick.make({ participant, question, answer })]
+      pieces.questionPicks.set(id, { toolCallId, picks })
+      return picks
+    },
+    questionAsked: (id) => pieces.questionPicks.delete(id),
+    questionClosed: (id, closed) => {
+      pieces.closedQuestions.set(id, closed)
+      pieces.questionPicks.delete(id)
+    },
+    closedQuestion: (id) => pieces.closedQuestions.get(id),
+    sandboxTokenMinted: (id, repo, token) => {
+      const before = pieces.sandboxTokens.get(id)?.tokens ?? []
+      pieces.sandboxTokens.set(id, { repo, tokens: [...before.slice(-1), token] })
+    },
+    sandboxTokensOf: (repo) =>
+      [...pieces.sandboxTokens.values()].flatMap((known) =>
+        sameRepo(known.repo, repo) ? known.tokens : [],
+      ),
+    installationFailing: (id, installationId, why) => {
+      const noted = pieces.installationTrouble.get(id) ?? new Map<InstallationId, string>()
+      pieces.installationTrouble.set(id, noted)
+      if (noted.get(installationId) === why) return false
+      noted.set(installationId, why)
+      return true
+    },
+    installationWorks: (id, installationId) => {
+      pieces.installationTrouble.get(id)?.delete(installationId)
+    },
     ended: (id, how) => {
       for (const piece of clearedWhen[how]) pieces[piece].delete(id)
     },
   }
+  return live
 }
