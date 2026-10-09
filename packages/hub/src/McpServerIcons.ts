@@ -18,8 +18,8 @@
 import { createHash } from "node:crypto"
 import { Context, Effect, Layer, Option } from "effect"
 import { getDomain } from "tldts"
-import { readAtMost } from "./Gateway.ts"
 import { fetchable } from "./McpServerOAuth.ts"
+import { readAtMost } from "./ReadAtMost.ts"
 
 /** An icon as the Hub keeps it. */
 export interface Icon {
