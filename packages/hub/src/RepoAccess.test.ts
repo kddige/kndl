@@ -94,6 +94,26 @@ describe("Repo access", () => {
     expect(github.collaboratorChecks("octocat")).toBe(2)
   })
 
+  test("lists the Repos the App is on that the person has access to, kept", async () => {
+    const other = RepoName.make("octo/other")
+    github.installedOn.add(repo)
+    github.installedOn.add(other)
+    github.grant(repo, "octocat")
+    const answers = await withAccess(
+      Effect.gen(function* () {
+        const access = yield* RepoAccess
+        const first = yield* access.accessible(octocat)
+        github.grant(other, "octocat")
+        // Within a minute, as the stand-in checks the App JWT against the real time.
+        yield* TestClock.adjust(Duration.seconds(50))
+        const cached = yield* access.accessible(octocat)
+        return { first, cached }
+      }),
+    )
+    expect(answers).toEqual({ first: [repo], cached: [repo] })
+    expect(github.requests.filter((r) => r.path === "/app/installations")).toHaveLength(1)
+  })
+
   test("forget asks GitHub again at once", async () => {
     const answers = await withAccess(
       Effect.gen(function* () {

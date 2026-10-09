@@ -45,6 +45,7 @@ import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
 import { EffortLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
+  BranchChoice,
   BranchName,
   EpochMillis,
   Participant,
@@ -167,14 +168,15 @@ export const WebHello = Schema.TaggedStruct("WebHello", {
 export type WebHello = typeof WebHello.Type
 
 /**
- * Start a new Session on a Repo, from a base branch. The Hub picks a Runner if none is named. A
+ * Start a new Session on a Repo, on a branch (ADR 0023): an existing one, directly or on a new
+ * Work branch made from it, or a new one made from another. The Hub picks a Runner if none is named. A
  * `model` or `effort` the Runner's Claude Code doesn't take is refused; absent, Claude Code's own
  * default is used (#128).
  */
 export const CreateSession = Schema.TaggedStruct("CreateSession", {
   requestId: RequestId,
   repo: RepoName,
-  baseBranch: BranchName,
+  branch: BranchChoice,
   runnerId: Schema.optionalKey(RunnerId),
   model: Schema.optionalKey(ModelName),
   effort: Schema.optionalKey(EffortLevel),
@@ -376,6 +378,31 @@ export const CheckRepo = Schema.TaggedStruct("CheckRepo", {
 })
 export type CheckRepo = typeof CheckRepo.Type
 
+/**
+ * The Repos the person may start a Session on, for New Session's Repo combo box: those the GitHub
+ * App is installed on and the person has access to. Answered with a {@link ReposListed}, or a
+ * CommandFailed when GitHub can't say, or there is no GitHub App.
+ */
+export const ListRepos = Schema.TaggedStruct("ListRepos", {
+  requestId: RequestId,
+})
+export type ListRepos = typeof ListRepos.Type
+
+/**
+ * A Repo's branches and its default branch, through the GitHub App, for New Session's Branch combo
+ * box. Answered with a {@link BranchesListed}, or a CommandFailed when the person has no access to
+ * the Repo, or GitHub can't say, or there is no GitHub App.
+ */
+export const ListBranches = Schema.TaggedStruct("ListBranches", {
+  requestId: RequestId,
+  repo: RepoName,
+})
+export type ListBranches = typeof ListBranches.Type
+
+/** What a web client asks the Hub about Repos and branches as New Session is filled in. */
+export const RepoLookup = Schema.Union([CheckRepo, ListRepos, ListBranches])
+export type RepoLookup = typeof RepoLookup.Type
+
 // ── Runners (issue #85) ──
 
 /**
@@ -514,7 +541,7 @@ export const WebToHub = Schema.Union([
   SetClaudeCredential,
   RemoveClaudeCredential,
   CheckAppPermissions,
-  CheckRepo,
+  RepoLookup,
   CreatePairingCode,
   RevokePairingCode,
   RemoveRunner,
@@ -673,6 +700,23 @@ export const RepoChecked = Schema.TaggedStruct("RepoChecked", {
 })
 export type RepoChecked = typeof RepoChecked.Type
 
+/** Answers a {@link ListRepos}. */
+export const ReposListed = Schema.TaggedStruct("ReposListed", {
+  requestId: RequestId,
+  repos: Schema.Array(RepoName),
+})
+export type ReposListed = typeof ReposListed.Type
+
+/** Answers a {@link ListBranches}. */
+export const BranchesListed = Schema.TaggedStruct("BranchesListed", {
+  requestId: RequestId,
+  repo: RepoName,
+  branches: Schema.Array(BranchName),
+  /** The Repo's default branch, which is among `branches`. */
+  defaultBranch: BranchName,
+})
+export type BranchesListed = typeof BranchesListed.Type
+
 /**
  * The person no longer has access to the Repo (ADR 0003): its Environment, and any of its Test
  * builds, are gone from this client, as its Sessions are with a SessionRemoved each.
@@ -807,6 +851,8 @@ export const HubToWeb = Schema.Union([
   ClaudeCredentialState,
   AppPermissionsChecked,
   RepoChecked,
+  ReposListed,
+  BranchesListed,
   RepoAccessLost,
   PairingCodeCreated,
   PairingCodeList,

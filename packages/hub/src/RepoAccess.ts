@@ -11,6 +11,9 @@
 //   The person's own GitHub token is used once at sign-in and never kept (GitHub.ts), so it isn't
 //   asked. Without the App, a GitHub sign-in's access can't be checked, so it has none; the Hub
 //   says so once, as it starts.
+// - `accessible` lists the Repos the GitHub App is installed on that the person has access to, for
+//   the web UI's Repo combo box: one collaborator check per Repo, cached as any is, and the
+//   list itself cached per person for `accessibleTtl`.
 // - `status` also says why not, for the web UI's check of a Repo as it is entered (#104): the App
 //   isn't installed on it (or there's no such Repo), or the person isn't a collaborator. Telling
 //   the two apart says whether the App is installed on a Repo the person can't reach; commands
@@ -55,6 +58,12 @@ const lookupTimeout = Duration.seconds(10)
  */
 export const refusedAnswerTtl = Duration.seconds(30)
 
+/** How long a person's list of Repos they have access to is kept (`accessible`). */
+export const accessibleTtl = Duration.minutes(5)
+
+/** How many collaborator checks one person's list of Repos runs at once. */
+const accessibleConcurrency = 8
+
 /** What GitHub answers, or why it couldn't, within `lookupTimeout`. */
 const askGitHub = <A>(asked: Effect.Effect<A, GitHubAppError>) =>
   asked.pipe(
@@ -89,6 +98,19 @@ class Asked implements Equal.Equal {
   }
 }
 
+/** What a cache keeps a person's answer by: their id; `participant` is who GitHub is asked for. */
+class Person implements Equal.Equal {
+  constructor(readonly participant: Participant) {}
+
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof Person && that.participant.id === this.participant.id
+  }
+
+  [Hash.symbol](): number {
+    return Hash.string(this.participant.id)
+  }
+}
+
 export class RepoAccess extends Context.Service<
   RepoAccess,
   {
@@ -106,6 +128,14 @@ export class RepoAccess extends Context.Service<
       participant: Participant,
       repo: RepoName,
     ) => Effect.Effect<RepoStatus, RepoAccessUnknown>
+    /**
+     * The Repos the GitHub App is installed on that the person has access to, each as `check`
+     * says, kept for {@link accessibleTtl}. A Repo GitHub can't say about is left out. Fails when
+     * the App's Repos can't be listed.
+     */
+    readonly accessible: (
+      participant: Participant,
+    ) => Effect.Effect<ReadonlyArray<RepoName>, RepoAccessUnknown>
     /** Forgets what GitHub said of the person and the Repo: the next check asks again. */
     readonly forget: (participant: Participant, repo: RepoName) => Effect.Effect<void>
     /**
@@ -183,6 +213,37 @@ export class RepoAccess extends Context.Service<
           ? Cache.invalidate(installed, new Asked("", repo))
           : Cache.invalidate(answers, new Asked(participant.login, repo))
 
+      // By person: the Repos the App is on that they have access to. Only an answer is kept.
+      const accessibleRepos = yield* Cache.makeWith(
+        ({ participant }: Person) =>
+          askGitHub(app.listRepos).pipe(
+            Effect.flatMap((repos) =>
+              Effect.forEach(
+                repos,
+                (repo) =>
+                  check(participant, repo).pipe(
+                    Effect.map((allowed) => (allowed ? [repo] : [])),
+                    Effect.catchTag("RepoAccessUnknown", (error) =>
+                      Effect.as(Effect.logWarning(error.message), []),
+                    ),
+                  ),
+                { concurrency: accessibleConcurrency },
+              ),
+            ),
+            Effect.map((checked) => checked.flat()),
+          ),
+        {
+          capacity: cacheCapacity,
+          timeToLive: (exit) =>
+            Exit.isSuccess(exit)
+              ? Duration.min(accessibleTtl, config.repoAccessTtl)
+              : Duration.zero,
+        },
+      )
+
+      const accessible = (participant: Participant) =>
+        Cache.get(accessibleRepos, new Person(participant))
+
       // By Repo: how GitHub spells its name. Only an answer is kept.
       const fullNames = yield* Cache.makeWith(({ repo }: Asked) => askGitHub(app.fullName(repo)), {
         capacity: cacheCapacity,
@@ -202,7 +263,7 @@ export class RepoAccess extends Context.Service<
             )
           : Effect.succeed(Option.none<RepoName>())
 
-      return RepoAccess.of({ check, status, forget, fullName })
+      return RepoAccess.of({ check, status, forget, fullName, accessible })
     }),
   )
 }

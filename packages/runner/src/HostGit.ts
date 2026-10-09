@@ -127,7 +127,8 @@ const excludeAgentWorktrees = (workspace: string) =>
 
 /**
  * Clones `url` into `workspace` on `baseBranch`, then creates and checks out `workBranch`, with
- * subagents' worktrees excluded.
+ * subagents' worktrees excluded. A `workBranch` that is the `baseBranch` is already checked out:
+ * the Session commits to it directly.
  */
 export const cloneWorkspace = (options: {
   readonly url: string
@@ -142,7 +143,9 @@ export const cloneWorkspace = (options: {
       ["clone", "--quiet", "--branch", options.baseBranch, "--", options.url, options.workspace],
       run,
     )
-    yield* git(["-C", options.workspace, "switch", "--quiet", "--create", options.workBranch])
+    if (options.workBranch !== options.baseBranch) {
+      yield* git(["-C", options.workspace, "switch", "--quiet", "--create", options.workBranch])
+    }
     yield* excludeAgentWorktrees(options.workspace)
   })
 

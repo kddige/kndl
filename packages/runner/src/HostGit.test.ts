@@ -116,15 +116,15 @@ describe.skipIf(Bun.which("git") === null)("host git", () => {
   const workspace = () => sessionDirectories(sessionsRoot, id).workspace
   const workBranch = () => `claude/g-${counter}`
 
-  const prepare = () =>
+  const prepare = (branches: { readonly base?: string; readonly work?: string } = {}) =>
     run(
       Effect.flatMap(Workspaces, (w) =>
         w.prepare({
           _tag: "StartSession",
           sessionId: id,
           repo: `acme/repo-${counter}` as never,
-          baseBranch: "main" as never,
-          workBranch: workBranch() as never,
+          baseBranch: (branches.base ?? "main") as never,
+          workBranch: (branches.work ?? workBranch()) as never,
           modToken: "m",
         }),
       ),
@@ -149,6 +149,13 @@ describe.skipIf(Bun.which("git") === null)("host git", () => {
 
     expect(git(workspace(), "branch", "--show-current")).toBe(workBranch())
     expect(git(workspace(), "rev-parse", "HEAD")).toBe(git(origin, "rev-parse", "main"))
+  })
+
+  test("works directly on the base branch when the Work branch is it (ADR 0023)", async () => {
+    await prepare({ work: "main" })
+
+    expect(git(workspace(), "branch", "--show-current")).toBe("main")
+    expect(git(workspace(), "branch", "--format=%(refname:short)")).toBe("main")
   })
 
   test("the clone pushes nothing, and has no Runner git directory beside it (#194)", async () => {

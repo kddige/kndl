@@ -44,7 +44,12 @@ async function forwardScene(hub?: TestHub) {
   const runner = await openRunner(theHub, runnerToken, [], undefined, true, { forwardsPorts: true })
   const web = await openWeb(theHub, "alice")
   await seedEnvironment(theHub, repo, "dev:alice")
-  web.send({ _tag: "CreateSession", requestId: "req-1", repo, baseBranch: "main" })
+  web.send({
+    _tag: "CreateSession",
+    requestId: "req-1",
+    repo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   const start = await runner.take("StartSession")
   const sessionId = (await web.take("SessionCreated")).session.id
   runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })

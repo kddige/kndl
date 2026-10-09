@@ -81,6 +81,8 @@ export class StandInGitHub {
    * As on GitHub, only a token that can read the organization's members counts them.
    */
   readonly throughOrganization = new Map<string, Set<string>>()
+  /** Each Repo's (`owner/name`) branches and default branch; by default `main` alone. */
+  readonly branches = new Map<string, { names: Array<string>; defaultBranch: string }>()
   /** While set, collaborator checks answer 503, as in an outage. */
   collaboratorsDown = false
   /** While set, `GET /app` answers 503, as in an outage. */
@@ -160,6 +162,18 @@ export class StandInGitHub {
     return undefined
   }
 
+  /** `repo`'s branches, and which is its default. */
+  private branchesOf(repo: string) {
+    return this.branches.get(repo) ?? { names: ["main"], defaultBranch: "main" }
+  }
+
+  /** The page of `all` that the request's `page` and `per_page` ask for. */
+  private page<T>(all: ReadonlyArray<T>, url: URL): ReadonlyArray<T> {
+    const perPage = Number(url.searchParams.get("per_page") ?? 30)
+    const page = Number(url.searchParams.get("page") ?? 1)
+    return all.slice((page - 1) * perPage, page * perPage)
+  }
+
   /** How many collaborator checks it has answered, for `login` if given. */
   collaboratorChecks(login?: string) {
     return this.requests.filter((request) => {
@@ -200,6 +214,7 @@ export class StandInGitHub {
     this.installedOn.clear()
     this.collaborators.clear()
     this.throughOrganization.clear()
+    this.branches.clear()
     this.collaboratorsDown = false
     this.appDown = false
     this.tokenLifetimeMs = 60 * 60 * 1000
@@ -290,7 +305,28 @@ export class StandInGitHub {
       if (!this.tokens.has(authorization?.replace(/^Bearer /, "") ?? "")) return unauthorized
       const fullName = this.spelling(match[1] ?? "")
       if (fullName === undefined) return this.json(404, { message: "Not Found" })
-      return this.json(200, { full_name: fullName, name: fullName.split("/")[1] })
+      return this.json(200, {
+        full_name: fullName,
+        name: fullName.split("/")[1],
+        default_branch: this.branchesOf(fullName).defaultBranch,
+      })
+    }
+    if (request.method === "GET" && (match = /^\/repos\/([^/]+\/[^/]+)\/branches$/.exec(path))) {
+      if (!this.tokens.has(authorization?.replace(/^Bearer /, "") ?? "")) return unauthorized
+      const fullName = this.spelling(match[1] ?? "")
+      if (fullName === undefined) return this.json(404, { message: "Not Found" })
+      return this.json(
+        200,
+        this.page(this.branchesOf(fullName).names, url).map((name) => ({ name })),
+      )
+    }
+    if (request.method === "GET" && path === "/installation/repositories") {
+      if (!this.tokens.has(authorization?.replace(/^Bearer /, "") ?? "")) return unauthorized
+      const all = [...this.installedOn]
+      return this.json(200, {
+        total_count: all.length,
+        repositories: this.page(all, url).map((full_name) => ({ full_name })),
+      })
     }
     if (
       request.method === "POST" &&

@@ -4,13 +4,20 @@
 // installation has, which the Runner keeps in the Session's Sandbox for `git` and `gh`. As the
 // installation, it also answers who has access to a Repo (RepoAccess.ts). As the App, it reads its
 // own permissions and its installations', to check them against what the Hub needs
-// (AppPermissions.ts).
+// (AppPermissions.ts). It lists the Repos the App is on and a Repo's branches, for the web UI's
+// New Session form (ADR 0023).
 //
 // It also makes the App in the first place: `kndl onboard` registers it on GitHub from a
 // manifest, and trades the code GitHub hands back for its credentials (convertManifest).
 
 import { createPrivateKey, type KeyObject, sign } from "node:crypto"
-import { type AppPermissionsCheck, type GitIdentity, RepoName, repoKey } from "@kndl/protocol"
+import {
+  type AppPermissionsCheck,
+  BranchName,
+  type GitIdentity,
+  RepoName,
+  repoKey,
+} from "@kndl/protocol"
 import {
   Clock,
   Context,
@@ -37,6 +44,13 @@ export class GitHubAppError extends Schema.TaggedError<GitHubAppError>()("GitHub
   /** The HTTP status GitHub answered with, when it answered. */
   status: Schema.optional(Schema.Int),
 }) {}
+
+/** A Repo's branches, and which of them is its default. */
+export interface RepoBranches {
+  /** As GitHub lists them. */
+  readonly branches: ReadonlyArray<BranchName>
+  readonly defaultBranch: BranchName
+}
 
 /** An installation token for one Repo. */
 export interface RepoToken {
@@ -89,6 +103,14 @@ const Installation = Schema.Struct({ id: Schema.Int, permissions: Schema.optiona
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString, expires_at: Schema.String })
 /** `GET /repos/{owner}/{repo}`, as far as the Hub reads it: the Repo's name as GitHub spells it. */
 const Repository = Schema.Struct({ full_name: RepoName })
+/** `GET /repos/{owner}/{repo}`, for the Repo's default branch. */
+const RepositoryDefaults = Schema.Struct({ default_branch: BranchName })
+/** `GET /installation/repositories`: a page of the Repos an installation token reaches. */
+const InstallationRepositories = Schema.Struct({
+  repositories: Schema.Array(Schema.Struct({ full_name: RepoName })),
+})
+/** `GET /repos/{owner}/{repo}/branches`: a page of them. */
+const BranchPage = Schema.Array(Schema.Struct({ name: BranchName }))
 const App = Schema.Struct({ slug: Schema.NonEmptyString, html_url: Schema.String })
 /** `GET /app`, as the permission check reads it. An enterprise's App has no owner login. */
 const AppDetails = Schema.Struct({
@@ -126,6 +148,12 @@ export const hostTokenPermissions = (
 
 /** The most installations GitHub lists on one page. */
 const installationsPerPage = 100
+
+/** The most Repos or branches GitHub lists on one page. */
+const listedPerPage = 100
+
+/** The most pages of a Repo's branches the Hub reads: past this many, the rest are left out. */
+const maxBranchPages = 20
 
 const notConfigured = new GitHubAppError({
   message:
@@ -193,6 +221,19 @@ export class GitHubApp extends Context.Service<
      * (AppPermissions.ts): `GET /app`, and every page of `GET /app/installations`.
      */
     readonly checkPermissions: Effect.Effect<AppPermissionsCheck, GitHubAppError>
+    /**
+     * Every Repo the App is installed on, over all its installations that aren't suspended:
+     * `GET /installation/repositories`, every page, with a token for each installation that has
+     * only the Metadata permission every App has. For New Session's Repo combo box, which
+     * RepoAccess filters by person.
+     */
+    readonly listRepos: Effect.Effect<ReadonlyArray<RepoName>, GitHubAppError>
+    /**
+     * The Repo's branches and its default branch, asked as the Repo's installation. Fails with
+     * status 404 where the App isn't installed on the Repo. Reads at most {@link maxBranchPages}
+     * pages of branches.
+     */
+    readonly listBranches: (repo: RepoName) => Effect.Effect<RepoBranches, GitHubAppError>
   }
 >()("@kndl/hub/GitHubApp") {
   /** The App from `HubConfig.githubApp`; when that is none, every call fails, saying so. */
@@ -217,6 +258,8 @@ export class GitHubApp extends Context.Service<
     installUrl: Effect.fail(notConfigured),
     isCollaborator: () => Effect.fail(notConfigured),
     checkPermissions: Effect.fail(notConfigured),
+    listRepos: Effect.fail(notConfigured),
+    listBranches: () => Effect.fail(notConfigured),
   })
 
   static readonly make = Effect.fnUntraced(function* (config: GitHubAppConfig) {
@@ -446,6 +489,72 @@ export class GitHubApp extends Context.Service<
       return checkAppPermissions(facts, installations, yield* Clock.currentTimeMillis)
     }).pipe(Effect.withSpan("GitHubApp.checkPermissions"))
 
+    const listRepos = Effect.gen(function* () {
+      const repos: Array<RepoName> = []
+      for (let installations = 1; ; installations++) {
+        const listed = yield* call(
+          "Could not list the GitHub App's installations",
+          Schema.Array(InstallationDetails),
+          request(
+            "GET",
+            `/app/installations?per_page=${installationsPerPage}&page=${installations}`,
+            { jwt: true },
+          ),
+        )
+        for (const installation of listed) {
+          if (installation.suspended_at != null) continue
+          const minted = yield* call(
+            `Could not get a token for installation ${installation.id}`,
+            AccessToken,
+            request("POST", `/app/installations/${installation.id}/access_tokens`, {
+              jwt: true,
+            }).pipe(
+              Effect.map(HttpClientRequest.bodyJsonUnsafe({ permissions: { metadata: "read" } })),
+            ),
+          )
+          const token = Redacted.make(minted.token)
+          for (let page = 1; ; page++) {
+            const found = yield* call(
+              `Could not list the Repos of installation ${installation.id}`,
+              InstallationRepositories,
+              request("GET", `/installation/repositories?per_page=${listedPerPage}&page=${page}`, {
+                token,
+              }),
+            )
+            repos.push(...found.repositories.map((repo) => repo.full_name))
+            if (found.repositories.length < listedPerPage) break
+          }
+        }
+        if (listed.length < installationsPerPage) break
+      }
+      return repos
+    }).pipe(Effect.withSpan("GitHubApp.listRepos"))
+
+    const listBranches = Effect.fn("GitHubApp.listBranches")(function* (repo: RepoName) {
+      const { owner, name } = splitRepo(repo)
+      const { token } = yield* repoToken(repo)
+      const { default_branch: defaultBranch } = yield* call(
+        `Could not look up ${repo}`,
+        RepositoryDefaults,
+        request("GET", `/repos/${owner}/${name}`, { token }),
+      )
+      const branches: Array<BranchName> = []
+      for (let page = 1; page <= maxBranchPages; page++) {
+        const found = yield* call(
+          `Could not list the branches of ${repo}`,
+          BranchPage,
+          request(
+            "GET",
+            `/repos/${owner}/${name}/branches?per_page=${listedPerPage}&page=${page}`,
+            { token },
+          ),
+        )
+        branches.push(...found.map((branch) => branch.name))
+        if (found.length < listedPerPage) break
+      }
+      return { branches, defaultBranch }
+    })
+
     return GitHubApp.of({
       isConfigured: true,
       repoToken,
@@ -457,6 +566,8 @@ export class GitHubApp extends Context.Service<
       installUrl,
       isCollaborator,
       checkPermissions,
+      listRepos,
+      listBranches,
     })
   })
 }

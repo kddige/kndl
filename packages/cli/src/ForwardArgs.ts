@@ -1,13 +1,13 @@
 // What `kndl forward [session] [ports...]` (#180) is given, read: which Session, which of its
 // ports to which local ones, and where to listen. Pure, so it is tested on its own.
 import { isIP } from "node:net"
-import type { SessionSummary } from "@kndl/protocol"
+import { type SessionSummary, sessionTitle } from "@kndl/protocol"
 
 /** A Session's short id, as the web shows it in the forward command: its first 6 characters. */
 export const shortId = (session: Pick<SessionSummary, "id">) => session.id.slice(0, 6)
 
-/** A Session as a person knows it: its name, or its Work branch until it has one. */
-export const sessionTitle = (session: SessionSummary) => session.name ?? session.workBranch
+/** A Session as a person knows it (the protocol's title: its name, or else its branch). */
+export { sessionTitle }
 
 /** One remote port, and the local one it is forwarded to. */
 export interface PortMapping {

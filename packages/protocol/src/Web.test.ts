@@ -37,12 +37,17 @@ const sessionEvents = [
 
 const webToHub = [
   { _tag: "WebHello", protocolVersion: ProtocolVersion },
-  { _tag: "CreateSession", requestId: "q-1", repo: "kddige/kndl", baseBranch: "main" },
+  {
+    _tag: "CreateSession",
+    requestId: "q-1",
+    repo: "kddige/kndl",
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  },
   {
     _tag: "CreateSession",
     requestId: "q-2",
     repo: "kddige/kndl",
-    baseBranch: "main",
+    branch: { _tag: "Existing", name: "main", newWorkBranch: false },
     runnerId: "r-1",
   },
   { _tag: "JoinSession", sessionId: "s-1" },
@@ -140,6 +145,8 @@ const webToHub = [
   { _tag: "CheckAppPermissions", requestId: "q-12" },
   { _tag: "CheckRepo", requestId: "q-13", repo: "kddige/kndl" },
   { _tag: "CheckRepo", requestId: "q-14", repo: "kddige/kndl", fresh: true },
+  { _tag: "ListRepos", requestId: "q-14" },
+  { _tag: "ListBranches", requestId: "q-14", repo: "kddige/kndl" },
   { _tag: "CreatePairingCode", requestId: "q-13" },
   { _tag: "CreatePairingCode", requestId: "q-14", runnerId: "r-1" },
   { _tag: "RevokePairingCode", requestId: "q-15", pairingCodeId: "pc-1" },
@@ -149,7 +156,7 @@ const webToHub = [
     _tag: "CreateSession",
     requestId: "q-18",
     repo: "kddige/kndl",
-    baseBranch: "main",
+    branch: { _tag: "Create", name: "feature/health-check", from: "main" },
     model: "opus[1m]",
     effort: "low",
   },
@@ -552,6 +559,15 @@ const hubToWeb = [
     credential: { kind: "OAuthToken", last4: "ONLY", plan: "max5x", addedAt: 1_700_000_000_000 },
     warning: "Saved without checking it: Anthropic couldn't be reached.",
   },
+  { _tag: "ReposListed", requestId: "q-14", repos: [] },
+  { _tag: "ReposListed", requestId: "q-14", repos: ["kddige/kndl", "kddige/other"] },
+  {
+    _tag: "BranchesListed",
+    requestId: "q-15",
+    repo: "kddige/kndl",
+    branches: ["main", "feature/health-check"],
+    defaultBranch: "main",
+  },
   { _tag: "RepoChecked", requestId: "q-13", repo: "kddige/kndl", status: "Allowed" },
   { _tag: "RepoChecked", requestId: "q-13", repo: "kddige/kndl", status: "NoAccess" },
   {
@@ -870,9 +886,25 @@ describe("WebToHub", () => {
     expectRejected(WebToHub, {
       _tag: "CreateSession",
       repo: "kddige/kndl",
-      baseBranch: "main",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     })
     expectRejected(WebToHub, { ...webToHub[1], repo: "kddige/kndl/extra" })
+    // The old shape, from before a Session could work on a branch directly.
+    expectRejected(WebToHub, {
+      _tag: "CreateSession",
+      requestId: "q-1",
+      repo: "kddige/kndl",
+      baseBranch: "main",
+    })
+    expectRejected(WebToHub, { ...webToHub[1], branch: { _tag: "Existing", name: "main" } })
+    expectRejected(WebToHub, { ...webToHub[1], branch: { _tag: "Create", name: "x", from: "" } })
+    for (const name of ["a b", "a..b", "-x", "x.lock", "x/", "a@{b", "a~b", "a:b", "HEAD"]) {
+      expectRejected(WebToHub, {
+        ...webToHub[1],
+        branch: { _tag: "Create", name, from: "main" },
+      })
+    }
+    expectRejected(WebToHub, { _tag: "ListBranches", requestId: "q-14" })
     expectRejected(WebToHub, { _tag: "JoinSession", sessionId: "s-1", afterSeq: -1 })
     expectRejected(WebToHub, { _tag: "CancelPrompt", sessionId: "s-1" })
     expectRejected(WebToHub, { _tag: "SteerPrompt", sessionId: "s-1" })

@@ -38,6 +38,59 @@ export const sameRepo = (a: string, b: string): boolean => repoKey(a) === repoKe
 export const BranchName = Schema.NonEmptyString
 export type BranchName = typeof BranchName.Type
 
+/**
+ * Why git would refuse `name` for a new branch, by the rules of `git check-ref-format --branch`,
+ * or undefined when it would take it. Worded for the person typing the name.
+ */
+export function branchNameProblem(name: string): string | undefined {
+  if (name === "") return "A branch name can't be empty."
+  if (name === "@") return "A branch can't be named just @."
+  if (name === "HEAD") return "A branch can't be named HEAD."
+  if (name.startsWith("-")) return "A branch name can't start with -."
+  if (name.startsWith("/") || name.endsWith("/")) return "A branch name can't start or end with /."
+  if (name.includes("//")) return "A branch name can't have // in it."
+  if (name.endsWith(".")) return "A branch name can't end with a dot."
+  if (name.includes("..")) return "A branch name can't have two dots in a row."
+  if (name.includes("@{")) return "A branch name can't have @{ in it."
+  // oxlint-disable-next-line no-control-regex -- git refuses control characters
+  if (/[\x00-\x20\x7f]/.test(name)) return "A branch name can't have spaces or control characters."
+  const bad = /[~^:?*[\\]/.exec(name)
+  if (bad !== null) return `A branch name can't have ${bad[0]} in it.`
+  for (const part of name.split("/")) {
+    if (part.startsWith(".")) return "A branch name's parts can't start with a dot."
+    if (part.endsWith(".lock")) return "A branch name's parts can't end with .lock."
+  }
+  return undefined
+}
+
+/** The name of a branch to create: a {@link BranchName} that git accepts, by {@link branchNameProblem}. */
+export const NewBranchName = BranchName.check(Schema.makeFilter((name) => branchNameProblem(name)))
+export type NewBranchName = typeof NewBranchName.Type
+
+/** A New Session on a branch that is already there: on it directly, or on a new Work branch. */
+export const ExistingBranch = Schema.TaggedStruct("Existing", {
+  name: BranchName,
+  /** True to work on a new `claude/<id>` branch made from it; false to commit to it directly. */
+  newWorkBranch: Schema.Boolean,
+})
+export type ExistingBranch = typeof ExistingBranch.Type
+
+/** A New Session on a branch to create, from `from`, which is its base branch. */
+export const CreateBranch = Schema.TaggedStruct("Create", {
+  name: NewBranchName,
+  from: BranchName,
+})
+export type CreateBranch = typeof CreateBranch.Type
+
+/**
+ * Which branch a New Session works on (ADR 0023): the Hub turns it into the base branch the Repo
+ * is cloned on and the Work branch the Session commits to.
+ */
+export const BranchChoice = Schema.Union([ExistingBranch, CreateBranch]).pipe(
+  Schema.toTaggedUnion("_tag"),
+)
+export type BranchChoice = typeof BranchChoice.Type
+
 /** The longest a Session name may be, in characters. */
 export const MaxSessionNameLength = 80
 
@@ -64,11 +117,24 @@ export function sessionNameFrom(text: string): { readonly name: SessionName | nu
   return { name: name === "" ? null : name }
 }
 
-/** What the web UI calls a Session: its name, or its Work branch while it has none. */
+/** How many characters of a Session's id its title shows, where its branch isn't its own. */
+const titleIdLength = 4
+
+/**
+ * What the web UI calls a Session: its name, or its Work branch while it has none. A Session on
+ * its base branch itself (ADR 0023) shares that branch with others, so its title adds its short
+ * id: `main · 3f96`.
+ */
 export const sessionTitle = (session: {
+  readonly id: SessionId
   readonly name?: SessionName
+  readonly baseBranch: BranchName
   readonly workBranch: BranchName
-}): string => session.name ?? session.workBranch
+}): string =>
+  session.name ??
+  (session.workBranch === session.baseBranch
+    ? `${session.workBranch} · ${session.id.slice(0, titleIdLength)}`
+    : session.workBranch)
 
 /**
  * Where a Session is in its lifecycle (see GLOSSARY.md):

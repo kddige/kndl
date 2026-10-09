@@ -129,7 +129,8 @@
 //   reading it, checking or applying a draft or starting a Test build, is checked the same way and
 //   refused alike whether the Repo exists or not. A person who loses access is told the Repo's
 //   Environment is gone from them with a RepoAccessLost. CheckRepo asks for a Repo as it is
-//   entered, before a new Session or Environment is set up. Shared variables aren't any Repo's.
+//   entered, before a new Session or Environment is set up; ListRepos and ListBranches fill in
+//   New Session's Repo and branch choices (ADR 0023), off the lock too. Shared variables aren't any Repo's.
 // - Claude credentials (ADR 0015, ClaudeCredentials.ts): each person stores their own, checked
 //   with Anthropic off the lock, and is sent what they can see of it (ClaudeCredentialState)
 //   after the welcome and whenever it changes. A Session runs on its Creator's, else on its
@@ -157,6 +158,8 @@
 import {
   AgentMessaged,
   AgentStatusChanged,
+  BranchesListed,
+  type BranchChoice,
   type BranchName,
   ClaudeCredentialFetched,
   ClaudeCredentialRefused,
@@ -230,6 +233,7 @@ import {
   RepoName,
   RepoAccessLost,
   RepoChecked,
+  ReposListed,
   TurnStopRequested,
   type WebToHub,
   cantStartText,
@@ -445,8 +449,23 @@ const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.effort !== undefined && { effort: setting.effort }),
 })
 
-/** The work branch a new Session commits to. */
+/** The work branch a new Session commits to, unless it works directly on a branch. */
 export const workBranchFor = (sessionId: SessionId) => `claude/${sessionId}`
+
+/**
+ * The branches a New Session's branch choice comes to (ADR 0023): the one its Repo is cloned on,
+ * and the one it commits to.
+ */
+export const branchesFor = (
+  choice: BranchChoice,
+  sessionId: SessionId,
+): { readonly baseBranch: BranchName; readonly workBranch: BranchName } => {
+  if (choice._tag === "Create") return { baseBranch: choice.from, workBranch: choice.name }
+  return {
+    baseBranch: choice.name,
+    workBranch: choice.newWorkBranch ? workBranchFor(sessionId) : choice.name,
+  }
+}
 
 /** Whether a subagent of the Session is running (ADR 0014): it is working, Turn or not. */
 const hasRunningAgents = (session: SessionSummary) =>
@@ -2004,7 +2023,8 @@ export class SessionRelay extends Context.Service<
       /** A Session to create and start, from New Session. */
       interface NewSessionPlan {
         readonly repo: RepoName
-        readonly baseBranch: BranchName
+        /** Which branch it works on; `branchesFor` makes of it its base and Work branches. */
+        readonly branch: BranchChoice
         readonly runner: OnlineRunner
         /** Whom it runs for: who created it. */
         readonly creator: Participant
@@ -2079,8 +2099,7 @@ export class SessionRelay extends Context.Service<
         const session = yield* sessions.create({
           id,
           repo,
-          baseBranch: plan.baseBranch,
-          workBranch: workBranchFor(id),
+          ...branchesFor(plan.branch, id),
           state: "Active",
           runnerId: runner.id,
           runnerLogin: runner.login,
@@ -2126,6 +2145,8 @@ export class SessionRelay extends Context.Service<
             readonly _tag:
               | "CheckAppPermissions"
               | "CheckRepo"
+              | "ListRepos"
+              | "ListBranches"
               | "SetClaudeCredential"
               | "RemoveClaudeCredential"
               | "RevokeCliToken"
@@ -2304,14 +2325,21 @@ export class SessionRelay extends Context.Service<
               if (behind !== undefined) return refuse(message, behind, { requestId })
               const model = yield* checkModel(runner.id, message)
               if (typeof model === "string") return refuse(message, model, { requestId })
-              // Repo access was checked before the lock was taken.
-              // TODO: check that the base branch exists, once the GitHub App can tell.
+              // Repo access was checked before the lock was taken. The branches are the form's
+              // word (ADR 0023): one that isn't there fails the clone, as it always has.
+              const { branch } = message
               const created = yield* startNew({
                 repo: message.repo,
-                baseBranch: message.baseBranch,
+                branch,
                 runner,
                 creator: you,
-                why: { by: you, message: `Started on ${runner.name} from ${message.baseBranch}` },
+                why: {
+                  by: you,
+                  message:
+                    branch._tag === "Existing" && !branch.newWorkBranch
+                      ? `Started on ${runner.name} on ${branch.name}`
+                      : `Started on ${runner.name} from ${branch._tag === "Create" ? branch.from : branch.name}`,
+                },
                 model: model.setting,
                 created: (session) =>
                   peer.send(
@@ -2990,6 +3018,43 @@ export class SessionRelay extends Context.Service<
           )
         })
 
+        /**
+         * Lists the Repos the person may start a Session on (ADR 0023), off the lock since it
+         * waits on GitHub: the App's, filtered by their access and kept for a few minutes.
+         */
+        const listRepos = Effect.fn("SessionRelay.listRepos")(function* (
+          message: Extract<WebToHub, { readonly _tag: "ListRepos" }>,
+        ) {
+          const listed = yield* Effect.result(access.accessible(you))
+          if (listed._tag === "Failure") {
+            yield* Effect.logWarning(listed.failure.message)
+            return refuse(message, listed.failure.message)
+          }
+          peer.send(ReposListed.make({ requestId: message.requestId, repos: listed.success }))
+        })
+
+        /**
+         * Lists a Repo's branches and its default branch (ADR 0023), off the lock since it waits
+         * on GitHub: to a person with access to the Repo, as for any command about it.
+         */
+        const listBranches = Effect.fn("SessionRelay.listBranches")(function* (
+          message: Extract<WebToHub, { readonly _tag: "ListBranches" }>,
+        ) {
+          const { requestId, repo } = message
+          const allowed = yield* Effect.result(access.check(you, repo))
+          if (allowed._tag === "Failure") {
+            yield* Effect.logWarning(allowed.failure.message)
+            return refuse(message, allowed.failure.message)
+          }
+          if (!allowed.success) return refuse(message, noRepoAccess(repo))
+          const listed = yield* Effect.result(app.listBranches(repo))
+          if (listed._tag === "Failure") {
+            yield* Effect.logWarning(listed.failure.message)
+            return refuse(message, listed.failure.message)
+          }
+          peer.send(BranchesListed.make({ requestId, repo, ...listed.success }))
+        })
+
         return (message) =>
           isMemberCommand(message)
             ? memberRelay.receiveWeb(client, message)
@@ -3001,44 +3066,50 @@ export class SessionRelay extends Context.Service<
                   ? revokeCliToken(message)
                   : message._tag === "CheckAppPermissions"
                     ? checkAppPermissions(message.requestId)
-                    : message._tag === "CheckRepo"
-                      ? checkRepo(message).pipe(
-                          Effect.catchTag("SqlError", (error) =>
-                            Effect.logError("A Repo check failed", error).pipe(
-                              Effect.andThen(
-                                Effect.sync(() =>
-                                  refuse(message, "The Hub could not do that; try again."),
+                    : message._tag === "ListRepos"
+                      ? listRepos(message)
+                      : message._tag === "ListBranches"
+                        ? listBranches(message)
+                        : message._tag === "CheckRepo"
+                          ? checkRepo(message).pipe(
+                              Effect.catchTag("SqlError", (error) =>
+                                Effect.logError("A Repo check failed", error).pipe(
+                                  Effect.andThen(
+                                    Effect.sync(() =>
+                                      refuse(message, "The Hub could not do that; try again."),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        )
-                      : authorize(message).pipe(
-                          Effect.flatMap((verdict) =>
-                            Effect.gen(function* () {
-                              const command =
-                                verdict.refusal === undefined ? yield* respelled(message) : message
-                              return yield* serialized(
+                            )
+                          : authorize(message).pipe(
+                              Effect.flatMap((verdict) =>
                                 Effect.gen(function* () {
-                                  const { learned, refusal } = verdict
-                                  if (learned !== undefined)
-                                    yield* accessKnown(you, learned.repo, learned.allowed)
-                                  if (refusal !== undefined) return refuse(message, refusal)
-                                  return yield* handle(command)
+                                  const command =
+                                    verdict.refusal === undefined
+                                      ? yield* respelled(message)
+                                      : message
+                                  return yield* serialized(
+                                    Effect.gen(function* () {
+                                      const { learned, refusal } = verdict
+                                      if (learned !== undefined)
+                                        yield* accessKnown(you, learned.repo, learned.allowed)
+                                      if (refusal !== undefined) return refuse(message, refusal)
+                                      return yield* handle(command)
+                                    }),
+                                  )
                                 }),
-                              )
-                            }),
-                          ),
-                          Effect.catchTag("SqlError", (error) =>
-                            Effect.logError("A web command failed", error).pipe(
-                              Effect.andThen(
-                                Effect.sync(() =>
-                                  refuse(message, "The Hub could not do that; try again."),
+                              ),
+                              Effect.catchTag("SqlError", (error) =>
+                                Effect.logError("A web command failed", error).pipe(
+                                  Effect.andThen(
+                                    Effect.sync(() =>
+                                      refuse(message, "The Hub could not do that; try again."),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                        )
+                            )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>

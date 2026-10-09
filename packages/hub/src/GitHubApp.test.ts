@@ -226,6 +226,53 @@ describe("collaborators", () => {
   })
 })
 
+const listRepos = () => withApp(Effect.flatMap(GitHubApp, (app) => app.listRepos))
+const listBranches = (of: RepoName) =>
+  withApp(Effect.flatMap(GitHubApp, (app) => app.listBranches(of)))
+
+describe("listing Repos", () => {
+  test("is every Repo the App is installed on, in every page, asked with a Metadata-only token", async () => {
+    const others = Array.from({ length: 120 }, (_, i) => `octo/repo-${i}`)
+    for (const other of others) github.installedOn.add(other)
+    const listed = await listRepos()
+    expect(listed).toHaveLength(121)
+    expect(listed).toContain(repo)
+    expect(listed).toContain("octo/repo-119")
+    const minted = github.requests.filter((request) => request.path.endsWith("/access_tokens"))
+    expect(minted.map((request) => request.body)).toEqual([{ permissions: { metadata: "read" } }])
+  })
+
+  test("leaves out a suspended installation", async () => {
+    const [installation] = github.installations
+    if (installation === undefined) throw new Error("the stand-in has no installation")
+    github.installations[0] = { ...installation, suspended: true }
+    expect(await listRepos()).toEqual([])
+  })
+})
+
+describe("listing branches", () => {
+  test("is the Repo's branches and its default branch", async () => {
+    github.branches.set(repo, { names: ["main", "dev", "release/1"], defaultBranch: "dev" })
+    expect(await listBranches(repo)).toEqual({
+      branches: ["main", "dev", "release/1"],
+      defaultBranch: "dev",
+    })
+  })
+
+  test("reads every page", async () => {
+    const names = Array.from({ length: 230 }, (_, i) => `b-${i}`)
+    github.branches.set(repo, { names, defaultBranch: "b-0" })
+    expect((await listBranches(repo)).branches).toEqual(names)
+  })
+
+  test("fails with status 404 on a Repo the App isn't installed on", async () => {
+    const error = await withApp(
+      Effect.flip(Effect.flatMap(GitHubApp, (app) => app.listBranches(RepoName.make("octo/x")))),
+    )
+    expect(error.status).toBe(404)
+  })
+})
+
 describe("without the App configured", () => {
   test("every call fails, saying what to set", async () => {
     const error = await Effect.runPromise(
@@ -253,6 +300,8 @@ describe("without the App configured", () => {
         "isCollaborator",
         "isConfigured",
         "isInstalled",
+        "listBranches",
+        "listRepos",
         "repoToken",
         "sandboxToken",
       ].toSorted(),

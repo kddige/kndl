@@ -244,7 +244,12 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
     const fake = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
     web.send({ _tag: "SetClaudeCredential", requestId: "r-0", secret: fake, plan: "max5x" })
     await web.next("ClaudeCredentialState", (message) => message["requestId"] === "r-0")
-    web.send({ _tag: "CreateSession", requestId: "r-1", repo: "acme/app", baseBranch: "main" })
+    web.send({
+      _tag: "CreateSession",
+      requestId: "r-1",
+      repo: "acme/app",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     const created = await web.next("SessionCreated")
     const sessionId = (created["session"] as { id: string }).id
     await web.next(

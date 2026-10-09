@@ -369,7 +369,12 @@ async function connect(
 
 /** Creates a Session of `repo` and plays its Runner's start: the StartSession it was sent. */
 async function startSession(web: Connection<Web>, runner: Connection<ToRunner>) {
-  web.send({ _tag: "CreateSession", requestId: `o-${++requests}`, repo, baseBranch: "main" })
+  web.send({
+    _tag: "CreateSession",
+    requestId: `o-${++requests}`,
+    repo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   const start = await runner.take("StartSession")
   runner.send({ _tag: "SessionStarted", sessionId: start.sessionId, environmentVersion: 1 })
   await web.take("SessionUpdated", (m) => m.session.id === start.sessionId && !m.session.starting)
@@ -1059,7 +1064,11 @@ describe("an OAuth Installation's tokens", () => {
 
     // A new Session doesn't start, without its server asked anything.
     mcpSeen.length = 0
-    const created = await ask(web, { _tag: "CreateSession", repo, baseBranch: "main" })
+    const created = await ask(web, {
+      _tag: "CreateSession",
+      repo,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     if (created._tag !== "SessionCreated") throw new Error(JSON.stringify(created))
     await web.take(
       "SessionUpdated",

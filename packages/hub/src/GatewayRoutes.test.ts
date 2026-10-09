@@ -171,7 +171,12 @@ async function gatewayScene() {
 
 /** Creates a Session of `repo` and plays its Runner's start: the StartSession it was sent. */
 async function startSession(web: Connection<Web>, runner: Connection<ToRunner>) {
-  web.send({ _tag: "CreateSession", requestId: `g-${++requests}`, repo, baseBranch: "main" })
+  web.send({
+    _tag: "CreateSession",
+    requestId: `g-${++requests}`,
+    repo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   const start = await runner.take("StartSession")
   runner.send({ _tag: "SessionStarted", sessionId: start.sessionId, environmentVersion: 1 })
   await web.take("SessionUpdated", (m) => m.session.id === start.sessionId && !m.session.starting)
@@ -660,7 +665,11 @@ const lastChangeOf = async (web: Connection<Web>, sessionId: string) =>
 
 /** Creates a Session of `repo` without playing its Runner's start: its id. */
 async function createSession(web: Connection<Web>) {
-  const created = await ask(web, { _tag: "CreateSession", repo, baseBranch: "main" })
+  const created = await ask(web, {
+    _tag: "CreateSession",
+    repo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   if (created._tag !== "SessionCreated") throw new Error(JSON.stringify(created))
   return created.session.id
 }

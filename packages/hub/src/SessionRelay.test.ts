@@ -113,7 +113,7 @@ async function sessionScene(
     _tag: "CreateSession",
     requestId: "req-1",
     repo: "kddige/kndl",
-    baseBranch: "main",
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     ...options.create,
   })
   const start = await runner.take("StartSession")
@@ -233,6 +233,38 @@ describe("CreateSession", () => {
     expect((await other.hello()).status).toBe(403)
   })
 
+  test("works on a new Work branch, or directly on the branch picked, or on a branch to create (ADR 0023)", async () => {
+    const shapes = [
+      {
+        branch: { _tag: "Existing", name: "dev", newWorkBranch: true },
+        branches: (id: string) => ({ baseBranch: "dev", workBranch: `claude/${id}` }),
+        why: "Started on mac from dev",
+      },
+      {
+        branch: { _tag: "Existing", name: "dev", newWorkBranch: false },
+        branches: () => ({ baseBranch: "dev", workBranch: "dev" }),
+        why: "Started on mac on dev",
+      },
+      {
+        branch: { _tag: "Create", name: "feature/health", from: "dev" },
+        branches: () => ({ baseBranch: "dev", workBranch: "feature/health" }),
+        why: "Started on mac from dev",
+      },
+    ]
+    for (const shape of shapes) {
+      const { start, created, sessionId, web } = await sessionScene(undefined, {
+        create: { branch: shape.branch },
+      })
+      expect(start).toMatchObject(shape.branches(sessionId))
+      expect(created.session).toMatchObject(shape.branches(sessionId))
+      joinSession(web, sessionId)
+      const history = await web.take("SessionHistory")
+      expect(history.entries.map((entry) => entry.event)).toContainEqual(
+        expect.objectContaining({ _tag: "SessionStateChanged", message: shape.why }),
+      )
+    }
+  })
+
   test("is refused when no Runner is online", async () => {
     const hub = await startHub({ config: { devLogin: true } })
     const web = await openWeb(hub, "alice")
@@ -240,7 +272,7 @@ describe("CreateSession", () => {
       _tag: "CreateSession",
       requestId: "req-1",
       repo: "kddige/kndl",
-      baseBranch: "main",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     })
 
     expect(await web.take("CommandFailed")).toMatchObject({
@@ -713,7 +745,7 @@ describe("the Session lifecycle", () => {
       _tag: "CreateSession",
       requestId: "r",
       repo: "kddige/kndl",
-      baseBranch: "main",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     })
     const start = await runner.take("StartSession")
     const sessionId = start.sessionId
@@ -945,7 +977,7 @@ describe("the Session lifecycle", () => {
       _tag: "CreateSession",
       requestId: "r",
       repo: "kddige/kndl",
-      baseBranch: "main",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     })
     const start = await runner.take("StartSession")
     const { sessionId } = start
@@ -982,7 +1014,7 @@ describe("the Session lifecycle", () => {
       _tag: "CreateSession",
       requestId: "r",
       repo: "kddige/kndl",
-      baseBranch: "main",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     })
     const { sessionId } = await runner.take("StartSession")
 
@@ -1346,7 +1378,7 @@ describe("archive, restore and purge", () => {
       _tag: "CreateSession",
       requestId: "req-2",
       repo: "kddige/other",
-      baseBranch: "main",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     })
     const kept = (await web.take("SessionCreated")).session
     await runner.take("StartSession")
@@ -1728,7 +1760,7 @@ describe("model and effort (#128)", () => {
         _tag: "CreateSession",
         requestId: "r",
         repo: "kddige/kndl",
-        baseBranch: "main",
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
         ...more,
       })
 
@@ -1949,7 +1981,7 @@ describe("the terminal relay", () => {
       _tag: "CreateSession",
       requestId: "r",
       repo: "kddige/kndl",
-      baseBranch: "main",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     })
     const { sessionId } = await runner.take("StartSession")
     const { since } = defined((await web.take("SessionCreated")).session.starting)
@@ -2377,7 +2409,12 @@ async function startIn(
 ) {
   await seedEnvironment(hub, inRepo, "dev:alice")
   const requestId = `req-${inRepo}`
-  web.send({ _tag: "CreateSession", requestId, repo: inRepo, baseBranch: "main" })
+  web.send({
+    _tag: "CreateSession",
+    requestId,
+    repo: inRepo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   await runner.take("StartSession", (start) => start.repo === inRepo)
   const created = await web.take("SessionCreated", (m) => m.requestId === requestId)
   return created.session.id
@@ -2504,7 +2541,7 @@ describe("Repo access", () => {
         _tag: "CreateSession",
         requestId: "r",
         repo: elsewhere,
-        baseBranch: "main",
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
       })
       expect(await octocatWeb.take("CommandFailed")).toEqual({
         _tag: "CommandFailed",
@@ -2513,7 +2550,12 @@ describe("Repo access", () => {
         message: `You have no access to ${elsewhere} on GitHub, or the GitHub App isn't installed on it.`,
       })
     }
-    octocatWeb.send({ _tag: "CreateSession", requestId: "ok", repo, baseBranch: "main" })
+    octocatWeb.send({
+      _tag: "CreateSession",
+      requestId: "ok",
+      repo,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     expect((await octocatWeb.take("SessionCreated")).session.creator).toMatchObject(octocat)
     // Its Creator commits in the Sandbox, by their GitHub noreply address.
     expect(
@@ -2527,6 +2569,57 @@ describe("Repo access", () => {
         gitIdentity: { name: "octocat", email: "1+octocat@users.noreply.github.com" },
       },
     ])
+  })
+
+  test("lists the Repos the App is on that a person has access to (ADR 0023)", async () => {
+    const hub = await accessHub()
+    github.grant(repo, "octocat")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+
+    octocatWeb.send({ _tag: "ListRepos", requestId: "l-1" })
+    expect(await octocatWeb.take("ReposListed")).toEqual({
+      _tag: "ReposListed",
+      requestId: "l-1",
+      repos: [repo],
+    })
+    // alice, by dev login, has access to every Repo.
+    const aliceWeb = await openWeb(hub, "alice")
+    aliceWeb.send({ _tag: "ListRepos", requestId: "l-2" })
+    expect((await aliceWeb.take("ReposListed")).repos.toSorted()).toEqual([secret, repo].toSorted())
+  })
+
+  test("refuses to list Repos without the GitHub App, saying so", async () => {
+    const hub = await startHub({ config: { devLogin: true } })
+    const web = await openWeb(hub, "alice")
+    web.send({ _tag: "ListRepos", requestId: "l-1" })
+    expect(await web.take("CommandFailed")).toMatchObject({
+      command: "ListRepos",
+      requestId: "l-1",
+      message: expect.stringContaining("GITHUB_APP_ID"),
+    })
+  })
+
+  test("lists a Repo's branches to those with access to it, and to no one else", async () => {
+    const hub = await accessHub()
+    github.grant(repo, "octocat")
+    github.branches.set(repo, { names: ["dev", "main"], defaultBranch: "main" })
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+
+    octocatWeb.send({ _tag: "ListBranches", requestId: "b-1", repo })
+    expect(await octocatWeb.take("BranchesListed")).toEqual({
+      _tag: "BranchesListed",
+      requestId: "b-1",
+      repo,
+      branches: ["dev", "main"],
+      defaultBranch: "main",
+    })
+    octocatWeb.send({ _tag: "ListBranches", requestId: "b-2", repo: secret })
+    expect(await octocatWeb.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "ListBranches",
+      requestId: "b-2",
+      message: `You have no access to ${secret} on GitHub, or the GitHub App isn't installed on it.`,
+    })
   })
 
   test("a collaborator can join, prompt and type, and GitHub is asked once", async () => {

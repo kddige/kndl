@@ -698,7 +698,12 @@ describe("Shared variables", () => {
 /** alice creates a Session on the scene's Runner, which starts it. */
 async function createSession(env: Scene, environmentVersion?: number) {
   const requestId = nextRequest()
-  env.web.send({ _tag: "CreateSession", requestId, repo, baseBranch: "main" })
+  env.web.send({
+    _tag: "CreateSession",
+    requestId,
+    repo,
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   const start = await env.runner.take("StartSession")
   const created = await env.web.take("SessionCreated", (message) => message.requestId === requestId)
   const sessionId = created.session.id
@@ -714,7 +719,12 @@ describe("Sessions and Environments", () => {
   test("a Repo without an Environment gets no Session until one is applied", async () => {
     const env = await scene()
     const requestId = nextRequest()
-    env.web.send({ _tag: "CreateSession", requestId, repo, baseBranch: "main" })
+    env.web.send({
+      _tag: "CreateSession",
+      requestId,
+      repo,
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
     expect(await env.web.take("CommandFailed", (m) => m.requestId === requestId)).toMatchObject({
       command: "CreateSession",
       message: `${repo} has no Environment yet: set one up before its first Session.`,

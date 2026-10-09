@@ -147,7 +147,12 @@ async function run(
 
 /** The second Session of alice's, Active with the same ports. */
 async function anotherSession(scene: TunnelScene): Promise<SessionId> {
-  scene.web.send({ _tag: "CreateSession", requestId: "r-2", repo: "acme/app", baseBranch: "main" })
+  scene.web.send({
+    _tag: "CreateSession",
+    requestId: "r-2",
+    repo: "acme/app",
+    branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+  })
   const created = await scene.web.next("SessionCreated")
   const id = (created["session"] as { id: SessionId }).id
   await scene.web.next(
