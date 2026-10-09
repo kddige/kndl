@@ -88,35 +88,35 @@ bun run secrets-reset          # in a checkout
 kndl secrets reset             # on an installed Hub
 ```
 
-Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. Each Installation keeps its header secrets, which show **needs a value** on **Plugins**: enter them again there; until then its Repos' Sessions don't start (see [A Session can't start for an Installation](#a-session-cant-start-for-an-installation)). Each OAuth Installation is disconnected: press **Connect** on it there. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. Each Installation keeps its header secrets, which show **needs a value** on **MCP**: enter them again there; until then its Repos' Sessions don't start (see [A Session can't start for an Installation](#a-session-cant-start-for-an-installation)). Each OAuth Installation is disconnected: press **Connect** on it there. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
 
 ## A Session can't start for an Installation
 
 **What you see.** A Session that was woken or started shows **This Session can't start** and stays Asleep, with one of:
 
 ```
-Claude Code could not start: Docs needs a value for API key. Fix the Installation on the Plugins page, or take owner/name off it, then wake the Session.
+Claude Code could not start: Docs needs a value for API key. Fix the Installation on the MCP page, or take owner/name off it, then wake the Session.
 ```
 
 ```
-Claude Code could not start: Docs's MCP server refused its credential (401). Fix the Installation on the Plugins page, or take owner/name off it, then wake the Session.
+Claude Code could not start: Docs's MCP server refused its credential (401). Fix the Installation on the MCP page, or take owner/name off it, then wake the Session.
 ```
 
 ```
-Claude Code could not start: The Hub could not read Docs's header secret values: check HUB_SECRETS_KEY. Fix the Installation on the Plugins page, or take owner/name off it, then wake the Session.
+Claude Code could not start: The Hub could not read Docs's header secret values: check HUB_SECRETS_KEY. Fix the Installation on the MCP page, or take owner/name off it, then wake the Session.
 ```
 
 ```
-Claude Code could not start: Docs isn't connected to its account. Fix the Installation on the Plugins page, or take owner/name off it, then wake the Session.
+Claude Code could not start: Docs isn't connected to its account. Fix the Installation on the MCP page, or take owner/name off it, then wake the Session.
 ```
 
-For a [global Installation](/how-to/add-a-remote-mcp-server-as-a-plugin/#turn-it-on-for-every-repo), the way out reads `or turn it off for owner/name, then wake the Session.`
+For a [global Installation](/how-to/add-a-remote-mcp-server/#turn-it-on-for-every-repo), the way out reads `or turn it off for owner/name, then wake the Session.`
 
-**Why.** The Hub checks each Installation on for the Session's Repo as the Session starts, and doesn't start it with one that surely can't work: one without a value for a header secret, one whose MCP server refuses its value with `401` or `403`, or one whose values the Hub can't decrypt, or an OAuth Installation that isn't connected to its account. See [When an Installation fails a Session](/how-to/add-a-remote-mcp-server-as-a-plugin/#when-an-installation-fails-a-session).
+**Why.** The Hub checks each Installation on for the Session's Repo as the Session starts, and doesn't start it with one that surely can't work: one without a value for a header secret, one whose MCP server refuses its value with `401` or `403`, or one whose values the Hub can't decrypt, or an OAuth Installation that isn't connected to its account. See [When an Installation fails a Session](/how-to/add-a-remote-mcp-server/#when-an-installation-fails-a-session).
 
 **Fix.** Press **Fix** beside the Installation, enter the value its server takes, and save; then press **Retry**. Or, with access to every Repo the Installation lists, press **Take owner/name off Docs**, which wakes the Session at once. A global Installation only the Hub's Owner can fix; anyone in the Session can press **Turn it off for owner/name**, which turns it off for the Repo alone and wakes the Session, and turn it back on later on the Repo's page. For the third, set `HUB_SECRETS_KEY` to the key the values were saved with, or see [The secrets key is lost](#the-secrets-key-is-lost). For the fourth, press **Reconnect** and sign in at its authorization server (see [An OAuth Installation won't connect](#an-oauth-installation-wont-connect)); only the Owner can reconnect a global one. Prompts sent meanwhile wait in the Session's queue, and run once it starts.
 
-## A Plugin's MCP server fails in a Session
+## An MCP server fails in a Session
 
 **What you see.** A running Session's conversation shows, in red, one of:
 
@@ -132,13 +132,13 @@ Docs's MCP server refused its credential (403). Its tools fail until the Install
 Docs needs a value for API key. Its tools fail until the Installation is fixed and the Session restarted.
 ```
 
-**Why.** The first is from the Session's start: the server didn't answer within `HUB_PLUGIN_CHECK_TIMEOUT_MS`, couldn't be reached from the Hub, or answered with an error such as `503`. A server that may only be down doesn't keep a Session from starting. The others are from the Gateway, while the Session ran: the server refused the Installation's value, or an edit to its Plugin cleared the value. The Session runs on, with its other servers, and says so once until the Installation works again.
+**Why.** The first is from the Session's start: the server didn't answer within `HUB_MCP_SERVER_CHECK_TIMEOUT_MS`, couldn't be reached from the Hub, or answered with an error such as `503`. A server that may only be down doesn't keep a Session from starting. The others are from the Gateway, while the Session ran: the server refused the Installation's value, or an edit to its MCP server cleared the value. The Session runs on, with its other servers, and says so once until the Installation works again.
 
-**Fix.** For the first, check that the Hub can reach the Plugin's URL; a slow server may need a higher `HUB_PLUGIN_CHECK_TIMEOUT_MS`. Its tools work as soon as it answers. For the others, press **Fix**, enter a value the server takes, and save; then **Restart** the Session, which starts it with the new value.
+**Fix.** For the first, check that the Hub can reach the MCP server's URL; a slow server may need a higher `HUB_MCP_SERVER_CHECK_TIMEOUT_MS`. Its tools work as soon as it answers. For the others, press **Fix**, enter a value the server takes, and save; then **Restart** the Session, which starts it with the new value.
 
 ## An OAuth Installation won't connect
 
-**What you see.** Pressing **Connect** or **Reconnect** on **Plugins**, or **Reconnect** in a Session, shows **Couldn't connect Docs**, with one of:
+**What you see.** Pressing **Connect** or **Reconnect** on **MCP**, or **Reconnect** in a Session, shows **Couldn't connect Docs**, with one of:
 
 ```
 The Hub connects only to an MCP server on https.
@@ -156,11 +156,11 @@ That connection expired or came from elsewhere: connect again.
 Connecting an Installation needs HUB_SECRETS_KEY in the Hub's configuration, to keep its tokens encrypted: run `bun run secrets-key`, put the key in packages/hub/.env.local, and restart the Hub.
 ```
 
-Or a Plugin's Installation shows **connection lost**, and its Sessions say `Docs isn't connected to its account.`
+Or an MCP server's Installation shows **connection lost**, and its Sessions say `Docs isn't connected to its account.`
 
 **Why.** The Hub connects only as the MCP authorization spec describes: it finds the authorization server from the MCP server's Protected Resource Metadata, registers itself there with Dynamic Client Registration or uses a client entered by hand, and signs you in with PKCE, all over `https`. A server not on `https` can't be connected. A sign-in must come back within 10 minutes, to the browser that began it, signed in to kndl as the person who pressed **Connect**, and is used once. **connection lost** means the authorization server refused to refresh the token, as when the grant was revoked there or the account was removed.
 
-**Fix.** For the first two, check the Plugin's URL. For an expired or stray sign-in, press **Connect** again, and finish it in the same browser. Set `HUB_SECRETS_KEY` as the last one says. For **connection lost**, press **Reconnect**. Only someone with access to every Repo the Installation lists can connect it, and only the Owner a global one. See [Connect it to an account with OAuth](/how-to/add-a-remote-mcp-server-as-a-plugin/#connect-it-to-an-account-with-oauth).
+**Fix.** For the first two, check the MCP server's URL. For an expired or stray sign-in, press **Connect** again, and finish it in the same browser. Set `HUB_SECRETS_KEY` as the last one says. For **connection lost**, press **Reconnect**. Only someone with access to every Repo the Installation lists can connect it, and only the Owner a global one. See [Connect it to an account with OAuth](/how-to/add-a-remote-mcp-server/#connect-it-to-an-account-with-oauth).
 
 ## An OAuth Installation asks for a client, or refuses the one entered
 
@@ -178,7 +178,7 @@ The MCP server's authorization server is now https://auth.example.com: enter a c
 The authorization server no longer takes the client entered before as it was: enter it again.
 ```
 
-Or connecting with the client entered is refused in the dialog, or with **Couldn't connect Docs** once back on **Plugins**, with one of:
+Or connecting with the client entered is refused in the dialog, or with **Couldn't connect Docs** once back on **MCP**, with one of:
 
 ```
 The authorization server https://github.com/login/oauth takes no public client: enter the client's secret too.
@@ -194,11 +194,11 @@ The authorization server refused the connection: invalid_client.
 
 **Why.** The authorization server offers no Dynamic Client Registration, as GitHub's doesn't, so the Hub needs a client you registered there by hand. One entered before is asked for again when it can't be used as it was: `HUB_PUBLIC_URL` changed, so the Hub's callback URL did; the MCP server names another authorization server; or the server no longer authenticates clients as it did. `invalid_client`, or `redirect_uri` in GitHub's error page, means the authorization server doesn't know the client, its secret, or its callback URL: the secret was mistyped or rotated, or the client was registered with another callback URL.
 
-**Fix.** Register the client with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/plugins/callback`, copied with its button, and enter its client ID and secret as the authorization server issued them. For a rotated secret, press **Change client** on the Installation and enter the client with its new secret. The Hub keeps the client it had until a connection with the new one completes. See [Connect a server without Dynamic Client Registration](/how-to/add-a-remote-mcp-server-as-a-plugin/#connect-a-server-without-dynamic-client-registration).
+**Fix.** Register the client with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/mcp/callback`, copied with its button, and enter its client ID and secret as the authorization server issued them. For a rotated secret, press **Change client** on the Installation and enter the client with its new secret. The Hub keeps the client it had until a connection with the new one completes. See [Connect a server without Dynamic Client Registration](/how-to/add-a-remote-mcp-server/#connect-a-server-without-dynamic-client-registration).
 
-## A global Installation, or its Plugin, can't be changed
+## A global Installation, or its MCP server, can't be changed
 
-**What you see.** On **Plugins**, **Edit** and **Delete** are disabled on an Installation marked **Global**, or on its Plugin, or saving is refused with one of:
+**What you see.** On **MCP**, **Edit** and **Delete** are disabled on an Installation marked **Global**, or on its MCP server, or saving is refused with one of:
 
 ```
 Only the Hub's Owner can create, edit or delete a global Installation: every Sandbox on the Hub can use it.
@@ -208,9 +208,9 @@ Only the Hub's Owner can create, edit or delete a global Installation: every San
 Docs search has a global Installation, on in every Repo: only the Hub's Owner can edit, upgrade or delete it.
 ```
 
-**Why.** A global Installation is on in every Repo, so every Sandbox on the Hub can use its credentials. Only the Hub's Owner creates, edits or deletes one, or edits, upgrades or deletes its Plugin.
+**Why.** A global Installation is on in every Repo, so every Sandbox on the Hub can use its credentials. Only the Hub's Owner creates, edits or deletes one, or edits, upgrades or deletes its MCP server.
 
-**Fix.** Ask the Owner. Meanwhile, anyone with access to a Repo can press **Turn off for this Repo** on the Repo's page, or create the Repo's own Installation of the Plugin, which takes the global one's place there. See [Turn it on for every Repo](/how-to/add-a-remote-mcp-server-as-a-plugin/#turn-it-on-for-every-repo).
+**Fix.** Ask the Owner. Meanwhile, anyone with access to a Repo can press **Turn off for this Repo** on the Repo's page, or create the Repo's own Installation of the MCP server, which takes the global one's place there. See [Turn it on for every Repo](/how-to/add-a-remote-mcp-server/#turn-it-on-for-every-repo).
 
 ## A Hub is already running on the database
 

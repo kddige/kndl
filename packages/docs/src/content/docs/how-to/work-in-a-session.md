@@ -80,11 +80,11 @@ While something listens on a TCP port in an Active Session's Sandbox, such as a 
 
 A port shows within about 2 seconds of a server starting to listen. A Session that isn't Active has no Open ports.
 
-## See its Plugins
+## See its MCP servers
 
-**Plugins** in the Session's header (**2 Installations**) lists the [Installations](/reference/glossary/#installation) its Claude Code runs with: each one's name and Plugin, and the MCP server Claude Code knows it by, such as `plugin:kndl:docs`. They are its Repo's, the same for every Session there: see [Add a remote MCP server as a Plugin](/how-to/add-a-remote-mcp-server-as-a-plugin/).
+**MCP servers** in the Session's header (**2 Installations**) lists the [Installations](/reference/glossary/#installation) its Claude Code runs with: each one's name and MCP server, and the name Claude Code knows its server by, such as `plugin:kndl:docs`. They are its Repo's, the same for every Session there: see [Add a remote MCP server](/how-to/add-a-remote-mcp-server/).
 
-When the Repo's Installations change while the Session is Active, a **Plugins changed** banner says so. **Restart** applies the change; an Asleep Session gets it as it wakes.
+When the Repo's Installations change while the Session is Active, an **MCP servers changed** banner says so. **Restart** applies the change; an Asleep Session gets it as it wakes.
 
 ## Sleep and wake
 

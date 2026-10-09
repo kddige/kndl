@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+> Amended by [ADR 0022](0022-kndl-serves-mcp-servers-only.md): a Plugin is now named an MCP server, and stays one. Of the Deferred list below, Plugins with files, values in the Sandbox, hooks and setup scripts are dropped: a Claude Code plugin in the Repo brings those. A stdio MCP server the Hub hosts may still come.
+
 # Plugins are remote MCP servers whose credentials the Hub holds
 
 A Plugin adds a remote MCP server, such as Linear's, to a Repo's Sessions. The Hub holds its credentials and adds them to each request in its Gateway, so no Plugin credential ever enters a Sandbox or reaches a Runner.

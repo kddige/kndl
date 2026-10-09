@@ -208,9 +208,9 @@ Each then needs a value: the Sessions of a Repo that has, or links, one don't st
 It also drops the record of 1 Test build: the lost key protects them.
 It clears the header secret values of 1 Installation, keeping each Installation:
   - Team Linear: API key
-Each then needs a value again: until it gets one, the Gateway refuses its Sessions' requests to the Plugin's MCP server.
+Each then needs a value again: until it gets one, the Gateway refuses its Sessions' requests to the MCP server.
 It also drops 1 header secret value that Sessions started with.
-Plain variables, Environments, Sessions, Plugins, Installations and the builds on Runners stay.
+Plain variables, Environments, Sessions, MCP servers, Installations and the builds on Runners stay.
 Type yes to clear them:
 ```
 
@@ -220,7 +220,7 @@ Type yes to clear them:
 The Sensitive values can't be reset: a Hub is running on /path/to/hub.db. Stop it first.
 ```
 
-It knows from the lock a running Hub holds, `hub.db.lock` beside the database. After the reset, make a new key with `bun run secrets-key`, set it, start the Hub, and enter the values again: the variables' on each Environment and on **Shared variables**, and the Installations' on **Plugins**. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+It knows from the lock a running Hub holds, `hub.db.lock` beside the database. After the reset, make a new key with `bun run secrets-key`, set it, start the Hub, and enter the values again: the variables' on each Environment and on **Shared variables**, and the Installations' on **MCP**. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
 
 ### Checks
 

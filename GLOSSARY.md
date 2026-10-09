@@ -158,26 +158,26 @@ _Avoid_: global secret, org secret
 A Shared variable placed into one Environment under a name chosen there.
 _Avoid_: reference, import, binding
 
-## Plugins
+## MCP servers
 
-**Plugin**:
-A remote MCP server that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. kndl's own pieces that each Session's Claude Code loads are the mod, not Plugins.
-_Avoid_: integration, extension, connector, mod
+**MCP server**:
+A remote server, speaking MCP, that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. They are managed on the MCP page. kndl's own pieces that each Session's Claude Code loads are the mod, not MCP servers.
+_Avoid_: plugin (in kndl, only ever a Claude Code plugin), integration, extension, connector, mod
 
-**Plugin icon**:
-The small picture beside a Plugin on the Plugins page. The Hub finds it, from the package's manifest or the favicon of the Plugin's URL, keeps it and serves it; browsers never fetch it from the third party. A Plugin with none shows a letter.
+**MCP server icon**:
+The small picture beside an MCP server on the MCP page. The Hub finds it, from the package's manifest or the favicon of the MCP server's URL, keeps it and serves it; browsers never fetch it from the third party. An MCP server with none shows a letter.
 _Avoid_: logo, favicon (a favicon is one place it may come from)
 
 **Upgrade**:
-Moving a packaged Plugin to what its source holds now, once someone has seen what that changes. A packaged Plugin is pinned to its version, and changes only by an Upgrade.
+Moving a packaged MCP server to what its source holds now, once someone has seen what that changes. A packaged MCP server is pinned to its version, and changes only by an Upgrade.
 _Avoid_: update, sync, refresh
 
 **Installation**:
-A named, configured copy of one Plugin, holding the credentials of the account it acts as: header secret values, or, for an OAuth Plugin, the tokens of the account someone connected it to and the client it connects with, which only the Hub holds. It is global, on in every Repo, or on in the Repos it lists, and a Repo has at most one Installation of each Plugin on: one that lists the Repo takes a global one's place there, and a Repo can turn a global one off.
-_Avoid_: connection, instance, config, plugin (for a configured copy)
+A named, configured copy of one MCP server, holding the credentials of the account it acts as: header secret values, or, for an OAuth MCP server, the tokens of the account someone connected it to and the client it connects with, which only the Hub holds. It is global, on in every Repo, or on in the Repos it lists, and a Repo has at most one Installation of each MCP server on: one that lists the Repo takes a global one's place there, and a Repo can turn a global one off.
+_Avoid_: connection, instance, config
 
 **Header secret**:
-A credential a Plugin declares its MCP server takes in an HTTP header, such as `Authorization: Bearer {value}`. Each Installation holds its own value, write-only and encrypted on the Hub, which the Gateway puts in the header.
+A credential an MCP server declares it takes in an HTTP header, such as `Authorization: Bearer {value}`. Each Installation holds its own value, write-only and encrypted on the Hub, which the Gateway puts in the header.
 _Avoid_: API key setting, token field, header variable
 
 **Gateway**:
