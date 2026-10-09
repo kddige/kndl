@@ -220,7 +220,6 @@ import {
   type TextDelta,
   SessionId,
   SessionRemoved,
-  type SessionRestart,
   SessionStartLogged,
   type SessionState,
   SessionStateChanged,
@@ -280,6 +279,7 @@ import { checkServer } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
 import { HubVersion } from "./HubVersion.ts"
+import { makeLiveSessions, type TextStream, type Why } from "./LiveSessions.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { isMcpServerCommand, makeMcpServerRelay, type McpServerRelay } from "./McpServerRelay.ts"
 import { type GatewayTarget, McpServers } from "./McpServers.ts"
@@ -334,32 +334,10 @@ export const RelayCloseCode = {
   Replaced: 4409,
 } as const
 
-/** Who or what moved a Session to another state, as its SessionStateChanged records. */
-interface Why {
-  readonly by?: Participant
-  readonly message?: string
-  /** The Installations that kept it from starting (#216). */
-  readonly installationsFailed?: ReadonlyArray<InstallationFailure>
-}
-
 /** Why, as one line: "Put to sleep by alice". */
 const whyText = (why: Why) => {
   const by = why.by === undefined ? "" : ` by ${why.by.login}`
   return `${why.message ?? (by === "" ? "" : "Changed")}${by}`
-}
-
-/** A StartSession its Runner hasn't answered yet (#70). */
-interface StartUnderWay {
-  readonly since: number
-  /** The Environment version it was sent, if the Repo has an Environment. */
-  readonly environmentVersion: EnvironmentVersion | undefined
-  /**
-   * What its terminal printed before Claude Code's terminal was up, redacted: the Environment's
-   * build and start script. Its last `startLogLimit` characters.
-   */
-  log: string
-  /** Whether the Runner has sent a Snapshot of Claude Code's terminal: output after it is Claude's. */
-  attached: boolean
 }
 
 /** How much of a start's output the Hub keeps for clients that join while it runs. */
@@ -631,78 +609,12 @@ export class SessionRelay extends Context.Service<
 
       const webClients = new Set<WebClient>()
       const forwards = new Set<ForwardClient>()
-      /** Why each Session last went Asleep, said to its forwards as they are closed. */
-      const asleepWhy = new Map<SessionId, Why>()
       const onlineRunners = new Map<RunnerId, OnlineRunner>()
-      /**
-       * The prompt each Session's mod has been sent and not yet started a Turn with or failed.
-       * In memory only: after a Hub restart the head of the queue is delivered again (see
-       * README.md).
-       */
-      const inFlight = new Map<SessionId, PromptId>()
-      /**
-       * The prompts each Session's mod has been sent to join the running Turn (DeliverIntoTurn),
-       * with who steered each, until the mod says it joined or failed. In memory only, as
-       * `inFlight` is.
-       */
-      const steering = new Map<SessionId, Map<PromptId, ParticipantId>>()
-      /** Sessions whose mod said in its hello that it steers (#195). */
-      const steers = new Set<SessionId>()
-      /**
-       * Sessions whose Claude Code was started or woken and whose new mod hasn't said hello yet.
-       * Prompts wait for that hello.
-       */
-      const starting = new Set<SessionId>()
-      /** Sessions the Hub asked their Runner to stop for sleep, with why, until SessionStopped. */
-      const stopping = new Map<SessionId, Why>()
-      /**
-       * Sessions being restarted (RestartSession), with who asked: put to sleep, and woken again
-       * once their Runner says they stopped.
-       */
-      const restarting = new Map<SessionId, Participant>()
-      /**
-       * Sessions whose StartSession the Runner hasn't answered yet, with the output of their
-       * build and start script so far: the web shows them starting (#70).
-       */
-      const starts = new Map<SessionId, StartUnderWay>()
-      /**
-       * Restarts under way, shown to the web: from the RestartSession until the Session has
-       * started again, or failed to. `restarting` is only the part before it is Asleep.
-       */
-      const restarts = new Map<SessionId, SessionRestart>()
-      /**
-       * Archived Sessions whose Runner was asked to stop them for good, until SessionStopped. The
-       * stop is recorded done only then, so a Runner that drops off first is asked again.
-       */
-      const archiving = new Set<SessionId>()
-      /**
-       * What listens in each Active Session's Sandbox, as its Runner last said (#175). In memory
-       * only: a Runner that reconnects sends it again.
-       */
-      const openPorts = new Map<SessionId, ReadonlyArray<OpenPort>>()
-      /**
-       * The Installations each Active Session has noted failing since it started (#216), each by
-       * why, so the Gateway's failures are noted once until the Installation works again.
-       */
-      const installationTrouble = new Map<SessionId, Map<InstallationId, string>>()
-      /** When each Session was last seen busy: an event logged, its queue or presence changing. */
-      const lastBusy = new Map<SessionId, number>()
-      /**
-       * What the Participants have picked for each Session's Open question so far (#193), before
-       * answering it. In memory only: cleared when the question closes.
-       */
-      const questionPicks = new Map<
-        SessionId,
-        { readonly toolCallId: ToolCallId; readonly picks: ReadonlyArray<QuestionPick> }
-      >()
-      /**
-       * How each Session's last Open question closed, redacted, so an answer that comes after is
-       * told who answered first, and what. In memory only.
-       */
-      const closedQuestions = new Map<SessionId, QuestionClosed>()
+      /** Each Session's live state, in memory only (LiveSessions.ts). */
+      const live = makeLiveSessions()
 
       const markBusy = (sessionId: SessionId) =>
-        Effect.map(Clock.currentTimeMillis, (now) => void lastBusy.set(sessionId, now))
+        Effect.map(Clock.currentTimeMillis, (now) => void live.lastBusy.set(sessionId, now))
 
       // ── Sending ──────────────────────────────────────────────────────────
 
@@ -782,9 +694,9 @@ export class SessionRelay extends Context.Service<
               state: session.state,
               turn:
                 session.currentTurn !== null ||
-                inFlight.has(session.id) ||
+                live.inFlight.has(session.id) ||
                 hasRunningAgents(session),
-              settling: starts.has(session.id) || stopping.has(session.id),
+              settling: live.starts.has(session.id) || live.stopping.has(session.id),
             })),
           ),
         session: (id) => Effect.map(sessions.get(id), Option.getOrUndefined),
@@ -844,9 +756,9 @@ export class SessionRelay extends Context.Service<
        * whether it is starting or restarting.
        */
       const forWeb = (session: SessionSummary): SessionSummary => {
-        const start = starts.get(session.id)
-        const restart = restarts.get(session.id)
-        const ports = session.state === "Active" ? openPorts.get(session.id) : undefined
+        const start = live.starts.get(session.id)
+        const restart = live.restarts.get(session.id)
+        const ports = session.state === "Active" ? live.openPorts.get(session.id) : undefined
         return {
           ...session,
           ...(ports !== undefined && ports.length > 0 && { openPorts: ports }),
@@ -895,8 +807,8 @@ export class SessionRelay extends Context.Service<
             "The Session was archived.",
           )
         }
-        if (session.state === "Asleep" && !restarts.has(session.id)) {
-          const why = asleepWhy.get(session.id)
+        if (session.state === "Asleep" && !live.restarts.has(session.id)) {
+          const why = live.asleepWhy.get(session.id)
           return yield* endForwards(
             ofSession,
             ForwardCloseCode.WentAsleep,
@@ -934,7 +846,7 @@ export class SessionRelay extends Context.Service<
         sessionId: SessionId,
         environment: { readonly environment?: { readonly version: EnvironmentVersion } },
       ) {
-        starts.set(sessionId, {
+        live.starts.set(sessionId, {
           since: yield* Clock.currentTimeMillis,
           environmentVersion: environment.environment?.version,
           log: "",
@@ -951,23 +863,21 @@ export class SessionRelay extends Context.Service<
       const needlesByRepo = new RepoMap<Needles>()
 
       /**
-       * Each Session's Sandbox tokens (#73): the current one and the one before it, which a
-       * process may still hold. In memory only; a Runner asks for a fresh one when it reconnects.
+       * Redacts the Session's new Sandbox token from now on, with the one before it. Called off
+       * the lock, as a GitRequest is answered: it is synchronous, so it lands between two changes
+       * under the lock, never inside one (see LiveSessions).
        */
-      const sandboxTokens = new Map<
-        SessionId,
-        { readonly repo: string; readonly tokens: ReadonlyArray<string> }
-      >()
-
-      /** Redacts the Session's new Sandbox token from now on, with the one before it. */
       const sandboxTokenMinted = (session: SessionSummary, token: string) => {
-        const before = sandboxTokens.get(session.id)?.tokens ?? []
-        sandboxTokens.set(session.id, { repo: session.repo, tokens: [...before.slice(-1), token] })
+        const before = live.sandboxTokens.get(session.id)?.tokens ?? []
+        live.sandboxTokens.set(session.id, {
+          repo: session.repo,
+          tokens: [...before.slice(-1), token],
+        })
         needlesByRepo.delete(session.repo)
       }
 
       const tokensOfRepo = (repo: string) =>
-        [...sandboxTokens.values()].flatMap((known) =>
+        [...live.sandboxTokens.values()].flatMap((known) =>
           sameRepo(known.repo, repo) ? known.tokens : [],
         )
 
@@ -1020,22 +930,6 @@ export class SessionRelay extends Context.Service<
           Effect.asVoid,
         )
 
-      /** Claude's text of a Turn's loop, as it streams. */
-      interface TextStream {
-        readonly turnId: TextDelta["turnId"]
-        readonly agentId: TextDelta["agentId"]
-        readonly redactor: StreamRedactor
-        flushing: boolean
-      }
-      /** Each Session's text streams, by Turn and subagent, until the Turn ends. */
-      const textStreams = new Map<SessionId, Map<string, TextStream>>()
-
-      /** Each Session's terminal Output, and the last frame's size, for held text let go. */
-      const terminalStreams = new Map<
-        SessionId,
-        { readonly redactor: StreamRedactor; size: TerminalFrame["size"]; flushing: boolean }
-      >()
-
       const append = Effect.fn("SessionRelay.append")(function* (
         sessionId: SessionId,
         event: SessionEvent,
@@ -1066,10 +960,10 @@ export class SessionRelay extends Context.Service<
         needles: Needles,
         event: TextDelta,
       ) {
-        let streams = textStreams.get(sessionId)
+        let streams = live.textStreams.get(sessionId)
         if (streams === undefined) {
           streams = new Map()
-          textStreams.set(sessionId, streams)
+          live.textStreams.set(sessionId, streams)
         }
         const key = `${event.turnId}/${event.agentId ?? ""}`
         let stream = streams.get(key)
@@ -1106,11 +1000,11 @@ export class SessionRelay extends Context.Service<
       ) {
         const needles = yield* needlesForSession(sessionId)
         if (event._tag === "TextDelta") return yield* textDelta(sessionId, needles, event)
-        const streams = textStreams.get(sessionId)
+        const streams = live.textStreams.get(sessionId)
         if (streams !== undefined) {
           for (const stream of streams.values()) yield* letTextGo(sessionId, stream)
           if (event._tag === "TurnEnded") {
-            if (event.agentId === undefined) textStreams.delete(sessionId)
+            if (event.agentId === undefined) live.textStreams.delete(sessionId)
             else streams.delete(`${event.turnId}/${event.agentId}`)
           }
         }
@@ -1129,20 +1023,20 @@ export class SessionRelay extends Context.Service<
           // Before Claude Code's terminal is up, the output is the start's: the Environment's
           // build and start script. A terminal shows nothing until a Snapshot, so the web shows
           // it from here instead (#70).
-          const start = starts.get(sessionId)
+          const start = live.starts.get(sessionId)
           if (start === undefined || start.attached || data === "") return
           start.log = (start.log + data).slice(-startLogLimit)
           toJoined(sessionId, SessionStartLogged.make({ sessionId, since: start.since, data }))
         }
-        let stream = terminalStreams.get(sessionId)
+        let stream = live.terminalStreams.get(sessionId)
         if (stream === undefined) {
           stream = { redactor: new StreamRedactor(needles), size: frame.size, flushing: false }
-          terminalStreams.set(sessionId, stream)
+          live.terminalStreams.set(sessionId, stream)
         }
         stream.redactor.needles = needles
         stream.size = frame.size
         if (frame.kind === "Snapshot") {
-          const start = starts.get(sessionId)
+          const start = live.starts.get(sessionId)
           if (start !== undefined) start.attached = true
           // The whole screen, held Output included.
           stream.redactor.reset()
@@ -1209,8 +1103,8 @@ export class SessionRelay extends Context.Service<
       ) {
         if (session.state === state) return
         // Nothing listens in a Sandbox whose Claude Code isn't known to run.
-        if (state !== "Active") openPorts.delete(session.id)
-        if (state === "Asleep") asleepWhy.set(session.id, why)
+        if (state !== "Active") live.openPorts.delete(session.id)
+        if (state === "Asleep") live.asleepWhy.set(session.id, why)
         yield* sessions.setState(session.id, state)
         yield* logEvent(session.id, SessionStateChanged.make({ state, ...why }))
         yield* sessionUpdated(session.id)
@@ -1406,9 +1300,14 @@ export class SessionRelay extends Context.Service<
        * delivery. An Asleep Session is woken instead (see `wake`).
        */
       const deliverNext = Effect.fn("SessionRelay.deliverNext")(function* (sessionId: SessionId) {
-        if (inFlight.has(sessionId) || starting.has(sessionId) || stopping.has(sessionId)) return
+        if (
+          live.inFlight.has(sessionId) ||
+          live.starting.has(sessionId) ||
+          live.stopping.has(sessionId)
+        )
+          return
         // A steer's answer first: the prompt it is about may be the head.
-        if (steering.has(sessionId)) return
+        if (live.steering.has(sessionId)) return
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         if (session.value.state !== "Active" || session.value.currentTurn !== null) return
@@ -1418,7 +1317,7 @@ export class SessionRelay extends Context.Service<
         if (session.value.modelPending === true && (yield* relaunch(session.value))) return
         const [head] = yield* prompts.list(sessionId)
         if (head === undefined) return
-        inFlight.set(sessionId, head.id)
+        live.inFlight.set(sessionId, head.id)
         yield* outbox.enqueue(
           sessionId,
           DeliverPrompt.make({
@@ -1456,8 +1355,8 @@ export class SessionRelay extends Context.Service<
         failure: InstallationFailure,
         after: string,
       ) {
-        const noted = installationTrouble.get(sessionId) ?? new Map<InstallationId, string>()
-        installationTrouble.set(sessionId, noted)
+        const noted = live.installationTrouble.get(sessionId) ?? new Map<InstallationId, string>()
+        live.installationTrouble.set(sessionId, noted)
         const why = `${failure.reason} ${failure.status ?? ""}`
         if (noted.get(failure.installationId) === why) return
         noted.set(failure.installationId, why)
@@ -1553,7 +1452,7 @@ export class SessionRelay extends Context.Service<
         installations: ReadonlyArray<SessionInstallation>,
         start: StartSession,
       ) {
-        const under = starts.get(session.id)
+        const under = live.starts.get(session.id)
         if (installations.length === 0 || under === undefined) return runner.peer.send(start)
         const settle = (failures: ReadonlyArray<InstallationFailure>) =>
           Effect.gen(function* () {
@@ -1562,7 +1461,7 @@ export class SessionRelay extends Context.Service<
             if (
               Option.isNone(now) ||
               now.value.state !== "Active" ||
-              starts.get(session.id) !== under ||
+              live.starts.get(session.id) !== under ||
               onlineRunners.get(runner.id) !== runner
             ) {
               return
@@ -1627,8 +1526,9 @@ export class SessionRelay extends Context.Service<
           Effect.withSpan("SessionRelay.installationFailed"),
         )
 
+      // Off the lock, as the Gateway calls it, and synchronous (see LiveSessions).
       const installationWorks = (sessionId: SessionId, installationId: InstallationId) => {
-        installationTrouble.get(sessionId)?.delete(installationId)
+        live.installationTrouble.get(sessionId)?.delete(installationId)
       }
 
       /** See the service (#217). */
@@ -1667,8 +1567,8 @@ export class SessionRelay extends Context.Service<
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         // Commands the old mod didn't collect are stale, as when it sleeps.
         yield* outbox.clear(session.id)
-        steering.delete(session.id)
-        starting.add(session.id)
+        live.steering.delete(session.id)
+        live.starting.add(session.id)
         yield* sessions.setModelPending(session.id, false)
         yield* Effect.logInfo(`Restarting Claude Code of ${session.id} for its new model`)
         runner.peer.send(
@@ -1699,16 +1599,7 @@ export class SessionRelay extends Context.Service<
         /** It went to sleep for a restart, and is about to be woken: the restart goes on. */
         restartGoesOn = false,
       ) {
-        inFlight.delete(session.id)
-        steering.delete(session.id)
-        steers.delete(session.id)
-        starting.delete(session.id)
-        starts.delete(session.id)
-        openPorts.delete(session.id)
-        installationTrouble.delete(session.id)
-        stopping.delete(session.id)
-        restarting.delete(session.id)
-        if (!restartGoesOn) restarts.delete(session.id)
+        live.ended(session.id, restartGoesOn ? "ClaudeGoneRestarting" : "ClaudeGone")
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
@@ -1750,7 +1641,7 @@ export class SessionRelay extends Context.Service<
       ): Effect.fn.Return<string | undefined, SqlError> {
         const runner = onlineRunners.get(session.runnerId)
         // A restored Session still being stopped for its archive wakes once it is stopped.
-        if (runner === undefined || session.state !== "Asleep" || archiving.has(session.id)) {
+        if (runner === undefined || session.state !== "Asleep" || live.archiving.has(session.id)) {
           return undefined
         }
         // Its prompts wait in its queue, and wake it once its Runner is updated.
@@ -1758,7 +1649,7 @@ export class SessionRelay extends Context.Service<
         if (refusal !== undefined) return refusal
         const cantStart = yield* cantStartOn(session, runner, why.by)
         if (cantStart !== undefined) {
-          restarts.delete(session.id)
+          live.restarts.delete(session.id)
           yield* logEvent(
             session.id,
             SessionStateChanged.make({
@@ -1775,7 +1666,7 @@ export class SessionRelay extends Context.Service<
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         const installations = yield* startMcpServers(session.id, session.repo, runner)
-        starting.add(session.id)
+        live.starting.add(session.id)
         yield* startSent(session.id, environment)
         // It starts with its model and effort as set now (#128).
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
@@ -1874,8 +1765,8 @@ export class SessionRelay extends Context.Service<
         why: Why,
       ) {
         const runner = onlineRunners.get(session.runnerId)
-        if (runner === undefined || stopping.has(session.id)) return
-        stopping.set(session.id, why)
+        if (runner === undefined || live.stopping.has(session.id)) return
+        live.stopping.set(session.id, why)
         yield* Effect.logInfo(`Putting Session ${session.id} to sleep: ${why.message ?? ""}`)
         runner.peer.send(StopSession.make({ sessionId: session.id, reason: "Sleep" }))
       })
@@ -1888,9 +1779,9 @@ export class SessionRelay extends Context.Service<
         // Claude waits on its question (#193), as its Turn does.
         if (session.openQuestion !== undefined) return false
         if (!onlineRunners.has(session.runnerId)) return false
-        if (stopping.has(session.id) || inFlight.has(session.id)) return false
+        if (live.stopping.has(session.id) || live.inFlight.has(session.id)) return false
         // A start can take minutes to build its Environment: it isn't idle until it's over.
-        if (starts.has(session.id)) return false
+        if (live.starts.has(session.id)) return false
         // Someone is in it, in the web or forwarding its ports (#180).
         if (presenceOf(session.id).length > 0) return false
         // Someone asked for it to stay up, as for a dev server (ADR 0016).
@@ -1904,11 +1795,11 @@ export class SessionRelay extends Context.Service<
         const sleepAfter = Duration.toMillis(config.sleepAfter)
         for (const session of yield* sessions.list) {
           if (!(yield* isIdle(session))) {
-            lastBusy.set(session.id, now)
+            live.lastBusy.set(session.id, now)
             continue
           }
-          const since = lastBusy.get(session.id)
-          if (since === undefined) lastBusy.set(session.id, now)
+          const since = live.lastBusy.get(session.id)
+          if (since === undefined) live.lastBusy.set(session.id, now)
           else if (now - since >= sleepAfter) {
             yield* putToSleep(session, {
               message: `Idle for ${Duration.format(config.sleepAfter)}`,
@@ -1921,7 +1812,7 @@ export class SessionRelay extends Context.Service<
 
       /** Asks the Runner to stop the Archived Session for good: its Sandbox goes, its Workspace stays. */
       const stopForArchive = (runner: OnlineRunner, sessionId: SessionId) => {
-        archiving.add(sessionId)
+        live.archiving.add(sessionId)
         runner.peer.send(StopSession.make({ sessionId, reason: "Archive" }))
       }
 
@@ -1935,12 +1826,7 @@ export class SessionRelay extends Context.Service<
         message?: string,
       ): Effect.fn.Return<void, SqlError> {
         const at = yield* Clock.currentTimeMillis
-        inFlight.delete(session.id)
-        starting.delete(session.id)
-        starts.delete(session.id)
-        stopping.delete(session.id)
-        restarting.delete(session.id)
-        restarts.delete(session.id)
+        live.ended(session.id, "Archived")
         yield* outbox.clear(session.id)
         // Its Claude Code is being stopped for good: its mod has nothing more to say.
         yield* modTokens.revoke(session.id)
@@ -1988,11 +1874,7 @@ export class SessionRelay extends Context.Service<
         for (const session of yield* sessions.dueForPurge(now)) {
           yield* Effect.logInfo(`Purging Session ${session.id}, archived past its retention`)
           yield* sessions.purge(session, now)
-          archiving.delete(session.id)
-          lastBusy.delete(session.id)
-          asleepWhy.delete(session.id)
-          openPorts.delete(session.id)
-          sandboxTokens.delete(session.id)
+          live.ended(session.id, "Purged")
           yield* outbox.clear(session.id)
           for (const client of webClients) {
             client.joined.delete(session.id)
@@ -2099,7 +1981,7 @@ export class SessionRelay extends Context.Service<
         })
         const modToken = yield* modTokens.issue({ sessionId: id, runnerId: runner.id })
         const installations = yield* startMcpServers(id, session.repo, runner)
-        starting.add(id)
+        live.starting.add(id)
         yield* startSent(id, environment)
         yield* logEvent(id, SessionStateChanged.make({ state: "Active", ...plan.why }))
         yield* sendStart(
@@ -2346,7 +2228,7 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return
               const entries = yield* log.history(sessionId, message.afterSeq)
               peer.send(HubToWeb.cases.SessionHistory.make({ sessionId, entries }))
-              const start = starts.get(sessionId)
+              const start = live.starts.get(sessionId)
               if (start !== undefined && start.log !== "") {
                 peer.send(
                   SessionStartLogged.make({
@@ -2362,7 +2244,7 @@ export class SessionRelay extends Context.Service<
               peer.send(
                 PromptQueueChanged.make({ sessionId, queue: yield* prompts.list(sessionId) }),
               )
-              const picked = questionPicks.get(sessionId)
+              const picked = live.questionPicks.get(sessionId)
               if (picked !== undefined && picked.picks.length > 0) {
                 peer.send(QuestionPicks.make({ sessionId, ...picked }))
               }
@@ -2417,7 +2299,7 @@ export class SessionRelay extends Context.Service<
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
               // Pressing Sleep turns Keep awake off (ADR 0016), even while it is going to sleep.
-              if (stopping.has(sessionId)) return yield* stopKeepingAwake(session.value)
+              if (live.stopping.has(sessionId)) return yield* stopKeepingAwake(session.value)
               if (session.value.state !== "Active") {
                 return refuse(
                   message,
@@ -2425,7 +2307,7 @@ export class SessionRelay extends Context.Service<
                   { sessionId },
                 )
               }
-              if (starts.has(sessionId)) {
+              if (live.starts.has(sessionId)) {
                 return refuse(
                   message,
                   "The Session is still starting; put it to sleep once it has started.",
@@ -2435,7 +2317,7 @@ export class SessionRelay extends Context.Service<
               if (session.value.currentTurn !== null) {
                 return refuse(message, "A Turn is running: stop it first.", { sessionId })
               }
-              if (inFlight.has(sessionId) || (yield* prompts.list(sessionId)).length > 0) {
+              if (live.inFlight.has(sessionId) || (yield* prompts.list(sessionId)).length > 0) {
                 return refuse(message, "Prompts are waiting in the Session's queue.", {
                   sessionId,
                 })
@@ -2478,7 +2360,7 @@ export class SessionRelay extends Context.Service<
                   return
                 }
                 case "Active":
-                  if (stopping.has(sessionId)) {
+                  if (live.stopping.has(sessionId)) {
                     return refuse(
                       message,
                       "The Session is still going to sleep; wake it once it is Asleep.",
@@ -2503,20 +2385,20 @@ export class SessionRelay extends Context.Service<
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
-              if (restarts.has(sessionId)) {
+              if (live.restarts.has(sessionId)) {
                 return refuse(message, "The Session is already restarting.", { sessionId })
               }
               switch (session.value.state) {
                 case "Asleep": {
                   // Set first, so the woken Session shows it is restarting.
-                  restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
+                  live.restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
                   const refused = yield* wake(session.value, { by: you })
-                  if (!starts.has(sessionId)) restarts.delete(sessionId)
+                  if (!live.starts.has(sessionId)) live.restarts.delete(sessionId)
                   if (refused !== undefined) return refuse(message, refused, { sessionId })
                   return
                 }
                 case "Active":
-                  if (starts.has(sessionId)) {
+                  if (live.starts.has(sessionId)) {
                     // Its Sandbox is being made from the version it was sent: restarting now
                     // would only start it again behind this start.
                     return refuse(
@@ -2525,14 +2407,14 @@ export class SessionRelay extends Context.Service<
                       { sessionId },
                     )
                   }
-                  if (stopping.has(sessionId)) {
+                  if (live.stopping.has(sessionId)) {
                     return refuse(
                       message,
                       "The Session is going to sleep; wake it once it is Asleep.",
                       { sessionId },
                     )
                   }
-                  if (session.value.currentTurn !== null || inFlight.has(sessionId)) {
+                  if (session.value.currentTurn !== null || live.inFlight.has(sessionId)) {
                     return refuse(message, "A Turn is running: stop it first, then restart.", {
                       sessionId,
                     })
@@ -2540,8 +2422,8 @@ export class SessionRelay extends Context.Service<
                   if (!onlineRunners.has(session.value.runnerId)) {
                     return refuse(message, "The Session's Runner is offline.", { sessionId })
                   }
-                  restarting.set(sessionId, you)
-                  restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
+                  live.restarting.set(sessionId, you)
+                  live.restarts.set(sessionId, { by: you, since: yield* Clock.currentTimeMillis })
                   yield* putToSleep(session.value, {
                     by: you,
                     message: "Restarting for the Environment's latest version",
@@ -2644,12 +2526,12 @@ export class SessionRelay extends Context.Service<
             case "CancelPrompt": {
               const { sessionId, promptId } = message
               if (Option.isNone(yield* sessionFor(message))) return
-              if (inFlight.get(sessionId) === promptId) {
+              if (live.inFlight.get(sessionId) === promptId) {
                 return refuse(message, "The prompt was already delivered to Claude Code.", {
                   sessionId,
                 })
               }
-              if (steering.get(sessionId)?.has(promptId) === true) {
+              if (live.steering.get(sessionId)?.has(promptId) === true) {
                 return refuse(message, "The prompt is being handed to the running Turn.", {
                   sessionId,
                 })
@@ -2670,15 +2552,15 @@ export class SessionRelay extends Context.Service<
               if (
                 session.value.state !== "Active" ||
                 session.value.currentTurn === null ||
-                stopping.has(sessionId)
+                live.stopping.has(sessionId)
               ) {
                 return why("No Turn is running to steer the prompt into: it goes next.")
               }
-              if (inFlight.get(sessionId) === promptId) {
+              if (live.inFlight.get(sessionId) === promptId) {
                 return why("The prompt was already delivered to Claude Code.")
               }
-              if (steering.get(sessionId)?.has(promptId) === true) return
-              if (!steers.has(sessionId)) {
+              if (live.steering.get(sessionId)?.has(promptId) === true) return
+              if (!live.steers.has(sessionId)) {
                 return why(
                   "This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.",
                 )
@@ -2686,8 +2568,8 @@ export class SessionRelay extends Context.Service<
               const prompt = (yield* prompts.list(sessionId)).find(({ id }) => id === promptId)
               if (prompt === undefined) return why("The prompt is not in the Prompt queue.")
               // It stays in its place until the mod says it joined the Turn.
-              const steered = steering.get(sessionId) ?? new Map<PromptId, ParticipantId>()
-              steering.set(sessionId, steered.set(promptId, you.id))
+              const steered = live.steering.get(sessionId) ?? new Map<PromptId, ParticipantId>()
+              live.steering.set(sessionId, steered.set(promptId, you.id))
               yield* outbox.enqueue(
                 sessionId,
                 DeliverIntoTurn.make({
@@ -2733,7 +2615,7 @@ export class SessionRelay extends Context.Service<
                     { sessionId },
                   )
                 case "Active":
-                  if (stopping.has(sessionId)) {
+                  if (live.stopping.has(sessionId)) {
                     return refuse(
                       message,
                       "The Session is going to sleep: message the agent once it is Asleep.",
@@ -2747,7 +2629,7 @@ export class SessionRelay extends Context.Service<
                   // Its new Claude Code resumes the agent from its transcript.
                   const refused = yield* wake(session.value, { by: you })
                   if (refused !== undefined) return refuse(message, refused, { sessionId })
-                  if (!starting.has(sessionId)) {
+                  if (!live.starting.has(sessionId)) {
                     return refuse(message, "The Session could not be woken: see its history.", {
                       sessionId,
                     })
@@ -2787,7 +2669,7 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return
               // A pick for a question that has closed meanwhile is moot.
               if (session.value.openQuestion?.toolCallId !== toolCallId) return
-              const before = questionPicks.get(sessionId)
+              const before = live.questionPicks.get(sessionId)
               const others = (before?.toolCallId === toolCallId ? before.picks : []).filter(
                 (pick) => pick.participant.id !== you.id || pick.question !== message.question,
               )
@@ -2802,7 +2684,7 @@ export class SessionRelay extends Context.Service<
                         answer: message.answer,
                       }),
                     ]
-              questionPicks.set(sessionId, { toolCallId, picks })
+              live.questionPicks.set(sessionId, { toolCallId, picks })
               toJoined(sessionId, QuestionPicks.make({ sessionId, toolCallId, picks }))
               return
             }
@@ -3298,9 +3180,10 @@ export class SessionRelay extends Context.Service<
           switch (message._tag) {
             case "SessionStarted":
               // A start that raced an archive: the StopSession that follows settles it.
-              if (session.value.state === "Archived" || archiving.has(message.sessionId)) return
-              starts.delete(message.sessionId)
-              restarts.delete(message.sessionId)
+              if (session.value.state === "Archived" || live.archiving.has(message.sessionId))
+                return
+              live.starts.delete(message.sessionId)
+              live.restarts.delete(message.sessionId)
               yield* sessions.setLastOutput(message.sessionId, null)
               yield* sessions.setEnvironmentVersion(
                 message.sessionId,
@@ -3319,7 +3202,7 @@ export class SessionRelay extends Context.Service<
                 message: `Claude Code could not start on ${runner.name}: ${message.message}`,
               })
             case "SessionStopped": {
-              if (archiving.delete(message.sessionId)) {
+              if (live.archiving.delete(message.sessionId)) {
                 if (session.value.state === "Archived") {
                   // Stopped for good: its Sandbox is destroyed.
                   yield* sessions.setArchiveStopped(message.sessionId)
@@ -3329,8 +3212,9 @@ export class SessionRelay extends Context.Service<
                 yield* claudeGone(session.value, {})
                 return yield* wakeIfWaiting(message.sessionId)
               }
-              const asked = stopping.get(message.sessionId)
-              const restartBy = asked === undefined ? undefined : restarting.get(message.sessionId)
+              const asked = live.stopping.get(message.sessionId)
+              const restartBy =
+                asked === undefined ? undefined : live.restarting.get(message.sessionId)
               // What Claude Code printed before it exited on its own (#105), redacted as its
               // terminal is: a Sensitive value it printed must not reach the summary.
               yield* sessions.setLastOutput(
@@ -3353,7 +3237,10 @@ export class SessionRelay extends Context.Service<
                 const stopped = yield* sessions.get(message.sessionId)
                 if (Option.isSome(stopped)) yield* wake(stopped.value, { by: restartBy })
                 // Not woken after all, as for an archive meanwhile: the restart is over.
-                if (!starts.has(message.sessionId) && restarts.delete(message.sessionId)) {
+                if (
+                  !live.starts.has(message.sessionId) &&
+                  live.restarts.delete(message.sessionId)
+                ) {
                   yield* sessionUpdated(message.sessionId)
                 }
                 return
@@ -3406,9 +3293,9 @@ export class SessionRelay extends Context.Service<
                   ? port
                   : { ...port, process: redactText(needles, port.process) },
               )
-              const before = openPorts.get(message.sessionId) ?? []
-              if (ports.length === 0) openPorts.delete(message.sessionId)
-              else openPorts.set(message.sessionId, ports)
+              const before = live.openPorts.get(message.sessionId) ?? []
+              if (ports.length === 0) live.openPorts.delete(message.sessionId)
+              else live.openPorts.set(message.sessionId, ports)
               if (!samePorts(before, ports)) yield* sessionUpdated(message.sessionId)
               return
             }
@@ -3525,13 +3412,8 @@ export class SessionRelay extends Context.Service<
                 yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
                 yield* environmentRelay.runnerGone(runner)
                 for (const session of yield* sessions.listByRunner(runner.id)) {
-                  // A stop it was asked for is settled by what it says when it is back.
-                  stopping.delete(session.id)
-                  restarting.delete(session.id)
-                  archiving.delete(session.id)
-                  // A start under way is settled by what it says when it is back, too.
-                  starts.delete(session.id)
-                  restarts.delete(session.id)
+                  // A stop or start it was asked for is settled by what it says when it is back.
+                  live.ended(session.id, "RunnerGone")
                   if (session.state === "Active" || session.state === "Asleep") {
                     yield* changeState(session, "Frozen", {
                       message: `${runner.name} went offline`,
@@ -3554,18 +3436,18 @@ export class SessionRelay extends Context.Service<
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         yield* sessions.setClaudeSessionId(sessionId, hello.claudeSessionId)
-        if (hello.steers === true) steers.add(sessionId)
-        else steers.delete(sessionId)
-        starting.delete(sessionId)
+        if (hello.steers === true) live.steers.add(sessionId)
+        else live.steers.delete(sessionId)
+        live.starting.delete(sessionId)
         yield* presenceToMod(sessionId)
         yield* deliverNext(sessionId)
       }, serialized)
 
       /** The mod answered a DeliverIntoTurn. */
       const steerAnswered = (sessionId: SessionId, promptId: PromptId) => {
-        const steered = steering.get(sessionId)
+        const steered = live.steering.get(sessionId)
         steered?.delete(promptId)
-        if (steered?.size === 0) steering.delete(sessionId)
+        if (steered?.size === 0) live.steering.delete(sessionId)
       }
 
       const modEvent = Effect.fn("SessionRelay.modEvent")(function* (
@@ -3573,7 +3455,7 @@ export class SessionRelay extends Context.Service<
         event: ModEvent,
       ) {
         if (event._tag === "PromptFailed") {
-          const steeredBy = steering.get(sessionId)?.get(event.promptId)
+          const steeredBy = live.steering.get(sessionId)?.get(event.promptId)
           if (steeredBy !== undefined) {
             // A steer that failed leaves the prompt in its place, to wait for the Turn to end.
             steerAnswered(sessionId, event.promptId)
@@ -3588,7 +3470,7 @@ export class SessionRelay extends Context.Service<
           }
           // The prompt is dropped, and its sender told: put back, it would most likely fail
           // again at once, and hold up the rest of the queue.
-          if (inFlight.get(sessionId) === event.promptId) inFlight.delete(sessionId)
+          if (live.inFlight.get(sessionId) === event.promptId) live.inFlight.delete(sessionId)
           const failed = yield* prompts.remove(sessionId, event.promptId)
           if (Option.isNone(failed)) return
           toWeb(
@@ -3623,7 +3505,7 @@ export class SessionRelay extends Context.Service<
 
         if (event._tag === "AnswerFailed") {
           // The question is as it was: closed. Told to whoever sent the answer.
-          const known = closedQuestions.get(sessionId)
+          const known = live.closedQuestions.get(sessionId)
           return toWeb(
             CommandFailed.make({
               command: "AnswerQuestion",
@@ -3655,7 +3537,7 @@ export class SessionRelay extends Context.Service<
               askedAt: yield* Clock.currentTimeMillis,
             }),
           )
-          questionPicks.delete(sessionId)
+          live.questionPicks.delete(sessionId)
           return yield* sessionUpdated(sessionId)
         }
 
@@ -3687,7 +3569,7 @@ export class SessionRelay extends Context.Service<
         } else if (event._tag === "TurnStarted") {
           yield* sessions.setCurrentTurn(sessionId, event.turnId)
           if (event.promptId !== undefined) {
-            if (inFlight.get(sessionId) === event.promptId) inFlight.delete(sessionId)
+            if (live.inFlight.get(sessionId) === event.promptId) live.inFlight.delete(sessionId)
             const started = yield* prompts.remove(sessionId, event.promptId)
             if (Option.isSome(started)) yield* queueChanged(sessionId)
           }
@@ -3716,11 +3598,11 @@ export class SessionRelay extends Context.Service<
       ) {
         yield* logEvent(sessionId, closed)
         const needles = yield* needlesForSession(sessionId)
-        closedQuestions.set(sessionId, {
+        live.closedQuestions.set(sessionId, {
           ...closed,
           outcome: redactOutcome(needles, closed.outcome),
         })
-        questionPicks.delete(sessionId)
+        live.questionPicks.delete(sessionId)
         yield* sessions.setOpenQuestion(sessionId, null)
       })
 
@@ -3746,7 +3628,7 @@ export class SessionRelay extends Context.Service<
 
       /** Why an answer to a question that isn't open is refused: how it closed, if it did. */
       const closedText = (sessionId: SessionId, toolCallId: ToolCallId): string => {
-        const closed = closedQuestions.get(sessionId)
+        const closed = live.closedQuestions.get(sessionId)
         return closed?.toolCallId === toolCallId
           ? `${questionClosedText(closed, true)}.`
           : "The question is no longer open."
@@ -3855,7 +3737,7 @@ export class SessionRelay extends Context.Service<
               case "Active":
                 break
             }
-            if (stopping.has(sessionId)) {
+            if (live.stopping.has(sessionId)) {
               return yield* refuseTunnel(
                 TunnelCloseCode.NotActive,
                 "The Session is going to sleep.",
@@ -3870,7 +3752,7 @@ export class SessionRelay extends Context.Service<
                 `${runner.name} runs a version from before forwarding ports: update it.`,
               )
             }
-            const open = openPorts.get(sessionId)?.find((listening) => listening.port === port)
+            const open = live.openPorts.get(sessionId)?.find((listening) => listening.port === port)
             if (open === undefined) {
               return yield* refuseTunnel(
                 TunnelCloseCode.PortNotOpen,
