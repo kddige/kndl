@@ -9,7 +9,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
-import { agentsOf, recentAgents } from "../hub/transcript.ts"
+import { recentAgents } from "../hub/transcript.ts"
 import { keptAwakeText } from "../session/keepAwake.ts"
 import { WaitingDot } from "../session/QuestionChip.tsx"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
@@ -140,11 +140,12 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   )
   const known = useMemo(() => new Set((sessions ?? []).map((session) => session.id)), [sessions])
   const folded = useFolded()
-  // The open Session's agents, finished ones too, from its log.
-  const openLog = useHubState((state) =>
-    sessionId === undefined ? undefined : state.joined[sessionId as SessionId]?.log,
+  // The open Session's agents, finished ones too, from its transcript.
+  const openAgents = useHubState((state) =>
+    sessionId === undefined
+      ? undefined
+      : state.joined[sessionId as SessionId]?.transcript.agentList,
   )
-  const openAgents = useMemo(() => openLog && agentsOf(openLog), [openLog])
   // When an agent's view opens, its folded Session opens, so its row isn't hidden.
   useEffect(() => {
     if (sessionId !== undefined && agentId !== undefined) setFolded(sessionId, false)

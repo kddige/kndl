@@ -3,7 +3,6 @@ import {
   MaxSessionNameLength,
   type PromptId,
   type SessionId,
-  type SessionLogEntry,
   type SessionStateChanged,
   type SessionSummary,
   sessionTitle,
@@ -22,7 +21,6 @@ import {
 } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
-import { buildTranscript, runningTurn } from "../hub/transcript.ts"
 import { restoreSession } from "../sessions/ArchivedSessions.tsx"
 import { renameSession } from "../sessions/rename.ts"
 import {
@@ -192,7 +190,7 @@ export function SessionView({
       agentId={agentId}
       onAgentChange={onAgentChange}
       summary={summary}
-      log={joined.log}
+      transcript={joined.transcript}
       presence={joined.presence}
       queue={joined.queue}
       startLog={joined.startLog}
@@ -207,7 +205,7 @@ function LoadedSession({
   agentId,
   onAgentChange,
   summary,
-  log,
+  transcript,
   presence,
   queue,
   startLog,
@@ -218,7 +216,7 @@ function LoadedSession({
   agentId: AgentId | undefined
   onAgentChange: ((agentId: AgentId | undefined) => void) | undefined
   summary: SessionSummary
-  log: ReadonlyArray<SessionLogEntry>
+  transcript: JoinedSession["transcript"]
   presence: JoinedSession["presence"]
   queue: JoinedSession["queue"]
   startLog: JoinedSession["startLog"]
@@ -226,10 +224,8 @@ function LoadedSession({
 }) {
   const hub = useHub()
   const navigate = useNavigate()
-  const transcript = useMemo(() => buildTranscript(log), [log])
   const items = transcript.items
-  const running = summary.currentTurn !== null || runningTurn(items) !== undefined
-  const lastChange = useMemo(() => latestStateChange(log), [log])
+  const running = summary.currentTurn !== null || transcript.running !== undefined
   const scroller = useStickToBottom(items)
 
   const [renaming, setRenaming] = useState(false)
@@ -296,7 +292,7 @@ function LoadedSession({
   const steerable =
     state === "Active" &&
     summary.currentTurn !== null &&
-    (runningTurn(items)?.stopRequests.length ?? 0) === 0
+    (transcript.running?.stopRequests.length ?? 0) === 0
   const [steering, setSteering] = useState<ReadonlySet<PromptId>>(new Set())
   useEffect(
     () =>
@@ -480,7 +476,7 @@ function LoadedSession({
                 <div {...stylex.props(styles.column, styles.transcript)}>
                   <StateBanner
                     summary={summary}
-                    change={lastChange}
+                    change={transcript.stateChange}
                     running={running}
                     startLog={startLog}
                     restart={restart}
@@ -852,11 +848,3 @@ function StateBanner({
 
 /** The reason as a sentence, with a space after it for the one that follows. */
 const sentence = (reason: string) => (/[.!?]$/.test(reason) ? `${reason} ` : `${reason}. `)
-
-function latestStateChange(log: ReadonlyArray<SessionLogEntry>): SessionStateChanged | undefined {
-  for (let index = log.length - 1; index >= 0; index--) {
-    const event = log[index]?.event
-    if (event?._tag === "SessionStateChanged") return event
-  }
-  return undefined
-}

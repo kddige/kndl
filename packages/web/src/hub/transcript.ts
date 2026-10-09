@@ -5,6 +5,10 @@
 // steered into a Turn (#195) is shown where Claude read it. State changes between Turns, notes
 // about the Sandbox, and a change of model (#128) become notices. A question Claude asked with
 // AskUserQuestion (#193) is a block of its own, in place of its tool call, with how it closed.
+//
+// The fold is incremental: the store folds each batch of entries a joined Session's log grows by
+// into the transcript it has, and a whole log is the same fold from an empty transcript. A batch
+// costs what it touches, so a Turn streaming in doesn't cost the whole Session's length.
 
 import type {
   AgentId,
@@ -129,7 +133,38 @@ export interface Transcript {
   readonly agents: ReadonlyMap<AgentId, AgentView>
   /** The questions Claude asked (#193), by their AskUserQuestion call. */
   readonly questions: ReadonlyMap<ToolCallId, QuestionView>
+  /**
+   * The Session's subagents in the order they started, with their status: for a list that needs
+   * no more, such as the sidebar's.
+   */
+  readonly agentList: ReadonlyArray<AgentSummary>
+  /** The Turn still running, if any: the last one without an end. */
+  readonly running: TurnView | undefined
+  /** The latest change of the Session's state in the log, if any. */
+  readonly stateChange: SessionStateChanged | undefined
 }
+
+/**
+ * A transcript as the store keeps it for a joined Session, with what folding more entries into it
+ * needs. {@link foldTranscript} makes the next one; this one never changes.
+ */
+export interface LiveTranscript extends Transcript {
+  readonly fold: TranscriptFold
+}
+
+/** Where a list of blocks is: a Turn's, by its place in the items, or a subagent's. */
+type Owner = { readonly turn: number } | { readonly agent: AgentId }
+
+/** A block's place in its list; blocks are only ever added or replaced, so it holds. */
+interface Place {
+  readonly owner: Owner
+  readonly index: number
+}
+
+/** A block as folded: a subagent's card names it, and gets its view when the Turn is shown. */
+type FoldedBlock =
+  | Exclude<Block, { readonly kind: "agent" }>
+  | { readonly kind: "agent"; readonly key: string; readonly agentId: AgentId }
 
 interface MutableAgent {
   agentId: AgentId
@@ -139,9 +174,11 @@ interface MutableAgent {
   background: boolean
   status: AgentStatus
   worktree?: AgentWorktree
-  blocks: Array<Block>
+  blocks: Array<FoldedBlock>
   /** Whether AgentStarted placed it; its events before that wait in its blocks. */
   placed: boolean
+  /** Whose blocks its card is in, once placed. */
+  card?: Owner
 }
 
 interface MutableTurn {
@@ -151,39 +188,221 @@ interface MutableTurn {
   sender: PromptSender
   prompt: string
   promptId?: PromptId
-  blocks: Array<Block>
+  blocks: Array<FoldedBlock>
   stopRequests: Array<Participant>
   unread: Array<SteeredPrompt>
   end: TurnEnded | null
 }
 
-export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript {
-  const items: Array<TranscriptItem> = []
-  const turns = new Map<TurnId, MutableTurn>()
-  const agents = new Map<AgentId, MutableAgent>()
-  /** Where each tool call's block is, so its end finds it, in any loop. */
-  const tools = new Map<ToolCallId, { list: Array<Block>; index: number }>()
-  /** The Agent calls that started a subagent: its card stands for the call. */
-  const agentCalls = new Set<ToolCallId>()
-  /** Where each question's block is: it stands for its AskUserQuestion call. */
-  const questions = new Map<ToolCallId, { list: Array<Block>; index: number }>()
-  let latest: MutableTurn | undefined
+type FoldedAgent = Readonly<MutableAgent> & { readonly blocks: ReadonlyArray<FoldedBlock> }
+type FoldedTurn = Readonly<MutableTurn> & {
+  readonly blocks: ReadonlyArray<FoldedBlock>
+  readonly stopRequests: ReadonlyArray<Participant>
+  readonly unread: ReadonlyArray<SteeredPrompt>
+}
 
-  const turnFor = (entry: SessionLogEntry, turnId: TurnId): MutableTurn => {
-    const existing = turns.get(turnId)
-    if (existing) return existing
-    // An event for a Turn whose start isn't in the log: show it under an unattributed Turn.
-    return startTurn(entry, turnId, { _tag: "FromTerminal" }, "")
+/** What folding more entries into a transcript needs, besides the transcript itself. */
+export interface TranscriptFold {
+  /** Each item's Turn as folded, in the items' order; undefined for a notice. */
+  readonly turns: ReadonlyArray<FoldedTurn | undefined>
+  /** Where each Turn is in the items, by its id: the latest Turn of that id. */
+  readonly turnIds: ReadonlyMap<TurnId, number>
+  /** Every subagent the log has an event of, placed or not, in the order first seen. */
+  readonly agents: ReadonlyMap<AgentId, FoldedAgent>
+  /** Where each tool call's block is, so its end finds it, in any loop. */
+  readonly tools: ReadonlyMap<ToolCallId, Place>
+  /** The Agent calls that started a subagent, and the one each started: its card stands for it. */
+  readonly agentCalls: ReadonlyMap<ToolCallId, AgentId>
+  /** Where each question's block is: it stands for its AskUserQuestion call. */
+  readonly questions: ReadonlyMap<ToolCallId, Place>
+  /** The latest Turn's place in the items. */
+  readonly latest: number | undefined
+}
+
+export const emptyTranscript: LiveTranscript = {
+  items: [],
+  agents: new Map(),
+  questions: new Map(),
+  agentList: [],
+  running: undefined,
+  stateChange: undefined,
+  fold: {
+    turns: [],
+    turnIds: new Map(),
+    agents: new Map(),
+    tools: new Map(),
+    agentCalls: new Map(),
+    questions: new Map(),
+    latest: undefined,
+  },
+}
+
+/** The transcript of a whole log: its entries folded into an empty one. */
+export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript {
+  const { fold: _, ...transcript } = foldTranscript(emptyTranscript, log)
+  return transcript
+}
+
+/**
+ * Folds entries that follow the transcript's into it, in `seq` order, as the store does with each
+ * batch a joined Session's log grows by. Whatever the batches, the result is what
+ * {@link buildTranscript} makes of the whole log. Its cost is that of the new entries and the Turns
+ * and subagents they touch, not the log's length: every Turn they leave alone, and its blocks, is
+ * the same object as before, so a memoized view of it doesn't render again.
+ */
+export function foldTranscript(
+  live: LiveTranscript,
+  entries: ReadonlyArray<SessionLogEntry>,
+): LiveTranscript {
+  if (entries.length === 0) return live
+  const folding = new Folding(live)
+  for (const entry of entries) folding.add(entry)
+  return folding.finish()
+}
+
+/** A map copied on its first change, so the fold it came from stays as it was. */
+class CopyOnWrite<K, V> {
+  #map: ReadonlyMap<K, V>
+  #copied = false
+  constructor(map: ReadonlyMap<K, V>) {
+    this.#map = map
+  }
+  get map(): ReadonlyMap<K, V> {
+    return this.#map
+  }
+  get(key: K): V | undefined {
+    return this.#map.get(key)
+  }
+  has(key: K): boolean {
+    return this.#map.has(key)
+  }
+  set(key: K, value: V): void {
+    if (!this.#copied) {
+      this.#map = new Map(this.#map)
+      this.#copied = true
+    }
+    ;(this.#map as Map<K, V>).set(key, value)
+  }
+}
+
+/**
+ * One batch of entries being folded into a transcript. A Turn or subagent the batch changes is
+ * copied once, the first time, and changed in place after that; the rest are shared. `finish`
+ * makes views of what changed, and of the Turns and subagents whose cards show what changed.
+ */
+class Folding {
+  readonly #from: LiveTranscript
+  readonly #items: Array<TranscriptItem | undefined>
+  readonly #turns: Array<FoldedTurn | undefined>
+  readonly #turnIds: CopyOnWrite<TurnId, number>
+  readonly #agents: CopyOnWrite<AgentId, FoldedAgent>
+  readonly #tools: CopyOnWrite<ToolCallId, Place>
+  readonly #agentCalls: CopyOnWrite<ToolCallId, AgentId>
+  readonly #questions: CopyOnWrite<ToolCallId, Place>
+  #latest: number | undefined
+  #stateChange: SessionStateChanged | undefined
+  #agentList: Array<AgentSummary> | undefined
+  /** The Turns and subagents copied in this batch, which may change in place. */
+  readonly #ownTurns = new Set<number>()
+  readonly #ownAgents = new Set<AgentId>()
+  /** The subagents first seen or described anew, which the Turns they prompted name. */
+  readonly #described = new Set<AgentId>()
+  #asked = false
+
+  constructor(from: LiveTranscript) {
+    const fold = from.fold
+    this.#from = from
+    this.#items = [...from.items]
+    this.#turns = [...fold.turns]
+    this.#turnIds = new CopyOnWrite(fold.turnIds)
+    this.#agents = new CopyOnWrite(fold.agents)
+    this.#tools = new CopyOnWrite(fold.tools)
+    this.#agentCalls = new CopyOnWrite(fold.agentCalls)
+    this.#questions = new CopyOnWrite(fold.questions)
+    this.#latest = fold.latest
+    this.#stateChange = from.stateChange
   }
 
-  const startTurn = (
+  /** Adds a subagent to the list, or changes it there, by what `update` makes of it. */
+  #list(
+    agentId: AgentId,
+    update: (listed: AgentSummary | undefined) => AgentSummary | undefined,
+  ): void {
+    const list = this.#agentList ?? this.#from.agentList
+    const at = list.findIndex((listed) => listed.id === agentId)
+    const next = update(list[at])
+    if (next === undefined || next === list[at]) return
+    this.#agentList ??= [...list]
+    if (at === -1) this.#agentList.push(next)
+    else this.#agentList[at] = next
+  }
+
+  /** The Turn at a place in the items, to change. */
+
+  #turn(index: number): MutableTurn {
+    const turn = this.#turns[index] as FoldedTurn
+    if (this.#ownTurns.has(index)) return turn as MutableTurn
+    const own: MutableTurn = {
+      ...turn,
+      blocks: [...turn.blocks],
+      stopRequests: [...turn.stopRequests],
+      unread: [...turn.unread],
+    }
+    this.#turns[index] = own
+    this.#ownTurns.add(index)
+    return own
+  }
+
+  /** A subagent already seen, to change. */
+  #agent(agentId: AgentId): MutableAgent | undefined {
+    const agent = this.#agents.get(agentId)
+    if (!agent || this.#ownAgents.has(agentId)) return agent as MutableAgent | undefined
+    const own: MutableAgent = { ...agent, blocks: [...agent.blocks] }
+    this.#agents.set(agentId, own)
+    this.#ownAgents.add(agentId)
+    return own
+  }
+
+  /**
+   * The subagent, by agentId, to change. One not started yet collects its events until
+   * AgentStarted says what it is; one that never starts is none the Session asked for, and isn't
+   * shown.
+   */
+  #agentFor(agentId: AgentId): MutableAgent {
+    const existing = this.#agent(agentId)
+    if (existing) return existing
+    const agent: MutableAgent = {
+      agentId,
+      agentType: "",
+      description: "",
+      model: "",
+      background: false,
+      status: "Running",
+      blocks: [],
+      placed: false,
+    }
+    this.#agents.set(agentId, agent)
+    this.#ownAgents.add(agentId)
+    this.#described.add(agentId)
+    return agent
+  }
+
+  /** The Turn of an event, by its place in the items. */
+  #turnFor(entry: SessionLogEntry, turnId: TurnId): number {
+    // An event for a Turn whose start isn't in the log: show it under an unattributed Turn.
+    return this.#turnIds.get(turnId) ?? this.#startTurn(entry, turnId, { _tag: "FromTerminal" }, "")
+  }
+
+  #startTurn(
     entry: SessionLogEntry,
     turnId: TurnId,
     sender: PromptSender,
     prompt: string,
     promptId?: PromptId,
-  ): MutableTurn => {
-    const turn: MutableTurn = {
+  ): number {
+    const index = this.#items.length
+    this.#items.push(undefined)
+    this.#turns.push({
       turnId,
       seq: entry.seq,
       at: entry.at,
@@ -194,51 +413,43 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
       stopRequests: [],
       unread: [],
       end: null,
-    }
-    turns.set(turnId, turn)
-    latest = turn
-    items.push({ kind: "turn", key: `turn-${entry.seq}`, turn: turn as TurnView })
-    return turn
-  }
-
-  /**
-   * The subagent, by agentId. One not started yet collects its events until AgentStarted says
-   * what it is; one that never starts is none the Session asked for, and isn't shown.
-   */
-  const agentFor = (agentId: AgentId): MutableAgent => {
-    let agent = agents.get(agentId)
-    if (!agent) {
-      agent = {
-        agentId,
-        agentType: "",
-        description: "",
-        model: "",
-        background: false,
-        status: "Running",
-        blocks: [],
-        placed: false,
-      }
-      agents.set(agentId, agent)
-    }
-    return agent
+    })
+    this.#ownTurns.add(index)
+    this.#turnIds.set(turnId, index)
+    this.#latest = index
+    return index
   }
 
   /** The block list an event writes to: its main-loop Turn's, or its subagent's card's. */
-  const blocksFor = (
-    entry: SessionLogEntry,
-    turnId: TurnId,
-    agentId: AgentId | undefined,
-  ): Array<Block> =>
-    agentId === undefined ? turnFor(entry, turnId).blocks : agentFor(agentId).blocks
+  #ownerFor(entry: SessionLogEntry, turnId: TurnId, agentId: AgentId | undefined): Owner {
+    if (agentId === undefined) return { turn: this.#turnFor(entry, turnId) }
+    this.#agentFor(agentId)
+    return { agent: agentId }
+  }
 
-  for (const entry of log) {
+  /** A block list, to change. */
+  #blocks(owner: Owner): Array<FoldedBlock> {
+    return "turn" in owner
+      ? this.#turn(owner.turn).blocks
+      : (this.#agent(owner.agent) as MutableAgent).blocks
+  }
+
+  #blockAt(place: Place | undefined): FoldedBlock | undefined {
+    if (!place) return undefined
+    const { owner } = place
+    const list =
+      "turn" in owner ? this.#turns[owner.turn]?.blocks : this.#agents.get(owner.agent)?.blocks
+    return list?.[place.index]
+  }
+
+  add(entry: SessionLogEntry): void {
     const event = entry.event
     switch (event._tag) {
       case "TurnStarted":
-        startTurn(entry, event.turnId, event.sender, event.text, event.promptId)
+        this.#startTurn(entry, event.turnId, event.sender, event.text, event.promptId)
         break
       case "TextDelta": {
-        const blocks = blocksFor(entry, event.turnId, event.agentId)
+        const blocks = this.#blocks(this.#ownerFor(entry, event.turnId, event.agentId))
         const last = blocks.at(-1)
         if (last?.kind === "text") {
           blocks[blocks.length - 1] = { ...last, text: last.text + event.text }
@@ -248,25 +459,29 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
         break
       }
       case "ToolCallStarted": {
-        if (agentCalls.has(event.toolCallId) || questions.has(event.toolCallId)) break
-        const blocks = blocksFor(entry, event.turnId, event.agentId)
+        if (this.#agentCalls.has(event.toolCallId) || this.#questions.has(event.toolCallId)) break
+        const owner = this.#ownerFor(entry, event.turnId, event.agentId)
+        const blocks = this.#blocks(owner)
         blocks.push({
           kind: "tool",
           key: `tool-${event.toolCallId}`,
           call: { toolCallId: event.toolCallId, tool: event.tool, input: event.input },
         })
-        tools.set(event.toolCallId, { list: blocks, index: blocks.length - 1 })
+        this.#tools.set(event.toolCallId, { owner, index: blocks.length - 1 })
         break
       }
       case "ToolCallEnded": {
-        if (agentCalls.has(event.toolCallId) || questions.has(event.toolCallId)) break
+        if (this.#agentCalls.has(event.toolCallId) || this.#questions.has(event.toolCallId)) break
         const ended = { outcome: event.outcome, output: event.output }
-        const started = tools.get(event.toolCallId)
-        const block = started?.list[started.index]
+        const started = this.#tools.get(event.toolCallId)
+        const block = this.#blockAt(started)
         if (started && block?.kind === "tool") {
-          started.list[started.index] = { ...block, call: { ...block.call, ...ended } }
+          this.#blocks(started.owner)[started.index] = {
+            ...block,
+            call: { ...block.call, ...ended },
+          }
         } else {
-          blocksFor(entry, event.turnId, event.agentId).push({
+          this.#blocks(this.#ownerFor(entry, event.turnId, event.agentId)).push({
             kind: "tool",
             key: `tool-${event.toolCallId}`,
             call: { toolCallId: event.toolCallId, tool: event.tool, input: "", ...ended },
@@ -276,75 +491,97 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
       }
       case "TurnEnded":
         // A subagent's run ending says nothing its status doesn't.
-        if (event.agentId === undefined) turnFor(entry, event.turnId).end = event
+        if (event.agentId === undefined) this.#turn(this.#turnFor(entry, event.turnId)).end = event
         break
       case "AgentStarted": {
-        const agent = agentFor(event.agentId)
+        this.#list(
+          event.agentId,
+          (listed) =>
+            listed ?? { id: event.agentId, description: event.description, status: "Running" },
+        )
+        const agent = this.#agentFor(event.agentId)
+        if (agent.description !== event.description) this.#described.add(event.agentId)
         agent.agentType = event.agentType
         agent.description = event.description
         agent.model = event.model
         agent.background = event.background
         if (agent.placed) break
         agent.placed = true
-        agentCalls.add(event.toolCallId)
-        const card: Block = {
+        this.#agentCalls.set(event.toolCallId, event.agentId)
+        const card: FoldedBlock = {
           kind: "agent",
           key: `agent-${event.agentId}`,
-          agent: agent as AgentView,
+          agentId: event.agentId,
         }
         // In place of its Agent call; if that wasn't seen, at the end of the Turn that started it.
-        const call = tools.get(event.toolCallId)
-        if (call && call.list[call.index]?.kind === "tool") call.list[call.index] = card
-        else (turns.get(event.turnId) ?? latest ?? turnFor(entry, event.turnId)).blocks.push(card)
+        const call = this.#tools.get(event.toolCallId)
+        if (call && this.#blockAt(call)?.kind === "tool") {
+          this.#blocks(call.owner)[call.index] = card
+          agent.card = call.owner
+        } else {
+          const owner = {
+            turn:
+              this.#turnIds.get(event.turnId) ?? this.#latest ?? this.#turnFor(entry, event.turnId),
+          }
+          this.#blocks(owner).push(card)
+          agent.card = owner
+        }
         break
       }
       case "QuestionAsked": {
-        if (questions.has(event.toolCallId)) break
-        const block: Block = {
+        if (this.#questions.has(event.toolCallId)) break
+        this.#asked = true
+        const block: FoldedBlock = {
           kind: "question",
           key: `question-${event.toolCallId}`,
           question: { toolCallId: event.toolCallId, questions: event.questions },
         }
         // In place of its AskUserQuestion call, or at the end of its Turn if that wasn't seen.
-        const call = tools.get(event.toolCallId)
-        if (call && call.list[call.index]?.kind === "tool") {
-          call.list[call.index] = block
-          questions.set(event.toolCallId, call)
+        const call = this.#tools.get(event.toolCallId)
+        if (call && this.#blockAt(call)?.kind === "tool") {
+          this.#blocks(call.owner)[call.index] = block
+          this.#questions.set(event.toolCallId, call)
         } else {
-          const blocks = turnFor(entry, event.turnId).blocks
+          const owner = { turn: this.#turnFor(entry, event.turnId) }
+          const blocks = this.#blocks(owner)
           blocks.push(block)
-          questions.set(event.toolCallId, { list: blocks, index: blocks.length - 1 })
+          this.#questions.set(event.toolCallId, { owner, index: blocks.length - 1 })
         }
         break
       }
       case "QuestionClosed": {
-        const at = questions.get(event.toolCallId)
-        const block = at?.list[at.index]
+        const at = this.#questions.get(event.toolCallId)
+        const block = this.#blockAt(at)
         if (!at || block?.kind !== "question") break
+        this.#asked = true
         const closed = { outcome: event.outcome, ...(event.by && { by: event.by }) }
-        at.list[at.index] = { ...block, question: { ...block.question, closed } }
+        this.#blocks(at.owner)[at.index] = { ...block, question: { ...block.question, closed } }
         break
       }
       case "AgentStatusChanged": {
-        const agent = agents.get(event.agentId)
+        this.#list(event.agentId, (listed) => listed && { ...listed, status: event.status })
+        const agent = this.#agent(event.agentId)
         if (!agent) break
         agent.status = event.status
         if (event.worktree) agent.worktree = event.worktree
         break
       }
       case "AgentMessaged":
-        agents.get(event.agentId)?.blocks.push({
+        this.#agent(event.agentId)?.blocks.push({
           kind: "message",
           key: `message-${entry.seq}`,
           sender: event.sender,
           text: event.text,
         })
         break
-      case "TurnStopRequested":
-        if (latest && latest.end === null) latest.stopRequests.push(event.by)
+      case "TurnStopRequested": {
+        const latest = this.#latest
+        if (latest !== undefined && this.#turns[latest]?.end === null)
+          this.#turn(latest).stopRequests.push(event.by)
         break
+      }
       case "PromptSteered":
-        turnFor(entry, event.turnId).unread.push({
+        this.#turn(this.#turnFor(entry, event.turnId)).unread.push({
           key: `steered-${entry.seq}`,
           promptId: event.promptId,
           sender: event.sender,
@@ -353,93 +590,130 @@ export function buildTranscript(log: ReadonlyArray<SessionLogEntry>): Transcript
         break
       case "SteeredPromptRead": {
         // Claude read it here, after what the Turn had said and done so far.
-        const turn = turns.get(event.turnId)
-        const index = turn?.unread.findIndex((prompt) => prompt.promptId === event.promptId) ?? -1
-        const [read] = index === -1 ? [] : (turn?.unread.splice(index, 1) ?? [])
-        if (turn && read) turn.blocks.push({ kind: "steered", ...read })
+        const index = this.#turnIds.get(event.turnId)
+        if (index === undefined) break
+        const unread = this.#turns[index]?.unread ?? []
+        if (!unread.some((prompt) => prompt.promptId === event.promptId)) break
+        const turn = this.#turn(index)
+        const [read] = turn.unread.splice(
+          turn.unread.findIndex((prompt) => prompt.promptId === event.promptId),
+          1,
+        )
+        if (read) turn.blocks.push({ kind: "steered", ...read })
         break
       }
       case "SessionStateChanged":
       case "SandboxNoted":
       case "ModelSwitched":
-        items.push({ kind: "notice", key: `notice-${entry.seq}`, at: entry.at, event })
+        if (event._tag === "SessionStateChanged") this.#stateChange = event
+        this.#items.push({ kind: "notice", key: `notice-${entry.seq}`, at: entry.at, event })
+        this.#turns.push(undefined)
         break
     }
   }
 
-  // Hand out plain snapshots, so a later build never shares mutable state with this one. Each
-  // agent is frozen once, so its card and the map hold the same view.
-  const frozen = new Map<AgentId, AgentView>()
-  const freezeBlocks = (blocks: ReadonlyArray<Block>): ReadonlyArray<Block> =>
-    blocks.map((block) =>
-      block.kind === "agent"
-        ? { ...block, agent: freezeAgent(block.agent as MutableAgent) }
-        : block,
-    )
-  const freezeAgent = (agent: MutableAgent): AgentView => {
-    const done = frozen.get(agent.agentId)
-    if (done) return done
-    const { placed: _, blocks, worktree, ...rest } = agent
-    const view: AgentView = {
-      ...rest,
-      ...(worktree && { worktree }),
-      blocks: freezeBlocks(blocks),
+  finish(): LiveTranscript {
+    const from = this.#from
+    const agents = this.#agents.map
+    // What a change shows in: a subagent's card, in the Turn or subagent it is in, and the name of
+    // a subagent in the Turns it prompted.
+    const changedTurns = new Set(this.#ownTurns)
+    const changedAgents = new Set<AgentId>()
+    const pending = [...this.#ownAgents]
+    for (let agentId = pending.pop(); agentId !== undefined; agentId = pending.pop()) {
+      if (changedAgents.has(agentId)) continue
+      changedAgents.add(agentId)
+      const card = agents.get(agentId)?.card
+      if (card && "turn" in card) changedTurns.add(card.turn)
+      else if (card) pending.push(card.agent)
     }
-    frozen.set(agent.agentId, view)
-    return view
-  }
-  const frozenItems = items.map((item): TranscriptItem => {
-    if (item.kind !== "turn") return item
-    const turn = item.turn as MutableTurn
-    const description =
-      turn.sender._tag === "FromAgent" ? agents.get(turn.sender.agentId)?.description : undefined
+    if (this.#described.size > 0) {
+      this.#turns.forEach((turn, index) => {
+        if (turn?.sender._tag === "FromAgent" && this.#described.has(turn.sender.agentId))
+          changedTurns.add(index)
+      })
+    }
+
+    const views = new Map<AgentId, AgentView>()
+    const viewBlocks = (blocks: ReadonlyArray<FoldedBlock>): ReadonlyArray<Block> =>
+      blocks.map((block) =>
+        block.kind === "agent"
+          ? { kind: "agent", key: block.key, agent: agentView(block.agentId) }
+          : block,
+      )
+    const agentView = (agentId: AgentId): AgentView => {
+      const done =
+        views.get(agentId) ?? (changedAgents.has(agentId) ? undefined : from.agents.get(agentId))
+      if (done) return done
+      const { placed: _, card: __, blocks, worktree, ...rest } = agents.get(agentId) as FoldedAgent
+      const view: AgentView = {
+        ...rest,
+        ...(worktree && { worktree }),
+        blocks: viewBlocks(blocks),
+      }
+      views.set(agentId, view)
+      return view
+    }
+
+    const items = this.#items
+    for (const index of changedTurns) {
+      const turn = this.#turns[index] as FoldedTurn
+      const description =
+        turn.sender._tag === "FromAgent" ? agents.get(turn.sender.agentId)?.description : undefined
+      items[index] = {
+        kind: "turn",
+        key: `turn-${turn.seq}`,
+        turn: {
+          turnId: turn.turnId,
+          seq: turn.seq,
+          at: turn.at,
+          sender: turn.sender,
+          ...(description !== undefined && { agentDescription: description }),
+          prompt: turn.prompt,
+          ...(turn.promptId !== undefined && { promptId: turn.promptId }),
+          blocks: viewBlocks(turn.blocks),
+          stopRequests: [...turn.stopRequests],
+          unread: [...turn.unread],
+          end: turn.end,
+        },
+      }
+    }
+    const shownItems = items as ReadonlyArray<TranscriptItem>
+
+    let shown = from.agents
+    if (changedAgents.size > 0) {
+      const next = new Map<AgentId, AgentView>()
+      for (const agent of agents.values())
+        if (agent.placed) next.set(agent.agentId, agentView(agent.agentId))
+      shown = next
+    }
+    let asked = from.questions
+    if (this.#asked) {
+      const next = new Map<ToolCallId, QuestionView>()
+      for (const [toolCallId, at] of this.#questions.map) {
+        const block = this.#blockAt(at)
+        if (block?.kind === "question") next.set(toolCallId, block.question)
+      }
+      asked = next
+    }
     return {
-      ...item,
-      turn: {
-        turnId: turn.turnId,
-        seq: turn.seq,
-        at: turn.at,
-        sender: turn.sender,
-        ...(description !== undefined && { agentDescription: description }),
-        prompt: turn.prompt,
-        ...(turn.promptId !== undefined && { promptId: turn.promptId }),
-        blocks: freezeBlocks(turn.blocks),
-        stopRequests: [...turn.stopRequests],
-        unread: [...turn.unread],
-        end: turn.end,
+      items: shownItems,
+      agents: shown,
+      questions: asked,
+      agentList: this.#agentList ?? from.agentList,
+      running: runningTurn(shownItems),
+      stateChange: this.#stateChange,
+      fold: {
+        turns: this.#turns,
+        turnIds: this.#turnIds.map,
+        agents,
+        tools: this.#tools.map,
+        agentCalls: this.#agentCalls.map,
+        questions: this.#questions.map,
+        latest: this.#latest,
       },
     }
-  })
-  const shown = new Map<AgentId, AgentView>()
-  for (const agent of agents.values())
-    if (agent.placed) shown.set(agent.agentId, freezeAgent(agent))
-  const asked = new Map<ToolCallId, QuestionView>()
-  for (const [toolCallId, at] of questions) {
-    const block = at.list[at.index]
-    if (block?.kind === "question") asked.set(toolCallId, block.question)
   }
-  return { items: frozenItems, agents: shown, questions: asked }
-}
-
-/**
- * The Session's subagents from its event log, in the order they started, with their status: for
- * a list that needs no more, such as the sidebar's.
- */
-export function agentsOf(log: ReadonlyArray<SessionLogEntry>): ReadonlyArray<AgentSummary> {
-  const agents = new Map<AgentId, AgentSummary>()
-  for (const { event } of log) {
-    if (event._tag === "AgentStarted" && !agents.has(event.agentId)) {
-      agents.set(event.agentId, {
-        id: event.agentId,
-        description: event.description,
-        status: "Running",
-      })
-    } else if (event._tag === "AgentStatusChanged") {
-      const agent = agents.get(event.agentId)
-      if (agent) agents.set(event.agentId, { ...agent, status: event.status })
-    }
-  }
-  return [...agents.values()]
 }
 
 /** How many finished agents the open Session lists; the rest are in its transcript. */

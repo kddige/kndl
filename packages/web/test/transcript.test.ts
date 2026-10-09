@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionLogEntry } from "@kndl/protocol"
+import { seedSessions } from "../src/hub/fake/script.ts"
 import {
-  agentsOf,
   buildTranscript,
+  emptyTranscript,
+  foldTranscript,
+  type LiveTranscript,
   recentAgents,
   displayPrompt,
   prettyInput,
   runningTurn,
+  type Transcript,
   type TranscriptItem,
   toolSummary,
   type TurnView,
@@ -21,8 +25,20 @@ const usage = {
   cacheCreationInputTokens: 0,
 }
 
+/**
+ * The transcript of a log, checked to be the same whether its entries are folded in all at once,
+ * one at a time, or in batches of any size, as the store folds them.
+ */
+function transcriptOf(log: ReadonlyArray<SessionLogEntry>): Transcript {
+  const whole = buildTranscript(log)
+  expect(viewOf(foldInBatches(log, () => 1))).toEqual(whole)
+  for (const seed of [1, 2, 3])
+    expect(viewOf(foldInBatches(log, randomSplits(seed)))).toEqual(whole)
+  return whole
+}
+
 /** The transcript's items. */
-const build = (log: ReadonlyArray<SessionLogEntry>) => buildTranscript(log).items
+const build = (log: ReadonlyArray<SessionLogEntry>) => transcriptOf(log).items
 
 function turns(items: ReadonlyArray<TranscriptItem>): ReadonlyArray<TurnView> {
   return items.flatMap((item) => (item.kind === "turn" ? [item.turn] : []))
@@ -98,7 +114,7 @@ describe("buildTranscript", () => {
   })
 
   test("a subagent is a card in place of the Agent call that started it, with its own events", () => {
-    const transcript = buildTranscript(
+    const transcript = transcriptOf(
       entries([
         { _tag: "TurnStarted", turnId: "t-1", text: "research", sender: fromAlice },
         { _tag: "TextDelta", turnId: "t-1", text: "Asking a subagent." },
@@ -158,7 +174,7 @@ describe("buildTranscript", () => {
   })
 
   test("a background agent fills its card after its Turn ends, and the Turn it starts is from it", () => {
-    const transcript = buildTranscript(
+    const transcript = transcriptOf(
       entries([
         { _tag: "TurnStarted", turnId: "t-1", text: "research", sender: fromAlice },
         { _tag: "ToolCallStarted", turnId: "t-1", toolCallId: "c-1", tool: "Agent", input: "{}" },
@@ -385,7 +401,14 @@ describe("buildTranscript", () => {
   })
 
   test("an empty log is an empty transcript", () => {
-    expect(buildTranscript([])).toEqual({ items: [], agents: new Map(), questions: new Map() })
+    expect(transcriptOf([])).toEqual({
+      items: [],
+      agents: new Map(),
+      questions: new Map(),
+      agentList: [],
+      running: undefined,
+      stateChange: undefined,
+    })
   })
 })
 
@@ -424,14 +447,14 @@ describe("questions (#193)", () => {
   } as const
 
   test("a question stands in place of its AskUserQuestion call, and says how it closed", () => {
-    const transcript = buildTranscript(
+    const transcript = transcriptOf(
       entries([started, { _tag: "TextDelta", turnId: "t-1", text: "One thing:" }, call, asked]),
     )
     const [turn] = turns(transcript.items)
     expect(turn?.blocks.map((block) => block.kind)).toEqual(["text", "question"])
     expect(transcript.questions.get("q-1" as never)?.closed).toBeUndefined()
 
-    const later = buildTranscript(
+    const later = transcriptOf(
       entries([started, call, asked, answered, ended, { ...call, toolCallId: "other" }]),
     )
     const blocks = turns(later.items)[0]?.blocks ?? []
@@ -453,6 +476,235 @@ describe("questions (#193)", () => {
     expect(turn?.blocks).toEqual([])
   })
 })
+
+describe("foldTranscript", () => {
+  test("the fake Hub's Sessions fold the same entry by entry, or in any batches, as all at once", () => {
+    for (const seed of seedSessions(1_790_000_000_000)) transcriptOf(entries(seed.events))
+  })
+
+  test("any log folds the same in any batches as all at once", () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const log = randomLog(seed)
+      const whole = buildTranscript(log)
+      expect(viewOf(foldInBatches(log, () => 1))).toEqual(whole)
+      expect(viewOf(foldInBatches(log, randomSplits(seed)))).toEqual(whole)
+    }
+  })
+
+  test("text streaming into the last Turn leaves every earlier Turn as it was", () => {
+    const before = foldTranscript(
+      emptyTranscript,
+      entries([
+        { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
+        { _tag: "TextDelta", turnId: "t-1", text: "Done." },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+        { _tag: "SessionStateChanged", state: "Active" },
+        { _tag: "TurnStarted", turnId: "t-2", text: "two", sender: fromBob },
+        { _tag: "TextDelta", turnId: "t-2", text: "Work" },
+      ]),
+    )
+    const after = foldTranscript(
+      before,
+      entries([{ _tag: "TextDelta", turnId: "t-2", text: "ing" }], 6),
+    )
+    expect(after.items).toHaveLength(3)
+    expect(after.items[0]).toBe(before.items[0] as never)
+    expect(after.items[1]).toBe(before.items[1] as never)
+    expect(turns(after.items)[1]?.blocks).toEqual([
+      { kind: "text", key: "text-5", text: "Working" },
+    ])
+    expect(after.agents).toBe(before.agents)
+    expect(after.questions).toBe(before.questions)
+    expect(after.agentList).toBe(before.agentList)
+    // What was folded before is as it was.
+    expect(turns(before.items)[1]?.blocks).toEqual([{ kind: "text", key: "text-5", text: "Work" }])
+  })
+
+  test("a subagent's text changes only the Turn its card is in", () => {
+    const log = entries([
+      { _tag: "TurnStarted", turnId: "t-1", text: "research", sender: fromAlice },
+      { _tag: "ToolCallStarted", turnId: "t-1", toolCallId: "c-1", tool: "Agent", input: "{}" },
+      agentStarted("a-1", "c-1", true),
+      { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+      { _tag: "TurnStarted", turnId: "t-2", text: "meanwhile", sender: fromBob },
+    ])
+    const before = foldTranscript(emptyTranscript, log)
+    const after = foldTranscript(
+      before,
+      entries([{ _tag: "TextDelta", turnId: "t-a", agentId: "a-1", text: "Found it" }], 5),
+    )
+    expect(after.items[1]).toBe(before.items[1] as never)
+    const card = turns(after.items)[0]?.blocks[0]
+    expect(card?.kind === "agent" && card.agent.blocks).toEqual([
+      { kind: "text", key: "text-5", text: "Found it" },
+    ])
+    expect(card?.kind === "agent" && card.agent).toBe(after.agents.get("a-1" as never) as never)
+  })
+
+  test("says which Turn is running and the latest state change", () => {
+    const transcript = transcriptOf(
+      entries([
+        { _tag: "SessionStateChanged", state: "Asleep" },
+        { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
+        { _tag: "SessionStateChanged", state: "Active", message: "Woke up" },
+        { _tag: "SandboxNoted", message: "Docker is off" },
+      ]),
+    )
+    expect(transcript.running?.turnId).toBe("t-1" as never)
+    expect(transcript.stateChange).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Active",
+      message: "Woke up",
+    })
+  })
+})
+
+/** The transcript without what folding more into it needs. */
+function viewOf(live: LiveTranscript): Transcript {
+  const { fold: _, ...view } = live
+  return view
+}
+
+/** Folds a log in batches, each as long as `size` says, at least one entry. */
+function foldInBatches(log: ReadonlyArray<SessionLogEntry>, size: () => number): LiveTranscript {
+  let live = emptyTranscript
+  for (let start = 0; start < log.length;) {
+    const end = start + Math.max(1, size())
+    live = foldTranscript(live, log.slice(start, end))
+    start = end
+  }
+  return live
+}
+
+/** A seeded pseudo-random number in [0, 1), so a failing case repeats (mulberry32). */
+function random(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296
+  }
+}
+
+/** Batch sizes from 1 to 8, from a seed. */
+function randomSplits(seed: number): () => number {
+  const next = random(seed * 7919)
+  return () => 1 + Math.floor(next() * 8)
+}
+
+type EventEncoded = Parameters<typeof entries>[0][number]
+
+/**
+ * A log of every kind of event, in any order, over a few ids each, so events meet Turns, calls
+ * and agents they don't belong to, or that aren't in the log yet.
+ */
+function randomLog(seed: number): ReadonlyArray<SessionLogEntry> {
+  const next = random(seed)
+  const pick = <A>(options: ReadonlyArray<A>): A =>
+    options[Math.floor(next() * options.length)] as A
+  const turnId = () => pick(["t-0", "t-1", "t-2"])
+  const agentId = () => pick(["a-0", "a-1"])
+  const toolCallId = () => pick(["c-0", "c-1", "c-2", "c-a-0", "c-a-1"])
+  const promptId = () => pick(["p-0", "p-1"])
+  const person = () => pick([alice, bob])
+  const inAgent = (): { agentId?: string } => (next() < 0.3 ? { agentId: agentId() } : {})
+  const makers: ReadonlyArray<() => EventEncoded> = [
+    () => ({
+      _tag: "TurnStarted",
+      turnId: turnId(),
+      text: "[Alice] go",
+      sender: pick([
+        fromAlice,
+        fromBob,
+        { _tag: "FromTerminal" },
+        { _tag: "FromAgent", agentId: agentId() },
+      ]),
+      ...(next() < 0.5 && { promptId: promptId() }),
+    }),
+    () => ({ _tag: "TextDelta", turnId: turnId(), ...inAgent(), text: pick(["a", "b "]) }),
+    () => ({ _tag: "TextDelta", turnId: turnId(), text: "c" }),
+    () => {
+      // Each subagent's calls have ids of their own, so no subagent's card is in its own blocks.
+      const loop = inAgent()
+      return {
+        _tag: "ToolCallStarted",
+        turnId: turnId(),
+        ...loop,
+        toolCallId: loop.agentId === undefined ? pick(["c-0", "c-1", "c-2"]) : `c-${loop.agentId}`,
+        tool: pick(["Bash", "Agent", "AskUserQuestion"]),
+        input: "{}",
+      }
+    },
+    () => ({
+      _tag: "ToolCallEnded",
+      turnId: turnId(),
+      ...inAgent(),
+      toolCallId: toolCallId(),
+      tool: "Bash",
+      outcome: pick(["Succeeded", "Failed"] as const),
+      output: "out",
+    }),
+    () => ({
+      _tag: "TurnEnded",
+      turnId: turnId(),
+      ...inAgent(),
+      reason: pick(["Answered", "Stopped"] as const),
+      durationMs: 1,
+    }),
+    () => {
+      // a-0's card may be in a-1's blocks, but not a-1's in a-0's.
+      const started = agentId()
+      return {
+        _tag: "AgentStarted",
+        turnId: turnId(),
+        agentId: started,
+        toolCallId: pick(started === "a-0" ? ["c-0", "c-1", "c-a-1"] : ["c-0", "c-1", "c-2"]),
+        agentType: "Explore",
+        description: pick(["Search", "Read"]),
+        model: "haiku",
+        background: next() < 0.5,
+      }
+    },
+    () => ({
+      _tag: "AgentStatusChanged",
+      agentId: agentId(),
+      status: pick(["Running", "Done", "Stopped"] as const),
+      ...(next() < 0.3 && { worktree: { path: "/w", branch: "worktree-a" } }),
+    }),
+    () => ({ _tag: "AgentMessaged", agentId: agentId(), sender: person(), text: "hey" }),
+    () => ({
+      _tag: "QuestionAsked",
+      turnId: turnId(),
+      toolCallId: toolCallId(),
+      questions: [
+        { question: "Which?", header: "Pick", multiSelect: false, options: [{ label: "A" }] },
+      ],
+    }),
+    () => ({
+      _tag: "QuestionClosed",
+      turnId: turnId(),
+      toolCallId: toolCallId(),
+      outcome: { _tag: "Dismissed" },
+      ...(next() < 0.5 && { by: person() }),
+    }),
+    () => ({ _tag: "TurnStopRequested", by: person() }),
+    () => ({
+      _tag: "PromptSteered",
+      turnId: turnId(),
+      promptId: promptId(),
+      text: "also this",
+      sender: person(),
+    }),
+    () => ({ _tag: "SteeredPromptRead", turnId: turnId(), promptId: promptId() }),
+    () => ({ _tag: "SessionStateChanged", state: pick(["Active", "Asleep"] as const) }),
+    () => ({ _tag: "SandboxNoted", message: "noted" }),
+    () => ({ _tag: "ModelSwitched", by: person(), model: "sonnet" }),
+  ]
+  const length = 1 + Math.floor(next() * 60)
+  return entries(Array.from({ length }, () => pick(makers)()))
+}
 
 describe("runningTurn", () => {
   test("is the last Turn while it has no end", () => {
@@ -488,7 +740,7 @@ describe("displayPrompt", () => {
   })
 })
 
-describe("agentsOf", () => {
+describe("the list of subagents", () => {
   test("lists the subagents the Session started, in order, with their status", () => {
     const log = entries([
       { _tag: "TurnStarted", turnId: "t-1", text: "go", sender: fromAlice },
@@ -498,7 +750,7 @@ describe("agentsOf", () => {
       // Claude Code's own agent, never started by an Agent call.
       { _tag: "AgentStatusChanged", agentId: "a-own", status: "Done" },
     ])
-    expect(agentsOf(log)).toEqual([
+    expect(transcriptOf(log).agentList).toEqual([
       { id: "a-1", description: "Search the code", status: "Stopped" },
       { id: "a-2", description: "Search the code", status: "Running" },
     ] as never)

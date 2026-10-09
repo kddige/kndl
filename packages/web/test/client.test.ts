@@ -15,6 +15,7 @@ import { HubClient, ListingUnavailableError } from "../src/hub/client.ts"
 import { FakeHub } from "../src/hub/fake/FakeHub.ts"
 import { demoSessionId } from "../src/hub/fake/script.ts"
 import { findSession } from "../src/hub/store.ts"
+import { buildTranscript, emptyTranscript } from "../src/hub/transcript.ts"
 import type { HubTransport, SocketHandlers } from "../src/hub/transport.ts"
 import { alice } from "./fixtures.ts"
 
@@ -318,6 +319,34 @@ describe("a joined Session", () => {
     )
     const seqs = (client.getState().joined[demo]?.log ?? []).map((entry) => entry.seq)
     expect<unknown>(seqs).toEqual(seqs.map((_, index) => index))
+  })
+
+  test("each joined Session's transcript is its whole log's, through the script and a reconnect", async () => {
+    const { hub, client } = setUp({ autoplay: false, stepMs: 2 })
+    client.start()
+    await eventually(() => expect(client.getState().sessions).not.toBeNull())
+    const ids = (client.getState().sessions ?? []).map((session) => session.id)
+    for (const id of ids) client.join(id)
+    await eventually(() => {
+      for (const id of ids) expect(client.getState().joined[id]?.historyLoaded).toBe(true)
+    })
+    const scripted = (client.getState().joined[demo]?.log.length ?? 0) + 1
+    hub.play()
+    // Drop the connection while Claude's reply streams in: the rejoin's history resumes it.
+    await eventually(() =>
+      expect(client.getState().joined[demo]?.log.length ?? 0).toBeGreaterThan(scripted + 5),
+    )
+    hub.dropConnections()
+    await eventually(() => expect(client.getState().connection.status).toBe("reconnecting"))
+    await eventually(() => {
+      const log = client.getState().joined[demo]?.log ?? []
+      expect(log.slice(scripted).some((entry) => entry.event._tag === "TurnEnded")).toBe(true)
+    }, 5_000)
+    for (const id of ids) {
+      const session = client.getState().joined[id]
+      const { fold: _, ...transcript } = session?.transcript ?? emptyTranscript
+      expect(transcript).toEqual(buildTranscript(session?.log ?? []))
+    }
   })
 
   test("leaving stops the Session's updates", async () => {
