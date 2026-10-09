@@ -1,5 +1,8 @@
 // The Hub's connections to its peers (#243): the web clients, `kndl forward`s and Runners
 // connected now, and who they make present in each Session.
+//
+// A peer is attached for its connection's scope: registered and its removal put in place at
+// once, so a connection that fails part way through connecting never leaves it behind.
 
 import type {
   BuildVersion,
@@ -15,6 +18,8 @@ import type {
   RunnerUpdater,
   SessionId,
 } from "@kndl/protocol"
+import { Effect, type Scope } from "effect"
+import type { SqlError } from "effect/sql/SqlError"
 import { closeReason } from "./CloseReason.ts"
 import type { RepoMap } from "./RepoMap.ts"
 
@@ -85,7 +90,7 @@ export interface Peers {
   readonly forwards: ReadonlySet<ForwardClient>
   /** The Runner's connection, if it is online. */
   readonly runner: (id: RunnerId) => OnlineRunner | undefined
-  /** Every online Runner, in the order they connected. */
+  /** Every online Runner, in the order they first connected. */
   readonly runners: () => ReadonlyArray<OnlineRunner>
   /**
    * The Participants who have joined the Session or forward it, each once, in the order they
@@ -103,15 +108,34 @@ export interface Peers {
     code: { readonly web: number; readonly forward: number },
     reason: string,
   ) => Presences
-  readonly addWeb: (client: WebClient) => void
-  readonly deleteWeb: (client: WebClient) => void
-  readonly addForward: (forward: ForwardClient) => void
-  readonly deleteForward: (forward: ForwardClient) => void
-  readonly setRunner: (runner: OnlineRunner) => void
-  readonly deleteRunner: (id: RunnerId) => void
+  /**
+   * Attaches the web client until the scope closes. Then, under the lock, it is taken out, and
+   * `left` is told who was present before in each Session it had joined.
+   */
+  readonly attachWeb: (
+    client: WebClient,
+    left: (before: Presences) => Effect.Effect<void, SqlError>,
+  ) => Effect.Effect<void, never, Scope.Scope>
+  /** Attaches the forward until the scope closes, as `attachWeb` does a web client. */
+  readonly attachForward: (
+    forward: ForwardClient,
+    left: (before: Presences) => Effect.Effect<void, SqlError>,
+  ) => Effect.Effect<void, never, Scope.Scope>
+  /**
+   * Attaches the Runner's connection until the scope closes, in place of any it had: the one it
+   * replaces, if any, for the caller to close and settle. Then, under the lock, unless a newer
+   * connection replaced it meanwhile, it is taken out and `left` runs.
+   */
+  readonly attachRunner: (
+    runner: OnlineRunner,
+    left: Effect.Effect<void, SqlError>,
+  ) => Effect.Effect<OnlineRunner | undefined, never, Scope.Scope>
 }
 
-export const makePeers = (): Peers => {
+export const makePeers = (options: {
+  /** The Session relay's lock, which a peer's removal takes. */
+  readonly serialized: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+}): Peers => {
   const webClients = new Set<WebClient>()
   const forwards = new Set<ForwardClient>()
   const runners = new Map<RunnerId, OnlineRunner>()
@@ -137,6 +161,13 @@ export const makePeers = (): Peers => {
     })
   }
 
+  const presencesOf = (sessionIds: Iterable<SessionId>): Presences =>
+    new Map([...sessionIds].map((id) => [id, presenceOf(id)]))
+
+  /** A peer's removal, under the lock: it can only log what goes wrong. */
+  const removal = (remove: () => Effect.Effect<void, SqlError>) =>
+    options.serialized(Effect.suspend(remove)).pipe(Effect.catchCause(Effect.logError))
+
   return {
     webClients,
     forwards,
@@ -157,11 +188,39 @@ export const makePeers = (): Peers => {
       }
       return before
     },
-    addWeb: (client) => void webClients.add(client),
-    deleteWeb: (client) => void webClients.delete(client),
-    addForward: (forward) => void forwards.add(forward),
-    deleteForward: (forward) => void forwards.delete(forward),
-    setRunner: (runner) => void runners.set(runner.id, runner),
-    deleteRunner: (id) => void runners.delete(id),
+    attachWeb: (client, left) =>
+      Effect.acquireRelease(
+        Effect.sync(() => void webClients.add(client)),
+        () =>
+          removal(() => {
+            const before = presencesOf(client.joined)
+            webClients.delete(client)
+            return left(before)
+          }),
+      ),
+    attachForward: (forward, left) =>
+      Effect.acquireRelease(
+        Effect.sync(() => void forwards.add(forward)),
+        () =>
+          removal(() => {
+            const before = presencesOf([forward.sessionId])
+            forwards.delete(forward)
+            return left(before)
+          }),
+      ),
+    attachRunner: (runner, left) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const replaced = runners.get(runner.id)
+          runners.set(runner.id, runner)
+          return replaced
+        }),
+        () =>
+          removal(() => {
+            if (runners.get(runner.id) !== runner) return Effect.void
+            runners.delete(runner.id)
+            return left
+          }),
+      ),
   }
 }

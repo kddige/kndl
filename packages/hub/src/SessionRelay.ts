@@ -561,7 +561,7 @@ export class SessionRelay extends Context.Service<
       const serialized = lock.withPermits(1)
 
       /** The web clients, forwards and Runners connected now (Peers.ts). */
-      const peers = makePeers()
+      const peers = makePeers({ serialized })
       /** Each Session's live state, in memory only (LiveSessions.ts). */
       const live = makeLiveSessions()
 
@@ -2960,7 +2960,12 @@ export class SessionRelay extends Context.Service<
             )
             yield* serialized(
               Effect.gen(function* () {
-                peers.addWeb(client)
+                // Out of every Session it joined when it goes, with presence updated.
+                yield* peers.attachWeb(client, (before) =>
+                  Effect.forEach(before, ([id, present]) => presenceChanged(id, present), {
+                    discard: true,
+                  }),
+                )
                 peer.send(yield* runnerList)
                 peer.send(yield* runnerRelay.pendingList())
                 // Only the Sessions of Repos the person has access to. Archived Sessions are
@@ -2986,16 +2991,6 @@ export class SessionRelay extends Context.Service<
               }),
             )
           }).pipe(Effect.orDie)
-          yield* Effect.addFinalizer(() =>
-            serialized(
-              Effect.gen(function* () {
-                const joined = [...client.joined]
-                const before = new Map(joined.map((id) => [id, peers.presenceOf(id)] as const))
-                peers.deleteWeb(client)
-                for (const id of joined) yield* presenceChanged(id, before.get(id) ?? [])
-              }),
-            ).pipe(Effect.catchCause(Effect.logError)),
-          )
           return receiveWeb(client)
         })
 
@@ -3261,7 +3256,7 @@ export class SessionRelay extends Context.Service<
           }
           yield* serialized(
             Effect.gen(function* () {
-              const replaced = peers.runner(runner.id)
+              const replaced = yield* peers.attachRunner(runner, runnerGone(runner))
               if (replaced !== undefined) {
                 replaced.peer.close(RelayCloseCode.Replaced, "Replaced by a newer connection")
                 // Its finalizer finds it replaced and settles nothing: what the old connection
@@ -3270,7 +3265,6 @@ export class SessionRelay extends Context.Service<
                   live.ended(session.id, "RunnerGone")
                 }
               }
-              peers.setRunner(runner)
               yield* runners.recordHello(
                 runner.id,
                 {
@@ -3328,30 +3322,26 @@ export class SessionRelay extends Context.Service<
               for (const sessionId of keptAwake) yield* wakeKeptAwake(sessionId)
             }),
           ).pipe(Effect.orDie)
-          yield* Effect.addFinalizer(() =>
-            serialized(
-              Effect.gen(function* () {
-                if (peers.runner(runner.id) !== runner) return
-                peers.deleteRunner(runner.id)
-                yield* tunnels.runnerGone(runner.id)
-                yield* runnerUpdates.gone(runner.id)
-                yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
-                yield* environmentRelay.runnerGone(runner)
-                for (const session of yield* sessions.listByRunner(runner.id)) {
-                  // A stop or start it was asked for is settled by what it says when it is back.
-                  live.ended(session.id, "RunnerGone")
-                  if (session.state === "Active" || session.state === "Asleep") {
-                    yield* changeState(session, "Frozen", {
-                      message: `${runner.name} went offline`,
-                    })
-                  }
-                }
-                toWeb(yield* runnerList)
-              }),
-            ).pipe(Effect.catchCause(Effect.logError)),
-          )
           return receiveRunner(runner)
         })
+
+      /** The Runner's connection is gone: its Sessions are Frozen until it is back. */
+      const runnerGone = Effect.fn("SessionRelay.runnerGone")(function* (runner: OnlineRunner) {
+        yield* tunnels.runnerGone(runner.id)
+        yield* runnerUpdates.gone(runner.id)
+        yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
+        yield* environmentRelay.runnerGone(runner)
+        for (const session of yield* sessions.listByRunner(runner.id)) {
+          // A stop or start it was asked for is settled by what it says when it is back.
+          live.ended(session.id, "RunnerGone")
+          if (session.state === "Active" || session.state === "Asleep") {
+            yield* changeState(session, "Frozen", {
+              message: `${runner.name} went offline`,
+            })
+          }
+        }
+        toWeb(yield* runnerList)
+      })
 
       // ── The mod channel ──────────────────────────────────────────────────
 
@@ -3721,7 +3711,7 @@ export class SessionRelay extends Context.Service<
        */
       const connectForward = (cli: CliIdentity, sessionId: SessionId, peer: Peer<HubToForward>) =>
         Effect.gen(function* () {
-          const forward = yield* serialized(
+          yield* serialized(
             Effect.gen(function* () {
               const found = yield* sessions.get(sessionId)
               if (Option.isNone(found)) {
@@ -3762,26 +3752,18 @@ export class SessionRelay extends Context.Service<
                 peer,
               }
               const before = peers.presenceOf(sessionId)
-              peers.addForward(client)
+              yield* peers.attachForward(client, (left) =>
+                Effect.forEach(left, ([id, present]) => presenceChanged(id, present), {
+                  discard: true,
+                }),
+              )
               peer.send(ForwardSession.make({ session: forWeb(session) }))
               yield* Effect.logInfo(
                 `${cli.participant.login} forwards Session ${sessionId} to ${cli.machine}`,
               )
               yield* presenceChanged(sessionId, before)
-              return client
             }),
           ).pipe(Effect.orDie)
-          yield* Effect.addFinalizer(() =>
-            forward === undefined
-              ? Effect.void
-              : serialized(
-                  Effect.gen(function* () {
-                    const before = peers.presenceOf(forward.sessionId)
-                    peers.deleteForward(forward)
-                    yield* presenceChanged(forward.sessionId, before)
-                  }),
-                ).pipe(Effect.catchCause(Effect.logError)),
-          )
           return (_message: never) => Effect.void
         })
 
