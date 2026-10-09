@@ -34,20 +34,12 @@
 // - Each request is logged with its Session, Installation, method, status and time taken, and
 //   nothing of what it carries.
 
-import {
-  type InstallationId,
-  InstallationId as InstallationIdSchema,
-  type SessionId,
-} from "@kndl/protocol"
-import { Clock, Effect, Option } from "effect"
+import { InstallationId as InstallationIdSchema } from "@kndl/protocol"
+import { Clock, Effect } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { authenticateMod } from "./Auth.ts"
-import { forward, type ReadyTarget, readAtMost } from "./Gateway.ts"
-import { McpServerOAuth } from "./McpServerOAuth.ts"
-import { type GatewayTarget, McpServers } from "./McpServers.ts"
-import type { SecretsUnavailable } from "./Secrets.ts"
+import { Gateway, MaxOAuthRequestBytes, type Refusal } from "./Gateway.ts"
 import { SessionRelay } from "./SessionRelay.ts"
-import { Sessions } from "./Sessions.ts"
 
 const errorResponse = (status: number, error: string) =>
   HttpServerResponse.jsonUnsafe({ error }, { status })
@@ -56,18 +48,10 @@ const errorResponse = (status: number, error: string) =>
 const oauthRefusal =
   "The MCP server refused the Installation's account: reconnect it on the MCP page."
 
-/**
- * The most the Gateway holds of an OAuth Installation's request body (#217), to send it again once
- * its token is refreshed. MCP's JSON-RPC messages are far smaller; a Sandbox sending a larger one
- * mustn't make the Hub hold it all.
- */
-export const MaxOAuthRequestBytes = 4 * 1024 * 1024
+/** The most the Gateway holds of an OAuth Installation's request body (#217): see Gateway.ts. */
+export { MaxOAuthRequestBytes }
 
 const tooLarge = `The request's body is larger than ${MaxOAuthRequestBytes / 1024 / 1024} MiB, the most the Gateway takes for an OAuth Installation.`
-
-/** Lets an answer's body go unread. */
-const discard = (response: Response) =>
-  Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(Effect.ignore)
 
 /** Request headers that stay at the Gateway: the Session's own, and the connection's. */
 const heldRequestHeaders = new Set([
@@ -116,30 +100,8 @@ const kept = (headers: Headers, held: ReadonlySet<string>) => {
 
 export const GatewayRoutes = HttpRouter.use(
   Effect.fn(function* (router) {
-    const sessions = yield* Sessions
-    const mcpServers = yield* McpServers
+    const gateway = yield* Gateway
     const relay = yield* SessionRelay
-    const oauth = yield* McpServerOAuth
-
-    /**
-     * Where the Session may reach the Installation's MCP server: its URL, or the status
-     * it is refused with. A token is live only while its Session is Active: an Asleep Session's
-     * is left from its last run, until its next start replaces it.
-     */
-    const target = Effect.fn("Gateway.target")(function* (
-      sessionId: SessionId,
-      installationId: InstallationId,
-    ) {
-      const session = yield* sessions.startedWith(sessionId)
-      if (Option.isNone(session) || session.value.state !== "Active") return 401
-      const startedWith = session.value.mcpServers
-      if (!startedWith.some((installation) => installation.id === installationId)) return 403
-      const on = yield* mcpServers.gatewayTarget(installationId, {
-        id: sessionId,
-        repo: session.value.repo,
-      })
-      return Option.isSome(on) ? on.value : 403
-    })
 
     yield* router.add(
       "*",
@@ -159,19 +121,25 @@ export const GatewayRoutes = HttpRouter.use(
             )
           })
 
-        /** What the Gateway answers when the Installation can't be reached now. */
-        const refusal = Effect.fn("Gateway.refusal")(function* (
-          found: Exclude<GatewayTarget, ReadyTarget> | 401 | 403,
-        ) {
-          if (found === 401) {
-            yield* done(401)
-            return errorResponse(401, "Expected the mod token of an Active Session")
-          }
-          if (found === 403) {
-            yield* done(403)
-            return errorResponse(403, "This Installation isn't on for the Session's Repo.")
-          }
+        /** What the Gateway answers when the Session can't reach the Installation now. */
+        const refusal = Effect.fn("Gateway.refusal")(function* (found: Refusal) {
           switch (found._tag) {
+            case "NotActive": {
+              yield* done(401)
+              return errorResponse(401, "Expected the mod token of an Active Session")
+            }
+            case "Off": {
+              yield* done(403)
+              return errorResponse(403, "This Installation isn't on for the Session's Repo.")
+            }
+            case "Unreadable": {
+              yield* Effect.logError("Could not decrypt an Installation's credentials", found.error)
+              yield* done(500)
+              return errorResponse(
+                500,
+                "The Hub could not read this Installation's credentials: check HUB_SECRETS_KEY.",
+              )
+            }
             case "NeedsValue": {
               yield* relay.installationFailed(grant.sessionId, installationId, {
                 reason: "ValueNeeded",
@@ -193,69 +161,31 @@ export const GatewayRoutes = HttpRouter.use(
             }
           }
         })
-        const unreadable = Effect.fn("Gateway.unreadable")(function* (error: SecretsUnavailable) {
-          yield* Effect.logError("Could not decrypt an Installation's credentials", error)
-          yield* done(500)
-          return errorResponse(
-            500,
-            "The Hub could not read this Installation's credentials: check HUB_SECRETS_KEY.",
-          )
-        })
 
-        const current = target(grant.sessionId, installationId).pipe(
-          Effect.catchTag("SecretsUnavailable", (error) => Effect.succeed(error)),
-        )
-        const found = yield* current
-        if (typeof found !== "number" && found._tag === "SecretsUnavailable") {
-          return yield* unreadable(found)
-        }
-        if (typeof found === "number" || found._tag !== "Ready") return yield* refusal(found)
-        let ready = found
+        const authorised = yield* gateway.authorise(grant.sessionId, installationId)
+        if (authorised._tag !== "Authorised") return yield* refusal(authorised)
         const incoming = yield* HttpServerRequest.toWeb(request)
-        const headers = kept(incoming.headers, heldRequestHeaders)
-        // An OAuth Installation's request is sent again once its token is refused and refreshed
-        // (#217): its body is read first, up to MaxOAuthRequestBytes, whether it says its length
-        // or comes in chunks. MCP's requests are small JSON-RPC messages.
-        let body: RequestInit["body"] = incoming.body
-        if (ready.oauth !== undefined && incoming.body !== null) {
-          if (Number(incoming.headers.get("content-length")) > MaxOAuthRequestBytes) {
+        const sent = yield* gateway.send(authorised, {
+          method: request.method,
+          headers: kept(incoming.headers, heldRequestHeaders),
+          body: incoming.body,
+          length: Number(incoming.headers.get("content-length")),
+          signal: incoming.signal,
+        })
+        switch (sent._tag) {
+          case "Answered":
+            break
+          case "TooLarge": {
             yield* done(413)
             return errorResponse(413, tooLarge)
           }
-          const read = yield* Effect.tryPromise(() =>
-            readAtMost(incoming.body, MaxOAuthRequestBytes),
-          ).pipe(Effect.option)
-          if (Option.isNone(read)) {
+          case "BodyUnreadable": {
             yield* done(400)
             return errorResponse(400, "The request's body could not be read.")
           }
-          if (read.value === undefined) {
-            yield* done(413)
-            return errorResponse(413, tooLarge)
-          }
-          body = read.value
-        }
-        const send = (to: ReadyTarget) =>
-          forward(to, { method: request.method, headers, body, signal: incoming.signal })
-
-        let answer = yield* send(ready)
-        // The server refused an OAuth token (#217): it is refreshed and the request sent once
-        // more, or the connection is lost. The 401 never reaches Claude Code, which would begin
-        // OAuth against the Gateway itself.
-        for (let tries = 1; ready.oauth !== undefined; tries++) {
-          if (Option.isNone(answer) || answer.value.status !== 401) break
-          yield* discard(answer.value)
-          const next = yield* oauth
-            .rejected(installationId, ready.oauth.generation)
-            .pipe(
-              Effect.catchTag("SecretsUnavailable", (error) =>
-                Effect.as(
-                  Effect.logError("Could not decrypt an Installation's OAuth tokens", error),
-                  "Lost" as const,
-                ),
-              ),
-            )
-          if (next === "Retry" && tries >= 2) {
+          // A server's 401 to an OAuth token never reaches Claude Code, which would begin OAuth
+          // against the Gateway itself (#217).
+          case "Refused": {
             yield* relay.installationFailed(grant.sessionId, installationId, {
               reason: "Rejected",
               status: 401,
@@ -263,29 +193,31 @@ export const GatewayRoutes = HttpRouter.use(
             yield* done(502)
             return errorResponse(502, oauthRefusal)
           }
-          const again = yield* current
-          if (typeof again !== "number" && again._tag === "SecretsUnavailable") {
-            return yield* unreadable(again)
-          }
-          if (typeof again === "number" || again._tag !== "Ready") return yield* refusal(again)
-          if (next === "Lost") {
+          case "Lost": {
+            if (sent.error !== undefined) {
+              yield* Effect.logError("Could not decrypt an Installation's OAuth tokens", sent.error)
+            }
+            const again = yield* gateway.authorise(grant.sessionId, installationId)
+            if (again._tag !== "Authorised") return yield* refusal(again)
             // Reconnected meanwhile: this request isn't sent again.
             yield* done(502)
             return errorResponse(502, oauthRefusal)
           }
-          ready = again
-          answer = yield* send(ready)
+          case "Unreachable": {
+            yield* done(502)
+            return errorResponse(502, "The MCP server could not be reached.")
+          }
+          case "Redirected": {
+            yield* done(502)
+            return errorResponse(
+              502,
+              "The MCP server redirected, which the Gateway doesn't follow.",
+            )
+          }
+          default:
+            return yield* refusal(sent)
         }
-        if (Option.isNone(answer)) {
-          yield* done(502)
-          return errorResponse(502, "The MCP server could not be reached.")
-        }
-        const response = answer.value
-        if (response.status >= 300 && response.status < 400) {
-          yield* discard(response)
-          yield* done(502)
-          return errorResponse(502, "The MCP server redirected, which the Gateway doesn't follow.")
-        }
+        const response = sent.response
         if (response.status === 401 || response.status === 403) {
           yield* relay.installationFailed(grant.sessionId, installationId, {
             reason: "Rejected",
@@ -293,7 +225,6 @@ export const GatewayRoutes = HttpRouter.use(
           })
         } else if (response.ok) {
           relay.installationWorks(grant.sessionId, installationId)
-          if (ready.oauth !== undefined) oauth.works(installationId, ready.oauth.generation)
         }
         yield* done(response.status)
         return HttpServerResponse.raw(

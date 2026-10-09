@@ -8,6 +8,7 @@ import { CliRoutes } from "./CliRoutes.ts"
 import { CliTokens } from "./CliTokens.ts"
 import { Environments } from "./Environments.ts"
 import { ForwardRoutes } from "./ForwardRoutes.ts"
+import { Gateway } from "./Gateway.ts"
 import { GatewayRoutes } from "./GatewayRoutes.ts"
 import { HealthRoute } from "./Health.ts"
 import { HubShutdown } from "./HubShutdown.ts"
@@ -62,6 +63,9 @@ export const HubRoutes = Layer.mergeAll(
  * and the Hub's version (HubVersion.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
+  // How a request reaches an Installation's MCP server (#254): for a Session's start, and the
+  // Gateway.
+  Layer.provideMerge(Gateway.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       SessionGit.layer,
