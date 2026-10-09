@@ -40,7 +40,9 @@ function typeInto(field: HTMLTextAreaElement, value: string): void {
 }
 
 test("the Session view plays the fake Hub's scripted Session", async () => {
-  const hub = new FakeHub({ stepMs: 2 })
+  // Slow enough steps that the first Turn still runs while the test opens who's here and queues a
+  // prompt: Bob's follow-up waits in the queue only for the Turn's last ~35 steps.
+  const hub = new FakeHub({ stepMs: 20 })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(
     createMemoryHistory({ initialEntries: [`/sessions/${demoSessionId}`] }),
@@ -696,7 +698,8 @@ test("a Turn a finished agent started shows the agent it's from, not Claude Code
 })
 
 test("an agent's view resumes it, messages it while it runs, and stops it", async () => {
-  const { page, sent } = await openApp("/sessions/s-release?agent=a-bump", 40)
+  // Slow enough steps that the resumed agent, one short text, still runs when the test messages it.
+  const { page, sent } = await openApp("/sessions/s-release?agent=a-bump", 100)
   const heading = () => page.querySelector('section[aria-label="Agent"] h2')?.textContent ?? ""
   const agentText = () => page.querySelector('section[aria-label="Agent"]')?.textContent ?? ""
   await eventually(() => expect(heading()).toContain("Bump the package versions"))

@@ -80,6 +80,24 @@ class Mod {
     this.after = body.messages.at(-1)?.seq ?? this.after
     return body.messages.map((command) => command.message)
   }
+
+  /**
+   * The commands tagged `tag` queued since the last poll, waiting up to `waitMs` for the first.
+   * Any command ends a poll, and others (a join's PresenceChanged) may be queued before the one
+   * awaited, so it polls again until one comes, rather than filtering the first answer to nothing.
+   */
+  async next<T extends Command["_tag"]>(
+    tag: T,
+    waitMs = 0,
+  ): Promise<Array<Extract<Command, { _tag: T }>>> {
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      const found = (await this.poll(Math.max(0, deadline - Date.now()))).filter(
+        (command): command is Extract<Command, { _tag: T }> => command._tag === tag,
+      )
+      if (found.length > 0 || Date.now() >= deadline) return found
+    }
+  }
 }
 
 const turnStarted = (turnId: string, promptId?: string): ModEvent => ({
@@ -154,12 +172,9 @@ describe("a Runner behind the Hub", () => {
     // Its running Session goes on taking prompts.
     web.send({ _tag: "JoinSession", sessionId })
     web.send({ _tag: "SendPrompt", sessionId, text: "one" })
-    const delivered = (await mod.poll(500)).find((c) => c._tag === "DeliverPrompt")
+    const [delivered] = await mod.next("DeliverPrompt", 500)
     expect(delivered).toMatchObject({ text: "one" })
-    await mod.post(
-      turnStarted("t-1", delivered?._tag === "DeliverPrompt" ? delivered.promptId : ""),
-      turnEnded("t-1"),
-    )
+    await mod.post(turnStarted("t-1", delivered?.promptId ?? ""), turnEnded("t-1"))
     await web.take("PromptQueueChanged", (m) => m.queue.length === 0)
 
     web.send({
@@ -283,7 +298,10 @@ describe("updating a Runner", () => {
     web.send({ _tag: "UpdateRunner", requestId: "u-2", runnerId, now: true })
     await web.take("RunnerUpdateRequested", (m) => m.requestId === "u-2")
     await listed(web, (r) => r.update?._tag === "Draining" && r.update.now)
-    expect(await busy.mod.poll(500)).toContainEqual({ _tag: "StopTurn", sessionId: busy.sessionId })
+    expect(await busy.mod.next("StopTurn", 500)).toContainEqual({
+      _tag: "StopTurn",
+      sessionId: busy.sessionId,
+    })
     expect(
       (await web.take("SessionEventLogged", (m) => m.entry.event._tag === "TurnStopRequested"))
         .entry.event,
