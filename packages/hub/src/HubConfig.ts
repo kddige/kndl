@@ -2,6 +2,7 @@ import { createPrivateKey } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { isLoopback } from "@kndl/protocol"
 import { HomeConfig } from "@kndl/protocol/home"
 import { Config, Context, Duration, Effect, Layer, Option, Redacted, Schema } from "effect"
 
@@ -114,19 +115,8 @@ export function parseSecretsKey(text: string): Uint8Array | undefined {
   return bytes.length === SecretsKeyBytes ? new Uint8Array(bytes) : undefined
 }
 
-/** True for `localhost` and loopback IP addresses (127.0.0.0/8, ::1, and 127.x mapped to IPv6). */
-export function isLoopback(host: string): boolean {
-  const bare = host
-    .replace(/^\[(.*)\]$/, "$1")
-    .toLowerCase()
-    .replace(/^::ffff:(?=127\.)/, "")
-  return (
-    bare === "localhost" ||
-    bare === "::1" ||
-    bare === "0:0:0:0:0:0:0:1" ||
-    /^127(?:\.\d{1,3}){3}$/.test(bare)
-  )
-}
+/** True for `localhost` and loopback IP addresses; one definition, shared with the web UI. */
+export { isLoopback }
 
 /**
  * Whether cookies get `Secure`, and what to warn about at startup. Browsers drop a Secure cookie
