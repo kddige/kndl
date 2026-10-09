@@ -210,10 +210,14 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "stopping",
     "restarting",
     "restarts",
+    // Its Turns are over and its terminal gone: a new Claude Code has Turns of its own, and its
+    // terminal starts with a Snapshot. The relay lets held text go first; a hold under way lets
+    // its own go.
+    "textStreams",
+    "terminalStreams",
     // `archiving` is kept: an Archived Session's stop is settled by its SessionStopped.
     // `lastBusy`, `asleepWhy` and `sandboxTokens` are kept until it is purged.
     // `questionPicks` is cleared as its question is cancelled, `closedQuestions` kept to say so.
-    // `textStreams` and `terminalStreams`: kept as before; see the follow-up.
   ],
   // As ClaudeGone, but its restart goes on: it is about to be woken.
   ClaudeGoneRestarting: [
@@ -226,6 +230,8 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "installationTrouble",
     "stopping",
     "restarting",
+    "textStreams",
+    "terminalStreams",
     // `restarts` is kept: the web shows the restart until the Session has started again.
     // The rest is kept as for ClaudeGone.
   ],
@@ -245,7 +251,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "installationTrouble",
     // `archiving` is kept: the stop for good is asked for after this.
     // `questionPicks` is cleared as its question is cancelled.
-    // `textStreams` and `terminalStreams`: kept as before; see the follow-up.
+    // `textStreams` and `terminalStreams` are kept until its Runner stops it: ClaudeGone.
   ],
   RunnerGone: [
     // A stop it was asked for is settled by what it says when it is back.
