@@ -10,6 +10,7 @@ import {
   globalMcpServerRefusal,
   globalReposRefusal,
   InstallationId,
+  installationsDiffer,
   notGlobalRefusal,
   Participant,
   ParticipantId,
@@ -20,7 +21,7 @@ import {
 import { Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
-import { installationsDiffer, McpServers } from "./McpServers.ts"
+import { McpServers } from "./McpServers.ts"
 import { McpServerSources } from "./McpServerSources.ts"
 import { generateSecretsKey } from "./Secrets.ts"
 import { SignIns } from "./SignIns.ts"

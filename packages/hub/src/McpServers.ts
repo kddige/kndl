@@ -1605,24 +1605,3 @@ const installationsOn = Effect.fn("McpServers.installationsOn")(function* (
   }
   return byRepo
 })
-
-/** What of an Installation a Session runs with: its names, and when its values were set. */
-const runsWith = (installation: SessionInstallation) =>
-  JSON.stringify([
-    installation.id,
-    installation.name,
-    installation.mcpServerName,
-    installation.mcpServerVersion ?? null,
-    installation.server,
-    (installation.values ?? []).map((value) => [value.key, value.setAt]),
-  ])
-
-/** Whether two lists of a Session's Installations differ, in what it runs with. */
-export const installationsDiffer = (
-  a: ReadonlyArray<SessionInstallation>,
-  b: ReadonlyArray<SessionInstallation>,
-) => {
-  const left = a.map(runsWith).toSorted()
-  const right = b.map(runsWith).toSorted()
-  return left.length !== right.length || left.some((entry, index) => entry !== right[index])
-}

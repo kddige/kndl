@@ -5,6 +5,7 @@ import {
   ClaudeSessionId,
   EffortLevel,
   EnvironmentVersion,
+  installationsDiffer,
   ModelName,
   OpenQuestion,
   ParticipantId,
@@ -21,7 +22,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 import type { Fragment } from "effect/sql/Statement"
-import { installationsDiffer, McpServers } from "./McpServers.ts"
+import { McpServers } from "./McpServers.ts"
 
 /** A Session to record, as CreateSession makes it. */
 export interface NewSession {

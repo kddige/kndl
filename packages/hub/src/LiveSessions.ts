@@ -22,6 +22,7 @@ import {
   type PromptId,
   type QuestionClosed,
   QuestionPick,
+  type Refusal,
   type SessionId,
   type SessionRestart,
   type SessionState,
@@ -29,6 +30,9 @@ import {
   type TerminalFrame,
   type TextDelta,
   type ToolCallId,
+  cancelRefusal,
+  deliveryBlocked,
+  steerVerdict,
 } from "@kndl/protocol"
 import type { StreamRedactor } from "./Redaction.ts"
 
@@ -97,11 +101,6 @@ export interface SessionSet {
   readonly has: (id: SessionId) => boolean
   readonly add: (id: SessionId) => void
   readonly delete: (id: SessionId) => boolean
-}
-
-/** Why a command is refused, as said to whoever sent it. */
-export interface Refusal {
-  readonly refusal: string
 }
 
 /** What the web and forwards are shown of a Session's live state: see `view`. */
@@ -572,34 +571,27 @@ export const makeLiveSessions = (): LiveSessions => {
       pieces.starting.delete(id)
     },
     steer: (id, { promptId, by, turnRunning, queued }) => {
-      if (!turnRunning || pieces.stopping.has(id)) {
-        return { refusal: "No Turn is running to steer the prompt into: it goes next." }
-      }
-      if (pieces.inFlight.get(id) === promptId) {
-        return { refusal: "The prompt was already delivered to Claude Code." }
-      }
-      if (pieces.steering.get(id)?.has(promptId) === true) return "already"
-      if (!pieces.steers.has(id)) {
-        return {
-          refusal:
-            "This Session's Claude Code runs a mod from before steering, so the prompt waits for the Turn to end. It can be steered once the Session starts again on an updated Runner.",
-        }
-      }
-      if (!queued) return { refusal: "The prompt is not in the Prompt queue." }
+      const verdict = steerVerdict({
+        queued,
+        delivered: pieces.inFlight.get(id) === promptId,
+        steering: pieces.steering.get(id)?.has(promptId) === true,
+        // One going to sleep takes no steer.
+        turnRunning: turnRunning && !pieces.stopping.has(id),
+        modSteers: pieces.steers.has(id),
+      })
+      if (verdict !== "ok") return verdict
       // It stays in its place until the mod says it joined the Turn.
       const steered = pieces.steering.get(id) ?? new Map<PromptId, ParticipantId>()
       pieces.steering.set(id, steered.set(promptId, by))
       return "ok"
     },
-    cancelRefusal: (id, promptId) => {
-      if (pieces.inFlight.get(id) === promptId) {
-        return { refusal: "The prompt was already delivered to Claude Code." }
-      }
-      if (pieces.steering.get(id)?.has(promptId) === true) {
-        return { refusal: "The prompt is being handed to the running Turn." }
-      }
-      return undefined
-    },
+    cancelRefusal: (id, promptId) =>
+      cancelRefusal({
+        // Whether it is queued, the relay finds as it takes it out.
+        queued: true,
+        delivered: pieces.inFlight.get(id) === promptId,
+        steering: pieces.steering.get(id)?.has(promptId) === true,
+      }),
     stopAsked: (id, why, restart) => {
       if (pieces.stopping.has(id)) return false
       if (restart !== undefined) {
@@ -626,10 +618,12 @@ export const makeLiveSessions = (): LiveSessions => {
       pieces.restarts.delete(id)
     },
     blocksDelivery: (id) =>
-      pieces.inFlight.has(id) ||
-      pieces.starting.has(id) ||
-      pieces.stopping.has(id) ||
-      pieces.steering.has(id),
+      deliveryBlocked({
+        promptOut: pieces.inFlight.has(id),
+        awaitingHello: pieces.starting.has(id),
+        goingToSleep: pieces.stopping.has(id),
+        steering: pieces.steering.has(id),
+      }),
     settling: (id) => pieces.starts.has(id) || pieces.stopping.has(id),
     busy: (id) => pieces.stopping.has(id) || pieces.inFlight.has(id) || pieces.starts.has(id),
     promptOut: (id) => pieces.inFlight.has(id),
