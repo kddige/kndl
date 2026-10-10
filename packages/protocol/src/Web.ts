@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { AttachmentIds, textOrAttachments } from "./Attachment.ts"
+import { AttachmentIds, PromptAttachments, textOrAttachments } from "./Attachment.ts"
 import { BuildVersion } from "./Build.ts"
 import {
   ClaudeCredentialState,
@@ -103,8 +103,11 @@ export type TurnStopRequested = typeof TurnStopRequested.Type
 export const AgentMessaged = Schema.TaggedStruct("AgentMessaged", {
   agentId: AgentId,
   sender: Participant,
-  text: Schema.NonEmptyString,
-})
+  /** As typed; empty for a message of attachments alone. */
+  text: Schema.String,
+  /** The files it carried (#278). */
+  attachments: Schema.optionalKey(PromptAttachments),
+}).check(textOrAttachments)
 export type AgentMessaged = typeof AgentMessaged.Type
 
 /**
@@ -232,13 +235,15 @@ export type SteerPrompt = typeof SteerPrompt.Type
 /**
  * Message one of the Session's subagents (ADR 0014): a running one reads it at its next tool call,
  * and one that has stopped resumes with it. Any Participant may; an Asleep Session is woken first.
- * The message carries the sender's name, as a prompt does.
+ * The message carries the sender's name, as a prompt does. Its attachments (#278) are files they
+ * uploaded to the Session; an image alone is a message.
  */
 export const MessageAgent = Schema.TaggedStruct("MessageAgent", {
   sessionId: SessionId,
   agentId: AgentId,
-  text: Schema.NonEmptyString,
-})
+  text: Schema.String,
+  attachments: Schema.optionalKey(AttachmentIds),
+}).check(textOrAttachments)
 export type MessageAgent = typeof MessageAgent.Type
 
 /**
@@ -251,7 +256,10 @@ export const AnswerQuestion = Schema.TaggedStruct("AnswerQuestion", {
   sessionId: SessionId,
   /** The Open question's call, so an answer meant for another question is refused. */
   toolCallId: ToolCallId,
+  /** A reply's files are the Hub's to fill in, from `attachments`. */
   answer: QuestionAnswer,
+  /** The files a reply carries (#278): ones its sender uploaded to the Session. */
+  attachments: Schema.optionalKey(AttachmentIds),
 })
 export type AnswerQuestion = typeof AnswerQuestion.Type
 

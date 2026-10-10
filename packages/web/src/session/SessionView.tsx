@@ -280,14 +280,16 @@ function LoadedSession({
 
   // While Claude asks a question (#193), what is sent declines it and goes to Claude instead.
   const asking = summary.openQuestion
-  // A reply takes no attachments yet (#278).
+  // A reply carries the draft's files too (#278).
   const send = (prompt: string, attachments: ReadonlyArray<AttachmentId>) =>
     asking
       ? command(
-          hub.answerQuestion(summary.id, asking.toolCallId, {
-            _tag: "Replied",
-            text: prompt.trim(),
-          }),
+          hub.answerQuestion(
+            summary.id,
+            asking.toolCallId,
+            { _tag: "Replied", text: prompt.trim() },
+            attachments,
+          ),
         )
       : command(hub.sendPrompt(summary.id, prompt, attachments))
   const attach = (file: File, options: UploadOptions) =>
@@ -542,7 +544,8 @@ function LoadedSession({
                       ? "Claude is waiting on an answer: a reply here declines its question."
                       : hint
                   }
-                  {...(asking ? { copy: replyCopy, cantAttach: replyCantAttach } : { attach })}
+                  attach={attach}
+                  {...(asking && { copy: replyCopy, needsText: true })}
                   picker={
                     <ModelPicker
                       models={models}
@@ -597,10 +600,6 @@ function claudeAccountText(summary: SessionSummary): string {
 }
 
 /** The prompt box's words while Claude waits on an answer to its question (#193). */
-/** Why a reply to Claude's question takes no files (#278); those added before wait. */
-const replyCantAttach =
-  "A reply to Claude's question can't carry attachments yet: they stay here for your next prompt."
-
 const replyCopy = {
   field: "Reply",
   placeholder: "Or reply directly…",

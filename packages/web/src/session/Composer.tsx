@@ -101,6 +101,8 @@ export interface ComposerProps {
   attach?: Attach | undefined
   /** Why files pasted or dropped are refused without `attach`. */
   cantAttach?: string
+  /** Files alone are no message: a reply to Claude's question is in your own words (#278). */
+  needsText?: boolean
   /** Scales an image down before it is uploaded; Claude Code's way by default. */
   prepare?: (file: File) => Promise<File>
 }
@@ -135,15 +137,16 @@ export function Composer({
   copy = promptCopy(running),
   attach,
   cantAttach = "Attachments go with prompts only, not here yet.",
+  needsText = false,
   prepare,
 }: ComposerProps) {
   const [draft, setDraft] = useState("")
   const pastes = usePastedTexts(draft, setDraft)
   const attachments = useAttachments(attach, cantAttach, prepare)
-  // Files kept from before it stopped taking them, as for a reply, wait for the next prompt.
+  // Files kept from before it stopped taking them wait for a Composer that takes them again.
   const taking = attach !== undefined
   const disabled = disabledReason !== undefined
-  const empty = draft.trim() === "" && (!taking || attachments.chips.length === 0)
+  const empty = draft.trim() === "" && (needsText || !taking || attachments.chips.length === 0)
   // A prompt waits for its files to upload, and for one that failed to be taken out.
   const waiting = disabled || empty || (taking && attachments.holding)
 

@@ -39,8 +39,20 @@ export type HubLinkDelivered = {
 export type HubLinkSteering = {
   promptId: string
   sender: HubLinkParticipant
-  /** As its sender wrote it. */
+  /** As its sender wrote it; empty for a prompt of attachments alone. */
   text: string
+  /** The files it carries (#278), as the Hub sent them. */
+  attachments?: HubLinkAttachment[]
+  /** The row's text as appended: framed, with the sender's name and a marker for each file. */
+  appended: string
+}
+
+/** A file a prompt carries, as the protocol has it. */
+export type HubLinkAttachment = {
+  id: string
+  name: string
+  mediaType: string
+  size: number
 }
 
 declare module "claude-code" {

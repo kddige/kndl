@@ -200,14 +200,21 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
         return
       }
       case "DeliverIntoTurn": {
-        const { promptId, text, sender } = command
+        const { promptId, text, sender, attachments } = command
         if (turn === null) {
           await post({ _tag: "PromptFailed", promptId, message: "no Turn is running" })
           return
         }
         const { turnId } = turn
         await post(
-          { _tag: "PromptSteered", turnId, promptId, text, sender },
+          {
+            _tag: "PromptSteered",
+            turnId,
+            promptId,
+            text,
+            sender,
+            ...(attachments !== undefined && { attachments }),
+          },
           { _tag: "SteeredPromptRead", turnId, promptId },
         )
         return
@@ -231,7 +238,7 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
         sessionId,
         claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
         model: "claude-opus",
-        ...(steers && { steers: true }),
+        ...(steers && { steers: true, attaches: true }),
       })
       loop = (async () => {
         while (!stopping.signal.aborted) {
@@ -482,7 +489,7 @@ for (const adapter of [fake, real]) {
       await eventually(() => expect(otherSession.events()).toEqual(session.events()))
     })
 
-    test("an image alone is a prompt: its Turn carries it, and a steer waits for the Turn (#276)", async () => {
+    test("an image alone is a prompt: its Turn carries it (#276)", async () => {
       const scene = await adapter.scene()
       const session = await turnRunning(scene)
       const file = new File([png], "shot.png", { type: "image/png" })
@@ -494,16 +501,31 @@ for (const adapter of [fake, real]) {
       expect(progress.at(-1)).toBe(png.byteLength)
       expect(scene.client.sendPrompt(scene.sessionId, "", [id])).toBe(true)
       await eventually(() => expect(session.queue()).toEqual([""]))
-      scene.client.steerPrompt(scene.sessionId, session.queued(""))
-      await eventually(() =>
-        expect(session.refusals("SteerPrompt")).toEqual([expect.stringContaining("attachments")]),
-      )
 
       scene.client.stopTurn(scene.sessionId)
       await eventually(() => expect(session.ofTag("TurnStarted")).toHaveLength(2))
       expect(session.ofTag("TurnStarted")[1]?.attachments).toEqual([
         { id, name: "shot.png", mediaType: "image/png", size: png.byteLength },
       ])
+    })
+
+    test("a prompt with an image steered into the running Turn carries it there (#278)", async () => {
+      const scene = await adapter.scene()
+      const session = await turnRunning(scene)
+      const file = new File([png], "shot.png", { type: "image/png" })
+      const id = await scene.client.uploadAttachment(scene.sessionId, file, {
+        onProgress: () => {},
+        signal: new AbortController().signal,
+      })
+      expect(scene.client.sendPrompt(scene.sessionId, "", [id])).toBe(true)
+      await eventually(() => expect(session.queue()).toEqual([""]))
+      scene.client.steerPrompt(scene.sessionId, session.queued(""))
+      await eventually(() => expect(session.ofTag("PromptSteered")).toHaveLength(1))
+      expect(session.ofTag("PromptSteered")[0]).toMatchObject({
+        text: "",
+        attachments: [{ id, name: "shot.png", mediaType: "image/png", size: png.byteLength }],
+      })
+      expect(session.queue()).toEqual([])
     })
 
     test("a PDF goes with a prompt, and its Turn carries it as one (#277)", async () => {

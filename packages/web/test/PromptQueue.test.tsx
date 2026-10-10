@@ -1,4 +1,4 @@
-// The Prompt queue's rows: a prompt with images says how many, and can't be steered (#276, #278).
+// The Prompt queue's rows: a prompt with images says how many, and is steered as any is (#276, #278).
 
 import { afterEach, expect, test } from "bun:test"
 import { AttachmentId, ParticipantId, PromptId, type QueuedPrompt } from "@kndl/protocol"
@@ -22,7 +22,7 @@ const shot = {
   size: 9,
 } as const
 
-test("a prompt with images says how many, and its Steer waits for the Turn, saying why", async () => {
+test("a prompt with images says how many, and can be steered as any prompt can (#278)", async () => {
   const queue: ReadonlyArray<QueuedPrompt> = [
     { id: PromptId.make("q1"), text: "look", sender: ada, queuedAt: 1, attachments: [shot, shot] },
     {
@@ -42,9 +42,10 @@ test("a prompt with images says how many, and its Steer waits for the Turn, sayi
   expect(rows[1]).toContain("1 image")
   const steer = (name: string) =>
     button(`Steer ${name}'s prompt into the running Turn`, view.container)
-  expect(steer("Ada").getAttribute("aria-disabled") ?? String(steer("Ada").disabled)).toBe("true")
-  expect(steer("Cy").disabled).toBe(false)
-  expect(steer("Cy").getAttribute("aria-disabled")).not.toBe("true")
+  for (const name of ["Ada", "Bo", "Cy"]) {
+    expect(steer(name).disabled).toBe(false)
+    expect(steer(name).getAttribute("aria-disabled")).not.toBe("true")
+  }
 })
 
 test("a prompt with images and PDFs counts each kind (#277)", async () => {

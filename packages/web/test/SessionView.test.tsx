@@ -887,3 +887,29 @@ test("an Archived Session can't take prompts or open its terminal, and offers a 
   await eventually(() => expect(find("s-flaky")?.state).toBe("Asleep"))
   await eventually(() => expect(banner()).toContain("This Session is Asleep"))
 })
+
+test("an image pasted into a message to an agent goes with it, and shows in its card (#278)", async () => {
+  const { page, sent } = await openApp("/sessions/s-release?agent=a-bump", 100)
+  const heading = () => page.querySelector('section[aria-label="Agent"] h2')?.textContent ?? ""
+  await eventually(() => expect(heading()).toContain("Bump the package versions"))
+  const field = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')
+  if (!field) throw new Error("no message field")
+  const clipboardData = new DataTransfer()
+  clipboardData.items.add(new File([new Uint8Array(8)], "shot.png", { type: "image/png" }))
+  await step(() =>
+    field.dispatchEvent(
+      new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }),
+    ),
+  )
+  // An image alone is a message.
+  await eventually(() => expect(button("Resume", page).disabled).toBe(false))
+  await step(() => button("Resume", page).click())
+  expect(sent()).toContain("MessageAgent")
+  await eventually(() =>
+    expect(
+      page.querySelector(
+        'section[aria-label="Agent"] [aria-label="The message\'s attachments"] img[alt="shot.png"]',
+      ),
+    ).not.toBeNull(),
+  )
+})

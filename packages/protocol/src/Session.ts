@@ -428,8 +428,16 @@ export const joinAnswers = (labels: ReadonlyArray<string>): string =>
 export const QuestionAnswered = Schema.TaggedStruct("Answered", { answers: QuestionAnswers })
 export type QuestionAnswered = typeof QuestionAnswered.Type
 
-/** Someone replied in their own words instead of answering, which Claude reads as their response. */
-export const QuestionReplied = Schema.TaggedStruct("Replied", { text: Schema.NonEmptyString })
+/**
+ * Someone replied in their own words instead of answering, which Claude reads as their response,
+ * with the files they attached to it (#278), which Claude opens by their markers. The web sends
+ * the files' ids beside it (AnswerQuestion), and the Hub puts the files here. A reply is in their
+ * own words: files alone are not one.
+ */
+export const QuestionReplied = Schema.TaggedStruct("Replied", {
+  text: Schema.NonEmptyString,
+  attachments: Schema.optionalKey(PromptAttachments),
+})
 export type QuestionReplied = typeof QuestionReplied.Type
 
 /** Someone dismissed the question, as Esc does in Claude Code's dialog: Claude is told no. */

@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { PromptAttachments } from "./Attachment.ts"
+import { attachmentCount, PromptAttachments, textOrAttachments } from "./Attachment.ts"
 import { AgentId, PromptId, ToolCallId, TurnId } from "./Ids.ts"
 import {
   AgentStatus,
@@ -67,10 +67,15 @@ export const PromptSteered = Schema.TaggedStruct("PromptSteered", {
   turnId: TurnId,
   /** The Prompt queue entry it came from. */
   promptId: PromptId,
-  /** The prompt as its sender wrote it. */
-  text: Schema.NonEmptyString,
+  /** The prompt as its sender wrote it; empty for a prompt of attachments alone. */
+  text: Schema.String,
   sender: Participant,
-})
+  /**
+   * The files it carried (#278), which the row the mod added marks. The Hub adds them from the
+   * queued prompt, as it logs the event.
+   */
+  attachments: Schema.optionalKey(PromptAttachments),
+}).check(textOrAttachments)
 export type PromptSteered = typeof PromptSteered.Type
 
 /**
@@ -256,8 +261,11 @@ export const questionClosedText = (
         .join("; ")
       return `${who} answered${then}: ${what}`
     }
-    case "Replied":
-      return `${who} replied${then}: “${outcome.text}”`
+    case "Replied": {
+      const files = outcome.attachments ?? []
+      const carried = files.length === 0 ? "" : ` with ${attachmentCount(files)}`
+      return `${who} replied${then}${carried}: “${outcome.text}”`
+    }
     case "Dismissed":
       return `${who} dismissed the question${then}`
     case "Cancelled":

@@ -37,6 +37,7 @@ import {
   installationsCantStartText,
   InviteLifetimeMs,
   InvitePath,
+  attachmentCount,
   attachmentName,
   AttachmentId,
   AttachmentMediaTypes,
@@ -67,6 +68,7 @@ import {
   sessionNameFrom,
   sleepVerdict,
   steerVerdict,
+  modFromBeforeAttachments,
   stopAgentRefusal,
   stopTurnRefusal,
   UpdateDrainMillis,
@@ -566,6 +568,29 @@ export class FakeHub implements HubTransport {
     if (session) session.modSteers = false
   }
 
+  /**
+   * The files a prompt, message or reply names, as the Hub takes them (#276, #278): only those its
+   * sender uploaded to the Session, all or none; none, having refused the command, if not.
+   */
+  #sent(
+    socket: FakeSocket,
+    message: {
+      readonly _tag: string
+      readonly sessionId: string
+      readonly attachments?: ReadonlyArray<string>
+    },
+    what: string,
+  ): ReadonlyArray<AttachmentWire> | undefined {
+    const files = (message.attachments ?? []).map((id) => this.#attachments.get(id))
+    const taken = files.flatMap((file) =>
+      file?.sessionId === message.sessionId && file.by === this.#you.id ? [file.attachment] : [],
+    )
+    if (taken.length === files.length) return taken
+    const reason = `An attachment of the ${what} isn't one you uploaded to this Session: attach it again.`
+    this.#fail(socket, message._tag, reason, message.sessionId)
+    return undefined
+  }
+
   /** Drops every connection, as a network blip would. */
   dropConnections(): void {
     this.#closeAll()
@@ -1046,22 +1071,8 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, cantSend.refusal, message.sessionId)
           break
         }
-        // As the Hub does: only files its sender uploaded to this Session (#276).
-        const files = (message.attachments ?? []).map((id) => this.#attachments.get(id))
-        const attachments = files.flatMap((file) =>
-          file?.sessionId === message.sessionId && file.by === this.#you.id
-            ? [file.attachment]
-            : [],
-        )
-        if (attachments.length !== files.length) {
-          this.#fail(
-            socket,
-            message._tag,
-            "An attachment of the prompt isn't one you uploaded to this Session: attach it again.",
-            message.sessionId,
-          )
-          break
-        }
+        const attachments = this.#sent(socket, message, "prompt")
+        if (!attachments) break
         this.#prompt(session, this.#you, message.text, this.#reply(message.text), attachments)
         break
       }
@@ -1094,6 +1105,8 @@ export class FakeHub implements HubTransport {
           modSteers: session.modSteers,
           hasAttachments:
             (session.queue.find((prompt) => prompt.id === promptId)?.attachments?.length ?? 0) > 0,
+          // A mod from before steering is from before files could be steered too.
+          modAttaches: session.modSteers,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
@@ -1135,7 +1148,30 @@ export class FakeHub implements HubTransport {
           )
           break
         }
-        session.asking.answer(message.answer, this.#you)
+        const ids = message.attachments ?? []
+        if (ids.length > 0 && message.answer._tag !== "Replied") {
+          const reason = "Only a reply to a question carries attachments."
+          this.#fail(socket, message._tag, reason, message.sessionId)
+          break
+        }
+        if (ids.length > 0 && !session.modSteers) {
+          const reason = modFromBeforeAttachments("replied with").refusal
+          this.#fail(socket, message._tag, reason, message.sessionId)
+          break
+        }
+        const files = this.#sent(socket, message, "reply")
+        if (!files) break
+        const { answer } = message
+        session.asking.answer(
+          answer._tag === "Replied"
+            ? {
+                _tag: "Replied",
+                text: answer.text,
+                ...(files.length > 0 && { attachments: files }),
+              }
+            : answer,
+          this.#you,
+        )
         break
       }
       case "PickAnswer": {
@@ -1160,6 +1196,13 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
           break
         }
+        if ((message.attachments?.length ?? 0) > 0 && verdict === "deliver" && !session.modSteers) {
+          const reason = modFromBeforeAttachments("sent to a subagent").refusal
+          this.#fail(socket, message._tag, reason, message.sessionId)
+          break
+        }
+        const files = this.#sent(socket, message, "message")
+        if (!files) break
         if (verdict === "wake") {
           this.#wake(session, "Woken on studio", this.#you)
           if (!session.summary.starting) {
@@ -1173,8 +1216,9 @@ export class FakeHub implements HubTransport {
           agentId: message.agentId,
           sender: this.#you,
           text: message.text,
+          ...(files.length > 0 && { attachments: files }),
         })
-        this.#deliverAgentMessage(session, message.agentId, message.text)
+        this.#deliverAgentMessage(session, message.agentId, message.text || attachmentCount(files))
         break
       }
       case "StopAgent": {
@@ -1930,6 +1974,7 @@ export class FakeHub implements HubTransport {
         promptId,
         text: prompt.text,
         sender: prompt.sender,
+        ...(prompt.attachments !== undefined && { attachments: prompt.attachments }),
       })
       session.queue = session.queue.filter((queued) => queued !== prompt)
       this.#replies.delete(promptId)

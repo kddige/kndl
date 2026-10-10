@@ -5,6 +5,7 @@ import type { QuestionView } from "../hub/transcript.ts"
 import { Badge, CheckIcon, CloseIcon, Disclosure, StopIcon } from "../ui/index.ts"
 import { color, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import { splitAnswer } from "./question.ts"
+import { SentAttachments } from "./SentAttachments.tsx"
 
 const pulse = stylex.keyframes({
   "0%": { opacity: 1, transform: "scale(1)" },
@@ -79,70 +80,77 @@ export function WaitingDot({ sx }: { sx?: stylex.StyleXStyles }) {
 
 /**
  * A question Claude asked (#193), in the transcript: amber while it waits, with the questions
- * under it; once closed, how and by whom.
+ * under it; once closed, how and by whom, and the files a reply carried (#278).
  */
 export const QuestionChip = memo(function QuestionChip({ question }: { question: QuestionView }) {
   const { closed } = question
   const headers = question.questions.map((asked) => asked.header || asked.question).join(" · ")
   return (
-    <Disclosure
-      sx={closed === undefined && styles.open}
-      summary={
-        closed === undefined ? (
-          <>
-            <WaitingDot />
-            <span {...stylex.props(styles.asking)}>Asking a question</span>
-            <span {...stylex.props(styles.headers)}>{headers}</span>
-          </>
-        ) : (
-          <>
-            <ClosedIcon outcome={closed.outcome._tag} />
-            <span {...stylex.props(styles.outcome)}>{questionClosedText(closed)}</span>
-          </>
-        )
-      }
-    >
-      <div {...stylex.props(styles.body)}>
-        {question.questions.map((asked) => {
-          const answer =
-            closed?.outcome._tag === "Answered" ? closed.outcome.answers[asked.question] : undefined
-          const chosen = new Set(
-            answer === undefined ? [] : asked.multiSelect ? splitAnswer(answer) : [answer],
+    <>
+      <Disclosure
+        sx={closed === undefined && styles.open}
+        summary={
+          closed === undefined ? (
+            <>
+              <WaitingDot />
+              <span {...stylex.props(styles.asking)}>Asking a question</span>
+              <span {...stylex.props(styles.headers)}>{headers}</span>
+            </>
+          ) : (
+            <>
+              <ClosedIcon outcome={closed.outcome._tag} />
+              <span {...stylex.props(styles.outcome)}>{questionClosedText(closed)}</span>
+            </>
           )
-          const typed = [...chosen].filter(
-            (part) => !asked.options.some((option) => option.label === part),
-          )
-          return (
-            <div key={asked.question} {...stylex.props(styles.question)}>
-              <div {...stylex.props(styles.title)}>
-                {asked.header !== "" && <Badge intent="warning">{asked.header}</Badge>}
-                <span>{asked.question}</span>
+        }
+      >
+        <div {...stylex.props(styles.body)}>
+          {question.questions.map((asked) => {
+            const answer =
+              closed?.outcome._tag === "Answered"
+                ? closed.outcome.answers[asked.question]
+                : undefined
+            const chosen = new Set(
+              answer === undefined ? [] : asked.multiSelect ? splitAnswer(answer) : [answer],
+            )
+            const typed = [...chosen].filter(
+              (part) => !asked.options.some((option) => option.label === part),
+            )
+            return (
+              <div key={asked.question} {...stylex.props(styles.question)}>
+                <div {...stylex.props(styles.title)}>
+                  {asked.header !== "" && <Badge intent="warning">{asked.header}</Badge>}
+                  <span>{asked.question}</span>
+                </div>
+                {asked.options.length > 0 && (
+                  <ol {...stylex.props(styles.options)}>
+                    {asked.options.map((option) => (
+                      <li key={option.label}>
+                        <span {...stylex.props(chosen.has(option.label) && styles.chosen)}>
+                          {option.label}
+                        </span>
+                        {option.description !== undefined && (
+                          <span {...stylex.props(styles.description)}> — {option.description}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                {typed.length > 0 && (
+                  <span {...stylex.props(styles.answer)}>Answered: {typed.join(", ")}</span>
+                )}
+                {closed?.outcome._tag === "Answered" && answer === undefined && (
+                  <span {...stylex.props(styles.answer)}>Skipped</span>
+                )}
               </div>
-              {asked.options.length > 0 && (
-                <ol {...stylex.props(styles.options)}>
-                  {asked.options.map((option) => (
-                    <li key={option.label}>
-                      <span {...stylex.props(chosen.has(option.label) && styles.chosen)}>
-                        {option.label}
-                      </span>
-                      {option.description !== undefined && (
-                        <span {...stylex.props(styles.description)}> — {option.description}</span>
-                      )}
-                    </li>
-                  ))}
-                </ol>
-              )}
-              {typed.length > 0 && (
-                <span {...stylex.props(styles.answer)}>Answered: {typed.join(", ")}</span>
-              )}
-              {closed?.outcome._tag === "Answered" && answer === undefined && (
-                <span {...stylex.props(styles.answer)}>Skipped</span>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </Disclosure>
+            )
+          })}
+        </div>
+      </Disclosure>
+      {closed?.outcome._tag === "Replied" && (
+        <SentAttachments attachments={closed.outcome.attachments} label="The reply's attachments" />
+      )}
+    </>
   )
 })
 

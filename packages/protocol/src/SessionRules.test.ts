@@ -26,6 +26,7 @@ describe("steering a queued prompt (ADR 0018)", () => {
     turnRunning: true,
     modSteers: true,
     hasAttachments: false,
+    modAttaches: true,
   }
 
   test("hands a queued prompt to a running Turn, once", () => {
@@ -55,8 +56,12 @@ describe("steering a queued prompt (ADR 0018)", () => {
     )
   })
 
-  test("is refused for a prompt with attachments, which waits for the Turn to end (#276)", () => {
-    expect(steerVerdict({ ...queued, hasAttachments: true })).toEqual(refused("attachments"))
+  test("hands a prompt with attachments to the Turn too, unless its mod is from before (#278)", () => {
+    expect(steerVerdict({ ...queued, hasAttachments: true })).toBe("ok")
+    expect(steerVerdict({ ...queued, hasAttachments: true, modAttaches: false })).toEqual(
+      refused("a mod from before attachments"),
+    )
+    expect(steerVerdict({ ...queued, modAttaches: false })).toBe("ok")
   })
 })
 

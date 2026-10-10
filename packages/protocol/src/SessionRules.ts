@@ -28,6 +28,14 @@ export interface PromptHandover {
   readonly steering: boolean
 }
 
+/**
+ * Why files can't go to a Session's mod by a way that is `done` (steered, sent to a subagent,
+ * replied with): it is from before they could (#278).
+ */
+export const modFromBeforeAttachments = (done: string): Refusal => ({
+  refusal: `This Session's Claude Code runs a mod from before attachments could be ${done}. They can be once the Session starts again on an updated Runner.`,
+})
+
 const notQueued: Refusal = { refusal: "The prompt is not in the Prompt queue." }
 const alreadyDelivered: Refusal = { refusal: "The prompt was already delivered to Claude Code." }
 
@@ -36,14 +44,15 @@ const alreadyDelivered: Refusal = { refusal: "The prompt was already delivered t
  * DeliverIntoTurn, the prompt keeping its place in the queue; "already", if it is on its way into
  * the Turn, and nothing is to be done; or why not. `turnRunning` is whether the Session is Active
  * with a Turn, and not going to sleep. `modSteers` is whether its mod said in its hello that it
- * steers (#195). `hasAttachments` is whether the prompt carries files (#276), which only a Turn of
- * its own shows Claude for now.
+ * steers (#195). `hasAttachments` is whether the prompt carries files (#276), and `modAttaches`
+ * whether the mod said in its hello that it marks them in a steered prompt (#278).
  */
 export const steerVerdict = (
   steer: PromptHandover & {
     readonly turnRunning: boolean
     readonly modSteers: boolean
     readonly hasAttachments: boolean
+    readonly modAttaches: boolean
   },
 ): "ok" | "already" | Refusal => {
   if (!steer.turnRunning) {
@@ -58,9 +67,7 @@ export const steerVerdict = (
     }
   }
   if (!steer.queued) return notQueued
-  if (steer.hasAttachments) {
-    return { refusal: "A prompt with attachments can't be steered: it waits for the Turn to end." }
-  }
+  if (steer.hasAttachments && !steer.modAttaches) return modFromBeforeAttachments("steered")
   return "ok"
 }
 

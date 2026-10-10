@@ -21,7 +21,6 @@ export {
   clip,
   deliveredPrompt,
   maxAttachmentParts,
-  promptFromParticipant,
   resultSummary,
   sharedSessionNote,
   startsDelivered,

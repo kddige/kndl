@@ -278,13 +278,24 @@ export class HubClient {
   }
 
   /**
-   * Messages a subagent of the Session (ADR 0014): a running one reads it at its next tool call,
-   * a finished one resumes.
+   * Messages a subagent of the Session (ADR 0014), with the files uploaded for it (#278): a running
+   * one reads it at its next tool call, a finished one resumes. An image alone is a message.
    */
-  messageAgent(sessionId: SessionId, agentId: AgentId, text: string): boolean {
+  messageAgent(
+    sessionId: SessionId,
+    agentId: AgentId,
+    text: string,
+    attachments: ReadonlyArray<AttachmentId> = [],
+  ): boolean {
     const trimmed = text.trim()
-    if (trimmed === "") return false
-    return this.#send({ _tag: "MessageAgent", sessionId, agentId, text: trimmed })
+    if (trimmed === "" && attachments.length === 0) return false
+    return this.#send({
+      _tag: "MessageAgent",
+      sessionId,
+      agentId,
+      text: trimmed,
+      ...(attachments.length > 0 && { attachments }),
+    })
   }
 
   stopAgent(sessionId: SessionId, agentId: AgentId): boolean {
@@ -293,10 +304,22 @@ export class HubClient {
 
   /**
    * Answers the Session's Open question (#193), named by its call: the first answer to reach
-   * Claude Code is Claude's, and a later one is refused, saying who answered first.
+   * Claude Code is Claude's, and a later one is refused, saying who answered first. A reply carries
+   * the files uploaded for it (#278).
    */
-  answerQuestion(sessionId: SessionId, toolCallId: ToolCallId, answer: QuestionAnswer): boolean {
-    return this.#send({ _tag: "AnswerQuestion", sessionId, toolCallId, answer })
+  answerQuestion(
+    sessionId: SessionId,
+    toolCallId: ToolCallId,
+    answer: QuestionAnswer,
+    attachments: ReadonlyArray<AttachmentId> = [],
+  ): boolean {
+    return this.#send({
+      _tag: "AnswerQuestion",
+      sessionId,
+      toolCallId,
+      answer,
+      ...(attachments.length > 0 && { attachments }),
+    })
   }
 
   /**

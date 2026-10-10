@@ -93,6 +93,8 @@ describe("Redacting a text", () => {
       model: "claude-haiku-4-5",
       background: true,
     } as const
+    const file = (name: string) =>
+      ({ id: attachmentId, name: `${name}.png`, mediaType: "image/png", size: 1 }) as const
     const events: ReadonlyArray<[SessionEvent, SessionEvent]> = [
       [
         {
@@ -168,6 +170,29 @@ describe("Redacting a text", () => {
       [
         { _tag: "AgentMessaged", agentId, sender, text: `try ${secret}` },
         { _tag: "AgentMessaged", agentId, sender, text: `try ${masked}` },
+      ],
+      // A file's name is in its marker, and redacted alike (#278).
+      [
+        { _tag: "PromptSteered", turnId, promptId, sender, text: "", attachments: [file(secret)] },
+        { _tag: "PromptSteered", turnId, promptId, sender, text: "", attachments: [file(masked)] },
+      ],
+      [
+        { _tag: "AgentMessaged", agentId, sender, text: "", attachments: [file(secret)] },
+        { _tag: "AgentMessaged", agentId, sender, text: "", attachments: [file(masked)] },
+      ],
+      [
+        {
+          _tag: "QuestionClosed",
+          turnId,
+          toolCallId,
+          outcome: { _tag: "Replied", text: `see ${secret}`, attachments: [file(secret)] },
+        },
+        {
+          _tag: "QuestionClosed",
+          turnId,
+          toolCallId,
+          outcome: { _tag: "Replied", text: `see ${masked}`, attachments: [file(masked)] },
+        },
       ],
       [
         { _tag: "SandboxNoted", message: `bad url ${secret}` },

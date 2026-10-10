@@ -90,6 +90,14 @@ export class Attachments extends Context.Service<
       sender: ParticipantId,
       at: number,
     ) => Effect.Effect<Option.Option<ReadonlyArray<Attachment>>, SqlError>
+    /**
+     * Those of the files `ids` names that are the Session's, in that order and each once, without
+     * their bytes: what a reply the mod reports closed its question with carried (#278).
+     */
+    readonly ofSession: (
+      sessionId: SessionId,
+      ids: ReadonlyArray<AttachmentId>,
+    ) => Effect.Effect<ReadonlyArray<Attachment>, SqlError>
     /** One of the Session's files, with its bytes. */
     readonly get: (
       sessionId: SessionId,
@@ -161,6 +169,20 @@ export class Attachments extends Context.Service<
         return Option.some(unique.flatMap((id) => byId.get(id) ?? []))
       }, sql.withTransaction)
 
+      const ofSession = Effect.fn("Attachments.ofSession")(function* (
+        sessionId: SessionId,
+        ids: ReadonlyArray<AttachmentId>,
+      ) {
+        const unique = [...new Set(ids)]
+        if (unique.length === 0) return []
+        const rows = yield* sql<Row>`
+          SELECT id, name, media_type AS mediaType, size FROM attachments
+          WHERE session_id = ${sessionId} AND id IN ${sql.in(unique)}
+        `
+        const byId = new Map(rows.map((row) => [row.id, decodeAttachment(row)]))
+        return unique.flatMap((id) => byId.get(id) ?? [])
+      })
+
       const get = Effect.fn("Attachments.get")(function* (sessionId: SessionId, id: AttachmentId) {
         const [row] = yield* sql<Row & { readonly data: Uint8Array }>`
           SELECT id, name, media_type AS mediaType, size, data FROM attachments
@@ -203,7 +225,7 @@ export class Attachments extends Context.Service<
         Effect.forkIn(layerScope),
       )
 
-      return Attachments.of({ add, markSent, get, part })
+      return Attachments.of({ add, markSent, ofSession, get, part })
     }),
   )
 }

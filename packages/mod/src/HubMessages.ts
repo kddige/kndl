@@ -41,7 +41,10 @@ export const clip = (text: string, max = MaxToolSummaryLength) => {
   return `${text.slice(0, Math.max(0, kept))}${clipNote(text.length - Math.max(0, kept))}`
 }
 
-/** The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195). */
+/**
+ * The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195), and marks the
+ * files of a steered prompt, a message to a subagent and a reply (#278).
+ */
 export const helloBody = (hello: {
   readonly sessionId: string
   readonly claudeSessionId: string
@@ -54,6 +57,7 @@ export const helloBody = (hello: {
         protocolVersion: ProtocolVersion,
         ...hello,
         steers: true,
+        attaches: true,
       }),
     ),
   )
@@ -177,13 +181,18 @@ export const promptFromParticipant = (sender: Pick<Participant, "name">, text: s
 
 /**
  * A prompt a Participant steered into the running Turn (#195, ADR 0018), as the model reads it: as
- * Claude Code frames a prompt typed while it works, with the sender's name.
+ * Claude Code frames a prompt typed while it works, with the sender's name and a marker for each
+ * file it carries (#278), which Claude opens by the marker alone.
  */
-export const steeredPrompt = (sender: Pick<Participant, "name">, text: string) =>
+export const steeredPrompt = (
+  sender: Pick<Participant, "name">,
+  text: string,
+  attachments: ReadonlyArray<MarkedFile> = [],
+) =>
   [
     "<system-reminder>",
     `${sender.name} sent a new message while you were working:`,
-    promptFromParticipant(sender, text),
+    deliveredPrompt(sender, text, attachments),
     "",
     "Address the message above as you continue this turn.",
     "</system-reminder>",
@@ -213,7 +222,10 @@ export const attachmentToolSpec = {
   isDeferred: false,
 }
 
-/** A prompt from the Prompt queue as Claude reads it: its sender's name, then each file's marker. */
+/**
+ * A prompt from the Prompt queue as Claude reads it: its sender's name, then each file's marker. A
+ * message to a subagent, and a reply to a question, read the same (#278).
+ */
 export const deliveredPrompt = (
   sender: Pick<Participant, "name">,
   text: string,
@@ -419,7 +431,9 @@ export const answerResult = (
     case "Answered":
       return { result: { questions, answers: answer.answers, annotations: {} } }
     case "Replied":
-      return { deny: `${repliedPrefix}${promptFromParticipant(sender, answer.text)}` }
+      return {
+        deny: `${repliedPrefix}${deliveredPrompt(sender, answer.text, answer.attachments ?? [])}`,
+      }
     case "Dismissed":
       return { deny: dismissedText }
   }

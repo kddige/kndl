@@ -29,6 +29,13 @@ const sessionEvents = [
   },
   { _tag: "TurnStopRequested", by: alice },
   { _tag: "AgentMessaged", agentId: "a-1", sender: alice, text: "also cover the edge cases" },
+  {
+    _tag: "AgentMessaged",
+    agentId: "a-1",
+    sender: alice,
+    text: "",
+    attachments: [{ id: "att-1", name: "shot.png", mediaType: "image/png", size: 12 }],
+  },
   { _tag: "SandboxNoted", message: "Memory capped at 8192 MiB by the Runner" },
   { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", effort: "high" },
   { _tag: "ModelSwitched", by: bob, modelLabel: "Opus 5.5" },
@@ -58,6 +65,7 @@ const webToHub = [
   { _tag: "SteerPrompt", sessionId: "s-1", promptId: "p-2" },
   { _tag: "StopTurn", sessionId: "s-1" },
   { _tag: "MessageAgent", sessionId: "s-1", agentId: "a-1", text: "also cover the edge cases" },
+  { _tag: "MessageAgent", sessionId: "s-1", agentId: "a-1", text: "", attachments: ["att-1"] },
   { _tag: "StopAgent", sessionId: "s-1", agentId: "a-1" },
   {
     _tag: "AnswerQuestion",
@@ -70,6 +78,13 @@ const webToHub = [
     sessionId: "s-1",
     toolCallId: "toolu_ask",
     answer: { _tag: "Replied", text: "neither" },
+  },
+  {
+    _tag: "AnswerQuestion",
+    sessionId: "s-1",
+    toolCallId: "toolu_ask",
+    answer: { _tag: "Replied", text: "like this" },
+    attachments: ["att-1"],
   },
   {
     _tag: "AnswerQuestion",
@@ -872,6 +887,8 @@ describe("WebToHub", () => {
   test("rejects malformed messages", () => {
     expectRejected(WebToHub, { _tag: "SendPrompt", sessionId: "s-1", text: "" })
     expectRejected(WebToHub, { _tag: "SendPrompt", text: "hi" })
+    expectRejected(WebToHub, { _tag: "MessageAgent", sessionId: "s-1", agentId: "a-1", text: "" })
+    expectRejected(SessionEvent, { _tag: "AgentMessaged", agentId: "a-1", sender: alice, text: "" })
     expectRejected(WebToHub, { _tag: "SleepSession" })
     expectRejected(WebToHub, {
       _tag: "AnswerQuestion",

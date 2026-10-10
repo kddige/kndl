@@ -28,6 +28,7 @@
 
 import {
   MinSensitiveValueLength,
+  type Attachment,
   type Question,
   type QuestionOutcome,
   type SessionEvent,
@@ -286,6 +287,10 @@ export function redactQuestions(
 }
 
 /** How an Open question closed, redacted: the answers, keyed by their redacted questions. */
+/** Files with their names redacted, since each name is in its marker in a message. */
+const redactFiles = (needles: Needles, files: ReadonlyArray<Attachment>) =>
+  files.map((file) => ({ ...file, name: redactText(needles, file.name) }))
+
 export function redactOutcome(needles: Needles, outcome: QuestionOutcome): QuestionOutcome {
   if (isEmpty(needles)) return outcome
   const redact = (text: string) => redactText(needles, text)
@@ -301,7 +306,13 @@ export function redactOutcome(needles: Needles, outcome: QuestionOutcome): Quest
         ),
       }
     case "Replied":
-      return { ...outcome, text: redact(outcome.text) }
+      return {
+        ...outcome,
+        text: redact(outcome.text),
+        ...(outcome.attachments !== undefined && {
+          attachments: redactFiles(needles, outcome.attachments),
+        }),
+      }
     case "Dismissed":
     case "Cancelled":
       return outcome
@@ -316,18 +327,18 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
   if (isEmpty(needles)) return event
   const redact = (text: string) => redactText(needles, text)
   switch (event._tag) {
+    // An attachment's name is in its marker in the text: both are redacted alike (#276, #278).
     case "TurnStarted":
-      // An attachment's name is in its marker in the text: both are redacted alike (#276).
+    case "AgentMessaged":
+    case "PromptSteered":
       return {
         ...event,
         text: redact(event.text),
         ...(event.attachments !== undefined && {
-          attachments: event.attachments.map((file) => ({ ...file, name: redact(file.name) })),
+          attachments: redactFiles(needles, event.attachments),
         }),
       }
     case "TextDelta":
-    case "AgentMessaged":
-    case "PromptSteered":
       return { ...event, text: redact(event.text) }
     case "AgentStarted":
       return { ...event, description: redact(event.description) }

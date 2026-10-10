@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import { SessionId } from "./Ids.ts"
+import { AttachmentId, ParticipantId, SessionId } from "./Ids.ts"
 import {
   BranchChoice,
   branchesFor,
@@ -21,6 +21,7 @@ import {
   sessionTitle,
 } from "./Session.ts"
 import { alice, expectRejected, expectRoundTrips, sessionSummary } from "./testSupport.ts"
+import { questionClosedText } from "./Turn.ts"
 
 const avatarUrl = "https://avatars.githubusercontent.com/u/583231?v=4"
 
@@ -129,6 +130,23 @@ describe("Open questions (#193)", () => {
       '"Red, green", "Say \\"hi\\"", Blue',
     )
     expect(joinAnswers([])).toBe("")
+  })
+
+  test("a reply with files says how many it carried (#278)", () => {
+    const by = { id: ParticipantId.make("p-1"), login: "bob", name: "Bob" }
+    const files = [
+      { id: AttachmentId.make("a-1"), name: "a.png", mediaType: "image/png" as const, size: 1 },
+      { id: AttachmentId.make("a-2"), name: "b.png", mediaType: "image/png" as const, size: 1 },
+    ]
+    expect(
+      questionClosedText({
+        outcome: { _tag: "Replied", text: "like this", attachments: files },
+        by,
+      }),
+    ).toBe("Bob replied with 2 images: “like this”")
+    expect(questionClosedText({ outcome: { _tag: "Replied", text: "no" }, by }, true)).toBe(
+      "Bob replied first: “no”",
+    )
   })
 })
 

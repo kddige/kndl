@@ -53,6 +53,12 @@ export const ModHello = Schema.TaggedStruct("ModHello", {
    * refuses to steer a prompt to it.
    */
   steers: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * It marks the files a {@link DeliverIntoTurn}, {@link DeliverAgentMessage} or a reply's
+   * {@link DeliverAnswer} carries (#278). A mod from before doesn't say so, and the Hub refuses to
+   * send it files those ways.
+   */
+  attaches: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModHello = typeof ModHello.Type
 
@@ -141,27 +147,32 @@ export type DeliverPrompt = typeof DeliverPrompt.Type
  * A prompt from the Prompt queue a Participant steered (web SteerPrompt, #195), sent while a Turn
  * runs, and only to a mod whose hello says it `steers`. The mod adds it to the running Turn with
  * the sender's name, as Claude Code adds a prompt typed while it works, and reports PromptSteered;
- * or PromptFailed, when no Turn runs to take it.
+ * or PromptFailed, when no Turn runs to take it. Its files (#278) are marked in the row it adds,
+ * and Claude opens them by the markers alone.
  */
 export const DeliverIntoTurn = Schema.TaggedStruct("DeliverIntoTurn", {
   sessionId: SessionId,
   promptId: PromptId,
-  text: Schema.NonEmptyString,
+  /** As typed; empty for a prompt of attachments alone. */
+  text: Schema.String,
   sender: Participant,
-})
+  attachments: Schema.optionalKey(PromptAttachments),
+}).check(textOrAttachments)
 export type DeliverIntoTurn = typeof DeliverIntoTurn.Type
 
 /**
  * A Participant's message to one of the Session's subagents (web MessageAgent, ADR 0014). The mod
- * sends it with the sender's name, as a prompt; a running agent reads it at its next tool call, and
- * one that has stopped resumes with it.
+ * sends it with the sender's name and a marker for each file (#278), as a prompt; a running agent
+ * reads it at its next tool call, and one that has stopped resumes with it.
  */
 export const DeliverAgentMessage = Schema.TaggedStruct("DeliverAgentMessage", {
   sessionId: SessionId,
   agentId: AgentId,
-  text: Schema.NonEmptyString,
+  /** As typed; empty for a message of attachments alone. */
+  text: Schema.String,
   sender: Participant,
-})
+  attachments: Schema.optionalKey(PromptAttachments),
+}).check(textOrAttachments)
 export type DeliverAgentMessage = typeof DeliverAgentMessage.Type
 
 /**

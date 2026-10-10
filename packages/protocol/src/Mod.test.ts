@@ -21,6 +21,8 @@ import {
 import { MaxToolSummaryLength } from "./Turn.ts"
 import { ProtocolVersion } from "./Version.ts"
 
+const shot = { id: "att-1", name: "shot.png", mediaType: "image/png", size: 12 }
+
 const modToHub = [
   {
     _tag: "ModHello",
@@ -123,6 +125,17 @@ describe("ModToHub", () => {
     expectRejected(ModToHub, { ...hello, steers: false })
   })
 
+  test("reads a hello that says the mod marks files beyond prompts (#278)", () => {
+    const hello = modToHub[0] as Record<string, unknown>
+    expectRoundTrips(ModToHub, [{ ...hello, steers: true, attaches: true }])
+    expect(Schema.decodeUnknownSync(ModToHub)(hello)).not.toHaveProperty("attaches")
+  })
+
+  test("reads a steered prompt of attachments alone (#278)", () => {
+    const steered = turnEvents.find((event) => event._tag === "PromptSteered")
+    expectRoundTrips(ModToHub, [{ ...steered, text: "", attachments: [shot] }])
+  })
+
   test("rejects a steered prompt without its text or sender", () => {
     const steered = turnEvents.find((event) => event._tag === "PromptSteered")
     expectRejected(ModToHub, { ...steered, text: "" })
@@ -168,6 +181,20 @@ describe("HubToMod", () => {
     expectRejected(HubToMod, { ...answer, answer: { _tag: "Replied", text: "" } })
     expectRejected(HubToMod, { ...answer, answer: { _tag: "Cancelled" } })
     expectRejected(HubToMod, { ...answer, answer: { _tag: "Answered", answers: { q: 1 } } })
+    expectRejected(HubToMod, {
+      ...answer,
+      answer: { _tag: "Replied", text: "", attachments: [shot] },
+    })
+  })
+
+  test("carries files into a Turn, to a subagent and with a reply; files alone too, but a reply's (#278)", () => {
+    const [steer, message] = [hubToMod[3], hubToMod[5]]
+    const answer = hubToMod.find((m) => m._tag === "DeliverAnswer")
+    expectRoundTrips(HubToMod, [
+      { ...steer, text: "", attachments: [shot] },
+      { ...message, text: "", attachments: [shot] },
+      { ...answer, answer: { _tag: "Replied", text: "like this", attachments: [shot] } },
+    ])
   })
 })
 
