@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   Attachment,
   attachmentName,
-  imageCount,
+  attachmentCount,
   withAttachmentMarkers,
   withoutAttachmentMarkers,
 } from "./Attachment.ts"
@@ -16,11 +16,12 @@ const shot = { id: "att-1", name: "shot.png", mediaType: "image/png", size: 48_2
 const photo = { id: "att-2", name: "photo.jpg", mediaType: "image/jpeg", size: 1_204_000 }
 
 describe("an Attachment (#276)", () => {
-  test("is an image of a type Claude reads", () => {
+  test("is an image or a PDF, of a type Claude reads (#277)", () => {
     expectRoundTrips(Attachment, [shot, photo, { ...shot, mediaType: "image/gif" }])
     expectRoundTrips(Attachment, [{ ...shot, mediaType: "image/webp" }])
+    expectRoundTrips(Attachment, [{ ...shot, name: "spec.pdf", mediaType: "application/pdf" }])
     expectRejected(Attachment, { ...shot, mediaType: "image/svg+xml" })
-    expectRejected(Attachment, { ...shot, mediaType: "application/pdf" })
+    expectRejected(Attachment, { ...shot, mediaType: "text/plain" })
     expectRejected(Attachment, { ...shot, name: "" })
   })
 
@@ -88,9 +89,10 @@ describe("an Attachment (#276)", () => {
 
 describe("an attachment's marker", () => {
   const [one, two] = [
-    { id: "att-1", name: "shot.png" },
-    { id: "att-2", name: "photo.jpg" },
+    { id: "att-1", name: "shot.png", mediaType: "image/png" },
+    { id: "att-2", name: "photo.jpg", mediaType: "image/jpeg" },
   ] as const
+  const spec = { id: "att-3", name: "spec.pdf", mediaType: "application/pdf" } as const
 
   test("follows the prompt, one line per file, as Claude Code numbers pasted images", () => {
     expect(withAttachmentMarkers("what is wrong here?", [one, two])).toBe(
@@ -98,6 +100,13 @@ describe("an attachment's marker", () => {
     )
     expect(withAttachmentMarkers("", [one])).toBe("[Image #1: shot.png (attachment att-1)]")
     expect(withAttachmentMarkers("just text", [])).toBe("just text")
+  })
+
+  test("numbers PDFs apart from images, as Claude Code numbers each kind (#277)", () => {
+    expect(withAttachmentMarkers("read these", [one, spec, two])).toBe(
+      "read these\n[Image #1: shot.png (attachment att-1)]\n[PDF #1: spec.pdf (attachment att-3)]\n[Image #2: photo.jpg (attachment att-2)]",
+    )
+    expect(withoutAttachmentMarkers(withAttachmentMarkers("x", [spec, one]), [spec, one])).toBe("x")
   })
 
   test("comes off again for the transcript, which shows the files themselves", () => {
@@ -116,6 +125,7 @@ describe("an attachment's name", () => {
     expect(attachmentName("a".repeat(300))).toHaveLength(100)
     expect(attachmentName("")).toBe("image")
     expect(attachmentName("[]")).toBe("image")
+    expect(attachmentName("", "document")).toBe("document")
   })
 
   test("is cut between characters, never through one", () => {
@@ -127,7 +137,11 @@ describe("an attachment's name", () => {
   })
 })
 
-test("a prompt's images are counted in words", () => {
-  expect(imageCount(1)).toBe("1 image")
-  expect(imageCount(3)).toBe("3 images")
+test("a prompt's files are counted in words, images and PDFs apart (#277)", () => {
+  const image = { mediaType: "image/png" }
+  const pdf = { mediaType: "application/pdf" }
+  expect(attachmentCount([image])).toBe("1 image")
+  expect(attachmentCount([image, image, image])).toBe("3 images")
+  expect(attachmentCount([pdf])).toBe("1 PDF")
+  expect(attachmentCount([image, pdf, image, pdf])).toBe("2 images and 2 PDFs")
 })

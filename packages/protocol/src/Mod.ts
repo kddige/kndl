@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { PromptAttachments, ImageMediaType, textOrAttachments } from "./Attachment.ts"
+import { AttachmentMediaType, PromptAttachments, textOrAttachments } from "./Attachment.ts"
 import {
   AgentId,
   AttachmentId,
@@ -193,7 +193,7 @@ export const MaxModAttachmentPartBytes = 2_400_000
 export const ModAttachment = Schema.Struct({
   id: AttachmentId,
   name: Schema.NonEmptyString,
-  mediaType: ImageMediaType,
+  mediaType: AttachmentMediaType,
   /** At most {@link MaxModAttachmentPartBytes} of the file, base64. */
   data: Schema.String,
   /** Where the next part starts; absent on the last. */

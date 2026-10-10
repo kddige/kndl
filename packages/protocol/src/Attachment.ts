@@ -7,8 +7,8 @@ import { AttachmentId } from "./Ids.ts"
 //
 // - `POST /sessions/<id>/attachments`: the raw file as the body, its name URI-encoded in
 //   {@link AttachmentNameHeader}. Answered with {@link AttachmentUploaded}; 413 past
-//   {@link MaxImageBytes}, 415 for what isn't an image of {@link ImageMediaTypes}, as its bytes
-//   say, whatever its `Content-Type` says.
+//   the limit for its type ({@link maxAttachmentBytes}), 415 for what isn't an image of
+//   {@link ImageMediaTypes} or a PDF (#277), as its bytes say, whatever its `Content-Type` says.
 // - `GET /sessions/<id>/attachments/<attachmentId>`: the file, to the Session's Participants.
 // - `GET /mod/attachments/<attachmentId>?offset=<n>`: the file, base64 in ModAttachment parts
 //   (Mod.ts), to the Session's own mod only.
@@ -20,6 +20,28 @@ export type ImageMediaType = typeof ImageMediaType.Type
 
 /** The largest image the Hub takes, in bytes: the most the Messages API reads of one. */
 export const MaxImageBytes = 5 * 1024 * 1024
+
+/** A PDF's type (#277): Claude reads one whole, as a document. */
+export const PdfMediaType = "application/pdf"
+
+/** The types of file a prompt carries: the images Claude reads, and PDFs. */
+export const AttachmentMediaTypes = [...ImageMediaTypes, PdfMediaType] as const
+export const AttachmentMediaType = Schema.Literals(AttachmentMediaTypes)
+export type AttachmentMediaType = typeof AttachmentMediaType.Type
+
+/** The largest PDF the Hub takes, in bytes: the most Claude Code's Read takes of a whole one. */
+export const MaxPdfBytes = 20 * 1024 * 1024
+
+/** Whether a file of this type is an image, rather than a PDF. */
+export const isImage = (mediaType: string): mediaType is ImageMediaType =>
+  (ImageMediaTypes as ReadonlyArray<string>).includes(mediaType)
+
+/** The largest file of this type the Hub takes, in bytes. */
+export const maxAttachmentBytes = (mediaType: AttachmentMediaType): number =>
+  isImage(mediaType) ? MaxImageBytes : MaxPdfBytes
+
+/** The largest file of any type the Hub takes, in bytes. */
+export const MaxAttachmentBytes = Math.max(MaxImageBytes, MaxPdfBytes)
 
 /** The most files a prompt may carry. */
 export const MaxAttachments = 20
@@ -39,7 +61,7 @@ export const AttachmentName = Schema.NonEmptyString.check(
 export const Attachment = Schema.Struct({
   id: AttachmentId,
   name: AttachmentName,
-  mediaType: ImageMediaType,
+  mediaType: AttachmentMediaType,
   /** In bytes. */
   size: Schema.Natural,
 })
@@ -72,12 +94,12 @@ const notInMarker = /[\u0000-\u001f\u007f[\]]+/g
 /**
  * The name an uploaded file is kept under: what its sender's browser called it, as one line
  * without brackets, since it goes into the prompt's marker, at most
- * {@link MaxAttachmentNameLength} UTF-16 units, cut between characters, never inside one; "image"
- * for none.
+ * {@link MaxAttachmentNameLength} UTF-16 units, cut between characters, never inside one;
+ * `fallback` for none.
  */
-export const attachmentName = (raw: string): string => {
+export const attachmentName = (raw: string, fallback = "image"): string => {
   const name = raw.replace(notInMarker, " ").replace(/\s+/g, " ").trim()
-  if (name === "") return "image"
+  if (name === "") return fallback
   let kept = ""
   for (const character of name) {
     if (kept.length + character.length > MaxAttachmentNameLength) break
@@ -86,30 +108,49 @@ export const attachmentName = (raw: string): string => {
   return kept.trimEnd()
 }
 
-/** How many images a prompt carries, in words: "1 image", "3 images". */
-export const imageCount = (count: number): string => (count === 1 ? "1 image" : `${count} images`)
+const counted = (count: number, kind: string) => `${count} ${kind}${count === 1 ? "" : "s"}`
+
+/** How many files a prompt carries, in words: "1 image", "3 images", "2 images and 1 PDF". */
+export const attachmentCount = (
+  attachments: ReadonlyArray<{ readonly mediaType: string }>,
+): string => {
+  const images = attachments.filter((file) => isImage(file.mediaType)).length
+  const pdfs = attachments.length - images
+  return [images > 0 ? counted(images, "image") : "", pdfs > 0 ? counted(pdfs, "PDF") : ""]
+    .filter((part) => part !== "")
+    .join(" and ")
+}
 
 /** What a marker names of a file: plain strings, as the mod, which has no brands, has them. */
 export interface MarkedFile {
   readonly id: string
   readonly name: string
+  readonly mediaType: string
 }
 
-/**
- * The line that stands for the `index`th file (from 0) in a prompt Claude reads, in the style of
- * Claude Code's `[Image #1]`, with the id its tool opens it by.
- */
-export const attachmentMarker = (attachment: MarkedFile, index: number): string =>
-  `[Image #${index + 1}: ${attachment.name} (attachment ${attachment.id})]`
+/** What a marker calls a file of this type: "Image", as Claude Code calls a pasted one, or "PDF". */
+const markerKind = (mediaType: string) => (isImage(mediaType) ? "Image" : "PDF")
 
-const markers = (attachments: ReadonlyArray<MarkedFile>) =>
-  attachments.map(attachmentMarker).join("\n")
+/**
+ * The line for each file in a prompt Claude reads, in the style of Claude Code's `[Image #1]`,
+ * with the id its tool opens it by. Images and PDFs are numbered apart (#277): `[Image #1: …]`,
+ * `[PDF #1: …]`, `[Image #2: …]`.
+ */
+export const attachmentMarkers = (attachments: ReadonlyArray<MarkedFile>): Array<string> => {
+  const numbers = new Map<string, number>()
+  return attachments.map((attachment) => {
+    const kind = markerKind(attachment.mediaType)
+    const number = (numbers.get(kind) ?? 0) + 1
+    numbers.set(kind, number)
+    return `[${kind} #${number}: ${attachment.name} (attachment ${attachment.id})]`
+  })
+}
 
 /** The prompt as Claude reads it: its text, then a marker line for each file. */
 export const withAttachmentMarkers = (
   text: string,
   attachments: ReadonlyArray<MarkedFile>,
-): string => [text, ...attachments.map(attachmentMarker)].filter((line) => line !== "").join("\n")
+): string => [text, ...attachmentMarkers(attachments)].filter((line) => line !== "").join("\n")
 
 /**
  * The prompt as its sender wrote it, from one {@link withAttachmentMarkers} made: the markers
@@ -120,7 +161,7 @@ export const withoutAttachmentMarkers = (
   attachments: ReadonlyArray<MarkedFile>,
 ): string => {
   if (attachments.length === 0) return text
-  const lines = markers(attachments)
+  const lines = attachmentMarkers(attachments).join("\n")
   if (text === lines) return ""
   return text.endsWith(`\n${lines}`) ? text.slice(0, -lines.length - 1) : text
 }
