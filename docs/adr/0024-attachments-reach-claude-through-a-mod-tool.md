@@ -31,7 +31,7 @@ So an attachment is a file the Hub keeps, and Claude opens it with a tool.
 - **One tool call per file.** Claude spends a step on each file, and a prompt with many files is slower to start.
 - **Subagent types that list their own tools can't open attachments.** General-purpose subagents get the tool; one whose definition lists its tools doesn't, unless it lists this one.
 - **The terminal shows the markers.** Anyone at the Session's terminal sees `[Image #1: …]` lines, not the image.
-- **The Hub holds people's files** for as long as the Session lives. Files uploaded and never sent are cleaned up later (#280). Until then there is no quota on uploads, beyond 5 MB each.
+- **The Hub holds people's files** for as long as the Session lives. There is no quota on uploads, beyond 5 MB each, but unsent uploads last at most 24 h (#280).
 - **A marker typed by hand opens a file too.** Claude opens any of the Session's files whose id is in a message, sent with a prompt or not. That gives nothing away: every Participant can already view all of the Session's attachments.
 - **Re-encoding drops a photo's metadata,** EXIF and its location included, but only for the images it encodes again. A small JPEG sent as it is keeps it.
 - **base64 costs a third.** A 5 MB image is about 6.7 MB of JSON from the Hub to the mod, in three requests.

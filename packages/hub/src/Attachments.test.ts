@@ -6,15 +6,19 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { join } from "node:path"
 import {
+  AttachmentId,
   type ModCommandsEncoded,
   type ModEventsEncoded,
   MaxImageBytes,
+  ParticipantId,
   ProtocolVersion,
+  SessionId,
 } from "@kndl/protocol"
-import { Effect, type Layer } from "effect"
-import type { SqlClient } from "effect/sql"
-import { Attachments } from "./Attachments.ts"
-import { databaseAt } from "./Database.ts"
+import { Duration, Effect, type Layer, Option } from "effect"
+import { SqlClient } from "effect/sql"
+import { TestClock } from "effect/testing"
+import { Attachments, unsentAttachmentLifetime } from "./Attachments.ts"
+import { DatabaseTest, databaseAt } from "./Database.ts"
 import { Sessions } from "./Sessions.ts"
 import { issueRunnerToken, openRunner, openWeb, stopAll } from "./testChannels.ts"
 import {
@@ -254,17 +258,32 @@ describe("a prompt with attachments", () => {
       )
       web.send({ _tag: "SendPrompt", sessionId, text: "look", attachments: [shot] })
       await web.take("PromptQueueChanged", (m) => m.queue.length === 1)
+      // And one left in the Composer.
+      const unsent = await uploaded(await upload(first.hub, web.cookie, sessionId, png))
       await web.close()
       await runner.close()
       await first.hub.stop()
 
-      const second = await startHub({ config: { devLogin: true }, database })
+      // Back a day and an hour later: it sweeps as it starts.
+      const second = await startHub({
+        config: { devLogin: true },
+        database,
+        clockAhead: Duration.sum(unsentAttachmentLifetime, Duration.hours(1)),
+      })
       const back = await openWeb(second, "alice", web.cookie)
       back.send({ _tag: "JoinSession", sessionId })
       const queue = await back.take("PromptQueueChanged", (m) => m.queue.length === 1)
       expect(queue.queue[0]?.attachments).toEqual([
         { id: shot, name: "shot.png", mediaType: "image/png", size: png.byteLength },
       ])
+      const served = (id: string) =>
+        fetch(`${second.url}/sessions/${sessionId}/attachments/${id}`, {
+          headers: { cookie: web.cookie },
+        }).then((response) => response.status)
+      expect({ shot: await served(shot), unsent: await served(unsent) }).toEqual({
+        shot: 200,
+        unsent: 404,
+      })
     } finally {
       await stopAll()
       rmSync(dir, { recursive: true, force: true })
@@ -366,4 +385,125 @@ test("a Session's attachments are purged with it", async () => {
     }),
   )
   expect((await kept())._tag).toBe("None")
+})
+
+// #280: the Attachments service alone, on a database in memory and a clock the test moves.
+
+/** `effect` with the Attachments of a Hub that runs for as long as it does. */
+const hubRunning = <A, E>(effect: Effect.Effect<A, E, Attachments>) =>
+  Effect.provide(effect, Attachments.layer)
+
+describe("an attachment nobody sent", () => {
+  const sessionId = SessionId.make("s-1")
+  const alice = ParticipantId.make("p-1")
+
+  /** `effect` on a database with alice's Session, the clock at 0. */
+  const run = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES (${alice}, 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (id, repo, base_branch, work_branch, state, runner_id,
+            runner_login_account, creator_id, created_at)
+          VALUES (${sessionId}, 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com',
+            ${alice}, 1)
+        `
+        return yield* effect
+      }).pipe(Effect.provide(DatabaseTest), Effect.provide(TestClock.layer())),
+    )
+
+  const uploadAs = (name: string) =>
+    Effect.flatMap(Attachments, (attachments) =>
+      attachments.add({ sessionId, name, mediaType: "image/png", bytes: png, by: alice, at: 0 }),
+    )
+
+  const send = (id: AttachmentId) =>
+    Effect.flatMap(Attachments, (attachments) => attachments.markSent(sessionId, [id], alice, 0))
+
+  const kept = (id: AttachmentId) =>
+    Effect.map(
+      Effect.flatMap(Attachments, (attachments) => attachments.get(sessionId, id)),
+      Option.isSome,
+    )
+
+  test("is deleted 24 hours after upload; one a prompt took is kept", async () => {
+    const found = await run(
+      hubRunning(
+        Effect.gen(function* () {
+          const dropped = yield* uploadAs("dropped.png")
+          const sent = yield* uploadAs("sent.png")
+          const taken = yield* send(sent.id)
+          yield* TestClock.adjust(Duration.subtract(unsentAttachmentLifetime, Duration.minutes(1)))
+          const before = { dropped: yield* kept(dropped.id), sent: yield* kept(sent.id) }
+          // Swept hourly: gone within the hour after.
+          yield* TestClock.adjust(Duration.hours(1))
+          const after = { dropped: yield* kept(dropped.id), sent: yield* kept(sent.id) }
+          return { taken: Option.isSome(taken), before, after }
+        }),
+      ),
+    )
+    expect(found).toEqual({
+      taken: true,
+      before: { dropped: true, sent: true },
+      after: { dropped: false, sent: true },
+    })
+  })
+
+  test("past 24 hours while the Hub was down, is deleted as it starts", async () => {
+    const found = await run(
+      Effect.gen(function* () {
+        const { dropped, sent } = yield* hubRunning(
+          Effect.gen(function* () {
+            const files = {
+              dropped: yield* uploadAs("dropped.png"),
+              sent: yield* uploadAs("sent.png"),
+            }
+            yield* send(files.sent.id)
+            return files
+          }),
+        )
+        // Down for a day and a minute, so no sweep ran.
+        yield* TestClock.setTime(Duration.toMillis(unsentAttachmentLifetime) + 60_000)
+        return yield* hubRunning(Effect.all({ dropped: kept(dropped.id), sent: kept(sent.id) }))
+      }),
+    )
+    expect(found).toEqual({ dropped: false, sent: true })
+  })
+
+  test("once deleted, can't be sent: its sender is asked to attach it again", async () => {
+    const found = await run(
+      hubRunning(
+        Effect.gen(function* () {
+          const late = yield* uploadAs("late.png")
+          yield* TestClock.adjust(Duration.sum(unsentAttachmentLifetime, Duration.hours(1)))
+          return yield* send(late.id)
+        }),
+      ),
+    )
+    expect(Option.isNone(found)).toBe(true)
+  })
+
+  test("named with a file that isn't the sender's, is refused, and isn't kept for it", async () => {
+    const found = await run(
+      hubRunning(
+        Effect.gen(function* () {
+          const attachments = yield* Attachments
+          const mine = yield* uploadAs("mine.png")
+          const marked = yield* attachments.markSent(
+            sessionId,
+            [mine.id, AttachmentId.make("made-up")],
+            alice,
+            0,
+          )
+          yield* TestClock.adjust(Duration.sum(unsentAttachmentLifetime, Duration.hours(1)))
+          return { marked: Option.isSome(marked), kept: yield* kept(mine.id) }
+        }),
+      ),
+    )
+    expect(found).toEqual({ marked: false, kept: false })
+  })
 })
