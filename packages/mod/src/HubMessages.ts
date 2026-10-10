@@ -3,6 +3,8 @@
 // the Hub refuse a whole batch, and every reply is decoded before the mod acts on it.
 
 import {
+  MaxImageBytes,
+  MaxModAttachmentPartBytes,
   MaxToolSummaryLength,
   ModAttachment,
   ModCommands,
@@ -249,8 +251,22 @@ const decodeAttachment = Schema.decodeUnknownExit(Schema.fromJsonString(ModAttac
 
 const failed = (why: string) => ({ deny: `Could not open the attachment: ${why}` })
 
-/** The attachment tool's answer, from the Hub's to `GET /mod/attachments/<id>`. */
-export const attachmentResult = (status: number, body: string): AttachmentResult => {
+/** The most parts the attachment tool fetches of one file: as many as the largest has. */
+export const maxAttachmentParts = Math.ceil(MaxImageBytes / MaxModAttachmentPartBytes)
+
+/** Where the attachment tool fetches a file's part from `offset` on, on the Hub. */
+export const attachmentPartPath = (id: string, offset: number) =>
+  `/mod/attachments/${encodeURIComponent(id)}?offset=${offset}`
+
+/**
+ * A part of a file, from the Hub's answer to {@link attachmentPartPath}; or the attachment tool's
+ * answer saying why there is none. The mod runtime's fetch reads 4 MiB of a body at most, so a
+ * large file comes in parts, each saying where the next starts.
+ */
+export const attachmentPart = (
+  status: number,
+  body: string,
+): { readonly part: ModAttachment } | { readonly deny: string } => {
   if (status !== 200) {
     try {
       const { error } = JSON.parse(body) as { error?: unknown }
@@ -260,13 +276,27 @@ export const attachmentResult = (status: number, body: string): AttachmentResult
     }
     return failed(`the Hub answered ${status}.`)
   }
-  const file = decodeAttachment(body)
-  if (Exit.isFailure(file)) return failed("the Hub's answer was not one.")
-  const { name, mediaType, data } = file.value
+  const part = decodeAttachment(body)
+  if (Exit.isFailure(part)) return failed("the Hub's answer was not one.")
+  return { part: part.value }
+}
+
+/** The attachment tool's answer from a file's parts, in order: an image block of the whole. */
+export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): AttachmentResult => {
+  const [first] = parts
+  if (first === undefined || parts.at(-1)?.next !== undefined)
+    return failed("the Hub sent only part of it.")
   return {
     result: [
-      { type: "text", text: name },
-      { type: "image", source: { type: "base64", media_type: mediaType, data } },
+      { type: "text", text: first.name },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: first.mediaType,
+          data: parts.map((part) => part.data).join(""),
+        },
+      },
     ],
   }
 }

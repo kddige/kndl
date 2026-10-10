@@ -258,6 +258,28 @@ describe("the mod's attachment", () => {
     expect((await other.request(`/mod/attachments/${id}`)).status).toBe(404)
     expect((await fetch(`${hub.url}/mod/attachments/${id}`)).status).toBe(401)
   })
+
+  test("comes in parts the mod runtime's fetch can read, which join into the file", async () => {
+    const { hub, web, sessionId, mod } = await scene()
+    const big = new Uint8Array(MaxImageBytes)
+    big.set(png)
+    big.fill(7, png.byteLength)
+    const id = await uploaded(await upload(hub, web.cookie, sessionId, big))
+
+    const parts: Array<{ data: string; next?: number }> = []
+    for (let offset: number | undefined = 0; offset !== undefined;) {
+      const response = await mod.request(`/mod/attachments/${id}?offset=${offset}`)
+      expect(response.status).toBe(200)
+      const part = (await response.json()) as { data: string; next?: number }
+      // Under the 4 MiB the mod reads of a body, with room for the rest of the JSON.
+      expect(part.data.length).toBeLessThan(4 * 1024 * 1024 - 1024)
+      parts.push(part)
+      offset = part.next
+    }
+    expect(parts.map((part) => part.next)).toEqual([2_400_000, 4_800_000, undefined])
+    expect(Buffer.from(parts.map((part) => part.data).join(""), "base64")).toEqual(Buffer.from(big))
+    expect((await mod.request(`/mod/attachments/${id}?offset=-1`)).status).toBe(400)
+  })
 })
 
 test("a Session's attachments are purged with it", async () => {

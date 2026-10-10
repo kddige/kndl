@@ -7,8 +7,9 @@
 // - `GET /sessions/<id>/attachments/<attachmentId>`: the file, to anyone who can see the Session.
 //   Served as the type its bytes were sniffed as, which the browser must not second-guess, and
 //   sandboxed, as MCP server icons are (ADR 0021).
-// - `GET /mod/attachments/<attachmentId>`: the file, base64, to the Session's own mod, for the tool
-//   that shows it Claude. Through the Runner's relay, like every `/mod/*` call.
+// - `GET /mod/attachments/<attachmentId>?offset=<n>`: the file, base64 in parts the mod runtime's
+//   fetch can read, to the Session's own mod, for the tool that shows it Claude. Through the
+//   Runner's relay, like every `/mod/*` call.
 
 import {
   AttachmentId,
@@ -16,7 +17,9 @@ import {
   AttachmentNameHeader,
   AttachmentUploaded,
   MaxImageBytes,
+  MaxModAttachmentPartBytes,
   ModAttachment,
+  ModAttachmentQuery,
   SessionId,
   sendPromptRefusal,
 } from "@kndl/protocol"
@@ -134,16 +137,25 @@ export const AttachmentRoutes = HttpRouter.use(
       Effect.gen(function* () {
         const grant = yield* authenticateMod
         const { attachmentId } = yield* HttpRouter.params
+        const query = yield* HttpServerRequest.schemaSearchParams(ModAttachmentQuery).pipe(
+          Effect.option,
+        )
+        const offset = Option.match(query, { onNone: () => -1, onSome: (q) => q.offset ?? 0 })
         const stored = yield* attachments
           .get(grant.sessionId, AttachmentId.make(attachmentId ?? "-"))
           .pipe(Effect.orDie)
         if (Option.isNone(stored)) return errorResponse(404, "There is no such attachment.")
         const { attachment, bytes } = stored.value
+        if (offset < 0 || offset > bytes.byteLength)
+          return errorResponse(400, "The offset is not in the file.")
+        // In parts, since the mod reads at most 4 MiB of a body.
+        const end = Math.min(offset + MaxModAttachmentPartBytes, bytes.byteLength)
         return yield* HttpServerResponse.schemaJson(ModAttachment)({
           id: attachment.id,
           name: attachment.name,
           mediaType: attachment.mediaType,
-          data: Buffer.from(bytes).toString("base64"),
+          data: Buffer.from(bytes.subarray(offset, end)).toString("base64"),
+          ...(end < bytes.byteLength && { next: end }),
         })
       }),
     )

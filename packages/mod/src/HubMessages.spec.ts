@@ -6,6 +6,8 @@ import {
   answerResult,
   askedQuestions,
   attachmentContext,
+  attachmentPart,
+  attachmentPartPath,
   attachmentResult,
   attachmentToolName,
   backgroundedByStop,
@@ -488,6 +490,16 @@ describe("AskUserQuestion (#193)", () => {
   })
 })
 
+/** A part of shot.png, as the Hub sends it. */
+const shotPart = (data: string, next?: number) => {
+  const read = attachmentPart(
+    200,
+    JSON.stringify({ id: "att-1", name: "shot.png", mediaType: "image/png", data, next }),
+  )
+  if ("deny" in read) throw new Error(read.deny)
+  return read.part
+}
+
 describe("attachments (#276)", () => {
   const shot = { id: "att-1", name: "shot.png", mediaType: "image/png" as const, size: 12 }
   const photo = { id: "att-2", name: "photo.jpg", mediaType: "image/jpeg" as const, size: 34 }
@@ -511,27 +523,30 @@ describe("attachments (#276)", () => {
     expect(attachmentToolName).toBe("mcp__hub-link-commands__attachment")
   })
 
-  test("the tool hands Claude the image the Hub sent, as an image block", () => {
-    const sent = JSON.stringify({
-      id: "att-1",
-      name: "shot.png",
-      mediaType: "image/png",
-      data: "iVBO",
-    })
-    expect(attachmentResult(200, sent)).toEqual({
+  test("the tool hands Claude the image the Hub sent, its parts joined, as an image block", () => {
+    expect(attachmentResult([shotPart("iVBO", 3), shotPart("Rw0K")])).toEqual({
       result: [
         { type: "text", text: "shot.png" },
-        { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBO" } },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0K" } },
       ],
     })
+    expect(attachmentPartPath("att 1", 2_400_000)).toBe("/mod/attachments/att%201?offset=2400000")
   })
 
-  test("the tool says why when the Hub has no such file, or answers nonsense", () => {
-    expect(attachmentResult(404, '{"error":"There is no such attachment."}')).toEqual({
+  test("the tool says why when the Hub has no such file, answers nonsense, or stops short", () => {
+    expect(attachmentPart(404, '{"error":"There is no such attachment."}')).toEqual({
       deny: "Could not open the attachment: There is no such attachment.",
     })
-    expect(attachmentResult(200, "not json")).toEqual({
+    expect(attachmentPart(200, "not json")).toEqual({
       deny: "Could not open the attachment: the Hub's answer was not one.",
+    })
+    const first = attachmentPart(
+      200,
+      JSON.stringify({ id: "a", name: "a.png", mediaType: "image/png", data: "iVBO", next: 3 }),
+    )
+    if ("deny" in first) throw new Error(first.deny)
+    expect(attachmentResult([first.part])).toEqual({
+      deny: "Could not open the attachment: the Hub sent only part of it.",
     })
   })
 

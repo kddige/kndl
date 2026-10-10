@@ -22,11 +22,14 @@ import {
   answerResult,
   askedQuestions,
   attachmentContext,
+  attachmentPart,
+  attachmentPartPath,
   attachmentResult,
   attachmentToolName,
   attachmentToolSpec,
   deliveredPrompt,
   HubLink,
+  maxAttachmentParts,
   promptFromParticipant,
   steeredPrompt,
   terminalOutcome,
@@ -254,20 +257,29 @@ export function register(on: On) {
   })
 
   // A file a Participant attached (#276, ADR 0024), by the id its marker gives: fetched from the
-  // Hub, through the Runner's relay, and handed to Claude as an image block.
+  // Hub, through the Runner's relay, in parts the runtime's fetch can read, and handed to Claude as
+  // an image block.
   on("tool.call", { tool: attachmentToolName }, async ($, e) => {
     const id = typeof e.id === "string" ? e.id : ""
-    if (state.hub === undefined) return { deny: "This session is not linked to a kndl Hub." }
+    const hub = state.hub
+    if (hub === undefined) return { deny: "This session is not linked to a kndl Hub." }
     if (id === "") return { deny: "Give the attachment's id, from its marker." }
+    const parts = []
     try {
-      const response = await $.http.fetch(
-        `${state.hub.url}/mod/attachments/${encodeURIComponent(id)}`,
-        { headers: { authorization: `Bearer ${state.hub.modToken}` } },
-      )
-      return attachmentResult(response.status, response.text) as never
+      for (let offset: number | undefined = 0; offset !== undefined;) {
+        if (parts.length === maxAttachmentParts) break
+        const response = await $.http.fetch(`${hub.url}${attachmentPartPath(id, offset)}`, {
+          headers: { authorization: `Bearer ${hub.modToken}` },
+        })
+        const answer = attachmentPart(response.status, response.text)
+        if ("deny" in answer) return answer
+        parts.push(answer.part)
+        offset = answer.part.next
+      }
     } catch (error) {
       return { deny: `Could not open the attachment: ${String(error)}` }
     }
+    return attachmentResult(parts) as never
   })
 
   on("session.end", async ($, e, next) => {

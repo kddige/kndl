@@ -179,14 +179,25 @@ export const DeliverAnswer = Schema.TaggedStruct("DeliverAnswer", {
 export type DeliverAnswer = typeof DeliverAnswer.Type
 
 /**
- * The answer to `GET /mod/attachments/<id>` (#276): one of the Session's attachments, which the
- * mod's tool hands Claude. Base64, as Claude reads it: the mod runtime's fetch reads text only.
+ * The most bytes of an attachment one {@link ModAttachment} carries: base64 of it is 3.2 MB, under
+ * the 4 MiB the mod runtime's fetch reads of a body (Claude Code 2.1.296), which a 5 MB image's
+ * would be over. A multiple of 3, so the parts' base64 joins into the whole file's.
+ */
+export const MaxModAttachmentPartBytes = 2_400_000
+
+/**
+ * The answer to `GET /mod/attachments/<id>?offset=<n>` (#276): a part of one of the Session's
+ * attachments, from byte `offset` (0 by default), which the mod's tool hands Claude whole. Base64,
+ * as Claude reads it: the mod runtime's fetch reads text only.
  */
 export const ModAttachment = Schema.Struct({
   id: AttachmentId,
   name: Schema.NonEmptyString,
   mediaType: ImageMediaType,
+  /** At most {@link MaxModAttachmentPartBytes} of the file, base64. */
   data: Schema.String,
+  /** Where the next part starts; absent on the last. */
+  next: Schema.optionalKey(Schema.Natural),
 })
 export type ModAttachment = typeof ModAttachment.Type
 export type ModAttachmentEncoded = typeof ModAttachment.Encoded
@@ -230,6 +241,10 @@ export const MaxCommandWaitMs = 25_000
 
 /** A whole number of at least zero, sent as a query parameter. */
 const NaturalFromString = Schema.FiniteFromString.pipe(Schema.decodeTo(Schema.Natural))
+
+/** The query of `GET /mod/attachments/<id>`: the byte its part starts at, 0 by default. */
+export const ModAttachmentQuery = Schema.Struct({ offset: Schema.optionalKey(NaturalFromString) })
+export type ModAttachmentQueryEncoded = typeof ModAttachmentQuery.Encoded
 
 /** The query of `GET /mod/commands`. Both default to 0: everything queued, without waiting. */
 export const ModCommandsQuery = Schema.Struct({

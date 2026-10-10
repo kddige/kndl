@@ -18,14 +18,14 @@ const answer = (status: number, text: string) => ({
 /**
  * A session a Runner started, linked to a Hub whose first poll answers `commands` once `ready`
  * settles, and whose later ones are held, as its long poll does; it answers for the attachments in
- * `files`, by id, and 404 for any other. Returns the requests, and the events posted.
+ * `files`, by id and then offset, and 404 for any other. Returns the requests, and the events posted.
  */
 const linkedSession = (
   on: On,
   commands: Array<Record<string, unknown>> = [],
   ready: Promise<void> = Promise.resolve(),
   env: Record<string, string> = {},
-  files: Record<string, Record<string, unknown>> = {},
+  files: Record<string, Record<number, Record<string, unknown>>> = {},
 ) => {
   mock.env(on, {
     KNDL_URL: hubUrl,
@@ -46,9 +46,9 @@ const linkedSession = (
     })
     if (e.url.endsWith("/mod/hello")) return answer(welcome.status, welcome.text)
     if (e.url.endsWith("/mod/events")) return answer(204, "")
-    const attachment = /\/mod\/attachments\/(.+)$/.exec(e.url)?.[1]
+    const [, attachment, offset] = /\/mod\/attachments\/([^?]+)\?offset=(\d+)$/.exec(e.url) ?? []
     if (attachment !== undefined) {
-      const file = files[attachment]
+      const file = files[attachment]?.[Number(offset)]
       return file === undefined
         ? answer(404, JSON.stringify({ error: "There is no such attachment." }))
         : answer(200, JSON.stringify(file))
@@ -651,26 +651,25 @@ describe("attachments (#276)", () => {
     ])
   })
 
-  test("the tool hands Claude the file the Hub keeps, as an image", async ($, on) => {
-    const { requests } = linkedSession(
-      on,
-      [],
-      undefined,
-      {},
-      {
-        "att-1": { id: "att-1", name: "shot.png", mediaType: "image/png", data: "iVBO" },
-      },
-    )
+  test("the tool hands Claude the file the Hub keeps, in its parts, as an image", async ($, on) => {
+    const file = { id: "att-1", name: "shot.png", mediaType: "image/png" }
+    const parts = { 0: { ...file, data: "iVBO", next: 3 }, 3: { ...file, data: "Rw0K" } }
+    const { requests } = linkedSession(on, [], undefined, {}, { "att-1": parts })
     on("tool.register", () => ({ value: { tool } }))
 
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
     const opened = await $.tool.call({ tool, id: "att-1" } as never)
     const missing = await $.tool.call({ tool, id: "att-9" } as never)
 
-    expect(requests.map((request) => request.url)).toContain(`${hubUrl}/mod/attachments/att-1`)
+    expect(requests.map((request) => request.url)).toEqual(
+      expect.arrayContaining([
+        `${hubUrl}/mod/attachments/att-1?offset=0`,
+        `${hubUrl}/mod/attachments/att-1?offset=3`,
+      ]),
+    )
     expect(opened.result).toEqual([
       { type: "text", text: "shot.png" },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBO" } },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0K" } },
     ])
     expect(missing.deny).toBe("Could not open the attachment: There is no such attachment.")
   })
