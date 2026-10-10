@@ -2,6 +2,7 @@ import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, type KeyboardEvent, type ReactNode, useState } from "react"
 import { ArrowUpIcon, Button, IconButton, StopIcon, Textarea } from "../ui/index.ts"
 import { color, radius, shadow, space, text } from "../ui/tokens.stylex.ts"
+import { PastedTextChips, usePastedTexts } from "./PastedTexts.tsx"
 
 const styles = stylex.create({
   form: {
@@ -78,12 +79,15 @@ export function Composer({
   copy = promptCopy(running),
 }: ComposerProps) {
   const [draft, setDraft] = useState("")
+  const pastes = usePastedTexts(draft, setDraft)
   const disabled = disabledReason !== undefined
   const empty = draft.trim() === ""
 
   const send = () => {
     if (disabled || empty) return
-    if (onSend(draft)) setDraft("")
+    if (!onSend(pastes.expand())) return
+    setDraft("")
+    pastes.clear()
   }
 
   const submit = (event: FormEvent) => {
@@ -101,11 +105,13 @@ export function Composer({
 
   return (
     <form onSubmit={submit} {...stylex.props(styles.form)}>
+      <PastedTextChips pastes={pastes.shown} onRemove={pastes.remove} />
       <Textarea
         aria-label={copy.field}
         value={draft}
         onValueChange={setDraft}
         onKeyDown={keyDown}
+        onPaste={pastes.onPaste}
         placeholder={disabledReason ?? copy.placeholder}
         rows={2}
         autoResize
