@@ -23,7 +23,6 @@ import {
   resultSummary,
   sharedSessionNote,
   startsDelivered,
-  steeredPrompt,
   taskNotificationAgent,
   toolArguments,
   turnEndReason,
@@ -240,7 +239,7 @@ export function register(on: On) {
       steered === undefined ||
       steered === null ||
       block?.type !== "text" ||
-      block.text !== steeredPrompt(steered.sender, steered.text)
+      block.text !== steered.appended
     )
       return next(e)
     const turnId = state.mainTurn
@@ -254,6 +253,7 @@ export function register(on: On) {
       promptId: steered.promptId,
       text: steered.text,
       sender: steered.sender,
+      ...(steered.attachments === undefined ? {} : { attachments: steered.attachments }),
     })
     return appended
   })

@@ -37,6 +37,7 @@ import {
   installationsCantStartText,
   InviteLifetimeMs,
   InvitePath,
+  attachmentCount,
   attachmentName,
   AttachmentId,
   AttachmentMediaTypes,
@@ -67,6 +68,8 @@ import {
   sessionNameFrom,
   sleepVerdict,
   steerVerdict,
+  answerAttachmentsRefusal,
+  attachmentsNotSent,
   stopAgentRefusal,
   stopTurnRefusal,
   UpdateDrainMillis,
@@ -171,6 +174,11 @@ interface FakeSession {
   steering: Set<string>
   /** Whether its mod said in its hello that it steers (#195): one from before steering doesn't. */
   modSteers: boolean
+  /**
+   * Whether its mod said in its hello that it marks the attachments of a steered prompt, a
+   * message to a subagent and a reply (#278): one from before doesn't.
+   */
+  modAttaches: boolean
   /** People the script puts in the Session, besides whoever is connected. */
   guests: Array<PresentParticipantWire>
   /** Cancels the running Turn's remaining steps. */
@@ -378,6 +386,7 @@ export class FakeHub implements HubTransport {
         inFlight: null,
         steering: new Set(),
         modSteers: true,
+        modAttaches: true,
         guests: [],
         stopTurn: null,
         terminal: null,
@@ -563,7 +572,45 @@ export class FakeHub implements HubTransport {
    */
   modFromBeforeSteering(sessionId: string): void {
     const session = this.sessions.get(sessionId)
-    if (session) session.modSteers = false
+    if (session) {
+      session.modSteers = false
+      session.modAttaches = false
+    }
+  }
+
+  /**
+   * The Session's Claude Code runs a mod from before attachments went beyond prompts (#278): it
+   * steers, but files can't be steered, sent to a subagent or replied with. In the browser,
+   * `fakeHub.modFromBeforeAttaching("s-demo")` in the console.
+   */
+  modFromBeforeAttaching(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session) session.modAttaches = false
+  }
+
+  /**
+   * The attachments a prompt, message or reply names, marked sent as the Hub marks them (#276,
+   * #278): only those its sender uploaded to the Session, all or none; none, having refused the
+   * command, if not.
+   */
+  #markSentOrRefuse(
+    socket: FakeSocket,
+    message: {
+      readonly _tag: string
+      readonly sessionId: string
+      readonly attachments?: ReadonlyArray<string>
+    },
+    what: string,
+  ): ReadonlyArray<AttachmentWire> | undefined {
+    const named = (message.attachments ?? []).map((id) => this.#attachments.get(id))
+    const taken = named.flatMap((uploaded) =>
+      uploaded?.sessionId === message.sessionId && uploaded.by === this.#you.id
+        ? [uploaded.attachment]
+        : [],
+    )
+    if (taken.length === named.length) return taken
+    this.#fail(socket, message._tag, attachmentsNotSent(what).refusal, message.sessionId)
+    return undefined
   }
 
   /** Drops every connection, as a network blip would. */
@@ -1046,22 +1093,8 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, cantSend.refusal, message.sessionId)
           break
         }
-        // As the Hub does: only files its sender uploaded to this Session (#276).
-        const files = (message.attachments ?? []).map((id) => this.#attachments.get(id))
-        const attachments = files.flatMap((file) =>
-          file?.sessionId === message.sessionId && file.by === this.#you.id
-            ? [file.attachment]
-            : [],
-        )
-        if (attachments.length !== files.length) {
-          this.#fail(
-            socket,
-            message._tag,
-            "An attachment of the prompt isn't one you uploaded to this Session: attach it again.",
-            message.sessionId,
-          )
-          break
-        }
+        const attachments = this.#markSentOrRefuse(socket, message, "prompt")
+        if (!attachments) break
         this.#prompt(session, this.#you, message.text, this.#reply(message.text), attachments)
         break
       }
@@ -1094,6 +1127,7 @@ export class FakeHub implements HubTransport {
           modSteers: session.modSteers,
           hasAttachments:
             (session.queue.find((prompt) => prompt.id === promptId)?.attachments?.length ?? 0) > 0,
+          modAttaches: session.modAttaches,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
@@ -1135,7 +1169,24 @@ export class FakeHub implements HubTransport {
           )
           break
         }
-        session.asking.answer(message.answer, this.#you)
+        const { answer } = message
+        const cantAttach = answerAttachmentsRefusal({
+          replied: answer._tag === "Replied",
+          hasAttachments: (message.attachments?.length ?? 0) > 0,
+          modAttaches: session.modAttaches,
+        })
+        if (cantAttach !== undefined) {
+          this.#fail(socket, message._tag, cantAttach.refusal, message.sessionId)
+          break
+        }
+        const carried = this.#markSentOrRefuse(socket, message, "reply")
+        if (!carried) break
+        session.asking.answer(
+          answer._tag === "Replied" && carried.length > 0
+            ? { ...answer, attachments: carried }
+            : answer,
+          this.#you,
+        )
         break
       }
       case "PickAnswer": {
@@ -1155,6 +1206,8 @@ export class FakeHub implements HubTransport {
           state: session.summary.state,
           goingToSleep: this.#goingToSleep(session),
           agentKnown: session.agents.has(message.agentId),
+          hasAttachments: (message.attachments?.length ?? 0) > 0,
+          modAttaches: session.modAttaches,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
@@ -1168,13 +1221,21 @@ export class FakeHub implements HubTransport {
             break
           }
         }
+        // Marked sent as it is logged, as on the Hub: a refused wake keeps none.
+        const carried = this.#markSentOrRefuse(socket, message, "message")
+        if (!carried) break
         this.#append(session, {
           _tag: "AgentMessaged",
           agentId: message.agentId,
           sender: this.#you,
           text: message.text,
+          ...(carried.length > 0 && { attachments: carried }),
         })
-        this.#deliverAgentMessage(session, message.agentId, message.text)
+        this.#deliverAgentMessage(
+          session,
+          message.agentId,
+          message.text || attachmentCount(carried),
+        )
         break
       }
       case "StopAgent": {
@@ -1656,6 +1717,7 @@ export class FakeHub implements HubTransport {
       inFlight: null,
       steering: new Set(),
       modSteers: true,
+      modAttaches: true,
       guests: [],
       stopTurn: null,
       terminal: null,
@@ -1930,6 +1992,7 @@ export class FakeHub implements HubTransport {
         promptId,
         text: prompt.text,
         sender: prompt.sender,
+        ...(prompt.attachments !== undefined && { attachments: prompt.attachments }),
       })
       session.queue = session.queue.filter((queued) => queued !== prompt)
       this.#replies.delete(promptId)

@@ -6,6 +6,7 @@ import {
   deliveryBlocked,
   installationsDiffer,
   messageAgentVerdict,
+  answerAttachmentsRefusal,
   restartVerdict,
   sleepVerdict,
   steerVerdict,
@@ -26,6 +27,7 @@ describe("steering a queued prompt (ADR 0018)", () => {
     turnRunning: true,
     modSteers: true,
     hasAttachments: false,
+    modAttaches: true,
   }
 
   test("hands a queued prompt to a running Turn, once", () => {
@@ -55,8 +57,12 @@ describe("steering a queued prompt (ADR 0018)", () => {
     )
   })
 
-  test("is refused for a prompt with attachments, which waits for the Turn to end (#276)", () => {
-    expect(steerVerdict({ ...queued, hasAttachments: true })).toEqual(refused("attachments"))
+  test("hands a prompt with attachments to the Turn too, unless its mod is from before (#278)", () => {
+    expect(steerVerdict({ ...queued, hasAttachments: true })).toBe("ok")
+    expect(steerVerdict({ ...queued, hasAttachments: true, modAttaches: false })).toEqual(
+      refused("a mod from before attachments"),
+    )
+    expect(steerVerdict({ ...queued, modAttaches: false })).toBe("ok")
   })
 })
 
@@ -159,7 +165,7 @@ describe("the Session lifecycle", () => {
 
 describe("subagents (ADR 0014)", () => {
   test("a message reaches an agent of an Active Session, and wakes an Asleep one", () => {
-    const known = { ...idle, agentKnown: true }
+    const known = { ...idle, agentKnown: true, hasAttachments: false, modAttaches: true }
     expect(messageAgentVerdict(known)).toBe("deliver")
     expect(messageAgentVerdict({ ...known, state: "Asleep" })).toBe("wake")
     expect(messageAgentVerdict({ ...known, agentKnown: false })).toEqual({
@@ -170,6 +176,31 @@ describe("subagents (ADR 0014)", () => {
     expect(messageAgentVerdict({ ...known, state: "Archived" })).toEqual(
       refused("restore it to message agents"),
     )
+  })
+
+  test("a message with attachments goes to a mod that marks them, or wakes a new one (#278)", () => {
+    const known = { ...idle, agentKnown: true, hasAttachments: true, modAttaches: true }
+    expect(messageAgentVerdict(known)).toBe("deliver")
+    expect(messageAgentVerdict({ ...known, modAttaches: false })).toEqual(
+      refused("a mod from before attachments"),
+    )
+    // A woken Session's mod is a new one: a Runner behind the Hub wakes none (ADR 0011).
+    expect(messageAgentVerdict({ ...known, modAttaches: false, state: "Asleep" })).toBe("wake")
+    expect(messageAgentVerdict({ ...known, hasAttachments: false, modAttaches: false })).toBe(
+      "deliver",
+    )
+  })
+
+  test("an answer carries attachments only as a reply, and only to a mod that marks them (#278)", () => {
+    const reply = { replied: true, hasAttachments: true, modAttaches: true }
+    expect(answerAttachmentsRefusal(reply)).toBeUndefined()
+    expect(answerAttachmentsRefusal({ ...reply, replied: false })).toEqual(refused("Only a reply"))
+    expect(answerAttachmentsRefusal({ ...reply, modAttaches: false })).toEqual(
+      refused("a mod from before attachments"),
+    )
+    expect(
+      answerAttachmentsRefusal({ replied: false, hasAttachments: false, modAttaches: false }),
+    ).toBeUndefined()
   })
 
   test("only a Running agent of an Active Session can be stopped", () => {

@@ -190,7 +190,7 @@ describe("checkEvent", () => {
   })
 })
 
-test("helloBody says hello in the protocol's shape, and that this mod steers (#195)", () => {
+test("helloBody says hello in the protocol's shape: this mod steers (#195), and marks files (#278)", () => {
   const body = helloBody({
     sessionId: "s1",
     claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
@@ -203,6 +203,7 @@ test("helloBody says hello in the protocol's shape, and that this mod steers (#1
     claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     model: "claude-test",
     steers: true,
+    attaches: true,
   } as never)
 })
 
@@ -532,6 +533,32 @@ describe("attachments (#276)", () => {
     expect(context).toContain("Image #1 shot.png: id att-1")
     expect(context).toContain("Image #2 photo.jpg: id att-2")
     expect(attachmentToolName).toBe("mcp__hub-link-commands__attachment")
+  })
+
+  test("a steered prompt marks its files inside the frame, for Claude to open by marker alone (#278)", () => {
+    expect(steeredPrompt(participant, "and this", [shot])).toBe(
+      [
+        "<system-reminder>",
+        "Ada Lovelace sent a new message while you were working:",
+        "[Ada Lovelace] and this",
+        "[Image #1: shot.png (attachment att-1)]",
+        "",
+        "Address the message above as you continue this turn.",
+        "</system-reminder>",
+      ].join("\n"),
+    )
+  })
+
+  test("a reply to a question carries its sender's name and its files' markers (#278)", () => {
+    expect(
+      answerResult(
+        [],
+        { _tag: "Replied", text: "like this", attachments: [shot] } as never,
+        participant,
+      ),
+    ).toEqual({
+      deny: `${repliedPrefix}[Ada Lovelace] like this\n[Image #1: shot.png (attachment att-1)]`,
+    })
   })
 
   test("a PDF is marked and counted as one, numbered apart from the images (#277)", () => {

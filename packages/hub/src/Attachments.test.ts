@@ -50,9 +50,13 @@ const sized = (head: Uint8Array, size: number) => {
 }
 
 /** A Session alice created, started, with its mod linked; and a way to upload to it. */
-async function scene(database?: Layer.Layer<SqlClient.SqlClient, unknown>) {
+async function scene(
+  database?: Layer.Layer<SqlClient.SqlClient, unknown>,
+  hello: { readonly attaches?: boolean } = {},
+) {
   const hub = await startHub({ config: { devLogin: true }, ...(database && { database }) })
-  const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true)
+  const { token } = await issueRunnerToken(hub)
+  const runner = await openRunner(hub, token, [], undefined, true)
   const web = await openWeb(hub, "alice")
   await seedEnvironment(hub, "kddige/kndl", "dev:alice")
   web.send({
@@ -64,10 +68,10 @@ async function scene(database?: Layer.Layer<SqlClient.SqlClient, unknown>) {
   const start = await runner.take("StartSession")
   const sessionId = (await web.take("SessionCreated")).session.id
   const mod = modOf(hub, start.modToken)
-  expect((await mod.hello(sessionId)).status).toBe(200)
+  expect((await mod.hello(sessionId, hello.attaches ?? true)).status).toBe(200)
   runner.send({ _tag: "SessionStarted", sessionId, environmentVersion: 1 })
   await web.take("SessionUpdated", (m) => m.session.id === sessionId && !m.session.starting)
-  return { hub, web, runner, sessionId, mod }
+  return { hub, web, runner, token, sessionId, mod }
 }
 
 /** The fake mod of a Session, with its mod token. */
@@ -79,9 +83,23 @@ function modOf(hub: TestHub, token: string) {
       headers: { ...bearer(token), "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
+  const commandsOf = async <Tag extends Command["_tag"]>(tag: Tag, waitMs: number) => {
+    const deadline = Date.now() + waitMs
+    for (;;) {
+      const wait = Math.max(0, deadline - Date.now())
+      const response = await request(`/mod/commands?after=${after}&waitMs=${wait}`)
+      const body = (await response.json()) as ModCommandsEncoded
+      after = body.messages.at(-1)?.seq ?? after
+      const found = body.messages
+        .map((command) => command.message)
+        .filter((command): command is Extract<Command, { _tag: Tag }> => command._tag === tag)
+      if (found.length > 0 || Date.now() >= deadline) return found
+    }
+  }
   return {
     request,
-    hello: (sessionId: string) =>
+    /** Its hello: it steers, and, unless from before #278, marks the files of a steer. */
+    hello: (sessionId: string, attaches = true) =>
       request("/mod/hello", {
         _tag: "ModHello",
         protocolVersion: ProtocolVersion,
@@ -89,26 +107,14 @@ function modOf(hub: TestHub, token: string) {
         claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
         model: "claude-opus",
         steers: true,
+        ...(attaches && { attaches: true }),
       }),
     post: async (...messages: ReadonlyArray<ModEvent>) =>
       expect((await request("/mod/events", { messages })).status).toBe(204),
     /** The prompts delivered, waiting up to `waitMs` for one. */
-    deliveries: async (waitMs = 2_000) => {
-      const deadline = Date.now() + waitMs
-      for (;;) {
-        const wait = Math.max(0, deadline - Date.now())
-        const response = await request(`/mod/commands?after=${after}&waitMs=${wait}`)
-        const body = (await response.json()) as ModCommandsEncoded
-        after = body.messages.at(-1)?.seq ?? after
-        const found = body.messages
-          .map((command) => command.message)
-          .filter(
-            (command): command is Extract<Command, { _tag: "DeliverPrompt" }> =>
-              command._tag === "DeliverPrompt",
-          )
-        if (found.length > 0 || Date.now() >= deadline) return found
-      }
-    },
+    deliveries: (waitMs = 2_000) => commandsOf("DeliverPrompt", waitMs),
+    /** The commands of `tag` the Hub sent, waiting up to `waitMs` for one. */
+    commands: <Tag extends Command["_tag"]>(tag: Tag, waitMs = 2_000) => commandsOf(tag, waitMs),
   }
 }
 
@@ -355,22 +361,386 @@ describe("a prompt with attachments", () => {
     expect((await web.take("CommandFailed")).message).toContain("attachment")
     expect(await mod.deliveries(100)).toEqual([])
   })
+})
 
-  test("waits for the Turn to end rather than be steered into it", async () => {
-    const { hub, web, sessionId, mod } = await scene()
-    web.send({ _tag: "JoinSession", sessionId })
-    await mod.post({
-      _tag: "TurnStarted",
-      turnId: "t-1",
-      text: "go",
-      sender: { _tag: "FromTerminal" },
+type Scene = Awaited<ReturnType<typeof scene>>
+
+/** alice, as an event names her. */
+const aliceSender = { id: "dev:alice", login: "alice", name: "alice" }
+
+/** The Session's Turn t-1 runs, from the terminal. */
+const turnRuns = async ({ web, sessionId, mod }: Scene) => {
+  web.send({ _tag: "JoinSession", sessionId })
+  await mod.post({
+    _tag: "TurnStarted",
+    turnId: "t-1",
+    text: "go",
+    sender: { _tag: "FromTerminal" },
+  })
+  await web.take(
+    "SessionUpdated",
+    (m) => m.session.id === sessionId && m.session.currentTurn !== null,
+  )
+}
+
+/** The Session's agent a-1 runs, started by Turn t-1. */
+const agentRuns = async (at: Scene) => {
+  await turnRuns(at)
+  await at.mod.post({
+    _tag: "AgentStarted",
+    turnId: "t-1",
+    agentId: "a-1",
+    toolCallId: "call-a-1",
+    agentType: "general-purpose",
+    description: "Check the layout",
+    model: "claude-haiku-4-5",
+    background: true,
+  })
+  await at.web.take("SessionUpdated", (m) => m.session.agents?.some((a) => a.id === "a-1") === true)
+}
+
+/** Claude asks question q-1 in Turn t-1: the Session's Open question. */
+const questionOpen = async (at: Scene) => {
+  await turnRuns(at)
+  await at.mod.post({
+    _tag: "QuestionAsked",
+    turnId: "t-1",
+    toolCallId: "q-1",
+    questions: [
+      {
+        question: "Which layout?",
+        header: "Layout",
+        options: [{ label: "Grid" }],
+        multiSelect: false,
+      },
+    ],
+  })
+  await at.web.take("SessionUpdated", (m) => m.session.openQuestion !== undefined)
+}
+
+/** The Session's history, as someone who joins later gets it. */
+const historyOf = async ({ hub, sessionId }: Scene) => {
+  const later = await openWeb(hub, "bob")
+  later.send({ _tag: "JoinSession", sessionId })
+  return (await later.take("SessionHistory")).entries.map((entry) => entry.event)
+}
+
+/**
+ * Runs `send` on a Session whose Hub keeps its database, then starts the Hub again a day and an
+ * hour later, once it has swept the files nobody sent (#280): whether each file `send` names is
+ * still served.
+ */
+async function aDayLater(send: (at: Scene) => Promise<ReadonlyArray<string>>) {
+  const dir = testDatabaseDir("kndl-attachments-")
+  try {
+    const database = databaseAt(join(dir, "hub.db"))
+    const first = await scene(database)
+    const ids = await send(first)
+    await stopAll()
+    const second = await startHub({
+      config: { devLogin: true },
+      database,
+      clockAhead: Duration.sum(unsentAttachmentLifetime, Duration.hours(1)),
     })
-    await web.take("SessionUpdated", (m) => m.session.currentTurn !== null)
-    const shot = await uploaded(await upload(hub, web.cookie, sessionId, png))
-    web.send({ _tag: "SendPrompt", sessionId, text: "look", attachments: [shot] })
-    const queued = await web.take("PromptQueueChanged", (m) => m.queue.length === 1)
-    web.send({ _tag: "SteerPrompt", sessionId, promptId: queued.queue[0]?.id ?? "" })
-    expect((await web.take("CommandFailed")).message).toContain("attachments")
+    return await Promise.all(
+      ids.map((id) =>
+        fetch(`${second.url}/sessions/${first.sessionId}/attachments/${id}`, {
+          headers: { cookie: first.web.cookie },
+        }).then((response) => response.status),
+      ),
+    )
+  } finally {
+    await stopAll()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+const shotAttachment = (id: string) => ({
+  id,
+  name: "shot.png",
+  mediaType: "image/png" as const,
+  size: png.byteLength,
+})
+
+/** A prompt of shot.png alone, queued while Turn t-1 runs, and steered. */
+const steered = async (at: Scene) => {
+  await turnRuns(at)
+  const shot = await uploaded(
+    await upload(at.hub, at.web.cookie, at.sessionId, png, { name: "shot.png" }),
+  )
+  at.web.send({ _tag: "SendPrompt", sessionId: at.sessionId, text: "", attachments: [shot] })
+  const queued = await at.web.take("PromptQueueChanged", (m) => m.queue.length === 1)
+  const promptId = queued.queue[0]?.id ?? ""
+  at.web.send({ _tag: "SteerPrompt", sessionId: at.sessionId, promptId })
+  return { shot, promptId }
+}
+
+describe("a prompt with attachments steered into the running Turn (#278)", () => {
+  test("goes to the mod with its files; the Turn carries them for whoever joins later", async () => {
+    const at = await scene()
+    const { shot, promptId } = await steered(at)
+    const [steer] = await at.mod.commands("DeliverIntoTurn")
+    expect(steer).toMatchObject({ promptId, text: "", attachments: [shotAttachment(shot)] })
+
+    // What the mod says of its files counts for nothing: the queued prompt's are logged.
+    await at.mod.post({
+      _tag: "PromptSteered",
+      turnId: "t-1",
+      promptId,
+      text: "",
+      sender: aliceSender,
+      attachments: [{ ...shotAttachment(shot), name: "renamed.png" }],
+    })
+    await at.web.take("PromptQueueChanged", (m) => m.queue.length === 0)
+    const logged = (await historyOf(at)).find((event) => event._tag === "PromptSteered")
+    expect(logged).toMatchObject({ promptId, text: "", attachments: [shotAttachment(shot)] })
+  })
+
+  test("keeps its files past the day an unsent one lasts", async () => {
+    const statuses = await aDayLater(async (at) => {
+      const { shot, promptId } = await steered(at)
+      await at.mod.commands("DeliverIntoTurn")
+      await at.mod.post({
+        _tag: "PromptSteered",
+        turnId: "t-1",
+        promptId,
+        text: "",
+        sender: aliceSender,
+        attachments: [shotAttachment(shot)],
+      })
+      await at.web.take("PromptQueueChanged", (m) => m.queue.length === 0)
+      return [shot]
+    })
+    expect(statuses).toEqual([200])
+  })
+
+  test("waits for the Turn to end with a mod from before, which can't mark its files", async () => {
+    const at = await scene(undefined, { attaches: false })
+    await steered(at)
+    expect((await at.web.take("CommandFailed")).message).toContain("a mod from before attachments")
+    expect(await at.mod.commands("DeliverIntoTurn", 100)).toEqual([])
+  })
+
+  test("not queued, logs none of the attachments the mod claims that aren't the Session's", async () => {
+    const at = await scene()
+    await turnRuns(at)
+    // Another Session's file, which the mod names.
+    at.web.send({
+      _tag: "CreateSession",
+      requestId: "req-2",
+      repo: "kddige/kndl",
+      branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+    })
+    const other = (await at.web.take("SessionCreated", (m) => m.requestId === "req-2")).session.id
+    const theirs = await uploaded(await upload(at.hub, at.web.cookie, other, png))
+    const claimed = [{ ...shotAttachment(theirs), name: "theirs.png" }]
+    await at.mod.post(
+      {
+        _tag: "PromptSteered",
+        turnId: "t-1",
+        promptId: "p-gone",
+        text: "look",
+        sender: aliceSender,
+        attachments: claimed,
+      },
+      // Attachments alone, none the Session's: nothing to show.
+      {
+        _tag: "PromptSteered",
+        turnId: "t-1",
+        promptId: "p-gone-2",
+        text: "",
+        sender: aliceSender,
+        attachments: claimed,
+      },
+    )
+    const logged = (await historyOf(at)).filter((event) => event._tag === "PromptSteered")
+    expect(logged).toEqual([
+      {
+        _tag: "PromptSteered",
+        turnId: "t-1",
+        promptId: "p-gone",
+        text: "look",
+        sender: aliceSender,
+      },
+    ])
+  })
+})
+
+/** Alice messages agent a-1. */
+const message = (at: Scene, attachments: ReadonlyArray<string>, text = "like this") =>
+  at.web.send({
+    _tag: "MessageAgent",
+    sessionId: at.sessionId,
+    agentId: "a-1",
+    text,
+    attachments,
+  })
+
+describe("a message to a subagent with attachments (#278)", () => {
+  test("goes to the mod with its files, and is logged with them for whoever joins later", async () => {
+    const at = await scene()
+    await agentRuns(at)
+    const shot = await uploaded(
+      await upload(at.hub, at.web.cookie, at.sessionId, png, { name: "shot.png" }),
+    )
+    message(at, [shot])
+    const [sent] = await at.mod.commands("DeliverAgentMessage")
+    expect(sent).toMatchObject({
+      agentId: "a-1",
+      text: "like this",
+      attachments: [shotAttachment(shot)],
+    })
+    const logged = (await historyOf(at)).find((event) => event._tag === "AgentMessaged")
+    expect(logged).toMatchObject({ text: "like this", attachments: [shotAttachment(shot)] })
+  })
+
+  test("keeps its files past the day an unsent one lasts", async () => {
+    const statuses = await aDayLater(async (at) => {
+      await agentRuns(at)
+      const shot = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
+      message(at, [shot], "")
+      await at.mod.commands("DeliverAgentMessage")
+      return [shot]
+    })
+    expect(statuses).toEqual([200])
+  })
+
+  test("names only files its sender uploaded to this Session, and keeps none if not", async () => {
+    const statuses = await aDayLater(async (at) => {
+      await agentRuns(at)
+      const mine = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
+      const bob = await openWeb(at.hub, "bob")
+      const bobs = await uploaded(await upload(at.hub, bob.cookie, at.sessionId, png))
+      message(at, [mine, bobs])
+      expect((await at.web.take("CommandFailed")).message).toContain("attachment")
+      expect(await at.mod.commands("DeliverAgentMessage", 100)).toEqual([])
+      return [mine]
+    })
+    expect(statuses).toEqual([404])
+  })
+
+  test("to an Asleep Session that can't be woken, keeps none of its attachments", async () => {
+    let logged: ReadonlyArray<string> = []
+    const statuses = await aDayLater(async (at) => {
+      await agentRuns(at)
+      await at.mod.post({ _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 })
+      at.web.send({ _tag: "SleepSession", sessionId: at.sessionId })
+      await at.runner.take("StopSession")
+      at.runner.send({
+        _tag: "SessionStopped",
+        sessionId: at.sessionId,
+        reason: "Requested",
+        exitCode: 143,
+      })
+      await at.web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+      // Back without a Claude credential, its Runner can't start Claude Code to wake it.
+      await at.runner.close()
+      await openRunner(at.hub, at.token, [], undefined, true, { ownClaudeCredential: false })
+      const shot = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
+      message(at, [shot])
+      expect((await at.web.take("CommandFailed")).message).toContain("could not be woken")
+      logged = (await historyOf(at)).map((event) => event._tag)
+      return [shot]
+    })
+    expect(logged).not.toContain("AgentMessaged")
+    expect(statuses).toEqual([404])
+  })
+
+  test("with files is refused by a mod from before, which can't mark them", async () => {
+    const at = await scene(undefined, { attaches: false })
+    await agentRuns(at)
+    const shot = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
+    message(at, [shot])
+    expect((await at.web.take("CommandFailed")).message).toContain("a mod from before attachments")
+    expect(await at.mod.commands("DeliverAgentMessage", 100)).toEqual([])
+  })
+})
+
+/** Alice replies to question q-1. */
+const reply = (at: Scene, attachments: ReadonlyArray<string>) =>
+  at.web.send({
+    _tag: "AnswerQuestion",
+    sessionId: at.sessionId,
+    toolCallId: "q-1",
+    answer: { _tag: "Replied", text: "like this" },
+    attachments,
+  })
+
+describe("a reply to an Open question with attachments (#278)", () => {
+  test("goes to the mod with its files, and the question shows them to whoever joins later", async () => {
+    const at = await scene()
+    await questionOpen(at)
+    const shot = await uploaded(
+      await upload(at.hub, at.web.cookie, at.sessionId, png, { name: "shot.png" }),
+    )
+    reply(at, [shot])
+    const [answer] = await at.mod.commands("DeliverAnswer")
+    expect(answer?.answer).toEqual({
+      _tag: "Replied",
+      text: "like this",
+      attachments: [shotAttachment(shot)],
+    })
+
+    // The files are the Session's own, whatever the mod says of them.
+    await at.mod.post({
+      _tag: "QuestionClosed",
+      turnId: "t-1",
+      toolCallId: "q-1",
+      outcome: {
+        _tag: "Replied",
+        text: "like this",
+        attachments: [
+          { ...shotAttachment(shot), name: "renamed.png" },
+          { id: "made-up", name: "x.png", mediaType: "image/png" as const, size: 1 },
+        ],
+      },
+      by: aliceSender,
+    })
+    await at.web.take("SessionUpdated", (m) => m.session.openQuestion === undefined)
+    const closed = (await historyOf(at)).find((event) => event._tag === "QuestionClosed")
+    expect(closed).toMatchObject({
+      outcome: { _tag: "Replied", text: "like this", attachments: [shotAttachment(shot)] },
+    })
+  })
+
+  test("keeps its files past the day an unsent one lasts", async () => {
+    const statuses = await aDayLater(async (at) => {
+      await questionOpen(at)
+      const shot = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
+      reply(at, [shot])
+      await at.mod.commands("DeliverAnswer")
+      return [shot]
+    })
+    expect(statuses).toEqual([200])
+  })
+
+  test("names only files its sender uploaded, keeping none if not; only a reply carries files", async () => {
+    const statuses = await aDayLater(async (at) => {
+      await questionOpen(at)
+      const mine = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
+      reply(at, [mine, "made-up"])
+      expect((await at.web.take("CommandFailed")).message).toContain("attachment")
+      at.web.send({
+        _tag: "AnswerQuestion",
+        sessionId: at.sessionId,
+        toolCallId: "q-1",
+        answer: { _tag: "Dismissed" },
+        attachments: [mine],
+      })
+      expect((await at.web.take("CommandFailed")).message).toContain("Only a reply")
+      expect(await at.mod.commands("DeliverAnswer", 100)).toEqual([])
+      return [mine]
+    })
+    expect(statuses).toEqual([404])
+  })
+
+  test("with files is refused by a mod from before, which can't mark them", async () => {
+    const at = await scene(undefined, { attaches: false })
+    await questionOpen(at)
+    const shot = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
+    reply(at, [shot])
+    expect((await at.web.take("CommandFailed")).message).toContain("a mod from before attachments")
+    expect(await at.mod.commands("DeliverAnswer", 100)).toEqual([])
   })
 })
 
@@ -496,7 +866,14 @@ describe("an attachment nobody sent", () => {
 
   const uploadAs = (name: string) =>
     Effect.flatMap(Attachments, (attachments) =>
-      attachments.add({ sessionId, name, mediaType: "image/png", bytes: png, by: alice, at: 0 }),
+      attachments.add({
+        sessionId,
+        name,
+        mediaType: "image/png",
+        bytes: png,
+        by: alice,
+        at: 0,
+      }),
     )
 
   const send = (id: AttachmentId) =>

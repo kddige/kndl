@@ -53,7 +53,10 @@ export type Block =
       readonly kind: "message"
       readonly key: string
       readonly sender: Participant
+      /** As typed; empty for a message of files alone. */
       readonly text: string
+      /** The files it carried (#278). */
+      readonly attachments?: ReadonlyArray<Attachment>
     }
   /** A queued prompt steered into the Turn (#195), where Claude read it. */
   | ({ readonly kind: "steered" } & SteeredPrompt)
@@ -63,8 +66,10 @@ export interface SteeredPrompt {
   readonly key: string
   readonly promptId: PromptId
   readonly sender: Participant
-  /** As its sender wrote it. */
+  /** As its sender wrote it; empty for a prompt of files alone. */
   readonly text: string
+  /** The files it carried (#278). */
+  readonly attachments?: ReadonlyArray<Attachment>
 }
 
 /** A question Claude asked with AskUserQuestion on the main loop (#193), and how it closed. */
@@ -589,6 +594,7 @@ class Folding {
           key: `message-${entry.seq}`,
           sender: event.sender,
           text: event.text,
+          ...(event.attachments !== undefined && { attachments: event.attachments }),
         })
         break
       case "TurnStopRequested": {
@@ -603,6 +609,7 @@ class Folding {
           promptId: event.promptId,
           sender: event.sender,
           text: event.text,
+          ...(event.attachments !== undefined && { attachments: event.attachments }),
         })
         break
       case "SteeredPromptRead": {

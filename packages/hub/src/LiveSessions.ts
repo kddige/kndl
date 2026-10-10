@@ -155,6 +155,8 @@ interface Pieces {
   readonly steering: PerSession<Map<PromptId, ParticipantId>>
   /** Sessions whose mod said in its hello that it steers (#195). */
   readonly steers: SessionSet
+  /** Sessions whose mod said in its hello that it marks files beyond prompts (#278). */
+  readonly attaches: SessionSet
   /**
    * Sessions whose Claude Code was started or woken and whose new mod hasn't said hello yet.
    * Prompts wait for that hello.
@@ -253,8 +255,16 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
    * was sent are dropped, since it won't answer them.
    */
   readonly relaunched: (id: SessionId) => void
-  /** The Session's mod said hello, saying whether it steers (#195): prompts may go to it. */
-  readonly modHello: (id: SessionId, steers: boolean) => void
+  /**
+   * The Session's mod said hello, saying whether it steers (#195) and marks the files of a steered
+   * prompt, a message to a subagent or a reply (#278): prompts may go to it.
+   */
+  readonly modHello: (
+    id: SessionId,
+    hello: { readonly steers: boolean; readonly attaches: boolean },
+  ) => void
+  /** Whether the Session's mod said it marks the files of a message or a reply (#278). */
+  readonly modAttaches: (id: SessionId) => boolean
 
   // ── Steering (ADR 0018) ──
 
@@ -271,7 +281,7 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
       readonly by: ParticipantId
       readonly turnRunning: boolean
       readonly queued: boolean
-      /** It carries files (#276), which a steer can't show Claude yet. */
+      /** It carries files (#276), which only a mod that says it `attaches` marks (#278). */
       readonly hasAttachments: boolean
     },
   ) => "ok" | "already" | Refusal
@@ -418,6 +428,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "inFlight",
     "steering",
     "steers",
+    "attaches",
     "starting",
     "starts",
     "openPorts",
@@ -439,6 +450,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "inFlight",
     "steering",
     "steers",
+    "attaches",
     "starting",
     "starts",
     "openPorts",
@@ -460,6 +472,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     // Its mod token is revoked: a steer under way is never answered, by a mod that is gone.
     "steering",
     "steers",
+    "attaches",
     // Its Sandbox is destroyed, and what listened or failed in it with it: a Runner that
     // drops off before it stops it leaves nothing to show after a restore.
     "openPorts",
@@ -486,6 +499,7 @@ const clearedWhen: { readonly [How in SessionEnd]: ReadonlyArray<Piece> } = {
     "inFlight",
     "steering",
     "steers",
+    "attaches",
     "starting",
     "stopping",
     "restarting",
@@ -519,6 +533,7 @@ export const makeLiveSessions = (): LiveSessions => {
     inFlight: new Map(),
     steering: new Map(),
     steers: new Set(),
+    attaches: new Set(),
     starting: new Set(),
     stopping: new Map(),
     restarting: new Map(),
@@ -567,11 +582,14 @@ export const makeLiveSessions = (): LiveSessions => {
       pieces.steering.delete(id)
       pieces.starting.add(id)
     },
-    modHello: (id, steers) => {
+    modHello: (id, { steers, attaches }) => {
       if (steers) pieces.steers.add(id)
       else pieces.steers.delete(id)
+      if (attaches) pieces.attaches.add(id)
+      else pieces.attaches.delete(id)
       pieces.starting.delete(id)
     },
+    modAttaches: (id) => pieces.attaches.has(id),
     steer: (id, { promptId, by, turnRunning, queued, hasAttachments }) => {
       const verdict = steerVerdict({
         queued,
@@ -581,6 +599,7 @@ export const makeLiveSessions = (): LiveSessions => {
         turnRunning: turnRunning && !pieces.stopping.has(id),
         modSteers: pieces.steers.has(id),
         hasAttachments,
+        modAttaches: pieces.attaches.has(id),
       })
       if (verdict !== "ok") return verdict
       // It stays in its place until the mod says it joined the Turn.

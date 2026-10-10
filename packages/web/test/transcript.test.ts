@@ -99,6 +99,61 @@ describe("buildTranscript", () => {
     expect(alone).toMatchObject({ prompt: "", attachments: [shot] })
   })
 
+  test("a steered prompt, a message to an agent and a reply show the files they carried (#278)", () => {
+    const shot = { id: "att-1", name: "shot.png", mediaType: "image/png", size: 12 } as const
+    const transcript = transcriptOf(
+      entries([
+        { _tag: "TurnStarted", turnId: "t-1", text: "research", sender: fromAlice },
+        { _tag: "ToolCallStarted", turnId: "t-1", toolCallId: "c-1", tool: "Agent", input: "{}" },
+        agentStarted("a-1", "c-1", true),
+        {
+          _tag: "AgentMessaged",
+          agentId: "a-1",
+          sender: bob,
+          text: "",
+          attachments: [shot],
+        },
+        {
+          _tag: "PromptSteered",
+          turnId: "t-1",
+          promptId: "p-2",
+          text: "",
+          sender: bob,
+          attachments: [shot],
+        },
+        { _tag: "SteeredPromptRead", turnId: "t-1", promptId: "p-2" },
+        {
+          _tag: "QuestionAsked",
+          turnId: "t-1",
+          toolCallId: "q-1",
+          questions: [{ question: "Which?", header: "", options: [], multiSelect: false }],
+        },
+        {
+          _tag: "QuestionClosed",
+          turnId: "t-1",
+          toolCallId: "q-1",
+          outcome: { _tag: "Replied", text: "like this", attachments: [shot] },
+          by: bob,
+        },
+      ]),
+    )
+    const [turn] = turns(transcript.items)
+    const agent = turn?.blocks.find((block) => block.kind === "agent")
+    expect(agent?.kind === "agent" && agent.agent.blocks).toEqual([
+      { kind: "message", key: "message-3", sender: bob, text: "", attachments: [shot] },
+    ] as never)
+    expect(turn?.blocks.find((block) => block.kind === "steered")).toMatchObject({
+      text: "",
+      attachments: [shot],
+    })
+    const question = turn?.blocks.find((block) => block.kind === "question")
+    expect(question?.kind === "question" && question.question.closed?.outcome).toEqual({
+      _tag: "Replied",
+      text: "like this",
+      attachments: [shot],
+    } as never)
+  })
+
   test("a tool call's start and end are one block; text either side stays separate", () => {
     const [turn] = turns(
       build(

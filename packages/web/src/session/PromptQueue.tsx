@@ -54,13 +54,14 @@ const styles = stylex.create({
   },
 })
 
-const hasAttachments = (prompt: QueuedPrompt) => (prompt.attachments?.length ?? 0) > 0
+const steerNow =
+  "Send it into the running Turn now, as Claude Code does with a prompt typed while it works"
 
-/** What Steer does, or why it can't for this prompt: one with files waits for the Turn (#278). */
+/** What Steer does; for a prompt with attachments, how they reach Claude (#278). */
 const steerTip = (prompt: QueuedPrompt) =>
-  hasAttachments(prompt)
-    ? "A prompt with attachments can't be steered yet: it runs when the Turn ends."
-    : "Send it into the running Turn now, as Claude Code does with a prompt typed while it works"
+  (prompt.attachments?.length ?? 0) > 0
+    ? `${steerNow}: its attachments go with it as markers, which Claude opens.`
+    : steerNow
 
 /** A queued prompt as its row shows it: its text, and how many images and PDFs it carries. */
 function queuedText(prompt: QueuedPrompt): string {
@@ -107,8 +108,6 @@ export function PromptQueue({
                   icon={<SteerIcon />}
                   aria-label={`Steer ${prompt.sender.name}'s prompt into the running Turn`}
                   loading={steering.has(prompt.id)}
-                  disabled={hasAttachments(prompt)}
-                  focusableWhenDisabled
                   onClick={() => onSteer(prompt)}
                 >
                   Steer

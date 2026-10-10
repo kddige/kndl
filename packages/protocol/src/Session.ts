@@ -428,8 +428,16 @@ export const joinAnswers = (labels: ReadonlyArray<string>): string =>
 export const QuestionAnswered = Schema.TaggedStruct("Answered", { answers: QuestionAnswers })
 export type QuestionAnswered = typeof QuestionAnswered.Type
 
-/** Someone replied in their own words instead of answering, which Claude reads as their response. */
-export const QuestionReplied = Schema.TaggedStruct("Replied", { text: Schema.NonEmptyString })
+/**
+ * Someone replied in their own words instead of answering, which Claude reads as their response,
+ * with the files they attached to it (#278), which Claude opens by their markers. The web sends
+ * the files' ids beside it (AnswerQuestion), and the Hub puts the files here. A reply is in their
+ * own words: files alone are not one.
+ */
+export const QuestionReplied = Schema.TaggedStruct("Replied", {
+  text: Schema.NonEmptyString,
+  attachments: Schema.optionalKey(PromptAttachments),
+})
 export type QuestionReplied = typeof QuestionReplied.Type
 
 /** Someone dismissed the question, as Esc does in Claude Code's dialog: Claude is told no. */
@@ -443,6 +451,17 @@ export const QuestionAnswer = Schema.Union([
   QuestionDismissed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type QuestionAnswer = typeof QuestionAnswer.Type
+
+/**
+ * An answer as a Participant sends it (web AnswerQuestion): a reply's attachments come as ids
+ * beside it, and the Hub puts them on the reply it sends the mod (#278).
+ */
+export const QuestionAnswerFromWeb = Schema.Union([
+  QuestionAnswered,
+  Schema.TaggedStruct("Replied", { text: Schema.NonEmptyString }),
+  QuestionDismissed,
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type QuestionAnswerFromWeb = typeof QuestionAnswerFromWeb.Type
 
 /**
  * How an Open question closed: answered, replied to or dismissed by a Participant or at the

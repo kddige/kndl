@@ -28,6 +28,7 @@ import {
   ProtocolVersion,
   type SessionEvent,
   type SessionId,
+  type ToolCallId,
 } from "@kndl/protocol"
 import { Schema } from "effect"
 import { HubClient } from "../../src/hub/client.ts"
@@ -45,10 +46,34 @@ interface Scene {
   readonly dropConnections: () => void
 }
 
+interface SceneOptions {
+  readonly modSteers?: boolean
+  readonly modAttaches?: boolean
+}
+
+/** The question Claude asks when a prompt says "ask" (#193). */
+const question = {
+  question: "Which layout?",
+  header: "Layout",
+  options: [{ label: "Grid" }],
+  multiSelect: false,
+}
+
+/** The subagent Claude starts in the background when a prompt says "delegate" (ADR 0014). */
+const agent = {
+  agentId: "a-1",
+  agentType: "general-purpose",
+  description: "Check the layout",
+  model: "claude-haiku-4-5",
+}
+
 interface Adapter {
   readonly name: string
-  /** A Scene; its mod says it steers unless `modSteers` is false. */
-  readonly scene: (options?: { readonly modSteers?: boolean }) => Promise<Scene>
+  /**
+   * A Scene; its mod says it steers unless `modSteers` is false, and marks attachments beyond
+   * prompts unless `modAttaches` is false (#278).
+   */
+  readonly scene: (options?: SceneOptions) => Promise<Scene>
 }
 
 const repo = "kddige/kndl"
@@ -83,17 +108,34 @@ async function started(client: HubClient): Promise<SessionId> {
 
 const fake: Adapter = {
   name: "the fake Hub",
-  scene: async ({ modSteers = true } = {}) => {
-    // Claude works on every prompt until it is stopped.
+  scene: async ({ modSteers = true, modAttaches = true } = {}) => {
+    // Claude works on every prompt until it is stopped, asking or delegating first if told to.
+    const working = { kind: "pause", steps: 1e6 } as const
     const hub = new FakeHub({
       stepMs: 2,
       autoplay: false,
-      reply: () => [{ kind: "pause", steps: 1e6 }],
+      reply: (text) =>
+        text === "ask"
+          ? [{ kind: "question", questions: [question] }, working]
+          : text === "delegate"
+            ? [
+                {
+                  kind: "agent",
+                  ...agent,
+                  prompt: "Look at the layout.",
+                  background: true,
+                  steps: [working],
+                  result: "Done.",
+                },
+                working,
+              ]
+            : [working],
     })
     cleanups.push(() => hub.dispose())
     const client = startClient(hub)
     const sessionId = await started(client)
     if (!modSteers) hub.modFromBeforeSteering(sessionId)
+    if (!modAttaches) hub.modFromBeforeAttaching(sessionId)
     return {
       client,
       sessionId,
@@ -190,24 +232,54 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
     switch (command._tag) {
       case "DeliverPrompt": {
         turn = { turnId: `t-${++turns}` }
+        const { turnId } = turn
         await post({
           _tag: "TurnStarted",
-          turnId: turn.turnId,
+          turnId,
           text: command.text,
           sender: { _tag: "FromParticipant", participant: command.sender },
           promptId: command.promptId,
         })
+        if (command.text === "ask")
+          await post({ _tag: "QuestionAsked", turnId, toolCallId: "q-1", questions: [question] })
+        if (command.text === "delegate")
+          await post({
+            _tag: "AgentStarted",
+            turnId,
+            toolCallId: "call-a-1",
+            ...agent,
+            background: true,
+          })
+        return
+      }
+      // The first answer is Claude's: the mod reports the question closed with it.
+      case "DeliverAnswer": {
+        if (turn === null) return
+        await post({
+          _tag: "QuestionClosed",
+          turnId: turn.turnId,
+          toolCallId: command.toolCallId,
+          outcome: command.answer,
+          by: command.sender,
+        })
         return
       }
       case "DeliverIntoTurn": {
-        const { promptId, text, sender } = command
+        const { promptId, text, sender, attachments } = command
         if (turn === null) {
           await post({ _tag: "PromptFailed", promptId, message: "no Turn is running" })
           return
         }
         const { turnId } = turn
         await post(
-          { _tag: "PromptSteered", turnId, promptId, text, sender },
+          {
+            _tag: "PromptSteered",
+            turnId,
+            promptId,
+            text,
+            sender,
+            ...(attachments !== undefined && { attachments }),
+          },
           { _tag: "SteeredPromptRead", turnId, promptId },
         )
         return
@@ -223,8 +295,11 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
   }
   let loop: Promise<void> = Promise.resolve()
   return {
-    /** Says hello, saying whether it steers, and then polls for the Hub's commands. */
-    hello: async (steers: boolean) => {
+    /**
+     * Says hello, saying whether it steers and marks attachments beyond prompts, and then polls
+     * for the Hub's commands.
+     */
+    hello: async (steers: boolean, attaches: boolean) => {
       const hello = await request("/mod/hello", {
         _tag: "ModHello",
         protocolVersion: ProtocolVersion,
@@ -232,6 +307,7 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
         claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
         model: "claude-opus",
         ...(steers && { steers: true }),
+        ...(attaches && { attaches: true }),
       })
       loop = (async () => {
         while (!stopping.signal.aborted) {
@@ -253,7 +329,7 @@ function scriptedMod(hub: TestHub, sessionId: string, modToken: string) {
 
 const real: Adapter = {
   name: "the real Hub",
-  scene: async ({ modSteers = true } = {}) => {
+  scene: async ({ modSteers = true, modAttaches = true } = {}) => {
     const hub = await startHub({ config: { devLogin: true } })
     // Last, once its clients and mod are gone: its shutdown waits for their connections.
     cleanups.push(() => hub.stop())
@@ -274,7 +350,7 @@ const real: Adapter = {
     const mod = scriptedMod(hub, start.sessionId, start.modToken)
     // Stopped before the clients and the Hub, whose shutdown waits for its held poll.
     cleanups.push(() => mod.stop())
-    expect((await mod.hello(modSteers)).status).toBe(200)
+    expect((await mod.hello(modSteers, modSteers && modAttaches)).status).toBe(200)
     runner.send({ _tag: "SessionStarted", sessionId: start.sessionId, environmentVersion: 1 })
     return {
       client,
@@ -286,6 +362,20 @@ const real: Adapter = {
     }
   },
 }
+
+/** shot.png, uploaded to the Scene's Session through its client. */
+const uploadShot = (scene: Scene) =>
+  scene.client.uploadAttachment(
+    scene.sessionId,
+    new File([png], "shot.png", { type: "image/png" }),
+    { onProgress: () => {}, signal: new AbortController().signal },
+  )
+const shotOf = (id: AttachmentId) => ({
+  id,
+  name: "shot.png",
+  mediaType: "image/png" as const,
+  size: png.byteLength,
+})
 
 // ── The contract ─────────────────────────────────────────────────────────
 
@@ -482,7 +572,7 @@ for (const adapter of [fake, real]) {
       await eventually(() => expect(otherSession.events()).toEqual(session.events()))
     })
 
-    test("an image alone is a prompt: its Turn carries it, and a steer waits for the Turn (#276)", async () => {
+    test("an image alone is a prompt: its Turn carries it (#276)", async () => {
       const scene = await adapter.scene()
       const session = await turnRunning(scene)
       const file = new File([png], "shot.png", { type: "image/png" })
@@ -494,16 +584,94 @@ for (const adapter of [fake, real]) {
       expect(progress.at(-1)).toBe(png.byteLength)
       expect(scene.client.sendPrompt(scene.sessionId, "", [id])).toBe(true)
       await eventually(() => expect(session.queue()).toEqual([""]))
-      scene.client.steerPrompt(scene.sessionId, session.queued(""))
-      await eventually(() =>
-        expect(session.refusals("SteerPrompt")).toEqual([expect.stringContaining("attachments")]),
-      )
 
       scene.client.stopTurn(scene.sessionId)
       await eventually(() => expect(session.ofTag("TurnStarted")).toHaveLength(2))
       expect(session.ofTag("TurnStarted")[1]?.attachments).toEqual([
         { id, name: "shot.png", mediaType: "image/png", size: png.byteLength },
       ])
+    })
+
+    test("a prompt with an image steered into the running Turn carries it there (#278)", async () => {
+      const scene = await adapter.scene()
+      const session = await turnRunning(scene)
+      const file = new File([png], "shot.png", { type: "image/png" })
+      const id = await scene.client.uploadAttachment(scene.sessionId, file, {
+        onProgress: () => {},
+        signal: new AbortController().signal,
+      })
+      expect(scene.client.sendPrompt(scene.sessionId, "", [id])).toBe(true)
+      await eventually(() => expect(session.queue()).toEqual([""]))
+      scene.client.steerPrompt(scene.sessionId, session.queued(""))
+      await eventually(() => expect(session.ofTag("PromptSteered")).toHaveLength(1))
+      expect(session.ofTag("PromptSteered")[0]).toMatchObject({
+        text: "",
+        attachments: [{ id, name: "shot.png", mediaType: "image/png", size: png.byteLength }],
+      })
+      expect(session.queue()).toEqual([])
+    })
+
+    test("a message to a subagent carries its attachments, but not to a mod from before (#278)", async () => {
+      for (const modAttaches of [true, false]) {
+        const scene = await adapter.scene({ modAttaches })
+        const session = watch(scene.client, scene.sessionId)
+        scene.client.sendPrompt(scene.sessionId, "delegate")
+        await eventually(() =>
+          expect(session.summary()?.agents?.some((one) => one.id === agent.agentId)).toBe(true),
+        )
+        const id = await uploadShot(scene)
+        expect(
+          scene.client.messageAgent(scene.sessionId, agent.agentId as never, "look", [id]),
+        ).toBe(true)
+        if (modAttaches) {
+          await eventually(() => expect(session.ofTag("AgentMessaged")).toHaveLength(1))
+          expect(session.ofTag("AgentMessaged")[0]).toMatchObject({
+            text: "look",
+            attachments: [shotOf(id)],
+          })
+        } else {
+          await eventually(() =>
+            expect(session.refusals("MessageAgent")).toEqual([
+              expect.stringContaining("a mod from before attachments"),
+            ]),
+          )
+          expect(session.ofTag("AgentMessaged")).toEqual([])
+        }
+      }
+    })
+
+    test("a reply to Claude's question carries its attachments, but not to a mod from before (#278)", async () => {
+      for (const modAttaches of [true, false]) {
+        const scene = await adapter.scene({ modAttaches })
+        const session = watch(scene.client, scene.sessionId)
+        scene.client.sendPrompt(scene.sessionId, "ask")
+        await eventually(() => expect(session.summary()?.openQuestion).toBeDefined())
+        const toolCallId = session.summary()?.openQuestion?.toolCallId as ToolCallId
+        const id = await uploadShot(scene)
+        // Only a reply carries attachments.
+        scene.client.answerQuestion(scene.sessionId, toolCallId, { _tag: "Dismissed" }, [id])
+        scene.client.answerQuestion(
+          scene.sessionId,
+          toolCallId,
+          { _tag: "Replied", text: "like this" },
+          [id],
+        )
+        if (modAttaches) {
+          await eventually(() => expect(session.ofTag("QuestionClosed")).toHaveLength(1))
+          expect(session.refusals("AnswerQuestion")).toEqual([
+            "Only a reply to a question carries attachments.",
+          ])
+          expect(session.ofTag("QuestionClosed")[0]?.outcome).toEqual({
+            _tag: "Replied",
+            text: "like this",
+            attachments: [shotOf(id)],
+          })
+        } else {
+          await eventually(() => expect(session.refusals("AnswerQuestion")).toHaveLength(2))
+          expect(session.refusals("AnswerQuestion")[1]).toContain("a mod from before attachments")
+          expect(session.ofTag("QuestionClosed")).toEqual([])
+        }
+      }
     })
 
     test("a PDF goes with a prompt, and its Turn carries it as one (#277)", async () => {

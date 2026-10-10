@@ -200,3 +200,36 @@ test("× dismisses the question, and everyone sees who did", async () => {
   await eventually(() => expect(card()).toBeNull())
   expect(conversation()).toContain("Alice Kim dismissed the question")
 })
+
+test("an image pasted into a reply goes with it, and shows under the question for everyone (#278)", async () => {
+  const { hub, page, card, field, conversation } = await asked()
+  const clipboardData = new DataTransfer()
+  clipboardData.items.add(new File([new Uint8Array(8)], "shot.png", { type: "image/png" }))
+  await step(() =>
+    field("Reply").dispatchEvent(
+      new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }),
+    ),
+  )
+  await eventually(() =>
+    expect(page.querySelector('[aria-label="Attachments"]')?.textContent).toContain("shot.png"),
+  )
+  // The image alone is no reply.
+  expect(button("Reply", page).disabled).toBe(true)
+  await step(() => typeInto(field("Reply"), "Like this one"))
+  await eventually(() => expect(button("Reply", page).disabled).toBe(false))
+  await step(() => button("Reply", page).click())
+
+  const sent = hub.received.findLast((message) => message._tag === "AnswerQuestion")
+  expect(sent).toMatchObject({
+    answer: { _tag: "Replied", text: "Like this one" },
+    attachments: [expect.any(String)],
+  })
+  await eventually(() => expect(card()).toBeNull())
+  await eventually(() =>
+    expect(conversation()).toContain("Alice Kim replied with 1 image: “Like this one”"),
+  )
+  expect(
+    page.querySelector('[aria-label="The reply\'s attachments"] img[alt="shot.png"]'),
+  ).not.toBeNull()
+  expect(page.querySelector('[aria-label="Attachments"]')).toBeNull()
+})

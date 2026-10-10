@@ -165,6 +165,7 @@ describe("the Hub link", () => {
       claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",
       steers: true,
+      attaches: true,
     })
   })
 
@@ -360,7 +361,9 @@ describe("a prompt steered into the running Turn (#195)", () => {
     const clock = mock.clock(on)
     on("state.get", (_, e) => {
       const value =
-        e.key === "steering" ? { promptId: "pr-2", sender: ada, text: "Also the changelog." } : null
+        e.key === "steering"
+          ? { promptId: "pr-2", sender: ada, text: "Also the changelog.", appended: framed }
+          : null
       return { value: { value, version: 1 } } as never
     })
     on("turn.start", (_, e) => ({ turnId: e.turnId }))

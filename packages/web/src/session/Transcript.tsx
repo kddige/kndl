@@ -1,7 +1,5 @@
 import {
   type AgentId,
-  type Attachment,
-  attachmentKind,
   type Participant,
   type SessionId,
   type SessionStateChanged,
@@ -11,7 +9,6 @@ import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, memo, type ReactNode, useContext, useState } from "react"
 import { clock, count, duration, statusOf } from "../app/format.ts"
-import { useHub } from "../app/hub.tsx"
 import type {
   AgentView,
   Block,
@@ -35,9 +32,9 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
-import { fileSize } from "./attachments.ts"
 import { modelSwitchedText } from "./models.ts"
 import { QuestionChip } from "./QuestionChip.tsx"
+import { SentAttachments, SessionContext } from "./SentAttachments.tsx"
 import { ToolCall } from "./ToolCall.tsx"
 
 /**
@@ -47,9 +44,6 @@ import { ToolCall } from "./ToolCall.tsx"
 type NameTurnModel = (model: string) => string | undefined
 
 const TurnModelContext = createContext<NameTurnModel>(() => undefined)
-
-/** The Session the transcript is of, for links to its agents. */
-const SessionContext = createContext<SessionId | null>(null)
 
 const styles = stylex.create({
   list: {
@@ -82,43 +76,7 @@ const styles = stylex.create({
     overflowWrap: "anywhere",
     lineHeight: leading.normal,
   },
-  attachments: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: space.s2,
-    marginInlineStart: space.s8,
-    padding: 0,
-    listStyle: "none",
-  },
-  thumbnailLink: { display: "block", borderRadius: radius.md },
-  thumbnail: {
-    display: "block",
-    maxWidth: "12rem",
-    maxHeight: "8rem",
-    objectFit: "contain",
-    borderRadius: radius.md,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    backgroundColor: color.surfaceMuted,
-  },
-  file: {
-    display: "inline-flex",
-    flexDirection: "column",
-    maxWidth: "16rem",
-    paddingBlock: space.s1_5,
-    paddingInline: space.s2,
-    borderRadius: radius.md,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: color.border,
-    backgroundColor: color.surfaceMuted,
-    color: "inherit",
-    fontSize: text.xs,
-    textDecoration: { default: "none", ":hover": "underline" },
-  },
-  fileName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  fileSize: { color: color.textSubtle },
+  sentFiles: { marginInlineStart: space.s8 },
   claudeMark: {
     display: "inline-flex",
     alignItems: "center",
@@ -325,9 +283,11 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
         </time>
       </div>
       {turn.prompt !== "" && <div {...stylex.props(styles.prompt)}>{turn.prompt}</div>}
-      {turn.attachments !== undefined && turn.attachments.length > 0 && (
-        <PromptAttachments attachments={turn.attachments} />
-      )}
+      <SentAttachments
+        attachments={turn.attachments}
+        label="The prompt's attachments"
+        sx={styles.sentFiles}
+      />
       <div {...stylex.props(styles.speaker)}>
         <span aria-hidden="true" {...stylex.props(styles.claudeMark)}>
           C
@@ -353,55 +313,6 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
     </article>
   )
 })
-
-/**
- * The files a Turn's prompt carried: each image as a thumbnail that opens full size in a tab of
- * its own (#276), each PDF as a chip, its name and size, that downloads it (#277).
- */
-function PromptAttachments({ attachments }: { attachments: ReadonlyArray<Attachment> }) {
-  const hub = useHub()
-  const sessionId = useContext(SessionContext)
-  if (sessionId === null) return null
-  return (
-    <ul aria-label="The prompt's attachments" {...stylex.props(styles.attachments)}>
-      {attachments.map((attachment) => {
-        const url = hub.attachmentUrl(sessionId, attachment.id)
-        if (attachmentKind(attachment.mediaType) === "pdf")
-          return (
-            <li key={attachment.id}>
-              <a
-                href={url}
-                download={attachment.name}
-                title={`Download ${attachment.name}`}
-                {...stylex.props(styles.file, focus.ring)}
-              >
-                <span {...stylex.props(styles.fileName)}>{attachment.name}</span>
-                <span {...stylex.props(styles.fileSize)}>PDF · {fileSize(attachment.size)}</span>
-              </a>
-            </li>
-          )
-        return (
-          <li key={attachment.id}>
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              title={attachment.name}
-              {...stylex.props(styles.thumbnailLink, focus.ring)}
-            >
-              <img
-                src={url}
-                alt={attachment.name}
-                loading="lazy"
-                {...stylex.props(styles.thumbnail)}
-              />
-            </a>
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
 
 /**
  * Who prompted a Turn: a person, the terminal, a subagent that ended (ADR 0014), or, in history
@@ -516,7 +427,12 @@ function BlockView({ block, ended }: { block: Block; ended: boolean }) {
             <Avatar name={block.sender.name} src={block.sender.avatarUrl} size="sm" />
             <span {...stylex.props(styles.name)}>{block.sender.name}</span>
           </div>
-          <div {...stylex.props(styles.messageText)}>{block.text}</div>
+          {block.text !== "" && <div {...stylex.props(styles.messageText)}>{block.text}</div>}
+          <SentAttachments
+            attachments={block.attachments}
+            label="The message's attachments"
+            sx={styles.sentFiles}
+          />
         </div>
       )
     case "steered":
@@ -544,7 +460,16 @@ function Steered({
           {note}
         </span>
       </div>
-      <div {...stylex.props(styles.messageText, unread && styles.messageUnread)}>{prompt.text}</div>
+      {prompt.text !== "" && (
+        <div {...stylex.props(styles.messageText, unread && styles.messageUnread)}>
+          {prompt.text}
+        </div>
+      )}
+      <SentAttachments
+        attachments={prompt.attachments}
+        label="The prompt's attachments"
+        sx={styles.sentFiles}
+      />
     </div>
   )
 }

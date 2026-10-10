@@ -251,6 +251,12 @@ import {
   repoKey,
   sameRepo,
   messageAgentVerdict,
+  answerAttachmentsRefusal,
+  attachmentsNotSent,
+  type Attachment,
+  type AttachmentId,
+  PromptSteered,
+  type QuestionAnswer,
   restartVerdict,
   sendPromptRefusal,
   type SessionNow,
@@ -357,6 +363,10 @@ export { startLogLimit } from "./LiveSessions.ts"
  */
 export const lastOutputText = (needles: Needles, output: string) =>
   redactText(needles, output).slice(-MaxLastOutputLength)
+
+/** `attachments` as an event's optional field: absent for none. */
+const carrying = (logged: ReadonlyArray<Attachment>) =>
+  logged.length > 0 ? { attachments: logged } : {}
 
 /** Whether two lists of Open ports say the same. */
 const samePorts = (a: ReadonlyArray<OpenPort>, b: ReadonlyArray<OpenPort>) =>
@@ -2102,6 +2112,55 @@ export class SessionRelay extends Context.Service<
           return session
         })
 
+        /**
+         * The attachments a prompt, message or reply names, marked sent by you, so they are kept
+         * past the day an unsent one lasts (#280): all of them, if each is one you uploaded to the
+         * Session; or none, the command refused, saying which `what` it was.
+         */
+        const markSentOrRefuse = Effect.fn("SessionRelay.markSentOrRefuse")(function* (
+          message: WebToHub & { readonly sessionId: SessionId },
+          ids: ReadonlyArray<AttachmentId> | undefined,
+          what: string,
+        ) {
+          const { sessionId } = message
+          const marked = yield* attachments.markSent(
+            sessionId,
+            ids ?? [],
+            you.id,
+            yield* Clock.currentTimeMillis,
+          )
+          if (Option.isNone(marked))
+            refuse(message, attachmentsNotSent(what).refusal, { sessionId })
+          return marked
+        })
+
+        /**
+         * The answer the mod is sent, from the web's (#278): a reply with the attachments sent with
+         * it, marked sent, or any other answer as it is; or none, the answer refused.
+         */
+        const attachToReply = Effect.fn("SessionRelay.attachToReply")(function* (
+          message: Extract<WebToHub, { readonly _tag: "AnswerQuestion" }>,
+        ) {
+          const { sessionId, answer } = message
+          const ids = message.attachments ?? []
+          const refusal = answerAttachmentsRefusal({
+            replied: answer._tag === "Replied",
+            hasAttachments: ids.length > 0,
+            modAttaches: live.modAttaches(sessionId),
+          })
+          if (refusal !== undefined) {
+            refuse(message, refusal.refusal, { sessionId })
+            return Option.none<QuestionAnswer>()
+          }
+          if (answer._tag !== "Replied" || ids.length === 0)
+            return Option.some<QuestionAnswer>(answer)
+          const sent = yield* markSentOrRefuse(message, ids, "reply")
+          return Option.map(sent, (carried): QuestionAnswer => ({
+            ...answer,
+            attachments: carried,
+          }))
+        })
+
         const handle = Effect.fn("SessionRelay.receiveWeb")(function* (message: RelayedCommand) {
           if (isEnvironmentCommand(message))
             return yield* environmentRelay.receiveWeb(client, message)
@@ -2208,30 +2267,16 @@ export class SessionRelay extends Context.Service<
               // A Frozen Session's prompts wait in the queue for its Runner to return.
               const cantSend = sendPromptRefusal(session.value)
               if (cantSend !== undefined) return refuse(message, cantSend.refusal, { sessionId })
-              // Its files are ones its sender uploaded to this Session (#276).
-              // Marked sent, they are kept past the day an unsent one lasts (#280).
-              const now = yield* Clock.currentTimeMillis
-              const files = yield* attachments.markSent(
-                sessionId,
-                message.attachments ?? [],
-                you.id,
-                now,
-              )
-              if (Option.isNone(files)) {
-                return refuse(
-                  message,
-                  "An attachment of the prompt isn't one you uploaded to this Session, or was deleted a day after upload unsent: attach it again.",
-                  { sessionId },
-                )
-              }
+              const carried = yield* markSentOrRefuse(message, message.attachments, "prompt")
+              if (Option.isNone(carried)) return
               yield* prompts.add(
                 sessionId,
                 QueuedPrompt.make({
                   id: PromptId.make(randomId()),
                   text: message.text,
                   sender: you,
-                  queuedAt: now,
-                  ...(files.value.length > 0 && { attachments: files.value }),
+                  queuedAt: yield* Clock.currentTimeMillis,
+                  ...(carried.value.length > 0 && { attachments: carried.value }),
                 }),
               )
               yield* queueChanged(sessionId)
@@ -2441,6 +2486,8 @@ export class SessionRelay extends Context.Service<
                   promptId,
                   text: prompt.text,
                   sender: prompt.sender,
+                  // Marked sent as it was queued (#280).
+                  ...(prompt.attachments !== undefined && { attachments: prompt.attachments }),
                 }),
               )
               return
@@ -2465,6 +2512,8 @@ export class SessionRelay extends Context.Service<
                 state: session.value.state,
                 goingToSleep: live.goingToSleep(sessionId),
                 agentKnown: Option.isSome(yield* sessions.agentStatus(sessionId, agentId)),
+                hasAttachments: (message.attachments?.length ?? 0) > 0,
+                modAttaches: live.modAttaches(sessionId),
               })
               if (typeof verdict === "object")
                 return refuse(message, verdict.refusal, { sessionId })
@@ -2478,13 +2527,23 @@ export class SessionRelay extends Context.Service<
                   })
                 }
               }
+              // Marked sent as it is logged, so a message refused, or a wake, keeps none.
+              const sent = yield* markSentOrRefuse(message, message.attachments, "message")
+              if (Option.isNone(sent)) return
+              const carried = sent.value.length > 0 ? { attachments: sent.value } : {}
               yield* logEvent(
                 sessionId,
-                AgentMessaged.make({ agentId, sender: you, text: message.text }),
+                AgentMessaged.make({ agentId, sender: you, text: message.text, ...carried }),
               )
               yield* outbox.enqueue(
                 sessionId,
-                DeliverAgentMessage.make({ sessionId, agentId, text: message.text, sender: you }),
+                DeliverAgentMessage.make({
+                  sessionId,
+                  agentId,
+                  text: message.text,
+                  sender: you,
+                  ...carried,
+                }),
               )
               return
             }
@@ -2497,10 +2556,13 @@ export class SessionRelay extends Context.Service<
               if (session.value.openQuestion?.toolCallId !== toolCallId) {
                 return refuse(message, closedText(sessionId, toolCallId), { sessionId })
               }
+              const answer = yield* attachToReply(message)
+              if (Option.isNone(answer)) return
               // The mod settles which answer came first, this one or another, or the terminal's.
+              // A reply's attachments are kept even if it came too late: the Session's life at most.
               yield* outbox.enqueue(
                 sessionId,
-                DeliverAnswer.make({ sessionId, toolCallId, answer: message.answer, sender: you }),
+                DeliverAnswer.make({ sessionId, toolCallId, answer: answer.value, sender: you }),
               )
               return
             }
@@ -3263,27 +3325,68 @@ export class SessionRelay extends Context.Service<
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
         yield* sessions.setClaudeSessionId(sessionId, hello.claudeSessionId)
-        live.modHello(sessionId, hello.steers === true)
+        live.modHello(sessionId, {
+          steers: hello.steers === true,
+          attaches: hello.attaches === true,
+        })
         yield* presenceToMod(sessionId)
         yield* deliverNext(sessionId)
       }, serialized)
 
       /**
-       * A Turn's start as it is logged: with the files its queued prompt carried (#276), so the
-       * transcript shows them, on replay too. They are the queue's to say, not the mod's.
+       * The attachments a mod's event is logged with (#276, #278): its queued prompt's, when it
+       * names one still queued; otherwise the Session's own for the ids the mod claims, their
+       * names and types the Hub's to say, and an id it doesn't know dropped. Never the mod's.
        */
-      const withAttachments = Effect.fn("SessionRelay.withAttachments")(function* (
+      const attachmentsToLog = Effect.fn("SessionRelay.attachmentsToLog")(function* (
+        sessionId: SessionId,
+        claimed: ReadonlyArray<Attachment> | undefined,
+        promptId?: PromptId,
+      ) {
+        if (promptId !== undefined) {
+          const queued = (yield* prompts.list(sessionId)).find(({ id }) => id === promptId)
+          if (queued !== undefined) return queued.attachments ?? []
+        }
+        return yield* attachments.ofSession(
+          sessionId,
+          (claimed ?? []).map(({ id }) => id),
+        )
+      })
+
+      /** A Turn's start as it is logged, with its prompt's attachments, on replay too. */
+      const turnStartedToLog = Effect.fn("SessionRelay.turnStartedToLog")(function* (
         sessionId: SessionId,
         event: TurnStarted,
       ) {
-        const { attachments: _claimed, ...started } = event
-        if (started.promptId === undefined) return TurnStarted.make(started)
-        const queued = (yield* prompts.list(sessionId)).find(({ id }) => id === started.promptId)
-        return TurnStarted.make({
-          ...started,
-          ...(queued?.attachments !== undefined && { attachments: queued.attachments }),
-        })
+        const { attachments: claimed, ...started } = event
+        const logged = yield* attachmentsToLog(sessionId, claimed, started.promptId)
+        return TurnStarted.make({ ...started, ...carrying(logged) })
       })
+
+      /**
+       * A steered prompt as it is logged, with its prompt's attachments (#278); none, if it is
+       * attachments alone and none of them is the Session's, since there is nothing to show.
+       */
+      const promptSteeredToLog = Effect.fn("SessionRelay.promptSteeredToLog")(function* (
+        sessionId: SessionId,
+        event: PromptSteered,
+      ) {
+        const { attachments: claimed, ...steered } = event
+        const logged = yield* attachmentsToLog(sessionId, claimed, steered.promptId)
+        if (logged.length === 0 && steered.text === "") return undefined
+        return PromptSteered.make({ ...steered, ...carrying(logged) })
+      })
+
+      /** A question closed as it is logged, with the attachments a reply carried (#278). */
+      const replyAttachmentsFromSession = Effect.fn("SessionRelay.replyAttachmentsFromSession")(
+        function* (sessionId: SessionId, event: QuestionClosed) {
+          const { outcome } = event
+          if (outcome._tag !== "Replied" || outcome.attachments === undefined) return event
+          const { attachments: claimed, ...reply } = outcome
+          const logged = yield* attachmentsToLog(sessionId, claimed)
+          return QuestionClosed.make({ ...event, outcome: { ...reply, ...carrying(logged) } })
+        },
+      )
 
       const modEvent = Effect.fn("SessionRelay.modEvent")(function* (
         sessionId: SessionId,
@@ -3378,7 +3481,7 @@ export class SessionRelay extends Context.Service<
           const session = yield* sessions.get(sessionId)
           // One closed already, as Cancelled when its Turn ended first, stays as it closed.
           if (Option.getOrUndefined(session)?.openQuestion?.toolCallId !== event.toolCallId) return
-          yield* closeQuestion(sessionId, event)
+          yield* closeQuestion(sessionId, yield* replyAttachmentsFromSession(sessionId, event))
           return yield* sessionUpdated(sessionId)
         }
 
@@ -3390,10 +3493,13 @@ export class SessionRelay extends Context.Service<
           return yield* sessionUpdated(sessionId)
         }
 
-        yield* logEvent(
-          sessionId,
-          event._tag === "TurnStarted" ? yield* withAttachments(sessionId, event) : event,
-        )
+        const logged =
+          event._tag === "TurnStarted"
+            ? yield* turnStartedToLog(sessionId, event)
+            : event._tag === "PromptSteered"
+              ? yield* promptSteeredToLog(sessionId, event)
+              : event
+        if (logged !== undefined) yield* logEvent(sessionId, logged)
         if (event._tag === "AgentStarted") {
           // Its summary shows the description too, redacted as the log has it.
           yield* sessions.agentStarted(sessionId, {

@@ -246,7 +246,7 @@ test("a Composer that takes no attachments says why when files are pasted", asyn
   )
 })
 
-test("files in the draft wait while it is a reply, saying why, and go with the next prompt", async () => {
+test("files in a draft that becomes a reply go with the reply, which needs words too (#278)", async () => {
   const { useState } = await import("react")
   const sent: Array<{ text: string; attachments: ReadonlyArray<string> }> = []
   let finish: ((id: AttachmentId) => void) | undefined
@@ -264,14 +264,14 @@ test("files in the draft wait while it is a reply, saying why, and go with the n
           }}
           onStop={() => {}}
           running={false}
-          cantAttach="A reply can't carry images yet."
-          attach={
-            asking
-              ? undefined
-              : () =>
-                  new Promise<AttachmentId>((resolve) => {
-                    finish = resolve
-                  })
+          {...(asking && {
+            copy: { field: "Reply", placeholder: "Reply", send: "Reply", stop: "Stop" },
+            needsText: true,
+          })}
+          attach={() =>
+            new Promise<AttachmentId>((resolve) => {
+              finish = resolve
+            })
           }
         />
       </>
@@ -281,8 +281,6 @@ test("files in the draft wait while it is a reply, saying why, and go with the n
   cleanup = view.unmount
   const field = view.container.querySelector<HTMLTextAreaElement>("textarea")
   if (!field) throw new Error("no field")
-  const said = () =>
-    view.container.querySelector('[aria-label="Attachments refused"]')?.textContent ?? ""
   await paste(field, [image("shot.png")])
   await step(() => finish?.("att-1" as AttachmentId))
 
@@ -290,18 +288,12 @@ test("files in the draft wait while it is a reply, saying why, and go with the n
   expect(view.container.querySelector('[aria-label="Attachments"]')?.textContent).toContain(
     "shot.png",
   )
-  expect(said()).toBe("A reply can't carry images yet.")
-  // Nothing written: the images alone are no reply.
-  expect(button("Send prompt").disabled).toBe(true)
-  await step(() => typeInto(field, "no"))
-  await step(() => button("Send prompt").click())
-
-  await step(() => button("Ask").click())
-  await step(() => button("Send prompt").click())
-  expect(sent).toEqual([
-    { text: "no", attachments: [] },
-    { text: "", attachments: ["att-1"] },
-  ])
+  // The images alone are no reply: it is in your own words.
+  expect(button("Reply").disabled).toBe(true)
+  await step(() => typeInto(field, "like this"))
+  await step(() => button("Reply").click())
+  expect(sent).toEqual([{ text: "like this", attachments: ["att-1"] }])
+  expect(view.container.querySelector('[aria-label="Attachments"]')).toBeNull()
 })
 
 /** Drags `files` over the Composer's form and drops them, as from the desktop. */

@@ -5,6 +5,7 @@ import type { AgentView } from "../hub/transcript.ts"
 import { AgentStatus, ArrowLeftIcon, Button, BranchIcon, EmptyState, toast } from "../ui/index.ts"
 import { color, font, space, text, weight } from "../ui/tokens.stylex.ts"
 import { Composer, type ComposerCopy } from "./Composer.tsx"
+import { SessionContext } from "./SentAttachments.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { AgentMeta, Blocks } from "./Transcript.tsx"
 
@@ -131,18 +132,22 @@ export function AgentPanel({
             </span>
           )}
           <AgentMeta agent={agent} />
-          <Blocks blocks={agent.blocks} ended={agent.status !== "Running"} />
+          <SessionContext value={session.id}>
+            <Blocks blocks={agent.blocks} ended={agent.status !== "Running"} />
+          </SessionContext>
         </section>
       </div>
       <div {...stylex.props(styles.column, styles.dock)}>
         <Composer
           copy={copy}
           running={running}
-          onSend={(message) => sent(hub.messageAgent(session.id, agent.agentId, message))}
+          onSend={(message, attachments) =>
+            sent(hub.messageAgent(session.id, agent.agentId, message, attachments))
+          }
           onStop={() => sent(hub.stopAgent(session.id, agent.agentId))}
           disabledReason={disabledReason}
           hint={hint}
-          cantAttach="Attachments can't go to a subagent yet: attach them to a prompt."
+          attach={(file, options) => hub.uploadAttachment(session.id, file, options)}
         />
       </div>
     </>

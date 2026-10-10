@@ -31,7 +31,6 @@ import {
   deliveredPrompt,
   HubLink,
   maxAttachmentParts,
-  promptFromParticipant,
   steeredPrompt,
   terminalOutcome,
 } from "./hub-link-lib.js"
@@ -113,11 +112,20 @@ const deliverIntoTurn = async ($: EngineInterface, command: Command<"DeliverInto
     report({ _tag: "PromptFailed", promptId: command.promptId, message })
   if (state.mainTurn === undefined) return failed("no Turn is running")
   const { promptId, sender, text } = command
+  const attachments = command.attachments ?? []
+  // Its files are marked in the row (#278): Claude opens them by the markers alone.
+  const row = steeredPrompt(sender, text, attachments)
   try {
     // Said before it is appended, so hub-link knows the row.
-    await $.state.set(steering, { promptId, sender, text })
+    await $.state.set(steering, {
+      promptId,
+      sender,
+      text,
+      ...(attachments.length > 0 && { attachments: [...attachments] }),
+      appended: row,
+    })
     const appended = await $.session.append({
-      message: { type: "user", content: [{ type: "text", text: steeredPrompt(sender, text) }] },
+      message: { type: "user", content: [{ type: "text", text: row }] },
     })
     if (appended.deny !== undefined) failed(appended.deny)
   } catch (error) {
@@ -128,8 +136,9 @@ const deliverIntoTurn = async ($: EngineInterface, command: Command<"DeliverInto
 }
 
 /**
- * A Participant's message to an agent (ADR 0014), with their name, as a prompt is: a running
- * agent reads it at its next tool call; one that has stopped resumes with it.
+ * A Participant's message to an agent (ADR 0014), with their name and a marker for each file
+ * (#278), as a prompt is: a running agent reads it at its next tool call; one that has stopped
+ * resumes with it. A subagent type that lists its own tools can't open the files.
  */
 const messageAgent = async ($: EngineInterface, command: Command<"DeliverAgentMessage">) => {
   const failed = (message: string) =>
@@ -143,7 +152,7 @@ const messageAgent = async ($: EngineInterface, command: Command<"DeliverAgentMe
   try {
     const sent = await $.session.send({
       to: { agentId: command.agentId },
-      text: promptFromParticipant(command.sender, command.text),
+      text: deliveredPrompt(command.sender, command.text, command.attachments ?? []),
     })
     if (!sent.isDelivered) failed(sent.reason)
   } catch (error) {
