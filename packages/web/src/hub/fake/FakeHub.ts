@@ -1012,6 +1012,8 @@ export class FakeHub implements HubTransport {
             session.summary.currentTurn !== null &&
             !this.#goingToSleep(session),
           modSteers: session.modSteers,
+          hasAttachments:
+            (session.queue.find((prompt) => prompt.id === promptId)?.attachments?.length ?? 0) > 0,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)

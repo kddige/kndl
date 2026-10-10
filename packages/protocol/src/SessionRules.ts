@@ -36,10 +36,15 @@ const alreadyDelivered: Refusal = { refusal: "The prompt was already delivered t
  * DeliverIntoTurn, the prompt keeping its place in the queue; "already", if it is on its way into
  * the Turn, and nothing is to be done; or why not. `turnRunning` is whether the Session is Active
  * with a Turn, and not going to sleep. `modSteers` is whether its mod said in its hello that it
- * steers (#195).
+ * steers (#195). `hasAttachments` is whether the prompt carries files (#276), which only a Turn of
+ * its own shows Claude for now.
  */
 export const steerVerdict = (
-  steer: PromptHandover & { readonly turnRunning: boolean; readonly modSteers: boolean },
+  steer: PromptHandover & {
+    readonly turnRunning: boolean
+    readonly modSteers: boolean
+    readonly hasAttachments: boolean
+  },
 ): "ok" | "already" | Refusal => {
   if (!steer.turnRunning) {
     return { refusal: "No Turn is running to steer the prompt into: it goes next." }
@@ -53,6 +58,9 @@ export const steerVerdict = (
     }
   }
   if (!steer.queued) return notQueued
+  if (steer.hasAttachments) {
+    return { refusal: "A prompt with attachments can't be steered: it waits for the Turn to end." }
+  }
   return "ok"
 }
 

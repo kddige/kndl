@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { AttachmentIds, textOrAttachments } from "./Attachment.ts"
 import { BuildVersion } from "./Build.ts"
 import {
   ClaudeCredentialState,
@@ -199,11 +200,15 @@ export const LeaveSession = Schema.TaggedStruct("LeaveSession", {
 })
 export type LeaveSession = typeof LeaveSession.Type
 
-/** Add a prompt to the end of the Session's Prompt queue; the sender is the signed-in person. */
+/**
+ * Add a prompt to the end of the Session's Prompt queue; the sender is the signed-in person. Its
+ * attachments (#276) are files they uploaded to the Session; an image alone is a prompt.
+ */
 export const SendPrompt = Schema.TaggedStruct("SendPrompt", {
   sessionId: SessionId,
-  text: Schema.NonEmptyString,
-})
+  text: Schema.String,
+  attachments: Schema.optionalKey(AttachmentIds),
+}).check(textOrAttachments)
 export type SendPrompt = typeof SendPrompt.Type
 
 /** Remove a prompt from the Prompt queue before it is delivered. Any Participant may. */

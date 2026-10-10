@@ -1,6 +1,8 @@
 import { Schema } from "effect"
+import { Attachments, ImageMediaType, textOrAttachments } from "./Attachment.ts"
 import {
   AgentId,
+  AttachmentId,
   ClaudeSessionId,
   ModCommandSeq,
   ParticipantId,
@@ -122,14 +124,17 @@ export type ModWelcome = typeof ModWelcome.Type
 
 /**
  * The next prompt from the Prompt queue, sent when the Session is idle. The mod submits it with
- * the sender's name and reports the Turn it starts with this `promptId`.
+ * the sender's name and a marker for each attachment (#276), and reports the Turn it starts with
+ * this `promptId`.
  */
 export const DeliverPrompt = Schema.TaggedStruct("DeliverPrompt", {
   sessionId: SessionId,
   promptId: PromptId,
-  text: Schema.NonEmptyString,
+  /** As typed; empty for a prompt of attachments alone. */
+  text: Schema.String,
   sender: Participant,
-})
+  attachments: Schema.optionalKey(Attachments),
+}).check(textOrAttachments)
 export type DeliverPrompt = typeof DeliverPrompt.Type
 
 /**
@@ -172,6 +177,19 @@ export const DeliverAnswer = Schema.TaggedStruct("DeliverAnswer", {
   sender: Participant,
 })
 export type DeliverAnswer = typeof DeliverAnswer.Type
+
+/**
+ * The answer to `GET /mod/attachments/<id>` (#276): one of the Session's attachments, which the
+ * mod's tool hands Claude. Base64, as Claude reads it: the mod runtime's fetch reads text only.
+ */
+export const ModAttachment = Schema.Struct({
+  id: AttachmentId,
+  name: Schema.NonEmptyString,
+  mediaType: ImageMediaType,
+  data: Schema.String,
+})
+export type ModAttachment = typeof ModAttachment.Type
+export type ModAttachmentEncoded = typeof ModAttachment.Encoded
 
 /** Every message the Hub sends the mod. `PresenceChanged` feeds the Participants band. */
 export const HubToMod = Schema.Union([

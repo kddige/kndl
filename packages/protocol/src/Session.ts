@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { Attachments, textOrAttachments } from "./Attachment.ts"
 import { BuildVersion, RunnerVersionStatus } from "./Build.ts"
 import {
   AgentId,
@@ -574,11 +575,13 @@ export type FromSession = typeof FromSession.Type
 /** A prompt waiting in a Session's Prompt queue. */
 export const QueuedPrompt = Schema.Struct({
   id: PromptId,
-  /** As typed. */
-  text: Schema.NonEmptyString,
+  /** As typed; empty for a prompt of attachments alone. */
+  text: Schema.String,
   sender: Participant,
   queuedAt: EpochMillis,
-})
+  /** The files it carries (#276), in the order they were added. */
+  attachments: Schema.optionalKey(Attachments),
+}).check(textOrAttachments)
 export type QueuedPrompt = typeof QueuedPrompt.Type
 
 /**
