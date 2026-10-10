@@ -20,7 +20,8 @@ const styles = stylex.create({
     borderRadius: radius.md,
     backgroundColor: color.surfaceMuted,
   },
-  panel: { width: "min(36rem, var(--available-width))" },
+  // Wider than a Popover is by default, for lines of code.
+  panel: { width: "min(36rem, var(--available-width))", maxWidth: "none" },
   text: {
     maxHeight: "16rem",
     margin: 0,
