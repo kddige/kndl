@@ -542,7 +542,7 @@ function LoadedSession({
                       ? "Claude is waiting on an answer: a reply here declines its question."
                       : hint
                   }
-                  {...(asking ? { copy: replyCopy } : { attach })}
+                  {...(asking ? { copy: replyCopy, cantAttach: replyCantAttach } : { attach })}
                   picker={
                     <ModelPicker
                       models={models}
@@ -597,6 +597,10 @@ function claudeAccountText(summary: SessionSummary): string {
 }
 
 /** The prompt box's words while Claude waits on an answer to its question (#193). */
+/** Why a reply to Claude's question takes no images (#278); those pasted before wait. */
+const replyCantAttach =
+  "A reply to Claude's question can't carry images yet: they stay here for your next prompt."
+
 const replyCopy = {
   field: "Reply",
   placeholder: "Or reply directly…",

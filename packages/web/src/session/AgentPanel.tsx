@@ -142,6 +142,7 @@ export function AgentPanel({
           onStop={() => sent(hub.stopAgent(session.id, agent.agentId))}
           disabledReason={disabledReason}
           hint={hint}
+          cantAttach="Images can't go to a subagent yet: attach them to a prompt."
         />
       </div>
     </>

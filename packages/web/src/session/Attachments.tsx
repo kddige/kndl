@@ -1,10 +1,11 @@
-import type { AttachmentId } from "@kndl/protocol"
+import { type AttachmentId, MaxImageBytes } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useRef, useState } from "react"
 import type { UploadOptions } from "../hub/transport.ts"
 import { CloseIcon, IconButton } from "../ui/index.ts"
 import { color, radius, space, text } from "../ui/tokens.stylex.ts"
 import { admitImages } from "./attachments.ts"
+import { browserCodec, downscale } from "./downscale.ts"
 
 const styles = stylex.create({
   chips: {
@@ -57,20 +58,35 @@ export interface AttachmentChip {
   /** The bytes sent so far. */
   readonly sent: number
   readonly upload:
+    | { readonly _tag: "Scaling" }
     | { readonly _tag: "Uploading" }
     | { readonly _tag: "Uploaded"; readonly id: AttachmentId }
     | { readonly _tag: "Failed"; readonly reason: string }
 }
 
+/** The browser's codec, once: none where it can't draw, as in tests. */
+const codec = browserCodec()
+
+/** Scales an image down as Claude Code does a pasted one (downscale.ts). */
+const scaleDown = (file: File) =>
+  codec === undefined ? Promise.resolve(file) : downscale(file, codec, MaxImageBytes)
+
 /**
- * The files attached to a Composer's draft (#276). Each is uploaded as soon as it is added; a
- * prompt goes once every one has, carrying their ids. A file Claude can't read is refused before
- * it is uploaded, saying why.
+ * The files attached to a Composer's draft (#276). Each is scaled down and uploaded as soon as it
+ * is added; a prompt goes once every one has, carrying their ids. A file Claude can't read is
+ * refused before it is uploaded, saying why. Without `attach` the draft takes none, and a paste
+ * of files says `cantAttach`; files it took before stay for the next prompt that can.
  */
-export function useAttachments(attach: Attach | undefined) {
+export function useAttachments(
+  attach: Attach | undefined,
+  cantAttach: string,
+  prepare: (file: File) => Promise<File> = scaleDown,
+) {
   const next = useRef(1)
   const [chips, setChips] = useState<ReadonlyArray<AttachmentChip>>([])
   const [refused, setRefused] = useState<ReadonlyArray<string>>([])
+  // Counted as files are added, not from the last render: two pastes before it still hold 20.
+  const held = useRef(0)
   const uploads = useRef(
     new Map<number, { readonly abort: AbortController; readonly preview: string }>(),
   )
@@ -87,52 +103,53 @@ export function useAttachments(attach: Attach | undefined) {
     }
   }, [])
 
-  // A draft that stops taking attachments, as a reply to Claude's question, drops its files
-  // rather than send them where they would be lost.
-  const taking = attach !== undefined
-  useEffect(() => {
-    if (taking) return
-    for (const { abort, preview } of uploads.current.values()) {
-      abort.abort()
-      URL.revokeObjectURL(preview)
-    }
-    uploads.current.clear()
-    setChips([])
-    setRefused([])
-  }, [taking])
-
   const change = (key: number, update: (chip: AttachmentChip) => AttachmentChip) =>
     setChips((all) => all.map((chip) => (chip.key === key ? update(chip) : chip)))
 
+  const send = async (key: number, file: File, abort: AbortController, upload: Attach) => {
+    const failed = (reason: string) =>
+      change(key, (chip) => ({ ...chip, upload: { _tag: "Failed", reason } }))
+    const scaled = await prepare(file)
+    if (abort.signal.aborted) return
+    // The Hub refuses it all the same; said here, before it is sent.
+    if (scaled.size > MaxImageBytes)
+      return failed(`It is over ${MaxImageBytes / 1024 / 1024} MB, even scaled down.`)
+    change(key, (chip) => ({
+      ...chip,
+      name: scaled.name,
+      size: scaled.size,
+      upload: { _tag: "Uploading" },
+    }))
+    try {
+      const id = await upload(scaled, {
+        onProgress: (sent) => change(key, (chip) => ({ ...chip, sent })),
+        signal: abort.signal,
+      })
+      change(key, (chip) => ({ ...chip, sent: chip.size, upload: { _tag: "Uploaded", id } }))
+    } catch (error) {
+      if (abort.signal.aborted) return
+      failed(error instanceof Error && error.message !== "" ? error.message : "It failed.")
+    }
+  }
+
   const add = (files: ReadonlyArray<File>) => {
-    if (attach === undefined) return
-    const admitted = admitImages(files, chips.length)
+    if (attach === undefined) return setRefused([cantAttach])
+    const admitted = admitImages(files, held.current)
+    held.current += admitted.accepted.length
     setRefused(admitted.refused)
     const added = admitted.accepted.map((file): AttachmentChip => {
       const key = next.current++
       const preview = URL.createObjectURL(file)
       const abort = new AbortController()
       uploads.current.set(key, { abort, preview })
-      attach(file, {
-        onProgress: (sent) => change(key, (chip) => ({ ...chip, sent })),
-        signal: abort.signal,
-      }).then(
-        (id) =>
-          change(key, (chip) => ({ ...chip, sent: chip.size, upload: { _tag: "Uploaded", id } })),
-        (error: unknown) => {
-          if (abort.signal.aborted) return
-          const reason =
-            error instanceof Error && error.message !== "" ? error.message : "It failed."
-          change(key, (chip) => ({ ...chip, upload: { _tag: "Failed", reason } }))
-        },
-      )
+      void send(key, file, abort, attach)
       return {
         key,
         name: file.name,
         preview,
         size: file.size,
         sent: 0,
-        upload: { _tag: "Uploading" },
+        upload: { _tag: "Scaling" },
       }
     })
     setChips((all) => [...all, ...added])
@@ -144,6 +161,7 @@ export function useAttachments(attach: Attach | undefined) {
     upload.abort.abort()
     URL.revokeObjectURL(upload.preview)
     uploads.current.delete(key)
+    held.current--
   }
 
   const uploaded = chips.flatMap((chip) =>
@@ -160,7 +178,7 @@ export function useAttachments(attach: Attach | undefined) {
     },
     /** The ids of the files uploaded, in the order they were added. */
     ids: uploaded,
-    /** Whether the prompt must wait: a file is still uploading, or failed and is still there. */
+    /** Whether the prompt must wait: a file is still on its way, or failed and is still there. */
     holding: uploaded.length !== chips.length,
     /** Forgets every file, once the prompt with them is sent. */
     clear: () => {
@@ -174,6 +192,8 @@ export function useAttachments(attach: Attach | undefined) {
 /** What a chip says under its file's name: how far its upload is, or why it failed. */
 function chipNote(chip: AttachmentChip): string | undefined {
   switch (chip.upload._tag) {
+    case "Scaling":
+      return "Scaling down"
     case "Uploading":
       return `Uploading ${chip.size === 0 ? 0 : Math.floor((chip.sent / chip.size) * 100)}%`
     case "Failed":
@@ -187,17 +207,23 @@ function chipNote(chip: AttachmentChip): string | undefined {
 export function AttachmentChips({
   chips,
   refused,
+  waiting,
   onRemove,
 }: {
   chips: ReadonlyArray<AttachmentChip>
   refused: ReadonlyArray<string>
+  /** Why the chips aren't sent with what is written now, as a reply. */
+  waiting?: string | undefined
   onRemove: (chip: AttachmentChip) => void
 }) {
+  // A refusal of what was pasted just now says it, and nothing else need.
+  const said =
+    refused.length > 0 ? refused : waiting !== undefined && chips.length > 0 ? [waiting] : []
   return (
     <>
-      {refused.length > 0 && (
+      {said.length > 0 && (
         <p aria-label="Attachments refused" role="status" {...stylex.props(styles.refused)}>
-          {refused.join(" ")}
+          {said.join(" ")}
         </p>
       )}
       {chips.length > 0 && (

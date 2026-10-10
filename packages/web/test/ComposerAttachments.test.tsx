@@ -123,18 +123,13 @@ test("a removed image is left out of the prompt, and its upload given up", async
   expect(sent).toEqual([{ text: "", attachments: ["att-1"] }])
 })
 
-test("what Claude can't read, over 5 MB or past 20 files, is refused with a reason", async () => {
+test("what Claude can't read, or past 20 files, is refused with a reason", async () => {
   const { uploads, field, said } = await composer()
-  await paste(field, [
-    image("notes.pdf", "application/pdf"),
-    image("huge.png", "image/png", MaxImageBytes + 1),
-  ])
+  await paste(field, [image("notes.pdf", "application/pdf")])
 
   expect(uploads).toEqual([])
   expect(said()).toContain("notes.pdf")
   expect(said()).toContain("JPEG, PNG, GIF or WebP")
-  expect(said()).toContain("huge.png")
-  expect(said()).toContain("5 MB")
 
   await paste(
     field,
@@ -142,6 +137,65 @@ test("what Claude can't read, over 5 MB or past 20 files, is refused with a reas
   )
   expect(uploads).toHaveLength(20)
   expect(said()).toContain("20 files at most")
+})
+
+/** Fifteen images, numbered on from `from`. */
+const batch = (from: number) => Array.from({ length: 15 }, (_, i) => image(`${from + i}.png`))
+
+test("two pastes at once still hold 20 files at most", async () => {
+  const { uploads, field, said } = await composer()
+  const twice = () => {
+    for (const files of [batch(0), batch(15)]) {
+      const clipboardData = new DataTransfer()
+      for (const file of files) clipboardData.items.add(file)
+      field.dispatchEvent(
+        new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }),
+      )
+    }
+  }
+  await step(twice)
+  expect(uploads).toHaveLength(20)
+  expect(said()).toContain("10 were left out")
+})
+
+test("an image over 5 MB even scaled down is held back, saying so", async () => {
+  const { uploads, field, chips } = await composer()
+  await paste(field, [image("huge.png", "image/png", MaxImageBytes + 1)])
+
+  expect(uploads).toEqual([])
+  expect(chips()[0]).toContain("over 5 MB, even scaled down")
+  expect(button("Send prompt").disabled).toBe(true)
+})
+
+test("an image is sent as it was scaled down, under its new name", async () => {
+  const sent: Array<ReadonlyArray<string>> = []
+  const uploaded: Array<string> = []
+  const view = await render(
+    <Composer
+      onSend={(_, attachments) => {
+        sent.push(attachments)
+        return true
+      }}
+      onStop={() => {}}
+      running={false}
+      prepare={async (file) =>
+        new File([new Uint8Array(10)], file.name.replace(".png", ".jpg"), { type: "image/jpeg" })
+      }
+      attach={async (file) => {
+        uploaded.push(`${file.name} ${file.type} ${file.size}`)
+        return "att-1" as AttachmentId
+      }}
+    />,
+  )
+  cleanup = view.unmount
+  const field = view.container.querySelector<HTMLTextAreaElement>("textarea")
+  if (!field) throw new Error("no field")
+  await paste(field, [image("photo.png", "image/png", 9 * 1024 * 1024)])
+
+  expect(uploaded).toEqual(["photo.jpg image/jpeg 10"])
+  expect(view.container.querySelector('[aria-label="Attachments"]')?.textContent).toContain(
+    "photo.jpg",
+  )
 })
 
 test("an upload the Hub refuses says why, and holds the prompt until it is removed", async () => {
@@ -168,16 +222,13 @@ test("a paste with an image and a long text gives each its chip (#279)", async (
   expect(container.querySelector('[aria-label="Pasted texts"]')).not.toBeNull()
 })
 
-test("a Composer that takes no attachments leaves pasted files alone", async () => {
-  const sent: Array<string> = []
+test("a Composer that takes no attachments says why when files are pasted", async () => {
   const view = await render(
     <Composer
-      onSend={(text) => {
-        sent.push(text)
-        return true
-      }}
+      onSend={() => true}
       onStop={() => {}}
       running={false}
+      cantAttach="Images can't go to a subagent yet: attach them to a prompt."
     />,
   )
   cleanup = view.unmount
@@ -185,9 +236,12 @@ test("a Composer that takes no attachments leaves pasted files alone", async () 
   if (!field) throw new Error("no field")
   await paste(field, [image("shot.png")])
   expect(view.container.querySelector('[aria-label="Attachments"]')).toBeNull()
+  expect(view.container.querySelector('[aria-label="Attachments refused"]')?.textContent).toBe(
+    "Images can't go to a subagent yet: attach them to a prompt.",
+  )
 })
 
-test("files in the draft are dropped once it stops taking attachments, as for a reply", async () => {
+test("files in the draft wait while it is a reply, saying why, and go with the next prompt", async () => {
   const { useState } = await import("react")
   const sent: Array<{ text: string; attachments: ReadonlyArray<string> }> = []
   let finish: ((id: AttachmentId) => void) | undefined
@@ -195,7 +249,7 @@ test("files in the draft are dropped once it stops taking attachments, as for a 
     const [asking, setAsking] = useState(false)
     return (
       <>
-        <button type="button" onClick={() => setAsking(true)}>
+        <button type="button" onClick={() => setAsking(!asking)}>
           Ask
         </button>
         <Composer
@@ -205,6 +259,7 @@ test("files in the draft are dropped once it stops taking attachments, as for a 
           }}
           onStop={() => {}}
           running={false}
+          cantAttach="A reply can't carry images yet."
           attach={
             asking
               ? undefined
@@ -221,12 +276,25 @@ test("files in the draft are dropped once it stops taking attachments, as for a 
   cleanup = view.unmount
   const field = view.container.querySelector<HTMLTextAreaElement>("textarea")
   if (!field) throw new Error("no field")
-  await step(() => typeInto(field, "no"))
+  const said = () =>
+    view.container.querySelector('[aria-label="Attachments refused"]')?.textContent ?? ""
   await paste(field, [image("shot.png")])
   await step(() => finish?.("att-1" as AttachmentId))
 
   await step(() => button("Ask").click())
-  expect(view.container.querySelector('[aria-label="Attachments"]')).toBeNull()
+  expect(view.container.querySelector('[aria-label="Attachments"]')?.textContent).toContain(
+    "shot.png",
+  )
+  expect(said()).toBe("A reply can't carry images yet.")
+  // Nothing written: the images alone are no reply.
+  expect(button("Send prompt").disabled).toBe(true)
+  await step(() => typeInto(field, "no"))
   await step(() => button("Send prompt").click())
-  expect(sent).toEqual([{ text: "no", attachments: [] }])
+
+  await step(() => button("Ask").click())
+  await step(() => button("Send prompt").click())
+  expect(sent).toEqual([
+    { text: "no", attachments: [] },
+    { text: "", attachments: ["att-1"] },
+  ])
 })

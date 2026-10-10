@@ -61,6 +61,10 @@ export interface ComposerProps {
   copy?: ComposerCopy
   /** Uploads a pasted image (#276); without it, the Composer takes no attachments. */
   attach?: Attach | undefined
+  /** Why a paste of files is refused without `attach`. */
+  cantAttach?: string
+  /** Scales a pasted image down before it is uploaded; Claude Code's way by default. */
+  prepare?: (file: File) => Promise<File>
 }
 
 /** The words of a composer for something other than prompts. */
@@ -92,26 +96,29 @@ export function Composer({
   picker,
   copy = promptCopy(running),
   attach,
+  cantAttach = "Images can be attached to prompts only, not here yet.",
+  prepare,
 }: ComposerProps) {
   const [draft, setDraft] = useState("")
   const pastes = usePastedTexts(draft, setDraft)
-  const attachments = useAttachments(attach)
+  const attachments = useAttachments(attach, cantAttach, prepare)
+  // Files kept from before it stopped taking them, as for a reply, wait for the next prompt.
+  const taking = attach !== undefined
   const disabled = disabledReason !== undefined
-  const empty = draft.trim() === "" && attachments.chips.length === 0
+  const empty = draft.trim() === "" && (!taking || attachments.chips.length === 0)
   // A prompt waits for its files to upload, and for one that failed to be taken out.
-  const waiting = disabled || empty || attachments.holding
+  const waiting = disabled || empty || (taking && attachments.holding)
 
   const send = () => {
     if (waiting) return
-    if (!onSend(pastes.expand(), attachments.ids)) return
+    if (!onSend(pastes.expand(), taking ? attachments.ids : [])) return
     setDraft("")
     pastes.clear()
-    attachments.clear()
+    if (taking) attachments.clear()
   }
 
   const paste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (attach !== undefined && event.clipboardData.files.length > 0)
-      attachments.add([...event.clipboardData.files])
+    if (event.clipboardData.files.length > 0) attachments.add([...event.clipboardData.files])
     pastes.onPaste(event)
   }
 
@@ -133,6 +140,7 @@ export function Composer({
       <AttachmentChips
         chips={attachments.chips}
         refused={attachments.refused}
+        waiting={taking ? undefined : cantAttach}
         onRemove={attachments.remove}
       />
       <PastedTextChips pastes={pastes.shown} onRemove={pastes.remove} />
