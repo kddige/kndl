@@ -23,6 +23,13 @@ export type TurnId = typeof TurnId.Type
 export const PromptId = Schema.NonEmptyString.pipe(Schema.brand("PromptId"))
 export type PromptId = typeof PromptId.Type
 
+/**
+ * A file a Participant attached to a prompt (#276), minted by the Hub when it is uploaded: 128
+ * random bits, since it is shown in the prompt and its file is cached for good.
+ */
+export const AttachmentId = Schema.NonEmptyString.pipe(Schema.brand("AttachmentId"))
+export type AttachmentId = typeof AttachmentId.Type
+
 /** One tool call: Claude Code's `tool_use_id`, or an id the mod mints when there is none. */
 export const ToolCallId = Schema.NonEmptyString.pipe(Schema.brand("ToolCallId"))
 export type ToolCallId = typeof ToolCallId.Type

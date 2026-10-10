@@ -3,14 +3,20 @@
 // the Hub refuse a whole batch, and every reply is decoded before the mod acts on it.
 
 import {
+  imageCount,
+  MaxImageBytes,
+  MaxModAttachmentPartBytes,
   MaxToolSummaryLength,
+  ModAttachment,
   ModCommands,
   ModEvent,
   ModHello,
   ModHelloReply,
   ProtocolVersion,
+  withAttachmentMarkers,
 } from "@kndl/protocol"
 import type {
+  MarkedFile,
   ModEventsEncoded,
   Participant,
   Question,
@@ -133,8 +139,22 @@ export const resultSummary = (tool: string, result: unknown) => {
     )
     return clip(parts.join("\n"))
   }
+  if (Array.isArray(result) && result.every(isRecord)) return clip(blocksSummary(result))
   return clip(typeof result === "string" ? result : (JSON.stringify(result) ?? ""))
 }
+
+/**
+ * Content blocks, as a tool such as the attachment tool answers: their text, and a note of each
+ * image or other block, never its bytes.
+ */
+const blocksSummary = (blocks: ReadonlyArray<Readonly<Record<string, unknown>>>) =>
+  blocks
+    .map((block) => {
+      if (block.type === "text") return text(block.text)
+      const source = isRecord(block.source) ? block.source : {}
+      return `[${text(source.media_type) || text(block.type) || "block"}]`
+    })
+    .join("\n")
 
 /**
  * Whether a Stop moved this call to the background instead of ending it. Claude Code does that to a
@@ -167,13 +187,130 @@ export const steeredPrompt = (sender: Pick<Participant, "name">, text: string) =
     "</system-reminder>",
   ].join("\n")
 
+// ── Attachments (#276, ADR 0024) ───────────────────────────────────────────
+
+/** The tool hub-link-commands registers, by its short name. */
+export const attachmentTool = "attachment"
+
+/** The tool as Claude calls it: Claude Code names a plugin's tools after the plugin. */
+export const attachmentToolName = `mcp__hub-link-commands__${attachmentTool}`
+
+/**
+ * The tool, as `$.tool.register` takes it: in the tool list from the first request on, not behind
+ * ToolSearch, so Claude can open a file without first searching for how.
+ */
+export const attachmentToolSpec = {
+  name: attachmentTool,
+  description:
+    'Opens a file someone in this shared session attached to a message, by the id its marker gives: "[Image #1: shot.png (attachment <id>)]". Returns the image itself. Call it once per file.',
+  inputSchema: {
+    type: "object",
+    properties: { id: { type: "string", description: "The attachment id from the marker." } },
+    required: ["id"],
+  },
+  isDeferred: false,
+}
+
+/** A prompt from the Prompt queue as Claude reads it: its sender's name, then each file's marker. */
+export const deliveredPrompt = (
+  sender: Pick<Participant, "name">,
+  text: string,
+  attachments: ReadonlyArray<MarkedFile>,
+) => promptFromParticipant(sender, withAttachmentMarkers(text, attachments))
+
+/**
+ * What Claude reads beside a prompt with files, and the people never see: to open each one before
+ * answering. The marker alone would do; this makes sure it isn't skipped.
+ */
+export const attachmentContext = (attachments: ReadonlyArray<MarkedFile>) => {
+  const files = attachments.map((file, index) => `#${index + 1} ${file.name}: id ${file.id}`)
+  const count = imageCount(attachments.length)
+  return [
+    `This message has ${count} attached. Look at each before you answer, by calling`,
+    `${attachmentToolName} once per image with its id: ${files.join("; ")}.`,
+  ].join(" ")
+}
+
+/** What the attachment tool answers: the Hub's file as an image block, or why it couldn't. */
+export type AttachmentResult =
+  | { readonly deny: string }
+  | {
+      readonly result: readonly [
+        { readonly type: "text"; readonly text: string },
+        {
+          readonly type: "image"
+          readonly source: {
+            readonly type: "base64"
+            readonly media_type: string
+            readonly data: string
+          }
+        },
+      ]
+    }
+
+const decodeAttachment = Schema.decodeUnknownExit(Schema.fromJsonString(ModAttachment))
+
+const failed = (why: string) => ({ deny: `Could not open the attachment: ${why}` })
+
+/** The most parts the attachment tool fetches of one file: as many as the largest has. */
+export const maxAttachmentParts = Math.ceil(MaxImageBytes / MaxModAttachmentPartBytes)
+
+/** Where the attachment tool fetches a file's part from `offset` on, on the Hub. */
+export const attachmentPartPath = (id: string, offset: number) =>
+  `/mod/attachments/${encodeURIComponent(id)}?offset=${offset}`
+
+/**
+ * A part of a file, from the Hub's answer to {@link attachmentPartPath}; or the attachment tool's
+ * answer saying why there is none. The mod runtime's fetch reads 4 MiB of a body at most, so a
+ * large file comes in parts, each saying where the next starts.
+ */
+export const attachmentPart = (
+  status: number,
+  body: string,
+): { readonly part: ModAttachment } | { readonly deny: string } => {
+  if (status !== 200) {
+    try {
+      const { error } = JSON.parse(body) as { error?: unknown }
+      if (typeof error === "string") return failed(error)
+    } catch {
+      // Said below.
+    }
+    return failed(`the Hub answered ${status}.`)
+  }
+  const part = decodeAttachment(body)
+  if (Exit.isFailure(part)) return failed("the Hub's answer was not one.")
+  return { part: part.value }
+}
+
+/** The attachment tool's answer from a file's parts, in order: an image block of the whole. */
+export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): AttachmentResult => {
+  const [first] = parts
+  if (first === undefined || parts.at(-1)?.next !== undefined)
+    return failed("the Hub sent only part of it.")
+  return {
+    result: [
+      { type: "text", text: first.name },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: first.mediaType,
+          data: parts.map((part) => part.data).join(""),
+        },
+      },
+    ],
+  }
+}
+
 /** What the model is told about the Session being shared, in the system prompt. */
 export const sharedSessionNote = [
   "This session is shared through kndl: several people may watch it live in a web UI and",
   'send it prompts. A prompt that starts with a name in brackets, such as "[Ada Lovelace] ...",',
   "came from that person; a prompt without one was typed at the terminal. They can watch your",
   "subagents too, and message or stop one. When it matters who asked for what, address people",
-  "by name. You run in a sandbox VM where the repository is checked out.",
+  "by name. You run in a sandbox VM where the repository is checked out. A line such as",
+  '"[Image #1: name (attachment id)]" in a message stands for a file its sender attached: to see',
+  `it, call ${attachmentToolName} with its id.`,
 ].join(" ")
 
 /**

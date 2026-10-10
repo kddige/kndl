@@ -2,7 +2,7 @@
 // Hub playing its script fast.
 
 import { expect, test } from "bun:test"
-import { hubMcpServerId, RequestId } from "@kndl/protocol"
+import { hubMcpServerId, RequestId, type SessionId } from "@kndl/protocol"
 import { Redacted } from "effect"
 import { installDom } from "./dom.ts"
 import { button, dialog, render, settle, step } from "./render.ts"
@@ -623,6 +623,47 @@ test("a Frozen Session takes prompts, which wait in its queue", async () => {
     ),
   )
   expect(page.textContent).not.toContain("The Hub refused that")
+})
+
+test("a pasted image goes with the prompt, and shows in its Turn, opening full size (#276)", async () => {
+  const { page } = await openSession("s-dotfiles")
+  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
+  if (!prompt) throw new Error("no prompt field")
+  const clipboardData = new DataTransfer()
+  clipboardData.items.add(new File([new Uint8Array(8)], "shot.png", { type: "image/png" }))
+  await step(() => typeInto(prompt, "What broke?"))
+  await step(() =>
+    prompt.dispatchEvent(
+      new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }),
+    ),
+  )
+  await eventually(() => expect(button("Send prompt", page).disabled).toBe(false))
+  await step(() => button("Send prompt", page).click())
+
+  await eventually(() =>
+    expect(page.querySelector('[aria-label="Prompt queue"]')?.textContent ?? "").toContain(
+      "What broke? · 1 image",
+    ),
+  )
+  expect(page.querySelector('[aria-label="Attachments"]')).toBeNull()
+})
+
+test("a Turn shows the images its prompt carried, each opening full size (#276)", async () => {
+  const { page, client } = await openSession("s-readme")
+  const id = await client.uploadAttachment(
+    "s-readme" as SessionId,
+    new File([new Uint8Array(8)], "shot.png", { type: "image/png" }),
+    { onProgress: () => {}, signal: new AbortController().signal },
+  )
+  client.sendPrompt("s-readme" as SessionId, "", [id])
+
+  await eventually(() => {
+    const thumbnail = page.querySelector<HTMLImageElement>(
+      '[aria-label="Conversation"] img[alt="shot.png"]',
+    )
+    expect(thumbnail?.src).toBe(client.attachmentUrl("s-readme" as SessionId, id))
+    expect(thumbnail?.closest("a")?.getAttribute("href")).toBe(thumbnail?.getAttribute("src"))
+  })
 })
 
 test("the Terminal tab mirrors the Session's terminal, and takes keystrokes", async () => {

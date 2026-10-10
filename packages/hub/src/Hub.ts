@@ -1,5 +1,7 @@
 import { MaxCommandWaitMs } from "@kndl/protocol"
 import { Layer } from "effect"
+import { AttachmentRoutes } from "./AttachmentRoutes.ts"
+import { Attachments } from "./Attachments.ts"
 import { AuthRoutes } from "./AuthRoutes.ts"
 import { ChannelRoutes } from "./Channels.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
@@ -41,6 +43,7 @@ import { WebUiRoutes } from "./WebUi.ts"
 /** Every route the Hub serves: its own, and the web UI's build on every other GET path. */
 export const HubRoutes = Layer.mergeAll(
   HealthRoute,
+  AttachmentRoutes,
   AuthRoutes,
   CliLoginRoutes,
   ChannelRoutes,
@@ -85,6 +88,7 @@ export const HubServices = SessionRelay.layer.pipe(
       ModOutbox.layer,
       SessionLog.layer,
       PromptQueue.layer,
+      Attachments.layer,
       Runners.layer,
       PairingCodes.layer,
       HubShutdown.layer,

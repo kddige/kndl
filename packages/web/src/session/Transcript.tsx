@@ -1,5 +1,6 @@
 import type {
   AgentId,
+  Attachment,
   Participant,
   SessionId,
   SessionStateChanged,
@@ -9,6 +10,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, memo, type ReactNode, useContext, useState } from "react"
 import { clock, count, duration, statusOf } from "../app/format.ts"
+import { useHub } from "../app/hub.tsx"
 import type {
   AgentView,
   Block,
@@ -77,6 +79,26 @@ const styles = stylex.create({
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
     lineHeight: leading.normal,
+  },
+  attachments: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: space.s2,
+    marginInlineStart: space.s8,
+    padding: 0,
+    listStyle: "none",
+  },
+  thumbnailLink: { display: "block", borderRadius: radius.md },
+  thumbnail: {
+    display: "block",
+    maxWidth: "12rem",
+    maxHeight: "8rem",
+    objectFit: "contain",
+    borderRadius: radius.md,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    backgroundColor: color.surfaceMuted,
   },
   claudeMark: {
     display: "inline-flex",
@@ -284,6 +306,9 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
         </time>
       </div>
       {turn.prompt !== "" && <div {...stylex.props(styles.prompt)}>{turn.prompt}</div>}
+      {turn.attachments !== undefined && turn.attachments.length > 0 && (
+        <PromptAttachments attachments={turn.attachments} />
+      )}
       <div {...stylex.props(styles.speaker)}>
         <span aria-hidden="true" {...stylex.props(styles.claudeMark)}>
           C
@@ -309,6 +334,38 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
     </article>
   )
 })
+
+/** The images a Turn's prompt carried (#276), each opening full size in a tab of its own. */
+function PromptAttachments({ attachments }: { attachments: ReadonlyArray<Attachment> }) {
+  const hub = useHub()
+  const sessionId = useContext(SessionContext)
+  if (sessionId === null) return null
+  return (
+    <ul aria-label="Attached images" {...stylex.props(styles.attachments)}>
+      {attachments.map((attachment) => {
+        const url = hub.attachmentUrl(sessionId, attachment.id)
+        return (
+          <li key={attachment.id}>
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              title={attachment.name}
+              {...stylex.props(styles.thumbnailLink, focus.ring)}
+            >
+              <img
+                src={url}
+                alt={attachment.name}
+                loading="lazy"
+                {...stylex.props(styles.thumbnail)}
+              />
+            </a>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
 
 /**
  * Who prompted a Turn: a person, the terminal, a subagent that ended (ADR 0014), or, in history

@@ -3,6 +3,7 @@
 
 import type {
   AgentSummary,
+  Attachment,
   AppPermissionsCheck,
   ClaudeCredentialInfo,
   CliTokenInfo,
@@ -41,6 +42,7 @@ export type OpenPortWire = (typeof OpenPort)["Encoded"]
 export type SessionEventWire = (typeof SessionEvent)["Encoded"]
 export type LogEntryWire = (typeof SessionLogEntry)["Encoded"]
 export type QueuedPromptWire = (typeof QueuedPrompt)["Encoded"]
+export type AttachmentWire = (typeof Attachment)["Encoded"]
 export type RunnerSummaryWire = (typeof RunnerSummary)["Encoded"]
 export type EnvironmentWire = (typeof Environment)["Encoded"]
 export type EnvironmentVersionInfoWire = (typeof EnvironmentVersionInfo)["Encoded"]

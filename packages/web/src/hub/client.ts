@@ -7,6 +7,7 @@
 import {
   type AgentId,
   type AppPermissionsCheck,
+  type AttachmentId,
   type BranchChoice,
   type BranchesListed,
   checkHandshake,
@@ -62,7 +63,7 @@ import {
   lastSeq,
   reduce,
 } from "./store.ts"
-import type { HubSocket, HubTransport } from "./transport.ts"
+import type { HubSocket, HubTransport, UploadOptions } from "./transport.ts"
 
 export interface HubClientOptions {
   /** How long to wait before reconnect attempt `attempt` (1, 2, ...), in milliseconds. */
@@ -227,11 +228,37 @@ export class HubClient {
     return this.#send({ _tag: "TerminalResize", sessionId, size })
   }
 
-  /** Queues a prompt. False if it couldn't be sent because the Hub isn't connected. */
-  sendPrompt(sessionId: SessionId, text: string): boolean {
+  /**
+   * Queues a prompt, with the files uploaded for it (#276): an image alone is a prompt. False if it
+   * couldn't be sent because the Hub isn't connected, or there is nothing to send.
+   */
+  sendPrompt(
+    sessionId: SessionId,
+    text: string,
+    attachments: ReadonlyArray<AttachmentId> = [],
+  ): boolean {
     const trimmed = text.trim()
-    if (trimmed === "") return false
-    return this.#send({ _tag: "SendPrompt", sessionId, text: trimmed })
+    if (trimmed === "" && attachments.length === 0) return false
+    return this.#send({
+      _tag: "SendPrompt",
+      sessionId,
+      text: trimmed,
+      ...(attachments.length > 0 && { attachments }),
+    })
+  }
+
+  /** Uploads a file to attach to a prompt in the Session (#276): the Hub's id for it. */
+  uploadAttachment(
+    sessionId: SessionId,
+    file: File,
+    options: UploadOptions,
+  ): Promise<AttachmentId> {
+    return this.transport.uploadAttachment(sessionId, file, options)
+  }
+
+  /** Where the browser loads one of the Session's attachments from. */
+  attachmentUrl(sessionId: SessionId, attachmentId: AttachmentId): string {
+    return this.transport.attachmentUrl(sessionId, attachmentId)
   }
 
   cancelPrompt(sessionId: SessionId, promptId: PromptId): boolean {

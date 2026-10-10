@@ -18,6 +18,8 @@ import {
 } from "@kndl/hub/src/testSupport.ts"
 import type { TestHub } from "@kndl/hub/src/testSupport.ts"
 import {
+  type AttachmentId,
+  AttachmentNameHeader,
   type CommandFailed,
   type ModCommandsEncoded,
   type ModEventsEncoded,
@@ -29,7 +31,7 @@ import {
 } from "@kndl/protocol"
 import { Schema } from "effect"
 import { HubClient } from "../../src/hub/client.ts"
-import { hubPaths } from "../../src/hub/config.ts"
+import { attachmentPath, attachmentsPath, hubPaths } from "../../src/hub/config.ts"
 import { FakeHub } from "../../src/hub/fake/FakeHub.ts"
 import type { HubTransport } from "../../src/hub/transport.ts"
 
@@ -106,6 +108,9 @@ const fake: Adapter = {
 type ModCommand = ModCommandsEncoded["messages"][number]["message"]
 type ModEvent = ModEventsEncoded["messages"][number]
 
+/** A PNG's signature and a little more: what the Hub tells a PNG by. */
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+
 /** A transport's sign-in routes, which these tests never use. */
 const unused = async (): Promise<never> => {
   throw new Error("unused")
@@ -138,6 +143,24 @@ function realTransport(hub: TestHub, cookie: string) {
     signOut: unused,
     approveCli: unused,
     admit: unused,
+    // fetch, which says nothing of how far an upload got: all of it, at the end.
+    uploadAttachment: async (sessionId, file, { onProgress }) => {
+      const response = await fetch(`${hub.url}${attachmentsPath(sessionId)}`, {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: webOrigin,
+          [AttachmentNameHeader]: encodeURIComponent(file.name),
+        },
+        body: file,
+      })
+      const body = (await response.json()) as { id?: AttachmentId; error?: string }
+      if (response.status !== 201 || body.id === undefined) throw new Error(body.error)
+      onProgress(file.size)
+      return body.id
+    },
+    attachmentUrl: (sessionId, attachmentId) =>
+      `${hub.url}${attachmentPath(sessionId, attachmentId)}`,
   }
   return {
     transport,
@@ -457,6 +480,39 @@ for (const adapter of [fake, real]) {
       const other = scene.newClient()
       const otherSession = watch(other, scene.sessionId)
       await eventually(() => expect(otherSession.events()).toEqual(session.events()))
+    })
+
+    test("an image alone is a prompt: its Turn carries it, and a steer waits for the Turn (#276)", async () => {
+      const scene = await adapter.scene()
+      const session = await turnRunning(scene)
+      const file = new File([png], "shot.png", { type: "image/png" })
+      const progress: Array<number> = []
+      const id = await scene.client.uploadAttachment(scene.sessionId, file, {
+        onProgress: (sent) => progress.push(sent),
+        signal: new AbortController().signal,
+      })
+      expect(progress.at(-1)).toBe(png.byteLength)
+      expect(scene.client.sendPrompt(scene.sessionId, "", [id])).toBe(true)
+      await eventually(() => expect(session.queue()).toEqual([""]))
+      scene.client.steerPrompt(scene.sessionId, session.queued(""))
+      await eventually(() =>
+        expect(session.refusals("SteerPrompt")).toEqual([expect.stringContaining("attachments")]),
+      )
+
+      scene.client.stopTurn(scene.sessionId)
+      await eventually(() => expect(session.ofTag("TurnStarted")).toHaveLength(2))
+      expect(session.ofTag("TurnStarted")[1]?.attachments).toEqual([
+        { id, name: "shot.png", mediaType: "image/png", size: png.byteLength },
+      ])
+    })
+
+    test("a prompt names only files its sender uploaded to the Session (#276)", async () => {
+      const scene = await adapter.scene()
+      const session = watch(scene.client, scene.sessionId)
+      scene.client.sendPrompt(scene.sessionId, "look", ["att-nope" as AttachmentId])
+      await eventually(() =>
+        expect(session.refusals("SendPrompt")).toEqual([expect.stringContaining("attachment")]),
+      )
     })
   })
 }

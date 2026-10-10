@@ -18,6 +18,8 @@ export default defineConfig({
       // An MCP server's icon (#230); the web UI's own /mcp page stays Vite's.
       "^/mcp/.+/icon": hub,
       "/runner/": hub,
+      // A Session's attachments (#276); the web UI's own /sessions/<id> page stays Vite's.
+      "^/sessions/[^/]+/attachments": hub,
       "/ws": { target: hub, ws: true },
     },
   },

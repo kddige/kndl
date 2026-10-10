@@ -5,9 +5,15 @@ import {
   agentWorktree,
   answerResult,
   askedQuestions,
+  attachmentContext,
+  attachmentPart,
+  attachmentPartPath,
+  attachmentResult,
+  attachmentToolName,
   backgroundedByStop,
   checkEvent,
   clip,
+  deliveredPrompt,
   dismissedText,
   eventsBody,
   helloBody,
@@ -481,5 +487,82 @@ describe("AskUserQuestion (#193)", () => {
         },
       }),
     ).toEqual({ _tag: "Answered", answers: { "Which library?": "date-fns" } })
+  })
+})
+
+/** A part of shot.png, as the Hub sends it. */
+const shotPart = (data: string, next?: number) => {
+  const read = attachmentPart(
+    200,
+    JSON.stringify({ id: "att-1", name: "shot.png", mediaType: "image/png", data, next }),
+  )
+  if ("deny" in read) throw new Error(read.deny)
+  return read.part
+}
+
+describe("attachments (#276)", () => {
+  const shot = { id: "att-1", name: "shot.png", mediaType: "image/png" as const, size: 12 }
+  const photo = { id: "att-2", name: "photo.jpg", mediaType: "image/jpeg" as const, size: 34 }
+
+  test("a delivered prompt names its sender, then marks each file with its id", () => {
+    expect(deliveredPrompt(participant, "what broke?", [shot, photo])).toBe(
+      "[Ada Lovelace] what broke?\n[Image #1: shot.png (attachment att-1)]\n[Image #2: photo.jpg (attachment att-2)]",
+    )
+    expect(deliveredPrompt(participant, "", [shot])).toBe(
+      "[Ada Lovelace] [Image #1: shot.png (attachment att-1)]",
+    )
+    expect(deliveredPrompt(participant, "hi", [])).toBe("[Ada Lovelace] hi")
+  })
+
+  test("Claude is told, out of sight, to open each file with the tool", () => {
+    const context = attachmentContext([shot, photo])
+    expect(context).toContain("2 images")
+    expect(context).toContain(attachmentToolName)
+    expect(context).toContain("#1 shot.png: id att-1")
+    expect(context).toContain("#2 photo.jpg: id att-2")
+    expect(attachmentToolName).toBe("mcp__hub-link-commands__attachment")
+  })
+
+  test("the tool hands Claude the image the Hub sent, its parts joined, as an image block", () => {
+    expect(attachmentResult([shotPart("iVBO", 3), shotPart("Rw0K")])).toEqual({
+      result: [
+        { type: "text", text: "shot.png" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0K" } },
+      ],
+    })
+    expect(attachmentPartPath("att 1", 2_400_000)).toBe("/mod/attachments/att%201?offset=2400000")
+  })
+
+  test("the tool says why when the Hub has no such file, answers nonsense, or stops short", () => {
+    expect(attachmentPart(404, '{"error":"There is no such attachment."}')).toEqual({
+      deny: "Could not open the attachment: There is no such attachment.",
+    })
+    expect(attachmentPart(200, "not json")).toEqual({
+      deny: "Could not open the attachment: the Hub's answer was not one.",
+    })
+    const first = attachmentPart(
+      200,
+      JSON.stringify({ id: "a", name: "a.png", mediaType: "image/png", data: "iVBO", next: 3 }),
+    )
+    if ("deny" in first) throw new Error(first.deny)
+    expect(attachmentResult([first.part])).toEqual({
+      deny: "Could not open the attachment: the Hub sent only part of it.",
+    })
+  })
+
+  test("the transcript shows the tool's image as a note, not its bytes", () => {
+    const blocks = [
+      { type: "text", text: "shot.png" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "A".repeat(9_000) },
+      },
+    ]
+    expect(resultSummary(attachmentToolName, blocks)).toBe("shot.png\n[image/png]")
+  })
+
+  test("the model is told what a marker is", () => {
+    expect(sharedSessionNote).toContain("[Image #1: name (attachment id)]")
+    expect(sharedSessionNote).toContain(attachmentToolName)
   })
 })

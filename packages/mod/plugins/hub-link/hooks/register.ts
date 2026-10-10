@@ -7,7 +7,8 @@
 //   runs none of the Hub's commands: a plugin's hooks don't see the work it causes, such as an
 //   agent it resumes, so hub-link-commands runs them, and this plugin sees what follows.
 // - Tools: Claude Code runs them, in the Sandbox, without asking (ADR 0004).
-// - The model: the system prompt says the Session is shared.
+// - The model: the system prompt says the Session is shared, and a prompt from the Hub with files
+//   says, out of sight, to open them (#276).
 //
 // The rest of the plugin, with Effect and the protocol, is bundled from the mod package's src/
 // into hooks/hub-link-lib.js (`bun run build`): Claude Code's mod runtime loads no package but its
@@ -179,6 +180,23 @@ export function register(on: On) {
   on("tool.check", async ($, e, next) =>
     e.tool === "AskUserQuestion" ? next(e) : { decision: "allow" as const },
   )
+
+  // A prompt hub-link-commands submits with files (#276, ADR 0024) carries what Claude is told of
+  // them, out of sight: to open each with the attachment tool.
+  on("prompt.submit", async ($, e, next) => {
+    const { value: delivered } = await $.state.get({
+      plugin: "hub-link-commands",
+      key: "delivered",
+    })
+    // Once, for the prompt delivered: not for the same text typed again later.
+    if (
+      delivered?.context === undefined ||
+      delivered.promptId === state.claimed ||
+      e.text !== delivered.text
+    )
+      return next(e)
+    return next({ ...e, context: [...(e.context ?? []), delivered.context] })
+  })
 
   on("turn.start", async ($, e, next) => {
     state.mainTurn = e.turnId

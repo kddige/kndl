@@ -271,6 +271,8 @@ export interface LiveSessions extends Pick<Pieces, "textStreams" | "terminalStre
       readonly by: ParticipantId
       readonly turnRunning: boolean
       readonly queued: boolean
+      /** It carries files (#276), which a steer can't show Claude yet. */
+      readonly hasAttachments: boolean
     },
   ) => "ok" | "already" | Refusal
   /** Why the queued prompt can't be cancelled, if it can't: it is on its way to Claude Code. */
@@ -570,7 +572,7 @@ export const makeLiveSessions = (): LiveSessions => {
       else pieces.steers.delete(id)
       pieces.starting.delete(id)
     },
-    steer: (id, { promptId, by, turnRunning, queued }) => {
+    steer: (id, { promptId, by, turnRunning, queued, hasAttachments }) => {
       const verdict = steerVerdict({
         queued,
         delivered: pieces.inFlight.get(id) === promptId,
@@ -578,6 +580,7 @@ export const makeLiveSessions = (): LiveSessions => {
         // One going to sleep takes no steer.
         turnRunning: turnRunning && !pieces.stopping.has(id),
         modSteers: pieces.steers.has(id),
+        hasAttachments,
       })
       if (verdict !== "ok") return verdict
       // It stays in its place until the mod says it joined the Turn.

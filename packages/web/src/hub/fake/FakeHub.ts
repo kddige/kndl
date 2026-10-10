@@ -37,7 +37,11 @@ import {
   installationsCantStartText,
   InviteLifetimeMs,
   InvitePath,
+  attachmentName,
+  AttachmentId,
+  ImageMediaTypes,
   memberRemovalRefusal,
+  MaxImageBytes,
   messageAgentVerdict,
   modelNotFoundText,
   ownerOnlyMessage,
@@ -55,6 +59,7 @@ import {
   sameRepo,
   sendPromptRefusal,
   SessionId,
+  withAttachmentMarkers,
   type SessionNow,
   sessionNameFrom,
   sleepVerdict,
@@ -67,7 +72,13 @@ import {
 } from "@kndl/protocol"
 import { Redacted, Schema } from "effect"
 import type { SignInOptions } from "../config.ts"
-import type { HubSocket, HubTransport, SignInStatus, SocketHandlers } from "../transport.ts"
+import type {
+  HubSocket,
+  HubTransport,
+  SignInStatus,
+  SocketHandlers,
+  UploadOptions,
+} from "../transport.ts"
 import { FakeEnvironments, sessionStartScript, testBuildScript } from "./environments.ts"
 import { FakeMcpServers, type McpServerChangeCommand } from "./mcpServers.ts"
 import {
@@ -89,6 +100,7 @@ import {
 import { FakeTerminal } from "./terminal.ts"
 import type {
   AgentSummaryWire,
+  AttachmentWire,
   AppPermissionsCheckWire,
   ClaudeCredentialInfoWire,
   CliTokenInfoWire,
@@ -320,6 +332,16 @@ export class FakeHub implements HubTransport {
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
   /** The scripted reply each queued prompt gets when it's delivered. */
   readonly #replies = new Map<string, ReadonlyArray<ReplyStep>>()
+  /** The files uploaded (#276), by id, with who uploaded each where, and a URL to show it at. */
+  readonly #attachments = new Map<
+    string,
+    {
+      readonly attachment: AttachmentWire
+      readonly sessionId: string
+      readonly by: string
+      readonly url: string
+    }
+  >()
   #ids = 0
 
   constructor(options: FakeHubOptions = {}) {
@@ -407,6 +429,39 @@ export class FakeHub implements HubTransport {
   async admit(ticket: string): Promise<void> {
     if (!this.#signInOptions.github) throw new Error("Not Found")
     this.admissions.push(ticket)
+  }
+
+  /**
+   * As the Hub does (#276): an image Claude reads, of 5 MB at most, kept for the Session. The fake
+   * trusts the file's type, and shows it from the browser's own copy.
+   */
+  async uploadAttachment(
+    sessionId: SessionId,
+    file: File,
+    { onProgress, signal }: UploadOptions,
+  ): Promise<AttachmentId> {
+    if (!this.#signedIn) throw new Error("Sign in first")
+    if (file.size > MaxImageBytes)
+      throw new Error("An image may be 5 MB at most, the most Claude reads.")
+    const mediaType = ImageMediaTypes.find((type) => type === file.type)
+    if (mediaType === undefined)
+      throw new Error("Only JPEG, PNG, GIF and WebP images can be attached.")
+    onProgress(Math.round(file.size / 2))
+    await new Promise((resolve) => setTimeout(resolve, this.stepMs))
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError")
+    onProgress(file.size)
+    const id = AttachmentId.make(`att-${++this.#ids}`)
+    this.#attachments.set(id, {
+      attachment: { id, name: attachmentName(file.name), mediaType, size: file.size },
+      sessionId,
+      by: this.#you.id,
+      url: URL.createObjectURL(file),
+    })
+    return id
+  }
+
+  attachmentUrl(_sessionId: SessionId, attachmentId: AttachmentId): string {
+    return this.#attachments.get(attachmentId)?.url ?? ""
   }
 
   async devSignIn(login?: string): Promise<void> {
@@ -982,7 +1037,23 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, cantSend.refusal, message.sessionId)
           break
         }
-        this.#prompt(session, this.#you, message.text, this.#reply(message.text))
+        // As the Hub does: only files its sender uploaded to this Session (#276).
+        const files = (message.attachments ?? []).map((id) => this.#attachments.get(id))
+        const attachments = files.flatMap((file) =>
+          file?.sessionId === message.sessionId && file.by === this.#you.id
+            ? [file.attachment]
+            : [],
+        )
+        if (attachments.length !== files.length) {
+          this.#fail(
+            socket,
+            message._tag,
+            "An attachment of the prompt isn't one you uploaded to this Session: attach it again.",
+            message.sessionId,
+          )
+          break
+        }
+        this.#prompt(session, this.#you, message.text, this.#reply(message.text), attachments)
         break
       }
       // As the Hub does: a prompt on its way to Claude Code can't be cancelled.
@@ -1012,6 +1083,8 @@ export class FakeHub implements HubTransport {
             session.summary.currentTurn !== null &&
             !this.#goingToSleep(session),
           modSteers: session.modSteers,
+          hasAttachments:
+            (session.queue.find((prompt) => prompt.id === promptId)?.attachments?.length ?? 0) > 0,
         })
         if (typeof verdict === "object") {
           this.#fail(socket, message._tag, verdict.refusal, message.sessionId)
@@ -1751,8 +1824,15 @@ export class FakeHub implements HubTransport {
     sender: ParticipantWire,
     text: string,
     reply: ReadonlyArray<ReplyStep>,
+    attachments: ReadonlyArray<AttachmentWire> = [],
   ): void {
-    const prompt: QueuedPromptWire = { id: `p-${++this.#ids}`, text, sender, queuedAt: Date.now() }
+    const prompt: QueuedPromptWire = {
+      id: `p-${++this.#ids}`,
+      text,
+      sender,
+      queuedAt: Date.now(),
+      ...(attachments.length > 0 && { attachments }),
+    }
     this.#replies.set(prompt.id, reply)
     session.queue.push(prompt)
     this.#queueChanged(session)
@@ -1797,10 +1877,11 @@ export class FakeHub implements HubTransport {
     this.#runTurn(
       session,
       {
-        // The Hub tells the model who is talking.
-        text: `[${prompt.sender.name}] ${prompt.text}`,
+        // The mod tells the model who is talking, and marks each file.
+        text: `[${prompt.sender.name}] ${withAttachmentMarkers(prompt.text, prompt.attachments ?? [])}`,
         sender: { _tag: "FromParticipant", participant: prompt.sender },
         promptId: prompt.id,
+        ...(prompt.attachments !== undefined && { attachments: prompt.attachments }),
       },
       reply,
     )

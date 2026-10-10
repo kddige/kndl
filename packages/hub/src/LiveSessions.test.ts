@@ -208,7 +208,7 @@ const refused = (refusal: string) => ({ refusal: expect.stringContaining(refusal
 describe("steering", () => {
   const one = PromptId.make("pr-1")
   const two = PromptId.make("pr-2")
-  const steering = { by: alice.id, turnRunning: true, queued: true }
+  const steering = { by: alice.id, turnRunning: true, queued: true, hasAttachments: false }
 
   test("hands a queued prompt to the running Turn once, until the mod answers", () => {
     const live = steeringSession()
@@ -391,7 +391,13 @@ describe("what a Session is doing", () => {
   test("a steer awaiting the mod's answer blocks delivery alone", () => {
     const live = makeLiveSessions()
     live.modHello(id, true)
-    live.steer(id, { promptId: one, by: alice.id, turnRunning: true, queued: true })
+    live.steer(id, {
+      promptId: one,
+      by: alice.id,
+      turnRunning: true,
+      queued: true,
+      hasAttachments: false,
+    })
     expect(doing(live)).toEqual({ ...nothing, blocksDelivery: true })
   })
 

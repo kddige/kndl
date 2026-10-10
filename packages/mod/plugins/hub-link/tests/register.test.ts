@@ -280,6 +280,48 @@ describe("who a Turn is from", () => {
     ])
   })
 
+  test("the prompt delivered with files tells Claude out of sight to open them, once (#276)", async ($, on) => {
+    const text = "[Ada Lovelace] What broke?\n[Image #1: shot.png (attachment att-1)]"
+    const context = "This message has 1 image attached. …"
+    delivered(on, { promptId: "pr-1", sender: ada, text, context })
+    const submitted: Array<unknown> = []
+    on("prompt.submit", (_, e) => {
+      submitted.push(e.context)
+      return { text: e.text }
+    })
+
+    on("turn.start", (_, e) => ({ turnId: e.turnId }))
+
+    await $.prompt.submit({ text } as never)
+    await $.turn.start({ turnId: "t1", text } as never)
+    await $.prompt.submit({ text: "typed at the terminal" } as never)
+    // The same text again, from the terminal's history, is the terminal's.
+    await $.prompt.submit({ text } as never)
+
+    expect(submitted).toEqual([[context], undefined, undefined])
+  })
+
+  test("a turn started from the delivered prompt with files is still its sender's (#276)", async ($, on) => {
+    const { posted } = linkedSession(on)
+    const clock = mock.clock(on)
+    const text = "[Ada Lovelace] [Image #1: shot.png (attachment att-1)]"
+    delivered(on, { promptId: "pr-1", sender: ada, text, context: "Open it." })
+    on("turn.start", (_, e) => ({ turnId: e.turnId }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text } as never)
+    await clock.advance(200)
+
+    expect(posted()).toEqual([
+      expect.objectContaining({
+        _tag: "TurnStarted",
+        sender: { _tag: "FromParticipant", participant: ada },
+        promptId: "pr-1",
+      }),
+    ])
+  })
+
   test("a background agent's task notification is from the agent", async ($, on) => {
     const { posted } = linkedSession(on)
     const clock = mock.clock(on)

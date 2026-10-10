@@ -213,6 +213,7 @@ import {
   installationsCantStartText,
   type InstallationId,
   type TerminalFrame,
+  TurnStarted,
   type TextDelta,
   SessionId,
   SessionRemoved,
@@ -271,6 +272,7 @@ import {
   Semaphore,
 } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
+import { Attachments } from "./Attachments.ts"
 import { ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { type CliIdentity, CliTokens } from "./CliTokens.ts"
 import { closeReason } from "./CloseReason.ts"
@@ -590,6 +592,7 @@ export class SessionRelay extends Context.Service<
       const sessions = yield* Sessions
       const log = yield* SessionLog
       const prompts = yield* PromptQueue
+      const attachments = yield* Attachments
       const runners = yield* Runners
       const modTokens = yield* ModTokens
       const outbox = yield* ModOutbox
@@ -1291,6 +1294,7 @@ export class SessionRelay extends Context.Service<
             promptId: head.id,
             text: head.text,
             sender: head.sender,
+            ...(head.attachments !== undefined && { attachments: head.attachments }),
           }),
         )
       })
@@ -2204,6 +2208,19 @@ export class SessionRelay extends Context.Service<
               // A Frozen Session's prompts wait in the queue for its Runner to return.
               const cantSend = sendPromptRefusal(session.value)
               if (cantSend !== undefined) return refuse(message, cantSend.refusal, { sessionId })
+              // Its files are ones its sender uploaded to this Session (#276).
+              const files = yield* attachments.ofSender(
+                sessionId,
+                message.attachments ?? [],
+                you.id,
+              )
+              if (Option.isNone(files)) {
+                return refuse(
+                  message,
+                  "An attachment of the prompt isn't one you uploaded to this Session: attach it again.",
+                  { sessionId },
+                )
+              }
               yield* prompts.add(
                 sessionId,
                 QueuedPrompt.make({
@@ -2211,6 +2228,7 @@ export class SessionRelay extends Context.Service<
                   text: message.text,
                   sender: you,
                   queuedAt: yield* Clock.currentTimeMillis,
+                  ...(files.value.length > 0 && { attachments: files.value }),
                 }),
               )
               yield* queueChanged(sessionId)
@@ -2406,6 +2424,7 @@ export class SessionRelay extends Context.Service<
                 by: you.id,
                 turnRunning: session.value.state === "Active" && session.value.currentTurn !== null,
                 queued: prompt !== undefined,
+                hasAttachments: (prompt?.attachments?.length ?? 0) > 0,
               })
               if (typeof steered === "object") {
                 return refuse(message, steered.refusal, { sessionId })
@@ -3246,6 +3265,23 @@ export class SessionRelay extends Context.Service<
         yield* deliverNext(sessionId)
       }, serialized)
 
+      /**
+       * A Turn's start as it is logged: with the files its queued prompt carried (#276), so the
+       * transcript shows them, on replay too. They are the queue's to say, not the mod's.
+       */
+      const withAttachments = Effect.fn("SessionRelay.withAttachments")(function* (
+        sessionId: SessionId,
+        event: TurnStarted,
+      ) {
+        const { attachments: _claimed, ...started } = event
+        if (started.promptId === undefined) return TurnStarted.make(started)
+        const queued = (yield* prompts.list(sessionId)).find(({ id }) => id === started.promptId)
+        return TurnStarted.make({
+          ...started,
+          ...(queued?.attachments !== undefined && { attachments: queued.attachments }),
+        })
+      })
+
       const modEvent = Effect.fn("SessionRelay.modEvent")(function* (
         sessionId: SessionId,
         event: ModEvent,
@@ -3351,7 +3387,10 @@ export class SessionRelay extends Context.Service<
           return yield* sessionUpdated(sessionId)
         }
 
-        yield* logEvent(sessionId, event)
+        yield* logEvent(
+          sessionId,
+          event._tag === "TurnStarted" ? yield* withAttachments(sessionId, event) : event,
+        )
         if (event._tag === "AgentStarted") {
           // Its summary shows the description too, redacted as the log has it.
           yield* sessions.agentStarted(sessionId, {

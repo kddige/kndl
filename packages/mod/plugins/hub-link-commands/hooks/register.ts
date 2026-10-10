@@ -6,9 +6,11 @@
 // - The Hub: says hello and long-polls for commands (see HubLink.ts): prompts from the Prompt
 //   queue, prompts steered into the running Turn, stopping the Turn, messages to subagents and
 //   stopping one, and presence.
-// - hub-link: reads which prompt it delivered last, and who sent it, to report the Turn it starts;
-//   and which it is steering, to report it joining the Turn.
+// - hub-link: reads which prompt it delivered last, and who sent it, to report the Turn it starts
+//   and tell Claude of its files; and which it is steering, to report it joining the Turn.
 // - The person at the terminal: a band above the prompt shows the link and the Participants.
+// - Claude: a tool that opens the files Participants attach to prompts (#276, ADR 0024), which the
+//   plugin API's prompts can't carry: it fetches each from the Hub, and answers with the image.
 //
 // The rest of the plugin, with Effect and the protocol, is bundled from the mod package's src/
 // into hooks/hub-link-lib.js (`bun run build`).
@@ -19,7 +21,15 @@ import type { HubLinkBand } from "../types"
 import {
   answerResult,
   askedQuestions,
+  attachmentContext,
+  attachmentPart,
+  attachmentPartPath,
+  attachmentResult,
+  attachmentToolName,
+  attachmentToolSpec,
+  deliveredPrompt,
   HubLink,
+  maxAttachmentParts,
   promptFromParticipant,
   steeredPrompt,
   terminalOutcome,
@@ -41,6 +51,9 @@ const steering = { plugin: "hub-link-commands", key: "steering" } as const
 /** The module's own state; a reload starts it over, and fires `session.start` again. */
 const state = {
   link: undefined as HubLink | undefined,
+  /** Where the Hub is, and the mod token, for the attachment tool's fetches. */
+  hub: undefined as { readonly url: string; readonly modToken: string } | undefined,
+
   /** The Turn running on the main loop, which StopTurn stops. */
   mainTurn: undefined as string | undefined,
   /** The Turn StopTurn stopped last. */
@@ -70,10 +83,17 @@ const deliverPrompt = async ($: EngineInterface, command: Command<"DeliverPrompt
     void $.state.set(delivered, null).catch(() => undefined)
     report({ _tag: "PromptFailed", promptId: command.promptId, message })
   }
-  const text = promptFromParticipant(command.sender, command.text)
+  const attachments = command.attachments ?? []
+  const text = deliveredPrompt(command.sender, command.text, attachments)
   try {
-    // Said before it is submitted, so hub-link reads it when the Turn starts.
-    await $.state.set(delivered, { promptId: command.promptId, sender: command.sender, text })
+    // Said before it is submitted, so hub-link reads it when the Turn starts, and adds what Claude
+    // is told of its files: a plugin's own hooks don't see the prompt it submits.
+    await $.state.set(delivered, {
+      promptId: command.promptId,
+      sender: command.sender,
+      text,
+      ...(attachments.length > 0 && { context: attachmentContext(attachments) }),
+    })
     const entered = await $.prompt.submit({ text, asUser: true })
     if (entered.drop !== undefined) failed(`a hook dropped the prompt: ${entered.drop}`)
   } catch (error) {
@@ -203,7 +223,8 @@ const startLink = async ($: EngineInterface) => {
   ])
   // hub-link says so in the debug log. A background job or daemon of Claude Code's isn't the
   // Session's Claude Code, and runs none of its commands (#191).
-  if (!hubUrl || !sessionId || !modToken || kind) return
+  if (!hubUrl || !sessionId || !modToken || kind) return false
+  state.hub = { url: hubUrl.replace(/\/+$/, ""), modToken }
   state.link?.stop()
   state.link = new HubLink({
     hubUrl,
@@ -217,13 +238,48 @@ const startLink = async ($: EngineInterface) => {
     log: (text) => $.ui.log(text, { to: "debug" }),
   })
   state.link.start()
+  return true
 }
 
 export function register(on: On) {
   on("session.start", async ($, e, next) => {
     const started = await next(e)
-    await startLink($).catch((error) => $.ui.log(`hub-link-commands: ${error}`, { to: "debug" }))
+    const linked = await startLink($).catch((error) => {
+      $.ui.log(`hub-link-commands: ${error}`, { to: "debug" })
+      return false
+    })
+    // In the tool list from the first request on, beside the Hub link it fetches through.
+    if (linked)
+      await $.tool
+        .register(attachmentToolSpec)
+        .catch((error) => $.ui.log(`hub-link-commands: ${error}`, { to: "debug" }))
     return started
+  })
+
+  // A file a Participant attached (#276, ADR 0024), by the id its marker gives: fetched from the
+  // Hub, through the Runner's relay, in parts the runtime's fetch can read, and handed to Claude as
+  // an image block.
+  on("tool.call", { tool: attachmentToolName }, async ($, e) => {
+    const id = typeof e.id === "string" ? e.id : ""
+    const hub = state.hub
+    if (hub === undefined) return { deny: "This session is not linked to a kndl Hub." }
+    if (id === "") return { deny: "Give the attachment's id, from its marker." }
+    const parts = []
+    try {
+      for (let offset: number | undefined = 0; offset !== undefined;) {
+        if (parts.length === maxAttachmentParts) break
+        const response = await $.http.fetch(`${hub.url}${attachmentPartPath(id, offset)}`, {
+          headers: { authorization: `Bearer ${hub.modToken}` },
+        })
+        const answer = attachmentPart(response.status, response.text)
+        if ("deny" in answer) return answer
+        parts.push(answer.part)
+        offset = answer.part.next
+      }
+    } catch (error) {
+      return { deny: `Could not open the attachment: ${String(error)}` }
+    }
+    return attachmentResult(parts)
   })
 
   on("session.end", async ($, e, next) => {

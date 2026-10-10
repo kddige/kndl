@@ -1,6 +1,8 @@
 import { Schema } from "effect"
+import { PromptAttachments, ImageMediaType, textOrAttachments } from "./Attachment.ts"
 import {
   AgentId,
+  AttachmentId,
   ClaudeSessionId,
   ModCommandSeq,
   ParticipantId,
@@ -122,14 +124,17 @@ export type ModWelcome = typeof ModWelcome.Type
 
 /**
  * The next prompt from the Prompt queue, sent when the Session is idle. The mod submits it with
- * the sender's name and reports the Turn it starts with this `promptId`.
+ * the sender's name and a marker for each attachment (#276), and reports the Turn it starts with
+ * this `promptId`.
  */
 export const DeliverPrompt = Schema.TaggedStruct("DeliverPrompt", {
   sessionId: SessionId,
   promptId: PromptId,
-  text: Schema.NonEmptyString,
+  /** As typed; empty for a prompt of attachments alone. */
+  text: Schema.String,
   sender: Participant,
-})
+  attachments: Schema.optionalKey(PromptAttachments),
+}).check(textOrAttachments)
 export type DeliverPrompt = typeof DeliverPrompt.Type
 
 /**
@@ -173,6 +178,30 @@ export const DeliverAnswer = Schema.TaggedStruct("DeliverAnswer", {
 })
 export type DeliverAnswer = typeof DeliverAnswer.Type
 
+/**
+ * The most bytes of an attachment one {@link ModAttachment} carries: base64 of it is 3.2 MB, under
+ * the 4 MiB the mod runtime's fetch reads of a body (Claude Code 2.1.296), which a 5 MB image's
+ * would be over. A multiple of 3, so the parts' base64 joins into the whole file's.
+ */
+export const MaxModAttachmentPartBytes = 2_400_000
+
+/**
+ * The answer to `GET /mod/attachments/<id>?offset=<n>` (#276): a part of one of the Session's
+ * attachments, from byte `offset` (0 by default), which the mod's tool hands Claude whole. Base64,
+ * as Claude reads it: the mod runtime's fetch reads text only.
+ */
+export const ModAttachment = Schema.Struct({
+  id: AttachmentId,
+  name: Schema.NonEmptyString,
+  mediaType: ImageMediaType,
+  /** At most {@link MaxModAttachmentPartBytes} of the file, base64. */
+  data: Schema.String,
+  /** Where the next part starts; absent on the last. */
+  next: Schema.optionalKey(Schema.Natural),
+})
+export type ModAttachment = typeof ModAttachment.Type
+export type ModAttachmentEncoded = typeof ModAttachment.Encoded
+
 /** Every message the Hub sends the mod. `PresenceChanged` feeds the Participants band. */
 export const HubToMod = Schema.Union([
   ModWelcome,
@@ -212,6 +241,10 @@ export const MaxCommandWaitMs = 25_000
 
 /** A whole number of at least zero, sent as a query parameter. */
 const NaturalFromString = Schema.FiniteFromString.pipe(Schema.decodeTo(Schema.Natural))
+
+/** The query of `GET /mod/attachments/<id>`: the byte its part starts at, 0 by default. */
+export const ModAttachmentQuery = Schema.Struct({ offset: Schema.optionalKey(NaturalFromString) })
+export type ModAttachmentQueryEncoded = typeof ModAttachmentQuery.Encoded
 
 /** The query of `GET /mod/commands`. Both default to 0: everything queued, without waiting. */
 export const ModCommandsQuery = Schema.Struct({

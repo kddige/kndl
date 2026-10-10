@@ -10,9 +10,11 @@
 // into the transcript it has, and a whole log is the same fold from an empty transcript. A batch
 // costs what it touches, so a Turn streaming in doesn't cost the whole Session's length.
 
+import { withoutAttachmentMarkers } from "@kndl/protocol"
 import type {
   AgentId,
   AgentStatus,
+  Attachment,
   AgentSummary,
   AgentWorktree,
   EventSeq,
@@ -98,9 +100,14 @@ export interface TurnView {
    * agent for, as Claude Code notifies a background command's end the same way.
    */
   readonly agentDescription?: string
-  /** The prompt as sent, without the `[Name] ` the Hub prefixes for the model. */
+  /**
+   * The prompt as sent, without the `[Name] ` the Hub prefixes for the model, or the markers of its
+   * files.
+   */
   readonly prompt: string
   readonly promptId?: PromptId
+  /** The files the prompt carried (#276), which the Turn shows. */
+  readonly attachments?: ReadonlyArray<Attachment>
   /** The main loop's text and tool calls, with each subagent at its Agent call. */
   readonly blocks: ReadonlyArray<Block>
   /** Who asked to stop this Turn, in order. */
@@ -188,6 +195,7 @@ interface MutableTurn {
   sender: PromptSender
   prompt: string
   promptId?: PromptId
+  attachments?: ReadonlyArray<Attachment>
   blocks: Array<FoldedBlock>
   stopRequests: Array<Participant>
   unread: Array<SteeredPrompt>
@@ -399,6 +407,7 @@ class Folding {
     sender: PromptSender,
     prompt: string,
     promptId?: PromptId,
+    attachments?: ReadonlyArray<Attachment>,
   ): number {
     const index = this.#items.length
     this.#items.push(undefined)
@@ -407,8 +416,9 @@ class Folding {
       seq: entry.seq,
       at: entry.at,
       sender,
-      prompt: displayPrompt(prompt, sender),
+      prompt: withoutAttachmentMarkers(displayPrompt(prompt, sender), attachments ?? []),
       ...(promptId !== undefined && { promptId }),
+      ...(attachments !== undefined && { attachments }),
       blocks: [],
       stopRequests: [],
       unread: [],
@@ -446,7 +456,14 @@ class Folding {
     const event = entry.event
     switch (event._tag) {
       case "TurnStarted":
-        this.#startTurn(entry, event.turnId, event.sender, event.text, event.promptId)
+        this.#startTurn(
+          entry,
+          event.turnId,
+          event.sender,
+          event.text,
+          event.promptId,
+          event.attachments,
+        )
         break
       case "TextDelta": {
         const blocks = this.#blocks(this.#ownerFor(entry, event.turnId, event.agentId))
@@ -671,6 +688,7 @@ class Folding {
           ...(description !== undefined && { agentDescription: description }),
           prompt: turn.prompt,
           ...(turn.promptId !== undefined && { promptId: turn.promptId }),
+          ...(turn.attachments !== undefined && { attachments: turn.attachments }),
           blocks: viewBlocks(turn.blocks),
           stopRequests: [...turn.stopRequests],
           unread: [...turn.unread],

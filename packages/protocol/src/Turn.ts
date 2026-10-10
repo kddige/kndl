@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { PromptAttachments } from "./Attachment.ts"
 import { AgentId, PromptId, ToolCallId, TurnId } from "./Ids.ts"
 import {
   AgentStatus,
@@ -48,6 +49,11 @@ export const TurnStarted = Schema.TaggedStruct("TurnStarted", {
   sender: PromptSender,
   /** The Prompt queue entry this Turn answers, when it came from the queue. */
   promptId: Schema.optionalKey(PromptId),
+  /**
+   * The files its prompt carried (#276), which `text` names by their markers. The Hub adds them
+   * from the queued prompt, as it logs the event.
+   */
+  attachments: Schema.optionalKey(PromptAttachments),
 })
 export type TurnStarted = typeof TurnStarted.Type
 
