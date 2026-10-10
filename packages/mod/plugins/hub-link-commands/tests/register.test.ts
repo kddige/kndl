@@ -17,14 +17,15 @@ const answer = (status: number, text: string) => ({
 
 /**
  * A session a Runner started, linked to a Hub whose first poll answers `commands` once `ready`
- * settles, and whose later ones are held, as its long poll does. Returns the requests, and the
- * events posted.
+ * settles, and whose later ones are held, as its long poll does; it answers for the attachments in
+ * `files`, by id, and 404 for any other. Returns the requests, and the events posted.
  */
 const linkedSession = (
   on: On,
   commands: Array<Record<string, unknown>> = [],
   ready: Promise<void> = Promise.resolve(),
   env: Record<string, string> = {},
+  files: Record<string, Record<string, unknown>> = {},
 ) => {
   mock.env(on, {
     KNDL_URL: hubUrl,
@@ -45,6 +46,13 @@ const linkedSession = (
     })
     if (e.url.endsWith("/mod/hello")) return answer(welcome.status, welcome.text)
     if (e.url.endsWith("/mod/events")) return answer(204, "")
+    const attachment = /\/mod\/attachments\/(.+)$/.exec(e.url)?.[1]
+    if (attachment !== undefined) {
+      const file = files[attachment]
+      return file === undefined
+        ? answer(404, JSON.stringify({ error: "There is no such attachment." }))
+        : answer(200, JSON.stringify(file))
+    }
     polled++
     if (polled > 1) return new Promise(() => undefined)
     await ready
@@ -582,5 +590,88 @@ describe("Open questions (#193)", () => {
     await clock.advance(200)
 
     expect(posted()).toEqual([expect.objectContaining({ _tag: "AnswerFailed", senderId: "p1" })])
+  })
+})
+
+describe("attachments (#276)", () => {
+  const tool = "mcp__hub-link-commands__attachment"
+  const shot = { id: "att-1", name: "shot.png", mediaType: "image/png", size: 12 }
+  const photo = { id: "att-2", name: "photo.jpg", mediaType: "image/jpeg", size: 34 }
+
+  test("the tool is in the model's tool list once the session is linked", async ($, on) => {
+    linkedSession(on)
+    const registered: Array<unknown> = []
+    on("tool.register", (_, e) => {
+      registered.push(e)
+      return { value: { tool } }
+    })
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+
+    expect(registered).toEqual([expect.objectContaining({ name: "attachment", isDeferred: false })])
+  })
+
+  test("a prompt with attachments marks each, and says what Claude is to be told of them", async ($, on) => {
+    linkedSession(on, [
+      {
+        _tag: "DeliverPrompt",
+        sessionId: "s1",
+        promptId: "pr-1",
+        text: "What broke?",
+        sender: ada,
+        attachments: [shot, photo],
+      },
+    ])
+    const clock = mock.clock(on)
+    on("tool.register", () => ({ value: { tool } }))
+    const writes = deliveredWrites(on)
+    const submitted: Array<string> = []
+    on("prompt.submit", (_, e) => {
+      submitted.push(e.text)
+      return { text: e.text }
+    })
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+
+    const text = [
+      "[Ada Lovelace] What broke?",
+      "[Image #1: shot.png (attachment att-1)]",
+      "[Image #2: photo.jpg (attachment att-2)]",
+    ].join("\n")
+    expect(submitted).toEqual([text])
+    // hub-link knows its Turn by the text submitted, and adds what Claude is told of the files.
+    expect(writes).toEqual([
+      {
+        promptId: "pr-1",
+        sender: ada,
+        text,
+        context: expect.stringMatching(/2 images.*#1 shot\.png: id att-1; #2 photo\.jpg: id att-2/),
+      },
+    ])
+  })
+
+  test("the tool hands Claude the file the Hub keeps, as an image", async ($, on) => {
+    const { requests } = linkedSession(
+      on,
+      [],
+      undefined,
+      {},
+      {
+        "att-1": { id: "att-1", name: "shot.png", mediaType: "image/png", data: "iVBO" },
+      },
+    )
+    on("tool.register", () => ({ value: { tool } }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    const opened = await $.tool.call({ tool, id: "att-1" } as never)
+    const missing = await $.tool.call({ tool, id: "att-9" } as never)
+
+    expect(requests.map((request) => request.url)).toContain(`${hubUrl}/mod/attachments/att-1`)
+    expect(opened.result).toEqual([
+      { type: "text", text: "shot.png" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBO" } },
+    ])
+    expect(missing.deny).toBe("Could not open the attachment: There is no such attachment.")
   })
 })

@@ -23,8 +23,13 @@ export type HubLinkParticipant = {
 export type HubLinkDelivered = {
   promptId: string
   sender: HubLinkParticipant
-  /** As submitted, led by the sender's name. */
+  /** As submitted, led by the sender's name, with a marker for each file it carries. */
   text: string
+  /**
+   * What Claude is told beside it, out of sight, when it carries files (#276): hub-link adds it
+   * as the prompt is submitted, since a plugin's hooks don't see the prompt it submits itself.
+   */
+  context?: string
 }
 
 /**
