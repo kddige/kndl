@@ -1,4 +1,5 @@
-import { describe, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
+import { Schema } from "effect"
 import {
   alice,
   bob,
@@ -887,6 +888,21 @@ describe("WebToHub", () => {
   test("rejects malformed messages", () => {
     expectRejected(WebToHub, { _tag: "SendPrompt", sessionId: "s-1", text: "" })
     expectRejected(WebToHub, { _tag: "SendPrompt", text: "hi" })
+    // A reply's attachments come as ids beside it, never on the reply itself (#278).
+    const replied = Schema.decodeUnknownSync(WebToHub)({
+      _tag: "AnswerQuestion",
+      sessionId: "s-1",
+      toolCallId: "toolu_ask",
+      answer: {
+        _tag: "Replied",
+        text: "like this",
+        attachments: [{ id: "att-1", name: "a.png", mediaType: "image/png", size: 1 }],
+      },
+    })
+    expect(replied._tag === "AnswerQuestion" && replied.answer).toEqual({
+      _tag: "Replied",
+      text: "like this",
+    })
     expectRejected(WebToHub, { _tag: "MessageAgent", sessionId: "s-1", agentId: "a-1", text: "" })
     expectRejected(SessionEvent, { _tag: "AgentMessaged", agentId: "a-1", sender: alice, text: "" })
     expectRejected(WebToHub, { _tag: "SleepSession" })

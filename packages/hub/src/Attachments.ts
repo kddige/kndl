@@ -91,8 +91,8 @@ export class Attachments extends Context.Service<
       at: number,
     ) => Effect.Effect<Option.Option<ReadonlyArray<Attachment>>, SqlError>
     /**
-     * Those of the files `ids` names that are the Session's, in that order and each once, without
-     * their bytes: what a reply the mod reports closed its question with carried (#278).
+     * Those of the attachments `ids` names that are the Session's, in that order and each once,
+     * without their bytes: what the Hub logs for ids the mod claims (#278).
      */
     readonly ofSession: (
       sessionId: SessionId,

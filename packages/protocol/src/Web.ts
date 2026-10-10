@@ -52,7 +52,7 @@ import {
   Participant,
   PresenceChanged,
   QueuedPrompt,
-  QuestionAnswer,
+  QuestionAnswerFromWeb,
   RepoName,
   RunnerSummary,
   SessionState,
@@ -256,8 +256,7 @@ export const AnswerQuestion = Schema.TaggedStruct("AnswerQuestion", {
   sessionId: SessionId,
   /** The Open question's call, so an answer meant for another question is refused. */
   toolCallId: ToolCallId,
-  /** A reply's files are the Hub's to fill in, from `attachments`. */
-  answer: QuestionAnswer,
+  answer: QuestionAnswerFromWeb,
   /** The files a reply carries (#278): ones its sender uploaded to the Session. */
   attachments: Schema.optionalKey(AttachmentIds),
 })

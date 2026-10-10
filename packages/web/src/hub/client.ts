@@ -39,7 +39,7 @@ import {
   type McpServerPackageRead,
   type McpServersState,
   ProtocolVersion,
-  type QuestionAnswer,
+  type QuestionAnswerFromWeb,
   RequestId,
   type RunnerId,
   type PromptId,
@@ -310,7 +310,7 @@ export class HubClient {
   answerQuestion(
     sessionId: SessionId,
     toolCallId: ToolCallId,
-    answer: QuestionAnswer,
+    answer: QuestionAnswerFromWeb,
     attachments: ReadonlyArray<AttachmentId> = [],
   ): boolean {
     return this.#send({

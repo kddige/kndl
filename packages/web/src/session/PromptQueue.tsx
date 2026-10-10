@@ -54,9 +54,14 @@ const styles = stylex.create({
   },
 })
 
-/** What Steer does, for any prompt: one with files too (#278). */
-const steerTip =
+const steerNow =
   "Send it into the running Turn now, as Claude Code does with a prompt typed while it works"
+
+/** What Steer does; for a prompt with attachments, how they reach Claude (#278). */
+const steerTip = (prompt: QueuedPrompt) =>
+  (prompt.attachments?.length ?? 0) > 0
+    ? `${steerNow}: its attachments go with it as markers, which Claude opens.`
+    : steerNow
 
 /** A queued prompt as its row shows it: its text, and how many images and PDFs it carries. */
 function queuedText(prompt: QueuedPrompt): string {
@@ -96,7 +101,7 @@ export function PromptQueue({
               {queuedText(prompt)}
             </span>
             {onSteer && (
-              <Tooltip content={steerTip}>
+              <Tooltip content={steerTip(prompt)}>
                 <Button
                   size="sm"
                   intent="ghost"

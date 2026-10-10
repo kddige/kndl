@@ -286,9 +286,9 @@ export function redactQuestions(
   }))
 }
 
-/** Files with their names redacted, since each name is in its marker in a message. */
-const redactFiles = (needles: Needles, files: ReadonlyArray<Attachment>) =>
-  files.map((file) => ({ ...file, name: redactText(needles, file.name) }))
+/** Attachments with their names redacted, since each name is in its marker in a message. */
+const redactAttachments = (needles: Needles, attachments: ReadonlyArray<Attachment>) =>
+  attachments.map((attachment) => ({ ...attachment, name: redactText(needles, attachment.name) }))
 
 /** How an Open question closed, redacted: the answers, keyed by their redacted questions. */
 export function redactOutcome(needles: Needles, outcome: QuestionOutcome): QuestionOutcome {
@@ -310,7 +310,7 @@ export function redactOutcome(needles: Needles, outcome: QuestionOutcome): Quest
         ...outcome,
         text: redact(outcome.text),
         ...(outcome.attachments !== undefined && {
-          attachments: redactFiles(needles, outcome.attachments),
+          attachments: redactAttachments(needles, outcome.attachments),
         }),
       }
     case "Dismissed":
@@ -335,7 +335,7 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
         ...event,
         text: redact(event.text),
         ...(event.attachments !== undefined && {
-          attachments: redactFiles(needles, event.attachments),
+          attachments: redactAttachments(needles, event.attachments),
         }),
       }
     case "TextDelta":

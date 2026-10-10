@@ -1,7 +1,7 @@
 import {
   type OpenQuestion,
   type Participant,
-  type QuestionAnswer,
+  type QuestionAnswerFromWeb,
   questionClosedText,
   type QuestionPick,
   type SessionSummary,
@@ -252,7 +252,7 @@ export function QuestionCard({
   open: OpenQuestion
   picks: ReadonlyArray<QuestionPick>
   you: Participant | null
-  onAnswer: (answer: QuestionAnswer) => boolean
+  onAnswer: (answer: QuestionAnswerFromWeb) => boolean
   onPick: (question: string, answer: string) => void
 }) {
   const { questions } = open

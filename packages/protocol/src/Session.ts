@@ -453,6 +453,17 @@ export const QuestionAnswer = Schema.Union([
 export type QuestionAnswer = typeof QuestionAnswer.Type
 
 /**
+ * An answer as a Participant sends it (web AnswerQuestion): a reply's attachments come as ids
+ * beside it, and the Hub puts them on the reply it sends the mod (#278).
+ */
+export const QuestionAnswerFromWeb = Schema.Union([
+  QuestionAnswered,
+  Schema.TaggedStruct("Replied", { text: Schema.NonEmptyString }),
+  QuestionDismissed,
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type QuestionAnswerFromWeb = typeof QuestionAnswerFromWeb.Type
+
+/**
  * How an Open question closed: answered, replied to or dismissed by a Participant or at the
  * terminal, or Cancelled, when its Turn was stopped or its Claude Code stopped first, or its dialog
  * timed out with nobody at the keyboard.
