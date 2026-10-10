@@ -2209,9 +2209,9 @@ export class SessionRelay extends Context.Service<
               const cantSend = sendPromptRefusal(session.value)
               if (cantSend !== undefined) return refuse(message, cantSend.refusal, { sessionId })
               // Its files are ones its sender uploaded to this Session (#276).
-              // Taking them keeps them past the day an unsent one lasts (#280).
+              // Marked sent, they are kept past the day an unsent one lasts (#280).
               const now = yield* Clock.currentTimeMillis
-              const files = yield* attachments.take(
+              const files = yield* attachments.markSent(
                 sessionId,
                 message.attachments ?? [],
                 you.id,

@@ -693,6 +693,8 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE attachments ADD COLUMN sent_at INTEGER`
     yield* sql`UPDATE attachments SET sent_at = uploaded_at`
+    // The sweep reads only these, never the blobs of the rest.
+    yield* sql`CREATE INDEX attachments_unsent ON attachments (uploaded_at) WHERE sent_at IS NULL`
   }),
 })
 

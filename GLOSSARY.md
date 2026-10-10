@@ -93,7 +93,7 @@ The ordered prompts from Participants waiting for the Session to finish its curr
 _Avoid_: backlog, inbox
 
 **Attachment**:
-A file a Participant attaches to a prompt in the web UI, such as a pasted screenshot. The Hub keeps it for the life of its Session once something sent takes it, and deletes one nobody sent a day after upload; the prompt names it with a marker, `[Image #1: shot.png (attachment <id>)]`, and Claude opens it with a tool the mod registers (ADR 0024).
+A file a Participant attaches to a prompt in the web UI, such as a pasted screenshot. The Hub keeps it for the life of its Session once it is sent with a prompt, and deletes one nobody sent a day after upload; the prompt names it with a marker, `[Image #1: shot.png (attachment <id>)]`, and Claude opens it with a tool the mod registers (ADR 0024).
 _Avoid_: upload, paste, file (for what the prompt carries)
 
 **Steer**:

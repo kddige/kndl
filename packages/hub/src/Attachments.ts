@@ -14,7 +14,7 @@ import type { SqlError } from "effect/sql/SqlError"
 export const unsentAttachmentLifetime = Duration.hours(24)
 
 /** How often the Hub deletes the files nobody sent, besides as it starts. */
-export const unsentSweepInterval = Duration.hours(1)
+const unsentSweepInterval = Duration.hours(1)
 
 /** An attachment with its bytes, as the Hub serves it. */
 export interface StoredAttachment {
@@ -58,11 +58,10 @@ const decodeAttachment = (row: Row) =>
   })
 
 /**
- * The files Participants attach to prompts (#276, ADR 0024), in SQLite. A file a prompt took is
- * kept for the life of the Session it was uploaded to: purging the Session deletes it (ON DELETE
- * CASCADE). One nobody sent, removed from the Composer or left in a closed tab, is deleted
- * {@link unsentAttachmentLifetime} after upload (#280), by a sweep as the Hub starts and every
- * {@link unsentSweepInterval}.
+ * The files Participants attach to prompts (#276, ADR 0024), in SQLite. A file sent with a prompt
+ * is kept for the life of the Session it was uploaded to: purging the Session deletes it (ON
+ * DELETE CASCADE). One nobody sent, removed from the Composer or left in a closed tab, is deleted
+ * {@link unsentAttachmentLifetime} after upload (#280), by a sweep as the Hub starts and hourly.
  */
 export class Attachments extends Context.Service<
   Attachments,
@@ -77,12 +76,12 @@ export class Attachments extends Context.Service<
       readonly at: number
     }) => Effect.Effect<Attachment, SqlError>
     /**
-     * Takes the files `ids` names for something `sender` sends at `at`: the attachments, in that
-     * order and each once, if each is a file `sender` uploaded to the Session; none if any isn't,
-     * or was deleted unsent. Each one taken is kept from then on for the life of the Session,
-     * also when what took it is refused after, or one of the others isn't found.
+     * Marks the files `ids` names sent, by `sender` at `at`, so they are kept from then on for the
+     * life of the Session: the attachments, in that order and each once, if each is a file
+     * `sender` uploaded to the Session. If any isn't, or was deleted unsent, none, and nothing is
+     * marked.
      */
-    readonly take: (
+    readonly markSent: (
       sessionId: SessionId,
       ids: ReadonlyArray<AttachmentId>,
       sender: ParticipantId,
@@ -124,7 +123,9 @@ export class Attachments extends Context.Service<
         })
       })
 
-      const take = Effect.fn("Attachments.take")(function* (
+      // In a transaction, so a sweep deletes a file before it is marked or not at all, and a
+      // refusal marks nothing.
+      const markSent = Effect.fn("Attachments.markSent")(function* (
         sessionId: SessionId,
         ids: ReadonlyArray<AttachmentId>,
         sender: ParticipantId,
@@ -133,21 +134,18 @@ export class Attachments extends Context.Service<
         // Each file once, however often it is named.
         const unique = [...new Set(ids)]
         if (unique.length === 0) return Option.some<ReadonlyArray<Attachment>>([])
-        // One statement, so a sweep either deletes a file before it is taken or not at all.
         const rows = yield* sql<Row>`
-          UPDATE attachments SET sent_at = COALESCE(sent_at, ${at})
+          SELECT id, name, media_type AS mediaType, size FROM attachments
           WHERE session_id = ${sessionId} AND uploaded_by = ${sender} AND id IN ${sql.in(unique)}
-          RETURNING id, name, media_type AS mediaType, size
+        `
+        if (rows.length !== unique.length) return Option.none<ReadonlyArray<Attachment>>()
+        yield* sql`
+          UPDATE attachments SET sent_at = ${at}
+          WHERE id IN ${sql.in(unique)} AND sent_at IS NULL
         `
         const byId = new Map(rows.map((row) => [row.id, decodeAttachment(row)]))
-        const found = unique.flatMap((id) => {
-          const attachment = byId.get(id)
-          return attachment === undefined ? [] : [attachment]
-        })
-        return found.length === unique.length
-          ? Option.some<ReadonlyArray<Attachment>>(found)
-          : Option.none()
-      })
+        return Option.some(unique.flatMap((id) => byId.get(id) ?? []))
+      }, sql.withTransaction)
 
       const get = Effect.fn("Attachments.get")(function* (sessionId: SessionId, id: AttachmentId) {
         const [row] = yield* sql<Row & { readonly data: Uint8Array }>`
@@ -158,13 +156,14 @@ export class Attachments extends Context.Service<
         return Option.some({ attachment: decodeAttachment(row), bytes: new Uint8Array(row.data) })
       })
 
-      const sweepUnsent = Effect.gen(function* () {
-        const before =
-          (yield* Clock.currentTimeMillis) - Duration.toMillis(unsentAttachmentLifetime)
-        yield* sql`DELETE FROM attachments WHERE sent_at IS NULL AND uploaded_at <= ${before}`
-      }).pipe(
+      const sweepUnsent = Effect.fn("Attachments.sweepUnsent")(
+        function* () {
+          const before =
+            (yield* Clock.currentTimeMillis) - Duration.toMillis(unsentAttachmentLifetime)
+          yield* sql`DELETE FROM attachments WHERE sent_at IS NULL AND uploaded_at <= ${before}`
+        },
         Effect.catchCause((cause) => Effect.logError("Could not delete unsent attachments", cause)),
-      )
+      )()
 
       // As the Hub starts, for those that aged while it was down; then for as long as it runs.
       yield* sweepUnsent
@@ -174,7 +173,7 @@ export class Attachments extends Context.Service<
         Effect.forkIn(layerScope),
       )
 
-      return Attachments.of({ add, take, get })
+      return Attachments.of({ add, markSent, get })
     }),
   )
 }

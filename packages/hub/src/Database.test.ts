@@ -42,6 +42,7 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
  */
 const beforeAttachmentsSent = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP INDEX attachments_unsent`
   yield* sql`ALTER TABLE attachments DROP COLUMN sent_at`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'attachments_sent'`
 })

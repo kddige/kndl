@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { join } from "node:path"
 import {
-  type AttachmentId,
+  AttachmentId,
   type ModCommandsEncoded,
   type ModEventsEncoded,
   MaxImageBytes,
@@ -258,17 +258,32 @@ describe("a prompt with attachments", () => {
       )
       web.send({ _tag: "SendPrompt", sessionId, text: "look", attachments: [shot] })
       await web.take("PromptQueueChanged", (m) => m.queue.length === 1)
+      // And one left in the Composer.
+      const unsent = await uploaded(await upload(first.hub, web.cookie, sessionId, png))
       await web.close()
       await runner.close()
       await first.hub.stop()
 
-      const second = await startHub({ config: { devLogin: true }, database })
+      // Back a day and an hour later: it sweeps as it starts.
+      const second = await startHub({
+        config: { devLogin: true },
+        database,
+        clockAhead: Duration.sum(unsentAttachmentLifetime, Duration.hours(1)),
+      })
       const back = await openWeb(second, "alice", web.cookie)
       back.send({ _tag: "JoinSession", sessionId })
       const queue = await back.take("PromptQueueChanged", (m) => m.queue.length === 1)
       expect(queue.queue[0]?.attachments).toEqual([
         { id: shot, name: "shot.png", mediaType: "image/png", size: png.byteLength },
       ])
+      const served = (id: string) =>
+        fetch(`${second.url}/sessions/${sessionId}/attachments/${id}`, {
+          headers: { cookie: web.cookie },
+        }).then((response) => response.status)
+      expect({ shot: await served(shot), unsent: await served(unsent) }).toEqual({
+        shot: 200,
+        unsent: 404,
+      })
     } finally {
       await stopAll()
       rmSync(dir, { recursive: true, force: true })
@@ -407,7 +422,7 @@ describe("an attachment nobody sent", () => {
     )
 
   const send = (id: AttachmentId) =>
-    Effect.flatMap(Attachments, (attachments) => attachments.take(sessionId, [id], alice, 0))
+    Effect.flatMap(Attachments, (attachments) => attachments.markSent(sessionId, [id], alice, 0))
 
   const kept = (id: AttachmentId) =>
     Effect.map(
@@ -470,5 +485,25 @@ describe("an attachment nobody sent", () => {
       ),
     )
     expect(Option.isNone(found)).toBe(true)
+  })
+
+  test("named with a file that isn't the sender's, is refused, and isn't kept for it", async () => {
+    const found = await run(
+      hubRunning(
+        Effect.gen(function* () {
+          const attachments = yield* Attachments
+          const mine = yield* uploadAs("mine.png")
+          const marked = yield* attachments.markSent(
+            sessionId,
+            [mine.id, AttachmentId.make("made-up")],
+            alice,
+            0,
+          )
+          yield* TestClock.adjust(Duration.sum(unsentAttachmentLifetime, Duration.hours(1)))
+          return { marked: Option.isSome(marked), kept: yield* kept(mine.id) }
+        }),
+      ),
+    )
+    expect(found).toEqual({ marked: false, kept: false })
   })
 })

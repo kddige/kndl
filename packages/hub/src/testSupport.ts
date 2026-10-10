@@ -13,7 +13,7 @@ import {
   RunnerId,
   TestBuildId,
 } from "@kndl/protocol"
-import { Context, Duration, Effect, Exit, Layer, Option, Scope } from "effect"
+import { Clock, Context, Duration, Effect, Exit, Layer, Option, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
 import type { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
@@ -96,6 +96,25 @@ export async function stopHubs() {
   await Promise.all(scopes.map((scope) => Effect.runPromise(Scope.close(scope, Exit.void))))
 }
 
+/** The clock, its time read `ahead` of the time it is; it sleeps as long as ever. */
+const clockAhead = (ahead: Duration.Duration) =>
+  Layer.effect(
+    Clock.Clock,
+    Effect.map(Clock.Clock, (clock): Clock.Clock => {
+      const millis = Duration.toMillis(ahead)
+      const nanos = BigInt(millis) * 1_000_000n
+      return {
+        currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe() + millis,
+        currentTimeMillis: Effect.map(clock.currentTimeMillis, (now) => now + millis),
+        currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe() + nanos,
+        currentTimeNanos: Effect.map(clock.currentTimeNanos, (now) => now + nanos),
+        monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+        monotonicTimeNanos: clock.monotonicTimeNanos,
+        sleep: (duration) => clock.sleep(duration),
+      }
+    }),
+  )
+
 export async function startHub(
   options: {
     readonly config?: Partial<HubConfigInput>
@@ -116,6 +135,8 @@ export async function startHub(
      * Where MCP server icons are found; by default nowhere, so a test never reaches the internet.
      */
     readonly mcpServerIcons?: Layer.Layer<McpServerIcons>
+    /** How far ahead of the time it is the Hub's clock reads, as after a long time down. */
+    readonly clockAhead?: Duration.Duration
   } = {},
 ): Promise<TestHub> {
   const layer = drainFirst(
@@ -139,6 +160,9 @@ export async function startHub(
     Layer.provideMerge(options.hubVersion ?? HubVersion.layer),
     Layer.provideMerge(options.database ?? DatabaseTest),
     Layer.provideMerge(HubConfig.layerFrom({ ...baseConfig, ...options.config })),
+    Layer.provideMerge(
+      options.clockAhead === undefined ? Layer.empty : clockAhead(options.clockAhead),
+    ),
   )
   const scope = Scope.makeUnsafe()
   openHubs.add(scope)
