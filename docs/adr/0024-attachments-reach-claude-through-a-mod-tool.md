@@ -31,7 +31,19 @@ So an attachment is a file the Hub keeps, and Claude opens it with a tool.
 - **One tool call per file.** Claude spends a step on each file, and a prompt with many files is slower to start.
 - **Subagent types that list their own tools can't open attachments.** General-purpose subagents get the tool; one whose definition lists its tools doesn't, unless it lists this one.
 - **The terminal shows the markers.** Anyone at the Session's terminal sees `[Image #1: …]` lines, not the image.
-- **The Hub holds people's files** for as long as the Session lives. There is no quota on uploads, beyond 5 MB each, but unsent uploads last at most 24 h (#280).
+- **The Hub holds people's files** for as long as the Session lives. There is no quota on uploads, beyond 5 MB an image and 10 MB a PDF (#277), but unsent uploads last at most 24 h (#280).
 - **A marker typed by hand opens a file too.** Claude opens any of the Session's files whose id is in a message, sent with a prompt or not. That gives nothing away: every Participant can already view all of the Session's attachments.
 - **Re-encoding drops a photo's metadata,** EXIF and its location included, but only for the images it encodes again. A small JPEG sent as it is keeps it.
 - **base64 costs a third.** A 5 MB image is about 6.7 MB of JSON from the Hub to the mod, in three requests.
+
+## Addendum: dropped and picked attachments, and PDFs (#277)
+
+- **Every way in is one.** An attachment dropped on the Composer, or picked with its attach button, goes the way a pasted one does: the same refusals with a reason, scaling for an image, a chip with its progress. The picker offers the image types and PDFs, so an iPhone offers the camera and the photo library.
+- **PDFs up to 10 MB.** #275 agreed on 20 MB. It is 10 MiB, because a bigger PDF would not reliably reach Claude (below). The Hub reads an upload up to the largest limit, sniffs it (`%PDF-` beside the image signatures), then holds it to the limit for its kind: 5 MB for an image, 10 MB for a PDF. One table in `protocol/src/Attachment.ts` holds what differs by kind: the limit, the marker's label, the name for an unnamed one, how the Hub serves it, and the block the tool answers with. A PDF is not scaled. Its marker is `[PDF #1: spec.pdf (attachment <id>)]`: images and PDFs are each numbered on their own, in the style of Claude Code's `[Image #1]`. The tool answers with a `document` block, `{type:"document", title, source:{type:"base64", media_type:"application/pdf", data}}`, which reaches the API unchanged. A 10 MB PDF is five parts of 2.4 MB. SQLite still loads the whole blob to cut each part, but only the part is held in the Hub's memory, so that stays bounded; at five parts of a 10 MB file, that is acceptable. The Turn shows a PDF as a chip with its name and size, served as a download (`Content-Disposition: attachment`), still sandboxed.
+- **Why 10 MiB: Claude Code caps a request's media before the API does.** The API caps a request at 32 MB, and every attachment a Turn opened stays in the conversation. Claude Code 2.1.296 adds up the base64 of every image and document in a request, old tool results included. Past 24 MiB (the API's 32 MiB less 8, its `tengu_media_byte_cap`), it replaces them, oldest first, with `[media removed: request limit]` until they are under 14 MiB. Measured against a stub API, with a plugin tool's `document` block:
+  - an 18 MB PDF (24 MB of base64) reached the request whole;
+  - a 19 MB or 20 MB PDF never did: Claude got the text `[media removed: request limit]` in its place;
+  - a second 10 MB PDF pushed the first out of later requests.
+
+  A 10 MiB PDF's base64 is 13.3 MiB, under the 14 MiB that eviction leaves, so the newest PDF always reaches Claude. Older attachments may still be evicted by a later one. An evicted attachment keeps its marker, so Claude can open it again with the tool.
+- **Pages count too.** The API takes at most 600 PDF pages in a request on 1M-context models, and 100 on 200K ones, and each page costs about 1,500 to 3,000 tokens. Past that the API refuses the whole request, so the Turn fails, not the tool.

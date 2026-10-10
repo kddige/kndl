@@ -1,10 +1,11 @@
-import type {
-  AgentId,
-  Attachment,
-  Participant,
-  SessionId,
-  SessionStateChanged,
-  TurnEnded,
+import {
+  type AgentId,
+  type Attachment,
+  attachmentKind,
+  type Participant,
+  type SessionId,
+  type SessionStateChanged,
+  type TurnEnded,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
@@ -34,6 +35,7 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { fileSize } from "./attachments.ts"
 import { modelSwitchedText } from "./models.ts"
 import { QuestionChip } from "./QuestionChip.tsx"
 import { ToolCall } from "./ToolCall.tsx"
@@ -100,6 +102,23 @@ const styles = stylex.create({
     borderColor: color.border,
     backgroundColor: color.surfaceMuted,
   },
+  file: {
+    display: "inline-flex",
+    flexDirection: "column",
+    maxWidth: "16rem",
+    paddingBlock: space.s1_5,
+    paddingInline: space.s2,
+    borderRadius: radius.md,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: color.border,
+    backgroundColor: color.surfaceMuted,
+    color: "inherit",
+    fontSize: text.xs,
+    textDecoration: { default: "none", ":hover": "underline" },
+  },
+  fileName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  fileSize: { color: color.textSubtle },
   claudeMark: {
     display: "inline-flex",
     alignItems: "center",
@@ -335,15 +354,32 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
   )
 })
 
-/** The images a Turn's prompt carried (#276), each opening full size in a tab of its own. */
+/**
+ * The files a Turn's prompt carried: each image as a thumbnail that opens full size in a tab of
+ * its own (#276), each PDF as a chip, its name and size, that downloads it (#277).
+ */
 function PromptAttachments({ attachments }: { attachments: ReadonlyArray<Attachment> }) {
   const hub = useHub()
   const sessionId = useContext(SessionContext)
   if (sessionId === null) return null
   return (
-    <ul aria-label="Attached images" {...stylex.props(styles.attachments)}>
+    <ul aria-label="The prompt's attachments" {...stylex.props(styles.attachments)}>
       {attachments.map((attachment) => {
         const url = hub.attachmentUrl(sessionId, attachment.id)
+        if (attachmentKind(attachment.mediaType) === "pdf")
+          return (
+            <li key={attachment.id}>
+              <a
+                href={url}
+                download={attachment.name}
+                title={`Download ${attachment.name}`}
+                {...stylex.props(styles.file, focus.ring)}
+              >
+                <span {...stylex.props(styles.fileName)}>{attachment.name}</span>
+                <span {...stylex.props(styles.fileSize)}>PDF · {fileSize(attachment.size)}</span>
+              </a>
+            </li>
+          )
         return (
           <li key={attachment.id}>
             <a

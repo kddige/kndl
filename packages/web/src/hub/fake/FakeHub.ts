@@ -39,9 +39,12 @@ import {
   InvitePath,
   attachmentName,
   AttachmentId,
-  ImageMediaTypes,
+  AttachmentMediaTypes,
+  attachmentRules,
   memberRemovalRefusal,
-  MaxImageBytes,
+  MaxAttachmentBytes,
+  tooLargeForAnyReason,
+  unsupportedAttachmentReason,
   messageAgentVerdict,
   modelNotFoundText,
   ownerOnlyMessage,
@@ -432,8 +435,9 @@ export class FakeHub implements HubTransport {
   }
 
   /**
-   * As the Hub does (#276): an image Claude reads, of 5 MB at most, kept for the Session. The fake
-   * trusts the file's type, and shows it from the browser's own copy.
+   * As the Hub does (#276, #277): an image Claude reads, of 5 MB at most, or a PDF of 10 MB at
+   * most, kept for the Session. The fake trusts the file's type, and shows it from the browser's
+   * own copy.
    */
   async uploadAttachment(
     sessionId: SessionId,
@@ -441,18 +445,23 @@ export class FakeHub implements HubTransport {
     { onProgress, signal }: UploadOptions,
   ): Promise<AttachmentId> {
     if (!this.#signedIn) throw new Error("Sign in first")
-    if (file.size > MaxImageBytes)
-      throw new Error("An image may be 5 MB at most, the most Claude reads.")
-    const mediaType = ImageMediaTypes.find((type) => type === file.type)
-    if (mediaType === undefined)
-      throw new Error("Only JPEG, PNG, GIF and WebP images can be attached.")
+    if (file.size > MaxAttachmentBytes) throw new Error(tooLargeForAnyReason)
+    const mediaType = AttachmentMediaTypes.find((type) => type === file.type)
+    if (mediaType === undefined) throw new Error(unsupportedAttachmentReason)
+    const rules = attachmentRules(mediaType)
+    if (file.size > rules.maxBytes) throw new Error(rules.tooLarge)
     onProgress(Math.round(file.size / 2))
     await new Promise((resolve) => setTimeout(resolve, this.stepMs))
     if (signal.aborted) throw new DOMException("Aborted", "AbortError")
     onProgress(file.size)
     const id = AttachmentId.make(`att-${++this.#ids}`)
     this.#attachments.set(id, {
-      attachment: { id, name: attachmentName(file.name), mediaType, size: file.size },
+      attachment: {
+        id,
+        name: attachmentName(file.name, rules.fallbackName),
+        mediaType,
+        size: file.size,
+      },
       sessionId,
       by: this.#you.id,
       url: URL.createObjectURL(file),

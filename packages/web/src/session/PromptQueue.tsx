@@ -1,4 +1,4 @@
-import { imageCount, type PromptId, type QueuedPrompt } from "@kndl/protocol"
+import { attachmentCount, type PromptId, type QueuedPrompt } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Avatar, Button, CloseIcon, IconButton, SteerIcon, Tooltip } from "../ui/index.ts"
 import { color, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -54,19 +54,19 @@ const styles = stylex.create({
   },
 })
 
-const carriesImages = (prompt: QueuedPrompt) => (prompt.attachments?.length ?? 0) > 0
+const hasAttachments = (prompt: QueuedPrompt) => (prompt.attachments?.length ?? 0) > 0
 
-/** What Steer does, or why it can't for this prompt: one with images waits for the Turn (#278). */
+/** What Steer does, or why it can't for this prompt: one with files waits for the Turn (#278). */
 const steerTip = (prompt: QueuedPrompt) =>
-  carriesImages(prompt)
-    ? "A prompt with images can't be steered yet: it runs when the Turn ends."
+  hasAttachments(prompt)
+    ? "A prompt with attachments can't be steered yet: it runs when the Turn ends."
     : "Send it into the running Turn now, as Claude Code does with a prompt typed while it works"
 
-/** A queued prompt as its row shows it: its text, and how many images it carries (#276). */
+/** A queued prompt as its row shows it: its text, and how many images and PDFs it carries. */
 function queuedText(prompt: QueuedPrompt): string {
-  const images = prompt.attachments?.length ?? 0
-  if (images === 0) return prompt.text
-  const note = imageCount(images)
+  const files = prompt.attachments ?? []
+  if (files.length === 0) return prompt.text
+  const note = attachmentCount(files)
   return prompt.text === "" ? note : `${prompt.text} · ${note}`
 }
 
@@ -107,7 +107,7 @@ export function PromptQueue({
                   icon={<SteerIcon />}
                   aria-label={`Steer ${prompt.sender.name}'s prompt into the running Turn`}
                   loading={steering.has(prompt.id)}
-                  disabled={carriesImages(prompt)}
+                  disabled={hasAttachments(prompt)}
                   focusableWhenDisabled
                   onClick={() => onSteer(prompt)}
                 >

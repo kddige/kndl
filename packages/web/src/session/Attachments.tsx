@@ -1,10 +1,10 @@
-import { type AttachmentId, MaxImageBytes } from "@kndl/protocol"
+import { type AttachmentId, attachmentKind, AttachmentKinds, megabytes } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useRef, useState } from "react"
 import type { UploadOptions } from "../hub/transport.ts"
 import { CloseIcon, IconButton } from "../ui/index.ts"
-import { color, radius, space, text } from "../ui/tokens.stylex.ts"
-import { admitImages } from "./attachments.ts"
+import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { admitAttachments, fileSize } from "./attachments.ts"
 import { browserCodec, downscale } from "./downscale.ts"
 
 const styles = stylex.create({
@@ -34,6 +34,19 @@ const styles = stylex.create({
     objectFit: "cover",
     borderRadius: radius.sm,
   },
+  document: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    width: "2rem",
+    height: "2rem",
+    borderRadius: radius.sm,
+    backgroundColor: color.surface,
+    color: color.textSubtle,
+    fontSize: text.xs,
+    fontWeight: weight.semibold,
+  },
   label: {
     display: "flex",
     flexDirection: "column",
@@ -52,8 +65,8 @@ export type Attach = (file: File, options: UploadOptions) => Promise<AttachmentI
 export interface AttachmentChip {
   readonly key: number
   readonly name: string
-  /** The browser's own copy of the image, for the thumbnail. */
-  readonly preview: string
+  /** The browser's own copy of an image, for the thumbnail; none for a PDF (#277). */
+  readonly preview?: string | undefined
   readonly size: number
   /** The bytes sent so far. */
   readonly sent: number
@@ -69,13 +82,16 @@ const codec = browserCodec()
 
 /** Scales an image down as Claude Code does a pasted one (downscale.ts). */
 const scaleDown = (file: File) =>
-  codec === undefined ? Promise.resolve(file) : downscale(file, codec, MaxImageBytes)
+  codec === undefined
+    ? Promise.resolve(file)
+    : downscale(file, codec, AttachmentKinds.image.maxBytes)
 
 /**
- * The files attached to a Composer's draft (#276). Each is scaled down and uploaded as soon as it
- * is added; a prompt goes once every one has, carrying their ids. A file Claude can't read is
- * refused before it is uploaded, saying why. Without `attach` the draft takes none, and a paste
- * of files says `cantAttach`; files it took before stay for the next prompt that can.
+ * The files attached to a Composer's draft (#276, #277), pasted, dropped or picked. Each is
+ * uploaded as soon as it is added, an image scaled down first; a prompt goes once every one has,
+ * carrying their ids. A file Claude can't read is refused before it is uploaded, saying why.
+ * Without `attach` the draft takes none, and files added say `cantAttach`; files it took before
+ * stay for the next prompt that can.
  */
 export function useAttachments(
   attach: Attach | undefined,
@@ -88,7 +104,7 @@ export function useAttachments(
   // Counted as files are added, not from the last render: two pastes before it still hold 20.
   const held = useRef(0)
   const uploads = useRef(
-    new Map<number, { readonly abort: AbortController; readonly preview: string }>(),
+    new Map<number, { readonly abort: AbortController; readonly preview?: string | undefined }>(),
   )
 
   // A draft left behind gives up its uploads.
@@ -97,7 +113,7 @@ export function useAttachments(
     return () => {
       for (const { abort, preview } of open.values()) {
         abort.abort()
-        URL.revokeObjectURL(preview)
+        if (preview !== undefined) URL.revokeObjectURL(preview)
       }
       open.clear()
     }
@@ -109,11 +125,14 @@ export function useAttachments(
   const send = async (key: number, file: File, abort: AbortController, upload: Attach) => {
     const failed = (reason: string) =>
       change(key, (chip) => ({ ...chip, upload: { _tag: "Failed", reason } }))
-    const scaled = await prepare(file)
+    // A PDF goes as it is: its size was checked as it was added.
+    const image = attachmentKind(file.type) === "image"
+    const scaled = image ? await prepare(file) : file
     if (abort.signal.aborted) return
     // The Hub refuses it all the same; said here, before it is sent.
-    if (scaled.size > MaxImageBytes)
-      return failed(`It is over ${MaxImageBytes / 1024 / 1024} MB, even scaled down.`)
+    const { maxBytes } = AttachmentKinds.image
+    if (image && scaled.size > maxBytes)
+      return failed(`It is over ${megabytes(maxBytes)}, even scaled down.`)
     change(key, (chip) => ({
       ...chip,
       name: scaled.name,
@@ -134,12 +153,13 @@ export function useAttachments(
 
   const add = (files: ReadonlyArray<File>) => {
     if (attach === undefined) return setRefused([cantAttach])
-    const admitted = admitImages(files, held.current)
+    const admitted = admitAttachments(files, held.current)
     held.current += admitted.accepted.length
     setRefused(admitted.refused)
     const added = admitted.accepted.map((file): AttachmentChip => {
       const key = next.current++
-      const preview = URL.createObjectURL(file)
+      const image = attachmentKind(file.type) === "image"
+      const preview = image ? URL.createObjectURL(file) : undefined
       const abort = new AbortController()
       uploads.current.set(key, { abort, preview })
       void send(key, file, abort, attach)
@@ -149,7 +169,7 @@ export function useAttachments(
         preview,
         size: file.size,
         sent: 0,
-        upload: { _tag: "Scaling" },
+        upload: image ? { _tag: "Scaling" } : { _tag: "Uploading" },
       }
     })
     setChips((all) => [...all, ...added])
@@ -159,7 +179,7 @@ export function useAttachments(
     const upload = uploads.current.get(key)
     if (upload === undefined) return
     upload.abort.abort()
-    URL.revokeObjectURL(upload.preview)
+    if (upload.preview !== undefined) URL.revokeObjectURL(upload.preview)
     uploads.current.delete(key)
     held.current--
   }
@@ -190,7 +210,7 @@ export function useAttachments(
 }
 
 /** What a chip says under its file's name: how far its upload is, or why it failed. */
-function chipNote(chip: AttachmentChip): string | undefined {
+function uploadNote(chip: AttachmentChip): string | undefined {
   switch (chip.upload._tag) {
     case "Scaling":
       return "Scaling down"
@@ -201,6 +221,13 @@ function chipNote(chip: AttachmentChip): string | undefined {
     case "Uploaded":
       return undefined
   }
+}
+
+/** The note under a chip's name: a PDF, which has no thumbnail, says its size too (#277). */
+function chipNote(chip: AttachmentChip): string | undefined {
+  const note = uploadNote(chip)
+  if (chip.preview !== undefined) return note
+  return note === undefined ? fileSize(chip.size) : `${fileSize(chip.size)} · ${note}`
 }
 
 /** A chip for each file attached to the draft, with its thumbnail and remove; and any refused. */
@@ -235,7 +262,13 @@ export function AttachmentChips({
                 key={chip.key}
                 {...stylex.props(styles.chip, chip.upload._tag === "Failed" && styles.failed)}
               >
-                <img src={chip.preview} alt="" {...stylex.props(styles.thumbnail)} />
+                {chip.preview === undefined ? (
+                  <span aria-hidden="true" {...stylex.props(styles.document)}>
+                    PDF
+                  </span>
+                ) : (
+                  <img src={chip.preview} alt="" {...stylex.props(styles.thumbnail)} />
+                )}
                 <span {...stylex.props(styles.label)}>
                   <span {...stylex.props(styles.name)} title={chip.name}>
                     {chip.name}

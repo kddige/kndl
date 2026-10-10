@@ -1,6 +1,6 @@
-// Images pasted into the Composer (#276): each is uploaded at once, as a chip with its progress
-// and a remove button, and the prompt is sent with the ids of those uploaded. What Claude can't
-// read is refused there, with a reason.
+// Images and PDFs attached in the Composer, pasted (#276), dropped or picked (#277): each is
+// uploaded at once, as a chip with its progress and a remove button, and the prompt is sent with
+// the ids of those uploaded. What Claude can't read is refused there, with a reason.
 
 import { afterEach, expect, test } from "bun:test"
 import type { AttachmentId } from "@kndl/protocol"
@@ -16,7 +16,7 @@ afterEach(async () => {
 
 // Loaded after installDom() and the StyleX compiler, so components see the DOM and compile.
 const { Composer } = await import("../src/session/Composer.tsx")
-const { MaxImageBytes } = await import("@kndl/protocol")
+const { MaxImageBytes, MaxPdfBytes } = await import("@kndl/protocol")
 
 /** An upload the test finishes, or fails, when it likes. */
 interface Upload {
@@ -30,6 +30,7 @@ interface Upload {
 async function composer() {
   const sent: Array<{ text: string; attachments: ReadonlyArray<string> }> = []
   const uploads: Array<Upload> = []
+  const prepared: Array<string> = []
   const view = await render(
     <Composer
       onSend={(text, attachments) => {
@@ -38,6 +39,10 @@ async function composer() {
       }}
       onStop={() => {}}
       running={false}
+      prepare={async (file) => {
+        prepared.push(file.name)
+        return file
+      }}
       attach={(file, { onProgress, signal }) =>
         new Promise<AttachmentId>((resolve, reject) => {
           uploads.push({
@@ -59,7 +64,7 @@ async function composer() {
       (chip) => chip.textContent ?? "",
     )
   const said = () => view.container.querySelector('[aria-label="Attachments refused"]')?.textContent
-  return { sent, uploads, field, chips, said, container: view.container }
+  return { sent, uploads, prepared, field, chips, said, container: view.container }
 }
 
 const image = (name: string, type = "image/png", size = 1_000) =>
@@ -123,26 +128,26 @@ test("a removed image is left out of the prompt, and its upload given up", async
   expect(sent).toEqual([{ text: "", attachments: ["att-1"] }])
 })
 
-test("what Claude can't read, or past 20 files, is refused with a reason", async () => {
+test("what Claude can't read, or past 20 attachments, is refused with a reason", async () => {
   const { uploads, field, said } = await composer()
-  await paste(field, [image("notes.pdf", "application/pdf")])
+  await paste(field, [image("notes.zip", "application/zip")])
 
   expect(uploads).toEqual([])
-  expect(said()).toContain("notes.pdf")
-  expect(said()).toContain("JPEG, PNG, GIF or WebP")
+  expect(said()).toContain("notes.zip")
+  expect(said()).toContain("JPEG, PNG, GIF or WebP image, or a PDF")
 
   await paste(
     field,
     Array.from({ length: 21 }, (_, i) => image(`${i}.png`)),
   )
   expect(uploads).toHaveLength(20)
-  expect(said()).toContain("20 files at most")
+  expect(said()).toContain("20 attachments at most")
 })
 
 /** Fifteen images, numbered on from `from`. */
 const batch = (from: number) => Array.from({ length: 15 }, (_, i) => image(`${from + i}.png`))
 
-test("two pastes at once still hold 20 files at most", async () => {
+test("two pastes at once still hold 20 attachments at most", async () => {
   const { uploads, field, said } = await composer()
   const twice = () => {
     for (const files of [batch(0), batch(15)]) {
@@ -228,7 +233,7 @@ test("a Composer that takes no attachments says why when files are pasted", asyn
       onSend={() => true}
       onStop={() => {}}
       running={false}
-      cantAttach="Images can't go to a subagent yet: attach them to a prompt."
+      cantAttach="Attachments can't go to a subagent yet: attach them to a prompt."
     />,
   )
   cleanup = view.unmount
@@ -237,7 +242,7 @@ test("a Composer that takes no attachments says why when files are pasted", asyn
   await paste(field, [image("shot.png")])
   expect(view.container.querySelector('[aria-label="Attachments"]')).toBeNull()
   expect(view.container.querySelector('[aria-label="Attachments refused"]')?.textContent).toBe(
-    "Images can't go to a subagent yet: attach them to a prompt.",
+    "Attachments can't go to a subagent yet: attach them to a prompt.",
   )
 })
 
@@ -297,4 +302,136 @@ test("files in the draft wait while it is a reply, saying why, and go with the n
     { text: "no", attachments: [] },
     { text: "", attachments: ["att-1"] },
   ])
+})
+
+/** Drags `files` over the Composer's form and drops them, as from the desktop. */
+async function drop(container: HTMLElement, files: ReadonlyArray<File>) {
+  const form = container.querySelector("form")
+  if (!form) throw new Error("no form")
+  const dataTransfer = new DataTransfer()
+  for (const file of files) dataTransfer.items.add(file)
+  // happy-dom's DragEvent is a plain Event: the files ride on it as a browser's do.
+  const drag = (type: string) => {
+    const event = new Event(type, { bubbles: true, cancelable: true })
+    Object.defineProperty(event, "dataTransfer", { value: dataTransfer })
+    form.dispatchEvent(event)
+  }
+  await step(() => drag("dragenter"))
+  await step(() => drag("dragover"))
+  const target = container.querySelector('[aria-label="Drop to attach"]')
+  await step(() => drag("drop"))
+  return target
+}
+
+test("files dropped on the Composer upload as pasted ones do, over a drop target (#277)", async () => {
+  const { sent, uploads, chips, container } = await composer()
+  const target = await drop(container, [image("shot.png"), image("notes.zip", "application/zip")])
+
+  expect(target?.textContent).toContain("Drop")
+  expect(container.querySelector('[aria-label="Drop to attach"]')).toBeNull()
+  expect(uploads.map((upload) => upload.file.name)).toEqual(["shot.png"])
+  expect(chips()).toEqual([expect.stringContaining("shot.png")])
+  expect(container.querySelector('[aria-label="Attachments refused"]')?.textContent).toContain(
+    "notes.zip",
+  )
+  await uploads[0]?.finish("att-1")
+  await step(() => button("Send prompt").click())
+  expect(sent).toEqual([{ text: "", attachments: ["att-1"] }])
+})
+
+test("the attach button picks files of the types Claude reads, camera and photos included (#277)", async () => {
+  const { uploads, chips, container } = await composer()
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')
+  if (!input) throw new Error("no file input")
+  expect(input.multiple).toBe(true)
+  expect(input.accept.split(",")).toEqual([
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+    ".pdf",
+  ])
+  let opened = false
+  input.addEventListener("click", () => {
+    opened = true
+  })
+  await step(() => button("Attach", container).click())
+  expect(opened).toBe(true)
+
+  const picked = new DataTransfer()
+  picked.items.add(image("photo.jpg", "image/jpeg"))
+  Object.defineProperty(input, "files", { value: picked.files, configurable: true })
+  await step(() => input.dispatchEvent(new Event("change", { bubbles: true })))
+  expect(uploads.map((upload) => upload.file.name)).toEqual(["photo.jpg"])
+  expect(chips()).toEqual([expect.stringContaining("photo.jpg")])
+  // The same file can be picked again.
+  expect(input.value).toBe("")
+})
+
+test("a PDF uploads as it is, its chip naming it and its size; past 10 MB it is refused (#277)", async () => {
+  const { sent, uploads, prepared, field, chips, said, container } = await composer()
+  await paste(field, [
+    image("spec.pdf", "application/pdf", 6_000_000),
+    // Dropped from some desktops without a type: a PDF by its name.
+    image("notes.pdf", "", 1_000),
+    image("huge.pdf", "application/pdf", MaxPdfBytes + 1),
+  ])
+
+  expect(prepared).toEqual([])
+  expect(uploads.map((upload) => upload.file.name)).toEqual(["spec.pdf", "notes.pdf"])
+  expect(said()).toContain("huge.pdf is over 10 MB")
+  expect(chips()[0]).toContain("spec.pdf")
+  expect(chips()[0]).toContain("5.7 MB")
+  expect(chips()[0]).toContain("Uploading")
+  expect(container.querySelector('[aria-label="Attachments"] img')).toBeNull()
+  await uploads[0]?.finish("att-1")
+  await uploads[1]?.finish("att-2")
+  await step(() => button("Send prompt").click())
+  expect(sent).toEqual([{ text: "", attachments: ["att-1", "att-2"] }])
+})
+
+test("a Composer that takes no attachments has no attach button, and says why for a drop (#277)", async () => {
+  const view = await render(
+    <Composer
+      onSend={() => true}
+      onStop={() => {}}
+      running={false}
+      cantAttach="Attachments can't go to a subagent yet: attach them to a prompt."
+    />,
+  )
+  cleanup = view.unmount
+  expect(view.container.querySelector('input[type="file"]')).toBeNull()
+  expect(view.container.querySelector('[aria-label="Attach"]')).toBeNull()
+  await drop(view.container, [image("shot.png")])
+  expect(view.container.querySelector('[aria-label="Attachments refused"]')?.textContent).toBe(
+    "Attachments can't go to a subagent yet: attach them to a prompt.",
+  )
+})
+
+test("files dropped or picked on a Composer that can't send are left out, with no drop target (#277)", async () => {
+  const uploads: Array<string> = []
+  const view = await render(
+    <Composer
+      onSend={() => true}
+      onStop={() => {}}
+      running={false}
+      disabledReason="The Session is Frozen."
+      attach={async (file) => {
+        uploads.push(file.name)
+        return "att-1" as AttachmentId
+      }}
+    />,
+  )
+  cleanup = view.unmount
+  const target = await drop(view.container, [image("shot.png")])
+  expect(target).toBeNull()
+  // Nor are those picked in a picker opened before it was disabled.
+  const input = view.container.querySelector<HTMLInputElement>('input[type="file"]')
+  const picked = new DataTransfer()
+  picked.items.add(image("photo.jpg", "image/jpeg"))
+  if (input) Object.defineProperty(input, "files", { value: picked.files, configurable: true })
+  await step(() => input?.dispatchEvent(new Event("change", { bubbles: true })))
+  expect(uploads).toEqual([])
+  expect(view.container.querySelector('[aria-label="Attachments"]')).toBeNull()
 })

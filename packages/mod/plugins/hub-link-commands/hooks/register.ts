@@ -10,7 +10,8 @@
 //   and tell Claude of its files; and which it is steering, to report it joining the Turn.
 // - The person at the terminal: a band above the prompt shows the link and the Participants.
 // - Claude: a tool that opens the files Participants attach to prompts (#276, ADR 0024), which the
-//   plugin API's prompts can't carry: it fetches each from the Hub, and answers with the image.
+//   plugin API's prompts can't carry: it fetches each from the Hub, and answers with the image or
+//   PDF (#277).
 //
 // The rest of the plugin, with Effect and the protocol, is bundled from the mod package's src/
 // into hooks/hub-link-lib.js (`bun run build`).
@@ -258,7 +259,7 @@ export function register(on: On) {
 
   // A file a Participant attached (#276, ADR 0024), by the id its marker gives: fetched from the
   // Hub, through the Runner's relay, in parts the runtime's fetch can read, and handed to Claude as
-  // an image block.
+  // an image block, or a document block for a PDF (#277).
   on("tool.call", { tool: attachmentToolName }, async ($, e) => {
     const id = typeof e.id === "string" ? e.id : ""
     const hub = state.hub

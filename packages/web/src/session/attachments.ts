@@ -1,8 +1,19 @@
-// Which files the Composer takes as attachments (#276), before any is scaled down and uploaded:
-// the images Claude reads, as many as a prompt holds. Their size is checked once they are scaled
-// down, and the Hub checks again, by the bytes; this says why up front.
+// Which files the Composer takes as attachments (#276, #277), however they come in (pasted,
+// dropped or picked), before any is scaled down and uploaded: the images Claude reads and PDFs,
+// as many as a prompt holds. An image's size is checked once it is scaled down; a PDF, sent as it
+// is, is checked here. The Hub checks again, by the bytes; this says why up front.
 
-import { ImageMediaTypes, MaxAttachments } from "@kndl/protocol"
+import {
+  attachmentKind,
+  AttachmentKinds,
+  AttachmentMediaTypes,
+  MaxAttachments,
+  megabytes,
+  PdfMediaType,
+} from "@kndl/protocol"
+
+/** What the attach button's file picker offers: the types Claude reads, and a PDF by its name. */
+export const pickerAccepts = [...AttachmentMediaTypes, ".pdf"].join(",")
 
 /** The files to upload, and why each of the rest isn't. */
 export interface Admitted {
@@ -10,27 +21,51 @@ export interface Admitted {
   readonly refused: ReadonlyArray<string>
 }
 
-const isImage = (type: string) => (ImageMediaTypes as ReadonlyArray<string>).includes(type)
+/** Whether the file is a PDF: by its type, or by its name where it came without one. */
+export const isPdf = (file: File) =>
+  file.type === PdfMediaType || (file.type === "" && /\.pdf$/i.test(file.name))
+
+/** The file with its type, for a PDF that came without one, as some desktops drop them. */
+const typed = (file: File) =>
+  file.type === "" && isPdf(file) ? new File([file], file.name, { type: PdfMediaType }) : file
+
+/** A size in words: "512 B", "1.5 KB", "2.4 MB". */
+export function fileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const kilobytes = bytes / 1024
+  if (kilobytes < 1024) return `${kilobytes.toFixed(1)} KB`
+  return `${(kilobytes / 1024).toFixed(1)} MB`
+}
 
 /**
  * Of `files`, those a prompt holding `held` attachments already can take: JPEG, PNG, GIF and WebP
- * images, {@link MaxAttachments} in all. The rest are refused, saying why.
+ * images, and PDFs within their limit, {@link MaxAttachments} in all. The rest are refused,
+ * saying why.
  */
-export function admitImages(files: ReadonlyArray<File>, held: number): Admitted {
+export function admitAttachments(files: ReadonlyArray<File>, held: number): Admitted {
   const refused: Array<string> = []
-  const images = files.filter((file) => {
-    if (!isImage(file.type)) {
-      refused.push(`${file.name} isn't a JPEG, PNG, GIF or WebP image.`)
-      return false
+  const taken = files.flatMap((file) => {
+    switch (attachmentKind(typed(file).type)) {
+      case "image":
+        // Its size is checked once it is scaled down.
+        return [file]
+      case "pdf": {
+        const { maxBytes } = AttachmentKinds.pdf
+        if (file.size <= maxBytes) return [typed(file)]
+        refused.push(`${file.name} is over ${megabytes(maxBytes)}, the most a PDF may be.`)
+        return []
+      }
+      case undefined:
+        refused.push(`${file.name} isn't a JPEG, PNG, GIF or WebP image, or a PDF.`)
+        return []
     }
-    return true
   })
   const room = Math.max(0, MaxAttachments - held)
-  if (images.length > room) {
-    const left = images.length - room
+  if (taken.length > room) {
+    const left = taken.length - room
     refused.push(
-      `A prompt takes ${MaxAttachments} files at most: ${left} ${left === 1 ? "was" : "were"} left out.`,
+      `A prompt takes ${MaxAttachments} attachments at most: ${left} ${left === 1 ? "was" : "were"} left out.`,
     )
   }
-  return { accepted: images.slice(0, room), refused }
+  return { accepted: taken.slice(0, room), refused }
 }

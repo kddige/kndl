@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto"
 import {
   Attachment,
   AttachmentId,
-  type ImageMediaType,
+  type AttachmentMediaType,
   type ParticipantId,
   type SessionId,
 } from "@kndl/protocol"
@@ -26,10 +26,13 @@ const startsWith = (bytes: Uint8Array, prefix: ReadonlyArray<number>, at = 0) =>
   prefix.every((byte, index) => bytes[at + index] === byte)
 
 /**
- * What image the bytes are, if one Claude reads: the Hub trusts them, never the upload's
- * `Content-Type`, since the Messages API refuses an image whose type doesn't match its data.
+ * What file the bytes are, if an image Claude reads or a PDF (#277): the Hub trusts them, never
+ * the upload's `Content-Type`, since the Messages API refuses a file whose type doesn't match its
+ * data.
  */
-export function sniffImage(bytes: Uint8Array): ImageMediaType | undefined {
+export function sniffAttachment(bytes: Uint8Array): AttachmentMediaType | undefined {
+  // "%PDF-", as Claude Code's Read tells a PDF.
+  if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) return "application/pdf"
   if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png"
   if (startsWith(bytes, [0xff, 0xd8, 0xff])) return "image/jpeg"
   if (startsWith(bytes, [0x47, 0x49, 0x46, 0x38])) return "image/gif"
@@ -53,7 +56,7 @@ const decodeAttachment = (row: Row) =>
   Attachment.make({
     id: AttachmentId.make(row.id),
     name: row.name,
-    mediaType: row.mediaType as ImageMediaType,
+    mediaType: row.mediaType as AttachmentMediaType,
     size: row.size,
   })
 
@@ -70,7 +73,7 @@ export class Attachments extends Context.Service<
     readonly add: (upload: {
       readonly sessionId: SessionId
       readonly name: string
-      readonly mediaType: ImageMediaType
+      readonly mediaType: AttachmentMediaType
       readonly bytes: Uint8Array
       readonly by: ParticipantId
       readonly at: number
@@ -92,6 +95,17 @@ export class Attachments extends Context.Service<
       sessionId: SessionId,
       id: AttachmentId,
     ) => Effect.Effect<Option.Option<StoredAttachment>, SqlError>
+    /**
+     * At most `length` bytes of one of the Session's attachments, from byte `offset` on, since the
+     * mod fetches a 10 MB PDF in parts (#277). SQLite still loads the whole blob to cut it, but only
+     * the part comes into memory here.
+     */
+    readonly part: (
+      sessionId: SessionId,
+      id: AttachmentId,
+      offset: number,
+      length: number,
+    ) => Effect.Effect<Option.Option<StoredAttachment>, SqlError>
   }
 >()("@kndl/hub/Attachments") {
   static readonly layer = Layer.effect(
@@ -103,7 +117,7 @@ export class Attachments extends Context.Service<
       const add = Effect.fn("Attachments.add")(function* (upload: {
         readonly sessionId: SessionId
         readonly name: string
-        readonly mediaType: ImageMediaType
+        readonly mediaType: AttachmentMediaType
         readonly bytes: Uint8Array
         readonly by: ParticipantId
         readonly at: number
@@ -156,6 +170,22 @@ export class Attachments extends Context.Service<
         return Option.some({ attachment: decodeAttachment(row), bytes: new Uint8Array(row.data) })
       })
 
+      const part = Effect.fn("Attachments.part")(function* (
+        sessionId: SessionId,
+        id: AttachmentId,
+        offset: number,
+        length: number,
+      ) {
+        // substr counts a blob's bytes from 1.
+        const [row] = yield* sql<Row & { readonly data: Uint8Array }>`
+          SELECT id, name, media_type AS mediaType, size,
+            substr(data, ${offset + 1}, ${length}) AS data
+          FROM attachments WHERE session_id = ${sessionId} AND id = ${id}
+        `
+        if (row === undefined) return Option.none<StoredAttachment>()
+        return Option.some({ attachment: decodeAttachment(row), bytes: new Uint8Array(row.data) })
+      })
+
       const sweepUnsent = Effect.fn("Attachments.sweepUnsent")(
         function* () {
           const before =
@@ -173,7 +203,7 @@ export class Attachments extends Context.Service<
         Effect.forkIn(layerScope),
       )
 
-      return Attachments.of({ add, markSent, get })
+      return Attachments.of({ add, markSent, get, part })
     }),
   )
 }

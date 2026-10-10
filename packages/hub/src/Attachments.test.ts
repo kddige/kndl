@@ -10,6 +10,7 @@ import {
   type ModCommandsEncoded,
   type ModEventsEncoded,
   MaxImageBytes,
+  MaxPdfBytes,
   ParticipantId,
   ProtocolVersion,
   SessionId,
@@ -38,6 +39,15 @@ type ModEvent = ModEventsEncoded["messages"][number]
 /** A PNG's signature and a little more: what the Hub tells a PNG by. */
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
 const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 5, 6, 7])
+const pdf = new TextEncoder().encode("%PDF-1.7\n%\u00e2\u00e3\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+
+/** A file of `size` bytes that starts as `head` does. */
+const sized = (head: Uint8Array, size: number) => {
+  const bytes = new Uint8Array(size)
+  bytes.set(head)
+  bytes.fill(7, head.byteLength)
+  return bytes
+}
 
 /** A Session alice created, started, with its mod linked; and a way to upload to it. */
 async function scene(database?: Layer.Layer<SqlClient.SqlClient, unknown>) {
@@ -175,6 +185,51 @@ describe("uploading an attachment", () => {
     expect(elsewhere.status).toBe(403)
     expect((await upload(hub, "", sessionId, png)).status).toBe(401)
     expect((await upload(hub, web.cookie, "no-such-session", png)).status).toBe(404)
+  })
+
+  test("keeps a PDF of up to 10 MB, as its bytes say, served as a download (#277)", async () => {
+    const { hub, web, sessionId } = await scene()
+    const id = await uploaded(
+      await upload(hub, web.cookie, sessionId, sized(pdf, MaxPdfBytes), {
+        name: "spec.pdf",
+        type: "application/octet-stream",
+      }),
+    )
+    const served = await fetch(`${hub.url}/sessions/${sessionId}/attachments/${id}`, {
+      headers: { cookie: web.cookie },
+    })
+    expect(served.status).toBe(200)
+    expect(served.headers.get("content-type")).toBe("application/pdf")
+    expect(served.headers.get("content-security-policy")).toBe("sandbox")
+    expect(served.headers.get("content-disposition")).toBe("attachment; filename*=UTF-8''spec.pdf")
+    expect((await served.arrayBuffer()).byteLength).toBe(MaxPdfBytes)
+
+    const unnamed = await uploaded(await upload(hub, web.cookie, sessionId, pdf))
+    const fetched = await fetch(`${hub.url}/sessions/${sessionId}/attachments/${unnamed}`, {
+      headers: { cookie: web.cookie },
+    })
+    expect(fetched.headers.get("content-disposition")).toBe(
+      "attachment; filename*=UTF-8''document.pdf",
+    )
+  })
+
+  test("has a limit for its kind: 10 MB for a PDF, 5 MB for an image (#277)", async () => {
+    const { hub, web, sessionId } = await scene()
+    const bigPdf = await upload(hub, web.cookie, sessionId, sized(pdf, MaxPdfBytes + 1))
+    expect(bigPdf.status).toBe(413)
+    expect(await bigPdf.json()).toEqual({
+      error: "An attachment may be 10 MB at most if a PDF, 5 MB if an image.",
+    })
+    // Under a PDF's limit, but an image.
+    const bigImage = await upload(hub, web.cookie, sessionId, sized(png, MaxImageBytes + 1))
+    expect(bigImage.status).toBe(413)
+    expect(await bigImage.json()).toEqual({
+      error: "An image may be 5 MB at most, the most Claude reads.",
+    })
+    const text = await upload(hub, web.cookie, sessionId, new TextEncoder().encode("hello"))
+    expect(await text.json()).toEqual({
+      error: "Only JPEG, PNG, GIF and WebP images and PDFs can be attached.",
+    })
   })
 
   test("is refused for an Archived Session, which takes no prompts", async () => {
@@ -346,9 +401,7 @@ describe("the mod's attachment", () => {
 
   test("comes in parts the mod runtime's fetch can read, which join into the file", async () => {
     const { hub, web, sessionId, mod } = await scene()
-    const big = new Uint8Array(MaxImageBytes)
-    big.set(png)
-    big.fill(7, png.byteLength)
+    const big = sized(png, MaxImageBytes)
     const id = await uploaded(await upload(hub, web.cookie, sessionId, big))
 
     const parts: Array<{ data: string; next?: number }> = []
@@ -364,6 +417,31 @@ describe("the mod's attachment", () => {
     expect(parts.map((part) => part.next)).toEqual([2_400_000, 4_800_000, undefined])
     expect(Buffer.from(parts.map((part) => part.data).join(""), "base64")).toEqual(Buffer.from(big))
     expect((await mod.request(`/mod/attachments/${id}?offset=-1`)).status).toBe(400)
+    // At its end, a part of nothing, the last; past it, none.
+    const end = await mod.request(`/mod/attachments/${id}?offset=${MaxImageBytes}`)
+    expect(await end.json()).toMatchObject({ data: "" })
+    expect((await mod.request(`/mod/attachments/${id}?offset=${MaxImageBytes + 1}`)).status).toBe(
+      400,
+    )
+  })
+
+  test("of a 10 MB PDF joins from its five parts, each one the mod can read (#277)", async () => {
+    const { hub, web, sessionId, mod } = await scene()
+    const big = sized(pdf, MaxPdfBytes)
+    const id = await uploaded(await upload(hub, web.cookie, sessionId, big, { name: "spec.pdf" }))
+
+    const parts: Array<{ mediaType: string; data: string; next?: number }> = []
+    for (let offset: number | undefined = 0; offset !== undefined;) {
+      const response = await mod.request(`/mod/attachments/${id}?offset=${offset}`)
+      const body = await response.text()
+      expect(body.length).toBeLessThan(4 * 1024 * 1024)
+      const part = JSON.parse(body) as { mediaType: string; data: string; next?: number }
+      parts.push(part)
+      offset = part.next
+    }
+    expect(parts).toHaveLength(5)
+    expect(parts.every((part) => part.mediaType === "application/pdf")).toBe(true)
+    expect(Buffer.from(parts.map((part) => part.data).join(""), "base64")).toEqual(Buffer.from(big))
   })
 })
 

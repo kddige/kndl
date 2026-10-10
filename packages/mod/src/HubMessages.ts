@@ -3,8 +3,10 @@
 // the Hub refuse a whole batch, and every reply is decoded before the mod acts on it.
 
 import {
-  imageCount,
-  MaxImageBytes,
+  attachmentCount,
+  attachmentLabels,
+  attachmentRules,
+  MaxAttachmentBytes,
   MaxModAttachmentPartBytes,
   MaxToolSummaryLength,
   ModAttachment,
@@ -202,7 +204,7 @@ export const attachmentToolName = `mcp__hub-link-commands__${attachmentTool}`
 export const attachmentToolSpec = {
   name: attachmentTool,
   description:
-    'Opens a file someone in this shared session attached to a message, by the id its marker gives: "[Image #1: shot.png (attachment <id>)]". Returns the image itself. Call it once per file.',
+    'Opens a file someone in this shared session attached to a message, by the id its marker gives: "[Image #1: shot.png (attachment <id>)]" or "[PDF #1: spec.pdf (attachment <id>)]". Returns the image or PDF itself. Call it once per file.',
   inputSchema: {
     type: "object",
     properties: { id: { type: "string", description: "The attachment id from the marker." } },
@@ -223,28 +225,33 @@ export const deliveredPrompt = (
  * answering. The marker alone would do; this makes sure it isn't skipped.
  */
 export const attachmentContext = (attachments: ReadonlyArray<MarkedFile>) => {
-  const files = attachments.map((file, index) => `#${index + 1} ${file.name}: id ${file.id}`)
-  const count = imageCount(attachments.length)
+  const labels = attachmentLabels(attachments)
+  const files = attachments.map((file, index) => `${labels[index]} ${file.name}: id ${file.id}`)
   return [
-    `This message has ${count} attached. Look at each before you answer, by calling`,
-    `${attachmentToolName} once per image with its id: ${files.join("; ")}.`,
+    `This message has ${attachmentCount(attachments)} attached. Look at each before you answer,`,
+    `by calling ${attachmentToolName} once per file with its id: ${files.join("; ")}.`,
   ].join(" ")
 }
 
-/** What the attachment tool answers: the Hub's file as an image block, or why it couldn't. */
+interface Base64Source {
+  readonly type: "base64"
+  readonly media_type: string
+  readonly data: string
+}
+
+/**
+ * What the attachment tool answers: the Hub's file as an image block, or a PDF as a document
+ * block (#277); or why it couldn't.
+ */
 export type AttachmentResult =
   | { readonly deny: string }
   | {
       readonly result: readonly [
         { readonly type: "text"; readonly text: string },
-        {
-          readonly type: "image"
-          readonly source: {
-            readonly type: "base64"
-            readonly media_type: string
-            readonly data: string
-          }
-        },
+        (
+          | { readonly type: "image"; readonly source: Base64Source }
+          | { readonly type: "document"; readonly title: string; readonly source: Base64Source }
+        ),
       ]
     }
 
@@ -252,8 +259,8 @@ const decodeAttachment = Schema.decodeUnknownExit(Schema.fromJsonString(ModAttac
 
 const failed = (why: string) => ({ deny: `Could not open the attachment: ${why}` })
 
-/** The most parts the attachment tool fetches of one file: as many as the largest has. */
-export const maxAttachmentParts = Math.ceil(MaxImageBytes / MaxModAttachmentPartBytes)
+/** The most parts the attachment tool fetches of one file: as many as the largest, a PDF, has. */
+export const maxAttachmentParts = Math.ceil(MaxAttachmentBytes / MaxModAttachmentPartBytes)
 
 /** Where the attachment tool fetches a file's part from `offset` on, on the Hub. */
 export const attachmentPartPath = (id: string, offset: number) =>
@@ -282,23 +289,25 @@ export const attachmentPart = (
   return { part: part.value }
 }
 
-/** The attachment tool's answer from a file's parts, in order: an image block of the whole. */
+/**
+ * The attachment tool's answer from a file's parts, in order: an image block of the whole, or a
+ * document block for a PDF.
+ */
 export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): AttachmentResult => {
   const [first] = parts
   if (first === undefined || parts.at(-1)?.next !== undefined)
     return failed("the Hub sent only part of it.")
+  const source = {
+    type: "base64",
+    media_type: first.mediaType,
+    data: parts.map((part) => part.data).join(""),
+  } as const
+  const name = { type: "text", text: first.name } as const
   return {
-    result: [
-      { type: "text", text: first.name },
-      {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: first.mediaType,
-          data: parts.map((part) => part.data).join(""),
-        },
-      },
-    ],
+    result:
+      attachmentRules(first.mediaType).block === "image"
+        ? [name, { type: "image", source }]
+        : [name, { type: "document", title: first.name, source }],
   }
 }
 
@@ -309,8 +318,8 @@ export const sharedSessionNote = [
   "came from that person; a prompt without one was typed at the terminal. They can watch your",
   "subagents too, and message or stop one. When it matters who asked for what, address people",
   "by name. You run in a sandbox VM where the repository is checked out. A line such as",
-  '"[Image #1: name (attachment id)]" in a message stands for a file its sender attached: to see',
-  `it, call ${attachmentToolName} with its id.`,
+  '"[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for',
+  `a file its sender attached: to see it, call ${attachmentToolName} with its id.`,
 ].join(" ")
 
 /**

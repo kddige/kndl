@@ -2,11 +2,12 @@
 // web channel, whose WebSocket stays at Bun's message limit.
 //
 // - `POST /sessions/<id>/attachments`: a Participant who may prompt the Session uploads one file,
-//   the raw body, named in `x-kndl-filename`. Read up to MaxImageBytes and no further; kept as the
-//   type its bytes are, which must be an image Claude reads, whatever `Content-Type` says.
+//   the raw body, named in `x-kndl-filename`. Read up to MaxAttachmentBytes and no further; kept as
+//   the type its bytes are, which must be an image Claude reads or a PDF (#277), whatever
+//   `Content-Type` says, and within the limit for that type.
 // - `GET /sessions/<id>/attachments/<attachmentId>`: the file, to anyone who can see the Session.
 //   Served as the type its bytes were sniffed as, which the browser must not second-guess, and
-//   sandboxed, as MCP server icons are (ADR 0021).
+//   sandboxed, as MCP server icons are (ADR 0021): an image inline, a PDF as a download.
 // - `GET /mod/attachments/<attachmentId>?offset=<n>`: the file, base64 in parts the mod runtime's
 //   fetch can read, to the Session's own mod, for the tool that shows it Claude. Through the
 //   Runner's relay, like every `/mod/*` call.
@@ -16,16 +17,19 @@ import {
   attachmentName,
   AttachmentNameHeader,
   AttachmentUploaded,
-  MaxImageBytes,
+  attachmentRules,
+  MaxAttachmentBytes,
   MaxModAttachmentPartBytes,
   ModAttachment,
   ModAttachmentQuery,
   SessionId,
   sendPromptRefusal,
+  tooLargeForAnyReason,
+  unsupportedAttachmentReason,
 } from "@kndl/protocol"
 import { Clock, Effect, Option } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
-import { Attachments, sniffImage } from "./Attachments.ts"
+import { Attachments, sniffAttachment } from "./Attachments.ts"
 import { authenticateMod, authenticateParticipant, requireSameOrigin } from "./Auth.ts"
 import { readAtMost } from "./ReadAtMost.ts"
 import { authorizeAccessFor } from "./SessionAccess.ts"
@@ -33,10 +37,8 @@ import { authorizeAccessFor } from "./SessionAccess.ts"
 const errorResponse = (status: number, error: string) =>
   HttpServerResponse.jsonUnsafe({ error }, { status })
 
-const tooLarge = errorResponse(
-  413,
-  `An image may be ${MaxImageBytes / 1024 / 1024} MB at most, the most Claude reads.`,
-)
+/** Past the limit for any kind of attachment: which kind it is doesn't matter. */
+const tooLarge = errorResponse(413, tooLargeForAnyReason)
 
 /** The name the upload gave its file, URI-encoded; "" for none, or one that doesn't decode. */
 const sentName = (header: string | undefined) => {
@@ -86,21 +88,25 @@ export const AttachmentRoutes = HttpRouter.use(
         const cantSend = sendPromptRefusal(access.session)
         if (cantSend !== undefined) return errorResponse(409, cantSend.refusal)
         const request = yield* HttpServerRequest.HttpServerRequest
-        if (Number(request.headers["content-length"] ?? 0) > MaxImageBytes) return tooLarge
+        if (Number(request.headers["content-length"] ?? 0) > MaxAttachmentBytes) return tooLarge
         const incoming = yield* HttpServerRequest.toWeb(request)
-        const bytes = yield* Effect.tryPromise(() => readAtMost(incoming.body, MaxImageBytes)).pipe(
-          Effect.option,
-        )
+        const bytes = yield* Effect.tryPromise(() =>
+          readAtMost(incoming.body, MaxAttachmentBytes),
+        ).pipe(Effect.option)
         if (Option.isNone(bytes)) return errorResponse(400, "The file could not be read.")
         if (bytes.value === undefined) return tooLarge
-        const mediaType = sniffImage(bytes.value)
-        if (mediaType === undefined) {
-          return errorResponse(415, "Only JPEG, PNG, GIF and WebP images can be attached.")
-        }
+        const mediaType = sniffAttachment(bytes.value)
+        if (mediaType === undefined) return errorResponse(415, unsupportedAttachmentReason)
+        // The limit for its kind, now its bytes say which.
+        const rules = attachmentRules(mediaType)
+        if (bytes.value.byteLength > rules.maxBytes) return errorResponse(413, rules.tooLarge)
         const attachment = yield* attachments
           .add({
             sessionId: access.session.id,
-            name: attachmentName(sentName(request.headers[AttachmentNameHeader])),
+            name: attachmentName(
+              sentName(request.headers[AttachmentNameHeader]),
+              rules.fallbackName,
+            ),
             mediaType,
             bytes: bytes.value,
             by: you.id,
@@ -133,7 +139,8 @@ export const AttachmentRoutes = HttpRouter.use(
             "content-security-policy": "sandbox",
             "x-content-type-options": "nosniff",
             "cross-origin-resource-policy": "same-origin",
-            "content-disposition": `inline; filename*=UTF-8''${headerName(attachment.name)}`,
+            // A PDF downloads: the sandbox would keep the browser's viewer from showing it.
+            "content-disposition": `${attachmentRules(attachment.mediaType).disposition}; filename*=UTF-8''${headerName(attachment.name)}`,
             // An attachment never changes: a new file is a new id.
             "cache-control": "private, max-age=31536000, immutable",
           },
@@ -151,21 +158,28 @@ export const AttachmentRoutes = HttpRouter.use(
           Effect.option,
         )
         const offset = Option.match(query, { onNone: () => -1, onSome: (q) => q.offset ?? 0 })
+        // No attachment is that long: said before the database is asked.
+        if (offset < 0 || offset > MaxAttachmentBytes)
+          return errorResponse(400, "The offset is not in the file.")
+        // In parts, since the mod reads at most 4 MiB of a body: each part alone is held in memory.
         const stored = yield* attachments
-          .get(grant.sessionId, AttachmentId.make(attachmentId ?? "-"))
+          .part(
+            grant.sessionId,
+            AttachmentId.make(attachmentId ?? "-"),
+            offset,
+            MaxModAttachmentPartBytes,
+          )
           .pipe(Effect.orDie)
         if (Option.isNone(stored)) return errorResponse(404, "There is no such attachment.")
         const { attachment, bytes } = stored.value
-        if (offset < 0 || offset > bytes.byteLength)
-          return errorResponse(400, "The offset is not in the file.")
-        // In parts, since the mod reads at most 4 MiB of a body.
-        const end = Math.min(offset + MaxModAttachmentPartBytes, bytes.byteLength)
+        if (offset > attachment.size) return errorResponse(400, "The offset is not in the file.")
+        const end = offset + bytes.byteLength
         return yield* HttpServerResponse.schemaJson(ModAttachment)({
           id: attachment.id,
           name: attachment.name,
           mediaType: attachment.mediaType,
-          data: Buffer.from(bytes.subarray(offset, end)).toString("base64"),
-          ...(end < bytes.byteLength && { next: end }),
+          data: Buffer.from(bytes).toString("base64"),
+          ...(end < attachment.size && { next: end }),
         })
       }),
     )
