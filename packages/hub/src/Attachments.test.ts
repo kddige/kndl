@@ -17,7 +17,7 @@ import {
 import { Duration, Effect, type Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { TestClock } from "effect/testing"
-import { Attachments, UnsentAttachmentLifetime } from "./Attachments.ts"
+import { Attachments, unsentAttachmentLifetime } from "./Attachments.ts"
 import { DatabaseTest, databaseAt } from "./Database.ts"
 import { Sessions } from "./Sessions.ts"
 import { issueRunnerToken, openRunner, openWeb, stopAll } from "./testChannels.ts"
@@ -422,7 +422,7 @@ describe("an attachment nobody sent", () => {
           const dropped = yield* uploadAs("dropped.png")
           const sent = yield* uploadAs("sent.png")
           const taken = yield* send(sent.id)
-          yield* TestClock.adjust(Duration.subtract(UnsentAttachmentLifetime, Duration.minutes(1)))
+          yield* TestClock.adjust(Duration.subtract(unsentAttachmentLifetime, Duration.minutes(1)))
           const before = { dropped: yield* kept(dropped.id), sent: yield* kept(sent.id) }
           // Swept hourly: gone within the hour after.
           yield* TestClock.adjust(Duration.hours(1))
@@ -452,7 +452,7 @@ describe("an attachment nobody sent", () => {
           }),
         )
         // Down for a day and a minute, so no sweep ran.
-        yield* TestClock.setTime(Duration.toMillis(UnsentAttachmentLifetime) + 60_000)
+        yield* TestClock.setTime(Duration.toMillis(unsentAttachmentLifetime) + 60_000)
         return yield* hubRunning(Effect.all({ dropped: kept(dropped.id), sent: kept(sent.id) }))
       }),
     )
@@ -464,7 +464,7 @@ describe("an attachment nobody sent", () => {
       hubRunning(
         Effect.gen(function* () {
           const late = yield* uploadAs("late.png")
-          yield* TestClock.adjust(Duration.sum(UnsentAttachmentLifetime, Duration.hours(1)))
+          yield* TestClock.adjust(Duration.sum(unsentAttachmentLifetime, Duration.hours(1)))
           return yield* send(late.id)
         }),
       ),

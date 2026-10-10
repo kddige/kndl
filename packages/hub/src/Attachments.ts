@@ -11,10 +11,10 @@ import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 
 /** How long a file nobody sent is kept after it was uploaded (#280). */
-export const UnsentAttachmentLifetime = Duration.hours(24)
+export const unsentAttachmentLifetime = Duration.hours(24)
 
 /** How often the Hub deletes the files nobody sent, besides as it starts. */
-export const UnsentSweepInterval = Duration.hours(1)
+export const unsentSweepInterval = Duration.hours(1)
 
 /** An attachment with its bytes, as the Hub serves it. */
 export interface StoredAttachment {
@@ -61,8 +61,8 @@ const decodeAttachment = (row: Row) =>
  * The files Participants attach to prompts (#276, ADR 0024), in SQLite. A file a prompt took is
  * kept for the life of the Session it was uploaded to: purging the Session deletes it (ON DELETE
  * CASCADE). One nobody sent, removed from the Composer or left in a closed tab, is deleted
- * {@link UnsentAttachmentLifetime} after upload (#280), by a sweep as the Hub starts and every
- * {@link UnsentSweepInterval}.
+ * {@link unsentAttachmentLifetime} after upload (#280), by a sweep as the Hub starts and every
+ * {@link unsentSweepInterval}.
  */
 export class Attachments extends Context.Service<
   Attachments,
@@ -99,6 +99,7 @@ export class Attachments extends Context.Service<
     Attachments,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
+      const layerScope = yield* Effect.scope
 
       const add = Effect.fn("Attachments.add")(function* (upload: {
         readonly sessionId: SessionId
@@ -159,7 +160,7 @@ export class Attachments extends Context.Service<
 
       const sweepUnsent = Effect.gen(function* () {
         const before =
-          (yield* Clock.currentTimeMillis) - Duration.toMillis(UnsentAttachmentLifetime)
+          (yield* Clock.currentTimeMillis) - Duration.toMillis(unsentAttachmentLifetime)
         yield* sql`DELETE FROM attachments WHERE sent_at IS NULL AND uploaded_at <= ${before}`
       }).pipe(
         Effect.catchCause((cause) => Effect.logError("Could not delete unsent attachments", cause)),
@@ -167,10 +168,10 @@ export class Attachments extends Context.Service<
 
       // As the Hub starts, for those that aged while it was down; then for as long as it runs.
       yield* sweepUnsent
-      yield* Effect.sleep(UnsentSweepInterval).pipe(
+      yield* Effect.sleep(unsentSweepInterval).pipe(
         Effect.andThen(sweepUnsent),
         Effect.forever,
-        Effect.forkIn(yield* Effect.scope),
+        Effect.forkIn(layerScope),
       )
 
       return Attachments.of({ add, take, get })

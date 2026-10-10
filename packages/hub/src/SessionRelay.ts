@@ -2210,16 +2210,17 @@ export class SessionRelay extends Context.Service<
               if (cantSend !== undefined) return refuse(message, cantSend.refusal, { sessionId })
               // Its files are ones its sender uploaded to this Session (#276).
               // Taking them keeps them past the day an unsent one lasts (#280).
+              const now = yield* Clock.currentTimeMillis
               const files = yield* attachments.take(
                 sessionId,
                 message.attachments ?? [],
                 you.id,
-                yield* Clock.currentTimeMillis,
+                now,
               )
               if (Option.isNone(files)) {
                 return refuse(
                   message,
-                  "An attachment of the prompt isn't one you uploaded to this Session: attach it again.",
+                  "An attachment of the prompt isn't one you uploaded to this Session, or was deleted a day after upload unsent: attach it again.",
                   { sessionId },
                 )
               }
@@ -2229,7 +2230,7 @@ export class SessionRelay extends Context.Service<
                   id: PromptId.make(randomId()),
                   text: message.text,
                   sender: you,
-                  queuedAt: yield* Clock.currentTimeMillis,
+                  queuedAt: now,
                   ...(files.value.length > 0 && { attachments: files.value }),
                 }),
               )
