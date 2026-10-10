@@ -500,6 +500,16 @@ const shotPart = (data: string, next?: number) => {
   return read.part
 }
 
+/** A part of spec.pdf, as the Hub sends it. */
+const specPart = (data: string, next?: number) => {
+  const read = attachmentPart(
+    200,
+    JSON.stringify({ id: "att-3", name: "spec.pdf", mediaType: "application/pdf", data, next }),
+  )
+  if ("deny" in read) throw new Error(read.deny)
+  return read.part
+}
+
 describe("attachments (#276)", () => {
   const shot = { id: "att-1", name: "shot.png", mediaType: "image/png" as const, size: 12 }
   const photo = { id: "att-2", name: "photo.jpg", mediaType: "image/jpeg" as const, size: 34 }
@@ -534,15 +544,7 @@ describe("attachments (#276)", () => {
   })
 
   test("the tool hands Claude a PDF the Hub sent as a document block, titled with its name (#277)", () => {
-    const part = (data: string, next?: number) => {
-      const read = attachmentPart(
-        200,
-        JSON.stringify({ id: "att-3", name: "spec.pdf", mediaType: "application/pdf", data, next }),
-      )
-      if ("deny" in read) throw new Error(read.deny)
-      return read.part
-    }
-    expect(attachmentResult([part("JVBE", 3), part("Ri0x")])).toEqual({
+    expect(attachmentResult([specPart("JVBE", 3), specPart("Ri0x")])).toEqual({
       result: [
         { type: "text", text: "spec.pdf" },
         {
