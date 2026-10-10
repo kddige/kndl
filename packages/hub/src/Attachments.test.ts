@@ -187,7 +187,7 @@ describe("uploading an attachment", () => {
     expect((await upload(hub, web.cookie, "no-such-session", png)).status).toBe(404)
   })
 
-  test("keeps a PDF of up to 20 MB, as its bytes say, served as a download (#277)", async () => {
+  test("keeps a PDF of up to 10 MB, as its bytes say, served as a download (#277)", async () => {
     const { hub, web, sessionId } = await scene()
     const id = await uploaded(
       await upload(hub, web.cookie, sessionId, sized(pdf, MaxPdfBytes), {
@@ -213,12 +213,12 @@ describe("uploading an attachment", () => {
     )
   })
 
-  test("has a limit for its type: 20 MB for a PDF, 5 MB for an image (#277)", async () => {
+  test("has a limit for its kind: 10 MB for a PDF, 5 MB for an image (#277)", async () => {
     const { hub, web, sessionId } = await scene()
     const bigPdf = await upload(hub, web.cookie, sessionId, sized(pdf, MaxPdfBytes + 1))
     expect(bigPdf.status).toBe(413)
     expect(await bigPdf.json()).toEqual({
-      error: "A file may be 20 MB at most if a PDF, 5 MB if an image.",
+      error: "An attachment may be 10 MB at most if a PDF, 5 MB if an image.",
     })
     // Under a PDF's limit, but an image.
     const bigImage = await upload(hub, web.cookie, sessionId, sized(png, MaxImageBytes + 1))
@@ -425,7 +425,7 @@ describe("the mod's attachment", () => {
     )
   })
 
-  test("of a 20 MB PDF joins from its parts, each one the mod can read (#277)", async () => {
+  test("of a 10 MB PDF joins from its five parts, each one the mod can read (#277)", async () => {
     const { hub, web, sessionId, mod } = await scene()
     const big = sized(pdf, MaxPdfBytes)
     const id = await uploaded(await upload(hub, web.cookie, sessionId, big, { name: "spec.pdf" }))
@@ -439,6 +439,7 @@ describe("the mod's attachment", () => {
       parts.push(part)
       offset = part.next
     }
+    expect(parts).toHaveLength(5)
     expect(parts.every((part) => part.mediaType === "application/pdf")).toBe(true)
     expect(Buffer.from(parts.map((part) => part.data).join(""), "base64")).toEqual(Buffer.from(big))
   })

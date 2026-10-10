@@ -1,7 +1,7 @@
 import {
   type AgentId,
   type Attachment,
-  isImage,
+  attachmentKind,
   type Participant,
   type SessionId,
   type SessionStateChanged,
@@ -363,10 +363,10 @@ function PromptAttachments({ attachments }: { attachments: ReadonlyArray<Attachm
   const sessionId = useContext(SessionContext)
   if (sessionId === null) return null
   return (
-    <ul aria-label="Attached files" {...stylex.props(styles.attachments)}>
+    <ul aria-label="The prompt's attachments" {...stylex.props(styles.attachments)}>
       {attachments.map((attachment) => {
         const url = hub.attachmentUrl(sessionId, attachment.id)
-        if (!isImage(attachment.mediaType))
+        if (attachmentKind(attachment.mediaType) === "pdf")
           return (
             <li key={attachment.id}>
               <a

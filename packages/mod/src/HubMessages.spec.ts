@@ -10,6 +10,7 @@ import {
   attachmentPartPath,
   attachmentResult,
   attachmentToolName,
+  maxAttachmentParts,
   backgroundedByStop,
   checkEvent,
   clip,
@@ -544,6 +545,8 @@ describe("attachments (#276)", () => {
   })
 
   test("the tool hands Claude a PDF the Hub sent as a document block, titled with its name (#277)", () => {
+    // A 10 MB PDF is five parts of 2.4 MB, each under the 4 MiB the runtime reads.
+    expect(maxAttachmentParts).toBe(5)
     expect(attachmentResult([specPart("JVBE", 3), specPart("Ri0x")])).toEqual({
       result: [
         { type: "text", text: "spec.pdf" },

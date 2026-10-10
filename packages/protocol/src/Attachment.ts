@@ -7,7 +7,7 @@ import { AttachmentId } from "./Ids.ts"
 //
 // - `POST /sessions/<id>/attachments`: the raw file as the body, its name URI-encoded in
 //   {@link AttachmentNameHeader}. Answered with {@link AttachmentUploaded}; 413 past
-//   the limit for its type ({@link maxAttachmentBytes}), 415 for what isn't an image of
+//   the limit for its kind ({@link AttachmentKinds}), 415 for what isn't an image of
 //   {@link ImageMediaTypes} or a PDF (#277), as its bytes say, whatever its `Content-Type` says.
 // - `GET /sessions/<id>/attachments/<attachmentId>`: the file, to the Session's Participants.
 // - `GET /mod/attachments/<attachmentId>?offset=<n>`: the file, base64 in ModAttachment parts
@@ -29,30 +29,81 @@ export const AttachmentMediaTypes = [...ImageMediaTypes, PdfMediaType] as const
 export const AttachmentMediaType = Schema.Literals(AttachmentMediaTypes)
 export type AttachmentMediaType = typeof AttachmentMediaType.Type
 
-/** The largest PDF the Hub takes, in bytes: the most Claude Code's Read takes of a whole one. */
-export const MaxPdfBytes = 20 * 1024 * 1024
+/**
+ * The largest PDF the Hub takes, in bytes. Claude Code 2.1.296 drops a request's media, oldest
+ * first, down to 14 MiB of base64 once they pass 24 MiB; a 10 MiB PDF's base64 is 13.3 MiB, so the
+ * newest one always reaches Claude (ADR 0024).
+ */
+export const MaxPdfBytes = 10 * 1024 * 1024
 
-/** Whether a file of this type is an image, rather than a PDF. */
-export const isImage = (mediaType: string): mediaType is ImageMediaType =>
+/** A size in megabytes, as the limits are said: "5 MB", "10 MB". */
+export const megabytes = (bytes: number): string => `${bytes / 1024 / 1024} MB`
+
+/** The kinds of attachment: an image Claude reads, or a PDF (#277). */
+export type AttachmentKind = "image" | "pdf"
+
+/** What differs between the kinds of attachment, in one place. */
+export interface AttachmentKindRules {
+  /** The largest the Hub takes, in bytes. */
+  readonly maxBytes: number
+  /** What a marker calls it, numbered: "Image #1", "PDF #1". */
+  readonly label: string
+  /** How a count names it: "1 image", "2 PDFs". */
+  readonly noun: string
+  /** Its name when its sender's browser gave none. */
+  readonly fallbackName: string
+  /** How the Hub serves it: an image shows in place, a PDF downloads. */
+  readonly disposition: "inline" | "attachment"
+  /** The block the mod's tool hands Claude it as. */
+  readonly block: "image" | "document"
+  /** Why the Hub refuses one past {@link maxBytes}. */
+  readonly tooLarge: string
+}
+
+export const AttachmentKinds: Readonly<Record<AttachmentKind, AttachmentKindRules>> = {
+  image: {
+    maxBytes: MaxImageBytes,
+    label: "Image",
+    noun: "image",
+    fallbackName: "image",
+    disposition: "inline",
+    block: "image",
+    tooLarge: `An image may be ${megabytes(MaxImageBytes)} at most, the most Claude reads.`,
+  },
+  pdf: {
+    maxBytes: MaxPdfBytes,
+    label: "PDF",
+    noun: "PDF",
+    fallbackName: "document.pdf",
+    disposition: "attachment",
+    block: "document",
+    tooLarge: `A PDF may be ${megabytes(MaxPdfBytes)} at most, so that Claude still sees it.`,
+  },
+}
+
+/** Which kind of attachment a type is; none for a type a prompt can't carry. */
+export const attachmentKind = (mediaType: string): AttachmentKind | undefined =>
   (ImageMediaTypes as ReadonlyArray<string>).includes(mediaType)
+    ? "image"
+    : mediaType === PdfMediaType
+      ? "pdf"
+      : undefined
 
-/** The largest file of this type the Hub takes, in bytes. */
-export const maxAttachmentBytes = (mediaType: AttachmentMediaType): number =>
-  isImage(mediaType) ? MaxImageBytes : MaxPdfBytes
+/** The rules for an attachment's type, which a prompt carries. */
+export const attachmentRules = (mediaType: AttachmentMediaType): AttachmentKindRules =>
+  AttachmentKinds[attachmentKind(mediaType) ?? "pdf"]
 
-/** The largest file of any type the Hub takes, in bytes. */
-export const MaxAttachmentBytes = Math.max(MaxImageBytes, MaxPdfBytes)
+/** The largest attachment of any kind the Hub takes, in bytes. */
+export const MaxAttachmentBytes = Math.max(
+  ...Object.values(AttachmentKinds).map((kind) => kind.maxBytes),
+)
 
-const megabytes = (bytes: number) => `${bytes / 1024 / 1024} MB`
+/** Why the Hub refuses an upload past {@link MaxAttachmentBytes}, before its type is known. */
+export const tooLargeForAnyReason = `An attachment may be ${megabytes(MaxPdfBytes)} at most if a PDF, ${megabytes(MaxImageBytes)} if an image.`
 
-/** Why a file of this type is refused past {@link maxAttachmentBytes}, as the Hub says it. */
-export const tooLargeReason = (mediaType: AttachmentMediaType): string =>
-  isImage(mediaType)
-    ? `An image may be ${megabytes(MaxImageBytes)} at most, the most Claude reads.`
-    : `A PDF may be ${megabytes(MaxPdfBytes)} at most.`
-
-/** Why a file is refused past {@link MaxAttachmentBytes}, before its type is known. */
-export const tooLargeForAnyReason = `A file may be ${megabytes(MaxPdfBytes)} at most if a PDF, ${megabytes(MaxImageBytes)} if an image.`
+/** Why the Hub refuses an upload whose bytes aren't of a type a prompt carries. */
+export const unsupportedAttachmentReason =
+  "Only JPEG, PNG, GIF and WebP images and PDFs can be attached."
 
 /** The most files a prompt may carry. */
 export const MaxAttachments = 20
@@ -119,17 +170,24 @@ export const attachmentName = (raw: string, fallback = "image"): string => {
   return kept.trimEnd()
 }
 
-const counted = (count: number, kind: string) => `${count} ${kind}${count === 1 ? "" : "s"}`
+/** The kind's rules, or a plain attachment's for a type the mod doesn't know. */
+const rulesOf = (mediaType: string) => {
+  const kind = attachmentKind(mediaType)
+  return kind === undefined ? { label: "Attachment", noun: "attachment" } : AttachmentKinds[kind]
+}
 
-/** How many files a prompt carries, in words: "1 image", "3 images", "2 images and 1 PDF". */
+const counted = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`
+
+/** How many attachments a prompt carries, in words: "1 image", "2 images and 1 PDF". */
 export const attachmentCount = (
   attachments: ReadonlyArray<{ readonly mediaType: string }>,
 ): string => {
-  const images = attachments.filter((file) => isImage(file.mediaType)).length
-  const pdfs = attachments.length - images
-  return [images > 0 ? counted(images, "image") : "", pdfs > 0 ? counted(pdfs, "PDF") : ""]
-    .filter((part) => part !== "")
-    .join(" and ")
+  const counts = new Map<string, number>()
+  for (const { mediaType } of attachments) {
+    const { noun } = rulesOf(mediaType)
+    counts.set(noun, (counts.get(noun) ?? 0) + 1)
+  }
+  return [...counts].map(([noun, count]) => counted(count, noun)).join(" and ")
 }
 
 /** What a marker names of a file: plain strings, as the mod, which has no brands, has them. */
@@ -139,19 +197,17 @@ export interface MarkedFile {
   readonly mediaType: string
 }
 
-/** What a marker calls a file of this type: "Image", as Claude Code calls a pasted one, or "PDF". */
-const markerKind = (mediaType: string) => (isImage(mediaType) ? "Image" : "PDF")
-
 /**
- * What each file of a prompt is called, as Claude Code numbers pasted images: "Image #1". Images
- * and PDFs are numbered apart (#277): "Image #1", "PDF #1", "Image #2".
+ * What each attachment of a prompt is called, in the style of Claude Code's "[Image #1]" for a
+ * pasted image. Images and PDFs are each numbered on their own (#277): "Image #1", "PDF #1",
+ * "Image #2".
  */
 export const attachmentLabels = (
   attachments: ReadonlyArray<{ readonly mediaType: string }>,
 ): Array<string> => {
   const numbers = new Map<string, number>()
   return attachments.map((attachment) => {
-    const kind = markerKind(attachment.mediaType)
+    const kind = rulesOf(attachment.mediaType).label
     const number = (numbers.get(kind) ?? 0) + 1
     numbers.set(kind, number)
     return `${kind} #${number}`

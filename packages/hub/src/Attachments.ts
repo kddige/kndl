@@ -96,8 +96,9 @@ export class Attachments extends Context.Service<
       id: AttachmentId,
     ) => Effect.Effect<Option.Option<StoredAttachment>, SqlError>
     /**
-     * At most `length` bytes of one of the Session's files, from byte `offset` on: read alone, not
-     * the whole file, since the mod fetches a 20 MB PDF in parts (#277).
+     * At most `length` bytes of one of the Session's attachments, from byte `offset` on, since the
+     * mod fetches a 10 MB PDF in parts (#277). SQLite still loads the whole blob to cut it, but only
+     * the part comes into memory here.
      */
     readonly part: (
       sessionId: SessionId,

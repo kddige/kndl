@@ -4,10 +4,11 @@
 // is, is checked here. The Hub checks again, by the bytes; this says why up front.
 
 import {
+  attachmentKind,
+  AttachmentKinds,
   AttachmentMediaTypes,
-  isImage,
   MaxAttachments,
-  MaxPdfBytes,
+  megabytes,
   PdfMediaType,
 } from "@kndl/protocol"
 
@@ -38,26 +39,32 @@ export function fileSize(bytes: number): string {
 
 /**
  * Of `files`, those a prompt holding `held` attachments already can take: JPEG, PNG, GIF and WebP
- * images, and PDFs of {@link MaxPdfBytes} at most, {@link MaxAttachments} in all. The rest are
- * refused, saying why.
+ * images, and PDFs within their limit, {@link MaxAttachments} in all. The rest are refused,
+ * saying why.
  */
-export function admitFiles(files: ReadonlyArray<File>, held: number): Admitted {
+export function admitAttachments(files: ReadonlyArray<File>, held: number): Admitted {
   const refused: Array<string> = []
   const taken = files.flatMap((file) => {
-    if (isPdf(file)) {
-      if (file.size <= MaxPdfBytes) return [typed(file)]
-      refused.push(`${file.name} is over ${MaxPdfBytes / 1024 / 1024} MB, the most a PDF may be.`)
-      return []
+    switch (attachmentKind(typed(file).type)) {
+      case "image":
+        // Its size is checked once it is scaled down.
+        return [file]
+      case "pdf": {
+        const { maxBytes } = AttachmentKinds.pdf
+        if (file.size <= maxBytes) return [typed(file)]
+        refused.push(`${file.name} is over ${megabytes(maxBytes)}, the most a PDF may be.`)
+        return []
+      }
+      case undefined:
+        refused.push(`${file.name} isn't a JPEG, PNG, GIF or WebP image, or a PDF.`)
+        return []
     }
-    if (isImage(file.type)) return [file]
-    refused.push(`${file.name} isn't a JPEG, PNG, GIF or WebP image, or a PDF.`)
-    return []
   })
   const room = Math.max(0, MaxAttachments - held)
   if (taken.length > room) {
     const left = taken.length - room
     refused.push(
-      `A prompt takes ${MaxAttachments} files at most: ${left} ${left === 1 ? "was" : "were"} left out.`,
+      `A prompt takes ${MaxAttachments} attachments at most: ${left} ${left === 1 ? "was" : "were"} left out.`,
     )
   }
   return { accepted: taken.slice(0, room), refused }

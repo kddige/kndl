@@ -40,12 +40,11 @@ import {
   attachmentName,
   AttachmentId,
   AttachmentMediaTypes,
-  isImage,
+  attachmentRules,
   memberRemovalRefusal,
   MaxAttachmentBytes,
-  maxAttachmentBytes,
   tooLargeForAnyReason,
-  tooLargeReason,
+  unsupportedAttachmentReason,
   messageAgentVerdict,
   modelNotFoundText,
   ownerOnlyMessage,
@@ -436,7 +435,7 @@ export class FakeHub implements HubTransport {
   }
 
   /**
-   * As the Hub does (#276, #277): an image Claude reads, of 5 MB at most, or a PDF of 20 MB at
+   * As the Hub does (#276, #277): an image Claude reads, of 5 MB at most, or a PDF of 10 MB at
    * most, kept for the Session. The fake trusts the file's type, and shows it from the browser's
    * own copy.
    */
@@ -448,9 +447,9 @@ export class FakeHub implements HubTransport {
     if (!this.#signedIn) throw new Error("Sign in first")
     if (file.size > MaxAttachmentBytes) throw new Error(tooLargeForAnyReason)
     const mediaType = AttachmentMediaTypes.find((type) => type === file.type)
-    if (mediaType === undefined)
-      throw new Error("Only JPEG, PNG, GIF and WebP images and PDFs can be attached.")
-    if (file.size > maxAttachmentBytes(mediaType)) throw new Error(tooLargeReason(mediaType))
+    if (mediaType === undefined) throw new Error(unsupportedAttachmentReason)
+    const rules = attachmentRules(mediaType)
+    if (file.size > rules.maxBytes) throw new Error(rules.tooLarge)
     onProgress(Math.round(file.size / 2))
     await new Promise((resolve) => setTimeout(resolve, this.stepMs))
     if (signal.aborted) throw new DOMException("Aborted", "AbortError")
@@ -459,7 +458,7 @@ export class FakeHub implements HubTransport {
     this.#attachments.set(id, {
       attachment: {
         id,
-        name: attachmentName(file.name, isImage(mediaType) ? "image" : "document.pdf"),
+        name: attachmentName(file.name, rules.fallbackName),
         mediaType,
         size: file.size,
       },

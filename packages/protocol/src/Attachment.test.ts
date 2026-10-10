@@ -3,6 +3,9 @@ import {
   Attachment,
   attachmentName,
   attachmentCount,
+  attachmentKind,
+  attachmentRules,
+  MaxPdfBytes,
   withAttachmentMarkers,
   withoutAttachmentMarkers,
 } from "./Attachment.ts"
@@ -144,4 +147,21 @@ test("a prompt's files are counted in words, images and PDFs apart (#277)", () =
   expect(attachmentCount([image, image, image])).toBe("3 images")
   expect(attachmentCount([pdf])).toBe("1 PDF")
   expect(attachmentCount([image, pdf, image, pdf])).toBe("2 images and 2 PDFs")
+})
+
+describe("an attachment's kind (#277)", () => {
+  test("is an image or a PDF by its type, and none for any other", () => {
+    expect(attachmentKind("image/webp")).toBe("image")
+    expect(attachmentKind("application/pdf")).toBe("pdf")
+    expect(attachmentKind("text/plain")).toBeUndefined()
+    expect(attachmentRules("application/pdf").disposition).toBe("attachment")
+    expect(attachmentRules("image/png").disposition).toBe("inline")
+  })
+
+  test("keeps a PDF small enough that Claude Code doesn't drop it from the request", () => {
+    // Measured on Claude Code 2.1.296: past 24 MiB of media base64 it drops media down to 14 MiB.
+    const base64 = Math.ceil(MaxPdfBytes / 3) * 4
+    expect(base64).toBeLessThan(14 * 1024 * 1024)
+    expect(MaxPdfBytes).toBe(10 * 1024 * 1024)
+  })
 })

@@ -66,13 +66,13 @@ const styles = stylex.create({
 })
 
 /** Whether a drag carries files, rather than text or a link. */
-const carriesFiles = (event: { readonly dataTransfer: DataTransfer | null }) =>
+const isFileDrag = (event: { readonly dataTransfer: DataTransfer | null }) =>
   [...(event.dataTransfer?.types ?? [])].includes("Files") ||
   [...(event.dataTransfer?.items ?? [])].some((item) => item.kind === "file")
 
 /** Lets files be dropped on the Composer: without it, the browser opens the file instead. */
 const dragOver = (event: DragEvent<HTMLFormElement>) => {
-  if (!carriesFiles(event)) return
+  if (!isFileDrag(event)) return
   event.preventDefault()
   if (event.dataTransfer !== null) event.dataTransfer.dropEffect = "copy"
 }
@@ -134,7 +134,7 @@ export function Composer({
   picker: modelPicker,
   copy = promptCopy(running),
   attach,
-  cantAttach = "Files can be attached to prompts only, not here yet.",
+  cantAttach = "Attachments go with prompts only, not here yet.",
   prepare,
 }: ComposerProps) {
   const [draft, setDraft] = useState("")
@@ -165,7 +165,7 @@ export function Composer({
   const [dragging, setDragging] = useState(false)
   const depth = useRef(0)
   const dragEnter = (event: DragEvent<HTMLFormElement>) => {
-    if (disabled || !carriesFiles(event)) return
+    if (disabled || !isFileDrag(event)) return
     event.preventDefault()
     depth.current++
     setDragging(true)
@@ -187,7 +187,7 @@ export function Composer({
   // A drop that misses the Composer would open the file in place of the app.
   useEffect(() => {
     const keep = (event: globalThis.DragEvent) => {
-      if (carriesFiles(event)) event.preventDefault()
+      if (isFileDrag(event)) event.preventDefault()
     }
     window.addEventListener("dragover", keep)
     window.addEventListener("drop", keep)
@@ -199,7 +199,8 @@ export function Composer({
 
   const picker = useRef<HTMLInputElement>(null)
   const pick = (event: ChangeEvent<HTMLInputElement>) => {
-    attachments.add([...(event.target.files ?? [])])
+    // The Composer may have been disabled while the picker was open.
+    if (!disabled) attachments.add([...(event.target.files ?? [])])
     // The same file can be picked again.
     event.target.value = ""
   }
@@ -227,7 +228,7 @@ export function Composer({
       {...stylex.props(styles.form)}
     >
       {dragging && taking && (
-        <div role="status" aria-label="Drop files to attach" {...stylex.props(styles.dropTarget)}>
+        <div role="status" aria-label="Drop to attach" {...stylex.props(styles.dropTarget)}>
           Drop images or PDFs to attach
         </div>
       )}
@@ -265,7 +266,7 @@ export function Composer({
             />
             <IconButton
               size="sm"
-              label="Attach files"
+              label="Attach"
               disabled={disabled}
               onClick={() => picker.current?.click()}
             >

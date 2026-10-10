@@ -5,7 +5,7 @@
 import {
   attachmentCount,
   attachmentLabels,
-  isImage,
+  attachmentRules,
   MaxAttachmentBytes,
   MaxModAttachmentPartBytes,
   MaxToolSummaryLength,
@@ -304,9 +304,10 @@ export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): Attachmen
   } as const
   const name = { type: "text", text: first.name } as const
   return {
-    result: isImage(first.mediaType)
-      ? [name, { type: "image", source }]
-      : [name, { type: "document", title: first.name, source }],
+    result:
+      attachmentRules(first.mediaType).block === "image"
+        ? [name, { type: "image", source }]
+        : [name, { type: "document", title: first.name, source }],
   }
 }
 

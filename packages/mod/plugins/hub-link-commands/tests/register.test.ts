@@ -656,12 +656,12 @@ describe("attachments (#276)", () => {
   test("the tool hands Claude the file the Hub keeps, in its parts, as an image or a PDF", async ($, on) => {
     const file = { id: "att-1", name: "shot.png", mediaType: "image/png" }
     const parts = { 0: { ...file, data: "iVBO", next: 3 }, 3: { ...file, data: "Rw0K" } }
-    // A 20 MB PDF comes in nine parts of 2.4 MB (#277).
+    // A 10 MB PDF comes in five parts of 2.4 MB (#277).
     const pdf = { id: "att-3", name: "spec.pdf", mediaType: "application/pdf" }
     const pdfParts = Object.fromEntries(
-      Array.from({ length: 9 }, (_, index) => [
+      Array.from({ length: 5 }, (_, index) => [
         index * 3,
-        { ...pdf, data: `AAA${index}`, ...(index < 8 && { next: (index + 1) * 3 }) },
+        { ...pdf, data: `AAA${index}`, ...(index < 4 && { next: (index + 1) * 3 }) },
       ]),
     )
     const { requests } = linkedSession(
@@ -699,7 +699,7 @@ describe("attachments (#276)", () => {
         source: {
           type: "base64",
           media_type: "application/pdf",
-          data: Array.from({ length: 9 }, (_, index) => `AAA${index}`).join(""),
+          data: Array.from({ length: 5 }, (_, index) => `AAA${index}`).join(""),
         },
       },
     ])

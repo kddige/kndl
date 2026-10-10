@@ -1,10 +1,10 @@
-import { type AttachmentId, isImage, MaxImageBytes } from "@kndl/protocol"
+import { type AttachmentId, attachmentKind, AttachmentKinds, megabytes } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useRef, useState } from "react"
 import type { UploadOptions } from "../hub/transport.ts"
 import { CloseIcon, IconButton } from "../ui/index.ts"
 import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
-import { admitFiles, fileSize } from "./attachments.ts"
+import { admitAttachments, fileSize } from "./attachments.ts"
 import { browserCodec, downscale } from "./downscale.ts"
 
 const styles = stylex.create({
@@ -82,7 +82,9 @@ const codec = browserCodec()
 
 /** Scales an image down as Claude Code does a pasted one (downscale.ts). */
 const scaleDown = (file: File) =>
-  codec === undefined ? Promise.resolve(file) : downscale(file, codec, MaxImageBytes)
+  codec === undefined
+    ? Promise.resolve(file)
+    : downscale(file, codec, AttachmentKinds.image.maxBytes)
 
 /**
  * The files attached to a Composer's draft (#276, #277), pasted, dropped or picked. Each is
@@ -124,12 +126,13 @@ export function useAttachments(
     const failed = (reason: string) =>
       change(key, (chip) => ({ ...chip, upload: { _tag: "Failed", reason } }))
     // A PDF goes as it is: its size was checked as it was added.
-    const image = isImage(file.type)
+    const image = attachmentKind(file.type) === "image"
     const scaled = image ? await prepare(file) : file
     if (abort.signal.aborted) return
     // The Hub refuses it all the same; said here, before it is sent.
-    if (image && scaled.size > MaxImageBytes)
-      return failed(`It is over ${MaxImageBytes / 1024 / 1024} MB, even scaled down.`)
+    const { maxBytes } = AttachmentKinds.image
+    if (image && scaled.size > maxBytes)
+      return failed(`It is over ${megabytes(maxBytes)}, even scaled down.`)
     change(key, (chip) => ({
       ...chip,
       name: scaled.name,
@@ -150,12 +153,13 @@ export function useAttachments(
 
   const add = (files: ReadonlyArray<File>) => {
     if (attach === undefined) return setRefused([cantAttach])
-    const admitted = admitFiles(files, held.current)
+    const admitted = admitAttachments(files, held.current)
     held.current += admitted.accepted.length
     setRefused(admitted.refused)
     const added = admitted.accepted.map((file): AttachmentChip => {
       const key = next.current++
-      const preview = isImage(file.type) ? URL.createObjectURL(file) : undefined
+      const image = attachmentKind(file.type) === "image"
+      const preview = image ? URL.createObjectURL(file) : undefined
       const abort = new AbortController()
       uploads.current.set(key, { abort, preview })
       void send(key, file, abort, attach)
@@ -165,7 +169,7 @@ export function useAttachments(
         preview,
         size: file.size,
         sent: 0,
-        upload: isImage(file.type) ? { _tag: "Scaling" } : { _tag: "Uploading" },
+        upload: image ? { _tag: "Scaling" } : { _tag: "Uploading" },
       }
     })
     setChips((all) => [...all, ...added])
