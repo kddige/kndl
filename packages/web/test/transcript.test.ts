@@ -70,6 +70,35 @@ describe("buildTranscript", () => {
     expect(turn?.end?.usage?.outputTokens).toBe(5)
   })
 
+  test("a Turn shows the files its prompt carried, and its prompt without their markers (#276)", () => {
+    const shot = { id: "att-1", name: "shot.png", mediaType: "image/png", size: 12 } as const
+    const [withText, alone] = turns(
+      build(
+        entries([
+          {
+            _tag: "TurnStarted",
+            turnId: "t-1",
+            text: "[Alice] what broke?\n[Image #1: shot.png (attachment att-1)]",
+            sender: fromAlice,
+            promptId: "p-1",
+            attachments: [shot],
+          },
+          { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 900 },
+          {
+            _tag: "TurnStarted",
+            turnId: "t-2",
+            text: "[Alice] [Image #1: shot.png (attachment att-1)]",
+            sender: fromAlice,
+            promptId: "p-2",
+            attachments: [shot],
+          },
+        ]),
+      ),
+    )
+    expect(withText).toMatchObject({ prompt: "what broke?", attachments: [shot] })
+    expect(alone).toMatchObject({ prompt: "", attachments: [shot] })
+  })
+
   test("a tool call's start and end are one block; text either side stays separate", () => {
     const [turn] = turns(
       build(

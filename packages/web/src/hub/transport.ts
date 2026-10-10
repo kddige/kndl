@@ -1,10 +1,24 @@
-// How the HubClient reaches a Hub: a socket for the web channel, and the sign-in routes. The
-// browser's transport talks to the real Hub on the page's own origin; the fake Hub implements the
-// same interface in-process.
+// How the HubClient reaches a Hub: a socket for the web channel, the sign-in routes, and the
+// attachments' uploads (#276). The browser's transport talks to the real Hub on the page's own
+// origin; the fake Hub implements the same interface in-process.
 
-import { type CliLoginApproval, CliLoginApproved, Participant } from "@kndl/protocol"
+import {
+  type AttachmentId,
+  AttachmentNameHeader,
+  AttachmentUploaded,
+  type CliLoginApproval,
+  CliLoginApproved,
+  Participant,
+  type SessionId,
+} from "@kndl/protocol"
 import { Schema } from "effect"
-import { hubPaths, type SignInOptions, webSocketUrl } from "./config.ts"
+import {
+  attachmentPath,
+  attachmentsPath,
+  hubPaths,
+  type SignInOptions,
+  webSocketUrl,
+} from "./config.ts"
 
 /** An open (or opening) web channel. Text frames only: every message is JSON. */
 export interface HubSocket {
@@ -17,6 +31,12 @@ export interface SocketHandlers {
   onMessage(text: string): void
   /** The socket closed, or never opened. Called once. */
   onClose(): void
+}
+
+/** How an upload goes: the bytes sent so far, and a way to give it up. */
+export interface UploadOptions {
+  readonly onProgress: (sent: number) => void
+  readonly signal: AbortSignal
 }
 
 export type SignInStatus =
@@ -40,10 +60,29 @@ export interface HubTransport {
    * the person by (issue #209). Throws with the Hub's reason when it refuses.
    */
   admit(ticket: string): Promise<void>
+  /**
+   * Uploads a file to attach to a prompt in the Session (#276), saying how far it got as it goes:
+   * the Hub's id for it. Throws with the Hub's reason when it refuses, as for a file too large.
+   */
+  uploadAttachment(sessionId: SessionId, file: File, options: UploadOptions): Promise<AttachmentId>
+  /** Where the browser loads one of the Session's attachments from. */
+  attachmentUrl(sessionId: SessionId, attachmentId: AttachmentId): string
 }
 
 const decodeParticipant = Schema.decodeUnknownSync(Participant)
 const decodeApproved = Schema.decodeUnknownSync(CliLoginApproved)
+const decodeUploaded = Schema.decodeUnknownSync(Schema.fromJsonString(AttachmentUploaded))
+
+/** Why the Hub refused an upload, from its `{ error }`. */
+function uploadRefusal(status: number, body: string): Error {
+  try {
+    const { error } = JSON.parse(body) as { error?: unknown }
+    if (typeof error === "string") return new Error(error)
+  } catch {
+    // Said below.
+  }
+  return new Error(status === 0 ? "The upload was cut off." : `The Hub answered ${status}.`)
+}
 
 /** The Hub's `{ error }`, or what it answered. */
 async function refusal(response: Response, what: string): Promise<Error> {
@@ -123,5 +162,30 @@ export function browserTransport(): HubTransport {
         throw new Error(reason || `The Hub answered ${response.status} to ${hubPaths.admission}`)
       }
     },
+
+    // XMLHttpRequest, not fetch, which can't tell how far an upload got.
+    uploadAttachment(sessionId, file, { onProgress, signal }) {
+      return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest()
+        request.open("POST", attachmentsPath(sessionId))
+        request.setRequestHeader(AttachmentNameHeader, encodeURIComponent(file.name))
+        request.upload.addEventListener("progress", (event) => onProgress(event.loaded))
+        request.addEventListener("load", () => {
+          if (request.status !== 201)
+            return reject(uploadRefusal(request.status, request.responseText))
+          try {
+            resolve(decodeUploaded(request.responseText).id)
+          } catch {
+            reject(new Error("The Hub's answer to the upload was not one."))
+          }
+        })
+        request.addEventListener("error", () => reject(uploadRefusal(0, "")))
+        request.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")))
+        signal.addEventListener("abort", () => request.abort(), { once: true })
+        request.send(file)
+      })
+    },
+
+    attachmentUrl: attachmentPath,
   }
 }

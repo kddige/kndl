@@ -1,7 +1,15 @@
+import type { AttachmentId } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { type FormEvent, type KeyboardEvent, type ReactNode, useState } from "react"
+import {
+  type ClipboardEvent,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useState,
+} from "react"
 import { ArrowUpIcon, Button, IconButton, StopIcon, Textarea } from "../ui/index.ts"
 import { color, radius, shadow, space, text } from "../ui/tokens.stylex.ts"
+import { type Attach, AttachmentChips, useAttachments } from "./Attachments.tsx"
 import { PastedTextChips, usePastedTexts } from "./PastedTexts.tsx"
 
 const styles = stylex.create({
@@ -35,8 +43,11 @@ const styles = stylex.create({
 })
 
 export interface ComposerProps {
-  /** Queues the prompt; returns false if it couldn't be sent, so the text stays. */
-  onSend: (text: string) => boolean
+  /**
+   * Queues the prompt, with the ids of the files attached to it; returns false if it couldn't be
+   * sent, so the text and files stay.
+   */
+  onSend: (text: string, attachments: ReadonlyArray<AttachmentId>) => boolean
   onStop: () => void
   /** A Turn is running, so Stop is offered and a prompt waits in the queue. */
   running: boolean
@@ -48,6 +59,8 @@ export interface ComposerProps {
   picker?: ReactNode
   /** What is written, for one that isn't a prompt: a message to an agent (ADR 0014). */
   copy?: ComposerCopy
+  /** Uploads a pasted image (#276); without it, the Composer takes no attachments. */
+  attach?: Attach | undefined
 }
 
 /** The words of a composer for something other than prompts. */
@@ -66,8 +79,9 @@ const promptCopy = (running: boolean): ComposerCopy => ({
 })
 
 /**
- * Where a Participant writes prompts. A prompt always goes through the Prompt queue. With `copy`,
- * it writes something else, such as a message to an agent.
+ * Where a Participant writes prompts. A prompt always goes through the Prompt queue, with the
+ * images pasted into it, given `attach` (#276). With `copy`, it writes something else, such as a
+ * message to an agent.
  */
 export function Composer({
   onSend,
@@ -77,17 +91,28 @@ export function Composer({
   hint,
   picker,
   copy = promptCopy(running),
+  attach,
 }: ComposerProps) {
   const [draft, setDraft] = useState("")
   const pastes = usePastedTexts(draft, setDraft)
+  const attachments = useAttachments(attach)
   const disabled = disabledReason !== undefined
-  const empty = draft.trim() === ""
+  const empty = draft.trim() === "" && attachments.chips.length === 0
+  // A prompt waits for its files to upload, and for one that failed to be taken out.
+  const waiting = disabled || empty || attachments.holding
 
   const send = () => {
-    if (disabled || empty) return
-    if (!onSend(pastes.expand())) return
+    if (waiting) return
+    if (!onSend(pastes.expand(), attachments.ids)) return
     setDraft("")
     pastes.clear()
+    attachments.clear()
+  }
+
+  const paste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (attach !== undefined && event.clipboardData.files.length > 0)
+      attachments.add([...event.clipboardData.files])
+    pastes.onPaste(event)
   }
 
   const submit = (event: FormEvent) => {
@@ -105,13 +130,18 @@ export function Composer({
 
   return (
     <form onSubmit={submit} {...stylex.props(styles.form)}>
+      <AttachmentChips
+        chips={attachments.chips}
+        refused={attachments.refused}
+        onRemove={attachments.remove}
+      />
       <PastedTextChips pastes={pastes.shown} onRemove={pastes.remove} />
       <Textarea
         aria-label={copy.field}
         value={draft}
         onValueChange={setDraft}
         onKeyDown={keyDown}
-        onPaste={pastes.onPaste}
+        onPaste={paste}
         placeholder={disabledReason ?? copy.placeholder}
         rows={2}
         autoResize
@@ -133,13 +163,7 @@ export function Composer({
             {copy.stop}
           </Button>
         )}
-        <IconButton
-          type="submit"
-          size="sm"
-          intent="primary"
-          label={copy.send}
-          disabled={disabled || empty}
-        >
+        <IconButton type="submit" size="sm" intent="primary" label={copy.send} disabled={waiting}>
           <ArrowUpIcon />
         </IconButton>
       </div>

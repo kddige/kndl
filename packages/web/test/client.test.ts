@@ -112,6 +112,8 @@ describe("connecting", () => {
       signOut: async () => {},
       approveCli: unused,
       admit: unused,
+      uploadAttachment: unused,
+      attachmentUrl: () => "",
     }
     const client = new HubClient(transport, { retryDelay: () => 1 })
     cleanups.push(() => client.stop())
@@ -145,6 +147,8 @@ describe("connecting", () => {
       signOut: async () => {},
       approveCli: unused,
       admit: unused,
+      uploadAttachment: unused,
+      attachmentUrl: () => "",
     }
     const client = new HubClient(transport)
     cleanups.push(() => client.stop())
@@ -167,6 +171,8 @@ describe("connecting", () => {
       signOut: async () => {},
       approveCli: unused,
       admit: unused,
+      uploadAttachment: unused,
+      attachmentUrl: () => "",
     }
     const client = new HubClient(transport, { retryDelay: () => 1 })
     cleanups.push(() => client.stop())
@@ -500,6 +506,8 @@ describe("the terminal", () => {
       signOut: async () => {},
       approveCli: unused,
       admit: unused,
+      uploadAttachment: unused,
+      attachmentUrl: () => "",
     }
     const client = new HubClient(transport, { retryDelay: () => 1 })
     cleanups.push(() => client.stop())

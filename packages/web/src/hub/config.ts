@@ -28,6 +28,17 @@ export const hubPaths = {
   admission: "/auth/github/admission",
 } as const
 
+/**
+ * `POST` the raw file, named in `x-kndl-filename`: uploads a file to attach to a prompt in the
+ * Session (#276), answered with its id.
+ */
+export const attachmentsPath = (sessionId: string) =>
+  `/sessions/${encodeURIComponent(sessionId)}/attachments`
+
+/** `GET`: one of the Session's attachments, as the image it is. */
+export const attachmentPath = (sessionId: string, attachmentId: string) =>
+  `${attachmentsPath(sessionId)}/${encodeURIComponent(attachmentId)}`
+
 /** GitHub sign-in that comes back to `returnTo`, a path on the Hub, such as the page it's on. */
 export function githubSignInUrl(returnTo?: string): string {
   if (returnTo === undefined || returnTo === "/") return hubPaths.githubSignIn

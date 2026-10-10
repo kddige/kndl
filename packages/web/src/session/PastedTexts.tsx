@@ -52,8 +52,8 @@ export function usePastedTexts(draft: string, setDraft: (draft: string) => void)
   const [pastes, setPastes] = useState<readonly PastedText[]>([])
 
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    // Files are attachments, not text.
-    if (event.clipboardData.files.length > 0) return
+    // A paste's files are attachments (#276); text beside them, as a spreadsheet copies with a
+    // picture of itself, is text all the same.
     const long = longPaste(event.clipboardData.getData("text/plain"))
     if (long === undefined) return
     event.preventDefault()

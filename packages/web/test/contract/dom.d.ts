@@ -11,3 +11,17 @@ interface Location {
 
 declare var location: Location | undefined
 declare var window: { readonly location: Location }
+
+/** The browser's upload of an attachment (#276) names it; Bun has no XMLHttpRequest. */
+declare class XMLHttpRequest {
+  readonly status: number
+  readonly responseText: string
+  readonly upload: {
+    addEventListener(type: "progress", listener: (event: { readonly loaded: number }) => void): void
+  }
+  open(method: string, url: string): void
+  setRequestHeader(name: string, value: string): void
+  addEventListener(type: "load" | "error" | "abort", listener: () => void): void
+  abort(): void
+  send(body: Blob): void
+}

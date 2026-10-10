@@ -54,6 +54,14 @@ const styles = stylex.create({
   },
 })
 
+/** A queued prompt as its row shows it: its text, and how many images it carries (#276). */
+function queuedText(prompt: QueuedPrompt): string {
+  const images = prompt.attachments?.length ?? 0
+  if (images === 0) return prompt.text
+  const note = images === 1 ? "1 image" : `${images} images`
+  return prompt.text === "" ? note : `${prompt.text} · ${note}`
+}
+
 /**
  * The prompts waiting for the current Turn to end, in order. Any Participant may cancel one, or,
  * while a Turn runs, steer it into that Turn now (#195).
@@ -81,7 +89,7 @@ export function PromptQueue({
             <span {...stylex.props(styles.position)}>{index + 1}</span>
             <Avatar name={prompt.sender.name} src={prompt.sender.avatarUrl} size="sm" />
             <span {...stylex.props(styles.text)} title={prompt.text}>
-              {prompt.text}
+              {queuedText(prompt)}
             </span>
             {onSteer && (
               <Tooltip content="Send it into the running Turn now, as Claude Code does with a prompt typed while it works">

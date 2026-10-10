@@ -1,5 +1,6 @@
 import {
   type AgentId,
+  type AttachmentId,
   MaxSessionNameLength,
   type PromptId,
   type SessionId,
@@ -21,6 +22,7 @@ import {
 } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { findSession, type JoinedSession } from "../hub/store.ts"
+import type { UploadOptions } from "../hub/transport.ts"
 import { restoreSession } from "../sessions/ArchivedSessions.tsx"
 import { renameSession } from "../sessions/rename.ts"
 import {
@@ -278,7 +280,8 @@ function LoadedSession({
 
   // While Claude asks a question (#193), what is sent declines it and goes to Claude instead.
   const asking = summary.openQuestion
-  const send = (prompt: string) =>
+  // A reply takes no attachments yet (#278).
+  const send = (prompt: string, attachments: ReadonlyArray<AttachmentId>) =>
     asking
       ? command(
           hub.answerQuestion(summary.id, asking.toolCallId, {
@@ -286,7 +289,9 @@ function LoadedSession({
             text: prompt.trim(),
           }),
         )
-      : command(hub.sendPrompt(summary.id, prompt))
+      : command(hub.sendPrompt(summary.id, prompt, attachments))
+  const attach = (file: File, options: UploadOptions) =>
+    hub.uploadAttachment(summary.id, file, options)
   // A prompt can be steered into a Turn the Hub has running and isn't stopping (#195). One being
   // steered leaves the queue once it has joined the Turn, or stays, with the Hub's reason.
   const steerable =
@@ -537,7 +542,7 @@ function LoadedSession({
                       ? "Claude is waiting on an answer: a reply here declines its question."
                       : hint
                   }
-                  {...(asking && { copy: replyCopy })}
+                  {...(asking ? { copy: replyCopy } : { attach })}
                   picker={
                     <ModelPicker
                       models={models}
