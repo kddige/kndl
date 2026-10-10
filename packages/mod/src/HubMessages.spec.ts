@@ -518,9 +518,40 @@ describe("attachments (#276)", () => {
     const context = attachmentContext([shot, photo])
     expect(context).toContain("2 images")
     expect(context).toContain(attachmentToolName)
-    expect(context).toContain("#1 shot.png: id att-1")
-    expect(context).toContain("#2 photo.jpg: id att-2")
+    expect(context).toContain("Image #1 shot.png: id att-1")
+    expect(context).toContain("Image #2 photo.jpg: id att-2")
     expect(attachmentToolName).toBe("mcp__hub-link-commands__attachment")
+  })
+
+  test("a PDF is marked and counted as one, numbered apart from the images (#277)", () => {
+    const spec = { id: "att-3", name: "spec.pdf", mediaType: "application/pdf" as const, size: 56 }
+    expect(deliveredPrompt(participant, "read it", [shot, spec])).toBe(
+      "[Ada Lovelace] read it\n[Image #1: shot.png (attachment att-1)]\n[PDF #1: spec.pdf (attachment att-3)]",
+    )
+    const context = attachmentContext([shot, spec])
+    expect(context).toContain("1 image and 1 PDF")
+    expect(context).toContain("Image #1 shot.png: id att-1; PDF #1 spec.pdf: id att-3")
+  })
+
+  test("the tool hands Claude a PDF the Hub sent as a document block, titled with its name (#277)", () => {
+    const part = (data: string, next?: number) => {
+      const read = attachmentPart(
+        200,
+        JSON.stringify({ id: "att-3", name: "spec.pdf", mediaType: "application/pdf", data, next }),
+      )
+      if ("deny" in read) throw new Error(read.deny)
+      return read.part
+    }
+    expect(attachmentResult([part("JVBE", 3), part("Ri0x")])).toEqual({
+      result: [
+        { type: "text", text: "spec.pdf" },
+        {
+          type: "document",
+          title: "spec.pdf",
+          source: { type: "base64", media_type: "application/pdf", data: "JVBERi0x" },
+        },
+      ],
+    })
   })
 
   test("the tool hands Claude the image the Hub sent, its parts joined, as an image block", () => {
@@ -563,6 +594,7 @@ describe("attachments (#276)", () => {
 
   test("the model is told what a marker is", () => {
     expect(sharedSessionNote).toContain("[Image #1: name (attachment id)]")
+    expect(sharedSessionNote).toContain("[PDF #1: name (attachment id)]")
     expect(sharedSessionNote).toContain(attachmentToolName)
   })
 })

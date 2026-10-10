@@ -132,18 +132,31 @@ export interface MarkedFile {
 const markerKind = (mediaType: string) => (isImage(mediaType) ? "Image" : "PDF")
 
 /**
- * The line for each file in a prompt Claude reads, in the style of Claude Code's `[Image #1]`,
- * with the id its tool opens it by. Images and PDFs are numbered apart (#277): `[Image #1: …]`,
- * `[PDF #1: …]`, `[Image #2: …]`.
+ * What each file of a prompt is called, as Claude Code numbers pasted images: "Image #1". Images
+ * and PDFs are numbered apart (#277): "Image #1", "PDF #1", "Image #2".
  */
-export const attachmentMarkers = (attachments: ReadonlyArray<MarkedFile>): Array<string> => {
+export const attachmentLabels = (
+  attachments: ReadonlyArray<{ readonly mediaType: string }>,
+): Array<string> => {
   const numbers = new Map<string, number>()
   return attachments.map((attachment) => {
     const kind = markerKind(attachment.mediaType)
     const number = (numbers.get(kind) ?? 0) + 1
     numbers.set(kind, number)
-    return `[${kind} #${number}: ${attachment.name} (attachment ${attachment.id})]`
+    return `${kind} #${number}`
   })
+}
+
+/**
+ * The line for each file in a prompt Claude reads, in the style of Claude Code's `[Image #1]`,
+ * with the id its tool opens it by: `[Image #1: shot.png (attachment <id>)]`,
+ * `[PDF #1: spec.pdf (attachment <id>)]`.
+ */
+export const attachmentMarkers = (attachments: ReadonlyArray<MarkedFile>): Array<string> => {
+  const labels = attachmentLabels(attachments)
+  return attachments.map(
+    (attachment, index) => `[${labels[index]}: ${attachment.name} (attachment ${attachment.id})]`,
+  )
 }
 
 /** The prompt as Claude reads it: its text, then a marker line for each file. */

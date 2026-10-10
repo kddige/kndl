@@ -646,7 +646,9 @@ describe("attachments (#276)", () => {
         promptId: "pr-1",
         sender: ada,
         text,
-        context: expect.stringMatching(/2 images.*#1 shot\.png: id att-1; #2 photo\.jpg: id att-2/),
+        context: expect.stringMatching(
+          /2 images.*Image #1 shot\.png: id att-1; Image #2 photo\.jpg: id att-2/,
+        ),
       },
     ])
   })
@@ -672,5 +674,34 @@ describe("attachments (#276)", () => {
       { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0K" } },
     ])
     expect(missing.deny).toBe("Could not open the attachment: There is no such attachment.")
+  })
+
+  test("the tool hands Claude a 20 MB PDF, all nine of its parts, as a document (#277)", async ($, on) => {
+    const file = { id: "att-3", name: "spec.pdf", mediaType: "application/pdf" }
+    // A 20 MB file comes in nine parts of 2.4 MB.
+    const parts = Object.fromEntries(
+      Array.from({ length: 9 }, (_, index) => [
+        index * 3,
+        { ...file, data: `AAA${index}`, ...(index < 8 && { next: (index + 1) * 3 }) },
+      ]),
+    )
+    linkedSession(on, [], undefined, {}, { "att-3": parts })
+    on("tool.register", () => ({ value: { tool } }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    const opened = await $.tool.call({ tool, id: "att-3" } as never)
+
+    expect(opened.result).toEqual([
+      { type: "text", text: "spec.pdf" },
+      {
+        type: "document",
+        title: "spec.pdf",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: Array.from({ length: 9 }, (_, index) => `AAA${index}`).join(""),
+        },
+      },
+    ])
   })
 })
