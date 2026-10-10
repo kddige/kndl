@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Attachments, textOrAttachments } from "./Attachment.ts"
+import { PromptAttachments, textOrAttachments } from "./Attachment.ts"
 import { BuildVersion, RunnerVersionStatus } from "./Build.ts"
 import {
   AgentId,
@@ -580,7 +580,7 @@ export const QueuedPrompt = Schema.Struct({
   sender: Participant,
   queuedAt: EpochMillis,
   /** The files it carries (#276), in the order they were added. */
-  attachments: Schema.optionalKey(Attachments),
+  attachments: Schema.optionalKey(PromptAttachments),
 }).check(textOrAttachments)
 export type QueuedPrompt = typeof QueuedPrompt.Type
 

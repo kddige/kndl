@@ -143,14 +143,18 @@ describe("Redacting a text", () => {
           turnId,
           text: `[Image #1: ${secret}.png (attachment a-1)]`,
           sender: { _tag: "FromTerminal" },
-          attachments: [{ id: attachmentId, name: `${secret}.png`, mediaType: "image/png", size: 1 }],
+          attachments: [
+            { id: attachmentId, name: `${secret}.png`, mediaType: "image/png", size: 1 },
+          ],
         },
         {
           _tag: "TurnStarted",
           turnId,
           text: `[Image #1: ${masked}.png (attachment a-1)]`,
           sender: { _tag: "FromTerminal" },
-          attachments: [{ id: attachmentId, name: `${masked}.png`, mediaType: "image/png", size: 1 }],
+          attachments: [
+            { id: attachmentId, name: `${masked}.png`, mediaType: "image/png", size: 1 },
+          ],
         },
       ],
       [

@@ -1,9 +1,15 @@
-import { Attachments, ParticipantId, PromptId, QueuedPrompt, type SessionId } from "@kndl/protocol"
+import {
+  PromptAttachments,
+  ParticipantId,
+  PromptId,
+  QueuedPrompt,
+  type SessionId,
+} from "@kndl/protocol"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 
-const AttachmentsJson = Schema.fromJsonString(Attachments)
+const AttachmentsJson = Schema.fromJsonString(PromptAttachments)
 const encodeAttachments = Schema.encodeSync(AttachmentsJson)
 const decodeAttachments = Schema.decodeUnknownSync(AttachmentsJson)
 

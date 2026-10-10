@@ -68,8 +68,8 @@ export class Attachments extends Context.Service<
       readonly at: number
     }) => Effect.Effect<Attachment, SqlError>
     /**
-     * The attachments `ids` names, in that order, if each is a file `sender` uploaded to the
-     * Session; none if any isn't.
+     * The attachments `ids` names, in that order and each once, if each is a file `sender`
+     * uploaded to the Session; none if any isn't.
      */
     readonly ofSender: (
       sessionId: SessionId,
@@ -116,17 +116,19 @@ export class Attachments extends Context.Service<
         ids: ReadonlyArray<AttachmentId>,
         sender: ParticipantId,
       ) {
-        if (ids.length === 0) return Option.some<ReadonlyArray<Attachment>>([])
+        // Each file once, however often it is named.
+        const unique = [...new Set(ids)]
+        if (unique.length === 0) return Option.some<ReadonlyArray<Attachment>>([])
         const rows = yield* sql<Row>`
           SELECT id, name, media_type AS mediaType, size FROM attachments
-          WHERE session_id = ${sessionId} AND uploaded_by = ${sender} AND id IN ${sql.in(ids)}
+          WHERE session_id = ${sessionId} AND uploaded_by = ${sender} AND id IN ${sql.in(unique)}
         `
         const byId = new Map(rows.map((row) => [row.id, decodeAttachment(row)]))
-        const found = ids.flatMap((id) => {
+        const found = unique.flatMap((id) => {
           const attachment = byId.get(id)
           return attachment === undefined ? [] : [attachment]
         })
-        return found.length === ids.length
+        return found.length === unique.length
           ? Option.some<ReadonlyArray<Attachment>>(found)
           : Option.none()
       })

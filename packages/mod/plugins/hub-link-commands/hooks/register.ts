@@ -279,7 +279,7 @@ export function register(on: On) {
     } catch (error) {
       return { deny: `Could not open the attachment: ${String(error)}` }
     }
-    return attachmentResult(parts) as never
+    return attachmentResult(parts)
   })
 
   on("session.end", async ($, e, next) => {

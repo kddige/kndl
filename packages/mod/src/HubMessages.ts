@@ -3,6 +3,7 @@
 // the Hub refuse a whole batch, and every reply is decoded before the mod acts on it.
 
 import {
+  imageCount,
   MaxImageBytes,
   MaxModAttachmentPartBytes,
   MaxToolSummaryLength,
@@ -223,7 +224,7 @@ export const deliveredPrompt = (
  */
 export const attachmentContext = (attachments: ReadonlyArray<MarkedFile>) => {
   const files = attachments.map((file, index) => `#${index + 1} ${file.name}: id ${file.id}`)
-  const count = attachments.length === 1 ? "1 image" : `${attachments.length} images`
+  const count = imageCount(attachments.length)
   return [
     `This message has ${count} attached. Look at each before you answer, by calling`,
     `${attachmentToolName} once per image with its id: ${files.join("; ")}.`,

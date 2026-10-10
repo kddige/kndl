@@ -3,17 +3,28 @@
 // web clients over WebSockets, and a fake mod over HTTP.
 
 import { afterEach, describe, expect, test } from "bun:test"
+import { rmSync } from "node:fs"
+import { join } from "node:path"
 import {
   type ModCommandsEncoded,
   type ModEventsEncoded,
   MaxImageBytes,
   ProtocolVersion,
 } from "@kndl/protocol"
-import { Effect } from "effect"
+import { Effect, type Layer } from "effect"
+import type { SqlClient } from "effect/sql"
 import { Attachments } from "./Attachments.ts"
+import { databaseAt } from "./Database.ts"
 import { Sessions } from "./Sessions.ts"
 import { issueRunnerToken, openRunner, openWeb, stopAll } from "./testChannels.ts"
-import { bearer, seedEnvironment, startHub, type TestHub, webOrigin } from "./testSupport.ts"
+import {
+  bearer,
+  seedEnvironment,
+  startHub,
+  type TestHub,
+  testDatabaseDir,
+  webOrigin,
+} from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -25,8 +36,8 @@ const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2
 const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 5, 6, 7])
 
 /** A Session alice created, started, with its mod linked; and a way to upload to it. */
-async function scene() {
-  const hub = await startHub({ config: { devLogin: true } })
+async function scene(database?: Layer.Layer<SqlClient.SqlClient, unknown>) {
+  const hub = await startHub({ config: { devLogin: true }, ...(database && { database }) })
   const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true)
   const web = await openWeb(hub, "alice")
   await seedEnvironment(hub, "kddige/kndl", "dev:alice")
@@ -215,6 +226,49 @@ describe("a prompt with attachments", () => {
     const history = await later.take("SessionHistory")
     const started = history.entries.find((entry) => entry.event._tag === "TurnStarted")
     expect(started?.event).toMatchObject({ attachments: files })
+  })
+
+  test("carries a file named twice once", async () => {
+    const { hub, web, sessionId, mod } = await scene()
+    const shot = await uploaded(await upload(hub, web.cookie, sessionId, png, { name: "shot.png" }))
+    web.send({ _tag: "SendPrompt", sessionId, text: "look", attachments: [shot, shot] })
+    const [delivered] = await mod.deliveries()
+    expect(delivered?.attachments?.map((file) => file.id)).toEqual([shot])
+  })
+
+  test("still queued, keeps its attachments over a Hub restart", async () => {
+    const dir = testDatabaseDir("kndl-attachments-")
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const first = await scene(database)
+      const { web, runner, sessionId, mod } = first
+      web.send({ _tag: "JoinSession", sessionId })
+      await mod.post({
+        _tag: "TurnStarted",
+        turnId: "t-1",
+        text: "go",
+        sender: { _tag: "FromTerminal" },
+      })
+      const shot = await uploaded(
+        await upload(first.hub, web.cookie, sessionId, png, { name: "shot.png" }),
+      )
+      web.send({ _tag: "SendPrompt", sessionId, text: "look", attachments: [shot] })
+      await web.take("PromptQueueChanged", (m) => m.queue.length === 1)
+      await web.close()
+      await runner.close()
+      await first.hub.stop()
+
+      const second = await startHub({ config: { devLogin: true }, database })
+      const back = await openWeb(second, "alice", web.cookie)
+      back.send({ _tag: "JoinSession", sessionId })
+      const queue = await back.take("PromptQueueChanged", (m) => m.queue.length === 1)
+      expect(queue.queue[0]?.attachments).toEqual([
+        { id: shot, name: "shot.png", mediaType: "image/png", size: png.byteLength },
+      ])
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   test("names only files its sender uploaded to this Session", async () => {

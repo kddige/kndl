@@ -1,17 +1,17 @@
 import { Schema } from "effect"
 import { AttachmentId } from "./Ids.ts"
 
-// Attachments (#275, ADR 0024): files a Participant attaches to a prompt, which reach Claude
-// through a tool the mod registers. The web uploads each file to the Hub over HTTP as soon as it
-// is added, and the prompt carries the ids:
+// Attachments (#276, ADR 0024): files a Participant attaches to a prompt, which reach Claude
+// through a tool the mod registers. The web scales each image down as Claude Code does a pasted
+// one, uploads it to the Hub over HTTP as soon as it is added, and the prompt carries the ids:
 //
 // - `POST /sessions/<id>/attachments`: the raw file as the body, its name URI-encoded in
 //   {@link AttachmentNameHeader}. Answered with {@link AttachmentUploaded}; 413 past
 //   {@link MaxImageBytes}, 415 for what isn't an image of {@link ImageMediaTypes}, as its bytes
 //   say, whatever its `Content-Type` says.
 // - `GET /sessions/<id>/attachments/<attachmentId>`: the file, to the Session's Participants.
-// - `GET /mod/attachments/<attachmentId>`: the file, base64 in a ModAttachment (Mod.ts), to the
-//   Session's own mod only.
+// - `GET /mod/attachments/<attachmentId>?offset=<n>`: the file, base64 in ModAttachment parts
+//   (Mod.ts), to the Session's own mod only.
 
 /** The image types Claude reads, as the Hub tells them from their bytes. */
 export const ImageMediaTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const
@@ -46,7 +46,7 @@ export const Attachment = Schema.Struct({
 export type Attachment = typeof Attachment.Type
 
 /** A prompt's attachments, in the order they were added; at most {@link MaxAttachments}. */
-export const Attachments = Schema.Array(Attachment).check(Schema.isMaxLength(MaxAttachments))
+export const PromptAttachments = Schema.Array(Attachment).check(Schema.isMaxLength(MaxAttachments))
 
 /** The ids of the files a prompt carries, as a Participant sends it. */
 export const AttachmentIds = Schema.Array(AttachmentId).check(Schema.isMaxLength(MaxAttachments))
@@ -72,12 +72,22 @@ const notInMarker = /[\u0000-\u001f\u007f[\]]+/g
 /**
  * The name an uploaded file is kept under: what its sender's browser called it, as one line
  * without brackets, since it goes into the prompt's marker, at most
- * {@link MaxAttachmentNameLength} characters; "image" for none.
+ * {@link MaxAttachmentNameLength} UTF-16 units, cut between characters, never inside one; "image"
+ * for none.
  */
 export const attachmentName = (raw: string): string => {
   const name = raw.replace(notInMarker, " ").replace(/\s+/g, " ").trim()
-  return name === "" ? "image" : name.slice(0, MaxAttachmentNameLength)
+  if (name === "") return "image"
+  let kept = ""
+  for (const character of name) {
+    if (kept.length + character.length > MaxAttachmentNameLength) break
+    kept += character
+  }
+  return kept.trimEnd()
 }
+
+/** How many images a prompt carries, in words: "1 image", "3 images". */
+export const imageCount = (count: number): string => (count === 1 ? "1 image" : `${count} images`)
 
 /** What a marker names of a file: plain strings, as the mod, which has no brands, has them. */
 export interface MarkedFile {

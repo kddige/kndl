@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   Attachment,
   attachmentName,
+  imageCount,
   withAttachmentMarkers,
   withoutAttachmentMarkers,
 } from "./Attachment.ts"
@@ -116,4 +117,17 @@ describe("an attachment's name", () => {
     expect(attachmentName("")).toBe("image")
     expect(attachmentName("[]")).toBe("image")
   })
+
+  test("is cut between characters, never through one", () => {
+    const name = attachmentName(`${"a".repeat(99)}😀b.png`)
+    expect(name).toBe("a".repeat(99))
+    // Whole characters encode: half of one would throw.
+    expect(() => encodeURIComponent(attachmentName(`${"a".repeat(98)}😀😀.png`))).not.toThrow()
+    expect(attachmentName(`${"a".repeat(98)}😀😀.png`)).toBe(`${"a".repeat(98)}😀`)
+  })
+})
+
+test("a prompt's images are counted in words", () => {
+  expect(imageCount(1)).toBe("1 image")
+  expect(imageCount(3)).toBe("3 images")
 })

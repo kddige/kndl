@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Attachments, ImageMediaType, textOrAttachments } from "./Attachment.ts"
+import { PromptAttachments, ImageMediaType, textOrAttachments } from "./Attachment.ts"
 import {
   AgentId,
   AttachmentId,
@@ -133,7 +133,7 @@ export const DeliverPrompt = Schema.TaggedStruct("DeliverPrompt", {
   /** As typed; empty for a prompt of attachments alone. */
   text: Schema.String,
   sender: Participant,
-  attachments: Schema.optionalKey(Attachments),
+  attachments: Schema.optionalKey(PromptAttachments),
 }).check(textOrAttachments)
 export type DeliverPrompt = typeof DeliverPrompt.Type
 
