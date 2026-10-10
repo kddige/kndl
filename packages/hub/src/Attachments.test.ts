@@ -131,6 +131,18 @@ describe("uploading an attachment", () => {
     expect(served.headers.get("content-security-policy")).toBe("sandbox")
     expect(served.headers.get("cross-origin-resource-policy")).toBe("same-origin")
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(jpeg)
+    expect(served.headers.get("content-disposition")).toBe("inline; filename*=UTF-8''shot.png")
+
+    // Saved under its name, whatever it holds.
+    const named = await uploaded(
+      await upload(hub, web.cookie, sessionId, png, { name: "Kjartan's shot (3).png" }),
+    )
+    const saved = await fetch(`${hub.url}/sessions/${sessionId}/attachments/${named}`, {
+      headers: { cookie: bob.cookie },
+    })
+    expect(saved.headers.get("content-disposition")).toBe(
+      "inline; filename*=UTF-8''Kjartan%27s%20shot%20%283%29.png",
+    )
   })
 
   test("is refused past 5 MB, for what isn't an image Claude reads, and from another site", async () => {

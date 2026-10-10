@@ -280,7 +280,7 @@ describe("who a Turn is from", () => {
     ])
   })
 
-  test("the prompt delivered with files tells Claude out of sight to open them (#276)", async ($, on) => {
+  test("the prompt delivered with files tells Claude out of sight to open them, once (#276)", async ($, on) => {
     const text = "[Ada Lovelace] What broke?\n[Image #1: shot.png (attachment att-1)]"
     const context = "This message has 1 image attached. …"
     delivered(on, { promptId: "pr-1", sender: ada, text, context })
@@ -290,10 +290,15 @@ describe("who a Turn is from", () => {
       return { text: e.text }
     })
 
-    await $.prompt.submit({ text } as never)
-    await $.prompt.submit({ text: "typed at the terminal" } as never)
+    on("turn.start", (_, e) => ({ turnId: e.turnId }))
 
-    expect(submitted).toEqual([[context], undefined])
+    await $.prompt.submit({ text } as never)
+    await $.turn.start({ turnId: "t1", text } as never)
+    await $.prompt.submit({ text: "typed at the terminal" } as never)
+    // The same text again, from the terminal's history, is the terminal's.
+    await $.prompt.submit({ text } as never)
+
+    expect(submitted).toEqual([[context], undefined, undefined])
   })
 
   test("a turn started from the delivered prompt with files is still its sender's (#276)", async ($, on) => {

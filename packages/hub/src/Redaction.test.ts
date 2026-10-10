@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   AgentId,
+  AttachmentId,
   ParticipantId,
   PromptId,
   type SessionEvent,
@@ -78,6 +79,7 @@ describe("Redacting a text", () => {
 
   test("redacts an event's free text, and nothing else", () => {
     const turnId = TurnId.make("turn-1")
+    const attachmentId = AttachmentId.make("a-1")
     const toolCallId = ToolCallId.make("call-1")
     const agentId = AgentId.make("agent-1")
     const promptId = PromptId.make("prompt-1")
@@ -133,6 +135,23 @@ describe("Redacting a text", () => {
       [
         { _tag: "TurnStarted", turnId, text: secret, sender: { _tag: "FromTerminal" } },
         { _tag: "TurnStarted", turnId, text: masked, sender: { _tag: "FromTerminal" } },
+      ],
+      // An attachment's name is in its marker, so both are redacted alike (#276).
+      [
+        {
+          _tag: "TurnStarted",
+          turnId,
+          text: `[Image #1: ${secret}.png (attachment a-1)]`,
+          sender: { _tag: "FromTerminal" },
+          attachments: [{ id: attachmentId, name: `${secret}.png`, mediaType: "image/png", size: 1 }],
+        },
+        {
+          _tag: "TurnStarted",
+          turnId,
+          text: `[Image #1: ${masked}.png (attachment a-1)]`,
+          sender: { _tag: "FromTerminal" },
+          attachments: [{ id: attachmentId, name: `${masked}.png`, mediaType: "image/png", size: 1 }],
+        },
       ],
       [
         { ...agentStarted, description: `use ${secret}` },

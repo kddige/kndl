@@ -188,7 +188,13 @@ export function register(on: On) {
       plugin: "hub-link-commands",
       key: "delivered",
     })
-    if (delivered?.context === undefined || e.text !== delivered.text) return next(e)
+    // Once, for the prompt delivered: not for the same text typed again later.
+    if (
+      delivered?.context === undefined ||
+      delivered.promptId === state.claimed ||
+      e.text !== delivered.text
+    )
+      return next(e)
     return next({ ...e, context: [...(e.context ?? []), delivered.context] })
   })
 

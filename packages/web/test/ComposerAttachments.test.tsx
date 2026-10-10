@@ -186,3 +186,47 @@ test("a Composer that takes no attachments leaves pasted files alone", async () 
   await paste(field, [image("shot.png")])
   expect(view.container.querySelector('[aria-label="Attachments"]')).toBeNull()
 })
+
+test("files in the draft are dropped once it stops taking attachments, as for a reply", async () => {
+  const { useState } = await import("react")
+  const sent: Array<{ text: string; attachments: ReadonlyArray<string> }> = []
+  let finish: ((id: AttachmentId) => void) | undefined
+  function Replying() {
+    const [asking, setAsking] = useState(false)
+    return (
+      <>
+        <button type="button" onClick={() => setAsking(true)}>
+          Ask
+        </button>
+        <Composer
+          onSend={(text, attachments) => {
+            sent.push({ text, attachments })
+            return true
+          }}
+          onStop={() => {}}
+          running={false}
+          attach={
+            asking
+              ? undefined
+              : () =>
+                  new Promise<AttachmentId>((resolve) => {
+                    finish = resolve
+                  })
+          }
+        />
+      </>
+    )
+  }
+  const view = await render(<Replying />)
+  cleanup = view.unmount
+  const field = view.container.querySelector<HTMLTextAreaElement>("textarea")
+  if (!field) throw new Error("no field")
+  await step(() => typeInto(field, "no"))
+  await paste(field, [image("shot.png")])
+  await step(() => finish?.("att-1" as AttachmentId))
+
+  await step(() => button("Ask").click())
+  expect(view.container.querySelector('[aria-label="Attachments"]')).toBeNull()
+  await step(() => button("Send prompt").click())
+  expect(sent).toEqual([{ text: "no", attachments: [] }])
+})

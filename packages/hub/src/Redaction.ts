@@ -317,6 +317,14 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
   const redact = (text: string) => redactText(needles, text)
   switch (event._tag) {
     case "TurnStarted":
+      // An attachment's name is in its marker in the text: both are redacted alike (#276).
+      return {
+        ...event,
+        text: redact(event.text),
+        ...(event.attachments !== undefined && {
+          attachments: event.attachments.map((file) => ({ ...file, name: redact(file.name) })),
+        }),
+      }
     case "TextDelta":
     case "AgentMessaged":
     case "PromptSteered":

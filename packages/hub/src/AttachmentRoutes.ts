@@ -47,6 +47,16 @@ const sentName = (header: string | undefined) => {
   }
 }
 
+/**
+ * A name as `filename*` takes it (RFC 8187): percent-encoded, `'` and the rest that
+ * `encodeURIComponent` leaves as they are included.
+ */
+const headerName = (name: string) =>
+  encodeURIComponent(name).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+
 /** The Session in the path, if the person may reach it; else the answer refusing them. */
 const sessionFrom = Effect.fn(function* (you: Parameters<typeof authorizeAccessFor>[0]) {
   const { sessionId } = yield* HttpRouter.params
@@ -123,7 +133,7 @@ export const AttachmentRoutes = HttpRouter.use(
             "content-security-policy": "sandbox",
             "x-content-type-options": "nosniff",
             "cross-origin-resource-policy": "same-origin",
-            "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,
+            "content-disposition": `inline; filename*=UTF-8''${headerName(attachment.name)}`,
             // An attachment never changes: a new file is a new id.
             "cache-control": "private, max-age=31536000, immutable",
           },

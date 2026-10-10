@@ -87,6 +87,20 @@ export function useAttachments(attach: Attach | undefined) {
     }
   }, [])
 
+  // A draft that stops taking attachments, as a reply to Claude's question, drops its files
+  // rather than send them where they would be lost.
+  const taking = attach !== undefined
+  useEffect(() => {
+    if (taking) return
+    for (const { abort, preview } of uploads.current.values()) {
+      abort.abort()
+      URL.revokeObjectURL(preview)
+    }
+    uploads.current.clear()
+    setChips([])
+    setRefused([])
+  }, [taking])
+
   const change = (key: number, update: (chip: AttachmentChip) => AttachmentChip) =>
     setChips((all) => all.map((chip) => (chip.key === key ? update(chip) : chip)))
 
