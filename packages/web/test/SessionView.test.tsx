@@ -666,6 +666,25 @@ test("a Turn shows the images its prompt carried, each opening full size (#276)"
   })
 })
 
+test("a Turn shows a PDF its prompt carried as a chip, its name and size, that downloads (#277)", async () => {
+  const { page, client } = await openSession("s-readme")
+  const id = await client.uploadAttachment(
+    "s-readme" as SessionId,
+    new File([new Uint8Array(1_536)], "spec.pdf", { type: "application/pdf" }),
+    { onProgress: () => {}, signal: new AbortController().signal },
+  )
+  client.sendPrompt("s-readme" as SessionId, "read it", [id])
+
+  await eventually(() => {
+    const chip = page.querySelector<HTMLAnchorElement>(
+      '[aria-label="Conversation"] a[download="spec.pdf"]',
+    )
+    expect(chip?.getAttribute("href")).toBe(client.attachmentUrl("s-readme" as SessionId, id))
+    expect(chip?.textContent).toContain("spec.pdf")
+    expect(chip?.textContent).toContain("1.5 KB")
+  })
+})
+
 test("the Terminal tab mirrors the Session's terminal, and takes keystrokes", async () => {
   const hub = new FakeHub({ stepMs: 2, autoplay: false })
   const client = new HubClient(hub, { retryDelay: () => 1 })

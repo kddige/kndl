@@ -46,3 +46,18 @@ test("a prompt with images says how many, and its Steer waits for the Turn, sayi
   expect(steer("Cy").disabled).toBe(false)
   expect(steer("Cy").getAttribute("aria-disabled")).not.toBe("true")
 })
+
+test("a prompt with images and PDFs counts each kind (#277)", async () => {
+  const spec = {
+    ...shot,
+    id: AttachmentId.make("att-2"),
+    name: "spec.pdf",
+    mediaType: "application/pdf",
+  } as const
+  const queue: ReadonlyArray<QueuedPrompt> = [
+    { id: PromptId.make("q1"), text: "read", sender: ada, queuedAt: 1, attachments: [shot, spec] },
+  ]
+  const view = await render(<PromptQueue queue={queue} onCancel={() => {}} />)
+  cleanup = view.unmount
+  expect(view.container.querySelector("li")?.textContent).toContain("read · 1 image and 1 PDF")
+})

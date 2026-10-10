@@ -506,6 +506,23 @@ for (const adapter of [fake, real]) {
       ])
     })
 
+    test("a PDF goes with a prompt, and its Turn carries it as one (#277)", async () => {
+      const scene = await adapter.scene()
+      const session = await turnRunning(scene)
+      const pdf = new TextEncoder().encode("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+      const file = new File([pdf], "spec.pdf", { type: "application/pdf" })
+      const id = await scene.client.uploadAttachment(scene.sessionId, file, {
+        onProgress: () => {},
+        signal: new AbortController().signal,
+      })
+      expect(scene.client.sendPrompt(scene.sessionId, "read it", [id])).toBe(true)
+      scene.client.stopTurn(scene.sessionId)
+      await eventually(() => expect(session.ofTag("TurnStarted")).toHaveLength(2))
+      expect(session.ofTag("TurnStarted")[1]?.attachments).toEqual([
+        { id, name: "spec.pdf", mediaType: "application/pdf", size: pdf.byteLength },
+      ])
+    })
+
     test("a prompt names only files its sender uploaded to the Session (#276)", async () => {
       const scene = await adapter.scene()
       const session = watch(scene.client, scene.sessionId)

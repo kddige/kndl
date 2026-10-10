@@ -133,6 +133,15 @@ export function ArrowUpIcon(props: IconProps) {
   )
 }
 
+/** Attach: files added to a prompt (#277). */
+export function PaperclipIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m13 7.5-5.3 5.3a3.25 3.25 0 0 1-4.6-4.6l5.65-5.65a2.17 2.17 0 0 1 3.06 3.06l-5.66 5.66a1.08 1.08 0 0 1-1.53-1.53L9.9 4.47" />
+    </Icon>
+  )
+}
+
 /** Steer: a queued prompt sent into the running Turn, joining it (#195). */
 export function SteerIcon(props: IconProps) {
   return (

@@ -597,9 +597,9 @@ function claudeAccountText(summary: SessionSummary): string {
 }
 
 /** The prompt box's words while Claude waits on an answer to its question (#193). */
-/** Why a reply to Claude's question takes no images (#278); those pasted before wait. */
+/** Why a reply to Claude's question takes no files (#278); those added before wait. */
 const replyCantAttach =
-  "A reply to Claude's question can't carry images yet: they stay here for your next prompt."
+  "A reply to Claude's question can't carry attachments yet: they stay here for your next prompt."
 
 const replyCopy = {
   field: "Reply",
