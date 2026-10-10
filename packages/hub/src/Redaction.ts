@@ -286,11 +286,11 @@ export function redactQuestions(
   }))
 }
 
-/** How an Open question closed, redacted: the answers, keyed by their redacted questions. */
 /** Files with their names redacted, since each name is in its marker in a message. */
 const redactFiles = (needles: Needles, files: ReadonlyArray<Attachment>) =>
   files.map((file) => ({ ...file, name: redactText(needles, file.name) }))
 
+/** How an Open question closed, redacted: the answers, keyed by their redacted questions. */
 export function redactOutcome(needles: Needles, outcome: QuestionOutcome): QuestionOutcome {
   if (isEmpty(needles)) return outcome
   const redact = (text: string) => redactText(needles, text)

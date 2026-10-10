@@ -2502,7 +2502,8 @@ export class SessionRelay extends Context.Service<
               if (typeof verdict === "object")
                 return refuse(message, verdict.refusal, { sessionId })
               const ids = message.attachments ?? []
-              // A woken Session's mod is a new one, which marks them.
+              // A woken Session's mod is a new one, which marks them: a Runner behind the Hub's
+              // commit can't wake a Session (ADR 0011).
               if (ids.length > 0 && verdict === "deliver" && !live.modAttaches(sessionId)) {
                 return refuse(message, modFromBeforeAttachments("sent to a subagent").refusal, {
                   sessionId,
@@ -3343,18 +3344,27 @@ export class SessionRelay extends Context.Service<
 
       /**
        * A steered prompt as it is logged: with the files its queued prompt carried (#278), as a
-       * Turn's start is. One no longer queued keeps what the mod says, which it was sent.
+       * Turn's start is. For one no longer queued, the Session's own files for the ids the mod
+       * says.
        */
       const steeredWithAttachments = Effect.fn("SessionRelay.steeredWithAttachments")(function* (
         sessionId: SessionId,
         event: PromptSteered,
       ) {
         const queued = (yield* prompts.list(sessionId)).find(({ id }) => id === event.promptId)
-        if (queued === undefined) return event
-        const { attachments: _claimed, ...steered } = event
+        const { attachments: claimed, ...steered } = event
+        const files =
+          queued !== undefined
+            ? (queued.attachments ?? [])
+            : yield* attachments.ofSession(
+                sessionId,
+                (claimed ?? []).map(({ id }) => id),
+              )
+        // Files alone, none of them the Session's, leave nothing to show: logged as the mod says.
+        if (files.length === 0 && steered.text === "") return event
         return {
           ...steered,
-          ...(queued.attachments !== undefined && { attachments: queued.attachments }),
+          ...(files.length > 0 && { attachments: files }),
         } satisfies PromptSteered
       })
 
