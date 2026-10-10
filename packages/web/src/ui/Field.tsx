@@ -1,7 +1,7 @@
 import { Field as BaseField } from "@base-ui/react/field"
 import { Input as BaseInput } from "@base-ui/react/input"
 import * as stylex from "@stylexjs/stylex"
-import type { KeyboardEventHandler, ReactNode } from "react"
+import type { ClipboardEventHandler, KeyboardEventHandler, ReactNode } from "react"
 import { color, control, leading, motion, radius, space, text, weight } from "./tokens.stylex.ts"
 
 export interface FieldProps {
@@ -174,6 +174,7 @@ export interface TextareaProps {
   defaultValue?: string
   onValueChange?: (value: string) => void
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>
+  onPaste?: ClipboardEventHandler<HTMLTextAreaElement>
   placeholder?: string
   /** Visible rows when empty. */
   rows?: number
@@ -193,6 +194,7 @@ export function Textarea({
   autoResize = false,
   onValueChange,
   onKeyDown,
+  onPaste,
   sx,
   ...props
 }: TextareaProps) {
@@ -207,7 +209,9 @@ export function Textarea({
         styles.controlFocus,
         sx,
       )}
-      render={<textarea rows={rows} {...(onKeyDown && { onKeyDown })} />}
+      render={
+        <textarea rows={rows} {...(onKeyDown && { onKeyDown })} {...(onPaste && { onPaste })} />
+      }
     />
   )
 }
