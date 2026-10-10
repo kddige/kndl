@@ -92,6 +92,10 @@ _Avoid_: message, run, step
 The ordered prompts from Participants waiting for the Session to finish its current Turn. A queued prompt waits unless someone steers it.
 _Avoid_: backlog, inbox
 
+**Attachment**:
+A file a Participant attaches to a prompt in the web UI, such as a pasted screenshot. The Hub keeps it for the life of its Session; the prompt names it with a marker, `[Image #1: shot.png (attachment <id>)]`, and Claude opens it with a tool the mod registers (ADR 0024).
+_Avoid_: upload, paste, file (for what the prompt carries)
+
 **Steer**:
 To take a queued prompt out of the Prompt queue and feed it into the running Turn, which reads it at its next step, as Claude Code does with a prompt typed while it works. The Turn stays the one its first prompt started.
 _Avoid_: interrupt, inject, push
