@@ -6,9 +6,15 @@ import {
   type ParticipantId,
   type SessionId,
 } from "@kndl/protocol"
-import { Context, Effect, Layer, Option } from "effect"
+import { Clock, Context, Duration, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
+
+/** How long a file nobody sent is kept after it was uploaded (#280). */
+export const UnsentAttachmentLifetime = Duration.hours(24)
+
+/** How often the Hub deletes the files nobody sent, besides as it starts. */
+export const UnsentSweepInterval = Duration.hours(1)
 
 /** An attachment with its bytes, as the Hub serves it. */
 export interface StoredAttachment {
@@ -52,8 +58,11 @@ const decodeAttachment = (row: Row) =>
   })
 
 /**
- * The files Participants attach to prompts (#276, ADR 0024), in SQLite, each kept for the life of
- * the Session it was uploaded to: purging the Session deletes them (ON DELETE CASCADE).
+ * The files Participants attach to prompts (#276, ADR 0024), in SQLite. A file a prompt took is
+ * kept for the life of the Session it was uploaded to: purging the Session deletes it (ON DELETE
+ * CASCADE). One nobody sent, removed from the Composer or left in a closed tab, is deleted
+ * {@link UnsentAttachmentLifetime} after upload (#280), by a sweep as the Hub starts and every
+ * {@link UnsentSweepInterval}.
  */
 export class Attachments extends Context.Service<
   Attachments,
@@ -68,13 +77,16 @@ export class Attachments extends Context.Service<
       readonly at: number
     }) => Effect.Effect<Attachment, SqlError>
     /**
-     * The attachments `ids` names, in that order and each once, if each is a file `sender`
-     * uploaded to the Session; none if any isn't.
+     * Takes the files `ids` names for something `sender` sends at `at`: the attachments, in that
+     * order and each once, if each is a file `sender` uploaded to the Session; none if any isn't,
+     * or was deleted unsent. Each one taken is kept from then on for the life of the Session,
+     * also when what took it is refused after, or one of the others isn't found.
      */
-    readonly ofSender: (
+    readonly take: (
       sessionId: SessionId,
       ids: ReadonlyArray<AttachmentId>,
       sender: ParticipantId,
+      at: number,
     ) => Effect.Effect<Option.Option<ReadonlyArray<Attachment>>, SqlError>
     /** One of the Session's files, with its bytes. */
     readonly get: (
@@ -111,17 +123,20 @@ export class Attachments extends Context.Service<
         })
       })
 
-      const ofSender = Effect.fn("Attachments.ofSender")(function* (
+      const take = Effect.fn("Attachments.take")(function* (
         sessionId: SessionId,
         ids: ReadonlyArray<AttachmentId>,
         sender: ParticipantId,
+        at: number,
       ) {
         // Each file once, however often it is named.
         const unique = [...new Set(ids)]
         if (unique.length === 0) return Option.some<ReadonlyArray<Attachment>>([])
+        // One statement, so a sweep either deletes a file before it is taken or not at all.
         const rows = yield* sql<Row>`
-          SELECT id, name, media_type AS mediaType, size FROM attachments
+          UPDATE attachments SET sent_at = COALESCE(sent_at, ${at})
           WHERE session_id = ${sessionId} AND uploaded_by = ${sender} AND id IN ${sql.in(unique)}
+          RETURNING id, name, media_type AS mediaType, size
         `
         const byId = new Map(rows.map((row) => [row.id, decodeAttachment(row)]))
         const found = unique.flatMap((id) => {
@@ -142,7 +157,23 @@ export class Attachments extends Context.Service<
         return Option.some({ attachment: decodeAttachment(row), bytes: new Uint8Array(row.data) })
       })
 
-      return Attachments.of({ add, ofSender, get })
+      const sweepUnsent = Effect.gen(function* () {
+        const before =
+          (yield* Clock.currentTimeMillis) - Duration.toMillis(UnsentAttachmentLifetime)
+        yield* sql`DELETE FROM attachments WHERE sent_at IS NULL AND uploaded_at <= ${before}`
+      }).pipe(
+        Effect.catchCause((cause) => Effect.logError("Could not delete unsent attachments", cause)),
+      )
+
+      // As the Hub starts, for those that aged while it was down; then for as long as it runs.
+      yield* sweepUnsent
+      yield* Effect.sleep(UnsentSweepInterval).pipe(
+        Effect.andThen(sweepUnsent),
+        Effect.forever,
+        Effect.forkIn(yield* Effect.scope),
+      )
+
+      return Attachments.of({ add, take, get })
     }),
   )
 }

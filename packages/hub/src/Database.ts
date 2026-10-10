@@ -686,6 +686,14 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`CREATE INDEX attachments_session ON attachments (session_id)`
     yield* sql`ALTER TABLE queued_prompts ADD COLUMN attachments TEXT`
   }),
+  // Unsent attachments (#280): when a prompt first took each file, or null while none has, so
+  // that the ones nobody sent can be deleted a day after upload. Those already kept are counted
+  // sent: a queued prompt or a past Turn may name them.
+  "0034_attachments_sent": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE attachments ADD COLUMN sent_at INTEGER`
+    yield* sql`UPDATE attachments SET sent_at = uploaded_at`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

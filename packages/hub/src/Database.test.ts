@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { join } from "node:path"
-import { AgentId, EnvironmentVersion, ParticipantId, SessionId } from "@kndl/protocol"
+import { AgentId, AttachmentId, EnvironmentVersion, ParticipantId, SessionId } from "@kndl/protocol"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
+import { Attachments } from "./Attachments.ts"
 import { CliTokens } from "./CliTokens.ts"
 import { DatabaseFile, databaseAt } from "./Database.ts"
 import { Members } from "./Members.ts"
@@ -36,11 +37,19 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0033, attachments (#276): the migrator runs only the
- * migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0034, attachments' sent_at (#280): the migrator runs
+ * only the migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeAttachmentsSent = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE attachments DROP COLUMN sent_at`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'attachments_sent'`
+})
+
+/** Takes the database back to before migration 0033, attachments (#276), and the ones after. */
 const beforeAttachments = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeAttachmentsSent
   yield* sql`DROP TABLE attachments`
   yield* sql`ALTER TABLE queued_prompts DROP COLUMN attachments`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'attachments'`
@@ -223,6 +232,44 @@ const beforeAgents = Effect.gen(function* () {
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
+
+describe("migration 0034, attachments' sent_at", () => {
+  test("counts the files kept before it sent, so the Hub never deletes them unsent", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeAttachmentsSent
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`
+          INSERT INTO sessions (id, repo, base_branch, work_branch, state, runner_id,
+            runner_login_account, creator_id, created_at)
+          VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
+        `
+        // Uploaded long before the day an unsent file lasts.
+        yield* sql`
+          INSERT INTO attachments
+            (id, session_id, name, media_type, size, data, uploaded_by, uploaded_at)
+          VALUES ('a-1', 's-1', 'shot.png', 'image/png', 1, ${new Uint8Array([1])}, 'p-1', 1)
+        `
+      }),
+    )
+    // The Hub starts, and sweeps.
+    const kept = await onDatabase(
+      file,
+      Effect.flatMap(Attachments, (attachments) =>
+        attachments.get(SessionId.make("s-1"), AttachmentId.make("a-1")),
+      ).pipe(Effect.provide(Attachments.layer)),
+    )
+    expect(Option.isSome(kept)).toBe(true)
+  })
+})
 
 describe("migration 0032, Plugins named MCP servers", () => {
   test("keeps every Plugin, Installation, log entry and Session's Installations, by their new names", async () => {
