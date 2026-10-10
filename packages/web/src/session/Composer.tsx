@@ -67,6 +67,7 @@ const styles = stylex.create({
 
 /** Whether a drag carries files, rather than text or a link. */
 const carriesFiles = (event: { readonly dataTransfer: DataTransfer | null }) =>
+  [...(event.dataTransfer?.types ?? [])].includes("Files") ||
   [...(event.dataTransfer?.items ?? [])].some((item) => item.kind === "file")
 
 /** Lets files be dropped on the Composer: without it, the browser opens the file instead. */
@@ -164,7 +165,7 @@ export function Composer({
   const [dragging, setDragging] = useState(false)
   const depth = useRef(0)
   const dragEnter = (event: DragEvent<HTMLFormElement>) => {
-    if (!carriesFiles(event)) return
+    if (disabled || !carriesFiles(event)) return
     event.preventDefault()
     depth.current++
     setDragging(true)
@@ -177,10 +178,10 @@ export function Composer({
     depth.current = 0
     setDragging(false)
     const files = [...(event.dataTransfer?.files ?? [])]
-    if (files.length === 0) return
+    // Nothing is added where nothing can be sent, as a paste can't reach a disabled field.
+    if (disabled || files.length === 0) return
     event.preventDefault()
-    // As a paste can't reach a disabled field.
-    if (!disabled) attachments.add(files)
+    attachments.add(files)
   }
 
   // A drop that misses the Composer would open the file in place of the app.
@@ -220,13 +221,13 @@ export function Composer({
     <form
       onSubmit={submit}
       onDragEnter={dragEnter}
-      onDragOver={dragOver}
+      onDragOver={disabled ? undefined : dragOver}
       onDragLeave={dragLeave}
       onDrop={drop}
       {...stylex.props(styles.form)}
     >
-      {dragging && taking && !disabled && (
-        <div aria-label="Drop files to attach" {...stylex.props(styles.dropTarget)}>
+      {dragging && taking && (
+        <div role="status" aria-label="Drop files to attach" {...stylex.props(styles.dropTarget)}>
           Drop images or PDFs to attach
         </div>
       )}

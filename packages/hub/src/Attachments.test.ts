@@ -417,6 +417,12 @@ describe("the mod's attachment", () => {
     expect(parts.map((part) => part.next)).toEqual([2_400_000, 4_800_000, undefined])
     expect(Buffer.from(parts.map((part) => part.data).join(""), "base64")).toEqual(Buffer.from(big))
     expect((await mod.request(`/mod/attachments/${id}?offset=-1`)).status).toBe(400)
+    // At its end, a part of nothing, the last; past it, none.
+    const end = await mod.request(`/mod/attachments/${id}?offset=${MaxImageBytes}`)
+    expect(await end.json()).toMatchObject({ data: "" })
+    expect((await mod.request(`/mod/attachments/${id}?offset=${MaxImageBytes + 1}`)).status).toBe(
+      400,
+    )
   })
 
   test("of a 20 MB PDF joins from its parts, each one the mod can read (#277)", async () => {

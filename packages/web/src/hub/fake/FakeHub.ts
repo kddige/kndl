@@ -44,6 +44,8 @@ import {
   memberRemovalRefusal,
   MaxAttachmentBytes,
   maxAttachmentBytes,
+  tooLargeForAnyReason,
+  tooLargeReason,
   messageAgentVerdict,
   modelNotFoundText,
   ownerOnlyMessage,
@@ -444,13 +446,11 @@ export class FakeHub implements HubTransport {
     { onProgress, signal }: UploadOptions,
   ): Promise<AttachmentId> {
     if (!this.#signedIn) throw new Error("Sign in first")
-    if (file.size > MaxAttachmentBytes)
-      throw new Error("A file may be 20 MB at most if a PDF, 5 MB if an image.")
+    if (file.size > MaxAttachmentBytes) throw new Error(tooLargeForAnyReason)
     const mediaType = AttachmentMediaTypes.find((type) => type === file.type)
     if (mediaType === undefined)
       throw new Error("Only JPEG, PNG, GIF and WebP images and PDFs can be attached.")
-    if (file.size > maxAttachmentBytes(mediaType))
-      throw new Error("An image may be 5 MB at most, the most Claude reads.")
+    if (file.size > maxAttachmentBytes(mediaType)) throw new Error(tooLargeReason(mediaType))
     onProgress(Math.round(file.size / 2))
     await new Promise((resolve) => setTimeout(resolve, this.stepMs))
     if (signal.aborted) throw new DOMException("Aborted", "AbortError")

@@ -372,7 +372,7 @@ test("the attach button picks files of the types Claude reads, camera and photos
 test("a PDF uploads as it is, its chip naming it and its size; past 20 MB it is refused (#277)", async () => {
   const { sent, uploads, prepared, field, chips, said, container } = await composer()
   await paste(field, [
-    image("spec.pdf", "application/pdf", 2_500_000),
+    image("spec.pdf", "application/pdf", 6_000_000),
     // Dropped from some desktops without a type: a PDF by its name.
     image("notes.pdf", "", 1_000),
     image("huge.pdf", "application/pdf", MaxPdfBytes + 1),
@@ -382,7 +382,8 @@ test("a PDF uploads as it is, its chip naming it and its size; past 20 MB it is 
   expect(uploads.map((upload) => upload.file.name)).toEqual(["spec.pdf", "notes.pdf"])
   expect(said()).toContain("huge.pdf is over 20 MB")
   expect(chips()[0]).toContain("spec.pdf")
-  expect(chips()[0]).toContain("2.4 MB")
+  expect(chips()[0]).toContain("5.7 MB")
+  expect(chips()[0]).toContain("Uploading")
   expect(container.querySelector('[aria-label="Attachments"] img')).toBeNull()
   await uploads[0]?.finish("att-1")
   await uploads[1]?.finish("att-2")
@@ -406,4 +407,25 @@ test("a Composer that takes no attachments has no attach button, and says why fo
   expect(view.container.querySelector('[aria-label="Attachments refused"]')?.textContent).toBe(
     "Files can't go to a subagent yet: attach them to a prompt.",
   )
+})
+
+test("files dropped on a Composer that can't send are left out, with no drop target (#277)", async () => {
+  const uploads: Array<string> = []
+  const view = await render(
+    <Composer
+      onSend={() => true}
+      onStop={() => {}}
+      running={false}
+      disabledReason="The Session is Frozen."
+      attach={async (file) => {
+        uploads.push(file.name)
+        return "att-1" as AttachmentId
+      }}
+    />,
+  )
+  cleanup = view.unmount
+  const target = await drop(view.container, [image("shot.png")])
+  expect(target).toBeNull()
+  expect(uploads).toEqual([])
+  expect(view.container.querySelector('[aria-label="Attachments"]')).toBeNull()
 })

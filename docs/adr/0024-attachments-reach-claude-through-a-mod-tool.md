@@ -46,4 +46,4 @@ So an attachment is a file the Hub keeps, and Claude opens it with a tool.
   - a second 10 MB PDF pushed the first out of later requests.
 
   So a PDF over about 18.8 MB is uploaded and never seen by Claude, and anything over 10.5 MiB can't be sure of surviving eviction alongside a later file. The 20 MB limit #275 agreed is kept here, pending a decision; 10 MiB (13.3 MiB of base64, under the 14 MiB floor) is the largest a PDF can be and still always reach Claude as the newest file. A file evicted from the conversation keeps its marker, so Claude can open it again with the tool.
-- **Pages count too.** The API takes at most 100 PDF pages in a request (600 on 1M-context models), and each page costs about 1,500 to 3,000 tokens. Past that the API refuses the whole request, so the Turn fails, not the tool.
+- **Pages count too.** The API takes at most 600 PDF pages in a request on 1M-context models, and 100 on 200K ones, and each page costs about 1,500 to 3,000 tokens. Past that the API refuses the whole request, so the Turn fails, not the tool.

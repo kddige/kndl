@@ -19,14 +19,14 @@ import {
   AttachmentUploaded,
   isImage,
   MaxAttachmentBytes,
-  MaxImageBytes,
-  MaxPdfBytes,
   maxAttachmentBytes,
   MaxModAttachmentPartBytes,
   ModAttachment,
   ModAttachmentQuery,
   SessionId,
   sendPromptRefusal,
+  tooLargeForAnyReason,
+  tooLargeReason,
 } from "@kndl/protocol"
 import { Clock, Effect, Option } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
@@ -38,18 +38,8 @@ import { authorizeAccessFor } from "./SessionAccess.ts"
 const errorResponse = (status: number, error: string) =>
   HttpServerResponse.jsonUnsafe({ error }, { status })
 
-const megabytes = (bytes: number) => `${bytes / 1024 / 1024} MB`
-
 /** Past the limit for any file: which type it is doesn't matter. */
-const tooLarge = errorResponse(
-  413,
-  `A file may be ${megabytes(MaxPdfBytes)} at most if a PDF, ${megabytes(MaxImageBytes)} if an image.`,
-)
-
-const imageTooLarge = errorResponse(
-  413,
-  `An image may be ${megabytes(MaxImageBytes)} at most, the most Claude reads.`,
-)
+const tooLarge = errorResponse(413, tooLargeForAnyReason)
 
 /** The name the upload gave its file, URI-encoded; "" for none, or one that doesn't decode. */
 const sentName = (header: string | undefined) => {
@@ -111,7 +101,8 @@ export const AttachmentRoutes = HttpRouter.use(
           return errorResponse(415, "Only JPEG, PNG, GIF and WebP images and PDFs can be attached.")
         }
         // The limit for its type, now its bytes say which.
-        if (bytes.value.byteLength > maxAttachmentBytes(mediaType)) return imageTooLarge
+        if (bytes.value.byteLength > maxAttachmentBytes(mediaType))
+          return errorResponse(413, tooLargeReason(mediaType))
         const attachment = yield* attachments
           .add({
             sessionId: access.session.id,

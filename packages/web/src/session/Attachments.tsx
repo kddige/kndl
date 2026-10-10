@@ -124,10 +124,11 @@ export function useAttachments(
     const failed = (reason: string) =>
       change(key, (chip) => ({ ...chip, upload: { _tag: "Failed", reason } }))
     // A PDF goes as it is: its size was checked as it was added.
-    const scaled = isImage(file.type) ? await prepare(file) : file
+    const image = isImage(file.type)
+    const scaled = image ? await prepare(file) : file
     if (abort.signal.aborted) return
     // The Hub refuses it all the same; said here, before it is sent.
-    if (scaled.size > MaxImageBytes)
+    if (image && scaled.size > MaxImageBytes)
       return failed(`It is over ${MaxImageBytes / 1024 / 1024} MB, even scaled down.`)
     change(key, (chip) => ({
       ...chip,

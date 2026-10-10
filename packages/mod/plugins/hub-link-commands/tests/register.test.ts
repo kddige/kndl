@@ -653,14 +653,32 @@ describe("attachments (#276)", () => {
     ])
   })
 
-  test("the tool hands Claude the file the Hub keeps, in its parts, as an image", async ($, on) => {
+  test("the tool hands Claude the file the Hub keeps, in its parts, as an image or a PDF", async ($, on) => {
     const file = { id: "att-1", name: "shot.png", mediaType: "image/png" }
     const parts = { 0: { ...file, data: "iVBO", next: 3 }, 3: { ...file, data: "Rw0K" } }
-    const { requests } = linkedSession(on, [], undefined, {}, { "att-1": parts })
+    // A 20 MB PDF comes in nine parts of 2.4 MB (#277).
+    const pdf = { id: "att-3", name: "spec.pdf", mediaType: "application/pdf" }
+    const pdfParts = Object.fromEntries(
+      Array.from({ length: 9 }, (_, index) => [
+        index * 3,
+        { ...pdf, data: `AAA${index}`, ...(index < 8 && { next: (index + 1) * 3 }) },
+      ]),
+    )
+    const { requests } = linkedSession(
+      on,
+      [],
+      undefined,
+      {},
+      {
+        "att-1": parts,
+        "att-3": pdfParts,
+      },
+    )
     on("tool.register", () => ({ value: { tool } }))
 
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
     const opened = await $.tool.call({ tool, id: "att-1" } as never)
+    const document = await $.tool.call({ tool, id: "att-3" } as never)
     const missing = await $.tool.call({ tool, id: "att-9" } as never)
 
     expect(requests.map((request) => request.url)).toEqual(
@@ -673,25 +691,7 @@ describe("attachments (#276)", () => {
       { type: "text", text: "shot.png" },
       { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0K" } },
     ])
-    expect(missing.deny).toBe("Could not open the attachment: There is no such attachment.")
-  })
-
-  test("the tool hands Claude a 20 MB PDF, all nine of its parts, as a document (#277)", async ($, on) => {
-    const file = { id: "att-3", name: "spec.pdf", mediaType: "application/pdf" }
-    // A 20 MB file comes in nine parts of 2.4 MB.
-    const parts = Object.fromEntries(
-      Array.from({ length: 9 }, (_, index) => [
-        index * 3,
-        { ...file, data: `AAA${index}`, ...(index < 8 && { next: (index + 1) * 3 }) },
-      ]),
-    )
-    linkedSession(on, [], undefined, {}, { "att-3": parts })
-    on("tool.register", () => ({ value: { tool } }))
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    const opened = await $.tool.call({ tool, id: "att-3" } as never)
-
-    expect(opened.result).toEqual([
+    expect(document.result).toEqual([
       { type: "text", text: "spec.pdf" },
       {
         type: "document",
@@ -703,5 +703,6 @@ describe("attachments (#276)", () => {
         },
       },
     ])
+    expect(missing.deny).toBe("Could not open the attachment: There is no such attachment.")
   })
 })

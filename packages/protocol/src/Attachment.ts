@@ -43,6 +43,17 @@ export const maxAttachmentBytes = (mediaType: AttachmentMediaType): number =>
 /** The largest file of any type the Hub takes, in bytes. */
 export const MaxAttachmentBytes = Math.max(MaxImageBytes, MaxPdfBytes)
 
+const megabytes = (bytes: number) => `${bytes / 1024 / 1024} MB`
+
+/** Why a file of this type is refused past {@link maxAttachmentBytes}, as the Hub says it. */
+export const tooLargeReason = (mediaType: AttachmentMediaType): string =>
+  isImage(mediaType)
+    ? `An image may be ${megabytes(MaxImageBytes)} at most, the most Claude reads.`
+    : `A PDF may be ${megabytes(MaxPdfBytes)} at most.`
+
+/** Why a file is refused past {@link MaxAttachmentBytes}, before its type is known. */
+export const tooLargeForAnyReason = `A file may be ${megabytes(MaxPdfBytes)} at most if a PDF, ${megabytes(MaxImageBytes)} if an image.`
+
 /** The most files a prompt may carry. */
 export const MaxAttachments = 20
 
