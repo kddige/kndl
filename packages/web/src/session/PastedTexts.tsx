@@ -2,7 +2,14 @@ import * as stylex from "@stylexjs/stylex"
 import { type ClipboardEvent, useRef, useState } from "react"
 import { Button, CloseIcon, IconButton, Popover } from "../ui/index.ts"
 import { color, font, leading, radius, space, text } from "../ui/tokens.stylex.ts"
-import { expandPastes, isLongPaste, type PastedText, pasteRef, pastesIn } from "./pastedText.ts"
+import {
+  expandPastes,
+  longPaste,
+  type PastedText,
+  pastePlaceholder,
+  pastesIn,
+  removePaste,
+} from "./pastedText.ts"
 
 const styles = stylex.create({
   chips: {
@@ -35,10 +42,11 @@ const styles = stylex.create({
 })
 
 /**
- * The long pastes in a Composer's draft (#279). A long paste goes into the draft as its reference,
- * at the caret, so where it was pasted is kept; `expand` puts the full text back for sending.
+ * The long pastes in a Composer's draft (#279). A long paste goes into the draft as its
+ * placeholder, at the caret, so where it was pasted is kept; `expand` puts the full text back for
+ * sending.
  */
-export function usePastedTexts(setDraft: (draft: string) => void) {
+export function usePastedTexts(draft: string, setDraft: (draft: string) => void) {
   // Counts up for the Composer's life, so two prompts never both have a `#1`.
   const next = useRef(1)
   const [pastes, setPastes] = useState<readonly PastedText[]>([])
@@ -46,36 +54,38 @@ export function usePastedTexts(setDraft: (draft: string) => void) {
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     // Files are attachments, not text.
     if (event.clipboardData.files.length > 0) return
-    // As the terminal sends it: Windows' line breaks as plain ones.
-    const pasted = event.clipboardData.getData("text/plain").replaceAll(/\r\n?/g, "\n")
-    if (!isLongPaste(pasted)) return
+    const long = longPaste(event.clipboardData.getData("text/plain"))
+    if (long === undefined) return
     event.preventDefault()
-    const paste = { n: next.current++, text: pasted }
+    const paste = { number: next.current++, text: long }
     setPastes((all) => [...all, paste])
     // insertText keeps the paste in the browser's undo history, and fires `input` to update the
-    // draft. Where it isn't supported, put the reference in by hand.
+    // draft. Where it isn't supported, put the placeholder in by hand.
     const field = event.currentTarget
-    const ref = pasteRef(paste)
-    if (!document.execCommand?.("insertText", false, ref)) {
-      field.setRangeText(ref, field.selectionStart, field.selectionEnd, "end")
+    const placeholder = pastePlaceholder(paste)
+    if (!document.execCommand?.("insertText", false, placeholder)) {
+      field.setRangeText(placeholder, field.selectionStart, field.selectionEnd, "end")
       setDraft(field.value)
     }
   }
 
   return {
     onPaste,
-    /** The pastes still in `draft`, to show as chips. */
-    shown: (draft: string) => pastesIn(draft, pastes),
-    /** `draft` without the paste's reference. */
-    remove: (draft: string, paste: PastedText) => draft.replace(pasteRef(paste), ""),
-    /** `draft` as it is sent, with each paste's full text. */
-    expand: (draft: string) => expandPastes(draft, pastes),
+    /** The pastes in the draft, to show as chips. */
+    shown: pastesIn(draft, pastes),
+    /** Takes the paste out of the draft, and forgets it, so a copy of its placeholder is text. */
+    remove: (paste: PastedText) => {
+      setDraft(removePaste(draft, paste))
+      setPastes((all) => all.filter((p) => p !== paste))
+    },
+    /** The draft as it is sent, with each paste's full text. */
+    expand: () => expandPastes(draft, pastes),
     /** Forgets the pastes, once the prompt with them is sent. */
     clear: () => setPastes([]),
   }
 }
 
-/** A chip for each long paste in the draft: its reference, which shows the text, and remove. */
+/** A chip for each long paste in the draft: its placeholder, which shows the text, and remove. */
 export function PastedTextChips({
   pastes,
   onRemove,
@@ -87,23 +97,23 @@ export function PastedTextChips({
   return (
     <ul aria-label="Pasted texts" {...stylex.props(styles.chips)}>
       {pastes.map((paste) => {
-        const ref = pasteRef(paste)
+        const placeholder = pastePlaceholder(paste)
         return (
-          <li key={paste.n} {...stylex.props(styles.chip)}>
+          <li key={paste.number} {...stylex.props(styles.chip)}>
             <Popover
               trigger={
                 <Button size="sm" intent="ghost">
-                  {ref}
+                  {placeholder}
                 </Button>
               }
-              title={ref}
+              title={placeholder}
               side="top"
               align="start"
               sx={styles.panel}
             >
               <pre {...stylex.props(styles.text)}>{paste.text}</pre>
             </Popover>
-            <IconButton size="sm" label={`Remove ${ref}`} onClick={() => onRemove(paste)}>
+            <IconButton size="sm" label={`Remove ${placeholder}`} onClick={() => onRemove(paste)}>
               <CloseIcon />
             </IconButton>
           </li>

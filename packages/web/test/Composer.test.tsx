@@ -110,7 +110,7 @@ test("a paste's chip shows its text, and removing it takes it out of the prompt"
   expect(sent).toEqual([` and ${trace}\nmore`])
 })
 
-test("deleting a paste's reference from the field takes its chip away", async () => {
+test("deleting a paste's placeholder from the field takes its chip away", async () => {
   const { field, container } = await composer()
   await step(() => paste(field, trace))
   await step(() => typeInto(field, "[Pasted text #1 +11 l"))
@@ -127,4 +127,36 @@ test("pastes are numbered on from the last prompt's", async () => {
   expect(field.value).toBe("[Pasted text #2 +11 lines]")
   await step(() => button("Send prompt").click())
   expect(sent).toEqual([trace, trace])
+})
+
+test("a trailing line break doesn't count as a line", async () => {
+  const { sent, field } = await composer()
+  const threeLines = "one\ntwo\nthree\n"
+  await step(() => paste(field, threeLines))
+  expect(field.value).toBe(threeLines)
+
+  await step(() => typeInto(field, ""))
+  await step(() => paste(field, `${trace}\n`))
+  expect(field.value).toBe("[Pasted text #1 +11 lines]")
+  await step(() => button("Send prompt").click())
+  expect(sent).toEqual([`${trace}\n`])
+})
+
+test("a copy of a placeholder pasted by hand stays as it is", async () => {
+  const { sent, field, container } = await composer()
+  const placeholder = "[Pasted text #1 +11 lines]"
+  await step(() => paste(field, trace))
+  await step(() => paste(field, ` ${placeholder}`))
+  expect(field.value).toBe(`${placeholder} ${placeholder}`)
+
+  await step(() => button("Send prompt").click())
+  expect(sent).toEqual([`${trace} ${placeholder}`])
+
+  await step(() => paste(field, trace))
+  await step(() => paste(field, " [Pasted text #2 +11 lines]"))
+  await step(() => button("Remove [Pasted text #2 +11 lines]", container).click())
+  expect(field.value).toBe(" [Pasted text #2 +11 lines]")
+  expect(container.querySelector('[aria-label="Pasted texts"]')).toBeNull()
+  await step(() => button("Send prompt").click())
+  expect(sent[1]).toBe(" [Pasted text #2 +11 lines]")
 })

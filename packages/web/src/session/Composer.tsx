@@ -79,13 +79,13 @@ export function Composer({
   copy = promptCopy(running),
 }: ComposerProps) {
   const [draft, setDraft] = useState("")
-  const pastes = usePastedTexts(setDraft)
+  const pastes = usePastedTexts(draft, setDraft)
   const disabled = disabledReason !== undefined
   const empty = draft.trim() === ""
 
   const send = () => {
     if (disabled || empty) return
-    if (!onSend(pastes.expand(draft))) return
+    if (!onSend(pastes.expand())) return
     setDraft("")
     pastes.clear()
   }
@@ -105,10 +105,7 @@ export function Composer({
 
   return (
     <form onSubmit={submit} {...stylex.props(styles.form)}>
-      <PastedTextChips
-        pastes={pastes.shown(draft)}
-        onRemove={(paste) => setDraft(pastes.remove(draft, paste))}
-      />
+      <PastedTextChips pastes={pastes.shown} onRemove={pastes.remove} />
       <Textarea
         aria-label={copy.field}
         value={draft}
