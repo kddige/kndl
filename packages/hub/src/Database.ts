@@ -667,6 +667,25 @@ const migrations = SqliteMigrator.fromRecord({
       WHERE mcp_servers IS NOT NULL
     `
   }),
+  // Attachments (#276, ADR 0024): the files Participants upload to a Session, kept until it is
+  // purged, and the ones each queued prompt carries, as a JSON array of Attachment.
+  "0033_attachments": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE attachments (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        data BLOB NOT NULL,
+        uploaded_by TEXT NOT NULL REFERENCES participants (id),
+        uploaded_at INTEGER NOT NULL
+      )
+    `
+    yield* sql`CREATE INDEX attachments_session ON attachments (session_id)`
+    yield* sql`ALTER TABLE queued_prompts ADD COLUMN attachments TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

@@ -1,11 +1,16 @@
-import { ParticipantId, PromptId, QueuedPrompt, type SessionId } from "@kndl/protocol"
-import { Context, Effect, Layer, Option } from "effect"
+import { Attachments, ParticipantId, PromptId, QueuedPrompt, type SessionId } from "@kndl/protocol"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
 import type { SqlError } from "effect/sql/SqlError"
 
+const AttachmentsJson = Schema.fromJsonString(Attachments)
+const encodeAttachments = Schema.encodeSync(AttachmentsJson)
+const decodeAttachments = Schema.decodeUnknownSync(AttachmentsJson)
+
 /**
  * Each Session's Prompt queue, in SQLite so that a Hub restart keeps it: the prompts
- * Participants sent, in the order they were sent, each with its sender. A prompt leaves the queue
+ * Participants sent, in the order they were sent, each with its sender and the attachments it
+ * carries (#276), which stay the Session's when it leaves. A prompt leaves the queue
  * when the Turn it starts begins, when it is cancelled, or when its delivery fails.
  *
  * Which prompt is out for delivery is the SessionRelay's business, not stored here.
@@ -34,8 +39,9 @@ export class PromptQueue extends Context.Service<
         prompt: QueuedPrompt,
       ) {
         yield* sql`
-          INSERT INTO queued_prompts (id, session_id, text, sender_id, queued_at)
-          VALUES (${prompt.id}, ${sessionId}, ${prompt.text}, ${prompt.sender.id}, ${prompt.queuedAt})
+          INSERT INTO queued_prompts (id, session_id, text, sender_id, queued_at, attachments)
+          VALUES (${prompt.id}, ${sessionId}, ${prompt.text}, ${prompt.sender.id}, ${prompt.queuedAt},
+            ${prompt.attachments === undefined ? null : encodeAttachments(prompt.attachments)})
         `
       })
 
@@ -48,8 +54,9 @@ export class PromptQueue extends Context.Service<
           readonly senderLogin: string
           readonly senderName: string
           readonly senderAvatarUrl: string | null
+          readonly attachments: string | null
         }>`
-          SELECT q.id, q.text, q.queued_at AS queuedAt,
+          SELECT q.id, q.text, q.queued_at AS queuedAt, q.attachments,
             p.id AS senderId, p.login AS senderLogin, p.name AS senderName,
             p.avatar_url AS senderAvatarUrl
           FROM queued_prompts q JOIN participants p ON p.id = q.sender_id
@@ -67,6 +74,7 @@ export class PromptQueue extends Context.Service<
               ...(row.senderAvatarUrl !== null && { avatarUrl: row.senderAvatarUrl }),
             },
             queuedAt: row.queuedAt,
+            ...(row.attachments !== null && { attachments: decodeAttachments(row.attachments) }),
           }),
         )
       })

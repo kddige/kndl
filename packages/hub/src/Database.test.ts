@@ -36,11 +36,23 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0032, Plugins named MCP servers (#232): the migrator
- * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0033, attachments (#276): the migrator runs only the
+ * migrations after the last it ran, so a test of an earlier one undoes this first.
+ */
+const beforeAttachments = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP TABLE attachments`
+  yield* sql`ALTER TABLE queued_prompts DROP COLUMN attachments`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'attachments'`
+})
+
+/**
+ * Takes the database back to before migration 0032, Plugins named MCP servers (#232), and the
+ * migrations after it.
  */
 const beforeMcpServers = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeAttachments
   yield* sql`
     UPDATE sessions SET mcp_servers = REPLACE(REPLACE(REPLACE(mcp_servers,
       '"mcpServerId":', '"pluginId":'),
