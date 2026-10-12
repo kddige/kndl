@@ -205,9 +205,11 @@ test("the docs list the permissions the Hub needs", async () => {
   // The docs page has RequiredPermissions as a table between two markers: when the list changes,
   // put the table this expects there.
   const page = await Bun.file(
-    join(import.meta.dir, "../../docs/src/content/docs/how-to/set-up-the-github-app.md"),
+    join(import.meta.dir, "../../docs/src/content/docs/self-hosting/set-up-the-github-app.mdx"),
   ).text()
-  const table = /<!-- permissions:start -->\n([\s\S]*?)<!-- permissions:end -->/.exec(page)?.[1]
+  const table = /\{\/\* permissions:start \*\/\}\n([\s\S]*?)\{\/\* permissions:end \*\/\}/.exec(
+    page,
+  )?.[1]
   expect(table).toBe(
     [
       "| Permission | Access | Why |",

@@ -86,12 +86,14 @@ export default defineConfig({
           label: "Guides",
           items: [
             { slug: "guides/work-in-a-session" },
+            { slug: "guides/manage-a-session" },
             { slug: "guides/work-with-subagents" },
             { slug: "guides/forward-a-sessions-ports" },
             { slug: "guides/set-up-an-environment" },
             { slug: "guides/use-variables-and-secrets" },
             { slug: "guides/add-your-claude-credential" },
             { slug: "guides/add-a-remote-mcp-server" },
+            { slug: "guides/connect-an-mcp-server-with-oauth" },
             { slug: "guides/publish-and-add-an-mcp-server-package" },
             { slug: "guides/install-the-cli-from-a-hub" },
             { slug: "guides/sign-in-the-cli" },
@@ -102,10 +104,12 @@ export default defineConfig({
           items: [
             { slug: "self-hosting/install" },
             { slug: "self-hosting/run-the-hub" },
-            { slug: "self-hosting/add-a-runner" },
             { slug: "self-hosting/reach-the-hub-from-other-machines" },
             { slug: "self-hosting/set-up-the-github-app" },
             { slug: "self-hosting/let-people-in" },
+            { slug: "self-hosting/add-a-runner" },
+            { slug: "self-hosting/update" },
+            { slug: "self-hosting/uninstall" },
           ],
         },
         {
@@ -124,6 +128,7 @@ export default defineConfig({
             { slug: "reference/commands" },
             { slug: "reference/configuration" },
             { slug: "reference/files-and-paths" },
+            { slug: "reference/mcp-servers" },
             { slug: "reference/mcp-server-packages" },
             { slug: "reference/glossary" },
           ],
@@ -139,6 +144,7 @@ export default defineConfig({
           items: [
             { slug: "contributing/develop-kndl" },
             { slug: "contributing/protocol" },
+            { slug: "contributing/internals" },
             {
               label: "Decisions (ADRs)",
               collapsed: true,

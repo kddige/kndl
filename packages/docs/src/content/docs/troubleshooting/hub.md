@@ -229,7 +229,7 @@ The authorization server refused the connection: invalid_client.
 
 **Why.** The authorization server has no Dynamic Client Registration, as GitHub's doesn't, so the Hub needs a client you register there yourself. `invalid_client` means the server doesn't know the client, its secret or its callback URL.
 
-**Fix.** Register a client at the authorization server with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/mcp/callback`, and enter its client ID and secret. For a rotated secret, press **Change client** and enter the new one. See [Connect a server without Dynamic Client Registration](/guides/add-a-remote-mcp-server/#connect-a-server-without-dynamic-client-registration).
+**Fix.** Register a client at the authorization server with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/mcp/callback`, and enter its client ID and secret. For a rotated secret, press **Change client** and enter the new one. See [Connect a server without Dynamic Client Registration](/guides/connect-an-mcp-server-with-oauth/#connect-a-server-without-dynamic-client-registration).
 
 ## A global Installation can't be changed
 

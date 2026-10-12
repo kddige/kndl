@@ -24,9 +24,15 @@ Run a Hub and a Runner on one machine, start a Session on one of your Repos, and
    curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
    ```
 
-   It clones kndl into `~/.kndl`, puts the `kndl` command in `~/.local/bin`, and starts `kndl onboard`.
+   It clones kndl into `~/.kndl`, puts the `kndl` command in `~/.local/bin`, and prints what to run next.
 
-2. Answer onboard's questions:
+2. Start onboard:
+
+   ```sh
+   kndl onboard
+   ```
+
+   If your shell says `kndl: command not found`, open a new terminal, or run `~/.local/bin/kndl onboard`. Then answer its questions:
 
    | Question                                                                               | Answer                                                |
    | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |

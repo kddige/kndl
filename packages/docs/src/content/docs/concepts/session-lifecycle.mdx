@@ -1,0 +1,92 @@
+---
+title: The Session lifecycle
+description: How a Session moves between Active, Asleep, Frozen and Archived, what each keeps, and when the Hub purges it.
+sidebar:
+  order: 2
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components"
+import LifecycleDiagram from "../../../components/LifecycleDiagram.astro"
+
+A Session is always in one of four states. Asleep Sessions cost nothing but disk, so a Runner can hold many more Sessions than it runs at once.
+
+<LifecycleDiagram />
+
+| State        | Sandbox                                           | Claude Code           | Prompts                                |
+| ------------ | ------------------------------------------------- | --------------------- | -------------------------------------- |
+| **Active**   | Running                                           | Running               | Delivered in order, one Turn at a time |
+| **Asleep**   | Stopped, disks kept                               | Stopped               | The first one wakes it                 |
+| **Frozen**   | As the Runner left it                             | As the Runner left it | Wait until the Runner is back          |
+| **Archived** | Destroyed; Workspace and Claude Code's state kept | Stopped               | Refused                                |
+
+## Going to sleep
+
+The Hub puts an Active Session to sleep after 15 minutes ([`HUB_SLEEP_AFTER_MS`](/reference/configuration/#hub)) with none of these:
+
+- a Turn or [subagent](/guides/work-with-subagents/) running, or a prompt queued;
+- a Participant present;
+- a [`kndl forward`](/guides/forward-a-sessions-ports/) connected;
+- **Keep awake** on.
+
+**Sleep now** in the Session's header puts it to sleep at once. A Runner also puts its Sessions to sleep before it updates, once their running Turns end.
+
+Asleep, the Sandbox is stopped and its disks are kept. Docker's containers are stopped first, so databases shut down cleanly.
+
+### Keep awake
+
+**Keep awake** in a Session's header stops it going to sleep when idle. Use it for work that runs with nobody watching, such as a dev server or a long background command. Open ports and background commands don't keep a Session awake on their own ([ADR 0016](/contributing/decisions/0016-forwarding-a-sessions-ports/)).
+
+- Anyone with access to the Repo can turn it on or off. The header, the sidebar and the Runners page show who turned it on.
+- Turning it on wakes an Asleep Session.
+- It stays on until someone turns it off, presses **Sleep now** or deletes the Session. A restore doesn't turn it back on.
+- After a Runner update or restart, the Hub wakes the Session again.
+
+## Waking
+
+A prompt wakes an Asleep Session, as do **Wake now** and a `kndl forward` of it. The Runner starts the same Sandbox, with its dependencies, caches and Docker data as they were. Claude Code resumes the conversation.
+
+- **A newer Environment version** makes the Sandbox afresh from its Build at the next wake, on the same Workspace and disks. **Restart** on the **Environment changed** banner does that at once.
+- **A Runner behind the Hub** wakes no Session. Prompts wait until the Runner runs the Hub's commit.
+- **Subagents** stop with their Session and are marked Interrupted. A message to one resumes it.
+
+## When a start fails
+
+If Claude Code can't start, the Session is Asleep, with the reason in its history. Queued prompts stay queued, and nothing retries on its own: the next prompt or **Wake now** tries again. See [Claude Code exited with code N](/troubleshooting/sessions/#claude-code-exited).
+
+## Frozen
+
+While its Runner is offline, a Session is Frozen. You can still read it, and prompts wait in its queue. Its Sandbox and Workspace are on that Runner, so it waits for it rather than moving.
+
+Claude Code runs in the Sandbox, not in the Runner, so it keeps running while the Runner's connection is down or the Runner restarts. When the Runner is back, the Session is Active if Claude Code is still running, and Asleep otherwise.
+
+## Deleting and restoring
+
+Any Participant can delete a Session with the bin in its header. Deleting archives it at once: the Sandbox and its disks are destroyed, and the Workspace and Claude Code's state are kept.
+
+- **Undo** on the toast restores it.
+- **Archived Sessions** in the sidebar lists each Repo's Archived Sessions, with who deleted each and when, and a **Restore** button.
+
+A restored Session is Asleep, and the next prompt wakes it in a new Sandbox. The conversation carries on. Dependencies and Docker's data went with the old disks, so the Start script or Claude reinstalls them.
+
+## Purging
+
+30 days after it was archived ([`HUB_ARCHIVE_RETENTION_MS`](/reference/configuration/#hub)), the Hub purges a Session: its history, its queue, and on its Runner, its Workspace and disks. Work the Session never pushed is gone with it.
+
+## History
+
+Every start, sleep, wake, delete, restore and failure is in the Session's history, with who did it.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Work in a Session"
+    description="Prompt it, Steer a Turn, use the terminal and keep it awake."
+    href="/kndl/guides/work-in-a-session/"
+  />
+  <LinkCard
+    title="Environments"
+    description="How a Repo's Sandboxes are built, versioned and tested."
+    href="/kndl/concepts/environments/"
+  />
+</CardGrid>

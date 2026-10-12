@@ -270,7 +270,7 @@ export type StableStay = NoRelease | { readonly _tag: "Older"; readonly release:
 /** What `update` on the stable Channel says when it stays where it is. */
 export function stableNotice(stay: StableStay): string {
   return stay._tag === "NoRelease"
-    ? "On the stable Channel, but origin has no Release yet: update stays here, and moves to the first Release."
+    ? "On the stable Channel, but origin has no Release yet: update stays here, and moves to the first Release that includes this commit."
     : `On the stable Channel: the latest Release, ${stay.release}, doesn't include this checkout's commit, so update stays here until a Release does.`
 }
 
