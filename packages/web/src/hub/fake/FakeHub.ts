@@ -341,6 +341,10 @@ export class FakeHub implements HubTransport {
   #scriptStarted = false
   readonly #sockets = new Set<FakeSocket>()
   readonly #timers = new Set<ReturnType<typeof setTimeout>>()
+  /** While held, the timed steps that came due, in order, waiting for `step` (#315). */
+  #holding = false
+  readonly #held: Array<{ timer: ReturnType<typeof setTimeout>; fn: () => void }> = []
+  #heldArrived: (() => void) | undefined
   /** The scripted reply each queued prompt gets when it's delivered. */
   readonly #replies = new Map<string, ReadonlyArray<ReplyStep>>()
   /** The files uploaded (#276), by id, with who uploaded each where, and a URL to show it at. */
@@ -616,6 +620,36 @@ export class FakeHub implements HubTransport {
   /** Drops every connection, as a network blip would. */
   dropConnections(): void {
     this.#closeAll()
+  }
+
+  /**
+   * Holds every timed step from now on: one that comes due waits for `step`, until `resume`. A
+   * test that looks at what shows between two steps holds them, so a slow machine can't skip
+   * past one (#315).
+   */
+  hold(): void {
+    this.#holding = true
+  }
+
+  /** Runs the next held step, in the order they came due, waiting for one if none has yet. */
+  async step(): Promise<void> {
+    for (;;) {
+      const next = this.#held.shift()
+      if (next === undefined) {
+        await new Promise<void>((resolve) => (this.#heldArrived = resolve))
+        continue
+      }
+      // A step stopped while it waited, as a Turn's are when it ends, stays stopped.
+      if (!this.#timers.delete(next.timer)) continue
+      next.fn()
+      return
+    }
+  }
+
+  /** Stops holding: runs every held step, in order, and the rest when they come due. */
+  resume(): void {
+    this.#holding = false
+    for (const next of this.#held.splice(0)) if (this.#timers.delete(next.timer)) next.fn()
   }
 
   /** Stops every timer, so a test leaves nothing running. */
@@ -2839,6 +2873,12 @@ export class FakeHub implements HubTransport {
 
   #after(steps: number, fn: () => void): ReturnType<typeof setTimeout> {
     const timer = setTimeout(() => {
+      if (this.#holding) {
+        this.#held.push({ timer, fn })
+        this.#heldArrived?.()
+        this.#heldArrived = undefined
+        return
+      }
       this.#timers.delete(timer)
       fn()
     }, steps * this.stepMs)
