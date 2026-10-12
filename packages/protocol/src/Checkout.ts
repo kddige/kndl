@@ -4,8 +4,8 @@
 // the web UI and the mod's bundle have no use for.
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { type BuildVersion, Channel, CommitIdPattern, releaseOf } from "./Build.ts"
 import { Schema } from "effect"
+import { type BuildVersion, Channel, CommitIdPattern, releaseOf } from "./Build.ts"
 
 /** The checkout this file is in: the one the Hub, Runner or CLI importing it runs from. */
 export const thisCheckout = fileURLToPath(new URL("../../..", import.meta.url))
