@@ -1,6 +1,7 @@
 {
   "name": "@kndl/mod",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "bun scripts/build.ts",

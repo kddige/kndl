@@ -1,6 +1,7 @@
 {
   "name": "@kndl/hub",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "start": "bun src/main.ts",
