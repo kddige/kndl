@@ -64,7 +64,7 @@ describe("doctor", () => {
       ...healthy,
       prerequisites: {
         missing: [
-          { name: "gh", detail: "gh isn't installed.", fixable: true },
+          { name: "git", detail: "git isn't installed.", fixable: true },
           { name: "KVM", detail: "There is no /dev/kvm.", fixable: false },
         ],
         steps: [],

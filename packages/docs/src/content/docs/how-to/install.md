@@ -20,20 +20,18 @@ To work on kndl itself, run it [from a checkout](#from-a-checkout) instead. A ch
 
 The Hub is one Bun process with a SQLite database. Runners run one microVM per Active Session, so give them the CPU, memory and disk.
 
-`kndl onboard` offers to install what's missing (git, gh, curl, and microsandbox's runtime) with Homebrew, apt or dnf. A Runner needs no Claude Code and no Claude sign-in: see [Add a Runner](/how-to/add-a-runner/).
+`kndl onboard` offers to install what's missing (git, curl, and microsandbox's runtime) with Homebrew, apt or dnf. A Runner needs no Claude Code and no Claude sign-in: see [Add a Runner](/how-to/add-a-runner/).
 
 ## Install
 
-The repository is private, so the installer comes through the GitHub CLI, signed in with access:
-
 ```sh
-gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
+curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 ```
 
 It installs Bun if it's missing, clones kndl into `~/.kndl/app`, writes the `kndl` command to `~/.local/bin` (adding it to `PATH` if needed), then starts `kndl onboard`. To install another branch, tag or commit, or to skip onboard:
 
 ```sh
-gh api … | sh -s -- --ref <branch|tag|sha> --no-onboard
+curl -fsSL … | sh -s -- --ref <branch|tag|sha> --no-onboard
 ```
 
 Run again on an installed machine, it updates the install and runs `kndl doctor --fix`. `KNDL_HOME` installs somewhere other than `~/.kndl`.
@@ -119,7 +117,7 @@ The `PATH` line install.sh added to your shell's startup file, marked `# kndl: P
 To work on kndl, clone it and run the Hub and Runner with `bun run` instead:
 
 ```sh
-gh repo clone kddige/kndl
+git clone https://github.com/kddige/kndl.git
 cd kndl
 bun install
 bun test

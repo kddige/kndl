@@ -9,8 +9,7 @@ const site = "https://kddige.github.io"
 const doc = (path: string) => `${base}${path}`
 const img = (name: string) => `${base}landing/${name}.webp`
 
-const installCmd =
-  "gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh"
+const installCmd = "curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh"
 
 // Stars: fixed positions from a tiny seeded generator, so the sky is the same on every build.
 let seed = 11
@@ -112,7 +111,7 @@ const mallows = [
             <button type="button" id="copy" aria-label="Copy the install command">Copy</button>
           </div>
           <p class="install-note">
-            Needs the GitHub CLI, signed in with access to the private repo.{" "}
+            macOS or Linux, with git.{" "}
             <a href={doc("how-to/install/")}>What it installs</a>
           </p>
         </div>

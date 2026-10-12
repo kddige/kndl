@@ -12,12 +12,14 @@ Start with `kndl doctor`. It prints `ok`, `!!` (a warning) or `XX` (a failure) f
 **What you see.**
 
 ```
-kndl install: Could not clone kddige/kndl: it's private, so install gh and run  gh auth login  first.
+kndl install: Could not clone https://github.com/kddige/kndl.git.
 ```
 
-**Why.** The repository is private, and install.sh can only clone it with the GitHub CLI's sign-in.
+git prints why just above it.
 
-**Fix.** Install the [GitHub CLI](https://cli.github.com), run `gh auth login` with an account that can read the repository, and run the installer again.
+**Why.** git couldn't reach GitHub, or `KNDL_REPO` names a URL or checkout that doesn't exist.
+
+**Fix.** Check that `git clone https://github.com/kddige/kndl.git` works from this machine (a proxy or firewall may be in the way), unset `KNDL_REPO` or correct it, and run the installer again.
 
 ## `kndl: command not found`
 

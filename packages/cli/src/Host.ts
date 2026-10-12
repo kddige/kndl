@@ -227,7 +227,7 @@ export const hostFacts = (layout: Layout) =>
       root: process.getuid?.() === 0,
       user: userInfo().username,
       packageManager: managers.find((manager) => has(manager === "apt" ? "apt-get" : manager)),
-      tools: { git: has("git"), gh: has("gh"), curl: has("curl") },
+      tools: { git: has("git"), curl: has("curl") },
       microsandbox: microsandboxRuntime(layout),
       kvm: on === "linux" ? kvm() : undefined,
     } satisfies HostFacts
