@@ -1,6 +1,7 @@
 import {
   type BuildVersion,
   CommitIdPattern,
+  ReleaseVersionPattern,
   RunnerId,
   type RunnerAccount,
   RunnerModels,
@@ -39,6 +40,7 @@ interface RunnerRow {
   readonly account: string | null
   readonly commit: string | null
   readonly branch: string | null
+  readonly release: string | null
   readonly lastSeenAt: number | null
   readonly openSessions: number
   readonly updater: string | null
@@ -52,12 +54,17 @@ const fromRow = (row: RunnerRow): KnownRunner => ({
   id: RunnerId.make(row.id),
   name: row.name,
   login: row.account === null ? null : { account: row.account },
-  // A row from a hello is a full commit id; anything else would fail the Runners list's encoding,
-  // so it reads as no version.
+  // A row from a hello is a full commit id, and a Release's version; anything else would fail the
+  // Runners list's encoding, so it reads as no version, or no Release.
   version:
     row.commit === null || !CommitIdPattern.test(row.commit)
       ? null
-      : { commit: row.commit, ...(row.branch !== null && { branch: row.branch }) },
+      : {
+          commit: row.commit,
+          ...(row.branch !== null && { branch: row.branch }),
+          ...(row.release !== null &&
+            ReleaseVersionPattern.test(row.release) && { release: row.release }),
+        },
   lastSeenAt: row.lastSeenAt,
   openSessions: row.openSessions,
   updater: row.updater === null ? null : Option.getOrNull(decodeUpdater(row.updater)),
@@ -113,6 +120,7 @@ export class Runners extends Context.Service<
           UPDATE runners SET login_account = ${hello.login.account},
             version_commit = ${hello.version?.commit ?? null},
             version_branch = ${hello.version?.branch ?? null},
+            version_release = ${hello.version?.release ?? null},
             updater = ${hello.updater === undefined ? null : JSON.stringify(hello.updater)},
             models = COALESCE(${hello.models === undefined ? null : JSON.stringify(hello.models)}, models),
             last_seen_at = ${at}
@@ -126,7 +134,7 @@ export class Runners extends Context.Service<
 
       const select = (where: Fragment) => sql<RunnerRow>`
         SELECT r.id, r.name, r.login_account AS account, r.version_commit AS "commit",
-          r.version_branch AS branch, r.last_seen_at AS lastSeenAt, r.updater, r.models,
+          r.version_branch AS branch, r.version_release AS release, r.last_seen_at AS lastSeenAt, r.updater, r.models,
           (SELECT count(*) FROM sessions s
             WHERE s.runner_id = r.id AND s.state IN ${sql.in(openStates)}) AS openSessions
         FROM runners r

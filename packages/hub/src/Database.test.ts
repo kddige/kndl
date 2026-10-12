@@ -37,11 +37,19 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0034, attachments' sent_at (#280): the migrator runs
- * only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ * Takes the database back to before migration 0035, a Runner's Release (ADR 0025): the migrator
+ * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
  */
+const beforeRunnerRelease = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE runners DROP COLUMN version_release`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'runner_release'`
+})
+
+/** Takes the database back to before migration 0034, attachments' sent_at (#280), and 0035. */
 const beforeAttachmentsSent = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeRunnerRelease
   yield* sql`DROP INDEX attachments_unsent`
   yield* sql`ALTER TABLE attachments DROP COLUMN sent_at`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'attachments_sent'`

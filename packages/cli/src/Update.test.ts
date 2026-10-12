@@ -1,16 +1,23 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { describeStep } from "./Shell.ts"
+import { describeStep, type Step } from "./Shell.ts"
 import {
   buildSteps,
+  type Channel,
+  channelAfter,
+  channelStep,
+  containsCheckoutStep,
   describeCheckout,
   gitSteps,
+  latestRelease,
   localRunnerRestart,
+  needsRemote,
   parseLsRemote,
   pinnedNotice,
   RefNotFound,
+  releaseVersion,
   runnersNotice,
   updateTarget,
 } from "./Update.ts"
@@ -28,6 +35,82 @@ const remote = parseLsRemote(
 const onMain = { branch: "main", commit: "1111111111111111", tag: undefined }
 const pinned = { branch: undefined, commit: "3333333333333333", tag: "v0.1.0" }
 
+const plain = { ref: undefined, channel: undefined }
+const ref = (name: string) => ({ ref: name, channel: undefined })
+const channel = (name: Channel) => ({ ref: undefined, channel: name })
+
+const released = parseLsRemote(
+  [
+    "1111111111111111111111111111111111111111\trefs/heads/main",
+    "5555555555555555555555555555555555555555\trefs/tags/v2026.9.12",
+    "6666666666666666666666666666666666666666\trefs/tags/v2026.10.9",
+    "7777777777777777777777777777777777777777\trefs/tags/v2026.10.10",
+    "8888888888888888888888888888888888888888\trefs/tags/v2026.10.11-beta.1",
+    "9999999999999999999999999999999999999999\trefs/tags/v2027.0.1",
+    "3333333333333333333333333333333333333333\trefs/tags/v0.1.0",
+  ].join("\n"),
+)
+
+describe("Releases", () => {
+  test("a Release's tag is v<year>.<month>.<n>, and nothing else is", () => {
+    expect(releaseVersion("v2026.10.1")).toEqual([2026, 10, 1])
+    for (const tag of ["2026.10.1", "v2026.10.1-beta.1", "v2026.10.01", "v2026.13.1", "v0.1.0"]) {
+      expect(releaseVersion(tag)).toBeUndefined()
+    }
+  })
+
+  test("the latest is compared by number: 2026.10.10 > 2026.10.9 > 2026.9.12, betas ignored", () => {
+    expect(latestRelease(released.tags)).toBe("v2026.10.10")
+    expect(latestRelease(["v2026.9.12", "v2026.10.9"])).toBe("v2026.10.9")
+    expect(latestRelease(["v2026.10.11-beta.1", "v0.1.0"])).toBeUndefined()
+  })
+})
+
+describe("Channels", () => {
+  test("an install with no Channel recorded follows its branch, as before Channels", () => {
+    expect(updateTarget(onMain, plain, released)).toEqual({ _tag: "Branch", name: "main" })
+    expect(needsRemote(onMain, plain)).toBe(false)
+  })
+
+  test("stable moves to the latest Release; dev follows main", () => {
+    const onStable = { ...pinned, channel: "stable" as const }
+
+    expect(needsRemote(onStable, plain)).toBe(true)
+    expect(updateTarget(onStable, plain, released)).toEqual({
+      _tag: "Release",
+      name: "v2026.10.10",
+    })
+    expect(updateTarget(onStable, channel("dev"), released)).toEqual({
+      _tag: "Branch",
+      name: "main",
+    })
+  })
+
+  test("stable stays when origin has no Release yet", () => {
+    expect(updateTarget(onMain, channel("stable"), remote)).toEqual({ _tag: "NoRelease" })
+  })
+
+  test("--channel records the Channel, --ref clears it, and plain update keeps it", () => {
+    const onStable = { ...onMain, channel: "stable" as const }
+
+    expect(channelAfter(onMain, channel("stable"))).toBe("stable")
+    expect(channelAfter(onStable, ref("main"))).toBeUndefined()
+    expect(channelAfter(onStable, plain)).toBe("stable")
+  })
+
+  test("--ref and --channel together fail", () => {
+    expect(updateTarget(onMain, { ref: "main", channel: "dev" }, remote)).toBeInstanceOf(
+      RefNotFound,
+    )
+  })
+
+  test("says where an install on stable is", () => {
+    const at = { ...pinned, tag: "v2026.10.10", channel: "stable" as const }
+
+    expect(describeCheckout(at)).toBe("333333333333, on stable at v2026.10.10")
+  })
+})
+
 describe("reading origin's refs", () => {
   test("lists branches and tags, without peeled tags", () => {
     expect(remote).toEqual({ branches: ["main", "84-cli-core"], tags: ["v0.1.0"] })
@@ -36,45 +119,47 @@ describe("reading origin's refs", () => {
 
 describe("where update goes", () => {
   test("plain update follows the branch the checkout is on", () => {
-    expect(updateTarget(onMain, undefined, remote)).toEqual({ _tag: "Branch", name: "main" })
+    expect(updateTarget(onMain, plain, remote)).toEqual({ _tag: "Branch", name: "main" })
   })
 
   test("plain update on a pinned checkout stays, and says how to follow main", () => {
-    const target = updateTarget(pinned, undefined, remote)
+    const target = updateTarget(pinned, plain, remote)
 
     expect(target).toEqual({ _tag: "Pinned", at: "v0.1.0" })
-    expect(pinnedNotice({ _tag: "Pinned", at: "v0.1.0" })).toContain("kndl update --ref main")
+    expect(pinnedNotice({ _tag: "Pinned", at: "v0.1.0" })).toContain("kndl update --channel dev")
   })
 
   test("a pinned commit with no tag names the commit", () => {
     const at = { branch: undefined, commit: "abcdef0123456789abcd", tag: undefined }
 
-    expect(updateTarget(at, undefined, remote)).toEqual({ _tag: "Pinned", at: "abcdef012345" })
+    expect(updateTarget(at, plain, remote)).toEqual({ _tag: "Pinned", at: "abcdef012345" })
   })
 
   test("--ref <branch> follows it", () => {
-    expect(updateTarget(pinned, "84-cli-core", remote)).toEqual({
+    expect(updateTarget(pinned, ref("84-cli-core"), remote)).toEqual({
       _tag: "Branch",
       name: "84-cli-core",
     })
   })
 
   test("--ref <tag> pins to it", () => {
-    expect(updateTarget(onMain, "v0.1.0", remote)).toEqual({ _tag: "Tag", name: "v0.1.0" })
+    expect(updateTarget(onMain, ref("v0.1.0"), remote)).toEqual({ _tag: "Tag", name: "v0.1.0" })
   })
 
   test("--ref <sha> pins to the commit", () => {
-    expect(updateTarget(onMain, "ABCDEF1", remote)).toEqual({ _tag: "Commit", sha: "abcdef1" })
+    expect(updateTarget(onMain, ref("ABCDEF1"), remote)).toEqual({ _tag: "Commit", sha: "abcdef1" })
   })
 
   test("--ref naming nothing on origin fails", () => {
-    expect(updateTarget(onMain, "no-such-branch", remote)).toBeInstanceOf(RefNotFound)
+    expect(updateTarget(onMain, ref("no-such-branch"), remote)).toBeInstanceOf(RefNotFound)
   })
 
   test("--ref that git would read as an option fails, even if origin lists it", () => {
     const listed = { branches: ["--upload-pack=touch pwned"], tags: ["-f"] }
-    expect(updateTarget(onMain, "--upload-pack=touch pwned", listed)).toBeInstanceOf(RefNotFound)
-    expect(updateTarget(onMain, "-f", listed)).toBeInstanceOf(RefNotFound)
+    expect(updateTarget(onMain, ref("--upload-pack=touch pwned"), listed)).toBeInstanceOf(
+      RefNotFound,
+    )
+    expect(updateTarget(onMain, ref("-f"), listed)).toBeInstanceOf(RefNotFound)
   })
 })
 
@@ -152,6 +237,11 @@ describe.skipIf(Bun.which("git") === null)("the git Steps, run by git", () => {
       .stdout.toString()
       .trim(),
   })
+  /** Runs a Step that may fail, and says whether it exited 0. */
+  const succeeds = (s: Step) =>
+    Bun.spawnSync([s.command, ...s.args], { cwd: s.cwd ?? app }).exitCode === 0
+  const recordedChannel = () =>
+    Bun.spawnSync(["git", "config", "--get", "kndl.channel"], { cwd: app }).stdout.toString().trim()
 
   test("pins to a tag or a commit, detached, and follows a branch again", () => {
     run({ _tag: "Tag", name: "v0.1.0" })
@@ -161,6 +251,43 @@ describe.skipIf(Bun.which("git") === null)("the git Steps, run by git", () => {
     run({ _tag: "Branch", name: "main" })
     expect(head()).toEqual({ commit: second, branch: "main" })
     expect(git(app, "rev-parse", "--abbrev-ref", "main@{upstream}")).toBe("origin/main")
+  })
+
+  test("stable never moves back: a Release older than the checkout doesn't include it", () => {
+    run({ _tag: "Branch", name: "main" })
+    expect(succeeds(containsCheckoutStep(app, "v0.1.0"))).toBe(false)
+    run({ _tag: "Release", name: "v0.1.0" })
+    expect(succeeds(containsCheckoutStep(app, "v0.1.0"))).toBe(true)
+  })
+
+  test("install.sh picks the same latest Release as update", () => {
+    const script = readFileSync(join(import.meta.dir, "../../../install.sh"), "utf8")
+    const fn = /^latest_release\(\) \{[\s\S]*?^\}$/m.exec(script)?.[0]
+    if (fn === undefined) throw new Error("install.sh has no latest_release")
+    const latest = (repo: string) =>
+      Bun.spawnSync(["sh", "-c", `${fn}\nlatest_release "$1"`, "sh", repo])
+        .stdout.toString()
+        .trim()
+    const tagged = join(dir, "tagged")
+    git(dir, "init", "--quiet", "--initial-branch=main", tagged)
+    expect(latest(tagged)).toBe("")
+    for (const tag of released.tags) {
+      git(tagged, "commit", "--quiet", "--allow-empty", "-m", tag)
+      git(tagged, "tag", tag)
+    }
+
+    expect(latest(tagged)).toBe("v2026.10.10")
+    expect(latestRelease(released.tags)).toBe("v2026.10.10")
+  })
+
+  test("records the Channel in the checkout, and clears it", () => {
+    expect(succeeds(channelStep(app, "stable"))).toBe(true)
+    expect(recordedChannel()).toBe("stable")
+    expect(succeeds(channelStep(app, undefined))).toBe(true)
+    expect(recordedChannel()).toBe("")
+    // Clearing again: git exits 5, which the Step may.
+    expect(channelStep(app, undefined).mayFail).toBe(true)
+    expect(recordedChannel()).toBe("")
   })
 })
 

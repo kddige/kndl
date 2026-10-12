@@ -75,6 +75,13 @@ test("lists each Runner with its login, version, last connection and Sessions", 
   expect(document.querySelector('a[aria-current="page"]')?.textContent).toContain("Runners")
 })
 
+test("shows a Runner on a Release by its Release, before its commit (ADR 0025)", async () => {
+  const { hub } = await openRunners()
+  const commit = "5d2b9e07c41a8f3362e0d9b7a1c4f58e2b6d0a93"
+  await step(() => hub.patchRunner("r-ci", { version: { commit, release: "2026.10.1" } }))
+  await eventually(() => expect(ciBox()).toContain("2026.10.1 (5d2b9e07c41a)"))
+})
+
 test("adds a Runner: shows the join command, then the Runner once the code is used", async () => {
   const { hub } = await openRunners()
   await step(() => button("Add a Runner").click())

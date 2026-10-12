@@ -19,7 +19,7 @@ Either way it manages the installed home, `KNDL_HOME` or else `~/.kndl`, never a
 | `kndl status` | What's installed (commit, and the branch it follows or that it's pinned), each service's state, the Hub's URL and `/health`, and whether the Runner is connected. Exits 1 only when there's no install; `doctor` is the check. |
 | `kndl logs [hub\|runner] [-f] [-n <lines>]` | Prints the last 100 lines (`-n`) of the service's log, and with `-f` follows it. The role can be left out when the machine has only one. |
 | `kndl doctor [--fix] [--yes]` | Checks the prerequisites, the env files and their permissions, that the Hub and Runner accept their configuration, the web UI and mod builds, kndl data in the home without its env file, the services, the Hub's health, whether the Runner reaches the Hub, and that a GitHub App in `hub.env` has [the permissions the Hub needs](/self-hosting/set-up-the-github-app/#keep-the-permissions-in-step). GitHub sign-in without an App fails, since no one signed in with GitHub can then see a Session. Prints `ok`, `!!` (a warning) or `XX` (a failure) for each, and exits 1 on a failure. `--fix` repairs what it can, after asking (`--yes` doesn't ask), then checks again. It moves data aside only when you confirm in a terminal, even with `--yes`. |
-| `kndl update [--ref <ref>] [--no-update-runners] [--now]` | Updates the install: fetches, moves to the target, runs `bun install`, rebuilds the web UI and the mod, rewrites and restarts the installed services, and runs `doctor`. On the Hub's machine, its Runners follow. `upgrade` is the same command. See [below](#kndl-update). |
+| `kndl update [--channel <stable\|dev>] [--ref <ref>] [--no-update-runners] [--now]` | Updates the install: fetches, moves to the target, runs `bun install`, rebuilds the web UI and the mod, rewrites and restarts the installed services, and runs `doctor`. On the Hub's machine, its Runners follow. `upgrade` is the same command. See [below](#kndl-update). |
 | `kndl uninstall [--purge] [--yes]` | Stops and removes the services, removes the `kndl` command and the install, and keeps the home's data. `--purge` removes the whole home. Asks first; without a terminal it needs `--yes`. |
 | `kndl hub install\|start\|stop\|status` | The Hub's service. `install` writes the service file and (re)starts it; `stop` stops it until the next `start` or login; `status` exits 1 unless it runs. |
 | `kndl hub setup-link` | Prints the installed Hub's Setup link, as [`bun run setup-link`](#bun-run-setup-link) does: whoever signs in with it becomes the Hub's Owner. Replaces any earlier link; refused once the Hub has an Owner. Run it on the Hub's machine. See [Let people in](/self-hosting/let-people-in/). |
@@ -87,8 +87,9 @@ The code is redeemed before anything is installed or built. If a later step fail
 
 | Command | What it does |
 |---|---|
-| `kndl update` | Moves to the latest commit of the branch the install follows, `main` by default. A pinned install stays where it is, and says how to follow `main` again. |
-| `kndl update --ref <branch>` | Moves to that branch, and follows it from then on. `--branch` is the same flag. |
+| `kndl update` | Moves along what the install follows: on the `stable` Channel, the latest Release; on `dev`, the latest commit of `main`; with no Channel, the latest commit of its branch. A pinned install stays where it is, and says how to follow a Channel. |
+| `kndl update --channel <stable\|dev>` | Follows that Channel from then on. `stable` never moves back to an older commit: it stays until a Release includes the commit checked out. |
+| `kndl update --ref <branch>` | Moves to that branch, and follows it from then on, instead of a Channel. `--branch` is the same flag. |
 | `kndl update --ref <tag or commit>` | Moves to it, and pins the install there. |
 | `--no-update-runners` | On the Hub's machine: leaves Runners on other machines on their commit. The Runner on this machine follows anyway, as it shares the install. |
 | `--now` | Runners following the Hub stop their running Turns at once, rather than giving them up to ten minutes to end. |

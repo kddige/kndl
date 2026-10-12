@@ -42,13 +42,19 @@ import { Shell, step } from "./Shell.ts"
 import { Ui } from "./Ui.ts"
 import {
   buildSteps,
+  type Channel,
+  channelAfter,
+  channelStep,
+  containsCheckoutStep,
   describeCheckout,
   gitSteps,
   localRunnerRestart,
+  needsRemote,
   parseLsRemote,
   pinnedNotice,
   RefNotFound,
   runnersNotice,
+  stableNotice,
   updateTarget,
 } from "./Update.ts"
 
@@ -166,6 +172,8 @@ const applyFix = (
 export interface UpdateOptions {
   /** `--ref`/`--branch`: where to move the install. */
   readonly ref: string | undefined
+  /** `--channel`: follow the latest Release, or main, from now on (ADR 0025). */
+  readonly channel: Channel | undefined
   /** On the Hub's machine, ask the Runners on other machines to follow (not `--no-update-runners`). */
   readonly updateRunners: boolean
   /** `--now`: Runners stop their running Turns at once, rather than letting them end. */
@@ -183,7 +191,7 @@ export interface UpdateOptions {
  */
 export const update = (installed: Layout, options: UpdateOptions) =>
   Effect.gen(function* () {
-    const ref = options.ref
+    const request = { ref: options.ref, channel: options.channel }
     const setting = thisMachine()
     let layout = installed
     if (setting !== undefined) {
@@ -199,28 +207,45 @@ export const update = (installed: Layout, options: UpdateOptions) =>
     const on = yield* requirePlatform(platform())
     const shell = yield* Shell
     const before = yield* readCheckout(layout.app)
-    const remote =
-      ref === undefined
-        ? { branches: [], tags: [] }
-        : parseLsRemote(
-            (yield* shell
-              .capture(
-                step("git", ["ls-remote", "--heads", "--tags", "origin"], { cwd: layout.app }),
-              )
-              .pipe(
-                Effect.mapError((error) =>
-                  fail(`Could not ask origin for its refs: ${error.message}`),
-                ),
-              )).stdout,
-          )
-    const target = updateTarget(before, ref, remote)
+    const remote = !needsRemote(before, request)
+      ? { branches: [], tags: [] }
+      : parseLsRemote(
+          (yield* shell
+            .capture(step("git", ["ls-remote", "--heads", "--tags", "origin"], { cwd: layout.app }))
+            .pipe(
+              Effect.mapError((error) =>
+                fail(`Could not ask origin for its refs: ${error.message}`),
+              ),
+            )).stdout,
+        )
+    const target = updateTarget(before, request, remote)
     if (target instanceof RefNotFound) return yield* fail(target.message)
     if (target._tag === "Pinned") {
       yield* Console.log(pinnedNotice(target))
       return true
     }
+    const channel = channelAfter(before, request)
+    if (target._tag === "NoRelease") {
+      yield* runSteps([channelStep(layout.app, channel)])
+      yield* Console.log(stableNotice(target))
+      return true
+    }
+    if (target._tag === "Release") {
+      // Fetch first, so the Release's tag is here to compare with.
+      yield* runSteps(gitSteps(layout.app, target).slice(0, 1))
+      const contains = yield* shell.capture(containsCheckoutStep(layout.app, target.name))
+      if (contains.exitCode !== 0) {
+        yield* runSteps([channelStep(layout.app, channel)])
+        yield* Console.log(stableNotice({ _tag: "Older", release: target.name }))
+        return true
+      }
+    }
     yield* Console.log(`Updating ${layout.app} (${describeCheckout(before)}):`)
-    yield* runSteps(gitSteps(layout.app, target))
+    const moves = gitSteps(layout.app, target)
+    yield* runSteps([
+      ...(target._tag === "Release" ? moves.slice(1) : moves),
+      channelStep(layout.app, channel),
+    ])
     yield* runSteps(buildSteps(layout.app, bunPath(), configuredRoles(layout)))
     const after = yield* readCheckout(layout.app)
     yield* Console.log(`Now at ${describeCheckout(after)}.`)

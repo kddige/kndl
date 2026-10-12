@@ -260,7 +260,7 @@ describe("Runners", () => {
           },
         ])
 
-        const version = { commit: "a".repeat(40), branch: "main" }
+        const version = { commit: "a".repeat(40), branch: "main", release: "2026.10.1" }
         const updater = { self: false, reason: "it runs from a developer's checkout" }
         const opus = {
           alias: "opus",
@@ -291,6 +291,17 @@ describe("Runners", () => {
             updater,
             models,
           }),
+        )
+
+        // On a commit after the Release, it says no Release, and none is kept from before.
+        const after = { commit: "b".repeat(40), branch: "main" }
+        yield* runners.recordHello(
+          studio.runnerId,
+          { login: { account: "a@b.c" }, version: after, updater },
+          25,
+        )
+        expect(Option.map(yield* runners.get(studio.runnerId), (r) => r.version)).toEqual(
+          Option.some(after),
         )
 
         // A Runner from before the version and the updater were in the hello. Its models are

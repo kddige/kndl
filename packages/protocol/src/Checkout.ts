@@ -4,7 +4,7 @@
 // the web UI and the mod's bundle have no use for.
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { type BuildVersion, CommitIdPattern } from "./Build.ts"
+import { type BuildVersion, CommitIdPattern, releaseOf } from "./Build.ts"
 
 /** The checkout this file is in: the one the Hub, Runner or CLI importing it runs from. */
 export const thisCheckout = fileURLToPath(new URL("../../..", import.meta.url))
@@ -21,12 +21,17 @@ function git(dir: string, args: ReadonlyArray<string>): string | undefined {
   }
 }
 
-/** The checkout's HEAD and branch, or `undefined` when `dir` isn't a git checkout. */
+/**
+ * The checkout's HEAD, its branch, and the Release tagged on HEAD (ADR 0025), or `undefined` when
+ * `dir` isn't a git checkout.
+ */
 export function readBuildVersion(dir: string = thisCheckout): BuildVersion | undefined {
   const commit = git(dir, ["rev-parse", "HEAD"])
   if (commit === undefined || !CommitIdPattern.test(commit)) return undefined
   const branch = git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"])
-  return branch ? { commit, branch } : { commit }
+  const tags = git(dir, ["tag", "--points-at", "HEAD", "--list", "v*"])
+  const release = releaseOf(tags === undefined ? [] : tags.split("\n"))
+  return { commit, ...(branch && { branch }), ...(release !== undefined && { release }) }
 }
 
 /**

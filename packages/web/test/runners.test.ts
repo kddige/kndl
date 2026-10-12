@@ -8,6 +8,7 @@ import {
 import {
   codeOutcome,
   manualUpdateText,
+  shortCommit,
   sortRunners,
   timeLeft,
   updateAction,
@@ -201,5 +202,17 @@ describe("Pairing codes on the page", () => {
       runners: [studio],
     }
     expect(codeOutcome(shown, redeemed, 20_000)).toEqual({ _tag: "Used", runner: studio })
+  })
+})
+
+describe("a commit as the page shows it", () => {
+  const commit = "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1"
+
+  test("is short", () => {
+    expect(shortCommit({ commit, branch: "main" })).toBe("824de4a1f0c3")
+  })
+
+  test("comes after its Release, when it is one's", () => {
+    expect(shortCommit({ commit, release: "2026.10.1" })).toBe("2026.10.1 (824de4a1f0c3)")
   })
 })

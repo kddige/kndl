@@ -61,7 +61,7 @@ kndl onboard --role runner --hub-url https://hub.example.com --token chr_… --r
 
 ## The Runners page
 
-**Runners** in the sidebar lists every Runner: whether it's online, its Claude credential, the commit it runs, when it was last seen, and how many of its Sessions aren't Archived. A Runner whose commit is behind the Hub's is marked **behind the Hub**: see [Keep Runners on the Hub's commit](#keep-runners-on-the-hubs-commit).
+**Runners** in the sidebar lists every Runner: whether it's online, its Claude credential, the commit it runs, when it was last seen, and how many of its Sessions aren't Archived. A commit that is a Release's shows the Release first, such as `2026.10.1 (824de4a1f0c3)` ([ADR 0025](/contributing/decisions/0025-releases-and-channels/)); the Hub's own is at the top of the page. A Runner whose commit is behind the Hub's is marked **behind the Hub**: see [Keep Runners on the Hub's commit](#keep-runners-on-the-hubs-commit).
 
 - **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place, with its name and Sessions, and the old token stops working. Use it for a reinstalled machine, a lost token, or to move a Runner to a new machine.
 - **Remove** revokes the Runner's token and disconnects it. Archive its Sessions first: it's refused while any aren't Archived.
