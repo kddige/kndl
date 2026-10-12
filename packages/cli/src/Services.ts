@@ -21,7 +21,7 @@ export interface ServiceSpec {
   readonly bun: string
   /**
    * The PATH the service runs with: the one onboard ran with. A launchd agent otherwise gets only
-   * `/usr/bin:/bin:/usr/sbin:/sbin`, and the Runner needs git and gh.
+   * `/usr/bin:/bin:/usr/sbin:/sbin`, and the Runner needs git.
    */
   readonly path: string
 }

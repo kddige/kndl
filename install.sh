@@ -3,7 +3,7 @@
 # `kndl` command in ~/.local/bin; then `kndl onboard`, when there's a terminal to ask
 # in. Run again on an installed machine, it updates the install and runs `kndl doctor --fix`.
 #
-#   gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
+#   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 #   ... | sh -s -- --ref <branch|tag|sha> --no-onboard
 #
 # The home is KNDL_HOME, by default ~/.kndl. KNDL_REPO overrides where the
@@ -62,23 +62,11 @@ find_bun() {
   say "$HOME/.bun/bin/bun"
 }
 
-# Clones the checkout. A private GitHub repo is cloned with gh, and the checkout keeps using gh's
-# credentials (in its own git config only), so `kndl update` can fetch.
+# Clones the checkout. kndl's repo is public, so neither this nor `kndl update` needs credentials.
 clone() {
   repo=$1
   app=$2
-  if [ -n "${KNDL_REPO:-}" ]; then
-    git clone --quiet "$repo" "$app"
-    return 0
-  fi
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    gh repo clone "$repo" "$app" -- --quiet
-    git -C "$app" config credential.https://github.com.helper ''
-    git -C "$app" config --add credential.https://github.com.helper '!gh auth git-credential'
-    return 0
-  fi
-  git clone --quiet "https://github.com/$repo.git" "$app" ||
-    die "Could not clone $repo: it's private, so install gh and run  gh auth login  first."
+  git clone --quiet "$repo" "$app" || die "Could not clone $repo."
 }
 
 # Moves a fresh checkout to --ref: a branch is followed, a tag or commit pinned.
@@ -173,7 +161,7 @@ main() {
   [ -n "$home" ] && [ "$home" != "${HOME%/}" ] || die "KNDL_HOME can't be / or your home directory."
   app="$home/app"
   wrapper="$HOME/.local/bin/kndl"
-  repo=${KNDL_REPO:-kddige/kndl}
+  repo=${KNDL_REPO:-https://github.com/kddige/kndl.git}
 
   bun=$(find_bun)
   mkdir -p "$home"

@@ -48,7 +48,7 @@ export const RoleTitle: Record<Role, string> = { hub: "Hub", runner: "Runner" }
 
 /** The install line, for the commands that need an install and find none. */
 export const InstallLine =
-  "gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh"
+  "curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh"
 
 /**
  * Fails unless the home holds an installed checkout. An install made under kndl's former name,

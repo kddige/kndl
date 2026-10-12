@@ -9,7 +9,7 @@ import { type Step, step } from "./Shell.ts"
 export type PackageManager = "brew" | "apt" | "dnf"
 
 /** A command-line tool a package manager installs. */
-export type Tool = "git" | "gh" | "curl"
+export type Tool = "git" | "curl"
 
 /** What Host.ts found on this machine. */
 export interface HostFacts {
@@ -47,10 +47,10 @@ export interface PrerequisitePlan {
 }
 
 /**
- * The tools a Hub and a Runner need: gh is how kndl itself is installed and updated. A
+ * The tools a Hub and a Runner need: git is how kndl itself is installed and updated. A
  * Runner's Sessions run in their Sandboxes, which bring their own tmux and Claude Code (ADR 0013).
  */
-const Tools: ReadonlyArray<Tool> = ["git", "gh"]
+const Tools: ReadonlyArray<Tool> = ["git"]
 
 /** microsandbox's own installer, for when no runtime is found. */
 export const MicrosandboxInstaller = "curl -fsSL https://install.microsandbox.dev | sh"
