@@ -73,6 +73,17 @@ export const PromptFailed = Schema.TaggedStruct("PromptFailed", {
 export type PromptFailed = typeof PromptFailed.Type
 
 /**
+ * A {@link DeliverPrompt} for a prompt the mod gave Claude Code already (#323), so it didn't again:
+ * the Hub delivers the head of the queue again when it doesn't know it was delivered, as after it
+ * restarted, or when the mod never reported the Turn it started. The Hub takes it out of the queue.
+ * Sent only to a Hub whose {@link ModWelcome} says it takes it.
+ */
+export const PromptAlreadySubmitted = Schema.TaggedStruct("PromptAlreadySubmitted", {
+  promptId: PromptId,
+})
+export type PromptAlreadySubmitted = typeof PromptAlreadySubmitted.Type
+
+/**
  * A {@link DeliverAgentMessage} or {@link StopAgent} failed, as when the agent is unknown to
  * Claude Code: named by the web command it came from, with who sent the message, if anyone did.
  */
@@ -100,6 +111,7 @@ export const ModToHub = Schema.Union([
   ModHello,
   TurnEvent,
   PromptFailed,
+  PromptAlreadySubmitted,
   AgentCommandFailed,
   AnswerFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
@@ -110,6 +122,7 @@ export type ModToHubEncoded = typeof ModToHub.Encoded
 export const ModEvent = Schema.Union([
   TurnEvent,
   PromptFailed,
+  PromptAlreadySubmitted,
   AgentCommandFailed,
   AnswerFailed,
 ]).pipe(Schema.toTaggedUnion("_tag"))
@@ -125,6 +138,11 @@ export type ModEventsEncoded = typeof ModEvents.Encoded
 /** The Hub accepted the mod's hello. */
 export const ModWelcome = Schema.TaggedStruct("ModWelcome", {
   protocolVersion: CurrentProtocolVersion,
+  /**
+   * It takes a {@link PromptAlreadySubmitted} (#323). A Hub from before doesn't say so, and would
+   * refuse the post it came in, with the events beside it.
+   */
+  alreadySubmitted: Schema.optionalKey(Schema.Literal(true)),
 })
 export type ModWelcome = typeof ModWelcome.Type
 

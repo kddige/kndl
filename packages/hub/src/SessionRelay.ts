@@ -8,7 +8,9 @@
 //   those connections and to the Session's mod whenever it changes.
 // - The Prompt queue (PromptQueue.ts): prompts wait in order, and the head is delivered to the
 //   mod when the Session is idle, one at a time. A prompt the mod reports as PromptFailed is
-//   dropped, and its sender gets a CommandFailed, rather than put back to fail again.
+//   dropped, and its sender gets a CommandFailed, rather than put back to fail again. One it
+//   reports as PromptAlreadySubmitted, delivered again but given to Claude Code before, leaves the
+//   queue as if its Turn had started (#323).
 // - Steering (#195, ADR 0018): while a Turn runs, any Participant can hand a queued prompt to it
 //   (SteerPrompt), if the Session's mod said in its hello that it steers. The prompt keeps its
 //   place in the queue until the mod reports it joined the Turn (PromptSteered), and nothing else
@@ -3423,6 +3425,18 @@ export class SessionRelay extends Context.Service<
               message: `Your prompt could not be delivered to Claude Code: ${event.message}`,
             }),
             (client) => client.you.id === failed.value.sender.id,
+          )
+          return yield* queueChanged(sessionId)
+        }
+
+        if (event._tag === "PromptAlreadySubmitted") {
+          // Delivered again, as after the Hub restarted or the mod's TurnStarted was lost, and not
+          // run twice (#323): it is out of the queue, as if its Turn had just started.
+          live.turnStarted(sessionId, event.promptId)
+          const removed = yield* prompts.remove(sessionId, event.promptId)
+          if (Option.isNone(removed)) return
+          yield* Effect.logInfo(
+            `Session ${sessionId}: its Claude Code had prompt ${event.promptId} already, so it left the queue`,
           )
           return yield* queueChanged(sessionId)
         }

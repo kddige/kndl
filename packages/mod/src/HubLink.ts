@@ -90,6 +90,7 @@ export class HubLink {
   private flushFailures = 0
   /** The seq of the last command handled. */
   private after = 0
+  private hubTakesAlreadySubmitted = false
 
   constructor(private readonly options: HubLinkOptions) {
     this.url = options.hubUrl.replace(/\/+$/, "")
@@ -97,6 +98,14 @@ export class HubLink {
       authorization: `Bearer ${options.modToken}`,
       "content-type": "application/json",
     }
+  }
+
+  /**
+   * Whether the Hub's welcome said it takes a PromptAlreadySubmitted (#323). A Hub from before
+   * would refuse the post it came in, and the events beside it.
+   */
+  get takesAlreadySubmitted() {
+    return this.hubTakesAlreadySubmitted
   }
 
   /** Says hello and starts polling for commands, if it runs them, from a timer of its own. */
@@ -150,7 +159,10 @@ export class HubLink {
     if (response.status === 401 || response.status === 403)
       return { rejected: `the Hub refused the mod token (${response.status})` }
     const reply = readHelloReply(response.text)
-    if (reply?._tag === "ModWelcome") return "Welcomed"
+    if (reply?._tag === "ModWelcome") {
+      this.hubTakesAlreadySubmitted = reply.alreadySubmitted === true
+      return "Welcomed"
+    }
     if (reply?._tag === "HandshakeRejected") return { rejected: reply.message }
     this.options.log(`hub-link: the Hub answered the hello with ${response.status}`)
     return "Retry"
