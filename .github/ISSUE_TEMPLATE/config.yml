@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/kddige/kndl/security/advisories/new
+    about: Report security issues privately, never in a public issue.
+  - name: Docs
+    url: https://kddige.github.io/kndl/
+    about: How to install, run and develop kndl.
