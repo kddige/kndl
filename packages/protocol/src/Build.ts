@@ -15,10 +15,25 @@ export const CommitIdPattern = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/
 export const CommitId = Schema.String.check(Schema.isPattern(CommitIdPattern))
 export type CommitId = typeof CommitId.Type
 
-/** The commit a Hub or Runner runs, and the branch its checkout follows, if it is on one. */
+/**
+ * A Release's version (ADR 0025), like `2026.10.1`: the year, the month and the Release's number
+ * in the month, none zero-padded. Its tag is the version with a `v` before it.
+ */
+export const ReleaseVersionPattern = /^[1-9]\d{3}\.([1-9]|1[0-2])\.[1-9]\d*$/
+
+/** A Release's version, without its tag's `v`. */
+export const ReleaseVersion = Schema.String.check(Schema.isPattern(ReleaseVersionPattern))
+export type ReleaseVersion = typeof ReleaseVersion.Type
+
+/**
+ * The commit a Hub or Runner runs, the branch its checkout follows, if it is on one, and the
+ * Release, if the commit is one's (ADR 0025). `release` is optional, so a peer from before it
+ * leaves it out, and ignores it when it's there.
+ */
 export const BuildVersion = Schema.Struct({
   commit: CommitId,
   branch: Schema.optionalKey(Schema.NonEmptyString),
+  release: Schema.optionalKey(ReleaseVersion),
 })
 export type BuildVersion = typeof BuildVersion.Type
 
@@ -49,8 +64,34 @@ export function runnerVersionStatus(
   return held ? "Behind" : "Differs"
 }
 
-/** A version as people read it: the commit's first 12 characters, and its branch. */
+/**
+ * A version as people read it: the commit's first 12 characters, and its branch; on a Release,
+ * the Release first, with those after it.
+ */
 export function describeBuild(version: BuildVersion): string {
   const commit = version.commit.slice(0, 12)
+  if (version.release !== undefined) {
+    const at = version.branch === undefined ? commit : `${commit}, ${version.branch}`
+    return `${version.release} (${at})`
+  }
   return version.branch === undefined ? commit : `${commit} (${version.branch})`
+}
+
+const parts = (version: string) => version.split(".").map(Number) as [number, number, number]
+
+/**
+ * The Release among a commit's tags (ADR 0025), without the tag's `v`. A tag with a suffix, like
+ * `-beta.1`, or zero-padding isn't a Release's. Of several, the newest.
+ */
+export function releaseOf(tags: ReadonlyArray<string>): ReleaseVersion | undefined {
+  return tags
+    .flatMap((tag) => {
+      const version = tag.startsWith("v") ? tag.slice(1) : ""
+      return ReleaseVersionPattern.test(version) ? [version] : []
+    })
+    .toSorted((a, b) => {
+      const [x, y] = [parts(a), parts(b)]
+      return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]
+    })
+    .at(-1)
 }
