@@ -117,7 +117,7 @@ Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Cl
 - `--session-id` for a new Session, or `--resume` to wake one.
 - `--plugin-dir /opt/kndl/mod/<copy>/hub-link` and `--plugin-dir /opt/kndl/mod/<copy>/hub-link-commands`, the mod's plugins ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)), from the copy of `RUNNER_MOD_DIR` made for this start, mounted read-only.
 - `--dangerously-skip-permissions`: the Sandbox is the boundary ([ADR 0004](/contributing/decisions/0004-the-sandbox-is-the-security-boundary/)).
-- `--model` and `--effort` when the Session's [model and effort](/guides/work-in-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
+- `--model` and `--effort` when the Session's [model and effort](/guides/manage-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
 
 Its environment is what the Start script gets: the package cache variables and, for a Repo with an Environment, the image's login environment with the Environment's Variables over it ([ADR 0009](/contributing/decisions/0009-environments/)). On top of it go these, the mod's and Claude Code's:
 

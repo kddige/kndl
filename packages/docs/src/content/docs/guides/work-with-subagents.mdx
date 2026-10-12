@@ -1,0 +1,90 @@
+---
+title: Work with subagents
+description: Have a Session hand work to Claude Code's subagents, then follow, message, stop and resume them, and merge a worktree agent's work.
+sidebar:
+  order: 3
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Have a Session hand work to [subagents](/reference/glossary/), then follow, message, stop and resume them from the web UI.
+
+## What you need
+
+- A Session: see [Work in a Session](/guides/work-in-a-session/).
+
+## Ask for subagents
+
+Claude starts subagents with Claude Code's Agent tool. Ask for them in a prompt:
+
+```text
+Use a background agent to write the changelog, and another, in a worktree, to update the API docs.
+```
+
+- **In the background**, the default, an agent keeps running after the Turn ends. When it's done, Claude Code starts a Turn to read its result.
+- **In the foreground**, the Turn waits for the agent.
+- **In a worktree**, the agent works in its own checkout, on its own branch.
+
+Every agent shares the Session's Sandbox. If they need more CPU or memory, raise the [Environment's resources](/guides/set-up-an-environment/#set-the-resources).
+
+## Follow an agent
+
+Each agent is a card in the transcript that streams its work. In the sidebar, the Session's agents are listed under its row, each with a status:
+
+| Status      | Meaning                                                |
+| ----------- | ------------------------------------------------------ |
+| Running     | The agent is working.                                  |
+| Done        | The agent finished.                                    |
+| Stopped     | Someone, or Claude, stopped it.                        |
+| Interrupted | The Session's Claude Code stopped while the agent ran. |
+
+To open an agent's view, click its row in the sidebar, or **Message or stop it** on its card. **Back to the chat** returns to the transcript.
+
+![An agent's view: "Document the protocol", Interrupted, with its branch, its tool calls, and a box to message it.](../../../assets/screenshots/agent.png)
+
+## Message, stop or resume an agent
+
+In the agent's view:
+
+<Steps>
+
+1. **To message a running agent**, type in the box and press **Send message**. The agent reads it, with your name, at its next tool call.
+
+2. **To stop it**, press **Stop agent**. Claude Code starts a Turn to tell the Session's Claude.
+
+3. **To resume an agent** that is Done, Stopped or Interrupted, type what it should do and press **Resume**. It picks up where it left off. A message to an agent of an Asleep Session wakes the Session first.
+
+</Steps>
+
+**Stop** on a Turn doesn't stop a background agent. Stop it from its view.
+
+## After sleep or a restart
+
+Agents run inside the Session's Claude Code, so they stop when it does: when the Session sleeps, when its model or Environment changes, or when its Runner is lost. While agents run, **Sleep now** and a restart ask first, and the Session doesn't fall asleep on its own.
+
+Agents that were running show as Interrupted. Their work so far is kept: resume one to carry on.
+
+## Merge a worktree agent's work
+
+A worktree agent works on the branch `worktree-agent-<agent id>`, shown on its card. To bring its work onto the Session's Work branch, ask:
+
+```text
+Merge the worktree agent's branch into this branch.
+```
+
+Until then the branch is local to the Session. It reaches GitHub only if the Session pushes it.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Manage a Session"
+    href="/kndl/guides/manage-a-session/"
+    description="Sleep, wake and model changes, which interrupt agents."
+  />
+  <LinkCard
+    title="Set up an Environment"
+    href="/kndl/guides/set-up-an-environment/"
+    description="Give agents more CPUs and memory."
+  />
+</CardGrid>

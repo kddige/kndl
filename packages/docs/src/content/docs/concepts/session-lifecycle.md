@@ -60,7 +60,7 @@ If the Repo's Environment has a later version, waking makes the Sandbox afresh f
 
 While a Session is Active, its Runner watches what listens in its Sandbox. Every 2 seconds it reads the guest's `/proc/net/tcp` and `/proc/net/tcp6`, and when the listening sockets change it looks up the process holding each new one and sends the Hub the Session's whole list. Each port is listed once, with every address it listens on. Ports Docker publishes are held by `docker-proxy`. Claude Code's own login callback port is left out.
 
-The Hub keeps the latest list in memory only and sends it to the web UI ([Work in a Session](/guides/work-in-a-session/#see-its-open-ports)). It drops the list as soon as the Session is no longer Active, Frozen included. Open ports don't keep a Session awake ([ADR 0016](/contributing/decisions/0016-forwarding-a-sessions-ports/)).
+The Hub keeps the latest list in memory only and sends it to the web UI ([Work in a Session](/guides/forward-a-sessions-ports/#see-a-sessions-open-ports)). It drops the list as soon as the Session is no longer Active, Frozen included. Open ports don't keep a Session awake ([ADR 0016](/contributing/decisions/0016-forwarding-a-sessions-ports/)).
 
 ## When a start fails
 
