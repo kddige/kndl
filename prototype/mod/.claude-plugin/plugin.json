@@ -1,6 +1,0 @@
-{
-  "name": "hub-link",
-  "version": "0.1.0",
-  "description": "Links this session to a claude-hub server: streams it out, takes prompts in.",
-  "types": "./types/index.d.ts"
-}
