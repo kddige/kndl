@@ -40,6 +40,14 @@ _Avoid_: port forward, tunnel
 The long-lived credential the `kndl` CLI signs in to a Hub with, made by `kndl login` and listed and revocable on its owner's Account page.
 _Avoid_: API key, access token, session cookie
 
+**Release**:
+A version of kndl, a dated tag on `main` such as `2026.10.1`, with notes on what changed since the last one. A fix is always a new Release.
+_Avoid_: version (alone), build, tag
+
+**Channel**:
+What an install of kndl follows: `stable`, the latest Release, or `dev`, the head of `main`. A Hub's Runners run what the Hub runs, whatever Channel each machine was installed with.
+_Avoid_: track, branch, ring
+
 ## Who gets in
 
 **Member**:

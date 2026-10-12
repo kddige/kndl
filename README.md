@@ -84,3 +84,7 @@ See [Develop kndl](https://kddige.github.io/kndl/how-to/develop-kndl/) and the [
 ## Not affiliated with Anthropic
 
 kndl is an independent project, not affiliated with, endorsed by or sponsored by Anthropic. Claude and Claude Code are Anthropic's trademarks; kndl runs Claude Code as Anthropic publishes it, on your own Claude account.
+
+## License
+
+kndl is released under the [MIT License](LICENSE). The skills vendored in `.agents/skills` are MIT-licensed by their author; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

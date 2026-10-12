@@ -1,12 +1,13 @@
 {
   "name": "kndl",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run --filter '*' typecheck && tsc -p scripts",
     "lint": "oxlint --deny-warnings",
     "format": "oxfmt --write",
     "format:check": "oxfmt --check",

@@ -71,7 +71,6 @@
     }
   ],
   "ignorePatterns": [
-    "prototype/**",
     "**/dist/**",
     "**/.claude-plugin/types/**",
     "packages/mod/plugins/*/hooks/hub-link-lib.js",
