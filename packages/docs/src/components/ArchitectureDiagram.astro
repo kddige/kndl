@@ -1,0 +1,164 @@
+---
+// The parts of kndl and what connects to what, for Concepts > How kndl works: browsers and the
+// Hub, a Runner's machine with its credential proxy and a Session's Sandbox, and Anthropic. Inline
+// SVG in the theme's colours, so it follows light and dark (docs/design/docs-style.md, "Components").
+---
+
+<figure class="arch">
+  <svg viewBox="0 0 760 390" role="img" aria-labelledby="arch-title arch-desc">
+    <title id="arch-title">How kndl's parts connect</title>
+    <desc id="arch-desc">
+      Browsers connect to the Hub. A Runner connects out to the Hub over a WebSocket. On the Runner's
+      machine, each Session's Claude Code and mod run in a Sandbox and reach Anthropic and the Hub
+      through the Runner's credential proxy, which adds the Claude credential.
+    </desc>
+    <defs>
+      <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0L10 5L0 10z" class="head" />
+      </marker>
+    </defs>
+
+    <!-- People -->
+    <text class="label" x="70" y="44" text-anchor="middle">People</text>
+    {[0, 1, 2].map((i) => (
+      <g transform={`translate(20 ${60 + i * 90})`}>
+        <rect class="box" width="100" height="62" rx="8" />
+        <rect class="bar" width="100" height="14" rx="8" />
+        <rect class="bar" y="7" width="100" height="7" />
+        <circle class="dot" cx="10" cy="7" r="2.4" />
+        <circle class="dot" cx="18" cy="7" r="2.4" />
+        <text class="small" x="50" y="44" text-anchor="middle">browser</text>
+      </g>
+    ))}
+    {[0, 1, 2].map((i) => (
+      <line class="wire" x1="124" y1={91 + i * 90} x2="196" y2="195" marker-end="url(#arch-arrow)" />
+    ))}
+
+    <!-- The Hub -->
+    <g transform="translate(200 140)">
+      <rect class="hub" width="150" height="110" rx="12" />
+      <text class="title" x="75" y="44" text-anchor="middle">Hub</text>
+      <text class="small on-hub" x="75" y="70" text-anchor="middle">web UI · Sessions</text>
+      <text class="small on-hub" x="75" y="90" text-anchor="middle">Prompt queues · SQLite</text>
+    </g>
+
+    <!-- Anthropic -->
+    <g transform="translate(200 312)">
+      <rect class="box" width="150" height="56" rx="10" />
+      <text class="label" x="75" y="34" text-anchor="middle">Anthropic API</text>
+    </g>
+
+    <!-- A Runner's machine -->
+    <rect class="machine" x="420" y="20" width="320" height="350" rx="14" />
+    <text class="small muted" x="436" y="44">A Runner's machine</text>
+
+    <g transform="translate(440 60)">
+      <rect class="box" width="280" height="74" rx="10" />
+      <text class="label" x="16" y="30">Runner</text>
+      <text class="small" x="16" y="54">credential proxy · Workspaces</text>
+    </g>
+
+    <g transform="translate(440 172)">
+      <rect class="sandbox" width="280" height="178" rx="10" />
+      <text class="label" x="16" y="28">Sandbox</text>
+      <text class="small muted" x="86" y="28">one microVM per Session</text>
+      <rect class="box" x="16" y="42" width="248" height="52" rx="8" />
+      <text class="small strong" x="140" y="64" text-anchor="middle">Claude Code + mod</text>
+      <text class="small" x="140" y="83" text-anchor="middle">in tmux</text>
+      <text class="small" x="16" y="124">/workspace, from the Runner</text>
+      <text class="small" x="16" y="146">your Repo's builds, tests, servers</text>
+    </g>
+
+    <!-- Claude Code to the proxy, with its Session token -->
+    <line class="wire" x1="580" y1="214" x2="580" y2="138" marker-end="url(#arch-arrow)" />
+    <text class="small muted" x="590" y="160">Session token</text>
+
+    <!-- The Runner connects out to the Hub -->
+    <line class="wire" x1="440" y1="90" x2="354" y2="172" marker-end="url(#arch-arrow)" />
+    <text class="small muted" x="392" y="104" text-anchor="end">connects out</text>
+
+    <!-- The proxy to Anthropic, with the Claude credential -->
+    <line class="wire" x1="440" y1="124" x2="354" y2="334" marker-end="url(#arch-arrow)" />
+    <text class="small muted" x="346" y="292" text-anchor="end">Claude credential</text>
+  </svg>
+  <figcaption>
+    Everything goes through the Hub, and the Runner connects to it, never the other way. Claude Code
+    holds only a Session token: the Runner's credential proxy swaps it for the Claude credential.
+  </figcaption>
+</figure>
+
+<style>
+  .arch {
+    margin: 1.5rem 0;
+  }
+  .arch svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-family: var(--sl-font, system-ui, sans-serif);
+  }
+  .arch figcaption {
+    margin-top: 0.6rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+  .box {
+    fill: var(--sl-color-gray-6);
+    stroke: var(--sl-color-gray-5);
+    stroke-width: 1.5;
+  }
+  .bar {
+    fill: var(--sl-color-gray-5);
+  }
+  .dot {
+    fill: var(--sl-color-gray-3);
+  }
+  .machine {
+    fill: none;
+    stroke: var(--sl-color-gray-4);
+    stroke-width: 1.5;
+  }
+  .hub {
+    fill: #f6c445;
+    stroke: #8c5f47;
+    stroke-width: 1.5;
+  }
+  .sandbox {
+    fill: var(--sl-color-black);
+    stroke: #8c5f47;
+    stroke-width: 1.2;
+    stroke-dasharray: 4 3;
+  }
+  .wire {
+    stroke: var(--sl-color-gray-3);
+    stroke-width: 1.6;
+  }
+  .head {
+    fill: var(--sl-color-gray-3);
+  }
+  .title {
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 26px;
+    font-weight: 700;
+    fill: #271d18;
+  }
+  .label {
+    font-size: 15px;
+    font-weight: 600;
+    fill: var(--sl-color-white);
+  }
+  .small {
+    font-size: 13px;
+    fill: var(--sl-color-gray-2);
+  }
+  .on-hub {
+    fill: #3f332d;
+  }
+  .strong {
+    font-weight: 600;
+    fill: var(--sl-color-white);
+  }
+  .muted {
+    fill: var(--sl-color-gray-3);
+  }
+</style>

@@ -1,0 +1,122 @@
+---
+// A Session's states and what moves it between them, for Concepts > The Session lifecycle. Inline
+// SVG in the theme's colours, so it follows light and dark (docs/design/docs-style.md, "Components").
+---
+
+<figure class="life">
+  <svg viewBox="0 0 820 300" role="img" aria-labelledby="life-title life-desc">
+    <title id="life-title">A Session's states</title>
+    <desc id="life-desc">
+      A Session starts Active. It goes to sleep when idle or with Sleep now, and a prompt or Wake now
+      wakes it. Deleting archives it, from Active or Asleep, and Restore makes it Asleep again. 30
+      days after it was archived it is purged. While its Runner is offline, an Active or Asleep
+      Session is Frozen, and it comes back Active or Asleep when the Runner is back.
+    </desc>
+    <defs>
+      <marker id="life-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0L10 5L0 10z" class="head" />
+      </marker>
+    </defs>
+
+    <!-- Start -->
+    <circle class="start" cx="22" cy="138" r="7" />
+    <line class="wire" x1="30" y1="138" x2="56" y2="138" marker-end="url(#life-arrow)" />
+
+    <!-- States -->
+    {[
+      { x: 60, y: 110, name: "Active", note: "Keep awake holds it", hot: true },
+      { x: 330, y: 110, name: "Asleep", note: "Sandbox stopped" },
+      { x: 600, y: 110, name: "Archived", note: "Sandbox destroyed" },
+      { x: 195, y: 236, name: "Frozen", note: "its Runner is offline" },
+    ].map((s) => (
+      <g transform={`translate(${s.x} ${s.y})`}>
+        <rect class={s.hot ? "state hot" : "state"} width="150" height="56" rx="10" />
+        <text class={s.hot ? "name on-hot" : "name"} x="75" y="25" text-anchor="middle">{s.name}</text>
+        <text class={s.hot ? "small on-hot" : "small"} x="75" y="44" text-anchor="middle">{s.note}</text>
+      </g>
+    ))}
+
+    <!-- Active and Asleep -->
+    <line class="wire" x1="210" y1="128" x2="326" y2="128" marker-end="url(#life-arrow)" />
+    <text class="small" x="268" y="120" text-anchor="middle">idle, or Sleep now</text>
+    <line class="wire" x1="330" y1="150" x2="214" y2="150" marker-end="url(#life-arrow)" />
+    <text class="small" x="272" y="170" text-anchor="middle">a prompt, or Wake now</text>
+
+    <!-- Asleep and Archived -->
+    <line class="wire" x1="480" y1="128" x2="596" y2="128" marker-end="url(#life-arrow)" />
+    <text class="small" x="538" y="120" text-anchor="middle">delete</text>
+    <line class="wire" x1="600" y1="150" x2="484" y2="150" marker-end="url(#life-arrow)" />
+    <text class="small" x="542" y="170" text-anchor="middle">restore</text>
+
+    <!-- Active to Archived -->
+    <path class="wire" d="M135 106 C 220 30, 590 30, 672 104" fill="none" marker-end="url(#life-arrow)" />
+    <text class="small" x="405" y="46" text-anchor="middle">delete</text>
+
+    <!-- Purged -->
+    <line class="wire" x1="675" y1="170" x2="675" y2="226" marker-end="url(#life-arrow)" />
+    <text class="small muted" x="675" y="248" text-anchor="middle">purged 30 days later</text>
+
+    <!-- Frozen -->
+    <line class="wire" x1="140" y1="170" x2="228" y2="232" marker-start="url(#life-arrow)" marker-end="url(#life-arrow)" />
+    <line class="wire" x1="400" y1="170" x2="312" y2="232" marker-start="url(#life-arrow)" marker-end="url(#life-arrow)" />
+    <text class="small muted" x="160" y="216" text-anchor="end">Runner offline</text>
+    <text class="small muted" x="380" y="216">Runner back</text>
+  </svg>
+  <figcaption>
+    The Hub decides a Session's state, and its Runner does what the Hub asks.
+  </figcaption>
+</figure>
+
+<style>
+  .life {
+    margin: 1.5rem 0;
+  }
+  .life svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-family: var(--sl-font, system-ui, sans-serif);
+  }
+  .life figcaption {
+    margin-top: 0.6rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+  .state {
+    fill: var(--sl-color-gray-6);
+    stroke: var(--sl-color-gray-5);
+    stroke-width: 1.5;
+  }
+  .hot {
+    fill: #f6c445;
+    stroke: #8c5f47;
+  }
+  .start {
+    fill: var(--sl-color-gray-3);
+  }
+  .wire {
+    stroke: var(--sl-color-gray-3);
+    stroke-width: 1.6;
+  }
+  .head {
+    fill: var(--sl-color-gray-3);
+  }
+  .name {
+    font-size: 15px;
+    font-weight: 600;
+    fill: var(--sl-color-white);
+  }
+  .small {
+    font-size: 12px;
+    fill: var(--sl-color-gray-2);
+  }
+  .on-hot {
+    fill: #271d18;
+  }
+  .small.on-hot {
+    fill: #3f332d;
+  }
+  .muted {
+    fill: var(--sl-color-gray-3);
+  }
+</style>

@@ -45,7 +45,7 @@ The Hub reads it strictly: a field it doesn't know refuses the package, and the 
 | `$schema` | No | Ignored, for editors that validate the file. |
 | `displayName` | Yes | The MCP server's name, as the MCP page and Sessions show it. One line of 1 to 80 characters. |
 | `description` | No | One line of 1 to 500 characters, shown on the MCP server. |
-| `icon` | No | The MCP server's icon on the MCP page: an `https://` URL, or a path to a file in the package, such as `assets/logo.svg`. PNG, ICO, WebP, JPEG or SVG, at most 512 KB. The Hub fetches or reads it and serves it itself, so browsers never contact the URL. It is never a reason to refuse a package: one the Hub can't use is left out, and the MCP server gets the favicon of its `mcp.url`'s website, or else a letter. A path is read from a git repo or an archive, not from a folder upload. |
+| `icon` | No | The MCP server's icon on the MCP page: an `https://` URL, or a path to a file in the package, such as `assets/logo.svg`. PNG, ICO, WebP, JPEG or SVG, at most 512 KB. The Hub fetches it and serves it itself, so browsers never contact the URL. An icon the Hub can't use is left out, never refused: the MCP server gets its website's favicon, or a letter. A path works from a repo or an archive, not a folder upload. |
 | `mcp.url` | Yes | The remote MCP server's URL, over [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http). It must start with `https://` (or `http://`), and can't hold a user name, password or `#fragment`. |
 | `auth` | No | What the MCP server needs to be reached: `{ "type": "none" }`, the default, [header secrets](#header-secrets), or [OAuth](#oauth). |
 
@@ -86,8 +86,12 @@ Each file is at most 64 KiB.
 
 ## Pinning and Upgrades
 
-A packaged MCP server stays as it was read: its name, description, URL and auth change only with an Upgrade, which shows what it changes, and whose values it clears, and applies only once confirmed. It can't be edited on the MCP page. Only a package from the same source upgrades it: the same git repo and folder, at any ref, or another upload. A package whose name an MCP server from another source has is refused.
+A packaged MCP server stays as it was read. It can't be edited on the MCP page: only an Upgrade changes it, from the same source (the same repo and folder, at any ref, or another upload). The Upgrade dialog shows what changes, and applies only once you confirm. A package whose name another source's MCP server has is refused.
 
-An Upgrade clears Installations' header secret values as editing a Hub-only MCP server does: all of them when the URL moves to another origin (scheme, host or port), and a secret's when it is gone from the package or has another key or header. Each value was entered for the server and header it had, so it goes nowhere else. Likewise, an Upgrade of an OAuth MCP server to another origin, or to another `auth` type, disconnects its Installations, dropping their tokens and their client, the one the Hub registered or the one entered by hand; the Upgrade dialog says which first.
+| An Upgrade that | Clears |
+|---|---|
+| Moves `mcp.url` to another origin (scheme, host or port) | Every Installation's header secret values, and an OAuth server's tokens and client |
+| Drops a header secret, or changes its `key` or `header` | That secret's values |
+| Changes `auth.type` | An OAuth server's tokens and client |
 
-An Upgrade logs `upgraded <MCP server>, the MCP server of <installation>, to <version>` in each Repo with an Installation of it, and `cleared <titles> of <installation>` where it cleared values. Sessions keep running what they started with, and show that a Restart applies the change; an Asleep one gets it as it wakes.
+Each Repo with an Installation logs `upgraded <MCP server>, the MCP server of <installation>, to <version>`, and `cleared <titles> of <installation>` where values were cleared. Running Sessions keep what they started with until a Restart. An Asleep one gets the change as it wakes.

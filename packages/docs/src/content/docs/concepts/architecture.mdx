@@ -1,0 +1,92 @@
+---
+title: How kndl works
+description: The Hub, Runners and Sandboxes, how a prompt travels between them, and what runs where.
+sidebar:
+  order: 1
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components"
+import ArchitectureDiagram from "../../../components/ArchitectureDiagram.astro"
+
+kndl has three parts: a Hub that people sign in to, Runners that run Sessions, and a Sandbox for each Session.
+
+<ArchitectureDiagram />
+
+- **The Hub** is one Bun process with a SQLite database. It keeps every Session, its history and its [Prompt queue](/reference/glossary/#prompt-queue), and relays prompts and replies between people and Runners.
+- **A Runner** is a machine that runs Sessions. It connects out to the Hub over a WebSocket, so the Hub never needs to reach it.
+- **A Sandbox** is a microVM on a Runner, one per Session. The Session's Claude Code runs there, with every tool, hook and command it starts.
+
+Browsers, Runners and each Session's mod talk to the Hub, never to each other.
+
+## A Session, end to end
+
+A Session is one Claude Code conversation on one Repo. When someone starts one:
+
+1. The Hub records it and picks a Runner, or the one you chose.
+2. The Runner clones the Repo into the Session's Workspace, on its Work branch.
+3. The Runner boots the Sandbox from the Repo's [Environment](/concepts/environments/), with the Workspace mounted at `/workspace`.
+4. It starts Claude Code in the Sandbox, with kndl's mod loaded. The mod connects the Session to the Hub.
+5. A prompt from anyone goes to the Hub, into the Session's Prompt queue. When Claude Code is idle, the Hub hands the mod the next prompt.
+6. As Claude works, the mod reports its text, each tool call and each subagent to the Hub. The Hub masks secrets and sends it to everyone in the Session.
+
+The Hub holds the queue, so people can send prompts while a Turn runs. They run in order, one Turn at a time.
+
+## Claude Code in the Sandbox
+
+Claude Code runs inside the Sandbox, so its tools run where it runs ([ADR 0013](/contributing/decisions/0013-claude-code-runs-in-the-sandbox/)). Tools, hooks, skills, the Repo's `CLAUDE.md` and settings, and subagents behave as they do on a laptop.
+
+- **It never asks for approval.** The Sandbox is the boundary, not a prompt ([ADR 0004](/contributing/decisions/0004-the-sandbox-is-the-security-boundary/)).
+- **It holds no Claude credential.** It sends requests to the Runner's credential proxy with a token for its Session alone. The proxy adds the real credential on the way out. See the [security model](/concepts/security-model/#the-credential-proxy).
+- **Its version is pinned.** Each kndl version runs one tested Claude Code version, which the Runner downloads once and shares with every Sandbox.
+
+## Sandboxes are disposable
+
+A Session's data lives on disks that outlive its Sandbox ([ADR 0006](/contributing/decisions/0006-workspace-on-host-sandbox-disposable/)). The Runner can stop a Sandbox when the Session sleeps, or replace it with a newer one, and nothing is lost.
+
+| What                                    | Where it lives                                                   |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| Source code                             | The Workspace, a directory on the Runner mounted at `/workspace` |
+| `node_modules` and package caches       | Disks of the Session's own, faster than the host mount           |
+| Docker's data                           | Its own disk, when the Environment turns Docker on               |
+| Claude Code's conversation and settings | Its own disk, so a woken Session carries on                      |
+
+Only what git in the Sandbox pushes leaves the Runner.
+
+## Several people, one Session
+
+A Session belongs to its Repo, not to a person ([ADR 0003](/contributing/decisions/0003-sessions-belong-to-the-repo/)). Anyone with access to the Repo on GitHub can join it, and every Participant has the same rights: prompt it, type into its terminal, put it to sleep or delete it.
+
+The person who started it is its Creator. The Session runs on the Creator's Claude credential and commits as the Creator.
+
+The **Terminal** tab mirrors the Session's Claude Code terminal, live. Everyone sees the same screen and can type into it, for what the chat doesn't handle, such as Claude Code's dialogs, Esc and Ctrl-C.
+
+## What runs where
+
+|                                                           | Hub's machine           | Runner's machine                | Sandbox                                                                                    |
+| --------------------------------------------------------- | ----------------------- | ------------------------------- | ------------------------------------------------------------------------------------------ |
+| Sessions, history, Prompt queues, Environments, Variables | Yes, in SQLite          |                                 |                                                                                            |
+| The GitHub App's private key                              | Yes                     |                                 |                                                                                            |
+| People's Claude credentials                               | Encrypted               | In memory, while a Session runs | Never                                                                                      |
+| The Runner's own Claude credential                        |                         | Yes                             | Never                                                                                      |
+| The credential proxy                                      |                         | Yes                             |                                                                                            |
+| The Workspace                                             |                         | Yes                             | Mounted at `/workspace`                                                                    |
+| Claude Code, the mod, and your Repo's code running        |                         |                                 | Yes                                                                                        |
+| A GitHub token for the Session's Repo                     |                         |                                 | Yes, in memory ([ADR 0010](/contributing/decisions/0010-the-sandbox-gets-a-github-token/)) |
+| The Environment's Variables                               | Encrypted, if Sensitive | In memory, while needed         | Yes                                                                                        |
+
+For the parts in more depth, see [Inside kndl](/contributing/internals/).
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="The Session lifecycle"
+    description="Active, Asleep, Frozen and Archived, and what each keeps."
+    href="/kndl/concepts/session-lifecycle/"
+  />
+  <LinkCard
+    title="Security model"
+    description="What's isolated, what's trusted, and what isn't protected."
+    href="/kndl/concepts/security-model/"
+  />
+</CardGrid>

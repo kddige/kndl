@@ -1,73 +1,80 @@
 ---
 title: Environments
-description: Why each Repo has one Environment, how versions, Builds and Test builds work, and how a Sandbox gets the same PATH a terminal would.
+description: Why each Repo has one Environment, and how versions, Builds and Test builds make its Sandboxes.
 sidebar:
   order: 3
 ---
 
-An Environment is the recipe a Repo's Sandboxes are built from: an image, a Bootstrap script, an optional Start script, Docker on or off, CPU and memory, dependency folders and Variables. Each Repo has exactly one ([ADR 0009](/contributing/decisions/0009-environments/)). The Hub keeps it, Runners build it, and the web UI edits it. The steps are in [Set up an Environment](/guides/set-up-an-environment/).
+An Environment is the recipe a Repo's Sandboxes are built from. Each Repo has exactly one ([ADR 0009](/contributing/decisions/0009-environments/)). To write one, see [Set up an Environment](/guides/set-up-an-environment/).
+
+An Environment has:
+
+- an **image**, `buildpack-deps:bookworm` by default;
+- a **Bootstrap script**, run once per Build to install tools;
+- a **Start script**, optional, run in each new Sandbox to install the Repo's dependencies;
+- **Docker**, on or off;
+- **CPUs and memory**;
+- **dependency folders**, such as `node_modules`, kept on a fast disk;
+- **Variables**, plain or Sensitive.
+
+The Hub keeps the Environment, Runners build it, and anyone with access to the Repo edits it in the web UI.
 
 ## Versions
 
-Changes are a draft, applied as a whole. Each apply makes an **Environment version**, recorded with who applied it and when, never with values.
+Changes are a draft until you apply them. Each apply makes an **Environment version**, recorded with who applied it and when.
 
-A Session runs on one version. A Session starts on the latest; a running one moves to a later version when it next wakes, or at once with **Restart**. Its Sandbox is then made again from that version's Build, on the same Workspace and disks, and the conversation goes on.
+A new Session starts on the latest version. A running Session moves to a newer version when it next wakes, or at once with **Restart**. Its Sandbox is made again on the same Workspace and disks, and the conversation carries on.
 
 ## Builds
 
-A **Build** is one version made ready on one Runner. The first time a Session needs a version its Runner hasn't built, the Runner builds it, in the Session's start log:
+A **Build** is one version made ready on one Runner. The first time a Session needs a version its Runner hasn't built, the Runner builds it, and the Session's start log shows it:
 
-1. It boots a Sandbox from the Environment's image, without the Workspace.
-2. It installs Docker, if the Environment turns it on.
-3. It installs tmux 3.2 or later and bash with the image's package manager, if the image lacks them.
-4. It runs the Bootstrap script, with the Variables available at build.
-5. It reads the Login environment (below).
-6. It saves the Sandbox's disk as a microsandbox snapshot, and removes the Sandbox.
+1. Boot a Sandbox from the image.
+2. Install Docker, if it's on, and tmux and bash, if the image lacks them.
+3. Run the Bootstrap script.
+4. Save the disk as a snapshot.
 
-Sessions boot from that snapshot in a fraction of a second, each adding only its own writes on top. A failed Build fails the Session's start, with the end of the script's output.
+Sessions boot from that snapshot in a fraction of a second, each adding only its own writes. A failed Build fails the Session's start, with the end of the script's output.
 
-Builds are keyed by the version that last changed the Build, so a change to resources alone needs no new Build. Each Runner keeps the last three Builds of each Repo (`RUNNER_SANDBOX_KEEP_BUILDS`).
+A change to CPUs or memory alone needs no new Build. Each Runner keeps the last three Builds of each Repo ([`RUNNER_SANDBOX_KEEP_BUILDS`](/reference/configuration/#runner)).
 
 ## Test builds
 
-A draft that changes the Build (the image, either script, Docker, the dependency folders, or any Variable available at build, its value included) can only be applied once a **Test build** of exactly that draft has passed. On the Runner you pick, it runs the Bootstrap script, then the Start script on a fresh clone of the Repo's default branch, streams the log to the web UI, and leaves nothing behind. The clone uses a read-only token for that Repo from the Hub's GitHub App, never the Runner host's git credentials. If the App isn't installed on the Repo, the Test build fails before cloning.
+A draft that changes the Build, such as the image, a script or a Variable available at build, can only be applied after a **Test build** of that exact draft passes. A Test build:
 
-The Hub records each result against a digest of the draft's build inputs, so any later change to them needs another Test build. Changes that don't affect the Build, such as resources or a Sensitive value not available at build, apply at once.
+1. runs on the Runner you pick;
+2. runs the Bootstrap script, then the Start script on a fresh clone of the Repo's default branch;
+3. streams its log to the web UI;
+4. leaves nothing behind.
+
+Any later change to the draft's build inputs needs another Test build. Changes that don't touch the Build, such as resources, apply at once.
 
 ## Each Sandbox
 
-A Session's Sandbox boots from its version's Build, with:
+A Session's Sandbox boots from its version's Build with:
 
-- the Workspace mounted at `/workspace`;
-- one disk for all its dependency folders, bound at each boot to every folder the Environment's patterns match, and to where one would be beside each **Next to** file, so the first install already lands on the disk;
-- one disk for package caches, at `/var/cache/kndl`, with `XDG_CACHE_HOME`, `BUN_INSTALL_CACHE_DIR` and `npm_config_cache` pointing into it;
+- the Workspace at `/workspace`;
+- one disk for the dependency folders, bound over each match in the Workspace;
+- one disk for package caches;
 - one disk for Docker's data, when Docker is on.
 
-A new Sandbox then runs the Start script in `/workspace`. CPUs and memory are the Environment's, capped by the Runner's `RUNNER_SANDBOX_MAX_CPUS` and `RUNNER_SANDBOX_MAX_MEMORY_MIB`, with a note in the Session when it gives less.
+A new Sandbox then runs the Start script in `/workspace`. CPUs and memory are capped by the Runner's [`RUNNER_SANDBOX_MAX_CPUS` and `RUNNER_SANDBOX_MAX_MEMORY_MIB`](/reference/configuration/#runner), and the Session notes when it gets less than it asked for.
 
-## The Login environment
+## Tools on `PATH`
 
-Installers such as mise, rustup, nvm and bun's put themselves on `PATH` through `~/.bashrc` or `~/.profile`, which nothing the Runner starts would read on its own. So each process the Runner starts in a Sandbox gets the environment a terminal would, as with VS Code dev containers' `userEnvProbe`:
-
-- After the Bootstrap script, the Build runs one interactive login shell, `bash -lic` (`sh -lc` on an image without bash), and keeps the environment it ends with in the Build, at `/var/lib/kndl/login-env.json`.
-- Each new Sandbox probes again in `/workspace` once its Start script has run, so tools set up by the Repo's own files, such as a `mise.toml`, are picked up too.
-- The Start script and Claude Code, and so every command Claude runs, get that environment, with the Environment's Variables over it.
-
-The probe runs with no Variable in its environment, so it captures no value. A login shell that fails, or takes more than 60 seconds, fails the Build with the end of its output. Scripts without a `#!` line run with `bash -e` where the image has bash, and `sh -e` otherwise.
-
-What a Session changes in its own Login environment, such as a line added to `~/.bashrc`, reaches its tools only when its Sandbox is next made from a Build, on a later version, not at an ordinary wake.
+Installers such as mise, rustup, nvm and Bun's add themselves to `PATH` in `~/.bashrc` or `~/.profile`. So kndl runs a login shell once after the Bootstrap script, and again in each new Sandbox, and gives every process it starts the environment that shell ends with. The Start script, Claude Code and every command Claude runs see the same `PATH` a terminal would.
 
 ## Variables
 
-A Variable is Plain, shown to everyone, or Sensitive: write-only once saved, encrypted on the Hub and redacted from everything it stores or shows. Shared variables are Hub-wide, and an Environment uses one through a Link, under a name chosen there.
+A Variable is **Plain**, shown to everyone, or **Sensitive**: write-only once saved, encrypted on the Hub, and masked in everything kndl shows. A Shared variable is Hub-wide, and an Environment uses it through a Link.
 
-The Hub never sends values with a Session's start: a Runner fetches them over its WebSocket, only for an Active Session of its own or a Test build it was sent, and keeps them in memory. It passes them in the environment of each process it starts in the Sandbox, and never sets them on the VM, whose settings microsandbox stores on disk. See [Use variables and secrets](/guides/use-variables-and-secrets/) and the [security model](/concepts/security-model/#redaction).
+A Runner fetches values only for its own Active Sessions and Test builds, and keeps them in memory. Each process in the Sandbox gets them in its environment. See [Use variables and secrets](/guides/use-variables-and-secrets/).
 
 ## Why scripts and snapshots
 
-- **Not a Dockerfile.** Runners would need an image builder. A script run against a chosen image gives most of the flexibility with what microsandbox already provides.
-- **Not a bootstrap on every boot.** Installing Docker alone takes about 33 seconds; booting from a Build takes about a quarter of a second. A second Session on the same Build costs only its own writes on disk.
+- **Not a Dockerfile.** Runners would need an image builder. A script on a chosen image gives most of the flexibility with what microsandbox already does.
+- **Not a script on every boot.** Installing Docker alone takes about 33 seconds. Booting from a Build takes about a quarter of a second.
 
 ## Who can change an Environment
 
-Anyone with access to the Repo on GitHub can open its Environment, run Test builds and apply versions, with the same rights: there are no roles. Shared variables belong to no Repo, so anyone signed in can manage them. See the [security model](/concepts/security-model/#who-can-do-what).
+Anyone with access to the Repo on GitHub can open its Environment, run Test builds and apply versions. There are no roles. Anyone signed in can manage Shared variables. See [Who can do what](/concepts/security-model/#who-can-do-what).
