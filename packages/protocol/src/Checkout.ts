@@ -4,7 +4,8 @@
 // the web UI and the mod's bundle have no use for.
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { type BuildVersion, CommitIdPattern, releaseOf } from "./Build.ts"
+import { type BuildVersion, Channel, CommitIdPattern, releaseOf } from "./Build.ts"
+import { Schema } from "effect"
 
 /** The checkout this file is in: the one the Hub, Runner or CLI importing it runs from. */
 export const thisCheckout = fileURLToPath(new URL("../../..", import.meta.url))
@@ -22,8 +23,8 @@ function git(dir: string, args: ReadonlyArray<string>): string | undefined {
 }
 
 /**
- * The checkout's HEAD, its branch, and the Release tagged on HEAD (ADR 0025), or `undefined` when
- * `dir` isn't a git checkout.
+ * The checkout's HEAD, its branch, the Release tagged on HEAD and the Channel recorded in its git
+ * config (ADR 0025), or `undefined` when `dir` isn't a git checkout.
  */
 export function readBuildVersion(dir: string = thisCheckout): BuildVersion | undefined {
   const commit = git(dir, ["rev-parse", "HEAD"])
@@ -31,7 +32,14 @@ export function readBuildVersion(dir: string = thisCheckout): BuildVersion | und
   const branch = git(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"])
   const tags = git(dir, ["tag", "--points-at", "HEAD", "--list", "v*"])
   const release = releaseOf(tags === undefined ? [] : tags.split("\n"))
-  return { commit, ...(branch && { branch }), ...(release !== undefined && { release }) }
+  const recorded = git(dir, ["config", "--get", "kndl.channel"])
+  const channel = Schema.is(Channel)(recorded) ? recorded : undefined
+  return {
+    commit,
+    ...(branch && { branch }),
+    ...(release !== undefined && { release }),
+    ...(channel !== undefined && { channel }),
+  }
 }
 
 /**
