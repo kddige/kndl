@@ -139,6 +139,7 @@ export default defineConfig({
           items: [
             { slug: "contributing/develop-kndl" },
             { slug: "contributing/protocol" },
+            { slug: "contributing/internals" },
             {
               label: "Decisions (ADRs)",
               collapsed: true,
