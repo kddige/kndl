@@ -262,11 +262,11 @@ const mallows = [
           <a href={doc("start/deploy-for-a-team/")}>Deploy for a team</a>
         </p>
       </div>
-      <pre class="term" aria-label="Install, set up and remove kndl"><span class="c"># install, and answer onboard's questions</span>
+      <pre class="term" aria-label="Install, set up and remove kndl"><span class="c"># install</span>
 <span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 
-<span class="c"># or answer them up front: one machine, dev login</span>
-<span class="p">$</span> kndl onboard --role both --reach local --dev-login --github-app skip
+<span class="c"># set up a Hub and a Runner, and answer its questions</span>
+<span class="p">$</span> kndl onboard
 
 <span class="c"># remove it all</span>
 <span class="p">$</span> kndl uninstall --purge</pre>
