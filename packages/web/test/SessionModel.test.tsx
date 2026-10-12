@@ -1,5 +1,6 @@
 // A Session's model and effort in the whole app (#128), against the fake Hub with its script not
-// playing: the picker in the composer, the transcript's notice and Turn footer, and New Session.
+// playing unless a test asks: the picker in the composer, the transcript's notice and Turn
+// footer, a switch asked about while an agent runs, and New Session.
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -34,8 +35,8 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
   }
 }
 
-async function open(path: string) {
-  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+async function open(path: string, autoplay = false) {
+  const hub = new FakeHub({ stepMs: 2, autoplay })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: [path] }))
   const view = await render(
@@ -54,10 +55,10 @@ async function open(path: string) {
     router,
     page,
     conversation: () => page.querySelector('[aria-label="Conversation"]')?.textContent ?? "",
-    /** The composer's picker, by its label. */
+    /** The composer's model picker, by its label. */
     picker: () =>
       [...page.querySelectorAll("button")].find((el) =>
-        el.getAttribute("aria-label")?.startsWith("Model and effort: "),
+        el.getAttribute("aria-label")?.startsWith("Model: "),
       ) ?? null,
   }
 }
@@ -78,7 +79,8 @@ function typeInto(field: HTMLInputElement, value: string): void {
 test("a switch shows in the transcript, and a Turn run before it names its model", async () => {
   const { page, conversation, picker } = await open(`/sessions/${demoSessionId}`)
   await eventually(() => expect(conversation()).toContain("Bob Lee switched to Sonnet 5.5, High"))
-  expect(picker()?.textContent).toBe("Sonnet 5.5 · High")
+  expect(picker()?.textContent).toBe("Sonnet 5.5")
+  expect(button("Effort: High", page).textContent).toBe("High")
   // The first Turn ran on Claude Code's default, before Bob's switch.
   const turnModels = [...page.querySelectorAll('[title="The model this Turn ran on"]')]
   expect(turnModels.map((el) => el.textContent)).toEqual(["Opus 5.5"])
@@ -101,6 +103,41 @@ test("anyone switches the model from the composer; everyone sees who did", async
   expect(sent).toEqual([{ model: "haiku", effort: undefined }])
 })
 
+test("while a switch is asked about, the picker shows it; Cancel goes back, Switch sends it", async () => {
+  // The demo's script starts a background agent, which a switch would interrupt.
+  const { hub, page, conversation, picker } = await open(`/sessions/${demoSessionId}`, true)
+  // Held, the script stops with the agent running, for as long as the test takes.
+  hub.hold()
+  const agentStatus = () =>
+    page.querySelector('nav a[href$="?agent=agent-docs"] [role="img"]')?.getAttribute("aria-label")
+  while (agentStatus() !== "Running") {
+    await step(() => hub.step())
+    await settle(5)
+  }
+  const before = picker()?.textContent
+  const switches = () => hub.received.filter((m) => m._tag === "SetSessionModel").length
+  const pickFable = async () => {
+    await step(() => picker()?.click())
+    await settle()
+    await step(() => radio("Fable 5.1").click())
+    await eventually(() => expect(dialog()?.textContent).toContain("Switch the model?"))
+  }
+
+  await pickFable()
+  expect(picker()?.textContent).toBe("Fable 5.1")
+  await step(() => button("Cancel", dialog() ?? document).click())
+  await eventually(() => expect(dialog()).toBeNull())
+  expect(picker()?.textContent).toBe(before)
+  expect(switches()).toBe(0)
+
+  await pickFable()
+  await step(() => button("Switch", dialog() ?? document).click())
+  expect(switches()).toBe(1)
+  expect(picker()?.textContent).toBe("Fable 5.1")
+  await eventually(() => expect(conversation()).toContain("Alice Kim switched to Fable 5.1"))
+  expect(picker()?.textContent).toBe("Fable 5.1")
+})
+
 test("New Session starts on the model picked in its dialog", async () => {
   const { hub, router, picker } = await open("/sessions/s-readme")
   await eventually(() => expect(picker()).not.toBeNull())
@@ -109,7 +146,7 @@ test("New Session starts on the model picked in its dialog", async () => {
   const newSession = dialog() as HTMLElement
 
   // Claude Code's default until one is picked.
-  const choose = button("Model and effort: Opus 5.5", newSession)
+  const choose = button("Model: Opus 5.5", newSession)
   const repo = newSession.querySelector<HTMLInputElement>('input[placeholder="kddige/kndl"]')
   await step(() => repo && typeInto(repo, "kddige/kndl"))
   // The Repo's default branch is filled in once the Hub has listed its branches.
@@ -121,7 +158,7 @@ test("New Session starts on the model picked in its dialog", async () => {
   await settle()
   await step(() => radio("Sonnet 5.5").click())
   await settle()
-  expect(button("Model and effort: Sonnet 5.5", newSession)).toBeDefined()
+  expect(button("Model: Sonnet 5.5", newSession)).toBeDefined()
 
   await step(() => button("Start Session", newSession).click())
   await eventually(() => expect(hub.received.some((m) => m._tag === "CreateSession")).toBe(true))

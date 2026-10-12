@@ -6,18 +6,25 @@ import { color, leading, space, text, weight } from "./tokens.stylex.ts"
 
 export type PopoverSide = "top" | "bottom" | "left" | "right"
 export type PopoverAlign = "start" | "center" | "end"
+export type PopoverChangeReason = BasePopover.Root.ChangeEventReason
 
 export interface PopoverProps {
   /** The element that toggles the popover, usually a Button. */
   trigger: ReactElement
   /** Names the popover for screen readers, and is shown as its heading. */
   title?: ReactNode
+  /**
+   * Names it for screen readers instead of the title, which is then only shown: for a title that
+   * is a value, such as the level an effort slider is on.
+   */
+  label?: string
   description?: ReactNode
   children?: ReactNode
   side?: PopoverSide
   align?: PopoverAlign
   open?: boolean
-  onOpenChange?: (open: boolean) => void
+  /** With why: `escape-key`, `outside-press`, `trigger-press` and so on. */
+  onOpenChange?: (open: boolean, reason: PopoverChangeReason) => void
   /** Layout overrides for the panel, e.g. a width. */
   sx?: stylex.StyleXStyles
 }
@@ -55,6 +62,7 @@ const styles = stylex.create({
 export function Popover({
   trigger,
   title,
+  label,
   description,
   children,
   side = "bottom",
@@ -66,7 +74,10 @@ export function Popover({
   return (
     <BasePopover.Root
       {...(open !== undefined && { open })}
-      {...(onOpenChange && { onOpenChange: (next: boolean) => onOpenChange(next) })}
+      {...(onOpenChange && {
+        onOpenChange: (next: boolean, details: BasePopover.Root.ChangeEventDetails) =>
+          onOpenChange(next, details.reason),
+      })}
     >
       <BasePopover.Trigger render={trigger} />
       <BasePopover.Portal>
@@ -76,12 +87,19 @@ export function Popover({
           sideOffset={6}
           {...stylex.props(popup.positioner)}
         >
-          <BasePopover.Popup {...stylex.props(popup.surface, styles.panel, sx)}>
+          <BasePopover.Popup
+            {...(label !== undefined && { "aria-label": label })}
+            {...stylex.props(popup.surface, styles.panel, sx)}
+          >
             {(title || description) && (
               <div {...stylex.props(styles.heading)}>
-                {title && (
-                  <BasePopover.Title {...stylex.props(styles.title)}>{title}</BasePopover.Title>
-                )}
+                {title &&
+                  (label === undefined ? (
+                    <BasePopover.Title {...stylex.props(styles.title)}>{title}</BasePopover.Title>
+                  ) : (
+                    // Base UI's Title would name the popover, over the label.
+                    <p {...stylex.props(styles.title)}>{title}</p>
+                  ))}
                 {description && (
                   <BasePopover.Description {...stylex.props(styles.description)}>
                     {description}
