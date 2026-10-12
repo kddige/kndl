@@ -102,10 +102,12 @@ export default defineConfig({
           items: [
             { slug: "self-hosting/install" },
             { slug: "self-hosting/run-the-hub" },
-            { slug: "self-hosting/add-a-runner" },
             { slug: "self-hosting/reach-the-hub-from-other-machines" },
             { slug: "self-hosting/set-up-the-github-app" },
             { slug: "self-hosting/let-people-in" },
+            { slug: "self-hosting/add-a-runner" },
+            { slug: "self-hosting/update" },
+            { slug: "self-hosting/uninstall" },
           ],
         },
         {

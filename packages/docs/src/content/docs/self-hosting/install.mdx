@@ -1,0 +1,124 @@
+---
+title: Install kndl
+description: Install kndl on a machine and set it up as a Hub, a Runner or both, running as services.
+sidebar:
+  order: 1
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Install kndl, and set the machine up as a Hub, a Runner or both, running as services that start at login and restart if they crash.
+
+## What each machine needs
+
+|                                             | Hub                       | Runner |
+| ------------------------------------------- | ------------------------- | ------ |
+| macOS or Linux, with git and curl           | Yes                       | Yes    |
+| A Mac with Apple Silicon, or Linux with KVM |                           | Yes    |
+| A port that browsers and Runners reach      | `7777`, or behind a proxy |        |
+
+The Hub is one [Bun](https://bun.sh) process with a SQLite database, and needs little CPU or memory. A Runner runs one [microsandbox](https://github.com/microsandbox/microsandbox) microVM per running Session, so give it the CPU, memory and disk. A Runner needs no Claude Code and no Claude sign-in.
+
+## Install
+
+<Steps>
+
+1. Install kndl:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
+   ```
+
+   It installs Bun if it's missing, clones kndl into `~/.kndl/app`, and puts the `kndl` command in `~/.local/bin`. It ends by printing the command to run next.
+
+2. Set the machine up:
+
+   ```sh
+   kndl onboard
+   ```
+
+   If your shell says `kndl` isn't found, open a new terminal, or run `~/.local/bin/kndl onboard`.
+
+</Steps>
+
+To install somewhere other than `~/.kndl`, set `KNDL_HOME` when you run the installer. The `kndl` command remembers it.
+
+## Choose what to follow
+
+A fresh install follows the `stable` [Channel](/reference/glossary/): the latest [Release](/reference/glossary/), a tag such as `v2026.10.1`. To follow `main` instead, or to pin a branch, tag or commit:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh -s -- --channel dev
+curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh -s -- --ref <branch|tag|sha>
+```
+
+`--ref` wins over `--channel`. With no Release yet, a `stable` install gets `main`, and [`kndl update`](/self-hosting/update/) moves it to the first Release that includes its commit. Switch later with `kndl update --channel`.
+
+## Set the machine up
+
+`kndl onboard` asks:
+
+1. **What does this machine run?** A Hub, a Runner for a Hub elsewhere, or both.
+2. **Who reaches this Hub?**
+   - **Only this machine (127.0.0.1)**, with dev login, for a try.
+   - **My local network, over plain HTTP (0.0.0.0).** See [Reach the Hub from other machines](/self-hosting/reach-the-hub-from-other-machines/) for what that costs.
+   - **Behind HTTPS**, through a reverse proxy or tunnel. It asks for the public URL.
+3. **The GitHub App**, for GitHub sign-in and the Repos' tokens: create it now, paste one you made, or not now. See [Set up the GitHub App](/self-hosting/set-up-the-github-app/).
+4. For a Runner on its own, **a pairing link** or **the Hub's URL and a Runner token**. See [Add a Runner](/self-hosting/add-a-runner/).
+
+It offers to install what's missing (git, curl and microsandbox's runtime) with Homebrew, apt or dnf, and shows the commands first. Then it writes `hub.env` and `runner.env` in `~/.kndl`, readable only by you, starts the services, and checks that the Hub answers and the Runner connects.
+
+A Hub with GitHub sign-in ends with its Setup link. Open it to [become the Owner](/self-hosting/let-people-in/#become-the-owner).
+
+:::danger[Back up `hub.env` with `hub.db`]
+`hub.env` holds `HUB_SECRETS_KEY`, the only key to the secrets in the Hub's database.
+:::
+
+To change an answer, run `kndl onboard` again. It asks only what the env files don't answer yet; `--reset` asks everything. For a script, `--non-interactive` never asks and fails naming the flag it needs:
+
+```sh
+kndl onboard --non-interactive --role runner \
+  --hub-url https://hub.example.com --token chr_… --install-prerequisites
+```
+
+Every flag is in [Commands](/reference/commands/#kndl-onboard).
+
+### On Linux
+
+The services are systemd user units, which stop when you log out. Onboard offers `loginctl enable-linger` (`--linger`), which keeps them running and starts them at boot.
+
+A Runner's user needs `/dev/kvm`, so onboard adds it to the `kvm` group. Reboot afterwards: the services keep the groups they started with.
+
+## Check on it
+
+```sh
+kndl status      # what's installed and what it follows, the services, the Hub, the Runner
+kndl doctor      # checks everything, and says how to fix what's wrong
+kndl logs hub -f # or runner
+```
+
+`kndl doctor --fix` repairs what it can. See [Troubleshooting](/troubleshooting/install/) for the rest.
+
+## Update
+
+Run `kndl update`. See [Update kndl](/self-hosting/update/).
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Reach the Hub from other machines"
+    description="Serve the Hub over HTTPS, so your team and Runners elsewhere can reach it."
+    href="/kndl/self-hosting/reach-the-hub-from-other-machines/"
+  />
+  <LinkCard
+    title="Add a Runner"
+    description="Pair another machine with the Hub to run Sessions."
+    href="/kndl/self-hosting/add-a-runner/"
+  />
+  <LinkCard
+    title="Uninstall kndl"
+    description="Remove the services and the install, with or without the data."
+    href="/kndl/self-hosting/uninstall/"
+  />
+</CardGrid>
