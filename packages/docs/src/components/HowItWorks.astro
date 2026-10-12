@@ -1,0 +1,150 @@
+---
+// How kndl fits together, for Introduction: people's browsers and the Hub, and Runners that
+// connect to the Hub and run each Session in its own Sandbox. Inline SVG in the theme's colours,
+// so it follows light and dark (docs/design/docs-style.md, "Components").
+---
+
+<figure class="how">
+  <svg
+    viewBox="0 0 760 330"
+    role="img"
+    aria-labelledby="how-title how-desc"
+  >
+    <title id="how-title">How kndl fits together</title>
+    <desc id="how-desc">
+      People open the Hub's web UI in their browsers. Runners on your own machines connect to the
+      Hub. Each Runner runs Sessions, each in its own Sandbox with Claude Code inside.
+    </desc>
+    <defs>
+      <marker id="how-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0L10 5L0 10z" class="head" />
+      </marker>
+    </defs>
+
+    <!-- People -->
+    <g>
+      <text class="label" x="80" y="40" text-anchor="middle">People</text>
+      {[0, 1, 2].map((i) => (
+        <g transform={`translate(30 ${62 + i * 82})`}>
+          <rect class="box" width="100" height="62" rx="8" />
+          <rect class="bar" width="100" height="14" rx="8" />
+          <rect class="bar-fill" y="7" width="100" height="7" />
+          <circle class="dot" cx="10" cy="7" r="2.4" />
+          <circle class="dot" cx="18" cy="7" r="2.4" />
+          <text class="small" x="50" y="44" text-anchor="middle">browser</text>
+        </g>
+      ))}
+    </g>
+
+    <!-- Arrows: browsers to the Hub -->
+    {[0, 1, 2].map((i) => (
+      <line class="wire" x1="134" y1={93 + i * 82} x2="246" y2={165} marker-end="url(#how-arrow)" />
+    ))}
+
+    <!-- The Hub -->
+    <g transform="translate(250 105)">
+      <rect class="hub" width="150" height="120" rx="12" />
+      <text class="title" x="75" y="44" text-anchor="middle">Hub</text>
+      <text class="small" x="75" y="70" text-anchor="middle">web UI · Sessions</text>
+      <text class="small" x="75" y="90" text-anchor="middle">sign-in · SQLite</text>
+    </g>
+
+    <!-- Arrows: Runners to the Hub (Runners connect out) -->
+    <line class="wire" x1="470" y1="105" x2="404" y2="150" marker-end="url(#how-arrow)" />
+    <line class="wire" x1="470" y1="235" x2="404" y2="185" marker-end="url(#how-arrow)" />
+    <text class="small muted" x="436" y="172" text-anchor="middle">connect</text>
+
+    <!-- Runners, each with Sandboxes -->
+    {[0, 1].map((r) => (
+      <g transform={`translate(474 ${30 + r * 150})`}>
+        <rect class="box" width="256" height="128" rx="12" />
+        <text class="label" x="16" y="28">{r === 0 ? "Runner · studio" : "Runner · build-box"}</text>
+        {[0, 1].map((s) => (
+          <g transform={`translate(${16 + s * 118} 44)`}>
+            <rect class="sandbox" width="106" height="66" rx="8" />
+            <text class="small strong" x="53" y="28" text-anchor="middle">Sandbox</text>
+            <text class="small" x="53" y="48" text-anchor="middle">Claude Code</text>
+          </g>
+        ))}
+      </g>
+    ))}
+  </svg>
+  <figcaption>
+    Runners connect out to the Hub, so the Hub never reaches into your machines. Each Session runs
+    in its own Sandbox on a Runner.
+  </figcaption>
+</figure>
+
+<style>
+  .how {
+    margin: 1.5rem 0;
+  }
+  .how svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-family: var(--sl-font, system-ui, sans-serif);
+  }
+  .how figcaption {
+    margin-top: 0.6rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+  .box {
+    fill: var(--sl-color-gray-6);
+    stroke: var(--sl-color-gray-5);
+    stroke-width: 1.5;
+  }
+  .bar {
+    fill: var(--sl-color-gray-5);
+  }
+  .bar-fill {
+    fill: var(--sl-color-gray-5);
+  }
+  .dot {
+    fill: var(--sl-color-gray-3);
+  }
+  .hub {
+    fill: #f6c445;
+    stroke: #8c5f47;
+    stroke-width: 1.5;
+  }
+  .sandbox {
+    fill: var(--sl-color-black);
+    stroke: #8c5f47;
+    stroke-width: 1.2;
+    stroke-dasharray: 4 3;
+  }
+  .wire {
+    stroke: var(--sl-color-gray-3);
+    stroke-width: 1.6;
+  }
+  .head {
+    fill: var(--sl-color-gray-3);
+  }
+  .title {
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 26px;
+    font-weight: 700;
+    fill: #271d18;
+  }
+  .hub ~ .small {
+    fill: #3f332d;
+  }
+  .label {
+    font-size: 15px;
+    font-weight: 600;
+    fill: var(--sl-color-white);
+  }
+  .small {
+    font-size: 13px;
+    fill: var(--sl-color-gray-2);
+  }
+  .strong {
+    font-weight: 600;
+    fill: var(--sl-color-white);
+  }
+  .muted {
+    fill: var(--sl-color-gray-3);
+  }
+</style>

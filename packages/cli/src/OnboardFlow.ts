@@ -641,7 +641,7 @@ function summary(layout: Layout, roles: ReadonlyArray<Role>): string {
     lines.push(`The Hub: ${values.HUB_PUBLIC_URL ?? "(no HUB_PUBLIC_URL)"}`)
     lines.push(
       values.GITHUB_APP_ID === undefined
-        ? "GitHub sign-in needs a GitHub App: `kndl onboard --github-app create` creates one. See https://kddige.github.io/kndl/how-to/set-up-the-github-app/."
+        ? "GitHub sign-in needs a GitHub App: `kndl onboard --github-app create` creates one. See https://kddige.github.io/kndl/self-hosting/set-up-the-github-app/."
         : "Install the GitHub App on the Repos kndl works in; `kndl doctor` checks its permissions.",
     )
     if (!signsInWithGitHub(layout)) {

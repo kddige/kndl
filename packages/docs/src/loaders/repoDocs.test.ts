@@ -38,10 +38,10 @@ test("adrLabel keeps the part of the title before a ; or :", () => {
 describe("rewriteLinks", () => {
   test("points links between ADRs at their pages", () => {
     expect(rewriteLinks("See [0005](./0005-git-remote.md#why).")).toBe(
-      "See [0005](/reference/decisions/0005-git-remote/#why).",
+      "See [0005](/contributing/decisions/0005-git-remote/#why).",
     )
     expect(rewriteLinks("[x](0001-claude-on-host.md)")).toBe(
-      "[x](/reference/decisions/0001-claude-on-host/)",
+      "[x](/contributing/decisions/0001-claude-on-host/)",
     )
   })
 

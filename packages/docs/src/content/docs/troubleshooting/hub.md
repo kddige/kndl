@@ -34,7 +34,7 @@ At startup the Hub warned: `The web UI isn't built: there is no index.html in �
 
 **Why.** Nothing has built the web UI into `HUB_WEB_DIR`, by default `packages/web/dist`.
 
-**Fix.** Run `bun run web:build`, then reload; the Hub needs no restart. In development, run `bun run web` and open <http://localhost:5173> instead. See [Run the Hub](/how-to/run-the-hub/).
+**Fix.** Run `bun run web:build`, then reload; the Hub needs no restart. In development, run `bun run web` and open <http://localhost:5173> instead. See [Run the Hub](/self-hosting/run-the-hub/).
 
 ## Dev login is refused
 
@@ -50,7 +50,7 @@ HubConfigError: Dev login (KNDL_DEV_LOGIN) is refused: browsers reach the Hub at
 
 **Why.** Dev login signs anyone in as anyone, so the Hub allows it only when both `HOST` and `HUB_PUBLIC_URL` are loopback.
 
-**Fix.** For a Hub others reach, [set up the GitHub App](/how-to/set-up-the-github-app/) and unset `KNDL_DEV_LOGIN`. To try kndl alone, keep `HOST` at `127.0.0.1` and use a `localhost` or `127.0.0.1` URL.
+**Fix.** For a Hub others reach, [set up the GitHub App](/self-hosting/set-up-the-github-app/) and unset `KNDL_DEV_LOGIN`. To try kndl alone, keep `HOST` at `127.0.0.1` and use a `localhost` or `127.0.0.1` URL.
 
 ## The secrets key is wrong or missing
 
@@ -88,7 +88,7 @@ bun run secrets-reset          # in a checkout
 kndl secrets reset             # on an installed Hub
 ```
 
-Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. Each Installation keeps its header secrets, which show **needs a value** on **MCP**: enter them again there; until then its Repos' Sessions don't start (see [A Session can't start for an Installation](#a-session-cant-start-for-an-installation)). Each OAuth Installation is disconnected: press **Connect** on it there. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+Make a new key with `bun run secrets-key` (or `kndl secrets key`), set `HUB_SECRETS_KEY` to it and start the Hub. Enter each cleared variable's value again, on each Repo's Environment and on **Shared variables**; until then the Repo's Sessions don't start. Everyone who stored a Claude credential pastes it again on their **Account** page. Each Installation keeps its header secrets, which show **needs a value** on **MCP**: enter them again there; until then its Repos' Sessions don't start (see [A Session can't start for an Installation](#a-session-cant-start-for-an-installation)). Each OAuth Installation is disconnected: press **Connect** on it there. See [If the key is lost](/guides/use-variables-and-secrets/#if-the-key-is-lost).
 
 ## A Session can't start for an Installation
 
@@ -110,9 +110,9 @@ Claude Code could not start: The Hub could not read Docs's header secret values:
 Claude Code could not start: Docs isn't connected to its account. Fix the Installation on the MCP page, or take owner/name off it, then wake the Session.
 ```
 
-For a [global Installation](/how-to/add-a-remote-mcp-server/#turn-it-on-for-every-repo), the way out reads `or turn it off for owner/name, then wake the Session.`
+For a [global Installation](/guides/add-a-remote-mcp-server/#turn-it-on-for-every-repo), the way out reads `or turn it off for owner/name, then wake the Session.`
 
-**Why.** The Hub checks each Installation on for the Session's Repo as the Session starts, and doesn't start it with one that surely can't work: one without a value for a header secret, one whose MCP server refuses its value with `401` or `403`, or one whose values the Hub can't decrypt, or an OAuth Installation that isn't connected to its account. See [When an Installation fails a Session](/how-to/add-a-remote-mcp-server/#when-an-installation-fails-a-session).
+**Why.** The Hub checks each Installation on for the Session's Repo as the Session starts, and doesn't start it with one that surely can't work: one without a value for a header secret, one whose MCP server refuses its value with `401` or `403`, or one whose values the Hub can't decrypt, or an OAuth Installation that isn't connected to its account. See [When an Installation fails a Session](/guides/add-a-remote-mcp-server/#when-an-installation-fails-a-session).
 
 **Fix.** Press **Fix** beside the Installation, enter the value its server takes, and save; then press **Retry**. Or, with access to every Repo the Installation lists, press **Take owner/name off Docs**, which wakes the Session at once. A global Installation only the Hub's Owner can fix; anyone in the Session can press **Turn it off for owner/name**, which turns it off for the Repo alone and wakes the Session, and turn it back on later on the Repo's page. For the third, set `HUB_SECRETS_KEY` to the key the values were saved with, or see [The secrets key is lost](#the-secrets-key-is-lost). For the fourth, press **Reconnect** and sign in at its authorization server (see [An OAuth Installation won't connect](#an-oauth-installation-wont-connect)); only the Owner can reconnect a global one. Prompts sent meanwhile wait in the Session's queue, and run once it starts.
 
@@ -160,7 +160,7 @@ Or an MCP server's Installation shows **connection lost**, and its Sessions say 
 
 **Why.** The Hub connects only as the MCP authorization spec describes: it finds the authorization server from the MCP server's Protected Resource Metadata, registers itself there with Dynamic Client Registration or uses a client entered by hand, and signs you in with PKCE, all over `https`. A server not on `https` can't be connected. A sign-in must come back within 10 minutes, to the browser that began it, signed in to kndl as the person who pressed **Connect**, and is used once. **connection lost** means the authorization server refused to refresh the token, as when the grant was revoked there or the account was removed.
 
-**Fix.** For the first two, check the MCP server's URL. For an expired or stray sign-in, press **Connect** again, and finish it in the same browser. Set `HUB_SECRETS_KEY` as the last one says. For **connection lost**, press **Reconnect**. Only someone with access to every Repo the Installation lists can connect it, and only the Owner a global one. See [Connect it to an account with OAuth](/how-to/add-a-remote-mcp-server/#connect-it-to-an-account-with-oauth).
+**Fix.** For the first two, check the MCP server's URL. For an expired or stray sign-in, press **Connect** again, and finish it in the same browser. Set `HUB_SECRETS_KEY` as the last one says. For **connection lost**, press **Reconnect**. Only someone with access to every Repo the Installation lists can connect it, and only the Owner a global one. See [Connect it to an account with OAuth](/guides/add-a-remote-mcp-server/#connect-it-to-an-account-with-oauth).
 
 ## An OAuth Installation asks for a client, or refuses the one entered
 
@@ -194,7 +194,7 @@ The authorization server refused the connection: invalid_client.
 
 **Why.** The authorization server offers no Dynamic Client Registration, as GitHub's doesn't, so the Hub needs a client you registered there by hand. One entered before is asked for again when it can't be used as it was: `HUB_PUBLIC_URL` changed, so the Hub's callback URL did; the MCP server names another authorization server; or the server no longer authenticates clients as it did. `invalid_client`, or `redirect_uri` in GitHub's error page, means the authorization server doesn't know the client, its secret, or its callback URL: the secret was mistyped or rotated, or the client was registered with another callback URL.
 
-**Fix.** Register the client with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/mcp/callback`, copied with its button, and enter its client ID and secret as the authorization server issued them. For a rotated secret, press **Change client** on the Installation and enter the client with its new secret. The Hub keeps the client it had until a connection with the new one completes. See [Connect a server without Dynamic Client Registration](/how-to/add-a-remote-mcp-server/#connect-a-server-without-dynamic-client-registration).
+**Fix.** Register the client with the callback URL the dialog shows, `<HUB_PUBLIC_URL>/auth/mcp/callback`, copied with its button, and enter its client ID and secret as the authorization server issued them. For a rotated secret, press **Change client** on the Installation and enter the client with its new secret. The Hub keeps the client it had until a connection with the new one completes. See [Connect a server without Dynamic Client Registration](/guides/add-a-remote-mcp-server/#connect-a-server-without-dynamic-client-registration).
 
 ## A global Installation, or its MCP server, can't be changed
 
@@ -210,7 +210,7 @@ Docs search has a global Installation, on in every Repo: only the Hub's Owner ca
 
 **Why.** A global Installation is on in every Repo, so every Sandbox on the Hub can use its credentials. Only the Hub's Owner creates, edits or deletes one, or edits, upgrades or deletes its MCP server.
 
-**Fix.** Ask the Owner. Meanwhile, anyone with access to a Repo can press **Turn off for this Repo** on the Repo's page, or create the Repo's own Installation of the MCP server, which takes the global one's place there. See [Turn it on for every Repo](/how-to/add-a-remote-mcp-server/#turn-it-on-for-every-repo).
+**Fix.** Ask the Owner. Meanwhile, anyone with access to a Repo can press **Turn off for this Repo** on the Repo's page, or create the Repo's own Installation of the MCP server, which takes the global one's place there. See [Turn it on for every Repo](/guides/add-a-remote-mcp-server/#turn-it-on-for-every-repo).
 
 ## A Hub is already running on the database
 
@@ -242,7 +242,7 @@ HubConfigError: The GitHub App's private key is not an RSA key.
 
 **Why.** Each pair turns on one feature, so half of one is a mistake. The private key must be the `.pem` file GitHub downloaded for the App.
 
-**Fix.** Set both of the pair, or neither. Point `GITHUB_APP_PRIVATE_KEY_PATH` at the App's private key as an absolute path the Hub's user can read: `~` isn't expanded. If the file is lost, generate a new private key on the App's settings page. See [Set up the GitHub App](/how-to/set-up-the-github-app/).
+**Fix.** Set both of the pair, or neither. Point `GITHUB_APP_PRIVATE_KEY_PATH` at the App's private key as an absolute path the Hub's user can read: `~` isn't expanded. If the file is lost, generate a new private key on the App's settings page. See [Set up the GitHub App](/self-hosting/set-up-the-github-app/).
 
 ## The settings in `.env.local` are ignored
 
@@ -259,7 +259,7 @@ These don't stop the Hub.
 | Warning | What it means |
 |---|---|
 | `GitHub sign-in is off: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are not set.` | Only dev login can sign people in. |
-| `` The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `kndl onboard --github-app create` to set one up. `` | See [Set up the GitHub App](/how-to/set-up-the-github-app/). |
+| `` The GitHub App is not configured (GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY_PATH): Runners use their host's own git credentials, Sandboxes get no GitHub token so Claude can't push or open pull requests, and people signed in with GitHub can't see any Session. Run `kndl onboard --github-app create` to set one up. `` | See [Set up the GitHub App](/self-hosting/set-up-the-github-app/). |
 | `` HUB_SECRETS_KEY is not set: Environments can't hold Sensitive values. Run `bun run secrets-key` to make one. `` | Plain variables still work. |
 | `Dev login is on (KNDL_DEV_LOGIN): anyone reaching http://127.0.0.1:7777 can sign in without GitHub.` | Expected while you try kndl alone. |
 | `Browsers reach the Hub over plain HTTP at … (HUB_PUBLIC_URL), so they will drop its Secure cookies and sign-in will fail. …` | See [Sign-in doesn't stick](/troubleshooting/sign-in/#sign-in-doesnt-stick). |

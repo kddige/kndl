@@ -35,7 +35,7 @@ Browsers reach the Hub over plain HTTP at http://192.168.1.10:7777 (HUB_PUBLIC_U
 
 **Why.** The sign-in cookie is `Secure` except on a loopback address over HTTP, and browsers drop `Secure` cookies sent over plain HTTP from any other address.
 
-**Fix.** Give the Hub an HTTPS URL, or reach it through an SSH tunnel to `localhost`. See [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/) for each option, including `HUB_INSECURE_COOKIES=1` and its cost.
+**Fix.** Give the Hub an HTTPS URL, or reach it through an SSH tunnel to `localhost`. See [Reach the Hub from other machines](/self-hosting/reach-the-hub-from-other-machines/) for each option, including `HUB_INSECURE_COOKIES=1` and its cost.
 
 ## "The sign-in expired or came from elsewhere"
 
@@ -63,7 +63,7 @@ This Hub is invite-only. Ask its owner for an invite.
 
 The Hub logs `Turned away <login>, who has no Invite`.
 
-**Why.** The Hub lets in only its Owner and the people the Owner invited ([Let people in](/how-to/let-people-in/)), and the link you came with, if any, didn't work: it was used, revoked, expired, replaced, or tied to another GitHub login. A Member the Owner removed is turned away too.
+**Why.** The Hub lets in only its Owner and the people the Owner invited ([Let people in](/self-hosting/let-people-in/)), and the link you came with, if any, didn't work: it was used, revoked, expired, replaced, or tied to another GitHub login. A Member the Owner removed is turned away too.
 
 **Fix.**
 
@@ -81,7 +81,7 @@ Sign-in failed: GitHub refused the sign-in: …
 
 **Why.** GitHub only accepts callback URLs registered on the App, and the Hub sends `<HUB_PUBLIC_URL>/auth/github/callback`. Otherwise the client secret is wrong, or the code expired; the text after the colon is GitHub's.
 
-**Fix.** On the App's settings page, add a callback URL for each address people use, such as `https://hub.example.com/auth/github/callback`. Check `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are the App's current ones, and restart the Hub after changing them. See [Set up the GitHub App](/how-to/set-up-the-github-app/).
+**Fix.** On the App's settings page, add a callback URL for each address people use, such as `https://hub.example.com/auth/github/callback`. Check `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are the App's current ones, and restart the Hub after changing them. See [Set up the GitHub App](/self-hosting/set-up-the-github-app/).
 
 ## There's no Sign in with GitHub button
 
@@ -109,7 +109,7 @@ This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on 
 
 **Why.** The page sends the browser back to the CLI on the browser's machine, and the CLI runs on another one.
 
-**Fix.** Go back a page: it shows the Login code. Paste it in the terminal, where the CLI asks `Waiting for the browser. Or paste the code the page shows`. Next time, run `kndl login --no-browser`. See [Sign in the CLI](/how-to/sign-in-the-cli/#sign-in-over-ssh).
+**Fix.** Go back a page: it shows the Login code. Paste it in the terminal, where the CLI asks `Waiting for the browser. Or paste the code the page shows`. Next time, run `kndl login --no-browser`. See [Sign in the CLI](/guides/sign-in-the-cli/#sign-in-over-ssh).
 
 ## "That code isn't valid"
 
@@ -133,4 +133,4 @@ https://hub.example.com doesn't accept this machine's CLI token: it was revoked.
 
 **Why.** Someone revoked the token on the **Account** page, under **CLI tokens**, or the Hub was set up again with a new database.
 
-**Fix.** Run `kndl login`. See [Sign in the CLI](/how-to/sign-in-the-cli/).
+**Fix.** Run `kndl login`. See [Sign in the CLI](/guides/sign-in-the-cli/).

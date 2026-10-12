@@ -272,7 +272,7 @@ function appCheck(fact: AppPermissionsFact): Check {
     return {
       name,
       status: "fail",
-      detail: `${describeDrift(check).join("\n")}\nUntil then, what needs it fails: see https://kddige.github.io/kndl/how-to/set-up-the-github-app/.`,
+      detail: `${describeDrift(check).join("\n")}\nUntil then, what needs it fails: see https://kddige.github.io/kndl/self-hosting/set-up-the-github-app/.`,
     }
   }
   if (check.installed === 0) {

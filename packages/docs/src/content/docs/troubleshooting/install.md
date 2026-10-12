@@ -39,7 +39,7 @@ git prints why just above it.
 
 **Why.** The CLI manages one home, `KNDL_HOME` or else `~/.kndl`, and that home has no `app/` checkout. It never manages a checkout's `~/.kndl-dev`.
 
-**Fix.** Install with [install.sh](/how-to/install/#install), or set `KNDL_HOME` to the home you installed into.
+**Fix.** Install with [install.sh](/self-hosting/install/#install), or set `KNDL_HOME` to the home you installed into.
 
 ## Onboard needs a flag
 

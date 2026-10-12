@@ -3,7 +3,7 @@ title: MCP server packages
 description: The kndl.json manifest and package.json fields an MCP server package needs, and the limits the Hub reads them with.
 ---
 
-An MCP server package is a folder with a `package.json` and, beside it, a kndl manifest, `kndl.json`. The Hub reads only these two files, from a git repo or an upload, and runs nothing in the package. To publish one and add it to a Hub, see [Publish and add an MCP server package](/how-to/publish-and-add-an-mcp-server-package/).
+An MCP server package is a folder with a `package.json` and, beside it, a kndl manifest, `kndl.json`. The Hub reads only these two files, from a git repo or an upload, and runs nothing in the package. To publish one and add it to a Hub, see [Publish and add an MCP server package](/guides/publish-and-add-an-mcp-server-package/).
 
 ```text
 linear-mcp/
@@ -64,7 +64,7 @@ An MCP server lists 1 to 10 headers, each key and each header name once.
 
 ### OAuth
 
-`{ "type": "oauth" }` is for an MCP server that signs people in with OAuth, as the [MCP authorization spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) describes, through an authorization server that offers Dynamic Client Registration (RFC 7591). Each Installation of the MCP server is connected to one account there, from the MCP page, and only the Hub holds its tokens: see [Connect it to an account with OAuth](/how-to/add-a-remote-mcp-server/#connect-it-to-an-account-with-oauth).
+`{ "type": "oauth" }` is for an MCP server that signs people in with OAuth, as the [MCP authorization spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) describes, through an authorization server that offers Dynamic Client Registration (RFC 7591). Each Installation of the MCP server is connected to one account there, from the MCP page, and only the Hub holds its tokens: see [Connect it to an account with OAuth](/guides/add-a-remote-mcp-server/#connect-it-to-an-account-with-oauth).
 
 ```json
 "auth": { "type": "oauth", "scopes": ["read", "write"] }
