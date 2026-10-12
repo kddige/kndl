@@ -322,12 +322,18 @@ const ExitSubscription = "kndl-exit"
 /**
  * Whether the pane is dead, and how its process ended: its exit status, or the signal that killed
  * it. tmux marks a pane dead when its terminal closes, and knows how the process ended only once
- * it reaps it, which may be later (#296). tmux 3.2 has no `pane_dead_signal`, so it says nothing.
+ * it reaps it (#296). tmux 3.2 has no `pane_dead_signal`, so it never says a signal killed it.
  */
 const PaneExitFormat = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 
-/** How long after a pane dies, with no word of how, it is asked once more (#296). */
-const ExitProbeDelayMs = 2_000
+/**
+ * While a dead pane's process isn't reaped, how long between two checks: doubling from the first
+ * to the last (#296). On a tmux with no `pane_dead_signal`, after how long a process tmux still
+ * has no status for is taken as killed by a signal.
+ */
+const ReapCheckFirstMs = 100
+const ReapCheckLastMs = 5_000
+const ReapGiveUpWithoutSignalsMs = 10_000
 
 /** The most bytes typed with one `send-keys` command. */
 const InputChunkBytes = 256
@@ -350,9 +356,11 @@ class ControlPane {
   /** The size last asked for, which tmux may not have applied yet. */
   private target: TerminalSize
 
-  /** Set once `Exited` is emitted; and the timer of a pending exit probe. */
-  private exited = false
-  private exitProbe: ReturnType<typeof setTimeout> | undefined
+  /** Set once `Exited` is emitted, or the stream ends; then nothing more is checked. */
+  private done = false
+  /** While the pane is dead and its process not yet reaped: when it was seen dead, the next check. */
+  private deadSince: number | undefined
+  private reapCheck: ReturnType<typeof setTimeout> | undefined
 
   constructor(
     private readonly commands: Queue.Queue<string>,
@@ -379,6 +387,7 @@ class ControlPane {
       Stream.flattenIterable,
       Stream.takeUntil((event) => event._tag === "Exited"),
       Stream.catchCause(() => Stream.empty),
+      Stream.ensuring(Effect.sync(() => this.stop())),
     )
 
     const input = (data: string) =>
@@ -428,10 +437,52 @@ class ControlPane {
 
   /** `Exited`, the first time only. */
   private exit(exitCode: number | undefined): Array<PaneEvent> {
-    clearTimeout(this.exitProbe)
-    if (this.exited) return []
-    this.exited = true
+    if (this.done) return []
+    this.stop()
     return [{ _tag: "Exited", exitCode }]
+  }
+
+  private stop(): void {
+    this.done = true
+    clearTimeout(this.reapCheck)
+  }
+
+  /**
+   * The pane is dead, but tmux hasn't reaped its process, so doesn't know how it ended. tmux reaps
+   * when a SIGCHLD reaches it, and a pane's can be missed: the status then waits for the next
+   * child of the server to exit (#296). So each check starts a job, whose exit reaps every child
+   * that has exited, and later reads what tmux knows. `-b` keeps a missed SIGCHLD for the job from
+   * holding up the commands after it. The subscription says so too, once tmux knows.
+   */
+  private awaitReap(): void {
+    if (this.done || this.deadSince !== undefined) return
+    this.deadSince = Date.now()
+    const check = (delay: number) => {
+      this.reapCheck = setTimeout(() => {
+        if (this.done) return
+        this.issueUnsafe("run-shell -b true", () => undefined)
+        this.issueUnsafe(
+          `display-message -p -t ${this.pane} '${PaneExitFormat} #{version}'`,
+          (reply) => {
+            if (this.done || reply.isError) return undefined
+            const line = reply.lines[0] ?? ""
+            const exit = parsePaneExit(line)
+            if (exit === undefined) return undefined
+            if (exit.known) return this.exit(exit.exitCode)[0]
+            // Without `pane_dead_signal`, a process a signal killed is never known: give it time.
+            const waited = Date.now() - (this.deadSince ?? Date.now())
+            if (
+              !reportsSignals(line.split(" ").at(-1) ?? "") &&
+              waited >= ReapGiveUpWithoutSignalsMs
+            )
+              return this.exit(undefined)[0]
+            check(Math.min(delay * 2, ReapCheckLastMs))
+            return undefined
+          },
+        )
+      }, delay)
+    }
+    check(ReapCheckFirstMs)
   }
 
   private toEvents(event: ControlEvent): Array<PaneEvent> {
@@ -453,17 +504,7 @@ class ControlPane {
         const exit = parsePaneExit(event.value)
         if (exit === undefined) return []
         if (exit.known) return this.exit(exit.exitCode)
-        // Dead, but not yet reaped: the subscription changes again once tmux knows how it ended.
-        // A tmux that never says so (a signal on 3.2, or tmux 3.3a, which sometimes loses the
-        // status) is asked once more, then taken as is.
-        this.exitProbe ??= setTimeout(
-          () =>
-            this.issueUnsafe(`display-message -p -t ${this.pane} '${PaneExitFormat}'`, (reply) => {
-              const probed = reply.isError ? undefined : parsePaneExit(reply.lines[0] ?? "")
-              return probed === undefined ? undefined : this.exit(probed.exitCode)[0]
-            }),
-          ExitProbeDelayMs,
-        )
+        this.awaitReap()
         return []
       }
       case "Exit":
@@ -486,4 +527,13 @@ function parsePaneExit(
     known: status !== "" || signal !== "",
     exitCode: Number.isInteger(exitCode) ? exitCode : undefined,
   }
+}
+
+/** Whether a tmux of `version` (`#{version}`, like `3.3a`) has `pane_dead_signal`: 3.3 or later. */
+function reportsSignals(version: string): boolean {
+  const [major = Number.NaN, minor = Number.NaN] = version
+    .split(".")
+    .map((part) => Number.parseInt(part, 10))
+  if (Number.isNaN(major) || Number.isNaN(minor)) return true
+  return major > 3 || (major === 3 && minor >= 3)
 }
