@@ -13,7 +13,6 @@
   },
   "sortPackageJson": false,
   "ignorePatterns": [
-    "prototype/",
     ".agents/",
     ".claude/",
     "skills-lock.json",

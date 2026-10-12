@@ -2,7 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# SQLite databases (the Hub's, and the prototype's prototype/hub/hub.db)
+# SQLite databases (the Hub's)
 *.db
 *.db-shm
 *.db-wal
@@ -14,7 +14,6 @@ packages/mod/plugins/*/hooks/hub-link-lib.js
 
 # Laid by Claude Code beside a mod each time it loads one
 .claude-plugin/types/
-prototype/mod/tsconfig.json
 .claude/settings.local.json
 .claude/worktrees/
 

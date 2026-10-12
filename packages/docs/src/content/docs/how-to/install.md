@@ -30,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 
 It installs Bun if it's missing, clones kndl into `~/.kndl/app` at the latest Release, writes the `kndl` command to `~/.local/bin` (adding it to `PATH` if needed), then starts `kndl onboard`.
 
-The install follows a Channel: `stable`, the latest Release (a tag like `v2026.10.1`), by default, or `dev`, the head of `main`. If there's no Release yet, it installs `main` and moves to the first Release when you update. To follow `main`, to install a branch, tag or commit instead, or to skip onboard:
+The install follows a Channel: `stable`, the latest Release (a tag like `v2026.10.1`), by default, or `dev`, the head of `main`. If there's no Release yet, it installs `main`, and `kndl update` moves it to the first Release that includes that commit. To follow `main`, to install a branch, tag or commit instead, or to skip onboard:
 
 ```sh
 curl -fsSL … | sh -s -- --channel dev --no-onboard

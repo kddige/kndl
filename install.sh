@@ -111,7 +111,7 @@ checkout_channel() {
       git -C "$app" checkout --quiet --detach "refs/tags/$release"
       say "Installing Release $release."
     else
-      say "There's no Release yet: installing main. kndl update moves to the first Release."
+      say "There's no Release yet: installing main. kndl update moves to the first Release that includes it."
     fi
   fi
   git -C "$app" config kndl.channel "$channel"

@@ -1,0 +1,29 @@
+# Checks every pull request's title against ADR 0025 (`<areas>: <change> (#<issue>)`). Pull
+# requests are squash-merged with their title as the commit title, so the title is what main's
+# history and the release notes show. The rule itself is in scripts/pr-title.ts.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+      - name: Check the title
+        # Through the environment, never interpolated into the script: the title is untrusted.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bun scripts/pr-title.ts
