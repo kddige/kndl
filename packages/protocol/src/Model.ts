@@ -22,6 +22,7 @@ export type ModelName = typeof ModelName.Type
 /**
  * Claude Code's effort levels, as its `--effort` takes them (Claude Code 2.1.289). Claude Code
  * picks the level itself when none is given; its own pickers call that the default, Medium.
+ * 2.1.296's `/effort` lists `auto` and `ultracode` besides, which aren't offered.
  */
 export const EffortLevel = Schema.Literals(["low", "medium", "high", "xhigh", "max"])
 export type EffortLevel = typeof EffortLevel.Type

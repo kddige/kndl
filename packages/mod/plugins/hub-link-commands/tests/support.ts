@@ -1,6 +1,6 @@
 // What the hub-link-commands tests share: a session linked to a faked Hub, and what the plugin
 // says it delivers and steers. Its own file, since `claude plugin test` (Claude Code 2.1.296)
-// hangs on a test file of more than 21 tests.
+// hangs on a test file of more than 20 tests: each one leaves its held long poll behind.
 
 import type { On } from "claude-code"
 import { mock } from "claude-code/testing"

@@ -56,10 +56,10 @@ export const PinnedClaudeModels: RunnerModels = {
     },
     {
       alias: "haiku",
-      id: "claude-haiku-4-5-20251001",
-      label: "Haiku 4.5",
+      id: "claude-haiku-5-5",
+      label: "Haiku 5.5",
       description: "Fastest for quick answers",
-      effort: false,
+      effort: true,
     },
     {
       alias: "opus[1m]",
