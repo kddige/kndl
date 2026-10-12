@@ -2,6 +2,9 @@
 
 Thanks for helping. kndl is early and changes quickly, so open an issue before you start on anything big: a short discussion saves a rewrite.
 
+> [!NOTE]
+> Issues and pull requests are open to maintainers only for now, while we set the baseline kndl grows from. Please use [Discussions](https://github.com/kddige/kndl/discussions) in the meantime.
+
 ## Set up
 
 [Develop kndl](https://kddige.github.io/kndl/contributing/develop-kndl/) covers what to install, running the Hub and a Runner from a checkout, the repository's layout, and working on the web UI, the mod and the docs site.
