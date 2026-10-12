@@ -58,7 +58,7 @@ import { Composer } from "./Composer.tsx"
 import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker } from "./ModelPicker.tsx"
-import { modelName, otherTurnModel } from "./models.ts"
+import { type ModelSetting, modelName, otherTurnModel } from "./models.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
 import { Presence } from "./Presence.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
@@ -258,6 +258,28 @@ function LoadedSession({
     }),
     [summary.model, summary.effort],
   )
+  // A switch shows in the picker from the pick, while it is asked about and then sent, until the
+  // Hub says the Session's setting: a cancel, or a refusal, shows the setting again.
+  const [picked, setPicked] = useState<PickedSetting | null>(null)
+  const shownSetting = picked !== null && picked.from === setting ? picked.to : setting
+  useEffect(() => {
+    if (!picked?.sent) return
+    const timer = setTimeout(() => setPicked(null), switchSentMs)
+    return () => clearTimeout(timer)
+  }, [picked])
+  const pick = (next: ModelSetting) => {
+    const from = setting
+    setPicked({ from, to: next, sent: false })
+    interrupting({
+      title: "Switch the model?",
+      action: "Switch",
+      go: () =>
+        setPicked(
+          command(hub.setSessionModel(summary.id, next)) ? { from, to: next, sent: true } : null,
+        ),
+      cancel: () => setPicked(null),
+    })
+  }
   const nameTurnModel = useCallback(
     (model: string) => otherTurnModel(models, setting, model),
     [models, setting],
@@ -440,7 +462,9 @@ function LoadedSession({
         size="sm"
         open={confirming !== null}
         onOpenChange={(open) => {
-          if (!open) setConfirming(null)
+          if (open) return
+          confirming?.cancel?.()
+          setConfirming(null)
         }}
         title={confirming?.title}
         description={`${
@@ -549,14 +573,8 @@ function LoadedSession({
                   picker={
                     <ModelPicker
                       models={models}
-                      value={setting}
-                      onChange={(next) =>
-                        interrupting({
-                          title: "Switch the model?",
-                          action: "Switch",
-                          go: () => command(hub.setSessionModel(summary.id, next)),
-                        })
-                      }
+                      value={shownSetting}
+                      onChange={pick}
                       disabled={archived}
                       side="top"
                     />
@@ -619,7 +637,19 @@ interface Interruption {
   /** Its button's label. */
   readonly action: string
   readonly go: () => void
+  /** What not going on with it undoes. */
+  readonly cancel?: () => void
 }
+
+/** A model and effort picked, from the setting it was picked on, and whether it was sent. */
+interface PickedSetting {
+  readonly from: ModelSetting
+  readonly to: ModelSetting
+  readonly sent: boolean
+}
+
+/** How long a sent switch shows without word from the Hub, as when it refuses it. */
+const switchSentMs = 5_000
 
 /** Asking for a restart, and whether it was just asked: from the click until the Hub answers. */
 interface Restart {

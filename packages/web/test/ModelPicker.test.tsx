@@ -133,27 +133,77 @@ test("a model that takes no effort level drops it, and has no effort button", as
   expect(trigger(container, "Effort")).toBeNull()
 })
 
-test("the effort slider steps through the CLI's levels, named as claude.ai names them", async () => {
+/** The open effort popover. */
+const effortPopover = () => document.querySelector<HTMLElement>('[role="dialog"]')
+
+test("the menu's rows are a group named Model", async () => {
+  const { container } = await picker()
+  await click(trigger(container, "Model"))
+  const group = radio("Opus 5.5").closest('[role="group"]')
+  const labelledBy = group?.getAttribute("aria-labelledby") ?? ""
+  expect(document.getElementById(labelledBy)?.textContent).toBe("Model")
+})
+
+test("with no level set, the effort slider says Claude Code picks, and is on no level", async () => {
   const { container, changes } = await picker({ model: "opus" })
   await click(trigger(container, "Effort"))
-  const popover = document.querySelector<HTMLElement>('[role="dialog"]')
-  // Unset, it rests on Claude Code's default, Medium.
-  expect(popover?.textContent).toContain("Medium")
-  expect(popover?.textContent).toContain("Claude Code's default")
-  expect(slider()?.getAttribute("aria-valuetext")).toBe("Medium")
+  const popover = effortPopover()
+  // Named Effort, with the level as its content.
+  expect(popover?.getAttribute("aria-label")).toBe("Effort")
+  expect(popover?.hasAttribute("aria-labelledby")).toBe(false)
+  expect(popover?.textContent).toContain("Default")
+  expect(popover?.textContent).toContain("Claude Code picks the level.")
+  expect(popover?.textContent).not.toContain("Medium")
+  expect(slider()?.getAttribute("aria-valuetext")).toBe("Default")
   // Nothing to go back to while none is set.
   expect(popover?.textContent).not.toContain("Use the default")
 
+  // The first key goes to an end, so every level, the first included, is a step and Enter away.
   await press("ArrowRight")
-  expect(changes).toEqual([{ model: "opus", effort: "high" }])
-  expect(trigger(container, "Effort")?.textContent).toBe("High")
-  expect(slider()?.getAttribute("aria-valuetext")).toBe("High")
+  expect(slider()?.getAttribute("aria-valuetext")).toBe("Low")
+  await press("Enter")
+  expect(changes).toEqual([{ model: "opus", effort: "low" }])
+})
 
-  await press("End")
-  expect(changes.at(-1)).toEqual({ model: "opus", effort: "max" })
-  expect(popover?.textContent).toContain("4× or more usage")
+test("arrow keys only move the effort slider: Enter sets the level, once", async () => {
+  const { container, changes } = await picker({ model: "opus", effort: "low" })
+  await click(trigger(container, "Effort"))
+  for (const _ of [1, 2, 3, 4]) await press("ArrowRight")
+  // Low to Max, shown but not set.
+  expect(changes).toEqual([])
+  expect(slider()?.getAttribute("aria-valuetext")).toBe("Max")
+  expect(effortPopover()?.textContent).toContain("4× or more usage")
+  expect(trigger(container, "Effort")?.textContent).toBe("Low")
 
+  await press("Enter")
+  expect(changes).toEqual([{ model: "opus", effort: "max" }])
+  expect(trigger(container, "Effort")?.textContent).toBe("Max")
+  // Enter again on the level set sends nothing more.
+  await press("Enter")
+  expect(changes).toHaveLength(1)
+})
+
+test("closing the effort slider on another level sets it; on the same one, nothing", async () => {
+  const { container, changes } = await picker({ model: "opus", effort: "high" })
+  await click(trigger(container, "Effort"))
+  await press("ArrowLeft")
+  await press("ArrowRight")
+  await click(trigger(container, "Effort"))
+  expect(effortPopover()).toBeNull()
+  expect(changes).toEqual([])
+
+  await click(trigger(container, "Effort"))
+  await press("ArrowLeft")
+  await press("ArrowLeft")
+  await click(trigger(container, "Effort"))
+  expect(changes).toEqual([{ model: "opus", effort: "low" }])
+  expect(trigger(container, "Effort")?.getAttribute("aria-label")).toBe("Effort: Low")
+})
+
+test("Use the default unsets the level", async () => {
+  const { container, changes } = await picker({ model: "opus", effort: "high" })
+  await click(trigger(container, "Effort"))
   await click(button("Use the default", document))
-  expect(changes.at(-1)).toEqual({ model: "opus" })
+  expect(changes).toEqual([{ model: "opus" }])
   expect(trigger(container, "Effort")?.textContent).toBe("Effort")
 })

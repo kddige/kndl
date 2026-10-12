@@ -1,6 +1,7 @@
 import { Slider as BaseSlider } from "@base-ui/react/slider"
 import * as stylex from "@stylexjs/stylex"
-import { color, motion, radius, shadow } from "./tokens.stylex.ts"
+import type { KeyboardEvent } from "react"
+import { color, radius, shadow } from "./tokens.stylex.ts"
 
 /** One stop on a {@link Slider}. */
 export interface SliderStep<Value extends string> {
@@ -12,19 +13,40 @@ export interface SliderStep<Value extends string> {
 export interface SliderProps<Value extends string> {
   /** The stops, in order, left to right. */
   steps: ReadonlyArray<SliderStep<Value>>
-  value: Value
-  /** Each move, while it is dragged too: for showing where it is. */
+  /** The stop it shows; undefined shows none, with no thumb. */
+  value: Value | undefined
+  /** Each move, from a drag or an arrow key: for showing where it is. */
   onValueChange?: (value: Value) => void
-  /** Where it was let go, or moved to with a key or a click: for acting on. */
+  /** Where a drag or a click lets go, or Enter: for acting on. Arrow keys only move it. */
   onValueCommitted?: (value: Value) => void
   /** Its accessible name. */
   label: string
+  /** What screen readers say for it while it shows no stop. */
+  unsetLabel?: string
   disabled?: boolean
   sx?: stylex.StyleXStyles
 }
 
 /** The thumb's diameter; the track is as tall, so the thumb sits in it. */
 const thumb = "1.25rem"
+
+/**
+ * Where the slider is while it shows no stop: between the first two, so a click on any stop,
+ * the first included, is a change Base UI reports. The thumb isn't drawn there.
+ */
+const between = 0.5
+
+/** The keys that move the thumb from no stop: End to the last, the others to the first. */
+const moveKeys = new Set([
+  "ArrowRight",
+  "ArrowLeft",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+])
 
 const styles = stylex.create({
   control: {
@@ -42,6 +64,13 @@ const styles = stylex.create({
     height: thumb,
     borderRadius: radius.full,
     backgroundColor: color.surfaceActive,
+    // The focused element is Base UI's visually hidden range input inside the thumb, so the
+    // shared focus.ring, which rings the focused element itself, can't show: the ring goes on
+    // the track, around the input, for keyboard focus only.
+    outlineStyle: { default: "none", ":has(:focus-visible)": "solid" },
+    outlineWidth: "2px",
+    outlineColor: color.focus,
+    outlineOffset: "2px",
   },
   indicator: {
     borderRadius: radius.full,
@@ -62,6 +91,11 @@ const styles = stylex.create({
     backgroundColor: color.onAccent,
     opacity: 0.6,
   },
+  // With the thumb inset at the ends, its centre runs from half a thumb in to half a thumb short
+  // of the end: the dots sit where it stops.
+  dotAt: (fraction: number) => ({
+    left: `calc(${thumb} / 2 + (100% - ${thumb}) * ${fraction})`,
+  }),
   thumb: {
     width: thumb,
     height: thumb,
@@ -71,19 +105,16 @@ const styles = stylex.create({
     borderWidth: "1px",
     borderStyle: "solid",
     borderColor: color.borderStrong,
-    // The thumb holds the focused input: the ring goes on the thumb, for keyboard focus only.
-    outlineStyle: { default: "none", ":has(:focus-visible)": "solid" },
-    outlineWidth: "2px",
-    outlineColor: color.focus,
-    outlineOffset: "2px",
-    transitionProperty: "box-shadow",
-    transitionDuration: motion.durationFast,
+  },
+  hidden: {
+    opacity: 0,
   },
 })
 
 /**
  * Picks one of a few ordered stops by sliding, as an effort level: a dot marks each stop, and the
- * thumb snaps to them. Arrow keys step, Home and End go to the ends.
+ * thumb snaps to them. A drag or a click commits where it lets go. Arrow keys, Home and End only
+ * move the thumb, and Enter commits, so stepping through the stops doesn't act on each.
  */
 export function Slider<Value extends string>({
   steps,
@@ -91,18 +122,35 @@ export function Slider<Value extends string>({
   onValueChange,
   onValueCommitted,
   label,
+  unsetLabel = "None",
   disabled = false,
   sx,
 }: SliderProps<Value>) {
   const last = Math.max(steps.length - 1, 1)
-  const index = Math.max(
-    steps.findIndex((step) => step.value === value),
-    0,
-  )
+  const index = steps.findIndex((step) => step.value === value)
+  const set = index >= 0
   const at = (next: number) => steps[Math.round(next)]?.value
+
+  // On the thumb's input, where Base UI runs it before its own handler, on the same event: one
+  // on the root, even capturing, gets an event of its own, and couldn't stop Base UI's.
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Enter" && value !== undefined && set) {
+      event.preventDefault()
+      onValueCommitted?.(value)
+      return
+    }
+    // From no stop, Base UI would step from the point between the first two: go to an end.
+    if (!set && moveKeys.has(event.key)) {
+      // Base UI's handler leaves a key alone once it is handled.
+      event.preventDefault()
+      const next = steps[event.key === "End" ? steps.length - 1 : 0]?.value
+      if (next !== undefined) onValueChange?.(next)
+    }
+  }
+
   return (
     <BaseSlider.Root
-      value={index}
+      value={set ? index : between}
       min={0}
       max={last}
       step={1}
@@ -112,7 +160,9 @@ export function Slider<Value extends string>({
         const step = at(next)
         if (step !== undefined) onValueChange?.(step)
       }}
-      onValueCommitted={(next: number) => {
+      onValueCommitted={(next: number, details) => {
+        // A key only moves it; Enter commits, above.
+        if (details.reason === "keyboard") return
         const step = at(next)
         if (step !== undefined) onValueCommitted?.(step)
       }}
@@ -120,23 +170,23 @@ export function Slider<Value extends string>({
     >
       <BaseSlider.Control {...stylex.props(styles.control)}>
         <BaseSlider.Track {...stylex.props(styles.track)}>
-          <BaseSlider.Indicator {...stylex.props(styles.indicator)} />
+          {set && <BaseSlider.Indicator {...stylex.props(styles.indicator)} />}
           {steps.map((step, i) => (
             <span
               key={step.value}
               aria-hidden
-              // With the thumb inset at the ends, its centre runs from half a thumb in to half a
-              // thumb short of the end: the dots sit where it stops.
-              {...stylex.props(styles.dot, i <= index && styles.dotFilled)}
-              style={{ left: `calc(${thumb} / 2 + (100% - ${thumb}) * ${i / last})` }}
+              {...stylex.props(
+                styles.dot,
+                styles.dotAt(i / last),
+                set && i <= index && styles.dotFilled,
+              )}
             />
           ))}
           <BaseSlider.Thumb
             aria-label={label}
-            getAriaValueText={(_formatted: string, next: number) =>
-              steps[Math.round(next)]?.label ?? ""
-            }
-            {...stylex.props(styles.thumb)}
+            onKeyDown={onKeyDown}
+            getAriaValueText={() => (set ? (steps[index]?.label ?? "") : unsetLabel)}
+            {...stylex.props(styles.thumb, !set && styles.hidden)}
           />
         </BaseSlider.Track>
       </BaseSlider.Control>

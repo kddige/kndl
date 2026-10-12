@@ -32,11 +32,7 @@ const styles = stylex.create({
     alignSelf: "flex-start",
     gap: space.s2,
   },
-  menu: {
-    width: "15rem",
-    maxWidth: "calc(100vw - 2rem)",
-  },
-  effort: {
+  popup: {
     width: "15rem",
     maxWidth: "calc(100vw - 2rem)",
   },
@@ -61,9 +57,14 @@ const styles = stylex.create({
 /** The radio value of the `default` row: no model set, Claude Code's default. */
 const defaultRow = "default"
 
-/** The level Claude Code runs when none is set: its own pickers call it the default, Medium. */
-const defaultEffort = (efforts: ReadonlyArray<EffortLevel>): EffortLevel | undefined =>
-  efforts.includes("medium") ? "medium" : efforts[0]
+/** `bar`: quiet buttons in the composer's bar. `field`: bordered ones, in a form. */
+type Appearance = "bar" | "field"
+
+/** A picker button's size and intent, for where it is. */
+const look = (appearance: Appearance) =>
+  appearance === "bar"
+    ? ({ size: "sm", intent: "ghost" } as const)
+    : ({ size: "md", intent: "secondary" } as const)
 
 export interface ModelPickerProps {
   /** What the Session's Runner said its Claude Code has; undefined before it has said. */
@@ -73,8 +74,7 @@ export interface ModelPickerProps {
   disabled?: boolean
   /** Which way the menus open: up, from the composer at the bottom of the page. */
   side?: MenuSide
-  /** `bar`: quiet buttons in the composer's bar. `field`: bordered ones, in a form. */
-  appearance?: "bar" | "field"
+  appearance?: Appearance
 }
 
 /**
@@ -96,8 +96,6 @@ export function ModelPicker({
   // A model the Runner doesn't list takes no level here: the Hub would refuse one for it.
   const takesEffort = current?.effort === true && efforts.length > 0
   const name = modelName(models, value)
-  const size = appearance === "bar" ? "sm" : "md"
-  const intent = appearance === "bar" ? "ghost" : "secondary"
 
   const chooseModel = (row: string) => {
     const model = row === defaultRow ? models?.default : models && findModel(models, row)
@@ -118,11 +116,10 @@ export function ModelPicker({
       <Menu
         side={side}
         align="start"
-        sx={styles.menu}
+        sx={styles.popup}
         trigger={
           <Button
-            size={size}
-            intent={intent}
+            {...look(appearance)}
             disabled={disabled}
             aria-label={`Model: ${name}`}
             sx={styles.trigger}
@@ -135,6 +132,7 @@ export function ModelPicker({
         <MenuRadioGroup
           value={value.model === undefined ? defaultRow : (current?.alias ?? value.model)}
           onValueChange={chooseModel}
+          label="Model"
         >
           <MenuRadioItem
             value={defaultRow}
@@ -152,73 +150,84 @@ export function ModelPicker({
           onChange={chooseEffort}
           disabled={disabled}
           side={side}
-          size={size}
-          intent={intent}
+          appearance={appearance}
         />
       )}
     </div>
   )
 }
 
+/**
+ * The effort button and its slider. The slider shows where it is dragged or stepped to, and sets
+ * the level where it is let go or clicked, on Enter, or when it closes on a level other than the
+ * one set: a change between Turns restarts Claude Code, and while agents run asks first, so
+ * stepping through the levels doesn't set each.
+ */
 function EffortPicker({
   efforts,
   value,
   onChange,
   disabled,
   side,
-  size,
-  intent,
+  appearance,
 }: {
   efforts: ReadonlyArray<EffortLevel>
+  /** The level set; undefined when none is, and Claude Code picks. */
   value: EffortLevel | undefined
   onChange: (effort: EffortLevel | undefined) => void
   disabled: boolean
   side: MenuSide
-  size: "sm" | "md"
-  intent: "ghost" | "secondary"
+  appearance: Appearance
 }) {
-  // Where the thumb is while it is dragged: the level is only set where it is let go, as a
-  // change between Turns restarts Claude Code, and in a Turn asks first.
-  const [dragging, setDragging] = useState<EffortLevel | undefined>(undefined)
-  const shown = dragging ?? value ?? defaultEffort(efforts)
-  if (shown === undefined) return null
-  const label = value === undefined ? "Effort" : effortNames[value]
-  const note =
-    value === undefined && dragging === undefined ? "Claude Code's default" : effortNotes[shown]
+  const [moved, setMoved] = useState<EffortLevel | undefined>(undefined)
+  const shown = moved ?? value
+  const setName = value === undefined ? "Default" : effortNames[value]
+  const commit = (level: EffortLevel) => {
+    setMoved(undefined)
+    if (level !== value) onChange(level)
+  }
 
   return (
     <Popover
       side={side}
       align="start"
-      title={effortNames[shown]}
-      {...(note !== undefined && { description: note })}
-      onOpenChange={() => setDragging(undefined)}
-      sx={styles.effort}
+      label="Effort"
+      title={shown === undefined ? "Default" : effortNames[shown]}
+      description={shown === undefined ? "Claude Code picks the level." : effortNotes[shown]}
+      onOpenChange={(open) => {
+        if (!open && moved !== undefined) commit(moved)
+      }}
+      sx={styles.popup}
       trigger={
         <Button
-          size={size}
-          intent={intent}
+          {...look(appearance)}
           disabled={disabled}
-          aria-label={`Effort: ${value === undefined ? "Default" : effortNames[value]}`}
+          aria-label={`Effort: ${setName}`}
           sx={[styles.trigger, styles.effortTrigger]}
         >
-          <span {...stylex.props(styles.label)}>{label}</span>
+          <span {...stylex.props(styles.label)}>{value === undefined ? "Effort" : setName}</span>
           <ChevronDownIcon />
         </Button>
       }
     >
       <Slider
         label="Effort"
+        unsetLabel="Default"
         steps={efforts.map((level) => ({ value: level, label: effortNames[level] }))}
         value={shown}
-        onValueChange={setDragging}
-        onValueCommitted={(level) => {
-          setDragging(undefined)
-          onChange(level)
-        }}
+        onValueChange={setMoved}
+        onValueCommitted={commit}
       />
       {value !== undefined && (
-        <Button size="sm" intent="ghost" onClick={() => onChange(undefined)} sx={styles.reset}>
+        <Button
+          size="sm"
+          intent="ghost"
+          onClick={() => {
+            setMoved(undefined)
+            onChange(undefined)
+          }}
+          sx={styles.reset}
+        >
           Use the default
         </Button>
       )}

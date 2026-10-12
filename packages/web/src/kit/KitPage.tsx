@@ -54,6 +54,7 @@ import {
   SessionStatus,
   setTheme,
   Sidebar,
+  Slider,
   Spinner,
   SteerIcon,
   StopIcon,
@@ -120,6 +121,9 @@ const styles = stylex.create({
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(15rem, 1fr))",
     gap: space.s4,
+  },
+  slider: {
+    width: "12rem",
   },
   swatches: {
     display: "grid",
@@ -737,6 +741,51 @@ function Toggles() {
   )
 }
 
+const LEVELS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+] as const
+
+type Level = (typeof LEVELS)[number]["value"]
+
+function Sliders() {
+  const [shown, setShown] = useState<Level | undefined>("medium")
+  const [committed, setCommitted] = useState<Level | undefined>("medium")
+  const [unset, setUnset] = useState<Level | undefined>(undefined)
+  return (
+    <Section
+      title="Slider"
+      note="One of a few ordered stops. Arrow keys move it; a click, letting go, or Enter sets it."
+    >
+      <div {...stylex.props(styles.grid)}>
+        <Row label={`set: ${committed ?? "none"}`}>
+          <Slider
+            label="Level"
+            steps={LEVELS}
+            value={shown}
+            onValueChange={setShown}
+            onValueCommitted={setCommitted}
+            sx={styles.slider}
+          />
+        </Row>
+        <Row label="none yet">
+          <Slider
+            label="Level, none set"
+            steps={LEVELS}
+            value={unset}
+            onValueChange={setUnset}
+            sx={styles.slider}
+          />
+        </Row>
+        <Row label="disabled">
+          <Slider label="Level, disabled" steps={LEVELS} value="high" disabled sx={styles.slider} />
+        </Row>
+      </div>
+    </Section>
+  )
+}
+
 // Kit-only links: they mark themselves current instead of going anywhere.
 function KitLink({ onPick, ...props }: ComponentProps<"a"> & { onPick: () => void }) {
   return (
@@ -1061,6 +1110,7 @@ export function KitPage() {
 
         <Fields />
         <Toggles />
+        <Sliders />
         <Selects />
         <Comboboxes />
 

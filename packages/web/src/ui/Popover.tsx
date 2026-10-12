@@ -12,6 +12,11 @@ export interface PopoverProps {
   trigger: ReactElement
   /** Names the popover for screen readers, and is shown as its heading. */
   title?: ReactNode
+  /**
+   * Names it for screen readers instead of the title, which is then only shown: for a title that
+   * is a value, such as the level an effort slider is on.
+   */
+  label?: string
   description?: ReactNode
   children?: ReactNode
   side?: PopoverSide
@@ -55,6 +60,7 @@ const styles = stylex.create({
 export function Popover({
   trigger,
   title,
+  label,
   description,
   children,
   side = "bottom",
@@ -76,12 +82,19 @@ export function Popover({
           sideOffset={6}
           {...stylex.props(popup.positioner)}
         >
-          <BasePopover.Popup {...stylex.props(popup.surface, styles.panel, sx)}>
+          <BasePopover.Popup
+            {...(label !== undefined && { "aria-label": label })}
+            {...stylex.props(popup.surface, styles.panel, sx)}
+          >
             {(title || description) && (
               <div {...stylex.props(styles.heading)}>
-                {title && (
-                  <BasePopover.Title {...stylex.props(styles.title)}>{title}</BasePopover.Title>
-                )}
+                {title &&
+                  (label === undefined ? (
+                    <BasePopover.Title {...stylex.props(styles.title)}>{title}</BasePopover.Title>
+                  ) : (
+                    // Base UI's Title would name the popover, over the label.
+                    <p {...stylex.props(styles.title)}>{title}</p>
+                  ))}
                 {description && (
                   <BasePopover.Description {...stylex.props(styles.description)}>
                     {description}
