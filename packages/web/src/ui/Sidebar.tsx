@@ -65,6 +65,7 @@ const styles = stylex.create({
     borderTopStyle: "solid",
     borderTopColor: color.border,
   },
+  aboveFooter: { flexShrink: 0, paddingBlock: space.s1, paddingInline: space.s4 },
   section: { display: "flex", flexDirection: "column" },
   sectionLabel: {
     paddingTop: space.s1,
@@ -222,6 +223,8 @@ export interface SidebarProps {
   header?: ReactNode
   /** NavSections. */
   children: ReactNode
+  /** A quiet line pinned just above the footer, such as the version. */
+  aboveFooter?: ReactNode
   /** Ambient status and the account, pinned to the bottom. */
   footer?: ReactNode
   sx?: stylex.StyleXStyles
@@ -231,13 +234,14 @@ export interface SidebarProps {
  * The app's navigation column: a header, NavSections that scroll, and a footer. It fills its
  * container's height; the page decides how wide it is and whether it's a drawer.
  */
-export function Sidebar({ label, header, children, footer, sx }: SidebarProps) {
+export function Sidebar({ label, header, children, aboveFooter, footer, sx }: SidebarProps) {
   return (
     <div {...stylex.props(styles.sidebar, sx)}>
       {header && <div {...stylex.props(styles.header)}>{header}</div>}
       <nav aria-label={label} {...stylex.props(styles.nav)}>
         {children}
       </nav>
+      {aboveFooter && <div {...stylex.props(styles.aboveFooter)}>{aboveFooter}</div>}
       {footer && <div {...stylex.props(styles.footer)}>{footer}</div>}
     </div>
   )

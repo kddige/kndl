@@ -1,5 +1,7 @@
 import {
   type AgentSummary,
+  type BuildVersion,
+  describeBuild,
   MaxSessionNameLength,
   type SessionId,
   type SessionSummary,
@@ -62,6 +64,12 @@ const styles = stylex.create({
     color: color.textMuted,
     fontSize: text.sm,
   },
+  version: {
+    color: color.textSubtle,
+    fontSize: text.xs,
+    fontFamily: "monospace",
+    userSelect: "text",
+  },
   you: {
     display: "flex",
     alignItems: "center",
@@ -100,6 +108,17 @@ const styles = stylex.create({
   },
 })
 
+/**
+ * The version tag (ADR 0025): the Release on `stable`, `dev-` and the commit on `dev`, and `ref-`
+ * and the commit on what `--ref` pinned, which clears the Channel. An install from before Channels
+ * records none and follows main, so it's `dev` too.
+ */
+function versionTag({ release, branch, channel, commit }: BuildVersion): string {
+  if (release !== undefined && channel !== "dev") return release
+  const dev = channel === "dev" || (channel === undefined && branch === "main")
+  return `${dev ? "dev" : "ref"}-${commit.slice(0, 9)}`
+}
+
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
 function sectionOf(
   pathname: string,
@@ -129,6 +148,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const runners = useHubState((state) => state.runners)
   const you = useHubState((state) => state.you)
   const owner = useHubState((state) => state.owner)
+  const hubVersion = useHubState((state) => state.hubVersion)
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { sessionId } = useParams({ strict: false })
   const { agent: agentId } = useSearch({ strict: false })
@@ -171,6 +191,13 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
             </IconButton>
           )}
         </>
+      }
+      aboveFooter={
+        hubVersion && (
+          <p title={describeBuild(hubVersion)} {...stylex.props(styles.version)}>
+            {versionTag(hubVersion)}
+          </p>
+        )
       }
       footer={
         <>

@@ -26,14 +26,23 @@ export const ReleaseVersion = Schema.String.check(Schema.isPattern(ReleaseVersio
 export type ReleaseVersion = typeof ReleaseVersion.Type
 
 /**
- * The commit a Hub or Runner runs, the branch its checkout follows, if it is on one, and the
- * Release, if the commit is one's (ADR 0025). `release` is optional, so a peer from before it
- * leaves it out, and ignores it when it's there.
+ * What an install follows (ADR 0025): the latest Release, or main. The CLI records it in the
+ * installed checkout as `kndl.channel`; `--ref` clears it.
+ */
+export const Channel = Schema.Literals(["stable", "dev"])
+export type Channel = typeof Channel.Type
+
+/**
+ * The commit a Hub or Runner runs, the branch its checkout follows, if it is on one, the Release,
+ * if the commit is one's, and the Channel its install follows, if one is recorded (ADR 0025).
+ * `release` and `channel` are optional, so a peer from before them leaves them out, and ignores
+ * them when they're there.
  */
 export const BuildVersion = Schema.Struct({
   commit: CommitId,
   branch: Schema.optionalKey(Schema.NonEmptyString),
   release: Schema.optionalKey(ReleaseVersion),
+  channel: Schema.optionalKey(Channel),
 })
 export type BuildVersion = typeof BuildVersion.Type
 

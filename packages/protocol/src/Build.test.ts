@@ -121,6 +121,33 @@ describe("the checkout's own version", () => {
     }
   })
 
+  test("names the Channel recorded in the checkout, and none that isn't one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-channel-"))
+    const git = (...args: Array<string>) =>
+      execFileSync("git", ["-C", dir, ...args], { stdio: "ignore" })
+    try {
+      git("init", "--quiet", "--initial-branch=main")
+      git(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "1",
+      )
+      expect(readBuildVersion(dir)?.channel).toBeUndefined()
+      git("config", "kndl.channel", "dev")
+      expect(readBuildVersion(dir)?.channel).toBe("dev")
+      git("config", "kndl.channel", "nightly")
+      expect(readBuildVersion(dir)?.channel).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test("is unknown outside a checkout", () => {
     expect(readBuildVersion("/")).toBeUndefined()
     expect(checkoutHolds("0123456789abcdef0123456789abcdef01234567", "/")).toBeUndefined()
