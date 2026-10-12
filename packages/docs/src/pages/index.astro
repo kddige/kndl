@@ -474,7 +474,7 @@ const mallows = [
   .lede { max-width: 30rem; margin: 1.1rem 0 1.6rem; font-size: clamp(1.05rem, 0.95rem + 0.3vw, 1.25rem); color: var(--ink-2); }
   .install { display: flex; align-items: stretch; max-width: 44rem; border: 1px solid color-mix(in srgb, var(--flame) 70%, var(--log)); border-radius: 0.7rem; background: var(--code-bg); overflow: hidden; }
   :root[data-theme="dark"] .install { border-color: color-mix(in srgb, var(--flame) 40%, transparent); }
-  .install code { flex: 1; min-width: 0; padding: 0.8rem 1rem; font-size: 0.74rem; line-height: 1.5; white-space: nowrap; overflow-x: auto; color: var(--code-ink); scrollbar-width: thin; }
+  .install code { flex: 1; min-width: 0; padding: 0.8rem 1rem; font-size: 0.74rem; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; color: var(--code-ink); scrollbar-width: thin; }
   .install .p { color: var(--prompt); user-select: none; }
   .install button { flex: none; font: inherit; font-family: var(--mono); font-size: 0.8rem; font-weight: 600; padding: 0 1.1rem; border: 0; background: var(--flame); color: var(--on-flame); cursor: pointer; }
   .install button:hover { background: var(--core); }
