@@ -1,0 +1,59 @@
+name: Bug
+description: Something in kndl doesn't work as it should.
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a vulnerability? Don't open an issue: see [SECURITY.md](https://github.com/kddige/kndl/blob/main/SECURITY.md).
+        Use the terms in [GLOSSARY.md](https://github.com/kddige/kndl/blob/main/GLOSSARY.md): Hub, Runner, Session, Sandbox and the rest.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The Hub's version, shown in the web UI's sidebar, like `v2026.10.2` or `dev-abc123def`. Add the Runner's if it differs.
+      placeholder: v2026.10.2
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      multiple: true
+      options:
+        - Hub
+        - Runner
+        - Web UI
+        - CLI or install
+        - Mod (inside Claude Code)
+        - Docs
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start a Session on …
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: The Runner's OS and Sandbox, your browser, and anything else that might matter.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Hub or Runner logs, console errors. Remove tokens and credentials first.
+      render: text

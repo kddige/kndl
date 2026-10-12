@@ -9,6 +9,9 @@
 
 **Multiplayer agentic sessions.**
 
+> [!NOTE]
+> Issues and pull requests are open to maintainers only for now, while we set the baseline kndl grows from. Please use [Discussions](https://github.com/kddige/kndl/discussions) for bugs, ideas and questions in the meantime.
+
 kndl (said "kindle") is a self-hosted Hub where a team runs Claude Code Sessions in Sandboxes on any number of Runners, and watches and drives them together from the web.
 
 **Documentation: <https://kddige.github.io/kndl/>**
