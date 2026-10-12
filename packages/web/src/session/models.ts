@@ -53,12 +53,6 @@ export function modelName(models: RunnerModels | undefined, setting: ModelSettin
   return modelOf(models, setting)?.label ?? setting.model ?? "Default model"
 }
 
-/** The picker's label: `Opus 5.5 · High`, the effort only when one is set. */
-export function settingLabel(models: RunnerModels | undefined, setting: ModelSetting): string {
-  const name = modelName(models, setting)
-  return setting.effort === undefined ? name : `${name} · ${effortNames[setting.effort]}`
-}
-
 /** What the transcript says of a change: `Alice switched to Sonnet 5.5, High`. */
 export function modelSwitchedText(event: ModelSwitched): string {
   const model =

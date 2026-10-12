@@ -38,6 +38,7 @@ export {
 export { PageHeader } from "./PageHeader.tsx"
 export { Popover } from "./Popover.tsx"
 export { Select, type SelectOption, type SelectSize } from "./Select.tsx"
+export { Slider, type SliderProps, type SliderStep } from "./Slider.tsx"
 export { SessionStatus, type SessionState } from "./SessionStatus.tsx"
 export { NavItem, type NestedNavItems, NavSection, NavSlot, Sidebar } from "./Sidebar.tsx"
 export { Spinner, type SpinnerSize } from "./Spinner.tsx"

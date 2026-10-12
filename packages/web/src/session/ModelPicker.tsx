@@ -2,19 +2,14 @@ import { type EffortLevel, findModel, type RunnerModels } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useState } from "react"
 import {
-  ArrowLeftIcon,
   Button,
   ChevronDownIcon,
-  ChevronRightIcon,
   Menu,
-  MenuItem,
   MenuRadioGroup,
   MenuRadioItem,
-  MenuSeparator,
   type MenuSide,
-  MenuSubmenu,
-  useMediaQuery,
-  WIDE,
+  Popover,
+  Slider,
 } from "../ui/index.ts"
 import { space } from "../ui/tokens.stylex.ts"
 import {
@@ -22,17 +17,31 @@ import {
   effortNotes,
   effortsOf,
   type ModelSetting,
+  modelName,
   modelOf,
-  settingLabel,
 } from "./models.ts"
 
 const styles = stylex.create({
+  pickers: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1,
+    minWidth: 0,
+  },
+  fieldPickers: {
+    alignSelf: "flex-start",
+    gap: space.s2,
+  },
   menu: {
-    width: "19rem",
+    width: "15rem",
     maxWidth: "calc(100vw - 2rem)",
   },
-  submenu: {
-    width: "13rem",
+  effort: {
+    width: "15rem",
+    maxWidth: "calc(100vw - 2rem)",
+  },
+  reset: {
+    alignSelf: "flex-start",
   },
   label: {
     overflow: "hidden",
@@ -40,16 +49,21 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
   },
   trigger: {
+    minWidth: 0,
     maxWidth: "100%",
     gap: space.s1,
   },
-  fieldTrigger: {
-    alignSelf: "flex-start",
+  effortTrigger: {
+    flexShrink: 0,
   },
 })
 
 /** The radio value of the `default` row: no model set, Claude Code's default. */
 const defaultRow = "default"
+
+/** The level Claude Code runs when none is set: its own pickers call it the default, Medium. */
+const defaultEffort = (efforts: ReadonlyArray<EffortLevel>): EffortLevel | undefined =>
+  efforts.includes("medium") ? "medium" : efforts[0]
 
 export interface ModelPickerProps {
   /** What the Session's Runner said its Claude Code has; undefined before it has said. */
@@ -57,17 +71,17 @@ export interface ModelPickerProps {
   value: ModelSetting
   onChange: (setting: ModelSetting) => void
   disabled?: boolean
-  /** Which way the menu opens: up, from the composer at the bottom of the page. */
+  /** Which way the menus open: up, from the composer at the bottom of the page. */
   side?: MenuSide
-  /** `bar`: a quiet button in the composer's bar. `field`: a bordered one, in a form. */
+  /** `bar`: quiet buttons in the composer's bar. `field`: bordered ones, in a form. */
   appearance?: "bar" | "field"
 }
 
 /**
- * The model a Session runs and its effort level, as claude.ai's composer picks them (#128): a
- * button named by the setting opens the Runner's models, each with a line on what it is good for,
- * and an Effort submenu with the levels its Claude Code takes. On a phone, the levels are a second
- * panel in the menu rather than a submenu beside it, which wouldn't fit.
+ * The model a Session runs and its effort level, as two small buttons side by side, as claude.ai
+ * and ChatGPT pick them (#128): one named by the model opens the Runner's models, the other named
+ * by the level opens a slider over the levels its Claude Code takes. The effort button is left
+ * out for a model that takes no level.
  */
 export function ModelPicker({
   models,
@@ -77,13 +91,13 @@ export function ModelPicker({
   side = "bottom",
   appearance = "bar",
 }: ModelPickerProps) {
-  const wide = useMediaQuery(WIDE)
-  const [panel, setPanel] = useState<"models" | "effort">("models")
   const current = modelOf(models, value)
   const efforts = effortsOf(models)
   // A model the Runner doesn't list takes no level here: the Hub would refuse one for it.
-  const takesEffort = current?.effort === true
-  const label = settingLabel(models, value)
+  const takesEffort = current?.effort === true && efforts.length > 0
+  const name = modelName(models, value)
+  const size = appearance === "bar" ? "sm" : "md"
+  const intent = appearance === "bar" ? "ghost" : "secondary"
 
   const chooseModel = (row: string) => {
     const model = row === defaultRow ? models?.default : models && findModel(models, row)
@@ -93,110 +107,121 @@ export function ModelPicker({
       ...(value.effort !== undefined && model?.effort === true && { effort: value.effort }),
     })
   }
-  const chooseEffort = (effort: EffortLevel) =>
-    onChange({ ...(value.model !== undefined && { model: value.model }), effort })
-
-  const effortValue = !takesEffort
-    ? "None"
-    : value.effort === undefined
-      ? "Default"
-      : effortNames[value.effort]
-
-  const effortRows = (
-    <MenuRadioGroup value={value.effort} onValueChange={chooseEffort} label="Effort">
-      {efforts.map((level) => (
-        <MenuRadioItem
-          key={level}
-          value={level}
-          label={effortNames[level]}
-          description={effortNotes[level]}
-        />
-      ))}
-    </MenuRadioGroup>
-  )
+  const chooseEffort = (effort: EffortLevel | undefined) =>
+    onChange({
+      ...(value.model !== undefined && { model: value.model }),
+      ...(effort !== undefined && { effort }),
+    })
 
   return (
-    <Menu
+    <div {...stylex.props(styles.pickers, appearance === "field" && styles.fieldPickers)}>
+      <Menu
+        side={side}
+        align="start"
+        sx={styles.menu}
+        trigger={
+          <Button
+            size={size}
+            intent={intent}
+            disabled={disabled}
+            aria-label={`Model: ${name}`}
+            sx={styles.trigger}
+          >
+            <span {...stylex.props(styles.label)}>{name}</span>
+            <ChevronDownIcon />
+          </Button>
+        }
+      >
+        <MenuRadioGroup
+          value={value.model === undefined ? defaultRow : (current?.alias ?? value.model)}
+          onValueChange={chooseModel}
+        >
+          <MenuRadioItem
+            value={defaultRow}
+            label={models === undefined ? "Default" : `Default · ${models.default.label}`}
+          />
+          {models?.models.map((option) => (
+            <MenuRadioItem key={option.alias} value={option.alias} label={option.label} />
+          ))}
+        </MenuRadioGroup>
+      </Menu>
+      {takesEffort && (
+        <EffortPicker
+          efforts={efforts}
+          value={value.effort}
+          onChange={chooseEffort}
+          disabled={disabled}
+          side={side}
+          size={size}
+          intent={intent}
+        />
+      )}
+    </div>
+  )
+}
+
+function EffortPicker({
+  efforts,
+  value,
+  onChange,
+  disabled,
+  side,
+  size,
+  intent,
+}: {
+  efforts: ReadonlyArray<EffortLevel>
+  value: EffortLevel | undefined
+  onChange: (effort: EffortLevel | undefined) => void
+  disabled: boolean
+  side: MenuSide
+  size: "sm" | "md"
+  intent: "ghost" | "secondary"
+}) {
+  // Where the thumb is while it is dragged: the level is only set where it is let go, as a
+  // change between Turns restarts Claude Code, and in a Turn asks first.
+  const [dragging, setDragging] = useState<EffortLevel | undefined>(undefined)
+  const shown = dragging ?? value ?? defaultEffort(efforts)
+  if (shown === undefined) return null
+  const label = value === undefined ? "Effort" : effortNames[value]
+  const note =
+    value === undefined && dragging === undefined ? "Claude Code's default" : effortNotes[shown]
+
+  return (
+    <Popover
       side={side}
       align="start"
-      onOpenChange={(open) => {
-        if (!open) setPanel("models")
-      }}
-      sx={styles.menu}
+      title={effortNames[shown]}
+      {...(note !== undefined && { description: note })}
+      onOpenChange={() => setDragging(undefined)}
+      sx={styles.effort}
       trigger={
         <Button
-          size={appearance === "bar" ? "sm" : "md"}
-          intent={appearance === "bar" ? "ghost" : "secondary"}
+          size={size}
+          intent={intent}
           disabled={disabled}
-          aria-label={`Model and effort: ${label}`}
-          sx={[styles.trigger, appearance === "field" && styles.fieldTrigger]}
+          aria-label={`Effort: ${value === undefined ? "Default" : effortNames[value]}`}
+          sx={[styles.trigger, styles.effortTrigger]}
         >
           <span {...stylex.props(styles.label)}>{label}</span>
           <ChevronDownIcon />
         </Button>
       }
     >
-      {panel === "effort" ? (
-        <>
-          <MenuItem keepOpen icon={<ArrowLeftIcon />} onClick={() => setPanel("models")}>
-            Back to models
-          </MenuItem>
-          <MenuSeparator />
-          {effortRows}
-        </>
-      ) : (
-        <>
-          <MenuRadioGroup
-            value={value.model === undefined ? defaultRow : (current?.alias ?? value.model)}
-            onValueChange={chooseModel}
-            label="Model"
-          >
-            <MenuRadioItem
-              value={defaultRow}
-              label="Default (recommended)"
-              description={
-                models === undefined
-                  ? "Claude Code's own default"
-                  : [models.default.label, models.default.description].filter(Boolean).join(" · ")
-              }
-            />
-            {models?.models.map((option) => (
-              <MenuRadioItem
-                key={option.alias}
-                value={option.alias}
-                label={option.label}
-                description={option.description}
-              />
-            ))}
-          </MenuRadioGroup>
-          {efforts.length > 0 && <MenuSeparator />}
-          {efforts.length > 0 &&
-            (wide ? (
-              <MenuSubmenu
-                label="Effort"
-                value={effortValue}
-                disabled={!takesEffort}
-                sx={styles.submenu}
-              >
-                {effortRows}
-              </MenuSubmenu>
-            ) : (
-              <MenuItem
-                keepOpen
-                disabled={!takesEffort}
-                onClick={() => setPanel("effort")}
-                end={
-                  <>
-                    {effortValue}
-                    <ChevronRightIcon />
-                  </>
-                }
-              >
-                Effort
-              </MenuItem>
-            ))}
-        </>
+      <Slider
+        label="Effort"
+        steps={efforts.map((level) => ({ value: level, label: effortNames[level] }))}
+        value={shown}
+        onValueChange={setDragging}
+        onValueCommitted={(level) => {
+          setDragging(undefined)
+          onChange(level)
+        }}
+      />
+      {value !== undefined && (
+        <Button size="sm" intent="ghost" onClick={() => onChange(undefined)} sx={styles.reset}>
+          Use the default
+        </Button>
       )}
-    </Menu>
+    </Popover>
   )
 }

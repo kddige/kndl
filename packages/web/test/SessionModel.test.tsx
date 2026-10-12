@@ -54,10 +54,10 @@ async function open(path: string) {
     router,
     page,
     conversation: () => page.querySelector('[aria-label="Conversation"]')?.textContent ?? "",
-    /** The composer's picker, by its label. */
+    /** The composer's model picker, by its label. */
     picker: () =>
       [...page.querySelectorAll("button")].find((el) =>
-        el.getAttribute("aria-label")?.startsWith("Model and effort: "),
+        el.getAttribute("aria-label")?.startsWith("Model: "),
       ) ?? null,
   }
 }
@@ -78,7 +78,8 @@ function typeInto(field: HTMLInputElement, value: string): void {
 test("a switch shows in the transcript, and a Turn run before it names its model", async () => {
   const { page, conversation, picker } = await open(`/sessions/${demoSessionId}`)
   await eventually(() => expect(conversation()).toContain("Bob Lee switched to Sonnet 5.5, High"))
-  expect(picker()?.textContent).toBe("Sonnet 5.5 · High")
+  expect(picker()?.textContent).toBe("Sonnet 5.5")
+  expect(button("Effort: High", page).textContent).toBe("High")
   // The first Turn ran on Claude Code's default, before Bob's switch.
   const turnModels = [...page.querySelectorAll('[title="The model this Turn ran on"]')]
   expect(turnModels.map((el) => el.textContent)).toEqual(["Opus 5.5"])
@@ -109,7 +110,7 @@ test("New Session starts on the model picked in its dialog", async () => {
   const newSession = dialog() as HTMLElement
 
   // Claude Code's default until one is picked.
-  const choose = button("Model and effort: Opus 5.5", newSession)
+  const choose = button("Model: Opus 5.5", newSession)
   const repo = newSession.querySelector<HTMLInputElement>('input[placeholder="kddige/kndl"]')
   await step(() => repo && typeInto(repo, "kddige/kndl"))
   // The Repo's default branch is filled in once the Hub has listed its branches.
@@ -121,7 +122,7 @@ test("New Session starts on the model picked in its dialog", async () => {
   await settle()
   await step(() => radio("Sonnet 5.5").click())
   await settle()
-  expect(button("Model and effort: Sonnet 5.5", newSession)).toBeDefined()
+  expect(button("Model: Sonnet 5.5", newSession)).toBeDefined()
 
   await step(() => button("Start Session", newSession).click())
   await eventually(() => expect(hub.received.some((m) => m._tag === "CreateSession")).toBe(true))

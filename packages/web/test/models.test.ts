@@ -7,23 +7,20 @@ import {
   modelName,
   modelSwitchedText,
   otherTurnModel,
-  settingLabel,
   sharedModels,
 } from "../src/session/models.ts"
 
 const alice = { id: "u-alice", login: "alice", name: "Alice Kim" } as ModelSwitched["by"]
 
-describe("settingLabel", () => {
-  test("names the model, and the effort only when one is set, as set when the Runner hasn't said", () => {
-    expect(settingLabel(fakeModels, {})).toBe("Opus 5.5")
-    expect(settingLabel(fakeModels, { model: "sonnet", effort: "xhigh" })).toBe(
-      "Sonnet 5.5 · Extra",
-    )
+describe("modelName", () => {
+  test("names the model, as set when the Runner hasn't said", () => {
+    expect(modelName(fakeModels, {})).toBe("Opus 5.5")
+    expect(modelName(fakeModels, { model: "sonnet", effort: "xhigh" })).toBe("Sonnet 5.5")
     // A full name or a [1m] variant finds its alias's name.
-    expect(settingLabel(fakeModels, { model: "claude-sonnet-5-5" })).toBe("Sonnet 5.5")
-    expect(settingLabel(fakeModels, { model: "opus[1m]" })).toBe("Opus 5.5 (1M context)")
+    expect(modelName(fakeModels, { model: "claude-sonnet-5-5" })).toBe("Sonnet 5.5")
+    expect(modelName(fakeModels, { model: "opus[1m]" })).toBe("Opus 5.5 (1M context)")
     // Without the Runner's list, the model as set.
-    expect(settingLabel(undefined, { model: "sonnet", effort: "low" })).toBe("sonnet · Low")
+    expect(modelName(undefined, { model: "sonnet", effort: "low" })).toBe("sonnet")
     expect(modelName(undefined, {})).toBe("Default model")
   })
 })
