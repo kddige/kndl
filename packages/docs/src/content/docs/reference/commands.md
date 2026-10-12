@@ -194,7 +194,7 @@ It's [`kndl onboard`](#kndl-onboard) with `--role runner --pair '<link>'`. It re
 | `--non-interactive` | off | Never ask. |
 | `--move-old-data` | off | As for [`kndl onboard`](#kndl-onboard). |
 
-A code that can't be used fails before anything is written. See [Troubleshooting](/troubleshooting/runners/#the-pairing-code-cant-be-used).
+A code that can't be used fails before anything is written. See [Troubleshooting](/troubleshooting/runners/#that-pairing-code-cant-be-used).
 
 ### `kndl secrets`
 

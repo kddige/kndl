@@ -1,113 +1,116 @@
 ---
 title: Troubleshooting
-description: Where kndl reports what went wrong, and an index of the problems these pages cover, by what you see.
+description: Find what went wrong with kndl by what you see, starting with kndl doctor.
 sidebar:
   label: Start here
   order: 0
 ---
 
-Each entry says what you see, why, and how to fix it.
+Find your symptom below, or start with `kndl doctor` on the machine that misbehaves.
+
+## Run `kndl doctor`
+
+```sh
+kndl doctor
+```
+
+It checks the install, the settings, the services and the Hub's health, and prints `ok`, `!!` (a warning) or `XX` (a failure) for each, with what to do. To repair what it can, after asking:
+
+```sh
+kndl doctor --fix
+```
 
 ## Where to look
 
 | Where | What it tells you |
 |---|---|
-| `kndl doctor` | On an installed machine: what's wrong with the install, the settings, the services and the Hub's health, and how to fix it. `--fix` repairs what it can. |
 | `kndl status` | Whether the services run, the Hub answers and the Runner is connected. |
-| The Hub's terminal, or `kndl logs hub` | Startup warnings and refusals, sign-in failures and refused Runner connections. |
-| The Runner's terminal, or `kndl logs runner` | Why it won't start, whether it reached the Hub, and what happened to Sandboxes. |
-| A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`, and notes about its Sandbox. |
-| A Session's **Starting…** banner | While a Session starts, **Show log** holds the output of its Build, Bootstrap script and Start script. |
-| A Session's **Terminal** tab | Claude Code's own screen, as it runs in tmux in the Session's Sandbox. |
-| A Session's **Asleep** banner | When Claude Code exited on its own, **Show Claude Code's last output** holds the last lines its terminal showed. |
-| `/health` on the Hub | `{"status":"ok"}` when the Hub is up. It needs no sign-in. |
+| `kndl logs hub`, `kndl logs runner` | Why a service won't start, refused connections, sign-in failures, what happened to Sandboxes. Add `-f` to follow. |
+| A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`. |
+| **Show log** on a Session's **Starting…** banner | The output of its Build, Bootstrap script and Start script. |
+| A Session's **Terminal** tab | Claude Code's own screen. |
+| `https://<your Hub>/health` | `{"status":"ok"}` when the Hub is up. |
 
-For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list` from `packages/runner`. See [Files and paths](/reference/files-and-paths/) for what each is named.
+Running kndl from a checkout? The logs are in the terminals running `bun run hub` and `bun run runner`, and the Hub's settings in `packages/hub/.env.local`. See [Develop kndl](/contributing/develop-kndl/).
 
 ## By symptom
 
-### [Installing and the CLI](/troubleshooting/install/)
-
-- install.sh says `Could not clone https://github.com/kddige/kndl.git.`
-- `kndl: command not found` after installing.
-- `kndl is not installed in …`
-- `onboard can't ask, so it needs --role hub|runner|both.`
-- Onboard can't create the GitHub App.
-- A service won't stay up.
-- On Linux, the services stop when you log out.
-- The Runner can't use KVM after onboard added you to the `kvm` group.
-- `… is readable by others (mode 644); it holds secrets and should be 600.`
-- `origin has no branch or tag named …, and it isn't a commit id.`
-- `The install is pinned at …, so update stays there.`
-- Uninstall refuses the home.
-
-### [The Hub](/troubleshooting/hub/)
-
-- The Hub exits at startup: `Failed to start server. Is port 7777 in use?`
-- The browser shows `The Hub's web UI isn't built.`
-- The Hub refuses dev login: `Dev login (KNDL_DEV_LOGIN) is refused: …`
-- The Hub refuses to start because of `HUB_SECRETS_KEY`.
-- The secrets key is lost.
-- `… a Hub is running on …/hub.db. Stop it first.`
-- The Hub exits with `HubConfigError: …` about the GitHub settings.
-- The Hub's settings in `.env.local` are ignored.
-- A warning at startup.
-
-### [Signing in](/troubleshooting/sign-in/)
-
-- Requests fail with `Only the web UI at … may make this request`.
-- Sign-in seems to work, then you're back on the sign-in page.
-- `Sign-in failed: the sign-in expired or came from elsewhere. Try again.`
-- After GitHub: `This Hub is invite-only. Ask its owner for an invite.`
-- `Sign-in failed: GitHub refused the sign-in: …`
-- There's no **Sign in with GitHub** button.
-- **Sign in as dev** answers `Dev login only answers on loopback`.
-- After **Approve** for `kndl login`, the browser can't connect to `127.0.0.1`.
-- `kndl login` says `That code isn't valid: …`
-- `kndl whoami` says `… doesn't accept this machine's CLI token: it was revoked. …`
-
-### [Runners](/troubleshooting/runners/)
-
-- The Runner exits with `ConfigError: SchemaError(Expected string at ["RUNNER_TOKEN"])`.
-- The Runner exits with `The hub-link mod isn't built: …`.
-- The Runner keeps logging `Hub connection: could not connect to …`.
-- A Runner on another machine never shows up.
-- `kndl runner join` says `That pairing code can't be used: …`
-- `kndl runner join` pairs, then says the Runner is `not connected to the Hub after 30 seconds`.
-- The Runner logs `The Hub doesn't accept this Runner's token: …`
-- **Remove** says the Runner has Sessions that aren't Archived.
-- `… this Runner needs an update. Update it on the Runners page.`, or a Runner is **behind the Hub**.
-- A Runner's row says **refuses: not on main**.
-- A Runner's row says **update failed**.
-- The Runner logs `The Hub turned this Runner away: …`.
-- A Session is Frozen.
-- The Runner warns `Unknown Sandbox for Session …`.
-
-### [Sessions and Sandboxes](/troubleshooting/sessions/)
-
-- A new Session goes straight to Asleep: `Claude Code could not start on …`.
-- A Session is Asleep with `Claude Code exited with code N`.
-- A woken Session's conversation starts over.
-- A Session can't start: `… need values`.
-- `The Session is Asleep: The Sandbox failed: …`
-- The Test build fails.
-- The Environment won't open, or **New Session** refuses the Repo.
-- A Sensitive variable can't be saved.
-- `Neither you nor … has a Claude credential`.
-- A Claude credential can't be saved.
-- A Session is missing, or `There is no such Session.`
-- A Session doesn't go to sleep.
-- **Restart** or **Sleep now** is refused.
-- The **Environment changed** banner stays.
-
-### [GitHub and git](/troubleshooting/github-and-git/)
-
-- The Runner can't clone a Repo.
-- `The GitHub App is not installed on owner/name, or can't see it: …`
-- **The GitHub App is missing permissions**.
-- `git push` or `gh` in a Session fails: the Sandbox has no GitHub token.
-- Claude pushed to the default branch.
+| What you see | Where |
+|---|---|
+| `kndl: command not found` right after installing | [Install](/troubleshooting/install/#kndl-command-not-found-right-after-installing) |
+| `kndl install: Could not clone …` | [Install](/troubleshooting/install/#installsh-could-not-clone) |
+| `kndl is not installed in …` | [Install](/troubleshooting/install/#kndl-is-not-installed) |
+| `onboard can't ask, so it needs --role hub\|runner\|both.` | [Install](/troubleshooting/install/#onboard-cant-ask-so-it-needs-a-flag) |
+| Onboard can't create the GitHub App | [Install](/troubleshooting/install/#onboard-cant-create-the-github-app) |
+| A service won't stay up | [Install](/troubleshooting/install/#a-service-wont-stay-up) |
+| On Linux, the services stop when you log out | [Install](/troubleshooting/install/#the-services-stop-when-you-log-out) |
+| `KVM access: … can't open /dev/kvm.` | [Install](/troubleshooting/install/#kvm-access-cant-open-devkvm) |
+| `… is readable by others (mode 644); …` | [Install](/troubleshooting/install/#an-env-file-is-readable-by-others) |
+| `kndl update` stays where it is | [Install](/troubleshooting/install/#kndl-update-stays-where-it-is) |
+| `kndl uninstall` refuses the home | [Install](/troubleshooting/install/#kndl-uninstall-refuses-the-home) |
+| `Failed to start server. Is port 7777 in use?` | [Hub](/troubleshooting/hub/#failed-to-start-server-is-port-7777-in-use) |
+| `The Hub's web UI isn't built.` | [Hub](/troubleshooting/hub/#the-hubs-web-ui-isnt-built) |
+| `Dev login (KNDL_DEV_LOGIN) is refused: …` | [Hub](/troubleshooting/hub/#dev-login-kndl_dev_login-is-refused) |
+| The Hub refuses `HUB_SECRETS_KEY` | [Hub](/troubleshooting/hub/#the-hub-refuses-hub_secrets_key) |
+| The secrets key is lost | [Hub](/troubleshooting/hub/#the-secrets-key-is-lost) |
+| `… a Hub is running on …/hub.db. Stop it first.` | [Hub](/troubleshooting/hub/#a-hub-is-running-on-hubdb) |
+| `HubConfigError: …` about GitHub settings | [Hub](/troubleshooting/hub/#hubconfigerror-about-the-github-settings) |
+| A Session can't start because of an MCP server Installation | [Hub](/troubleshooting/hub/#a-session-cant-start-because-of-an-installation) |
+| An MCP server's tools fail in a running Session | [Hub](/troubleshooting/hub/#an-mcp-servers-tools-fail-in-a-session) |
+| **Couldn't connect** an OAuth Installation | [Hub](/troubleshooting/hub/#couldnt-connect-an-oauth-installation) |
+| **Enter a client** for an OAuth Installation | [Hub](/troubleshooting/hub/#an-oauth-installation-asks-for-a-client) |
+| A **Global** Installation can't be changed | [Hub](/troubleshooting/hub/#a-global-installation-cant-be-changed) |
+| `Only the web UI at … may make this request` | [Signing in](/troubleshooting/sign-in/#only-the-web-ui-may-make-this-request) |
+| Sign-in doesn't stick | [Signing in](/troubleshooting/sign-in/#sign-in-doesnt-stick) |
+| `the sign-in expired or came from elsewhere` | [Signing in](/troubleshooting/sign-in/#the-sign-in-expired-or-came-from-elsewhere) |
+| `This Hub is invite-only.` | [Signing in](/troubleshooting/sign-in/#this-hub-is-invite-only) |
+| `GitHub refused the sign-in: …` | [Signing in](/troubleshooting/sign-in/#github-refused-the-sign-in) |
+| No **Sign in with GitHub** button | [Signing in](/troubleshooting/sign-in/#theres-no-sign-in-with-github-button) |
+| `Dev login only answers on loopback` | [Signing in](/troubleshooting/sign-in/#dev-login-only-answers-on-loopback) |
+| `kndl login`: the browser can't connect to `127.0.0.1` | [Signing in](/troubleshooting/sign-in/#kndl-login-the-browser-cant-connect-to-127001) |
+| `That code isn't valid` | [Signing in](/troubleshooting/sign-in/#that-code-isnt-valid) |
+| `… doesn't accept this machine's CLI token` | [Signing in](/troubleshooting/sign-in/#the-hub-doesnt-accept-this-machines-cli-token) |
+| `Hub connection: could not connect to …` | [Runners](/troubleshooting/runners/#hub-connection-could-not-connect) |
+| A Runner on another machine never shows up | [Runners](/troubleshooting/runners/#a-runner-on-another-machine-never-shows-up) |
+| `That pairing code can't be used` | [Runners](/troubleshooting/runners/#that-pairing-code-cant-be-used) |
+| `Runner: not connected to the Hub after 30 seconds` | [Runners](/troubleshooting/runners/#runner-not-connected-to-the-hub-after-30-seconds) |
+| `The Hub doesn't accept this Runner's token` | [Runners](/troubleshooting/runners/#the-hub-doesnt-accept-this-runners-token) |
+| `Runner … has … that aren't Archived.` | [Runners](/troubleshooting/runners/#remove-says-the-runner-has-sessions) |
+| `this Runner needs an update`, or **behind the Hub** | [Runners](/troubleshooting/runners/#this-runner-needs-an-update) |
+| **refuses: not on main** | [Runners](/troubleshooting/runners/#refuses-not-on-main) |
+| **update failed** | [Runners](/troubleshooting/runners/#update-failed) |
+| `The Hub turned this Runner away: …` | [Runners](/troubleshooting/runners/#the-hub-turned-this-runner-away) |
+| A Session is Frozen | [Runners](/troubleshooting/runners/#a-session-is-frozen) |
+| `Unknown Sandbox for Session …` | [Runners](/troubleshooting/runners/#unknown-sandbox-for-session) |
+| `The hub-link mod isn't built` | [Runners](/troubleshooting/runners/#the-hub-link-mod-isnt-built) |
+| `Expected string at ["RUNNER_TOKEN"]`, from a checkout | [Develop kndl](/contributing/develop-kndl/#run-a-runner) |
+| `Claude Code could not start on …` | [Sessions](/troubleshooting/sessions/#claude-code-could-not-start) |
+| `Claude Code exited with code …` | [Sessions](/troubleshooting/sessions/#claude-code-exited) |
+| A woken Session's conversation starts over | [Sessions](/troubleshooting/sessions/#a-woken-sessions-conversation-starts-over) |
+| `… Sessions can't start: … need values` | [Sessions](/troubleshooting/sessions/#variables-need-values) |
+| `The Sandbox failed: …` | [Sessions](/troubleshooting/sessions/#the-sandbox-failed) |
+| **Test build failed** | [Sessions](/troubleshooting/sessions/#test-build-failed) |
+| `You don't have access to … on GitHub` | [Sessions](/troubleshooting/sessions/#you-dont-have-access-to-a-repo) |
+| A Sensitive variable can't be saved | [Sessions](/troubleshooting/sessions/#a-sensitive-variable-cant-be-saved) |
+| `Neither you nor … has a Claude credential` | [Sessions](/troubleshooting/sessions/#neither-you-nor-the-runner-has-a-claude-credential) |
+| A Claude credential can't be saved | [Sessions](/troubleshooting/sessions/#a-claude-credential-cant-be-saved) |
+| `There is no such Session.` | [Sessions](/troubleshooting/sessions/#there-is-no-such-session) |
+| A Session doesn't go to sleep | [Sessions](/troubleshooting/sessions/#a-session-doesnt-go-to-sleep) |
+| **Restart** or **Sleep now** is refused | [Sessions](/troubleshooting/sessions/#restart-or-sleep-now-is-refused) |
+| **Environment changed** stays | [Sessions](/troubleshooting/sessions/#environment-changed-stays) |
+| `git clone exited with 128` | [GitHub and git](/troubleshooting/github-and-git/#git-clone-exited-with-128) |
+| `The GitHub App is not installed on …, or can't see it` | [GitHub and git](/troubleshooting/github-and-git/#the-github-app-is-not-installed-on-the-repo) |
+| **The GitHub App is missing permissions** | [GitHub and git](/troubleshooting/github-and-git/#the-github-app-is-missing-permissions) |
+| `git push` or `gh` fails in a Session | [GitHub and git](/troubleshooting/github-and-git/#git-push-or-gh-fails-in-a-session) |
+| Claude pushed to the default branch | [GitHub and git](/troubleshooting/github-and-git/#claude-pushed-to-the-default-branch) |
 
 ## Still stuck
 
-Search the [issues](https://github.com/kddige/kndl/issues), and open one with what you ran, what you saw (the exact message) and the relevant lines from the Hub's and the Runner's logs. Remove tokens and keys first: kndl's own tokens start with `chr_`, `chm_` or `chs_`.
+Search the [issues](https://github.com/kddige/kndl/issues), or open one with:
+
+- what you ran,
+- the exact message you saw,
+- the relevant lines of `kndl logs hub` and `kndl logs runner`,
+- the output of `kndl status`.
+
+Remove tokens and keys first. kndl's own tokens start with `ch`, a letter and `_`, such as `chr_…` or `chc_…`.

@@ -5,39 +5,33 @@ sidebar:
   order: 3
 ---
 
-Most sign-in problems come from `HUB_PUBLIC_URL`, the URL browsers use to reach the web UI (default `http://localhost:5173`, Vite's dev server). GitHub sends people back to it, the Hub accepts cookie-authenticated requests only from it, and it decides whether cookies are `Secure`.
+Fixes for signing in to the web UI and the CLI. Most web sign-in problems come from `HUB_PUBLIC_URL` in `hub.env`: the address people open the Hub at. GitHub sends people back to it, and the Hub accepts requests only from it.
 
-## The address in the browser isn't `HUB_PUBLIC_URL`
+## Only the web UI may make this request
 
 **What you see.** The web UI loads but can't connect, or **Sign in as dev** answers:
 
 ```
-{"error":"Only the web UI at http://localhost:5173 may make this request"}
+{"error":"Only the web UI at http://127.0.0.1:7777 may make this request"}
 ```
 
-**Why.** You opened the web UI at another address than `HUB_PUBLIC_URL`, such as the Hub's own `http://127.0.0.1:7777`. The Hub refuses requests from any other origin, so another site can't act with your cookie. `localhost` and `127.0.0.1` are different origins.
+**Why.** You opened the Hub at another address than `HUB_PUBLIC_URL`. `localhost` and `127.0.0.1` count as different addresses.
 
-**Fix.** Open the web UI at exactly `HUB_PUBLIC_URL`, or set it to the address you use and restart the Hub:
-
-```sh
-HUB_PUBLIC_URL=http://127.0.0.1:7777 bun run hub
-```
-
-With GitHub sign-in, add the matching callback URL to the GitHub App too (see below).
+**Fix.** Open the Hub at exactly the address the message names. Or set `HUB_PUBLIC_URL` in `hub.env` to the address you use, and run `kndl hub install`. With GitHub sign-in, add that address's callback URL to the GitHub App too ([below](#github-refused-the-sign-in)).
 
 ## Sign-in doesn't stick
 
 **What you see.** You sign in, and land back on the sign-in page. The Hub warned at startup:
 
 ```
-Browsers reach the Hub over plain HTTP at http://192.168.1.10:7777 (HUB_PUBLIC_URL), so they will drop its Secure cookies and sign-in will fail. Serve it over HTTPS, reach it through an SSH tunnel to localhost or over Tailscale HTTPS, or, on a network you trust, set HUB_INSECURE_COOKIES=1.
+Browsers reach the Hub over plain HTTP at http://192.168.1.10:7777 (HUB_PUBLIC_URL), so they will drop its Secure cookies and sign-in will fail. …
 ```
 
-**Why.** The sign-in cookie is `Secure` except on a loopback address over HTTP, and browsers drop `Secure` cookies sent over plain HTTP from any other address.
+**Why.** Browsers drop the Hub's sign-in cookie over plain HTTP, except on `localhost` or `127.0.0.1`.
 
-**Fix.** Give the Hub an HTTPS URL, or reach it through an SSH tunnel to `localhost`. See [Reach the Hub from other machines](/self-hosting/reach-the-hub-from-other-machines/) for each option, including `HUB_INSECURE_COOKIES=1` and its cost.
+**Fix.** Give the Hub an HTTPS address, or reach it through an SSH tunnel to `localhost`. See [Reach the Hub from other machines](/self-hosting/reach-the-hub-from-other-machines/) for each option, including `HUB_INSECURE_COOKIES=1` and what it costs.
 
-## "The sign-in expired or came from elsewhere"
+## The sign-in expired or came from elsewhere
 
 **What you see.** After GitHub, the browser shows:
 
@@ -45,43 +39,44 @@ Browsers reach the Hub over plain HTTP at http://192.168.1.10:7777 (HUB_PUBLIC_U
 Sign-in failed: the sign-in expired or came from elsewhere. Try again.
 ```
 
-**Why.** The Hub couldn't match GitHub's answer to the sign-in you started, because its 10-minute cookie was missing or different:
+**Why.** The sign-in took more than 10 minutes, started at another address than `HUB_PUBLIC_URL`, or the browser dropped its cookie over plain HTTP.
 
-- more than 10 minutes passed on GitHub's pages;
-- you started at another address than `HUB_PUBLIC_URL`, where GitHub sent you back;
-- the browser dropped the cookie, as over plain HTTP on a LAN (above).
+**Fix.** Start again from the Hub at exactly `HUB_PUBLIC_URL`. If it keeps happening, see [Sign-in doesn't stick](#sign-in-doesnt-stick).
 
-**Fix.** Start again from the web UI at exactly `HUB_PUBLIC_URL`. If it keeps happening, fix the address or HTTPS as above.
+## This Hub is invite-only
 
-## "This Hub is invite-only"
-
-**What you see.** After GitHub, the browser lands on a page that says **You weren't let in**:
+**What you see.** After GitHub, a page says **You weren't let in**:
 
 ```
 This Hub is invite-only. Ask its owner for an invite.
 ```
 
-The Hub logs `Turned away <login>, who has no Invite`.
-
-**Why.** The Hub lets in only its Owner and the people the Owner invited ([Let people in](/self-hosting/let-people-in/)), and the link you came with, if any, didn't work: it was used, revoked, expired, replaced, or tied to another GitHub login. A Member the Owner removed is turned away too.
+**Why.** The Hub lets in only its Owner and the people the Owner invited, and the link you came with, if any, didn't work: it was used, revoked, expired, or tied to another GitHub account. A Member the Owner removed is turned away too.
 
 **Fix.**
 
-- **On a new Hub, with no Owner yet,** run `kndl hub setup-link` on the Hub's machine (`bun run setup-link` from a checkout) and open the link it prints.
-- **Otherwise,** ask the Owner for a new Invite, and open it in the browser where you'll sign in. If it is tied to a login, sign in to GitHub as that account.
-- **If you are the Owner,** you signed in to GitHub as another account. Sign out of github.com and sign in as the Owner's.
+- **A new Hub with no Owner yet:** on the Hub's machine, print a Setup link and open it:
 
-## GitHub refuses the sign-in
+  ```sh
+  kndl hub setup-link
+  ```
 
-**What you see.** GitHub shows an error about the `redirect_uri` instead of asking you to authorize the App, or the Hub answers:
+- **Otherwise:** ask the Owner for a new Invite. If it's tied to a GitHub account, sign in to GitHub as that account.
+- **You are the Owner:** you're signed in to github.com as another account. Sign out there, and sign in as yours.
+
+See [Let people in](/self-hosting/let-people-in/).
+
+## GitHub refused the sign-in
+
+**What you see.** GitHub shows an error about the `redirect_uri`, or the Hub answers:
 
 ```
 Sign-in failed: GitHub refused the sign-in: …
 ```
 
-**Why.** GitHub only accepts callback URLs registered on the App, and the Hub sends `<HUB_PUBLIC_URL>/auth/github/callback`. Otherwise the client secret is wrong, or the code expired; the text after the colon is GitHub's.
+**Why.** GitHub accepts only callback URLs registered on the App, and the Hub sends `<HUB_PUBLIC_URL>/auth/github/callback`. Otherwise, the client secret is wrong.
 
-**Fix.** On the App's settings page, add a callback URL for each address people use, such as `https://hub.example.com/auth/github/callback`. Check `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` are the App's current ones, and restart the Hub after changing them. See [Set up the GitHub App](/self-hosting/set-up-the-github-app/).
+**Fix.** On the App's settings page on GitHub, add the callback URL for each address people use, such as `https://hub.example.com/auth/github/callback`. Check `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `hub.env` are the App's current ones, then run `kndl hub install`. See [Set up the GitHub App](/self-hosting/set-up-the-github-app/).
 
 ## There's no Sign in with GitHub button
 
@@ -91,27 +86,37 @@ Sign-in failed: GitHub refused the sign-in: …
 This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with KNDL_DEV_LOGIN=1.
 ```
 
-**Why.** `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` aren't set where the Hub reads them. The Hub warned `GitHub sign-in is off` at startup.
+**Why.** `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` aren't set. The Hub warned `GitHub sign-in is off` at startup.
 
-**Fix.** Put both in `packages/hub/.env.local` and restart the Hub. See [The settings in `.env.local` are ignored](/troubleshooting/hub/#the-settings-in-envlocal-are-ignored).
+**Fix.** [Set up the GitHub App](/self-hosting/set-up-the-github-app/):
+
+```sh
+kndl onboard --github-app create
+```
 
 ## Dev login only answers on loopback
 
 **What you see.** **Sign in as dev** answers `Dev login only answers on loopback`.
 
-**Why.** The Hub accepts dev login only from `127.0.0.1` or `::1`, and a proxy or tunnel can make the request arrive from elsewhere.
+**Why.** The Hub accepts dev login only from the Hub's own machine, and a proxy or tunnel made the request arrive from elsewhere.
 
-**Fix.** Open the web UI on the Hub's own machine, without a proxy, or use GitHub sign-in.
+**Fix.** Open the Hub in a browser on its own machine, without a proxy, or use GitHub sign-in.
 
-## After Approve, the browser can't connect to `127.0.0.1`
+## kndl login: the browser can't connect to 127.0.0.1
 
 **What you see.** You ran `kndl login` and pressed **Approve**, and the browser can't reach `127.0.0.1`.
 
-**Why.** The page sends the browser back to the CLI on the browser's machine, and the CLI runs on another one.
+**Why.** The page sends the browser back to the CLI on the browser's machine, and the CLI runs on another one, as over SSH.
 
-**Fix.** Go back a page: it shows the Login code. Paste it in the terminal, where the CLI asks `Waiting for the browser. Or paste the code the page shows`. Next time, run `kndl login --no-browser`. See [Sign in the CLI](/guides/sign-in-the-cli/#sign-in-over-ssh).
+**Fix.** Go back a page: it shows the Login code. Paste it where the CLI asks `Waiting for the browser. Or paste the code the page shows`. Next time, run:
 
-## "That code isn't valid"
+```sh
+kndl login --no-browser
+```
+
+See [Sign in the CLI](/guides/sign-in-the-cli/).
+
+## That code isn't valid
 
 **What you see.** `kndl login` says:
 
@@ -119,11 +124,11 @@ This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on 
 That code isn't valid: it may have expired or been used. Run kndl login again.
 ```
 
-**Why.** A Login code works once, for 10 minutes, only for the `kndl login` that opened its page, and not across a Hub restart.
+**Why.** A Login code works once, for 10 minutes, only for the `kndl login` that opened its page.
 
-**Fix.** Run `kndl login` again, open the address this run prints, and approve within 10 minutes.
+**Fix.** Run `kndl login` again, and approve within 10 minutes.
 
-## "doesn't accept this machine's CLI token"
+## The Hub doesn't accept this machine's CLI token
 
 **What you see.** `kndl whoami` says:
 
@@ -131,6 +136,6 @@ That code isn't valid: it may have expired or been used. Run kndl login again.
 https://hub.example.com doesn't accept this machine's CLI token: it was revoked. Run kndl login to sign in again.
 ```
 
-**Why.** Someone revoked the token on the **Account** page, under **CLI tokens**, or the Hub was set up again with a new database.
+**Why.** Someone revoked the token under **CLI tokens** on the **Account** page, or the Hub was set up again with a new database.
 
-**Fix.** Run `kndl login`. See [Sign in the CLI](/guides/sign-in-the-cli/).
+**Fix.** Run `kndl login`.

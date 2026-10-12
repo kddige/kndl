@@ -50,7 +50,7 @@ As a Session starts or wakes, the Hub sends each of its Installations' servers a
 | An OAuth Installation isn't connected | Doesn't start: `Docs isn't connected to its account.` |
 | No answer in time, unreachable, or another error | Starts, with a warning in its conversation. |
 
-While a Session runs, an Installation whose server refuses it shows as an error in the conversation, and the Session keeps its other servers. See [Troubleshooting](/troubleshooting/hub/#a-session-cant-start-for-an-installation).
+While a Session runs, an Installation whose server refuses it shows as an error in the conversation, and the Session keeps its other servers. See [Troubleshooting](/troubleshooting/hub/#a-session-cant-start-because-of-an-installation).
 
 ## OAuth
 

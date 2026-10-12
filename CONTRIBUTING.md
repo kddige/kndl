@@ -4,7 +4,7 @@ Thanks for helping. kndl is early and changes quickly, so open an issue before y
 
 ## Set up
 
-[Develop kndl](https://kddige.github.io/kndl/contributing/develop-kndl/) covers the repository's layout, what to install, and how to work on the web UI, the mod and the docs site.
+[Develop kndl](https://kddige.github.io/kndl/contributing/develop-kndl/) covers what to install, running the Hub and a Runner from a checkout, the repository's layout, and working on the web UI, the mod and the docs site.
 
 ## Checks
 
