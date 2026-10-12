@@ -4,6 +4,7 @@
 import { expect, test } from "bun:test"
 import { hubMcpServerId, RequestId, type SessionId } from "@kndl/protocol"
 import { Redacted } from "effect"
+import { act } from "react"
 import { installDom } from "./dom.ts"
 import { button, dialog, render, settle, step } from "./render.ts"
 
@@ -521,21 +522,26 @@ test("an Installation that fails mid-Session shows as an error in it, which runs
 })
 
 test("a restart for a changed Environment shows its progress until the Session is back", async () => {
-  // Slow enough to see each step of the restart.
-  const { page, banner, sent } = await openSession(demoSessionId, "Environment changed", 15)
+  const { hub, page, banner, sent } = await openSession(demoSessionId, "Environment changed")
   expect(banner()).toContain("version 2 is the latest")
   const statuses = () =>
     [...page.querySelectorAll('[role="status"]')].map((el) => el.textContent ?? "").join("\n")
+  // Each step of the restart waits for the test, so a slow machine can't skip past one (#315).
+  hub.hold()
 
   await step(() => button("Restart", page).click())
   expect(sent()).toContain("RestartSession")
-  // Stopping it first, then starting it on the latest version, with its log.
+  // Stopping it first...
   await eventually(() => expect(statuses()).toContain("Restarting…"))
   expect(statuses()).toContain("You asked for a restart.")
   expect(banner()).toBe("")
   expect(button("Sleep now", page).disabled).toBe(true)
+  // ...then, once its Runner has stopped it, starting it on the latest version, with its log.
+  await act(() => hub.step())
+  await act(() => hub.step())
   await eventually(() => expect(statuses()).toContain("Starting the Sandbox on version 2"))
   expect(statuses()).toContain("Restarting…")
+  await act(() => hub.step())
   await step(() => button("Show log", page).click())
   await eventually(() =>
     expect(page.querySelector('[aria-label="Start log"]')?.textContent).toContain(
@@ -544,6 +550,7 @@ test("a restart for a changed Environment shows its progress until the Session i
   )
 
   // Back, on the latest version: no banner.
+  hub.resume()
   await eventually(() => expect(statuses()).not.toContain("Restarting…"))
   expect(banner()).toBe("")
   expect(button("Sleep now", page).disabled).toBe(false)

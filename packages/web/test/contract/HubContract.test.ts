@@ -443,7 +443,8 @@ for (const adapter of [fake, real]) {
       expect(from).toBe(scene.client.getState().you?.id)
       expect(turn?.promptId).toBeDefined()
       await eventually(() => expect(session.queue()).toEqual([]))
-      expect(session.summary()?.currentTurn).toBe(turn?.turnId)
+      // The Hub sends the Session's summary after the queue it emptied (#314).
+      await eventually(() => expect(session.summary()?.currentTurn).toBe(turn?.turnId))
     })
 
     test("a prompt sent while a Turn runs waits, and goes next once the Turn ends", async () => {
