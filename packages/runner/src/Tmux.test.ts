@@ -51,9 +51,11 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
   test("runs a command in tmux, streams its terminal and reports its exit", async () => {
     const id = sessionId("tmux-1")
     // Prints its arguments (an empty one, and one ending in `;`) and an env var, echoes one line
-    // back, then exits with 7.
+    // back, then exits with 7 on the next. It waits to exit: tmux drops output it hasn't yet sent
+    // to a control client once the pane is closed (control.c), so what a process prints just
+    // before it exits may never stream (#296).
     const script =
-      'printf "ready %s [%s][%s]\\n" "$GREETING" "$1" "$2"; read line; printf "got:%s\\n" "$line"; exit 7'
+      'printf "ready %s [%s][%s]\\n" "$GREETING" "$1" "$2"; read line; printf "got:%s\\n" "$line"; read line; exit 7'
 
     const program = Effect.gen(function* () {
       const tmux = yield* Tmux
@@ -106,6 +108,7 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
       yield* waitFor(Effect.sync(() => output(events).includes("got:hé")))
       expect(events.at(-1)).toMatchObject({ _tag: "Output", size: { cols: 70, rows: 12 } })
 
+      yield* pane.input("\r")
       yield* Fiber.join(pump)
       expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 7 })
       yield* tmux.kill(id)
@@ -236,6 +239,49 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
       const events = yield* pane.events.pipe(Stream.runCollect)
       expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 0 })
       expect(yield* tmux.variable(id, "KNDL_MOD_TOKEN")).toBeUndefined()
+      yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
+
+  // tmux marks a pane dead when its terminal closes, and has its exit status only once it reaps
+  // the process, which may be later (#296).
+  test("reports the exit status of a process that closed its terminal before it exited", async () => {
+    const id = sessionId("tmux-7")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      yield* tmux.launch({
+        sessionId: id,
+        cwd: tmpdir(),
+        // Ignores the SIGHUP tmux's closing the pane sends, so it lives on past it, and exits.
+        argv: ["sh", "-c", 'trap "" HUP; exec </dev/null >/dev/null 2>&1; sleep 1.5; exit 3'],
+        env: {},
+        size: { cols: 40, rows: 5 },
+      })
+      const pane = yield* tmux.attach(id)
+      const events = yield* pane.events.pipe(Stream.runCollect)
+      expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 3 })
+      yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
+
+  test("reports a process killed by a signal as exited, with no exit status", async () => {
+    const id = sessionId("tmux-8")
+    const program = Effect.gen(function* () {
+      const tmux = yield* Tmux
+      yield* tmux.launch({
+        sessionId: id,
+        cwd: tmpdir(),
+        argv: ["sh", "-c", "echo up; kill -KILL $$"],
+        env: {},
+        size: { cols: 40, rows: 5 },
+      })
+      const pane = yield* tmux.attach(id)
+      const events = yield* pane.events.pipe(Stream.runCollect)
+      expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: undefined })
       yield* tmux.kill(id)
     })
 

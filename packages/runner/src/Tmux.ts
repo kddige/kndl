@@ -272,7 +272,7 @@ export const makeTmux = (backend: TmuxBackend) => {
         cols: Math.max(cols, 1),
         rows: Math.max(rows, 1),
       })
-      yield* pane.issue(`refresh-client -B '${ExitSubscription}::#{pane_dead} #{pane_dead_status}'`)
+      yield* pane.issue(`refresh-client -B '${ExitSubscription}::${PaneExitFormat}'`)
       return pane.toPane(
         client.events.pipe(
           Stream.filter((event) => event._tag === "Stdout"),
@@ -319,6 +319,16 @@ function sequence(commands: ReadonlyArray<ReadonlyArray<string>>): Array<string>
 
 const ExitSubscription = "kndl-exit"
 
+/**
+ * Whether the pane is dead, and how its process ended: its exit status, or the signal that killed
+ * it. tmux marks a pane dead when its terminal closes, and knows how the process ended only once
+ * it reaps it, which may be later (#296). tmux 3.2 has no `pane_dead_signal`, so it says nothing.
+ */
+const PaneExitFormat = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
+
+/** How long after a pane dies, with no word of how, it is asked once more (#296). */
+const ExitProbeDelayMs = 2_000
+
 /** The most bytes typed with one `send-keys` command. */
 const InputChunkBytes = 256
 
@@ -340,6 +350,10 @@ class ControlPane {
   /** The size last asked for, which tmux may not have applied yet. */
   private target: TerminalSize
 
+  /** Set once `Exited` is emitted; and the timer of a pending exit probe. */
+  private exited = false
+  private exitProbe: ReturnType<typeof setTimeout> | undefined
+
   constructor(
     private readonly commands: Queue.Queue<string>,
     /** The pane, as a tmux target. */
@@ -351,10 +365,12 @@ class ControlPane {
 
   /** Sends a command; `handler` gets its reply, in the order the commands were sent. */
   issue(command: string, handler: ReplyHandler = () => undefined): Effect.Effect<void> {
-    return Effect.sync(() => {
-      this.pending.push(handler)
-      Queue.offerUnsafe(this.commands, `${command}\n`)
-    })
+    return Effect.sync(() => this.issueUnsafe(command, handler))
+  }
+
+  private issueUnsafe(command: string, handler: ReplyHandler): void {
+    this.pending.push(handler)
+    Queue.offerUnsafe(this.commands, `${command}\n`)
   }
 
   toPane(stdout: Stream.Stream<Uint8Array, unknown>): Pane {
@@ -410,6 +426,14 @@ class ControlPane {
     return { events, input, resize, snapshot, terminate }
   }
 
+  /** `Exited`, the first time only. */
+  private exit(exitCode: number | undefined): Array<PaneEvent> {
+    clearTimeout(this.exitProbe)
+    if (this.exited) return []
+    this.exited = true
+    return [{ _tag: "Exited", exitCode }]
+  }
+
   private toEvents(event: ControlEvent): Array<PaneEvent> {
     switch (event._tag) {
       case "Output": {
@@ -426,13 +450,40 @@ class ControlPane {
         return []
       case "SubscriptionChanged": {
         if (event.name !== ExitSubscription) return []
-        const [dead, status] = event.value.trim().split(" ")
-        if (dead !== "1") return []
-        const exitCode = status === undefined || status === "" ? undefined : Number(status)
-        return [{ _tag: "Exited", exitCode: Number.isInteger(exitCode) ? exitCode : undefined }]
+        const exit = parsePaneExit(event.value)
+        if (exit === undefined) return []
+        if (exit.known) return this.exit(exit.exitCode)
+        // Dead, but not yet reaped: the subscription changes again once tmux knows how it ended.
+        // A tmux that never says so (a signal on 3.2, or tmux 3.3a, which sometimes loses the
+        // status) is asked once more, then taken as is.
+        this.exitProbe ??= setTimeout(
+          () =>
+            this.issueUnsafe(`display-message -p -t ${this.pane} '${PaneExitFormat}'`, (reply) => {
+              const probed = reply.isError ? undefined : parsePaneExit(reply.lines[0] ?? "")
+              return probed === undefined ? undefined : this.exit(probed.exitCode)[0]
+            }),
+          ExitProbeDelayMs,
+        )
+        return []
       }
       case "Exit":
         return []
     }
+  }
+}
+
+/**
+ * A pane's `PaneExitFormat`: undefined while it runs; once dead, its exit status, and whether
+ * tmux knows how it ended yet (an exit status, or a signal, which has none).
+ */
+function parsePaneExit(
+  value: string,
+): { readonly known: boolean; readonly exitCode: number | undefined } | undefined {
+  const [dead = "", status = "", signal = ""] = value.split(" ").map((part) => part.trim())
+  if (dead !== "1") return undefined
+  const exitCode = status === "" ? undefined : Number(status)
+  return {
+    known: status !== "" || signal !== "",
+    exitCode: Number.isInteger(exitCode) ? exitCode : undefined,
   }
 }
