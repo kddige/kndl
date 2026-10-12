@@ -183,7 +183,7 @@ test("arrow keys only move the effort slider: Enter sets the level, once", async
   expect(changes).toHaveLength(1)
 })
 
-test("closing the effort slider on another level sets it; on the same one, nothing", async () => {
+test("closing the effort slider on another level sets it, unless by Escape; on the same one, nothing", async () => {
   const { container, changes } = await picker({ model: "opus", effort: "high" })
   await click(trigger(container, "Effort"))
   await press("ArrowLeft")
@@ -192,12 +192,38 @@ test("closing the effort slider on another level sets it; on the same one, nothi
   expect(effortPopover()).toBeNull()
   expect(changes).toEqual([])
 
+  // Escape takes back what was moved, and sends nothing.
+  await click(trigger(container, "Effort"))
+  await press("ArrowLeft")
+  expect(slider()?.getAttribute("aria-valuetext")).toBe("Medium")
+  await press("Escape")
+  expect(effortPopover()).toBeNull()
+  expect(changes).toEqual([])
+  await click(trigger(container, "Effort"))
+  expect(slider()?.getAttribute("aria-valuetext")).toBe("High")
+  await click(trigger(container, "Effort"))
+  expect(changes).toEqual([])
+
+  // A click outside sets it.
   await click(trigger(container, "Effort"))
   await press("ArrowLeft")
   await press("ArrowLeft")
-  await click(trigger(container, "Effort"))
+  await step(() => {
+    document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))
+    document.body.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }))
+    document.body.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+  })
+  await settle()
+  expect(effortPopover()).toBeNull()
   expect(changes).toEqual([{ model: "opus", effort: "low" }])
   expect(trigger(container, "Effort")?.getAttribute("aria-label")).toBe("Effort: Low")
+
+  // As does pressing its button again.
+  await click(trigger(container, "Effort"))
+  await press("End")
+  await click(trigger(container, "Effort"))
+  expect(changes.at(-1)).toEqual({ model: "opus", effort: "max" })
 })
 
 test("Use the default unsets the level", async () => {

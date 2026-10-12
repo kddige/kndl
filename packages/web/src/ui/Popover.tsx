@@ -6,6 +6,7 @@ import { color, leading, space, text, weight } from "./tokens.stylex.ts"
 
 export type PopoverSide = "top" | "bottom" | "left" | "right"
 export type PopoverAlign = "start" | "center" | "end"
+export type PopoverChangeReason = BasePopover.Root.ChangeEventReason
 
 export interface PopoverProps {
   /** The element that toggles the popover, usually a Button. */
@@ -22,7 +23,8 @@ export interface PopoverProps {
   side?: PopoverSide
   align?: PopoverAlign
   open?: boolean
-  onOpenChange?: (open: boolean) => void
+  /** With why: `escape-key`, `outside-press`, `trigger-press` and so on. */
+  onOpenChange?: (open: boolean, reason: PopoverChangeReason) => void
   /** Layout overrides for the panel, e.g. a width. */
   sx?: stylex.StyleXStyles
 }
@@ -72,7 +74,10 @@ export function Popover({
   return (
     <BasePopover.Root
       {...(open !== undefined && { open })}
-      {...(onOpenChange && { onOpenChange: (next: boolean) => onOpenChange(next) })}
+      {...(onOpenChange && {
+        onOpenChange: (next: boolean, details: BasePopover.Root.ChangeEventDetails) =>
+          onOpenChange(next, details.reason),
+      })}
     >
       <BasePopover.Trigger render={trigger} />
       <BasePopover.Portal>

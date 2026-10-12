@@ -159,8 +159,8 @@ export function ModelPicker({
 
 /**
  * The effort button and its slider. The slider shows where it is dragged or stepped to, and sets
- * the level where it is let go or clicked, on Enter, or when it closes on a level other than the
- * one set: a change between Turns restarts Claude Code, and while agents run asks first, so
+ * the level where it is let go or clicked, on Enter, or when it closes other than by Escape on a
+ * level other than the one set; Escape takes it back. A change between Turns restarts Claude Code, and while agents run asks first, so
  * stepping through the levels doesn't set each.
  */
 function EffortPicker({
@@ -194,8 +194,11 @@ function EffortPicker({
       label="Effort"
       title={shown === undefined ? "Default" : effortNames[shown]}
       description={shown === undefined ? "Claude Code picks the level." : effortNotes[shown]}
-      onOpenChange={(open) => {
-        if (!open && moved !== undefined) commit(moved)
+      onOpenChange={(open, reason) => {
+        if (open || moved === undefined) return
+        // Escape takes back what was moved; any other way out sets it.
+        if (reason === "escape-key") setMoved(undefined)
+        else commit(moved)
       }}
       sx={styles.popup}
       trigger={
