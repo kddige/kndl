@@ -38,6 +38,12 @@ const plugin = "hub-link"
 /** The module's own state; a reload starts it over, and fires `session.start` again. */
 const state = {
   link: undefined as HubLink | undefined,
+  /**
+   * What happened before the first link was made, to be posted on it: a woken Session's Claude
+   * Code can start a Turn with the prompt hub-link-commands was delivered while this one still
+   * reads what its hello says. Undefined once there is a link, or none will be.
+   */
+  early: [] as Array<Record<string, unknown>> | undefined,
   /** The Turn running on the main loop. */
   mainTurn: undefined as string | undefined,
   /** The run each subagent's loop is in, from its steps; tool calls carry only the agent. */
@@ -53,7 +59,10 @@ const state = {
   minted: 0,
 }
 
-const report = (event: Record<string, unknown>) => state.link?.report(event)
+const report = (event: Record<string, unknown>) => {
+  if (state.link !== undefined) state.link.report(event)
+  else state.early?.push(event)
+}
 
 /** The agent is running, in its worktree if it has one. */
 const reportRunning = (agentId: string, cwd: string | undefined) => {
@@ -92,12 +101,14 @@ const startLink = async ($: EngineInterface) => {
     $.env.get("CLAUDE_CODE_SESSION_KIND"),
   ])
   if (!hubUrl || !sessionId || !modToken) {
+    state.early = undefined
     $.ui.log("hub-link: not started by a Runner, so not linked to a Hub", { to: "debug" })
     return
   }
   // A background job or daemon of Claude Code's inherits the Session's mod token, but isn't the
   // Session's Claude Code: linked too, it would run each prompt again (#191).
   if (kind) {
+    state.early = undefined
     $.ui.log(`hub-link: a Claude Code ${kind} process, so not linked to the Hub`, { to: "debug" })
     return
   }
@@ -114,12 +125,17 @@ const startLink = async ($: EngineInterface) => {
     log: (text) => $.ui.log(text, { to: "debug" }),
   })
   state.link.start()
+  for (const event of state.early ?? []) state.link.report(event)
+  state.early = undefined
 }
 
 export function register(on: On) {
   on("session.start", async ($, e, next) => {
     const started = await next(e)
-    await startLink($).catch((error) => $.ui.log(`hub-link: ${error}`, { to: "debug" }))
+    await startLink($).catch((error) => {
+      state.early = undefined
+      $.ui.log(`hub-link: ${error}`, { to: "debug" })
+    })
     return started
   })
 
