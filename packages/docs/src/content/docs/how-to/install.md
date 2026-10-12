@@ -28,11 +28,16 @@ The Hub is one Bun process with a SQLite database. Runners run one microVM per A
 curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 ```
 
-It installs Bun if it's missing, clones kndl into `~/.kndl/app`, writes the `kndl` command to `~/.local/bin` (adding it to `PATH` if needed), then starts `kndl onboard`. To install another branch, tag or commit, or to skip onboard:
+It installs Bun if it's missing, clones kndl into `~/.kndl/app` at the latest Release, writes the `kndl` command to `~/.local/bin` (adding it to `PATH` if needed), then starts `kndl onboard`.
+
+The install follows a Channel: `stable`, the latest Release (a tag like `v2026.10.1`), by default, or `dev`, the head of `main`. If there's no Release yet, it installs `main`, and `kndl update` moves it to the first Release that includes that commit. To follow `main`, to install a branch, tag or commit instead, or to skip onboard:
 
 ```sh
-curl -fsSL … | sh -s -- --ref <branch|tag|sha> --no-onboard
+curl -fsSL … | sh -s -- --channel dev --no-onboard
+curl -fsSL … | sh -s -- --ref <branch|tag|sha>
 ```
+
+`--ref` wins over `--channel`.
 
 Run again on an installed machine, it updates the install and runs `kndl doctor --fix`. `KNDL_HOME` installs somewhere other than `~/.kndl`.
 
@@ -94,9 +99,11 @@ kndl logs hub   # or runner; -f follows
 kndl update
 ```
 
-It moves to the latest commit of the branch the install follows (`main` unless you chose another), rebuilds, restarts the services and runs doctor.
+It moves the install along what it follows, rebuilds, restarts the services and runs doctor. On the `stable` Channel, that's the latest Release. On `dev`, it's the latest commit of `main`. An install from before Channels follows its branch, as it did.
 
-`--ref` moves the install: a branch is followed from then on, and a tag or commit pins it until you `update --ref main`.
+`--channel stable` or `--channel dev` switches the Channel from then on. `stable` never moves an install back to an older commit: one on `main` waits until a Release includes its commit.
+
+`--ref` moves the install, and it no longer follows a Channel: a branch is followed from then on, and a tag or commit pins it until you pass `--channel` or another `--ref`.
 
 On the Hub's machine, the Hub's Runners follow it to the new commit; `--no-update-runners` leaves Runners on other machines where they are. See [Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit).
 
