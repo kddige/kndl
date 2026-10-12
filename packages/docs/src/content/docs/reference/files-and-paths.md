@@ -28,8 +28,8 @@ Outside the home:
 
 | Path | What it is |
 |---|---|
-| `~/.local/bin/kndl` | The `kndl` command: a small script that runs the install's CLI. On a machine with no install, it can be the binary [installed from a Hub](/how-to/install-the-cli-from-a-hub/) instead (`KNDL_BIN_DIR` moves it). |
-| `~/.config/kndl/cli.json` | The Hub the CLI is signed in to or was installed from, as `{"hub":"https://hub.example.com"}`, and after [`kndl login`](/how-to/sign-in-the-cli/), its CLI token, `"token":"chc_…"`. Readable only by you (`0600`, in a `0700` directory). `$XDG_CONFIG_HOME/kndl/cli.json` when that is set. |
+| `~/.local/bin/kndl` | The `kndl` command: a small script that runs the install's CLI. On a machine with no install, it can be the binary [installed from a Hub](/guides/install-the-cli-from-a-hub/) instead (`KNDL_BIN_DIR` moves it). |
+| `~/.config/kndl/cli.json` | The Hub the CLI is signed in to or was installed from, as `{"hub":"https://hub.example.com"}`, and after [`kndl login`](/guides/sign-in-the-cli/), its CLI token, `"token":"chc_…"`. Readable only by you (`0600`, in a `0700` directory). `$XDG_CONFIG_HOME/kndl/cli.json` when that is set. |
 | `~/Library/LaunchAgents/io.github.kddige.kndl.hub.plist`, `….runner.plist` | macOS: the services, as launchd agents. |
 | `~/.config/systemd/user/kndl-hub.service`, `kndl-runner.service` | Linux: the services, as systemd user units (`$XDG_CONFIG_HOME/systemd/user` when that is set). |
 
@@ -45,7 +45,7 @@ Each service runs the install's Hub or Runner with its env file and `KNDL_HOME` 
 | `packages/web/dist` | The web UI's build, which the Hub serves. `HUB_WEB_DIR` moves it. |
 | `~/.kndl-dev/cli/` | The `kndl` binaries the Hub serves, by commit, as in [an installed home](#an-installed-home). |
 
-Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the database can't be read without the key. See [If the key is lost](/how-to/use-variables-and-secrets/#if-the-key-is-lost).
+Back up `hub.db` together with `HUB_SECRETS_KEY`: Sensitive values in the database can't be read without the key. See [If the key is lost](/guides/use-variables-and-secrets/#if-the-key-is-lost).
 
 ## A Runner
 

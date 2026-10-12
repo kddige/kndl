@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-A Session that can't start doesn't retry on its own. It goes Asleep with the reason in its transcript, and its queued prompts wait. Fix the cause, then send a prompt or press **Wake now**. See [the Session lifecycle](/explanation/session-lifecycle/#when-a-start-fails).
+A Session that can't start doesn't retry on its own. It goes Asleep with the reason in its transcript, and its queued prompts wait. Fix the cause, then send a prompt or press **Wake now**. See [the Session lifecycle](/concepts/session-lifecycle/#when-a-start-fails).
 
 ## A Session goes Asleep as soon as it starts
 
@@ -50,7 +50,7 @@ and, under it, **Show Claude Code's last output**.
 WARN (#2): Session <id> exited with 1; its last 3 line(s) of output are on the Session's page
 ```
 
-Fix what the output names, then send a prompt or press **Wake now**. A sign-in or usage message means the Claude credential the Session runs on needs attention: its Creator's, which they [replace on their Account page](/how-to/add-your-claude-credential/), or else [the Runner's own](/reference/configuration/#the-runners-claude-credential).
+Fix what the output names, then send a prompt or press **Wake now**. A sign-in or usage message means the Claude credential the Session runs on needs attention: its Creator's, which they [replace on their Account page](/guides/add-your-claude-credential/), or else [the Runner's own](/reference/configuration/#the-runners-claude-credential).
 
 ## The conversation starts over
 
@@ -74,7 +74,7 @@ kddige/kndl's Sessions can't start: NPM_TOKEN and GH_TOKEN (the shared variable 
 
 A Test build is refused with `NPM_TOKEN needs a value.`, and the variables show **needs a value**.
 
-**Why.** The Hub's secrets key was lost and its Sensitive values were [reset](/how-to/use-variables-and-secrets/#if-the-key-is-lost), keeping the variables without their values.
+**Why.** The Hub's secrets key was lost and its Sensitive values were [reset](/guides/use-variables-and-secrets/#if-the-key-is-lost), keeping the variables without their values.
 
 **Fix.** Press **Enter values**, type each value on the Repo's Environment and apply, and press **Enter value** on each Shared variable named. Then wake the Session.
 
@@ -113,7 +113,7 @@ could not get access to clone the Repo: The GitHub App is not installed on owner
 
 The first is for a Dev login, which still needs the App to clone. The second means the App was taken off the Repo during the Test build.
 
-**Fix.** Read the full log, fix the draft and run the Test build again; **Apply** turns on once a Test build of exactly that draft passes. Install tools in the Bootstrap script; set up the clone, such as its dependencies, in the Start script. See [Set up an Environment](/how-to/set-up-an-environment/). For the App, see [The GitHub App can't see the Repo](/troubleshooting/github-and-git/#the-github-app-cant-see-the-repo).
+**Fix.** Read the full log, fix the draft and run the Test build again; **Apply** turns on once a Test build of exactly that draft passes. Install tools in the Bootstrap script; set up the clone, such as its dependencies, in the Start script. See [Set up an Environment](/guides/set-up-an-environment/). For the App, see [The GitHub App can't see the Repo](/troubleshooting/github-and-git/#the-github-app-cant-see-the-repo).
 
 ## The Environment won't open, or New Session refuses the Repo
 
@@ -124,7 +124,7 @@ The first is for a Dev login, which still needs the App to clone. The second mea
 
 Applying, checking a draft or starting a Test build is refused with `You have no access to owner/name on GitHub, or the GitHub App isn't installed on it.`
 
-**Why.** Only people with access to a Repo on GitHub can see or change its Environment, and only on Repos the GitHub App is installed on. A Repo that doesn't exist reads like one without the App. See [Who can do what](/explanation/security-model/#who-can-do-what).
+**Why.** Only people with access to a Repo on GitHub can see or change its Environment, and only on Repos the GitHub App is installed on. A Repo that doesn't exist reads like one without the App. See [Who can do what](/concepts/security-model/#who-can-do-what).
 
 **Fix.** Check the Repo's name. For the first, follow **Install the App** and install it on the Repo, then press **check again**. For the second, have the Repo's owner add you as a collaborator, then press **Check again**.
 
@@ -142,7 +142,7 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 
 **Why.** The Hub encrypts Sensitive values with `HUB_SECRETS_KEY`, and redacts them from everything Sessions show, which a very short value would make useless.
 
-**Fix.** For the first, do what it says. For the second, make the variable Plain, or use the real, longer value. See [Use variables and secrets](/how-to/use-variables-and-secrets/).
+**Fix.** For the first, do what it says. For the second, make the variable Plain, or use the real, longer value. See [Use variables and secrets](/guides/use-variables-and-secrets/).
 
 ## New Session refuses: no Claude credential
 
@@ -154,7 +154,7 @@ Neither you nor build-box has a Claude credential: add yours on the Account page
 
 **Why.** A Session runs on its Creator's Claude credential, or else on its Runner's own, and neither has one.
 
-**Fix.** [Add your Claude credential](/how-to/add-your-claude-credential/) on your **Account** page, or pick a Runner with its own [Claude credential](/reference/configuration/#the-runners-claude-credential).
+**Fix.** [Add your Claude credential](/guides/add-your-claude-credential/) on your **Account** page, or pick a Runner with its own [Claude credential](/reference/configuration/#the-runners-claude-credential).
 
 ## A Claude credential can't be saved
 
@@ -170,15 +170,15 @@ Neither you nor build-box has a Claude credential: add yours on the Account page
 
 **What you see.** A teammate's Session isn't in your list, a link to it says `There is no such Session.`, or a Session you were in disappears. Starting a Session says `You have no access to owner/name on GitHub, or the GitHub App isn't installed on it.`
 
-**Why.** You see only the Sessions of Repos you have access to on GitHub, and only Repos the GitHub App is installed on. `Could not check your access on GitHub; try again.` means GitHub didn't answer the Hub. See [Who can do what](/explanation/security-model/#who-can-do-what).
+**Why.** You see only the Sessions of Repos you have access to on GitHub, and only Repos the GitHub App is installed on. `Could not check your access on GitHub; try again.` means GitHub didn't answer the Hub. See [Who can do what](/concepts/security-model/#who-can-do-what).
 
-**Fix.** Have the Repo's owner add you on GitHub, or install the App on it. Its Sessions show up within twice `HUB_REPO_ACCESS_TTL_MS` (5 minutes by default), with no reload. Without `GITHUB_APP_ID` on the Hub, GitHub sign-ins see no Sessions at all: [set up the GitHub App](/how-to/set-up-the-github-app/).
+**Fix.** Have the Repo's owner add you on GitHub, or install the App on it. Its Sessions show up within twice `HUB_REPO_ACCESS_TTL_MS` (5 minutes by default), with no reload. Without `GITHUB_APP_ID` on the Hub, GitHub sign-ins see no Sessions at all: [set up the GitHub App](/self-hosting/set-up-the-github-app/).
 
 ## A Session doesn't go to sleep
 
 **What you see.** A Session nobody uses stays Active long after `HUB_SLEEP_AFTER_MS` (15 minutes by default).
 
-**Why.** Something keeps it busy: a Turn or subagent running, a prompt queued, a Participant with the Session open in a tab, or **Keep awake**, which the header shows as "Kept awake by …". See [Going to sleep](/explanation/session-lifecycle/#going-to-sleep).
+**Why.** Something keeps it busy: a Turn or subagent running, a prompt queued, a Participant with the Session open in a tab, or **Keep awake**, which the header shows as "Kept awake by …". See [Going to sleep](/concepts/session-lifecycle/#going-to-sleep).
 
 **Fix.** Turn **Keep awake** off, or press **Sleep now**, which turns it off and puts the Session to sleep at once.
 
@@ -200,4 +200,4 @@ Neither you nor build-box has a Claude credential: add yours on the Account page
 
 **Why.** Someone applied a new version of the Repo's Environment, and a running Sandbox keeps the version it started on.
 
-**Fix.** Press **Restart** when it suits you. The Session wakes on a fresh Sandbox from the latest version, with its Workspace and conversation. What it installed outside the Workspace is gone; see [Environments](/explanation/environments/).
+**Fix.** Press **Restart** when it suits you. The Session wakes on a fresh Sandbox from the latest version, with its Workspace and conversation. What it installed outside the Workspace is gone; see [Environments](/concepts/environments/).

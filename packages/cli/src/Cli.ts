@@ -29,6 +29,7 @@ import { onboard } from "./OnboardFlow.ts"
 import { describeServiceState } from "./Services.ts"
 import { Shell, step } from "./Shell.ts"
 import { status } from "./Status.ts"
+import { Channels } from "./Update.ts"
 
 /** Sets the exit code when a command reports that something is wrong. */
 const exitWith = (ok: boolean) =>
@@ -214,6 +215,11 @@ const updateCommand = Command.make(
         Flag.withDescription("A branch to follow, or a tag or commit to pin to"),
       ),
     ),
+    channel: optional(
+      Flag.Literals("channel", Channels).pipe(
+        Flag.withDescription("Follow stable (the latest Release) or dev (main) from now on"),
+      ),
+    ),
     noUpdateRunners: off("no-update-runners").pipe(
       Flag.withDescription(
         "On the Hub's machine: leave Runners on other machines on their commit (the Runner here still follows)",
@@ -225,8 +231,11 @@ const updateCommand = Command.make(
       ),
     ),
   },
-  ({ ref, noUpdateRunners, now }) =>
-    Effect.flatMap(update(layout(), { ref, updateRunners: !noUpdateRunners, now }), exitWith),
+  ({ ref, channel, noUpdateRunners, now }) =>
+    Effect.flatMap(
+      update(layout(), { ref, channel, updateRunners: !noUpdateRunners, now }),
+      exitWith,
+    ),
 ).pipe(
   operator("update"),
   Command.withAlias("upgrade"),

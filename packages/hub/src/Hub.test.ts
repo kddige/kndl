@@ -420,7 +420,7 @@ describe("mod channel", () => {
 
 describe("web channel", () => {
   test("welcomes the signed-in person from the web UI's origin, then lists Runners, Pairing codes and Sessions, their Claude credential and CLI tokens", async () => {
-    const hubVersion = { commit: "c".repeat(40), branch: "main" }
+    const hubVersion = { commit: "c".repeat(40), branch: "main", release: "2026.10.1" }
     const hub = await startHub({
       config: { devLogin: true },
       hubVersion: HubVersion.fixed(hubVersion),

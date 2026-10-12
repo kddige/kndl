@@ -1,9 +1,9 @@
 ---
-// The landing page, at the site root. A drawn campsite (Kip is the fire) and real screenshots of
-// the web UI in one composition: the viewer is the third person at the fire, and the laptop in
-// the foreground runs the real web UI. Going down through the ground, each layer shows what you'd
-// see there. Standalone page, not the Starlight layout, so it carries the head tags that
-// astro.config.mjs gives the docs pages. Conventions: docs/design/docs-style.md, "Landing page".
+// The landing page, at the site root. One screen of hero: a drawn campsite (Kip is the fire), the
+// install command, and a laptop in the foreground running the real web UI. Then four short points
+// and the three commands from install to uninstall. Standalone page, not the Starlight layout, so
+// it carries the head tags that astro.config.mjs gives the docs pages. Conventions:
+// docs/design/docs-style.md, "Landing page".
 const base = import.meta.env.BASE_URL
 const site = "https://kddige.github.io"
 const doc = (path: string) => `${base}${path}`
@@ -81,9 +81,8 @@ const mallows = [
           kndl
         </a>
         <nav aria-label="Docs">
-          <a href={doc("tutorials/first-session/")}>Tutorial</a>
-          <a href={doc("how-to/install/")}>Install</a>
-          <a href={doc("explanation/architecture/")}>How it works</a>
+          <a href={doc("start/quickstart/")}>Quickstart</a>
+          <a href={doc("start/introduction/")}>Docs</a>
           <a href="https://github.com/kddige/kndl">GitHub</a>
           <label class="theme">
             <span class="sr">Theme</span>
@@ -112,7 +111,11 @@ const mallows = [
           </div>
           <p class="install-note">
             macOS or Linux, with git.{" "}
-            <a href={doc("how-to/install/")}>What it installs</a>
+            <a href={doc("self-hosting/install/")}>What it installs</a>
+          </p>
+          <p class="ctas hero-ctas">
+            <a class="btn" href={doc("start/quickstart/")}>Get started</a>
+            <a class="btn ghost" href="https://github.com/kddige/kndl">GitHub</a>
           </p>
         </div>
       </div>
@@ -209,155 +212,69 @@ const mallows = [
       </div>
     </section>
 
-    <!-- 2. At the fire: the Prompt queue, for real. -->
-    <section class="fire" aria-labelledby="fire-h">
-      <div class="text">
-        <h2 id="fire-h">Working in a Session together</h2>
+    <!-- 2. What it is, in four points. -->
+    <section class="points" aria-labelledby="points-h">
+      <h2 id="points-h" class="sr">What kndl does</h2>
+      <div class="point">
+        <h3>Sessions you share</h3>
         <p>
-          Anyone with access to the Session's Repo can open it, follow Claude's Turn in the
-          transcript and send prompts. Everyone in it has the same rights.
+          Everyone with access to a Repo can open its Sessions, follow Claude live and send prompts.
+          Prompts wait in a queue, or join the running Turn with <b>Steer</b>.
         </p>
+        <a href={doc("guides/work-in-a-session/")}>Work in a Session</a>
+      </div>
+      <div class="point">
+        <h3>A Sandbox per Session</h3>
         <p>
-          While a Turn is running, prompts from anyone wait in the Prompt queue, and Claude takes
-          them in order. Press <b>Steer</b> on a queued prompt and it joins the running Turn
-          instead: Claude reads it at its next step.
+          Claude Code and every command it runs live in a microVM, built from the Repo's
+          Environment. Nothing runs on the host.
         </p>
-        <p class="more"><a href={doc("how-to/work-in-a-session/")}>Work in a Session</a></p>
+        <a href={doc("concepts/environments/")}>Environments</a>
       </div>
-
-      <figure class="shot">
-        <div class="frame"><img class="t-light" src={img("queue")} width="1520" height="440" loading="lazy" alt="The Prompt queue in the web UI: Queued, runs when the current Turn ends. Prompt 1 from SI: Also log each retry with the order id, at warn level. Prompt 2 from JO: Mention the double-charge in the PR description. Each has Steer and remove buttons. Below it, the prompt box says Queue a prompt for after this Turn." />
-<img class="t-dark" src={img("queue-dark")} width="1520" height="440" loading="lazy" alt="" aria-hidden="true" /></div>
-        <figcaption>Two queued prompts, from SI and JO, each with Steer.</figcaption>
-      </figure>
-    </section>
-
-    <!-- 3. Underground, with what you'd see down there. One line runs down through the layers. -->
-    <section class="ground" aria-label="What runs where">
-      <div class="layer">
-        <div class="rail" aria-hidden="true"></div>
-        <div class="text">
-          <h2>The Hub</h2>
-          <p>
-            One Bun process with its data in SQLite. It keeps every Session, signs people in with
-            GitHub, serves the web UI and relays prompts and Events between people and Runners.
-            Runners connect to it, so it never has to reach them.
-          </p>
-          <p class="more"><a href={doc("how-to/run-the-hub/")}>Run the Hub</a></p>
-        </div>
-        <figure class="shot narrow">
-          <div class="frame"><img class="t-light" src={img("hub")} width="510" height="830" loading="lazy" alt="The web UI's sidebar: Runners, Environments, Shared variables and Archived Sessions, then Sessions grouped by Repo: acme/billing, acme/docs and acme/shop. Two of two Runners are online." />
-<img class="t-dark" src={img("hub-dark")} width="510" height="830" loading="lazy" alt="" aria-hidden="true" /></div>
-          <figcaption>The sidebar, with Sessions grouped by Repo.</figcaption>
-        </figure>
+      <div class="point">
+        <h3>On your machines</h3>
+        <p>
+          The Hub is one Bun process with a SQLite database. Runners are your Macs and Linux boxes,
+          and they connect to the Hub, not the other way round.
+        </p>
+        <a href={doc("concepts/architecture/")}>How kndl works</a>
       </div>
-
-      <div class="layer">
-        <div class="rail" aria-hidden="true"></div>
-        <div class="text">
-          <h2>Runners</h2>
-          <p>
-            A Runner is a Mac with Apple Silicon or a Linux machine with KVM. It clones the Repo,
-            boots the Sandboxes and keeps each Session's Workspace on its own disk.
-          </p>
-          <p class="more"><a href={doc("how-to/add-a-runner/")}>Add a Runner</a></p>
-        </div>
-        <figure class="shot">
-          <div class="frame"><img class="t-light" src={img("runners")} width="1530" height="300" loading="lazy" alt="The Runners page: build-box and studio-mac, both online, each with Re-pair and Remove, and a count of two Sessions." />
-<img class="t-dark" src={img("runners-dark")} width="1530" height="300" loading="lazy" alt="" aria-hidden="true" /></div>
-          <figcaption>The Runners page, with two Runners online.</figcaption>
-        </figure>
-      </div>
-
-      <div class="layer">
-        <div class="rail" aria-hidden="true"></div>
-        <div class="text">
-          <h2>The credential proxy</h2>
-          <p>
-            Claude Code in the Sandbox sends its requests to a proxy on the Runner, with a Session
-            token. The proxy adds the Creator's Claude credential, or else the Runner's own, on the
-            way to Anthropic, so the Sandbox never holds one.
-          </p>
-          <p class="more"><a href={doc("explanation/security-model/#the-credential-proxy")}>The security model</a></p>
-        </div>
-        <figure class="shot crop">
-          <div class="frame"><div class="sheet">
-            <img class="t-light" src={img("credential")} width="1550" height="185" loading="lazy" alt="A Session's header: its name, an Active badge, Keep awake and Sleep now, then the Repo, the Work branch and the line: on the Runner's Claude account, Subscription token ending 9f3b." />
-<img class="t-dark" src={img("credential-dark")} width="1550" height="185" loading="lazy" alt="" aria-hidden="true" />
-            <span class="pin" style="left: 38%; top: 33%; width: 47%; height: 24%" aria-hidden="true"></span>
-          </div></div>
-          <figcaption>The Session header names the Claude account it runs on, here the Runner's.</figcaption>
-        </figure>
-      </div>
-
-      <div class="layer">
-        <div class="rail" aria-hidden="true"></div>
-        <div class="text">
-          <h2>The Sandbox</h2>
-          <p>
-            Each Session has its own Sandbox, a microsandbox microVM. Claude Code and the tools it
-            starts run in it, on the Workspace at <code>/workspace</code>. It is built from the
-            Repo's Environment: an image, a Bootstrap script and a Start script.
-          </p>
-          <p class="more"><a href={doc("how-to/set-up-an-environment/")}>Set up an Environment</a></p>
-        </div>
-        <figure class="shot">
-          <div class="frame"><img class="t-light" src={img("env")} width="1530" height="660" loading="lazy" alt="The Environment form for acme/shop, version 3: Image oven/bun:1.4, a Bootstrap script that runs bun install and installs Chromium, a Start script that runs bun run dev, and a Docker in every Sandbox switch." />
-<img class="t-dark" src={img("env-dark")} width="1530" height="660" loading="lazy" alt="" aria-hidden="true" /></div>
-          <figcaption>The Environment form for acme/shop.</figcaption>
-        </figure>
+      <div class="point">
+        <h3>Your own Claude</h3>
+        <p>
+          Each person adds their Claude subscription or API key once. A proxy on the Runner adds it
+          to each request, so the Sandbox never holds it.
+        </p>
+        <a href={doc("concepts/security-model/")}>The security model</a>
       </div>
     </section>
 
-    <!-- 4. Embers. -->
-    <section class="embers">
-      <svg class="sleep" viewBox="0 0 160 110" aria-hidden="true">
-        <rect x="14" y="80" width="132" height="22" rx="11" fill="#6B4A3A" transform="rotate(-4 80 90)" />
-        <rect x="18" y="84" width="124" height="20" rx="10" fill="#8C5F47" transform="rotate(3 80 94)" />
-        <g transform="translate(80 86) scale(0.5) translate(-64 -108)">
-          <path class="flame" d="M64 12C74 30 100 46 100 74c0 22-16 34-36 34S28 96 28 74c0-16 8-26 16-34 1 12 6 18 13 20-3-16-1-34 7-48z" fill="#F6C445" />
-          <path d="M64 50c6 12 21 20 21 36 0 12-9 19-21 19s-21-7-21-19c0-11 9-20 21-36z" fill="#FFEDB5" />
-          <g fill="#F59C8B"><circle cx="49.5" cy="93" r="3.4" /><circle cx="78.5" cy="93" r="3.4" /></g>
-          <path d="M51 84q5 4 10 0M67 84q5 4 10 0" fill="none" stroke="#2A1F3D" stroke-width="2.8" stroke-linecap="round" />
-          <path d="M60 95q4 3.5 8 0" fill="none" stroke="#2A1F3D" stroke-width="2.6" stroke-linecap="round" />
-        </g>
-        <text class="zz" x="104" y="38">z</text>
-        <text class="zz" x="118" y="24">z</text>
-      </svg>
-      <div class="text">
-        <h2>When a Session is idle</h2>
-        <p>
-          An Active Session that is idle for 15 minutes goes Asleep, unless Keep awake is on. Its
-          Sandbox stops and its disks stay, with the Workspace. The next prompt wakes it, and
-          Claude Code resumes the conversation.
-        </p>
-        <p class="more"><a href={doc("explanation/session-lifecycle/")}>A Session's lifecycle</a></p>
-      </div>
-    </section>
-
-    <!-- 5. Close. -->
+    <!-- 3. Try it, then remove it. -->
     <section class="close">
       <div class="text">
-        <h2>Run it on one machine</h2>
+        <h2>Try it, then remove it</h2>
         <p>
-          The tutorial runs a Hub and a Runner on one machine with dev login, so you need no GitHub
-          App. It takes about twenty minutes, most of it waiting for the first Build.
+          Run the Hub and a Runner on one machine, start a Session on one of your Repos, and take
+          it all away with one command. About 10 minutes.
         </p>
         <p class="ctas">
-          <a class="btn" href={doc("tutorials/first-session/")}>Run your first Session</a>
-          <a href={doc("how-to/install/")}>Or install it as services</a>
+          <a class="btn" href={doc("start/quickstart/")}>Quickstart</a>
+          <a href={doc("start/deploy-for-a-team/")}>Deploy for a team</a>
         </p>
       </div>
-      <pre class="term" aria-label="Commands to start a Hub from a checkout"><span class="c"># from a checkout of kddige/kndl</span>
-<span class="p">$</span> bun install
-<span class="p">$</span> bun run web:build
-<span class="p">$</span> HUB_PUBLIC_URL=http://127.0.0.1:7777 \
-  KNDL_DEV_LOGIN=1 bun run hub</pre>
+      <pre class="term" aria-label="Install, set up and remove kndl"><span class="c"># install</span>
+<span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
+
+<span class="c"># set up a Hub and a Runner, and answer its questions</span>
+<span class="p">$</span> kndl onboard
+
+<span class="c"># remove it all</span>
+<span class="p">$</span> kndl uninstall --purge</pre>
     </section>
 
     <footer>
       <span>kndl is said "kindle". The screenshots are the real web UI showing made-up Sessions, Repos and people (acme/shop, mira, sione, jo). No Claude ran.</span>
-      <span><a href={doc("reference/glossary/")}>Glossary</a> · <a href={doc("reference/commands/")}>Commands</a> · <a href="https://github.com/kddige/kndl">GitHub</a></span>
+      <span><a href={doc("start/introduction/")}>Docs</a> · <a href={doc("reference/commands/")}>Commands</a> · <a href="https://github.com/kddige/kndl">GitHub</a> · MIT licensed · Not affiliated with Anthropic</span>
     </footer>
 
     <script is:inline>
@@ -523,6 +440,9 @@ const mallows = [
   .more { margin: 1.4rem 0 0; font-size: 1rem; }
   .btn { display: inline-block; padding: 0.7rem 1.3rem; border-radius: 999px; background: var(--flame); color: var(--on-flame); font-weight: 700; text-decoration: none; }
   .btn:hover { background: var(--core); color: var(--on-flame); }
+  .btn.ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--log); }
+  .btn.ghost:hover { background: var(--code-bg); color: var(--ink); }
+  .hero-ctas { margin-top: 1.2rem; }
   .ctas { display: flex; flex-wrap: wrap; align-items: center; gap: 0.8rem 1.6rem; margin: 1.6rem 0 0; }
 
   /* 1. Hero: on a wide screen the scene fills it and the laptop sits on the ground at the
@@ -554,7 +474,7 @@ const mallows = [
   .lede { max-width: 30rem; margin: 1.1rem 0 1.6rem; font-size: clamp(1.05rem, 0.95rem + 0.3vw, 1.25rem); color: var(--ink-2); }
   .install { display: flex; align-items: stretch; max-width: 44rem; border: 1px solid color-mix(in srgb, var(--flame) 70%, var(--log)); border-radius: 0.7rem; background: var(--code-bg); overflow: hidden; }
   :root[data-theme="dark"] .install { border-color: color-mix(in srgb, var(--flame) 40%, transparent); }
-  .install code { flex: 1; min-width: 0; padding: 0.8rem 1rem; font-size: 0.74rem; line-height: 1.5; white-space: nowrap; overflow-x: auto; color: var(--code-ink); scrollbar-width: thin; }
+  .install code { flex: 1; min-width: 0; padding: 0.8rem 1rem; font-size: 0.74rem; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; color: var(--code-ink); scrollbar-width: thin; }
   .install .p { color: var(--prompt); user-select: none; }
   .install button { flex: none; font: inherit; font-family: var(--mono); font-size: 0.8rem; font-weight: 600; padding: 0 1.1rem; border: 0; background: var(--flame); color: var(--on-flame); cursor: pointer; }
   .install button:hover { background: var(--core); }
@@ -576,7 +496,6 @@ const mallows = [
   /* By day the flame gets a log-brown edge, or flame yellow would melt into the paper. */
   .flame { stroke: var(--s-edge); stroke-width: calc(var(--s-edge-w) * 1px); stroke-linejoin: round; paint-order: stroke; }
   .far .flame { stroke-width: calc(var(--s-edge-w) * 1.6px); }
-  .sleep .flame { stroke-width: calc(var(--s-edge-w) * 3px); }
   .brand .flame { stroke-width: calc(var(--s-edge-w) * 3.5px); }
 
   .pitch-body { order: 2; padding-top: 1.2rem; }
@@ -599,54 +518,28 @@ const mallows = [
     .lid { padding: 0.6vw 0.6vw 0.7vw; }
     .pitch-body { padding-top: 0; }
     .pitch h1 { font-size: clamp(2.6rem, 0.6rem + 3.2vw, 3.75rem); }
+    /* Keep the command and its Copy button clear of the laptop, which starts at 57vw. */
+    .install { max-width: min(44rem, calc(54vw - 4rem)); }
   }
 
-  /* Screenshots: one treatment everywhere. They are of the dark web UI, so on paper they sit
-     in a thin line with a soft shadow. */
-  .shot { margin: 0; min-width: 0; }
-  .frame { border: 1px solid var(--line); border-radius: 0.7rem; overflow: hidden; background: #111215; box-shadow: var(--shadow); }
-  .sheet { position: relative; }
-  .shot figcaption { margin-top: 0.8rem; font-size: 0.9rem; line-height: 1.5; color: var(--muted); }
-  .pin { position: absolute; border: 1.5px solid var(--flame); border-radius: 0.4rem; }
+  /* 2. Four points, two by two on a wide screen. Text only: the hero has the picture. */
+  .points { display: grid; gap: 2.5rem 4rem; padding: clamp(4rem, 9vw, 6.5rem) var(--pad); background: var(--bg); border-top: 1px solid var(--line); }
+  .point h3 { font-family: var(--serif); font-variation-settings: "SOFT" 100; font-size: 1.45rem; font-weight: 700; line-height: 1.2; margin: 0 0 0.6rem; color: var(--ink); }
+  .point p { color: var(--ink-2); max-width: 32rem; }
+  .point b { font-weight: 600; color: var(--ink); }
+  .point a { font-size: 1rem; }
+  @media (min-width: 48rem) {
+    .points { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
 
-  /* 2, 3, 4: text beside a picture, the same grid each time. */
-  .fire, .layer, .embers, .close { display: grid; gap: 2.5rem; align-items: center; padding: clamp(4rem, 9vw, 7rem) var(--pad); }
-  .fire { background: var(--bg); }
-
-  /* 3. Underground: the soil darkens towards the logs' brown as it goes down, and one line
-     runs through the layers like a cable. */
-  .ground { position: relative; padding-top: 2.5rem; background: var(--soil); }
-  .ground::before { content: ""; position: absolute; inset: -1px 0 auto 0; height: 26px; background: var(--bg); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 26' preserveAspectRatio='none'%3E%3Cpath d='M0 0H240V10C200 24 168 12 128 18S56 26 0 12Z'/%3E%3C/svg%3E") 0 0 / 240px 26px repeat-x; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 26' preserveAspectRatio='none'%3E%3Cpath d='M0 0H240V10C200 24 168 12 128 18S56 26 0 12Z'/%3E%3C/svg%3E") 0 0 / 240px 26px repeat-x; }
-  .ground .shot figcaption { color: color-mix(in srgb, var(--muted) 80%, var(--ink)); }
-  :root:not([data-theme="dark"]) .ground a { color: #5a3b2c; }
-  .layer { position: relative; --lp: clamp(2.5rem, 5vw, 4rem); padding-block: var(--lp); align-items: start; }
-  .ground .layer:last-child { padding-bottom: clamp(4rem, 9vw, 7rem); }
-  .rail { display: none; }
-  .narrow { max-width: 16rem; }
-
+  .close { display: grid; gap: 2.5rem; align-items: center; padding: 0 var(--pad) clamp(4rem, 9vw, 6.5rem); }
   @media (min-width: 62rem) {
-    .fire, .layer, .embers, .close { grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); gap: clamp(3rem, 6vw, 6rem); }
-    .layer { grid-template-columns: 1.5rem minmax(0, 26rem) minmax(0, 1fr); padding-inline-start: calc(var(--pad) - 2.5rem); column-gap: clamp(2rem, 4vw, 4rem); }
-    .rail { display: block; position: absolute; top: 0; bottom: 0; left: calc(var(--pad) - 2.5rem + 0.75rem - 1px); border-inline-start: 2px dashed var(--rail); }
-    .rail::after { content: ""; position: absolute; left: -6px; top: calc(var(--lp) + 0.9rem); width: 10px; height: 10px; border-radius: 50%; background: var(--flame); box-shadow: 0 0 0 1.5px var(--s-edge); }
-    .layer:first-child .rail { top: calc(var(--lp) + 0.9rem); }
-    .layer:first-child .rail::after { top: 0; }
-    .layer:last-child .rail { bottom: auto; height: calc(var(--lp) + 0.9rem + 10px); }
-    .layer .text { grid-column: 2; }
-    .layer .shot { grid-column: 3; }
-    .shot.narrow { max-width: 17rem; }
-    .embers .sleep { order: 2; }
-    .close { align-items: center; }
+    .close { grid-template-columns: minmax(0, 22rem) minmax(0, 1fr); gap: clamp(2.5rem, 5vw, 5rem); }
   }
-
-  /* 4. Embers */
-  .embers { background: var(--bg); }
-  .sleep { width: min(100%, 16rem); justify-self: center; order: 2; }
-  .zz { font-family: var(--serif); font-size: 12px; font-weight: 700; fill: var(--ink); opacity: 0.6; }
 
   /* 5. Close */
-  .close { background: var(--bg); padding-top: 0; }
-  .term { margin: 0; padding: 1.4rem 1.6rem; border-radius: 0.7rem; background: var(--code-bg); font-family: var(--mono); font-size: 0.85rem; line-height: 1.8; color: var(--code-ink); overflow-x: auto; border: 1px solid var(--line); }
+  .close { background: var(--bg); }
+  .term { margin: 0; padding: 1.4rem 1.6rem; border-radius: 0.7rem; background: var(--code-bg); font-family: var(--mono); font-size: 0.78rem; line-height: 1.8; color: var(--code-ink); overflow-x: auto; border: 1px solid var(--line); }
   .term .p { color: var(--prompt); user-select: none; }
   .term .c { color: var(--muted); }
   footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.6rem 2rem; padding: 2rem var(--pad) 2.5rem; font-size: 0.85rem; line-height: 1.6; color: var(--muted); background: var(--bg); border-top: 1px solid var(--line); }
@@ -656,10 +549,8 @@ const mallows = [
     .top nav { gap: 1.1rem; }
     .top nav a:not(:first-child):not(:nth-child(2)) { display: none; }
     .aside { display: none; }
-    .fire, .embers, .close { padding-block: 3.5rem; }
+    .points { padding-block: 3.5rem; }
     .text p { font-size: 1.05rem; }
-    /* The header shot is too wide to read here: show the part around the account line. */
-    .crop .sheet { width: 190%; margin-left: -66%; }
   }
 
   /* Motion: the flame breathes and three sparks rise, only when asked for. */

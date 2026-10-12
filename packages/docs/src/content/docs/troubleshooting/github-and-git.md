@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Two kinds of git run for a Session: the Runner's, on its host, which clones the Repo, and the Session's, in its Sandbox, which Claude uses. They get their access differently. See [Git from Sessions](/explanation/git-from-sessions/).
+Two kinds of git run for a Session: the Runner's, on its host, which clones the Repo, and the Session's, in its Sandbox, which Claude uses. They get their access differently. See [Git from Sessions](/concepts/git-from-sessions/).
 
 ## The Runner can't clone the Repo
 
@@ -52,7 +52,7 @@ and the Hub logs the same as warnings. What needs the permission fails, such as 
 
 **Why.** The App lacks a permission kndl needs, or an installation hasn't accepted it yet: GitHub keeps an installation on its old permissions until someone who manages the account accepts the new ones.
 
-**Fix.** Follow the links: add the permissions on the App's page and **Save changes**, then on each installation's page **Accept new permissions**. Click **Check again** on the banner, or run `kndl doctor`. See [Keep the permissions in step](/how-to/set-up-the-github-app/#keep-the-permissions-in-step).
+**Fix.** Follow the links: add the permissions on the App's page and **Save changes**, then on each installation's page **Accept new permissions**. Click **Check again** on the banner, or run `kndl doctor`. See [Keep the permissions in step](/self-hosting/set-up-the-github-app/#keep-the-permissions-in-step).
 
 If doctor warns `Couldn't check its permissions` instead, the Hub's App settings are wrong or GitHub can't be reached: the message says which.
 
@@ -71,12 +71,12 @@ WARN (#2): Session 9af3111eb506f54cea59b83c: its Sandbox has no GitHub token, so
 - git wasn't in the image when the token arrived. The next refresh, within 45 minutes, or a restart of the Session sets it up.
 - `gh` isn't installed. kndl doesn't install it.
 
-**Fix.** [Set up the GitHub App](/how-to/set-up-the-github-app/) and install it on the Repo. Install git and gh in the Environment's [Bootstrap script](/how-to/set-up-an-environment/#write-the-bootstrap-script). Don't run `gh auth login` in the Sandbox.
+**Fix.** [Set up the GitHub App](/self-hosting/set-up-the-github-app/) and install it on the Repo. Install git and gh in the Environment's [Bootstrap script](/guides/set-up-an-environment/#write-the-bootstrap-script). Don't run `gh auth login` in the Sandbox.
 
 ## Claude pushed to the default branch
 
 **What you see.** A Session pushed straight to `main`, or merged its own pull request.
 
-**Why.** The Sandbox token has every permission the App's installation has on the Session's Repo, by design ([ADR 0010](/reference/decisions/0010-the-sandbox-gets-a-github-token/)).
+**Why.** The Sandbox token has every permission the App's installation has on the Session's Repo, by design ([ADR 0010](/contributing/decisions/0010-the-sandbox-gets-a-github-token/)).
 
-**Fix.** Protect the default branch with a GitHub ruleset: require a pull request with at least one approval, block force pushes, and keep the App off the bypass list. See [Protect the default branch](/how-to/set-up-the-github-app/#protect-the-default-branch).
+**Fix.** Protect the default branch with a GitHub ruleset: require a pull request with at least one approval, block force pushes, and keep the App off the bypass list. See [Protect the default branch](/self-hosting/set-up-the-github-app/#protect-the-default-branch).

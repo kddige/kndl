@@ -39,7 +39,7 @@ git prints why just above it.
 
 **Why.** The CLI manages one home, `KNDL_HOME` or else `~/.kndl`, and that home has no `app/` checkout. It never manages a checkout's `~/.kndl-dev`.
 
-**Fix.** Install with [install.sh](/how-to/install/#install), or set `KNDL_HOME` to the home you installed into.
+**Fix.** Install with [install.sh](/self-hosting/install/#install), or set `KNDL_HOME` to the home you installed into.
 
 ## Onboard needs a flag
 
@@ -122,12 +122,30 @@ origin has no branch or tag named v2, and it isn't a commit id.
 **What you see.**
 
 ```
-The install is pinned at 1a2b3c4d5e6f, so update stays there. To follow main again: kndl update --ref main
+The install is pinned at 1a2b3c4d5e6f, so update stays there. To follow the latest Release: kndl update --channel stable. To follow main: kndl update --channel dev
 ```
 
 **Why.** `--ref` with a tag or commit pins the install, so a plain `update` doesn't move it.
 
-**Fix.** `kndl update --ref main`, or another branch.
+**Fix.** `kndl update --channel stable`, `kndl update --channel dev`, or `--ref` with a branch.
+
+## Update on stable stays where it is
+
+**What you see.**
+
+```
+On the stable Channel: the latest Release, v2026.10.1, doesn't include this checkout's commit, so update stays here until a Release does.
+```
+
+or, before kndl's first Release:
+
+```
+On the stable Channel, but origin has no Release yet: update stays here, and moves to the first Release.
+```
+
+**Why.** The stable Channel never moves an install back to an older commit, because its Hub may already have changed its database for the newer code. An install that followed `main` and switched to `stable` is usually ahead of the latest Release.
+
+**Fix.** Nothing: the next Release that includes the commit moves it. To keep following `main` instead: `kndl update --channel dev`.
 
 ## Uninstall refuses the home
 

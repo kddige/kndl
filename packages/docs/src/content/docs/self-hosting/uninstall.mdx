@@ -1,0 +1,62 @@
+---
+title: Uninstall kndl
+description: Remove kndl's services, command and install from a machine, keeping its data or removing that too.
+sidebar:
+  order: 8
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Remove kndl from a machine, and choose whether its data goes too.
+
+<Steps>
+
+1. In the web UI, archive or delete the Sessions on this machine's Runner. A Session still running keeps its Sandbox after kndl is gone.
+
+2. Uninstall:
+
+   ```sh
+   kndl uninstall          # keep the data
+   kndl uninstall --purge  # remove the data too
+   ```
+
+   It lists what it removes and asks first. Without a terminal, pass `--yes`.
+
+</Steps>
+
+## What goes, and what stays
+
+|                                                                      | `kndl uninstall` | `kndl uninstall --purge` |
+| -------------------------------------------------------------------- | ---------------- | ------------------------ |
+| The Hub's and Runner's services                                      | Removed          | Removed                  |
+| The `kndl` command, `~/.local/bin/kndl`                              | Removed          | Removed                  |
+| The install, `~/.kndl/app`                                           | Removed          | Removed                  |
+| `hub.env`, `runner.env`, `hub.db`, `sessions/`, `logs/` in `~/.kndl` | Kept             | Removed                  |
+
+Without `--purge`, [install kndl](/self-hosting/install/) again and run `kndl onboard`, and the Hub and Runner pick up where they left off.
+
+:::danger[`--purge` can't be undone]
+It removes the Hub's database, its `HUB_SECRETS_KEY` and every Session's Workspace.
+:::
+
+Two things stay either way:
+
+- **Bun**, if the installer added it, in `~/.bun`.
+- **The `PATH` line** the installer added to your shell's startup file, marked `# kndl: PATH`. Delete it by hand.
+
+On a Hub, uninstalling doesn't remove its Runners on other machines. Remove each one from the **Runners** page, then uninstall kndl on its machine.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Install kndl"
+    description="Install it again, on this machine or another."
+    href="/kndl/self-hosting/install/"
+  />
+  <LinkCard
+    title="Quickstart"
+    description="Try kndl on one machine in about 10 minutes."
+    href="/kndl/start/quickstart/"
+  />
+</CardGrid>

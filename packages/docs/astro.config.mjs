@@ -2,6 +2,7 @@
 import { unified } from "@astrojs/markdown-remark"
 import starlight from "@astrojs/starlight"
 import { defineConfig } from "astro/config"
+import { moved } from "./redirects.mjs"
 import { rehypeBaseLinks } from "./src/plugins/rehypeBaseLinks.ts"
 import { paperDark, paperLight } from "./src/styles/expressiveCodeThemes.ts"
 
@@ -18,7 +19,11 @@ export default defineConfig({
   site,
   base,
   trailingSlash: "always",
-  // Pages link to each other root-relative (`/how-to/...`); this prefixes the base path. MDX
+  // Pages that moved keep their old URLs, as redirects to the new ones.
+  redirects: Object.fromEntries(
+    Object.entries(moved).map(([from, to]) => [from, `${base.slice(0, -1)}${to}`]),
+  ),
+  // Pages link to each other root-relative (`/guides/...`); this prefixes the base path. MDX
   // inherits the processor.
   markdown: { processor: unified({ rehypePlugins: [[rehypeBaseLinks, { base }]] }) },
   integrations: [
@@ -33,6 +38,7 @@ export default defineConfig({
         replacesTitle: true,
       },
       favicon: "/favicon.svg",
+      social: [{ icon: "github", label: "GitHub", href: "https://github.com/kddige/kndl" }],
       head: [
         { tag: "link", attrs: { rel: "icon", href: `${base}favicon.ico`, sizes: "32x32" } },
         { tag: "link", attrs: { rel: "apple-touch-icon", href: `${base}apple-touch-icon.png` } },
@@ -68,47 +74,80 @@ export default defineConfig({
       pagination: true,
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       sidebar: [
-        { label: "Tutorials", items: [{ autogenerate: { directory: "tutorials" } }] },
         {
-          label: "How-to guides",
+          label: "Get started",
           items: [
-            { slug: "how-to/install" },
-            { slug: "how-to/run-the-hub" },
-            { slug: "how-to/add-a-runner" },
-            { slug: "how-to/add-your-claude-credential" },
-            { slug: "how-to/reach-the-hub-from-other-machines" },
-            { slug: "how-to/set-up-the-github-app" },
-            { slug: "how-to/set-up-an-environment" },
-            { slug: "how-to/use-variables-and-secrets" },
-            { slug: "how-to/work-in-a-session" },
-            { slug: "how-to/work-with-subagents" },
-            { slug: "how-to/add-a-remote-mcp-server" },
-            { slug: "how-to/publish-and-add-an-mcp-server-package" },
-            { slug: "how-to/install-the-cli-from-a-hub" },
-            { slug: "how-to/sign-in-the-cli" },
-            { slug: "how-to/forward-a-sessions-ports" },
-            { slug: "how-to/develop-kndl" },
+            { slug: "start/introduction" },
+            { slug: "start/quickstart" },
+            { slug: "start/deploy-for-a-team" },
           ],
         },
-        { label: "Explanation", items: [{ autogenerate: { directory: "explanation" } }] },
+        {
+          label: "Guides",
+          items: [
+            { slug: "guides/work-in-a-session" },
+            { slug: "guides/work-with-subagents" },
+            { slug: "guides/forward-a-sessions-ports" },
+            { slug: "guides/set-up-an-environment" },
+            { slug: "guides/use-variables-and-secrets" },
+            { slug: "guides/add-your-claude-credential" },
+            { slug: "guides/add-a-remote-mcp-server" },
+            { slug: "guides/publish-and-add-an-mcp-server-package" },
+            { slug: "guides/install-the-cli-from-a-hub" },
+            { slug: "guides/sign-in-the-cli" },
+          ],
+        },
+        {
+          label: "Self-hosting",
+          items: [
+            { slug: "self-hosting/install" },
+            { slug: "self-hosting/run-the-hub" },
+            { slug: "self-hosting/reach-the-hub-from-other-machines" },
+            { slug: "self-hosting/set-up-the-github-app" },
+            { slug: "self-hosting/let-people-in" },
+            { slug: "self-hosting/add-a-runner" },
+            { slug: "self-hosting/update" },
+            { slug: "self-hosting/uninstall" },
+          ],
+        },
+        {
+          label: "Concepts",
+          items: [
+            { slug: "concepts/architecture" },
+            { slug: "concepts/session-lifecycle" },
+            { slug: "concepts/environments" },
+            { slug: "concepts/git-from-sessions" },
+            { slug: "concepts/security-model" },
+          ],
+        },
         {
           label: "Reference",
           items: [
             { slug: "reference/commands" },
             { slug: "reference/configuration" },
             { slug: "reference/files-and-paths" },
-            { slug: "reference/glossary" },
             { slug: "reference/mcp-server-packages" },
-            { slug: "reference/protocol" },
+            { slug: "reference/glossary" },
+          ],
+        },
+        {
+          label: "Troubleshooting",
+          collapsed: true,
+          items: [{ autogenerate: { directory: "troubleshooting" } }],
+        },
+        {
+          label: "Contributing",
+          collapsed: true,
+          items: [
+            { slug: "contributing/develop-kndl" },
+            { slug: "contributing/protocol" },
             {
               label: "Decisions (ADRs)",
               collapsed: true,
-              items: [{ autogenerate: { directory: "reference/decisions" } }],
+              items: [{ autogenerate: { directory: "contributing/decisions" } }],
             },
           ],
         },
-        { label: "Troubleshooting", items: [{ autogenerate: { directory: "troubleshooting" } }] },
-        { label: "About", slug: "about" },
       ],
     }),
   ],

@@ -18,7 +18,7 @@ ERROR (#2): ConfigError: SchemaError(Expected string
 
 **Why.** `RUNNER_TOKEN` isn't set. The Runner doesn't read `packages/hub/.env.local`, which is the Hub's.
 
-**Fix.** Pair the machine with `kndl runner join`, which writes the token, or issue one on the Hub's machine with `bun run runner-token <name>` and start the Runner with it. See [Add a Runner](/how-to/add-a-runner/).
+**Fix.** Pair the machine with `kndl runner join`, which writes the token, or issue one on the Hub's machine with `bun run runner-token <name>` and start the Runner with it. See [Add a Runner](/self-hosting/add-a-runner/).
 
 ## The mod isn't built
 
@@ -60,7 +60,7 @@ The Runner connects on its own once the Hub is reachable.
 
 **Why.** The Hub listens on `127.0.0.1` by default, and `HUB_URL` defaults to `http://127.0.0.1:7777`, which on the second machine names that machine itself.
 
-**Fix.** Make the Hub reachable from the Runner's machine and point `HUB_URL` at it. See [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/). Nothing connects in to the Runner.
+**Fix.** Make the Hub reachable from the Runner's machine and point `HUB_URL` at it. See [Reach the Hub from other machines](/self-hosting/reach-the-hub-from-other-machines/). Nothing connects in to the Runner.
 
 ## The Pairing code can't be used
 
@@ -120,7 +120,7 @@ build-box: this Runner needs an update. Update it on the Runners page.
 
 **Why.** It runs an older commit of kndl than the Hub, or one the Hub's history doesn't have. The Hub starts and wakes no Session there until it matches; running Sessions go on, and prompts to Asleep ones wait in their queue.
 
-**Fix.** Press **Update** on its row ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)). Without **Update**, the row says why:
+**Fix.** Press **Update** on its row ([Keep Runners on the Hub's commit](/self-hosting/add-a-runner/#keep-runners-on-the-hubs-commit)). Without **Update**, the row says why:
 
 - It runs from a checkout (`bun run runner`): pull the checkout to the Hub's commit and restart it.
 - It isn't run as the kndl service: run `kndl update` on its machine.
@@ -182,7 +182,7 @@ To connect again, this Runner needs the Hub's version (the Hub runs 1a2b3c4d5e6f
 
 **Why.** Its Runner isn't connected to the Hub. A Session's Sandbox and Workspace are on its Runner, so it waits for that Runner.
 
-**Fix.** Start the Runner again, or fix its connection. Each Session is then Active if its Claude Code still runs, and otherwise Asleep, woken at once if prompts are waiting. See [the Session lifecycle](/explanation/session-lifecycle/#frozen).
+**Fix.** Start the Runner again, or fix its connection. Each Session is then Active if its Claude Code still runs, and otherwise Asleep, woken at once if prompts are waiting. See [the Session lifecycle](/concepts/session-lifecycle/#frozen).
 
 ## It warns about Sandboxes it doesn't know
 
