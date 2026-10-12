@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { resolveLayout } from "./Layout.ts"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { resolveLayout, shellQuote } from "./Layout.ts"
 import {
   installSteps,
   launchdPlist,
@@ -10,6 +13,7 @@ import {
   stopSteps,
   systemdUnitFile,
   systemdWord,
+  UntilUnloaded,
   uninstallSteps,
 } from "./Services.ts"
 import { describeStep } from "./Shell.ts"
@@ -30,6 +34,27 @@ const target = (platform: "darwin" | "linux", role: "hub" | "runner"): ServiceTa
   configHome: "/home/ada/.config",
   userHome: "/home/ada",
 })
+
+// A fake launchctl that knows the service for its first `known` prints, and a sleep that
+// doesn't, so the wait runs instantly.
+const waitForUnload = (known: number) => {
+  const bin = mkdtempSync(join(tmpdir(), "kndl-unload-"))
+  const count = join(bin, "count")
+  writeFileSync(count, "0")
+  writeFileSync(
+    join(bin, "launchctl"),
+    `#!/bin/sh\nn=$(($(cat '${count}') + 1)); echo $n > '${count}'\n[ "$1 $2" = "print gui/501/io.github.kddige.kndl.hub" ] && [ $n -le ${known} ]\n`,
+    { mode: 0o755 },
+  )
+  writeFileSync(join(bin, "sleep"), "#!/bin/sh\n", { mode: 0o755 })
+  const run = Bun.spawnSync(
+    ["sh", "-c", UntilUnloaded, "sh", "gui/501/io.github.kddige.kndl.hub"],
+    { env: { PATH: `${bin}:/usr/bin:/bin` } },
+  )
+  const prints = Number(readFileSync(count, "utf8"))
+  rmSync(bin, { recursive: true })
+  return { exitCode: run.exitCode, prints }
+}
 
 describe("the launchd LaunchAgent", () => {
   const plist = launchdPlist(spec("hub"))
@@ -139,14 +164,18 @@ describe("the service commands", () => {
       "systemd install": commands(installSteps(target("linux", "hub"))),
       "systemd uninstall": commands(uninstallSteps(target("linux", "runner"))),
     }).toEqual({
-      // Unloads any earlier version first.
+      // Unloads any earlier version first, and waits until it's gone.
       "launchd install": [
         "launchctl bootout gui/501/io.github.kddige.kndl.hub",
+        `sh -c ${shellQuote(UntilUnloaded)} sh gui/501/io.github.kddige.kndl.hub`,
         "launchctl enable gui/501/io.github.kddige.kndl.hub",
         "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
       ],
       // Unloads, so KeepAlive doesn't restart it.
-      "launchd stop": ["launchctl bootout gui/501/io.github.kddige.kndl.runner"],
+      "launchd stop": [
+        "launchctl bootout gui/501/io.github.kddige.kndl.runner",
+        `sh -c ${shellQuote(UntilUnloaded)} sh gui/501/io.github.kddige.kndl.runner`,
+      ],
       "launchd start": [
         "launchctl enable gui/501/io.github.kddige.kndl.hub",
         "launchctl bootstrap gui/501 /home/ada/Library/LaunchAgents/io.github.kddige.kndl.hub.plist",
@@ -161,6 +190,17 @@ describe("the service commands", () => {
     })
     // Unloading an agent that isn't loaded is fine.
     expect(installSteps(target("darwin", "hub"))[0]?.mayFail).toBe(true)
+  })
+
+  describe("waiting until launchd has unloaded an agent", () => {
+    test("returns once launchd no longer knows it", () => {
+      expect(waitForUnload(0)).toEqual({ exitCode: 0, prints: 1 })
+      expect(waitForUnload(5)).toEqual({ exitCode: 0, prints: 6 })
+    })
+
+    test("gives up after 30 seconds of it still unloading", () => {
+      expect(waitForUnload(1_000)).toEqual({ exitCode: 1, prints: 301 })
+    })
   })
 
   test("never run with sudo, and are all system Steps a dry run skips", () => {
