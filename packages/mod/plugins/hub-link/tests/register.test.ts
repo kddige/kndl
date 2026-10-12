@@ -290,8 +290,9 @@ describe("who a Turn is from", () => {
   test("a Turn that starts before the link does is still posted, as its prompt's", async ($, on) => {
     // A woken Session: hub-link-commands says hello first, and the Hub delivers the queued prompt
     // while hub-link still reads what its hello says. Lost, its prompt stayed queued for good.
-    const model = Promise.withResolvers<{ value: string }>()
-    const { posted } = linkedSession(on, () => model.promise)
+    let answerModel: ((model: { value: string }) => void) | undefined
+    const model = new Promise<{ value: string }>((resolve) => (answerModel = resolve))
+    const { posted } = linkedSession(on, () => model)
     const clock = mock.clock(on)
     const text = "[Ada Lovelace] yo"
     delivered(on, { promptId: "pr-1", sender: ada, text })
@@ -300,7 +301,7 @@ describe("who a Turn is from", () => {
     const started = $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
     const turn = $.turn.start({ turnId: "t1", text } as never)
     await clock.advance(50)
-    model.resolve({ value: "claude-test" })
+    answerModel?.({ value: "claude-test" })
     await Promise.all([started, turn])
     await clock.advance(200)
 
