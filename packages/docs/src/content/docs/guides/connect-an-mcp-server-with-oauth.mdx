@@ -1,0 +1,76 @@
+---
+title: Connect an MCP server with OAuth
+description: Connect an MCP server's Installation to an account with OAuth, including a server like GitHub's that needs a client registered by hand.
+sidebar:
+  order: 9
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Connect an MCP server that signs people in to one account, so every Session on its Repos acts as that account.
+
+Each Installation connects to one account. Whatever Claude does through the server, it does as whoever connected it.
+
+## What you need
+
+- An MCP server whose authorization server speaks OAuth as the [MCP authorization spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization) describes.
+- The Hub's secrets key, `HUB_SECRETS_KEY`, set up.
+- Access on GitHub to every Repo the Installation lists. For a global Installation, you must be the Hub's Owner.
+
+## Connect it
+
+<Steps>
+
+1. Add the MCP server as in [Add a remote MCP server](/guides/add-a-remote-mcp-server/), with **Sign-in** set to **OAuth**. Leave **Scopes** empty to ask for the ones the server names.
+
+2. Add an Installation of it, then press **Connect** on the Installation.
+
+3. Sign in at the server's sign-in page, and allow kndl access.
+
+</Steps>
+
+You're back on **MCP**, and the Installation shows **connected** and the account it acts as. Finish within 10 minutes, in the same browser.
+
+The Hub keeps the tokens encrypted and refreshes them itself. They never reach a Runner or a Sandbox.
+
+## Connect a server without Dynamic Client Registration
+
+Some sign-in servers, such as GitHub's, don't let the Hub register itself. You register a client by hand, and give it to the Hub. For GitHub's MCP server, `https://api.githubcopilot.com/mcp/`:
+
+<Steps>
+
+1. Add the MCP server with **Sign-in** set to **OAuth**, add its Installation, and press **Connect**.
+
+2. The Hub shows **Enter a client for GitHub**, with a **Callback URL**. Copy it.
+
+3. On GitHub, open **Settings** → **Developer settings** → **OAuth Apps** → **New OAuth App**. Set **Homepage URL** to the Hub's URL, paste the callback URL into **Authorization callback URL**, and press **Register application**.
+
+4. Press **Generate a new client secret** and copy it. GitHub shows it only once.
+
+5. Back in kndl, enter the **Client ID** and **Client secret**, and press **Connect**. Authorize the app on GitHub.
+
+</Steps>
+
+One OAuth app can serve several Installations. **Change client** on an Installation replaces its client, such as after you rotate the secret.
+
+## Reconnect or disconnect
+
+- **Reconnect** signs in again, to the same account or another. Use it when the Installation shows **connection lost**.
+- **Disconnect** makes the Hub forget the tokens. The Repos' Sessions don't start until it's connected again.
+
+Moving the MCP server's URL to another host disconnects every Installation, so tokens never go to a different server. The edit dialog says so first, with **Save and disconnect**.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="An OAuth Installation won't connect"
+    href="/kndl/troubleshooting/hub/#an-oauth-installation-wont-connect"
+    description="What each connect error means."
+  />
+  <LinkCard
+    title="MCP servers"
+    href="/kndl/reference/mcp-servers/#oauth"
+    description="The OAuth flow in detail."
+  />
+</CardGrid>

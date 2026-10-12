@@ -33,7 +33,7 @@ Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Cl
 - `--session-id` for a new Session, or `--resume` to wake one.
 - `--plugin-dir /opt/kndl/mod/<copy>/hub-link` and `--plugin-dir /opt/kndl/mod/<copy>/hub-link-commands`, the mod's plugins ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)), from the copy of `RUNNER_MOD_DIR` made for this start, mounted read-only.
 - `--dangerously-skip-permissions`: the Sandbox is the boundary ([ADR 0004](/contributing/decisions/0004-the-sandbox-is-the-security-boundary/)).
-- `--model` and `--effort` when the Session's [model and effort](/guides/work-in-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
+- `--model` and `--effort` when the Session's [model and effort](/guides/manage-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
 
 Its environment is what the Start script gets: the package cache variables and, for a Repo with an Environment, the image's login environment with the Environment's Variables over it ([ADR 0009](/contributing/decisions/0009-environments/)). On top of it go these, the mod's and Claude Code's:
 
@@ -71,7 +71,7 @@ The Session view's **Terminal** tab shows the Session's Claude Code terminal, li
 
 While a Session is Active, its Runner watches what listens in its Sandbox. Every 2 seconds it reads the guest's `/proc/net/tcp` and `/proc/net/tcp6`, and when the listening sockets change it looks up the process holding each new one and sends the Hub the Session's whole list. Each port is listed once, with every address it listens on. Ports Docker publishes are held by `docker-proxy`. Claude Code's own login callback port is left out.
 
-The Hub keeps the latest list in memory only and sends it to the web UI ([Work in a Session](/guides/work-in-a-session/#see-its-open-ports)). It drops the list as soon as the Session is no longer Active, Frozen included. Open ports don't keep a Session awake ([ADR 0016](/contributing/decisions/0016-forwarding-a-sessions-ports/)).
+The Hub keeps the latest list in memory only and sends it to the web UI ([Forward a Session's ports](/guides/forward-a-sessions-ports/#see-a-sessions-open-ports)). It drops the list as soon as the Session is no longer Active, Frozen included. Open ports don't keep a Session awake ([ADR 0016](/contributing/decisions/0016-forwarding-a-sessions-ports/)).
 
 ## Sleep, wake and Frozen, in detail
 

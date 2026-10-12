@@ -32,7 +32,7 @@ To install a Hub, a Runner or both as services, on macOS or Linux with git:
 curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 ```
 
-It installs into `~/.kndl` and starts `kndl onboard`. See [Install kndl](https://kddige.github.io/kndl/self-hosting/install/). To get only the `kndl` command from a Hub, see [Install the CLI from a Hub](https://kddige.github.io/kndl/guides/install-the-cli-from-a-hub/).
+It installs into `~/.kndl`. Then run `kndl onboard` to set up a Hub, a Runner, or both. See [Install kndl](https://kddige.github.io/kndl/self-hosting/install/). To get only the `kndl` command from a Hub, see [Install the CLI from a Hub](https://kddige.github.io/kndl/guides/install-the-cli-from-a-hub/).
 
 To run it from this checkout on one machine, without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, `git`, a Claude account (Claude Code signed in here, or your own token on your Account page), and a Mac with Apple Silicon or Linux with KVM.
 

@@ -1,0 +1,107 @@
+---
+title: Add a Runner
+description: Pair a machine with the Hub as a Runner, from the web UI or with a Runner token, and manage it on the Runners page.
+sidebar:
+  order: 6
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Connect a machine to the Hub as a Runner, so Sessions can run on it.
+
+Each Runner connects out to the Hub, so the Hub never reaches into it. A Runner needs no Claude Code and no Claude sign-in: its Sessions run on their Creator's [Claude credential](/guides/add-your-claude-credential/).
+
+## What you need
+
+- A machine with what a Runner [needs](/self-hosting/install/#what-each-machine-needs): a Mac with Apple Silicon, or Linux with KVM.
+- The Hub's URL, reachable from that machine. See [Reach the Hub from other machines](/self-hosting/reach-the-hub-from-other-machines/).
+
+## Pair it from the web UI
+
+Anyone signed in can add a Runner.
+
+<Steps>
+
+1. In the web UI, open **Runners** and press **Add a Runner**. Copy the command it shows.
+
+   ![The Add a Runner dialog, showing a kndl runner join command with a Pairing code, and Waiting for the machine to pair.](../../../assets/screenshots/add-a-runner.png)
+
+2. On the **Runner's machine**, [install kndl](/self-hosting/install/#install), then paste the command:
+
+   ```sh
+   kndl runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
+   ```
+
+   It offers to install what's missing, installs and starts the Runner's service, and waits until it connects.
+
+3. The dialog's **Waiting for the machine to pair…** turns into **Paired build-box**, and the Runner shows on the **Runners** page.
+
+</Steps>
+
+The Runner is named after the machine's short hostname. To name it yourself, add `--name build-box`. For a script, add `--non-interactive`.
+
+### Pairing codes
+
+- A code works **once**, within **15 minutes**, and is shown only once.
+- Anyone with it can pair a machine, so share it only with whoever sets up the Runner.
+- **Pairing codes not used yet**, on the **Runners** page, lists open codes. **Revoke** ends one. A Runner already paired keeps working.
+- Case, dashes and spaces don't matter, so a code read aloud works.
+
+## Pair it with a Runner token
+
+To script it from the Hub's machine, issue a token instead.
+
+<Steps>
+
+1. On the **Hub's machine**, issue the Runner's token. It starts with `chr_` and isn't shown again:
+
+   ```sh
+   kndl runner token build-box
+   ```
+
+2. On the **Runner's machine**, install kndl and run onboard with it:
+
+   ```sh
+   kndl onboard --role runner --runner-name build-box \
+     --hub-url https://hub.example.com --token chr_…
+   ```
+
+</Steps>
+
+## Manage Runners
+
+The **Runners** page lists each Runner: online or offline, its Claude credential, its version, and its Sessions.
+
+![The Runners page, with studio online and ci-box offline and behind the Hub.](../../../assets/screenshots/runners.png)
+
+- **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place, with its name and Sessions, and the old token stops working. Use it for a reinstalled machine or a lost token.
+- **Remove** disconnects the Runner and revokes its token. Archive its Sessions first.
+
+While a Runner is offline, its Sessions are [Frozen](/concepts/session-lifecycle/#frozen). They carry on when it's back. `kndl runner stop` and `kndl runner start` control its service, and `kndl logs runner -f` follows its log.
+
+### Runner names
+
+A Runner's name is its identity: its Sessions belong to the Runner of that name.
+
+- **A name the Hub has** can't be taken by a new Runner. `kndl runner join` refuses with `The Hub already has a Runner named build-box …`, and the code isn't used up. Use **Re-pair** instead.
+- **A removed Runner's name** is free again. A machine paired under it takes over the removed Runner's Archived Sessions.
+- **For a clean slate**, pair under a new name: `--name build-box-2`.
+
+## Keep Runners on the Hub's commit
+
+Runners run the Hub's commit, and follow it when the Hub updates. A Runner **behind the Hub** starts and wakes no Session until it updates. See [Update kndl](/self-hosting/update/#keep-runners-on-the-hubs-commit).
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Let people in"
+    description="Become the Hub's Owner and invite your team."
+    href="/kndl/self-hosting/let-people-in/"
+  />
+  <LinkCard
+    title="Set up an Environment"
+    description="Give a Repo's Sandboxes the tools its Sessions need."
+    href="/kndl/guides/set-up-an-environment/"
+  />
+</CardGrid>

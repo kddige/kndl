@@ -1,10 +1,11 @@
 #!/bin/sh
 # Installs kndl: Bun if it's missing, the checkout in <home>/app, its dependencies, and the
-# `kndl` command in ~/.local/bin; then `kndl onboard`, when there's a terminal to ask
-# in. Run again on an installed machine, it updates the install and runs `kndl doctor --fix`.
+# `kndl` command in ~/.local/bin. Run again on an installed machine, it updates the install. It
+# never asks anything: piped to sh, a prompt can't read the keyboard, so it says what to run next
+# (`kndl onboard`, or `kndl doctor --fix`) instead of running it.
 #
 #   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
-#   ... | sh -s -- --channel <stable|dev> --ref <branch|tag|sha> --no-onboard
+#   ... | sh -s -- --channel <stable|dev> --ref <branch|tag|sha>
 #
 # A fresh install follows the stable Channel: the latest Release, a tag like v2026.10.1 (ADR
 # 0025). --channel dev follows main instead, and --ref, which wins over --channel, follows a
@@ -27,7 +28,7 @@ die() {
 }
 
 usage() {
-  say "Usage: install.sh [--channel <stable|dev>] [--ref <branch|tag|sha>] [--no-onboard]"
+  say "Usage: install.sh [--channel <stable|dev>] [--ref <branch|tag|sha>]"
 }
 
 # Puts a line in the shell's startup file that adds ~/.local/bin to PATH, once.
@@ -145,15 +146,18 @@ quote() {
   esac
 }
 
-# Whether there's a terminal to ask questions in, even when this script is piped to sh.
-has_tty() {
-  [ -t 1 ] && (: </dev/tty) 2>/dev/null
+# How to run the kndl command in this shell: by name if it's already on PATH, else by its path,
+# since a startup file add_to_path changed only applies to new shells.
+next_command() {
+  case ":${PATH}:" in
+    *":$(dirname "$1"):"*) printf 'kndl' ;;
+    *) printf '%s' "$1" ;;
+  esac
 }
 
 main() {
   ref=""
   channel=""
-  onboard=1
   while [ $# -gt 0 ]; do
     case $1 in
       --channel)
@@ -175,7 +179,7 @@ main() {
         shift
         ;;
       --no-onboard)
-        onboard=0
+        # Accepted for scripts written before it stopped running onboard: it never does now.
         shift
         ;;
       -h | --help)
@@ -222,8 +226,8 @@ main() {
     write_wrapper "$wrapper" "$home" "$bun"
     add_to_path "$(dirname "$wrapper")"
     export KNDL_HOME="$home"
-    # update ends with doctor, which fails on what --fix may repair: run it either way, and fail
-    # if either did.
+    # update ends with doctor. What it finds, `doctor --fix` repairs, asking first: say so rather
+    # than run it, since piped to sh it can't read the keyboard.
     status=0
     if [ -n "$ref" ]; then
       "$wrapper" update --ref "$ref" || status=$?
@@ -232,11 +236,7 @@ main() {
     else
       "$wrapper" update || status=$?
     fi
-    if has_tty; then
-      "$wrapper" doctor --fix </dev/tty || status=$?
-    else
-      "$wrapper" doctor --fix || status=$?
-    fi
+    [ "$status" = 0 ] || say "To repair what it found, run:  $(next_command "$wrapper") doctor --fix"
     return "$status"
   fi
 
@@ -254,11 +254,11 @@ main() {
   export KNDL_HOME="$home"
   say "Installed: $wrapper"
 
-  if [ "$onboard" = 1 ] && has_tty; then
-    "$wrapper" onboard </dev/tty
-  else
-    say "Next: kndl onboard  (set up a Hub, a Runner, or both)."
-  fi
+  say ""
+  say "Next, set up a Hub, a Runner, or both:"
+  say ""
+  say "  $(next_command "$wrapper") onboard"
+  say ""
 }
 
 main "$@"
