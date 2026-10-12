@@ -1,0 +1,62 @@
+# A Release (ADR 0025): pushing a tag like v2026.10.1 checks the tag, runs CI on its commit, and
+# creates the GitHub Release with notes built from the PR titles since the last Release. Tags are
+# pushed by hand; see docs/agents/releasing.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+# One Release at a time, and never cancelled halfway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+      - name: The tag is a Release tag, newer than every Release
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bun scripts/release.ts check "$TAG"
+      # Runners only follow commits on main (ADR 0011), so a Release must be one.
+      - name: The tag is on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git merge-base --is-ancestor "refs/tags/$TAG" origin/main ||
+            { echo "::error::$TAG is not on main."; exit 1; }
+
+  ci:
+    needs: check-tag
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+      - name: Create the GitHub Release
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bun scripts/release.ts notes "$TAG" > notes.md
+          gh release create "$TAG" --verify-tag --title "kndl ${TAG#v}" --notes-file notes.md
