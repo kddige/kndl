@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { type HostFacts, MicrosandboxInstaller, prerequisitePlan } from "./Prerequisites.ts"
 import { describeStep } from "./Shell.ts"
 
-const everything = { git: true, gh: true, curl: true }
+const everything = { git: true, curl: true }
 
 const mac: HostFacts = {
   platform: "darwin",
@@ -38,29 +38,24 @@ describe("the prerequisite plan", () => {
 
   test("installs with the package manager there is, with sudo only where it's needed", () => {
     const cases: ReadonlyArray<[string, HostFacts, Array<string>, boolean]> = [
-      [
-        "macOS",
-        { ...mac, tools: { ...everything, git: false, gh: false } },
-        ["brew install git gh"],
-        false,
-      ],
+      ["macOS", { ...mac, tools: { ...everything, git: false } }, ["brew install git"], false],
       // apt refreshes the lists first.
       [
         "apt",
-        { ...linux, tools: { ...everything, gh: false } },
-        ["sudo apt-get update", "sudo apt-get install -y gh"],
+        { ...linux, tools: { ...everything, git: false } },
+        ["sudo apt-get update", "sudo apt-get install -y git"],
         true,
       ],
       [
         "dnf",
-        { ...linux, packageManager: "dnf", tools: { ...everything, git: false, gh: false } },
-        ["sudo dnf install -y git gh"],
+        { ...linux, packageManager: "dnf", tools: { ...everything, git: false } },
+        ["sudo dnf install -y git"],
         true,
       ],
       [
         "root",
-        { ...linux, root: true, tools: { ...everything, gh: false } },
-        ["apt-get update", "apt-get install -y gh"],
+        { ...linux, root: true, tools: { ...everything, git: false } },
+        ["apt-get update", "apt-get install -y git"],
         false,
       ],
     ]
@@ -104,18 +99,18 @@ describe("the prerequisite plan", () => {
     expect(intel.missing).toMatchObject([{ name: "Apple Silicon", fixable: false }])
 
     const noManager = prerequisitePlan(
-      { ...linux, packageManager: undefined, tools: { ...everything, gh: false } },
+      { ...linux, packageManager: undefined, tools: { ...everything, git: false } },
       ["hub"],
     )
     expect(noManager.steps).toEqual([])
-    expect(noManager.missing).toMatchObject([{ name: "gh", fixable: false }])
+    expect(noManager.missing).toMatchObject([{ name: "git", fixable: false }])
   })
 
   test("every Step is a system Step, which a dry run only prints", () => {
     const facts: HostFacts = {
       ...linux,
       microsandbox: false,
-      tools: { git: false, gh: false, curl: false },
+      tools: { git: false, curl: false },
       kvm: { device: true, accessible: false },
     }
 

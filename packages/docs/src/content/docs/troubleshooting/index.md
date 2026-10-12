@@ -28,7 +28,7 @@ For a closer look on a Runner's machine, list its Sandboxes with `bun x msb list
 
 ### [Installing and the CLI](/troubleshooting/install/)
 
-- install.sh says `Could not clone kddige/kndl: it's private, …`
+- install.sh says `Could not clone https://github.com/kddige/kndl.git.`
 - `kndl: command not found` after installing.
 - `kndl is not installed in …`
 - `onboard can't ask, so it needs --role hub|runner|both.`

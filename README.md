@@ -26,10 +26,10 @@ Terms are defined in [`GLOSSARY.md`](GLOSSARY.md), and design decisions are in [
 
 ## Quick start
 
-To install a Hub, a Runner or both as services (needs the GitHub CLI signed in, as the repository is private):
+To install a Hub, a Runner or both as services, on macOS or Linux with git:
 
 ```sh
-gh api repos/kddige/kndl/contents/install.sh -H 'Accept: application/vnd.github.raw' | sh
+curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 ```
 
 It installs into `~/.kndl` and starts `kndl onboard`. See [Install kndl](https://kddige.github.io/kndl/how-to/install/). To get only the `kndl` command from a Hub, see [Install the CLI from a Hub](https://kddige.github.io/kndl/how-to/install-the-cli-from-a-hub/).
