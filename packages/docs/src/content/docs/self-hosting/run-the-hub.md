@@ -47,7 +47,7 @@ bun run hub     # the Hub, on http://127.0.0.1:7777
 bun run web     # the web UI, on http://localhost:5173
 ```
 
-Vite passes the Hub's routes through to it (at `HUB_URL`, default `http://127.0.0.1:7777`), so `HUB_PUBLIC_URL` keeps its default, `http://localhost:5173`. To work on the web UI with no Hub, see [Develop kndl](/contributing/develop-kndl/#work-on-the-web-ui).
+Vite passes the Hub's routes through to it (at `HUB_URL`, default `http://127.0.0.1:7777`), so `HUB_PUBLIC_URL` keeps its default, `http://localhost:5173`. To work on the web UI with no Hub, see [Develop kndl](/contributing/develop-kndl/#work-on-the-web-ui-without-a-hub).
 
 ### Keep the configuration in `.env.local`
 

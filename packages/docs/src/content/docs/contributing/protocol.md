@@ -5,7 +5,20 @@ sidebar:
   order: 5
 ---
 
-Everything goes through the Hub: Runners, browsers and each Session's mod, by way of its Runner, all connect to it, and never to each other. The messages are [Effect Schemas](https://effect.website/docs/schema/introduction/) in `packages/protocol`, which every package builds against.
+How the Hub, Runners, browsers, the CLI and each Session's mod talk to each other. Everything goes through the Hub: the others connect to it, never to each other. The messages are [Effect Schemas](https://effect.website/docs/schema/introduction/) in `packages/protocol`, which every package builds against, so a change to a message is a change there.
+
+## At a glance
+
+| Channel | Between | Transport | Credential | Section |
+|---|---|---|---|---|
+| Web | a browser tab and the Hub | WebSocket `/ws/web` | the sign-in cookie | [Web channel](#web-channel-wsweb) |
+| Runner | a Runner and the Hub | WebSocket `/ws/runner` | Runner token | [Runner channel](#runner-channel-wsrunner) |
+| Mod | a Session's mod and the Hub, through its Runner's credential proxy | HTTP `/mod/*` | mod token | [Mod channel](#mod-channel-mod) |
+| Forward | `kndl forward` and the Hub | WebSocket `/ws/forward/<session id>` | CLI token | [Forwards](#forwards) |
+| Tunnel | a client and a Session's Open port, through the Hub and the Runner | a WebSocket pair per connection | CLI token or sign-in cookie | [Tunnels](#tunnels) |
+| CLI | `kndl login`, `whoami`, `logout`, `runner join` | HTTP `/auth/cli/*`, `/runner/*` | Login code, CLI token or Pairing code | [Signing in the CLI](#signing-in-the-cli), [Pairing](#pairing) |
+
+The web, Runner and forward channels and the mod's hello open with the same [handshake](#handshake). Each channel's section lists its messages by direction, then the rules that aren't obvious from the schemas.
 
 ## Endpoints
 
@@ -22,13 +35,15 @@ Everything goes through the Hub: Runners, browsers and each Session's mod, by wa
 | `GET /auth/cli/sessions` | `kndl forward`, to pick a Session ([Forwards](#forwards)) | `Authorization: Bearer <CLI token>` |
 | `GET /ws/forward/<session id>` | `kndl forward` ([Forwards](#forwards)) | `Authorization: Bearer <CLI token>` |
 | `GET /mcp/<id>/icon` | a browser | the sign-in cookie. An MCP server's icon, the `<id>` URL-encoded; 404 if it has none. |
+| `POST /sessions/<session id>/attachments` | a browser, attaching a file to a prompt | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin. The raw file is the body, named in `x-kndl-filename`; it must be an image Claude reads or a PDF ([ADR 0024](/contributing/decisions/0024-attachments-reach-claude-through-a-mod-tool/)). |
+| `GET /sessions/<session id>/attachments/<attachment id>` | a browser | the sign-in cookie. The file, to anyone who can see the Session. |
 | `GET /ws/web` | a browser | the sign-in cookie, from `HUB_PUBLIC_URL`'s origin |
 | `GET /ws/runner` | a Runner | `Authorization: Bearer <Runner token>` |
 | `POST /runner/pair` | `kndl runner join` | none: the [Pairing code](#pairing) in the body is the credential. |
 | `GET /runner/connection` | `kndl runner join`, onboard | `Authorization: Bearer <Runner token>` |
 | `GET /tunnel/<session id>/<port>` | a client reaching an Open port ([Tunnels](#tunnels)) | `Authorization: Bearer <CLI token>`, or the sign-in cookie from `HUB_PUBLIC_URL`'s origin |
 | `GET /runner/tunnel/<tunnel id>` | a Runner, dialing back for a tunnel | `Authorization: Bearer <Runner token>` |
-| `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands` | one Session's mod | `Authorization: Bearer <mod token>` |
+| `POST /mod/hello`, `POST /mod/events`, `GET /mod/commands`, `GET /mod/attachments/<attachment id>` | one Session's mod | `Authorization: Bearer <mod token>` |
 | `/gateway/<installation id>`, any method | one Session's Claude Code, to an Installation's MCP server ([MCP servers](#mcp-servers)) | `Authorization: Bearer <mod token>`, put in by the Runner's credential proxy |
 | `GET /cli`, `GET /cli/version`, `GET /cli/<os>-<arch>` | `curl … \| sh`, the [`kndl` command from a Hub](/reference/commands/#the-kndl-command-from-a-hub) | none: the install script, the Hub's commit, and the binary built from it. |
 | anything else | a browser | none: the web UI's build. |
@@ -61,7 +76,7 @@ The Hub keeps each CLI token's machine, when it was made, and when it was last u
 
 ## Handshake
 
-Each channel opens with a hello carrying the peer's `protocolVersion` (`1`). The Hub answers with a welcome, or with `HandshakeRejected` and a message naming the side to update, then closes the connection. The peer checks the welcome's version the same way.
+Each channel opens with a hello carrying the peer's `protocolVersion`, `ProtocolVersion` in `packages/protocol/src/Version.ts` (`2`). The Hub answers with a welcome, or with `HandshakeRejected` and a message naming the side to update, then closes the connection. The peer checks the welcome's version the same way.
 
 `HandshakeRejected` has the same shape in every protocol version: `reason` (`ProtocolVersionMismatch` or `MalformedHandshake`), the rejecting side's `protocolVersion`, `message`, and, when the Hub turns a Runner away, `hubVersion`, the commit the Hub runs. A Runner that updates itself moves to that commit and restarts; one that doesn't logs what to do. Neither exits: it tries again every minute.
 
@@ -209,6 +224,16 @@ A WebSocket per browser tab.
 | Hub to browser | `WebWelcome` (with the Hub's own commit) or `HandshakeRejected`; `RunnerList`, `PairingCodeList`, `PairingCodeCreated`, `PairingCodeRedeemed`, `RunnerRemoved`, `RunnerUpdateRequested`, `SessionList`, `SessionCreated`, `SessionUpdated`, `SessionRemoved`; `SessionHistory`, `SessionEventLogged`, `SessionStartLogged`; `PromptQueueChanged`; `QuestionPicks`; `SessionStateChanged`; `TurnStopRequested`; `SandboxNoted`; `ModelSwitched`; `AppPermissionsChecked`; `RepoChecked`, `RepoAccessLost`; `ClaudeCredentialState`; `CliTokenList`; `InviteCreated`, `InviteList`, `MemberList`; `McpServersState`, `McpServerLog`; terminal frames; `CommandFailed` |
 
 Each Session in `SessionList`, `SessionCreated` and `SessionUpdated` carries `agents` when it has subagents that are Running or Interrupted: each one's `id`, `description` and `status` ([Subagents](#subagents)). An Active Session carries `openPorts` while anything listens in its Sandbox: the list from its Runner's last `SessionPorts`.
+
+### Runners, Repos and Sessions
+
+`UpdateRunner { runnerId, now }` updates a Runner from the Runners page; sent again with `now: true` while it waits for Turns, it stops them. Each Runner in `RunnerList` carries its `updater` and, while one is under way or after it ended badly, `update`: `Checking`, `Draining` (with `waitingFor`, the Sessions still Active, and `deadline`), `Applying` (with `step`), `Restarting`, `Refused` (with `refusal`) or `Failed` (with `failure`).
+
+Every Session and Environment command is checked against the person's access to its Repo ([ADR 0003](/contributing/decisions/0003-sessions-belong-to-the-repo/), [ADR 0009](/contributing/decisions/0009-environments/)). A refusal is a `CommandFailed` that reads the same whether the Repo exists or not. `CheckRepo` asks about a Repo up front, as it is entered: `RepoChecked` says `Allowed`, `NotInstalled` (the GitHub App isn't installed on it, or there is no such Repo, with the App's install link) or `NoAccess`. `fresh: true` asks GitHub again rather than the Hub's cache. `ListRepos` and `ListBranches { repo }` fill in New Session's combo boxes: `ReposListed` holds the Repos the GitHub App is installed on that the person has access to, kept for a few minutes per person, and `BranchesListed` a Repo's branches and its default branch. Both answer `ListingUnavailable` when the Hub has no GitHub App, and are refused with a `CommandFailed` when GitHub can't answer; `ListBranches` also when the person has no access to the Repo.
+
+`CreateSession.branch` says which branch the Session works on ([ADR 0023](/contributing/decisions/0023-sessions-can-work-directly-on-a-branch/)): `Existing { name, newWorkBranch }` or `Create { name, from }`. The Hub resolves it to the base and Work branches `StartSession` carries, and checks no branch exists; the Runner refuses a `Create` name the Repo already has. Every branch name must be one `git check-ref-format --branch` accepts, at most 255 characters; a `Create` name can't be under `claude/` or equal `from`.
+
+`RepoAccessLost` tells a client that has lost access to a Repo to drop its Environment, as `SessionRemoved` does each of its Sessions.
 
 ### Steering
 
@@ -367,14 +392,6 @@ The Hub marks a Session's Running agents `Interrupted` when its Claude Code stop
 
 When the mod can't carry out a command, it reports `AgentCommandFailed { agentId, command, senderId?, message }`, and the Hub passes it on as a `CommandFailed` to whoever sent it: `Your message could not be delivered to the agent: …` or `The agent could not be stopped: …`.
 
-`UpdateRunner { runnerId, now }` updates a Runner from the Runners page; sent again with `now: true` while it waits for Turns, it stops them. Each Runner in `RunnerList` carries its `updater` and, while one is under way or after it ended badly, `update`: `Checking`, `Draining` (with `waitingFor`, the Sessions still Active, and `deadline`), `Applying` (with `step`), `Restarting`, `Refused` (with `refusal`) or `Failed` (with `failure`).
-
-Every Session and Environment command is checked against the person's access to its Repo ([ADR 0003](/contributing/decisions/0003-sessions-belong-to-the-repo/), [ADR 0009](/contributing/decisions/0009-environments/)). A refusal is a `CommandFailed` that reads the same whether the Repo exists or not. `CheckRepo` asks about a Repo up front, as it is entered: `RepoChecked` says `Allowed`, `NotInstalled` (the GitHub App isn't installed on it, or there is no such Repo, with the App's install link) or `NoAccess`. `fresh: true` asks GitHub again rather than the Hub's cache. `ListRepos` and `ListBranches { repo }` fill in New Session's combo boxes: `ReposListed` holds the Repos the GitHub App is installed on that the person has access to, kept for a few minutes per person, and `BranchesListed` a Repo's branches and its default branch. Both answer `ListingUnavailable` when the Hub has no GitHub App, and are refused with a `CommandFailed` when GitHub can't answer; `ListBranches` also when the person has no access to the Repo.
-
-`CreateSession.branch` says which branch the Session works on ([ADR 0023](/contributing/decisions/0023-sessions-can-work-directly-on-a-branch/)): `Existing { name, newWorkBranch }` or `Create { name, from }`. The Hub resolves it to the base and Work branches `StartSession` carries, and checks no branch exists; the Runner refuses a `Create` name the Repo already has. Every branch name must be one `git check-ref-format --branch` accepts, at most 255 characters; a `Create` name can't be under `claude/` or equal `from`.
-
-`RepoAccessLost` tells a client that has lost access to a Repo to drop its Environment, as `SessionRemoved` does each of its Sessions.
-
 ## Mod channel: `/mod/*`
 
 Plain HTTP from the mod inside each Session's Claude Code, in its Sandbox. Its two plugins each say hello: `hub-link` reports the Session's Events, and `hub-link-commands` polls for the Hub's commands and runs them, since a plugin's hooks don't see the work it causes, such as an agent it resumes ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)). The mod sends it to its Runner's credential proxy with the Session token, and the proxy relays it to the Hub with the mod token:
@@ -382,6 +399,12 @@ Plain HTTP from the mod inside each Session's Claude Code, in its Sandbox. Its t
 - `POST /mod/hello` once at start, answered with `ModWelcome`.
 - `POST /mod/events` with the Session's Events as they happen: prompts, tool calls and results, Turn starts and ends, and [subagents](#subagents).
 - `GET /mod/commands`, a long poll: the Hub answers with commands such as `DeliverPrompt` when it has some, or with none after a while. The mod answers a prompt it can't deliver with `PromptFailed`.
+- `GET /mod/attachments/<attachment id>?offset=<n>`: a file attached to a prompt, base64, in parts, for the tool that shows it to Claude ([ADR 0024](/contributing/decisions/0024-attachments-reach-claude-through-a-mod-tool/)).
+
+| Direction | Messages |
+|---|---|
+| Mod to Hub | `ModHello`; Turn events (`TurnStarted`, `TextDelta`, `ToolCallStarted`, `ToolCallEnded`, `TurnEnded`, `AgentStarted`, `AgentStatusChanged`, `QuestionAsked`, `QuestionClosed`, `PromptSteered`, `SteeredPromptRead`); `PromptFailed`, `AgentCommandFailed`, `AnswerFailed` |
+| Hub to mod | `ModWelcome` or `HandshakeRejected`; `DeliverPrompt`, `DeliverIntoTurn`, `StopTurn`, `DeliverAgentMessage`, `StopAgent`, `DeliverAnswer`, `PresenceChanged` |
 
 A mod that can [steer](#steering) says `steers: true` in its hello. Only that mod is sent `DeliverIntoTurn { sessionId, promptId, text, sender }`, and only while a Turn runs. hub-link-commands appends the prompt to the running Turn's conversation, with its sender's name, as a user row. If no Turn is running or the append is refused, it answers `PromptFailed`. hub-link reports `PromptSteered` when the row joins the Turn, and `SteeredPromptRead` at the Turn's next step, which is the model request that reads it.
 

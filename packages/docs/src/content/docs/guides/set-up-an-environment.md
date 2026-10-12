@@ -14,7 +14,7 @@ The page first checks the Repo with GitHub. If you can't use it, you are told wh
 - **The GitHub App isn't installed on owner/name**, with an **Install the App** link. Install it on the Repo, or add the Repo to the App's installation, then press **check again**.
 - **You don't have access to owner/name on GitHub.** Have the Repo's owner add you as a collaborator, then press **Check again**.
 
-See [the Environment won't open](/troubleshooting/sessions/#the-environment-wont-open-or-new-session-refuses-the-repo) for more.
+See [the Environment won't open](/troubleshooting/sessions/#you-dont-have-access-to-a-repo) for more.
 
 ## Choose the image
 

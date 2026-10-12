@@ -81,7 +81,7 @@ Makes this machine a Runner with a pairing link from **Add a Runner**, or **Re-p
 | `--non-interactive` | Never ask. |
 | `--move-old-data` | As for [onboard](#kndl-onboard). |
 
-The code is redeemed before anything is installed or built. If a later step fails, `kndl onboard` finishes the job with the token in `runner.env`. A code that can't be used fails before anything is written; see [Troubleshooting](/troubleshooting/runners/#the-pairing-code-cant-be-used).
+The code is redeemed before anything is installed or built. If a later step fails, `kndl onboard` finishes the job with the token in `runner.env`. A code that can't be used fails before anything is written; see [Troubleshooting](/troubleshooting/runners/#that-pairing-code-cant-be-used).
 
 ### `kndl update`
 
