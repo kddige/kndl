@@ -1,0 +1,127 @@
+---
+title: Quickstart
+description: Install kndl on one machine, start a Claude Code Session on one of your Repos, and remove it again, in about 10 minutes.
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Run a Hub and a Runner on one machine, start a Session on one of your Repos, and remove it all when you're done. It takes about 10 minutes, most of it waiting for the first Sandbox to build.
+
+## What you need
+
+- **A Mac with Apple Silicon, or Linux with KVM.** Each Session runs in a [microsandbox](https://github.com/microsandbox/microsandbox) microVM, which needs one of the two.
+- **git and curl.** The installer adds [Bun](https://bun.sh) if it's missing.
+- **A Claude subscription or an Anthropic API key.** If Claude Code is signed in on this machine, kndl uses that login. Otherwise you add a token in step 4.
+- **A GitHub repository** this machine can clone. Any public repository works.
+
+## Install and set up
+
+<Steps>
+
+1. Install kndl:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
+   ```
+
+   It clones kndl into `~/.kndl`, puts the `kndl` command in `~/.local/bin`, and starts `kndl onboard`.
+
+2. Answer onboard's questions:
+
+   | Question                                                                               | Answer                                                |
+   | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+   | What does this machine run?                                                            | **Both: a Hub, and a Runner for it, on this machine** |
+   | Who reaches this Hub?                                                                  | **Only this machine (127.0.0.1)**                     |
+   | Sign in without GitHub (dev login, this machine only), until the GitHub App is set up? | Yes                                                   |
+   | GitHub sign-in, and Repos' tokens, need a GitHub App. Set it up now?                   | **Not now**                                           |
+   | Run these now? (only if something is missing)                                          | Yes. It lists the commands first; some use `sudo`.    |
+   | Keep the services running while you're logged out…? (Linux only)                       | Your choice. No is fine for a try.                    |
+
+   Onboard writes the settings, installs the Hub and the Runner as services, and checks that the Runner connects. You should see it end with `Done.`
+
+   To skip the questions, pass the answers as flags instead: `kndl onboard --role both --reach local --dev-login --github-app skip`.
+
+3. Open [http://127.0.0.1:7777](http://127.0.0.1:7777). Under **Dev login**, type a name, such as `alice`, and press **Sign in as dev**.
+
+</Steps>
+
+## Start a Session
+
+<Steps>
+
+1. Press **New Session**. In **Repo**, enter your repository as `owner/name`. Leave **Branch** on its default branch and **Runner** on **Any online Runner**, then press **Start Session**.
+
+   ![The New Session dialog: Repo, Branch, Work on a new branch, Runner and Model, with Start Session at the bottom.](../../../assets/screenshots/new-session.png)
+
+2. A Repo's first Session needs an [Environment](/concepts/environments/): what its Sandboxes are built from. kndl opens the Repo's Environment page with a draft. Leave the defaults.
+
+   ![The Environment page: an image, a Bootstrap script, a Start script and a Docker switch.](../../../assets/screenshots/environment.png)
+
+3. Under **Apply**, pick your Runner in **Runner to build on** and press **Test build**. The log streams in below. The first build pulls the image, so it takes a few minutes.
+
+4. When the build passes, press **Apply and start Session**.
+
+   If the dialog asks you to **Add your Claude credential**, follow [Add your Claude credential](/guides/add-your-claude-credential/), then start the Session again.
+
+</Steps>
+
+## Work in it
+
+<Steps>
+
+1. The Session opens with a **Starting…** banner while the Runner clones the Repo and boots the Sandbox. Then send a prompt:
+
+   ```text
+   List the files in this repository and tell me what it does.
+   ```
+
+   Claude's reply streams in, with each tool call it makes.
+
+   ![A Session: Bob's prompt, Claude's reply with a Bash tool call, and a subagent's result.](../../../assets/screenshots/session.png)
+
+2. Open the **Terminal** tab. It shows Claude Code's own screen, live, and you can type into it.
+
+3. Open [http://127.0.0.1:7777](http://127.0.0.1:7777) in a private window and sign in as someone else, such as `sam`. Open the same Session. Both windows show the same Session, and a prompt `sam` sends while Claude works waits in the Prompt queue.
+
+</Steps>
+
+## Remove it
+
+<Steps>
+
+1. In each Session, press **Delete Session**, the bin at the top right, so its Sandbox stops.
+
+2. Remove kndl, its services and everything it stored:
+
+   ```sh
+   kndl uninstall --purge
+   ```
+
+   It lists what it removes and asks first. Without `--purge`, it keeps the data in `~/.kndl`: the Hub's database and the Runner's Sessions.
+
+</Steps>
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Deploy for a team"
+    description="Put the Hub on a server, sign in with GitHub, and invite people."
+    href="/kndl/start/deploy-for-a-team/"
+  />
+  <LinkCard
+    title="Set up an Environment"
+    description="Give your Repo's Sandboxes the tools and services it needs."
+    href="/kndl/guides/set-up-an-environment/"
+  />
+  <LinkCard
+    title="Work in a Session"
+    description="The Prompt queue, Steer, the terminal, ports and subagents."
+    href="/kndl/guides/work-in-a-session/"
+  />
+  <LinkCard
+    title="How kndl works"
+    description="What runs where, and how the Claude credential stays out of the Sandbox."
+    href="/kndl/concepts/architecture/"
+  />
+</CardGrid>

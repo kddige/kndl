@@ -32,7 +32,7 @@ To install a Hub, a Runner or both as services, on macOS or Linux with git:
 curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
 ```
 
-It installs into `~/.kndl` and starts `kndl onboard`. See [Install kndl](https://kddige.github.io/kndl/how-to/install/). To get only the `kndl` command from a Hub, see [Install the CLI from a Hub](https://kddige.github.io/kndl/how-to/install-the-cli-from-a-hub/).
+It installs into `~/.kndl` and starts `kndl onboard`. See [Install kndl](https://kddige.github.io/kndl/self-hosting/install/). To get only the `kndl` command from a Hub, see [Install the CLI from a Hub](https://kddige.github.io/kndl/guides/install-the-cli-from-a-hub/).
 
 To run it from this checkout on one machine, without GitHub, you need [Bun](https://bun.sh) 1.4 or newer, `git`, a Claude account (Claude Code signed in here, or your own token on your Account page), and a Mac with Apple Silicon or Linux with KVM.
 
@@ -49,7 +49,7 @@ bun run runner-token "$(hostname -s)"   # prints a Runner token, chr_…
 RUNNER_TOKEN=chr_… bun run runner
 ```
 
-Open <http://127.0.0.1:7777>, sign in with dev login, give a Repo its Environment, and start a Session on it. The [tutorial](https://kddige.github.io/kndl/tutorials/first-session/) walks through it.
+Open <http://127.0.0.1:7777>, sign in with dev login, give a Repo its Environment, and start a Session on it. The [tutorial](https://kddige.github.io/kndl/start/quickstart/) walks through it.
 
 ## Development
 
@@ -79,7 +79,7 @@ From the repo root:
 | `bun run docs:dev` | The documentation site on <http://localhost:4321/kndl/>. |
 | `bun run docs:build` | Builds the site into `packages/docs/dist`. |
 
-See [Develop kndl](https://kddige.github.io/kndl/how-to/develop-kndl/) and the [commands reference](https://kddige.github.io/kndl/reference/commands/).
+See [Develop kndl](https://kddige.github.io/kndl/contributing/develop-kndl/) and the [commands reference](https://kddige.github.io/kndl/reference/commands/).
 
 ## Not affiliated with Anthropic
 

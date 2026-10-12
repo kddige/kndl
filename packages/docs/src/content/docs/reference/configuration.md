@@ -17,21 +17,21 @@ The Hub and Runners are configured with environment variables. `bun run hub` and
 | `HUB_DATABASE` | `hub.db` in `packages/hub` | The SQLite database. With `KNDL_HOME` set, `hub.db` in that home. |
 | `HUB_WEB_DIR` | `packages/web/dist` | The web UI's build, which the Hub serves. Without one, the Hub warns at startup and its pages answer 503. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | The GitHub App's client id and secret. Set both, or neither; unset, GitHub sign-in is off. |
-| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The GitHub App's id and the path to its private key (an RSA PEM). The Hub mints installation tokens from them for Runners' clones, for `git` and `gh` in Sandboxes, and to check who has access to a Repo. Set both, or neither; unset, Runners use their host's git credentials, Sandboxes get no GitHub token, and GitHub sign-ins have access to no Repo. The Hub checks the App's permissions against [the ones it needs](/how-to/set-up-the-github-app/#the-permissions) as it starts and every hour. `kndl onboard --github-app create` writes all four of the App's settings. |
+| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | The GitHub App's id and the path to its private key (an RSA PEM). The Hub mints installation tokens from them for Runners' clones, for `git` and `gh` in Sandboxes, and to check who has access to a Repo. Set both, or neither; unset, Runners use their host's git credentials, Sandboxes get no GitHub token, and GitHub sign-ins have access to no Repo. The Hub checks the App's permissions against [the ones it needs](/self-hosting/set-up-the-github-app/#the-permissions) as it starts and every hour. `kndl onboard --github-app create` writes all four of the App's settings. |
 | `GITHUB_WEBHOOK_SECRET` | unset | The GitHub App's webhook secret, which onboard saves for an App GitHub gave a webhook. The Hub doesn't read it. |
 | `KNDL_DEV_LOGIN` | off | `1` turns on dev login, which signs anyone in as any name without GitHub. The Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback, and only answers it for loopback callers. |
 | `KNDL_DEV_USER` | `$USER`, else `dev` | Who dev login signs you in as when you give no name. |
-| `HUB_INSECURE_COOKIES` | off | `1` drops `Secure` from the Hub's cookies when `HUB_PUBLIC_URL` is plain HTTP. Sign-in tokens then travel in cleartext. See [Reach the Hub from other machines](/how-to/reach-the-hub-from-other-machines/#last-resort-plain-http-on-a-network-you-trust). |
+| `HUB_INSECURE_COOKIES` | off | `1` drops `Secure` from the Hub's cookies when `HUB_PUBLIC_URL` is plain HTTP. Sign-in tokens then travel in cleartext. See [Reach the Hub from other machines](/self-hosting/reach-the-hub-from-other-machines/#last-resort-plain-http-on-a-network-you-trust). |
 | `HUB_SLEEP_AFTER_MS` | `900000` (15 minutes) | How long an Active Session goes with no Turn running, no prompt queued and no Participant present before the Hub puts it to sleep. |
 | `HUB_ARCHIVE_RETENTION_MS` | `2592000000` (30 days) | How long an Archived Session can be restored before the Hub purges it. |
-| `HUB_REPO_ACCESS_TTL_MS` | `300000` (5 minutes) | How long the Hub trusts what GitHub said about a person's access to a Repo, and how often it checks everyone connected again. Someone who loses access is out of the Repo's Sessions within twice this. See [Who can do what](/explanation/security-model/#who-can-do-what). |
-| `HUB_MCP_SERVER_CHECK_TIMEOUT_MS` | `5000` (5 seconds) | How long a Session's start waits on each of its Installations' MCP servers to answer the Hub's check. One that doesn't answer in time doesn't stop the start: the Session starts with a warning. See [When an Installation fails a Session](/how-to/add-a-remote-mcp-server/#when-an-installation-fails-a-session). |
-| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values, people's [Claude credentials](#peoples-claude-credentials) and Installations' [header secret values](/how-to/add-a-remote-mcp-server/#header-secret-values) are encrypted with. Unset, none can be saved; once any are saved, the Hub refuses to start without the same key. If it is lost, see [`bun run secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes). |
+| `HUB_REPO_ACCESS_TTL_MS` | `300000` (5 minutes) | How long the Hub trusts what GitHub said about a person's access to a Repo, and how often it checks everyone connected again. Someone who loses access is out of the Repo's Sessions within twice this. See [Who can do what](/concepts/security-model/#who-can-do-what). |
+| `HUB_MCP_SERVER_CHECK_TIMEOUT_MS` | `5000` (5 seconds) | How long a Session's start waits on each of its Installations' MCP servers to answer the Hub's check. One that doesn't answer in time doesn't stop the start: the Session starts with a warning. See [When an Installation fails a Session](/guides/add-a-remote-mcp-server/#when-an-installation-fails-a-session). |
+| `HUB_SECRETS_KEY` | unset | 32 random bytes in base64, from `bun run secrets-key`, that Sensitive values, people's [Claude credentials](#peoples-claude-credentials) and Installations' [header secret values](/guides/add-a-remote-mcp-server/#header-secret-values) are encrypted with. Unset, none can be saved; once any are saved, the Hub refuses to start without the same key. If it is lost, see [`bun run secrets-reset`](/reference/commands/#bun-run-secrets-reset---yes). |
 | `KNDL_HOME` | unset | See [Homes](#homes). |
 
 ### People's Claude credentials
 
-Each person can store one Claude credential on their **Account** page: a subscription token from `claude setup-token`, with the plan it is on, or an Anthropic API key ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). The Sessions they start run on it, on any Runner. It needs only `HUB_SECRETS_KEY`.
+Each person can store one Claude credential on their **Account** page: a subscription token from `claude setup-token`, with the plan it is on, or an Anthropic API key ([ADR 0015](/contributing/decisions/0015-each-person-brings-their-claude-credential/)). The Sessions they start run on it, on any Runner. It needs only `HUB_SECRETS_KEY`.
 
 - The Hub checks it as it is saved with one free `POST https://api.anthropic.com/v1/messages/count_tokens`, and refuses one Anthropic rejects. When Anthropic can't be reached in time, it is saved anyway, with a warning.
 - The plan picked for a token is passed to Claude Code as `CLAUDE_CODE_SUBSCRIPTION_TYPE` and its rate-limit tier. An API key has no plan.
@@ -55,18 +55,18 @@ Each person can store one Claude credential on their **Account** page: a subscri
 | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count | The most CPUs a Sandbox gets, whatever its Environment asks for. |
 | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory | The most memory, in MiB, a Sandbox gets. |
 | `RUNNER_SANDBOX_KEEP_BUILDS` | `3` | How many builds of each Repo's Environment the Runner keeps. |
-| `RUNNER_PROXY_PORT` | `7779`; `7778` in an installed home | The port of the Runner's [credential proxy](/explanation/security-model/#the-credential-proxy) on the host's loopback, which Sandboxes reach at `host.microsandbox.internal`. If it is taken, the Runner logs an error and runs without the proxy. |
+| `RUNNER_PROXY_PORT` | `7779`; `7778` in an installed home | The port of the Runner's [credential proxy](/concepts/security-model/#the-credential-proxy) on the host's loopback, which Sandboxes reach at `host.microsandbox.internal`. If it is taken, the Runner logs an error and runs without the proxy. |
 | `RUNNER_CLAUDE_CREDENTIAL` | `auto` | Where the Runner's own Claude credential is read from: see [The Runner's Claude credential](#the-runners-claude-credential). |
 | `RUNNER_CLAUDE_PLAN` | the plan in Claude Code's config file | The plan the Runner's credential is on, `pro`, `max`, `team` or `enterprise`, passed to Claude Code in a Sandbox. |
 | `RUNNER_CLAUDE_RATE_LIMIT_TIER` | Claude Code's for the plan: `default_claude_ai` for `pro`, `default_claude_max_5x` for `max` | The rate-limit tier of `RUNNER_CLAUDE_PLAN`, such as `default_claude_max_20x`. |
-| `RUNNER_UPDATE_ANY_COMMIT` | unset | `1`: when the Hub asks, the Runner moves to its commit even if it isn't on `origin/main`, such as a Hub running a branch. Unset, it refuses such a commit ([Keep Runners on the Hub's commit](/how-to/add-a-runner/#keep-runners-on-the-hubs-commit)). |
+| `RUNNER_UPDATE_ANY_COMMIT` | unset | `1`: when the Hub asks, the Runner moves to its commit even if it isn't on `origin/main`, such as a Hub running a branch. Unset, it refuses such a commit ([Keep Runners on the Hub's commit](/self-hosting/add-a-runner/#keep-runners-on-the-hubs-commit)). |
 | `KNDL_SERVICE` | unset | Set to `runner` (or `hub`) by the service files the `kndl` command installs. A Runner updates itself only when it is set and the Runner runs from the install, `<home>/app`. |
 | `CLAUDE_CONFIG_DIR` | unset | Read as Claude Code reads it: the Runner looks for Claude Code's config file at `$CLAUDE_CONFIG_DIR/.claude.json` instead of `~/.claude.json`. |
 | `KNDL_HOME` | unset | See [Homes](#homes). |
 
 ### The Runner's Claude credential
 
-A Session whose Creator has no Claude credential runs on the Runner's own, if it has one ([ADR 0015](/reference/decisions/0015-each-person-brings-their-claude-credential/)). A Runner needs neither a credential of its own nor Claude Code. It is read from where `RUNNER_CLAUDE_CREDENTIAL` says:
+A Session whose Creator has no Claude credential runs on the Runner's own, if it has one ([ADR 0015](/contributing/decisions/0015-each-person-brings-their-claude-credential/)). A Runner needs neither a credential of its own nor Claude Code. It is read from where `RUNNER_CLAUDE_CREDENTIAL` says:
 
 | Value | Read from |
 |---|---|
@@ -101,7 +101,7 @@ A Hub or Runner keeps its state in a home. From a checkout, that is the dev home
 
 ## The `kndl` command from a Hub
 
-The install script a Hub serves at `/cli`, and the binary it installs ([Install the CLI from a Hub](/how-to/install-the-cli-from-a-hub/)), read these. The CLI from an install reads none of them.
+The install script a Hub serves at `/cli`, and the binary it installs ([Install the CLI from a Hub](/guides/install-the-cli-from-a-hub/)), read these. The CLI from an install reads none of them.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -112,14 +112,14 @@ The install script a Hub serves at `/cli`, and the binary it installs ([Install 
 
 ## What a Runner gives Claude Code
 
-Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Claude Code's normal setting sources, so the Repo's `CLAUDE.md`, skills, hooks, settings and `.mcp.json` apply ([ADR 0013](/reference/decisions/0013-claude-code-runs-in-the-sandbox/)). Its command line is `claude` with:
+Each Session's Claude Code runs in tmux in its Sandbox, in `/workspace`, with Claude Code's normal setting sources, so the Repo's `CLAUDE.md`, skills, hooks, settings and `.mcp.json` apply ([ADR 0013](/contributing/decisions/0013-claude-code-runs-in-the-sandbox/)). Its command line is `claude` with:
 
 - `--session-id` for a new Session, or `--resume` to wake one.
-- `--plugin-dir /opt/kndl/mod/<copy>/hub-link` and `--plugin-dir /opt/kndl/mod/<copy>/hub-link-commands`, the mod's plugins ([ADR 0014](/reference/decisions/0014-subagents-replace-child-sessions/)), from the copy of `RUNNER_MOD_DIR` made for this start, mounted read-only.
-- `--dangerously-skip-permissions`: the Sandbox is the boundary ([ADR 0004](/reference/decisions/0004-the-sandbox-is-the-security-boundary/)).
-- `--model` and `--effort` when the Session's [model and effort](/how-to/work-in-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
+- `--plugin-dir /opt/kndl/mod/<copy>/hub-link` and `--plugin-dir /opt/kndl/mod/<copy>/hub-link-commands`, the mod's plugins ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)), from the copy of `RUNNER_MOD_DIR` made for this start, mounted read-only.
+- `--dangerously-skip-permissions`: the Sandbox is the boundary ([ADR 0004](/contributing/decisions/0004-the-sandbox-is-the-security-boundary/)).
+- `--model` and `--effort` when the Session's [model and effort](/guides/work-in-a-session/#choose-the-model-and-effort) are set. Neither is written to its settings.
 
-Its environment is what the Start script gets: the package cache variables and, for a Repo with an Environment, the image's login environment with the Environment's Variables over it ([ADR 0009](/reference/decisions/0009-environments/)). On top of it go these, the mod's and Claude Code's:
+Its environment is what the Start script gets: the package cache variables and, for a Repo with an Environment, the image's login environment with the Environment's Variables over it ([ADR 0009](/contributing/decisions/0009-environments/)). On top of it go these, the mod's and Claude Code's:
 
 | Variable | What it is |
 |---|---|
@@ -131,7 +131,7 @@ Its environment is what the Start script gets: the package cache variables and, 
 | `DISABLE_INSTALLATION_CHECKS` | `1`: the Runner installs Claude Code, so `/status` doesn't ask for the native installer's `claude` command and install method. |
 | `TZ` | The Runner's time zone, such as `Europe/Copenhagen`, so the times Claude Code and its tools show are yours. |
 
-Claude Code and its mod reach Anthropic and the Hub through the [credential proxy](/explanation/security-model/#the-credential-proxy), holding only the Session token. These variables point them at it; the credential's kind decides which are set.
+Claude Code and its mod reach Anthropic and the Hub through the [credential proxy](/concepts/security-model/#the-credential-proxy), holding only the Session token. These variables point them at it; the credential's kind decides which are set.
 
 | Variable | What it is |
 |---|---|

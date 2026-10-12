@@ -14,7 +14,7 @@ const adrDirectory = join(repoRoot, "docs", "adr")
 
 /** Where the rendered files live on the site, under the base path. */
 export const glossaryId = "reference/glossary"
-export const decisionsId = "reference/decisions"
+export const decisionsId = "contributing/decisions"
 
 interface Source {
   readonly id: string
@@ -204,7 +204,7 @@ async function store(context: LoaderContext, source: Source) {
 
 /**
  * Starlight's own docs loader, plus GLOSSARY.md as `reference/glossary`, and docs/adr as
- * `reference/decisions` and one page per ADR.
+ * `contributing/decisions` and one page per ADR.
  */
 export function docsWithRepoFiles(): Loader {
   const docs = docsLoader()

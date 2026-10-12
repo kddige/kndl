@@ -1,0 +1,83 @@
+---
+title: Deploy for a team
+description: The path from one machine to a Hub your team signs in to with GitHub, with Runners on the machines that run Sessions.
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Run the Hub on a server your team can reach, sign people in with GitHub, and add a Runner on each machine that runs Sessions. Each step links to its full guide.
+
+## What you need
+
+- **A machine for the Hub:** macOS or Linux, always on, reachable by your team. It needs little CPU or memory.
+- **One or more Runners:** Macs with Apple Silicon, or Linux machines with KVM. Give them the CPU, memory and disk for one microVM per running Session. The Hub's machine can be one of them.
+- **A way to serve the Hub over HTTPS:** a reverse proxy with a domain, or [Tailscale](https://tailscale.com). GitHub sign-in needs it.
+- **A GitHub account** that can create a GitHub App for your user or organisation.
+
+## Set up the Hub
+
+<Steps>
+
+1. On the **Hub's machine**, install kndl. Onboard starts on its own:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
+   ```
+
+2. Answer **Hub** (or **Both**, to run Sessions on it too). For who reaches it, answer **Behind HTTPS**, and give the public URL, such as `https://hub.example.com`. See [Install kndl](/self-hosting/install/#set-the-machine-up).
+
+3. Put the Hub behind HTTPS, with a reverse proxy or Tailscale Serve. See [Reach the Hub from other machines](/self-hosting/reach-the-hub-from-other-machines/).
+
+4. When onboard offers the GitHub App, choose to create it on GitHub now. Then install the App on the Repos your team works on. See [Set up the GitHub App](/self-hosting/set-up-the-github-app/).
+
+5. Onboard ends with a Setup link. Open it to sign in with GitHub as the Hub's Owner. See [Let people in](/self-hosting/let-people-in/#become-the-owner).
+
+</Steps>
+
+:::danger[Back up `hub.env` with `hub.db`]
+`~/.kndl/hub.env` holds `HUB_SECRETS_KEY`, the only key to the Claude credentials and secrets in the Hub's database. Back them up together.
+:::
+
+## Add Runners
+
+<Steps>
+
+1. In the web UI, open **Runners** and choose **Add a Runner**. Copy the `kndl runner join` command it shows.
+
+2. On the **Runner's machine**, install kndl without onboard, then paste the command:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh -s -- --no-onboard
+   kndl runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
+   ```
+
+   It installs the Runner as a service and waits until it connects. You should see it on the **Runners** page. See [Add a Runner](/self-hosting/add-a-runner/).
+
+</Steps>
+
+## Invite your team
+
+<Steps>
+
+1. Open **People**, press **Invite someone**, and send each person their Invite link. kndl sends no email. See [Let people in](/self-hosting/let-people-in/#invite-someone).
+
+2. Each person adds their own Claude subscription or API key on their **Account** page, and their Sessions run on it. See [Add your Claude credential](/guides/add-your-claude-credential/).
+
+3. Give each Repo an Environment with the tools its Sessions need. See [Set up an Environment](/guides/set-up-an-environment/).
+
+</Steps>
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="The security model"
+    description="What a Sandbox can reach, where credentials live, and what to protect."
+    href="/kndl/concepts/security-model/"
+  />
+  <LinkCard
+    title="Update kndl"
+    description="Follow Releases, and keep Runners on the Hub's version."
+    href="/kndl/self-hosting/install/#update"
+  />
+</CardGrid>

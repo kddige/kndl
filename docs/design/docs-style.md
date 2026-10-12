@@ -1,96 +1,123 @@
 # Docs style
 
-How the docs site (`packages/docs`, published at <https://kddige.github.io/kndl/>) is written. Follow it in every PR that changes the site, and change this file when a convention changes. Written for issue #97, from the sources at the end.
+How the docs site (`packages/docs`, published at <https://kddige.github.io/kndl/>) is written. Follow it in every PR that changes the site, and change this file when a convention changes.
+
+The bar is [Bun's docs](https://bun.sh/docs) and [Astro's](https://docs.astro.build): short pages, code first, one path through each task, and a clear next step. A reader should be able to skim a page's headings and commands and get the job done without reading a paragraph.
+
+## Who reads the docs
+
+Two readers come first. Write for both on every page in Get started and Self-hosting.
+
+- **The developer trying kndl.** They install it on one machine, start a Session, and uninstall it if it isn't for them. They want the shortest path to something working, and a clean way out.
+- **The team lead self-hosting it.** They put a Hub on a server, add Runners and invite people. They want to know what each machine needs, what's exposed, and what it costs to operate.
+
+People using a Hub someone else runs read Guides. People working on kndl itself read Contributing.
 
 ## The rule above the rules
 
-The site describes the code on `main`, not other docs. Check every command, flag, setting, default, path and quoted message against the code before you write it, and grep for a message before you quote it. A wrong page is worse than a missing one ([Write the Docs: Current](https://www.writethedocs.org/guide/writing/docs-principles/)).
+The site describes the code on `main`, not other docs. Check every command, flag, setting, default, path, UI label and quoted message against the code before you write it. Grep for a message before you quote it, and grep `packages/web/src` for a label before you name it. A wrong page is worse than a missing one.
 
-- Document what exists. No "coming soon", "lands with #NN" or "today" notes for planned work, and no docs for designs that only have an ADR (Previews). The issue tracker holds plans.
-- A PR that changes behaviour updates the pages that describe it, in the same PR: the how-to, the reference row, the Troubleshooting entry that quotes its message.
-- Describe kndl as it is, never how it got there ([Google: Timeless documentation](https://developers.google.com/style/timeless-documentation)). No upgrade or migration notes, no former names, no "now", "new", "no longer", "existing", "older" or "since #NN", no "Fixed in #NN", and no Troubleshooting entries for states only an old install can reach. kndl is in development: what changed between commits belongs in commit messages and PRs, and the reasons behind a change in an ADR.
+- Document what exists. No "coming soon" and no docs for designs that only have an ADR. The issue tracker holds plans.
+- A PR that changes behaviour updates the pages that describe it, in the same PR: the guide, the reference row, and the Troubleshooting entry that quotes its message.
+- Describe kndl as it is, never how it got there. No "now", "new", "no longer" or "since #NN", and no migration notes. What changed belongs in release notes and PRs, and why in an ADR.
 
-## Say less
+## Sections
 
-Every sentence must help the reader do the job or understand the page's subject. Cut the rest.
+The sidebar (`packages/docs/astro.config.mjs`) has these sections, in this order. Each page lives in exactly one, and links to the others instead of repeating them.
 
-- One idea per sentence, and short paragraphs. Lead with what most readers need; leave out edge cases most readers never meet, or move them to Troubleshooting.
-- Don't narrate the implementation: say what the reader sees and does, and link to Explanation or an ADR for how it works.
-- Don't hedge, restate the heading, or end a section with a summary of it.
-- Say a thing once. If two pages explain the same behaviour, keep it in one and link from the other.
-
-## Where a page goes
-
-The site follows [Diátaxis](https://diataxis.fr), plus Troubleshooting. Put each page in one quadrant and keep it there; link to the others rather than mixing them in.
-
-| Section | It is | It is not |
+| Section | What goes in it | What doesn't |
 |---|---|---|
-| Tutorials | One guided path a newcomer follows start to finish, on one machine. Every step works as written. | A list of options. |
-| How-to guides | One job for someone who knows what they want: install, add a Runner, set up an Environment. | Background or a full list of settings: link to Explanation and Reference. |
-| Reference | Commands, settings, paths, protocol and words, described neutrally, in the order of the product. | Instructions or opinions. |
-| Explanation | How and why kndl works. | Steps to follow. |
-| Troubleshooting | Entries reached from what the reader sees. | Background beyond what the fix needs. |
+| **Get started** | Introduction (what kndl is, who it's for, how it fits together), Quickstart (one machine, start to finish, then uninstall), Deploy for a team (the path from one machine to a team's Hub, as links). | Options, edge cases, settings. |
+| **Guides** | One task for someone using a Hub: work in a Session, set up an Environment, add an MCP server. | Running the Hub or its machines. |
+| **Self-hosting** | One task for whoever runs the Hub and Runners: install, expose the Hub, set up the GitHub App, add Runners, let people in, update. | Background: link to Concepts. |
+| **Concepts** | How kndl works and why: the architecture, a Session's lifecycle, the security model. Diagrams and prose. | Steps to follow. |
+| **Reference** | Commands, settings, paths and words, as tables, in the product's order. | Instructions or opinions. |
+| **Troubleshooting** | Entries reached from what the reader sees: a message, a stuck state. | Background beyond what the fix needs. |
+| **Contributing** | Developing kndl, the protocol, the ADRs. | Anything a user or operator needs. |
 
-The sidebar (`packages/docs/astro.config.mjs`) runs Tutorials, How-to guides, Explanation, Reference, Troubleshooting, About. It lists How-to guides and Reference explicitly, in the order a newcomer needs them: install, run the Hub and add a Runner first, as one path; then reaching the Hub and the GitHub App; then using it; then working on kndl. Reference starts with what's looked up most, Commands. Add a new page there too, and keep its `sidebar.order` in step. Tutorials, Explanation and Troubleshooting are autogenerated by `sidebar.order`.
-
-## Page shapes
-
-Pages of one kind share one shape.
-
-- **How-to.** Title is the job, as an imperative: "Add a Runner", not "Runners". The first paragraph says what you'll have at the end. Then **Before you start**, when there is anything to have first, then the steps as `##` sections or a numbered list, then where to go next.
-- **Tutorial.** What you'll do and how long it takes, **What you need**, steps in Starlight's `<Steps>`, then **What you did** with links onward.
-- **Reference.** One table per kind of thing (a command's flags, a component's settings), with the same columns throughout a page. Defaults go in their own column or as "default: `x`" in the description. Examples over explanation.
-- **Troubleshooting entry.** A `##` heading naming the symptom as the reader would put it, then three paragraphs in this order: **What you see.** (the message, quoted exactly, in a code block when it's long), **Why.**, **Fix.** Every entry is listed on the Troubleshooting index under where it shows up.
+Moving or renaming a page: add the old path to `packages/docs/redirects.mjs`, so old links keep working, and fix the links in the repo.
 
 ## Voice
 
-From the [Google developer documentation style guide](https://developers.google.com/style/highlights):
+- **Second person, imperative, present tense.** "Install kndl", "Run `kndl onboard`", "The Runner clones the Repo". Say who does it.
+- **Short sentences.** Aim for 10 to 20 words. One idea per sentence, two or three sentences per paragraph.
+- **Lead with the action.** Put the command before the explanation, and the condition before the action: "To follow `main`, pass `--channel dev`."
+- **No filler.** Cut "This page explains", "In this section", "simply", "just", "easy", "note that", "please", and any sentence that restates the heading. Don't end a section with a summary of it.
+- **No marketing.** No "powerful", "seamless", "blazing", "effortless". Say what it does and let the reader judge.
+- **Don't hedge, don't narrate the implementation.** Say what the reader sees and does. Link to Concepts or an ADR for how it works.
+- **Sentence case** for titles and headings, except glossary terms, which keep their capitals ("Set up an Environment").
+- **Name machines plainly:** **the Hub's machine**, **the Runner's machine**, **your laptop**.
 
-- Second person and present tense: "you", "the Runner clones". Active voice: say who does it.
-- Sentence case for titles and headings, except glossary terms, which keep their capitals ("Set up an Environment").
-- Plain and short. No marketing words, no "simply", "just" or "easy".
-- Put the condition or goal before the action: "To keep the settings out of your shell history, put them in an env file" ([procedures](https://developers.google.com/style/procedures)).
-- One action per numbered step, saying where it happens first: "On the **Runner's machine**, …". Say what the reader sees once it worked.
-- Name machines and roles plainly: **the Hub's machine**, **the Runner's machine**.
+## Page template
+
+Every page in Get started, Guides and Self-hosting has this shape:
+
+1. **Title:** the task, as an imperative ("Add a Runner"), or the thing for Introduction and Concepts.
+2. **One sentence** saying what you'll have at the end. No heading above it.
+3. **What you need:** a short list, only when there's something to have first. Link to where to get each thing.
+4. **Steps**, in Starlight's `<Steps>`, or as `##` sections when each step has several parts. Each step is one action, says where it happens when that matters ("On the Runner's machine"), and has a command, a code block or a screenshot.
+5. **What you should see:** after a step whose result isn't obvious, say what success looks like: the output, the page, the badge.
+6. **Next steps:** two to four links, as a `<CardGrid>` of `<LinkCard>`s at the end.
+
+Reference pages are tables with the same columns throughout the page, examples over prose, and defaults stated in their own column. A troubleshooting entry is a `##` heading naming the symptom as the reader would put it, then **What you see.** (the message, quoted exactly), **Why.** and **Fix.**
+
+## Length
+
+- A Get started, Guides or Self-hosting page stays under about **600 words**, code excluded. If it grows past that, split it into two tasks, or move the edge cases to Troubleshooting and the tables to Reference.
+- Lead with what most readers need. An edge case most readers never meet goes in Troubleshooting or behind a link, not inline.
+- Say a thing once. If two pages explain the same behaviour, keep it in one and link from the other.
 
 ## Glossary terms
 
-`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Session name, Work branch, Base branch, Pairing code, Claude credential, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
+`GLOSSARY.md` is the vocabulary. Use its terms with its capitals wherever they mean the domain thing: Hub, Runner, Session, Sandbox, Workspace, Repo, Environment, Build, Test build, Bootstrap script, Start script, Variable, Shared variable, Turn, Prompt queue, Participant, Creator, Session name, Work branch, Base branch, Pairing code, Claude credential, Release, Channel, and the states Active, Asleep, Frozen, Archived. Lowercase is for the ordinary word: a tmux session, an environment variable, a build of the web UI.
 
-Link a term to its page (or to the [glossary](https://kddige.github.io/kndl/reference/glossary/)) on its first use in a page when the reader may not know it. Don't invent synonyms: a Sandbox is never a "VM" or "container" in prose that means the Sandbox.
+- Link a term to its glossary entry or its page on first use in a page, when the reader may not know it.
+- Don't stack terms. "The Runner boots the Session's Sandbox from the Repo's Environment's Build" is four definitions in one sentence. Introduce one at a time, or say it plainly first and name it after.
+- Don't invent synonyms: a Sandbox is never a "VM" or "container" in prose that means the Sandbox.
+
+## Components
+
+Starlight's components, imported in `.mdx` pages from `@astrojs/starlight/components`:
+
+- **`<Steps>`** for any numbered procedure.
+- **`<Tabs>` with `syncKey`** for variants the reader picks once: macOS or Linux, install or checkout.
+- **`<CardGrid>` and `<LinkCard>`** for next steps at the end of a page, and for routing on Introduction. Not for features or decoration. A `LinkCard`'s `href` is a component prop, which the build doesn't prefix: write the base into it, `href="/kndl/start/quickstart/"`.
+- **Asides**, sparingly, for what the reader must not miss: `:::danger` for data loss (the secrets key), `:::caution` for a security cost, `:::tip` for a shortcut. At most two per page. Ordinary detail goes in the text.
+- **Diagrams** are Astro components with inline SVG in the theme's colours (`packages/docs/src/components/`), so they follow light and dark. No Mermaid: it renders as code.
+
+## Screenshots
+
+- **Where:** `packages/docs/src/assets/screenshots/`, as PNG at 2x of a 1280 × 800 window. Reference them with a relative Markdown image, `![…](../../../assets/screenshots/session.png)`, so Astro optimises them.
+- **Light theme**, from the real web UI against the fake Hub (`VITE_FAKE_HUB=1 bun run web`), so they show made-up Sessions, Repos and people, and no real data. Crop to what the step is about when the whole window is noise.
+- **Alt text** says what the screenshot shows that the reader needs, in a sentence: "The Runners page, with studio online and ci-box offline and behind the Hub."
+- **One per step at most**, and only when it shows something words can't: a layout, where a button is, what success looks like.
+- Retake a screenshot in the PR that changes what it shows.
 
 ## Commands, settings and messages
 
-From the Google guide's [code in text](https://developers.google.com/style/code-in-text):
-
 - Code font for commands, flags, settings, paths, file names, HTTP routes and anything typed verbatim: `kndl runner join`, `HUB_PUBLIC_URL`, `~/.kndl/hub.env`.
-- **Bold** for UI labels, spelled exactly as the web UI spells them: **Add a Runner**, **Re-pair**, **Test build**. Grep `packages/web/src` for a label before you name it.
+- **Bold** for UI labels, spelled exactly as the web UI spells them: **Add a Runner**, **Re-pair**, **Test build**.
 - Placeholders in angle brackets inside code: `<name>`, `<session id>`. Example values look real and are the same across the site: `build-box` for a Runner, `hub.example.com` for a Hub, `owner/name` for a Repo, `chr_…` for a token.
 - Command blocks are `sh` and contain only what to type. A comment says which machine or file when it matters. Output goes in its own block with no language.
-- A quoted message is copied from the code; `…` stands for an interpolated or trailing part. Don't paraphrase a message in code font. A message containing backticks goes between double backticks with a space inside each end; a backslash doesn't escape a backtick in code.
-- Name both forms where they differ: `kndl …` for an install, `bun run …` for a checkout. The install is the main path; a checkout is for working on kndl.
+- A quoted message is copied from the code; `…` stands for an interpolated or trailing part. Don't paraphrase a message in code font.
+- Name both forms where they differ: `kndl …` for an install, `bun run …` for a checkout. The install is the main path; a checkout is for working on kndl (Contributing).
 - Homes: `~/.kndl` for an install, `~/.kndl-dev` for a checkout. Say "the home" when it applies to both.
 
 ## Links
 
-- Link with root-relative paths and a trailing slash: `/how-to/add-a-runner/#pairing-codes`. The build adds the `/kndl/` base. Link text says where it goes; never "here".
-- One home per topic: say a thing fully in one place and link to it from the others ([Write the Docs: Unique](https://www.writethedocs.org/guide/writing/docs-principles/)). A sentence of repetition to save a click is fine (ARID).
+- Link with root-relative paths and a trailing slash: `/self-hosting/add-a-runner/#pairing-codes`. The build adds the `/kndl/` base. Link text says where it goes; never "here".
 - `bun run docs:build` checks every internal link and `#anchor` in the built site (`packages/docs/scripts/check-links.ts`) and fails on a broken one. Renaming a heading changes its anchor: fix the links it breaks.
 - The glossary and the ADRs are rendered from `GLOSSARY.md` and `docs/adr/`. Edit those, never a copy.
 
-## Asides
-
-Use Starlight's asides sparingly, for what the reader must not miss: `:::danger` for data loss (the secrets key), `:::caution` for a security cost, `:::note` for a side path. Not for ordinary detail.
-
 ## Landing page
 
-The landing page is `packages/docs/src/pages/index.astro`: one standalone page with its own markup and CSS, not the Starlight layout, so it repeats the `<head>` tags `astro.config.mjs` gives the other pages. What it settled:
+The landing page is `packages/docs/src/pages/index.astro`: one standalone page with its own markup and CSS, not the Starlight layout, so it repeats the `<head>` tags `astro.config.mjs` gives the other pages.
 
-- **Voice.** The same plain voice as the pages, and the sample is `README.md`. The headline is the product's own tagline. A section heading names what the section holds ("The Hub", "Runners"), not a claim. No slogans, no labels staged from the illustration ("At the fire", "Overnight"), no figurative verbs ("dials the Hub"). A block says what a thing is and one detail the reader can check, and does not restate its heading. Tells to cut: "not X but Y", one-line closers, a triad that exists only to be three, dashes as connectors, and words like "pivotal" or "seamless".
-- **Brand.** Night `#1D1733`, flame `#F6C445`, core `#FFEDB5`, logs `#8C5F47` and `#6B4A3A`, cheeks `#F59C8B` (`brand/drafts/README.md`); one accent, at most three hues. Fraunces (soft) for headings, JetBrains Mono for code and the scene's labels. The fonts load from Google Fonts. Motion is the flame, the sparks and the marshmallows' lean, all off under `prefers-reduced-motion`.
-- **Real product.** The pictures of the web UI are real screenshots in `packages/docs/public/landing/`, and the footer says they show made-up Sessions, Repos and people. They were taken with Playwright at 2x, about 1040 px wide, from a throwaway Hub started with `KNDL_DEV_LOGIN=1`: its SQLite rows (Sessions, events, queued prompts) were written directly, two fake Runner connections were held open so the Runners show online, and three dev-login browsers gave the presence. No script for this is in the repo. To redo the screenshots, seed a Hub the same way and crop to WebP.
-- **Leave out.** Card grids, feature icon sets, gradients and glows, stock indigo, a centered template hero.
-- **Self-audit before a change ships.** Are the fonts chosen, or defaults? Does each colour mean something? Does the layout break the three-card reflex? Does the headline say something only kndl could say? Is anything on the page there to decorate and not to inform?
+- **Shape.** One screen of hero: the tagline, one sentence on what kndl is, the install command with a copy button, **Get started** and **GitHub**, the campsite and a real screenshot. Then four short points, each one sentence with a link. Then "Try it, then remove it": the three commands from install to uninstall. Then the footer. Nothing else: everything else is in the docs.
+- **Voice.** The same plain voice as the pages. The headline is the product's own tagline. A point says what a thing is and one detail the reader can check. Tells to cut: "not X but Y", one-line closers, a triad that exists only to be three, dashes as connectors.
+- **Brand.** Night `#1D1733`, flame `#F6C445`, core `#FFEDB5`, logs `#8C5F47` and `#6B4A3A`, cheeks `#F59C8B` (`brand/drafts/README.md`); one accent, at most three hues. Fraunces (soft) for headings, JetBrains Mono for code. Motion is the flame, the sparks and the marshmallows' lean, all off under `prefers-reduced-motion`.
+- **Real product.** The pictures of the web UI are real screenshots in `packages/docs/public/landing/`, of made-up Sessions, Repos and people, and the footer says so.
+- **Leave out.** Feature icon sets, gradients and glows, stock indigo, testimonials, a centered template hero.
 
 ## Theme
 
@@ -109,14 +136,13 @@ The docs pages use the palette "Paper", in `packages/docs/src/styles/theme.css`:
 | Aside fill (every kind)   | `#f5ecda` | `#231f2b` |
 
 - **Contrast.** Every text colour is at least 4.5:1 on its background, and code at least 5.5:1. Flame is never text on cream: it is only a fill or a rule (link underlines, focus rings, the tip aside's rule).
-- **Fonts.** Fraunces (variable, `SOFT` 100, weight 600 to 800) on every heading, the sidebar's group labels and "On this page"; JetBrains Mono for code; the system sans for body text. They load from Google Fonts with `display=swap`, and a size-adjusted Times fallback keeps the headings from jumping. Self-hosting them needs a new dependency, which is still open.
-- **Code.** Expressive Code themes in `packages/docs/src/styles/expressiveCodeThemes.ts`, set as `expressiveCode.themes` in `astro.config.mjs`. A change to them leaves stale colours in Markdown pages Astro has cached: delete `node_modules/.astro/data-store.json` before a build, or `.astro/data-store.json` and restart the dev server.
+- **Fonts.** Fraunces (variable, `SOFT` 100, weight 600 to 800) on every heading, the sidebar's group labels and "On this page"; JetBrains Mono for code; the system sans for body text. They load from Google Fonts with `display=swap`, and a size-adjusted Times fallback keeps the headings from jumping.
+- **Code.** Expressive Code themes in `packages/docs/src/styles/expressiveCodeThemes.ts`. A change to them leaves stale colours in Markdown pages Astro has cached: delete `node_modules/.astro/data-store.json` before a build.
 
 ## Sources
 
-- [Diátaxis](https://diataxis.fr): [how-to guides](https://diataxis.fr/how-to-guides/), [reference](https://diataxis.fr/reference/).
-- [Google developer documentation style guide](https://developers.google.com/style): [highlights](https://developers.google.com/style/highlights), [procedures](https://developers.google.com/style/procedures), [code in text](https://developers.google.com/style/code-in-text).
-- [Google: Timeless documentation](https://developers.google.com/style/timeless-documentation).
-- [Write the Docs: documentation principles](https://www.writethedocs.org/guide/writing/docs-principles/).
-- Comparable self-hosted tools: [Immich's quick start](https://docs.immich.app/overview/quick-start) (requirements first, one path, "where to go from here"), [Caddy's directive reference](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) (one shape per directive, defaults stated in place), [Tailscale's KB](https://tailscale.com/kb/1312/serve) (prerequisites up front, limitations in their own section).
-- [Starlight's sidebar guide](https://starlight.astro.build/guides/sidebar/).
+- [Bun's docs](https://bun.sh/docs): [Installation](https://bun.sh/docs/installation) and [Quickstart](https://bun.sh/docs/quickstart): one sentence of intro, then a command; tabs for platforms; uninstall on the install page.
+- [Astro's docs](https://docs.astro.build): [Install and set up](https://docs.astro.build/en/install-and-setup/): prerequisites as a short list, numbered steps, "Next steps" at the end; [Getting started](https://docs.astro.build/en/getting-started/): routing readers with cards.
+- [Diátaxis](https://diataxis.fr), which the sections still follow underneath: tasks, concepts and reference kept apart.
+- [Google developer documentation style guide](https://developers.google.com/style): [procedures](https://developers.google.com/style/procedures), [code in text](https://developers.google.com/style/code-in-text), [timeless documentation](https://developers.google.com/style/timeless-documentation).
+- [Starlight's components](https://starlight.astro.build/components/using-components/) and [sidebar guide](https://starlight.astro.build/guides/sidebar/).
