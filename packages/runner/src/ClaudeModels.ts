@@ -1,6 +1,6 @@
 import type { EffortLevel, ModelOption, RunnerModels } from "@kndl/protocol"
 import { EffortLevels } from "@kndl/protocol"
-import { Config, Context, Effect, Layer } from "effect"
+import { Config, Context, Data, Effect, Layer } from "effect"
 import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 
 // Which models and effort levels a Session's Claude Code takes (#128), for the Runner's hello: the
@@ -8,8 +8,9 @@ import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
 //
 // Sessions run the pinned build of Claude Code in their Sandboxes (ADR 0013), so what they take
 // is known with the build: PinnedClaudeModels says it, and the Runner's host needs no Claude Code
-// to find out. The smoke test (SandboxClaude.integration.test.ts) checks the table against the
-// pinned build itself, the way it was first found out:
+// to find out. `bun run --filter @kndl/runner probe-models` writes the table from the pinned build,
+// and the smoke test (SandboxClaude.integration.test.ts) checks it against the build in a real
+// Sandbox, both by asking the build the same way:
 //
 // Claude Code has no command that lists its models with their names. What it does have, without
 // an API call or a conversation saved, is `claude -p /model`: its init event says which model it
@@ -210,6 +211,38 @@ export function runnerModels(
     efforts,
   }
 }
+
+export class ModelProbeError extends Data.TaggedError("ModelProbeError")<{
+  readonly message: string
+}> {}
+
+/**
+ * What a Claude Code build takes, as {@link runnerModels} says it: `probe` runs the build with
+ * {@link modelProbeFlags} and the given arguments, and gives back its output. Asks `/model` bare,
+ * `/effort`, then `/model` with each alias the bare one lists, four at a time. Fails for an answer
+ * it can't read, naming the alias, rather than leave the alias out.
+ */
+export const probeModels = <E, R>(
+  probe: (args: ReadonlyArray<string>) => Effect.Effect<string, E, R>,
+) =>
+  Effect.gen(function* () {
+    const said = (args: ReadonlyArray<string>) =>
+      Effect.flatMap(probe(args), (stdout) => {
+        const found = parseModelProbe(stdout)
+        return found === undefined
+          ? Effect.fail(new ModelProbeError({ message: `claude ${args.join(" ")} said no model` }))
+          : Effect.succeed(found)
+      })
+    const bare = yield* said(["-p", "/model"])
+    const efforts = parseEfforts(yield* probe(["-p", "/effort"]))
+    const probes = yield* Effect.forEach(
+      bare.aliases,
+      (alias) =>
+        Effect.map(said(["--model", alias, "-p", "/model"]), (found) => [alias, found] as const),
+      { concurrency: 4 },
+    )
+    return runnerModels(bare, new Map(probes), efforts)
+  })
 
 /** What a Session's Claude Code takes. */
 export class ClaudeModels extends Context.Service<

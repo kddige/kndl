@@ -22,7 +22,7 @@ Each Session's Claude Code runs inside its Sandbox, so its tools run where it ru
 
 The Runner downloads the Linux build of a pinned Claude Code version from the npm registry once, checks its integrity hash, keeps it in the home's `claude-code/` ([Files and paths](/reference/files-and-paths/)), and mounts it read-only into every Sandbox at `/opt/kndl/claude-code`. Each Build checks its image and records whether its Sandboxes use the musl build (Alpine-like images) or the glibc build (Debian, Ubuntu and the like).
 
-The version is pinned, rather than following the host's, because Claude Code learns its plan from variables that are not a public interface. A version is pinned only after a smoke test passes: its banner names the plan, `/status` answers, and a Turn runs a Bash command.
+The version is pinned, rather than following the host's, because Claude Code learns its plan from variables that are not a public interface. A version is pinned only after a smoke test passes: its banner names the plan, `/status` answers, a Turn runs a Bash command, and the build takes the models the Runner offers. `bun run --filter @kndl/runner probe-models` writes that table from the new version first.
 
 Claude Code also needs tmux 3.2 or later and bash, which every Build installs if its image lacks them.
 

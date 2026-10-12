@@ -23,14 +23,7 @@ import { devHome } from "@kndl/protocol/home"
 import { Effect, Layer, Redacted } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
-import {
-  type ModelProbe,
-  modelProbeFlags,
-  parseEfforts,
-  parseModelProbe,
-  PinnedClaudeModels,
-  runnerModels,
-} from "./ClaudeModels.ts"
+import { modelProbeFlags, PinnedClaudeModels, probeModels } from "./ClaudeModels.ts"
 import { HubLink } from "./HubLink.ts"
 import { makeCredentialProxy, serveCredentialProxy } from "./proxy/CredentialProxy.ts"
 import { DefaultKeychainService, parseCredentialSource } from "./proxy/ProxyConfig.ts"
@@ -221,20 +214,7 @@ test.skipIf(!enabled)(
             env: { ...started.claude.env, ...pass.env },
           })
           .pipe(Effect.map((result) => result.stdout))
-      const bare = parseModelProbe(yield* probe(["-p", "/model"]))
-      if (bare === undefined) return yield* Effect.die(new Error("claude -p /model said no model"))
-      const efforts = parseEfforts(yield* probe(["-p", "/effort"]))
-      const probes = new Map<string, ModelProbe>()
-      yield* Effect.forEach(
-        bare.aliases,
-        (alias) =>
-          Effect.map(probe(["--model", alias, "-p", "/model"]), (stdout) => {
-            const found = parseModelProbe(stdout)
-            if (found !== undefined) probes.set(alias, found)
-          }),
-        { concurrency: 4 },
-      )
-      const models = runnerModels(bare, probes, efforts)
+      const models = yield* probeModels(probe)
       if (!Bun.deepEquals(models, PinnedClaudeModels)) {
         console.error(
           `Claude Code ${PinnedClaudeVersion} takes, for PinnedClaudeModels:\n${JSON.stringify(models, null, 2)}`,

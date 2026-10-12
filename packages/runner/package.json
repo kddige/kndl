@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "bun src/main.ts",
-    "probe-models": "bun src/probe-models.ts",
+    "probe-models": "bun scripts/probe-models.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
