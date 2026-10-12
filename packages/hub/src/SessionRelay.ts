@@ -3324,6 +3324,13 @@ export class SessionRelay extends Context.Service<
       ) {
         const session = yield* sessions.get(sessionId)
         if (Option.isNone(session)) return
+        // The Session wakes into the conversation its mod last said hello as. One the Runner didn't
+        // launch, a `claude` run inside it, would leave its own conversation behind (#321).
+        const was = yield* sessions.claudeSessionId(sessionId)
+        if (Option.isSome(was) && was.value !== hello.claudeSessionId)
+          yield* Effect.logWarning(
+            `Session ${sessionId}: its mod says hello as conversation ${hello.claudeSessionId}, not ${was.value}; the Session now resumes that one`,
+          )
         yield* sessions.setClaudeSessionId(sessionId, hello.claudeSessionId)
         live.modHello(sessionId, {
           steers: hello.steers === true,

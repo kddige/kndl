@@ -581,6 +581,8 @@ describe("Sessions", () => {
       CLAUDE_CODE_DISABLE_AGENT_VIEW: "1",
       DISABLE_INSTALLATION_CHECKS: "1",
       KNDL_SESSION_ID: "s-1",
+      // The conversation it was launched as, the one the mod links (#321).
+      KNDL_CONVERSATION_ID: spec?.argv[2],
       // The credential proxy, for Anthropic's API and the Hub alike, and the Session token for
       // both: never the mod token, nor a Claude credential (ADR 0013).
       ANTHROPIC_BASE_URL: "http://host.microsandbox.internal:7778",

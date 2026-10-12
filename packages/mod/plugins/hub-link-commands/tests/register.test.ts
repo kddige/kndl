@@ -45,6 +45,19 @@ describe("the Hub link", () => {
     expect(requests).toEqual([])
   })
 
+  test("runs no commands in a claude run inside the Session, as another conversation (#321)", async ($, on) => {
+    const prompt = { _tag: "DeliverPrompt", promptId: "q1", sender: ada, text: "hi" }
+    const { requests } = linkedSession(on, [prompt], undefined, {
+      KNDL_CONVERSATION_ID: "5f0c2a9e-1d3b-4e6f-8a7c-9b8d7e6f5a4b",
+    })
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: false })
+    await clock.advance(1000)
+
+    expect(requests).toEqual([])
+  })
+
   test("shows the Participants the Hub reports in the band above the prompt", async ($, on) => {
     linkedSession(on, [
       {

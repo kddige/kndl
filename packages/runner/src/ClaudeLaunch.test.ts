@@ -38,6 +38,17 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
   expect(env).not.toHaveProperty(ModEnvironment.modToken)
 })
 
+test("Claude Code is told which conversation it was launched as, new or resumed (#321)", () => {
+  // The mod links only that one: a `claude` run inside the Session inherits the rest.
+  expect(claudeLaunch(options).env[ModEnvironment.conversationId]).toBe(
+    "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
+  )
+  const resumed = { _tag: "Resume", id: "9c528fab-0d1e-4f2a-8b3c-4d5e6f7a8b9c" } as never
+  expect(claudeLaunch({ ...options, conversation: resumed }).env).toMatchObject({
+    [ModEnvironment.conversationId]: "9c528fab-0d1e-4f2a-8b3c-4d5e6f7a8b9c",
+  })
+})
+
 test("the Session's model and effort go as flags, so they never reach settings.json", () => {
   const { argv } = claudeLaunch({ ...options, model: "opus[1m]", effort: "xhigh" })
   expect(argv.slice(-4)).toEqual(["--model", "opus[1m]", "--effort", "xhigh"])

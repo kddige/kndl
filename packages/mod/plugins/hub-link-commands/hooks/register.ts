@@ -225,21 +225,25 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
 }
 
 const startLink = async ($: EngineInterface) => {
-  const [hubUrl, sessionId, modToken, kind] = await Promise.all([
+  const [hubUrl, sessionId, modToken, kind, launched] = await Promise.all([
     $.env.get("KNDL_URL"),
     $.env.get("KNDL_SESSION_ID"),
     $.env.get("KNDL_MOD_TOKEN"),
     $.env.get("CLAUDE_CODE_SESSION_KIND"),
+    $.env.get("KNDL_CONVERSATION_ID"),
   ])
   // hub-link says so in the debug log. A background job or daemon of Claude Code's isn't the
-  // Session's Claude Code, and runs none of its commands (#191).
+  // Session's Claude Code, and runs none of its commands (#191); nor does a `claude` run inside
+  // the Session as another conversation than the one the Runner launched (#321).
   if (!hubUrl || !sessionId || !modToken || kind) return false
+  const conversation = await $.session.id()
+  if (launched && conversation !== launched) return false
   state.hub = { url: hubUrl.replace(/\/+$/, ""), modToken }
   state.link?.stop()
   state.link = new HubLink({
     hubUrl,
     modToken,
-    hello: { sessionId, claudeSessionId: await $.session.id(), model: await $.session.model() },
+    hello: { sessionId, claudeSessionId: conversation, model: await $.session.model() },
     fetch: (url, init) => $.http.fetch(url, init),
     // Its own timers, so a Stop can't cut what it does short (#165).
     after: (ms, fn) => void $.clock.after(ms, fn),

@@ -35,6 +35,7 @@ export const linkedSession = (
     KNDL_URL: hubUrl,
     KNDL_SESSION_ID: "s1",
     KNDL_MOD_TOKEN: "secret",
+    KNDL_CONVERSATION_ID: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     ...env,
   })
   on("session.id", () => ({ value: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f" }))

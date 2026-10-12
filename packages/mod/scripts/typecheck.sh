@@ -20,7 +20,10 @@ MSG
 fi
 
 bun run build >/dev/null
-CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude --plugin-dir plugins/hub-link \
+# Run inside a kndl Session, the mod it loads would otherwise link to the Session's Hub as this
+# claude, whose conversation the Session would then wake into (#321).
+env -u KNDL_URL -u KNDL_SESSION_ID -u KNDL_MOD_TOKEN -u KNDL_CONVERSATION_ID \
+  CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude --plugin-dir plugins/hub-link \
   --plugin-dir plugins/hub-link-commands --strict-mcp-config -p /cost >/dev/null
 # Each plugin, against the mod runtime only; then the Bun unit tests, against Bun.
 tsc --noEmit -p plugins/hub-link
