@@ -156,16 +156,35 @@ export function systemdUnitFile(spec: ServiceSpec): string {
   return lines.join("\n")
 }
 
+/**
+ * Waits, up to 30 seconds, until launchd no longer knows the service `$1`. `launchctl bootout`
+ * returns while launchd still unloads it, and loading it again before then fails with "Bootstrap
+ * failed: 5: Input/output error", which left the Hub stopped after every `kndl update`. 30 seconds
+ * outlasts launchd's 20 between asking the process to exit and killing it.
+ */
+export const UntilUnloaded =
+  'i=0; while launchctl print "$1" >/dev/null 2>&1; do [ "$i" -ge 300 ] && exit 1; sleep 0.1; i=$((i + 1)); done'
+
+/** The Steps that unload a launchd agent, and wait until it's gone. */
+function unloadSteps(target: ServiceTarget, why?: string): ReadonlyArray<Step> {
+  const service = `gui/${target.uid}/${launchdLabel(target.role)}`
+  return [
+    step("launchctl", ["bootout", service], {
+      system: true,
+      mayFail: true,
+      ...(why === undefined ? {} : { why }),
+    }),
+    // A timeout isn't an error here: loading it again then fails, and says why.
+    step("sh", ["-c", UntilUnloaded, "sh", service], { system: true, mayFail: true }),
+  ]
+}
+
 /** The Steps that load the service file and start it (it must already be written). */
 export function installSteps(target: ServiceTarget): ReadonlyArray<Step> {
   if (target.platform === "darwin") {
     const domain = `gui/${target.uid}`
     return [
-      step("launchctl", ["bootout", `${domain}/${launchdLabel(target.role)}`], {
-        system: true,
-        mayFail: true,
-        why: "unload an earlier version, if loaded",
-      }),
+      ...unloadSteps(target, "unload an earlier version, if loaded"),
       step("launchctl", ["enable", `${domain}/${launchdLabel(target.role)}`], { system: true }),
       step("launchctl", ["bootstrap", domain, serviceFilePath(target)], { system: true }),
     ]
@@ -200,14 +219,7 @@ export function startSteps(target: ServiceTarget): ReadonlyArray<Step> {
  * killed one; it loads again at the next login, as an enabled systemd unit starts again at boot.
  */
 export function stopSteps(target: ServiceTarget): ReadonlyArray<Step> {
-  if (target.platform === "darwin") {
-    return [
-      step("launchctl", ["bootout", `gui/${target.uid}/${launchdLabel(target.role)}`], {
-        system: true,
-        mayFail: true,
-      }),
-    ]
-  }
+  if (target.platform === "darwin") return unloadSteps(target)
   return [
     step("systemctl", ["--user", "stop", systemdUnit(target.role)], {
       system: true,
