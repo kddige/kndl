@@ -186,9 +186,10 @@ function targetOf(update: RunnerUpdateState) {
   return update._tag === "Failed" ? update.failure.target : update.target
 }
 
-/** A commit as the page shows it, short. */
+/** A commit as the page shows it, short, after its Release if it is one's (ADR 0025). */
 export function shortCommit(version: BuildVersion): string {
-  return version.commit.slice(0, 12)
+  const commit = version.commit.slice(0, 12)
+  return version.release === undefined ? commit : `${version.release} (${commit})`
 }
 
 /** A code the Runners page showed, as it was minted. */

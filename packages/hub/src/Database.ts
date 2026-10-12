@@ -696,6 +696,12 @@ const migrations = SqliteMigrator.fromRecord({
     // The sweep reads only these, never the blobs of the rest.
     yield* sql`CREATE INDEX attachments_unsent ON attachments (uploaded_at) WHERE sent_at IS NULL`
   }),
+  // The Release a Runner's commit is, as it last said hello (ADR 0025); null on a commit that is
+  // no Release's, and from a Runner from before.
+  "0035_runner_release": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE runners ADD COLUMN version_release TEXT`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

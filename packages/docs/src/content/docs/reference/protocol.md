@@ -90,7 +90,7 @@ A WebSocket that the Runner opens and keeps open, reconnecting with backoff.
 
 A side drops a message it can't decode and carries on.
 
-`RunnerHello` carries the Runner's name, `login`, the Sessions it runs, and `version`: the commit its checkout is on and the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)). The Hub starts and wakes no Session on a Runner behind its own commit, and leaves the Sessions it runs alone.
+`RunnerHello` carries the Runner's name, `login`, the Sessions it runs, and `version`: the commit its checkout is on, the branch, if any ([ADR 0011](/reference/decisions/0011-runners-follow-the-hubs-commit/)), and `release`, the Release tagged on that commit, if any, such as `2026.10.1` ([ADR 0025](/reference/decisions/0025-releases-and-channels/)). Every `version`, `target` and `hubVersion` carries `release` the same way. It is optional, and a peer from before it ignores it, so it needed no new protocol version. The Hub starts and wakes no Session on a Runner behind its own commit, and leaves the Sessions it runs alone.
 
 After a restart, a Runner lists in `withoutModToken` the Sessions it kept running: their mod tokens went with the old process. For each one the Hub issues a new mod token, revoking the old, and sends it in `ModTokenReissued { sessionId, modToken }` before marking the Session Active. Until it arrives the Runner's credential proxy answers that Session's requests `503` with `retry-after`, which Claude Code and the mod retry. A Runner that loses the message lists the Session again in its next hello.
 
