@@ -15,3 +15,7 @@ The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Releases
+
+A Release is a dated tag on `main`, like `v2026.10.1`, cut by hand. See `docs/agents/releasing.md`.

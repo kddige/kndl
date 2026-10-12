@@ -1,12 +1,14 @@
 # The checks every change must pass: type-check, lint, format and the unit tests, on pull requests
 # (forks' included, so it uses no secrets) and on push to main. The tests that boot real
-# microsandbox Sandboxes skip themselves without KNDL_SANDBOX_IT=1, so they don't run here.
+# microsandbox Sandboxes skip themselves without KNDL_SANDBOX_IT=1, so they don't run here. The
+# release workflow calls it on a Release tag's commit.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:

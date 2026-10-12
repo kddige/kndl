@@ -6,7 +6,7 @@ Report it privately: on this repository's **Security** tab, select **Report a vu
 
 Include what you found, how to reproduce it, and what an attacker gains. We reply as soon as we can and keep you updated until it's fixed.
 
-kndl is early and maintained in spare time. There is no bug bounty and no response-time guarantee. Only the latest commit on `main` gets fixes.
+kndl is early and maintained in spare time. There is no bug bounty and no response-time guarantee. Fixes land on `main` and ship in the next Release; older Releases get no backports.
 
 ## What's in scope
 
