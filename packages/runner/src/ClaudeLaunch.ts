@@ -12,11 +12,15 @@ import { gatewayPlugin, modPlugins } from "./sandbox/SessionLayout.ts"
 /**
  * The environment variables the mod reads to reach the Hub. The Hub's URL and the mod token are
  * the credential proxy's (proxy/ClaudeEnvironment.ts); the launch sets the rest.
+ *
+ * The conversation is the one Claude Code was launched as. A `claude` run inside the Session
+ * inherits all of them, but is another conversation, which the mod doesn't link (#321).
  */
 export const ModEnvironment = {
   hubUrl: "KNDL_URL",
   sessionId: "KNDL_SESSION_ID",
   modToken: "KNDL_MOD_TOKEN",
+  conversationId: "KNDL_CONVERSATION_ID",
 } as const
 
 export interface ClaudeLaunchOptions {
@@ -88,6 +92,7 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       // install method to warn about (#157).
       DISABLE_INSTALLATION_CHECKS: "1",
       [ModEnvironment.sessionId]: options.sessionId,
+      [ModEnvironment.conversationId]: options.conversation.id,
     },
   }
 }

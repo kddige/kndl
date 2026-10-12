@@ -93,6 +93,7 @@ const linkedSession = (
     KNDL_URL: hubUrl,
     KNDL_SESSION_ID: "s1",
     KNDL_MOD_TOKEN: "secret",
+    KNDL_CONVERSATION_ID: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
   })
   on("session.id", () => ({ value: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f" }))
   on("session.model", model)
@@ -153,6 +154,34 @@ describe("the Hub link", () => {
 
     expect(requests).toEqual([])
     expect(lines).toEqual(["hub-link: a Claude Code bg process, so not linked to the Hub"])
+  })
+
+  test("a claude run inside the Session, as another conversation, isn't linked (#321)", async ($, on) => {
+    // It inherits the Session's mod token. Linked, its conversation would become the one the
+    // Session resumes when it wakes, and the Session's own would be lost.
+    mock.env(on, {
+      KNDL_URL: hubUrl,
+      KNDL_SESSION_ID: "s1",
+      KNDL_MOD_TOKEN: "secret",
+      KNDL_CONVERSATION_ID: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    })
+    on("session.id", () => ({ value: "5f0c2a9e-1d3b-4e6f-8a7c-9b8d7e6f5a4b" }))
+    const lines: Array<string> = []
+    on("ui.log", (_, e) => {
+      lines.push(e.text)
+      return { value: undefined }
+    })
+    on("session.start", (_, e) => ({ cwd: e.cwd }))
+    const requests = fakeFetch(on, () => welcome)
+    const clock = mock.clock(on)
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: false })
+    await clock.advance(1000)
+
+    expect(requests).toEqual([])
+    expect(lines).toEqual([
+      "hub-link: conversation 5f0c2a9e-1d3b-4e6f-8a7c-9b8d7e6f5a4b isn't the one the Runner launched, so not linked to the Hub",
+    ])
   })
 
   test("says hello with the mod token, and polls for no commands", async ($, on) => {

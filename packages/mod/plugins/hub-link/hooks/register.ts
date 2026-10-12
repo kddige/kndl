@@ -94,11 +94,12 @@ const stoppedTask = (result: unknown): string | undefined =>
     : undefined
 
 const startLink = async ($: EngineInterface) => {
-  const [hubUrl, sessionId, modToken, kind] = await Promise.all([
+  const [hubUrl, sessionId, modToken, kind, launched] = await Promise.all([
     $.env.get("KNDL_URL"),
     $.env.get("KNDL_SESSION_ID"),
     $.env.get("KNDL_MOD_TOKEN"),
     $.env.get("CLAUDE_CODE_SESSION_KIND"),
+    $.env.get("KNDL_CONVERSATION_ID"),
   ])
   if (!hubUrl || !sessionId || !modToken) {
     state.early = undefined
@@ -112,11 +113,24 @@ const startLink = async ($: EngineInterface) => {
     $.ui.log(`hub-link: a Claude Code ${kind} process, so not linked to the Hub`, { to: "debug" })
     return
   }
+  // A `claude` run inside the Session, by Claude Code's own tools or in a terminal, inherits its
+  // mod token too, but is another conversation: linked, it would become the one the Session
+  // resumes when it wakes, and the Session's own would be lost (#321). A Runner from before
+  // KNDL_CONVERSATION_ID doesn't say which it launched.
+  const conversation = await $.session.id()
+  if (launched && conversation !== launched) {
+    state.early = undefined
+    $.ui.log(
+      `hub-link: conversation ${conversation} isn't the one the Runner launched, so not linked to the Hub`,
+      { to: "debug" },
+    )
+    return
+  }
   state.link?.stop()
   state.link = new HubLink({
     hubUrl,
     modToken,
-    hello: { sessionId, claudeSessionId: await $.session.id(), model: await $.session.model() },
+    hello: { sessionId, claudeSessionId: conversation, model: await $.session.model() },
     fetch: (url, init) => $.http.fetch(url, init),
     // Its own timers, so a Stop can't cut what it does short (#165).
     after: (ms, fn) => void $.clock.after(ms, fn),
