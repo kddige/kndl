@@ -81,15 +81,21 @@ describe("tools", () => {
 
 const welcome = { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 2 }) }
 
-/** A session a Runner started, linked to the Hub. Returns the requests, and the events posted. */
-const linkedSession = (on: On) => {
+/**
+ * A session a Runner started, linked to the Hub. Returns the requests, and the events posted.
+ * `model` answers what the session's model is, as Claude Code does.
+ */
+const linkedSession = (
+  on: On,
+  model: () => { value: string } | Promise<{ value: string }> = () => ({ value: "claude-test" }),
+) => {
   mock.env(on, {
     KNDL_URL: hubUrl,
     KNDL_SESSION_ID: "s1",
     KNDL_MOD_TOKEN: "secret",
   })
   on("session.id", () => ({ value: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f" }))
-  on("session.model", () => ({ value: "claude-test" }))
+  on("session.model", model)
   on("ui.log", () => ({ value: undefined }))
   on("session.start", (_, e) => ({ cwd: e.cwd }))
   const requests = fakeFetch(on, (request) => {
@@ -277,6 +283,34 @@ describe("who a Turn is from", () => {
         turnId: "t2",
         text: "and the changelog",
         sender: { _tag: "FromTerminal" },
+      },
+    ])
+  })
+
+  test("a Turn that starts before the link does is still posted, as its prompt's", async ($, on) => {
+    // A woken Session: hub-link-commands says hello first, and the Hub delivers the queued prompt
+    // while hub-link still reads what its hello says. Lost, its prompt stayed queued for good.
+    let modelRead: (value: { value: string }) => void = () => undefined
+    const { posted } = linkedSession(on, () => new Promise((resolve) => (modelRead = resolve)))
+    const clock = mock.clock(on)
+    const text = "[Ada Lovelace] yo"
+    delivered(on, { promptId: "pr-1", sender: ada, text })
+    on("turn.start", (_, e) => ({ turnId: e.turnId }))
+
+    const started = $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    const turn = $.turn.start({ turnId: "t1", text } as never)
+    await clock.advance(50)
+    modelRead({ value: "claude-test" })
+    await Promise.all([started, turn])
+    await clock.advance(200)
+
+    expect(posted()).toEqual([
+      {
+        _tag: "TurnStarted",
+        turnId: "t1",
+        text,
+        sender: { _tag: "FromParticipant", participant: ada },
+        promptId: "pr-1",
       },
     ])
   })
