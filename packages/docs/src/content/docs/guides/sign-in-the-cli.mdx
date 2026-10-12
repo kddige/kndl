@@ -1,0 +1,94 @@
+---
+title: Sign in the CLI
+description: Sign the kndl command in to a Hub as you with kndl login, from a laptop or over SSH, and sign it out again.
+sidebar:
+  order: 12
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Sign the `kndl` command in to a Hub as you, so it can act on the Hub in your name.
+
+## What you need
+
+- The `kndl` command, [installed from a Hub](/guides/install-the-cli-from-a-hub/) or from a [kndl install](/self-hosting/install/).
+- The Hub's URL, such as `https://hub.example.com`, and an account on it.
+
+## Sign in
+
+<Steps>
+
+1. Run:
+
+   ```sh
+   kndl login https://hub.example.com
+   ```
+
+   A `kndl` installed from a Hub can leave out the URL.
+
+2. Your browser opens the Hub's sign-in page. Check that it names the machine you ran the command on, and press **Approve**.
+
+   Only approve a sign-in you started yourself. Anyone who sends you such a link could act as you.
+
+3. The browser shows **kndl is signed in**, and the terminal says:
+
+   ```
+   Signed in to https://hub.example.com as ada, on laptop. The CLI token is in /home/ada/.config/kndl/cli.json, readable only by you.
+   ```
+
+</Steps>
+
+## Sign in over SSH
+
+Over SSH, the CLI doesn't open a browser. Pass `--no-browser` to get the same anywhere:
+
+```sh
+kndl login https://hub.example.com --no-browser
+```
+
+<Steps>
+
+1. Open the address the CLI prints in a browser on any machine.
+
+2. Check the machine's name, and press **Approve**. The page shows a code, such as `ABCD-EFGH-JKMN-PQRS`.
+
+3. Paste the code into the terminal and press Enter. It works once, within 10 minutes.
+
+</Steps>
+
+## Check who you are
+
+```sh
+kndl whoami
+```
+
+```
+Hub:     https://hub.example.com
+Account: ada (Ada Lovelace)
+Machine: laptop, signed in 2026-10-06
+```
+
+The CLI is signed in to one Hub at a time. Running `kndl login` again replaces the sign-in.
+
+## Sign out
+
+```sh
+kndl logout
+```
+
+To sign out a machine you can't reach, open your **Account** page and press **Revoke** beside it under **CLI tokens**.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Forward a Session's ports"
+    href="/kndl/guides/forward-a-sessions-ports/"
+    description="Open a Session's dev server on your machine."
+  />
+  <LinkCard
+    title="Commands"
+    href="/kndl/reference/commands/#kndl-login"
+    description="login, logout and whoami in full."
+  />
+</CardGrid>

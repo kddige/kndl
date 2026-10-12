@@ -1,0 +1,99 @@
+---
+title: Publish and add an MCP server package
+description: Describe a remote MCP server in a package, publish it in git or as an archive, add it to a Hub, and upgrade it to a new version.
+sidebar:
+  order: 10
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Describe a remote MCP server once, in a package any Hub can add and upgrade.
+
+A package is two files, a `package.json` and a `kndl.json`. The Hub reads them and runs nothing in the package.
+
+## What you need
+
+- A remote MCP server, as for [Add a remote MCP server](/guides/add-a-remote-mcp-server/#what-you-need).
+- To publish from git, a public repo the Hub can fetch over `https://`.
+
+## Write the package
+
+<Steps>
+
+1. Make a folder, such as `linear-mcp/`, or use the root of the server's own repo.
+
+2. Add a `package.json` with a `name` and a `version`. The name becomes the MCP server's id, so pick one you own on npm or under your own scope:
+
+   ```json
+   { "name": "@acme/linear-mcp", "version": "1.0.0" }
+   ```
+
+3. Beside it, add a `kndl.json` with the name people see and the server's URL:
+
+   ```json
+   {
+     "displayName": "Linear",
+     "description": "Linear's issues and projects.",
+     "mcp": { "url": "https://mcp.linear.example/mcp" }
+   }
+   ```
+
+   If the server needs a key, add `auth` with [header secrets](/reference/mcp-server-packages/#header-secrets).
+
+</Steps>
+
+## Publish it
+
+- **In git:** commit both files and push. Tag each version, such as `v1.0.0`, so a Hub can pin to it.
+- **As an archive:** run `npm pack` in the folder, or zip it. The archive must be 4 MiB or less.
+
+## Add it to the Hub
+
+<Steps>
+
+1. Press **MCP** in the sidebar, then **Add package**.
+
+2. Choose where it is:
+   - **From git:** enter the **Git repo URL**, and optionally a **Ref** (a branch, tag or commit) and the **Folder** it's in.
+   - **Upload:** choose the package's folder, or an archive of it.
+
+3. Press **Read package**. The Hub shows what it read. Nothing is added yet.
+
+4. Check it, then press **Add**.
+
+</Steps>
+
+The MCP server is listed under its package name with its version, such as `1.0.0 (3f2c9a1)`. Turn it on for Repos [as any MCP server](/guides/add-a-remote-mcp-server/#turn-it-on-for-repos).
+
+## Upgrade it
+
+A packaged MCP server stays on the version it was added at, until someone upgrades it.
+
+<Steps>
+
+1. Publish the new version.
+
+2. On the MCP server, press **Upgrade**. From git, the Hub fetches the same ref again. From an upload, choose the new version and press **Read package**.
+
+3. Check what changes. A warning lists any new header secrets, and any values the upgrade clears.
+
+4. Press **Upgrade**.
+
+</Steps>
+
+Running Sessions show **MCP servers changed**: **Restart** applies the upgrade. To pin a server from git to another tag, press **Add package** and read the same repo at that tag. The Hub offers it as an upgrade.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="MCP server packages"
+    href="/kndl/reference/mcp-server-packages/"
+    description="Every field of kndl.json, and the limits."
+  />
+  <LinkCard
+    title="MCP servers"
+    href="/kndl/reference/mcp-servers/#edits-that-clear-values"
+    description="Which changes clear Installations' values."
+  />
+</CardGrid>

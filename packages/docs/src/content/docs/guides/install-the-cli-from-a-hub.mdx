@@ -1,0 +1,87 @@
+---
+title: Install the CLI from a Hub
+description: Install the kndl command from a Hub with one line, on a laptop that runs no Hub or Runner, and keep it on the Hub's version.
+sidebar:
+  order: 11
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Get the `kndl` command on your laptop from your team's Hub. It keeps itself on the Hub's version.
+
+This command doesn't run a Hub or a Runner. To make a machine one, [install kndl](/self-hosting/install/) instead.
+
+## What you need
+
+- The Hub's URL, such as `https://hub.example.com`.
+- macOS or Linux, on arm64 or x64. On Windows, use WSL.
+- `curl` or `wget`.
+
+## Install it
+
+<Steps>
+
+1. Run the Hub's install script:
+
+   ```sh
+   curl -fsSL https://hub.example.com/cli | sh
+   ```
+
+   The first install for a platform can take a minute while the Hub builds it.
+
+2. If the script says `~/.local/bin` isn't on your `PATH`, add the line it prints to `~/.zshrc` or `~/.bashrc`, and open a new terminal:
+
+   ```sh
+   export PATH="$HOME/.local/bin:$PATH"
+   ```
+
+3. Check that it runs:
+
+   ```sh
+   kndl --version
+   ```
+
+</Steps>
+
+To install it somewhere else, set `KNDL_BIN_DIR`:
+
+```sh
+curl -fsSL https://hub.example.com/cli | KNDL_BIN_DIR="$HOME/bin" sh
+```
+
+## Updates
+
+Each time you run it, `kndl` checks the Hub it came from. When the Hub runs a different version, `kndl` updates itself first:
+
+```
+kndl: updating to 1e9cf127d5c2 from https://hub.example.com...
+kndl: updated to 1e9cf127d5c2.
+```
+
+If the Hub doesn't answer within two seconds, `kndl` runs as it is. Set `KNDL_NO_SELF_UPDATE=1` to turn updates off.
+
+Commands that set up a machine, such as `onboard`, `status` and `update`, need a full install, and say so.
+
+## Remove it
+
+Sign it out first, so the Hub revokes its token, then delete it:
+
+```sh
+kndl logout
+rm ~/.local/bin/kndl ~/.config/kndl/cli.json
+```
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Sign in the CLI"
+    href="/kndl/guides/sign-in-the-cli/"
+    description="Sign it in to the Hub as you."
+  />
+  <LinkCard
+    title="Forward a Session's ports"
+    href="/kndl/guides/forward-a-sessions-ports/"
+    description="What the CLI is for, day to day."
+  />
+</CardGrid>

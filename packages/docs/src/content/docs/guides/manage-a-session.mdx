@@ -1,0 +1,79 @@
+---
+title: Manage a Session
+description: Rename a Session, change its model and effort, put it to sleep or keep it awake, and delete and restore it.
+sidebar:
+  order: 2
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Rename a Session, choose its model, control when it sleeps, and delete or restore it. Anyone in the Session can do each of these.
+
+## Rename it
+
+<Steps>
+
+1. Press the pencil beside the title in the Session's header, or on its row in the sidebar.
+
+2. Type the name, up to 80 characters, and press Enter. Esc cancels.
+
+</Steps>
+
+A Session without a name shows its Work branch. Clear the name to go back to it.
+
+## Choose the model and effort
+
+The button at the left of the prompt box shows the Session's model and effort, such as **Sonnet 5.5 · High**. It's one setting for everyone in the Session.
+
+<Steps>
+
+1. Press the button. **Default (recommended)** is Claude Code's own default.
+
+2. Pick a model, or open **Effort** and pick **Low**, **Medium**, **High**, **Extra** or **Max**.
+
+</Steps>
+
+The change applies from the next Turn. The Runner restarts Claude Code in the same conversation, and the next prompt waits until it's back. Restarting interrupts running subagents, so the web UI asks first while any run.
+
+## Sleep and wake
+
+A Session goes to sleep after 15 minutes, by default, when nothing is happening: no Turn or subagent running, no prompt queued, no open question, and nobody in it. Sleeping stops Claude Code and the Sandbox. The Workspace, the conversation and the Sandbox's disks are kept.
+
+- **Sleep now**, in the header, puts it to sleep at once.
+- **Any prompt** wakes it, as does **Wake now** on its banner. Claude Code resumes the same conversation, with `node_modules`, caches and Docker's data as they were.
+
+## Keep it awake
+
+To keep a Session running while nobody is in it, such as for a dev server or a long command, turn on **Keep awake** in its header. The sidebar marks the Session with a sun, and the header says who turned it on.
+
+Turn **Keep awake** off, or press **Sleep now**, to let it sleep again.
+
+## When its Runner goes offline
+
+A Session whose Runner is offline is Frozen. You can read it, and new prompts wait in its queue. When the Runner is back, the Session carries on, and runs the waiting prompts.
+
+## Delete and restore it
+
+**Delete Session**, the bin in the header, archives the Session. Its Sandbox is destroyed. Its Workspace and conversation are kept for 30 days by default, then deleted.
+
+To restore it, press **Undo** in the toast, or **Restore** on it in **Archived Sessions**, in the sidebar. A restored Session starts Asleep. The next prompt wakes it in a fresh Sandbox, without the old `node_modules` or Docker data.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Session lifecycle"
+    href="/kndl/concepts/session-lifecycle/"
+    description="Each state, and what sleep, wake and archive keep."
+  />
+  <LinkCard
+    title="Work with subagents"
+    href="/kndl/guides/work-with-subagents/"
+    description="What happens to running agents when a Session sleeps."
+  />
+  <LinkCard
+    title="A Session doesn't go to sleep"
+    href="/kndl/troubleshooting/sessions/#a-session-doesnt-go-to-sleep"
+    description="Find what keeps a Session awake."
+  />
+</CardGrid>
