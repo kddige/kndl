@@ -67,6 +67,50 @@ const state = {
 
 const report = (event: Record<string, unknown>) => state.link?.report(event)
 
+/**
+ * The prompts given Claude Code, by id, so one delivered again isn't run twice (#323): the Hub
+ * delivers the head of its queue again when it restarts, or when the TurnStarted that takes a
+ * prompt out of it was lost. Kept here for this process, and in the store, which is in the
+ * Session's own Claude configuration, for the next: the last `SubmittedKept` of them.
+ */
+const submitted = {
+  ids: new Set<string>(),
+  /** The store's list is read, changed and written back one change at a time. */
+  writing: Promise.resolve(),
+}
+const SubmittedKept = 200
+
+const storeSubmitted = (
+  $: EngineInterface,
+  change: (ids: ReadonlyArray<string>) => Array<string>,
+) => {
+  submitted.writing = submitted.writing
+    .then(async () => {
+      const kept = await $.store.get("submitted")
+      const ids = Array.isArray(kept) ? kept.filter((id) => typeof id === "string") : []
+      await $.store.set("submitted", change(ids).slice(-SubmittedKept))
+    })
+    .catch(() => undefined)
+  return submitted.writing
+}
+
+/** Whether `promptId` was given Claude Code already; if not, it is now said to be. */
+const submittedBefore = async ($: EngineInterface, promptId: string) => {
+  // Checked and taken before anything is awaited, so a prompt delivered twice at once runs once.
+  if (submitted.ids.has(promptId)) return true
+  submitted.ids.add(promptId)
+  const kept = await $.store.get("submitted").catch(() => undefined)
+  if (Array.isArray(kept) && kept.includes(promptId)) return true
+  await storeSubmitted($, (ids) => [...ids, promptId])
+  return false
+}
+
+/** `promptId` wasn't given Claude Code after all, so it may be delivered again. */
+const notSubmitted = ($: EngineInterface, promptId: string) => {
+  submitted.ids.delete(promptId)
+  void storeSubmitted($, (ids) => ids.filter((id) => id !== promptId))
+}
+
 const setBand = ($: EngineInterface, change: Partial<HubLinkBand>) =>
   update($, band, (value) => ({ ...value, ...change })).catch(() => undefined)
 
@@ -78,9 +122,17 @@ const bandStatus = (status: LinkStatus): Partial<HubLinkBand> =>
 type Command<Tag extends ModCommand["_tag"]> = Extract<ModCommand, { _tag: Tag }>
 
 const deliverPrompt = async ($: EngineInterface, command: Command<"DeliverPrompt">) => {
+  if (await submittedBefore($, command.promptId)) {
+    // A Hub from before #323 would refuse the event, so it keeps the prompt queued: still run once.
+    if (state.link?.takesAlreadySubmitted) {
+      report({ _tag: "PromptAlreadySubmitted", promptId: command.promptId })
+    }
+    return
+  }
   const failed = (message: string) => {
     // No Turn starts with it.
     void $.state.set(delivered, null).catch(() => undefined)
+    notSubmitted($, command.promptId)
     report({ _tag: "PromptFailed", promptId: command.promptId, message })
   }
   const attachments = command.attachments ?? []

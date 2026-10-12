@@ -33,6 +33,7 @@ const modToHub = [
   },
   ...turnEvents,
   { _tag: "PromptFailed", promptId: "p-1", message: "prompt dropped by a hook" },
+  { _tag: "PromptAlreadySubmitted", promptId: "p-1" },
   {
     _tag: "AgentCommandFailed",
     agentId: "a-1",
@@ -216,6 +217,17 @@ describe("the HTTP bodies", () => {
     expectEveryTag(ModHelloReply, hubToMod.slice(0, 2))
     expectRoundTrips(ModHelloReply, hubToMod.slice(0, 2))
     expectRejected(ModHelloReply, hubToMod[3])
+  })
+
+  test("a welcome says the Hub takes PromptAlreadySubmitted; a mod from before reads it all the same (#323)", () => {
+    const welcome = { _tag: "ModWelcome", protocolVersion: ProtocolVersion, alreadySubmitted: true }
+    expectRoundTrips(ModHelloReply, [welcome])
+    // An older mod's schema has no such key, and ignores it.
+    const before = Schema.TaggedStruct("ModWelcome", { protocolVersion: Schema.Number })
+    expect(Schema.decodeUnknownSync(before)(welcome)).toEqual({
+      _tag: "ModWelcome",
+      protocolVersion: ProtocolVersion,
+    })
   })
 
   test("ModCommands round-trips numbered commands, and none", () => {

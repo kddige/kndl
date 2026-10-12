@@ -474,6 +474,28 @@ describe("the Prompt queue", () => {
     ])
     expect(await bobWeb.untaken("CommandFailed")).toEqual([])
   })
+
+  test("takes a prompt the mod had given Claude Code already out of the queue, and delivers the next (#323)", async () => {
+    // As after a Hub restart, which forgets the prompt was delivered, or a TurnStarted lost: the
+    // head of the queue is delivered again, and the mod doesn't run it twice.
+    const { web, sessionId, mod } = await sessionScene()
+    joinSession(web, sessionId)
+    web.send({ _tag: "SendPrompt", sessionId, text: "one" })
+    web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    const [one, two] = (await web.take("PromptQueueChanged", queueIs("one", "two"))).queue
+    expect((await mod.deliveries(500)).map((command) => command.promptId)).toEqual([
+      defined(one).id,
+    ])
+
+    await mod.post({ _tag: "PromptAlreadySubmitted", promptId: defined(one).id })
+
+    await web.take("PromptQueueChanged", queueIs("two"))
+    expect((await mod.deliveries(500)).map((command) => command.promptId)).toEqual([
+      defined(two).id,
+    ])
+    // Nothing failed: its sender isn't told otherwise.
+    expect(await web.untaken("CommandFailed")).toEqual([])
+  })
 })
 
 /** The prompts sent to join the running Turn since the last poll. */

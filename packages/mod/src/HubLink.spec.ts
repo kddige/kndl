@@ -127,6 +127,21 @@ describe("HubLink", () => {
     expect(handled).toEqual(["StopTurn", "StopTurn"])
   })
 
+  test("knows a Hub takes PromptAlreadySubmitted only once its welcome says so (#323)", async () => {
+    const takes = { _tag: "ModWelcome", protocolVersion: ProtocolVersion, alreadySubmitted: true }
+    for (const [reply, expected] of [
+      [welcome, false],
+      [{ status: 200, text: JSON.stringify(takes) }, true],
+    ] as const) {
+      const { link } = harness((request) => (request.path === "/mod/hello" ? reply : undefined))
+      expect(link.takesAlreadySubmitted).toBe(false)
+      link.start()
+      await settle()
+      link.stop()
+      expect(link.takesAlreadySubmitted).toBe(expected)
+    }
+  })
+
   test("without onCommand only says hello, and never polls", async () => {
     const { link, requests, statuses } = harness(() => welcome, { runsCommands: false })
     link.start()

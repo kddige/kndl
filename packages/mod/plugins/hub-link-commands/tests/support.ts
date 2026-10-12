@@ -9,7 +9,14 @@ export const hubUrl = "http://hub.test"
 
 type Fetched = { url: string; body?: string }
 
+/** The welcome of a Hub that takes PromptAlreadySubmitted (#323). */
 export const welcome = {
+  status: 200,
+  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 2, alreadySubmitted: true }),
+}
+
+/** A Hub's from before #323, which refuses a PromptAlreadySubmitted. */
+export const olderWelcome = {
   status: 200,
   text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 2 }),
 }
@@ -22,7 +29,8 @@ export const answer = (status: number, text: string) => ({
 /**
  * A session a Runner started, linked to a Hub whose first poll answers `commands` once `ready`
  * settles, and whose later ones are held, as its long poll does; it answers for the attachments in
- * `files`, by id and then offset, and 404 for any other. Returns the requests, and the events posted.
+ * `files`, by id and then offset, and 404 for any other, and its hello with `hello`. Returns the
+ * requests, and the events posted.
  */
 export const linkedSession = (
   on: On,
@@ -30,6 +38,7 @@ export const linkedSession = (
   ready: Promise<void> = Promise.resolve(),
   env: Record<string, string> = {},
   files: Record<string, Record<number, Record<string, unknown>>> = {},
+  hello: { status: number; text: string } = welcome,
 ) => {
   mock.env(on, {
     KNDL_URL: hubUrl,
@@ -49,7 +58,7 @@ export const linkedSession = (
       url: e.url,
       ...(typeof e.init?.body === "string" ? { body: e.init.body } : {}),
     })
-    if (e.url.endsWith("/mod/hello")) return answer(welcome.status, welcome.text)
+    if (e.url.endsWith("/mod/hello")) return answer(hello.status, hello.text)
     if (e.url.endsWith("/mod/events")) return answer(204, "")
     const [, attachment, offset] = /\/mod\/attachments\/([^?]+)\?offset=(\d+)$/.exec(e.url) ?? []
     if (attachment !== undefined) {

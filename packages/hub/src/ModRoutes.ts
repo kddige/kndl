@@ -86,7 +86,10 @@ export const ModRoutes = HttpRouter.use(
         greeted.add(grant.sessionId)
         yield* relay.modHello(grant.sessionId, hello.value).pipe(Effect.orDie)
         return yield* replyToHello(
-          ModHelloReply.cases.ModWelcome.make({ protocolVersion: ProtocolVersion }),
+          ModHelloReply.cases.ModWelcome.make({
+            protocolVersion: ProtocolVersion,
+            alreadySubmitted: true,
+          }),
         )
       }).pipe(badRequest),
     )

@@ -275,6 +275,8 @@ describe("mod channel", () => {
       expect(await response.json()).toEqual({
         _tag: "ModWelcome",
         protocolVersion: ProtocolVersion,
+        // So the mod may tell it of a prompt delivered again (#323).
+        alreadySubmitted: true,
       })
     })
 
