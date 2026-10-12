@@ -1,6 +1,7 @@
 {
   "name": "kndl",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "workspaces": [
     "packages/*"

@@ -1,6 +1,7 @@
 {
   "name": "@kndl/cli",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "kndl": "src/main.ts"
