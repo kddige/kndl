@@ -44,7 +44,7 @@ import {
   statusStep,
 } from "./Services.ts"
 import { Shell, step } from "./Shell.ts"
-import type { Checkout } from "./Update.ts"
+import { type Checkout, ChannelKey, Channels } from "./Update.ts"
 
 /** This machine's platform, or a failure on one kndl doesn't install on. */
 export function platform(): Platform | undefined {
@@ -213,7 +213,14 @@ export const readCheckout = (app: string) =>
     const branch = yield* git("symbolic-ref", "--quiet", "--short", "HEAD")
     const commit = (yield* git("rev-parse", "HEAD")) ?? "unknown"
     const tag = branch === undefined ? yield* git("describe", "--tags", "--exact-match") : undefined
-    return { branch: branch || undefined, commit, tag: tag || undefined } satisfies Checkout
+    const recorded = yield* git("config", "--get", ChannelKey)
+    const channel = Channels.find((name) => name === recorded)
+    return {
+      branch: branch || undefined,
+      commit,
+      tag: tag || undefined,
+      channel,
+    } satisfies Checkout
   })
 
 /** What Prerequisites.ts plans from. */

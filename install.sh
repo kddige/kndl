@@ -4,7 +4,12 @@
 # in. Run again on an installed machine, it updates the install and runs `kndl doctor --fix`.
 #
 #   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
-#   ... | sh -s -- --ref <branch|tag|sha> --no-onboard
+#   ... | sh -s -- --channel <stable|dev> --ref <branch|tag|sha> --no-onboard
+#
+# A fresh install follows the stable Channel: the latest Release, a tag like v2026.10.1 (ADR
+# 0025). --channel dev follows main instead, and --ref, which wins over --channel, follows a
+# branch or pins a tag or commit. Run on an installed machine, only what's passed changes what it
+# follows.
 #
 # The home is KNDL_HOME, by default ~/.kndl. KNDL_REPO overrides where the
 # checkout is cloned from (a URL, or a local checkout). Everything is in functions, and the last
@@ -22,7 +27,7 @@ die() {
 }
 
 usage() {
-  say "Usage: install.sh [--ref <branch|tag|sha>] [--no-onboard]"
+  say "Usage: install.sh [--channel <stable|dev>] [--ref <branch|tag|sha>] [--no-onboard]"
 }
 
 # Puts a line in the shell's startup file that adds ~/.local/bin to PATH, once.
@@ -83,6 +88,35 @@ checkout_ref() {
   fi
 }
 
+# Prints the latest Release among the checkout's tags, compared by number (v2026.10.10 is after
+# v2026.10.9), or nothing. A tag with a suffix, like -beta.1, isn't a Release. The CLI's
+# latestRelease in Update.ts picks the same one.
+latest_release() {
+  git -C "$1" tag --list 'v*' |
+    grep -E '^v[0-9]{4}\.([1-9]|1[0-2])\.[1-9][0-9]*$' |
+    sed 's/^v//' |
+    sort -t . -k1,1n -k2,2n -k3,3n |
+    tail -n 1 |
+    sed 's/^./v&/'
+}
+
+# Moves a fresh checkout to its Channel, and records the Channel for `kndl update`
+# (kndl.channel in the checkout's git config).
+checkout_channel() {
+  app=$1
+  channel=$2
+  if [ "$channel" = stable ]; then
+    release=$(latest_release "$app")
+    if [ -n "$release" ]; then
+      git -C "$app" checkout --quiet --detach "refs/tags/$release"
+      say "Installing Release $release."
+    else
+      say "There's no Release yet: installing main. kndl update moves to the first Release."
+    fi
+  fi
+  git -C "$app" config kndl.channel "$channel"
+}
+
 # Writes the `kndl` command; the CLI's Layout.ts writes the same script.
 write_wrapper() {
   wrapper=$1
@@ -118,9 +152,19 @@ has_tty() {
 
 main() {
   ref=""
+  channel=""
   onboard=1
   while [ $# -gt 0 ]; do
     case $1 in
+      --channel)
+        [ $# -ge 2 ] || die "$1 needs a value."
+        channel=$2
+        shift 2
+        ;;
+      --channel=*)
+        channel=${1#*=}
+        shift
+        ;;
       --ref | --branch)
         [ $# -ge 2 ] || die "$1 needs a value."
         ref=$2
@@ -144,6 +188,13 @@ main() {
         ;;
     esac
   done
+
+  case $channel in
+    "" | stable | dev) ;;
+    *) die "--channel is stable or dev, not $channel." ;;
+  esac
+  # --ref wins over --channel.
+  [ -z "$ref" ] || channel=""
 
   case "$(uname -s)" in
     Darwin | Linux) ;;
@@ -176,6 +227,8 @@ main() {
     status=0
     if [ -n "$ref" ]; then
       "$wrapper" update --ref "$ref" || status=$?
+    elif [ -n "$channel" ]; then
+      "$wrapper" update --channel "$channel" || status=$?
     else
       "$wrapper" update || status=$?
     fi
@@ -190,7 +243,11 @@ main() {
   [ ! -e "$app" ] || die "$app exists but isn't a git checkout: move it, and run this again."
   say "Installing kndl in $home."
   clone "$repo" "$app"
-  [ -z "$ref" ] || checkout_ref "$app" "$ref"
+  if [ -n "$ref" ]; then
+    checkout_ref "$app" "$ref"
+  else
+    checkout_channel "$app" "${channel:-stable}"
+  fi
   (cd "$app" && "$bun" install --frozen-lockfile)
   write_wrapper "$wrapper" "$home" "$bun"
   add_to_path "$(dirname "$wrapper")"
