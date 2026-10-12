@@ -1,0 +1,101 @@
+---
+title: Reach the Hub from other machines
+description: Serve the Hub over HTTPS with a reverse proxy or Tailscale, or through an SSH tunnel, so your team and Runners elsewhere can reach it.
+sidebar:
+  order: 3
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components"
+
+Give the Hub one URL that your team's browsers and your Runners reach, with sign-in working.
+
+The Hub listens on `127.0.0.1:7777`, so only its own machine reaches it. Browsers drop its sign-in cookie over plain HTTP anywhere but loopback, so the URL must be HTTPS. Pick one way:
+
+| Way                                 | For                   | Certificate    |
+| ----------------------------------- | --------------------- | -------------- |
+| [A reverse proxy](#a-reverse-proxy) | A team, on a domain   | From the proxy |
+| [Tailscale Serve](#tailscale-serve) | A team on one tailnet | From Tailscale |
+| [An SSH tunnel](#an-ssh-tunnel)     | One person            | None needed    |
+
+## A reverse proxy
+
+1. Put a proxy with a certificate in front of the Hub, such as [Caddy](https://caddyserver.com). It must pass WebSocket upgrades through, which Caddy does by default:
+
+   ```
+   hub.example.com {
+     reverse_proxy 127.0.0.1:7777
+   }
+   ```
+
+2. On the **Hub's machine**, give the Hub its URL:
+
+   ```sh
+   kndl onboard --reach https --public-url https://hub.example.com
+   ```
+
+3. Add `https://hub.example.com/auth/github/callback` to the GitHub App's **Callback URLs**, if the App was made for another URL. See [Set up the GitHub App](/self-hosting/set-up-the-github-app/).
+
+Runners then use `https://hub.example.com` as the Hub's URL, and connect over `wss:`.
+
+## Tailscale Serve
+
+[Tailscale Serve](https://tailscale.com/kb/1312/serve) gives the Hub an HTTPS URL that only your tailnet reaches.
+
+1. Turn on HTTPS certificates in your tailnet's admin console, under **DNS**.
+
+2. On the **Hub's machine**, serve the Hub:
+
+   ```sh
+   tailscale serve --bg 7777
+   ```
+
+   It prints the URL, such as `https://hub-box.your-tailnet.ts.net`.
+
+3. Give the Hub that URL with `kndl onboard --reach https --public-url <url>`, and add `<url>/auth/github/callback` to the GitHub App's **Callback URLs**.
+
+## An SSH tunnel
+
+For one person, keep the Hub on **Only this machine (127.0.0.1)** and forward its port to your laptop:
+
+```sh
+ssh -L 7777:127.0.0.1:7777 hub-box
+```
+
+Open [http://127.0.0.1:7777](http://127.0.0.1:7777) on your laptop. Use exactly the URL the Hub has: browsers treat `localhost` and `127.0.0.1` as different sites. Dev login works this way too.
+
+## Last resort: plain HTTP on a network you trust
+
+`--reach lan` serves the Hub on `0.0.0.0` over plain HTTP. Sign-in then needs `--insecure-cookies` (`HUB_INSECURE_COOKIES=1`):
+
+```sh
+kndl onboard --reach lan --public-url http://192.168.1.10:7777 --insecure-cookies
+```
+
+:::caution[Sign-ins travel in cleartext]
+Anyone who can watch the network can take over a sign-in.
+:::
+
+Without it, the Hub logs that browsers will drop its cookies and sign-in will fail.
+
+## Whichever you pick
+
+- **Use one URL.** The Hub refuses signed-in requests from any origin but `HUB_PUBLIC_URL`'s.
+- **Dev login needs loopback.** It works only through an SSH tunnel. For a team, set up GitHub sign-in.
+- **Behind a proxy or Tailscale, keep the Hub on loopback.** `--reach https` does.
+
+See [the security model](/concepts/security-model/) for what the Hub exposes.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Set up the GitHub App"
+    description="Sign people in with GitHub."
+    href="/kndl/self-hosting/set-up-the-github-app/"
+  />
+  <LinkCard
+    title="Add a Runner"
+    description="Pair another machine with the Hub."
+    href="/kndl/self-hosting/add-a-runner/"
+  />
+</CardGrid>

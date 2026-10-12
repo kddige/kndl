@@ -1,0 +1,75 @@
+---
+title: Run the Hub
+description: Start, stop and check the Hub's service, change its settings, and choose how people sign in.
+sidebar:
+  order: 2
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components"
+
+Run the Hub as a service, change its settings, and choose how people sign in.
+
+## What you need
+
+- A machine where [`kndl onboard`](/self-hosting/install/#set-the-machine-up) set up a Hub.
+
+## Control the service
+
+```sh
+kndl hub status    # whether the service runs
+kndl hub stop      # stop it until the next start or login
+kndl hub start
+kndl logs hub -f   # follow its log, ~/.kndl/logs/hub.log
+```
+
+While the Hub is stopped, Sessions keep running on their Runners. The Runners reconnect when it's back.
+
+## Check it's up
+
+```sh
+curl http://127.0.0.1:7777/health
+```
+
+```
+{"status":"ok"}
+```
+
+`/health` needs no sign-in. `kndl status` checks it for you.
+
+## Change its settings
+
+The Hub's settings are in `~/.kndl/hub.env`. Either run `kndl onboard` again, or edit the file and restart the Hub with it:
+
+```sh
+kndl hub install
+```
+
+Every setting is in the [configuration reference](/reference/configuration/#hub).
+
+:::danger[Back up `hub.env` with `hub.db`]
+Once a secret is saved, the Hub refuses to start without the same `HUB_SECRETS_KEY`, and nothing can read the secrets without it.
+:::
+
+## Choose how people sign in
+
+The Hub needs at least one way to sign in:
+
+- **GitHub sign-in**, for a team. [Set up the GitHub App](/self-hosting/set-up-the-github-app/), then [let people in](/self-hosting/let-people-in/).
+- **Dev login**, for a try on one machine. With `KNDL_DEV_LOGIN=1`, anyone who reaches the Hub signs in under any name. Onboard offers it for a Hub only this machine reaches, and the Hub refuses to start with it unless `HOST` and `HUB_PUBLIC_URL` are both loopback.
+
+With neither, the sign-in page says the Hub has no way to sign in turned on.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Reach the Hub from other machines"
+    description="Serve the Hub over HTTPS for your team and Runners elsewhere."
+    href="/kndl/self-hosting/reach-the-hub-from-other-machines/"
+  />
+  <LinkCard
+    title="Set up the GitHub App"
+    description="Sign people in with GitHub, and give Sessions their Repo's token."
+    href="/kndl/self-hosting/set-up-the-github-app/"
+  />
+</CardGrid>

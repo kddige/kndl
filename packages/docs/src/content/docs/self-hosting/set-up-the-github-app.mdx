@@ -1,0 +1,115 @@
+---
+title: Set up the GitHub App
+description: Create the GitHub App that signs people in with GitHub and gives Runners and Sessions their Repo's tokens, and protect your default branch.
+sidebar:
+  order: 4
+---
+
+import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
+
+Create a GitHub App for the Hub, so people sign in with GitHub and Sessions can clone and push their Repo.
+
+The App does two jobs:
+
+- **Sign-in.** People sign in to the Hub with GitHub.
+- **Tokens.** The Hub mints short-lived tokens for Runners to clone Repos, and for `git` and `gh` in each Session's Sandbox ([ADR 0010](/contributing/decisions/0010-the-sandbox-gets-a-github-token/)).
+
+## Create it with onboard
+
+<Steps>
+
+1. On the **Hub's machine**, run:
+
+   ```sh
+   kndl onboard --github-app create
+   ```
+
+   It asks whether the App belongs to your account or an organization.
+
+2. Onboard opens a page that sends GitHub kndl's settings for the App: its name, `kndl-<machine>`, the Hub's sign-in callback, and [the permissions](#the-permissions). On GitHub, rename it if you like, and create it.
+
+3. GitHub sends your browser back. Onboard saves the App's private key in `~/.kndl` and its settings in `hub.env`, and prints the App's install link.
+
+4. [Install the App](#install-the-app) on the Repos your Sessions work on.
+
+</Steps>
+
+The sign-in page then offers **Sign in with GitHub**, and onboard prints the Hub's Setup link: [become the Owner](/self-hosting/let-people-in/#become-the-owner) with it.
+
+**Over SSH**, onboard prints the page's address, such as `http://127.0.0.1:41234/`, and the command that forwards its port. Run that command on your laptop, then open the address there. If the page GitHub returns to doesn't load, paste its address, with `code=` in it, at onboard's prompt.
+
+## Install the App
+
+Open the install link onboard printed, or the App's settings on GitHub and **Install App**. Choose your account or organization, and only the repositories Sessions should work on. Add more later the same way; the Hub needs no restart.
+
+Onboard makes the App private, so it installs only on the account that owns it. To install it on several accounts, [make it public](/self-hosting/let-people-in/#make-the-github-app-public).
+
+## The permissions
+
+The App needs these permissions, and no webhook:
+
+{/* permissions:start */}
+| Permission | Access | Why |
+|---|---|---|
+| Contents | read and write | Runners clone Repos; git in the Sandbox pushes branches. |
+| Pull requests | read and write | gh pr in the Sandbox: opening, reviewing and merging pull requests. |
+| Issues | read and write | gh issue in the Sandbox: reading and commenting on issues. |
+| Metadata | read-only | Repo access: the Hub asks GitHub who is a Repo's collaborator. GitHub gives every App this one. |
+| Members | read-only | Repo access on an organization: without it, GitHub hides access through the organization (owners, its base permission, teams), and the Hub refuses those people. An organization permission. |
+{/* permissions:end */}
+
+:::caution[Every Sandbox gets these permissions]
+Each Session's Sandbox gets a token with all of these on its own Repo. Anything running there can do what this list allows, and so can any permission you add, such as **Workflows**. See [the security model](/concepts/security-model/).
+:::
+
+## Keep the permissions in step
+
+The Hub checks the App and each installation at startup and every hour. When a permission is missing, a banner in the web UI lists it with links to fix it, and `kndl doctor` fails its `GitHub App` check.
+
+1. Open the App's permissions page, the banner's first link, add what's missing, and **Save changes**.
+2. For each installation, open its review link and **Accept new permissions**.
+3. Press **Check again** in the banner.
+
+## Use an App you made yourself
+
+Create one at [https://github.com/settings/apps/new](https://github.com/settings/apps/new), or under an organization's **Settings**, **Developer settings**, **GitHub Apps**:
+
+| Setting                                                | Value                                                                             |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Callback URLs                                          | `<HUB_PUBLIC_URL>/auth/github/callback`, one for each URL people reach the Hub at |
+| Request user authorization (OAuth) during installation | Off                                                                               |
+| Expire user authorization tokens                       | On                                                                                |
+| Webhook, Active                                        | Off                                                                               |
+| Permissions                                            | [The permissions](#the-permissions)                                               |
+
+Note its **App ID** and **Client ID**, and generate a **client secret** and a **private key**. Put the key's `.pem` file somewhere only you can read, then paste them all into:
+
+```sh
+kndl onboard --github-app manual
+```
+
+## Protect the default branch
+
+Anything running in a Session's Sandbox can push any branch of its Repo and merge its pull requests. Guard the default branch with a ruleset on each Repo:
+
+1. In the Repo's **Settings**, **Rules**, **Rulesets**, add a branch ruleset that targets the default branch.
+2. Require a pull request before merging, with at least one approval.
+3. Block force pushes.
+4. Leave the App off the bypass list.
+
+See [Git from Sessions](/concepts/git-from-sessions/) for what the token reaches.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Let people in"
+    description="Become the Hub's Owner and invite your team."
+    href="/kndl/self-hosting/let-people-in/"
+  />
+  <LinkCard
+    title="Add a Runner"
+    description="Pair another machine with the Hub."
+    href="/kndl/self-hosting/add-a-runner/"
+  />
+</CardGrid>
