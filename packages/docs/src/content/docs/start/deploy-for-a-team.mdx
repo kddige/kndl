@@ -18,10 +18,11 @@ Run the Hub on a server your team can reach, sign people in with GitHub, and add
 
 <Steps>
 
-1. On the **Hub's machine**, install kndl. Onboard starts on its own:
+1. On the **Hub's machine**, install kndl and start onboard:
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
+   kndl onboard
    ```
 
 2. Answer **Hub** (or **Both**, to run Sessions on it too). For who reaches it, answer **Behind HTTPS**, and give the public URL, such as `https://hub.example.com`. See [Install kndl](/self-hosting/install/#set-the-machine-up).
@@ -44,10 +45,10 @@ Run the Hub on a server your team can reach, sign people in with GitHub, and add
 
 1. In the web UI, open **Runners** and choose **Add a Runner**. Copy the `kndl runner join` command it shows.
 
-2. On the **Runner's machine**, install kndl without onboard, then paste the command:
+2. On the **Runner's machine**, install kndl, then paste the command:
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh -s -- --no-onboard
+   curl -fsSL https://raw.githubusercontent.com/kddige/kndl/main/install.sh | sh
    kndl runner join 'https://hub.example.com#7K2QD-M9XRT-4VBNC-H8PWE'
    ```
 
