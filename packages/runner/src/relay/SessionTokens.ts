@@ -1,11 +1,11 @@
-// Session tokens (ADR 0013): the only credential a Session's Claude Code and mod hold. Every
-// guest reaches the credential proxy from the same loopback address (spike #142), so the token
-// alone says which Session a request is from. The proxy swaps it for the Session's Claude
-// credential on the way to Anthropic, and for its mod token on the way to the Hub.
+// Session tokens (ADR 0026): what a Session's mod, and its Claude Code's MCP traffic, present to
+// the mod relay in place of the mod token. Every guest reaches the relay from the same loopback address (spike
+// #142), so the token alone says which Session a request is from. The relay swaps it for the
+// Session's mod token on the way to the Hub.
 //
 // A token is `chp_` and 32 random bytes. It is issued when a Session starts or wakes, replaced
-// when it starts again, and revoked when it sleeps, is archived or exits. Tokens, and the
-// credentials and mod tokens they stand for, live in this process's memory alone: never on disk.
+// when it starts again, and revoked when it sleeps, is archived or exits. Tokens, and the mod
+// tokens they stand for, live in this process's memory alone: never on disk.
 //
 // A Runner restart keeps running Sessions running (#157): the Runner reads each one's token back
 // from its Claude Code's environment in the Sandbox and holds it, for that Session alone. A held
@@ -13,7 +13,7 @@
 // let in again, standing for the Session's new grant.
 
 import { createHash, randomBytes } from "node:crypto"
-import type { ClaudeCredential, SessionId } from "@kndl/protocol"
+import type { SessionId } from "@kndl/protocol"
 import { Context, Effect, Layer, Redacted } from "effect"
 
 /** What a Session token stands for. */
@@ -21,11 +21,6 @@ export interface SessionGrant {
   readonly sessionId: SessionId
   /** The mod token the Hub gave the Session; the relay calls the Hub with it. */
   readonly modToken: Redacted.Redacted<string>
-  /**
-   * The Claude credential of the Session's Creator. Without one, the Session runs on the Runner's
-   * own (see RunnerCredential.ts).
-   */
-  readonly credential?: ClaudeCredential
 }
 
 export class SessionTokens extends Context.Service<
@@ -41,7 +36,7 @@ export class SessionTokens extends Context.Service<
      * {@link issue} lets it in again. False for one that isn't a Session token, or is another's.
      */
     readonly hold: (sessionId: SessionId, token: string) => Effect.Effect<boolean>
-    /** Revokes the Session's token, held or live, forgetting its credential and mod token. */
+    /** Revokes the Session's token, held or live, forgetting its mod token. */
     readonly revoke: (sessionId: SessionId) => Effect.Effect<void>
     /**
      * What a presented token stands for: its grant, `"Held"` for a held one, or undefined for one

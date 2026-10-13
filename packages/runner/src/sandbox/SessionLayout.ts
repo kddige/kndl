@@ -16,7 +16,7 @@ import type { Mount, SandboxSpec } from "./SandboxBackend.ts"
 export const workspaceGuestPath = "/workspace"
 
 /**
- * The name a guest reaches its host's loopback by, as the credential proxy (ADR 0013): every
+ * The name a guest reaches its host's loopback by, as the mod relay (ADR 0026): every
  * guest's connection arrives there from 127.0.0.1.
  */
 export const hostFromGuest = "host.microsandbox.internal"

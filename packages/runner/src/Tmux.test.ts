@@ -3,6 +3,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { tmpdir } from "node:os"
 import { BunServices } from "@effect/platform-bun"
+import type { SessionId } from "@kndl/protocol"
 import { Effect, Fiber, Layer, Redacted, Stream } from "effect"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { FakeSandboxBackend } from "./sandbox/FakeSandboxBackend.ts"
@@ -46,6 +47,25 @@ describe("lastOutputOf", () => {
     expect(lastOutputOf(screen, 40, 12)).toBe("e 98\nline 99")
   })
 })
+
+/** What `LEAKED` and `KEPT` a process launched in `id` with `unset` had, as it printed them. */
+const leakedIn = (id: SessionId, unset?: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const tmux = yield* Tmux
+    yield* tmux.launch({
+      sessionId: id,
+      cwd: tmpdir(),
+      argv: ["sh", "-c", 'printf "[%s][%s]\\n" "${LEAKED-unset}" "$KEPT"; sleep 0.3'],
+      env: { KEPT: "yes" },
+      ...(unset === undefined ? {} : { unset }),
+      size: { cols: 40, rows: 5 },
+    })
+    const pane = yield* tmux.attach(id)
+    yield* pane.events.pipe(Stream.runCollect)
+    const shown = yield* tmux.lastOutput(id)
+    yield* tmux.kill(id)
+    return shown
+  }).pipe(Effect.scoped)
 
 describe.skipIf(tmuxMissing)("makeTmux", () => {
   test("runs a command in tmux, streams its terminal and reports its exit", async () => {
@@ -240,6 +260,22 @@ describe.skipIf(tmuxMissing)("makeTmux", () => {
       expect(events.at(-1)).toEqual({ _tag: "Exited", exitCode: 0 })
       expect(yield* tmux.variable(id, "KNDL_MOD_TOKEN")).toBeUndefined()
       yield* tmux.kill(id)
+    })
+
+    await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))
+  }, 15_000)
+
+  test("keeps the variables it is told to out of the process, even ones the server has", async () => {
+    const program = Effect.gen(function* () {
+      // The server has a variable, as from the Sandbox's image, which a process gets by default.
+      // It stays up with no session, as the launch has it.
+      const server = "start-server ; set-option -g exit-empty off ; set-environment -g LEAKED image"
+      yield* hostBackend.exec(sessionId("tmux-env-1"), {
+        command: "tmux",
+        args: ["-L", socket, "-f", "/dev/null", ...server.split(" ")],
+      })
+      expect(yield* leakedIn(sessionId("tmux-env-1"))).toBe("[image][yes]")
+      expect(yield* leakedIn(sessionId("tmux-env-2"), ["LEAKED"])).toBe("[unset][yes]")
     })
 
     await Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestTmux)))

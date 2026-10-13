@@ -1,7 +1,8 @@
-// The Runner's side of fetching a Session's Claude credential from the Hub (ADR 0015): its
-// Creator's, asked for just before its Claude Code starts or wakes, and handed to the credential
-// proxy. It is kept in memory only, never written to the Runner's disk, and never logged. A
-// restarted Runner asks again.
+// The Runner's side of fetching a Session's Claude credential from the Hub (ADR 0026): its
+// Creator's setup token, asked for just before its Claude Code starts or wakes, and set on that
+// Claude Code's process alone. It is kept in memory only, never written to the Runner's disk or
+// the Sandbox's, and never logged. There is no fallback: a fetch the Hub refuses, or doesn't
+// answer in time, fails the start.
 
 import { randomUUID } from "node:crypto"
 import {
@@ -28,12 +29,10 @@ export class HubClaudeCredential extends Context.Service<
   HubClaudeCredential,
   {
     /**
-     * Asks the Hub for the Claude credential of a Session this Runner runs: its Creator's, or
-     * undefined when they have stored none, and the Runner's own is used.
+     * Asks the Hub for the Claude credential of a Session this Runner runs: its Creator's. Fails
+     * with the Hub's own message when it refuses, as for a Creator with none.
      */
-    readonly fetch: (
-      sessionId: SessionId,
-    ) => Effect.Effect<ClaudeCredential | undefined, ClaudeCredentialError>
+    readonly fetch: (sessionId: SessionId) => Effect.Effect<ClaudeCredential, ClaudeCredentialError>
     /** Hands the Hub's answer to the request waiting for it. */
     readonly receive: (
       reply: ClaudeCredentialFetched | ClaudeCredentialRefused,
@@ -45,15 +44,12 @@ export const HubClaudeCredentialLive = Layer.effect(
   HubClaudeCredential,
   Effect.gen(function* () {
     const hub = yield* HubLink
-    const pending = new Map<
-      string,
-      Deferred.Deferred<ClaudeCredential | undefined, ClaudeCredentialError>
-    >()
+    const pending = new Map<string, Deferred.Deferred<ClaudeCredential, ClaudeCredentialError>>()
 
     const fetch = (sessionId: SessionId) =>
       Effect.gen(function* () {
         const requestId = newRequestId()
-        const answer = yield* Deferred.make<ClaudeCredential | undefined, ClaudeCredentialError>()
+        const answer = yield* Deferred.make<ClaudeCredential, ClaudeCredentialError>()
         pending.set(requestId, answer)
         // While the Runner is offline the request waits in the HubLink, and the timeout runs.
         return yield* hub.send(FetchClaudeCredential.make({ requestId, sessionId })).pipe(
@@ -85,19 +81,18 @@ export const HubClaudeCredentialLive = Layer.effect(
             waiting,
             reply._tag === "ClaudeCredentialFetched"
               ? Exit.succeed(reply.credential)
-              : Exit.fail(
-                  new ClaudeCredentialError({
-                    message: `The Hub refused the Session's Claude credential: ${reply.message}`,
-                  }),
-                ),
+              : Exit.fail(new ClaudeCredentialError({ message: reply.message })),
           )
         }),
     })
   }),
 )
 
-/** No Hub to ask: every Session runs on the Runner's own credential. For tests. */
+/** No Hub to ask: every fetch is refused, so no Session starts. For tests. */
 export const NoHubClaudeCredential = Layer.succeed(
   HubClaudeCredential,
-  HubClaudeCredential.of({ fetch: () => Effect.succeed(undefined), receive: () => Effect.void }),
+  HubClaudeCredential.of({
+    fetch: () => Effect.fail(new ClaudeCredentialError({ message: "No Hub in this test." })),
+    receive: () => Effect.void,
+  }),
 )

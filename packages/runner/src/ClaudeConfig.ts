@@ -13,13 +13,11 @@ import {
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { ClaudeSessionIdPattern } from "@kndl/protocol"
-import type { ClaudePlan, ClaudeSubscriptionType } from "@kndl/protocol"
 import { Context, Data, Effect } from "effect"
 
 // What the Runner reads of Claude Code's state on its host, when there is any; none of it is
-// needed. The account and plan of Claude Code's login, from its config file `.claude.json`, for a
-// Runner whose own Claude credential is that login (ADR 0015); and what Claude Code kept of
-// Sessions from before they ran in Sandboxes (ADR 0013), to carry over or forget.
+// needed: what Claude Code kept of Sessions from before they ran in Sandboxes (ADR 0013), to
+// carry over or forget.
 
 export class ClaudeConfigError extends Data.TaggedError("ClaudeConfigError")<{
   readonly message: string
@@ -40,38 +38,6 @@ export function claudeConfigPath(
   if (exists(legacy)) return legacy
   const suffix = env.CLAUDE_CODE_CUSTOM_OAUTH_URL ? "-custom-oauth" : ""
   return join(configDir ?? homedir(), `.claude${suffix}.json`)
-}
-
-/** The signed-in account's email address, from `oauthAccount.emailAddress`. */
-export function accountFromClaudeConfig(config: unknown): string | undefined {
-  const account = field(field(config, "oauthAccount"), "emailAddress")
-  return typeof account === "string" && account.length > 0 ? account : undefined
-}
-
-/** Claude Code's `organizationType`s, by the plan Claude Code 2.1.289 takes each for. */
-const plansByOrganization: Record<string, ClaudeSubscriptionType> = {
-  claude_pro: "pro",
-  claude_max: "max",
-  claude_team: "team",
-  claude_enterprise: "enterprise",
-}
-
-/**
- * The plan of the signed-in account, from `oauthAccount.organizationType` and
- * `organizationRateLimitTier`, which Claude Code refreshes as it starts.
- */
-export function planFromClaudeConfig(config: unknown): ClaudePlan | undefined {
-  const account = field(config, "oauthAccount")
-  const organization = field(account, "organizationType")
-  const subscriptionType =
-    typeof organization === "string" && Object.hasOwn(plansByOrganization, organization)
-      ? plansByOrganization[organization]
-      : undefined
-  if (subscriptionType === undefined) return undefined
-  const tier = field(account, "organizationRateLimitTier")
-  return typeof tier === "string" && tier !== ""
-    ? { subscriptionType, rateLimitTier: tier }
-    : { subscriptionType }
 }
 
 /** How often a write lost to a Claude Code process rewriting the file is tried again. */
@@ -210,10 +176,4 @@ function objectOrEmpty(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
-}
-
-function field(value: unknown, key: string): unknown {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)[key]
-    : undefined
 }

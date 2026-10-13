@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type {
+  ClaudeCredential,
   HubToRunner,
   RelaunchSession,
   RunTestBuild,
@@ -22,13 +23,14 @@ import {
   Semaphore,
   Stream,
 } from "effect"
+import { claudeEnvironment, ClaudeTokenVariable, KeptOutOfClaude } from "./ClaudeEnvironment.ts"
 import { claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
 import { HubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
 import { OpenPorts } from "./OpenPorts.ts"
-import { CredentialProxy } from "./proxy/CredentialProxy.ts"
+import { ModRelay } from "./relay/ModRelay.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes, type SandboxStarted } from "./Sandbox.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
@@ -54,7 +56,7 @@ export class Sessions extends Context.Service<
      * Takes back the Sessions an earlier Runner left running, as after a restart (#157). Each
      * one whose Claude Code still runs in its Sandbox keeps running, its terminal streamed again.
      * The Session token its Claude Code holds, read back from it, is held for it alone at the
-     * proxy until the Hub gives it a new mod token (ModTokenReissued). Any other Sandbox left
+     * mod relay until the Hub gives it a new mod token (ModTokenReissued). Any other Sandbox left
      * running is stopped: the Hub has its Session Asleep once the Runner says hello without it.
      * Run once, at startup, before the hello.
      */
@@ -70,11 +72,6 @@ export class Sessions extends Context.Service<
      * reconnecting.
      */
     readonly snapshotAll: Effect.Effect<void>
-    /**
-     * How the Runner's own Claude credential is shown, for {@link RunnerHello}; undefined when it
-     * has none.
-     */
-    readonly ownClaudeAccount: Effect.Effect<string | undefined>
   }
 >()("@kndl/runner/Sessions") {}
 
@@ -91,11 +88,12 @@ const message = (cause: Cause.Cause<unknown>) => {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** `text` with every occurrence of `value` masked, character for character. */
-export function withoutValue(text: string, value: string | undefined): string {
-  return value === undefined || value === ""
-    ? text
-    : text.replaceAll(value, "*".repeat(value.length))
+/** `text` with every occurrence of each of `values` masked, character for character. */
+export function withoutValues(text: string, values: ReadonlyArray<string> = []): string {
+  return values.reduce(
+    (masked, value) => (value === "" ? masked : masked.replaceAll(value, "*".repeat(value.length))),
+    text,
+  )
 }
 
 export const SessionsLive = Layer.effect(
@@ -109,16 +107,16 @@ export const SessionsLive = Layer.effect(
     const hubGit = yield* HubGit
     const hubVariables = yield* HubVariables
     const hubClaudeCredential = yield* HubClaudeCredential
-    const proxy = yield* CredentialProxy
+    const relay = yield* ModRelay
     const ports = yield* OpenPorts
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
     /**
-     * The Session token each Session's Claude Code was started with, kept out of what it printed
-     * before it exited.
+     * The Session token and the setup token each Session's Claude Code was started with, kept out
+     * of what it printed before it exited.
      */
-    const sessionTokens = new Map<SessionId, string>()
+    const launchSecrets = new Map<SessionId, ReadonlyArray<string>>()
     /** What each started Session's Sandbox runs: its Environment version and Claude Code. */
     const sandboxStarts = new Map<SessionId, SandboxStarted>()
     /** Sessions kept running across a restart, whose Session token waits for a mod token. */
@@ -126,40 +124,17 @@ export const SessionsLive = Layer.effect(
     const locks = new Map<SessionId, Semaphore.Semaphore>()
 
     /**
-     * Gives the Session a Session token for the credential proxy, standing for its mod token and
-     * its Creator's Claude credential, fetched from the Hub as it starts or wakes (ADR 0015) and
-     * kept in memory only. Without one, or when the Hub can't be asked, the proxy uses the
-     * Runner's own. Its Claude Code holds the token in place of the mod token and any Claude
-     * credential (ADR 0013).
+     * Gives the Session a Session token for the mod relay, standing for its mod token. Its mod and
+     * Claude Code's MCP traffic hold the token in place of the mod token.
      */
     const admit = (sessionId: SessionId, modToken: string) =>
-      Effect.gen(function* () {
-        const credential = yield* hubClaudeCredential
-          .fetch(sessionId)
-          .pipe(
-            Effect.catch((error) =>
-              Effect.as(
-                Effect.logWarning(
-                  `Session ${sessionId} runs on this Runner's Claude credential: ${error.message}`,
-                ),
-                undefined,
-              ),
-            ),
-          )
-        const pass = yield* proxy.admit({
-          sessionId,
-          modToken: Redacted.make(modToken),
-          ...(credential !== undefined && { credential }),
-        })
-        sessionTokens.set(sessionId, Redacted.value(pass.token))
-        return pass
-      })
+      relay.admit({ sessionId, modToken: Redacted.make(modToken) })
 
     /** Revokes the Session's Session token, held or live, as it stops. */
     const forget = (sessionId: SessionId) => {
-      sessionTokens.delete(sessionId)
+      launchSecrets.delete(sessionId)
       held.delete(sessionId)
-      return proxy.revoke(sessionId)
+      return relay.revoke(sessionId)
     }
 
     /** Starting and stopping one Session happen one at a time. */
@@ -235,9 +210,9 @@ export const SessionsLive = Layer.effect(
     const exitedOnItsOwn = (sessionId: SessionId, exitCode: number | undefined) =>
       serialized(sessionId)(
         Effect.gen(function* () {
-          const output = withoutValue(
+          const output = withoutValues(
             yield* tmux.lastOutput(sessionId),
-            sessionTokens.get(sessionId),
+            launchSecrets.get(sessionId),
           )
           yield* forget(sessionId)
           const exited = `Session ${sessionId} exited with ${exitCode ?? "unknown status"}`
@@ -299,13 +274,15 @@ export const SessionsLive = Layer.effect(
 
     /**
      * Starts the Session's Claude Code in a new tmux session in its running Sandbox, and watches
-     * it. It holds a new Session token, given to it alone, never set on the Sandbox, and loads a
-     * new copy of the Runner's mod, which nothing changes while it runs (#159).
+     * it. It holds its Creator's setup token and a new Session token, given to it alone, never set
+     * on the Sandbox (ClaudeEnvironment.ts), and loads a new copy of the Runner's mod, which
+     * nothing changes while it runs (#159).
      */
     const launchClaude = (
       request: StartSession | RelaunchSession,
       directories: SessionDirectories,
       sandbox: SandboxStarted,
+      credential: ClaudeCredential,
     ) =>
       Effect.gen(function* () {
         const { sessionId } = request
@@ -318,12 +295,22 @@ export const SessionsLive = Layer.effect(
           ...(request.effort === undefined ? {} : { effort: request.effort }),
           ...(request.mcpServers === undefined ? {} : { mcpServers: request.mcpServers }),
         })
-        const pass = yield* admit(sessionId, request.modToken)
+        const sessionToken = yield* admit(sessionId, request.modToken)
+        launchSecrets.set(sessionId, [
+          Redacted.value(sessionToken),
+          Redacted.value(credential.token),
+        ])
         yield* tmux.launch({
           sessionId,
           cwd: workspaceGuestPath,
           argv: launch.argv,
-          env: { ...sandbox.claude.env, ...launch.env, ...pass.env },
+          env: claudeEnvironment({
+            base: { ...sandbox.claude.env, ...launch.env },
+            relayUrl: relay.guestUrl,
+            sessionToken,
+            credential,
+          }),
+          unset: KeptOutOfClaude,
           size: InitialTerminalSize,
         })
         yield* watch(sessionId)
@@ -348,6 +335,9 @@ export const SessionsLive = Layer.effect(
           // Whatever is left of an earlier run, such as a tmux session whose process exited.
           yield* tmux.kill(sessionId)
           const launched = yield* Effect.gen(function* () {
+            // Its Creator's setup token first (ADR 0026): without it, the Session can't run, and
+            // its Sandbox isn't started for nothing.
+            const credential = yield* hubClaudeCredential.fetch(sessionId)
             const directories = yield* workspaces.prepare(request)
             // The Sandbox (#9) is created and started around the Workspace before Claude Code,
             // from the Repo's Environment if it has one (ADR 0009).
@@ -357,7 +347,7 @@ export const SessionsLive = Layer.effect(
               ...(request.gitIdentity === undefined ? {} : { gitIdentity: request.gitIdentity }),
             })
             sandboxStarts.set(sessionId, sandbox)
-            yield* launchClaude(request, directories, sandbox)
+            yield* launchClaude(request, directories, sandbox, credential)
           }).pipe(Effect.exit)
 
           if (Exit.isSuccess(launched)) {
@@ -377,9 +367,9 @@ export const SessionsLive = Layer.effect(
     /**
      * Starts a running Session's Claude Code again with the model and effort the Hub sends (#128),
      * resuming its conversation: Claude Code exits as on a stop and starts in a new tmux session,
-     * while its Sandbox stays as it is. The Hub sends it only while
-     * no Turn runs. A Claude Code that won't start again leaves the Session as a failed start does,
-     * asleep.
+     * while its Sandbox stays as it is, on its Creator's setup token fetched again. The Hub sends
+     * it only while no Turn runs. A Claude Code that won't start again, as when the Hub refuses
+     * the setup token, leaves the Session as a failed start does, asleep.
      */
     const relaunch = (request: RelaunchSession) =>
       serialized(request.sessionId)(
@@ -400,11 +390,17 @@ export const SessionsLive = Layer.effect(
           yield* Deferred.await(session.exited).pipe(Effect.timeoutOption(StopGracePeriod))
           yield* tmux.kill(sessionId)
           yield* forget(sessionId)
-          const launched = yield* launchClaude(
-            request,
-            sessionDirectories(config.sessionsRoot, sessionId),
-            sandbox,
-          ).pipe(Effect.exit)
+          const launched = yield* hubClaudeCredential.fetch(sessionId).pipe(
+            Effect.flatMap((credential) =>
+              launchClaude(
+                request,
+                sessionDirectories(config.sessionsRoot, sessionId),
+                sandbox,
+                credential,
+              ),
+            ),
+            Effect.exit,
+          )
 
           if (Exit.isSuccess(launched)) {
             const model = [request.model ?? "default model", request.effort ?? "default effort"]
@@ -484,20 +480,23 @@ export const SessionsLive = Layer.effect(
 
     // Its Session token is read back from Claude Code's environment, where the launch put it for
     // the mod (ModEnvironment.modToken). It lets only this Session in, so a guest that changed it
-    // gains nothing. Anything missing, and the Session sleeps, as its Sandbox is stopped.
+    // gains nothing. Anything missing, and the Session sleeps, as its Sandbox is stopped. Claude
+    // Code runs on with the setup token it was started with, read back too only to keep it out
+    // of what it prints as it exits.
     const adopt = Effect.gen(function* () {
       yield* tmux.retireHostServer
       const kept: Array<SessionId> = []
       for (const sessionId of yield* sandboxes.running) {
         if (!isSafeSessionId(sessionId)) continue
         const token = yield* tmux.variable(sessionId, ModEnvironment.modToken)
-        if (token === undefined || !(yield* proxy.hold(sessionId, token))) {
+        if (token === undefined || !(yield* relay.hold(sessionId, token))) {
           yield* Effect.logInfo(
             `Session ${sessionId}: Claude Code is no longer running, so it sleeps`,
           )
           continue
         }
-        sessionTokens.set(sessionId, token)
+        const setupToken = yield* tmux.variable(sessionId, ClaudeTokenVariable)
+        launchSecrets.set(sessionId, setupToken === undefined ? [token] : [token, setupToken])
         held.add(sessionId)
         const watched = yield* watch(sessionId).pipe(Effect.exit)
         if (Exit.isFailure(watched)) {
@@ -515,9 +514,9 @@ export const SessionsLive = Layer.effect(
 
     /**
      * Lets a Session kept running across a restart in again, now the Hub has given it a new mod
-     * token: the proxy takes its held Session token back, standing for the new mod token and its
-     * Creator's Claude credential, and its Sandbox is taken back, so Claude Code can start again
-     * in it with a new model.
+     * token: the relay takes its held Session token back, standing for the new mod token, and its
+     * Sandbox is taken back, so Claude Code can start again in it with a new model. Its Claude
+     * Code still has its setup token, so none is fetched.
      */
     const readmit = (sessionId: SessionId, modToken: string) =>
       serialized(sessionId)(
@@ -626,7 +625,6 @@ export const SessionsLive = Layer.effect(
       snapshotAll: Effect.suspend(() =>
         Effect.forEach(running.values(), (session) => session.pane.snapshot, { discard: true }),
       ).pipe(Effect.andThen(ports.resendAll)),
-      ownClaudeAccount: proxy.runnerAccount,
     })
   }),
 )

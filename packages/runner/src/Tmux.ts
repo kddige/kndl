@@ -57,9 +57,15 @@ export interface LaunchSpec {
   readonly argv: ReadonlyArray<string>
   /**
    * Its environment, over the tmux server's. Given to this process alone (`new-session -e`),
-   * never to the server or the Sandbox, so it may hold the Session token (ADR 0013).
+   * never to the server or the Sandbox, so it may hold the Session token and the Creator's
+   * setup token (ADR 0026).
    */
   readonly env: Readonly<Record<string, string>>
+  /**
+   * Variables kept out of its environment even where the tmux server has them, as from the
+   * Sandbox's image: unset in the server's global environment, which each new process starts from.
+   */
+  readonly unset?: ReadonlyArray<string>
   readonly size: TerminalSize
 }
 
@@ -146,7 +152,8 @@ const sandboxMessage = (error: SandboxError) =>
  * commands whose replies arrive in order with it.
  */
 export const makeTmux = (backend: TmuxBackend) => {
-  // A failure's message is tmux's own, never its arguments: a launch's carry the Session token.
+  // A failure's message is tmux's own, never its arguments: a launch's carry the Session token and
+  // the setup token.
   // `env` is the tmux client's, over the Sandbox's.
   const tmux = (
     sessionId: SessionId,
@@ -188,6 +195,7 @@ export const makeTmux = (backend: TmuxBackend) => {
         ["set-option", "-g", "remain-on-exit", "on"],
         ["set-option", "-g", "status", "off"],
         ["set-option", "-g", "focus-events", "on"],
+        ...(spec.unset ?? []).map((name) => ["set-environment", "-g", "-u", name]),
         [
           "new-session",
           "-d",

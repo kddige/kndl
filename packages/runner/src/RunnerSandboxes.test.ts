@@ -22,7 +22,7 @@ import { makeSessionSandboxes } from "./SessionSandboxes.ts"
 import {
   FakeHubVariables,
   FakeTmux,
-  FakeCredentialProxy,
+  FakeModRelay,
   FakeOpenPorts,
   FakeWorkspaces,
   sandboxesDefaults,
@@ -98,7 +98,7 @@ const runProcess = <A>(
     Layer.provide([
       host.tmux.layer,
       new FakeWorkspaces(host.sessionsRoot).layer,
-      new FakeCredentialProxy().layer,
+      new FakeModRelay().layer,
       new FakeOpenPorts().layer,
       HubGitLive,
       NoHubClaudeCredential,
