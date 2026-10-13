@@ -14,6 +14,7 @@ import {
 import { readBuildVersion } from "@kndl/protocol/checkout"
 import type { ServerWebSocket } from "bun"
 import { Context, Effect, Fiber, Layer, Redacted, References } from "effect"
+import { KeptOutOfClaude } from "./ClaudeEnvironment.ts"
 import { gatewayMcpServers } from "./ClaudeLaunch.ts"
 import { type ClaudeModels, StaticClaudeModels } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
@@ -26,7 +27,7 @@ import { modGuestPath } from "./sandbox/SessionLayout.ts"
 import { SessionsLive } from "./Sessions.ts"
 import {
   eventually,
-  FakeCredentialProxy,
+  FakeModRelay,
   fakeSandboxClaudePath,
   FakeOpenPorts,
   FakeSandboxes,
@@ -39,6 +40,9 @@ import { Tunnels } from "./Tunnels.ts"
 import { Updater } from "./Updater.ts"
 
 const token = "chr_test.secret"
+
+/** The Creator's setup token the fake Hub hands out: fake, valid nowhere. */
+const setupToken = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
 
 /** What the Runner's Claude Code takes, as it says in its hello (#128). */
 const models = {
@@ -60,10 +64,13 @@ class FakeHub {
   /** Answers the next upgrades with 401, as for a bad token. */
   refuseNext = 0
   /**
-   * What the Hub answers a FetchClaudeCredential with, but for its requestId: by default, that
-   * the Session's Creator has no Claude credential, so it runs on the Runner's own.
+   * What the Hub answers a FetchClaudeCredential with, but for its requestId: by default, the
+   * Session's Creator's setup token, a fake one.
    */
-  claudeCredential: Record<string, unknown> = { _tag: "ClaudeCredentialFetched" }
+  claudeCredential: Record<string, unknown> = {
+    _tag: "ClaudeCredentialFetched",
+    credential: { _tag: "OAuthToken", token: setupToken },
+  }
   /** What the Hub answers a hello with. */
   answer: (hello: Received) => unknown = () => ({
     _tag: "RunnerWelcome",
@@ -122,7 +129,7 @@ interface Harness {
   readonly tmux: FakeTmux
   readonly workspaces: FakeWorkspaces
   readonly sandboxes: FakeSandboxes
-  readonly proxy: FakeCredentialProxy
+  readonly relay: FakeModRelay
   readonly openPorts: FakeOpenPorts
   /** The Runner's HubGit, once its layer is built. */
   readonly hubGit: () => HubGit["Service"]
@@ -201,8 +208,8 @@ function startRunner(
 
 /**
  * Restarts the Runner on the same machine, as `kndl restart` or a crash would: what runs in
- * tmux and the Sandboxes runs on, and the Hub is the same. The new Runner has a new credential
- * proxy: only the old one's memory held its Session tokens.
+ * tmux and the Sandboxes runs on, and the Hub is the same. The new Runner has a new mod relay:
+ * only the old one's memory held its Session tokens.
  */
 async function restartRunner(h: Harness): Promise<Harness> {
   await Effect.runPromise(Fiber.interrupt(h.runner))
@@ -214,14 +221,14 @@ async function restartRunner(h: Harness): Promise<Harness> {
   return next
 }
 
-/** Runs a Runner on `machine`, with a credential proxy of its own. */
+/** Runs a Runner on `machine`, with a mod relay of its own. */
 function runOn(
   machine: Pick<Harness, "hub" | "tmux" | "sandboxes" | "workspaces" | "settings">,
   updater: Layer.Layer<Updater> = Updater.manual(),
   claudeModels: Layer.Layer<ClaudeModels> = StaticClaudeModels(models),
 ): Harness {
   const { hub, tmux, sandboxes, workspaces, settings } = machine
-  const proxy = new FakeCredentialProxy()
+  const relay = new FakeModRelay()
   const openPorts = new FakeOpenPorts()
   let hubGit: HubGit["Service"] | undefined
   const layer = SessionsLive.pipe(
@@ -237,7 +244,7 @@ function runOn(
     Layer.provideMerge(updater),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(claudeModels),
-    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, proxy.layer]),
+    Layer.provide([tmux.layer, workspaces.layer, sandboxes.layer, relay.layer]),
     Layer.provideMerge(Layer.succeed(RunnerConfig, RunnerConfig.of(settings))),
     Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
   )
@@ -252,7 +259,7 @@ function runOn(
     tmux,
     workspaces,
     sandboxes,
-    proxy,
+    relay,
     openPorts,
     hubGit: () => {
       if (hubGit === undefined) throw new Error("the Runner's layer isn't built yet")
@@ -285,7 +292,7 @@ const connected = (h: Harness) =>
   eventually(() => h.hub.connections.length > 0 && h.hub.current.received.length > 0)
 
 describe("connecting", () => {
-  test("says hello with the Runner token, its name and its own Claude credential, here none", async () => {
+  test("says hello with the Runner token and its name, and no Claude credential of its own", async () => {
     const h = startRunner()
     await connected(h)
 
@@ -294,8 +301,6 @@ describe("connecting", () => {
       _tag: "RunnerHello",
       protocolVersion: ProtocolVersion,
       name: "mac",
-      // Its own Claude credential, here none; sent even so, as a Hub from before requires it.
-      login: { account: "No Claude credential" },
       sessions: [],
       // The commit this checkout is at, when it is a git checkout (ADR 0011).
       ...(buildVersion !== undefined && { version: buildVersion }),
@@ -306,8 +311,6 @@ describe("connecting", () => {
       // What its Claude Code takes, and that it restarts Claude Code on a new model (#128).
       models,
       relaunches: true,
-      // Whether it has a Claude credential of its own, for Sessions whose Creator has none (#150).
-      ownClaudeCredential: false,
       // It opens tunnels to a Session's Open ports (#177).
       forwardsPorts: true,
       // It gives Claude Code the MCP servers of its Session's Installations (#221).
@@ -480,21 +483,23 @@ describe("restarting under running Sessions (#157)", () => {
     await eventually(() => h.hub.current.received.some((m) => m.data === "still here"))
 
     // The token is held for s-1 alone: Claude Code is asked to retry, and nothing is relayed.
-    const find = (presented: string) => Effect.runSync(after.proxy.tokens.find(presented))
+    const find = (presented: string) => Effect.runSync(after.relay.tokens.find(presented))
     expect(find(kept)).toBe("Held")
-    expect(after.proxy.grants).toEqual([])
+    expect(after.relay.grants).toEqual([])
 
     h.hub.send({ _tag: "ModTokenReissued", sessionId: "s-1", modToken: "chm_mod.reissued" })
     await eventually(() => h.sandboxes.calls.includes("keep s-1"))
 
     // The same token now stands for the new mod token, and no other token gets in.
     expect(find(kept)).toMatchObject({ sessionId: "s-1" })
-    expect(Redacted.value(after.proxy.grants[0]?.modToken as Redacted.Redacted)).toBe(
+    expect(Redacted.value(after.relay.grants[0]?.modToken as Redacted.Redacted)).toBe(
       "chm_mod.reissued",
     )
     expect(find(`${kept.slice(0, -1)}x`)).toBeUndefined()
     expect(h.tmux.launched).toHaveLength(1)
     expect(h.hub.all("SessionStopped")).toEqual([])
+    // Claude Code runs on with the setup token it started with: none is fetched again.
+    expect(h.hub.all("FetchClaudeCredential")).toHaveLength(1)
 
     // The next hello asks for nothing more.
     h.hub.current.socket.close(1001, "Hub restarting")
@@ -525,6 +530,18 @@ describe("restarting under running Sessions (#157)", () => {
     expect(h.sandboxes.calls).toEqual(["start s-1", "keep s-1"])
   })
 
+  test("keeps the tokens a kept Session's Claude Code holds out of what it prints as it exits", async () => {
+    const { h, kept } = await withSession()
+    await restartRunner(h)
+    h.tmux.pane("s-1").output(`${kept} ${setupToken}\r\n`)
+    h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 1 })
+    await eventually(() => h.hub.all("SessionStopped").length === 1)
+
+    expect(h.hub.all("SessionStopped")[0]).toMatchObject({
+      output: `${"*".repeat(kept.length)} ${"*".repeat(setupToken.length)}`,
+    })
+  })
+
   test("puts to sleep a Session whose Claude Code exited while the Runner was down", async () => {
     const { h } = await withSession()
     await Effect.runPromise(Fiber.interrupt(h.runner))
@@ -546,14 +563,14 @@ describe("restarting under running Sessions (#157)", () => {
     await eventually(() => h.hub.all("TerminalFrame").length === 2)
 
     expect(h.sandboxes.calls).toEqual(["start s-1"])
-    expect(h.proxy.grants.map((grant) => Redacted.value(grant.modToken))).toEqual([
+    expect(h.relay.grants.map((grant) => Redacted.value(grant.modToken))).toEqual([
       "chm_mod.secret",
     ])
   })
 })
 
 describe("Sessions", () => {
-  test("starts Claude Code in its Sandbox's tmux with the mod and a Session token, then streams it", async () => {
+  test("starts Claude Code in its Sandbox's tmux with the mod, its Creator's setup token and a Session token, then streams it", async () => {
     const h = startRunner()
     await connected(h)
     const gitIdentity = { name: "Ada Lovelace", email: "1+ada@users.noreply.github.com" }
@@ -583,17 +600,19 @@ describe("Sessions", () => {
       KNDL_SESSION_ID: "s-1",
       // The conversation it was launched as, the one the mod links (#321).
       KNDL_CONVERSATION_ID: spec?.argv[2] ?? "",
-      // The credential proxy, for Anthropic's API and the Hub alike, and the Session token for
-      // both: never the mod token, nor a Claude credential (ADR 0013).
-      ANTHROPIC_BASE_URL: "http://host.microsandbox.internal:7778",
+      // The mod relay, for the Hub, and the Session token for it: never the mod token (ADR 0026).
       KNDL_URL: "http://host.microsandbox.internal:7778",
       KNDL_MOD_TOKEN: sessionToken,
-      CLAUDE_CODE_OAUTH_TOKEN: sessionToken,
-      CLAUDE_CODE_OAUTH_SCOPES: expect.any(String),
-      _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: "1",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       DISABLE_AUTOUPDATER: "1",
+      // The Creator's own setup token, fetched from the Hub as it starts, for Anthropic directly.
+      CLAUDE_CODE_OAUTH_TOKEN: setupToken,
     })
+    // Kept out even where the tmux server has them.
+    expect(spec?.unset).toEqual(KeptOutOfClaude)
+    expect(h.hub.all("FetchClaudeCredential")).toEqual([
+      { _tag: "FetchClaudeCredential", requestId: expect.any(String), sessionId: "s-1" },
+    ])
     expect(JSON.stringify(spec)).not.toContain("chm_mod.secret")
     expect(h.workspaces.prepared).toMatchObject([{ sessionId: "s-1", workBranch: "claude/s-1" }])
     expect(h.sandboxes.calls).toEqual(["start s-1"])
@@ -627,7 +646,7 @@ describe("Sessions", () => {
     expect(JSON.parse(config)).toEqual(
       gatewayMcpServers(mcpServers as unknown as ReadonlyArray<GatewayServer>),
     )
-    // The Session token alone reaches it, by the variable the proxy's environment sets.
+    // The Session token alone reaches it, by the variable the launch sets for the mod relay.
     expect(config).not.toContain("chm_mod.secret")
   })
 
@@ -719,40 +738,70 @@ describe("Sessions", () => {
     expect(h.tmux.launched).toEqual([])
   })
 
-  test("admits a Session with its Creator's Claude credential, asked of the Hub as it starts (#150)", async () => {
+  test("keeps out of Claude Code the variables that would sign it in another way, or send it elsewhere", async () => {
     const h = startRunner()
     await connected(h)
-    const fake = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
-    h.hub.claudeCredential = {
-      _tag: "ClaudeCredentialFetched",
-      credential: { _tag: "OAuthToken", token: fake, plan: { subscriptionType: "pro" } },
+    h.sandboxes.claudeEnv = {
+      CLAUDE_CONFIG_DIR: "/claude",
+      ANTHROPIC_API_KEY: "sk-ant-api03-FAKE_KEY_FOR_TESTS_ONLY",
+      ANTHROPIC_BASE_URL: "https://elsewhere.example",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-FROM_A_VARIABLE",
+      DATABASE_URL: "postgres://db",
     }
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
-    expect(h.hub.all("FetchClaudeCredential")).toEqual([
-      { _tag: "FetchClaudeCredential", requestId: expect.any(String), sessionId: "s-1" },
-    ])
-    const credential = h.proxy.grants[0]?.credential
-    expect(credential?._tag === "OAuthToken" && Redacted.value(credential.token)).toBe(fake)
-    expect(credential?._tag === "OAuthToken" && credential.plan).toEqual({
-      subscriptionType: "pro",
-    })
+    const env = h.tmux.launched[0]?.env ?? {}
+    for (const name of KeptOutOfClaude) expect(env).not.toHaveProperty(name)
+    // The launch's setup token wins over a Variable's, and other Variables are left as they are.
+    expect(env["CLAUDE_CODE_OAUTH_TOKEN"]).toBe(setupToken)
+    expect(env["DATABASE_URL"]).toBe("postgres://db")
   })
 
-  test("runs a Session on the Runner's own Claude credential when its Creator has none, or the Hub refuses", async () => {
+  test("fails a start the Hub refuses the setup token for, with its message, before the Sandbox starts", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.hub.claudeCredential = {
+      _tag: "ClaudeCredentialRefused",
+      message: "Ada has no Claude setup token.",
+    }
+    h.hub.send(startSession("s-1"))
+    await eventually(() => h.hub.all("SessionStartFailed").length === 1)
+
+    expect(h.hub.all("SessionStartFailed")).toEqual([
+      { _tag: "SessionStartFailed", sessionId: "s-1", message: "Ada has no Claude setup token." },
+    ])
+    // Never run without it: no Claude Code, no Session token, and no Sandbox left running.
+    expect(h.tmux.launched).toEqual([])
+    expect(h.relay.grants).toEqual([])
+    expect(h.workspaces.prepared).toEqual([])
+    expect(h.sandboxes.calls).toEqual(["stop s-1 Sleep"])
+    expect(h.hub.all("SessionStarted")).toEqual([])
+  })
+
+  test("fails a relaunch the Hub refuses the setup token for, leaving the Session asleep", async () => {
     const h = startRunner()
     await connected(h)
     h.hub.send(startSession("s-1"))
     await eventually(() => h.hub.all("SessionStarted").length === 1)
-    h.hub.claudeCredential = { _tag: "ClaudeCredentialRefused", message: "no" }
-    h.hub.send(startSession("s-2", { workBranch: "claude/s-2" }))
-    await eventually(() => h.hub.all("SessionStarted").length === 2)
+    writeTranscript(h, "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f")
 
-    expect(h.proxy.grants.map((grant) => `${grant.sessionId}: ${grant.credential?._tag}`)).toEqual([
-      "s-1: undefined",
-      "s-2: undefined",
-    ])
+    h.hub.claudeCredential = { _tag: "ClaudeCredentialRefused", message: "Ada was removed." }
+    h.hub.send({
+      _tag: "RelaunchSession",
+      sessionId: "s-1",
+      repo: "acme/app",
+      workBranch: "claude/s-1",
+      resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
+      modToken: "chm_mod.second",
+      model: "opus[1m]",
+    })
+    await eventually(() => h.hub.all("SessionStartFailed").length === 1)
+
+    expect(h.hub.all("SessionStartFailed")[0]).toMatchObject({ message: "Ada was removed." })
+    expect(h.tmux.launched).toHaveLength(1)
+    expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])
   })
 
   test("starts a new conversation with the same id when Claude Code never wrote one to resume", async () => {
@@ -1063,12 +1112,13 @@ describe("Sessions", () => {
     await eventually(() => h.hub.all("SessionStarted").length === 1)
 
     // What it printed goes with it, read before its tmux session is killed, without its Session
-    // token.
+    // token or its setup token.
     const sessionToken = h.tmux.launched[0]?.env["KNDL_MOD_TOKEN"] ?? ""
     h.tmux
       .pane("s-1")
       .output("\u001b[31mError:\u001b[0m The current working directory was deleted\r\n")
     h.tmux.pane("s-1").output(`token ${sessionToken}\r\n`)
+    h.tmux.pane("s-1").output(`setup ${setupToken}\r\n`)
     h.tmux.pane("s-1").emit({ _tag: "Exited", exitCode: 1 })
     await eventually(() => h.hub.all("SessionStopped").length === 1)
 
@@ -1077,7 +1127,7 @@ describe("Sessions", () => {
       sessionId: "s-1",
       reason: "Exited",
       exitCode: 1,
-      output: `Error: The current working directory was deleted\ntoken ${"*".repeat(sessionToken.length)}`,
+      output: `Error: The current working directory was deleted\ntoken ${"*".repeat(sessionToken.length)}\nsetup ${"*".repeat(setupToken.length)}`,
     })
     expect(h.tmux.panes.size).toBe(0)
     expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep"])

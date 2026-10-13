@@ -14,13 +14,7 @@ import {
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import {
-  claudeConfigPath,
-  forgetDirectories,
-  hostTranscriptPath,
-  accountFromClaudeConfig,
-  planFromClaudeConfig,
-} from "./ClaudeConfig.ts"
+import { claudeConfigPath, forgetDirectories, hostTranscriptPath } from "./ClaudeConfig.ts"
 
 const tempDir = () => realpathSync(mkdtempSync(join(tmpdir(), "kndl-config-")))
 
@@ -123,30 +117,6 @@ test("Claude Code's config file is where Claude Code reads it", () => {
       none,
     ),
   ).toBe("/cfg/.claude-custom-oauth.json")
-})
-
-test("the config names the signed-in account, and its plan with its rate-limit tier", () => {
-  expect(
-    planFromClaudeConfig({
-      oauthAccount: {
-        organizationType: "claude_max",
-        organizationRateLimitTier: "default_claude_max_20x",
-      },
-    }),
-  ).toEqual({ subscriptionType: "max", rateLimitTier: "default_claude_max_20x" })
-  expect(planFromClaudeConfig({ oauthAccount: { organizationType: "claude_pro" } })).toEqual({
-    subscriptionType: "pro",
-  })
-  // Unknown without a subscription.
-  expect(planFromClaudeConfig({})).toBeUndefined()
-  expect(planFromClaudeConfig({ oauthAccount: { organizationType: "api" } })).toBeUndefined()
-  expect(
-    planFromClaudeConfig({ oauthAccount: { organizationType: "constructor" } }),
-  ).toBeUndefined()
-  expect(accountFromClaudeConfig({ oauthAccount: { emailAddress: "a@example.com" } })).toBe(
-    "a@example.com",
-  )
-  expect(accountFromClaudeConfig({})).toBeUndefined()
 })
 
 /** A Session's `claude` directory, also reached through a symlink, as macOS's /tmp is. */

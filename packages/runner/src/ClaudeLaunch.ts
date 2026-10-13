@@ -11,7 +11,7 @@ import { gatewayPlugin, modPlugins } from "./sandbox/SessionLayout.ts"
 
 /**
  * The environment variables the mod reads to reach the Hub. The Hub's URL and the mod token are
- * the credential proxy's (proxy/ClaudeEnvironment.ts); the launch sets the rest.
+ * the mod relay's and the Session token (ClaudeEnvironment.ts); the launch sets the rest.
  *
  * The conversation is the one Claude Code was launched as. A `claude` run inside the Session
  * inherits all of them, but is another conversation, which the mod doesn't link (#321).
@@ -99,9 +99,9 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
 
 /**
  * The `.mcp.json` of the {@link gatewayPlugin} plugin: an MCP server for each Installation the
- * Session runs with, at the Gateway (ADR 0020), through the credential proxy as the mod's calls
- * go. Claude Code fills in the variables from its environment: the proxy's URL, and the Session
- * token, which the proxy relays with the Session's mod token in its place. Nothing in it is secret.
+ * Session runs with, at the Gateway (ADR 0020), through the mod relay as the mod's calls go.
+ * Claude Code fills in the variables from its environment: the relay's URL, and the Session
+ * token, which the relay relays with the Session's mod token in its place. Nothing in it is secret.
  */
 export function gatewayMcpServers(servers: ReadonlyArray<GatewayServer>) {
   return {

@@ -33,7 +33,7 @@ test("Claude Code runs in the Sandbox with the mod's plugins, never asking for a
     "--dangerously-skip-permissions",
   ])
   expect(env[ModEnvironment.sessionId]).toBe("s-1")
-  // The Hub's URL and the mod token are the credential proxy's to give.
+  // The Hub's URL and the mod token are the mod relay's to give.
   expect(env).not.toHaveProperty(ModEnvironment.hubUrl)
   expect(env).not.toHaveProperty(ModEnvironment.modToken)
 })
@@ -74,7 +74,7 @@ test("a Session's Installations come as one more plugin, kndl, after the mod's (
 })
 
 test("each Installation's MCP server is the Gateway, reached with the Session token alone", () => {
-  // Claude Code fills in the variables: the credential proxy's URL, and the Session token.
+  // Claude Code fills in the variables: the mod relay's URL, and the Session token.
   expect(gatewayMcpServers(servers)).toEqual({
     mcpServers: {
       docs: {

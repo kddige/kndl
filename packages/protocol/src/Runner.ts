@@ -227,7 +227,9 @@ export type RunnerWelcome = typeof RunnerWelcome.Type
 /**
  * Start Claude Code for a Session: for a new Session, after cloning its Repo onto its Work
  * branch, which it creates from the base branch unless it is the base branch (ADR 0023); to wake
- * an Asleep one, with `resume` and the Workspace already in place.
+ * an Asleep one, with `resume` and the Workspace already in place. Claude Code runs on its
+ * Creator's setup token, which the Runner asks for first with a {@link FetchClaudeCredential}: a
+ * refusal fails the start, with the Hub's message (ADR 0026).
  */
 export const StartSession = Schema.TaggedStruct("StartSession", {
   sessionId: SessionId,
@@ -238,8 +240,8 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
   resume: Schema.optionalKey(ClaudeSessionId),
   /**
    * The token the Session's mod authenticates to the Hub with, scoped to this Session (issue #7).
-   * Kept in the Runner's memory, for its credential proxy to relay the mod's calls with; never
-   * passed into the Sandbox (ADR 0004, 0013).
+   * Kept in the Runner's memory, for its mod relay to relay the mod's calls with; never passed
+   * into the Sandbox (ADR 0004, 0026).
    */
   modToken: Schema.NonEmptyString,
   /**
@@ -269,7 +271,7 @@ export type StartSession = typeof StartSession.Type
  * (#128): Claude Code alone, resuming its conversation, with its Sandbox left running. The Hub
  * sends it only while no Turn runs, and only to a Runner whose hello says it `relaunches`.
  * Answered as a StartSession is, with SessionStarted, or SessionStartFailed when Claude Code
- * didn't start again.
+ * didn't start again, as when the Hub refuses its setup token.
  */
 export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   sessionId: SessionId,

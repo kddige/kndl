@@ -20,9 +20,8 @@ import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables, VariablesError } from "./HubVariables.ts"
 import { OpenPorts } from "./OpenPorts.ts"
-import { CredentialProxy, makeCredentialProxy } from "./proxy/CredentialProxy.ts"
-import { NoClaudeCredential, RunnerCredential } from "./proxy/RunnerCredential.ts"
-import { makeSessionTokens, type SessionGrant } from "./proxy/SessionTokens.ts"
+import { makeModRelay, ModRelay } from "./relay/ModRelay.ts"
+import { makeSessionTokens, type SessionGrant } from "./relay/SessionTokens.ts"
 import { Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import { SandboxBackendError } from "./sandbox/SandboxBackend.ts"
 import type { ExecEvent, ExecRequest, SpawnedCommand } from "./sandbox/SandboxBackend.ts"
@@ -41,43 +40,32 @@ import { WorkspaceError, Workspaces } from "./Workspace.ts"
 
 export const sessionId = (id: string) => Schema.decodeSync(SessionId)(id)
 
-/** A Runner with no Claude credential of its own. */
-export const NoRunnerCredential = RunnerCredential.of({
-  current: Effect.fail(new NoClaudeCredential({ message: "none in this test" })),
-  reread: Effect.fail(new NoClaudeCredential({ message: "none in this test" })),
-  describe: Effect.fail(new NoClaudeCredential({ message: "none in this test" })),
-})
-
 /**
- * The credential proxy without its server: real Session tokens, and a record of the Sessions
- * admitted and revoked, in order.
+ * The mod relay without its server: real Session tokens, and a record of the Sessions admitted
+ * and revoked, in order.
  */
-export class FakeCredentialProxy {
+export class FakeModRelay {
   readonly tokens = makeSessionTokens()
   readonly calls: Array<string> = []
   /** What each Session was admitted with, in order. */
   readonly grants: Array<SessionGrant> = []
-  readonly layer: Layer.Layer<CredentialProxy>
+  readonly layer: Layer.Layer<ModRelay>
 
   constructor() {
-    const proxy = makeCredentialProxy({
-      port: 7778,
-      tokens: this.tokens,
-      runnerCredential: NoRunnerCredential,
-    })
+    const relay = makeModRelay({ port: 7778, tokens: this.tokens })
     this.layer = Layer.succeed(
-      CredentialProxy,
-      CredentialProxy.of({
-        ...proxy,
+      ModRelay,
+      ModRelay.of({
+        ...relay,
         admit: (grant) =>
-          Effect.tap(proxy.admit(grant), () =>
+          Effect.tap(relay.admit(grant), () =>
             Effect.sync(() => {
               this.calls.push(`admit ${grant.sessionId}`)
               this.grants.push(grant)
             }),
           ),
         revoke: (id) =>
-          Effect.tap(proxy.revoke(id), () => Effect.sync(() => this.calls.push(`revoke ${id}`))),
+          Effect.tap(relay.revoke(id), () => Effect.sync(() => this.calls.push(`revoke ${id}`))),
       }),
     )
   }
@@ -386,6 +374,8 @@ export class FakeSandboxes {
   readonly transcripts = new Set<string>()
   /** The Sessions whose Sandbox runs: started, and not stopped since. */
   readonly running = new Set<SessionId>()
+  /** What each Sandbox says Claude Code runs with, as from its Variables. */
+  claudeEnv: Readonly<Record<string, string>> = { CLAUDE_CONFIG_DIR: "/claude" }
 
   /** `claudePath`: the Claude Code each Sandbox runs. */
   constructor(readonly claudePath: string = fakeSandboxClaudePath) {}
@@ -401,14 +391,14 @@ export class FakeSandboxes {
             ...(target.environment === undefined
               ? {}
               : { environmentVersion: target.environment.version }),
-            claude: { path: this.claudePath, env: { CLAUDE_CONFIG_DIR: "/claude" } },
+            claude: { path: this.claudePath, env: this.claudeEnv },
           }
         }),
       running: Effect.sync(() => [...this.running]),
       keep: (id) =>
         Effect.sync(() => {
           this.calls.push(`keep ${id}`)
-          return { claude: { path: this.claudePath, env: { CLAUDE_CONFIG_DIR: "/claude" } } }
+          return { claude: { path: this.claudePath, env: this.claudeEnv } }
         }),
       hasTranscript: (_id, _directories, conversation) =>
         Effect.sync(() => this.transcripts.has(conversation)),

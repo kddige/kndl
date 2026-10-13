@@ -11,8 +11,8 @@
 // image has musl's loader (`/lib/ld-musl-*`, as on Alpine and the default `docker:dind`), and the
 // glibc build everywhere else, such as on Debian (spike #46). An Environment's build checks its
 // image and records which one its Sandboxes use; Sandboxes without an Environment boot the
-// default Alpine image and use the musl build. Nothing here gives the Sandbox Claude credentials:
-// Claude Code reaches Anthropic through the credential proxy, with a Session token.
+// default Alpine image and use the musl build. Nothing here gives the Sandbox a Claude credential:
+// the launch sets its Creator's setup token on Claude Code's own process (ClaudeEnvironment.ts).
 
 import { createHash } from "node:crypto"
 import { chmod, mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises"
@@ -23,7 +23,7 @@ import { Data, Effect } from "effect"
  * The Claude Code version Sessions run. Upgrading it: change it here, rewrite PinnedClaudeModels
  * (ClaudeModels.ts) with `bun run --filter @kndl/runner probe-models`, then run the smoke test,
  * `KNDL_SANDBOX_IT=1 bun test src/SandboxClaude.integration.test.ts` in packages/runner,
- * which runs it in a Sandbox through the credential proxy: its banner, `/status`, and a Turn
+ * which runs it in a Sandbox on a setup token: its banner, `/status`, and a Turn
  * with Bash. It also checks PinnedClaudeModels (ClaudeModels.ts), the models the build takes,
  * and says what the build lists when the table is out of date.
  */

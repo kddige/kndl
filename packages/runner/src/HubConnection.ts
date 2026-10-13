@@ -130,9 +130,6 @@ export const runHubConnection = (backoff: Backoff = DefaultBackoff) =>
     }
   })
 
-/** What the hello shows for a Runner with no Claude credential of its own. */
-export const NoClaudeCredentialText = "No Claude credential"
-
 const connectOnce = Effect.scoped(
   Effect.gen(function* () {
     const config = yield* RunnerConfig
@@ -162,15 +159,12 @@ const connectOnce = Effect.scoped(
     const writer = yield* socket.writer
     const hello = yield* updater.hello
     const models = yield* (yield* ClaudeModels).current
-    const ownAccount = yield* sessions.ownClaudeAccount
     const write = (message: RunnerToHub) => writer.write(JSON.stringify(encodeOutgoing(message)))
 
     yield* write(
       RunnerToHub.cases.RunnerHello.make({
         protocolVersion: ProtocolVersion,
         name: config.name,
-        // A Hub from before requires `login`: it shows the Runner's own credential, if any.
-        login: { account: ownAccount ?? NoClaudeCredentialText },
         sessions: [...(yield* sessions.running)],
         ...(yield* Effect.map(sessions.withoutModToken, (ids) =>
           ids.length === 0 ? {} : { withoutModToken: [...ids] },
@@ -183,7 +177,6 @@ const connectOnce = Effect.scoped(
         relaunches: true,
         forwardsPorts: true,
         relaysMcpServers: true,
-        ownClaudeCredential: ownAccount !== undefined,
       }),
     ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
 

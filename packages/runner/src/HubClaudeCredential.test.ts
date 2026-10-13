@@ -30,7 +30,7 @@ const requested = (sent: ReadonlyArray<RunnerToHub>) =>
     return (sent[0] as FetchClaudeCredential).requestId as CredentialRequestId
   })
 
-const fake = "sk-ant-api03-FAKE_KEY_FOR_TESTS_ONLY_77d1"
+const fake = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_77d1"
 
 describe("HubClaudeCredential", () => {
   test("asks the Hub for a Session's Claude credential and returns its answer", () =>
@@ -42,33 +42,21 @@ describe("HubClaudeCredential", () => {
         expect(sent[0]).toMatchObject({ _tag: "FetchClaudeCredential", sessionId: "s-1" })
         // Another request's answer is not this one's.
         yield* credentials.receive({
-          _tag: "ClaudeCredentialFetched",
+          _tag: "ClaudeCredentialRefused",
           requestId: "other" as CredentialRequestId,
+          message: "Not this one.",
         })
         yield* credentials.receive({
           _tag: "ClaudeCredentialFetched",
           requestId,
-          credential: { _tag: "ApiKey", key: Redacted.make(fake) },
+          credential: { _tag: "OAuthToken", token: Redacted.make(fake) },
         })
         const credential = yield* Fiber.join(fetching)
-        expect(credential?._tag === "ApiKey" && Redacted.value(credential.key)).toBe(fake)
+        expect(Redacted.value(credential.token)).toBe(fake)
       }),
     ))
 
-  test("returns none when the Creator has stored none", () =>
-    run((sent) =>
-      Effect.gen(function* () {
-        const credentials = yield* HubClaudeCredential
-        const fetching = yield* Effect.forkChild(credentials.fetch(sessionId("s-1")))
-        yield* credentials.receive({
-          _tag: "ClaudeCredentialFetched",
-          requestId: yield* requested(sent),
-        })
-        expect(yield* Fiber.join(fetching)).toBeUndefined()
-      }),
-    ))
-
-  test("fails with the Hub's reason when it refuses", () =>
+  test("fails with the Hub's own message when it refuses, as for a Creator with none", () =>
     run((sent) =>
       Effect.gen(function* () {
         const credentials = yield* HubClaudeCredential
@@ -77,9 +65,9 @@ describe("HubClaudeCredential", () => {
         yield* credentials.receive({
           _tag: "ClaudeCredentialRefused",
           requestId,
-          message: "Not a Session this Runner runs.",
+          message: "Ada has no Claude setup token.",
         })
-        expect((yield* Fiber.join(fetching)).message).toContain("Not a Session this Runner runs.")
+        expect((yield* Fiber.join(fetching)).message).toBe("Ada has no Claude setup token.")
       }),
     ))
 })
