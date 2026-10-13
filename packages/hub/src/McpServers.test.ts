@@ -395,7 +395,7 @@ describe("an Installation's header secret values", () => {
   })
 
   test("are refused without a secrets key, and for a key the MCP server doesn't declare", async () => {
-    const hub = await startHub({ config: { devLogin: true } })
+    const hub = await startHub({ config: { devLogin: true, secretsKey: Option.none() } })
     const web = await openWeb(hub, "alice")
     const created = state(
       await ask(web, { _tag: "CreateMcpServer", auth: headers, name: "Docs Search", url }),

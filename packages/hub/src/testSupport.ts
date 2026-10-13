@@ -13,11 +13,11 @@ import {
   RunnerId,
   TestBuildId,
 } from "@kndl/protocol"
-import { Clock, Context, Duration, Effect, Exit, Layer, Option, Scope } from "effect"
+import { Clock, Context, Duration, Effect, Exit, Layer, Option, Redacted, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
 import type { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
-import { ClaudeCheck } from "./ClaudeCredentials.ts"
+import { ClaudeCheck, ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { CliBuilds } from "./CliBuilds.ts"
 import { DatabaseTest } from "./Database.ts"
 import { Environments } from "./Environments.ts"
@@ -38,7 +38,7 @@ import { McpServerOAuth } from "./McpServerOAuth.ts"
 import { McpServers } from "./McpServers.ts"
 import { McpServerSources } from "./McpServerSources.ts"
 import { Members } from "./Members.ts"
-import { Secrets } from "./Secrets.ts"
+import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import { Sessions } from "./Sessions.ts"
 
 export const webOrigin = "http://localhost:5173"
@@ -63,6 +63,43 @@ export const baseConfig: HubConfigInput = {
   // No CLI builds: CliRoutes.test.ts gives its own.
   cliDir: "/nonexistent/kndl/cli",
 }
+
+/**
+ * The secrets key a test Hub has unless its config says otherwise: one for every Hub of a test
+ * run, so a Hub restarted on the same database reads what it stored. A Session runs on its
+ * Creator's setup token (ADR 0026), which the Hub stores only with a key.
+ */
+export const testSecretsKey = Option.some(Redacted.make(generateSecretsKey()))
+
+/** A setup token for `login`, as `claude setup-token` prints one: a fake, for tests. */
+export const setupTokenOf = (login: string) => `sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_${login}_9f3b`
+
+/**
+ * Stores a setup token for the person, as they would on the Account page (ADR 0026): the Sessions
+ * they create run on it. The Hub needs a secrets key, as test Hubs have by default.
+ */
+export const saveSetupToken = (hub: TestHub, login: string, participantId = `dev:${login}`) =>
+  hub.run(
+    Effect.flatMap(ClaudeCredentials, (credentials) =>
+      credentials.set(ParticipantId.make(participantId), Redacted.make(setupTokenOf(login))),
+    ),
+  )
+
+/**
+ * Stores a setup token for the person unless they have one, or the Hub has no secrets key to
+ * store it with, which some tests mean it to have none.
+ */
+export const ensureSetupToken = (hub: TestHub, login: string, participantId = `dev:${login}`) =>
+  hub.run(
+    Effect.gen(function* () {
+      const credentials = yield* ClaudeCredentials
+      const id = ParticipantId.make(participantId)
+      if (credentials.info(id) !== undefined) return
+      yield* credentials
+        .set(id, Redacted.make(setupTokenOf(login)))
+        .pipe(Effect.catchTag("ClaudeCredentialRefusal", () => Effect.void))
+    }),
+  )
 
 /**
  * Sessions, given a database, with the McpServers it asks which Installations its Sessions' Repos
@@ -159,7 +196,9 @@ export async function startHub(
     Layer.provideMerge(options.cliBuilds ?? CliBuilds.unused),
     Layer.provideMerge(options.hubVersion ?? HubVersion.layer),
     Layer.provideMerge(options.database ?? DatabaseTest),
-    Layer.provideMerge(HubConfig.layerFrom({ ...baseConfig, ...options.config })),
+    Layer.provideMerge(
+      HubConfig.layerFrom({ ...baseConfig, secretsKey: testSecretsKey, ...options.config }),
+    ),
     Layer.provideMerge(
       options.clockAhead === undefined ? Layer.empty : clockAhead(options.clockAhead),
     ),

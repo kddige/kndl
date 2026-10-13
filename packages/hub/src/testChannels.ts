@@ -5,7 +5,15 @@ import type { BuildVersion, HubToRunner, HubToWeb } from "@kndl/protocol"
 import { ProtocolVersion } from "@kndl/protocol"
 import { Effect } from "effect"
 import { RunnerTokens } from "./RunnerTokens.ts"
-import { bearer, cookieFrom, devSignIn, stopHubs, type TestHub, webOrigin } from "./testSupport.ts"
+import {
+  bearer,
+  cookieFrom,
+  devSignIn,
+  ensureSetupToken,
+  stopHubs,
+  type TestHub,
+  webOrigin,
+} from "./testSupport.ts"
 
 /** Shuts down every Hub, after closing the WebSockets to it, which its shutdown waits for. */
 export async function stopAll() {
@@ -121,11 +129,19 @@ export class Connection<In extends Tagged> {
   }
 }
 
-export const runnerLogin = { account: "alice@example.com" }
-
-/** A web client signed in as `login`, welcomed and handed the lists. */
-export async function openWeb(hub: TestHub, login: string, cookie?: string) {
+/**
+ * A web client signed in as `login`, welcomed and handed the lists. Signed in by dev login, they
+ * have a setup token saved first, as anyone who creates Sessions has (ADR 0026), unless
+ * `setupToken` is false or the Hub has no secrets key.
+ */
+export async function openWeb(
+  hub: TestHub,
+  login: string,
+  cookie?: string,
+  options: { readonly setupToken?: boolean } = {},
+) {
   const signIn = cookie ?? cookieFrom(await devSignIn(hub, login))
+  if (cookie === undefined && options.setupToken !== false) await ensureSetupToken(hub, login)
   const web = await Connection.open<Web>(
     hub,
     "/ws/web",
@@ -167,7 +183,6 @@ export async function openRunner(
     _tag: "RunnerHello",
     protocolVersion: ProtocolVersion,
     name: "mac",
-    login: runnerLogin,
     sessions,
     ...(version !== undefined && { version }),
     ...(asksCloneAccess && { asksCloneAccess: true }),

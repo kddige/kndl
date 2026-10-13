@@ -702,6 +702,14 @@ const migrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql`ALTER TABLE runners ADD COLUMN version_release TEXT`
   }),
+  // A Session runs on its Creator's setup token alone (ADR 0026): no Runner has a Claude
+  // credential of its own to show, and Claude Code learns its plan from Anthropic.
+  "0036_creator_drives": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE runners DROP COLUMN login_account`
+    yield* sql`ALTER TABLE sessions DROP COLUMN runner_login_account`
+    yield* sql`ALTER TABLE claude_credentials DROP COLUMN plan`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

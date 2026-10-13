@@ -208,6 +208,55 @@ describe("the forward endpoint", () => {
     expect(gone.participants).toEqual([{ id: "dev:alice", login: "alice", name: "alice" }])
   })
 
+  test("of an Asleep Session by anyone but its Creator is closed, waking nothing (ADR 0026)", async () => {
+    const scene = await forwardScene()
+    await openWeb(scene.hub, "bob")
+    const bobs = (await cliToken(scene.hub, "bob", "bobs-mac")).token
+    await putToSleep(scene)
+    const forward = await Connection.open<Forwarded>(
+      scene.hub,
+      `/ws/forward/${scene.sessionId}`,
+      bearer(bobs),
+      { _tag: "ForwardHello", protocolVersion: ProtocolVersion },
+    )
+    expect(await forward.closed).toEqual({
+      code: ForwardCloseCode.WentAsleep,
+      reason: "The Session is Asleep, and only alice can wake it.",
+    })
+    expect(await scene.runner.untaken("StartSession")).toEqual([])
+
+    // Awake, bob forwards it as anyone with access does, and keeps it from idling.
+    scene.web.send({ _tag: "WakeSession", sessionId: scene.sessionId })
+    await scene.runner.take("StartSession")
+    scene.runner.send({ _tag: "SessionStarted", sessionId: scene.sessionId })
+    await scene.web.take("SessionUpdated", (m) => m.session.state === "Active")
+    const awake = await openForward(scene.hub, scene.sessionId, bobs)
+    expect((await awake.take("ForwardSession")).session.state).toBe("Active")
+    scene.web.send({ _tag: "JoinSession", sessionId: scene.sessionId })
+    const present = await scene.web.take("PresenceChanged", (m) =>
+      m.participants.some((p) => p.forwardingFrom !== undefined),
+    )
+    expect(present.participants).toContainEqual({
+      id: "dev:bob",
+      login: "bob",
+      name: "bob",
+      forwardingFrom: ["bobs-mac"],
+    })
+  })
+
+  test("by someone who watches keeps the Session awake, as its Creator's does", async () => {
+    const scene = await forwardScene(
+      await startHub({ config: { devLogin: true, sleepAfterMs: 150 } }),
+    )
+    await openWeb(scene.hub, "bob")
+    const bobs = (await cliToken(scene.hub, "bob", "bobs-mac")).token
+    const forward = await openForward(scene.hub, scene.sessionId, bobs)
+    await Bun.sleep(250)
+    expect(await scene.runner.untaken("StopSession")).toEqual([])
+    await forward.close()
+    expect(await scene.runner.take("StopSession")).toMatchObject({ reason: "Sleep" })
+  })
+
   test("wakes an Asleep Session", async () => {
     const scene = await forwardScene()
     await putToSleep(scene)
@@ -229,11 +278,10 @@ describe("the forward endpoint", () => {
     expect((await frozen.take("ForwardSession")).session.state).toBe("Frozen")
     await frozen.close()
 
-    // Back without a Claude credential of its own, and alice has stored none.
-    await openRunner(scene.hub, scene.runnerToken, [], undefined, true, {
-      forwardsPorts: true,
-      ownClaudeCredential: false,
-    })
+    // Back, but alice has removed her Claude credential, which it would run on.
+    scene.web.send({ _tag: "RemoveClaudeCredential", requestId: "rm" })
+    await scene.web.take("ClaudeCredentialState", (m) => m.requestId === "rm")
+    await openRunner(scene.hub, scene.runnerToken, [], undefined, true, { forwardsPorts: true })
     await scene.web.take("SessionUpdated", (m) => m.session.state === "Asleep")
     const forward = await Connection.open<Forwarded>(
       scene.hub,
@@ -244,7 +292,7 @@ describe("the forward endpoint", () => {
     expect(await forward.closed).toEqual({
       code: ForwardCloseCode.WentAsleep,
       reason:
-        "Claude Code could not start: Neither you nor mac has a Claude credential: add yours on the Account page.",
+        "Claude Code could not start: You have no Claude credential: add your setup token on the Account page.",
     })
   })
 

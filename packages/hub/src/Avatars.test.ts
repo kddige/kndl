@@ -62,7 +62,6 @@ describe("avatars", () => {
           workBranch: "claude/s-1",
           state: "Active",
           runnerId,
-          runnerLogin: { account: "alice@example.com" },
           creatorId: octocat.id,
           createdAt: 1_790_000_000_000,
         })

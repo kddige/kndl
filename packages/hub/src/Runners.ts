@@ -3,7 +3,6 @@ import {
   CommitIdPattern,
   ReleaseVersionPattern,
   RunnerId,
-  type RunnerAccount,
   RunnerModels,
   RunnerUpdater,
   type SessionState,
@@ -17,8 +16,6 @@ import type { Fragment } from "effect/sql/Statement"
 export interface KnownRunner {
   readonly id: RunnerId
   readonly name: string
-  /** Its own Claude credential, as its last hello showed it; null until it first connects. */
-  readonly login: RunnerAccount | null
   /** The version it last said hello with; null before then, or from a Runner too old to say. */
   readonly version: BuildVersion | null
   /** When it was last connected, as of its last hello or disconnect. */
@@ -37,7 +34,6 @@ const openStates: ReadonlyArray<SessionState> = ["Active", "Asleep", "Frozen"]
 interface RunnerRow {
   readonly id: string
   readonly name: string
-  readonly account: string | null
   readonly commit: string | null
   readonly branch: string | null
   readonly release: string | null
@@ -53,7 +49,6 @@ const decodeModels = Schema.decodeUnknownOption(Schema.fromJsonString(RunnerMode
 const fromRow = (row: RunnerRow): KnownRunner => ({
   id: RunnerId.make(row.id),
   name: row.name,
-  login: row.account === null ? null : { account: row.account },
   // A row from a hello is a full commit id, and a Release's version; anything else would fail the
   // Runners list's encoding, so it reads as no version, or no Release.
   version:
@@ -72,9 +67,9 @@ const fromRow = (row: RunnerRow): KnownRunner => ({
 })
 
 /**
- * What the Hub remembers about Runners beyond their tokens (RunnerTokens.ts): the own Claude
- * credential and version each last said hello with, and when it was last connected, so the web
- * UI can list Runners that are offline too.
+ * What the Hub remembers about Runners beyond their tokens (RunnerTokens.ts): the version each
+ * last said hello with, and when it was last connected, so the web UI can list Runners that are
+ * offline too.
  */
 export class Runners extends Context.Service<
   Runners,
@@ -86,7 +81,6 @@ export class Runners extends Context.Service<
     readonly recordHello: (
       id: RunnerId,
       hello: {
-        readonly login: RunnerAccount
         readonly version: BuildVersion | undefined
         readonly updater: RunnerUpdater | undefined
         readonly models?: RunnerModels | undefined
@@ -109,7 +103,6 @@ export class Runners extends Context.Service<
       const recordHello = Effect.fn("Runners.recordHello")(function* (
         id: RunnerId,
         hello: {
-          readonly login: RunnerAccount
           readonly version: BuildVersion | undefined
           readonly updater: RunnerUpdater | undefined
           readonly models?: RunnerModels | undefined
@@ -117,8 +110,7 @@ export class Runners extends Context.Service<
         at: number,
       ) {
         yield* sql`
-          UPDATE runners SET login_account = ${hello.login.account},
-            version_commit = ${hello.version?.commit ?? null},
+          UPDATE runners SET version_commit = ${hello.version?.commit ?? null},
             version_branch = ${hello.version?.branch ?? null},
             version_release = ${hello.version?.release ?? null},
             updater = ${hello.updater === undefined ? null : JSON.stringify(hello.updater)},
@@ -133,7 +125,7 @@ export class Runners extends Context.Service<
       })
 
       const select = (where: Fragment) => sql<RunnerRow>`
-        SELECT r.id, r.name, r.login_account AS account, r.version_commit AS "commit",
+        SELECT r.id, r.name, r.version_commit AS "commit",
           r.version_branch AS branch, r.version_release AS release, r.last_seen_at AS lastSeenAt, r.updater, r.models,
           (SELECT count(*) FROM sessions s
             WHERE s.runner_id = r.id AND s.state IN ${sql.in(openStates)}) AS openSessions

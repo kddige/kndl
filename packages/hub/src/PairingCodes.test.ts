@@ -251,7 +251,6 @@ describe("Runners", () => {
           {
             id: studio.runnerId,
             name: "studio",
-            login: null,
             version: null,
             lastSeenAt: null,
             openSessions: 0,
@@ -274,17 +273,12 @@ describe("Runners", () => {
           models: [opus],
           efforts: ["low", "medium"] as const,
         }
-        yield* runners.recordHello(
-          studio.runnerId,
-          { login: { account: "a@b.c" }, version, updater, models },
-          10,
-        )
+        yield* runners.recordHello(studio.runnerId, { version, updater, models }, 10)
         yield* runners.recordSeen(studio.runnerId, 20)
         expect(yield* runners.get(studio.runnerId)).toEqual(
           Option.some({
             id: studio.runnerId,
             name: "studio",
-            login: { account: "a@b.c" },
             version,
             lastSeenAt: 20,
             openSessions: 0,
@@ -295,22 +289,14 @@ describe("Runners", () => {
 
         // On a commit after the Release, it says no Release, and none is kept from before.
         const after = { commit: "b".repeat(40), branch: "main" }
-        yield* runners.recordHello(
-          studio.runnerId,
-          { login: { account: "a@b.c" }, version: after, updater },
-          25,
-        )
+        yield* runners.recordHello(studio.runnerId, { version: after, updater }, 25)
         expect(Option.map(yield* runners.get(studio.runnerId), (r) => r.version)).toEqual(
           Option.some(after),
         )
 
         // A Runner from before the version and the updater were in the hello. Its models are
         // kept: a hello without them is from a Claude Code that couldn't say this time (#128).
-        yield* runners.recordHello(
-          studio.runnerId,
-          { login: { account: "a@b.c" }, version: undefined, updater: undefined },
-          30,
-        )
+        yield* runners.recordHello(studio.runnerId, { version: undefined, updater: undefined }, 30)
         expect(
           Option.map(yield* runners.get(studio.runnerId), (r) => [r.version, r.updater, r.models]),
         ).toEqual(Option.some([null, null, models]))

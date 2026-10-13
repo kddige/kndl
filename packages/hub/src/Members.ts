@@ -12,8 +12,9 @@
 //   for someone else, the person is told only that the Hub is invite-only. Nothing is recorded
 //   of someone refused.
 // - Removing a Member signs them out everywhere and revokes their CLI tokens at once; they need a
-//   new Invite to come back. Their Sessions and their Claude credential stay as they were. The
-//   Owner can't be removed.
+//   new Invite to come back. Their Sessions and their Claude credential stay, but their awake
+//   Sessions are put to sleep, and none wakes on their credential until they are back (ADR 0026,
+//   SessionRelay.ts). The Owner can't be removed.
 
 import {
   InviteId,
@@ -96,6 +97,8 @@ export class Members extends Context.Service<
     readonly owner: Effect.Effect<Option.Option<ParticipantId>, SqlError>
     /** The Members, the Owner first, then the earliest admitted. */
     readonly list: Effect.Effect<ReadonlyArray<Member>, SqlError>
+    /** Whether someone is a Member now: admitted, and not removed since. */
+    readonly isMember: (id: ParticipantId) => Effect.Effect<boolean, SqlError>
     /**
      * Removes a Member: signs them out everywhere and revokes their CLI tokens. Refused for the
      * Owner, or anyone who isn't a Member.
@@ -320,11 +323,19 @@ export class Members extends Context.Service<
         return minted.token
       }).pipe(sql.withTransaction, Effect.withSpan("Members.newSetupLink"))
 
+      const isMember = Effect.fn("Members.isMember")(function* (id: ParticipantId) {
+        const rows = yield* sql<{ readonly id: string }>`
+            SELECT id FROM participants WHERE id = ${id} AND admitted_at IS NOT NULL
+          `
+        return rows.length > 0
+      })
+
       return Members.of({
         admit,
         admitLocal,
         owner,
         list,
+        isMember,
         remove,
         invite,
         pendingInvites,

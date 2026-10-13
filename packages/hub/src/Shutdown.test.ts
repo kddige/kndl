@@ -64,7 +64,6 @@ async function connect(hub: Awaited<ReturnType<typeof startSeededHub>>) {
         _tag: "RunnerHello",
         protocolVersion: ProtocolVersion,
         name: "mac",
-        login: { account: "alice@example.com" },
         sessions: [],
       }),
     ),

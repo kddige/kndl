@@ -179,7 +179,10 @@ describe("Secrets", () => {
     try {
       const database = databaseAt(join(dir, "hub.db"))
       // A key with nothing encrypted yet is taken, whichever it is.
-      const keyless = await startHub({ config: { devLogin: true }, database })
+      const keyless = await startHub({
+        config: { devLogin: true, secretsKey: Option.none() },
+        database,
+      })
       await keyless.stop()
 
       const first = await startHub({ config: { devLogin: true, ...withKey(keyA) }, database })
@@ -194,7 +197,7 @@ describe("Secrets", () => {
       await stopAll()
 
       for (const [config, message] of [
-        [{}, "HUB_SECRETS_KEY is not set"],
+        [{ secretsKey: Option.none() }, "HUB_SECRETS_KEY is not set"],
         [withKey(keyB), "HUB_SECRETS_KEY is not the key"],
       ] as const) {
         const error = await startHub({ config: { devLogin: true, ...config }, database }).then(
@@ -224,7 +227,7 @@ describe("Secrets", () => {
   })
 
   test("a Hub without a key refuses Sensitive values, and takes Plain ones", async () => {
-    const hub = await startHub({ config: { devLogin: true } })
+    const hub = await startHub({ config: { devLogin: true, secretsKey: Option.none() } })
     const env = await scene({ hub })
     const requestId = nextRequest()
     env.web.send({ _tag: "CheckEnvironmentDraft", requestId, repo, draft: draft() })

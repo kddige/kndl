@@ -13,7 +13,6 @@ import type {
   Participant,
   ParticipantId,
   PresentParticipant,
-  RunnerAccount,
   RunnerId,
   RunnerUpdater,
   SessionId,
@@ -71,10 +70,6 @@ export interface OnlineRunner {
   readonly updater: RunnerUpdater | undefined
   /** Whether it takes a RelaunchSession (#128). */
   readonly relaunches: boolean
-  /** Its own Claude credential, as its hello showed it. */
-  readonly login: RunnerAccount
-  /** Whether it has a Claude credential of its own for Sessions whose Creator has none. */
-  readonly ownClaudeCredential: boolean
   /** Whether it takes an OpenTunnel (#177). */
   readonly forwardsPorts: boolean
   /** Whether it gives Claude Code the MCP servers of its Session's Installations (#221). */
