@@ -24,8 +24,13 @@ export interface HostFacts {
   readonly tools: Readonly<Record<Tool, boolean>>
   /** A complete microsandbox runtime: the one in `~/.microsandbox`, or the app's bundled one. */
   readonly microsandbox: boolean
-  /** Linux only: `/dev/kvm`, and whether this user can open it. */
-  readonly kvm: { readonly device: boolean; readonly accessible: boolean } | undefined
+  /**
+   * Linux only: `/dev/kvm`, whether this user can open it, and whether the group database already
+   * has them in the kvm group, which a login that started before it was added doesn't have yet.
+   */
+  readonly kvm:
+    | { readonly device: boolean; readonly accessible: boolean; readonly member: boolean }
+    | undefined
 }
 
 /** A missing prerequisite, as doctor and onboard show it. */
@@ -110,6 +115,12 @@ export function prerequisitePlan(facts: HostFacts, roles: ReadonlyArray<Role>): 
         fixable: false,
         detail:
           "There is no /dev/kvm: turn on virtualization (VT-x or AMD-V) in the firmware, or, in a VM, nested virtualization.",
+      })
+    } else if (facts.kvm.member) {
+      missing.push({
+        name: "KVM access",
+        fixable: false,
+        detail: `${facts.user} is in the kvm group, but this login started before they were added: reboot (logging out isn't enough while the services linger), then run \`kndl doctor\`.`,
       })
     } else {
       missing.push({

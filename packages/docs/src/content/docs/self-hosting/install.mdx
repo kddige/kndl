@@ -31,6 +31,8 @@ The Hub is one [Bun](https://bun.sh) process with a SQLite database, and needs l
 
    It installs Bun if it's missing, clones kndl into `~/.kndl/app`, and puts the `kndl` command in `~/.local/bin`. It ends by printing the command to run next.
 
+   If you use [mise](https://mise.jdx.dev), the installer installs Bun with it (`mise use --global bun@latest`), so Bun is on your `PATH` and `mise upgrade` updates it. Otherwise it uses Bun's own installer, which puts Bun in `~/.bun`.
+
 2. Set the machine up:
 
    ```sh

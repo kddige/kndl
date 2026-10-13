@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs kndl: Bun if it's missing, the checkout in <home>/app, its dependencies, and the
+# Installs kndl: Bun if it's missing (with mise, if it's there), the checkout in <home>/app, its dependencies, and the
 # `kndl` command in ~/.local/bin. Run again on an installed machine, it updates the install. It
 # never asks anything: piped to sh, a prompt can't read the keyboard, so it says what to run next
 # (`kndl onboard`, or `kndl doctor --fix`) instead of running it.
@@ -59,6 +59,16 @@ find_bun() {
   if [ -x "$HOME/.bun/bin/bun" ]; then
     say "$HOME/.bun/bin/bun"
     return 0
+  fi
+  # With mise, Bun is a tool it manages, like the user's others: on PATH wherever mise is
+  # activated, and updated with `mise upgrade`. If mise can't, Bun's installer still can.
+  if command -v mise >/dev/null 2>&1; then
+    say "Installing Bun with mise..." >&2
+    if mise use --global bun@latest >&2 && bun=$(mise where bun@latest) && [ -x "$bun/bin/bun" ]; then
+      say "$bun/bin/bun"
+      return 0
+    fi
+    say "mise couldn't install Bun: using Bun's installer instead." >&2
   fi
   command -v curl >/dev/null 2>&1 || die "Bun is missing, and installing it needs curl."
   command -v bash >/dev/null 2>&1 || die "Bun is missing, and its installer needs bash."

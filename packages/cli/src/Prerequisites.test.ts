@@ -20,7 +20,7 @@ const linux: HostFacts = {
   platform: "linux",
   arch: "x64",
   packageManager: "apt",
-  kvm: { device: true, accessible: true },
+  kvm: { device: true, accessible: true, member: true },
 }
 
 const commands = (facts: HostFacts, roles: ReadonlyArray<"hub" | "runner">) =>
@@ -81,17 +81,27 @@ describe("the prerequisite plan", () => {
   })
 
   test("Linux: adds the user to the kvm group when /dev/kvm is closed to them", () => {
-    const facts = { ...linux, kvm: { device: true, accessible: false } }
+    const facts = { ...linux, kvm: { device: true, accessible: false, member: false } }
     const plan = prerequisitePlan(facts, ["runner"])
 
     expect(commands(facts, ["runner"])).toEqual(["sudo usermod -aG kvm ada"])
     expect(plan.afterwards[0]).toContain("Reboot")
   })
 
+  test("Linux: a user already in the kvm group, whose login predates it, is told to reboot", () => {
+    const facts = { ...linux, kvm: { device: true, accessible: false, member: true } }
+    const plan = prerequisitePlan(facts, ["runner"])
+
+    expect(plan.steps).toEqual([])
+    expect(plan.missing).toMatchObject([{ name: "KVM access", fixable: false }])
+    expect(plan.missing[0]?.detail).toContain("reboot")
+  })
+
   test("what can't be fixed is reported, not installed: no /dev/kvm, an Intel Mac, no package manager", () => {
-    const noKvm = prerequisitePlan({ ...linux, kvm: { device: false, accessible: false } }, [
-      "runner",
-    ])
+    const noKvm = prerequisitePlan(
+      { ...linux, kvm: { device: false, accessible: false, member: false } },
+      ["runner"],
+    )
     expect(noKvm.steps).toEqual([])
     expect(noKvm.missing).toMatchObject([{ name: "KVM", fixable: false }])
 
@@ -111,7 +121,7 @@ describe("the prerequisite plan", () => {
       ...linux,
       microsandbox: false,
       tools: { git: false, curl: false },
-      kvm: { device: true, accessible: false },
+      kvm: { device: true, accessible: false, member: false },
     }
 
     expect(prerequisitePlan(facts, ["runner"]).steps.every((s) => s.system === true)).toBe(true)

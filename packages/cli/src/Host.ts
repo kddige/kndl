@@ -236,7 +236,7 @@ export const hostFacts = (layout: Layout) =>
       packageManager: managers.find((manager) => has(manager === "apt" ? "apt-get" : manager)),
       tools: { git: has("git"), curl: has("curl") },
       microsandbox: microsandboxRuntime(layout),
-      kvm: on === "linux" ? kvm() : undefined,
+      kvm: on === "linux" ? kvm(userInfo().username) : undefined,
     } satisfies HostFacts
   })
 
@@ -260,14 +260,20 @@ function microsandboxRuntime(layout: Layout): boolean {
   }
 }
 
-function kvm(): { readonly device: boolean; readonly accessible: boolean } {
-  if (!existsSync("/dev/kvm")) return { device: false, accessible: false }
+function kvm(user: string): NonNullable<HostFacts["kvm"]> {
+  if (!existsSync("/dev/kvm")) return { device: false, accessible: false, member: false }
   try {
     accessSync("/dev/kvm", constants.R_OK | constants.W_OK)
-    return { device: true, accessible: true }
+    return { device: true, accessible: true, member: true }
   } catch {
-    return { device: true, accessible: false }
+    return { device: true, accessible: false, member: inGroup(user, "kvm") }
   }
+}
+
+/** Whether the group database has `user` in `group`: `id -nG <user>` reads it, not this process. */
+function inGroup(user: string, group: string): boolean {
+  const id = Bun.spawnSync(["id", "-nG", user], { stdout: "pipe", stderr: "ignore" })
+  return id.exitCode === 0 && id.stdout.toString().trim().split(/\s+/).includes(group)
 }
 
 /** Why the Hub would refuse `hub.env`, checked by the Hub's own HubConfig. */

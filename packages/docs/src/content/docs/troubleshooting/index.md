@@ -45,6 +45,8 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | A service won't stay up | [Install](/troubleshooting/install/#a-service-wont-stay-up) |
 | On Linux, the services stop when you log out | [Install](/troubleshooting/install/#the-services-stop-when-you-log-out) |
 | `KVM access: … can't open /dev/kvm.` | [Install](/troubleshooting/install/#kvm-access-cant-open-devkvm) |
+| `sudo: a terminal is required to read the password` | [Install](/troubleshooting/install/#sudo-a-terminal-is-required-to-read-the-password) |
+| `bun: command not found` while building | [Install](/troubleshooting/install/#build-the-web-ui-or-the-hub-link-mod-bun-command-not-found) |
 | `… is readable by others (mode 644); …` | [Install](/troubleshooting/install/#an-env-file-is-readable-by-others) |
 | `kndl update` stays where it is | [Install](/troubleshooting/install/#kndl-update-stays-where-it-is) |
 | `kndl uninstall` refuses the home | [Install](/troubleshooting/install/#kndl-uninstall-refuses-the-home) |
