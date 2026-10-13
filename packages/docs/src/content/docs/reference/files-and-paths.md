@@ -19,7 +19,6 @@ An install keeps everything in its home, `~/.kndl`, or `KNDL_HOME`. Back up `hub
 | `hub.db.lock` | The lock the running Hub holds, so a second Hub or a `secrets reset` on the same database is refused. |
 | `sessions/` | The Runner's Sessions, one directory each. See [One Session's directory](#one-sessions-directory). |
 | `claude-code/` | Linux builds of Claude Code, mounted read-only into every Sandbox. |
-| `claude-token` | Off macOS, the Runner's [Claude credential](/reference/configuration/#the-runners-claude-credential), if you put one there. Must be readable only by you. |
 | `runner-update.json` | The Runner's update under way, or its last failed one, so it can go back. |
 | `logs/hub.log`, `logs/runner.log` | Each service's output. `kndl logs` prints it. |
 | `cli/<commit>/kndl-<os>-<arch>` | The [`kndl` binaries the Hub serves](/reference/commands/#the-kndl-command-from-a-hub). |
@@ -35,7 +34,7 @@ An install keeps everything in its home, `~/.kndl`, or `KNDL_HOME`. Back up `hub
 | `~/Library/LaunchAgents/io.github.kddige.kndl.hub.plist`, `….runner.plist` | macOS: the services, as launchd agents. |
 | `~/.config/systemd/user/kndl-hub.service`, `kndl-runner.service` | Linux: the services, as systemd user units. |
 | `~/.microsandbox/` | microsandbox's home, with its Sandboxes, volumes and snapshots. |
-| `~/.claude.json` | Claude Code's config, if Claude Code is on the machine. The Runner reads its account and plan when its credential is Claude Code's login. `$CLAUDE_CONFIG_DIR/.claude.json` when that's set. |
+| `~/.claude.json`, `~/.claude/projects/` | Claude Code's config and transcripts, if Claude Code is on the machine. The Runner copies a Session's transcripts from there into its Sandbox, for Sessions from before they ran in Sandboxes, and removes them and their config entries when it purges the Session. Under `$CLAUDE_CONFIG_DIR` when that's set. Sessions never use this machine's Claude login. |
 
 Each service runs the install's Hub or Runner with its env file and `KNDL_HOME`, logs to `logs/`, starts at login and restarts if it crashes.
 

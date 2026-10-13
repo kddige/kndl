@@ -1,17 +1,18 @@
 ---
 title: Work in a Session
-description: Start a Session, prompt it with others, steer and stop a Turn, answer Claude's questions, use the terminal, and get the work out.
+description: Start a Session, prompt it while others watch, steer and stop a Turn, answer Claude's questions, use the terminal, and get the work out.
 sidebar:
   order: 1
 ---
 
 import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
 
-Start a Session on a Repo, prompt it together with your team, and get its work onto GitHub.
+Start a Session on a Repo, drive it while your team watches, and get its work onto GitHub.
 
 ## What you need
 
 - An account on a Hub with at least one online Runner.
+- Your [Claude credential](/guides/add-your-claude-credential/) on your **Account** page. The Sessions you start run on it.
 - A Repo with an [Environment](/guides/set-up-an-environment/). Starting the first Session on a Repo takes you there.
 
 ## Start a Session
@@ -33,9 +34,9 @@ Start a Session on a Repo, prompt it together with your team, and get its work o
 
 </Steps>
 
-## Prompt it together
+## Prompt it while others watch
 
-Everyone signed in to the Hub can open the Session and send prompts. Each prompt shows who sent it.
+You started the Session, so you drive it. Everyone else with access to the Repo can open it and follow along live, but can't prompt it: their prompt box says who drives.
 
 - **While Claude works**, new prompts wait in the [Prompt queue](/reference/glossary/) and run in order.
 - **To get a queued prompt in now**, press **Steer** on it. Claude reads it at its next step, usually after the current tool call, and the transcript marks it **Steered in**.
@@ -53,13 +54,13 @@ When Claude asks a question, the Session's row gets an amber dot and its header 
 - Type your own answer in **Something else** and press Enter.
 - Press **Skip** to leave a question unanswered.
 
-Anyone in the Session can answer, and everyone sees the others' picks. The answers go to Claude after the last question. To reply in your own words, type in the prompt box (**Or reply directly…**) and press **Reply**.
+You answer, and everyone in the Session sees your picks. The answers go to Claude after the last question. To reply in your own words, type in the prompt box (**Or reply directly…**) and press **Reply**.
 
 ## Use the terminal
 
-The **Terminal** tab shows Claude Code's screen, live, and anyone can type into it. Use it for what the chat doesn't cover: Claude Code's other dialogs, a subagent's questions, Esc and Ctrl-C.
+The **Terminal** tab shows Claude Code's screen, live, and you can type into it. Use it for what the chat doesn't cover: Claude Code's other dialogs, a subagent's questions, Esc and Ctrl-C.
 
-The terminal has one size for everyone. **Fit to my window** sets it to yours.
+Only you see it. Others in the Session don't, since the terminal is where your Claude token is easiest to see. **Fit to my window** sets its size to yours.
 
 ## What Claude can use
 

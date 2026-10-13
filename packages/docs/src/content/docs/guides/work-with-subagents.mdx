@@ -7,7 +7,7 @@ sidebar:
 
 import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
 
-Have a Session hand work to [subagents](/reference/glossary/), then follow, message, stop and resume them from the web UI.
+Have a Session hand work to [subagents](/reference/glossary/), then follow, message, stop and resume them from the web UI. Everyone in the Session follows them. Messaging, stopping and resuming are the Session's Creator's.
 
 ## What you need
 
@@ -35,7 +35,7 @@ Each agent is a card in the transcript that streams its work. In the sidebar, th
 | ----------- | ------------------------------------------------------ |
 | Running     | The agent is working.                                  |
 | Done        | The agent finished.                                    |
-| Stopped     | Someone, or Claude, stopped it.                        |
+| Stopped     | The Creator, or Claude, stopped it.                    |
 | Interrupted | The Session's Claude Code stopped while the agent ran. |
 
 To open an agent's view, click its row in the sidebar, or **Message or stop it** on its card. **Back to the chat** returns to the transcript.

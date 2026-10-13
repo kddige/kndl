@@ -94,7 +94,8 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | **Test build failed** | [Sessions](/troubleshooting/sessions/#test-build-failed) |
 | `You don't have access to … on GitHub` | [Sessions](/troubleshooting/sessions/#you-dont-have-access-to-a-repo) |
 | A Sensitive variable can't be saved | [Sessions](/troubleshooting/sessions/#a-sensitive-variable-cant-be-saved) |
-| `Neither you nor … has a Claude credential` | [Sessions](/troubleshooting/sessions/#neither-you-nor-the-runner-has-a-claude-credential) |
+| New Session asks for your Claude credential, or a Session sleeps for want of one | [Sessions](/troubleshooting/sessions/#you-have-no-claude-credential) |
+| `Only …, who started this Session, can drive it` | [Sessions](/troubleshooting/sessions/#only-someone-else-can-drive-this-session) |
 | A Claude credential can't be saved | [Sessions](/troubleshooting/sessions/#a-claude-credential-cant-be-saved) |
 | `There is no such Session.` | [Sessions](/troubleshooting/sessions/#there-is-no-such-session) |
 | A Session doesn't go to sleep | [Sessions](/troubleshooting/sessions/#a-session-doesnt-go-to-sleep) |

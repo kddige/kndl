@@ -7,7 +7,7 @@ sidebar:
 
 import { CardGrid, LinkCard, Steps } from "@astrojs/starlight/components"
 
-Rename a Session, choose its model, control when it sleeps, and delete or restore it. Anyone in the Session can do each of these.
+Rename a Session, choose its model, control when it sleeps, and delete or restore it. Each of these is the Session's Creator's to do: others in the Session see the result.
 
 ## Rename it
 
@@ -23,7 +23,7 @@ A Session without a name shows its Work branch. Clear the name to go back to it.
 
 ## Choose the model and effort
 
-Two buttons under the prompt box show the Session's model and effort, such as **Sonnet 5.5** and **High**. The effort button says **Effort** while no level is set, and Claude Code picks one. It's one setting for everyone in the Session.
+Two buttons under the prompt box show the Session's model and effort, such as **Sonnet 5.5** and **High**. The effort button says **Effort** while no level is set, and Claude Code picks one. It's one setting for the Session.
 
 <Steps>
 
@@ -42,11 +42,11 @@ The change applies from the next Turn. The Runner restarts Claude Code in the sa
 A Session goes to sleep after 15 minutes, by default, when nothing is happening: no Turn or subagent running, no prompt queued, no open question, and nobody in it. Sleeping stops Claude Code and the Sandbox. The Workspace, the conversation and the Sandbox's disks are kept.
 
 - **Sleep now**, in the header, puts it to sleep at once.
-- **Any prompt** wakes it, as does **Wake now** on its banner. Claude Code resumes the same conversation, with `node_modules`, caches and Docker's data as they were.
+- **Your next prompt** wakes it, as does **Wake now** on its banner. Claude Code resumes the same conversation, with `node_modules`, caches and Docker's data as they were.
 
 ## Keep it awake
 
-To keep a Session running while nobody is in it, such as for a dev server or a long command, turn on **Keep awake** in its header. The sidebar marks the Session with a sun, and the header says who turned it on.
+To keep a Session running while nobody is in it, such as for a dev server or a long command, turn on **Keep awake** in its header. The sidebar marks the Session with a sun for everyone.
 
 Turn **Keep awake** off, or press **Sleep now**, to let it sleep again.
 
@@ -58,7 +58,7 @@ A Session whose Runner is offline is Frozen. You can read it, and new prompts wa
 
 **Delete Session**, the bin in the header, archives the Session. Its Sandbox is destroyed. Its Workspace and conversation are kept for 30 days by default, then deleted.
 
-To restore it, press **Undo** in the toast, or **Restore** on it in **Archived Sessions**, in the sidebar. A restored Session starts Asleep. The next prompt wakes it in a fresh Sandbox, without the old `node_modules` or Docker data.
+To restore it, press **Undo** in the toast, or **Restore** on it in **Archived Sessions**, in the sidebar. A restored Session starts Asleep. Your next prompt wakes it in a fresh Sandbox, without the old `node_modules` or Docker data.
 
 ## Next steps
 
