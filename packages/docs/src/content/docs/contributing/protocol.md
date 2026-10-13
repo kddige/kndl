@@ -151,7 +151,7 @@ The Runner sends the table of the pinned Claude Code version's models, `PinnedCl
 1. The CLI opens it with a CLI token as `Authorization: Bearer`; the sign-in cookie won't do. A request that isn't a WebSocket upgrade gets `426`, and a missing or wrong token `401`, before the upgrade.
 2. The Hub checks the caller's access to the Session's Repo, as for a tunnel. A refusal comes after the upgrade, as a close with a code and a message.
 3. The CLI sends `ForwardHello { protocolVersion }`. The Hub answers `ForwardWelcome { protocolVersion }`, or `HandshakeRejected` ([Handshake](#handshake)).
-4. The Hub wakes an Asleep Session, then sends `ForwardSession { session }`, the Session as the web channel has it, and another whenever it changes. Its `openPorts` are the ports to forward. A Frozen Session's forward stays open, and is sent the Session again once its Runner is back. The CLI sends nothing more.
+4. The Hub wakes an Asleep Session for its Creator, then sends `ForwardSession { session }`, the Session as the web channel has it, and another whenever it changes. Its `openPorts` are the ports to forward. A Frozen Session's forward stays open, and is sent the Session again once its Runner is back. The CLI sends nothing more.
 
 While it is connected, a forward is presence: the Hub doesn't put the Session to sleep for being idle, and lists the forward's person in the Session's `PresenceChanged`, to the web UI and the mod, even without the Session open in a browser. `forwardingFrom` on that person lists the machines their forwards come from, each named after its CLI token. Closing the forward takes it out.
 
@@ -162,7 +162,7 @@ The Hub closes a forward with one of these codes, and a message saying why. The 
 | `1001` | The Hub is shutting down. |
 | `4401` | The CLI token was revoked, on the **Account** page or by `kndl logout`: `This machine's CLI token was revoked: run kndl login to sign in again.` |
 | `4404` | No such Session, or one the caller has no access to: the two get the same answer. Also when the caller loses access to the Session's Repo: `You no longer have access to <repo>.` |
-| `4409` | The Session went asleep, the message saying why, such as `Put to sleep by <login>`; or it was Asleep and couldn't be woken, the message saying why not. |
+| `4409` | The Session went asleep, the message saying why, such as `Put to sleep by <login>`; or it was Asleep and couldn't be woken, the message saying why not, such as that only its Creator can wake it. |
 | `4410` | The Session was archived. |
 | `4424` | GitHub couldn't say whether the caller has access to the Session's Repo; try again. |
 
@@ -244,7 +244,7 @@ Only a Session's `creator` drives it ([ADR 0026](/contributing/decisions/0026-a-
 - `OpenTerminal`, `TerminalInput` and `TerminalResize`;
 - uploading an Attachment with `POST /sessions/<session id>/attachments`.
 
-`JoinSession`, reading Attachments, and Forwards take Repo access alone. Terminal frames go only to the Creator's connections.
+`JoinSession`, reading Attachments, and Forwards of an Active Session take Repo access alone. Only the Creator's forward wakes an Asleep Session ([Forwards](#forwards)). Terminal frames go only to the Creator's connections.
 
 Each time the Hub starts, it puts to sleep every Active Session whose Creator has no setup token, saying why. It also takes out of each Prompt queue the prompts queued by anyone but the Session's Creator, and logs each as `PromptCancelled { promptId, sender, text, message }`.
 

@@ -93,7 +93,8 @@ Anyone who can reach that address on your network can use the ports, without sig
 ## While it forwards
 
 - The Session shows you in **Here now** as forwarding from your machine.
-- The Session stays awake while a forward is connected, and an Asleep Session wakes when you forward it.
+- The Session stays awake while a forward is connected.
+- Forwarding an Asleep Session you started wakes it. Anyone else's forward of it is told it's Asleep, and that only its Creator can wake it.
 - If the connection to the Hub drops, the CLI reconnects on its own.
 
 If a port is already taken on your machine, the CLI says which process holds it and keeps retrying. See [Commands](/reference/commands/#kndl-forward) for every option.

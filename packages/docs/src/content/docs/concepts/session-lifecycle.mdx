@@ -53,7 +53,7 @@ It can't wake until its Creator has a Claude credential again. A removed Member'
 
 ## Waking
 
-The Creator's prompt wakes an Asleep Session, as do **Wake now** and a `kndl forward` of it. The Runner fetches the Creator's setup token from the Hub and starts the same Sandbox, with its dependencies, caches and Docker data as they were. Claude Code resumes the conversation.
+The Creator wakes an Asleep Session with a prompt, **Wake now** or a `kndl forward` of it. Anyone else's forward of an Asleep Session is told it's Asleep and that only its Creator can wake it. The Runner fetches the Creator's setup token from the Hub and starts the same Sandbox, with its dependencies, caches and Docker data as they were. Claude Code resumes the conversation.
 
 A Session whose Creator has no Claude credential doesn't wake. A replaced token reaches the Session at its next wake.
 
