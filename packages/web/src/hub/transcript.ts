@@ -3,8 +3,9 @@
 // 0014) is a card at the Agent call that started it: its events are grouped by agentId, whichever
 // run they come in, so a background agent keeps filling its card after its Turn ended. A prompt
 // steered into a Turn (#195) is shown where Claude read it. State changes between Turns, notes
-// about the Sandbox, and a change of model (#128) become notices. A question Claude asked with
-// AskUserQuestion (#193) is a block of its own, in place of its tool call, with how it closed.
+// about the Sandbox, and a change of model (#128) become notices. So does a queued prompt the Hub
+// cancelled (ADR 0026), shown as cancelled. A question Claude asked with AskUserQuestion (#193) is
+// a block of its own, in place of its tool call, with how it closed.
 //
 // The fold is incremental: the store folds each batch of entries a joined Session's log grows by
 // into the transcript it has, and a whole log is the same fold from an empty transcript. A batch
@@ -31,6 +32,7 @@ import type {
   TurnId,
   SandboxNoted,
   ModelSwitched,
+  PromptCancelled,
 } from "@kndl/protocol"
 
 export interface ToolCallView {
@@ -137,6 +139,13 @@ export type TranscriptItem =
       readonly key: string
       readonly at: number
       readonly event: NoticeEvent
+    }
+  /** A queued prompt the Hub took out of the queue without it running (ADR 0026). */
+  | {
+      readonly kind: "cancelled"
+      readonly key: string
+      readonly at: number
+      readonly event: PromptCancelled
     }
 
 export interface Transcript {
@@ -631,6 +640,10 @@ class Folding {
       case "ModelSwitched":
         if (event._tag === "SessionStateChanged") this.#stateChange = event
         this.#items.push({ kind: "notice", key: `notice-${entry.seq}`, at: entry.at, event })
+        this.#turns.push(undefined)
+        break
+      case "PromptCancelled":
+        this.#items.push({ kind: "cancelled", key: `cancelled-${entry.seq}`, at: entry.at, event })
         this.#turns.push(undefined)
         break
     }

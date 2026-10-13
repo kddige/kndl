@@ -1,7 +1,9 @@
 ---
-status: accepted
+status: superseded by 0026
 supersedes: 0002
 ---
+
+> Superseded by [ADR 0026](0026-a-session-runs-on-and-is-driven-by-its-creator.md): each person still stores their own setup token on the Hub, and a Session runs on its Creator's. But there's no fallback to a Runner's credential, the token goes into the Sandbox, API keys aren't accepted for now (#334), and only the Creator drives a Session.
 
 # Each person brings their Claude credential; a Session runs on its Creator's
 

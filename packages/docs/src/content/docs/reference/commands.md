@@ -249,7 +249,7 @@ Shows which Hub the CLI is signed in to, as whom, and on which machine. Exits 1 
 kndl forward [<session>] [<port>...] [--bind <address>]
 ```
 
-Opens a Session's Open ports on `localhost` here, as they open and close, until you stop it. It wakes an Asleep Session and keeps it awake. See [Forward a Session's ports](/guides/forward-a-sessions-ports/).
+Opens a Session's Open ports on `localhost` here, as they open and close, until you stop it. It keeps the Session awake, and wakes an Asleep one you started. For anyone else's Asleep Session, it says only its Creator can wake it. See [Forward a Session's ports](/guides/forward-a-sessions-ports/).
 
 | Argument or flag | Default | What it does |
 |---|---|---|

@@ -15,7 +15,7 @@ A Session is always in one of four states. Asleep Sessions cost nothing but disk
 | State        | Sandbox                                           | Claude Code           | Prompts                                |
 | ------------ | ------------------------------------------------- | --------------------- | -------------------------------------- |
 | **Active**   | Running                                           | Running               | Delivered in order, one Turn at a time |
-| **Asleep**   | Stopped, disks kept                               | Stopped               | The first one wakes it                 |
+| **Asleep**   | Stopped, disks kept                               | Stopped               | The Creator's next one wakes it        |
 | **Frozen**   | As the Runner left it                             | As the Runner left it | Wait until the Runner is back          |
 | **Archived** | Destroyed; Workspace and Claude Code's state kept | Stopped               | Refused                                |
 
@@ -32,18 +32,30 @@ The Hub puts an Active Session to sleep after 15 minutes ([`HUB_SLEEP_AFTER_MS`]
 
 Asleep, the Sandbox is stopped and its disks are kept. Docker's containers are stopped first, so databases shut down cleanly.
 
+### Put to sleep, saying why
+
+The Hub also puts a Session to sleep, even mid-Turn, when the token it runs on goes away. The Session's history says why:
+
+- its Creator removed or replaced their Claude credential;
+- its Creator was removed as a Member;
+- its Creator has no Claude credential, as the Hub starts.
+
+It can't wake until its Creator has a Claude credential again. A removed Member's Sessions stay readable until they're purged.
+
 ### Keep awake
 
 **Keep awake** in a Session's header stops it going to sleep when idle. Use it for work that runs with nobody watching, such as a dev server or a long background command. Open ports and background commands don't keep a Session awake on their own ([ADR 0016](/contributing/decisions/0016-forwarding-a-sessions-ports/)).
 
-- Anyone with access to the Repo can turn it on or off. The header, the sidebar and the Runners page show who turned it on.
+- Only the Session's Creator can turn it on or off. The header, the sidebar and the Runners page show who turned it on.
 - Turning it on wakes an Asleep Session.
-- It stays on until someone turns it off, presses **Sleep now** or deletes the Session. A restore doesn't turn it back on.
+- It stays on until the Creator turns it off, presses **Sleep now** or deletes the Session. A restore doesn't turn it back on.
 - After a Runner update or restart, the Hub wakes the Session again.
 
 ## Waking
 
-A prompt wakes an Asleep Session, as do **Wake now** and a `kndl forward` of it. The Runner starts the same Sandbox, with its dependencies, caches and Docker data as they were. Claude Code resumes the conversation.
+The Creator wakes an Asleep Session with a prompt, **Wake now** or a `kndl forward` of it. Anyone else's forward of an Asleep Session is told it's Asleep and that only its Creator can wake it. The Runner fetches the Creator's setup token from the Hub and starts the same Sandbox, with its dependencies, caches and Docker data as they were. Claude Code resumes the conversation.
+
+A Session whose Creator has no Claude credential doesn't wake. A replaced token reaches the Session at its next wake.
 
 - **A newer Environment version** makes the Sandbox afresh from its Build at the next wake, on the same Workspace and disks. **Restart** on the **Environment changed** banner does that at once.
 - **A Runner behind the Hub** wakes no Session. Prompts wait until the Runner runs the Hub's commit.
@@ -61,12 +73,12 @@ Claude Code runs in the Sandbox, not in the Runner, so it keeps running while th
 
 ## Deleting and restoring
 
-Any Participant can delete a Session with the bin in its header. Deleting archives it at once: the Sandbox and its disks are destroyed, and the Workspace and Claude Code's state are kept.
+The Session's Creator can delete it with the bin in its header. Deleting archives it at once: the Sandbox and its disks are destroyed, and the Workspace and Claude Code's state are kept. Everyone with access to the Repo can still read it.
 
 - **Undo** on the toast restores it.
-- **Archived Sessions** in the sidebar lists each Repo's Archived Sessions, with who deleted each and when, and a **Restore** button.
+- **Archived Sessions** in the sidebar lists each Repo's Archived Sessions, with who deleted each and when. The Creator restores one with **Restore**.
 
-A restored Session is Asleep, and the next prompt wakes it in a new Sandbox. The conversation carries on. Dependencies and Docker's data went with the old disks, so the Start script or Claude reinstalls them.
+A restored Session is Asleep, and the Creator's next prompt wakes it in a new Sandbox. The conversation carries on. Dependencies and Docker's data went with the old disks, so the Start script or Claude reinstalls them.
 
 ## Purging
 

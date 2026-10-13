@@ -37,11 +37,22 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0035, a Runner's Release (ADR 0025): the migrator
+ * Takes the database back to before migration 0036, the Creator drives (ADR 0026): the migrator
  * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ * A Session's Runner login was NOT NULL with no default, which a column added can't be.
  */
+const beforeCreatorDrives = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE runners ADD COLUMN login_account TEXT`
+  yield* sql`ALTER TABLE sessions ADD COLUMN runner_login_account TEXT NOT NULL DEFAULT ''`
+  yield* sql`ALTER TABLE claude_credentials ADD COLUMN plan TEXT`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'creator_drives'`
+})
+
+/** Takes the database back to before migration 0035, a Runner's Release (ADR 0025), and 0036. */
 const beforeRunnerRelease = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeCreatorDrives
   yield* sql`ALTER TABLE runners DROP COLUMN version_release`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'runner_release'`
 })
@@ -241,6 +252,60 @@ const beforeAgents = Effect.gen(function* () {
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
+
+describe("migration 0036, the Creator drives", () => {
+  test("keeps every Runner, Session and Claude credential, without their Runner login or plan", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeCreatorDrives
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at, login_account)
+          VALUES ('r-1', 'build-box', 'hash', 1, 'a@example.com')`
+        yield* sql`
+          INSERT INTO sessions (id, repo, base_branch, work_branch, state, runner_id,
+            runner_login_account, creator_id, created_at)
+          VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com', 'p-1', 1)
+        `
+        yield* sql`
+          INSERT INTO claude_credentials (participant_id, kind, ciphertext, last4, plan, added_at)
+          VALUES ('p-1', 'OAuthToken', 'sealed', '9f3b', 'max5x', 1)
+        `
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const columns = (table: string) =>
+          Effect.map(
+            sql.unsafe<{ readonly name: string }>(`SELECT name FROM pragma_table_info('${table}')`),
+            (rows) => rows.map((row) => row.name),
+          )
+        return {
+          runners: yield* sql`SELECT id FROM runners`,
+          sessions: yield* sql`SELECT id FROM sessions`,
+          credentials:
+            yield* sql`SELECT participant_id AS participantId, last4 FROM claude_credentials`,
+          runnerColumns: yield* columns("runners"),
+          sessionColumns: yield* columns("sessions"),
+          credentialColumns: yield* columns("claude_credentials"),
+        }
+      }),
+    )
+    expect(after.runners).toEqual([{ id: "r-1" }])
+    expect(after.sessions).toEqual([{ id: "s-1" }])
+    expect(after.credentials).toEqual([{ participantId: "p-1", last4: "9f3b" }])
+    expect(after.runnerColumns).not.toContain("login_account")
+    expect(after.sessionColumns).not.toContain("runner_login_account")
+    expect(after.credentialColumns).not.toContain("plan")
+  })
+})
 
 describe("migration 0034, attachments' sent_at", () => {
   test("counts the files kept before it sent, so the Hub never deletes them unsent", async () => {
@@ -576,9 +641,8 @@ describe("migration 0017, subagents", () => {
           VALUES ('r-1', 'build-box', 'hash', 1)`
         yield* sql`
           INSERT INTO sessions (
-            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at
-          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Active', 'r-1', 'a@example.com', 'p-1', 1)
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Active', 'r-1', 'p-1', 1)
         `
         const sessions = yield* Sessions
         const id = SessionId.make("s-1")
@@ -624,10 +688,8 @@ describe("migration 0021, no WIP ref", () => {
           VALUES ('r-1', 'build-box', 'hash', 1)`
         yield* sql`
           INSERT INTO sessions (
-            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at
-          ) VALUES ('s-1', 'acme/web', 'main', 'claude/s-1', 'Asleep', 'r-1',
-            'a@example.com', 'p-1', 1)
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at
+          ) VALUES ('s-1', 'acme/web', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1)
         `
         yield* beforeNoWipRef
         // From before #194: a failed WIP push between two notes.

@@ -6,7 +6,6 @@ import {
   expectEveryTag,
   expectRejected,
   expectRoundTrips,
-  runnerLogin,
   runnerModels,
 } from "./testSupport.ts"
 import { ProtocolVersion } from "./Version.ts"
@@ -18,7 +17,6 @@ const runnerToHub = [
     _tag: "RunnerHello",
     protocolVersion: ProtocolVersion,
     name: "studio",
-    login: runnerLogin,
     sessions: ["s-1", "s-2"],
   },
   { _tag: "SessionStarted", sessionId: "s-1" },
@@ -64,7 +62,6 @@ const runnerToHub = [
     _tag: "RunnerHello",
     protocolVersion: ProtocolVersion,
     name: "studio",
-    login: runnerLogin,
     sessions: [],
     asksCloneAccess: true,
   },
@@ -72,7 +69,6 @@ const runnerToHub = [
     _tag: "RunnerHello",
     protocolVersion: ProtocolVersion,
     name: "studio",
-    login: runnerLogin,
     sessions: ["s-1", "s-2"],
     withoutModToken: ["s-1"],
   },
@@ -108,7 +104,6 @@ const runnerToHub = [
     _tag: "RunnerHello",
     protocolVersion: ProtocolVersion,
     name: "studio",
-    login: runnerLogin,
     sessions: [],
     models: runnerModels,
     relaunches: true,
@@ -248,15 +243,8 @@ const hubToRunner = [
     credential: {
       _tag: "OAuthToken",
       token: "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY",
-      plan: { subscriptionType: "max", rateLimitTier: "default_claude_max_5x" },
     },
   },
-  {
-    _tag: "ClaudeCredentialFetched",
-    requestId: "c-2",
-    credential: { _tag: "ApiKey", key: "sk-ant-api03-FAKE_KEY_FOR_TESTS_ONLY" },
-  },
-  { _tag: "ClaudeCredentialFetched", requestId: "c-3" },
   { _tag: "ClaudeCredentialRefused", requestId: "c-4", message: "Not a Session this Runner runs" },
   { _tag: "CheckUpdate", target: { commit: "a".repeat(40), branch: "main" } },
   { _tag: "ApplyUpdate", target: { commit: "a".repeat(40) } },
@@ -304,7 +292,6 @@ describe("RunnerToHub", () => {
     expectRejected(RunnerToHub, { sessionId: "s-1" })
     expectRejected(RunnerToHub, { _tag: "SessionStarted", sessionId: "" })
     expectRejected(RunnerToHub, { _tag: "SessionStarted" })
-    expectRejected(RunnerToHub, { ...runnerToHub[0], login: { account: "" } })
     expectRejected(RunnerToHub, { _tag: "SandboxStateReport", sessionId: "s-1", state: "Asleep" })
     expectRejected(RunnerToHub, {
       _tag: "SessionStopped",

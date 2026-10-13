@@ -79,7 +79,7 @@ describe("tools", () => {
   })
 })
 
-const welcome = { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 2 }) }
+const welcome = { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 3 }) }
 
 /**
  * A session a Runner started, linked to the Hub. Returns the requests, and the events posted.
@@ -195,7 +195,7 @@ describe("the Hub link", () => {
     expect(requests.map((request) => request.url)).toEqual([`${hubUrl}/mod/hello`])
     expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
       _tag: "ModHello",
-      protocolVersion: 2,
+      protocolVersion: 3,
       sessionId: "s1",
       claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",

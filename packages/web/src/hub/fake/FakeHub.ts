@@ -1,8 +1,8 @@
 // An in-process stand-in for the Hub's web channel, until the real one (issues #7 and #8) is
 // done. It speaks the protocol over a fake socket, so the HubClient can't tell the difference,
 // and plays a scripted Session: streamed text, tool calls, subagents in the foreground and the
-// background, which people can message and stop, a second Participant joining and queueing a
-// prompt, and a terminal to watch and type into; Environments, shared
+// background, which its Creator can message and stop, a second Participant joining to watch, and
+// a terminal to watch and type into; Environments, shared
 // variables and Test builds with a streaming log (environments.ts); MCP servers and their
 // Installations, with each Repo's change log (mcpServers.ts); and, when asked to, a GitHub App
 // short of permissions. `VITE_FAKE_HUB=1` runs the UI against it; tests use it too.
@@ -10,7 +10,10 @@
 // It keeps its data in the wire (encoded) shapes and decodes what the client sends, so a client
 // message the real Hub would refuse fails here too. What it refuses of a Session, and how its Prompt
 // queue and Steer behave, it decides by the protocol's Session rules (SessionRules.ts), as the real
-// Hub does; HubContract.test.ts runs the same HubClient tests against both.
+// Hub does; HubContract.test.ts runs the same HubClient tests against both. Only a Session's
+// Creator drives it (ADR 0026), on their setup token: the fake refuses anyone else's prompts,
+// answers, stops, controls and terminal, and assumes every Creator but the signed-in person has a
+// token stored.
 
 import {
   admissionLink,
@@ -19,7 +22,6 @@ import {
   cancelRefusal,
   cantStartText,
   checkHandshake,
-  claudeCredentialKindOf,
   claudeCredentialProblem,
   CliLoginApproval,
   type CliLoginApproved,
@@ -32,6 +34,7 @@ import {
   formatCliLoginCode,
   formatPairingCode,
   deliveryBlocked,
+  driveRefusal,
   installationFailureText,
   installationsDiffer,
   installationsCantStartText,
@@ -95,6 +98,7 @@ import {
   type ReplyStep,
   replyTo,
   scriptedTurn,
+  seedClaudeCredential,
   seedCliTokens,
   seedInvites,
   seedMembers,
@@ -146,10 +150,15 @@ export interface FakeHubOptions {
    */
   appPermissions?: AppPermissionsCheckWire | null
   /**
-   * The signed-in person's Claude credential (ADR 0015), as the Hub shows it; null for none.
-   * Default null.
+   * The signed-in person's Claude credential, a setup token (ADR 0026), as the Hub shows it; null
+   * for none, so their Sessions can't start or wake. Default one, added a month ago.
    */
   claudeCredential?: ClaudeCredentialInfoWire | null
+  /**
+   * Who is signed in. Default Alice, the Creator of most seeded Sessions; Bob watches them, and
+   * drives his own.
+   */
+  you?: ParticipantWire
   /** The signed-in person's CLI tokens (issue #179), newest first. Default two, on two machines. */
   cliTokens?: ReadonlyArray<CliTokenInfoWire>
   /** Whether the signed-in person is the Hub's Owner (#209), who has the People page. Default true. */
@@ -278,6 +287,10 @@ class FakeSocket implements HubSocket {
 
 const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 
+/** Why a Session can't be created without the person's own setup token (ADR 0026). */
+const noCredentialText =
+  "Add your Claude setup token on your Account page first: a Session runs on its Creator's own."
+
 /** What a listing that fails says, as the Hub words it. */
 const notListed = "Could not list your Repos; try again."
 
@@ -365,7 +378,9 @@ export class FakeHub implements HubTransport {
     this.#signInOptions = options.signInOptions ?? { github: true, dev: true }
     this.#autoplay = options.autoplay ?? true
     this.#appPermissions = options.appPermissions ?? null
-    this.#claudeCredential = options.claudeCredential ?? null
+    this.#claudeCredential =
+      options.claudeCredential === undefined ? seedClaudeCredential() : options.claudeCredential
+    this.#you = options.you ?? defaultYou
     this.#cliTokens = [...(options.cliTokens ?? seedCliTokens())]
     this.#owner = options.owner ?? true
     this.#reply = options.reply ?? replyTo
@@ -375,11 +390,8 @@ export class FakeHub implements HubTransport {
       const agents = agentsFromLog(log)
       const listed = listedAgents(agents)
       this.sessions.set(seed.summary.id, {
-        // Bob has stored his Claude credential; whether the signed-in person has is an option.
         summary: {
           ...seed.summary,
-          claudeAccount:
-            seed.summary.creator.id === this.#you.id ? this.#claudeAccount() : "Creator",
           ...(listed.length > 0 && { agents: listed }),
           ...(seed.summary.state === "Active" &&
             seed.ports !== undefined && { openPorts: seed.ports }),
@@ -521,11 +533,9 @@ export class FakeHub implements HubTransport {
     this.#dropCodes((other) => other.id === code.id)
     const connected = {
       isOnline: true,
-      login: { account: "alice@example.com" },
       version: hubVersion,
       versionStatus: "Current" as const,
       lastSeenAt: Date.now(),
-      ownClaudeCredential: true,
     }
     const runnerId = code.runnerId ?? `r-${++this.#ids}`
     const repaired = this.runners.find((runner) => runner.id === runnerId)
@@ -567,6 +577,16 @@ export class FakeHub implements HubTransport {
     })
     this.#toOwner(this.#memberList())
     this.#toOwner(this.#inviteList())
+  }
+
+  /**
+   * The Session's Creator prompts it from elsewhere, as from another tab, and Claude replies as
+   * it does to a prompt from the web: for whoever watches it (ADR 0026). In the browser,
+   * `fakeHub.creatorPrompts("s-landing", "ask me first")` in the console.
+   */
+  creatorPrompts(sessionId: string, text: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session) this.#prompt(session, session.summary.creator, text, this.#reply(text))
   }
 
   /**
@@ -854,8 +874,14 @@ export class FakeHub implements HubTransport {
       session.guests.push({ ...bob, forwardingFrom: ["bob-mbp"] })
       this.#presence(session)
     })
+    // Its Creator prompts it, as from another tab: only they drive it (ADR 0026).
     this.#after(6, () =>
-      this.#prompt(session, bob, "Can you make tool calls collapse by default?", scriptedTurn),
+      this.#prompt(
+        session,
+        session.summary.creator,
+        "Can you make tool calls collapse by default?",
+        scriptedTurn,
+      ),
     )
   }
 
@@ -902,36 +928,29 @@ export class FakeHub implements HubTransport {
           socket.deliver({ _tag: "AppPermissionsChecked", check: this.#appPermissions })
         }
         break
-      // As the Hub does (ADR 0015), with Anthropic played by the secret: one with REJECTED in it
-      // is refused, one with UNREACHABLE in it stored with a warning. Every value here is fake.
+      // As the Hub does (ADR 0015, ADR 0026): a setup token only, with Anthropic played by the
+      // secret: one with REJECTED in it is refused, one with UNREACHABLE in it stored with a
+      // warning. Every value here is fake.
       case "SetClaudeCredential": {
         const secret = Redacted.value(message.secret).trim()
-        const kind = claudeCredentialKindOf(secret)
-        const plan = kind === "OAuthToken" ? message.plan : undefined
-        const problem = claudeCredentialProblem(secret, plan)
-        if (problem !== undefined || kind === undefined) {
-          this.#refuse(socket, message._tag, message.requestId, problem ?? "")
+        const problem = claudeCredentialProblem(secret)
+        if (problem !== undefined) {
+          this.#refuse(socket, message._tag, message.requestId, problem)
           break
         }
-        const what = kind === "ApiKey" ? "API key" : "token"
         if (secret.includes("REJECTED")) {
           this.#refuse(
             socket,
             message._tag,
             message.requestId,
-            `Anthropic rejected this ${what}: it is invalid.`,
+            "Anthropic rejected this token: it is invalid.",
           )
           break
         }
         this.#setClaudeCredential(
           socket,
           message.requestId,
-          {
-            kind,
-            last4: secret.slice(-4),
-            ...(plan !== undefined && { plan }),
-            addedAt: Date.now(),
-          },
+          { kind: "OAuthToken", last4: secret.slice(-4), addedAt: Date.now() },
           secret.includes("UNREACHABLE")
             ? "Saved without checking it: Anthropic couldn't be reached. If it is wrong, Sessions on it can't run a Turn; replace it here."
             : undefined,
@@ -1031,19 +1050,22 @@ export class FakeHub implements HubTransport {
       }
       case "CreateSession":
         if (this.#refusedRepo(socket, message._tag, message.requestId, message.repo)) break
+        // It runs on its Creator's own setup token, with no fallback (ADR 0026).
+        if (this.#claudeCredential === null) {
+          this.#refuse(socket, message._tag, message.requestId, noCredentialText)
+          break
+        }
         this.#create(socket, message.requestId, message.repo, message.branch, message.runnerId, {
           ...(message.model !== undefined && { model: message.model }),
           ...(message.effort !== undefined && { effort: message.effort }),
         })
         break
-      // As the Hub does (#128): anyone may, but not in an Archived Session; the Runner's Claude
-      // Code must have the model and level. A running Turn finishes on the old model.
+      // As the Hub does (#128): its Creator may (ADR 0026), but not in an Archived Session; the
+      // Runner's Claude Code must have the model and level. A running Turn finishes on the old
+      // model.
       case "SetSessionModel": {
-        const session = this.sessions.get(message.sessionId)
-        if (!session) {
-          this.#fail(socket, message._tag, "There is no such Session.", message.sessionId)
-          break
-        }
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
         if (session.summary.state === "Archived") {
           const refusal = "The Session is archived: restore it to change its model."
           this.#fail(socket, message._tag, refusal, message.sessionId)
@@ -1120,7 +1142,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "SendPrompt": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         const cantSend = sendPromptRefusal(session.summary)
         if (cantSend !== undefined) {
@@ -1134,7 +1156,7 @@ export class FakeHub implements HubTransport {
       }
       // As the Hub does: a prompt on its way to Claude Code can't be cancelled.
       case "CancelPrompt": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         const cantCancel = cancelRefusal(this.#handover(session, message.promptId))
         if (cantCancel !== undefined) {
@@ -1149,7 +1171,7 @@ export class FakeHub implements HubTransport {
       // As the Hub and the mod do (ADR 0018): the prompt keeps its place in the queue until the
       // mod has appended it to the running Turn, which reads it at its next step.
       case "SteerPrompt": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         const { promptId } = message
         const verdict = steerVerdict({
@@ -1171,7 +1193,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "StopTurn": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         const cantStop = stopTurnRefusal(session.summary)
         if (cantStop !== undefined) {
@@ -1186,7 +1208,7 @@ export class FakeHub implements HubTransport {
       // As the Hub and the mod do (#193): the first answer is Claude's; a later one is refused,
       // saying who answered first.
       case "AnswerQuestion": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         if (session.asking?.toolCallId !== message.toolCallId) {
           const closed = session.log.findLast(
@@ -1224,17 +1246,17 @@ export class FakeHub implements HubTransport {
         break
       }
       case "PickAnswer": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         const asking = session?.asking
         if (!session || asking?.toolCallId !== message.toolCallId) break
         const { question, answer } = message
         this.#pick(session, { participant: this.#you, question, answer })
         break
       }
-      // As the Hub does (ADR 0014): anyone may message an agent, which resumes one that has
-      // stopped, waking its Session first; a Running one can be stopped.
+      // As the Hub does (ADR 0014): its Creator may message an agent (ADR 0026), which resumes one
+      // that has stopped, waking its Session first; a Running one can be stopped.
       case "MessageAgent": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         const verdict = messageAgentVerdict({
           state: session.summary.state,
@@ -1273,7 +1295,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "StopAgent": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         const agent = session.agents.get(message.agentId)
         const cantStop = stopAgentRefusal({
@@ -1288,7 +1310,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "SleepSession": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         const verdict = sleepVerdict(this.#sessionNow(session))
         // Pressing Sleep turns Keep awake off, as on the Hub (ADR 0016), even while it is going
@@ -1302,7 +1324,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "SetKeepAwake": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         if (session.summary.state === "Archived") {
           this.#fail(socket, message._tag, "The Session is archived.", message.sessionId)
@@ -1316,7 +1338,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "WakeSession": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         const verdict = wakeVerdict({
           state: session.summary.state,
@@ -1333,7 +1355,7 @@ export class FakeHub implements HubTransport {
         break
       }
       case "RestartSession":
-        this.#restart(socket, message.sessionId)
+        if (this.#drivenFor(socket, message)) this.#restart(socket, message.sessionId)
         break
       case "GetMcpServers":
         socket.deliver({ ...this.mcpServers.state(this.#allowed), requestId: message.requestId })
@@ -1551,11 +1573,8 @@ export class FakeHub implements HubTransport {
         break
       }
       case "ArchiveSession": {
-        const session = this.sessions.get(message.sessionId)
-        if (!session) {
-          this.#fail(socket, "ArchiveSession", "There is no such Session.", message.sessionId)
-          break
-        }
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
         if (session.summary.state === "Archived") {
           this.#fail(
             socket,
@@ -1570,11 +1589,8 @@ export class FakeHub implements HubTransport {
         break
       }
       case "RestoreSession": {
-        const session = this.sessions.get(message.sessionId)
-        if (!session) {
-          this.#fail(socket, "RestoreSession", "There is no such Session.", message.sessionId)
-          break
-        }
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
         if (session.summary.state !== "Archived") {
           this.#fail(socket, "RestoreSession", "The Session is not archived.", message.sessionId)
           break
@@ -1585,13 +1601,11 @@ export class FakeHub implements HubTransport {
         this.#toAll(this.#runnerList())
         break
       }
-      // As the Hub does: anyone may, in any state; trimmed, empty clears it, too long is refused.
+      // As the Hub does: its Creator may (ADR 0026), in any state; trimmed, empty clears it, too
+      // long is refused.
       case "RenameSession": {
-        const session = this.sessions.get(message.sessionId)
-        if (!session) {
-          this.#fail(socket, "RenameSession", "There is no such Session.", message.sessionId)
-          break
-        }
+        const session = this.#drivenFor(socket, message)
+        if (!session) break
         const renamed = sessionNameFrom(message.name)
         if (typeof renamed === "string") {
           this.#fail(socket, "RenameSession", renamed, message.sessionId)
@@ -1603,11 +1617,12 @@ export class FakeHub implements HubTransport {
         this.#summaryChanged(session)
         break
       }
-      // The terminal, as the real Hub relays it: watching needs no running terminal, but
-      // keystrokes and resizes reach only an Active Session, from someone watching it. An
+      // The terminal, as the real Hub relays it: its Creator's alone (ADR 0026), as raw frames are
+      // where their token is easiest to leak. Opening it needs no running terminal, but
+      // keystrokes and resizes reach only an Active Session, from a client that opened it. An
       // Archived Session has no terminal to open.
       case "OpenTerminal": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         if (session.summary.state === "Archived") {
           this.#fail(
@@ -1627,7 +1642,7 @@ export class FakeHub implements HubTransport {
         break
       case "TerminalInput":
       case "TerminalResize": {
-        const session = this.#sessionFor(socket, message)
+        const session = this.#drivenFor(socket, message)
         if (!session) break
         if (!socket.terminals.has(message.sessionId)) {
           this.#fail(socket, message._tag, "Open the Session's terminal first.", message.sessionId)
@@ -1706,7 +1721,7 @@ export class FakeHub implements HubTransport {
       runnerId === undefined
         ? this.runners.find((candidate) => candidate.isOnline)
         : this.runners.find((candidate) => candidate.id === runnerId)
-    if (!runner || !runner.isOnline || runner.login === null) {
+    if (!runner || !runner.isOnline) {
       const message = runner ? `${runner.name} is offline.` : "No Runner is online."
       socket.deliver({ _tag: "CommandFailed", command: "CreateSession", requestId, message })
       return
@@ -1734,9 +1749,7 @@ export class FakeHub implements HubTransport {
       ...branchesFor(branch, SessionId.make(id)),
       state: "Active",
       runnerId: runner.id,
-      runnerLogin: runner.login,
       creator: this.#you,
-      claudeAccount: this.#claudeAccount(),
       createdAt: Date.now(),
       currentTurn: null,
       // Not started on any version until its Runner says so: it is being started on `version`.
@@ -1873,7 +1886,17 @@ export class FakeHub implements HubTransport {
    * delivered once it has started.
    */
   #wake(session: FakeSession, message: string, by?: ParticipantWire): void {
-    // As on the Hub, it stays Asleep while its Environment needs values (#57).
+    // As on the Hub, it stays Asleep while its Creator has no setup token (ADR 0026).
+    if (!this.#hasCredential(session)) {
+      this.#append(session, {
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        message: `Claude Code could not start: ${session.summary.creator.name} has no Claude setup token on this Hub.`,
+      })
+      this.#summaryChanged(session)
+      return
+    }
+    // And while its Environment needs values (#57).
     const needed = this.environments.valuesNeeded(session.summary.repo)
     if (needed.length > 0) {
       this.#append(session, {
@@ -2632,6 +2655,27 @@ export class FakeHub implements HubTransport {
     return session
   }
 
+  /**
+   * The Session a command that drives it names, if the signed-in person is its Creator (ADR 0026);
+   * none, having refused the command, as the Hub does, if not.
+   */
+  #drivenFor(
+    socket: FakeSocket,
+    message: Extract<WebToHub, { readonly sessionId: unknown }>,
+  ): FakeSession | undefined {
+    const session = this.#sessionFor(socket, message)
+    if (!session) return undefined
+    const refused = driveRefusal(this.#you, session.summary.creator)
+    if (refused === undefined) return session
+    this.#fail(socket, message._tag, refused.refusal, message.sessionId)
+    return undefined
+  }
+
+  /** Whether the Session's Creator has a setup token stored, which it runs on (ADR 0026). */
+  #hasCredential(session: FakeSession): boolean {
+    return session.summary.creator.id !== this.#you.id || this.#claudeCredential !== null
+  }
+
   /** Where a prompt is on its way to Claude Code, as the Hub's rules read it (SessionRules). */
   #handover(session: FakeSession, promptId: string): PromptHandover {
     return {
@@ -2840,8 +2884,9 @@ export class FakeHub implements HubTransport {
 
   /** Tells every other client, as the Hub broadcasts an applied version or changed variables. */
   /**
-   * Stores or removes the signed-in person's Claude credential: tells whoever asked, their other
-   * connections, and everyone whose account their Sessions now run on.
+   * Stores or removes the signed-in person's Claude credential, telling whoever asked and their
+   * other connections. As on the Hub (ADR 0026), their awake Sessions go to sleep, saying why: a
+   * new token reaches each at its next wake, and without one, none wakes.
    */
   #setClaudeCredential(
     socket: FakeSocket,
@@ -2849,20 +2894,24 @@ export class FakeHub implements HubTransport {
     credential: ClaudeCredentialInfoWire | null,
     warning?: string,
   ): void {
+    const had = this.#claudeCredential !== null
     this.#claudeCredential = credential
     const state = { _tag: "ClaudeCredentialState" as const, credential }
     socket.deliver({ ...state, requestId, ...(warning !== undefined && { warning }) })
     this.#toOthers(socket, state)
+    if (!had) return
+    const why =
+      credential === null
+        ? `${this.#you.name} removed their Claude setup token`
+        : `${this.#you.name} replaced their Claude setup token: it wakes on the new one`
     for (const session of this.sessions.values()) {
-      if (session.summary.creator.id !== this.#you.id) continue
-      session.summary = { ...session.summary, claudeAccount: this.#claudeAccount() }
-      this.#summaryChanged(session)
+      if (session.summary.creator.id !== this.#you.id || session.summary.state !== "Active")
+        continue
+      const { starting: _, restarting: __, keepAwake: ___, ...summary } = session.summary
+      session.summary = summary
+      this.#setState(session, "Asleep", why)
+      session.stopTurn?.()
     }
-  }
-
-  /** Whose account the signed-in person's Sessions run on. */
-  #claudeAccount(): "Creator" | "Runner" {
-    return this.#claudeCredential === null ? "Runner" : "Creator"
   }
 
   #toOthers(socket: FakeSocket, message: HubMessage): void {

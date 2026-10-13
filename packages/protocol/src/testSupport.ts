@@ -34,8 +34,6 @@ export function expectRejected(schema: Schema.Codec<unknown, unknown>, input: un
 export const alice = { id: "u-1", login: "alice", name: "Alice" }
 export const bob = { id: "u-2", login: "bob", name: "Bob" }
 
-export const runnerLogin = { account: "alice@example.com" }
-
 /** What a Runner's Claude Code takes, as its hello says (#128). */
 export const runnerModels = {
   default: {
@@ -79,7 +77,6 @@ export const sessionSummary = {
   workBranch: "claude/s-1",
   state: "Active",
   runnerId: "r-1",
-  runnerLogin,
   creator: alice,
   createdAt: 1_790_000_000_000,
   currentTurn: null,

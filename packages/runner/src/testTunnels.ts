@@ -45,7 +45,7 @@ import { SandboxBackend, type SandboxBackendShape } from "./sandbox/SandboxBacke
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { SessionsLive } from "./Sessions.ts"
 import {
-  FakeCredentialProxy,
+  FakeModRelay,
   FakeSandboxes,
   FakeWorkspaces,
   hostTmuxBackend,
@@ -271,7 +271,7 @@ export async function tunnelScene(options: {
       ),
       new FakeWorkspaces(sessionsRoot).layer,
       new FakeSandboxes(fakeClaude).layer,
-      new FakeCredentialProxy().layer,
+      new FakeModRelay().layer,
     ]),
     Layer.provideMerge(
       Layer.succeed(
@@ -308,12 +308,11 @@ export async function tunnelScene(options: {
     "RunnerList",
     (message) => Array.isArray(message["runners"]) && message["runners"].length > 0,
   )
-  // A fake Claude credential, which the Runner, having none of its own, starts the Session on.
+  // alice's Claude credential, a fake one, which the Runner starts her Session on.
   web.send({
     _tag: "SetClaudeCredential",
     requestId: "r-0",
     secret: "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b",
-    plan: "max5x",
   })
   await web.next("ClaudeCredentialState", (message) => message["requestId"] === "r-0")
   web.send({

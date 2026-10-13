@@ -19,7 +19,7 @@ import {
   type Web,
 } from "./testChannels.ts"
 import { appId, appKeyPair, appSlug, StandInGitHub, webUrl } from "./testGitHubApi.ts"
-import { seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
+import { ensureSetupToken, seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -56,7 +56,7 @@ async function accessHub(config: Partial<HubConfigInput> = {}) {
   return { hub, runner, runnerId: issued.runnerId, runnerToken: issued.token }
 }
 
-/** A web client signed in with GitHub as octocat. */
+/** A web client signed in with GitHub as octocat, with a setup token saved (ADR 0026). */
 async function openOctocat(hub: TestHub) {
   const { token } = await hub.run(
     Effect.gen(function* () {
@@ -66,6 +66,7 @@ async function openOctocat(hub: TestHub) {
       )
     }),
   )
+  await ensureSetupToken(hub, octocat.login, octocat.id)
   return openWeb(hub, octocat.login, `${signInCookie}=${token}`)
 }
 

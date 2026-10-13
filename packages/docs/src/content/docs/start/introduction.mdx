@@ -6,16 +6,16 @@ description: What kndl is, who it's for, and how a Hub, Runners and Sandboxes fi
 import { CardGrid, LinkCard } from "@astrojs/starlight/components"
 import HowItWorks from "../../../components/HowItWorks.astro"
 
-kndl (said "kindle") runs Claude Code Sessions on machines you own, and lets your team watch and drive them together from the browser.
+kndl (said "kindle") runs Claude Code Sessions on machines you own. Whoever starts a Session drives it, and your team watches it live from the browser.
 
 ![A Session in kndl's web UI. Claude is mid-Turn: a subagent searches the docs in the background, tool calls are listed with their results, and Bob's prompt waits in the Prompt queue with a Steer button.](../../../assets/screenshots/session-live.png)
 
 ## What you get
 
-- **Shared Sessions.** Everyone with access to a Repo can open its Sessions, follow Claude live, and send prompts. Prompts sent while Claude works wait in a [Prompt queue](/reference/glossary/#prompt-queue), or join the running Turn with **Steer**.
-- **A Sandbox per Session.** Claude Code and every command it runs live in a microVM on a Runner, never on the host. The Claude credential stays outside it.
+- **Shared Sessions.** Everyone with access to a Repo can open its Sessions and follow Claude live. A Session's [Creator](/reference/glossary/#creator) drives it: their prompts sent while Claude works wait in a [Prompt queue](/reference/glossary/#prompt-queue), or join the running Turn with **Steer**.
+- **A Sandbox per Session.** Claude Code and every command it runs live in a microVM on a Runner, never on the host.
 - **Your machines.** The Hub and the Runners are yours: a laptop, a Mac mini under a desk, a Linux server. Nothing runs on a kndl service, because there isn't one.
-- **Your Claude account.** Each person adds their own Claude subscription or API key, and their Sessions run on it, on any Runner.
+- **Your Claude account.** Each person adds their own Claude setup token, and the Sessions they start run on it, on any Runner. Nobody else's prompts reach it.
 
 ## How it fits together
 
@@ -54,7 +54,7 @@ One machine can be the Hub and a Runner at once. That's how the [Quickstart](/st
   />
   <LinkCard
     title="How kndl works"
-    description="The Hub, Runners, Sandboxes and the credential proxy in detail."
+    description="The Hub, Runners, Sandboxes, and who drives a Session, in detail."
     href="/kndl/concepts/architecture/"
   />
 </CardGrid>

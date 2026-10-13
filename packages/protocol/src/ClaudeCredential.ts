@@ -3,162 +3,64 @@ import { SecretValue } from "./Environment.ts"
 import { CredentialRequestId, RequestId, SessionId } from "./Ids.ts"
 import { EpochMillis } from "./Session.ts"
 
-// The Claude credential a Session's Claude Code runs on (ADR 0013, ADR 0015). Claude Code in the
-// Sandbox holds only a Session token; the Runner's credential proxy swaps it for the credential
-// on each request to Anthropic. A Session uses its Creator's credential, or else the Runner's own.
+// The Claude credential a Session's Claude Code runs on (ADR 0026): its Creator's own setup token,
+// stored on the Hub and handed to the Runner as the Session starts or wakes. Claude Code in the
+// Sandbox holds it in its own environment and talks to Anthropic directly. There is no fallback:
+// a Session whose Creator has none doesn't start. API keys aren't taken for now (#334).
 
-/** The Claude plans a subscription credential can be on, as Claude Code names them. */
-export const ClaudeSubscriptionType = Schema.Literals(["pro", "max", "team", "enterprise"])
-export type ClaudeSubscriptionType = typeof ClaudeSubscriptionType.Type
-
-/**
- * The plan a subscription credential is on. Claude Code can't ask Anthropic for it through the
- * proxy, which forwards inference alone, so it is told: `CLAUDE_CODE_SUBSCRIPTION_TYPE` and
- * `CLAUDE_CODE_RATE_LIMIT_TIER`.
- */
-export const ClaudePlan = Schema.Struct({
-  subscriptionType: ClaudeSubscriptionType,
-  /** As Claude Code's login records it, such as `default_claude_max_5x`. */
-  rateLimitTier: Schema.optional(Schema.NonEmptyString),
-})
-export type ClaudePlan = typeof ClaudePlan.Type
-
-/** A Claude credential, by how Anthropic takes it. */
+/** A Claude credential: a subscription token, the only kind taken for now (#334). */
 export const ClaudeCredential = Schema.Union([
   /**
-   * A subscription token, as `claude setup-token` prints (`sk-ant-oat…`), or the access token of
-   * Claude Code's own login: sent as `Authorization: Bearer`.
+   * A subscription token, as `claude setup-token` prints (`sk-ant-oat…`), which Claude Code reads
+   * from `CLAUDE_CODE_OAUTH_TOKEN`.
    */
   Schema.TaggedStruct("OAuthToken", {
     token: Schema.RedactedFromValue(Schema.NonEmptyString),
-    /** The plan it is on; Claude Code runs without one as on no plan. */
-    plan: Schema.optional(ClaudePlan),
-  }),
-  /** An Anthropic API key (`sk-ant-api…`), billed per token: sent as `x-api-key`. */
-  Schema.TaggedStruct("ApiKey", {
-    key: Schema.RedactedFromValue(Schema.NonEmptyString),
   }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ClaudeCredential = typeof ClaudeCredential.Type
 
-/** What every Anthropic API key starts with. */
+/** What every Anthropic API key starts with: refused for now (#334). */
 export const ApiKeyPrefix = "sk-ant-api"
 
 /** What every subscription token starts with, such as one `claude setup-token` prints. */
 export const OAuthTokenPrefix = "sk-ant-oat"
 
 /**
- * The credential a pasted secret is: an API key by its prefix, else a subscription token, on
- * `plan` when given. Undefined for a blank secret.
+ * The credential a pasted secret is: a subscription token. Undefined for a blank secret, or an API
+ * key (#334).
  */
-export function credentialFromSecret(
-  secret: string,
-  plan?: ClaudePlan,
-): ClaudeCredential | undefined {
+export function credentialFromSecret(secret: string): ClaudeCredential | undefined {
   const value = secret.trim()
-  if (value === "") return undefined
-  if (value.startsWith(ApiKeyPrefix))
-    return ClaudeCredential.cases.ApiKey.make({ key: Redacted.make(value) })
-  return ClaudeCredential.cases.OAuthToken.make({
-    token: Redacted.make(value),
-    ...(plan === undefined ? {} : { plan }),
-  })
-}
-
-/**
- * The rate-limit tier Claude Code's login records for a plan when none is given: Max's is the 5x
- * one, the smaller. Undefined for Team and Enterprise, whose tier depends on the seat.
- */
-export function defaultRateLimitTier(subscriptionType: ClaudeSubscriptionType): string | undefined {
-  switch (subscriptionType) {
-    case "pro":
-      return "default_claude_ai"
-    case "max":
-      return "default_claude_max_5x"
-    default:
-      return undefined
-  }
+  if (value === "" || value.startsWith(ApiKeyPrefix)) return undefined
+  return ClaudeCredential.cases.OAuthToken.make({ token: Redacted.make(value) })
 }
 
 // ── A person's own credential, stored on the Hub (ADR 0015) ────────────────
 
-/** The two kinds of Claude credential, by their `_tag`. */
-export const ClaudeCredentialKind = Schema.Literals(["OAuthToken", "ApiKey"])
+/** The kinds of Claude credential, by their `_tag`: a subscription token alone for now (#334). */
+export const ClaudeCredentialKind = Schema.Literals(["OAuthToken"])
 export type ClaudeCredentialKind = typeof ClaudeCredentialKind.Type
 
-/**
- * The plans a person picks for a subscription token. Max has two tiers that Claude Code tells
- * apart; Team and Enterprise are told apart by the plan alone.
- */
-export const ClaudePlanChoice = Schema.Literals(["pro", "max5x", "max20x", "team", "enterprise"])
-export type ClaudePlanChoice = typeof ClaudePlanChoice.Type
-
-/** Each plan choice, in the order offered, with how it is shown. */
-export const claudePlanChoices: ReadonlyArray<{
-  readonly choice: ClaudePlanChoice
-  readonly label: string
-}> = [
-  { choice: "pro", label: "Pro" },
-  { choice: "max5x", label: "Max 5x" },
-  { choice: "max20x", label: "Max 20x" },
-  { choice: "team", label: "Team" },
-  { choice: "enterprise", label: "Enterprise" },
-]
-
-/** How a plan choice is shown, such as "Max 5x". */
-export function claudePlanLabel(choice: ClaudePlanChoice): string {
-  return claudePlanChoices.find((each) => each.choice === choice)?.label ?? choice
-}
-
-/** The plan Claude Code is told for a plan choice. */
-export function claudePlanOf(choice: ClaudePlanChoice): ClaudePlan {
-  switch (choice) {
-    case "pro":
-      return { subscriptionType: "pro", rateLimitTier: "default_claude_ai" }
-    case "max5x":
-      return { subscriptionType: "max", rateLimitTier: "default_claude_max_5x" }
-    case "max20x":
-      return { subscriptionType: "max", rateLimitTier: "default_claude_max_20x" }
-    case "team":
-      return { subscriptionType: "team" }
-    case "enterprise":
-      return { subscriptionType: "enterprise" }
-  }
-}
-
-/** The kind a pasted secret is, by its prefix: undefined for one that is neither. */
+/** The kind a pasted secret is, by its prefix: undefined for one that isn't a subscription token. */
 export function claudeCredentialKindOf(secret: string): ClaudeCredentialKind | undefined {
-  const value = secret.trim()
-  if (value.startsWith(ApiKeyPrefix)) return "ApiKey"
-  if (value.startsWith(OAuthTokenPrefix)) return "OAuthToken"
-  return undefined
+  return secret.trim().startsWith(OAuthTokenPrefix) ? "OAuthToken" : undefined
 }
 
 /**
- * Why a pasted secret can't be stored as a Claude credential on `plan`, or undefined when it can.
- * Checks its shape only; the Hub then asks Anthropic whether it is valid.
+ * Why a pasted secret can't be stored as a Claude credential, or undefined when it can. Checks its
+ * shape only; the Hub then asks Anthropic whether it is valid.
  */
-export function claudeCredentialProblem(
-  secret: string,
-  plan: ClaudePlanChoice | undefined,
-): string | undefined {
+export function claudeCredentialProblem(secret: string): string | undefined {
   const value = secret.trim()
-  if (value === "") return "Paste a token or an API key."
-  const kind = claudeCredentialKindOf(value)
-  if (kind === undefined)
-    return `That isn't a Claude token or API key: a token starts with ${OAuthTokenPrefix}, a key with ${ApiKeyPrefix}.`
+  if (value === "") return "Paste the token `claude setup-token` printed."
+  if (value.startsWith(ApiKeyPrefix))
+    return "API keys aren't taken for now. Run `claude setup-token` and paste the token it prints."
+  if (claudeCredentialKindOf(value) === undefined)
+    return `That isn't a Claude setup token: it starts with ${OAuthTokenPrefix}.`
   if (/\s/.test(value) || value.length < 24)
-    return "That doesn't look like a whole token or key. Copy it again, all on one line."
-  if (kind === "OAuthToken" && plan === undefined) return "Pick the plan your Claude account is on."
+    return "That doesn't look like a whole token. Copy it again, all on one line."
   return undefined
-}
-
-/** The credential a pasted secret is stored as, with the plan picked for a token. */
-export function claudeCredentialOf(
-  secret: string,
-  plan: ClaudePlanChoice | undefined,
-): ClaudeCredential | undefined {
-  return credentialFromSecret(secret, plan === undefined ? undefined : claudePlanOf(plan))
 }
 
 /**
@@ -167,10 +69,8 @@ export function claudeCredentialOf(
  */
 export const ClaudeCredentialInfo = Schema.Struct({
   kind: ClaudeCredentialKind,
-  /** The last 4 characters of the token or key. */
+  /** The last 4 characters of the token. */
   last4: Schema.String,
-  /** The plan picked for a subscription token. */
-  plan: Schema.optionalKey(ClaudePlanChoice),
   addedAt: EpochMillis,
 })
 export type ClaudeCredentialInfo = typeof ClaudeCredentialInfo.Type
@@ -184,10 +84,8 @@ export type ClaudeCredentialInfo = typeof ClaudeCredentialInfo.Type
  */
 export const SetClaudeCredential = Schema.TaggedStruct("SetClaudeCredential", {
   requestId: RequestId,
-  /** The token or API key, as pasted. */
+  /** The token, as pasted. */
   secret: SecretValue,
-  /** The plan, for a subscription token. */
-  plan: Schema.optionalKey(ClaudePlanChoice),
 })
 export type SetClaudeCredential = typeof SetClaudeCredential.Type
 
@@ -228,16 +126,20 @@ export type FetchClaudeCredential = typeof FetchClaudeCredential.Type
 // ── Hub to Runner ──────────────────────────────────────────────────────────
 
 /**
- * Answers {@link FetchClaudeCredential}: the Session's Creator's credential. Absent when they
- * have stored none: the Runner then uses its own.
+ * Answers {@link FetchClaudeCredential}: the Session's Creator's credential. A Creator with none,
+ * or who isn't a Member any more, is answered with a {@link ClaudeCredentialRefused}: the Session
+ * doesn't start.
  */
 export const ClaudeCredentialFetched = Schema.TaggedStruct("ClaudeCredentialFetched", {
   requestId: CredentialRequestId,
-  credential: Schema.optionalKey(ClaudeCredential),
+  credential: ClaudeCredential,
 })
 export type ClaudeCredentialFetched = typeof ClaudeCredentialFetched.Type
 
-/** Answers {@link FetchClaudeCredential} the Hub refused, such as for a Session not the Runner's. */
+/**
+ * Answers {@link FetchClaudeCredential} the Hub refused: for a Session not the Runner's, or whose
+ * Creator has no credential or isn't a Member any more.
+ */
 export const ClaudeCredentialRefused = Schema.TaggedStruct("ClaudeCredentialRefused", {
   requestId: CredentialRequestId,
   message: Schema.String,

@@ -1,5 +1,5 @@
 // Answering Claude's question from the web UI (#193): the whole app on the fake Hub's demo
-// Session, asked to ask with "ask me".
+// Session, asked to ask with "ask me". Only its Creator answers; anyone else watches (ADR 0026).
 
 import { expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -13,7 +13,7 @@ const { createMemoryHistory, RouterProvider } = await import("@tanstack/react-ro
 const { HubProvider } = await import("../src/app/hub.tsx")
 const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
-const { demoSessionId } = await import("../src/hub/fake/script.ts")
+const { bob, demoSessionId } = await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
 
 const library = "Which date library should the web UI use?"
@@ -93,7 +93,7 @@ async function asked() {
   }
 }
 
-test("a Participant answers Claude's questions from the chat, as the terminal would", async () => {
+test("the Creator answers Claude's questions from the chat, as the terminal would", async () => {
   const { hub, client, page, card, field, conversation, header, option, answers } = await asked()
 
   // The Session is waiting on someone: on its page, in the sidebar and in the transcript.
@@ -105,11 +105,9 @@ test("a Participant answers Claude's questions from the chat, as the terminal wo
   // The prompt box still works: what's sent there replies instead of answering.
   expect(field("Reply").placeholder).toBe("Or reply directly…")
 
-  // Bob's pick shows on the option he picked.
-  await eventually(() =>
-    expect(card()?.querySelector('[aria-label="Picked by: Bob Lee"]')).not.toBeNull(),
-  )
-  expect(option("Luxon").textContent).toContain("Luxon")
+  // Their own picks, from another tab, don't show as someone else's.
+  await settle(50)
+  expect(card()?.querySelector('[aria-label^="Picked by"]')).toBeNull()
 
   // One option for the first question moves on to the second, which takes several.
   await step(() => option("Luxon").click())
@@ -232,4 +230,51 @@ test("an image pasted into a reply goes with it, and shows under the question fo
     page.querySelector('[aria-label="The reply\'s attachments"] img[alt="shot.png"]'),
   ).not.toBeNull()
   expect(page.querySelector('[aria-label="Attachments"]')).toBeNull()
+})
+
+test("someone watching sees Claude's questions and the Creator's picks, with nothing to answer", async () => {
+  // Bob watches Alice's demo Session as she asks Claude to ask first, from another tab.
+  const hub = new FakeHub({ stepMs: 2, autoplay: false, you: bob })
+  const client = new HubClient(hub, { retryDelay: () => 1 })
+  const router = createAppRouter(
+    createMemoryHistory({ initialEntries: [`/sessions/${demoSessionId}`] }),
+  )
+  const view = await render(
+    <HubProvider client={client}>
+      <RouterProvider router={router} />
+    </HubProvider>,
+  )
+  cleanup = async () => {
+    await view.unmount()
+    client.stop()
+    hub.dispose()
+  }
+  const page = view.container
+  await eventually(() => expect(page.querySelector("h1")).not.toBeNull())
+  hub.creatorPrompts(demoSessionId, "Add relative times, but ask me first")
+  const card = () => page.querySelector<HTMLElement>('[aria-label="Claude\'s question"]')
+  await eventually(() => expect(card()).not.toBeNull())
+
+  // It waits on Alice, who drives it: on its page and in the sidebar.
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Waiting on Alice Kim")
+  expect(page.querySelector('[role="img"][aria-label="Waiting on Alice Kim"]')).not.toBeNull()
+  expect(card()?.textContent).toContain(library)
+  expect(card()?.textContent).toContain("Luxon")
+  expect(card()?.textContent).toContain("Waiting on Alice Kim to answer")
+  // Her pick shows; there's nothing to pick, type, skip, dismiss or submit.
+  await eventually(() =>
+    expect(card()?.querySelector('[aria-label="Picked by: Alice Kim"]')).not.toBeNull(),
+  )
+  const buttons = [...(card()?.querySelectorAll("button") ?? [])].map(
+    (each) => each.getAttribute("aria-label") ?? each.textContent,
+  )
+  expect(buttons).toEqual(["Previous question", "Next question"])
+  expect(card()?.querySelector("input")).toBeNull()
+  // The prompt box doesn't reply for them either.
+  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
+  expect(prompt?.disabled).toBe(true)
+  expect(page.querySelector('textarea[aria-label="Reply"]')).toBeNull()
+  expect(
+    hub.received.filter(({ _tag }) => _tag === "AnswerQuestion" || _tag === "PickAnswer"),
+  ).toEqual([])
 })

@@ -1,12 +1,12 @@
 // The Runner: a host machine connected to the Hub that runs Sessions in Sandboxes, each on its
-// Creator's Claude credential or else on the Runner's own, if it has one.
+// Creator's Claude credential.
 // Configured from the environment; see RunnerConfig.ts and the README.
 
 import { resolve } from "node:path"
 import { BunRuntime, BunServices, BunSocket } from "@effect/platform-bun"
 import { FormerName, formerServiceRole, moveFromFormerService } from "@kndl/protocol/former-name"
 import { Effect, Layer } from "effect"
-import { ProxyConfigLive } from "./proxy/ProxyConfig.ts"
+import { RelayConfigLive } from "./relay/RelayConfig.ts"
 import { runRunner, SessionsHost } from "./Runner.ts"
 import { missingModBundle, RunnerConfigLive } from "./RunnerConfig.ts"
 import { LoadCheckVariable } from "./SelfUpdate.ts"
@@ -14,7 +14,7 @@ import { UpdaterLive } from "./Updater.ts"
 
 const RunnerLive = UpdaterLive.pipe(
   Layer.provideMerge(SessionsHost),
-  Layer.provideMerge(Layer.mergeAll(RunnerConfigLive, ProxyConfigLive)),
+  Layer.provideMerge(Layer.mergeAll(RunnerConfigLive, RelayConfigLive)),
   Layer.provideMerge(Layer.mergeAll(BunServices.layer, BunSocket.layerWebSocketConstructor)),
 )
 

@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { CommitId } from "./Build.ts"
 import { HubToRunner, RunnerHello, RunnerToHub } from "./Runner.ts"
-import { runnerLogin } from "./testSupport.ts"
 import {
   NeedsUpdateText,
   type RunnerUpdateState,
@@ -46,7 +45,6 @@ describe("RunnerHello", () => {
     _tag: "RunnerHello",
     protocolVersion: ProtocolVersion,
     name: "studio",
-    login: runnerLogin,
     sessions: [],
   }
 
@@ -88,7 +86,6 @@ const carrying = (commit: string) => {
         _tag: "RunnerHello",
         protocolVersion: ProtocolVersion,
         name: "studio",
-        login: runnerLogin,
         sessions: [],
         version,
       },

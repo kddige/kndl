@@ -1,6 +1,6 @@
 # kndl
 
-Multiplayer agentic sessions. kndl (said "kindle", always lowercase; formerly claude-hub) runs Claude Code sessions on any machine, and people watch and drive them together from a web UI. See `README.md` for the architecture and how to run it.
+Multiplayer agentic sessions. kndl (said "kindle", always lowercase; formerly claude-hub) runs Claude Code sessions on any machine, and people watch them together from a web UI. Each Session is driven by its Creator, on their own Claude credential (ADR 0026). See `README.md` for the architecture and how to run it.
 
 ## Agent skills
 

@@ -72,8 +72,9 @@ function queuedText(prompt: QueuedPrompt): string {
 }
 
 /**
- * The prompts waiting for the current Turn to end, in order. Any Participant may cancel one, or,
- * while a Turn runs, steer it into that Turn now (#195).
+ * The prompts waiting for the current Turn to end, in order. The Session's Creator may cancel one,
+ * or, while a Turn runs, steer it into that Turn now (#195); everyone else only sees them (ADR
+ * 0026).
  */
 export function PromptQueue({
   queue,
@@ -82,7 +83,8 @@ export function PromptQueue({
   steering = new Set(),
 }: {
   queue: ReadonlyArray<QueuedPrompt>
-  onCancel: (prompt: QueuedPrompt) => void
+  /** Cancels a queued prompt; absent for someone watching. */
+  onCancel?: ((prompt: QueuedPrompt) => void) | undefined
   /** Steers a prompt into the running Turn; absent when no Turn is running. */
   onSteer?: ((prompt: QueuedPrompt) => void) | undefined
   /** The prompts on their way into the running Turn, which leave the queue once they joined it. */
@@ -114,13 +116,15 @@ export function PromptQueue({
                 </Button>
               </Tooltip>
             )}
-            <IconButton
-              size="sm"
-              label={`Cancel ${prompt.sender.name}'s prompt`}
-              onClick={() => onCancel(prompt)}
-            >
-              <CloseIcon />
-            </IconButton>
+            {onCancel && (
+              <IconButton
+                size="sm"
+                label={`Cancel ${prompt.sender.name}'s prompt`}
+                onClick={() => onCancel(prompt)}
+              >
+                <CloseIcon />
+              </IconButton>
+            )}
           </li>
         ))}
       </ol>

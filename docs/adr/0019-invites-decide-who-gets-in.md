@@ -35,3 +35,7 @@ Invites are the simplest. They work with one public App, cover organization memb
 - **One Owner, no other roles.** Nobody else can invite or remove people, and ownership can't be handed over from the web UI. Hub-wide actions stay open to every Member, as before.
 - **Losing the Owner's GitHub account** leaves the Hub without anyone to invite people until ownership is changed in its database. Removal never applies to the Owner.
 - **Removal is about signing in.** A removed Member's web connections and Forwards close at once, but a Pairing code they made still works until it expires, a tunnel already open stays open until it closes, and a prompt they queued still runs, as when someone loses Repo access or a CLI token is revoked.
+
+## Amendment: a removed Member's Sessions sleep (ADR 0026)
+
+A removed Member's Sessions still belong to their Repos, and their setup token is still theirs. But the Hub won't hand that token to a Runner any more. It puts the removed Member's awake Sessions to sleep and says why. Those Sessions stay readable, and Fork (#332) is how someone else carries one on.

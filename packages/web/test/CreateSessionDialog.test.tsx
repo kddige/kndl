@@ -1,5 +1,5 @@
-// New Session for someone with no Claude credential of their own (ADR 0015), against the fake Hub
-// with its script not playing: it runs on its Runner's, and with none there, it says so up front.
+// New Session against the fake Hub with its script not playing. A Session runs on its Creator's
+// own setup token (ADR 0026): without one, it says so up front, leading to the Account page.
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -19,14 +19,17 @@ const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
 const { createAppRouter } = await import("../src/router.tsx")
 
-/** Opens New Session as alice, who has stored no Claude credential. */
-async function openDialog(runnerHasOwn: boolean) {
-  const hub = new FakeHub({ stepMs: 2, autoplay: false })
-  return open(hub, runnerHasOwn)
+/** Opens New Session as alice, who has stored a setup token unless `withToken` is false. */
+async function openDialog(withToken = true) {
+  const hub = new FakeHub({
+    stepMs: 2,
+    autoplay: false,
+    ...(!withToken && { claudeCredential: null }),
+  })
+  return open(hub)
 }
 
-async function open(hub: InstanceType<typeof FakeHub>, runnerHasOwn = true) {
-  hub.patchRunner("r-studio", { ownClaudeCredential: runnerHasOwn })
+async function open(hub: InstanceType<typeof FakeHub>) {
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/runners"] }))
   const view = await render(
@@ -81,24 +84,23 @@ const inputOf = (dialog: HTMLElement, label: string) =>
     `input[id="${[...dialog.querySelectorAll("label")].find((each) => each.textContent === label)?.getAttribute("for")}"]`,
   ) as HTMLInputElement | null
 
-test("runs on its Runner's own credential, and with no Runner that has one, says so before the form is filled in", async () => {
-  const runnerHasOwn = await openDialog(true)
-  expect(runnerHasOwn.dialog.textContent).toContain(
-    "Until then, this one runs on its Runner's own.",
-  )
-  expect(runnerHasOwn.start.disabled).toBe(false)
+test("needs your own setup token, and without one says so before the form is filled in", async () => {
+  const withToken = await openDialog()
+  expect(withToken.dialog.textContent).not.toContain("Add your setup token first")
+  expect(withToken.start.disabled).toBe(false)
   await cleanup?.()
 
-  const { dialog, start } = await openDialog(false)
-  expect(dialog.textContent).toContain("Add your Claude credential first")
-  expect(dialog.textContent).toContain(
-    "No online Runner has a Claude credential of its own to run this one on.",
-  )
+  const { dialog, router, start } = await openDialog(false)
+  expect(dialog.textContent).toContain("Add your setup token first")
   expect(start.disabled).toBe(true)
+  // Its link goes to the Account page, where the token is added.
+  const account = [...dialog.querySelectorAll("a")].find((link) => link.textContent === "Account")
+  await step(() => account?.click())
+  await eventually(() => expect(router.state.location.pathname).toBe("/account"))
 })
 
 test("the Branch is disabled until a Repo is picked, then prefills the Repo's default branch", async () => {
-  const { dialog } = await openDialog(true)
+  const { dialog } = await openDialog()
   expect(inputOf(dialog, "Branch")?.disabled).toBe(true)
 
   await type(dialog, "Repo", "kddige/kndl")
@@ -112,7 +114,7 @@ test("the Branch is disabled until a Repo is picked, then prefills the Repo's de
 })
 
 test("starts a Session directly on the branch when Work on a new branch is off, noting a branch GitHub doesn't list", async () => {
-  const { dialog, hub, start } = await openDialog(true)
+  const { dialog, hub, start } = await openDialog()
   await type(dialog, "Repo", "kddige/kndl")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
   expect(dialog.textContent).not.toContain("Branch not found on GitHub")
@@ -135,7 +137,7 @@ test("starts a Session directly on the branch when Work on a new branch is off, 
 })
 
 test("offers to create a branch that is none of the Repo's, from one of them", async () => {
-  const { dialog, hub, start } = await openDialog(true)
+  const { dialog, hub, start } = await openDialog()
   await type(dialog, "Repo", "kddige/kndl")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
   await type(dialog, "Branch", "feature/health")
@@ -200,7 +202,7 @@ test("warns when sessions are already on the branch it would commit to", async (
 })
 
 test("suggests the Repos from the Hub, with the person's own Sessions' Repos on top", async () => {
-  const { dialog } = await openDialog(true)
+  const { dialog } = await openDialog()
   await type(dialog, "Repo", "kddige/")
   await eventually(() => expect(document.querySelector('[role="listbox"]')).not.toBeNull())
   const listbox = document.querySelector('[role="listbox"]') as HTMLElement
@@ -211,7 +213,7 @@ test("suggests the Repos from the Hub, with the person's own Sessions' Repos on 
 })
 
 test("carries the whole branch choice through the Environment setup of a Repo's first Session", async () => {
-  const { dialog, router, start } = await openDialog(true)
+  const { dialog, router, start } = await openDialog()
   await type(dialog, "Repo", "acme/fresh")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
   await step(() => (dialog.querySelector('input[type="checkbox"]') as HTMLElement).click())
@@ -224,7 +226,7 @@ test("carries the whole branch choice through the Environment setup of a Repo's 
 })
 
 test("says why a branch's name can't be used, existing or new, and sends nothing", async () => {
-  const { dialog, hub, start } = await openDialog(true)
+  const { dialog, hub, start } = await openDialog()
   await type(dialog, "Repo", "kddige/kndl")
   await eventually(() => expect(inputOf(dialog, "Branch")?.value).toBe("main"))
   await type(dialog, "Branch", "feature..x")
@@ -245,7 +247,7 @@ test("says why a branch's name can't be used, existing or new, and sends nothing
 })
 
 test("leaves a branch git would refuse out of the Environment setup's search", async () => {
-  const { router } = await openDialog(true)
+  const { router } = await openDialog()
   await step(() =>
     router.navigate({ href: "/repos/acme/fresh/environment?branch=a%20b&from=main" }),
   )

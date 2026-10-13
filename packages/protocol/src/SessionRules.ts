@@ -10,6 +10,24 @@ export interface Refusal {
   readonly refusal: string
 }
 
+// ── Who drives a Session (ADR 0026) ──
+
+/**
+ * Why `you` can't drive a Session created by `creator`, or undefined when they can: only its
+ * Creator prompts it, steers or cancels its prompts, answers it, stops it or its subagents,
+ * controls it, and opens its terminal. Its Claude Code runs on their setup token. Everyone else
+ * with Repo access watches.
+ */
+export const driveRefusal = (
+  you: { readonly id: string },
+  creator: { readonly id: string; readonly name: string },
+): Refusal | undefined =>
+  you.id === creator.id
+    ? undefined
+    : {
+        refusal: `Only ${creator.name}, who started this Session, can drive it: it runs on their Claude credential.`,
+      }
+
 // ── The Prompt queue and Steer (ADR 0018) ──
 
 /** Where a prompt is on its way from the Prompt queue to Claude Code. */

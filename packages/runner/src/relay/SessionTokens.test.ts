@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test"
-import { type ClaudeCredential, credentialFromSecret } from "@kndl/protocol"
 import { Effect, Redacted } from "effect"
 import { sessionId } from "../testSupport.ts"
 import { makeSessionTokens, SessionTokenPrefix } from "./SessionTokens.ts"
@@ -10,8 +9,7 @@ const run = Effect.runSync
 describe("SessionTokens", () => {
   test("issues each Session its own random token, which finds what it stands for", () => {
     const tokens = makeSessionTokens()
-    const credential = credentialFromSecret("sk-ant-oat01-FAKE") as ClaudeCredential
-    const one = run(tokens.issue({ sessionId: sessionId("s-1"), modToken, credential }))
+    const one = run(tokens.issue({ sessionId: sessionId("s-1"), modToken }))
     const two = run(tokens.issue({ sessionId: sessionId("s-2"), modToken }))
 
     expect(Redacted.value(one)).toStartWith(SessionTokenPrefix)
@@ -20,7 +18,6 @@ describe("SessionTokens", () => {
     expect(run(tokens.find(Redacted.value(one)))).toEqual({
       sessionId: sessionId("s-1"),
       modToken,
-      credential,
     })
     expect(run(tokens.find(Redacted.value(two)))).toMatchObject({ sessionId: sessionId("s-2") })
   })

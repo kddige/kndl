@@ -20,7 +20,6 @@ import {
 const runner = (name: string, isOnline: boolean): RunnerSummary => ({
   id: RunnerId.make(`r-${name}`),
   name,
-  login: { account: "alice@example.com" },
   isOnline,
   version: null,
   versionStatus: "Unknown",

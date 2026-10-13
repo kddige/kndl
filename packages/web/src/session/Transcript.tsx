@@ -1,6 +1,7 @@
 import {
   type AgentId,
   type Participant,
+  type PromptCancelled,
   type SessionId,
   type SessionStateChanged,
   type TurnEnded,
@@ -23,6 +24,7 @@ import {
   Avatar,
   Badge,
   BranchIcon,
+  CloseIcon,
   Disclosure,
   Markdown,
   SessionStatus,
@@ -75,6 +77,21 @@ const styles = stylex.create({
     whiteSpace: "pre-wrap",
     overflowWrap: "anywhere",
     lineHeight: leading.normal,
+  },
+  // A prompt that never ran: cancelled out of the queue (ADR 0026).
+  cancelledPrompt: {
+    borderStyle: "dashed",
+    borderColor: color.borderStrong,
+    backgroundColor: "transparent",
+    color: color.textMuted,
+  },
+  cancelledNote: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1,
+    marginInlineStart: space.s8,
+    color: color.textSubtle,
+    fontSize: text.xs,
   },
   sentFiles: { marginInlineStart: space.s8 },
   claudeMark: {
@@ -260,6 +277,8 @@ export const Transcript = memo(function Transcript({
             <li key={item.key}>
               {item.kind === "turn" ? (
                 <Turn turn={item.turn} />
+              ) : item.kind === "cancelled" ? (
+                <CancelledPrompt at={item.at} prompt={item.event} />
               ) : (
                 <Notice at={item.at} event={item.event} />
               )}
@@ -313,6 +332,31 @@ const Turn = memo(function Turn({ turn }: { turn: TurnView }) {
     </article>
   )
 })
+
+/**
+ * A queued prompt the Hub cancelled without it running (ADR 0026): its sender's words, shown as
+ * cancelled, and why.
+ */
+function CancelledPrompt({ at, prompt }: { at: number; prompt: PromptCancelled }) {
+  return (
+    <article {...stylex.props(styles.turn)} data-cancelled={prompt.promptId}>
+      <div {...stylex.props(styles.speaker)}>
+        <Avatar name={prompt.sender.name} src={prompt.sender.avatarUrl} />
+        <span {...stylex.props(styles.name)}>{prompt.sender.name}</span>
+        <time {...stylex.props(styles.time)} dateTime={new Date(at).toISOString()}>
+          {clock(at)}
+        </time>
+      </div>
+      <div {...stylex.props(styles.prompt, styles.cancelledPrompt)}>
+        {prompt.text === "" ? "A prompt of attachments" : prompt.text}
+      </div>
+      <span {...stylex.props(styles.cancelledNote)}>
+        <CloseIcon aria-hidden="true" />
+        {`Cancelled · ${prompt.message}`}
+      </span>
+    </article>
+  )
+}
 
 /**
  * Who prompted a Turn: a person, the terminal, a subagent that ended (ADR 0014), or, in history

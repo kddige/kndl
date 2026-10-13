@@ -12,7 +12,7 @@
 //   redaction (a Session still running may print those unredacted), and the Test builds, whose
 //   digests are keyed from it, so none could match again.
 // - Each person's Claude credential goes too (ADR 0015): they add theirs again on the Account
-//   page, and until then their Sessions run on their Runner's own credential, if it has one.
+//   page, and until then their Sessions don't start, as they run on it alone (ADR 0026).
 // - So do the values of Installations' header secrets (#215), and those their Sessions started
 //   with: each Installation stays, and needs a value again on the MCP page; until then the
 //   Gateway refuses its requests.
@@ -150,7 +150,7 @@ function claudeCredentialLines(plan: SecretsResetPlan): ReadonlyArray<string> {
   const people = plan.claudeCredentials
   if (people.length === 0) return []
   return [
-    `It removes the Claude credential${people.length === 1 ? "" : "s"} of ${people.join(", ")}: until each adds theirs again on the Account page, their Sessions run on their Runner's own.`,
+    `It removes the Claude credential${people.length === 1 ? "" : "s"} of ${people.join(", ")}: until each adds theirs again on the Account page, their Sessions don't start.`,
   ]
 }
 

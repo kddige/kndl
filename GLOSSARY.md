@@ -1,6 +1,6 @@
 # kndl
 
-kndl (said "kindle", written lowercase): multiplayer agentic sessions. A self-hosted platform where a team runs Claude Code sessions in sandboxes and works in them together from the web, "pair-prompting" the way two people pair-program at one screen.
+kndl (said "kindle", written lowercase): multiplayer agentic sessions. A self-hosted platform where a team runs Claude Code sessions in sandboxes and works in them together from the web: each Session's Creator drives it, and the team watches it live.
 
 ## Infrastructure
 
@@ -9,12 +9,12 @@ The central server that people sign in to. It knows every Session, Runner and Pa
 _Avoid_: server, backend, dashboard
 
 **Runner**:
-A host machine connected to the Hub that runs Sessions, each on its Creator's Claude credential or else on the Runner's own, if it has one.
+A host machine connected to the Hub that runs Sessions, each on its Creator's Claude credential.
 _Avoid_: worker, agent, node, host
 
 **Claude credential**:
-A person's own Claude subscription token or Anthropic API key, stored write-only and encrypted on the Hub. The Sessions they create run on it, on any Runner. A Runner may have one of its own, kept on its host, for Sessions whose Creator has none; a Runner needs none.
-_Avoid_: login, Runner login, OAuth token, Claude key
+A person's own Claude subscription token, made with `claude setup-token`, stored write-only and encrypted on the Hub. The Sessions they create run on it, on any Runner, and nobody else's prompts reach it.
+_Avoid_: login, Runner login, OAuth token, Claude key, API key
 
 **Pairing code**:
 A short-lived, single-use code that lets a machine become a Runner of the Hub, or take over an existing Runner's place after it is reinstalled. Using it gives the machine its own lasting credential, and the code is spent.
@@ -69,11 +69,11 @@ _Avoid_: invitation code, Pairing code, join link
 ## Sessions
 
 **Session**:
-One ongoing Claude Code conversation working on one Repo, on a Work branch. A Session belongs to its Repo, not to a person.
+One ongoing Claude Code conversation working on one Repo, on a Work branch, driven by its Creator on their Claude credential. Who can see it is its Repo's to decide.
 _Avoid_: chat, thread, agent, job
 
 **Subagent**:
-A Claude Code agent that a Session's Claude starts with the Agent tool. It runs in the Session's Sandbox, is shown under the Session, and any Participant can message or stop it.
+A Claude Code agent that a Session's Claude starts with the Agent tool. It runs in the Session's Sandbox, is shown under the Session, and the Session's Creator can message or stop it.
 _Avoid_: Child Session, sub-session, worker
 
 **Session name**:
@@ -81,23 +81,19 @@ A Session's editable display name. It defaults to the Session's Work branch, or,
 _Avoid_: title, label
 
 **Creator**:
-The person who started a Session. It grants no special rights in the Session, but the Repo access check and the git identity in its Sandbox are theirs.
+The person who started a Session, whose Claude credential it runs on. Only they drive it: they prompt it, answer it, stop it, control it and use its terminal. The git identity in its Sandbox is theirs.
 _Avoid_: owner
 
 **Participant**:
-Anyone currently in a Session. All Participants have equal rights, including deleting the Session. Each is a Member of the Hub.
+Anyone currently in a Session, the Creator included. A Participant who isn't the Creator watches: they read the Session, live or Archived, and open its Previews and Forwards, but can't drive it. Each is a Member of the Hub.
 _Avoid_: collaborator, viewer, guest
-
-**Contributor**:
-A Participant who has sent at least one prompt in a Session.
-_Avoid_: author, collaborator
 
 **Turn**:
 One prompt and Claude's full response to it, including every tool call it made.
 _Avoid_: message, run, step
 
 **Prompt queue**:
-The ordered prompts from Participants waiting for the Session to finish its current Turn. A queued prompt waits unless someone steers it.
+The ordered prompts from the Creator waiting for the Session to finish its current Turn. A queued prompt waits unless the Creator steers it.
 _Avoid_: backlog, inbox
 
 **Attachment**:
@@ -109,7 +105,7 @@ To take a queued prompt out of the Prompt queue and feed it into the running Tur
 _Avoid_: interrupt, inject, push
 
 **Open question**:
-A question Claude asked in a Turn, with AskUserQuestion, that no one has answered yet. Any Participant may answer it, from the web UI or at the terminal; the first answer is the one Claude reads. While it is open, the Session is waiting on its Participants and doesn't go to sleep.
+A question Claude asked in a Turn, with AskUserQuestion, that no one has answered yet. The Creator answers it, from the web UI or at the terminal; the first answer is the one Claude reads. While it is open, the Session is waiting on its Creator and doesn't go to sleep.
 _Avoid_: prompt, dialog, permission request
 
 **Workspace**:
@@ -198,7 +194,7 @@ _Avoid_: API key setting, token field, header variable
 
 **Gateway**:
 The Hub's path from a Session to an Installation's MCP server, which adds the Installation's credentials on the way, so they never enter a Sandbox.
-_Avoid_: MCP proxy, credential proxy
+_Avoid_: MCP proxy, credential proxy, mod relay
 
 ## Session lifecycle
 

@@ -30,7 +30,6 @@ const runnerHello = {
   _tag: "RunnerHello",
   protocolVersion: ProtocolVersion,
   name: "mac",
-  login: { account: "alice@example.com" },
   sessions: [],
 }
 

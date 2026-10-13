@@ -12,7 +12,6 @@ import {
   type BranchesListed,
   checkHandshake,
   type ClaudeCredentialState,
-  type ClaudePlanChoice,
   type CliTokenId,
   type CommandFailed,
   type EnvironmentDraft,
@@ -710,20 +709,16 @@ export class HubClient {
     await this.#request({ _tag: "UpdateRunner", runnerId, now }, "RunnerUpdateRequested")
   }
 
-  // ── The person's Claude credential (ADR 0015) ────────────────────────────
+  // ── The person's Claude credential (ADR 0015, ADR 0026) ──────────────────
 
   /**
-   * Stores the signed-in person's Claude credential, a token on `plan` or an API key, in place of
-   * any before. The Hub checks it with Anthropic, and refuses one Anthropic rejects; the answer
-   * carries a warning when it was stored without that check. The store then holds what it shows.
+   * Stores the signed-in person's Claude credential, a setup token, in place of any before. The
+   * Hub checks it with Anthropic, and refuses one Anthropic rejects; the answer carries a warning
+   * when it was stored without that check. The store then holds what it shows.
    */
-  setClaudeCredential(secret: string, plan?: ClaudePlanChoice): Promise<ClaudeCredentialState> {
+  setClaudeCredential(secret: string): Promise<ClaudeCredentialState> {
     return this.#request(
-      {
-        _tag: "SetClaudeCredential",
-        secret: Redacted.make(secret),
-        ...(plan !== undefined && { plan }),
-      },
+      { _tag: "SetClaudeCredential", secret: Redacted.make(secret) },
       "ClaudeCredentialState",
     )
   }

@@ -49,8 +49,7 @@ export const RunnerTokenVariable = "RUNNER_TOKEN"
  * | `RUNNER_TMUX_SOCKET` | the home's: `kndl-dev` |
  * | `RUNNER_REPO_URL` | `https://github.com/{repo}.git` |
  *
- * The credential proxy's settings, `RUNNER_PROXY_PORT` and `RUNNER_CLAUDE_*`, are read by
- * ProxyConfigLive (proxy/ProxyConfig.ts).
+ * The mod relay's port, `RUNNER_RELAY_PORT`, is read by RelayConfigLive (relay/RelayConfig.ts).
  */
 export const RunnerConfigLive = Layer.effect(
   RunnerConfig,

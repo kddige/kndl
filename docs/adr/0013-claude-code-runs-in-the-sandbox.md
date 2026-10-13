@@ -1,7 +1,9 @@
 ---
-status: accepted
+status: superseded by 0026
 supersedes: 0001
 ---
+
+> Superseded by [ADR 0026](0026-a-session-runs-on-and-is-driven-by-its-creator.md): Claude Code still runs in the Sandbox, but with its Creator's setup token in its own environment, and it talks to Anthropic directly. The credential proxy is gone, and what's left on the Runner is the mod relay for `/mod/*` and `/gateway/*`. A Runner's own credential is no longer read.
 
 # Claude Code runs in the Sandbox; a Runner proxy holds the Claude credential
 

@@ -78,3 +78,7 @@ All of ADR 0012's Child Sessions:
 - **Claude Code's undocumented behaviour.** Task notifications, sidechain paths and the background default can change. The pinned version's smoke test (ADR 0013) gains an agent check: spawn, stream, completion notification, message and stop.
 - **The model learns nothing new.** Claude Code's own Agent, SendMessage and TaskStop apply.
 - **Other ADRs.** This supersedes ADR 0012, and amends ADR 0013 (the mod keeps no Child tools and is two plugins) and ADR 0015 (no Child Sessions run on a parent's Creator's credential).
+
+## Amendment: only the Creator messages or stops an agent (ADR 0026)
+
+Every Participant still watches a Session's agents. Only its Creator messages or stops one, since a message runs on the Creator's setup token like a prompt.

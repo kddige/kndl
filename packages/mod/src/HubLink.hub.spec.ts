@@ -47,7 +47,6 @@ const seed = async (hub: TestHub) => {
         workBranch: "kndl/s-link",
         state: "Active",
         runnerId: runner.runnerId,
-        runnerLogin: { account: "alice@example.com" },
         creatorId: alice.id,
         createdAt: Date.now(),
       })

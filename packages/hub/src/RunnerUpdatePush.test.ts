@@ -42,7 +42,6 @@ describe("kndl update leaving the push", () => {
           runners.recordHello(
             issued.runnerId,
             {
-              login: { account: "ada@example.com" },
               version: { commit: "a".repeat(40) },
               updater: { self: true },
             },

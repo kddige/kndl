@@ -8,7 +8,6 @@ import {
   expectEveryTag,
   expectRejected,
   expectRoundTrips,
-  runnerLogin,
   runnerModels,
   sessionSummary,
   turnEvents,
@@ -41,6 +40,13 @@ const sessionEvents = [
   { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", effort: "high" },
   { _tag: "ModelSwitched", by: bob, modelLabel: "Opus 5.5" },
   { _tag: "ModelSwitched", by: bob },
+  {
+    _tag: "PromptCancelled",
+    promptId: "p-1",
+    sender: bob,
+    text: "fix the tests",
+    message: "Only the Creator prompts a Session now",
+  },
 ]
 
 const webToHub = [
@@ -182,7 +188,6 @@ const webToHub = [
     _tag: "SetClaudeCredential",
     requestId: "q-19",
     secret: "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY",
-    plan: "max5x",
   },
   {
     _tag: "SetClaudeCredential",
@@ -317,7 +322,6 @@ const hubToWeb = [
       {
         id: "r-1",
         name: "studio",
-        login: runnerLogin,
         isOnline: true,
         version: { commit: "b".repeat(40) },
         versionStatus: "Behind",
@@ -336,7 +340,6 @@ const hubToWeb = [
       {
         id: "r-3",
         name: "laptop",
-        login: runnerLogin,
         isOnline: true,
         version: { commit: "b".repeat(40) },
         versionStatus: "Behind",
@@ -353,7 +356,6 @@ const hubToWeb = [
       {
         id: "r-2",
         name: "new-mac",
-        login: null,
         isOnline: false,
         version: null,
         versionStatus: "Unknown",
@@ -442,7 +444,6 @@ const hubToWeb = [
       {
         id: "r-1",
         name: "studio",
-        login: runnerLogin,
         isOnline: true,
         version: null,
         versionStatus: "Unknown",
@@ -572,7 +573,7 @@ const hubToWeb = [
   {
     _tag: "ClaudeCredentialState",
     requestId: "q-19",
-    credential: { kind: "OAuthToken", last4: "ONLY", plan: "max5x", addedAt: 1_700_000_000_000 },
+    credential: { kind: "OAuthToken", last4: "ONLY", addedAt: 1_700_000_000_000 },
     warning: "Saved without checking it: Anthropic couldn't be reached.",
   },
   { _tag: "ListingUnavailable", requestId: "q-14" },

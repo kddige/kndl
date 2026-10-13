@@ -1,11 +1,16 @@
-// Each person's Claude credential (ADR 0015, issue #150), end to end: a real Hub, web clients and
-// fake Runners over WebSockets. ClaudeCheck.layerTest stands in for Anthropic, so every secret
-// here is a fake.
+// Each person's Claude credential (ADR 0015, ADR 0026, issue #150), end to end: a real Hub, web
+// clients and fake Runners over WebSockets. ClaudeCheck.layerTest stands in for Anthropic, so
+// every secret here is a fake.
 
 import { afterEach, describe, expect, test } from "bun:test"
+import { rmSync } from "node:fs"
+import { join } from "node:path"
+import { ParticipantId } from "@kndl/protocol"
 import { Effect, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
-import { generateSecretsKey } from "./Secrets.ts"
+import { ClaudeCredentials } from "./ClaudeCredentials.ts"
+import { databaseAt } from "./Database.ts"
+import { generateSecretsKey, Secrets } from "./Secrets.ts"
 import {
   type Connection,
   issueRunnerToken,
@@ -15,7 +20,7 @@ import {
   type ToRunner,
   type Web,
 } from "./testChannels.ts"
-import { seedEnvironment, startHub, type TestHub } from "./testSupport.ts"
+import { seedEnvironment, startHub, type TestHub, testDatabaseDir } from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -40,30 +45,15 @@ async function request(
   )
 }
 
-const save = (web: Connection<Web>, secret: string, plan?: string) =>
-  request(web, {
-    _tag: "SetClaudeCredential",
-    secret,
-    ...(plan !== undefined && { plan }),
-  })
+const save = (web: Connection<Web>, secret: string) =>
+  request(web, { _tag: "SetClaudeCredential", secret })
 
-/** A Hub with a Runner online, and alice on the web. */
-async function scene(
-  options: { readonly ownClaudeCredential?: boolean; readonly config?: object } = {},
-) {
-  const hub = await startHub({ config: options.config ?? withKey })
+/** A Hub with a Runner online, and alice on the web with no Claude credential yet. */
+async function scene(options: { readonly config?: object; readonly hub?: TestHub } = {}) {
+  const hub = options.hub ?? (await startHub({ config: options.config ?? withKey }))
   const issued = await issueRunnerToken(hub)
-  const runner = await openRunner(
-    hub,
-    issued.token,
-    [],
-    undefined,
-    true,
-    options.ownClaudeCredential === undefined
-      ? {}
-      : { ownClaudeCredential: options.ownClaudeCredential },
-  )
-  const web = await openWeb(hub, "alice")
+  const runner = await openRunner(hub, issued.token)
+  const web = await openWeb(hub, "alice", undefined, { setupToken: false })
   await seedEnvironment(hub, repo, "dev:alice")
   return { hub, runner, web, runnerId: issued.runnerId }
 }
@@ -100,17 +90,17 @@ const storedText = (hub: TestHub) =>
   )
 
 describe("saving a Claude credential", () => {
-  test("a token is stored with its plan; only its kind, last 4, plan and date come back", async () => {
+  test("a setup token is stored; only its kind, last 4 and date come back", async () => {
     const { hub, web } = await scene()
     expect(web.claudeCredential).toEqual({ _tag: "ClaudeCredentialState", credential: null })
-    const elsewhere = await openWeb(hub, "alice")
+    const elsewhere = await openWeb(hub, "alice", web.cookie)
     const bob = await openWeb(hub, "bob")
 
-    const saved = await save(web, `  ${token}\n`, "max5x")
+    const saved = await save(web, `  ${token}\n`)
     expect(saved).toEqual({
       _tag: "ClaudeCredentialState",
       requestId: expect.any(String),
-      credential: { kind: "OAuthToken", last4: "9f3b", plan: "max5x", addedAt: expect.any(Number) },
+      credential: { kind: "OAuthToken", last4: "9f3b", addedAt: expect.any(Number) },
     })
     // alice's other tab hears of it; bob doesn't.
     expect(
@@ -125,35 +115,24 @@ describe("saving a Claude credential", () => {
     expect(await storedText(hub)).not.toContain(token)
 
     // A new connection is told what it has.
-    const later = await openWeb(hub, "alice")
-    expect(later.claudeCredential.credential).toMatchObject({ kind: "OAuthToken", plan: "max5x" })
-  })
-
-  test("an API key needs no plan, and replaces the token before it", async () => {
-    const { web } = await scene()
-    await save(web, token, "pro")
-    expect(await save(web, apiKey, "pro")).toMatchObject({
-      credential: { kind: "ApiKey", last4: "77d1" },
+    const later = await openWeb(hub, "alice", web.cookie)
+    expect(later.claudeCredential.credential).toEqual({
+      kind: "OAuthToken",
+      last4: "9f3b",
+      addedAt: expect.any(Number),
     })
-    const state = await save(web, apiKey)
-    expect(state).toMatchObject({ credential: { kind: "ApiKey" } })
-    expect(state._tag === "ClaudeCredentialState" && state.credential?.plan).toBeFalsy()
   })
 
-  test("refuses what isn't a whole token or key, and a token without a plan", async () => {
+  test("refuses an API key, and what isn't a whole setup token", async () => {
     const { web } = await scene()
     const refusals = [
-      [" ", undefined, "Paste a token or an API key."],
-      [
-        "hunter2-not-a-token",
-        undefined,
-        "That isn't a Claude token or API key: a token starts with sk-ant-oat, a key with sk-ant-api.",
-      ],
-      ["sk-ant-oat01-short", "pro", "That doesn't look like a whole token or key."],
-      [token, undefined, "Pick the plan your Claude account is on."],
+      [" ", "Paste the token `claude setup-token` printed."],
+      [apiKey, "API keys aren't taken for now."],
+      ["hunter2-not-a-token", "That isn't a Claude setup token: it starts with sk-ant-oat."],
+      ["sk-ant-oat01-short", "That doesn't look like a whole token."],
     ] as const
-    for (const [secret, plan, message] of refusals) {
-      expect(await save(web, secret, plan)).toMatchObject({
+    for (const [secret, message] of refusals) {
+      expect(await save(web, secret)).toMatchObject({
         _tag: "CommandFailed",
         command: "SetClaudeCredential",
         message: expect.stringContaining(message),
@@ -164,27 +143,27 @@ describe("saving a Claude credential", () => {
 
   test("refuses one Anthropic rejects, keeping the one before", async () => {
     const { hub, web } = await scene()
-    await save(web, token, "max20x")
-    expect(await save(web, "sk-ant-oat01-REJECTED_FAKE_TOKEN_0000", "pro")).toMatchObject({
+    await save(web, token)
+    expect(await save(web, "sk-ant-oat01-REJECTED_FAKE_TOKEN_0000")).toMatchObject({
       _tag: "CommandFailed",
       message: "Anthropic rejected this token: it is invalid.",
     })
-    const again = await openWeb(hub, "alice")
-    expect(again.claudeCredential.credential).toMatchObject({ last4: "9f3b", plan: "max20x" })
+    const again = await openWeb(hub, "alice", web.cookie)
+    expect(again.claudeCredential.credential).toMatchObject({ last4: "9f3b" })
   })
 
   test("stores one Anthropic can't be asked about, with a warning", async () => {
     const { web } = await scene()
-    expect(await save(web, "sk-ant-api03-UNREACHABLE_FAKE_KEY_0000")).toMatchObject({
+    expect(await save(web, "sk-ant-oat01-UNREACHABLE_FAKE_TOKEN_0000")).toMatchObject({
       _tag: "ClaudeCredentialState",
-      credential: { kind: "ApiKey", last4: "0000" },
+      credential: { kind: "OAuthToken", last4: "0000" },
       warning: "Saved without checking it: Anthropic couldn't be reached.",
     })
   })
 
   test("is refused, saying why, on a Hub without HUB_SECRETS_KEY", async () => {
-    const { web } = await scene({ config: { devLogin: true } })
-    expect(await save(web, token, "pro")).toMatchObject({
+    const { web } = await scene({ config: { devLogin: true, secretsKey: Option.none() } })
+    expect(await save(web, token)).toMatchObject({
       _tag: "CommandFailed",
       message: expect.stringContaining("needs HUB_SECRETS_KEY"),
     })
@@ -192,7 +171,7 @@ describe("saving a Claude credential", () => {
 
   test("is removed on request", async () => {
     const { hub, web } = await scene()
-    await save(web, token, "team")
+    await save(web, token)
     expect(await request(web, { _tag: "RemoveClaudeCredential" })).toEqual({
       _tag: "ClaudeCredentialState",
       requestId: expect.any(String),
@@ -200,38 +179,81 @@ describe("saving a Claude credential", () => {
     })
     expect(await storedText(hub)).toBe("[]")
   })
+
+  test("API keys stored from before are deleted as the Hub starts, and a row that isn't a token is none", async () => {
+    const dir = testDatabaseDir("kndl-")
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const first = await startHub({ config: withKey, database })
+      const { web } = await scene({ hub: first })
+      const bob = await openWeb(first, "bob", undefined, { setupToken: false })
+      await save(web, token)
+      // As a Hub from before stored them: bob's an API key, and carol's a token that is a key.
+      await openWeb(first, "carol", undefined, { setupToken: false })
+      await first.run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          const secrets = yield* Secrets
+          const sealed = (id: string) =>
+            Effect.orDie(secrets.encrypt(Redacted.make(apiKey), `claude-credential:${id}`))
+          yield* sql`INSERT INTO claude_credentials (participant_id, kind, ciphertext, last4, added_at)
+            VALUES ('dev:bob', 'ApiKey', ${yield* sealed("dev:bob")}, '77d1', 1),
+              ('dev:carol', 'OAuthToken', ${yield* sealed("dev:carol")}, '77d1', 1)`
+        }),
+      )
+      await bob.close()
+      await stopAll()
+
+      const second = await startHub({ config: withKey, database })
+      const kept = await second.run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          const credentials = yield* ClaudeCredentials
+          return {
+            rows: yield* sql<{ readonly participantId: string }>`
+              SELECT participant_id AS participantId FROM claude_credentials ORDER BY 1`,
+            carol: credentials.credentialOf(ParticipantId.make("dev:carol")),
+          }
+        }),
+      )
+      expect(kept.rows).toEqual([{ participantId: "dev:alice" }, { participantId: "dev:carol" }])
+      expect(kept.carol).toBeUndefined()
+      expect(
+        (await openWeb(second, "alice", web.cookie)).claudeCredential.credential,
+      ).toMatchObject({ last4: "9f3b" })
+      expect(
+        (await openWeb(second, "carol", undefined, { setupToken: false })).claudeCredential,
+      ).toMatchObject({ credential: null })
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("a Session's Claude credential", () => {
-  test("its Runner is sent its Creator's, with the plan Claude Code is told", async () => {
+  test("its Runner is sent its Creator's setup token, and refused once they have none", async () => {
     const { web, runner } = await scene()
-    await save(web, token, "max20x")
+    await save(web, token)
     const session = await createSession(web, runner)
-    expect(session.claudeAccount).toBe("Creator")
     expect(await fetchCredential(runner, session.id)).toEqual({
       _tag: "ClaudeCredentialFetched",
       requestId: expect.any(String),
-      credential: {
-        _tag: "OAuthToken",
-        token,
-        plan: { subscriptionType: "max", rateLimitTier: "default_claude_max_20x" },
-      },
+      credential: { _tag: "OAuthToken", token },
     })
 
-    // Once removed, the Runner is told to use its own, and the Session says so.
+    // Once removed, there is no other: the Runner is refused (ADR 0026).
     await request(web, { _tag: "RemoveClaudeCredential" })
-    expect(
-      (await web.take("SessionUpdated", (m) => m.session.claudeAccount === "Runner")).session.id,
-    ).toBe(session.id)
     expect(await fetchCredential(runner, session.id)).toEqual({
-      _tag: "ClaudeCredentialFetched",
+      _tag: "ClaudeCredentialRefused",
       requestId: expect.any(String),
+      message: "alice, who started this Session, has no Claude credential.",
     })
   })
 
   test("is refused to a Runner the Session doesn't run on", async () => {
     const { hub, web, runner } = await scene()
-    await save(web, apiKey)
+    await save(web, token)
     const session = await createSession(web, runner)
     const other = await issueRunnerToken(hub, "linux")
     const intruder = await openRunner(hub, other.token)
@@ -240,11 +262,29 @@ describe("a Session's Claude credential", () => {
       requestId: expect.any(String),
       message: "Not a Session this Runner runs.",
     })
-    expect(intruder.texts.join("\n")).not.toContain(apiKey)
+    expect(intruder.texts.join("\n")).not.toContain(token)
   })
 
-  test("a Session neither its Creator nor its Runner has one for doesn't start", async () => {
-    const { web, runner } = await scene({ ownClaudeCredential: false })
+  test("is refused once its Creator isn't a Member", async () => {
+    const { hub, web, runner } = await scene()
+    await save(web, token)
+    const session = await createSession(web, runner)
+    await hub.run(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql`UPDATE participants SET admitted_at = NULL WHERE id = 'dev:alice'`,
+      ),
+    )
+    expect(await fetchCredential(runner, session.id)).toEqual({
+      _tag: "ClaudeCredentialRefused",
+      requestId: expect.any(String),
+      message: "alice, who started this Session, isn't a Member of this Hub any more.",
+    })
+    expect(runner.texts.join("\n")).not.toContain(token)
+  })
+
+  test("a Session whose Creator has none doesn't start: there is no other to run on", async () => {
+    const { web, runner } = await scene()
     expect(
       await request(web, {
         _tag: "CreateSession",
@@ -253,50 +293,19 @@ describe("a Session's Claude credential", () => {
       }),
     ).toMatchObject({
       _tag: "CommandFailed",
-      message: "Neither you nor mac has a Claude credential: add yours on the Account page.",
+      message: "You have no Claude credential: add your setup token on the Account page.",
     })
     expect(await runner.untaken("StartSession")).toEqual([])
 
-    await save(web, token, "pro")
-    const session = await createSession(web, runner)
-    expect(session.claudeAccount).toBe("Creator")
+    await save(web, token)
+    expect((await createSession(web, runner)).creator.id).toBe("dev:alice")
   })
 
-  test("a Session on a Runner with its own runs on the Runner's when its Creator has none", async () => {
-    const { web, runner } = await scene()
-    const session = await createSession(web, runner)
-    expect(session.claudeAccount).toBe("Runner")
-  })
-
-  test("any Runner, for a Creator with none, is one with its own; the web is told which have one", async () => {
-    const { hub, runner: without, web } = await scene({ ownClaudeCredential: false })
-    const other = await issueRunnerToken(hub, "linux")
-    const withOwn = await openRunner(hub, other.token)
-    const list = await web.take("RunnerList", (m) => m.runners.every((each) => each.isOnline))
-    expect(list.runners.map((each) => [each.name, each.ownClaudeCredential])).toEqual(
-      expect.arrayContaining([
-        ["mac", false],
-        ["linux", true],
-      ]),
-    )
-
-    const session = await createSession(web, withOwn)
-    expect(session.claudeAccount).toBe("Runner")
-    expect(await without.untaken("StartSession")).toEqual([])
-  })
-
-  test("is redacted from what its Sessions print", async () => {
-    const { web, runner } = await scene()
-    await save(web, token, "pro")
-    const session = await createSession(web, runner)
-    web.send({ _tag: "JoinSession", sessionId: session.id })
-    await web.take("SessionHistory")
-    runner.send({ _tag: "SandboxNote", sessionId: session.id, message: `leaked ${token}` })
-    const logged = await web.take(
-      "SessionEventLogged",
-      (m) => m.entry.event._tag === "SandboxNoted",
-    )
-    expect(logged.entry.event).toMatchObject({ message: `leaked ${"*".repeat(token.length)}` })
-    expect(web.texts.join("\n")).not.toContain(token)
+  test("the web is told nothing of a Runner's own credential, which there is none of", async () => {
+    const { web } = await scene()
+    const [runner] = web.runners.runners
+    expect(runner?.isOnline).toBe(true)
+    expect(runner).not.toHaveProperty("ownClaudeCredential")
+    expect(runner).not.toHaveProperty("login")
   })
 })

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { PairingCodeRefused } from "@kndl/protocol"
 import { HubVersion } from "./HubVersion.ts"
 import { RunnerGoneCloseCode } from "./RunnerRelay.ts"
-import { openRunner, openWeb, runnerLogin, stopAll } from "./testChannels.ts"
+import { openRunner, openWeb, stopAll } from "./testChannels.ts"
 import { bearer, seedEnvironment, startHub, type TestHub, webOrigin } from "./testSupport.ts"
 
 afterEach(stopAll)
@@ -94,7 +94,6 @@ describe("Add a Runner", () => {
     expect(offline.runners[0]).toEqual({
       id: paired.runnerId,
       name: "studio",
-      login: null,
       isOnline: false,
       version: null,
       versionStatus: "Unknown",
@@ -110,7 +109,6 @@ describe("Add a Runner", () => {
     const runner = await openRunner(hub, paired.token, [], olderCommit)
     const online = await web.take("RunnerList", (m) => m.runners[0]?.isOnline === true)
     expect(online.runners[0]).toMatchObject({
-      login: runnerLogin,
       version: olderCommit,
       versionStatus: "Behind",
       openSessions: 0,

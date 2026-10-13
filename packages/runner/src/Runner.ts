@@ -6,9 +6,8 @@ import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
 import { OpenPortsLive } from "./OpenPorts.ts"
-import { CredentialProxyLive } from "./proxy/CredentialProxy.ts"
-import { RunnerCredentialLive } from "./proxy/RunnerCredential.ts"
-import { SessionTokensLive } from "./proxy/SessionTokens.ts"
+import { ModRelayLive } from "./relay/ModRelay.ts"
+import { SessionTokensLive } from "./relay/SessionTokens.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { Sessions, SessionsLive } from "./Sessions.ts"
@@ -33,18 +32,13 @@ export const runRunner = (options: { readonly backoff?: Backoff } = {}) =>
     return yield* runHubConnection(options.backoff ?? DefaultBackoff)
   })
 
-/**
- * The credential proxy and mod relay for Sessions in Sandboxes, serving from the Runner's start,
- * over the Session tokens and the Runner's own Claude credential.
- */
-export const CredentialProxyHost = CredentialProxyLive.pipe(
-  Layer.provide([SessionTokensLive, RunnerCredentialLive]),
-)
+/** The mod relay for Sessions in Sandboxes, serving from the Runner's start, over the Session tokens. */
+export const ModRelayHost = ModRelayLive.pipe(Layer.provide(SessionTokensLive))
 
 /**
- * Sessions on this host: each Session's Claude Code runs in tmux in its own microsandbox VM, with
- * a Session token for the credential proxy, and its Workspace is cloned with host git. Tunnels
- * into those Sandboxes (#177) share the Sessions' sandbox backend.
+ * Sessions on this host: each Session's Claude Code runs in tmux in its own microsandbox VM, on
+ * its Creator's setup token, with a Session token for the mod relay, and its Workspace is cloned
+ * with host git. Tunnels into those Sandboxes (#177) share the Sessions' sandbox backend.
  */
 export const SessionsHost = TunnelsLive.pipe(
   Layer.provideMerge(
@@ -58,5 +52,5 @@ export const SessionsHost = TunnelsLive.pipe(
   Layer.provideMerge(HubClaudeCredentialLive),
   Layer.provideMerge(ClaudeModelsLive),
   Layer.provideMerge(HubLinkLive),
-  Layer.provideMerge(CredentialProxyHost),
+  Layer.provideMerge(ModRelayHost),
 )

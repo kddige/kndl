@@ -1,6 +1,6 @@
 ---
 title: Inside kndl
-description: How the parts work underneath - Claude Code in the Sandbox, Builds, the Sandbox token, the credential proxy, the Gateway and redaction - for people working on kndl or auditing it.
+description: How the parts work underneath - Claude Code in the Sandbox, Builds, the Sandbox token, the Creator's token, the mod relay, the Gateway and redaction - for people working on kndl or auditing it.
 sidebar:
   order: 3
 ---
@@ -13,8 +13,8 @@ Each Session's Claude Code runs inside its Sandbox, so its tools run where it ru
 
 - **It runs in tmux in the VM,** started through the Sandbox backend's own exec, in `/workspace` with Claude Code's normal setting sources and `--dangerously-skip-permissions` ([ADR 0004](/contributing/decisions/0004-the-sandbox-is-the-security-boundary/)). Claude runs as root there, so the Runner sets `IS_SANDBOX=1`.
 - **Its state is on a disk of the Session's own,** `/var/lib/kndl/claude`, as `CLAUDE_CONFIG_DIR`, so the conversation and settings survive sleep. Before each start the Runner seeds it with onboarding done, `/workspace` trusted and bypass-permissions mode accepted, so no dialog waits for a person.
-- **It holds no Claude credential.** It sends every request to the Runner's [credential proxy](/concepts/security-model/#the-credential-proxy) with a token for its Session alone, and the proxy puts the real credential in its place. The token is given to the Claude Code process, never written to the VM.
-- **The mod loads read-only** from `/opt/kndl/mod`, each plugin with its own `--plugin-dir`, and reaches the Hub through the same proxy, which adds the Session's mod token. It is a copy of the Runner's mod made each time Claude Code starts, so an update never changes the mod under a running Turn; a Session picks up an updated mod at its next start, wake or change of model ([ADR 0011](/contributing/decisions/0011-runners-follow-the-hubs-commit/#what-a-running-sessions-claude-code-loads-amended-in-159)).
+- **It runs on its Creator's setup token,** and talks to Anthropic directly ([The Creator's token](#the-creators-token)). The token is given to the Claude Code process, never written to the VM.
+- **The mod loads read-only** from `/opt/kndl/mod`, each plugin with its own `--plugin-dir`, and reaches the Hub through the Runner's [mod relay](#the-mod-relay), which adds the Session's mod token. It is a copy of the Runner's mod made each time Claude Code starts, so an update never changes the mod under a running Turn; a Session picks up an updated mod at its next start, wake or change of model ([ADR 0011](/contributing/decisions/0011-runners-follow-the-hubs-commit/#what-a-running-sessions-claude-code-loads-amended-in-159)).
 - **Auto memory is off.** Each Session has its own state, so Sessions would never share what it remembers.
 - **Agent view is off.** A background job from Claude Code's agent view, `/background` or `--bg`, would be a second Claude Code that runs each prompt again.
 
@@ -22,7 +22,7 @@ Each Session's Claude Code runs inside its Sandbox, so its tools run where it ru
 
 The Runner downloads the Linux build of a pinned Claude Code version from the npm registry once, checks its integrity hash, keeps it in the home's `claude-code/` ([Files and paths](/reference/files-and-paths/)), and mounts it read-only into every Sandbox at `/opt/kndl/claude-code`. Each Build checks its image and records whether its Sandboxes use the musl build (Alpine-like images) or the glibc build (Debian, Ubuntu and the like).
 
-The version is pinned, rather than following the host's, because Claude Code learns its plan from variables that are not a public interface. A version is pinned only after a smoke test passes: its banner names the plan, `/status` answers, a Turn runs a Bash command, and the build takes the models the Runner offers. `bun run --filter @kndl/runner probe-models` writes that table from the new version first.
+The version is pinned, rather than following the host's, so that the mod and the Runner's table of models are tested with it. A version is pinned only after a smoke test passes: its banner names the plan, `/status` answers, a Turn runs a Bash command, and the build takes the models the Runner offers. `bun run --filter @kndl/runner probe-models` writes that table from the new version first.
 
 Claude Code also needs tmux 3.2 or later and bash, which every Build installs if its image lacks them.
 
@@ -47,25 +47,24 @@ Its environment is what the Start script gets: the package cache variables and, 
 | `DISABLE_INSTALLATION_CHECKS` | `1`: the Runner installs Claude Code, so `/status` doesn't ask for the native installer's `claude` command and install method. |
 | `TZ` | The Runner's time zone, such as `Europe/Copenhagen`, so the times Claude Code and its tools show are yours. |
 
-Claude Code and its mod reach Anthropic and the Hub through the [credential proxy](/concepts/security-model/#the-credential-proxy), holding only the Session token. These variables point them at it; the credential's kind decides which are set.
+Claude Code talks to Anthropic directly, on its Creator's setup token. Its mod reaches the Hub through the [mod relay](#the-mod-relay), holding only the Session token. These go on top too, and win over a Variable of the same name:
 
 | Variable | What it is |
 |---|---|
-| `ANTHROPIC_BASE_URL`, `KNDL_URL` | The proxy as the Sandbox reaches it: `http://host.microsandbox.internal:<RUNNER_PROXY_PORT>`. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | The Creator's setup token, fetched from the Hub as the Session starts or wakes, and set on Claude Code's process alone, with `tmux -e`. |
+| `KNDL_URL` | The mod relay as the Sandbox reaches it: `http://host.microsandbox.internal:<RUNNER_RELAY_PORT>`. |
 | `KNDL_MOD_TOKEN` | The Session token. |
-| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_AUTOUPDATER` | `1`: the proxy forwards inference alone. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | The Session token, for a subscription token. |
-| `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL`, `CLAUDE_CODE_OAUTH_SCOPES` | For a subscription token: Claude Code treats the proxy as Anthropic's API, with a setup-token's scopes. |
-| `CLAUDE_CODE_SUBSCRIPTION_TYPE`, `CLAUDE_CODE_RATE_LIMIT_TIER` | For a subscription token, its plan, when known: the Creator's, or for the Runner's credential `RUNNER_CLAUDE_PLAN`. |
-| `ANTHROPIC_AUTH_TOKEN` | The Session token, for an API key, in place of all the subscription variables. |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_AUTOUPDATER` | `1`: no telemetry, and no update away from the pinned version. |
+
+Variables that would sign Claude Code in some other way, or send it elsewhere, are kept out of its process: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` and `CLAUDE_CODE_USE_FOUNDRY`. The Start script still gets them.
 
 ## The terminal mirror
 
-The Session view's **Terminal** tab shows the Session's Claude Code terminal, live. Everyone watching sees the same screen and can type into it, for what the chat doesn't handle, such as Claude Code's dialogs, Esc and Ctrl-C.
+The Session view's **Terminal** tab shows the Session's Claude Code terminal, live, to its Creator alone. They can type into it, for what the chat doesn't handle, such as Claude Code's dialogs, Esc and Ctrl-C. Other Participants don't see it: raw terminal frames are where the Creator's token is easiest to leak ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)).
 
 - The Runner attaches to the Session's tmux in control mode (`tmux -C`). Opening the tab sends a snapshot of the pane, with its colours and cursor, then relays the pane's output. A reconnect waits for a fresh snapshot, so nothing is drawn twice.
-- The terminal has one size, the tmux pane's. Whoever last typed into it or pressed **Fit to my window** sets it; everyone else sees it at that size, scaled down when it doesn't fit.
-- The Hub relays keystrokes only from someone who opened the terminal, and only while the Session is Active.
+- The terminal has one size, the tmux pane's. The tab that last typed into it or pressed **Fit to my window** sets it; the Creator's other tabs see it at that size, scaled down when it doesn't fit.
+- The Hub sends terminal frames only to the Creator's connections. It relays keystrokes only from the Creator, from a tab that opened the terminal, and only while the Session is Active.
 
 ## Open ports
 
@@ -81,7 +80,7 @@ The Hub keeps the latest list in memory only and sends it to the web UI ([Forwar
 
 **A conversation never written down.** A conversation Claude Code never wrote down, because it exited too early, can't be resumed. Waking such a Session starts a fresh conversation, with the same id, on the same Workspace, and a note in the Session's history says so: the history still shows the earlier conversation, which Claude Code doesn't remember.
 
-**Frozen.** When the Runner is back, the Session is Active if its Claude Code is still running, and otherwise Asleep, woken at once if prompts are waiting, with its running subagents Interrupted. Claude Code runs in the Sandbox, not in the Runner, so it keeps running when the Runner's connection drops and when the Runner restarts. A restarted Runner reads each Session token back from its Claude Code, and the Hub gives the Session a fresh mod token; until then the credential proxy asks that Claude Code to retry, and a running Turn carries on once it can.
+**Frozen.** When the Runner is back, the Session is Active if its Claude Code is still running, and otherwise Asleep, woken at once if prompts are waiting, with its running subagents Interrupted. Claude Code runs in the Sandbox, not in the Runner, so it keeps running when the Runner's connection drops and when the Runner restarts. A restarted Runner reads each Session token back from its Claude Code, and the Hub gives the Session a fresh mod token; until then the mod relay asks the mod to retry, and a running Turn carries on meanwhile, since Claude Code reaches Anthropic directly.
 
 ## Builds
 
@@ -157,13 +156,12 @@ The Runner never pushes. Work reaches GitHub only when git in the Sandbox pushes
 
 | Credential | Lives on | Reaches a Sandbox? |
 |---|---|---|
-| A person's Claude credential, a subscription token or API key | encrypted on the Hub with `HUB_SECRETS_KEY`; the credential proxy's memory while one of their Sessions is awake | Never ([The credential proxy](#the-credential-proxy)) |
-| The Runner's own Claude credential, for Sessions without their Creator's | the Runner owner's Keychain or a private file; the credential proxy's memory | Never ([The credential proxy](#the-credential-proxy)) |
-| Session tokens, one per run of a Session | the credential proxy's memory, as SHA-256 hashes | Yes, by design: they stand in for the Claude credential and the mod token |
+| A person's Claude credential, a setup token | encrypted on the Hub with `HUB_SECRETS_KEY`; the environment of the Claude Code process of each of their awake Sessions | Yes, by design: in its Creator's Sessions ([The Creator's token](#the-creators-token)) |
+| Session tokens, one per run of a Session | the mod relay's memory, as SHA-256 hashes | Yes, by design: they stand in for the mod token |
 | The GitHub App's private key and client secret | the Hub | Never |
 | `HUB_SECRETS_KEY` | the Hub | Never |
 | Runner tokens | the Runner, as `RUNNER_TOKEN`; the Hub keeps a hash | Never |
-| Mod tokens, one per run of a Session | the Runner's memory; the Hub keeps a hash | Never ([The credential proxy](#the-credential-proxy)) |
+| Mod tokens, one per run of a Session | the Runner's memory; the Hub keeps a hash | Never ([The mod relay](#the-mod-relay)) |
 | Sign-in cookies | the browser; the Hub keeps a hash | Never |
 | CLI tokens, one per machine signed in with `kndl login` | that machine's `cli.json`, readable only by its user; the Hub keeps a hash | Never |
 | The Setup link and Invites ([Who gets in](/concepts/security-model/#who-gets-in)) | the link, with whoever it was given to; the Hub keeps a hash | Never |
@@ -172,17 +170,27 @@ The Runner never pushes. Work reaches GitHub only when git in the Sandbox pushes
 | Environment Variables | encrypted on the Hub if Sensitive; in the Runner's memory while needed | Yes, by design: in every process's environment |
 | An Installation's header secret values, an MCP server's keys | encrypted on the Hub with `HUB_SECRETS_KEY`, with a copy for each Session that started with them | Never ([The Gateway](#the-gateway)) |
 
-### The credential proxy
+### The Creator's token
 
-Anything Claude runs in the Sandbox could read a credential Claude Code held there, so it holds none. Each Runner runs a credential proxy on its host's loopback, port `RUNNER_PROXY_PORT`, which every Sandbox reaches at `host.microsandbox.internal`, and Claude Code and its mod hold only a Session token.
+A Session runs on its Creator's own `claude setup-token` token, and Claude Code holds it in the Sandbox ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)). A Runner has no Claude credential of its own.
 
-- **A Session token is the only identity.** Claude Code gets it in its own process's environment, as its OAuth token and as the mod's, and it is never written to the Sandbox's disk. Every Sandbox's connection reaches the proxy from the host's own loopback address, so the proxy tells Sessions apart by token alone. A token is 32 random bytes, issued as a Session starts or wakes and revoked as it sleeps, is archived, stops or exits; the proxy keeps only its SHA-256. A request without a live token is answered 401. A restarted Runner reads the token of each Session still running back from its Claude Code, and holds it for that Session alone, answering 503 until the Hub has given the Session a new mod token.
-- **It forwards three requests to Anthropic and nothing else:** `POST /v1/messages`, `POST /v1/messages/count_tokens` and `GET /v1/models`. Anything else is answered 404, its path checked after `..` is resolved. It swaps the Session token for the Session's Claude credential: a subscription token as the bearer, an API key as `x-api-key`. Responses stream back unbuffered.
-- **It relays the mod's calls to the Hub,** `/mod/*`, swapping the Session token for the Session's mod token, so the mod token stays on the Runner too. Claude Code's MCP traffic to its Installations, `/gateway/*`, goes to the Hub's [Gateway](#the-gateway) the same way, streaming both ways.
-- **Credentials stay in memory.** A Session's credential is its Creator's ([ADR 0015](/contributing/decisions/0015-each-person-brings-their-claude-credential/)), held by the proxy while the Session's token lives and never written to disk. A Session without one uses the Runner's own, read from the owner's Keychain or a file only the Runner's user can read ([The Runner's Claude credential](/reference/configuration/#the-runners-claude-credential)).
-- **Nothing secret is logged.** The proxy logs one line per request to Anthropic, under its Session: method, path, status, time and whose credential it used.
+- **Fetched as the Session starts or wakes.** The Runner asks the Hub over its WebSocket. The Hub answers only for a Session on that Runner whose Creator has a token and is a Member. A refusal fails the start or wake with the Hub's message, and Claude Code never runs without the token.
+- **In Claude Code's process alone.** The Runner sets `CLAUDE_CODE_OAUTH_TOKEN` on the Claude Code it starts, with `tmux -e`. It is never written to the VM's disk, and never logged.
+- **No other way in.** The variables that would sign Claude Code in some other way are kept out of its process ([What a Runner gives Claude Code](#what-a-runner-gives-claude-code)). It talks to Anthropic as Claude Code does on a laptop, and learns the plan from Anthropic.
+- **Masked.** The Hub masks the token in the Session's transcript, terminal frames and Claude Code's last output, like a Sensitive value ([Redaction](#redaction)).
+- **Taken away.** When the Creator removes or replaces their token, or is removed as a Member, the Hub puts their Active Sessions to sleep, even mid-Turn, saying why. A replaced token reaches a Session at its next wake.
 
-Anything in a Sandbox can read its Session token, and spend its Session's credential through the proxy while the Session is awake. It can't take the credential away, use it after the Session sleeps, or reach any API path but inference.
+Anything in the Sandbox can read the token from Claude Code's environment, and use it anywhere until it expires, a year after it was made. Only the Creator prompts that Claude, so only they can ask it for the token. That is the risk of running your own Claude Code on your own token, on a Repo you trust.
+
+### The mod relay
+
+Each Runner runs a mod relay on its host's loopback, port `RUNNER_RELAY_PORT`, which every Sandbox reaches at `host.microsandbox.internal`. The mod holds only a Session token, so the mod token stays on the Runner, and no Sandbox needs a route to the Hub.
+
+- **A Session token is the only identity.** Claude Code gets it in its own process's environment, as the mod's, and it is never written to the Sandbox's disk. Every Sandbox's connection reaches the relay from the host's own loopback address, so the relay tells Sessions apart by token alone. A token is 32 random bytes, issued as a Session starts or wakes and revoked as it sleeps, is archived, stops or exits; the relay keeps only its SHA-256. A request without a live token is answered 401. A restarted Runner reads the token of each Session still running back from its Claude Code, and holds it for that Session alone, answering 503 until the Hub has given the Session a new mod token.
+- **It relays the mod's calls to the Hub,** `/mod/*`, swapping the Session token for the Session's mod token. Claude Code's MCP traffic to its Installations, `/gateway/*`, goes to the Hub's [Gateway](#the-gateway) the same way, streaming both ways. It relays nothing else, and never reaches Anthropic.
+- **Nothing secret is logged.**
+
+Anything in a Sandbox can read its Session token, and reach the Hub as the Session's mod while the Session is awake. It can't take the mod token away, or use the Session token after the Session sleeps.
 
 ### Every endpoint needs a credential
 
@@ -204,9 +212,9 @@ Cookie-authenticated requests must come from `HUB_PUBLIC_URL`'s origin, and the 
 
 ## The Gateway
 
-An [MCP server](/reference/glossary/#mcp-server) is remote, and Claude Code reaches it through the Hub's Gateway, never directly ([ADR 0020](/contributing/decisions/0020-plugins-are-remote-mcp-servers-behind-the-hub/)). Its `.mcp.json` holds the credential proxy's address and the Session token, and nothing else secret.
+An [MCP server](/reference/glossary/#mcp-server) is remote, and Claude Code reaches it through the Hub's Gateway, never directly ([ADR 0020](/contributing/decisions/0020-plugins-are-remote-mcp-servers-behind-the-hub/)). Its `.mcp.json` holds the mod relay's address and the Session token, and nothing else secret.
 
-- **Only the Installations on for the Session's Repo.** The Gateway answers `403` for an Installation the Session didn't start with, or that was taken off its Repo since: taking one off stops it at once. It answers `401` without the mod token of an Active Session, which the credential proxy puts in for a live Session token.
+- **Only the Installations on for the Session's Repo.** The Gateway answers `403` for an Installation the Session didn't start with, or that was taken off its Repo since: taking one off stops it at once. It answers `401` without the mod token of an Active Session, which the mod relay puts in for a live Session token.
 - **Turning one on takes access to its Repos.** Making or changing an Installation takes access on GitHub to every Repo it lists, as starting a Session does. A refusal reads the same whether the Repo exists or not, and an Installation on in a Repo someone can't see only says how many such Repos it lists.
 - **Untouched, and not logged.** Request and answer stream both ways as they are. The Gateway drops the Session's token, cookies and forwarding headers on the way out, and the server's cookies on the way back. It logs each request's Session, Installation, method, status and time, never its content or headers.
 - **No MCP server credential enters a Sandbox or a Runner.** The Hub calls the server from its own address. An MCP server that needs a key declares header secrets, such as `Authorization: Bearer {value}`, and each Installation holds its own value, which the Gateway adds to every request on the way out. A header of the same name from the Sandbox, by any case, is dropped first, so code in a Sandbox can't send its own in its place.
@@ -217,7 +225,7 @@ An [MCP server](/reference/glossary/#mcp-server) is remote, and Claude Code reac
 
 ## Redaction
 
-The Hub masks Sensitive values, each character with `*`, in everything it stores or shows: a Session's Events (prompts, Claude's text, tool input and output, subagents included), its terminal frames, and Test build logs and results. A Session's set is its Repo's Sensitive Variables and linked Sensitive Shared variables, plus any value they replaced while a Session that started with it still runs, the header secret values of the Installations it started with, and its current and previous Sandbox tokens.
+The Hub masks Sensitive values, each character with `*`, in everything it stores or shows: a Session's Events (prompts, Claude's text, tool input and output, subagents included), its terminal frames, and Test build logs and results. A Session's set is its Repo's Sensitive Variables and linked Sensitive Shared variables, plus any value they replaced while a Session that started with it still runs, the header secret values of the Installations it started with, its current and previous Sandbox tokens, and its Creator's setup token.
 
 - Besides the value itself, it looks for it trimmed, JSON-escaped, URL-encoded and, for a multi-line value such as a key, each of its long lines. Matching skips terminal colour codes and line breaks, so a value wrapped on screen is still found.
 - Claude's text and terminal output stream in pieces, so the end of a piece that could start a value is held back until the next one, for at most 100 ms.

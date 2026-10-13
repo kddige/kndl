@@ -1,14 +1,14 @@
 // The smoke test for upgrading the pinned Claude Code (PinnedClaudeVersion): a Session's Claude
-// Code in a real microsandbox VM, launched as the Runner launches it, in tmux, through the
-// credential proxy, with the mod loaded. Its banner shows the plan, `/status` opens, a Turn runs
-// Bash in the Sandbox, a background subagent's run and its task notification are where hub-link
-// and the Hub expect them (ADR 0014), and the models and effort levels it takes are those
-// PinnedClaudeModels says. So it is skipped unless KNDL_SANDBOX_IT=1, and makes model
-// calls (a few, on haiku) with this machine's Runner credential, read as the Runner reads it
-// (`RUNNER_CLAUDE_CREDENTIAL`, by default the Keychain item `kndl-setup-token`). It needs
-// `msb` installed for the current user, and network access to Docker Hub and to npm the first
-// time a Claude Code version is cached. No Hub runs: the mod's link stays down. Everything it
-// creates is named kndl-it-… and destroyed at the end, pass or fail.
+// Code in a real microsandbox VM, launched as the Runner launches it, in tmux, on a setup token
+// and talking to Anthropic directly (ADR 0026), with the mod loaded. Its banner shows a
+// subscription, `/status` opens, a Turn runs Bash in the Sandbox, a background subagent's run and
+// its task notification are where hub-link and the Hub expect them (ADR 0014), and the models and
+// effort levels it takes are those PinnedClaudeModels says. So it is skipped unless
+// KNDL_SANDBOX_IT=1, and makes model calls (a few, on haiku) with your own setup token: the one
+// in `CLAUDE_CODE_OAUTH_TOKEN`, or else, on macOS, in the Keychain item `kndl-setup-token`. It
+// needs `msb` installed for the current user, and network access to Docker Hub and to npm the
+// first time a Claude Code version is cached. No Hub runs: the mod's link stays down. Everything
+// it creates is named kndl-it-… and destroyed at the end, pass or fail.
 //
 //   KNDL_SANDBOX_IT=1 bun test packages/runner/src/SandboxClaude.integration.test.ts
 
@@ -17,22 +17,20 @@ import { randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { BunServices } from "@effect/platform-bun"
-import type { RepoName, SessionId } from "@kndl/protocol"
+import {
+  type ClaudeCredential,
+  credentialFromSecret,
+  type RepoName,
+  type SessionId,
+} from "@kndl/protocol"
 import { devHome } from "@kndl/protocol/home"
 import { Effect, Layer, Redacted } from "effect"
-import { ChildProcessSpawner } from "effect/process"
+import { claudeEnvironment, KeptOutOfClaude } from "./ClaudeEnvironment.ts"
 import { claudeLaunch } from "./ClaudeLaunch.ts"
 import { modelProbeFlags, PinnedClaudeModels, probeModels } from "./ClaudeModels.ts"
 import { HubLink } from "./HubLink.ts"
-import { makeCredentialProxy, serveCredentialProxy } from "./proxy/CredentialProxy.ts"
-import { DefaultKeychainService, parseCredentialSource } from "./proxy/ProxyConfig.ts"
-import {
-  hostSecretReaders,
-  makeRunnerCredential,
-  RunnerCredential,
-} from "./proxy/RunnerCredential.ts"
-import { makeSessionTokens, SessionTokens } from "./proxy/SessionTokens.ts"
+import { makeModRelay, serveModRelay } from "./relay/ModRelay.ts"
+import { makeSessionTokens, SessionTokens } from "./relay/SessionTokens.ts"
 import { Sandboxes } from "./Sandbox.ts"
 import * as MicrosandboxBackend from "./sandbox/MicrosandboxBackend.ts"
 import { SandboxBackend } from "./sandbox/SandboxBackend.ts"
@@ -49,12 +47,23 @@ const enabled = process.env.KNDL_SANDBOX_IT === "1"
 /** The mod in this checkout, which the Session's Claude Code loads a copy of. */
 const modDir = join(import.meta.dir, "..", "..", "mod")
 
-/** How the banner names each plan. */
-const planNames: Record<string, string> = {
-  pro: "Claude Pro",
-  max: "Claude Max",
-  team: "Claude Team",
-  enterprise: "Claude Enterprise",
+/** The Keychain item the setup token is looked for in on macOS, without `CLAUDE_CODE_OAUTH_TOKEN`. */
+const keychainService = "kndl-setup-token"
+
+/** Your own setup token, which the test's Claude Code runs on as a Session runs on its Creator's. */
+const setupToken = (): ClaudeCredential => {
+  const fromKeychain = () =>
+    process.platform === "darwin"
+      ? Bun.spawnSync(["security", "find-generic-password", "-s", keychainService, "-w"])
+          .stdout.toString()
+          .trim()
+      : ""
+  const credential = credentialFromSecret(process.env.CLAUDE_CODE_OAUTH_TOKEN ?? fromKeychain())
+  if (credential === undefined)
+    throw new Error(
+      `Put a setup token from \`claude setup-token\` in CLAUDE_CODE_OAUTH_TOKEN, or on macOS in the Keychain item ${keychainService}.`,
+    )
+  return credential
 }
 
 /** Waits for `read` to show what `seen` looks for, failing with what it read last. */
@@ -75,7 +84,7 @@ const waitFor = (
   })
 
 test.skipIf(!enabled)(
-  `Claude Code ${PinnedClaudeVersion} runs in a Sandbox: its banner shows the plan, /status opens, a Turn runs Bash, a subagent runs, and it takes the models PinnedClaudeModels says`,
+  `Claude Code ${PinnedClaudeVersion} runs in a Sandbox: its banner shows a subscription, /status opens, a Turn runs Bash, a subagent runs, and it takes the models PinnedClaudeModels says`,
   async () => {
     const sessionId = `it-${Date.now().toString(36)}` as SessionId
     const root = await mkdtemp(join(tmpdir(), "kndl-it-"))
@@ -83,23 +92,21 @@ test.skipIf(!enabled)(
     await mkdir(directories.workspace, { recursive: true })
     const cacheDir = process.env.RUNNER_SANDBOX_CLAUDE_CACHE ?? join(devHome.dir, "claude-code")
     const conversation = randomUUID()
+    const credential = setupToken()
 
     const program = Effect.gen(function* () {
       const sandboxes = yield* Sandboxes
       const backend = yield* SandboxBackend
       const tokens = yield* SessionTokens
-      const runnerCredential = yield* RunnerCredential
       const tmux = makeTmux(backend)
 
-      // No Hub: the proxy relays the mod's requests to a port nothing listens on.
-      const port = yield* serveCredentialProxy({ port: 0, hubUrl: new URL("http://127.0.0.1:9") })
-      const proxy = makeCredentialProxy({ port, tokens, runnerCredential })
-      const credential = yield* runnerCredential.current
+      // No Hub: the relay relays the mod's requests to a port nothing listens on.
+      const port = yield* serveModRelay({ port: 0, hubUrl: new URL("http://127.0.0.1:9") })
+      const relay = makeModRelay({ port, tokens })
       const started = yield* sandboxes.start(sessionId, directories, {
         repo: "acme/app" as RepoName,
       })
-      const pass = yield* proxy.admit({ sessionId, modToken: Redacted.make("chm_it.FAKE") })
-      expect(pass.credential).toBe("Runner")
+      const sessionToken = yield* relay.admit({ sessionId, modToken: Redacted.make("chm_it.FAKE") })
       const launch = claudeLaunch({
         claudePath: started.claude.path,
         sessionId,
@@ -107,11 +114,18 @@ test.skipIf(!enabled)(
         conversation: { _tag: "New", id: conversation },
         model: "haiku",
       })
+      const env = claudeEnvironment({
+        base: { ...started.claude.env, ...launch.env },
+        relayUrl: relay.guestUrl,
+        sessionToken,
+        credential,
+      })
       yield* tmux.launch({
         sessionId,
         cwd: workspaceGuestPath,
         argv: launch.argv,
-        env: { ...started.claude.env, ...launch.env, ...pass.env },
+        env,
+        unset: KeptOutOfClaude,
         size: { cols: 120, rows: 40 },
       })
 
@@ -146,9 +160,8 @@ test.skipIf(!enabled)(
           // Straight to the prompt: no onboarding, trust or bypass-permissions question.
           yield* until("prompt", (s) => s.includes("bypass permissions"))
           expect(screen).toContain(`Claude Code v${PinnedClaudeVersion}`)
-          if (credential._tag === "OAuthToken" && credential.plan !== undefined) {
-            expect(screen).toContain(planNames[credential.plan.subscriptionType] ?? "")
-          }
+          // The plan comes from Anthropic, as nothing states it any more.
+          expect(screen).toMatch(/Claude (Pro|Max|Team|Enterprise)/)
           expect(screen).not.toContain("API Usage Billing")
 
           yield* type("/status")
@@ -211,7 +224,7 @@ test.skipIf(!enabled)(
             command: started.claude.path,
             args: [...modelProbeFlags, ...args],
             cwd: workspaceGuestPath,
-            env: { ...started.claude.env, ...pass.env },
+            env,
           })
           .pipe(Effect.map((result) => result.stdout))
       const models = yield* probeModels(probe)
@@ -254,22 +267,6 @@ test.skipIf(!enabled)(
         },
       }),
     )
-    const credential = Layer.effect(
-      RunnerCredential,
-      Effect.gen(function* () {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
-        return yield* makeRunnerCredential({
-          source: parseCredentialSource(process.env.RUNNER_CLAUDE_CREDENTIAL ?? "auto") ?? {
-            _tag: "Keychain",
-            service: DefaultKeychainService,
-          },
-          plan: undefined,
-          home: devHome.dir,
-          readers: hostSecretReaders(spawner),
-        })
-      }),
-    )
-
     try {
       await Effect.runPromise(
         program.pipe(
@@ -285,7 +282,6 @@ test.skipIf(!enabled)(
               hub,
               new FakeHubVariables().layer,
               Layer.sync(SessionTokens, makeSessionTokens),
-              credential.pipe(Layer.provide(BunServices.layer)),
             ),
           ),
           Effect.scoped,

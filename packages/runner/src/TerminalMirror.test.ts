@@ -8,7 +8,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BunServices, BunSocket } from "@effect/platform-bun"
-import { type HubToWeb, ProtocolVersion } from "@kndl/protocol"
+import { type HubToWeb, ProtocolVersion, type SessionId } from "@kndl/protocol"
 import { Effect, Fiber, Layer, Option, Redacted, References } from "effect"
 import { RunnerTokens } from "../../hub/src/RunnerTokens.ts"
 import { generateSecretsKey } from "../../hub/src/Secrets.ts"
@@ -21,6 +21,7 @@ import {
   type TestHub,
   webOrigin,
 } from "../../hub/src/testSupport.ts"
+import { ClaudeTokenVariable } from "./ClaudeEnvironment.ts"
 import { StaticClaudeModels } from "./ClaudeModels.ts"
 import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
@@ -31,7 +32,7 @@ import { RunnerConfig } from "./RunnerConfig.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
 import { SessionsLive } from "./Sessions.ts"
 import {
-  FakeCredentialProxy,
+  FakeModRelay,
   FakeOpenPorts,
   FakeSandboxes,
   FakeWorkspaces,
@@ -170,8 +171,11 @@ afterAll(() => {
   if (socketPath !== "") rmSync(socketPath, { force: true })
 })
 
+/** tmux on the host, in the Sandbox's place. */
+const guestTmux = hostTmuxBackend({ socket: tmuxSocket, paths: { [workspaceGuestPath]: dir } })
+
 /** Runs the real Runner against `hub`, with real tmux and the Workspace and Sandbox faked. */
-async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
+async function startRunner(hub: TestHub) {
   const { token } = await hub.run(Effect.flatMap(RunnerTokens, (tokens) => tokens.issue("mac")))
   const sessionsRoot = join(dir, "sessions")
   const layer = SessionsLive.pipe(
@@ -183,18 +187,10 @@ async function startRunner(hub: TestHub, proxy = new FakeCredentialProxy()) {
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(StaticClaudeModels(undefined)),
     Layer.provide([
-      Layer.succeed(
-        Tmux,
-        Tmux.of({
-          ...makeTmux(
-            hostTmuxBackend({ socket: tmuxSocket, paths: { [workspaceGuestPath]: dir } }),
-          ),
-          retireHostServer: Effect.void,
-        }),
-      ),
+      Layer.succeed(Tmux, Tmux.of({ ...makeTmux(guestTmux), retireHostServer: Effect.void })),
       new FakeWorkspaces(sessionsRoot).layer,
       new FakeSandboxes(fakeClaude).layer,
-      proxy.layer,
+      new FakeModRelay().layer,
     ]),
     Layer.provideMerge(
       Layer.succeed(
@@ -228,9 +224,7 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
     const hub = await startHub({
       config: { devLogin: true, secretsKey: Option.some(Redacted.make(generateSecretsKey())) },
     })
-    // A Runner with no Claude credential of its own.
-    const proxy = new FakeCredentialProxy()
-    await startRunner(hub, proxy)
+    await startRunner(hub)
     const cookie = cookieFrom(await devSignIn(hub, "alice"))
     await seedEnvironment(hub, "acme/app", "dev:alice")
     const web = await Web.open(hub, cookie)
@@ -240,9 +234,9 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
       (message) => Array.isArray(message["runners"]) && message["runners"].length > 0,
     )
 
-    // alice's Claude credential, a fake one, which her Session's Runner is given (#150).
+    // alice's Claude credential, a fake one, which her Session's Runner is given (ADR 0026).
     const fake = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
-    web.send({ _tag: "SetClaudeCredential", requestId: "r-0", secret: fake, plan: "max5x" })
+    web.send({ _tag: "SetClaudeCredential", requestId: "r-0", secret: fake })
     await web.next("ClaudeCredentialState", (message) => message["requestId"] === "r-0")
     web.send({
       _tag: "CreateSession",
@@ -260,9 +254,12 @@ describe.skipIf(tmuxMissing)("the terminal mirror", () => {
     // Opening it gets a snapshot of the screen as it is, then what it prints.
     web.send({ _tag: "OpenTerminal", sessionId })
     const opened = await framesUntil(web, "fake claude ready")
-    // It was started on alice's Claude credential, fetched from the Hub.
-    const credential = proxy.grants[0]?.credential
-    expect(credential?._tag === "OAuthToken" && Redacted.value(credential.token)).toBe(fake)
+    // Its Claude Code was started on alice's Claude credential, fetched from the Hub.
+    expect(
+      await Effect.runPromise(
+        makeTmux(guestTmux).variable(sessionId as SessionId, ClaudeTokenVariable),
+      ),
+    ).toBe(fake)
     expect(opened.some((frame) => frame.kind === "Snapshot")).toBe(true)
     web.send({ _tag: "CloseTerminal", sessionId })
     web.send({ _tag: "OpenTerminal", sessionId })

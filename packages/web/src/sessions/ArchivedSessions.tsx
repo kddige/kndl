@@ -5,6 +5,7 @@ import { useMemo } from "react"
 import { day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
+import { useDrives } from "../session/drive.ts"
 import {
   Avatar,
   BranchIcon,
@@ -224,6 +225,8 @@ function ArchivedRow({
   hub: HubClient
 }) {
   const archived = session.archived
+  // Restoring it is its Creator's alone (ADR 0026).
+  const drives = useDrives(session)
   if (archived === undefined) return null
   return (
     <li {...stylex.props(styles.row, first && styles.firstRow)}>
@@ -245,13 +248,15 @@ function ArchivedRow({
           <span title={day(archived.purgeAt)}>Purged {purgedIn(archived.purgeAt)}</span>
         </div>
       </div>
-      <Button
-        size="sm"
-        aria-label={`Restore ${sessionTitle(session)}`}
-        onClick={() => restoreSession(hub, session.id)}
-      >
-        Restore
-      </Button>
+      {drives && (
+        <Button
+          size="sm"
+          aria-label={`Restore ${sessionTitle(session)}`}
+          onClick={() => restoreSession(hub, session.id)}
+        >
+          Restore
+        </Button>
+      )}
     </li>
   )
 }
