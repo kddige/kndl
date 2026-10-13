@@ -83,10 +83,11 @@ export interface ComposerProps {
    * sent, so the text and files stay.
    */
   onSend: (text: string, attachments: ReadonlyArray<AttachmentId>) => boolean
-  onStop: () => void
+  /** Stops what is running; without it, as for someone watching (ADR 0026), there is no Stop. */
+  onStop?: (() => void) | undefined
   /** A Turn is running, so Stop is offered and a prompt waits in the queue. */
   running: boolean
-  /** Why prompts can't be sent now, such as the Session being Frozen. */
+  /** Why prompts can't be sent, such as the Session being Archived, or being someone else's. */
   disabledReason?: string | undefined
   /** What a prompt does now, such as waking an Asleep Session. */
   hint?: string | undefined
@@ -123,9 +124,9 @@ const promptCopy = (running: boolean): ComposerCopy => ({
 })
 
 /**
- * Where a Participant writes prompts. A prompt always goes through the Prompt queue, with the
- * images and PDFs pasted, dropped or picked for it, given `attach` (#276, #277). With `copy`, it
- * writes something else, such as a message to an agent.
+ * Where the Creator writes prompts (ADR 0026). A prompt always goes through the Prompt queue,
+ * with the images and PDFs pasted, dropped or picked for it, given `attach` (#276, #277). With
+ * `copy`, it writes something else, such as a message to an agent.
  */
 export function Composer({
   onSend,
@@ -286,7 +287,7 @@ export function Composer({
                 ? "Prompts wait in the queue until the Turn ends."
                 : "Enter to send, Shift+Enter for a new line.")}
         </span>
-        {running && (
+        {running && onStop && (
           <Button size="sm" intent="secondary" icon={<StopIcon />} onClick={onStop}>
             {copy.stop}
           </Button>

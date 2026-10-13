@@ -344,6 +344,10 @@ const real: Adapter = {
       return startClient(opened.transport)
     }
     const client = newClient()
+    // A Session runs on its Creator's own setup token, with no fallback (ADR 0026); the test Hub
+    // stores it without asking Anthropic.
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    await client.setClaudeCredential("sk-ant-oat01-FAKE_TOKEN_FOR_CONTRACT_TESTS_ONLY")
     // Its Runner starts it: the mod says hello, and then the Runner says it started.
     const creating = started(client)
     const start = await runner.take("StartSession")

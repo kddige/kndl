@@ -12,6 +12,7 @@ import { Link, useNavigate, useParams, useRouterState, useSearch } from "@tansta
 import { useEffect, useMemo, useState } from "react"
 import { isListed } from "../hub/store.ts"
 import { recentAgents } from "../hub/transcript.ts"
+import { useDrives } from "../session/drive.ts"
 import { keptAwakeText } from "../session/keepAwake.ts"
 import { WaitingDot } from "../session/QuestionChip.tsx"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
@@ -330,8 +331,8 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
 
 /**
  * A Session in the sidebar: its state's dot, its Session name (or Work branch) and what it's busy
- * with, leading to it. Its Rename button turns the row into a field for the name. Its agents'
- * rows are `nested` under it.
+ * with, leading to it. Its Rename button, its Creator's alone (ADR 0026), turns the row into a
+ * field for the name. Its agents' rows are `nested` under it.
  */
 function SessionRow({
   session,
@@ -343,6 +344,7 @@ function SessionRow({
   nested?: Omit<NestedNavItems, "label">
 }) {
   const hub = useHub()
+  const drives = useDrives(session)
   const [renaming, setRenaming] = useState(false)
   const title = sessionTitle(session)
   return (
@@ -361,25 +363,28 @@ function SessionRow({
       trailing={<SessionIndicators session={session} />}
       {...(nested && { nested: { ...nested, label: `Agents of ${title}` } })}
       action={
-        <IconButton label={`Rename ${title}`} size="sm" onClick={() => setRenaming(true)}>
-          <PencilIcon />
-        </IconButton>
+        drives ? (
+          <IconButton label={`Rename ${title}`} size="sm" onClick={() => setRenaming(true)}>
+            <PencilIcon />
+          </IconButton>
+        ) : undefined
       }
-      {...(renaming && {
-        editor: (
-          <InlineEdit
-            label="Session name"
-            defaultValue={title}
-            placeholder={session.workBranch}
-            maxLength={MaxSessionNameLength}
-            onCommit={(typed) => {
-              setRenaming(false)
-              renameSession(hub, session, typed)
-            }}
-            onCancel={() => setRenaming(false)}
-          />
-        ),
-      })}
+      {...(drives &&
+        renaming && {
+          editor: (
+            <InlineEdit
+              label="Session name"
+              defaultValue={title}
+              placeholder={session.workBranch}
+              maxLength={MaxSessionNameLength}
+              onCommit={(typed) => {
+                setRenaming(false)
+                renameSession(hub, session, typed)
+              }}
+              onCancel={() => setRenaming(false)}
+            />
+          ),
+        })}
     >
       {title}
     </NavItem>
@@ -430,8 +435,9 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
           : session.agents?.some((agent) => agent.status === "Running") === true
             ? "Agents working"
             : null
-  // Claude asked a question (#193): it waits on someone to answer rather than working.
+  // Claude asked a question (#193): it waits on its Creator to answer rather than working.
   const waiting = session.openQuestion !== undefined
+  const waitingOn = session.creator.id === you?.id ? "you" : session.creator.name
   // What a restart would apply: a newer Environment, or its Repo's Installations (ADR 0020).
   const changed = environmentChanged(session)
     ? "Environment changed"
@@ -459,8 +465,8 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
         <NavSlot>
           <span
             role="img"
-            aria-label="Waiting on you"
-            title="Waiting on you: Claude asked a question"
+            aria-label={`Waiting on ${waitingOn}`}
+            title={`Waiting on ${waitingOn}: Claude asked a question`}
             {...stylex.props(styles.waiting)}
           >
             <WaitingDot />

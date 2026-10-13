@@ -17,7 +17,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { type ReactNode, useEffect, useMemo, useState } from "react"
-import { repoParams, runnerLabel, timeAgo } from "../app/format.ts"
+import { repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, type RepoCheck, RepoRefusal } from "../app/repoAccess.tsx"
 import type { RepoEnvironment, TestBuildRun } from "../hub/store.ts"
@@ -830,7 +830,7 @@ function EnvironmentEditor({
                 onValueChange={(value) => setRunnerId(value)}
                 options={onlineRunners.map((runner: RunnerSummary) => ({
                   value: runner.id as string,
-                  label: runnerLabel(runner),
+                  label: runner.name,
                 }))}
                 sx={styles.runnerSelect}
               />

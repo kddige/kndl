@@ -16,7 +16,8 @@ const { createMemoryHistory, RouterProvider } = await import("@tanstack/react-ro
 const { HubProvider } = await import("../src/app/hub.tsx")
 const { HubClient } = await import("../src/hub/client.ts")
 const { FakeHub } = await import("../src/hub/fake/FakeHub.ts")
-const { demoSessionId, releaseSessionId, you } = await import("../src/hub/fake/script.ts")
+const { bob, bobsSessionId, demoSessionId, releaseSessionId, you } =
+  await import("../src/hub/fake/script.ts")
 const { createAppRouter } = await import("../src/router.tsx")
 
 /** Waits, letting React render, until `check` stops throwing. */
@@ -42,7 +43,8 @@ function typeInto(field: HTMLTextAreaElement, value: string): void {
 
 test("the Session view plays the fake Hub's scripted Session", async () => {
   // Slow enough steps that the first Turn still runs while the test opens who's here and queues a
-  // prompt: Bob's follow-up waits in the queue only for the Turn's last ~35 steps.
+  // prompt: Alice's follow-up from her other tab waits in the queue only for the Turn's last ~35
+  // steps.
   const hub = new FakeHub({ stepMs: 20 })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(
@@ -67,17 +69,13 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   // Connected and joined: the Session's header, named by its work branch, with its Repo.
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/web-client"))
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("kddige/kndl")
-  // Its Creator has stored no Claude credential, so it runs on the Runner's (ADR 0015).
-  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain(
-    "on the Runner's Claude account",
-  )
+  // Alice started it, so she drives it (ADR 0026).
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("you drive it")
   expect(hub.received.map((message) => message._tag)).toContain("JoinSession")
-  // Bob keeps it awake (ADR 0016).
-  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain(
-    "Kept awake by Bob Lee",
-  )
+  // She keeps it awake (ADR 0016).
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Kept awake by you")
 
-  // A second Participant joins, and their prompt starts a Turn under their name.
+  // A second Participant joins to watch, and Alice's prompt from her other tab starts a Turn.
   await eventually(() =>
     expect(
       page.querySelector('[role="group"][aria-label^="Here now"]')?.getAttribute("aria-label"),
@@ -98,9 +96,9 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
   )
   await eventually(() => expect(conversation()).toContain("Can you make tool calls collapse"))
-  expect(conversation()).toContain("Bob Lee")
+  expect(conversation()).toContain("Alice Kim")
 
-  // While it runs: Stop is offered, and Bob's follow-up waits in the queue.
+  // While it runs: Stop is offered, and her follow-up waits in the queue.
   await eventually(() => expect(hasButton("Stop")).toBe(true))
   await eventually(() => expect(queue()).toContain("Then add a line about it to the README"))
 
@@ -110,8 +108,13 @@ test("the Session view plays the fake Hub's scripted Session", async () => {
   await step(() => typeInto(prompt, "And a test for it"))
   await step(() => button("Queue prompt", page).click())
   await eventually(() => expect(queue()).toContain("And a test for it"))
-  await step(() => button("Cancel Alice Kim's prompt", page).click())
+  const queued = [...page.querySelectorAll('[aria-label="Prompt queue"] li')].find((row) =>
+    row.textContent?.includes("And a test for it"),
+  )
+  if (!queued) throw new Error("not queued")
+  await step(() => button("Cancel Alice Kim's prompt", queued).click())
   await eventually(() => expect(queue()).not.toContain("And a test for it"))
+  expect(queue()).toContain("Then add a line about it to the README")
   expect(hub.received.map((message) => message._tag)).toContain("CancelPrompt")
 
   // The streamed answer arrives whole; then the queued prompt runs as its own Turn.
@@ -859,7 +862,7 @@ test("a Repo's Archived screen lists who deleted each Session, and restores it",
   const { page, sent, find } = await openApp("/repos/kddige/kndl/archived")
   const archived = () => page.querySelector('ul[aria-label="Archived Sessions"]')?.textContent ?? ""
   await eventually(() => expect(archived()).toContain("claude/flaky-login"))
-  expect(archived()).toContain("Deleted by Bob Lee 3d ago")
+  expect(archived()).toContain("Deleted by Alice Kim 3d ago")
   expect(archived()).toContain("Purged in 27 days")
 
   await step(() => button("Restore claude/flaky-login", page).click())
@@ -875,7 +878,7 @@ test("an Archived Session can't take prompts or open its terminal, and offers a 
       .map((el) => el.textContent ?? "")
       .find((content) => content.startsWith("This Session is")) ?? ""
   await eventually(() => expect(banner()).toContain("This Session is Archived"))
-  expect(banner()).toContain("Bob Lee deleted it.")
+  expect(banner()).toContain("Alice Kim deleted it.")
   const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
   expect(prompt?.disabled).toBe(true)
   const labels = [...page.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))
@@ -919,4 +922,101 @@ test("an image pasted into a message to an agent goes with it, and shows in its 
       ),
     ).not.toBeNull(),
   )
+})
+
+test("someone watching a Session reads it, but can't drive it or see its terminal (ADR 0026)", async () => {
+  const { router, page, sent } = await openApp(`/sessions/${bobsSessionId}?tab=terminal`)
+  const header = () => page.querySelector("h1")?.closest("header")?.textContent ?? ""
+  const banner = () =>
+    [...page.querySelectorAll('[role="status"]')]
+      .map((el) => el.textContent ?? "")
+      .find((content) => content.startsWith("This Session is")) ?? ""
+  await eventually(() => expect(banner()).toContain("This Session is Asleep"))
+  expect(header()).toContain("Bob Lee drives it")
+  // It waits on Bob to wake it: nothing here wakes it.
+  expect(banner()).toContain("Its Sandbox is stopped until Bob Lee wakes it.")
+  const labels = () =>
+    [...page.querySelectorAll("button")].map(
+      (each) => each.getAttribute("aria-label") ?? each.textContent?.trim(),
+    )
+  for (const control of ["Wake now", "Rename Session", "Delete Session", "Sleep now", "Attach"])
+    expect(labels()).not.toContain(control)
+  expect(labels().some((label) => label?.startsWith("Model:"))).toBe(false)
+  expect(page.querySelector("header [role=switch]")).toBeNull()
+  // Nor rename it from the sidebar.
+  expect(labels()).not.toContain("Rename claude/landing-copy")
+
+  // The composer is disabled, saying who drives it and why.
+  const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
+  expect(prompt?.disabled).toBe(true)
+  expect(prompt?.placeholder).toBe(
+    "Only Bob Lee, who started this Session, can drive it: it runs on their Claude credential.",
+  )
+
+  // There's no terminal, even asked for in the URL: no tab, and it's never opened.
+  expect(page.querySelector('[role="tab"]')).toBeNull()
+  expect(page.querySelector(".xterm")).toBeNull()
+  expect(router.state.location.search).toEqual({ tab: "terminal" })
+  expect(sent()).not.toContain("OpenTerminal")
+
+  // The prompt the Hub cancelled shows, as cancelled, with why.
+  const cancelled = page.querySelector('[data-cancelled="p-seed-alice"]')?.textContent ?? ""
+  expect(cancelled).toContain("Alice Kim")
+  expect(cancelled).toContain("And make the install command copyable")
+  expect(cancelled).toContain("Cancelled · Only the Session's Creator prompts it now")
+})
+
+test("someone watching a live Session sees its Turn and queue, with nothing to stop, steer or cancel", async () => {
+  const hub = new FakeHub({ stepMs: 20, you: bob })
+  const client = new HubClient(hub, { retryDelay: () => 1 })
+  const router = createAppRouter(
+    createMemoryHistory({ initialEntries: [`/sessions/${demoSessionId}`] }),
+  )
+  const view = await render(
+    <HubProvider client={client}>
+      <RouterProvider router={router} />
+    </HubProvider>,
+  )
+  cleanup = async () => {
+    await view.unmount()
+    client.stop()
+    hub.dispose()
+  }
+  const page = view.container
+  const queue = () => page.querySelector('[aria-label="Prompt queue"]')
+  const conversation = () => page.querySelector('[aria-label="Conversation"]')?.textContent ?? ""
+  // Alice's prompt runs, and her follow-up waits in the queue.
+  await eventually(() => expect(conversation()).toContain("Can you make tool calls collapse"))
+  await eventually(() =>
+    expect(queue()?.textContent).toContain("Then add a line about it to the README"),
+  )
+  expect(queue()?.querySelector("button")).toBeNull()
+  const labels = [...page.querySelectorAll("button")].map((each) => each.textContent?.trim())
+  expect(labels).not.toContain("Stop")
+  expect(page.querySelector('[role="tab"]')).toBeNull()
+  expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Alice Kim drives it")
+})
+
+test("the Creator's Session can't wake without their setup token, and leads to the Account page", async () => {
+  const hub = new FakeHub({ stepMs: 2, autoplay: false, claudeCredential: null })
+  const client = new HubClient(hub, { retryDelay: () => 1 })
+  const router = createAppRouter(createMemoryHistory({ initialEntries: ["/sessions/s-readme"] }))
+  const view = await render(
+    <HubProvider client={client}>
+      <RouterProvider router={router} />
+    </HubProvider>,
+  )
+  cleanup = async () => {
+    await view.unmount()
+    client.stop()
+    hub.dispose()
+  }
+  const page = view.container
+  const banner = () =>
+    [...page.querySelectorAll('[role="status"]')]
+      .map((el) => el.textContent ?? "")
+      .find((content) => content.startsWith("This Session can't wake")) ?? ""
+  await eventually(() => expect(banner()).toContain("you have none on this Hub"))
+  await step(() => button("Add a setup token", page).click())
+  await eventually(() => expect(router.state.location.pathname).toBe("/account"))
 })

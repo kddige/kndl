@@ -78,15 +78,15 @@ function typeInto(field: HTMLInputElement, value: string): void {
 
 test("a switch shows in the transcript, and a Turn run before it names its model", async () => {
   const { page, conversation, picker } = await open(`/sessions/${demoSessionId}`)
-  await eventually(() => expect(conversation()).toContain("Bob Lee switched to Sonnet 5.5, High"))
+  await eventually(() => expect(conversation()).toContain("Alice Kim switched to Sonnet 5.5, High"))
   expect(picker()?.textContent).toBe("Sonnet 5.5")
   expect(button("Effort: High", page).textContent).toBe("High")
-  // The first Turn ran on Claude Code's default, before Bob's switch.
+  // The first Turn ran on Claude Code's default, before Alice's switch.
   const turnModels = [...page.querySelectorAll('[title="The model this Turn ran on"]')]
   expect(turnModels.map((el) => el.textContent)).toEqual(["Opus 5.5"])
 })
 
-test("anyone switches the model from the composer; everyone sees who did", async () => {
+test("its Creator switches the model from the composer; everyone sees who did", async () => {
   const { hub, page, conversation, picker } = await open("/sessions/s-readme")
   await eventually(() => expect(picker()?.textContent).toBe("Opus 5.5"))
   // Its Turn ran on the model it is set to: the footer doesn't say so.

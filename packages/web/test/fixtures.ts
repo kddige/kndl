@@ -8,13 +8,11 @@ type EventEncoded = (typeof SessionLogEntry.Encoded)["event"]
 
 export const alice = { id: "u-1", login: "alice", name: "Alice" }
 export const bob = { id: "u-2", login: "bob", name: "Bob" }
-export const runnerLogin = { account: "alice@example.com" }
 
 /** A Runner online on the Hub's own commit, with no Sessions. */
 export const runnerSummary = {
   id: "r-1",
   name: "studio",
-  login: runnerLogin,
   isOnline: true,
   version: { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", branch: "main" },
   versionStatus: "Current",
@@ -29,7 +27,6 @@ export const sessionSummary = {
   workBranch: "claude/s-1",
   state: "Active",
   runnerId: "r-1",
-  runnerLogin,
   creator: alice,
   createdAt: 1_790_000_000_000,
   currentTurn: null,

@@ -55,15 +55,16 @@ async function openRunners() {
   return { hub, page: view.container }
 }
 
-test("lists each Runner with its login, version, last connection and Sessions", async () => {
+test("lists each Runner with its version, last connection and Sessions, and no credential of its own", async () => {
   const { page } = await openRunners()
   expect(page.querySelector("h1")?.textContent).toBe("Runners")
   const [studio, ci] = [...(runners()?.querySelectorAll("li") ?? [])].map((li) => li.textContent)
   expect(studio).toContain("studio")
   expect(studio).toContain("online")
-  expect(studio).toContain("alice@example.com")
+  // Sessions run on their Creators' setup tokens, not the Runner's (ADR 0026).
+  expect(studio).not.toContain("Claude")
   expect(studio).toContain("824de4a1f0c3 (main)")
-  expect(studio).toContain("3 Sessions")
+  expect(studio).toContain("4 Sessions")
   expect(ci).toContain("offline")
   expect(ci).toContain("behind the Hub")
   expect(ci).toContain("Last seen 3h ago")

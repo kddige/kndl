@@ -55,6 +55,7 @@ import {
 import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import { AgentPanel } from "./AgentPanel.tsx"
 import { Composer } from "./Composer.tsx"
+import { useDriveRefusal } from "./drive.ts"
 import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker } from "./ModelPicker.tsx"
@@ -143,6 +144,9 @@ export type SessionTab = "chat" | "terminal"
  * One Session: its conversation, who's here, the Prompt queue and the composer, and in another
  * tab its terminal. With `agentId`, the chat shows that subagent's view instead (ADR 0014). `tab`,
  * `agentId` and their callbacks let the URL track what is open.
+ *
+ * Only its Creator drives it (ADR 0026). Anyone else watches: the composer is disabled, saying
+ * why, and what would drive it is hidden, the terminal included.
  */
 export function SessionView({
   sessionId,
@@ -286,19 +290,29 @@ function LoadedSession({
   )
 
   const you = useHubState((hubState) => hubState.you)
+  // Only its Creator drives it (ADR 0026): anyone else watches.
+  const cantDrive = useDriveRefusal(summary)
+  const drives = cantDrive === undefined
+  // It runs on its Creator's setup token, and can't wake without one.
+  const noToken = useHubState((hubState) => hubState.claudeCredential === null)
   const state = summary.state
   // Being started or restarted, it can't be put to sleep or restarted (#70).
   const busy = summary.starting !== undefined || summary.restarting !== undefined
-  const disabledReason = state === "Archived" ? "Archived: restore it to send prompts" : undefined
-  const hint = busy
-    ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until Claude Code is up.`
-    : summary.modelPending === true && running
-      ? `${modelName(models, setting)} takes over when this Turn ends.`
-      : state === "Asleep"
-        ? "Asleep: sending a prompt wakes it."
-        : state === "Frozen"
-          ? "Frozen: prompts wait in the queue until its Runner is back."
-          : undefined
+  const disabledReason =
+    cantDrive ?? (state === "Archived" ? "Archived: restore it to send prompts" : undefined)
+  const hint = !drives
+    ? undefined
+    : busy
+      ? `${summary.restarting ? "Restarting" : "Starting"}: prompts wait in the queue until Claude Code is up.`
+      : summary.modelPending === true && running
+        ? `${modelName(models, setting)} takes over when this Turn ends.`
+        : state === "Asleep"
+          ? noToken
+            ? "Asleep: add a setup token on your Account page to wake it."
+            : "Asleep: sending a prompt wakes it."
+          : state === "Frozen"
+            ? "Frozen: prompts wait in the queue until its Runner is back."
+            : undefined
 
   // While Claude asks a question (#193), what is sent declines it and goes to Claude instead.
   const asking = summary.openQuestion
@@ -331,9 +345,10 @@ function LoadedSession({
       }),
     [hub, summary.id],
   )
-  // An Archived Session has no terminal to open: it shows its conversation only.
+  // An Archived Session has no terminal to open, and someone watching sees none (ADR 0026): it
+  // shows its conversation only.
   const archived = state === "Archived"
-  const view: SessionTab = archived ? "chat" : tab
+  const view: SessionTab = archived || !drives ? "chat" : tab
   // The terminal mounts when first shown and stays, so its scrollback survives switching tabs.
   const [shownTerminal, setShownTerminal] = useState(view === "terminal")
   if (view === "terminal" && !shownTerminal) setShownTerminal(true)
@@ -356,7 +371,7 @@ function LoadedSession({
       <PageHeader
         // On a phone the name keeps its row, and the toggle and buttons go on one of their own.
         stackActions
-        // Its name, edited in place: anyone with access may rename it, whatever its state.
+        // Its name, edited in place: its Creator may rename it, whatever its state.
         title={
           renaming ? (
             <InlineEdit
@@ -377,7 +392,7 @@ function LoadedSession({
         }
         badge={
           <span {...stylex.props(styles.badges)}>
-            {!renaming && (
+            {drives && !renaming && (
               <IconButton label="Rename Session" size="sm" onClick={() => setRenaming(true)}>
                 <PencilIcon />
               </IconButton>
@@ -385,7 +400,7 @@ function LoadedSession({
             <SessionStatus state={statusOf(state)} />
             {summary.openQuestion && (
               <Badge intent="warning" icon={<WaitingDot />}>
-                Waiting on you
+                Waiting on {drives ? "you" : summary.creator.name}
               </Badge>
             )}
           </span>
@@ -401,7 +416,8 @@ function LoadedSession({
                 {summary.name !== undefined && `${summary.workBranch} `}from {summary.baseBranch}
               </>
             )}{" "}
-            <span aria-hidden="true">·</span> {claudeAccountText(summary)}
+            <span aria-hidden="true">·</span>{" "}
+            {drives ? "you drive it" : `${summary.creator.name} drives it`}
             {summary.keepAwake !== undefined && (
               <>
                 {" "}
@@ -418,8 +434,8 @@ function LoadedSession({
           <>
             <OpenPorts summary={summary} />
             <SessionMcpServers summary={summary} />
-            {state !== "Archived" && (
-              // Anyone with access may turn it on or off (ADR 0016); Sleep now turns it off.
+            {drives && state !== "Archived" && (
+              // Its Creator turns it on or off (ADR 0016, ADR 0026); Sleep now turns it off.
               <Tooltip content="While it's on, the Session doesn't go to sleep when idle. Sleep now turns it off.">
                 <span>
                   <Switch
@@ -431,7 +447,7 @@ function LoadedSession({
                 </span>
               </Tooltip>
             )}
-            {state === "Active" && (
+            {drives && state === "Active" && (
               <Button
                 size="sm"
                 intent="secondary"
@@ -448,7 +464,7 @@ function LoadedSession({
                 Sleep now
               </Button>
             )}
-            {state !== "Archived" && (
+            {drives && state !== "Archived" && (
               <IconButton label="Delete Session" size="sm" onClick={remove}>
                 <TrashIcon />
               </IconButton>
@@ -490,14 +506,17 @@ function LoadedSession({
         onValueChange={(next) => onTabChange?.(next === "terminal" ? "terminal" : "chat")}
         sx={styles.tabs}
       >
-        <div {...stylex.props(styles.tabList)}>
-          <TabList label="Session views">
-            <Tab value="chat">Chat</Tab>
-            <Tab value="terminal" disabled={archived}>
-              Terminal
-            </Tab>
-          </TabList>
-        </div>
+        {/* Someone watching has no terminal (ADR 0026), so no other tab to switch to. */}
+        {drives && (
+          <div {...stylex.props(styles.tabList)}>
+            <TabList label="Session views">
+              <Tab value="chat">Chat</Tab>
+              <Tab value="terminal" disabled={archived}>
+                Terminal
+              </Tab>
+            </TabList>
+          </div>
+        )}
         <TabPanel value="chat" keepMounted sx={styles.tabPanel}>
           {agentId !== undefined ? (
             <AgentPanel session={summary} agentId={agentId} agent={agent} onClose={closeAgent} />
@@ -510,6 +529,7 @@ function LoadedSession({
                     change={transcript.stateChange}
                     running={running}
                     startLog={startLog}
+                    drives={drives}
                     restart={restart}
                     onWake={() => command(hub.wakeSession(summary.id))}
                     onRestore={() => restoreSession(hub, summary.id)}
@@ -523,7 +543,11 @@ function LoadedSession({
                   {items.length === 0 ? (
                     <EmptyState
                       title="Nothing here yet"
-                      description="Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
+                      description={
+                        drives
+                          ? "Send the first prompt. Everyone in the Session sees Claude's answer as it streams."
+                          : `Once ${summary.creator.name} sends the first prompt, you see Claude's answer here as it streams.`
+                      }
                     />
                   ) : (
                     <Transcript
@@ -540,16 +564,21 @@ function LoadedSession({
                   summary={summary}
                   questions={transcript.questions}
                   picks={questionPicks}
+                  drives={drives}
                 />
                 <PromptQueue
                   queue={queue}
-                  onCancel={(prompt) => {
-                    if (!hub.cancelPrompt(summary.id, prompt.id)) {
-                      toast.show({ title: "Not connected to the Hub", intent: "warning" })
-                    }
-                  }}
+                  onCancel={
+                    drives
+                      ? (prompt) => {
+                          if (!hub.cancelPrompt(summary.id, prompt.id)) {
+                            toast.show({ title: "Not connected to the Hub", intent: "warning" })
+                          }
+                        }
+                      : undefined
+                  }
                   onSteer={
-                    steerable
+                    drives && steerable
                       ? (prompt) => {
                           if (command(hub.steerPrompt(summary.id, prompt.id)))
                             setSteering((ids) => new Set(ids).add(prompt.id))
@@ -560,24 +589,26 @@ function LoadedSession({
                 />
                 <Composer
                   onSend={send}
-                  onStop={() => hub.stopTurn(summary.id)}
+                  onStop={drives ? () => hub.stopTurn(summary.id) : undefined}
                   running={running}
                   disabledReason={disabledReason}
                   hint={
-                    asking
+                    drives && asking
                       ? "Claude is waiting on an answer: a reply here declines its question."
                       : hint
                   }
-                  attach={attach}
-                  {...(asking && { copy: replyCopy, needsText: true })}
+                  attach={drives ? attach : undefined}
+                  {...(drives && asking && { copy: replyCopy, needsText: true })}
                   picker={
-                    <ModelPicker
-                      models={models}
-                      value={shownSetting}
-                      onChange={pick}
-                      disabled={archived}
-                      side="top"
-                    />
+                    drives && (
+                      <ModelPicker
+                        models={models}
+                        value={shownSetting}
+                        onChange={pick}
+                        disabled={archived}
+                        side="top"
+                      />
+                    )
                   }
                 />
               </div>
@@ -585,7 +616,7 @@ function LoadedSession({
           )}
         </TabPanel>
         <TabPanel value="terminal" keepMounted sx={styles.tabPanel}>
-          {shownTerminal && !archived && (
+          {shownTerminal && !archived && drives && (
             <Suspense
               fallback={
                 <div {...stylex.props(styles.centered)}>
@@ -600,21 +631,6 @@ function LoadedSession({
       </Tabs>
     </main>
   )
-}
-
-/**
- * Whose Claude account a Session runs on (ADR 0015): its Creator's own credential, or else its
- * Runner's own, shown as its Runner showed it then. A Hub from before says only the Runner's.
- */
-function claudeAccountText(summary: SessionSummary): string {
-  switch (summary.claudeAccount) {
-    case "Creator":
-      return `on ${summary.creator.name}'s Claude account`
-    case "Runner":
-      return `on the Runner's Claude account, ${summary.runnerLogin.account}`
-    default:
-      return `on ${summary.runnerLogin.account}`
-  }
 }
 
 /** The prompt box's words while Claude waits on an answer to its question (#193). */
@@ -689,9 +705,11 @@ function useRestart(summary: SessionSummary, send: () => boolean): Restart {
 function StartingBanner({
   summary,
   startLog,
+  drives,
 }: {
   summary: SessionSummary
   startLog: JoinedSession["startLog"]
+  drives: boolean
 }) {
   const { starting, restarting } = summary
   const you = useHubState((state) => state.you)
@@ -719,7 +737,7 @@ function StartingBanner({
         : version === undefined
           ? "Starting Claude Code in a fresh Sandbox. "
           : `Starting the Sandbox on version ${version} of ${summary.repo}'s Environment: building it if its Runner hasn't yet, which can take a few minutes, then running its start script. `}
-      Prompts sent now wait in the queue until Claude Code is up.
+      {drives && "Prompts sent now wait in the queue until Claude Code is up."}
     </Banner>
   )
 }
@@ -727,12 +745,15 @@ function StartingBanner({
 /**
  * Shown while the Session is starting or restarting, Frozen, Asleep or Archived, or runs on an
  * older Environment or other Installations than its Repo's, with why from its latest state change.
+ * Its Restart, Wake and Restore are its Creator's alone (ADR 0026): someone watching sees why, but
+ * not them.
  */
 function StateBanner({
   summary,
   change,
   running,
   startLog,
+  drives,
   restart,
   onWake,
   onRestore,
@@ -742,21 +763,26 @@ function StateBanner({
   change: SessionStateChanged | undefined
   running: boolean
   startLog: JoinedSession["startLog"]
+  /** Whether the signed-in person drives the Session. */
+  drives: boolean
   restart: Restart
   onWake: () => void
   onRestore: () => void
   onEnterValues: () => void
 }) {
+  const navigate = useNavigate()
+  // Its Creator's setup token, which it can't wake without (ADR 0026); undefined while loading.
+  const credential = useHubState((state) => state.claudeCredential)
   const why = change?.state === summary.state ? change.message : undefined
   const busy = summary.starting !== undefined || summary.restarting !== undefined
   if (busy && (summary.state === "Active" || summary.state === "Asleep")) {
-    return <StartingBanner summary={summary} startLog={startLog} />
+    return <StartingBanner summary={summary} startLog={startLog} drives={drives} />
   }
   switch (summary.state) {
     case "Active": {
       const environment = summary.environment
       const mcpServers = mcpServersChanged(summary)
-      const restartButton = (
+      const restartButton = drives && (
         <Button
           size="sm"
           icon={<RestartIcon />}
@@ -782,7 +808,7 @@ function StateBanner({
             ; version {environment.latestVersion} is the latest. Restarting puts the Session to
             sleep and wakes it on a fresh Sandbox, with its Workspace and conversation as they are.
             {mcpServers && ` It applies the change to ${summary.repo}'s Installations too.`}
-            {running && " Once the running Turn ends."}
+            {drives ? running && " Once the running Turn ends." : ` ${restarter(summary)}`}
           </Banner>
         )
       }
@@ -798,7 +824,7 @@ function StateBanner({
           {summary.repo}'s Installations changed since this Session started, and Claude Code gets
           its MCP servers as it starts. A Restart applies the change, with the Workspace and
           conversation as they are.
-          {running && " Once the running Turn ends."}
+          {drives ? running && " Once the running Turn ends." : ` ${restarter(summary)}`}
         </Banner>
       )
     }
@@ -806,7 +832,7 @@ function StateBanner({
       return (
         <Banner intent="frozen" icon={<InfoIcon />} title="This Session is Frozen">
           {why ? sentence(why) : "Its Runner is offline. "}
-          Prompts sent now wait in the queue until the Runner is back.
+          {drives && "Prompts sent now wait in the queue until the Runner is back."}
         </Banner>
       )
     case "Asleep":
@@ -824,7 +850,7 @@ function StateBanner({
             }
           >
             {why ? sentence(why) : ""}
-            Prompts sent now wait in the queue until it starts.
+            {drives && "Prompts sent now wait in the queue until it starts."}
           </Banner>
         )
       }
@@ -834,8 +860,27 @@ function StateBanner({
           <InstallationsFailedBanner
             summary={summary}
             failures={change.installationsFailed ?? []}
-            onRetry={onWake}
+            onRetry={drives ? onWake : undefined}
           />
+        )
+      }
+      // It runs on its Creator's setup token, and can't wake without one (ADR 0026).
+      if (drives && credential === null) {
+        return (
+          <Banner
+            intent="danger"
+            icon={<InfoIcon />}
+            title="This Session can't wake"
+            action={
+              <Button size="sm" onClick={() => void navigate({ to: "/account" })}>
+                Add a setup token
+              </Button>
+            }
+          >
+            {why ? sentence(why) : ""}
+            It runs on your Claude setup token, and you have none on this Hub. Add one on your
+            Account page, then wake it.
+          </Banner>
         )
       }
       return (
@@ -844,9 +889,11 @@ function StateBanner({
           icon={<InfoIcon />}
           title="This Session is Asleep"
           action={
-            <Button size="sm" onClick={onWake}>
-              Wake now
-            </Button>
+            drives && (
+              <Button size="sm" onClick={onWake}>
+                Wake now
+              </Button>
+            )
           }
           detail={
             // What Claude Code printed before it exited on its own, as why it did (#105).
@@ -858,8 +905,9 @@ function StateBanner({
           }
         >
           {why ? sentence(why) : ""}
-          Its Sandbox is stopped. Sending a prompt wakes it, with its Workspace and conversation as
-          they were.
+          {drives
+            ? "Its Sandbox is stopped. Sending a prompt wakes it, with its Workspace and conversation as they were."
+            : `Its Sandbox is stopped until ${summary.creator.name} wakes it.`}
         </Banner>
       )
     case "Archived": {
@@ -869,9 +917,11 @@ function StateBanner({
           icon={<InfoIcon />}
           title="This Session is Archived"
           action={
-            <Button size="sm" onClick={onRestore}>
-              Restore
-            </Button>
+            drives && (
+              <Button size="sm" onClick={onRestore}>
+                Restore
+              </Button>
+            )
           }
         >
           {archived
@@ -883,6 +933,9 @@ function StateBanner({
     }
   }
 }
+
+/** Who may restart a Session, for someone watching it (ADR 0026). */
+const restarter = (summary: SessionSummary) => `Only ${summary.creator.name} can restart it.`
 
 /** The reason as a sentence, with a space after it for the one that follows. */
 const sentence = (reason: string) => (/[.!?]$/.test(reason) ? `${reason} ` : `${reason}. `)

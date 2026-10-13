@@ -437,6 +437,24 @@ describe("buildTranscript", () => {
     expect(items).toMatchObject([{ kind: "notice", event: { _tag: "SandboxNoted", message } }])
   })
 
+  test("a prompt the Hub cancelled shows as cancelled, in its place between Turns (ADR 0026)", () => {
+    const message = "Only the Session's Creator prompts it now"
+    const items = build(
+      entries([
+        { _tag: "TurnStarted", turnId: "t-1", text: "one", sender: fromAlice },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "Answered", durationMs: 1 },
+        { _tag: "PromptCancelled", promptId: "p-2", sender: bob, text: "two", message },
+        { _tag: "TurnStarted", turnId: "t-3", text: "three", sender: fromAlice },
+      ]),
+    )
+    expect(items.map((item) => item.kind)).toEqual(["turn", "cancelled", "turn"])
+    expect(items[1]).toMatchObject({
+      kind: "cancelled",
+      key: "cancelled-2",
+      event: { promptId: "p-2", sender: { name: "Bob" }, text: "two", message },
+    })
+  })
+
   test("events for a Turn whose start is missing get an unattributed Turn", () => {
     const [turn] = turns(
       build(
