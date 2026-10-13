@@ -13,7 +13,7 @@ Clone kndl, run it from the checkout, and make a change that passes the checks. 
 - [Bun](https://bun.sh) 1.4 or newer.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) on `PATH`. `bun run typecheck` needs it to check the mod; it doesn't need to be signed in.
 - tmux, for the Runner's tmux tests. Without it, `bun test` skips them.
-- To run Sessions: a Mac with Apple Silicon, or Linux with KVM your user can open (add it to the `kvm` group).
+- To run Sessions: a Mac with Apple Silicon, or Linux with KVM your user can open (add it to the `kvm` group), and a Claude setup token from `claude setup-token`, saved on your **Account** page.
 
 ## Get the code
 
@@ -52,7 +52,7 @@ kndl is one Bun workspace in TypeScript, on [Effect](https://effect.website).
 |---|---|
 | `packages/protocol` | The messages the Hub, Runners, the mod and the web UI exchange, as Effect Schemas, and which home a process keeps its state in. See [Protocol](/contributing/protocol/). |
 | `packages/hub` | The Hub: an HTTP and WebSocket server with its data in SQLite. |
-| `packages/runner` | A Runner: runs each Session's Claude Code in tmux in a microsandbox Sandbox, behind its credential proxy. |
+| `packages/runner` | A Runner: runs each Session's Claude Code in tmux in a microsandbox Sandbox, on its Creator's setup token, and relays its mod's calls to the Hub. |
 | `packages/mod` | The Claude Code mod each Session loads, as two plugins: `hub-link` reports Turns and subagents to the Hub, and `hub-link-commands` delivers prompts and stops ([ADR 0014](/contributing/decisions/0014-subagents-replace-child-sessions/)). |
 | `packages/cli` | The `kndl` command. Its decisions are pure modules with tests; `Host.ts` and `Shell.ts` do the I/O. `KNDL_DRY_RUN=1` prints the commands that change the system instead of running them. |
 | `packages/web` | The web UI: React on Vite, with [Base UI](https://base-ui.com) and StyleX. |

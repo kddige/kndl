@@ -39,7 +39,7 @@ Claude Code exited with code 1. Its Sandbox is stopped. …
 
 **Why.** Claude Code ended by itself: it crashed, refused to start, or was quit from its terminal. Code 0 means it quit normally, as after `/exit`.
 
-**Fix.** Open **Show Claude Code's last output** under the message, fix what it names, and press **Wake now**. A sign-in or usage message means the Claude credential the Session runs on needs attention: [replace yours](/guides/add-your-claude-credential/) on your **Account** page, or the [Runner's own](/reference/configuration/#the-runners-claude-credential).
+**Fix.** Open **Show Claude Code's last output** under the message, fix what it names, and press **Wake now**. A sign-in or usage message means the Claude credential the Session runs on needs attention: its Creator [replaces theirs](/guides/add-your-claude-credential/#replace-or-remove-it) on their **Account** page.
 
 ## A woken Session's conversation starts over
 
@@ -122,17 +122,25 @@ The value of NPM_TOKEN is under 4 characters: too short to redact from output. M
 - **No key:** whoever runs the Hub makes one with `kndl secrets key`, puts it in `hub.env`, and runs `kndl hub install`.
 - **Too short:** make the variable Plain, or use the real, longer value.
 
-## Neither you nor the Runner has a Claude credential
+## You have no Claude credential
 
-**What you see.** New Session says:
+**What you see.** New Session asks you to add your Claude credential, or a Session went to sleep saying its Creator has none, or removed or replaced theirs.
+
+**Why.** A Session runs on its Creator's Claude credential, and a Runner has none of its own. Removing or replacing a credential, or removing its owner as a Member, puts their awake Sessions to sleep.
+
+**Fix.** The Session's Creator [adds theirs](/guides/add-your-claude-credential/) and wakes it. A Session whose Creator is no longer a Member stays readable, but can't wake.
+
+## Only someone else can drive this Session
+
+**What you see.** The prompt box is off, there's no **Terminal** tab, and a command is refused with:
 
 ```
-Neither you nor build-box has a Claude credential: add yours on the Account page.
+Only Alice Lee, who started this Session, can drive it: it runs on their Claude credential.
 ```
 
-**Why.** A Session runs on its Creator's Claude credential, or else on its Runner's own, and neither has one.
+**Why.** Only a Session's Creator prompts it, answers it, stops it, controls it and uses its terminal. Everyone else watches.
 
-**Fix.** [Add your Claude credential](/guides/add-your-claude-credential/), or pick a Runner that has one.
+**Fix.** Ask its Creator, or start a Session of your own on its Work branch once it's pushed.
 
 ## A Claude credential can't be saved
 
@@ -141,7 +149,9 @@ Neither you nor build-box has a Claude credential: add yours on the Account page
 | Message | Fix |
 |---|---|
 | `Anthropic rejected this token: …` | It was revoked, expired, or copied in part. Run `claude setup-token` again and paste the new one on one line. |
-| `That isn't a Claude token or API key: …` | Paste the whole token, starting `sk-ant-oat`, or API key, starting `sk-ant-api`. |
+| `That isn't a Claude setup token: it starts with sk-ant-oat.` | Paste the whole token `claude setup-token` printed. |
+| `API keys aren't taken for now. …` | Run `claude setup-token`, and paste the token it prints. |
+| `That doesn't look like a whole token. …` | Copy it again, all on one line. |
 | `This Hub can't store a Claude credential: it needs HUB_SECRETS_KEY …` | Whoever runs the Hub sets `HUB_SECRETS_KEY`, as for [Sensitive variables](#a-sensitive-variable-cant-be-saved). |
 | `Saved without checking it: …` | Saved, but the Hub couldn't reach Anthropic to check it. If it's wrong, Turns fail: replace it then. |
 

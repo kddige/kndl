@@ -1,6 +1,6 @@
 ---
 // The parts of kndl and what connects to what, for Concepts > How kndl works: browsers and the
-// Hub, a Runner's machine with its credential proxy and a Session's Sandbox, and Anthropic. Inline
+// Hub, a Runner's machine with its mod relay and a Session's Sandbox, and Anthropic. Inline
 // SVG in the theme's colours, so it follows light and dark (docs/design/docs-style.md, "Components").
 ---
 
@@ -9,8 +9,9 @@
     <title id="arch-title">How kndl's parts connect</title>
     <desc id="arch-desc">
       Browsers connect to the Hub. A Runner connects out to the Hub over a WebSocket. On the Runner's
-      machine, each Session's Claude Code and mod run in a Sandbox and reach Anthropic and the Hub
-      through the Runner's credential proxy, which adds the Claude credential.
+      machine, each Session's Claude Code and mod run in a Sandbox. Claude Code talks to Anthropic
+      directly, on its Creator's setup token, and the mod reaches the Hub through the Runner's mod
+      relay.
     </desc>
     <defs>
       <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -55,7 +56,7 @@
     <g transform="translate(440 60)">
       <rect class="box" width="280" height="74" rx="10" />
       <text class="label" x="16" y="30">Runner</text>
-      <text class="small" x="16" y="54">credential proxy · Workspaces</text>
+      <text class="small" x="16" y="54">mod relay · Workspaces</text>
     </g>
 
     <g transform="translate(440 172)">
@@ -69,7 +70,7 @@
       <text class="small" x="16" y="146">your Repo's builds, tests, servers</text>
     </g>
 
-    <!-- Claude Code to the proxy, with its Session token -->
+    <!-- The mod to the relay, with its Session token -->
     <line class="wire" x1="580" y1="214" x2="580" y2="138" marker-end="url(#arch-arrow)" />
     <text class="small muted" x="590" y="160">Session token</text>
 
@@ -77,13 +78,14 @@
     <line class="wire" x1="440" y1="90" x2="354" y2="172" marker-end="url(#arch-arrow)" />
     <text class="small muted" x="392" y="104" text-anchor="end">connects out</text>
 
-    <!-- The proxy to Anthropic, with the Claude credential -->
-    <line class="wire" x1="440" y1="124" x2="354" y2="334" marker-end="url(#arch-arrow)" />
-    <text class="small muted" x="346" y="292" text-anchor="end">Claude credential</text>
+    <!-- Claude Code to Anthropic, on the Creator's setup token -->
+    <line class="wire" x1="456" y1="240" x2="354" y2="334" marker-end="url(#arch-arrow)" />
+    <text class="small muted" x="384" y="292" text-anchor="end">setup token</text>
   </svg>
   <figcaption>
-    Everything goes through the Hub, and the Runner connects to it, never the other way. Claude Code
-    holds only a Session token: the Runner's credential proxy swaps it for the Claude credential.
+    Claude Code talks to Anthropic directly, on its Creator's setup token. Everything else goes
+    through the Hub, and the Runner connects to it, never the other way. The mod holds only a
+    Session token, which the Runner's mod relay swaps for its mod token.
   </figcaption>
 </figure>
 

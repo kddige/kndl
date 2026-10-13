@@ -36,7 +36,7 @@ const mallows = [
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>kndl · Multiplayer agentic sessions, self-hosted</title>
-    <meta name="description" content="kndl is a Hub you host. A team runs Claude Code Sessions in Sandboxes on machines you own, and watches and drives them together from the web." />
+    <meta name="description" content="kndl is a Hub you host. A team runs Claude Code Sessions in Sandboxes on machines you own: whoever starts a Session drives it, and the team watches it live from the web." />
     <link rel="icon" href={`${base}favicon.svg`} type="image/svg+xml" />
     <link rel="icon" href={`${base}favicon.ico`} sizes="32x32" />
     <link rel="apple-touch-icon" href={`${base}apple-touch-icon.png`} />
@@ -102,8 +102,8 @@ const mallows = [
         <div class="pitch-body">
           <p class="lede">
             kndl is a self-hosted Hub for Claude Code Sessions. Each Session works in its own Sandbox
-            on a machine you own, and everyone with access to its Repo can watch it live and send it
-            prompts.
+            on a machine you own. Whoever starts it drives it, and everyone with access to its Repo can
+            watch it live.
           </p>
           <div class="install">
             <code><span class="p">$</span> <span id="cmd">{installCmd}</span></code>
@@ -218,8 +218,9 @@ const mallows = [
       <div class="point">
         <h3>Sessions you share</h3>
         <p>
-          Everyone with access to a Repo can open its Sessions, follow Claude live and send prompts.
-          Prompts wait in a queue, or join the running Turn with <b>Steer</b>.
+          Everyone with access to a Repo can open its Sessions and follow Claude live. The person
+          who started one drives it: their prompts wait in a queue, or join the running Turn with
+          <b>Steer</b>.
         </p>
         <a href={doc("guides/work-in-a-session/")}>Work in a Session</a>
       </div>
@@ -242,8 +243,8 @@ const mallows = [
       <div class="point">
         <h3>Your own Claude</h3>
         <p>
-          Each person adds their Claude subscription or API key once. A proxy on the Runner adds it
-          to each request, so the Sandbox never holds it.
+          Each person adds their own Claude setup token once. Only the Sessions they start run on
+          it, and only they prompt them.
         </p>
         <a href={doc("concepts/security-model/")}>The security model</a>
       </div>

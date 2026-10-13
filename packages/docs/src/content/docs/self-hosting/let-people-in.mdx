@@ -68,11 +68,12 @@ The link admits one person, once, within 7 days. They open it, press **Continue 
 Under **Members**, press **Remove** beside someone. At once:
 
 - They're signed out of the web UI everywhere, and their CLI tokens are revoked.
+- Their awake Sessions go to sleep, each saying why.
 - They can't sign in again without a new Invite.
 
 A port Forward they have open stays open until it closes, and a Pairing code they made works until it expires.
 
-Their Sessions stay, and run on their Claude credential. The Owner can't be removed. Apart from the **People** page, Members can do what the Owner can, such as adding and removing Runners.
+Their Sessions stay, readable by everyone with access to their Repos, but can't wake: the Hub won't hand their Claude credential to a Runner. The Owner can't be removed. Apart from the **People** page, Members can do what the Owner can, such as adding and removing Runners.
 
 ## Make the GitHub App public
 

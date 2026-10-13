@@ -53,37 +53,11 @@ The Hub and Runners read environment variables. Where you set them:
 | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count | The most CPUs a Sandbox gets, whatever its Environment asks for. |
 | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory | The most memory, in MiB, a Sandbox gets. |
 | `RUNNER_SANDBOX_KEEP_BUILDS` | `3` | How many Builds of each Repo's Environment the Runner keeps. |
-| `RUNNER_PROXY_PORT` | `7778`; `7779` in a checkout | The port of the Runner's [credential proxy](/concepts/security-model/#the-credential-proxy) on the host's loopback. If it's taken, the Runner logs an error and runs without the proxy. |
-| `RUNNER_CLAUDE_CREDENTIAL` | `auto` | Where the Runner's own Claude credential is read from. See [below](#the-runners-claude-credential). |
-| `RUNNER_CLAUDE_PLAN` | the plan in Claude Code's config file | The plan of the Runner's credential: `pro`, `max`, `team` or `enterprise`. |
-| `RUNNER_CLAUDE_RATE_LIMIT_TIER` | `default_claude_ai` for `pro`, `default_claude_max_5x` for `max` | The rate-limit tier of `RUNNER_CLAUDE_PLAN`, such as `default_claude_max_20x`. |
+| `RUNNER_RELAY_PORT` | `RUNNER_PROXY_PORT` if set, else `7778`; `7779` in a checkout | The port of the Runner's [mod relay](/concepts/security-model/#the-mod-relay) on the host's loopback. If it's taken, the Runner logs an error and runs without the relay. |
 | `RUNNER_UPDATE_ANY_COMMIT` | unset | `1`: follow the Hub to a commit that isn't on `origin/main`, such as a Hub on a branch. See [Keep Runners on the Hub's commit](/self-hosting/add-a-runner/#keep-runners-on-the-hubs-commit). |
 | `KNDL_SERVICE` | unset | Set to `runner` or `hub` by the service files `kndl` installs. A Runner updates itself only when it's set and the Runner runs from `<home>/app`. |
-| `CLAUDE_CONFIG_DIR` | unset | Read as Claude Code reads it: the Runner looks for Claude Code's config at `$CLAUDE_CONFIG_DIR/.claude.json`. |
+| `CLAUDE_CONFIG_DIR` | unset | Read as Claude Code reads it: the Runner looks there for what Claude Code on this machine kept of Sessions from before they ran in Sandboxes. |
 | `KNDL_HOME` | unset | The home. See [Homes](#homes). |
-
-### The Runner's Claude credential
-
-A Session whose Creator has no Claude credential runs on its Runner's own, if it has one ([ADR 0015](/contributing/decisions/0015-each-person-brings-their-claude-credential/)). A Runner needs neither. `RUNNER_CLAUDE_CREDENTIAL` says where to read it:
-
-| Value | Read from |
-|---|---|
-| `auto`, or unset | On macOS, the Keychain item `kndl-setup-token`; elsewhere, the file `<home>/claude-token`. Without either, Claude Code's own login on this machine. |
-| `keychain` | The Keychain item `kndl-setup-token`. |
-| `keychain:<service>` | The Keychain item with that service name. |
-| `file:<path>` | That file. It must be the Runner user's and readable by no one else (`chmod 600`). |
-| `claude-code` | Claude Code's own login: its Keychain item `Claude Code-credentials` on macOS, else `~/.claude/.credentials.json`. |
-| `none` | None. A Session without its own credential is refused by the proxy. |
-
-The credential is what `claude setup-token` prints, good for a year, or an Anthropic API key. On a Mac, put it in the Keychain, and the Runner needs nothing else:
-
-```sh
-security add-generic-password -s kndl-setup-token -a "$USER" -w
-```
-
-`security` asks for the token, so it stays out of your shell's history.
-
-The Runner reads its credential when it starts, and again when Anthropic refuses it, so a replaced one is picked up without a restart. The Runners page shows it by kind and last four characters, such as **Subscription token …x7Qa**, or as **No Claude credential**.
 
 ## Homes
 
@@ -94,7 +68,7 @@ An install keeps its state in its home, `~/.kndl`. A checkout uses the dev home,
 | `RUNNER_SESSIONS_ROOT` | `~/.kndl/sessions` | `~/.kndl-dev/sessions` |
 | `RUNNER_SANDBOX_CLAUDE_CACHE` | `~/.kndl/claude-code` | `~/.kndl-dev/claude-code` |
 | `RUNNER_TMUX_SOCKET` | `kndl` | `kndl-dev` |
-| `RUNNER_PROXY_PORT` | `7778` | `7779` |
+| `RUNNER_RELAY_PORT` | `7778` | `7779` |
 | `HUB_DATABASE` | `~/.kndl/hub.db` | `packages/hub/hub.db` |
 
 See [Files and paths](/reference/files-and-paths/) for everything in a home.
