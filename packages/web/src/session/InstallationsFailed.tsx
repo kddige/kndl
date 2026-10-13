@@ -2,8 +2,9 @@
 // a way out. Fix opens the Installation on the MCP page; whoever may change it (access to every
 // Repo it lists, as the Hub requires) can take the Session's Repo off it here instead, and the
 // Session is woken at once. A global one (#219) anyone in the Session can turn off for its Repo
-// instead, but only the Owner can fix. Retry wakes it, which checks the Installations again. Its
-// queued prompts wait meanwhile, and run once it starts. An OAuth Installation not connected
+// instead, but only the Owner can fix. Retry wakes it, which checks the Installations again: only
+// the Session's Creator has it (ADR 0026). Its queued prompts wait meanwhile, and run once it
+// starts. An OAuth Installation not connected
 // (#217) has Reconnect instead of Fix: through its authorization server and back to the MCP page,
 // or first asking for a client entered by hand, where that offers no registration (#218).
 
@@ -57,7 +58,8 @@ export function InstallationsFailedBanner({
 }: {
   summary: SessionSummary
   failures: ReadonlyArray<InstallationFailure>
-  onRetry: () => void
+  /** Wakes the Session again; absent for someone watching it, who can't (ADR 0026). */
+  onRetry?: (() => void) | undefined
 }) {
   const hub = useHub()
   const online = useHubState((state) => state.connection.status === "online")
@@ -104,7 +106,7 @@ export function InstallationsFailedBanner({
     setBusy(installation.id)
     try {
       await hub.turnGlobalInstallation(installation.id, summary.repo, false)
-      onRetry()
+      onRetry?.()
     } catch (error) {
       toast.show({
         title: `Couldn't turn ${installation.name} off for ${summary.repo}`,
@@ -123,7 +125,7 @@ export function InstallationsFailedBanner({
       await (remove
         ? hub.deleteInstallation(installation.id)
         : hub.editInstallation(installation.id, installation.name, others))
-      onRetry()
+      onRetry?.()
     } catch (error) {
       toast.show({
         title: `Couldn't take ${summary.repo} off ${installation.name}`,
@@ -143,9 +145,11 @@ export function InstallationsFailedBanner({
         icon={<InfoIcon />}
         title="This Session can't start"
         action={
-          <Button size="sm" onClick={onRetry}>
-            Retry
-          </Button>
+          onRetry && (
+            <Button size="sm" onClick={onRetry}>
+              Retry
+            </Button>
+          )
         }
         detail={
           <ul
@@ -212,8 +216,10 @@ export function InstallationsFailedBanner({
         }
       >
         {one ? "An Installation" : "Installations"} on for {summary.repo} can't work. Fix{" "}
-        {one ? "it" : "them"}, or {leaveText(summary.repo, failures)}, then retry. Prompts sent now
-        wait in the queue until it starts.
+        {one ? "it" : "them"}, or {leaveText(summary.repo, failures)}
+        {onRetry
+          ? ", then retry. Prompts sent now wait in the queue until it starts."
+          : `. Then ${summary.creator.name} can wake it.`}
       </Banner>
       <Dialog
         size="sm"

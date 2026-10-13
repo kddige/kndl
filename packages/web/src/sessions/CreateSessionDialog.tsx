@@ -10,7 +10,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { type FormEvent, type ReactElement, useEffect, useState } from "react"
-import { repoParams, runnerLabel } from "../app/format.ts"
+import { repoParams } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { isRefused, RepoRefusal, repoPattern, useRepoCheck } from "../app/repoAccess.tsx"
 import { ListingUnavailableError } from "../hub/client.ts"
@@ -86,8 +86,9 @@ const distinctRepos = (names: ReadonlyArray<string>) => [
 
 /**
  * "New Session": pick a Repo, a branch (an existing one, directly or on a new Work branch, or a
- * new one made from another; ADR 0023) and, if it matters, the Runner to run it on. Opened by
- * `trigger`, a primary "New Session" Button unless given.
+ * new one made from another; ADR 0023) and, if it matters, the Runner to run it on. It runs on
+ * your own setup token, and only you drive it (ADR 0026): without one, it says to add one first.
+ * Opened by `trigger`, a primary "New Session" Button unless given.
  */
 export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
   const hub = useHub()
@@ -142,14 +143,9 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
       : runners?.find((candidate) => candidate.id === runner)?.models
   // A choice the Runner picked since doesn't have is dropped, not sent to be refused.
   const modelSetting = fitSetting(models, modelChoice)
-  // Without a credential of their own, a Session runs on its Runner's, if it has one (ADR 0015);
-  // with neither, it can't start, and the dialog says so before the form is filled in.
-  const chosen = runner === anyRunner ? undefined : online.find((each) => each.id === runner)
-  const runsOnRunner = claudeCredential === null
-  const needsCredential =
-    runsOnRunner &&
-    online.length > 0 &&
-    !(chosen === undefined ? online : [chosen]).some((each) => each.ownClaudeCredential === true)
+  // A Session runs on its Creator's own setup token, with no fallback (ADR 0026): without one, it
+  // can't start, and the dialog says so before the form is filled in.
+  const needsCredential = claudeCredential === null
 
   // Recent: the person's own Sessions' Repos, newest first. Without a list from the Hub, the
   // suggestions are those and every other Repo the Sessions are in.
@@ -326,16 +322,10 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
       }
     >
       <form id="create-session" onSubmit={submit} noValidate {...stylex.props(styles.form)}>
-        {runsOnRunner && (
-          <Banner
-            intent={needsCredential ? "warning" : "accent"}
-            icon={<KeyIcon />}
-            title={
-              needsCredential ? "Add your Claude credential first" : "Add your Claude credential"
-            }
-          >
-            Sessions you start run on your own Claude account once you add a token or API key on
-            your{" "}
+        {needsCredential && (
+          <Banner intent="warning" icon={<KeyIcon />} title="Add your setup token first">
+            A Session runs on its Creator's own Claude account, and only they drive it. Add your
+            setup token on your{" "}
             <Link
               to="/account"
               onClick={() => {
@@ -346,12 +336,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
             >
               Account
             </Link>{" "}
-            page.{" "}
-            {needsCredential
-              ? chosen === undefined
-                ? "No online Runner has a Claude credential of its own to run this one on."
-                : `${chosen.name} has no Claude credential of its own to run this one on.`
-              : "Until then, this one runs on its Runner's own."}
+            page to start one.
           </Banner>
         )}
         <Field
@@ -487,9 +472,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
           description={
             online.length === 0
               ? "No Runner is online, so the Session can't start yet."
-              : runsOnRunner
-                ? "Whose machine it runs on, and on whose Claude credential, until you add yours."
-                : "Whose machine it runs on: on your own Claude account."
+              : "Whose machine it runs on: on your own Claude account."
           }
         >
           <Select
@@ -499,7 +482,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
               { value: anyRunner, label: "Any online Runner" },
               ...(runners ?? []).map((candidate) => ({
                 value: candidate.id as string,
-                label: `${runnerLabel(candidate)}${candidate.isOnline ? "" : " (offline)"}`,
+                label: `${candidate.name}${candidate.isOnline ? "" : " (offline)"}`,
                 disabled: !candidate.isOnline,
               })),
             ]}
@@ -507,7 +490,7 @@ export function CreateSessionDialog({ trigger }: { trigger?: ReactElement }) {
         </Field>
         <Field
           label="Model"
-          description="Claude Code's default unless you pick one. Anyone in the Session can change it later."
+          description="Claude Code's default unless you pick one. You can change it later."
         >
           <ModelPicker
             models={models}

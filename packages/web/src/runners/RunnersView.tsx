@@ -1,6 +1,6 @@
-// The Runners page (issue #85): every Runner paired with the Hub, whether it's online, its own
-// Claude credential, its version against the Hub's own, when it was last seen and how many
-// Sessions it has.
+// The Runners page (issue #85): every Runner paired with the Hub, whether it's online, its version
+// against the Hub's own, when it was last seen and how many Sessions it has. A Runner has no
+// Claude credential of its own: each Session runs on its Creator's (ADR 0026).
 // Anyone signed in adds a Runner here with a Pairing code, Re-pairs one (a new token, same RunnerId
 // and Sessions) or removes one, once its Sessions are all Archived. Codes still waiting are listed
 // so they can be revoked. A Runner behind the Hub that updates itself has Update (#87): it moves
@@ -241,7 +241,7 @@ export function RunnersView() {
         title="Runners"
         description={
           <>
-            The machines Sessions run on, each with its own Claude credential, if any.
+            The machines Sessions run on, each on its Creator's own Claude credential.
             {hubVersion && (
               <>
                 {" "}
@@ -345,6 +345,8 @@ function RunnerRow({
   const action = updateAction(runner)
   const manual = manualUpdateText(runner)
   const you = useHubState((state) => state.you)
+  // Paired, but it hasn't connected since.
+  const neverSeen = !runner.isOnline && runner.lastSeenAt === null
   return (
     <li aria-label={runner.name} {...stylex.props(styles.row, first && styles.firstRow)}>
       <div {...stylex.props(styles.main)}>
@@ -366,11 +368,10 @@ function RunnerRow({
         </div>
         <p {...stylex.props(styles.facts)}>
           <span {...stylex.props(styles.fact)}>
-            {runner.login === null ? "Not connected yet" : runner.login.account}
-          </span>
-          <span {...stylex.props(styles.fact)}>
             {runner.version === null ? (
-              runner.login === null ? null : (
+              neverSeen ? (
+                "Not connected yet"
+              ) : (
                 "Version unknown"
               )
             ) : (
@@ -379,11 +380,9 @@ function RunnerRow({
               </span>
             )}
           </span>
-          {!runner.isOnline && (
+          {!runner.isOnline && !neverSeen && (
             <span {...stylex.props(styles.fact)}>
-              {runner.lastSeenAt === null
-                ? "Never seen"
-                : `Last seen ${timeAgo(runner.lastSeenAt, now)}`}
+              {runner.lastSeenAt !== null && `Last seen ${timeAgo(runner.lastSeenAt, now)}`}
             </span>
           )}
           <span {...stylex.props(styles.fact)}>

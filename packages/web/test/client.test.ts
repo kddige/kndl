@@ -13,7 +13,7 @@ import { Redacted, Schema } from "effect"
 import { editFrom, toDraft } from "../src/environment/draft.ts"
 import { HubClient, ListingUnavailableError } from "../src/hub/client.ts"
 import { FakeHub } from "../src/hub/fake/FakeHub.ts"
-import { demoSessionId } from "../src/hub/fake/script.ts"
+import { bob, bobsSessionId, demoSessionId } from "../src/hub/fake/script.ts"
 import { findSession } from "../src/hub/store.ts"
 import { buildTranscript, emptyTranscript } from "../src/hub/transcript.ts"
 import type { HubTransport, SocketHandlers } from "../src/hub/transport.ts"
@@ -634,6 +634,114 @@ describe("archiving", () => {
     client.restoreSession(readme)
     await eventually(() => expect(failures).toHaveLength(1))
     expect(failures[0]).toMatchObject({ command: "RestoreSession", sessionId: "s-readme" })
+  })
+})
+
+/** Every refusal the client is sent from now on. */
+function refusals(client: HubClient): Array<CommandFailed> {
+  const failures: Array<CommandFailed> = []
+  cleanups.push(client.onCommandFailed((failure) => failures.push(failure)))
+  return failures
+}
+
+describe("who drives a Session (ADR 0026)", () => {
+  test("only its Creator drives it: everyone else is refused, saying why, and watches", async () => {
+    const { hub, client } = setUp({ you: bob, autoplay: false })
+    const failures = refusals(client)
+    client.start()
+    client.join(demo)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+
+    expect(client.sendPrompt(demo, "hello")).toBe(true)
+    client.stopTurn(demo)
+    client.sleepSession(demo)
+    client.setKeepAwake(demo, false)
+    client.restartSession(demo)
+    client.setSessionModel(demo, { model: "opus" })
+    client.renameSession(demo, "Bob's now")
+    client.archiveSession(demo)
+    client.openTerminal(demo, () => {})
+    const driving = [
+      "SendPrompt",
+      "StopTurn",
+      "SleepSession",
+      "SetKeepAwake",
+      "RestartSession",
+      "SetSessionModel",
+      "RenameSession",
+      "ArchiveSession",
+      "OpenTerminal",
+    ]
+    await eventually(() => expect(failures.map((failure) => failure.command)).toEqual(driving))
+    for (const failure of failures) {
+      expect(failure.message).toBe(
+        "Only Alice Kim, who started this Session, can drive it: it runs on their Claude credential.",
+      )
+    }
+    // Nothing changed: no prompt queued, still Active and kept awake, its name as it was.
+    expect(client.getState().joined[demo]?.queue).toEqual([])
+    const summary = findSession(client.getState(), demo)
+    expect(summary?.state).toBe("Active")
+    expect(summary?.keepAwake?.by.name).toBe("Alice Kim")
+    expect(summary?.name).toBeUndefined()
+    expect(hub.received.map((message) => message._tag)).toContain("JoinSession")
+
+    // Their own Session they drive.
+    const landing = SessionId.make(bobsSessionId)
+    client.wakeSession(landing)
+    await eventually(() => expect(findSession(client.getState(), landing)?.state).toBe("Active"))
+    expect(failures).toHaveLength(driving.length)
+  })
+
+  test("without a setup token, a Session can't be created or woken", async () => {
+    const { client } = setUp({ claudeCredential: null, autoplay: false })
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    await expect(
+      client.createSession({
+        repo: "kddige/kndl",
+        branch: { _tag: "Existing", name: "main", newWorkBranch: true },
+      }),
+    ).rejects.toThrow("Add your Claude setup token")
+
+    const readme = SessionId.make("s-readme")
+    client.join(readme)
+    await eventually(() => expect(client.getState().joined[readme]?.historyLoaded).toBe(true))
+    client.wakeSession(readme)
+    const log = () => client.getState().joined[readme]?.log.map((entry) => entry.event) ?? []
+    await eventually(() =>
+      expect(log().at(-1)).toMatchObject({
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        message: "Claude Code could not start: Alice Kim has no Claude setup token on this Hub.",
+      }),
+    )
+    expect(findSession(client.getState(), readme)?.state).toBe("Asleep")
+  })
+
+  test("removing or replacing your setup token puts your awake Sessions to sleep, saying why", async () => {
+    const { client } = setUp({ autoplay: false })
+    client.start()
+    client.join(demo)
+    await eventually(() => expect(client.getState().joined[demo]?.historyLoaded).toBe(true))
+    const log = () => client.getState().joined[demo]?.log.map((entry) => entry.event) ?? []
+
+    await client.setClaudeCredential("sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_e5f6")
+    await eventually(() => expect(findSession(client.getState(), demo)?.state).toBe("Asleep"))
+    expect(log().at(-1)).toMatchObject({
+      _tag: "SessionStateChanged",
+      message: "Alice Kim replaced their Claude setup token: it wakes on the new one",
+    })
+    // It wakes on the new one, and goes to sleep again once that is removed.
+    client.wakeSession(demo)
+    await eventually(() => expect(findSession(client.getState(), demo)?.state).toBe("Active"))
+    await client.removeClaudeCredential()
+    await eventually(() => expect(findSession(client.getState(), demo)?.state).toBe("Asleep"))
+    expect(log().at(-1)).toMatchObject({
+      _tag: "SessionStateChanged",
+      message: "Alice Kim removed their Claude setup token",
+    })
+    expect(findSession(client.getState(), demo)?.keepAwake).toBeUndefined()
   })
 })
 

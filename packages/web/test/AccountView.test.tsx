@@ -1,6 +1,6 @@
-// The Account page against the fake Hub: pasting a Claude credential, which the fake checks as the
-// Hub does, seeing it write-only once saved, and removing it (ADR 0015); and listing and revoking
-// the CLI tokens `kndl login` made (issue #179). Every secret is made up.
+// The Account page against the fake Hub: pasting a Claude setup token, which the fake checks as the
+// Hub does, seeing it write-only once saved, and removing it (ADR 0015, ADR 0026); and listing and
+// revoking the CLI tokens `kndl login` made (issue #179). Every secret is made up.
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -47,7 +47,7 @@ const saved = () => section()?.querySelector('[aria-label="Your Claude credentia
 const alert = () => section()?.querySelector('[role="alert"]')?.textContent ?? ""
 
 async function openAccount(options: ConstructorParameters<typeof FakeHub>[0] = {}) {
-  const hub = new FakeHub({ stepMs: 2, autoplay: false, ...options })
+  const hub = new FakeHub({ stepMs: 2, autoplay: false, claudeCredential: null, ...options })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/account"] }))
   const view = await render(
@@ -64,64 +64,62 @@ async function openAccount(options: ConstructorParameters<typeof FakeHub>[0] = {
   return { hub, page: view.container }
 }
 
-test("saves a pasted API key, then shows it write-only", async () => {
+test("saves a pasted setup token, with no plan to pick, then shows it write-only", async () => {
   const { page } = await openAccount()
   expect(page.querySelector("h1")?.textContent).toBe("Account")
   await eventually(() => expect(secretField()).not.toBeNull())
   expect(section()?.textContent).toContain("claude setup-token")
-  await step(() => typeInto(secretField(), fakeKey))
+  expect(section()?.textContent).not.toContain("plan")
+  expect(section()?.textContent).not.toContain("API key")
+  await step(() => typeInto(secretField(), fakeToken))
   await step(() => button("Save").click())
   await eventually(() => expect(saved()).not.toBeNull())
   const shown = saved()?.textContent ?? ""
-  expect(shown).toContain("API key")
-  expect(shown).toContain("…a1b2")
-  expect(shown).toContain("Billed per token")
-  // The key itself never comes back to the page.
-  expect(document.body.innerHTML).not.toContain(fakeKey)
+  expect(shown).toContain("Setup token")
+  expect(shown).toContain("…c3d4")
+  // The token itself never comes back to the page.
+  expect(document.body.innerHTML).not.toContain(fakeToken)
 })
 
-test("asks for the plan of a subscription token before saving it", async () => {
+test("refuses an API key, asking for a setup token instead (#334)", async () => {
+  const { hub } = await openAccount()
+  await eventually(() => expect(secretField()).not.toBeNull())
+  await step(() => typeInto(secretField(), fakeKey))
+  await step(() => button("Save").click())
+  expect(section()?.textContent).toContain("API keys aren't taken for now")
+  expect(saved()).toBeNull()
+  // Said before it is sent: the Hub never sees it.
+  expect(hub.received.map((message) => message._tag)).not.toContain("SetClaudeCredential")
+})
+
+test("says why the Hub refused a token Anthropic rejected, and keeps the form", async () => {
   await openAccount()
   await eventually(() => expect(secretField()).not.toBeNull())
-  expect(section()?.textContent).not.toContain("Pick a plan")
-  await step(() => typeInto(secretField(), fakeToken))
-  expect(section()?.textContent).toContain("Pick a plan")
+  await step(() => typeInto(secretField(), "sk-ant-oat01-REJECTED_FAKE_TOKEN_FOR_TESTS"))
   await step(() => button("Save").click())
-  expect(section()?.textContent).toContain("Pick the plan your Claude account is on.")
+  await eventually(() => expect(alert()).toContain("Anthropic rejected this token"))
   expect(saved()).toBeNull()
 })
 
-test("says why the Hub refused a credential Anthropic rejected, and keeps the form", async () => {
-  await openAccount()
-  await eventually(() => expect(secretField()).not.toBeNull())
-  await step(() => typeInto(secretField(), "sk-ant-api03-REJECTED_FAKE_KEY_FOR_TESTS"))
-  await step(() => button("Save").click())
-  await eventually(() => expect(alert()).toContain("Anthropic rejected this API key"))
-  expect(saved()).toBeNull()
-})
-
-test("shows a saved credential, replaces it, and removes it after asking", async () => {
+test("shows a saved token, replaces it, and removes it after asking", async () => {
   await openAccount({
-    claudeCredential: {
-      kind: "OAuthToken",
-      last4: "c3d4",
-      plan: "max20x",
-      addedAt: 1_760_000_000_000,
-    },
+    claudeCredential: { kind: "OAuthToken", last4: "c3d4", addedAt: 1_760_000_000_000 },
   })
-  await eventually(() => expect(saved()?.textContent).toContain("Subscription token"))
-  expect(saved()?.textContent).toContain("Max 20x")
+  await eventually(() => expect(saved()?.textContent).toContain("Setup token"))
   expect(saved()?.textContent).toContain("…c3d4")
 
   // Replace opens the form, and Cancel goes back to what is saved.
   await step(() => button("Replace").click())
   expect(secretField()).not.toBeNull()
+  // Replacing it puts the Sessions on it to sleep (ADR 0026): the form says so.
+  expect(section()?.textContent).toContain("Your Sessions that are awake go to sleep")
   await step(() => button("Cancel").click())
   expect(saved()).not.toBeNull()
 
   await step(() => button("Remove").click())
   const confirm = dialog() as HTMLElement
   expect(confirm.textContent).toContain("Remove your Claude credential?")
+  expect(confirm.textContent).toContain("none of them can start or wake")
   await step(() => button("Remove", confirm).click())
   await eventually(() => expect(secretField()).not.toBeNull())
   expect(saved()).toBeNull()

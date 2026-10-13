@@ -1,15 +1,12 @@
-// The signed-in person's own settings: their Claude credential (ADR 0015), which the Sessions they
-// start run on. It is pasted once and checked with Anthropic as it is saved; after that it is
-// write-only, so the page shows only its kind, its last 4 characters and its plan. And their CLI
-// tokens (issue #179): a machine each that `kndl login` signed in, to revoke.
+// The signed-in person's own settings: their Claude credential, a setup token (ADR 0015, ADR
+// 0026), which the Sessions they start run on and which only they drive. It is pasted once and
+// checked with Anthropic as it is saved; after that it is write-only, so the page shows only its
+// last 4 characters and when it was added. And their CLI tokens (issue #179): a machine each that
+// `kndl login` signed in, to revoke.
 
 import {
   type ClaudeCredentialInfo,
-  type ClaudePlanChoice,
-  claudeCredentialKindOf,
   claudeCredentialProblem,
-  claudePlanChoices,
-  claudePlanLabel,
   type CliTokenInfo,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
@@ -28,7 +25,6 @@ import {
   Input,
   KeyIcon,
   PageHeader,
-  Select,
   ServerIcon,
   Spinner,
   toast,
@@ -187,8 +183,9 @@ function ClaudeSection() {
           Claude
         </h2>
         <p {...stylex.props(styles.note)}>
-          The Sessions you start run on your own Claude account, on whichever Runner they are on.
-          Without one, they run on the Runner's own credential, where it has one.
+          The Sessions you start run on your own Claude account, through a setup token, on whichever
+          Runner they are on. Only you drive them: anyone else in them watches. Without one, you
+          can't start a Session.
         </p>
       </div>
       {credential === undefined ? (
@@ -240,18 +237,9 @@ function SavedCredential({
         </Banner>
       )}
       <dl aria-label="Your Claude credential" {...stylex.props(styles.facts)}>
-        <Fact term="Kind">
-          {credential.kind === "OAuthToken" ? "Subscription token" : "API key"}
-        </Fact>
+        <Fact term="Kind">Setup token</Fact>
         <Fact term="Ends in">
           <span {...stylex.props(styles.mono)}>…{credential.last4}</span>
-        </Fact>
-        <Fact term="Plan">
-          {credential.plan !== undefined
-            ? claudePlanLabel(credential.plan)
-            : credential.kind === "ApiKey"
-              ? "Billed per token"
-              : "Not given"}
         </Fact>
         <Fact term="Added">{new Date(credential.addedAt).toLocaleDateString()}</Fact>
       </dl>
@@ -276,7 +264,7 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   )
 }
 
-/** Pastes a token or API key, with the plan for a token; the Hub checks it with Anthropic. */
+/** Pastes a setup token; the Hub checks it with Anthropic. API keys aren't taken for now (#334). */
 function CredentialForm({
   replacing,
   onCancel,
@@ -289,16 +277,11 @@ function CredentialForm({
 }) {
   const hub = useHub()
   const [secret, setSecret] = useState("")
-  const [plan, setPlan] = useState<ClaudePlanChoice | null>(null)
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const kind = claudeCredentialKindOf(secret)
-  const chosenPlan = kind === "OAuthToken" ? (plan ?? undefined) : undefined
-  const problem = claudeCredentialProblem(secret, chosenPlan)
-  const secretProblem = problem !== undefined && !problem.startsWith("Pick") ? problem : undefined
-  const planProblem = problem?.startsWith("Pick") ? problem : undefined
+  const problem = claudeCredentialProblem(secret)
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -307,7 +290,7 @@ function CredentialForm({
     setBusy(true)
     setError(null)
     try {
-      const answer = await hub.setClaudeCredential(secret.trim(), chosenPlan)
+      const answer = await hub.setClaudeCredential(secret.trim())
       setSecret("")
       toast.show({
         title: "Saved your Claude credential",
@@ -330,16 +313,18 @@ function CredentialForm({
         </li>
         <li>
           Paste the token it prints, which starts with{" "}
-          <code {...stylex.props(styles.code)}>sk-ant-oat</code>, and pick your plan. Or paste an
-          Anthropic API key, <code {...stylex.props(styles.code)}>sk-ant-api…</code>, billed per
-          token.
+          <code {...stylex.props(styles.code)}>sk-ant-oat</code>. It lasts a year.
         </li>
       </ol>
       <Field
-        label="Token or API key"
-        description="Checked with Anthropic as it is saved. It is stored encrypted and never shown again."
-        invalid={touched && secretProblem !== undefined}
-        error={touched ? secretProblem : undefined}
+        label="Setup token"
+        description={
+          replacing
+            ? "Checked with Anthropic as it is saved, stored encrypted and never shown again. Your Sessions that are awake go to sleep, and wake on the new one."
+            : "Checked with Anthropic as it is saved. It is stored encrypted and never shown again."
+        }
+        invalid={touched && problem !== undefined}
+        error={touched ? problem : undefined}
       >
         <Input
           type="password"
@@ -353,21 +338,6 @@ function CredentialForm({
           sx={styles.mono}
         />
       </Field>
-      {kind === "OAuthToken" && (
-        <Field
-          label="Plan"
-          description="The plan your Claude account is on, which Claude Code is told."
-          invalid={touched && planProblem !== undefined}
-          error={touched ? planProblem : undefined}
-        >
-          <Select
-            value={plan}
-            placeholder="Pick a plan"
-            onValueChange={(next) => setPlan(next)}
-            options={claudePlanChoices.map(({ choice, label }) => ({ value: choice, label }))}
-          />
-        </Field>
-      )}
       {error && (
         <p role="alert" {...stylex.props(styles.error)}>
           {error}
@@ -426,7 +396,7 @@ function RemoveDialog({
         }
       }}
       title="Remove your Claude credential?"
-      description="Sessions you start from now on run on their Runner's own credential, and don't start on a Runner without one. Sessions already running keep theirs until they next start."
+      description="Your Sessions that are awake go to sleep, and none of them can start or wake until you add a setup token again."
       footer={
         <>
           <DialogClose>Cancel</DialogClose>

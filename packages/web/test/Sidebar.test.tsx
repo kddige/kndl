@@ -111,7 +111,13 @@ test("the sidebar lists the listed Sessions under their Repo, oldest first, and 
     {
       repo: "kddige/kndl",
       // Release 0.4's interrupted agent is under it.
-      sessions: ["claude/readme-run", "claude/web-client", "Release 0.4", "Document the protocol"],
+      sessions: [
+        "claude/readme-run",
+        "claude/web-client",
+        "Release 0.4",
+        "Document the protocol",
+        "claude/landing-copy",
+      ],
     },
   ])
   expect(current()).toEqual(["claude/readme-run"])
@@ -150,7 +156,7 @@ test("a Session kept awake is marked in its sidebar row, with who keeps it awake
   await eventually(() => expect(groups().length).toBe(2))
   expect(["s-readme", "s-demo", "s-dotfiles"].map(keptAwake)).toEqual([
     null,
-    "Kept awake by Bob Lee",
+    "Kept awake by you",
     "Kept awake by you",
   ])
 
@@ -267,7 +273,7 @@ test("the Environments page lists every Repo with a Session, Archived ones inclu
   ])
   expect(rows).toEqual([
     ["/repos/kddige/dotfiles/environment", "kddige/dotfiles1 Session"],
-    ["/repos/kddige/kndl/environment", "kddige/kndl3 Sessions"],
+    ["/repos/kddige/kndl/environment", "kddige/kndl4 Sessions"],
   ])
 })
 
@@ -276,7 +282,7 @@ test("the Archive page lists every Repo's Archived Sessions, and restores them",
   const archived = () =>
     page.querySelector('ul[aria-label="Archived Sessions of kddige/kndl"]')?.textContent ?? ""
   await eventually(() => expect(archived()).toContain("claude/flaky-login"))
-  expect(archived()).toContain("Deleted by Bob Lee 3d ago")
+  expect(archived()).toContain("Deleted by Alice Kim 3d ago")
   expect(current()).toEqual(["Archived Sessions"])
   expect(page.querySelector("h2 a")?.getAttribute("href")).toBe("/repos/kddige/kndl/archived")
 

@@ -1,12 +1,14 @@
 // What the fake Hub knows and plays: two Runners, one behind the Hub's commit, a few Sessions with
-// some history, and the Turns it streams. All made up; the people are Alice (you) and Bob. The
-// demo's Turn starts a subagent in the foreground and one in the background that outlives it, and
-// Release 0.4 has subagents that finished, were stopped and were interrupted (ADR 0014). The demo
-// has dev servers listening in its Sandbox: a Docker one, and one on `::1` only (#175). A prompt
-// that says "ask me" gets a question to answer (#193), which Bob picks an answer for too.
+// some history, and the Turns it streams. All made up; the people are Alice (you) and Bob. Only a
+// Session's Creator drives it (ADR 0026): Alice drives hers, and watches Bob's, which has a prompt
+// of hers that the Hub cancelled. The demo's Turn starts a subagent in the foreground and one in the
+// background that outlives it, and Release 0.4 has subagents that finished, were stopped and were
+// interrupted (ADR 0014). The demo has dev servers listening in its Sandbox: a Docker one, and one
+// on `::1` only (#175). A prompt that says "ask me" gets a question to answer (#193).
 
 import type {
   AppPermissionsCheckWire,
+  ClaudeCredentialInfoWire,
   CliTokenInfoWire,
   MemberWire,
   OpenPortWire,
@@ -23,8 +25,15 @@ export const you: ParticipantWire = { id: "u-alice", login: "alice", name: "Alic
 export const bob: ParticipantWire = { id: "u-bob", login: "bob", name: "Bob Lee" }
 
 export const demoSessionId = "s-demo"
+/** Bob's Session, which Alice watches (ADR 0026). */
+export const bobsSessionId = "s-landing"
 /** A Session whose subagents finished, were stopped and were interrupted. */
 export const releaseSessionId = "s-release"
+
+/** Alice's setup token (ADR 0026), as the Hub shows it: she added it a month ago. */
+export function seedClaudeCredential(now = Date.now()): ClaudeCredentialInfoWire {
+  return { kind: "OAuthToken", last4: "x7Qa", addedAt: now - 30 * 24 * 3_600_000 }
+}
 
 /** One thing a scripted Turn, or a subagent's run, does. */
 export type ReplyStep =
@@ -56,12 +65,12 @@ export type ReplyStep =
       readonly result: string
       readonly relay?: string
     }
-  /** Someone else queues a prompt while the Turn runs. */
+  /** The Creator queues a prompt while the Turn runs, as from another tab. */
   | { readonly kind: "queue"; readonly sender: ParticipantWire; readonly text: string }
   | { readonly kind: "pause"; readonly steps: number }
   /**
    * Claude asks with AskUserQuestion on the main loop (#193), and the Turn waits for an answer.
-   * `pick` is someone else's pick, shared a few steps in.
+   * `pick` is the Creator's pick from another tab, shared a few steps in.
    */
   | {
       readonly kind: "question"
@@ -188,7 +197,6 @@ export function seedRunners(): Array<RunnerSummaryWire> {
     {
       id: "r-studio",
       name: "studio",
-      login: { account: "alice@example.com" },
       isOnline: true,
       version: hubVersion,
       versionStatus: "Current",
@@ -196,12 +204,10 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       openSessions: 0,
       updater: { self: true },
       models: fakeModels,
-      ownClaudeCredential: true,
     },
     {
       id: "r-ci",
       name: "ci-box",
-      login: { account: "ci@example.com" },
       isOnline: false,
       version: { commit: "5d2b9e07c41a8f3362e0d9b7a1c4f58e2b6d0a93", branch: "main" },
       versionStatus: "Behind",
@@ -228,7 +234,7 @@ const day = 24 * hour
 export const archiveRetentionMs = 30 * day
 
 export function seedSessions(now = Date.now()): Array<SeedSession> {
-  const studio = { runnerId: "r-studio", runnerLogin: { account: "alice@example.com" } }
+  const studio = { runnerId: "r-studio" }
   return [
     {
       summary: {
@@ -243,11 +249,11 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         currentTurn: null,
         // Started before Alice applied version 2: it shows "Environment changed".
         environment: { version: 1, latestVersion: 2 },
-        // Bob switched it after the first Turn, which ran on Claude Code's default (#128).
+        // Alice switched it after the first Turn, which ran on Claude Code's default (#128).
         model: "sonnet",
         effort: "high",
-        // Bob keeps it up while he tries its dev server (ADR 0016).
-        keepAwake: { by: bob, at: now - 30 * 60_000 },
+        // Alice keeps it up while Bob tries its dev server (ADR 0016).
+        keepAwake: { by: you, at: now - 30 * 60_000 },
       },
       // Vite on Node 22 listens on `localhost`, which is `::1` only; Postgres runs in Docker.
       ports: [
@@ -279,7 +285,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         ]),
         {
           _tag: "ModelSwitched",
-          by: bob,
+          by: you,
           model: "sonnet",
           modelLabel: "Sonnet 5.5",
           effort: "high",
@@ -294,7 +300,7 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         workBranch: "claude/readme-run",
         state: "Asleep",
         ...studio,
-        creator: bob,
+        creator: you,
         createdAt: now - 26 * hour,
         currentTurn: null,
         environment: { version: 1, latestVersion: 2 },
@@ -308,12 +314,45 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
           "Find out how the web UI runs against the fake Hub.",
           [{ _tag: "TextDelta", text: "`VITE_FAKE_HUB=1 bun run web` serves it on the fake Hub." }],
         ),
-        ...turn("t-seed-2", bob, "Document how to run the web UI against the fake Hub", [
+        ...turn("t-seed-2", you, "Document how to run the web UI against the fake Hub", [
           {
             _tag: "TextDelta",
             text: "Added a **Run** row to the README: `VITE_FAKE_HUB=1 bun run web`.",
           },
         ]),
+        { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 15m" },
+      ],
+    },
+    {
+      // Bob's: Alice watches it (ADR 0026).
+      summary: {
+        id: bobsSessionId,
+        repo: "kddige/kndl",
+        baseBranch: "main",
+        workBranch: "claude/landing-copy",
+        state: "Asleep",
+        ...studio,
+        creator: bob,
+        createdAt: now - 20 * 60_000,
+        currentTurn: null,
+        environment: { version: 2, latestVersion: 2 },
+      },
+      at: now - 20 * 60_000,
+      events: [
+        ...turn("t-seed-5", bob, "Tighten the landing page's copy", [
+          {
+            _tag: "TextDelta",
+            text: "Cut the hero to one line: **Claude Code, together.** The rest reads shorter too.",
+          },
+        ]),
+        // Queued by Alice before only the Creator could prompt: the Hub cancelled it (ADR 0026).
+        {
+          _tag: "PromptCancelled",
+          promptId: "p-seed-alice",
+          sender: you,
+          text: "And make the install command copyable",
+          message: "Only the Session's Creator prompts it now",
+        },
         { _tag: "SessionStateChanged", state: "Asleep", message: "Idle for 15m" },
       ],
     },
@@ -325,7 +364,6 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         workBranch: "claude/zsh-prompt",
         state: "Frozen",
         runnerId: "r-ci",
-        runnerLogin: { account: "ci@example.com" },
         creator: you,
         createdAt: now - 50 * hour,
         currentTurn: null,
@@ -352,14 +390,14 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
         createdAt: now - 5 * day,
         currentTurn: null,
         environment: { version: 1, latestVersion: 2 },
-        archived: { by: bob, at: now - 3 * day, purgeAt: now + 27 * day },
+        archived: { by: you, at: now - 3 * day, purgeAt: now + 27 * day },
       },
       at: now - 5 * day,
       events: [
         ...turn("t-seed-4", you, "Fix the flaky login test", [
           { _tag: "TextDelta", text: "It raced the cookie being set: it now waits for it." },
         ]),
-        { _tag: "SessionStateChanged", state: "Archived", by: bob },
+        { _tag: "SessionStateChanged", state: "Archived", by: you },
       ],
     },
     ...releaseSessions(now),
@@ -369,10 +407,10 @@ export function seedSessions(now = Date.now()): Array<SeedSession> {
 /**
  * Release 0.4 handed the changelog, the docs and the version bump to background agents. The
  * changelog's is done and told it so; Alice messaged and stopped the bump's; the docs' was
- * interrupted when Bob put the Session to sleep, in its worktree.
+ * interrupted when she put the Session to sleep, in its worktree.
  */
 function releaseSessions(now: number): Array<SeedSession> {
-  const studio = { runnerId: "r-studio", runnerLogin: { account: "alice@example.com" } }
+  const studio = { runnerId: "r-studio" }
   const at = now - 40 * 60_000
   const haiku = "claude-haiku-4-5-20251001"
   const changelog = { agentId: "a-changelog", description: "Write the 0.4 changelog" }
@@ -471,7 +509,7 @@ function releaseSessions(now: number): Array<SeedSession> {
           }),
         },
         { _tag: "AgentStatusChanged", agentId: docs.agentId, status: "Interrupted" },
-        { _tag: "SessionStateChanged", state: "Asleep", message: "Put to sleep", by: bob },
+        { _tag: "SessionStateChanged", state: "Asleep", message: "Put to sleep", by: you },
       ],
     },
   ]
@@ -614,7 +652,10 @@ function tool(
   return { _tag: "Tool", tool: name, input: JSON.stringify(input), output }
 }
 
-/** The demo's live Turn: Bob asks, Claude streams, a subagent explores, Bob queues another. */
+/**
+ * The demo's live Turn: Alice asks, Claude streams, a subagent explores, and she queues another,
+ * while Bob watches.
+ */
 export const scriptedTurn: ReadonlyArray<ReplyStep> = [
   { kind: "text", text: "Sure. First I'll look at how the chat renders tool calls today." },
   {
@@ -679,7 +720,7 @@ export const scriptedTurn: ReadonlyArray<ReplyStep> = [
     relay:
       "The docs agent found one page that describes tool calls: **work-in-a-session.md**. I'll update it with the README.",
   },
-  { kind: "queue", sender: bob, text: "Then add a line about it to the README" },
+  { kind: "queue", sender: you, text: "Then add a line about it to the README" },
   {
     kind: "tool",
     tool: "Edit",
@@ -740,7 +781,8 @@ export const questionReply: ReadonlyArray<ReplyStep> = [
         ],
       },
     ],
-    pick: { participant: bob, question: libraryQuestion, answer: "Luxon" },
+    // Alice leans to Luxon in another tab: whoever watches sees it (ADR 0026).
+    pick: { participant: you, question: libraryQuestion, answer: "Luxon" },
   },
   { kind: "text", text: "\n\nThanks. Going with that." },
 ]

@@ -111,6 +111,8 @@ const styles = stylex.create({
     cursor: { default: "pointer", ":disabled": "default" },
   },
   active: { backgroundColor: color.surfaceHover },
+  // An option as someone watching sees it: not a button.
+  watchedRow: { cursor: "default" },
   arrow: {
     flexShrink: 0,
     width: "0.75rem",
@@ -165,16 +167,20 @@ const styles = stylex.create({
 
 /**
  * A question Claude asked (#193), docked above the prompt box: the card to answer it, or, once
- * someone else has, who did and how.
+ * someone else has, who did and how. Only the Session's Creator answers (ADR 0026): anyone else
+ * sees the question, and what the Creator picks, without the controls to answer it.
  */
 export function QuestionDock({
   summary,
   questions,
   picks,
+  drives,
 }: {
   summary: SessionSummary
   questions: ReadonlyMap<ToolCallId, QuestionView>
   picks: QuestionPicksState | null
+  /** Whether the signed-in person drives the Session, and so answers it. */
+  drives: boolean
 }) {
   const hub = useHub()
   const you = useHubState((state) => state.you)
@@ -194,12 +200,16 @@ export function QuestionDock({
         open={open}
         picks={picks?.toolCallId === open.toolCallId ? picks.picks : []}
         you={you}
-        onAnswer={(answer) => {
-          const sent = hub.answerQuestion(summary.id, open.toolCallId, answer)
-          if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
-          return sent
-        }}
-        onPick={onPick}
+        {...(drives
+          ? {
+              onAnswer: (answer: QuestionAnswerFromWeb) => {
+                const sent = hub.answerQuestion(summary.id, open.toolCallId, answer)
+                if (!sent) toast.show({ title: "Not connected to the Hub", intent: "warning" })
+                return sent
+              },
+              onPick,
+            }
+          : { answerer: summary.creator.name })}
       />
     )
   }
@@ -241,8 +251,41 @@ function useClosedQuestion(
  * Answers Claude's questions, one at a time, as Claude Code's dialog does: an option, several for
  * a multi-select question, or something else typed in. Picking the last question's answer sends
  * them all; Skip leaves a question unanswered, and × dismisses them, as Esc does at the terminal.
+ * Without `onAnswer`, it only shows them, waiting on `answerer`.
  */
 export function QuestionCard({
+  open,
+  picks,
+  you,
+  onAnswer,
+  onPick,
+  answerer,
+}: {
+  open: OpenQuestion
+  picks: ReadonlyArray<QuestionPick>
+  you: Participant | null
+  /** Sends an answer; absent for someone watching, who can't answer (ADR 0026). */
+  onAnswer?: ((answer: QuestionAnswerFromWeb) => boolean) | undefined
+  onPick?: ((question: string, answer: string) => void) | undefined
+  /** Who answers it, for someone watching. */
+  answerer?: string | undefined
+}) {
+  if (onAnswer === undefined)
+    return <WatchedQuestion open={open} picks={picks} you={you} answerer={answerer} />
+  return (
+    <AnsweredQuestion
+      open={open}
+      picks={picks}
+      you={you}
+      onAnswer={onAnswer}
+      onPick={onPick ?? noPick}
+    />
+  )
+}
+
+const noPick = () => {}
+
+function AnsweredQuestion({
   open,
   picks,
   you,
@@ -520,6 +563,103 @@ export function QuestionCard({
             {last ? "Submit" : "Next"}
           </Button>
         )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Claude's questions as someone watching sees them (ADR 0026): each with its options, and what
+ * the Creator has picked so far, waiting on them to answer.
+ */
+function WatchedQuestion({
+  open,
+  picks,
+  you,
+  answerer,
+}: {
+  open: OpenQuestion
+  picks: ReadonlyArray<QuestionPick>
+  you: Participant | null
+  answerer: string | undefined
+}) {
+  const { questions } = open
+  const [index, setIndex] = useState(0)
+  const question = questions[index]
+  if (!question) return null
+  const others = othersPicks(picks, question, you)
+  return (
+    <div role="group" aria-label="Claude's question" {...stylex.props(styles.card)}>
+      <div {...stylex.props(styles.header)}>
+        <WaitingDot sx={styles.dot} />
+        <h2 {...stylex.props(styles.heading)}>
+          {question.header !== "" && <Badge intent="warning">{question.header}</Badge>}
+          <span>{question.question}</span>
+        </h2>
+        {questions.length > 1 && (
+          <span {...stylex.props(styles.pager)}>
+            <IconButton
+              label="Previous question"
+              size="sm"
+              disabled={index === 0}
+              onClick={() => setIndex(index - 1)}
+            >
+              <ChevronRightIcon {...stylex.props(styles.previous)} />
+            </IconButton>
+            {index + 1} of {questions.length}
+            <IconButton
+              label="Next question"
+              size="sm"
+              disabled={index === questions.length - 1}
+              onClick={() => setIndex(index + 1)}
+            >
+              <ChevronRightIcon />
+            </IconButton>
+          </span>
+        )}
+      </div>
+      <ol {...stylex.props(styles.rows)}>
+        {question.options.map((option, row) => {
+          const by = others.byOption.get(option.label) ?? []
+          return (
+            <li key={option.label} {...stylex.props(styles.row, styles.watchedRow)}>
+              <span {...stylex.props(styles.number)}>{row + 1}.</span>
+              <span {...stylex.props(styles.option)}>
+                <span {...stylex.props(styles.label)}>{option.label}</span>
+                {option.description !== undefined && (
+                  <span {...stylex.props(styles.description)}>{option.description}</span>
+                )}
+              </span>
+              {by.length > 0 && (
+                <AvatarStack
+                  label="Picked by"
+                  size="sm"
+                  max={3}
+                  people={by.map((person) => ({
+                    id: person.id,
+                    name: person.name,
+                    src: person.avatarUrl,
+                  }))}
+                />
+              )}
+            </li>
+          )
+        })}
+        {others.typed.map(({ participant, text: typed }) => (
+          <li key={participant.id} {...stylex.props(styles.typed)}>
+            <Avatar name={participant.name} src={participant.avatarUrl} size="sm" />
+            <span>
+              {participant.name}: {typed}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <div {...stylex.props(styles.footer)}>
+        <span {...stylex.props(styles.keys)}>
+          {answerer === undefined
+            ? "Waiting on an answer, here or at the terminal."
+            : `Waiting on ${answerer} to answer, here or at the terminal.`}
+        </span>
       </div>
     </div>
   )

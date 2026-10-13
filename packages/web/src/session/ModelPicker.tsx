@@ -11,7 +11,7 @@ import {
   Popover,
   Slider,
 } from "../ui/index.ts"
-import { space } from "../ui/tokens.stylex.ts"
+import { color, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
   effortNames,
   effortNotes,
@@ -51,6 +51,17 @@ const styles = stylex.create({
   },
   effortTrigger: {
     flexShrink: 0,
+  },
+  // The setting as someone watching sees it: the pickers' labels, as text.
+  shown: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: space.s1,
+    minWidth: 0,
+    paddingInline: space.s2,
+    color: color.textMuted,
+    fontSize: text.sm,
+    fontWeight: weight.medium,
   },
 })
 
@@ -154,6 +165,38 @@ export function ModelPicker({
         />
       )}
     </div>
+  )
+}
+
+/**
+ * The model a Session runs and its effort level, named as the picker names them, for someone who
+ * can't change them: watching a Session they didn't start (ADR 0026).
+ */
+export function ModelSettingLabel({
+  models,
+  value,
+}: {
+  models: RunnerModels | undefined
+  value: ModelSetting
+}) {
+  const name = modelName(models, value)
+  // As the picker: a level only for a model that takes one.
+  const effort =
+    modelOf(models, value)?.effort === true &&
+    effortsOf(models).length > 0 &&
+    value.effort !== undefined
+      ? effortNames[value.effort]
+      : undefined
+  return (
+    <span title="The model and effort this Session runs on" {...stylex.props(styles.shown)}>
+      <span {...stylex.props(styles.label)}>{name}</span>
+      {effort !== undefined && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span>{effort}</span>
+        </>
+      )}
+    </span>
   )
 }
 
