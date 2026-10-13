@@ -123,11 +123,63 @@ It turns on lingering for your user with `loginctl enable-linger`.
 
 ## KVM access: can't open /dev/kvm
 
-**What you see.** On Linux, `kndl doctor` reports `KVM access: <user> can't open /dev/kvm.`, or Sandboxes fail to start right after onboard added you to the `kvm` group.
+**What you see.** On Linux, `kndl doctor` reports one of:
 
-**Why.** A new group applies only to processes started after it was added, and the systemd user manager keeps the groups it started with.
+```
+XX  Prerequisites    ada can't open /dev/kvm.
+XX  Prerequisites    ada is in the kvm group, but this login started before they were added: reboot …
+```
 
-**Fix.** Reboot, then run `kndl doctor`. If doctor says there's no `/dev/kvm` at all, turn on virtualization (VT-x or AMD-V) in the firmware, or nested virtualization in a VM.
+or Sandboxes fail to start right after onboard added you to the `kvm` group.
+
+**Why.** The Runner needs `/dev/kvm`, which belongs to the `kvm` group. Onboard and `kndl doctor --fix` add you to it with `sudo usermod -aG kvm <user>`. A new group only reaches processes started afterwards, and your services' systemd user manager keeps the groups it started with, even across logins while the services linger.
+
+**Fix.**
+
+- **You're not in the group yet:** run `kndl doctor --fix`, or `sudo usermod -aG kvm $USER` yourself, then reboot.
+- **You're in the group already:** reboot. Logging out and in isn't enough.
+
+Then run `kndl doctor`. If it says there's no `/dev/kvm` at all, turn on virtualization (VT-x or AMD-V) in the firmware, or nested virtualization in a VM.
+
+## sudo: a terminal is required to read the password
+
+**What you see.** Onboard or `kndl doctor --fix` asks to run commands with sudo, you answer Yes, and then:
+
+```
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo -v exited with 1
+```
+
+Turning on lingering can fail the same way, with `Error creating textual authentication agent: Error opening current controlling terminal`.
+
+**Why.** kndl up to v2026.10.3 ran commands away from your terminal, so sudo and polkit had nowhere to ask for your password. Later versions run them in your terminal.
+
+**Fix.** Update with `kndl update`. Until a Release with the fix is out, answer No when kndl offers to run the commands, run the ones it printed yourself, and then run `kndl doctor --fix` again:
+
+```sh
+sudo usermod -aG kvm $USER
+sudo loginctl enable-linger $USER
+```
+
+## Build the web UI or the hub-link mod: bun: command not found
+
+**What you see.** Onboard, `kndl doctor --fix` or `kndl update` fails to build, and `kndl doctor` says the web UI or the hub-link mod isn't built:
+
+```
+▲ Build the hub-link mod: failed
+/usr/bin/bash: line 1: bun: command not found
+```
+
+The Hub's pages answer 503, and the Runner's service keeps restarting.
+
+**Why.** install.sh installed Bun into `~/.bun/bin`, which your shell's `PATH` doesn't include yet, and kndl up to v2026.10.3 needed `bun` on `PATH` for the builds. Later versions use the Bun they run with.
+
+**Fix.** Update with `kndl update`. Until a Release with the fix is out, put Bun on `PATH` and fix it again:
+
+```sh
+export PATH="$HOME/.bun/bin:$PATH"
+kndl doctor --fix
+```
 
 ## An env file is readable by others
 

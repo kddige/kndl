@@ -4,6 +4,7 @@
 //
 // With KNDL_DRY_RUN=1, Shell prints the Steps that change the system (package managers,
 // sudo, launchctl, systemctl, loginctl) instead of running them, and runs the rest (git, bun).
+import { delimiter, dirname } from "node:path"
 import { Context, Data, Effect, Layer, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/process"
 import { shellQuote } from "./Layout.ts"
@@ -66,12 +67,22 @@ export class Shell extends Context.Service<
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
       const dryRun = process.env.KNDL_DRY_RUN === "1"
       const root = process.getuid?.() === 0
+      // The Bun running the CLI comes first on PATH, so the package scripts' `bun run` find it
+      // even when install.sh has just installed Bun and the shell's PATH doesn't have it yet.
+      const path = [dirname(process.execPath), process.env.PATH]
+        .filter((part) => part !== undefined && part !== "")
+        .join(delimiter)
 
       const command = (s: Step, stdio: "pipe" | "inherit") => {
         const [bin, ...args] =
           s.sudo && !root ? ["sudo", s.command, ...s.args] : [s.command, ...s.args]
         return ChildProcess.make(bin ?? s.command, args, {
           ...(s.cwd === undefined ? {} : { cwd: s.cwd }),
+          env: { PATH: path },
+          extendEnv: true,
+          // Effect starts children in a session of their own by default, which has no terminal:
+          // sudo then can't ask for a password, nor polkit (behind loginctl) for authentication.
+          detached: false,
           stdin: stdio === "inherit" ? "inherit" : "ignore",
           stdout: stdio,
           stderr: stdio,
