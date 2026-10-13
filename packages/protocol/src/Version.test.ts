@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { HubToMod, ModHello } from "./Mod.ts"
 import { HubToRunner, RunnerHello, RunnerWelcome } from "./Runner.ts"
-import { expectRoundTrips, runnerLogin } from "./testSupport.ts"
+import { expectRoundTrips } from "./testSupport.ts"
 import { checkHandshake, HandshakeRejected, ProtocolVersion } from "./Version.ts"
 import { HubToWeb, WebHello } from "./Web.ts"
 
@@ -10,7 +10,6 @@ const runnerHello = {
   _tag: "RunnerHello",
   protocolVersion: ProtocolVersion,
   name: "studio",
-  login: runnerLogin,
   sessions: [],
 }
 

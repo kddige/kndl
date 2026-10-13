@@ -142,6 +142,20 @@ export const ModelSwitched = Schema.TaggedStruct("ModelSwitched", {
 export type ModelSwitched = typeof ModelSwitched.Type
 
 /**
+ * The Hub took a queued prompt out of the Prompt queue without it running (ADR 0026): it was
+ * queued by someone other than the Session's Creator, before only the Creator could prompt.
+ */
+export const PromptCancelled = Schema.TaggedStruct("PromptCancelled", {
+  promptId: PromptId,
+  sender: Participant,
+  /** As typed; empty for a prompt of attachments alone. */
+  text: Schema.String,
+  /** Why it was cancelled, as shown. */
+  message: Schema.String,
+})
+export type PromptCancelled = typeof PromptCancelled.Type
+
+/**
  * Everything a Session's history records: Turn events from the mod, and what the Hub saw
  * happen. New kinds of event are added here as members.
  */
@@ -152,6 +166,7 @@ export const SessionEvent = Schema.Union([
   AgentMessaged,
   SandboxNoted,
   ModelSwitched,
+  PromptCancelled,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type SessionEvent = typeof SessionEvent.Type
 

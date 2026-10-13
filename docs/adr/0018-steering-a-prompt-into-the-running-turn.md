@@ -29,3 +29,7 @@ So a steered prompt is appended:
 - **Only the main loop.** A subagent's loop can't be steered into. A subagent is messaged instead (ADR 0014).
 - **The hand-over lives in the Hub's memory**, like the mod's outbox and a delivered prompt that hasn't started yet. After a Hub restart there are two cases. A steer the mod hadn't fetched is lost, and the prompt waits in the queue as before. A steer the mod had already appended still reports `PromptSteered`, and the prompt leaves the queue then.
 - **`claude plugin test` can't answer `session.append`.** The mod's tests cover the paths around it, and the append itself was checked in the spike.
+
+## Amendment: only the Creator drives a Session (ADR 0026)
+
+Only a Session's Creator prompts it, so only they queue, steer or cancel its prompts. The Steer button shows only to them.

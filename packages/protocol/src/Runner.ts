@@ -19,7 +19,7 @@ import { GitIdentity, GitReply, GitRequest } from "./Git.ts"
 import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
 import { GatewayServer } from "./McpServer.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
-import { BranchName, OpenPort, RepoName, RunnerAccount } from "./Session.ts"
+import { BranchName, OpenPort, RepoName } from "./Session.ts"
 import {
   RequestTerminalSnapshot,
   TerminalFrame,
@@ -48,8 +48,6 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
   protocolVersion: CurrentProtocolVersion,
   /** The Runner's name, such as its short hostname. */
   name: Schema.NonEmptyString,
-  /** Its own Claude credential, as the Hub shows it; named `login` from before (ADR 0002). */
-  login: RunnerAccount,
   /** Sessions whose Claude Code is running here, including those it kept across a restart. */
   sessions: Schema.Array(SessionId),
   /**
@@ -86,11 +84,6 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * new model then takes effect when it next wakes.
    */
   relaunches: Schema.optionalKey(Schema.Literal(true)),
-  /**
-   * Whether it has a Claude credential of its own, which a Session runs on when its Creator has
-   * stored none (ADR 0015). A Runner from before doesn't say: it is taken to have one.
-   */
-  ownClaudeCredential: Schema.optionalKey(Schema.Boolean),
   /**
    * It takes an {@link OpenTunnel} (#177). A Runner from before doesn't say so: the Hub opens no
    * tunnel to its Sessions.

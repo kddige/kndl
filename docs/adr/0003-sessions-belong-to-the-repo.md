@@ -1,6 +1,8 @@
 ---
-status: accepted
+status: superseded by 0026
 ---
+
+> Superseded by [ADR 0026](0026-a-session-runs-on-and-is-driven-by-its-creator.md): a Session still belongs to its Repo, so Repo access decides who sees it. But only its Creator drives it: prompts it, controls it or opens its terminal. Other Participants watch. Delete still means archive, and only the Creator archives and restores.
 
 # Sessions have no owner; they belong to their Repo
 

@@ -15,3 +15,7 @@ Sessions never ask for tool approval. Everything inside the Sandbox is allowed, 
 ## Amendment: one per-Session token in the Sandbox (ADR 0013)
 
 With Claude Code in the Sandbox, the Sandbox holds one secret of claude-hub's own: a random per-Session token for the Runner's credential proxy and mod relay. It reaches only those two, for that Session, while the Session is awake. The Runner revokes it on sleep and archive. The Claude credential and the mod token stay on the Runner, behind it.
+
+## Amendment: the Creator's setup token is in the Sandbox (ADR 0026)
+
+The Claude credential is now the second deliberate exception, after Variables and the Sandbox token. A Session's Claude Code has its Creator's setup token in its own environment and talks to Anthropic directly, so anything running in the Sandbox can read that token. Only the Creator drives a Session, so the only prompts that can ask Claude for it are the Creator's own. The per-Session token above now reaches only the mod relay.

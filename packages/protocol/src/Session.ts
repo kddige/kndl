@@ -210,31 +210,10 @@ export const Participant = Schema.Struct({
 })
 export type Participant = typeof Participant.Type
 
-/**
- * How a Runner shows its own Claude credential (ADR 0015), which runs Sessions whose Creator has
- * stored none. Sent in its hello as `login`, and kept as a Session's `runnerLogin`: names from
- * when every Session ran on the Claude account signed in on its Runner (ADR 0002).
- */
-export const RunnerAccount = Schema.Struct({
-  /**
-   * The credential's kind and last four characters, such as "Subscription token …9f3b"; the
-   * account Claude Code is signed in to, when it is Claude Code's login; or "No Claude
-   * credential". From a Runner from before: the email address of its Claude account.
-   */
-  account: Schema.NonEmptyString,
-})
-export type RunnerAccount = typeof RunnerAccount.Type
-
-/** Whose Claude credential a Session runs on: its Creator's, or its Runner's own (ADR 0015). */
-export const ClaudeAccount = Schema.Literals(["Creator", "Runner"])
-export type ClaudeAccount = typeof ClaudeAccount.Type
-
 /** A Runner as the web UI lists it: every Runner paired with the Hub and not removed. */
 export const RunnerSummary = Schema.Struct({
   id: RunnerId,
   name: Schema.NonEmptyString,
-  /** Its own Claude credential as it last said hello with it; null until it first connects. */
-  login: Schema.NullOr(RunnerAccount),
   isOnline: Schema.Boolean,
   /** The version it last said hello with; null before it connects, or from a Runner too old to say. */
   version: Schema.NullOr(BuildVersion),
@@ -256,11 +235,6 @@ export const RunnerSummary = Schema.Struct({
    * from a Runner too old to say, or that couldn't find out.
    */
   models: Schema.optionalKey(RunnerModels),
-  /**
-   * Whether it has a Claude credential of its own, which runs the Sessions of a Creator who has
-   * stored none (ADR 0015); absent while it is offline.
-   */
-  ownClaudeCredential: Schema.optionalKey(Schema.Boolean),
 })
 export type RunnerSummary = typeof RunnerSummary.Type
 
@@ -500,16 +474,9 @@ export const SessionSummary = Schema.Struct({
   state: SessionState,
   runnerId: RunnerId,
   /**
-   * Its Runner's own Claude credential as it was when the Session was created, which the Session
-   * runs on when `claudeAccount` is `Runner`.
+   * Whose setup token its Claude Code runs on, and the only one who drives it: prompts it, answers
+   * it, stops it, controls it and uses its terminal (ADR 0026). Other Participants watch.
    */
-  runnerLogin: RunnerAccount,
-  /**
-   * Whose Claude account its Claude Code runs on (ADR 0015): its Creator's own credential, or the
-   * Runner's, when the Creator has stored none. Absent from a Hub from before.
-   */
-  claudeAccount: Schema.optionalKey(ClaudeAccount),
-  /** Recorded for history only; grants no rights (ADR 0003). */
   creator: Participant,
   createdAt: EpochMillis,
   /** The Turn running now, or null when the Session is idle. */
