@@ -58,7 +58,7 @@ import { Composer } from "./Composer.tsx"
 import { useDriveRefusal } from "./drive.ts"
 import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
-import { ModelPicker } from "./ModelPicker.tsx"
+import { ModelPicker, ModelSettingLabel } from "./ModelPicker.tsx"
 import { type ModelSetting, modelName, otherTurnModel } from "./models.ts"
 import { OpenPorts } from "./OpenPorts.tsx"
 import { Presence } from "./Presence.tsx"
@@ -600,7 +600,7 @@ function LoadedSession({
                   attach={drives ? attach : undefined}
                   {...(drives && asking && { copy: replyCopy, needsText: true })}
                   picker={
-                    drives && (
+                    drives ? (
                       <ModelPicker
                         models={models}
                         value={shownSetting}
@@ -608,6 +608,9 @@ function LoadedSession({
                         disabled={archived}
                         side="top"
                       />
+                    ) : (
+                      // Someone watching sees what it runs on, but can't change it (ADR 0026).
+                      <ModelSettingLabel models={models} value={setting} />
                     )
                   }
                 />

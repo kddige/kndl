@@ -941,7 +941,11 @@ test("someone watching a Session reads it, but can't drive it or see its termina
     )
   for (const control of ["Wake now", "Rename Session", "Delete Session", "Sleep now", "Attach"])
     expect(labels()).not.toContain(control)
+  // Its model shows as the picker names it, but doesn't open: Claude Code's default here.
   expect(labels().some((label) => label?.startsWith("Model:"))).toBe(false)
+  const model = page.querySelector('[title="The model and effort this Session runs on"]')
+  expect(model?.textContent).toBe("Opus 5.5")
+  expect(model?.closest("button")).toBeNull()
   expect(page.querySelector("header [role=switch]")).toBeNull()
   // Nor rename it from the sidebar.
   expect(labels()).not.toContain("Rename claude/landing-copy")
@@ -994,6 +998,12 @@ test("someone watching a live Session sees its Turn and queue, with nothing to s
   const labels = [...page.querySelectorAll("button")].map((each) => each.textContent?.trim())
   expect(labels).not.toContain("Stop")
   expect(page.querySelector('[role="tab"]')).toBeNull()
+  // Its model and effort show, as the picker names them, with nothing to pick.
+  expect(
+    page.querySelector('[title="The model and effort this Session runs on"]')?.textContent,
+  ).toBe("Sonnet 5.5·High")
+  expect(page.querySelector('button[aria-label^="Model:"]')).toBeNull()
+  expect(page.querySelector('button[aria-label^="Effort:"]')).toBeNull()
   expect(page.querySelector("h1")?.closest("header")?.textContent).toContain("Alice Kim drives it")
 })
 
