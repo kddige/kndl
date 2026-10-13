@@ -12,21 +12,25 @@ import {
   type ModEventsEncoded,
   Participant,
   ParticipantId,
+  PromptId,
   ProtocolVersion,
+  QueuedPrompt,
+  SessionId,
 } from "@kndl/protocol"
 import { Effect, Exit, Option, Redacted } from "effect"
 import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
+import { ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { databaseAt } from "./Database.ts"
 import { Environments } from "./Environments.ts"
 import { HubConfig, type HubConfigInput } from "./HubConfig.ts"
+import { PromptQueue } from "./PromptQueue.ts"
 import { SignIns } from "./SignIns.ts"
 import {
   Connection,
   issueRunnerToken,
   openRunner,
   openWeb,
-  runnerLogin,
   stopAll,
   type Tagged,
   type ToRunner,
@@ -36,7 +40,9 @@ import { appId, appKeyPair, appSlug, botUserId, StandInGitHub } from "./testGitH
 import {
   baseConfig,
   bearer,
+  ensureSetupToken,
   seedEnvironment,
+  setupTokenOf,
   startHub,
   type TestHub,
   testDatabaseDir,
@@ -244,7 +250,6 @@ describe("CreateSession", () => {
         baseBranch: "main",
         workBranch: `claude/${sessionId}`,
         state: "Active",
-        runnerLogin,
         creator: alice,
         currentTurn: null,
       },
@@ -391,7 +396,7 @@ describe("presence", () => {
 })
 
 describe("the Prompt queue", () => {
-  test("keeps prompts in order with their senders, for every joined client, and cancels them", async () => {
+  test("keeps the Creator's prompts in order with their sender, for every joined client, and cancels them", async () => {
     const { hub, web, sessionId, mod } = await sessionScene()
     // A Turn typed at the terminal is running, so the queue waits.
     await mod.post(turnStarted("t-0"))
@@ -401,23 +406,28 @@ describe("the Prompt queue", () => {
 
     web.send({ _tag: "SendPrompt", sessionId, text: "one" })
     await bobWeb.take("PromptQueueChanged", queueIs("one"))
-    bobWeb.send({ _tag: "SendPrompt", sessionId, text: "two" })
-    await web.take("PromptQueueChanged", queueIs("one", "two"))
-    web.send({ _tag: "SendPrompt", sessionId, text: "three" })
-    const queued = await bobWeb.take("PromptQueueChanged", queueIs("one", "two", "three"))
-
+    web.send({ _tag: "SendPrompt", sessionId, text: "two" })
+    const queued = await bobWeb.take("PromptQueueChanged", queueIs("one", "two"))
     expect(queued.queue.map((prompt) => [prompt.text, prompt.sender])).toEqual([
       ["one", alice],
-      ["two", bob],
-      ["three", alice],
+      ["two", alice],
     ])
 
-    // Any Participant may cancel any prompt.
-    bobWeb.send({ _tag: "CancelPrompt", sessionId, promptId: queued.queue[0]?.id ?? "" })
-    await web.take("PromptQueueChanged", queueIs("two", "three"))
-    await bobWeb.take("PromptQueueChanged", queueIs("two", "three"))
+    // Bob watches: he neither prompts it nor cancels its prompts (ADR 0026).
+    bobWeb.send({ _tag: "SendPrompt", sessionId, text: "mine" })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({
+      command: "SendPrompt",
+      sessionId,
+      message: expect.stringContaining("Only alice, who started this Session, can drive it"),
+    })
+    bobWeb.send({ _tag: "CancelPrompt", sessionId, promptId: defined(queued.queue[0]).id })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "CancelPrompt", sessionId })
 
-    web.send({ _tag: "CancelPrompt", sessionId, promptId: queued.queue[0]?.id ?? "" })
+    web.send({ _tag: "CancelPrompt", sessionId, promptId: defined(queued.queue[0]).id })
+    await web.take("PromptQueueChanged", queueIs("two"))
+    await bobWeb.take("PromptQueueChanged", queueIs("two"))
+
+    web.send({ _tag: "CancelPrompt", sessionId, promptId: defined(queued.queue[0]).id })
     expect(await web.take("CommandFailed")).toMatchObject({ command: "CancelPrompt", sessionId })
     expect(await mod.deliveries()).toEqual([])
   })
@@ -514,15 +524,17 @@ describe("steering (#195)", () => {
     web.send({ _tag: "SendPrompt", sessionId, text: "two" })
     const [one, two] = (await bobWeb.take("PromptQueueChanged", queueIs("one", "two"))).queue
 
-    // Any Participant may steer anyone's prompt.
+    // The Creator steers; Bob, who watches, can't.
     bobWeb.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "SteerPrompt", sessionId })
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
     expect(await steers(mod, 500)).toEqual([
       { _tag: "DeliverIntoTurn", sessionId, promptId: defined(two).id, text: "two", sender: alice },
     ])
     // On its way into the Turn, it can't be cancelled, and is steered once.
     web.send({ _tag: "CancelPrompt", sessionId, promptId: defined(two).id })
     expect(await web.take("CommandFailed")).toMatchObject({ command: "CancelPrompt", sessionId })
-    bobWeb.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: defined(two).id })
     expect(await steers(mod, 50)).toEqual([])
 
     const steered: ModEvent = {
@@ -586,7 +598,7 @@ describe("steering (#195)", () => {
     web.send({ _tag: "SteerPrompt", sessionId, promptId: "p-gone" })
     expect((await web.take("CommandFailed")).message).toContain("not in the Prompt queue")
 
-    bobWeb.send({ _tag: "SteerPrompt", sessionId, promptId: defined(one).id })
+    web.send({ _tag: "SteerPrompt", sessionId, promptId: defined(one).id })
     expect(await steers(mod, 500)).toHaveLength(1)
     // The Turn ends before the mod answers: nothing is delivered until it does.
     await mod.post(turnEnded("t-0"))
@@ -597,12 +609,12 @@ describe("steering (#195)", () => {
       promptId: defined(one).id,
       message: "the Turn ended before it could join",
     })
-    expect(await bobWeb.take("CommandFailed")).toMatchObject({
+    expect(await web.take("CommandFailed")).toMatchObject({
       command: "SteerPrompt",
       sessionId,
       message: expect.stringContaining("the Turn ended before it could join"),
     })
-    expect(await web.untaken("CommandFailed")).toEqual([])
+    expect(await bobWeb.untaken("CommandFailed")).toEqual([])
     // Still first in the queue, it is delivered as prompts are.
     expect((await mod.deliveries(500)).map((command) => command.promptId)).toEqual([
       defined(one).id,
@@ -1264,7 +1276,7 @@ const stateChanged = (state: string) => (m: Extract<Web, { _tag: "SessionEventLo
   m.entry.event._tag === "SessionStateChanged" && m.entry.event.state === state
 
 describe("archive, restore and purge", () => {
-  test("any Participant can delete a Session: it is archived at once, and its Runner stops it for good", async () => {
+  test("its Creator can delete a Session: it is archived at once, and its Runner stops it for good", async () => {
     const scene = await sessionScene()
     const { hub, runner, web, sessionId, mod } = scene
     const bobWeb = await openWeb(hub, "bob")
@@ -1273,8 +1285,11 @@ describe("archive, restore and purge", () => {
     web.send({ _tag: "OpenTerminal", sessionId })
     await runner.take("RequestTerminalSnapshot")
 
-    // Bob didn't create it, and may delete it all the same.
+    // Bob didn't create it, so he may not delete it (ADR 0026).
     bobWeb.send({ _tag: "ArchiveSession", sessionId })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "ArchiveSession" })
+    expect(await runner.untaken("StopSession")).toEqual([])
+    web.send({ _tag: "ArchiveSession", sessionId })
     expect(await runner.take("StopSession")).toEqual({
       _tag: "StopSession",
       sessionId,
@@ -1283,11 +1298,11 @@ describe("archive, restore and purge", () => {
     const session = (await web.take("SessionUpdated", (m) => m.session.state === "Archived"))
       .session
     const at = defined(session.archived).at
-    expect(session.archived).toEqual({ by: bob, at, purgeAt: at + thirtyDays })
+    expect(session.archived).toEqual({ by: alice, at, purgeAt: at + thirtyDays })
     expect((await web.take("SessionEventLogged", stateChanged("Archived"))).entry.event).toEqual({
       _tag: "SessionStateChanged",
       state: "Archived",
-      by: bob,
+      by: alice,
     })
 
     // Its mod is cut off, and its terminal closed.
@@ -1318,8 +1333,8 @@ describe("archive, restore and purge", () => {
     })
     web.send({ _tag: "WakeSession", sessionId })
     expect(await web.take("CommandFailed")).toMatchObject({ command: "WakeSession" })
-    bobWeb.send({ _tag: "ArchiveSession", sessionId })
-    expect(await bobWeb.take("CommandFailed")).toMatchObject({
+    web.send({ _tag: "ArchiveSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({
       command: "ArchiveSession",
       message: "The Session is already archived.",
     })
@@ -1513,13 +1528,16 @@ describe("archive, restore and purge", () => {
 })
 
 describe("Session names", () => {
-  test("anyone with access can rename a Session, and every client sees it live", async () => {
+  test("its Creator can rename a Session, and every client sees it live", async () => {
     const { hub, web, sessionId, session } = await sessionScene()
     expect(session.name).toBeUndefined()
     const bobWeb = await openWeb(hub, "bob")
 
-    // Bob didn't create it, and may rename it all the same; the name is trimmed.
-    bobWeb.send({ _tag: "RenameSession", sessionId, name: "  Health check " })
+    // Bob didn't create it, so he may not rename it (ADR 0026).
+    bobWeb.send({ _tag: "RenameSession", sessionId, name: "Mine" })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "RenameSession" })
+    // The name is trimmed.
+    web.send({ _tag: "RenameSession", sessionId, name: "  Health check " })
     for (const client of [web, bobWeb]) {
       const renamed = await client.take("SessionUpdated", (m) => m.session.name !== undefined)
       expect(renamed.session).toEqual({ ...session, name: "Health check" })
@@ -1605,17 +1623,20 @@ const notKeptAwake = (m: Extract<Web, { _tag: "SessionUpdated" }>) =>
   m.session.keepAwake === undefined
 
 describe("Keep awake (ADR 0016)", () => {
-  test("anyone with access can turn it on, every client sees who, and an idle Session stays up", async () => {
+  test("its Creator can turn it on, every client sees who, and an idle Session stays up", async () => {
     const hub = await hubSleepingAfter(300)
     const bobWeb = await openWeb(hub, "bob")
     const { runner, web, sessionId } = await sessionScene(hub)
+    // Bob didn't create it, so he may not keep it awake (ADR 0026).
     bobWeb.send({ _tag: "SetKeepAwake", sessionId, on: true })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "SetKeepAwake" })
+    web.send({ _tag: "SetKeepAwake", sessionId, on: true })
     for (const client of [web, bobWeb]) {
       const on = await client.take("SessionUpdated", keptAwake)
-      expect(on.session.keepAwake?.by).toEqual(bob)
+      expect(on.session.keepAwake?.by).toEqual(alice)
       expect(on.session.keepAwake?.at).toBeGreaterThan(0)
     }
-    expect((await openWeb(hub, "carol")).sessions.sessions[0]?.keepAwake?.by).toEqual(bob)
+    expect((await openWeb(hub, "carol")).sessions.sessions[0]?.keepAwake?.by).toEqual(alice)
 
     // Idle well past its wait, it isn't put to sleep.
     await Bun.sleep(600)
@@ -1835,15 +1856,17 @@ describe("model and effort (#128)", () => {
     })
   })
 
-  test("anyone with access can change it: everyone sees it, and the history says who", async () => {
+  test("its Creator can change it: everyone sees it, and the history says who", async () => {
     const scene = await sessionScene(undefined, modelRunner)
     const { hub, web, sessionId, session } = scene
     const bobWeb = await openWeb(hub, "bob")
     joinSession(web, sessionId)
     await web.take("SessionHistory")
 
-    // Bob didn't create it, and may change it all the same.
-    bobWeb.send({ _tag: "SetSessionModel", sessionId, model: "sonnet", effort: "high" })
+    // Bob didn't create it, so he may not change it (ADR 0026).
+    bobWeb.send({ _tag: "SetSessionModel", sessionId, model: "haiku" })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "SetSessionModel" })
+    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet", effort: "high" })
     for (const client of [web, bobWeb]) {
       const changed = await client.take("SessionUpdated", (m) => m.session.model === "sonnet")
       expect(changed.session).toEqual({
@@ -1855,7 +1878,7 @@ describe("model and effort (#128)", () => {
     }
     expect((await web.take("SessionEventLogged", modelSwitched)).entry.event).toEqual({
       _tag: "ModelSwitched",
-      by: bob,
+      by: alice,
       model: "sonnet",
       modelLabel: "Sonnet 5.5",
       effort: "high",
@@ -2088,11 +2111,15 @@ describe("the terminal relay", () => {
 
   test("takes keystrokes only from a connection watching the terminal", async () => {
     const { hub, runner, web, sessionId } = await sessionScene()
-    const bobWeb = await openWeb(hub, "bob")
-    bobWeb.send({ _tag: "TerminalInput", sessionId, data: "rm -rf /\r" })
-    bobWeb.send({ _tag: "TerminalResize", sessionId, size: { cols: 10, rows: 5 } })
-    expect((await bobWeb.take("CommandFailed")).command).toBe("TerminalInput")
-    expect((await bobWeb.take("CommandFailed")).command).toBe("TerminalResize")
+    const tab = await openWeb(hub, "alice", web.cookie)
+    tab.send({ _tag: "TerminalInput", sessionId, data: "rm -rf /\r" })
+    tab.send({ _tag: "TerminalResize", sessionId, size: { cols: 10, rows: 5 } })
+    for (const command of ["TerminalInput", "TerminalResize"]) {
+      expect(await tab.take("CommandFailed")).toMatchObject({
+        command,
+        message: "Open the Session's terminal first.",
+      })
+    }
     web.send({ _tag: "TerminalInput", sessionId: "s-nonexistent", data: "x" })
     expect(await web.take("CommandFailed")).toMatchObject({ command: "TerminalInput" })
     expect(await runner.untaken("TerminalInput")).toEqual([])
@@ -2498,7 +2525,7 @@ describe("Repo access", () => {
     })
   }
 
-  /** A web client signed in with GitHub as `who`. */
+  /** A web client signed in with GitHub as `who`, with a setup token saved (ADR 0026). */
   async function openGitHubWeb(hub: TestHub, who: typeof octocat) {
     const { token } = await hub.run(
       Effect.gen(function* () {
@@ -2506,6 +2533,7 @@ describe("Repo access", () => {
         return yield* signIns.signIn(Participant.make({ ...who, id: ParticipantId.make(who.id) }))
       }),
     )
+    await ensureSetupToken(hub, who.login, who.id)
     return openWeb(hub, who.login, `${signInCookie}=${token}`)
   }
 
@@ -2702,7 +2730,7 @@ describe("Repo access", () => {
     })
   })
 
-  test("a collaborator can join, prompt and type, and GitHub is asked once", async () => {
+  test("a collaborator can join and watch, but not drive it, and GitHub is asked once", async () => {
     const { hub, runner, mod, sessionId } = await sessionScene(await accessHub())
     github.grant(repo, "octocat")
     const octocatWeb = await openGitHubWeb(hub, octocat)
@@ -2711,15 +2739,23 @@ describe("Repo access", () => {
     expect(await octocatWeb.take("SessionHistory")).toMatchObject({ sessionId })
     await octocatWeb.take("PresenceChanged")
     await mod.poll()
-    octocatWeb.send({ _tag: "SendPrompt", sessionId, text: "hi" })
-    expect((await mod.deliveries(500)).map((delivery) => delivery.text)).toEqual(["hi"])
-    octocatWeb.send({ _tag: "OpenTerminal", sessionId })
-    await runner.take("RequestTerminalSnapshot")
-    octocatWeb.send({ _tag: "TerminalInput", sessionId, data: "ls\r" })
-    await runner.take("TerminalInput")
-    octocatWeb.send({ _tag: "SetKeepAwake", sessionId, on: true })
-    const kept = await octocatWeb.take("SessionUpdated", (m) => m.session.keepAwake !== undefined)
-    expect(kept.session.keepAwake?.by).toMatchObject(octocat)
+    // Only alice, who started it, drives it (ADR 0026).
+    for (const command of [
+      { _tag: "SendPrompt", text: "hi" },
+      { _tag: "OpenTerminal" },
+      { _tag: "SetKeepAwake", on: true },
+    ]) {
+      octocatWeb.send({ ...command, sessionId })
+      expect(await octocatWeb.take("CommandFailed")).toEqual({
+        _tag: "CommandFailed",
+        command: command._tag,
+        sessionId,
+        message:
+          "Only alice, who started this Session, can drive it: it runs on their Claude credential.",
+      })
+    }
+    expect(await mod.deliveries(50)).toEqual([])
+    expect(await runner.untaken("RequestTerminalSnapshot")).toEqual([])
 
     // As the list was made; the answer was cached for everything since.
     expect(github.collaboratorChecks("octocat")).toBe(1)
@@ -2748,10 +2784,8 @@ describe("Repo access", () => {
     joinSession(octocatWeb, sessionId)
     await octocatWeb.take("SessionHistory")
     await web.take("PresenceChanged", (m) => m.participants.length === 2)
-    for (const client of [web, octocatWeb]) {
-      client.send({ _tag: "OpenTerminal", sessionId })
-      await runner.take("RequestTerminalSnapshot")
-    }
+    web.send({ _tag: "OpenTerminal", sessionId })
+    await runner.take("RequestTerminalSnapshot")
 
     github.revoke(repo, "octocat")
     expect(await octocatWeb.take("SessionRemoved")).toEqual({ _tag: "SessionRemoved", sessionId })
@@ -2759,7 +2793,7 @@ describe("Repo access", () => {
     const presence = (await mod.poll()).filter((command) => command._tag === "PresenceChanged")
     expect(presence.at(-1)).toMatchObject({ participants: [alice] })
 
-    // Out of its terminal, and refused.
+    // Refused as if there were no such Session.
     const frame = {
       _tag: "TerminalFrame",
       sessionId,
@@ -2779,7 +2813,7 @@ describe("Repo access", () => {
   })
 
   test("when GitHub can't say, a person keeps what they had and no one new gets in", async () => {
-    const { hub, mod, sessionId } = await sessionScene(await accessHub({ repoAccessTtlMs: 100 }))
+    const { hub, sessionId } = await sessionScene(await accessHub({ repoAccessTtlMs: 100 }))
     github.grant(repo, "octocat")
     github.grant(repo, "hubot")
     const octocatWeb = await openGitHubWeb(hub, octocat)
@@ -2788,9 +2822,9 @@ describe("Repo access", () => {
 
     github.collaboratorsDown = true
     await Bun.sleep(300)
-    await mod.poll()
+    // Still let in: refused only as he didn't start it.
     octocatWeb.send({ _tag: "SendPrompt", sessionId, text: "hi" })
-    expect((await mod.deliveries(500)).map((delivery) => delivery.text)).toEqual(["hi"])
+    expect((await octocatWeb.take("CommandFailed")).message).toContain("Only alice")
     expect(await octocatWeb.untaken("SessionRemoved")).toEqual([])
 
     const hubotWeb = await openGitHubWeb(hub, hubot)
@@ -2928,23 +2962,28 @@ describe("subagents (ADR 0014)", () => {
     expect(session?.agents).toEqual([{ id: "a-1", description: "Task a-1", status: "Interrupted" }])
   })
 
-  test("any Participant can message an agent: logged, sent to the mod, waking an Asleep Session", async () => {
+  test("its Creator can message an agent: logged, sent to the mod, waking an Asleep Session", async () => {
     const scene = await agentScene()
     const { hub, runner, web, sessionId, mod } = scene
     const bobWeb = await openWeb(hub, "bob")
     await mod.poll()
-    bobWeb.send({ _tag: "MessageAgent", sessionId, agentId: "a-1", text: "Check the docs too" })
+    // Bob didn't create it, so he may neither message nor stop its agents (ADR 0026).
+    bobWeb.send({ _tag: "MessageAgent", sessionId, agentId: "a-1", text: "Mine now" })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "MessageAgent" })
+    bobWeb.send({ _tag: "StopAgent", sessionId, agentId: "a-1" })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "StopAgent" })
+    web.send({ _tag: "MessageAgent", sessionId, agentId: "a-1", text: "Check the docs too" })
     expect(
       (await web.take("SessionEventLogged", (m) => m.entry.event._tag === "AgentMessaged")).entry
         .event,
-    ).toEqual({ _tag: "AgentMessaged", agentId: "a-1", sender: bob, text: "Check the docs too" })
+    ).toEqual({ _tag: "AgentMessaged", agentId: "a-1", sender: alice, text: "Check the docs too" })
     expect(await mod.poll(500)).toEqual([
       {
         _tag: "DeliverAgentMessage",
         sessionId,
         agentId: "a-1",
         text: "Check the docs too",
-        sender: bob,
+        sender: alice,
       },
     ])
 
@@ -3088,41 +3127,47 @@ describe("Open questions (#193)", () => {
     ])
 
     const answer = { _tag: "Answered", answers: { [library]: "Temporal" } } as const
+    // Bob didn't start it, so he may not answer it (ADR 0026).
     bobWeb.send({ _tag: "AnswerQuestion", sessionId, toolCallId: "toolu_ask", answer })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "AnswerQuestion" })
+    expect(await mod.poll()).toEqual([])
+    web.send({ _tag: "AnswerQuestion", sessionId, toolCallId: "toolu_ask", answer })
     expect(await mod.poll(500)).toEqual([
-      { _tag: "DeliverAnswer", sessionId, toolCallId: "toolu_ask", answer, sender: bob },
+      { _tag: "DeliverAnswer", sessionId, toolCallId: "toolu_ask", answer, sender: alice },
     ])
     const outcome: ModEvent = {
       _tag: "QuestionClosed",
       turnId: "t-1",
       toolCallId: "toolu_ask",
       outcome: answer,
-      by: bob,
+      by: alice,
     }
     await mod.post(outcome)
-    await web.take("SessionUpdated", noQuestion)
-    expect((await web.take("SessionEventLogged", closed)).entry.event).toEqual(outcome)
+    await bobWeb.take("SessionUpdated", noQuestion)
+    expect((await bobWeb.take("SessionEventLogged", closed)).entry.event).toEqual(outcome)
 
-    // Too late: alice is told who answered first, and what, and the mod is sent nothing.
-    web.send({ _tag: "AnswerQuestion", sessionId, toolCallId: "toolu_ask", answer })
-    expect(await web.take("CommandFailed")).toEqual({
+    // Too late, from her other tab: she is told who answered first, and what, and the mod is
+    // sent nothing.
+    later.send({ _tag: "AnswerQuestion", sessionId, toolCallId: "toolu_ask", answer })
+    expect(await later.take("CommandFailed")).toEqual({
       _tag: "CommandFailed",
       command: "AnswerQuestion",
       sessionId,
-      message: "bob answered first: Temporal.",
+      message: "alice answered first: Temporal.",
     })
     expect(await mod.poll()).toEqual([])
   })
 
   test("an answer the mod got after another is refused, saying who answered first", async () => {
-    const { web, bobWeb, sessionId, mod } = await questionScene()
+    const { hub, web, bobWeb, sessionId, mod } = await questionScene()
+    const tab = await openWeb(hub, "alice", web.cookie)
     web.send({
       _tag: "AnswerQuestion",
       sessionId,
       toolCallId: "toolu_ask",
       answer: { _tag: "Dismissed" },
     })
-    bobWeb.send({
+    tab.send({
       _tag: "AnswerQuestion",
       sessionId,
       toolCallId: "toolu_ask",
@@ -3139,24 +3184,24 @@ describe("Open questions (#193)", () => {
         outcome: { _tag: "Dismissed" },
         by: alice,
       },
-      { _tag: "AnswerFailed", toolCallId: "toolu_ask", senderId: bob.id, message: "closed" },
+      { _tag: "AnswerFailed", toolCallId: "toolu_ask", senderId: alice.id, message: "closed" },
     )
-    expect(await bobWeb.take("CommandFailed")).toEqual({
+    expect(await tab.take("CommandFailed")).toEqual({
       _tag: "CommandFailed",
       command: "AnswerQuestion",
       sessionId,
       message: "alice dismissed the question first.",
     })
-    expect(await web.untaken("CommandFailed")).toEqual([])
+    expect(await bobWeb.untaken("CommandFailed")).toEqual([])
 
     // One the Hub knows nothing of says only that it came too late.
     await mod.post({
       _tag: "AnswerFailed",
       toolCallId: "toolu_other",
-      senderId: bob.id,
+      senderId: alice.id,
       message: "No question is waiting on this answer.",
     })
-    expect((await bobWeb.take("CommandFailed")).message).toBe(
+    expect((await tab.take("CommandFailed")).message).toBe(
       "Your answer came too late: No question is waiting on this answer.",
     )
   })
@@ -3164,31 +3209,40 @@ describe("Open questions (#193)", () => {
   test("picks are shown to everyone in the Session, and to those who join, until it closes", async () => {
     const { hub, web, bobWeb, sessionId, mod } = await questionScene()
     const pick = (answer: string, toolCallId = "toolu_ask") =>
-      bobWeb.send({ _tag: "PickAnswer", sessionId, toolCallId, question: library, answer })
+      web.send({ _tag: "PickAnswer", sessionId, toolCallId, question: library, answer })
+    // Bob watches: his picks are refused (ADR 0026).
+    bobWeb.send({
+      _tag: "PickAnswer",
+      sessionId,
+      toolCallId: "toolu_ask",
+      question: library,
+      answer: "x",
+    })
+    expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "PickAnswer" })
     pick("date-fns")
-    expect(await web.take("QuestionPicks")).toEqual({
+    expect(await bobWeb.take("QuestionPicks")).toEqual({
       _tag: "QuestionPicks",
       sessionId,
       toolCallId: "toolu_ask",
-      picks: [{ participant: bob, question: library, answer: "date-fns" }],
+      picks: [{ participant: alice, question: library, answer: "date-fns" }],
     })
     pick("Temporal")
-    await web.take("QuestionPicks", (m) => m.picks[0]?.answer === "Temporal")
-    const another = await openWeb(hub, "alice", web.cookie)
+    await bobWeb.take("QuestionPicks", (m) => m.picks[0]?.answer === "Temporal")
+    const another = await openWeb(hub, "carol")
     joinSession(another, sessionId)
     expect((await another.take("QuestionPicks")).picks).toEqual([
-      { participant: bob, question: library, answer: "Temporal" },
+      { participant: alice, question: library, answer: "Temporal" },
     ])
     pick("")
-    await web.take("QuestionPicks", (m) => m.picks.length === 0)
+    await bobWeb.take("QuestionPicks", (m) => m.picks.length === 0)
 
     // A pick for another question, or once it has closed, is moot.
     pick("date-fns", "toolu_other")
     await mod.post(turnEnded("t-1"))
-    await web.take("SessionUpdated", noQuestion)
+    await bobWeb.take("SessionUpdated", noQuestion)
     pick("date-fns")
     await Bun.sleep(100)
-    expect(await web.untaken("QuestionPicks")).toEqual([])
+    expect(await bobWeb.untaken("QuestionPicks")).toEqual([])
   })
 
   test("is Cancelled when its Turn ends or its Claude Code stops first", async () => {
@@ -3412,7 +3466,7 @@ const refuseHellos = async (hub: TestHub) => {
     Effect.flatMap(
       SqlClient.SqlClient,
       (sql) =>
-        sql`CREATE TRIGGER refuse_hello BEFORE UPDATE OF login_account ON runners
+        sql`CREATE TRIGGER refuse_hello BEFORE UPDATE OF version_commit ON runners
             BEGIN SELECT RAISE(ABORT, 'the disk is full'); END`,
     ),
   )
@@ -3429,7 +3483,6 @@ describe("connections (#243)", () => {
       _tag: "RunnerHello",
       protocolVersion: ProtocolVersion,
       name: "mac",
-      login: runnerLogin,
       sessions: [],
     })
     await runner.closed
@@ -3446,5 +3499,304 @@ describe("connections (#243)", () => {
       branch: { _tag: "Existing", name: "main", newWorkBranch: true },
     })
     expect((await web.take("CommandFailed")).command).toBe("CreateSession")
+  })
+})
+
+/** Why someone other than alice can't drive her Session (ADR 0026). */
+const onlyAlice =
+  "Only alice, who started this Session, can drive it: it runs on their Claude credential."
+
+describe("driving (ADR 0026)", () => {
+  test("every command that drives a Session is refused anyone but its Creator, who watches", async () => {
+    const { hub, runner, web, sessionId, mod } = await sessionScene()
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(bobWeb, sessionId)
+    expect(await bobWeb.take("SessionHistory")).toMatchObject({ sessionId })
+    await mod.poll()
+    const commands = [
+      { _tag: "SendPrompt", text: "hi" },
+      { _tag: "CancelPrompt", promptId: "p-1" },
+      { _tag: "SteerPrompt", promptId: "p-1" },
+      { _tag: "StopTurn" },
+      { _tag: "MessageAgent", agentId: "a-1", text: "hi" },
+      { _tag: "StopAgent", agentId: "a-1" },
+      { _tag: "AnswerQuestion", toolCallId: "toolu_ask", answer: { _tag: "Dismissed" } },
+      { _tag: "PickAnswer", toolCallId: "toolu_ask", question: "Which?", answer: "This" },
+      { _tag: "SleepSession" },
+      { _tag: "WakeSession" },
+      { _tag: "SetKeepAwake", on: true },
+      { _tag: "RestartSession" },
+      { _tag: "ArchiveSession" },
+      { _tag: "RestoreSession" },
+      { _tag: "RenameSession", name: "mine now" },
+      { _tag: "SetSessionModel", model: "default" },
+      { _tag: "OpenTerminal" },
+      { _tag: "TerminalInput", data: "ls\r" },
+      { _tag: "TerminalResize", size: { cols: 80, rows: 24 } },
+    ]
+    for (const command of commands) {
+      bobWeb.send({ ...command, sessionId })
+      expect(await bobWeb.take("CommandFailed")).toEqual({
+        _tag: "CommandFailed",
+        command: command._tag,
+        sessionId,
+        message: onlyAlice,
+      })
+    }
+
+    // None reached the Session, and it is as it was.
+    expect(await mod.poll()).toEqual([])
+    expect(await runner.untaken("RequestTerminalSnapshot")).toEqual([])
+    expect(await runner.untaken("TerminalInput")).toEqual([])
+    expect(await runner.untaken("StopSession")).toEqual([])
+    expect(await web.untaken("PromptQueueChanged")).toEqual([])
+    expect((await openWeb(hub, "carol")).sessions.sessions).toEqual([
+      expect.objectContaining({ id: sessionId, state: "Active" }),
+    ])
+    expect((await openWeb(hub, "carol")).sessions.sessions[0]).not.toHaveProperty("name")
+  })
+
+  test("a Session's terminal frames go to its Creator's connections alone", async () => {
+    const { hub, runner, web, sessionId } = await sessionScene()
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(bobWeb, sessionId)
+    await bobWeb.take("SessionHistory")
+    bobWeb.send({ _tag: "OpenTerminal", sessionId })
+    expect((await bobWeb.take("CommandFailed")).message).toBe(onlyAlice)
+    const tab = await openWeb(hub, "alice", web.cookie)
+    for (const client of [web, tab]) client.send({ _tag: "OpenTerminal", sessionId })
+    await runner.take("RequestTerminalSnapshot")
+    await runner.take("RequestTerminalSnapshot")
+
+    for (const kind of ["Snapshot", "Output"] as const) {
+      const frame = {
+        _tag: "TerminalFrame",
+        sessionId,
+        kind,
+        data: "$ ",
+        size: { cols: 80, rows: 24 },
+      } as const
+      runner.send(frame)
+      for (const client of [web, tab]) expect(await client.take("TerminalFrame")).toEqual(frame)
+    }
+    expect(await bobWeb.untaken("TerminalFrame")).toEqual([])
+  })
+})
+
+describe("revoking a Claude credential (ADR 0026)", () => {
+  test("removing it puts its owner's Active Sessions to sleep, mid-Turn, saying why", async () => {
+    const { hub, runner, web, sessionId, mod } = await sessionScene()
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(bobWeb, sessionId)
+    await bobWeb.take("SessionHistory")
+    await mod.post(turnStarted("t-1"))
+
+    web.send({ _tag: "RemoveClaudeCredential", requestId: "rm" })
+    expect(await runner.take("StopSession")).toEqual({
+      _tag: "StopSession",
+      sessionId,
+      reason: "Sleep",
+    })
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    expect((await bobWeb.take("SessionEventLogged", stateChanged("Asleep"))).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      by: alice,
+      message: "Put to sleep: the Claude credential it ran on was removed",
+    })
+
+    // It doesn't wake without one.
+    web.send({ _tag: "WakeSession", sessionId })
+    expect(
+      (await bobWeb.take("SessionEventLogged", stateChanged("Asleep"))).entry.event,
+    ).toMatchObject({
+      message:
+        "Claude Code could not start: You have no Claude credential: add your setup token on the Account page.",
+    })
+    expect(await runner.untaken("StartSession")).toEqual([])
+  })
+
+  test("replacing it puts them to sleep, to wake on the new one", async () => {
+    const { runner, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    const replacement = "sk-ant-oat01-ANOTHER_FAKE_TOKEN_FOR_TESTS_0000"
+
+    web.send({ _tag: "SetClaudeCredential", requestId: "new", secret: replacement })
+    expect(await runner.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    expect((await web.take("SessionEventLogged", stateChanged("Asleep"))).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      by: alice,
+      message: "Put to sleep, to wake on a new Claude credential: the one it ran on was replaced",
+    })
+
+    web.send({ _tag: "WakeSession", sessionId })
+    await runner.take("StartSession")
+    runner.send({ _tag: "FetchClaudeCredential", requestId: "f", sessionId })
+    expect(await runner.take("ClaudeCredentialFetched")).toEqual({
+      _tag: "ClaudeCredentialFetched",
+      requestId: "f",
+      credential: { _tag: "OAuthToken", token: replacement },
+    })
+  })
+
+  test("one revoked while its Runner is offline goes to sleep when it is back", async () => {
+    const { hub, runner, runnerToken, web, sessionId } = await sessionScene()
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    await runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    web.send({ _tag: "SetClaudeCredential", requestId: "new", secret: setupTokenOf("alice-2") })
+    await web.take("ClaudeCredentialState", (m) => m.requestId === "new")
+
+    // Claude Code kept running on the one before, in tmux.
+    const back = await openRunner(hub, runnerToken, [sessionId])
+    expect(await back.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+    back.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    expect(
+      (await web.take("SessionEventLogged", stateChanged("Asleep"))).entry.event,
+    ).toMatchObject({
+      by: alice,
+      message: "Put to sleep, to wake on a new Claude credential: the one it ran on was replaced",
+    })
+    expect(await back.untaken("StartSession")).toEqual([])
+  })
+
+  test("removing its owner as a Member puts their Sessions to sleep, saying who did", async () => {
+    const { hub, runner, web, sessionId } = await sessionScene()
+    // bob is the Hub's Owner, who alone removes Members.
+    const bobWeb = await openWeb(hub, "bob")
+    await hub.run(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql`UPDATE participants SET owner = 1 WHERE id = 'dev:bob'`,
+      ),
+    )
+    joinSession(bobWeb, sessionId)
+    await bobWeb.take("SessionHistory")
+
+    bobWeb.send({ _tag: "RemoveMember", requestId: "rm", participantId: "dev:alice" })
+    await web.closed
+    expect(await runner.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+    runner.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+    expect((await bobWeb.take("SessionEventLogged", stateChanged("Asleep"))).entry.event).toEqual({
+      _tag: "SessionStateChanged",
+      state: "Asleep",
+      by: bob,
+      message: "Put to sleep: alice, who started it, was removed from the Hub",
+    })
+    // Its Runner isn't handed their credential.
+    runner.send({ _tag: "FetchClaudeCredential", requestId: "f", sessionId })
+    expect(await runner.take("ClaudeCredentialRefused")).toMatchObject({
+      message: "alice, who started this Session, isn't a Member of this Hub any more.",
+    })
+  })
+
+  test("the Creator's setup token is masked in its transcript, terminal and last output", async () => {
+    const { runner, web, sessionId, mod } = await sessionScene()
+    const token = setupTokenOf("alice")
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({ _tag: "OpenTerminal", sessionId })
+    await runner.take("RequestTerminalSnapshot")
+
+    await mod.post(turnSaying("t-1", `echo $CLAUDE_CODE_OAUTH_TOKEN: ${token}`))
+    expect((await web.take("SessionEventLogged")).entry.event).toMatchObject({
+      _tag: "TurnStarted",
+      text: `echo $CLAUDE_CODE_OAUTH_TOKEN: ${stars(token)}`,
+    })
+    runner.send({
+      _tag: "TerminalFrame",
+      sessionId,
+      kind: "Snapshot",
+      data: `$ env\r\nCLAUDE_CODE_OAUTH_TOKEN=${token}\r\n`,
+      size: { cols: 120, rows: 40 },
+    })
+    expect((await web.take("TerminalFrame")).data).toBe(
+      `$ env\r\nCLAUDE_CODE_OAUTH_TOKEN=${stars(token)}\r\n`,
+    )
+    runner.send({
+      _tag: "SessionStopped",
+      sessionId,
+      reason: "Exited",
+      exitCode: 1,
+      output: `bad token ${token}`,
+    })
+    const slept = await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+    expect(slept.session.lastOutput).toBe(`bad token ${stars(token)}`)
+    expect(web.texts.join("\n")).not.toContain(token)
+  })
+})
+
+describe("upgrading to only the Creator driving (ADR 0026)", () => {
+  test("as the Hub starts, others' queued prompts are cancelled, once, and a Session with no credential to run on sleeps", async () => {
+    const dir = testDatabaseDir("kndl-")
+    try {
+      const database = databaseAt(join(dir, "hub.db"))
+      const first = await startHub({ config: { devLogin: true }, database })
+      const { runner, runnerToken, web, sessionId, mod } = await sessionScene(first)
+      await openWeb(first, "bob")
+      await mod.post(turnStarted("t-1"))
+      joinSession(web, sessionId)
+      web.send({ _tag: "SendPrompt", sessionId, text: "mine" })
+      await web.take("PromptQueueChanged", queueIs("mine"))
+      // As a Hub from before let them, bob queued one too; and alice's credential is gone.
+      await first.run(
+        Effect.gen(function* () {
+          yield* (yield* PromptQueue).add(
+            SessionId.make(sessionId),
+            QueuedPrompt.make({
+              id: PromptId.make("p-bob"),
+              text: "bob's",
+              sender: Participant.make({ ...bob, id: ParticipantId.make(bob.id) }),
+              queuedAt: 1,
+            }),
+          )
+          yield* (yield* ClaudeCredentials).remove(ParticipantId.make(alice.id))
+        }),
+      )
+      await web.close()
+      await runner.close()
+      await first.stop()
+
+      const second = await startHub({ config: { devLogin: true }, database })
+      const back = await openWeb(second, "alice", web.cookie)
+      joinSession(back, sessionId)
+      const history = await back.take("SessionHistory")
+      expect(history.entries.map((entry) => entry.event)).toContainEqual({
+        _tag: "PromptCancelled",
+        promptId: "p-bob",
+        sender: bob,
+        text: "bob's",
+        message: "Cancelled: only alice, who started this Session, can prompt it now.",
+      })
+      expect(queueTexts(await back.take("PromptQueueChanged"))).toEqual(["mine"])
+
+      // Its Claude Code kept running in tmux, on a credential that is gone.
+      const again = await openRunner(second, runnerToken, [sessionId])
+      expect(await again.take("StopSession")).toMatchObject({ sessionId, reason: "Sleep" })
+      again.send({ _tag: "SessionStopped", sessionId, reason: "Requested", exitCode: 143 })
+      expect((await back.take("SessionEventLogged", stateChanged("Asleep"))).entry.event).toEqual({
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        message:
+          "Put to sleep: it runs on the Claude credential of alice, who started it, and they have none",
+      })
+      await stopAll()
+
+      // Started again, it finds nothing more to cancel.
+      const third = await startHub({ config: { devLogin: true }, database })
+      const later = await openWeb(third, "alice", web.cookie)
+      joinSession(later, sessionId)
+      const cancelled = (await later.take("SessionHistory")).entries.filter(
+        (entry) => entry.event._tag === "PromptCancelled",
+      )
+      expect(cancelled).toHaveLength(1)
+    } finally {
+      await stopAll()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

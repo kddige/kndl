@@ -14,9 +14,9 @@ const encodeAttachments = Schema.encodeSync(AttachmentsJson)
 const decodeAttachments = Schema.decodeUnknownSync(AttachmentsJson)
 
 /**
- * Each Session's Prompt queue, in SQLite so that a Hub restart keeps it: the prompts
- * Participants sent, in the order they were sent, each with its sender and the attachments it
- * carries (#276), which stay the Session's when it leaves. A prompt leaves the queue
+ * Each Session's Prompt queue, in SQLite so that a Hub restart keeps it: the prompts its
+ * Creator sent (ADR 0026), in the order they were sent, each with its sender and the attachments
+ * it carries (#276), which stay the Session's when it leaves. A prompt leaves the queue
  * when the Turn it starts begins, when it is cancelled, or when its delivery fails.
  *
  * Which prompt is out for delivery is the SessionRelay's business, not stored here.

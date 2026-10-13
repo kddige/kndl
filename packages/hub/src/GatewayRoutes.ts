@@ -3,7 +3,7 @@
 // once it has them, stay on the Hub, and only the Hub decides which Session reaches which server.
 //
 // - `/gateway/<installation id>`, any method, by the Session's mod token alone as `Authorization:
-//   Bearer`: the token the Runner's credential proxy relays it with (ADR 0013). A request without
+//   Bearer`: the token the Runner's mod relay passes it on with (ADR 0026). A request without
 //   a live token is answered `401`.
 // - The Installation must be one the Session started with, and still on for its Repo; any other is
 //   answered `403`, alike whether it exists or not. One removed from the Repo stops at once; one

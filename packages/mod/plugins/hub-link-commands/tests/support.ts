@@ -12,13 +12,13 @@ type Fetched = { url: string; body?: string }
 /** The welcome of a Hub that takes PromptAlreadySubmitted (#323). */
 export const welcome = {
   status: 200,
-  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 2, alreadySubmitted: true }),
+  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 3, alreadySubmitted: true }),
 }
 
 /** A Hub's from before #323, which refuses a PromptAlreadySubmitted. */
 export const olderWelcome = {
   status: 200,
-  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 2 }),
+  text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 3 }),
 }
 
 /** The Hub's answer to a fetch. */

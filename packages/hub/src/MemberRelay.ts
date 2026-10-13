@@ -7,7 +7,8 @@
 //   Invite made, revoked or used, someone admitted, or a Member removed. No one else is sent them.
 // - Removing a Member signs them out everywhere and revokes their CLI tokens (Members.ts), then
 //   closes their web clients and forwards. A tunnel already open stays open until it closes, as
-//   with a CLI token revoked.
+//   with a CLI token revoked. Their awake Sessions are put to sleep, each saying why: they run on
+//   the removed Member's Claude credential (ADR 0026).
 
 import {
   admissionLink,
@@ -54,8 +55,8 @@ export interface MemberWebClient {
 export const makeMemberRelay = Effect.fn("makeMemberRelay")(function* (deps: {
   /** Sends a message to every web client `to` picks. */
   readonly toWeb: (message: HubToWeb, to: (client: MemberWebClient) => boolean) => void
-  /** Closes a removed Member's web clients and forwards. */
-  readonly removed: (participantId: ParticipantId) => Effect.Effect<void, SqlError>
+  /** Closes a removed Member's web clients and forwards, and puts their awake Sessions to sleep. */
+  readonly removed: (participantId: ParticipantId, by: Participant) => Effect.Effect<void, SqlError>
 }) {
   const members = yield* Members
   const { publicUrl } = yield* HubConfig
@@ -132,7 +133,7 @@ export const makeMemberRelay = Effect.fn("makeMemberRelay")(function* (deps: {
         )
         if (refusal !== undefined) return refuse(refusal)
         yield* Effect.logInfo(`${client.you.login} removed a Member (${message.participantId})`)
-        yield* deps.removed(message.participantId)
+        yield* deps.removed(message.participantId, client.you)
         return yield* toOwner(yield* memberList(), asked)
       }
     }

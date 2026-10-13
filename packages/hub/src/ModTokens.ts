@@ -12,8 +12,9 @@ export interface ModGrant {
 
 /**
  * The tokens Sessions' mods authenticate with. Each is scoped to one Session: the Hub issues it
- * for `StartSession.modToken`, the Runner passes it to Claude Code's environment on the host, and
- * it never enters the Sandbox (ADR 0004). The Hub keeps only its hash.
+ * for `StartSession.modToken`, and the Runner keeps it, adding it to the mod's requests as its
+ * mod relay passes them on (ADR 0026). It never enters the Sandbox, where the mod holds the
+ * Session's own token instead (ADR 0004). The Hub keeps only its hash.
  */
 export class ModTokens extends Context.Service<
   ModTokens,

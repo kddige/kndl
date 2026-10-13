@@ -1,4 +1,4 @@
-// Attachments (#276, ADR 0024): a Participant uploads a file to a Session over HTTP, sends a
+// Attachments (#276, ADR 0024): a Session's Creator uploads a file to it over HTTP, sends a
 // prompt naming it, and the Session's mod fetches it for Claude. A real Hub, a fake Runner and
 // web clients over WebSockets, and a fake mod over HTTP.
 
@@ -143,6 +143,27 @@ const uploaded = async (response: Response) => {
   return ((await response.json()) as { id: string }).id
 }
 
+/**
+ * A file bob attached to the Session, as one from before only its Creator could (ADR 0026): its
+ * id. Bob is signed in first.
+ */
+const bobsFile = async (hub: TestHub, sessionId: string) => {
+  await openWeb(hub, "bob")
+  const added = await hub.run(
+    Effect.flatMap(Attachments, (attachments) =>
+      attachments.add({
+        sessionId: SessionId.make(sessionId),
+        name: "bob.png",
+        mediaType: "image/png",
+        bytes: png,
+        by: ParticipantId.make("dev:bob"),
+        at: 0,
+      }),
+    ),
+  )
+  return added.id
+}
+
 describe("uploading an attachment", () => {
   test("keeps the image for the Session, served to its Participants as its bytes say", async () => {
     const { hub, web, sessionId } = await scene()
@@ -174,6 +195,23 @@ describe("uploading an attachment", () => {
     expect(saved.headers.get("content-disposition")).toBe(
       "inline; filename*=UTF-8''Kjartan%27s%20shot%20%283%29.png",
     )
+  })
+
+  test("is refused anyone but the Session's Creator, who alone prompts it (ADR 0026)", async () => {
+    const { hub, web, sessionId } = await scene()
+    const bob = await openWeb(hub, "bob")
+    const refused = await upload(hub, bob.cookie, sessionId, png)
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toEqual({
+      error:
+        "Only alice, who started this Session, can drive it: it runs on their Claude credential.",
+    })
+    // What alice attaches, bob still sees.
+    const id = await uploaded(await upload(hub, web.cookie, sessionId, png))
+    const served = await fetch(`${hub.url}/sessions/${sessionId}/attachments/${id}`, {
+      headers: { cookie: bob.cookie },
+    })
+    expect(served.status).toBe(200)
   })
 
   test("is refused past 5 MB, for what isn't an image Claude reads, and from another site", async () => {
@@ -353,8 +391,7 @@ describe("a prompt with attachments", () => {
 
   test("names only files its sender uploaded to this Session", async () => {
     const { hub, web, sessionId, mod } = await scene()
-    const bob = await openWeb(hub, "bob")
-    const bobs = await uploaded(await upload(hub, bob.cookie, sessionId, png))
+    const bobs = await bobsFile(hub, sessionId)
     web.send({ _tag: "SendPrompt", sessionId, text: "look", attachments: [bobs] })
     expect((await web.take("CommandFailed")).message).toContain("attachment")
     web.send({ _tag: "SendPrompt", sessionId, text: "look", attachments: ["made-up"] })
@@ -609,8 +646,7 @@ describe("a message to a subagent with attachments (#278)", () => {
     const statuses = await aDayLater(async (at) => {
       await agentRuns(at)
       const mine = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
-      const bob = await openWeb(at.hub, "bob")
-      const bobs = await uploaded(await upload(at.hub, bob.cookie, at.sessionId, png))
+      const bobs = await bobsFile(at.hub, at.sessionId)
       message(at, [mine, bobs])
       expect((await at.web.take("CommandFailed")).message).toContain("attachment")
       expect(await at.mod.commands("DeliverAgentMessage", 100)).toEqual([])
@@ -633,9 +669,9 @@ describe("a message to a subagent with attachments (#278)", () => {
         exitCode: 143,
       })
       await at.web.take("SessionUpdated", (m) => m.session.state === "Asleep")
-      // Back without a Claude credential, its Runner can't start Claude Code to wake it.
-      await at.runner.close()
-      await openRunner(at.hub, at.token, [], undefined, true, { ownClaudeCredential: false })
+      // Without a Claude credential, there is none to wake it on (ADR 0026).
+      at.web.send({ _tag: "RemoveClaudeCredential", requestId: "rm" })
+      await at.web.take("ClaudeCredentialState", (m) => m.requestId === "rm")
       const shot = await uploaded(await upload(at.hub, at.web.cookie, at.sessionId, png))
       message(at, [shot])
       expect((await at.web.take("CommandFailed")).message).toContain("could not be woken")
@@ -856,9 +892,8 @@ describe("an attachment nobody sent", () => {
           VALUES ('r-1', 'build-box', 'hash', 1)`
         yield* sql`
           INSERT INTO sessions (id, repo, base_branch, work_branch, state, runner_id,
-            runner_login_account, creator_id, created_at)
-          VALUES (${sessionId}, 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'a@example.com',
-            ${alice}, 1)
+            creator_id, created_at)
+          VALUES (${sessionId}, 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', ${alice}, 1)
         `
         return yield* effect
       }).pipe(Effect.provide(DatabaseTest), Effect.provide(TestClock.layer())),

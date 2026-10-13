@@ -8,8 +8,9 @@
 //   stopping one, and presence.
 // - hub-link: reads which prompt it delivered last, and who sent it, to report the Turn it starts
 //   and tell Claude of its files; and which it is steering, to report it joining the Turn.
-// - The person at the terminal: a band above the prompt shows the link and the Participants.
-// - Claude: a tool that opens the files Participants attach to prompts (#276, ADR 0024), which the
+// - The person at the terminal, the Session's Creator: a band above the prompt shows the link and
+//   the Participants watching (ADR 0026).
+// - Claude: a tool that opens the files the Creator attaches to prompts (#276, ADR 0024), which the
 //   plugin API's prompts can't carry: it fetches each from the Hub, and answers with the image or
 //   PDF (#277).
 //
@@ -59,7 +60,7 @@ const state = {
   /** The Turn StopTurn stopped last. */
   stoppedTurn: undefined as string | undefined,
   /**
-   * The AskUserQuestion calls waiting for an answer, by id (#193): each takes a Participant's
+   * The AskUserQuestion calls waiting for an answer, by id (#193): each takes the Creator's
    * answer, and says whether it came first.
    */
   asking: new Map<string, (answer: QuestionAnswer, sender: Participant) => boolean>(),
@@ -154,7 +155,7 @@ const deliverPrompt = async ($: EngineInterface, command: Command<"DeliverPrompt
 }
 
 /**
- * A queued prompt a Participant steered into the running Turn (#195, ADR 0018): a row of the
+ * A queued prompt the Creator steered into the running Turn (#195, ADR 0018): a row of the
  * Turn's conversation, which Claude reads at its next step, as Claude Code adds a prompt typed
  * while it works. hub-link sees it join, and reports it. Once the Turn has ended it can't join:
  * the Hub keeps it queued.
@@ -188,7 +189,7 @@ const deliverIntoTurn = async ($: EngineInterface, command: Command<"DeliverInto
 }
 
 /**
- * A Participant's message to an agent (ADR 0014), with their name and a marker for each file
+ * The Creator's message to an agent (ADR 0014), with their name and a marker for each file
  * (#278), as a prompt is: a running agent reads it at its next tool call; one that has stopped
  * resumes with it. A subagent type that lists its own tools can't open the files.
  */
@@ -322,7 +323,7 @@ export function register(on: On) {
     return started
   })
 
-  // A file a Participant attached (#276, ADR 0024), by the id its marker gives: fetched from the
+  // A file the Creator attached (#276, ADR 0024), by the id its marker gives: fetched from the
   // Hub, through the Runner's relay, in parts the runtime's fetch can read, and handed to Claude as
   // an image block, or a document block for a PDF (#277).
   on("tool.call", { tool: attachmentToolName }, async ($, e) => {
@@ -367,7 +368,7 @@ export function register(on: On) {
   })
 
   // Claude's question on the main loop is the Session's Open question (#193): its dialog opens at
-  // the terminal as ever, and any Participant may answer it from the web UI meanwhile. The first
+  // the terminal as ever, and the Creator may answer it from the web UI meanwhile. The first
   // answer is the one Claude reads; one from the web closes the dialog, by settling this call
   // while it is still open. A subagent's questions are answered at the terminal alone.
   on("tool.call", { tool: "AskUserQuestion" }, async ($, e, next) => {

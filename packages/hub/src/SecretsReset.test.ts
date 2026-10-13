@@ -87,12 +87,12 @@ const variables = (values: { readonly build?: string; readonly runtime?: string 
 /**
  * The scene on a Hub over `database`: a Runner relaying MCP servers online, and alice on the web.
  */
-async function scene(hub: TestHub) {
+async function scene(hub: TestHub, options: { readonly setupToken?: boolean } = {}) {
   const issued = await issueRunnerToken(hub)
   const runner = await openRunner(hub, issued.token, [], undefined, true, {
     relaysMcpServers: true,
   })
-  const web = await openWeb(hub, "alice")
+  const web = await openWeb(hub, "alice", undefined, options)
   const request = async (message: { readonly _tag: string } & Record<string, unknown>) => {
     const requestId = nextRequest()
     web.send({ ...message, requestId })
@@ -124,9 +124,10 @@ async function seededDatabase() {
   await env.setShared({ _tag: "Sensitive", name: "GITHUB_TOKEN", value: sharedSecret })
   await env.setShared({ _tag: "Sensitive", name: "SIGNING_KEY", value: signingSecret })
   await env.setShared({ _tag: "Sensitive", name: "UNUSED_TOKEN", value: sharedSecret })
-  expect(
-    await env.request({ _tag: "SetClaudeCredential", secret: claudeSecret, plan: "max5x" }),
-  ).toMatchObject({ _tag: "ClaudeCredentialState", credential: { kind: "OAuthToken" } })
+  expect(await env.request({ _tag: "SetClaudeCredential", secret: claudeSecret })).toMatchObject({
+    _tag: "ClaudeCredentialState",
+    credential: { kind: "OAuthToken" },
+  })
   const draft = { ...recipe, variables: variables({ build: buildSecret, runtime: runtimeSecret }) }
   expect((await env.testBuild(draft))._tag).toBe("TestBuildEnded")
   expect((await env.apply(draft, null))._tag).toBe("EnvironmentState")
@@ -306,7 +307,7 @@ describe("secrets-reset", () => {
     expect((await reset(file, true)).outcome._tag).toBe("Reset")
 
     const hub = await startHub({ config: withKey(newKey), database: databaseAt(file) })
-    const env = await scene(hub)
+    const env = await scene(hub, { setupToken: false })
     // alice's Claude credential is gone too: she adds it again.
     expect(env.web.claudeCredential.credential).toBeNull()
     const state = await env.request({ _tag: "GetEnvironment", repo })

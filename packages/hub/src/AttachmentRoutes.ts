@@ -1,8 +1,8 @@
 // Attachments (#276, ADR 0024): the files Participants attach to prompts, over HTTP beside the
 // web channel, whose WebSocket stays at Bun's message limit.
 //
-// - `POST /sessions/<id>/attachments`: a Participant who may prompt the Session uploads one file,
-//   the raw body, named in `x-kndl-filename`. Read up to MaxAttachmentBytes and no further; kept as
+// - `POST /sessions/<id>/attachments`: the Session's Creator, who alone prompts it (ADR 0026),
+//   uploads one file, the raw body, named in `x-kndl-filename`. Read up to MaxAttachmentBytes and no further; kept as
 //   the type its bytes are, which must be an image Claude reads or a PDF (#277), whatever
 //   `Content-Type` says, and within the limit for that type.
 // - `GET /sessions/<id>/attachments/<attachmentId>`: the file, to anyone who can see the Session.
@@ -18,6 +18,7 @@ import {
   AttachmentNameHeader,
   AttachmentUploaded,
   attachmentRules,
+  driveRefusal,
   MaxAttachmentBytes,
   MaxModAttachmentPartBytes,
   ModAttachment,
@@ -84,7 +85,9 @@ export const AttachmentRoutes = HttpRouter.use(
         const you = yield* authenticateParticipant
         const access = yield* sessionFrom(you)
         if ("refused" in access) return access.refused
-        // Anyone who may prompt the Session may attach.
+        // Whoever may prompt the Session may attach: its Creator alone.
+        const notYours = driveRefusal(you, access.session.creator)
+        if (notYours !== undefined) return errorResponse(403, notYours.refusal)
         const cantSend = sendPromptRefusal(access.session)
         if (cantSend !== undefined) return errorResponse(409, cantSend.refusal)
         const request = yield* HttpServerRequest.HttpServerRequest

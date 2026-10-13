@@ -321,7 +321,8 @@ export function redactOutcome(needles: Needles, outcome: QuestionOutcome): Quest
 
 /**
  * A Session event with its free text redacted: a prompt, Claude's text, tool input and output,
- * an agent's description, the messages people send it, and questions and their answers.
+ * an agent's description, the messages people send it, questions and their answers, and a prompt
+ * the Hub cancelled.
  */
 export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent {
   if (isEmpty(needles)) return event
@@ -350,6 +351,8 @@ export function redactEvent(needles: Needles, event: SessionEvent): SessionEvent
       return event.message === undefined ? event : { ...event, message: redact(event.message) }
     case "SandboxNoted":
       return { ...event, message: redact(event.message) }
+    case "PromptCancelled":
+      return { ...event, text: redact(event.text), message: redact(event.message) }
     case "QuestionAsked":
       return { ...event, questions: redactQuestions(needles, event.questions) }
     case "QuestionClosed":

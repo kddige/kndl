@@ -32,8 +32,7 @@ export interface NewSession {
   readonly workBranch: string
   readonly state: SessionState
   readonly runnerId: RunnerId
-  readonly runnerLogin: { readonly account: string }
-  /** The Creator, a signed-in Participant: recorded for history only (ADR 0003). */
+  /** The Creator, a signed-in Participant: it runs on their Claude credential (ADR 0026). */
   readonly creatorId: ParticipantId
   readonly createdAt: number
   /** Its model and effort (#128); absent for Claude Code's default. */
@@ -62,7 +61,6 @@ interface SessionRow {
   readonly name: string | null
   readonly state: string
   readonly runnerId: string
-  readonly runnerLoginAccount: string
   readonly creatorId: string
   readonly creatorLogin: string
   readonly creatorName: string
@@ -138,7 +136,6 @@ const toSummary = (
     ...(row.name !== null && { name: row.name }),
     state: decodeState(row.state),
     runnerId: RunnerId.make(row.runnerId),
-    runnerLogin: { account: row.runnerLoginAccount },
     creator: {
       id: ParticipantId.make(row.creatorId),
       login: row.creatorLogin,
@@ -392,7 +389,7 @@ export class Sessions extends Context.Service<
       const selectRows = (where: Fragment) => sql<SessionRow>`
         SELECT s.id, s.repo, s.base_branch AS baseBranch, s.work_branch AS workBranch, s.name,
           s.state,
-          s.runner_id AS runnerId, s.runner_login_account AS runnerLoginAccount,
+          s.runner_id AS runnerId,
           s.creator_id AS creatorId, p.login AS creatorLogin, p.name AS creatorName,
           p.avatar_url AS creatorAvatarUrl,
           s.created_at AS createdAt, s.current_turn AS currentTurn,
@@ -435,13 +432,12 @@ export class Sessions extends Context.Service<
       const create = Effect.fn("Sessions.create")(function* (session: NewSession) {
         yield* sql`
           INSERT INTO sessions (
-            id, repo, base_branch, work_branch, state, runner_id, runner_login_account,
-            creator_id, created_at, model, effort
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, model,
+            effort
           ) VALUES (
             ${session.id}, ${session.repo}, ${session.baseBranch}, ${session.workBranch},
-            ${session.state}, ${session.runnerId}, ${session.runnerLogin.account},
-            ${session.creatorId}, ${session.createdAt}, ${session.model ?? null},
-            ${session.effort ?? null}
+            ${session.state}, ${session.runnerId}, ${session.creatorId}, ${session.createdAt},
+            ${session.model ?? null}, ${session.effort ?? null}
           )
         `
         return Option.getOrThrow(yield* get(session.id))

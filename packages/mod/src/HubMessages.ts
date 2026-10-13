@@ -323,13 +323,16 @@ export const attachmentResult = (parts: ReadonlyArray<ModAttachment>): Attachmen
   }
 }
 
-/** What the model is told about the Session being shared, in the system prompt. */
+/**
+ * What the model is told about the Session being shared, in the system prompt: others watch, and
+ * only the person who started it drives it (ADR 0026).
+ */
 export const sharedSessionNote = [
-  "This session is shared through kndl: several people may watch it live in a web UI and",
-  'send it prompts. A prompt that starts with a name in brackets, such as "[Ada Lovelace] ...",',
-  "came from that person; a prompt without one was typed at the terminal. They can watch your",
-  "subagents too, and message or stop one. When it matters who asked for what, address people",
-  "by name. You run in a sandbox VM where the repository is checked out. A line such as",
+  "This session is shared through kndl: other people may watch it, and your subagents, live in a",
+  "web UI, but only the person who started it sends it prompts, answers your questions, and",
+  "messages or stops a subagent. A prompt that starts with their name in brackets, such as",
+  '"[Ada Lovelace] ...", came from the web UI; a prompt without one was typed at the terminal.',
+  "You run in a sandbox VM where the repository is checked out. A line such as",
   '"[Image #1: name (attachment id)]" or "[PDF #1: name (attachment id)]" in a message stands for',
   `a file its sender attached: to see it, call ${attachmentToolName} with its id.`,
 ].join(" ")

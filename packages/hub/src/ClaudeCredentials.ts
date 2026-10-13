@@ -1,23 +1,22 @@
-// Each person's Claude credential, stored on the Hub (ADR 0015, issue #150).
+// Each person's Claude credential, stored on the Hub (ADR 0015, ADR 0026, issue #150).
 //
-// - One per person: a subscription token (`claude setup-token`) with the plan it is on, or an
-//   Anthropic API key. Encrypted at rest like Sensitive values (Secrets.ts), bound to its owner,
-//   and cleared by `secrets-reset` (SecretsReset.ts).
+// - One per person: a subscription token, as `claude setup-token` prints. API keys aren't taken
+//   for now (#334): any stored from before are deleted as the Hub starts, and a row that doesn't
+//   read as a token is taken as none. Encrypted at rest like Sensitive values (Secrets.ts), bound
+//   to its owner, and cleared by `secrets-reset` (SecretsReset.ts).
 // - Checked with Anthropic before it is stored (ClaudeCheck): one free `count_tokens` request.
 //   A credential Anthropic rejects is refused; one it can't be asked about is stored with a
 //   warning, so a slow or unreachable Anthropic never blocks saving.
-// - Write-only: its owner is shown its kind, last 4 characters, plan and when it was added, never
-//   the value. Only the Runner a Session runs on is sent it, to keep in memory (SessionRelay.ts).
+// - Write-only: its owner is shown its kind, last 4 characters and when it was added, never the
+//   value. Only the Runner of a Session its owner created is sent it, as the Session starts or
+//   wakes, for Claude Code's own environment in the Sandbox (SessionRelay.ts).
 // - Every value, and every one replaced or removed since the Hub started, is masked in what
-//   Sessions print (Redaction.ts), though Claude Code in the Sandbox never holds one.
+//   Sessions print (Redaction.ts): Claude Code in the Sandbox holds its Creator's.
 import {
   type ClaudeCredential,
   type ClaudeCredentialInfo,
-  type ClaudePlanChoice,
-  ClaudePlanChoice as ClaudePlanChoiceSchema,
-  claudeCredentialKindOf,
-  claudeCredentialOf,
   claudeCredentialProblem,
+  credentialFromSecret,
   type EpochMillis,
   type ParticipantId,
 } from "@kndl/protocol"
@@ -57,15 +56,12 @@ const AnthropicError = Schema.Struct({
 })
 const decodeAnthropicError = Schema.decodeUnknownOption(AnthropicError)
 
-const whatItIs = (credential: ClaudeCredential) =>
-  credential._tag === "ApiKey" ? "API key" : "token"
-
 /** How long a reason from Anthropic is kept, so a strange answer can't flood the page. */
 const reasonLimit = 200
 
 /**
  * Asks Anthropic whether a Claude credential is valid. The live layer sends one
- * `POST /v1/messages/count_tokens`; the test layer asks no one.
+ * `POST /v1/messages/count_tokens` with the token as a bearer; the test layer asks no one.
  */
 export class ClaudeCheck extends Context.Service<
   ClaudeCheck,
@@ -76,16 +72,10 @@ export class ClaudeCheck extends Context.Service<
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient
       const check = Effect.fn("ClaudeCheck.check")(function* (credential: ClaudeCredential) {
-        const auth =
-          credential._tag === "ApiKey"
-            ? { "x-api-key": Redacted.value(credential.key) }
-            : {
-                authorization: `Bearer ${Redacted.value(credential.token)}`,
-                "anthropic-beta": oauthBeta,
-              }
         const request = HttpClientRequest.post(countTokensUrl).pipe(
           HttpClientRequest.setHeaders({
-            ...auth,
+            authorization: `Bearer ${Redacted.value(credential.token)}`,
+            "anthropic-beta": oauthBeta,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
           }),
@@ -109,10 +99,7 @@ export class ClaudeCheck extends Context.Service<
                         (type === "authentication_error" || type === "permission_error"))
                     if (refused) {
                       const said = reason === undefined ? "" : `: ${reason.slice(0, reasonLimit)}`
-                      return {
-                        _tag: "Rejected",
-                        message: `Anthropic rejected this ${whatItIs(credential)}${said}`,
-                      }
+                      return { _tag: "Rejected", message: `Anthropic rejected this token${said}` }
                     }
                     return unconfirmed(`Anthropic answered ${response.status}`)
                   }),
@@ -138,13 +125,11 @@ export class ClaudeCheck extends Context.Service<
     ClaudeCheck,
     ClaudeCheck.of({
       check: (credential) => {
-        const value = Redacted.value(
-          credential._tag === "ApiKey" ? credential.key : credential.token,
-        )
+        const value = Redacted.value(credential.token)
         if (value.includes("REJECTED")) {
           return Effect.succeed({
             _tag: "Rejected",
-            message: `Anthropic rejected this ${whatItIs(credential)}: it is invalid.`,
+            message: "Anthropic rejected this token: it is invalid.",
           })
         }
         if (value.includes("UNREACHABLE")) {
@@ -183,33 +168,20 @@ interface Stored {
 
 interface Row {
   readonly participantId: string
-  readonly kind: string
   readonly ciphertext: string
-  readonly last4: string
-  readonly plan: string | null
   readonly addedAt: number
 }
-
-const isPlanChoice = Schema.is(ClaudePlanChoiceSchema)
 
 /** What a credential is encrypted with, so a ciphertext can't be moved to another person. */
 const contextOf = (participantId: ParticipantId) => `claude-credential:${participantId}`
 
-const infoOf = (
-  secret: string,
-  plan: ClaudePlanChoice | undefined,
-  addedAt: EpochMillis,
-): ClaudeCredentialInfo => {
-  const kind = claudeCredentialKindOf(secret) ?? "OAuthToken"
-  return {
-    kind,
-    last4: secret.slice(-4),
-    ...(kind === "OAuthToken" && plan !== undefined && { plan }),
-    addedAt,
-  }
-}
+const infoOf = (secret: string, addedAt: EpochMillis): ClaudeCredentialInfo => ({
+  kind: "OAuthToken",
+  last4: secret.slice(-4),
+  addedAt,
+})
 
-/** Each person's Claude credential (ADR 0015). */
+/** Each person's Claude credential (ADR 0015, ADR 0026). */
 export class ClaudeCredentials extends Context.Service<
   ClaudeCredentials,
   {
@@ -217,18 +189,22 @@ export class ClaudeCredentials extends Context.Service<
     readonly info: (participantId: ParticipantId) => ClaudeCredentialInfo | undefined
     /**
      * Checks the secret's shape, then with Anthropic, and stores it as the person's credential,
-     * replacing any before: what they see of it, and a warning when Anthropic couldn't confirm it.
+     * replacing any before: what they see of it, whether it replaced one, and a warning when
+     * Anthropic couldn't confirm it.
      */
     readonly set: (
       participantId: ParticipantId,
       secret: Redacted.Redacted<string>,
-      plan: ClaudePlanChoice | undefined,
     ) => Effect.Effect<
-      { readonly info: ClaudeCredentialInfo; readonly warning?: string },
+      {
+        readonly info: ClaudeCredentialInfo
+        readonly replaced: boolean
+        readonly warning?: string
+      },
       ClaudeCredentialRefusal | SqlError
     >
-    /** Removes the person's credential, if they have one. */
-    readonly remove: (participantId: ParticipantId) => Effect.Effect<void, SqlError>
+    /** Removes the person's credential: whether they had one. */
+    readonly remove: (participantId: ParticipantId) => Effect.Effect<boolean, SqlError>
     /** The person's credential, to send to the Runner of a Session they created. */
     readonly credentialOf: (participantId: ParticipantId) => ClaudeCredential | undefined
     /** Every value stored, and every one replaced or removed since the Hub started: to redact. */
@@ -245,10 +221,11 @@ export class ClaudeCredentials extends Context.Service<
       const stored = new Map<ParticipantId, Stored>()
       const retired = new Set<string>()
 
+      // API keys aren't taken for now (#334): no Session runs on one any more.
+      yield* sql`DELETE FROM claude_credentials WHERE kind <> 'OAuthToken'`.pipe(Effect.orDie)
       // Secrets.ts refuses to start without the key they were stored with, so each decrypts.
       const rows = yield* sql<Row>`
-        SELECT participant_id AS participantId, kind, ciphertext, last4, plan,
-          added_at AS addedAt
+        SELECT participant_id AS participantId, ciphertext, added_at AS addedAt
         FROM claude_credentials
       `.pipe(Effect.orDie)
       for (const row of rows) {
@@ -263,10 +240,12 @@ export class ClaudeCredentials extends Context.Service<
               ),
             ),
           )
-        if (secret === undefined) continue
-        const plan = row.plan !== null && isPlanChoice(row.plan) ? row.plan : undefined
+        // One that doesn't read as a token is none: its owner's Sessions don't start on it.
+        if (secret === undefined || credentialFromSecret(Redacted.value(secret)) === undefined) {
+          continue
+        }
         stored.set(participantId, {
-          info: infoOf(Redacted.value(secret), plan, row.addedAt as EpochMillis),
+          info: infoOf(Redacted.value(secret), row.addedAt as EpochMillis),
           secret,
         })
       }
@@ -279,10 +258,9 @@ export class ClaudeCredentials extends Context.Service<
       const set = Effect.fn("ClaudeCredentials.set")(function* (
         participantId: ParticipantId,
         secret: Redacted.Redacted<string>,
-        plan: ClaudePlanChoice | undefined,
       ) {
         const value = Redacted.value(secret).trim()
-        const problem = claudeCredentialProblem(value, plan)
+        const problem = claudeCredentialProblem(value)
         if (problem !== undefined) return yield* new ClaudeCredentialRefusal({ message: problem })
         if (!secrets.available) {
           return yield* new ClaudeCredentialRefusal({
@@ -290,12 +268,11 @@ export class ClaudeCredentials extends Context.Service<
               "This Hub can't store a Claude credential: it needs HUB_SECRETS_KEY in its configuration. Ask whoever runs it to set one.",
           })
         }
-        const kind = claudeCredentialKindOf(value)
-        // A plan is a token's alone.
-        const keptPlan = kind === "OAuthToken" ? plan : undefined
-        const credential = claudeCredentialOf(value, keptPlan)
+        const credential = credentialFromSecret(value)
         if (credential === undefined) {
-          return yield* new ClaudeCredentialRefusal({ message: "Paste a token or an API key." })
+          return yield* new ClaudeCredentialRefusal({
+            message: "Paste the token `claude setup-token` printed.",
+          })
         }
         const checked = yield* claude.check(credential)
         if (checked._tag === "Rejected") {
@@ -310,20 +287,20 @@ export class ClaudeCredentials extends Context.Service<
             ),
           )
         const addedAt = (yield* Clock.currentTimeMillis) as EpochMillis
-        const info = infoOf(value, keptPlan, addedAt)
+        const info = infoOf(value, addedAt)
         yield* sql`
-          INSERT INTO claude_credentials (participant_id, kind, ciphertext, last4, plan, added_at)
-          VALUES (${participantId}, ${info.kind}, ${ciphertext}, ${info.last4},
-            ${keptPlan ?? null}, ${addedAt})
+          INSERT INTO claude_credentials (participant_id, kind, ciphertext, last4, added_at)
+          VALUES (${participantId}, ${info.kind}, ${ciphertext}, ${info.last4}, ${addedAt})
           ON CONFLICT (participant_id) DO UPDATE SET kind = excluded.kind,
-            ciphertext = excluded.ciphertext, last4 = excluded.last4, plan = excluded.plan,
-            added_at = excluded.added_at
+            ciphertext = excluded.ciphertext, last4 = excluded.last4, added_at = excluded.added_at
         `
+        const replaced = stored.has(participantId)
         retire(participantId)
         retired.delete(value)
         stored.set(participantId, { info, secret: kept })
         return {
           info,
+          replaced,
           ...(checked._tag === "Unconfirmed" && { warning: checked.warning }),
         }
       })
@@ -333,7 +310,7 @@ export class ClaudeCredentials extends Context.Service<
       ) {
         yield* sql`DELETE FROM claude_credentials WHERE participant_id = ${participantId}`
         retire(participantId)
-        stored.delete(participantId)
+        return stored.delete(participantId)
       })
 
       return ClaudeCredentials.of({
@@ -342,8 +319,9 @@ export class ClaudeCredentials extends Context.Service<
         remove,
         credentialOf: (participantId) => {
           const known = stored.get(participantId)
-          if (known === undefined) return undefined
-          return claudeCredentialOf(Redacted.value(known.secret), known.info.plan)
+          return known === undefined
+            ? undefined
+            : credentialFromSecret(Redacted.value(known.secret))
         },
         values: () => [
           ...[...stored.values()].map((known) => Redacted.value(known.secret)),

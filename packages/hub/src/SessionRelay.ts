@@ -11,7 +11,14 @@
 //   dropped, and its sender gets a CommandFailed, rather than put back to fail again. One it
 //   reports as PromptAlreadySubmitted, delivered again but given to Claude Code before, leaves the
 //   queue as if its Turn had started (#323).
-// - Steering (#195, ADR 0018): while a Turn runs, any Participant can hand a queued prompt to it
+// - Driving (ADR 0026): a Session runs on its Creator's setup token, and only its Creator drives
+//   it. Every command that prompts it, steers or cancels its prompts, answers its questions,
+//   stops its Turns or subagents, controls it (sleep, wake, Keep awake, restart, archive,
+//   restore, rename, model and effort) or uses its terminal is refused anyone else, once Repo
+//   access lets them see it (`authorize`), as is their forward of it Asleep, which would wake it.
+//   They watch: they join it, read it, and forward its Open ports. Its terminal frames go to its
+//   Creator's connections alone.
+// - Steering (#195, ADR 0018): while a Turn runs, the Creator can hand a queued prompt to it
 //   (SteerPrompt), if the Session's mod said in its hello that it steers. The prompt keeps its
 //   place in the queue until the mod reports it joined the Turn (PromptSteered), and nothing else
 //   is delivered meanwhile. A steer the mod reports as PromptFailed leaves the prompt where it
@@ -24,9 +31,8 @@
 //   - Wake: a prompt to an Asleep Session (or WakeSession) wakes it. The Hub records it Active and
 //     sends StartSession with `resume`, the Claude Code session id from the mod's last hello. The
 //     prompt waits in the queue until the new mod says hello.
-//   - Keep awake (SetKeepAwake, ADR 0016): anyone with access to the Repo can turn it on, and it
-//     stays on, recorded with who turned it on, until someone turns it off or presses Sleep, or
-//     the Session is archived. While it is on the Session is never idle, so never put to sleep
+//   - Keep awake (SetKeepAwake, ADR 0016): the Creator can turn it on, and it stays on, recorded
+//     with who turned it on, until they turn it off or press Sleep, or the Session is archived. While it is on the Session is never idle, so never put to sleep
 //     for it; an Asleep one is woken when it is turned on, and again whenever its Runner is back
 //     from a drain or a restart (or the Hub's). A Claude Code that exits on its own leaves it
 //     Asleep, as without Keep awake, rather than starting it again and again.
@@ -45,23 +51,23 @@
 //     Active if its Claude Code is still running in tmux, otherwise Asleep, and woken if prompts
 //     are waiting. A Runner that restarted under it says it has no mod token for it, and is sent
 //     a new one (ModTokenReissued, #157).
-//   - Archive (#18, ADR 0003): any Participant can delete a Session, which archives it at once.
+//   - Archive (#18, ADR 0026): the Creator can delete a Session, which archives it at once.
 //     The Hub records it Archived, with who did it and when, and sends StopSession `Archive`: the
 //     Runner destroys the Sandbox and its volumes, keeping the Workspace.
 //     A Runner that is offline is sent it when it is back. An Archived Session takes no prompts
 //     and opens no terminal; its history stays readable.
-//   - Restore: any Participant can bring an Archived Session back until it is purged. It comes
+//   - Restore: the Creator can bring an Archived Session back until it is purged. It comes
 //     back Asleep (Frozen while its Runner is offline), and its next prompt wakes it on a fresh
 //     Sandbox around the kept Workspace.
 //   - Purge: `HubConfig.archiveRetention` after it was archived, a periodic sweep deletes the
 //     Session, its log and its queue, and sends the Runner PurgeSession to delete its directory,
 //     Claude Code's state and any volumes left. A Runner that is offline is sent it when it is
 //     back, again on every connection until it answers SessionPurged.
-// - Session names (#120): anyone with access can rename a Session (RenameSession), in any state;
+// - Session names (#120): the Creator can rename a Session (RenameSession), in any state;
 //   every client that can see it gets the SessionUpdated. A Session without a name is shown by its
 //   Work branch.
-// - Model and effort (#128): a Session's setting, chosen with CreateSession or changed by anyone
-//   with access (SetSessionModel) unless it is Archived, and checked against the models its
+// - Model and effort (#128): a Session's setting, chosen with CreateSession or changed by its
+//   Creator (SetSessionModel) unless it is Archived, and checked against the models its
 //   Runner's Claude Code said it has. Each change is logged as a ModelSwitched. Claude Code takes
 //   them as `--model` and `--effort` when it starts; a running one never switches mid-Turn: once
 //   no Turn runs, the Hub sends RelaunchSession, and the Runner starts Claude Code again,
@@ -73,21 +79,22 @@
 //   idle, so it doesn't sleep under the agent, and a draining Runner waits for it as for a Turn.
 //   When its Claude Code stops (sleep, exit, a lost Runner, a relaunch for a new model), its
 //   Running agents are Interrupted.
-//   - Any Participant can message an agent (MessageAgent): logged as AgentMessaged and sent to
+//   - The Creator can message an agent (MessageAgent): logged as AgentMessaged and sent to
 //     the mod, which resumes one that has stopped. An Asleep Session is woken for it first. A
 //     Running agent can be stopped (StopAgent). A mod that can't do either says so with
 //     AgentCommandFailed, passed on to the person as a CommandFailed.
 // - Open questions (#193): when Claude asks with AskUserQuestion on the main loop, the mod reports
 //   QuestionAsked. The Hub logs it and keeps it as the Session's Open question (Sessions.ts), so
 //   a client that reloads, or a Hub that restarts, still shows it; while it is open the Session
-//   isn't idle. Any Participant may answer it (AnswerQuestion): the Hub sends the mod a
+//   isn't idle. The Creator may answer it (AnswerQuestion): the Hub sends the mod a
 //   DeliverAnswer for the question it reported only, and the mod settles which answer came first,
 //   there or at the terminal, and reports QuestionClosed, which closes it. A later answer is
 //   refused, by the Hub or by the mod (AnswerFailed), saying who answered first and what. A
 //   question still open when its Turn ends, or its Claude Code stops, or it is archived, is
-//   closed Cancelled. What Participants pick before answering (PickAnswer) is passed to everyone
+//   closed Cancelled. What the Creator picks before answering (PickAnswer) is passed to everyone
 //   in the Session (QuestionPicks), in memory only.
-// - The terminal mirror: frames from the Runner to the web clients watching, keystrokes back.
+// - The terminal mirror: frames from the Runner to the Creator's web clients watching, keystrokes
+//   back.
 // - Open ports (#175, ADR 0016): while a Session is Active its Runner reports what listens in its
 //   Sandbox whenever that changes, the whole list each time. The Hub keeps the latest list in
 //   memory only, process names redacted, and sends it with the Session to the web. It is cleared
@@ -113,11 +120,12 @@
 //   SandboxNoted warns of each. Mid-Session, the Gateway reports a server's 401 or 403 and its own
 //   409 for a value needed: each is noted in the Session once, until the Installation works again,
 //   and the Session runs on.
-// - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo, and the Sandbox
-//   tokens of its Sessions (#73), are masked in every event before it is logged, and in terminal
-//   frames before they are relayed. Claude's text
-//   (TextDelta) and terminal Output are streams: text that could start a value is held back
-//   until the next event or frame, or `holdMillis` at most.
+// - Redaction (#48, Redaction.ts): the Sensitive values of a Session's Repo, the Sandbox tokens
+//   of its Sessions (#73), and the Claude credentials, its Creator's among them (ADR 0026), are
+//   masked in every event before it is logged, in terminal frames before they are relayed, and in
+//   the last lines a Claude Code that exited printed. Claude's text (TextDelta) and terminal
+//   Output are streams: text that could start a value is held back until the next event or
+//   frame, or `holdMillis` at most.
 // - Repo access (#52, ADR 0003, RepoAccess.ts): a web client is sent only the Sessions of Repos
 //   its person has access to, and every command about a Session, or creating one, is checked
 //   first, off the lock, since it may wait on GitHub. A Session the person has no access to is
@@ -134,12 +142,21 @@
 //   entered, before a new Session or Environment is set up; ListRepos and ListBranches fill in
 //   New Session's Repo and branch choices (ADR 0023), off the lock too. Shared variables aren't
 //   any Repo's.
-// - Claude credentials (ADR 0015, ClaudeCredentials.ts): each person stores their own, checked
-//   with Anthropic off the lock, and is sent what they can see of it (ClaudeCredentialState)
-//   after the welcome and whenever it changes. A Session runs on its Creator's, else on its
-//   Runner's own: a Runner asks for it just before it starts Claude Code, and only for a Session
-//   it runs. A Session neither has a credential for doesn't start: CreateSession is refused, and
-//   a wake leaves it Asleep. Every credential is redacted from every Session.
+// - Claude credentials (ADR 0015, ADR 0026, ClaudeCredentials.ts): each person stores their own
+//   setup token, checked with Anthropic off the lock, and is sent what they can see of it
+//   (ClaudeCredentialState) after the welcome and whenever it changes. A Session runs on its
+//   Creator's alone: a Runner asks for it just before it starts Claude Code, and only for a
+//   Session it runs. A Session whose Creator has none, or isn't a Member any more, doesn't start:
+//   CreateSession is refused, a wake leaves it Asleep, and the Runner's fetch is refused. Every
+//   credential is redacted from every Session.
+//   - Revoking: when a Creator removes or replaces theirs, or is removed as a Member, their
+//     Active Sessions are put to sleep at once, even mid-Turn, each saying why. A Frozen one is
+//     put to sleep when its Runner is back, as is one whose Creator has no credential then, or
+//     isn't a Member.
+//   - Upgrading: as the Hub starts, prompts queued by anyone but their Session's Creator, from
+//     before only the Creator could prompt, are taken out of the queue, each logged as a
+//     PromptCancelled. Every Session is Frozen then, so one whose Creator has no credential is
+//     put to sleep when its Runner is back, as above.
 // - Tunnels (#177, ADR 0016): a connection to one of an Active Session's Open ports. Once
 //   TunnelRoutes.ts has checked the caller's access, `openTunnel` checks the Session can take
 //   one, picks the loopback address in the port's address family, and sends its Runner an
@@ -149,8 +166,9 @@
 //   whenever one is made or revoked, and may revoke them from any of their web clients.
 // - Forwards (#180, ADR 0016): `kndl forward` keeps a connection per Session it forwards
 //   (ForwardRoutes.ts), sent the Session whenever it changes. A forward is presence, named with
-//   the machine its CLI token is named after, so it keeps the Session from being idle. One to an
-//   Asleep Session wakes it. When the Session goes to sleep anyway, or is archived or purged, or
+//   the machine its CLI token is named after, so it keeps the Session from being idle. Its
+//   Creator's forward to an Asleep Session wakes it; anyone else's is closed, since waking it
+//   drives it (ADR 0026). When the Session goes to sleep anyway, or is archived or purged, or
 //   its person loses access or revokes the CLI token, the forward is closed, saying why.
 //
 // Every change runs under one lock, so a joining client's history and the live entries after it
@@ -174,6 +192,7 @@ import {
   DeliverAnswer,
   DeliverIntoTurn,
   DeliverPrompt,
+  driveRefusal,
   type EnvironmentVersion,
   ForwardCloseCode,
   ForwardSession,
@@ -191,6 +210,7 @@ import {
   type McpServerCommand,
   PresenceChanged,
   type PresentParticipant,
+  PromptCancelled,
   PromptId,
   PromptQueueChanged,
   QueuedPrompt,
@@ -304,6 +324,7 @@ import {
   makeMemberRelay,
   RemovedCloseCode,
 } from "./MemberRelay.ts"
+import { Members } from "./Members.ts"
 import { ModOutbox } from "./ModOutbox.ts"
 import { ModTokens } from "./ModTokens.ts"
 import type { PairingRefused, Redeemed } from "./PairingCodes.ts"
@@ -408,6 +429,32 @@ interface AccessVerdict {
   /** Why the command is refused, if it is. */
   readonly refusal?: string
 }
+
+/**
+ * The web commands that drive a Session, which only its Creator may send (ADR 0026): everyone
+ * else with Repo access watches it.
+ */
+const drivingCommands: ReadonlySet<WebToHub["_tag"]> = new Set<WebToHub["_tag"]>([
+  "SendPrompt",
+  "CancelPrompt",
+  "SteerPrompt",
+  "StopTurn",
+  "MessageAgent",
+  "StopAgent",
+  "AnswerQuestion",
+  "PickAnswer",
+  "SleepSession",
+  "WakeSession",
+  "SetKeepAwake",
+  "RestartSession",
+  "ArchiveSession",
+  "RestoreSession",
+  "RenameSession",
+  "SetSessionModel",
+  "OpenTerminal",
+  "TerminalInput",
+  "TerminalResize",
+])
 
 /** Fails opening a tunnel, with the close code its client gets (ADR 0016). */
 const refuseTunnel = (code: TunnelCloseCode, message: string) =>
@@ -543,7 +590,8 @@ export class SessionRelay extends Context.Service<
     /**
      * A `kndl forward`, once welcomed, by a caller already checked for access (#180): sends
      * it the Session, now and whenever it changes, and counts it as presence until the scope
-     * closes. An Asleep Session is woken; one that can't be is closed, saying why.
+     * closes. An Asleep Session is woken, for its Creator alone; one that isn't is closed,
+     * saying why.
      */
     readonly connectForward: (
       cli: CliIdentity,
@@ -620,6 +668,7 @@ export class SessionRelay extends Context.Service<
       const hubVersion = yield* HubVersion
       const updatePush = yield* RunnerUpdatePush
       const claudeCredentials = yield* ClaudeCredentials
+      const members = yield* Members
       const tunnels = yield* Tunnels
       const cliTokens = yield* CliTokens
       const layerScope = yield* Effect.scope
@@ -665,7 +714,6 @@ export class SessionRelay extends Context.Service<
               ...(updater !== null && { updater }),
               ...(models !== null && { models }),
               ...(update !== undefined && { update }),
-              ...(online !== undefined && { ownClaudeCredential: online.ownClaudeCredential }),
             }
           }),
         })
@@ -679,7 +727,7 @@ export class SessionRelay extends Context.Service<
 
       const memberRelay = yield* makeMemberRelay({
         toWeb: (message, to) => toWeb(message, to),
-        removed: (participantId) =>
+        removed: (participantId, by) =>
           serialized(
             Effect.gen(function* () {
               const before = peers.closeWhere(
@@ -688,6 +736,11 @@ export class SessionRelay extends Context.Service<
                 "You were removed from this Hub.",
               )
               for (const [id, present] of before) yield* presenceChanged(id, present)
+              // Their Sessions run on their Claude credential, which no Session gets now.
+              yield* sleepSessionsOf(participantId, (creator) => ({
+                by,
+                message: `Put to sleep: ${creator.login}, who started it, was removed from the Hub`,
+              }))
             }),
           ),
       })
@@ -738,36 +791,63 @@ export class SessionRelay extends Context.Service<
       }
 
       /**
-       * Why a Session for `creator` can't start on `runner`: neither has a Claude credential
-       * (ADR 0015). `you` is who is told, when it is the Creator.
+       * Why a Session for `creator` can't start: they have no setup token, which it would run on,
+       * and there is no other (ADR 0026). `you` is who is told, when it is the Creator.
        */
-      const noClaudeCredential = (
-        creator: Participant,
-        runner: OnlineRunner,
-        you?: Participant,
-      ): string | undefined => {
-        if (runner.ownClaudeCredential || claudeCredentials.info(creator.id) !== undefined) {
-          return undefined
-        }
+      const noClaudeCredential = (creator: Participant, you?: Participant): string | undefined => {
+        if (claudeCredentials.info(creator.id) !== undefined) return undefined
         return you?.id === creator.id
-          ? `Neither you nor ${runner.name} has a Claude credential: add yours on the Account page.`
-          : `Neither ${creator.login}, whom this Session runs for, nor ${runner.name} has a Claude credential: ${creator.login} can add theirs on the Account page.`
+          ? "You have no Claude credential: add your setup token on the Account page."
+          : `${creator.login}, who started this Session, has no Claude credential: they can add theirs on the Account page.`
       }
 
       /**
-       * The online Runner a Session goes to when its Creator picked none: one that can run it on
-       * a Claude credential, its Creator's or its own (ADR 0015), if any can.
+       * Why the Session's Claude Code may not run any more (ADR 0026): its Creator has no setup
+       * token now, or isn't a Member, so it is put to sleep, saying so. Undefined while it may.
        */
-      const anyRunnerFor = (creator: Participant): OnlineRunner | undefined => {
-        const online = peers.runners()
-        return (
-          online.find((runner) => noClaudeCredential(creator, runner) === undefined) ?? online[0]
-        )
-      }
+      const notRunnable = Effect.fn("SessionRelay.notRunnable")(function* (
+        session: SessionSummary,
+      ): Effect.fn.Return<Why | undefined, SqlError> {
+        const { creator } = session
+        if (!(yield* members.isMember(creator.id))) {
+          return {
+            message: `Put to sleep: ${creator.login}, who started it, isn't a Member of this Hub any more`,
+          }
+        }
+        if (claudeCredentials.info(creator.id) === undefined) {
+          return {
+            message: `Put to sleep: it runs on the Claude credential of ${creator.login}, who started it, and they have none`,
+          }
+        }
+        return undefined
+      })
 
       /**
-       * The Session as the web sees it: what is stored, whose Claude account it runs on, and
-       * whether it is starting or restarting.
+       * Why a Frozen Session whose Creator's credential was revoked is put to sleep when its
+       * Runner is back, in memory only: one still without a credential then is put to sleep all
+       * the same (`notRunnable`).
+       */
+      const revokedWhileAway = new Map<SessionId, Why>()
+
+      /**
+       * Puts to sleep the Sessions that `creatorId` created and that run now, even mid-Turn, saying
+       * why (ADR 0026): the Claude credential they run on was removed or replaced, or its owner
+       * removed from the Hub. A Frozen one is put to sleep when its Runner is back.
+       */
+      const sleepSessionsOf = Effect.fn("SessionRelay.sleepSessionsOf")(function* (
+        creatorId: ParticipantId,
+        why: (creator: Participant) => Why,
+      ) {
+        for (const session of yield* sessions.list) {
+          if (session.creator.id !== creatorId) continue
+          if (session.state === "Active") yield* putToSleep(session, why(session.creator))
+          else if (session.state === "Frozen")
+            revokedWhileAway.set(session.id, why(session.creator))
+        }
+      })
+
+      /**
+       * The Session as the web sees it: what is stored, and whether it is starting or restarting.
        */
       const forWeb = (session: SessionSummary): SessionSummary => {
         const { start, restart, openPorts } = live.view(session.id)
@@ -775,8 +855,6 @@ export class SessionRelay extends Context.Service<
         return {
           ...session,
           ...(ports !== undefined && ports.length > 0 && { openPorts: ports }),
-          claudeAccount:
-            claudeCredentials.info(session.creator.id) === undefined ? "Runner" : "Creator",
           ...(start !== undefined && {
             starting: {
               since: start.since,
@@ -1012,15 +1090,21 @@ export class SessionRelay extends Context.Service<
         yield* append(sessionId, redactEvent(needles, event))
       })
 
-      /** Sends a terminal frame, redacted, to those watching. */
+      /**
+       * Sends a terminal frame, redacted, to those watching: the Creator's connections alone, as
+       * no one else opens its terminal (ADR 0026).
+       */
       const terminalFrame = Effect.fn("SessionRelay.terminalFrame")(function* (
-        repo: string,
+        session: SessionSummary,
         frame: TerminalFrame,
       ) {
         const { sessionId } = frame
-        const needles = yield* needlesFor(repo)
+        const needles = yield* needlesFor(session.repo)
         const send = (data: string, size: TerminalFrame["size"]) => {
-          toWeb({ ...frame, size, data }, (client) => client.terminals.has(sessionId))
+          toWeb(
+            { ...frame, size, data },
+            (client) => client.terminals.has(sessionId) && client.you.id === session.creator.id,
+          )
           // Before Claude Code's terminal is up, the output is the start's: the Environment's
           // build and start script. A terminal shows nothing until a Snapshot, so the web shows
           // it from here instead (#70).
@@ -1418,6 +1502,15 @@ export class SessionRelay extends Context.Service<
             ) {
               return
             }
+            // Put to sleep meanwhile, as when its Creator's credential was revoked (ADR 0026): it
+            // doesn't start.
+            if (live.goingToSleep(session.id)) {
+              const settled = live.stopped(session.id)
+              return yield* claudeGone(
+                now.value,
+                settled._tag === "Stop" ? (settled.asked ?? {}) : {},
+              )
+            }
             const blocking = failures.filter(failureBlocksStart)
             if (blocking.length > 0) {
               return yield* claudeGone(now.value, {
@@ -1605,7 +1698,7 @@ export class SessionRelay extends Context.Service<
         // Its prompts wait in its queue, and wake it once its Runner is updated.
         const refusal = runnerRefusal(runner)
         if (refusal !== undefined) return refusal
-        const cantStart = yield* cantStartOn(session, runner, why.by)
+        const cantStart = yield* cantStartOn(session, why.by)
         if (cantStart !== undefined) {
           // Asleep, it has no start under way.
           live.restartOver(session.id)
@@ -1656,12 +1749,11 @@ export class SessionRelay extends Context.Service<
       })
 
       /**
-       * Why the Session's Claude Code can't start on `runner`: values its Environment needs are
-       * unset, or there is no Claude credential to run it on. `you` is who is told.
+       * Why the Session's Claude Code can't start: values its Environment needs are unset, or
+       * there is no Claude credential to run it on, its Creator's (ADR 0026). `you` is who is told.
        */
       const cantStartOn = Effect.fn("SessionRelay.cantStartOn")(function* (
         session: SessionSummary,
-        runner: OnlineRunner,
         you: Participant | undefined,
       ) {
         const needed = yield* environments.valuesNeeded(session.repo)
@@ -1671,7 +1763,10 @@ export class SessionRelay extends Context.Service<
             valuesNeeded: true,
           }
         }
-        const noCredential = noClaudeCredential(session.creator, runner, you)
+        const { creator } = session
+        const noCredential = (yield* members.isMember(creator.id))
+          ? noClaudeCredential(creator, you)
+          : `${creator.login}, who started this Session, isn't a Member of this Hub any more.`
         if (noCredential !== undefined) {
           return { message: `Claude Code could not start: ${noCredential}`, valuesNeeded: false }
         }
@@ -1908,14 +2003,14 @@ export class SessionRelay extends Context.Service<
 
       /**
        * Creates a Session and starts it on the plan's Runner, which must be online and able to
-       * start Sessions: the Session, or why it can't start, as for an Environment that is missing
-       * or needs values.
+       * start Sessions: the Session, or why it can't start, as for a Creator with no Claude
+       * credential, or an Environment that is missing or needs values.
        */
       const startNew = Effect.fn("SessionRelay.startNew")(function* (
         plan: NewSessionPlan,
       ): Effect.fn.Return<SessionSummary | string, SqlError> {
         const { repo, runner } = plan
-        const noCredential = noClaudeCredential(plan.creator, runner, plan.why.by)
+        const noCredential = noClaudeCredential(plan.creator, plan.why.by)
         if (noCredential !== undefined) return noCredential
         const missing = yield* environmentRelay.missingEnvironment(repo)
         if (missing !== undefined) return missing
@@ -1929,7 +2024,6 @@ export class SessionRelay extends Context.Service<
           ...branchesFor(plan.branch, id),
           state: "Active",
           runnerId: runner.id,
-          runnerLogin: runner.login,
           creatorId: plan.creator.id,
           createdAt: yield* Clock.currentTimeMillis,
           ...modelFlags(plan.model ?? {}),
@@ -1998,7 +2092,8 @@ export class SessionRelay extends Context.Service<
          * person has no access to is refused as if there were no such Session, and a command about
          * a Repo, creating a Session or about its Environment (#104), alike whether the Repo
          * exists or not. Leaving a Session or closing its terminal needs no access, nor do Runner
-         * commands or shared variables, which are no Repo's: there are no roles (ADR 0009).
+         * commands or shared variables, which are no Repo's: there are no roles (ADR 0009). A
+         * command that drives a Session is then refused anyone but its Creator (ADR 0026).
          */
         const authorize = Effect.fn("SessionRelay.authorize")(function* (
           message: RelayedCommand,
@@ -2006,6 +2101,7 @@ export class SessionRelay extends Context.Service<
           if (isRunnerCommand(message)) return {}
           let repo: string
           let refusal: string
+          let creator: Participant | undefined
           switch (message._tag) {
             case "WebHello":
             case "LeaveSession":
@@ -2030,6 +2126,7 @@ export class SessionRelay extends Context.Service<
               if (Option.isNone(session)) return {}
               repo = session.value.repo
               refusal = "There is no such Session."
+              if (drivingCommands.has(message._tag)) creator = session.value.creator
             }
           }
           const checked = yield* access.check(you, repo).pipe(
@@ -2038,14 +2135,17 @@ export class SessionRelay extends Context.Service<
               Effect.succeed({ unknown: error.message }),
             ),
           )
+          // Only once the person may see the Session: one they can't is no such Session to them.
+          const notYours = creator === undefined ? undefined : driveRefusal(you, creator)?.refusal
           if ("allowed" in checked) {
             return {
               learned: { repo, allowed: checked.allowed },
-              ...(!checked.allowed && { refusal }),
+              ...(!checked.allowed ? { refusal } : notYours !== undefined && { refusal: notYours }),
             }
           }
           // When GitHub can't say, the person keeps what they had.
-          if (client.repos.get(repo) === true) return {}
+          if (client.repos.get(repo) === true)
+            return notYours === undefined ? {} : { refusal: notYours }
           yield* Effect.logWarning(checked.unknown)
           return {
             refusal:
@@ -2184,7 +2284,7 @@ export class SessionRelay extends Context.Service<
             case "CreateSession": {
               const { requestId } = message
               const runner =
-                message.runnerId === undefined ? anyRunnerFor(you) : peers.runner(message.runnerId)
+                message.runnerId === undefined ? peers.runners()[0] : peers.runner(message.runnerId)
               if (runner === undefined) {
                 return refuse(
                   message,
@@ -2308,7 +2408,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "SetKeepAwake": {
-              // Anyone with access to the Session's Repo may, in any state but Archived (ADR 0016).
+              // Its Creator may, in any state but Archived (ADR 0016, ADR 0026).
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -2370,7 +2470,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "ArchiveSession": {
-              // Anyone with access to the Session's Repo may (ADR 0003).
+              // Its Creator may (ADR 0026).
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -2381,7 +2481,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "RenameSession": {
-              // Anyone with access to the Session's Repo may, in any state (#120).
+              // Its Creator may, in any state (#120).
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -2393,7 +2493,7 @@ export class SessionRelay extends Context.Service<
             }
 
             case "SetSessionModel": {
-              // Anyone with access to the Session's Repo may, in any state but Archived (#128).
+              // Its Creator may, in any state but Archived (#128).
               const { sessionId } = message
               const session = yield* sessionFor(message)
               if (Option.isNone(session)) return
@@ -2647,8 +2747,9 @@ export class SessionRelay extends Context.Service<
         /**
          * Stores or removes the person's Claude credential (ADR 0015), off the lock since a check
          * waits on Anthropic. Then, under it, every connection of theirs is sent what they can
-         * see of it, the asker with its `requestId`, and their Sessions with whose account they
-         * run on; and what Sessions print is redacted of it from now on.
+         * see of it, the asker with its `requestId`, and what Sessions print is redacted of it
+         * from now on. One removed or replaced puts the Sessions running on it to sleep, saying
+         * why (ADR 0026): those on a replaced one wake on the new one.
          */
         const claudeCredentialCommand = (
           message: Extract<
@@ -2660,8 +2761,8 @@ export class SessionRelay extends Context.Service<
             const { requestId } = message
             const changed =
               message._tag === "SetClaudeCredential"
-                ? yield* claudeCredentials.set(you.id, message.secret, message.plan)
-                : yield* Effect.as(claudeCredentials.remove(you.id), { info: undefined })
+                ? yield* claudeCredentials.set(you.id, message.secret)
+                : { info: undefined, removed: yield* claudeCredentials.remove(you.id) }
             yield* serialized(
               Effect.gen(function* () {
                 needlesByRepo.clear()
@@ -2680,9 +2781,19 @@ export class SessionRelay extends Context.Service<
                       : {}),
                   }),
                 )
-                for (const session of yield* sessions.list) {
-                  if (session.creator.id === you.id) yield* sessionToWeb(session)
+                if ("removed" in changed) {
+                  if (!changed.removed) return
+                  return yield* sleepSessionsOf(you.id, () => ({
+                    by: you,
+                    message: "Put to sleep: the Claude credential it ran on was removed",
+                  }))
                 }
+                if (!changed.replaced) return
+                yield* sleepSessionsOf(you.id, () => ({
+                  by: you,
+                  message:
+                    "Put to sleep, to wake on a new Claude credential: the one it ran on was replaced",
+                }))
               }),
             )
           }).pipe(
@@ -3000,24 +3111,28 @@ export class SessionRelay extends Context.Service<
             return yield* environmentRelay.receiveRunner(runner, message)
           }
           if (message._tag === "FetchClaudeCredential") {
-            // Only for a Session this Runner runs (ADR 0015): its Creator's credential, if any.
+            // Only for a Session this Runner runs (ADR 0015): its Creator's credential, which
+            // there is no other for (ADR 0026), while they are a Member.
             const { requestId } = message
+            const refused = (why: string) =>
+              runner.peer.send(ClaudeCredentialRefused.make({ requestId, message: why }))
             const session = yield* ownSession(message.sessionId)
             if (Option.isNone(session) || session.value.state === "Archived") {
-              return runner.peer.send(
-                ClaudeCredentialRefused.make({
-                  requestId,
-                  message: "Not a Session this Runner runs.",
-                }),
+              return refused("Not a Session this Runner runs.")
+            }
+            const { creator } = session.value
+            if (!(yield* members.isMember(creator.id))) {
+              return refused(
+                `${creator.login}, who started this Session, isn't a Member of this Hub any more.`,
               )
             }
-            const credential = claudeCredentials.credentialOf(session.value.creator.id)
-            return runner.peer.send(
-              ClaudeCredentialFetched.make({
-                requestId,
-                ...(credential !== undefined && { credential }),
-              }),
-            )
+            const credential = claudeCredentials.credentialOf(creator.id)
+            if (credential === undefined) {
+              return refused(
+                `${creator.login}, who started this Session, has no Claude credential.`,
+              )
+            }
+            return runner.peer.send(ClaudeCredentialFetched.make({ requestId, credential }))
           }
           if (message._tag === "FetchCloneAccess") {
             const { requestId } = message
@@ -3148,7 +3263,7 @@ export class SessionRelay extends Context.Service<
               // the other Sandbox states are for the Runner's log.
               return yield* Effect.logDebug(`Sandbox of ${message.sessionId}: ${message.state}`)
             case "TerminalFrame":
-              return yield* terminalFrame(session.value.repo, message)
+              return yield* terminalFrame(session.value, message)
             case "GitRequest":
               // Answered off the lock: it may wait on GitHub.
               yield* sessionGit.answer(session.value, message.ask).pipe(
@@ -3212,13 +3327,11 @@ export class SessionRelay extends Context.Service<
           const runner: OnlineRunner = {
             id: identity.runnerId,
             name: identity.name,
-            login: hello.login,
             peer,
             asksCloneAccess: hello.asksCloneAccess === true,
             version: hello.version,
             updater: hello.updater,
             relaunches: hello.relaunches === true,
-            ownClaudeCredential: hello.ownClaudeCredential !== false,
             forwardsPorts: hello.forwardsPorts === true,
             relaysMcpServers: hello.relaysMcpServers === true,
           }
@@ -3233,12 +3346,7 @@ export class SessionRelay extends Context.Service<
               }
               yield* runners.recordHello(
                 runner.id,
-                {
-                  login: runner.login,
-                  version: hello.version,
-                  updater: hello.updater,
-                  models: hello.models,
-                },
+                { version: hello.version, updater: hello.updater, models: hello.models },
                 yield* Clock.currentTimeMillis,
               )
               // Settles an update it restarted for, before its Sessions wake.
@@ -3269,8 +3377,14 @@ export class SessionRelay extends Context.Service<
                     peer.send(ModTokenReissued.make({ sessionId: session.id, modToken }))
                   }
                   yield* changeState(session, "Active", { message: `${runner.name} is back` })
-                  yield* deliverNext(session.id)
+                  // Its Creator's credential was revoked while it was away, or it has none to run
+                  // on now, as after an upgrade (ADR 0026): it goes to sleep instead.
+                  const revoked = revokedWhileAway.get(session.id) ?? (yield* notRunnable(session))
+                  revokedWhileAway.delete(session.id)
+                  if (revoked !== undefined) yield* putToSleep(session, revoked)
+                  else yield* deliverNext(session.id)
                 } else {
+                  revokedWhileAway.delete(session.id)
                   if (session.state !== "Asleep") {
                     yield* claudeGone(session, {
                       message: `${runner.name} is back; Claude Code is not running there`,
@@ -3612,6 +3726,29 @@ export class SessionRelay extends Context.Service<
 
       // ── Start-up ─────────────────────────────────────────────────────────
 
+      // Only the Creator prompts a Session (ADR 0026): a prompt someone else queued before is
+      // cancelled, and the chat shows it was. Done each time the Hub starts, it finds none the
+      // second time.
+      for (const session of yield* sessions.list) {
+        const { creator } = session
+        let cancelled = false
+        for (const prompt of yield* prompts.list(session.id)) {
+          if (prompt.sender.id === creator.id) continue
+          if (Option.isNone(yield* prompts.remove(session.id, prompt.id))) continue
+          cancelled = true
+          yield* logEvent(
+            session.id,
+            PromptCancelled.make({
+              promptId: prompt.id,
+              sender: prompt.sender,
+              text: prompt.text,
+              message: `Cancelled: only ${creator.name}, who started this Session, can prompt it now.`,
+            }),
+          )
+        }
+        if (cancelled) yield* Effect.logInfo(`Cancelled the prompts others queued in ${session.id}`)
+      }
+
       // No Runner is connected to a Hub that just started, so every Session waits Frozen for
       // its Runner to say hello.
       for (const session of yield* sessions.list) {
@@ -3755,7 +3892,8 @@ export class SessionRelay extends Context.Service<
 
       /**
        * A forward to the Session, from a caller ForwardRoutes.ts has checked for access. An Asleep
-       * Session is woken first: one that can't be is closed with why, and never counted present.
+       * Session is woken first, if the caller is its Creator: one that isn't is closed with why,
+       * and never counted present.
        */
       const connectForward = (cli: CliIdentity, sessionId: SessionId, peer: Peer<HubToForward>) =>
         Effect.gen(function* () {
@@ -3771,15 +3909,24 @@ export class SessionRelay extends Context.Service<
                 peer.close(ForwardCloseCode.Archived, "The Session is archived.")
                 return undefined
               }
+              // Waking it drives it: only its Creator's forward does (ADR 0026).
+              if (session.state === "Asleep" && cli.participant.id !== session.creator.id) {
+                peer.close(
+                  ForwardCloseCode.WentAsleep,
+                  closeReason(
+                    `The Session is Asleep, and only ${session.creator.name} can wake it.`,
+                  ),
+                )
+                return undefined
+              }
               if (session.state === "Asleep") {
                 const refused = yield* wake(session, { by: cli.participant })
                 const woken = Option.getOrUndefined(yield* sessions.get(sessionId))
                 if (refused !== undefined || woken === undefined || woken.state !== "Active") {
-                  const runner = peers.runner(session.runnerId)
                   const cantStart =
-                    runner === undefined
+                    peers.runner(session.runnerId) === undefined
                       ? undefined
-                      : yield* cantStartOn(session, runner, cli.participant)
+                      : yield* cantStartOn(session, cli.participant)
                   peer.close(
                     ForwardCloseCode.WentAsleep,
                     closeReason(

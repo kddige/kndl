@@ -363,6 +363,13 @@ test("the shared Session's note says where the model runs, and leaves `!` alone 
   expect(sharedSessionNote).not.toContain("!")
 })
 
+test("the shared Session's note says others watch, and only its starter prompts (ADR 0026)", () => {
+  expect(sharedSessionNote).toContain("other people may watch it")
+  expect(sharedSessionNote).toContain("only the person who started it sends it prompts")
+  expect(sharedSessionNote).not.toContain("several people")
+  expect(sharedSessionNote).not.toContain("address people")
+})
+
 const notification = [
   "<task-notification>",
   "<task-id>a1b2c3</task-id>",
