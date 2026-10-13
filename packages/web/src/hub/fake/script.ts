@@ -129,8 +129,9 @@ export function seedInvites(): Array<PendingInviteWire> {
 export const hubVersion = { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", branch: "main" }
 
 /**
- * What the fake Runners' Claude Code has (#128), as a Runner on Claude Code 2.1.289 says it in its
- * hello: Haiku takes no effort level.
+ * What the fake Runners' Claude Code has (#128), as a Runner on Claude Code 2.1.289 said it in its
+ * hello. Kept from that build, whose Haiku 4.5 takes no effort level, so the UI shows a model that
+ * takes none; the pinned build's are PinnedClaudeModels (packages/runner/src/ClaudeModels.ts).
  */
 export const fakeModels: NonNullable<RunnerSummaryWire["models"]> = {
   default: {

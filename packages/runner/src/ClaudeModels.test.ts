@@ -7,6 +7,7 @@ import {
   PinnedClaudeModels,
   parseEfforts,
   parseModelProbe,
+  probeModels,
   runnerModels,
 } from "./ClaudeModels.ts"
 import { PinnedClaudeVersion } from "./sandbox/SandboxClaude.ts"
@@ -154,6 +155,43 @@ describe("runnerModels", () => {
     expect(models.models.find((model) => model.alias === "opus[1m]")?.label).toBe(
       "Opus 5.5 (1M context)",
     )
+  })
+})
+
+// What each alias resolves to, as Claude Code 2.1.296 resolves it.
+const resolved: Record<string, readonly [string, string]> = {
+  sonnet: ["claude-sonnet-5-5", "Sonnet 5.5"],
+  opus: ["claude-opus-5-5", "Opus 5.5"],
+  haiku: ["claude-haiku-5-5", "Haiku 5.5"],
+  fable: ["claude-fable-5-1", "Fable 5.1"],
+  best: ["claude-fable-5-1", "Fable 5.1"],
+  "sonnet[1m]": ["claude-sonnet-5-5[1m]", "Sonnet 5.5"],
+  "opus[1m]": ["claude-opus-5-5[1m]", "Opus 5.5 (1M context)"],
+  "fable[1m]": ["claude-fable-5-1", "Fable 5.1"],
+  opusplan: ["claude-sonnet-5-5", "Opus in plan mode, else Sonnet"],
+  default: ["claude-opus-5-5", "Opus 5.5"],
+}
+
+/** A build that answers as 2.1.296 does, the first aliases slowest; `garbled` answers nothing. */
+const build = (garbled?: string) => (args: ReadonlyArray<string>) => {
+  if (args.includes("/effort")) return Effect.succeed(effortRun)
+  const alias = args[0] === "--model" ? args[1] : undefined
+  if (alias === undefined)
+    return Effect.succeed(modelRun("claude-opus-5-5", "Opus 5.5 (default)", true))
+  if (alias === garbled) return Effect.succeed("Not an event")
+  const [id, label] = resolved[alias] ?? ["", ""]
+  const late = 10 - Object.keys(resolved).indexOf(alias)
+  return Effect.as(Effect.sleep(`${late} millis`), modelRun(id, label, true))
+}
+
+describe("probeModels", () => {
+  test("asks the build for its models in the table's order, whichever answers first", async () => {
+    expect(await Effect.runPromise(probeModels(build()))).toEqual(PinnedClaudeModels)
+  })
+
+  test("fails for an alias whose answer it can't read, rather than leave it out", async () => {
+    const error = await Effect.runPromise(Effect.flip(probeModels(build("haiku"))))
+    expect(error.message).toBe("claude --model haiku -p /model said no model")
   })
 })
 

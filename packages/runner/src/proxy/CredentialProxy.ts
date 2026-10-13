@@ -84,7 +84,10 @@ export class CredentialProxy extends Context.Service<
 /** Anthropic's API, where requests go unless a test says otherwise. */
 export const AnthropicApi = "https://api.anthropic.com"
 
-/** The requests Claude Code 2.1.289 sends its base URL (spike #142); anything else is refused. */
+/**
+ * The requests Claude Code sends its base URL (spike #142, on 2.1.289; 2.1.296 sends no others):
+ * anything else is refused.
+ */
 const allowed: ReadonlyArray<{ readonly method: string; readonly path: string }> = [
   { method: "POST", path: "/v1/messages" },
   { method: "POST", path: "/v1/messages/count_tokens" },

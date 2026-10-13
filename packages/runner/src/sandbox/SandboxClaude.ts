@@ -20,13 +20,14 @@ import { join } from "node:path"
 import { Data, Effect } from "effect"
 
 /**
- * The Claude Code version Sessions run. Upgrading it: change it here, then run the smoke test,
+ * The Claude Code version Sessions run. Upgrading it: change it here, rewrite PinnedClaudeModels
+ * (ClaudeModels.ts) with `bun run --filter @kndl/runner probe-models`, then run the smoke test,
  * `KNDL_SANDBOX_IT=1 bun test src/SandboxClaude.integration.test.ts` in packages/runner,
  * which runs it in a Sandbox through the credential proxy: its banner, `/status`, and a Turn
  * with Bash. It also checks PinnedClaudeModels (ClaudeModels.ts), the models the build takes,
  * and says what the build lists when the table is out of date.
  */
-export const PinnedClaudeVersion = "2.1.289"
+export const PinnedClaudeVersion = "2.1.296"
 
 /** Where the cache directory is mounted in every Sandbox. */
 export const sandboxClaudeGuestDir = "/opt/kndl/claude-code"

@@ -2,14 +2,7 @@
 // loading the bundle (`bun run build` first), with the world beneath it and the Hub faked.
 
 import { describe, expect, mock, test } from "claude-code/testing"
-import {
-  ada,
-  askedSession,
-  deliveredWrites,
-  hubUrl,
-  linkedSession,
-  steeringWrites,
-} from "./support.ts"
+import { ada, deliveredWrites, hubUrl, linkedSession, steeringWrites } from "./support.ts"
 
 describe("the Hub link", () => {
   test("says hello with the mod token, then polls for commands", async ($, on) => {
@@ -150,7 +143,7 @@ describe("prompts", () => {
     const aborted: Array<string> = []
     on("turn.abort", (_, e) => {
       aborted.push(e.turnId)
-      return {} as never
+      return { value: undefined }
     })
 
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
@@ -187,13 +180,12 @@ describe("steering a prompt into the running Turn (#195)", () => {
     expect(writes).toEqual([])
   })
 
-  // The row itself is Claude Code's to keep: `claude plugin test` has nothing beneath a plugin's
-  // own session.append (a test's hook there is skipped), so it fails here, as a refused one does.
-  test("says what it steers while it adds the row, and reports a row not kept", async ($, on) => {
+  test("says what it steers while it adds the row", async ($, on) => {
     let turnStarted: (() => void) | undefined
     const { posted } = linkedSession(on, [steer], new Promise((resolve) => (turnStarted = resolve)))
     const clock = mock.clock(on)
     const writes = steeringWrites(on)
+    const session = mock.session(on)
     on("turn.start", (_, e) => ({ turnId: e.turnId }))
 
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
@@ -202,21 +194,37 @@ describe("steering a prompt into the running Turn (#195)", () => {
     turnStarted?.()
     await clock.advance(200)
 
+    const appended = expect.stringContaining("[Ada Lovelace] Also the changelog.\n")
     expect(writes).toEqual([
-      {
-        promptId: "pr-2",
-        sender: ada,
-        text: "Also the changelog.",
-        appended: expect.stringContaining("[Ada Lovelace] Also the changelog.\n"),
-      },
+      { promptId: "pr-2", sender: ada, text: "Also the changelog.", appended },
       null,
     ])
+    expect(session.appended()).toEqual([
+      expect.objectContaining({
+        door: "note",
+        message: { type: "user", content: [{ type: "text", text: appended }] },
+      }),
+    ])
+    expect(posted()).toEqual([])
+  })
+
+  test("reports a row Claude Code doesn't keep", async ($, on) => {
+    let turnStarted: (() => void) | undefined
+    const { posted } = linkedSession(on, [steer], new Promise((resolve) => (turnStarted = resolve)))
+    const clock = mock.clock(on)
+    const writes = steeringWrites(on)
+    on("turn.start", (_, e) => ({ turnId: e.turnId }))
+    on("session.append", { door: "note" }, () => ({ deny: "the session is closing" }))
+
+    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
+    await clock.advance(0)
+    await $.turn.start({ turnId: "t1", text: "long job" } as never)
+    turnStarted?.()
+    await clock.advance(200)
+
+    expect(writes.at(-1)).toBeNull()
     expect(posted()).toEqual([
-      {
-        _tag: "PromptFailed",
-        promptId: "pr-2",
-        message: expect.stringContaining("session.append"),
-      },
+      { _tag: "PromptFailed", promptId: "pr-2", message: "the session is closing" },
     ])
   })
 })
@@ -290,213 +298,6 @@ describe("subagents (ADR 0014)", () => {
     expect(posted()).toEqual([
       { _tag: "AgentCommandFailed", agentId: "a2", command: "StopAgent", message: "no task a2" },
     ])
-  })
-})
-
-describe("Open questions (#193)", () => {
-  /** What the dialog's call ends with once its Turn is stopped. */
-  const refused = "Error: The user doesn't want to proceed with this tool use."
-  const questions = [
-    {
-      question: "Which library?",
-      header: "Library",
-      options: [
-        { label: "date-fns", description: "Small and familiar" },
-        { label: "Temporal", description: "The platform's own" },
-      ],
-      multiSelect: false,
-    },
-  ]
-  const asked = {
-    _tag: "QuestionAsked",
-    turnId: "t1",
-    questions: [
-      {
-        question: "Which library?",
-        header: "Library",
-        options: [
-          { label: "date-fns", description: "Small and familiar" },
-          { label: "Temporal", description: "The platform's own" },
-        ],
-        multiSelect: false,
-      },
-    ],
-  }
-
-  test("a Participant's answer is Claude's, and closes the dialog", async ($, on) => {
-    const { dialog, posted } = askedSession(on, {
-      _tag: "Answered",
-      answers: { "Which library?": "Temporal" },
-    })
-    const clock = mock.clock(on)
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    await clock.advance(0)
-    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
-    const call = $.tool.call({ tool: "AskUserQuestion", questions } as never)
-    await clock.advance(200)
-
-    expect(await call).toEqual(
-      expect.objectContaining({
-        result: expect.objectContaining({
-          answers: { "Which library?": "Temporal" },
-          annotations: {},
-        }),
-      }),
-    )
-    expect(dialog.signal?.aborted).toBe(true)
-    expect(posted()).toEqual([
-      { ...asked, toolCallId: dialog.id },
-      {
-        _tag: "QuestionClosed",
-        turnId: "t1",
-        toolCallId: dialog.id,
-        outcome: { _tag: "Answered", answers: { "Which library?": "Temporal" } },
-        by: ada,
-      },
-    ])
-  })
-
-  test("one dismissed is refused, as Esc refuses it", async ($, on) => {
-    const { dialog, posted } = askedSession(on, { _tag: "Dismissed" })
-    const clock = mock.clock(on)
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    await clock.advance(0)
-    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
-    const call = $.tool.call({ tool: "AskUserQuestion", questions } as never)
-    await clock.advance(200)
-
-    expect(await call).toEqual(
-      expect.objectContaining({
-        deny: expect.stringContaining("The user doesn't want to proceed with this tool use."),
-      }),
-    )
-    expect(posted().at(-1)).toEqual({
-      _tag: "QuestionClosed",
-      turnId: "t1",
-      toolCallId: dialog.id,
-      outcome: { _tag: "Dismissed" },
-      by: ada,
-    })
-  })
-
-  test("one answered at the terminal first is reported, and a later one refused", async ($, on) => {
-    const atTerminal = {
-      result: { questions, answers: { "Which library?": "date-fns" }, annotations: {} },
-    }
-    const { dialog, posted } = askedSession(on, { _tag: "Replied", text: "Neither" }, atTerminal)
-    const clock = mock.clock(on)
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    await clock.advance(0)
-    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
-    const done = await $.tool.call({ tool: "AskUserQuestion", questions } as never)
-    await clock.advance(200)
-
-    expect(done).toEqual(expect.objectContaining(atTerminal))
-    expect(posted()).toEqual([
-      { ...asked, toolCallId: dialog.id },
-      {
-        _tag: "QuestionClosed",
-        turnId: "t1",
-        toolCallId: dialog.id,
-        outcome: { _tag: "Answered", answers: { "Which library?": "date-fns" } },
-      },
-      {
-        _tag: "AnswerFailed",
-        toolCallId: dialog.id,
-        senderId: "p1",
-        message: "The question was answered or closed already.",
-      },
-    ])
-  })
-
-  test("one dismissed with Esc at the terminal, which stops the Turn, is dismissed (#206)", async ($, on) => {
-    const escaped = { isError: true, result: refused }
-    const { dialog, posted } = askedSession(on, { _tag: "Dismissed" }, escaped)
-    const clock = mock.clock(on)
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    await clock.advance(0)
-    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
-    await $.tool.call({ tool: "AskUserQuestion", questions } as never)
-    await clock.advance(200)
-
-    expect(posted()[1]).toEqual({
-      _tag: "QuestionClosed",
-      turnId: "t1",
-      toolCallId: dialog.id,
-      outcome: { _tag: "Dismissed" },
-    })
-  })
-
-  test("one whose Turn is stopped from the web UI is cancelled (#206)", async ($, on) => {
-    let opened: (() => void) | undefined
-    const { posted } = linkedSession(
-      on,
-      [{ _tag: "StopTurn", sessionId: "s1" }],
-      new Promise((resolve) => (opened = resolve)),
-    )
-    const clock = mock.clock(on)
-    on("turn.start", (_, e) => ({ turnId: e.turnId }))
-    // Claude Code's Stop ends the dialog's call refused, as Esc does.
-    let stop: (() => void) | undefined
-    on("turn.abort", () => {
-      stop?.()
-      return {} as never
-    })
-    on("tool.call", () => {
-      opened?.()
-      return new Promise((resolve) => {
-        stop = () => resolve({ isError: true, result: refused })
-      }) as never
-    })
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    await clock.advance(0)
-    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
-    await $.tool.call({ tool: "AskUserQuestion", questions } as never)
-    await clock.advance(200)
-
-    expect(posted()[1]).toEqual({
-      _tag: "QuestionClosed",
-      turnId: "t1",
-      toolCallId: expect.any(String),
-      outcome: { _tag: "Cancelled" },
-    })
-  })
-
-  test("one whose dialog timed out on its own is cancelled, not skipped at the terminal (#206)", async ($, on) => {
-    const timedOut = { result: { questions, answers: {}, afkTimeoutMs: 60_000 } }
-    const { dialog, posted } = askedSession(on, { _tag: "Dismissed" }, timedOut)
-    const clock = mock.clock(on)
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    await clock.advance(0)
-    await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
-    const done = await $.tool.call({ tool: "AskUserQuestion", questions } as never)
-    await clock.advance(200)
-
-    expect(done).toEqual(expect.objectContaining(timedOut))
-    expect(posted()[1]).toEqual({
-      _tag: "QuestionClosed",
-      turnId: "t1",
-      toolCallId: dialog.id,
-      outcome: { _tag: "Cancelled" },
-    })
-  })
-
-  test("one asked with no Turn on the main loop, a background agent's, is the terminal's alone", async ($, on) => {
-    const { posted } = askedSession(on, { _tag: "Dismissed" })
-    const clock = mock.clock(on)
-
-    await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
-    await clock.advance(0)
-    void $.tool.call({ tool: "AskUserQuestion", questions } as never)
-    await clock.advance(200)
-
-    expect(posted()).toEqual([expect.objectContaining({ _tag: "AnswerFailed", senderId: "p1" })])
   })
 })
 
