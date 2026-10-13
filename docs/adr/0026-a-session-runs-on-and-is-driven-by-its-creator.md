@@ -21,7 +21,7 @@ So:
   - the terminal, which Participants can't see either: raw terminal frames are where the token is easiest to leak;
   - every Session control: sleep, wake, keep awake, restart, model and effort, rename, archive and restore.
 
-  Other Participants watch: they read the Session live or Archived, open Previews and Forwards, and see Attachments. Everything still needs Repo access on top.
+  Other Participants watch: they read the Session live or Archived, see Attachments, and Forward its ports while it's awake. Only the Creator's Forward wakes an Asleep Session. Everything still needs Repo access on top.
 
 ## How it works
 
