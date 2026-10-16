@@ -14,6 +14,7 @@ import {
   TurnId,
 } from "./Ids.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
+import { SysinfoSample } from "./Sysinfo.ts"
 import { RunnerUpdater, RunnerUpdateState } from "./Update.ts"
 
 // Shapes shared by more than one channel: who is involved in a Session and what state it is in.
@@ -235,6 +236,12 @@ export const RunnerSummary = Schema.Struct({
    * from a Runner too old to say, or that couldn't find out.
    */
   models: Schema.optionalKey(RunnerModels),
+  /**
+   * What its host looked like when it last sampled it (#350), kept after it disconnects, for the
+   * page to show greyed out; absent from a Runner too old to sample, and before its first sample.
+   * Its disk-free history is asked for apart, with a GetRunnerDiskHistory.
+   */
+  sysinfo: Schema.optionalKey(SysinfoSample),
 })
 export type RunnerSummary = typeof RunnerSummary.Type
 

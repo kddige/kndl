@@ -283,6 +283,9 @@ export function reduce(state: HubState, action: HubAction): HubState {
     case "RunnerUpdateRequested":
       // The RunnerList that follows shows the update.
       return state
+    case "RunnerDiskHistory":
+      // Answers the page that asked, which keeps the points itself.
+      return state
     case "PairingCodeList":
       return { ...state, pairingCodes: action.codes }
     case "PairingCodeRedeemed":

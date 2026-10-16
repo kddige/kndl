@@ -37,6 +37,29 @@ export function count(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`
 }
 
+/** A size in binary units, with a decimal under ten: "512 B", "9.5 GiB", "186 GiB". */
+export function bytes(n: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"]
+  let value = n
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${unit > 0 && value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+}
+
+/** How long a host has been up: "under a minute", "5m", "3h 20m", "3d 4h". */
+export function uptime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 1) return "under a minute"
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes % 60}m`
+  return `${minutes}m`
+}
+
 /** "A", "A and B", "A, B and C". */
 export function andList(items: ReadonlyArray<string>): string {
   if (items.length <= 1) return items[0] ?? ""

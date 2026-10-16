@@ -10,7 +10,8 @@ export type HubWriter = (message: RunnerToHub) => Effect.Effect<void, unknown>
  * While disconnected, Session lifecycle messages wait and are sent, in order, right after the
  * next welcome. Terminal frames and Open ports are dropped instead, because every reconnect sends
  * a fresh snapshot of each terminal, and each Session's Open ports again; and so is a
- * TunnelFailed, since the Hub fails a tunnel whose Runner went offline itself.
+ * TunnelFailed, since the Hub fails a tunnel whose Runner went offline itself. A host's sysinfo is
+ * dropped too: the next sample is at most half a minute away.
  */
 export class HubLink extends Context.Service<
   HubLink,
@@ -26,7 +27,8 @@ export class HubLink extends Context.Service<
 const resentOnConnect = (message: RunnerToHub) =>
   message._tag === "TerminalFrame" ||
   message._tag === "SessionPorts" ||
-  message._tag === "TunnelFailed"
+  message._tag === "TunnelFailed" ||
+  message._tag === "RunnerSysinfo"
 
 export const HubLinkLive = Layer.effect(
   HubLink,

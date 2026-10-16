@@ -111,6 +111,18 @@ const runnerToHub = [
     relaysMcpServers: true,
   },
   { _tag: "TunnelFailed", tunnelId: "t-1", message: "Nothing listens on port 3000" },
+  {
+    _tag: "RunnerSysinfo",
+    diskFreeBytes: 200 * 1024 ** 3,
+    diskTotalBytes: 500 * 1024 ** 3,
+    memoryTotalBytes: 16 * 1024 ** 3,
+    memoryAvailableBytes: 9 * 1024 ** 3,
+    cpuCores: 8,
+    loadAverage: [0.5, 0.75, 1.25],
+    os: "linux",
+    arch: "arm64",
+    uptimeSeconds: 86_400,
+  },
 ]
 
 const hubToRunner = [
@@ -329,6 +341,7 @@ describe("RunnerToHub", () => {
     })
     expectRejected(RunnerToHub, { _tag: "SessionPorts", sessionId: "s-1", ports: [{ port: 80 }] })
     expectRejected(RunnerToHub, { _tag: "TunnelFailed", tunnelId: "", message: "refused" })
+    expectRejected(RunnerToHub, { _tag: "RunnerSysinfo", diskFreeBytes: 1 })
   })
 })
 

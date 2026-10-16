@@ -5,11 +5,16 @@
 // and Sessions) or removes one, once its Sessions are all Archived. Codes still waiting are listed
 // so they can be revoked. A Runner behind the Hub that updates itself has Update (#87): it moves
 // to the Hub's commit once its Sessions sleep, and its row follows the update, or says why it
-// refused or failed. Every confirmation is a Dialog on the page.
+// refused or failed. A row also shows the Runner's host as it last sampled it (#350): disk, memory
+// and CPU, the free disk of the last week, and a warning when the disk is low. Every confirmation
+// is a Dialog on the page.
 
 import {
   type BuildVersion,
   describeBuild,
+  type DiskFreePoint,
+  DiskHistoryPointMillis,
+  diskIsLow,
   type PairingCodeCreated,
   pairingCommand,
   type PendingPairingCode,
@@ -17,11 +22,12 @@ import {
   runnerRemovalRefusal,
   type SessionSummary,
   sessionTitle,
+  type SysinfoSample,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { useEffect, useState } from "react"
 import { copyCommand } from "../app/copy.ts"
-import { timeAgo } from "../app/format.ts"
+import { bytes, timeAgo, uptime } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { keptAwakeText } from "../session/keepAwake.ts"
 import {
@@ -46,8 +52,10 @@ import {
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
   codeOutcome,
+  diskSparkline,
   shortCommit,
   sortRunners,
+  sysinfoAge,
   timeLeft,
   updateAction,
   manualUpdateText,
@@ -115,6 +123,9 @@ const styles = stylex.create({
   },
   fact: { display: "inline-flex", alignItems: "center", gap: space.s1_5, minWidth: 0 },
   mono: { fontFamily: font.mono },
+  hostOffline: { opacity: 0.55 },
+  lowDisk: { color: color.warningSubtleText },
+  sparkline: { flexShrink: 0, color: color.textMuted },
   keptAwakeList: {
     display: "flex",
     flexDirection: "column",
@@ -411,6 +422,7 @@ function RunnerRow({
             </Tooltip>
           )}
         </p>
+        {runner.sysinfo && <RunnerHost runner={runner} sysinfo={runner.sysinfo} now={now} />}
         {update && (
           <p
             aria-live="polite"
@@ -449,6 +461,101 @@ function RunnerRow({
         </Button>
       </div>
     </li>
+  )
+}
+
+/** How big the free-disk sparkline is drawn, in pixels. */
+const sparklineSize = { width: 120, height: 24 }
+
+/**
+ * A Runner's host as it last sampled it (#350): disk, memory, CPU and load, and how old the sample
+ * is. Greyed while the Runner is offline, since the numbers are as of when it went. A disk under
+ * 10 GiB or a tenth free gets a warning badge, and nothing more: it stops no Session.
+ */
+function RunnerHost({
+  runner,
+  sysinfo,
+  now,
+}: {
+  runner: RunnerSummary
+  sysinfo: SysinfoSample
+  now: number
+}) {
+  const low = diskIsLow(sysinfo)
+  const [load1, load5, load15] = sysinfo.loadAverage
+  return (
+    <p
+      data-offline={runner.isOnline ? undefined : ""}
+      {...stylex.props(styles.facts, !runner.isOnline && styles.hostOffline)}
+    >
+      <span {...stylex.props(styles.fact, low && styles.lowDisk)}>
+        Disk {bytes(sysinfo.diskFreeBytes)} free of {bytes(sysinfo.diskTotalBytes)}
+      </span>
+      {low && (
+        <Tooltip content="Under 10 GiB, or a tenth of the disk, is free. Sessions can still start, until it runs out.">
+          <span tabIndex={0}>
+            <Badge intent="warning">low disk</Badge>
+          </span>
+        </Tooltip>
+      )}
+      <DiskSparkline runner={runner} low={low} now={now} />
+      <span {...stylex.props(styles.fact)}>
+        Memory {bytes(sysinfo.memoryAvailableBytes)} available of {bytes(sysinfo.memoryTotalBytes)}
+      </span>
+      <span {...stylex.props(styles.fact)}>
+        {sysinfo.cpuCores} {sysinfo.cpuCores === 1 ? "core" : "cores"}, load{" "}
+        {[load1, load5, load15].map((load) => load.toFixed(2)).join(" ")}
+      </span>
+      <span {...stylex.props(styles.fact)}>
+        {sysinfo.os} {sysinfo.arch}, up {uptime(sysinfo.uptimeSeconds)}
+      </span>
+      <span {...stylex.props(styles.fact)}>as of {sysinfoAge(sysinfo.at, now)}</span>
+    </p>
+  )
+}
+
+/**
+ * A Runner's free disk over the last 7 days, asked of the Hub when it's shown and again each time
+ * the Hub keeps another point (every 5 minutes), for an online Runner. Nothing is drawn until the
+ * Hub answers with two points; one that fails to answer just has no sparkline.
+ */
+function DiskSparkline({ runner, low, now }: { runner: RunnerSummary; low: boolean; now: number }) {
+  const hub = useHub()
+  const [points, setPoints] = useState<ReadonlyArray<DiskFreePoint>>([])
+  const bucket = runner.isOnline ? Math.floor(now / DiskHistoryPointMillis) : 0
+  useEffect(() => {
+    let current = true
+    hub
+      .runnerDiskHistory(runner.id)
+      .then((history) => {
+        if (current) setPoints(history)
+      })
+      .catch(() => {})
+    return () => {
+      current = false
+    }
+  }, [hub, runner.id, bucket])
+  const line = diskSparkline(points, sparklineSize.width, sparklineSize.height)
+  const first = points[0]
+  const last = points.at(-1)
+  if (line === undefined || first === undefined || last === undefined) return null
+  return (
+    <svg
+      role="img"
+      aria-label={`Free disk over the last 7 days, from ${bytes(first.freeBytes)} to ${bytes(last.freeBytes)}`}
+      width={sparklineSize.width}
+      height={sparklineSize.height}
+      viewBox={`0 0 ${sparklineSize.width} ${sparklineSize.height}`}
+      {...stylex.props(styles.sparkline, low && styles.lowDisk)}
+    >
+      <polyline
+        points={line}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+      />
+    </svg>
   )
 }
 

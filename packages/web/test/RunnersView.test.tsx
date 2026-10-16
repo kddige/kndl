@@ -52,6 +52,9 @@ async function openRunners() {
     hub.dispose()
   }
   await eventually(() => expect(runners()?.querySelectorAll("li").length).toBe(2))
+  // The disk-free history each Runner asks for (#350) answers within this, not as an update React
+  // finds outside its act().
+  await settle()
   return { hub, page: view.container }
 }
 
@@ -74,6 +77,70 @@ test("lists each Runner with its version, last connection and Sessions, and no c
   expect(ci).toContain("1 kept awake")
   // The sidebar's general nav marks the page.
   expect(document.querySelector('a[aria-current="page"]')?.textContent).toContain("Runners")
+})
+
+const studioBox = () => runners()?.querySelector('[aria-label="studio"]')?.textContent ?? ""
+
+test("shows a Runner's host: disk, memory, CPU and load, and how old the sample is (#350)", async () => {
+  await openRunners()
+  await eventually(() => expect(studioBox()).toContain("186 GiB free of 500 GiB"))
+  expect(studioBox()).toContain("19 GiB available of 32 GiB")
+  expect(studioBox()).toContain("10 cores")
+  expect(studioBox()).toContain("load 1.42 1.18 0.96")
+  expect(studioBox()).toContain("linux arm64")
+  expect(studioBox()).toContain("up 12d 5h")
+  expect(studioBox()).toMatch(/as of \d+s ago/)
+  expect(studioBox()).not.toContain("low disk")
+})
+
+test("draws the free disk of the last 7 days once the Hub has sent it", async () => {
+  const { hub } = await openRunners()
+  await eventually(() =>
+    expect(
+      runners()
+        ?.querySelector('[aria-label="studio"] svg[role="img"] polyline')
+        ?.getAttribute("points"),
+    ).toMatch(/^0,[\d.]+ /),
+  )
+  expect(hub.received.filter((m) => m._tag === "GetRunnerDiskHistory")[0]).toMatchObject({
+    runnerId: "r-studio",
+  })
+})
+
+test("warns of a low disk, under 10 GiB free or a tenth of it, and greys the host of a Runner that is offline", async () => {
+  const { hub } = await openRunners()
+  // ci-box is offline, and was nearly full when last heard from.
+  expect(ciBox()).toContain("8.0 GiB free of 120 GiB")
+  expect(ciBox()).toContain("low disk")
+  expect(ciBox()).toContain("as of 3h ago")
+  expect(runners()?.querySelector('[aria-label="ci-box"] [data-offline]')).not.toBeNull()
+  expect(runners()?.querySelector('[aria-label="studio"] [data-offline]')).toBeNull()
+
+  const GiB = 1024 ** 3
+  const studio = hub.runners.find((runner) => runner.id === "r-studio")
+  const sysinfo = studio?.sysinfo
+  if (sysinfo === undefined) throw new Error("the fake Runner has no sysinfo")
+  // Over 10 GiB, but under a tenth of a 500 GiB disk.
+  await step(() =>
+    hub.patchRunner("r-studio", { sysinfo: { ...sysinfo, diskFreeBytes: 49 * GiB } }),
+  )
+  await eventually(() => expect(studioBox()).toContain("low disk"))
+  await step(() =>
+    hub.patchRunner("r-studio", { sysinfo: { ...sysinfo, diskFreeBytes: 51 * GiB } }),
+  )
+  await eventually(() => expect(studioBox()).not.toContain("low disk"))
+})
+
+test("lists a Runner that sent no sysinfo without a host line", async () => {
+  const { hub } = await openRunners()
+  expect(ciBox()).toContain("free of")
+  await step(() => {
+    hub.runners = hub.runners.map(({ sysinfo: _sampled, ...runner }) => runner)
+    hub.patchRunner("r-ci", { isOnline: true })
+  })
+  await eventually(() => expect(ciBox()).toContain("online"))
+  expect(ciBox()).not.toContain("free of")
+  expect(studioBox()).not.toContain("free of")
 })
 
 test("shows a Runner on a Release by its Release, before its commit (ADR 0025)", async () => {

@@ -1,11 +1,16 @@
 import {
   type BuildVersion,
   CommitIdPattern,
+  type DiskFreePoint,
+  DiskHistoryPointMillis,
+  DiskHistoryRetentionMillis,
   ReleaseVersionPattern,
   RunnerId,
   RunnerModels,
   RunnerUpdater,
   type SessionState,
+  type Sysinfo,
+  type SysinfoSample,
 } from "@kndl/protocol"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { SqlClient } from "effect/sql"
@@ -26,6 +31,8 @@ export interface KnownRunner {
   readonly updater: RunnerUpdater | null
   /** The models its Claude Code offers, as it last said; null before it first says (#128). */
   readonly models: RunnerModels | null
+  /** Its last sysinfo sample (#350), kept in memory only: null before its first since the Hub started. */
+  readonly sysinfo: SysinfoSample | null
 }
 
 /** The Session states that keep a Runner from being removed. */
@@ -46,7 +53,7 @@ interface RunnerRow {
 const decodeUpdater = Schema.decodeUnknownOption(Schema.fromJsonString(RunnerUpdater))
 const decodeModels = Schema.decodeUnknownOption(Schema.fromJsonString(RunnerModels))
 
-const fromRow = (row: RunnerRow): KnownRunner => ({
+const fromRow = (row: RunnerRow, sysinfo: SysinfoSample | undefined): KnownRunner => ({
   id: RunnerId.make(row.id),
   name: row.name,
   // A row from a hello is a full commit id, and a Release's version; anything else would fail the
@@ -64,12 +71,14 @@ const fromRow = (row: RunnerRow): KnownRunner => ({
   openSessions: row.openSessions,
   updater: row.updater === null ? null : Option.getOrNull(decodeUpdater(row.updater)),
   models: row.models === null ? null : Option.getOrNull(decodeModels(row.models)),
+  sysinfo: sysinfo ?? null,
 })
 
 /**
  * What the Hub remembers about Runners beyond their tokens (RunnerTokens.ts): the version each
  * last said hello with, and when it was last connected, so the web UI can list Runners that are
- * offline too.
+ * offline too; and the samples of their hosts (#350): the latest of each in memory, and their free
+ * disk in the database for a week.
  */
 export class Runners extends Context.Service<
   Runners,
@@ -87,6 +96,22 @@ export class Runners extends Context.Service<
       },
       at: number,
     ) => Effect.Effect<void, SqlError>
+    /**
+     * A Runner sampled its host at `at` (#350). The sample replaces the one before, and its free
+     * disk is kept as a point of the Runner's history, in place of any earlier one in the same
+     * {@link DiskHistoryPointMillis}. Points older than {@link DiskHistoryRetentionMillis} are
+     * deleted, every Runner's.
+     */
+    readonly recordSysinfo: (
+      id: RunnerId,
+      sysinfo: Sysinfo,
+      at: number,
+    ) => Effect.Effect<void, SqlError>
+    /** A Runner's disk-free points of the retention before `now`, oldest first. */
+    readonly diskHistory: (
+      id: RunnerId,
+      now: number,
+    ) => Effect.Effect<ReadonlyArray<DiskFreePoint>, SqlError>
     /** A Runner was last connected at `at`, as when it disconnects. */
     readonly recordSeen: (id: RunnerId, at: number) => Effect.Effect<void, SqlError>
     /** Every Runner paired and not removed, by name. */
@@ -124,6 +149,31 @@ export class Runners extends Context.Service<
         yield* sql`UPDATE runners SET last_seen_at = ${at} WHERE id = ${id}`
       })
 
+      const latest = new Map<string, SysinfoSample>()
+
+      const recordSysinfo = Effect.fn("Runners.recordSysinfo")(function* (
+        id: RunnerId,
+        sysinfo: Sysinfo,
+        at: number,
+      ) {
+        latest.set(id, { ...sysinfo, at })
+        yield* sql`
+          INSERT INTO runner_disk_history (runner_id, bucket, at, free_bytes)
+          VALUES (${id}, ${Math.floor(at / DiskHistoryPointMillis)}, ${at}, ${sysinfo.diskFreeBytes})
+          ON CONFLICT (runner_id, bucket) DO UPDATE SET at = excluded.at, free_bytes = excluded.free_bytes
+        `
+        yield* sql`DELETE FROM runner_disk_history WHERE at < ${at - DiskHistoryRetentionMillis}`
+      })
+
+      const diskHistory = Effect.fn("Runners.diskHistory")(function* (id: RunnerId, now: number) {
+        const rows = yield* sql<{ readonly at: number; readonly freeBytes: number }>`
+          SELECT at, free_bytes AS freeBytes FROM runner_disk_history
+          WHERE runner_id = ${id} AND at >= ${now - DiskHistoryRetentionMillis}
+          ORDER BY at
+        `
+        return rows.map(({ at, freeBytes }) => ({ at, freeBytes }))
+      })
+
       const select = (where: Fragment) => sql<RunnerRow>`
         SELECT r.id, r.name, r.version_commit AS "commit",
           r.version_branch AS branch, r.version_release AS release, r.last_seen_at AS lastSeenAt, r.updater, r.models,
@@ -135,16 +185,18 @@ export class Runners extends Context.Service<
       `
 
       const list = select(sql``).pipe(
-        Effect.map((rows) => rows.map(fromRow)),
+        Effect.map((rows) => rows.map((row) => fromRow(row, latest.get(row.id)))),
         Effect.withSpan("Runners.list"),
       )
 
       const get = Effect.fn("Runners.get")(function* (id: RunnerId) {
         const rows = yield* select(sql`AND r.id = ${id}`)
-        return Option.fromNullishOr(rows[0]).pipe(Option.map(fromRow))
+        return Option.fromNullishOr(rows[0]).pipe(
+          Option.map((row) => fromRow(row, latest.get(row.id))),
+        )
       })
 
-      return Runners.of({ recordHello, recordSeen, list, get })
+      return Runners.of({ recordHello, recordSysinfo, diskHistory, recordSeen, list, get })
     }),
   )
 }

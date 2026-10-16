@@ -60,6 +60,7 @@ import {
   StopAgent,
   StopTurn,
 } from "./Session.ts"
+import { DiskFreePoint } from "./Sysinfo.ts"
 import { TerminalFrame, TerminalInput, TerminalResize } from "./Terminal.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
@@ -486,6 +487,17 @@ export const UpdateRunner = Schema.TaggedStruct("UpdateRunner", {
 })
 export type UpdateRunner = typeof UpdateRunner.Type
 
+/**
+ * Ask for a Runner's disk-free history (#350), the points of the last 7 days, to draw a sparkline
+ * from. Apart from the RunnerList because it is long and changes little. Answered with a
+ * {@link RunnerDiskHistory}, or a CommandFailed for a Runner that isn't there.
+ */
+export const GetRunnerDiskHistory = Schema.TaggedStruct("GetRunnerDiskHistory", {
+  requestId: RequestId,
+  runnerId: RunnerId,
+})
+export type GetRunnerDiskHistory = typeof GetRunnerDiskHistory.Type
+
 // ── People (issue #209, ADR 0019) ──
 //
 // The Owner's alone: the Hub refuses each, with a CommandFailed, from anyone else.
@@ -573,6 +585,7 @@ export const WebToHub = Schema.Union([
   RevokePairingCode,
   RemoveRunner,
   UpdateRunner,
+  GetRunnerDiskHistory,
   RevokeCliToken,
   CreateInvite,
   ListInvites,
@@ -858,6 +871,14 @@ export const RunnerUpdateRequested = Schema.TaggedStruct("RunnerUpdateRequested"
 })
 export type RunnerUpdateRequested = typeof RunnerUpdateRequested.Type
 
+/** Answers a {@link GetRunnerDiskHistory}: the Runner's free disk over time, oldest first. */
+export const RunnerDiskHistory = Schema.TaggedStruct("RunnerDiskHistory", {
+  requestId: RequestId,
+  runnerId: RunnerId,
+  points: Schema.Array(DiskFreePoint),
+})
+export type RunnerDiskHistory = typeof RunnerDiskHistory.Type
+
 /** Every message the Hub sends a web client. */
 export const HubToWeb = Schema.Union([
   WebWelcome,
@@ -898,6 +919,7 @@ export const HubToWeb = Schema.Union([
   PairingCodeRedeemed,
   RunnerRemoved,
   RunnerUpdateRequested,
+  RunnerDiskHistory,
   CliTokenList,
   InviteCreated,
   InviteList,
