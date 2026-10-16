@@ -176,7 +176,7 @@ const webToHub = [
   { _tag: "RevokePairingCode", requestId: "q-15", pairingCodeId: "pc-1" },
   { _tag: "RemoveRunner", requestId: "q-16", runnerId: "r-1" },
   { _tag: "UpdateRunner", requestId: "q-17", runnerId: "r-1", now: false },
-  { _tag: "GetRunnerDiskHistory", requestId: "q-18", runnerId: "r-1" },
+  { _tag: "GetRunnerHistory", requestId: "q-18", runnerId: "r-1" },
   {
     _tag: "CreateSession",
     requestId: "q-18",
@@ -668,12 +668,17 @@ const hubToWeb = [
   { _tag: "PairingCodeRedeemed", id: "pc-1", runnerId: "r-1", name: "studio", repaired: true },
   { _tag: "RunnerUpdateRequested", requestId: "q-17", runnerId: "r-1" },
   {
-    _tag: "RunnerDiskHistory",
+    _tag: "RunnerHistory",
     requestId: "q-18",
     runnerId: "r-1",
     points: [
-      { at: 1_790_000_000_000, freeBytes: 200 * 1024 ** 3 },
-      { at: 1_790_000_300_000, freeBytes: 199 * 1024 ** 3 },
+      { at: 1_790_000_000_000, diskFreeBytes: 200 * 1024 ** 3 },
+      {
+        at: 1_790_000_300_000,
+        diskFreeBytes: 199 * 1024 ** 3,
+        memoryAvailableBytes: 9 * 1024 ** 3,
+        load1: 0.5,
+      },
     ],
   },
   { _tag: "CliTokenList", tokens: [] },

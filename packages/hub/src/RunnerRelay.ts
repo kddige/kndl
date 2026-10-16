@@ -1,6 +1,6 @@
 // What the Session relay does for the Runners page (issue #85): Pairing codes minted, revoked and
-// redeemed, Runners removed, and a Runner's disk-free history read (#350). It runs under the Session relay's lock, as part of it, so a
-// Runner's removal and its Sessions' states never race.
+// redeemed, Runners removed, and a Runner's history read (#350, #356). It runs under the Session
+// relay's lock, as part of it, so a Runner's removal and its Sessions' states never race.
 //
 // - Anyone signed in may mint a code, revoke one, or remove a Runner: there are no roles yet.
 // - A Re-pair's redemption replaces the Runner's token, so a Runner still connected with the old
@@ -17,7 +17,7 @@ import {
   pairingLink,
   type Participant,
   type RequestId,
-  RunnerDiskHistory,
+  RunnerHistory,
   type RunnerId,
   RunnerRemoved,
   runnerRemovalRefusal,
@@ -34,7 +34,7 @@ const webTags = [
   "CreatePairingCode",
   "RevokePairingCode",
   "RemoveRunner",
-  "GetRunnerDiskHistory",
+  "GetRunnerHistory",
 ] as const
 
 /** A web command from the Runners page. */
@@ -136,12 +136,12 @@ export const makeRunnerRelay = Effect.fn("makeRunnerRelay")(function* (deps: {
         yield* deps.runnersChanged
         return yield* codesChanged()
       }
-      case "GetRunnerDiskHistory": {
+      case "GetRunnerHistory": {
         const runner = yield* runners.get(message.runnerId)
         if (Option.isNone(runner)) return refuse("There is no such Runner.")
-        const points = yield* runners.diskHistory(message.runnerId, yield* Clock.currentTimeMillis)
+        const points = yield* runners.history(message.runnerId, yield* Clock.currentTimeMillis)
         return peer.send(
-          RunnerDiskHistory.make({
+          RunnerHistory.make({
             requestId: message.requestId,
             runnerId: message.runnerId,
             points,

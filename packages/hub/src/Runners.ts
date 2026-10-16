@@ -1,10 +1,10 @@
 import {
   type BuildVersion,
   CommitIdPattern,
-  type DiskFreePoint,
-  DiskHistoryPointMillis,
-  DiskHistoryRetentionMillis,
   ReleaseVersionPattern,
+  RunnerHistoryPointMillis,
+  RunnerHistoryRetentionMillis,
+  type RunnerHistoryPoint,
   RunnerId,
   RunnerModels,
   RunnerUpdater,
@@ -78,7 +78,7 @@ const fromRow = (row: RunnerRow, sysinfo: SysinfoSample | undefined): KnownRunne
  * What the Hub remembers about Runners beyond their tokens (RunnerTokens.ts): the version each
  * last said hello with, and when it was last connected, so the web UI can list Runners that are
  * offline too; and the samples of their hosts (#350): the latest of each in memory, and their free
- * disk in the database for a week.
+ * disk, available memory and load in the database for a week (#356).
  */
 export class Runners extends Context.Service<
   Runners,
@@ -98,20 +98,20 @@ export class Runners extends Context.Service<
     ) => Effect.Effect<void, SqlError>
     /**
      * A Runner sampled its host at `at` (#350). The sample replaces the one before, and its free
-     * disk is kept as a point of the Runner's history, in place of any earlier one in the same
-     * {@link DiskHistoryPointMillis}. Points older than {@link DiskHistoryRetentionMillis} are
-     * deleted, every Runner's.
+     * disk, available memory and 1-minute load (#356) are kept as a point of the Runner's history,
+     * in place of any earlier one in the same {@link RunnerHistoryPointMillis}. Points older than
+     * {@link RunnerHistoryRetentionMillis} are deleted, every Runner's.
      */
     readonly recordSysinfo: (
       id: RunnerId,
       sysinfo: Sysinfo,
       at: number,
     ) => Effect.Effect<void, SqlError>
-    /** A Runner's disk-free points of the retention before `now`, oldest first. */
-    readonly diskHistory: (
+    /** A Runner's history points of the retention before `now`, oldest first. */
+    readonly history: (
       id: RunnerId,
       now: number,
-    ) => Effect.Effect<ReadonlyArray<DiskFreePoint>, SqlError>
+    ) => Effect.Effect<ReadonlyArray<RunnerHistoryPoint>, SqlError>
     /** A Runner was last connected at `at`, as when it disconnects. */
     readonly recordSeen: (id: RunnerId, at: number) => Effect.Effect<void, SqlError>
     /** Every Runner paired and not removed, by name. */
@@ -158,20 +158,39 @@ export class Runners extends Context.Service<
       ) {
         latest.set(id, { ...sysinfo, at })
         yield* sql`
-          INSERT INTO runner_disk_history (runner_id, bucket, at, free_bytes)
-          VALUES (${id}, ${Math.floor(at / DiskHistoryPointMillis)}, ${at}, ${sysinfo.diskFreeBytes})
-          ON CONFLICT (runner_id, bucket) DO UPDATE SET at = excluded.at, free_bytes = excluded.free_bytes
+          INSERT INTO runner_history
+            (runner_id, bucket, at, disk_free_bytes, memory_available_bytes, load_1)
+          VALUES (${id}, ${Math.floor(at / RunnerHistoryPointMillis)}, ${at},
+            ${sysinfo.diskFreeBytes}, ${sysinfo.memoryAvailableBytes}, ${sysinfo.loadAverage[0]})
+          ON CONFLICT (runner_id, bucket) DO UPDATE SET at = excluded.at,
+            disk_free_bytes = excluded.disk_free_bytes,
+            memory_available_bytes = excluded.memory_available_bytes, load_1 = excluded.load_1
         `
-        yield* sql`DELETE FROM runner_disk_history WHERE at < ${at - DiskHistoryRetentionMillis}`
+        yield* sql`DELETE FROM runner_history WHERE at < ${at - RunnerHistoryRetentionMillis}`
       })
 
-      const diskHistory = Effect.fn("Runners.diskHistory")(function* (id: RunnerId, now: number) {
-        const rows = yield* sql<{ readonly at: number; readonly freeBytes: number }>`
-          SELECT at, free_bytes AS freeBytes FROM runner_disk_history
-          WHERE runner_id = ${id} AND at >= ${now - DiskHistoryRetentionMillis}
+      const history = Effect.fn("Runners.history")(function* (id: RunnerId, now: number) {
+        const rows = yield* sql<{
+          readonly at: number
+          readonly diskFreeBytes: number
+          readonly memoryAvailableBytes: number | null
+          readonly load1: number | null
+        }>`
+          SELECT at, disk_free_bytes AS diskFreeBytes,
+            memory_available_bytes AS memoryAvailableBytes, load_1 AS load1
+          FROM runner_history
+          WHERE runner_id = ${id} AND at >= ${now - RunnerHistoryRetentionMillis}
           ORDER BY at
         `
-        return rows.map(({ at, freeBytes }) => ({ at, freeBytes }))
+        // A point from before #356 has no memory or load.
+        return rows.map(
+          ({ at, diskFreeBytes, memoryAvailableBytes, load1 }): RunnerHistoryPoint => ({
+            at,
+            diskFreeBytes,
+            ...(memoryAvailableBytes !== null && { memoryAvailableBytes }),
+            ...(load1 !== null && { load1 }),
+          }),
+        )
       })
 
       const select = (where: Fragment) => sql<RunnerRow>`
@@ -196,7 +215,7 @@ export class Runners extends Context.Service<
         )
       })
 
-      return Runners.of({ recordHello, recordSysinfo, diskHistory, recordSeen, list, get })
+      return Runners.of({ recordHello, recordSysinfo, history, recordSeen, list, get })
     }),
   )
 }

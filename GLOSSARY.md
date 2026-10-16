@@ -13,7 +13,7 @@ A host machine connected to the Hub that runs Sessions, each on its Creator's Cl
 _Avoid_: worker, agent, node, host
 
 **Sysinfo**:
-What a Runner reports of its host every 30 seconds: free and total disk of the volume holding its data, memory, CPU cores, load, OS, architecture and uptime. The Runners page shows the latest, the free disk of the last 7 days, and a warning when the disk is under 10 GiB or a tenth free. Display only: a low disk never stops a Session from starting.
+What a Runner reports of its host every 30 seconds: free and total disk of the volume holding its data, memory, CPU cores, load, OS, architecture and uptime. The Runners page warns on a Runner's row when the disk is under 10 GiB or a tenth free, and the row's Monitor shows the latest, and the free disk, available memory and 1-minute load of the last 7 days as charts. Display only: a low disk never stops a Session from starting.
 _Avoid_: health check, heartbeat, metrics
 
 **Claude credential**:

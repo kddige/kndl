@@ -67,6 +67,10 @@ const lightColor = {
   sessionArchivedSubtle: "oklch(96.3% 0.01 82)",
   sessionArchivedText: "oklch(47% 0.024 55)",
 
+  // A chart's one series (#356): a cool blue that reads apart from the warm accent and the warning
+  // amber a chart draws thresholds in, checked against the surface with the dataviz validator
+  chartSeries: "oklch(52% 0.13 250)",
+
   // Avatars: each person gets a hue; lightness and chroma of the fill and the initials come from here
   avatarBgLightness: "90%",
   avatarBgChroma: "0.045",
@@ -124,6 +128,8 @@ const darkColor: typeof lightColor = {
   sessionArchived: "oklch(56% 0.014 300)",
   sessionArchivedSubtle: "oklch(23.4% 0.017 300)",
   sessionArchivedText: "oklch(74% 0.018 305)",
+
+  chartSeries: "oklch(66% 0.11 240)",
 
   avatarBgLightness: "34%",
   avatarBgChroma: "0.05",
@@ -211,6 +217,8 @@ export const color = stylex.defineVars({
     default: lightColor.sessionArchivedText,
     [DARK]: darkColor.sessionArchivedText,
   },
+
+  chartSeries: { default: lightColor.chartSeries, [DARK]: darkColor.chartSeries },
 
   avatarBgLightness: {
     default: lightColor.avatarBgLightness,

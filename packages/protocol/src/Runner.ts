@@ -199,7 +199,8 @@ export type TunnelFailed = typeof TunnelFailed.Type
 /**
  * What the Runner's host looks like now (#350): sent right after the Runner is welcomed, then every
  * SysinfoIntervalMillis while it is connected. The Hub keeps the latest of each Runner for the
- * Runners page, and the disk-free numbers as history. A Runner from before doesn't send it.
+ * Runners page, and its free disk, available memory and 1-minute load as history (#356). A Runner
+ * from before doesn't send it.
  */
 export const RunnerSysinfo = Schema.TaggedStruct("RunnerSysinfo", Sysinfo.fields)
 export type RunnerSysinfo = typeof RunnerSysinfo.Type

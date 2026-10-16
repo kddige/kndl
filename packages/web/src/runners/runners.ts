@@ -4,10 +4,10 @@
 
 import {
   type BuildVersion,
-  type DiskFreePoint,
   type PairingCodeId,
   type PendingPairingCode,
   refusalText,
+  type RunnerHistoryPoint,
   type RunnerId,
   type RunnerSummary,
   type RunnerUpdater,
@@ -237,38 +237,91 @@ export function sysinfoAge(at: number, now: number): string {
   return seconds < 60 ? `${seconds}s ago` : timeAgo(at, now)
 }
 
-/** Pixels clear above and below a sparkline's line, so its stroke isn't cut off. */
-const sparklinePadding = 1
+/**
+ * Whether a Runner's row offers its Monitor (#356): once it has connected, as there may be a
+ * sample or a history to show. One paired but never seen has neither.
+ */
+export function hasMonitor(runner: RunnerSummary): boolean {
+  return runner.isOnline || runner.lastSeenAt !== null
+}
 
-/** A coordinate to a tenth of a pixel. */
-const round = (n: number) => Math.round(n * 10) / 10
+/** A measure a Runner's history keeps (#356). */
+export type HistoryMeasure = "diskFreeBytes" | "memoryAvailableBytes" | "load1"
+
+/** One point of a chart: when, and the measure's value then. */
+export interface SeriesPoint {
+  readonly at: number
+  readonly value: number
+}
 
 /**
- * The `points` attribute of a polyline that draws a Runner's free disk over time in a box of
- * `width` by `height`: oldest at the left, the most free at the top. A disk that never changed is
- * a line through the middle. `undefined` for fewer than two points, which draw no line.
+ * One measure of a Runner's history, to chart: a point kept before the Hub kept memory and load
+ * (#356) has neither, and is left out of theirs rather than drawn at zero.
  */
-export function diskSparkline(
-  points: ReadonlyArray<DiskFreePoint>,
-  width: number,
-  height: number,
-): string | undefined {
-  const first = points[0]
-  const last = points.at(-1)
-  if (first === undefined || last === undefined || points.length < 2) return undefined
-  const free = points.map((point) => point.freeBytes)
-  const most = Math.max(...free)
-  const least = Math.min(...free)
-  const span = last.at - first.at
-  const room = height - 2 * sparklinePadding
-  return points
-    .map((point) => {
-      const x = span === 0 ? 0 : ((point.at - first.at) / span) * width
-      const y =
-        most === least
-          ? height / 2
-          : sparklinePadding + ((most - point.freeBytes) / (most - least)) * room
-      return `${round(x)},${round(y)}`
-    })
-    .join(" ")
+export function historySeries(
+  points: ReadonlyArray<RunnerHistoryPoint>,
+  measure: HistoryMeasure,
+): Array<SeriesPoint> {
+  return points.flatMap((point) => {
+    const value = point[measure]
+    return value === undefined ? [] : [{ at: point.at, value }]
+  })
+}
+
+/** A binary unit of bytes, as a chart's axis counts in it. */
+export interface ByteUnit {
+  readonly name: "MiB" | "GiB" | "TiB"
+  readonly bytes: number
+}
+
+const byteUnits: ReadonlyArray<ByteUnit> = [
+  { name: "MiB", bytes: 1024 ** 2 },
+  { name: "GiB", bytes: 1024 ** 3 },
+  { name: "TiB", bytes: 1024 ** 4 },
+]
+
+/**
+ * The unit a chart of bytes up to `max` counts in, so its ticks are round numbers of it: GiB for
+ * most disks and memory, MiB under one GiB, TiB from one TiB.
+ */
+export function byteUnit(max: number): ByteUnit {
+  const [mib, gib, tib] = byteUnits as [ByteUnit, ByteUnit, ByteUnit]
+  if (max >= tib.bytes) return tib
+  if (max > 0 && max < gib.bytes) return mib
+  return gib
+}
+
+/** The most ticks a history chart's time axis has. */
+const maxTimeTicks = 8
+
+const hourMillis = 3_600_000
+
+/** Hours between ticks a span under two days may have: the first that gives few enough ticks. */
+const hourSteps = [1, 2, 3, 6, 12]
+
+/**
+ * Where a history chart from `from` to `to` ticks its time axis: at each local midnight for a
+ * span of two days or more (a week, mostly), otherwise on the hour every few hours, the fewest
+ * that give at most eight ticks.
+ */
+export function timeTicks(
+  from: number,
+  to: number,
+): { readonly unit: "day" | "hour"; readonly values: Array<number> } {
+  if (to - from >= 48 * hourMillis) {
+    const values: Array<number> = []
+    const day = new Date(from)
+    day.setHours(0, 0, 0, 0)
+    if (day.getTime() < from) day.setDate(day.getDate() + 1)
+    for (; day.getTime() <= to; day.setDate(day.getDate() + 1)) values.push(day.getTime())
+    return { unit: "day", values }
+  }
+  const step = hourSteps.find((hours) => (to - from) / (hours * hourMillis) < maxTimeTicks) ?? 12
+  const hour = new Date(from)
+  hour.setMinutes(0, 0, 0)
+  if (hour.getTime() < from) hour.setHours(hour.getHours() + 1)
+  while (hour.getHours() % step !== 0) hour.setHours(hour.getHours() + 1)
+  const values: Array<number> = []
+  for (; hour.getTime() <= to; hour.setHours(hour.getHours() + step)) values.push(hour.getTime())
+  return { unit: "hour", values }
 }
