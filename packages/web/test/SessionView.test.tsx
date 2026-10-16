@@ -942,6 +942,71 @@ test("several Archived Sessions are purged at once, and an offline Runner frees 
   }
 })
 
+test("the Archived screen shows the disk each Session takes, and what purging the ticked ones frees (#352)", async () => {
+  const { page, hub, client } = await openApp("/archive")
+  const row = (title: string) =>
+    [...page.querySelectorAll("li")].find((li) => li.textContent?.includes(title))
+  const toolbar = () => page.textContent ?? ""
+  await eventually(() => expect(row("claude/flaky-login")?.textContent).toContain("1.8 GiB"))
+  hub.diskBytes.set("s-readme", 512 * 1024 ** 2)
+  await step(() => client.archiveSession("s-readme" as SessionId))
+  await eventually(() => expect(row("claude/readme-run")?.textContent).toContain("512 MiB"))
+  // Nothing ticked, nothing to free.
+  expect(toolbar()).not.toContain("Frees")
+
+  await step(() => tick("claude/flaky-login"))
+  await eventually(() => expect(toolbar()).toContain("Frees 1.8 GiB"))
+  await step(() => tick("claude/readme-run"))
+  await eventually(() => expect(toolbar()).toContain("Frees 2.3 GiB"))
+
+  const purgeSelected = [...page.querySelectorAll("button")].find((el) =>
+    el.textContent?.startsWith("Purge selected"),
+  )
+  await step(() => purgeSelected?.click())
+  await eventually(() => expect(purgeDialog()?.textContent).toContain("Purge 2 Sessions?"))
+  const asked = purgeDialog()?.textContent ?? ""
+  expect(asked).toContain("Frees 2.3 GiB")
+  expect(asked).toContain("1.8 GiB")
+  expect(asked).toContain("512 MiB")
+
+  function tick(title: string): void {
+    const box = row(title)?.querySelector('input[type="checkbox"]') as HTMLElement | null
+    if (!box) throw new Error(`no checkbox for ${title}`)
+    box.click()
+  }
+})
+
+test("a Session whose Runner is offline has an unknown size, which the total says (#352)", async () => {
+  const { page, hub } = await openApp("/repos/kddige/kndl/archived")
+  const row = () =>
+    [...page.querySelectorAll("li")].find((li) => li.textContent?.includes("claude/flaky-login"))
+  await eventually(() => expect(row()?.textContent).toContain("1.8 GiB"))
+
+  await step(() => hub.patchRunner("r-studio", { isOnline: false }))
+  await eventually(() => expect(row()?.textContent).toContain("Size unknown"))
+  expect(row()?.textContent).not.toContain("1.8 GiB")
+
+  await step(() => {
+    const box = row()?.querySelector('input[type="checkbox"]') as HTMLElement | null
+    box?.click()
+  })
+  await eventually(() => expect(page.textContent).toContain("Disk use unknown"))
+  const purge = [...page.querySelectorAll("button")].find((el) =>
+    el.textContent?.startsWith("Purge selected"),
+  )
+  await step(() => purge?.click())
+  await eventually(() => {
+    const asked = [...document.querySelectorAll<HTMLElement>('[role="dialog"]:not([data-type])')]
+    expect(
+      asked.find((el) => el.textContent?.includes("Purge claude/flaky-login?"))?.textContent,
+    ).toContain("Disk use unknown")
+  })
+
+  // Back online, the next ask finds it.
+  await step(() => hub.patchRunner("r-studio", { isOnline: true }))
+  await eventually(() => expect(row()?.textContent).toContain("1.8 GiB"))
+})
+
 test("an Archived Session can't take prompts or open its terminal, and offers a restore", async () => {
   const { page, sent, find } = await openApp("/sessions/s-flaky?tab=terminal")
   const banner = () =>

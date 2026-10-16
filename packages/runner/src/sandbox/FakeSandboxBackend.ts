@@ -331,6 +331,15 @@ export const makeFake = (options: FakeOptions = {}) => {
           }
         }),
       ),
+    volumeBytes: (sessionId) =>
+      Effect.sync(() => {
+        let total = 0
+        for (const [name, files] of world.volumes) {
+          if (parseVolumeName(name)?.sessionId !== sessionId) continue
+          for (const data of files.values()) total += data.byteLength
+        }
+        return total
+      }),
     state: (sessionId) =>
       Effect.succeed(world.sandboxes.get(sessionId)?.state ?? ("Destroyed" as const)),
     list: Effect.sync(() => {

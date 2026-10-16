@@ -285,6 +285,12 @@ export interface SandboxBackendShape {
     sessionId: SessionId,
     options?: { readonly keepVolumes?: true | ReadonlyArray<string> },
   ) => Effect.Effect<void, SandboxError>
+  /**
+   * How many bytes of the host's disk the Session's volumes take (#352): what is allocated to
+   * them, as `du` counts it, not their sizes, which are only caps. 0 when it has none. Host mounts
+   * and the Sandbox's own root disk are not counted.
+   */
+  readonly volumeBytes: (sessionId: SessionId) => Effect.Effect<number, SandboxError>
   /** Where the Session's Sandbox is: `Destroyed` when it has none. */
   readonly state: (sessionId: SessionId) => Effect.Effect<SandboxState, SandboxError>
   /**

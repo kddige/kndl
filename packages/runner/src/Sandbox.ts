@@ -98,6 +98,11 @@ export class Sandboxes extends Context.Service<
      */
     readonly purge: (sessionId: SessionId) => Effect.Effect<void, SandboxError>
     /**
+     * The bytes of the host's disk the Session's Sandbox volumes take (#352): what is allocated to
+     * them, not their caps. 0 when it has none.
+     */
+    readonly diskUsage: (sessionId: SessionId) => Effect.Effect<number, SandboxError>
+    /**
      * Stops any of this Runner's Sandboxes left running for a Session not among `running`, as
      * after a crash, and logs the Sandboxes it doesn't know. Other Runners' Sandboxes, and ones
      * from before Sandboxes carried their Runner's mark, are left alone. Destroys nothing of a

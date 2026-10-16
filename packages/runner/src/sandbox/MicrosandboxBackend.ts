@@ -43,6 +43,7 @@ import type {
 } from "microsandbox"
 
 type MountBuilder = InstanceType<typeof MountBuilderClass>
+import { allocatedBytes } from "../DiskUsage.ts"
 import { RunnerConfig } from "../RunnerConfig.ts"
 import { makeAgentTcp } from "./AgentTcp.ts"
 import {
@@ -557,6 +558,23 @@ export const make = Effect.fnUntraced(function* ({
     }))
   })
 
+  // A disk volume is a sparse ext4 image, `<home>/volumes/<name>/disk.raw`, that takes only the
+  // blocks the guest has written (see docs/research/microsandbox-fork.md), so what it costs the
+  // host is its allocated blocks. The SDK's own `usedBytes` isn't relied on: whether it counts
+  // those or the image's length isn't documented.
+  const volumeBytes: SandboxBackendShape["volumeBytes"] = Effect.fn("SandboxBackend.volumeBytes")(
+    function* (sessionId: SessionId) {
+      const volumes = yield* call("list volumes", sessionId, () => Volume.list())
+      const owned = volumes.filter(
+        (volume) => parseVolumeName(volume.name)?.sessionId === sessionId,
+      )
+      const sizes = yield* Effect.forEach(owned, (volume) =>
+        Effect.promise(() => allocatedBytes(join(msbHome(), "volumes", volume.name))),
+      )
+      return sizes.reduce((total, size) => total + size, 0)
+    },
+  )
+
   /**
    * Starts a command, killed when the scope closes unless it has exited. Its stdin is a pipe left
    * open for writing, or `request.stdin` (if any) followed by end of input.
@@ -749,6 +767,7 @@ export const make = Effect.fnUntraced(function* ({
     start,
     stop,
     destroy,
+    volumeBytes,
     state,
     list,
     execStream,

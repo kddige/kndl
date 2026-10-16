@@ -123,6 +123,22 @@ describe.skipIf(Bun.which("git") === null)("WorkspacesGitClone", () => {
     expect(git(workspace, "branch", "--show-current")).toBe("claude/w-1")
   })
 
+  test("measures what its directory has allocated, Workspace included, and 0 once it's gone (#352)", async () => {
+    const usage = (id: string) =>
+      run(Effect.flatMap(Workspaces, (w) => w.usage(sessionId(id)))).then((result) =>
+        result._tag === "Success" ? result.success : -1,
+      )
+    expect(await run(start("w-5"))).toMatchObject({ _tag: "Success" })
+    const workspace = join(sessionsRoot, "w-5", "workspace")
+    const empty = await usage("w-5")
+    expect(empty).toBeGreaterThan(0)
+
+    writeFileSync(join(workspace, "big.bin"), Buffer.alloc(2 * 1024 * 1024, 1))
+    expect(await usage("w-5")).toBeGreaterThanOrEqual(empty + 2 * 1024 * 1024)
+
+    expect(await usage("w-never")).toBe(0)
+  })
+
   test("won't wake a Session whose Workspace is gone", async () => {
     const result = await run(start("w-3", { resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f" }))
 

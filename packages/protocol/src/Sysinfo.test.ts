@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { RunnerToHub } from "./Runner.ts"
 import { RunnerSummary } from "./Session.ts"
-import { diskIsLow, LowDiskFreeBytes, Sysinfo } from "./Sysinfo.ts"
+import { diskIsLow, LowDiskFreeBytes, MaxDiskUsageSessions, Sysinfo } from "./Sysinfo.ts"
 import { HubToWeb, WebToHub } from "./Web.ts"
 
 const GiB = 1024 ** 3
@@ -96,5 +96,29 @@ describe("a Runner's disk-free history", () => {
         points: [{ at: 1, freeBytes: 5 }],
       }),
     ).toMatchObject({ points: [{ at: 1, freeBytes: 5 }] })
+  })
+})
+
+const ask = (sessionIds: ReadonlyArray<string>) => ({
+  _tag: "GetSessionDiskUsage",
+  requestId: "q-1",
+  sessionIds,
+})
+
+describe("a Session's disk use", () => {
+  test("is asked for by Session ids, up to a bound, and answered with a size or none", () => {
+    expect(Schema.decodeUnknownSync(WebToHub)(ask(["s-1"]))._tag).toBe("GetSessionDiskUsage")
+    expect(() =>
+      Schema.decodeUnknownSync(WebToHub)(
+        ask(Array.from({ length: MaxDiskUsageSessions + 1 }, (_, i) => `s-${i}`)),
+      ),
+    ).toThrow()
+    expect(
+      Schema.decodeUnknownSync(HubToWeb)({
+        _tag: "SessionDiskUsage",
+        requestId: "q-1",
+        sizes: [{ sessionId: "s-1", bytes: 0 }, { sessionId: "s-2" }],
+      }),
+    ).toMatchObject({ sizes: [{ bytes: 0 }, { sessionId: "s-2" }] })
   })
 })

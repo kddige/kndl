@@ -16,11 +16,11 @@ import {
   VariablesRefused,
 } from "./Environment.ts"
 import { GitIdentity, GitReply, GitRequest } from "./Git.ts"
-import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.ts"
+import { ClaudeSessionId, EnvironmentVersion, RequestId, RunnerId, SessionId } from "./Ids.ts"
 import { GatewayServer } from "./McpServer.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
 import { BranchName, OpenPort, RepoName } from "./Session.ts"
-import { Sysinfo } from "./Sysinfo.ts"
+import { MaxDiskUsageSessions, SessionDiskSize, Sysinfo } from "./Sysinfo.ts"
 import {
   RequestTerminalSnapshot,
   TerminalFrame,
@@ -96,6 +96,11 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
    * Hub sends it none.
    */
   relaysMcpServers: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * It takes a {@link MeasureSessionDisks} (#352). A Runner from before doesn't say so: the Hub
+   * doesn't ask it, and the archive list shows its Sessions' sizes as unknown.
+   */
+  measuresDisk: Schema.optionalKey(Schema.Literal(true)),
 })
 export type RunnerHello = typeof RunnerHello.Type
 
@@ -199,6 +204,16 @@ export type TunnelFailed = typeof TunnelFailed.Type
 export const RunnerSysinfo = Schema.TaggedStruct("RunnerSysinfo", Sysinfo.fields)
 export type RunnerSysinfo = typeof RunnerSysinfo.Type
 
+/**
+ * Answers a {@link MeasureSessionDisks}: the disk each of the Sessions takes on the Runner, in the
+ * order asked. A Session the Runner couldn't measure has no `bytes`.
+ */
+export const SessionDisksMeasured = Schema.TaggedStruct("SessionDisksMeasured", {
+  requestId: RequestId,
+  sizes: Schema.Array(SessionDiskSize),
+})
+export type SessionDisksMeasured = typeof SessionDisksMeasured.Type
+
 /** Every message a Runner sends the Hub. */
 export const RunnerToHub = Schema.Union([
   RunnerHello,
@@ -221,6 +236,7 @@ export const RunnerToHub = Schema.Union([
   UpdateFailed,
   TunnelFailed,
   RunnerSysinfo,
+  SessionDisksMeasured,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type RunnerToHub = typeof RunnerToHub.Type
 
@@ -345,6 +361,18 @@ export const OpenTunnel = Schema.TaggedStruct("OpenTunnel", {
 })
 export type OpenTunnel = typeof OpenTunnel.Type
 
+/**
+ * Measure how much disk the Sessions take on the Runner (#352), for the archive list. The Runner
+ * works it out when asked (it walks their directories, so it isn't sampled) and answers with a
+ * {@link SessionDisksMeasured}. Sent only to a Runner whose hello says it `measuresDisk`; at most
+ * {@link MaxDiskUsageSessions} Sessions.
+ */
+export const MeasureSessionDisks = Schema.TaggedStruct("MeasureSessionDisks", {
+  requestId: RequestId,
+  sessionIds: Schema.Array(SessionId).check(Schema.isMaxLength(MaxDiskUsageSessions)),
+})
+export type MeasureSessionDisks = typeof MeasureSessionDisks.Type
+
 /** Every message the Hub sends a Runner. */
 export const HubToRunner = Schema.Union([
   RunnerWelcome,
@@ -366,5 +394,6 @@ export const HubToRunner = Schema.Union([
   CheckUpdate,
   ApplyUpdate,
   OpenTunnel,
+  MeasureSessionDisks,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type HubToRunner = typeof HubToRunner.Type

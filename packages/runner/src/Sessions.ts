@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto"
 import type {
   ClaudeCredential,
   HubToRunner,
+  MeasureSessionDisks,
   RelaunchSession,
   RunTestBuild,
+  SessionDiskSize,
   SessionId,
   StartSession,
   StopSession,
@@ -449,6 +451,37 @@ export const SessionsLive = Layer.effect(
       )
 
     /**
+     * Measures the disk the Sessions take (#352), a few at a time since walking a Workspace reads
+     * a lot of disk: each one's directory and its Sandbox volumes, as allocated. A Session whose id
+     * can't name a directory, or that couldn't be measured, is left without a size, not guessed.
+     */
+    const measureDisks = (request: MeasureSessionDisks) =>
+      Effect.forEach(
+        request.sessionIds,
+        (sessionId): Effect.Effect<SessionDiskSize> => {
+          if (!isSafeSessionId(sessionId)) return Effect.succeed({ sessionId })
+          return Effect.all([workspaces.usage(sessionId), sandboxes.diskUsage(sessionId)]).pipe(
+            Effect.map(([directory, volumes]): SessionDiskSize => ({
+              sessionId,
+              bytes: directory + volumes,
+            })),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                `Could not measure the disk Session ${sessionId} takes: ${message(cause)}`,
+              ).pipe(Effect.as({ sessionId })),
+            ),
+          )
+        },
+        { concurrency: 4 },
+      ).pipe(
+        Effect.flatMap((sizes) =>
+          hub.send(
+            RunnerToHub.cases.SessionDisksMeasured.make({ requestId: request.requestId, sizes }),
+          ),
+        ),
+      )
+
+    /**
      * Deletes everything of a purged Session: stops Claude Code if it is somehow running, then
      * destroys its Sandbox and volumes, and removes its directory and Claude Code's state for it.
      * Says SessionPurged only once all of it is gone; the Hub asks again on the next connection
@@ -590,6 +623,8 @@ export const SessionsLive = Layer.effect(
             return Effect.logWarning(`Ignored a PurgeSession for ${incoming.sessionId}`)
           }
           return background(purge(incoming.sessionId))
+        case "MeasureSessionDisks":
+          return background(measureDisks(incoming))
         case "TerminalInput":
           return running.get(incoming.sessionId)?.pane.input(incoming.data) ?? Effect.void
         case "TerminalResize":

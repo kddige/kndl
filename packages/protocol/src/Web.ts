@@ -60,7 +60,7 @@ import {
   StopAgent,
   StopTurn,
 } from "./Session.ts"
-import { DiskFreePoint } from "./Sysinfo.ts"
+import { DiskFreePoint, MaxDiskUsageSessions, SessionDiskSize } from "./Sysinfo.ts"
 import { TerminalFrame, TerminalInput, TerminalResize } from "./Terminal.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
@@ -385,8 +385,29 @@ export const PurgeArchivedSession = Schema.TaggedStruct("PurgeArchivedSession", 
 })
 export type PurgeArchivedSession = typeof PurgeArchivedSession.Type
 
-/** What a web client asks of a Session's archive: deleting it, restoring it and purging it. */
-export const ArchiveCommand = Schema.Union([ArchiveSession, RestoreSession, PurgeArchivedSession])
+/**
+ * Ask how much of its Runner's disk each of the Archived Sessions takes (#352), to show what
+ * purging them would free. The Hub asks their Runners, which measure on demand, and keeps what they
+ * say for a minute. Answered with a {@link SessionDiskUsage}, whose sizes are unknown for a Session
+ * the person can't see or that isn't Archived, and for one whose Runner is offline. At most
+ * {@link MaxDiskUsageSessions} Sessions.
+ */
+export const GetSessionDiskUsage = Schema.TaggedStruct("GetSessionDiskUsage", {
+  requestId: RequestId,
+  sessionIds: Schema.Array(SessionId).check(Schema.isMaxLength(MaxDiskUsageSessions)),
+})
+export type GetSessionDiskUsage = typeof GetSessionDiskUsage.Type
+
+/**
+ * What a web client asks of a Session's archive: deleting it, restoring it, purging it and how much
+ * disk it takes.
+ */
+export const ArchiveCommand = Schema.Union([
+  ArchiveSession,
+  RestoreSession,
+  PurgeArchivedSession,
+  GetSessionDiskUsage,
+])
 export type ArchiveCommand = typeof ArchiveCommand.Type
 
 /** Start receiving the Session's terminal frames, beginning with a snapshot. */
@@ -664,6 +685,16 @@ export const ArchivedSessionPurged = Schema.TaggedStruct("ArchivedSessionPurged"
 })
 export type ArchivedSessionPurged = typeof ArchivedSessionPurged.Type
 
+/**
+ * Answers a {@link GetSessionDiskUsage}: one entry for each Session asked about, in the order asked,
+ * with `bytes` absent where it isn't known.
+ */
+export const SessionDiskUsage = Schema.TaggedStruct("SessionDiskUsage", {
+  requestId: RequestId,
+  sizes: Schema.Array(SessionDiskSize),
+})
+export type SessionDiskUsage = typeof SessionDiskUsage.Type
+
 /** Answers a {@link CreateSession}. */
 export const SessionCreated = Schema.TaggedStruct("SessionCreated", {
   requestId: RequestId,
@@ -915,6 +946,7 @@ export const HubToWeb = Schema.Union([
   SessionUpdated,
   SessionRemoved,
   ArchivedSessionPurged,
+  SessionDiskUsage,
   SessionCreated,
   SessionHistory,
   SessionEventLogged,

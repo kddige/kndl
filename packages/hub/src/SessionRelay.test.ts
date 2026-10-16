@@ -1595,6 +1595,132 @@ describe("archive, restore and purge", () => {
     expect(await again.untaken("PurgeSession")).toEqual([])
   })
 
+  test("asks the Runner how much disk an Archived Session takes, and keeps the answer for a minute (#352)", async () => {
+    const scene = await sessionScene(undefined, { runnerHello: { measuresDisk: true } })
+    const { hub, runner, web, sessionId } = scene
+    await archived(scene)
+    const bobWeb = await openWeb(hub, "bob")
+
+    // Nothing is measured until somebody asks.
+    expect(await runner.untaken("MeasureSessionDisks")).toEqual([])
+
+    bobWeb.send({
+      _tag: "GetSessionDiskUsage",
+      requestId: "r-size",
+      sessionIds: [sessionId, "no-such-session"],
+    })
+    const ask = await runner.take("MeasureSessionDisks")
+    expect(ask.sessionIds).toEqual([sessionId])
+    runner.send({
+      _tag: "SessionDisksMeasured",
+      requestId: ask.requestId,
+      sizes: [{ sessionId, bytes: 1_572_864 }],
+    })
+    expect(await bobWeb.take("SessionDiskUsage")).toEqual({
+      _tag: "SessionDiskUsage",
+      requestId: "r-size",
+      // Asked order; an unknown Session has no size.
+      sizes: [{ sessionId, bytes: 1_572_864 }, { sessionId: "no-such-session" }],
+    })
+
+    // Alice opens the list too: the Runner isn't asked again.
+    web.send({ _tag: "GetSessionDiskUsage", requestId: "r-again", sessionIds: [sessionId] })
+    expect(await web.take("SessionDiskUsage")).toEqual({
+      _tag: "SessionDiskUsage",
+      requestId: "r-again",
+      sizes: [{ sessionId, bytes: 1_572_864 }],
+    })
+    expect(await runner.untaken("MeasureSessionDisks")).toEqual([])
+  })
+
+  test("a size the Runner couldn't measure is unknown, and asked again next time (#352)", async () => {
+    const scene = await sessionScene(undefined, { runnerHello: { measuresDisk: true } })
+    const { runner, web, sessionId } = scene
+    await archived(scene)
+
+    web.send({ _tag: "GetSessionDiskUsage", requestId: "r-1", sessionIds: [sessionId] })
+    const ask = await runner.take("MeasureSessionDisks")
+    runner.send({ _tag: "SessionDisksMeasured", requestId: ask.requestId, sizes: [{ sessionId }] })
+    expect(await web.take("SessionDiskUsage")).toEqual({
+      _tag: "SessionDiskUsage",
+      requestId: "r-1",
+      sizes: [{ sessionId }],
+    })
+
+    web.send({ _tag: "GetSessionDiskUsage", requestId: "r-2", sessionIds: [sessionId] })
+    const again = await runner.take("MeasureSessionDisks")
+    expect(again.requestId).not.toBe(ask.requestId)
+    runner.send({
+      _tag: "SessionDisksMeasured",
+      requestId: again.requestId,
+      sizes: [{ sessionId, bytes: 7 }],
+    })
+    expect(await web.take("SessionDiskUsage")).toMatchObject({ sizes: [{ sessionId, bytes: 7 }] })
+  })
+
+  test("the size is unknown while its Runner is offline, or too old to measure, and the Runner isn't asked (#352)", async () => {
+    const old = await sessionScene()
+    await archived(old)
+    old.web.send({ _tag: "GetSessionDiskUsage", requestId: "r-old", sessionIds: [old.sessionId] })
+    expect(await old.web.take("SessionDiskUsage")).toEqual({
+      _tag: "SessionDiskUsage",
+      requestId: "r-old",
+      sizes: [{ sessionId: old.sessionId }],
+    })
+    expect(await old.runner.untaken("MeasureSessionDisks")).toEqual([])
+
+    const scene = await sessionScene(undefined, { runnerHello: { measuresDisk: true } })
+    const { runner, web, sessionId } = scene
+    await archived(scene)
+    await Bun.sleep(100)
+    await runner.close()
+    web.send({ _tag: "GetSessionDiskUsage", requestId: "r-off", sessionIds: [sessionId] })
+    expect(await web.take("SessionDiskUsage")).toEqual({
+      _tag: "SessionDiskUsage",
+      requestId: "r-off",
+      sizes: [{ sessionId }],
+    })
+  })
+
+  test("a Runner that goes offline mid-measure leaves the size unknown (#352)", async () => {
+    const scene = await sessionScene(undefined, { runnerHello: { measuresDisk: true } })
+    const { runner, web, sessionId } = scene
+    await archived(scene)
+    await Bun.sleep(100)
+
+    web.send({ _tag: "GetSessionDiskUsage", requestId: "r-1", sessionIds: [sessionId] })
+    await runner.take("MeasureSessionDisks")
+    await runner.close()
+    expect(await web.take("SessionDiskUsage")).toEqual({
+      _tag: "SessionDiskUsage",
+      requestId: "r-1",
+      sizes: [{ sessionId }],
+    })
+  })
+
+  test("only an Archived Session is measured (#352)", async () => {
+    const { runner, web, sessionId } = await sessionScene(undefined, {
+      runnerHello: { measuresDisk: true },
+    })
+    web.send({ _tag: "GetSessionDiskUsage", requestId: "r-live", sessionIds: [sessionId] })
+    expect(await web.take("SessionDiskUsage")).toEqual({
+      _tag: "SessionDiskUsage",
+      requestId: "r-live",
+      sizes: [{ sessionId }],
+    })
+    expect(await runner.untaken("MeasureSessionDisks")).toEqual([])
+  })
+
+  test("refuses to measure past the bound on Sessions per request (#352)", async () => {
+    const { web } = await sessionScene()
+    web.send({
+      _tag: "GetSessionDiskUsage",
+      requestId: "r-many",
+      sessionIds: Array.from({ length: 501 }, (_, i) => `s-${i}`),
+    })
+    expect(await web.untaken("SessionDiskUsage")).toEqual([])
+  })
+
   test("refuses unknown Sessions", async () => {
     const { web } = await sessionScene()
     web.send({ _tag: "PurgeArchivedSession", requestId: "r-purge", sessionId: "nope" })
@@ -2714,6 +2840,33 @@ describe("Repo access", () => {
     octocatWeb.send({ _tag: "PurgeArchivedSession", requestId: "r-purge", sessionId })
     expect(await octocatWeb.take("ArchivedSessionPurged")).toMatchObject({ sessionId })
     expect(await runner.take("PurgeSession")).toEqual({ _tag: "PurgeSession", sessionId })
+  })
+
+  test("an Archived Session out of reach has no size to anyone without access to its Repo (#352)", async () => {
+    const scene = await sessionScene(await accessHub(), { runnerHello: { measuresDisk: true } })
+    const { hub, runner, sessionId } = scene
+    await archived(scene)
+    const hubotWeb = await openGitHubWeb(hub, hubot)
+    hubotWeb.send({ _tag: "GetSessionDiskUsage", requestId: "r-size", sessionIds: [sessionId] })
+    expect(await hubotWeb.take("SessionDiskUsage")).toEqual({
+      _tag: "SessionDiskUsage",
+      requestId: "r-size",
+      sizes: [{ sessionId }],
+    })
+    expect(await runner.untaken("MeasureSessionDisks")).toEqual([])
+
+    github.grant(repo, "octocat")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+    octocatWeb.send({ _tag: "GetSessionDiskUsage", requestId: "r-size", sessionIds: [sessionId] })
+    const ask = await runner.take("MeasureSessionDisks")
+    runner.send({
+      _tag: "SessionDisksMeasured",
+      requestId: ask.requestId,
+      sizes: [{ sessionId, bytes: 9 }],
+    })
+    expect(await octocatWeb.take("SessionDiskUsage")).toMatchObject({
+      sizes: [{ sessionId, bytes: 9 }],
+    })
   })
 
   test("creating a Session needs access to its Repo", async () => {

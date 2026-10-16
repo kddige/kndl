@@ -22,7 +22,7 @@ import { HubVariables, VariablesError } from "./HubVariables.ts"
 import { OpenPorts } from "./OpenPorts.ts"
 import { makeModRelay, ModRelay } from "./relay/ModRelay.ts"
 import { makeSessionTokens, type SessionGrant } from "./relay/SessionTokens.ts"
-import { Sandboxes, type SandboxTarget } from "./Sandbox.ts"
+import { SandboxError, Sandboxes, type SandboxTarget } from "./Sandbox.ts"
 import { SandboxBackendError } from "./sandbox/SandboxBackend.ts"
 import type { ExecEvent, ExecRequest, SpawnedCommand } from "./sandbox/SandboxBackend.ts"
 import { modPlugins } from "./sandbox/SessionLayout.ts"
@@ -258,6 +258,8 @@ export class FakeWorkspaces {
   readonly prepared: Array<StartSession> = []
   readonly removed: Array<SessionId> = []
   removeFails = false
+  /** The bytes each Session's directory takes, for `usage`; 0 for one not set. */
+  readonly usages = new Map<SessionId, number>()
 
   constructor(private readonly root: string) {}
 
@@ -278,6 +280,7 @@ export class FakeWorkspaces {
           this.removed.push(id)
           return Effect.void
         }),
+      usage: (id) => Effect.sync(() => this.usages.get(id) ?? 0),
     }),
   )
 }
@@ -376,6 +379,10 @@ export class FakeSandboxes {
   readonly running = new Set<SessionId>()
   /** What each Sandbox says Claude Code runs with, as from its Variables. */
   claudeEnv: Readonly<Record<string, string>> = { CLAUDE_CONFIG_DIR: "/claude" }
+  /** The bytes each Session's volumes take, for `diskUsage`; 0 for one not set. */
+  readonly diskUsages = new Map<SessionId, number>()
+  /** The Sessions whose `diskUsage` fails. */
+  readonly diskUsageFails = new Set<SessionId>()
 
   /** `claudePath`: the Claude Code each Sandbox runs. */
   constructor(readonly claudePath: string = fakeSandboxClaudePath) {}
@@ -412,6 +419,10 @@ export class FakeSandboxes {
           this.calls.push(`purge ${id}`)
           this.running.delete(id)
         }),
+      diskUsage: (id) =>
+        this.diskUsageFails.has(id)
+          ? Effect.fail(new SandboxError({ message: "could not list the volumes" }))
+          : Effect.succeed(this.diskUsages.get(id) ?? 0),
       reconcile: (running) =>
         Effect.sync(() => {
           const known = [...running]

@@ -16,6 +16,7 @@ import {
   type CliTokenId,
   type CommandFailed,
   type DiskFreePoint,
+  MaxDiskUsageSessions,
   type EnvironmentDraft,
   type EffortLevel,
   type EnvironmentDraftChecked,
@@ -45,6 +46,7 @@ import {
   type RunnerId,
   type PromptId,
   type RepoChecked,
+  type SessionDiskSize,
   type SessionId,
   type SessionSummary,
   type SharedVariable,
@@ -402,6 +404,27 @@ export class HubClient {
    */
   purgeSession(sessionId: SessionId): Promise<ArchivedSessionPurged> {
     return this.#request({ _tag: "PurgeArchivedSession", sessionId }, "ArchivedSessionPurged")
+  }
+
+  /**
+   * How much of their Runners' disk the Archived Sessions take (#352), one entry for each Session
+   * asked about, in the order asked, with `bytes` absent where it isn't known: its Runner is
+   * offline or couldn't measure it. The Hub keeps what its Runners say for a minute.
+   */
+  async sessionDiskUsage(
+    sessionIds: ReadonlyArray<SessionId>,
+  ): Promise<ReadonlyArray<SessionDiskSize>> {
+    // The Hub takes so many at a time.
+    const chunks: Array<ReadonlyArray<SessionId>> = []
+    for (let from = 0; from < sessionIds.length; from += MaxDiskUsageSessions) {
+      chunks.push(sessionIds.slice(from, from + MaxDiskUsageSessions))
+    }
+    const answers = await Promise.all(
+      chunks.map((chunk) =>
+        this.#request({ _tag: "GetSessionDiskUsage", sessionIds: chunk }, "SessionDiskUsage"),
+      ),
+    )
+    return answers.flatMap((answer) => answer.sizes)
   }
 
   /**
@@ -879,6 +902,7 @@ export class HubClient {
         break
       case "SessionCreated":
       case "ArchivedSessionPurged":
+      case "SessionDiskUsage":
       case "EnvironmentState":
       case "EnvironmentDraftChecked":
       case "TestBuildStarted":
