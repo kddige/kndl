@@ -256,6 +256,7 @@ describe("Runners", () => {
             openSessions: 0,
             updater: null,
             models: null,
+            sysinfo: null,
           },
         ])
 
@@ -284,6 +285,7 @@ describe("Runners", () => {
             openSessions: 0,
             updater,
             models,
+            sysinfo: null,
           }),
         )
 

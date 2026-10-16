@@ -318,6 +318,22 @@ describe("connecting", () => {
     })
   })
 
+  test("sends the Hub its host's sysinfo once it is welcomed, and again on every connection (#350)", async () => {
+    const h = startRunner()
+    await connected(h)
+
+    await eventually(() => h.hub.current.received.some((m) => m._tag === "RunnerSysinfo"))
+    const [hello, ...rest] = h.hub.current.received
+    expect(hello).toMatchObject({ _tag: "RunnerHello" })
+    expect(rest.find((m) => m._tag === "RunnerSysinfo")).toMatchObject({
+      os: process.platform,
+      arch: process.arch,
+    })
+
+    h.hub.current.socket.close(1001, "Hub restarting")
+    await eventually(() => h.hub.connections.length === 2 && h.hub.all("RunnerSysinfo").length >= 2)
+  })
+
   test("leaves the models out of its hello when Claude Code couldn't say", async () => {
     const h = startRunner(undefined, undefined, StaticClaudeModels(undefined))
     await connected(h)

@@ -14,6 +14,7 @@ import {
   type ClaudeCredentialState,
   type CliTokenId,
   type CommandFailed,
+  type DiskFreePoint,
   type EnvironmentDraft,
   type EffortLevel,
   type EnvironmentDraftChecked,
@@ -709,6 +710,12 @@ export class HubClient {
     await this.#request({ _tag: "UpdateRunner", runnerId, now }, "RunnerUpdateRequested")
   }
 
+  /** A Runner's free disk over the last 7 days (#350), oldest point first. */
+  async runnerDiskHistory(runnerId: RunnerId): Promise<ReadonlyArray<DiskFreePoint>> {
+    return (await this.#request({ _tag: "GetRunnerDiskHistory", runnerId }, "RunnerDiskHistory"))
+      .points
+  }
+
   // ── The person's Claude credential (ADR 0015, ADR 0026) ──────────────────
 
   /**
@@ -874,6 +881,7 @@ export class HubClient {
       case "PairingCodeList":
       case "RunnerRemoved":
       case "RunnerUpdateRequested":
+      case "RunnerDiskHistory":
       case "ClaudeCredentialState":
       case "CliTokenList":
       case "InviteCreated":

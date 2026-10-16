@@ -94,6 +94,7 @@ import {
   archiveRetentionMs,
   bob,
   demoSessionId,
+  fakeDiskHistory,
   hubVersion,
   type ReplyStep,
   replyTo,
@@ -1546,6 +1547,20 @@ export class FakeHub implements HubTransport {
         socket.deliver({ _tag: "RunnerRemoved", requestId: message.requestId, runnerId: runner.id })
         this.#toAll(this.#runnerList())
         this.#toAll(this.#pairingCodeList())
+        break
+      }
+      case "GetRunnerDiskHistory": {
+        const runner = this.runners.find((candidate) => candidate.id === message.runnerId)
+        if (!runner) {
+          this.#refuse(socket, message._tag, message.requestId, "There is no such Runner.")
+          break
+        }
+        socket.deliver({
+          _tag: "RunnerDiskHistory",
+          requestId: message.requestId,
+          runnerId: runner.id,
+          points: fakeDiskHistory(runner.sysinfo),
+        })
         break
       }
       case "UpdateRunner": {

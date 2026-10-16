@@ -7,9 +7,11 @@ import {
 } from "@kndl/protocol"
 import {
   codeOutcome,
+  diskSparkline,
   manualUpdateText,
   shortCommit,
   sortRunners,
+  sysinfoAge,
   timeLeft,
   updateAction,
   updateNote,
@@ -213,5 +215,39 @@ describe("a commit as the page shows it", () => {
 
   test("comes after its Release, when it is one's", () => {
     expect(shortCommit({ commit, release: "2026.10.1" })).toBe("2026.10.1 (824de4a1f0c3)")
+  })
+})
+
+describe("a Runner's host", () => {
+  test("says how old its sample is, in seconds at first", () => {
+    expect(sysinfoAge(100_000, 112_000)).toBe("12s ago")
+    expect(sysinfoAge(100_000, 100_000)).toBe("0s ago")
+    expect(sysinfoAge(100_000, 100_000 + 3 * 60_000)).toBe("3m ago")
+    // A clock a little behind the Hub's doesn't make it negative.
+    expect(sysinfoAge(100_000, 99_000)).toBe("0s ago")
+  })
+
+  test("draws free disk as a line from the oldest point to the newest, least free at the bottom", () => {
+    const GiB = 1024 ** 3
+    const points = [
+      { at: 0, freeBytes: 100 * GiB },
+      { at: 50, freeBytes: 50 * GiB },
+      { at: 100, freeBytes: 75 * GiB },
+    ]
+    // 100 wide and 20 high, with a pixel's room above and below for the stroke.
+    expect(diskSparkline(points, 100, 20)).toBe("0,1 50,19 100,10")
+  })
+
+  test("draws a disk that never changed as a flat line in the middle", () => {
+    const flat = [
+      { at: 0, freeBytes: 5 },
+      { at: 10, freeBytes: 5 },
+    ]
+    expect(diskSparkline(flat, 100, 20)).toBe("0,10 100,10")
+  })
+
+  test("draws nothing for fewer than two points", () => {
+    expect(diskSparkline([], 100, 20)).toBeUndefined()
+    expect(diskSparkline([{ at: 0, freeBytes: 5 }], 100, 20)).toBeUndefined()
   })
 })

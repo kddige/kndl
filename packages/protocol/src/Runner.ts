@@ -20,6 +20,7 @@ import { ClaudeSessionId, EnvironmentVersion, RunnerId, SessionId } from "./Ids.
 import { GatewayServer } from "./McpServer.ts"
 import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
 import { BranchName, OpenPort, RepoName } from "./Session.ts"
+import { Sysinfo } from "./Sysinfo.ts"
 import {
   RequestTerminalSnapshot,
   TerminalFrame,
@@ -190,6 +191,14 @@ export const TunnelFailed = Schema.TaggedStruct("TunnelFailed", {
 })
 export type TunnelFailed = typeof TunnelFailed.Type
 
+/**
+ * What the Runner's host looks like now (#350): sent right after the Runner is welcomed, then every
+ * SysinfoIntervalMillis while it is connected. The Hub keeps the latest of each Runner for the
+ * Runners page, and the disk-free numbers as history. A Runner from before doesn't send it.
+ */
+export const RunnerSysinfo = Schema.TaggedStruct("RunnerSysinfo", Sysinfo.fields)
+export type RunnerSysinfo = typeof RunnerSysinfo.Type
+
 /** Every message a Runner sends the Hub. */
 export const RunnerToHub = Schema.Union([
   RunnerHello,
@@ -211,6 +220,7 @@ export const RunnerToHub = Schema.Union([
   UpdateProgress,
   UpdateFailed,
   TunnelFailed,
+  RunnerSysinfo,
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type RunnerToHub = typeof RunnerToHub.Type
 

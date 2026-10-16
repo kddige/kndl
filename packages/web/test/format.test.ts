@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { SessionSummary } from "@kndl/protocol"
 import { Schema } from "effect"
-import { environmentChanged, mcpServersChanged, terminalText } from "../src/app/format.ts"
+import {
+  bytes,
+  environmentChanged,
+  mcpServersChanged,
+  terminalText,
+  uptime,
+} from "../src/app/format.ts"
 import { alice, sessionSummary } from "./fixtures.ts"
 
 const summary = (fields: Partial<typeof SessionSummary.Encoded>): SessionSummary =>
@@ -65,5 +71,26 @@ describe("terminalText", () => {
     expect(terminalText("Pulling 10%\rPulling 50%\rPulling 100%\r\nnext\r")).toBe(
       "Pulling 100%\nnext",
     )
+  })
+})
+
+describe("bytes", () => {
+  const GiB = 1024 ** 3
+  test("counts in binary units, with a decimal only under ten", () => {
+    expect(bytes(0)).toBe("0 B")
+    expect(bytes(512)).toBe("512 B")
+    expect(bytes(512 * 1024 ** 2)).toBe("512 MiB")
+    expect(bytes(9.5 * GiB)).toBe("9.5 GiB")
+    expect(bytes(186 * GiB)).toBe("186 GiB")
+    expect(bytes(2 * 1024 * GiB)).toBe("2.0 TiB")
+  })
+})
+
+describe("uptime", () => {
+  test("names the largest unit it has and the one below it", () => {
+    expect(uptime(30)).toBe("under a minute")
+    expect(uptime(5 * 60)).toBe("5m")
+    expect(uptime(3 * 3600 + 20 * 60)).toBe("3h 20m")
+    expect(uptime(3 * 86_400 + 4 * 3600 + 59)).toBe("3d 4h")
   })
 })

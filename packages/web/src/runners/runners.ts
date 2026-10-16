@@ -4,6 +4,7 @@
 
 import {
   type BuildVersion,
+  type DiskFreePoint,
   type PairingCodeId,
   type PendingPairingCode,
   refusalText,
@@ -15,6 +16,7 @@ import {
   type UpdateStep,
   updateUnderWay,
 } from "@kndl/protocol"
+import { timeAgo } from "../app/format.ts"
 
 /** Online Runners first, then by name. */
 export function sortRunners(runners: ReadonlyArray<RunnerSummary>): Array<RunnerSummary> {
@@ -227,4 +229,46 @@ export function codeOutcome(
   if (now >= shown.expiresAt) return { _tag: "Expired" }
   const listed = state.pairingCodes?.some((code) => code.id === shown.id) ?? true
   return listed ? { _tag: "Waiting" } : { _tag: "Revoked" }
+}
+
+/** How old a host sample is: "12s ago", then as `timeAgo` says it, "3m ago". */
+export function sysinfoAge(at: number, now: number): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1000))
+  return seconds < 60 ? `${seconds}s ago` : timeAgo(at, now)
+}
+
+/** Pixels clear above and below a sparkline's line, so its stroke isn't cut off. */
+const sparklinePadding = 1
+
+/** A coordinate to a tenth of a pixel. */
+const round = (n: number) => Math.round(n * 10) / 10
+
+/**
+ * The `points` attribute of a polyline that draws a Runner's free disk over time in a box of
+ * `width` by `height`: oldest at the left, the most free at the top. A disk that never changed is
+ * a line through the middle. `undefined` for fewer than two points, which draw no line.
+ */
+export function diskSparkline(
+  points: ReadonlyArray<DiskFreePoint>,
+  width: number,
+  height: number,
+): string | undefined {
+  const first = points[0]
+  const last = points.at(-1)
+  if (first === undefined || last === undefined || points.length < 2) return undefined
+  const free = points.map((point) => point.freeBytes)
+  const most = Math.max(...free)
+  const least = Math.min(...free)
+  const span = last.at - first.at
+  const room = height - 2 * sparklinePadding
+  return points
+    .map((point) => {
+      const x = span === 0 ? 0 : ((point.at - first.at) / span) * width
+      const y =
+        most === least
+          ? height / 2
+          : sparklinePadding + ((most - point.freeBytes) / (most - least)) * room
+      return `${round(x)},${round(y)}`
+    })
+    .join(" ")
 }

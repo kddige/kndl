@@ -1,5 +1,5 @@
 // What the Session relay does for the Runners page (issue #85): Pairing codes minted, revoked and
-// redeemed, and Runners removed. It runs under the Session relay's lock, as part of it, so a
+// redeemed, Runners removed, and a Runner's disk-free history read (#350). It runs under the Session relay's lock, as part of it, so a
 // Runner's removal and its Sessions' states never race.
 //
 // - Anyone signed in may mint a code, revoke one, or remove a Runner: there are no roles yet.
@@ -17,19 +17,25 @@ import {
   pairingLink,
   type Participant,
   type RequestId,
+  RunnerDiskHistory,
   type RunnerId,
   RunnerRemoved,
   runnerRemovalRefusal,
   type WebToHub,
 } from "@kndl/protocol"
-import { Effect, Option } from "effect"
+import { Clock, Effect, Option } from "effect"
 import type { SqlError } from "effect/sql/SqlError"
 import { HubConfig } from "./HubConfig.ts"
 import { PairingCodes } from "./PairingCodes.ts"
 import { Runners } from "./Runners.ts"
 import { RunnerTokens } from "./RunnerTokens.ts"
 
-const webTags = ["CreatePairingCode", "RevokePairingCode", "RemoveRunner"] as const
+const webTags = [
+  "CreatePairingCode",
+  "RevokePairingCode",
+  "RemoveRunner",
+  "GetRunnerDiskHistory",
+] as const
 
 /** A web command from the Runners page. */
 export type RunnerCommand = Extract<WebToHub, { readonly _tag: (typeof webTags)[number] }>
@@ -129,6 +135,18 @@ export const makeRunnerRelay = Effect.fn("makeRunnerRelay")(function* (deps: {
         peer.send(RunnerRemoved.make({ requestId: message.requestId, runnerId: message.runnerId }))
         yield* deps.runnersChanged
         return yield* codesChanged()
+      }
+      case "GetRunnerDiskHistory": {
+        const runner = yield* runners.get(message.runnerId)
+        if (Option.isNone(runner)) return refuse("There is no such Runner.")
+        const points = yield* runners.diskHistory(message.runnerId, yield* Clock.currentTimeMillis)
+        return peer.send(
+          RunnerDiskHistory.make({
+            requestId: message.requestId,
+            runnerId: message.runnerId,
+            points,
+          }),
+        )
       }
     }
   })

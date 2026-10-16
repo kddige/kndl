@@ -37,12 +37,23 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0036, the Creator drives (ADR 0026): the migrator
- * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
- * A Session's Runner login was NOT NULL with no default, which a column added can't be.
+ * Takes the database back to before migration 0037, a Runner's disk-free history (#350): the
+ * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
+ * first.
+ */
+const beforeRunnerDiskHistory = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP TABLE runner_disk_history`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'runner_disk_history'`
+})
+
+/**
+ * Takes the database back to before migration 0036, the Creator drives (ADR 0026), and 0037. A
+ * Session's Runner login was NOT NULL with no default, which a column added can't be.
  */
 const beforeCreatorDrives = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeRunnerDiskHistory
   yield* sql`ALTER TABLE runners ADD COLUMN login_account TEXT`
   yield* sql`ALTER TABLE sessions ADD COLUMN runner_login_account TEXT NOT NULL DEFAULT ''`
   yield* sql`ALTER TABLE claude_credentials ADD COLUMN plan TEXT`
@@ -252,6 +263,38 @@ const beforeAgents = Effect.gen(function* () {
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
+
+describe("migration 0037, a Runner's disk-free history", () => {
+  test("keeps every Runner, and drops a deleted Runner's points with it", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeRunnerDiskHistory
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`PRAGMA foreign_keys = ON`
+        yield* sql`INSERT INTO runner_disk_history (runner_id, bucket, at, free_bytes)
+          VALUES ('r-1', 1, 300000, 5)`
+        const kept =
+          yield* sql`SELECT runner_id AS runnerId, free_bytes AS freeBytes FROM runner_disk_history`
+        yield* sql`DELETE FROM runners WHERE id = 'r-1'`
+        return { kept, left: yield* sql`SELECT runner_id FROM runner_disk_history` }
+      }),
+    )
+    expect(after.kept).toEqual([{ runnerId: "r-1", freeBytes: 5 }])
+    expect(after.left).toEqual([])
+  })
+})
 
 describe("migration 0036, the Creator drives", () => {
   test("keeps every Runner, Session and Claude credential, without their Runner login or plan", async () => {

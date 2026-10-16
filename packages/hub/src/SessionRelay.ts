@@ -702,7 +702,7 @@ export class SessionRelay extends Context.Service<
       const runnerList: Effect.Effect<RunnerList, SqlError> = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
         return HubToWeb.cases.RunnerList.make({
-          runners: (yield* runners.list).map(({ updater, models, ...runner }) => {
+          runners: (yield* runners.list).map(({ updater, models, sysinfo, ...runner }) => {
             const online = peers.runner(runner.id)
             const isOnline = online !== undefined
             const update = runnerUpdates.stateOf(runner.id)
@@ -713,6 +713,7 @@ export class SessionRelay extends Context.Service<
               lastSeenAt: isOnline ? now : runner.lastSeenAt,
               ...(updater !== null && { updater }),
               ...(models !== null && { models }),
+              ...(sysinfo !== null && { sysinfo }),
               ...(update !== undefined && { update }),
             }
           }),
@@ -3096,6 +3097,12 @@ export class SessionRelay extends Context.Service<
 
         const handle = Effect.fn("SessionRelay.receiveRunner")(function* (message: RunnerToHub) {
           if (message._tag === "RunnerHello") return
+          if (message._tag === "RunnerSysinfo") {
+            const { _tag, ...sysinfo } = message
+            yield* runners.recordSysinfo(runner.id, sysinfo, yield* Clock.currentTimeMillis)
+            // The Runners page shows the latest sample, so every web client hears the list again.
+            return toWeb(yield* runnerList)
+          }
           if (
             message._tag === "UpdateChecked" ||
             message._tag === "UpdateProgress" ||

@@ -12,6 +12,10 @@ _Avoid_: server, backend, dashboard
 A host machine connected to the Hub that runs Sessions, each on its Creator's Claude credential.
 _Avoid_: worker, agent, node, host
 
+**Sysinfo**:
+What a Runner reports of its host every 30 seconds: free and total disk of the volume holding its data, memory, CPU cores, load, OS, architecture and uptime. The Runners page shows the latest, the free disk of the last 7 days, and a warning when the disk is under 10 GiB or a tenth free. Display only: a low disk never stops a Session from starting.
+_Avoid_: health check, heartbeat, metrics
+
 **Claude credential**:
 A person's own Claude subscription token, made with `claude setup-token`, stored write-only and encrypted on the Hub. The Sessions they create run on it, on any Runner, and nobody else's prompts reach it.
 _Avoid_: login, Runner login, OAuth token, Claude key, API key

@@ -190,6 +190,52 @@ export const fakeModels: NonNullable<RunnerSummaryWire["models"]> = {
   efforts: ["low", "medium", "high", "xhigh", "max"],
 }
 
+const GiB = 1024 ** 3
+
+/** What a Runner's host looked like at `at` (#350): `diskFreeGiB` free of `diskTotalGiB`. */
+function fakeSysinfo(
+  at: number,
+  disk: { readonly freeGiB: number; readonly totalGiB: number },
+  more: Partial<NonNullable<RunnerSummaryWire["sysinfo"]>> = {},
+): NonNullable<RunnerSummaryWire["sysinfo"]> {
+  return {
+    diskFreeBytes: disk.freeGiB * GiB,
+    diskTotalBytes: disk.totalGiB * GiB,
+    memoryTotalBytes: 32 * GiB,
+    memoryAvailableBytes: 19 * GiB,
+    cpuCores: 10,
+    loadAverage: [1.42, 1.18, 0.96],
+    os: "linux",
+    arch: "arm64",
+    uptimeSeconds: 12 * 24 * 3600 + 5 * 3600,
+    at,
+    ...more,
+  }
+}
+
+/**
+ * A Runner's disk-free history as the Hub would keep it (#350): a point every 5 minutes for a
+ * week, ending at its sample's, with the free space draining and a clean-up now and then.
+ */
+export function fakeDiskHistory(
+  sysinfo: RunnerSummaryWire["sysinfo"],
+  now = Date.now(),
+): Array<{ at: number; freeBytes: number }> {
+  if (sysinfo === undefined) return []
+  const step = 5 * 60_000
+  const points: Array<{ at: number; freeBytes: number }> = []
+  const end = Math.min(now, sysinfo.at)
+  const start = end - 7 * day
+  for (let at = start; at <= end; at += step) {
+    // Six GiB lost a day, except for a clean-up of old Sandboxes four days in, which freed 38.
+    const days = (at - start) / day
+    const freeGiB = days < 4 ? 6 * (4 - days) - 20 : 6 * (7 - days)
+    const freeBytes = sysinfo.diskFreeBytes + Math.round(freeGiB * GiB)
+    points.push({ at, freeBytes: Math.max(0, freeBytes) })
+  }
+  return points
+}
+
 /** The Runners paired with the fake Hub; their `openSessions` is counted from the Sessions. */
 export function seedRunners(): Array<RunnerSummaryWire> {
   const now = Date.now()
@@ -204,6 +250,7 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       openSessions: 0,
       updater: { self: true },
       models: fakeModels,
+      sysinfo: fakeSysinfo(now - 8_000, { freeGiB: 186, totalGiB: 500 }),
     },
     {
       id: "r-ci",
@@ -215,6 +262,12 @@ export function seedRunners(): Array<RunnerSummaryWire> {
       openSessions: 0,
       updater: { self: true },
       models: fakeModels,
+      // Nearly full when it was last heard from: the page warns.
+      sysinfo: fakeSysinfo(
+        now - 3 * 60 * 60 * 1000,
+        { freeGiB: 8, totalGiB: 120 },
+        { memoryTotalBytes: 8 * GiB, memoryAvailableBytes: 2.5 * GiB, cpuCores: 4, os: "darwin" },
+      ),
     },
   ]
 }

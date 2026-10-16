@@ -174,6 +174,7 @@ const webToHub = [
   { _tag: "RevokePairingCode", requestId: "q-15", pairingCodeId: "pc-1" },
   { _tag: "RemoveRunner", requestId: "q-16", runnerId: "r-1" },
   { _tag: "UpdateRunner", requestId: "q-17", runnerId: "r-1", now: false },
+  { _tag: "GetRunnerDiskHistory", requestId: "q-18", runnerId: "r-1" },
   {
     _tag: "CreateSession",
     requestId: "q-18",
@@ -450,6 +451,18 @@ const hubToWeb = [
         lastSeenAt: 1_790_000_000_000,
         openSessions: 1,
         models: runnerModels,
+        sysinfo: {
+          diskFreeBytes: 200 * 1024 ** 3,
+          diskTotalBytes: 500 * 1024 ** 3,
+          memoryTotalBytes: 16 * 1024 ** 3,
+          memoryAvailableBytes: 9 * 1024 ** 3,
+          cpuCores: 8,
+          loadAverage: [0.5, 0.75, 1.25],
+          os: "linux",
+          arch: "arm64",
+          uptimeSeconds: 86_400,
+          at: 1_790_000_000_000,
+        },
       },
     ],
   },
@@ -644,6 +657,15 @@ const hubToWeb = [
   { _tag: "RunnerRemoved", requestId: "q-16", runnerId: "r-1" },
   { _tag: "PairingCodeRedeemed", id: "pc-1", runnerId: "r-1", name: "studio", repaired: true },
   { _tag: "RunnerUpdateRequested", requestId: "q-17", runnerId: "r-1" },
+  {
+    _tag: "RunnerDiskHistory",
+    requestId: "q-18",
+    runnerId: "r-1",
+    points: [
+      { at: 1_790_000_000_000, freeBytes: 200 * 1024 ** 3 },
+      { at: 1_790_000_300_000, freeBytes: 199 * 1024 ** 3 },
+    ],
+  },
   { _tag: "CliTokenList", tokens: [] },
   {
     _tag: "CliTokenList",

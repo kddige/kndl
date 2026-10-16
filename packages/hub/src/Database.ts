@@ -710,6 +710,22 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE sessions DROP COLUMN runner_login_account`
     yield* sql`ALTER TABLE claude_credentials DROP COLUMN plan`
   }),
+  // A Runner's disk-free history (#350): one point per 5 minutes, the bucket being the epoch
+  // milliseconds divided by that, so a later sample in it replaces the one before. Points older
+  // than 7 days are deleted as samples arrive, which the index on `at` serves.
+  "0037_runner_disk_history": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE runner_disk_history (
+        runner_id TEXT NOT NULL REFERENCES runners (id) ON DELETE CASCADE,
+        bucket INTEGER NOT NULL,
+        at INTEGER NOT NULL,
+        free_bytes INTEGER NOT NULL,
+        PRIMARY KEY (runner_id, bucket)
+      ) WITHOUT ROWID
+    `
+    yield* sql`CREATE INDEX runner_disk_history_at ON runner_disk_history (at)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

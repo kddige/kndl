@@ -9,6 +9,7 @@ import { readBuildVersion } from "@kndl/protocol/checkout"
 import { Data, Duration, Effect, Redacted, Schema } from "effect"
 import { Socket } from "effect/socket"
 import { ClaudeModels } from "./ClaudeModels.ts"
+import { reportSysinfo } from "./HostSysinfo.ts"
 import { HubLink } from "./HubLink.ts"
 import { RunnerConfig, runnerConnectionUrl, runnerSocketUrl } from "./RunnerConfig.ts"
 import { Sessions } from "./Sessions.ts"
@@ -210,6 +211,8 @@ const connectOnce = Effect.scoped(
     yield* updater.welcomed
     yield* hub.connect(write)
     yield* Effect.addFinalizer(() => hub.disconnect)
+    // The host's sysinfo (#350), now and every half minute, for as long as this connection lasts.
+    yield* Effect.forkScoped(reportSysinfo())
     yield* sessions.snapshotAll
 
     // Messages from the rest of the batch the welcome came in, then everything after it.
