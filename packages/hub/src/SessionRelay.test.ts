@@ -1508,8 +1508,103 @@ describe("archive, restore and purge", () => {
     await web.take("SessionRemoved")
   })
 
+  test("any Member who can see an Archived Session can purge it now, not just its Creator (#351)", async () => {
+    const scene = await sessionScene()
+    const { hub, runner, web, sessionId } = scene
+    const bobWeb = await openWeb(hub, "bob")
+    joinSession(bobWeb, sessionId)
+    await bobWeb.take("SessionHistory")
+    await archived(scene)
+
+    // Its retention is 30 days, but bob purges it now: purging isn't driving (ADR 0027).
+    bobWeb.send({ _tag: "PurgeArchivedSession", requestId: "r-purge", sessionId })
+    expect(await bobWeb.take("ArchivedSessionPurged")).toEqual({
+      _tag: "ArchivedSessionPurged",
+      requestId: "r-purge",
+      sessionId,
+      runnerOnline: true,
+    })
+    expect(await runner.take("PurgeSession")).toEqual({ _tag: "PurgeSession", sessionId })
+    for (const client of [web, bobWeb]) {
+      expect(await client.take("SessionRemoved")).toEqual({ _tag: "SessionRemoved", sessionId })
+    }
+
+    // Gone from the Hub, so it can't be restored, or purged again.
+    web.send({ _tag: "RestoreSession", sessionId })
+    expect(await web.take("CommandFailed")).toMatchObject({ message: "There is no such Session." })
+    bobWeb.send({ _tag: "PurgeArchivedSession", requestId: "r-again", sessionId })
+    expect(await bobWeb.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "PurgeArchivedSession",
+      sessionId,
+      requestId: "r-again",
+      message: "There is no such Session.",
+    })
+    expect((await openWeb(hub, "carol")).sessions.sessions).toEqual([])
+
+    // Once the Runner says it is done, it isn't asked again.
+    runner.send({ _tag: "SessionPurged", sessionId })
+    await Bun.sleep(100)
+    await runner.close()
+    const back = await openRunner(hub, scene.runnerToken, [])
+    expect(await back.untaken("PurgeSession")).toEqual([])
+  })
+
+  test("refuses to purge a Session that isn't Archived", async () => {
+    const { hub, runner, web, sessionId } = await sessionScene()
+    const bobWeb = await openWeb(hub, "bob")
+    for (const client of [web, bobWeb]) {
+      client.send({ _tag: "PurgeArchivedSession", requestId: "r-purge", sessionId })
+      expect(await client.take("CommandFailed")).toEqual({
+        _tag: "CommandFailed",
+        command: "PurgeArchivedSession",
+        sessionId,
+        requestId: "r-purge",
+        message: "Only an Archived Session can be purged: delete it first.",
+      })
+    }
+    expect(await runner.untaken("PurgeSession")).toEqual([])
+    expect(await web.untaken("SessionRemoved")).toEqual([])
+    expect((await openWeb(hub, "carol")).sessions.sessions).toEqual([
+      expect.objectContaining({ id: sessionId, state: "Active" }),
+    ])
+  })
+
+  test("a purge with its Runner offline says so, and the Runner frees the disk when it is back", async () => {
+    const scene = await sessionScene()
+    const { hub, runner, runnerToken, web, sessionId } = scene
+    await archived(scene)
+    await Bun.sleep(100)
+    await runner.close()
+
+    web.send({ _tag: "PurgeArchivedSession", requestId: "r-purge", sessionId })
+    expect(await web.take("ArchivedSessionPurged")).toEqual({
+      _tag: "ArchivedSessionPurged",
+      requestId: "r-purge",
+      sessionId,
+      runnerOnline: false,
+    })
+    await web.take("SessionRemoved")
+
+    const back = await openRunner(hub, runnerToken, [])
+    expect(await back.take("PurgeSession")).toEqual({ _tag: "PurgeSession", sessionId })
+    back.send({ _tag: "SessionPurged", sessionId })
+    await Bun.sleep(100)
+    await back.close()
+    const again = await openRunner(hub, runnerToken, [])
+    expect(await again.untaken("PurgeSession")).toEqual([])
+  })
+
   test("refuses unknown Sessions", async () => {
     const { web } = await sessionScene()
+    web.send({ _tag: "PurgeArchivedSession", requestId: "r-purge", sessionId: "nope" })
+    expect(await web.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "PurgeArchivedSession",
+      sessionId: "nope",
+      requestId: "r-purge",
+      message: "There is no such Session.",
+    })
     web.send({ _tag: "ArchiveSession", sessionId: "nope" })
     expect(await web.take("CommandFailed")).toMatchObject({
       command: "ArchiveSession",
@@ -2597,6 +2692,28 @@ describe("Repo access", () => {
     expect(await runner.untaken("TerminalInput")).toEqual([])
     expect(await runner.untaken("StopSession")).toEqual([])
     expect(await hubotWeb.untaken("SessionHistory")).toEqual([])
+  })
+
+  test("an Archived Session out of reach can't be purged: it is no such Session (#351)", async () => {
+    const scene = await sessionScene(await accessHub())
+    const { hub, runner, sessionId } = scene
+    await archived(scene)
+    const hubotWeb = await openGitHubWeb(hub, hubot)
+    for (const id of [sessionId, "no-such-session"]) {
+      hubotWeb.send({ _tag: "PurgeArchivedSession", requestId: "r-purge", sessionId: id })
+      expect(await hubotWeb.take("CommandFailed")).toEqual({
+        ...noSuchSession("PurgeArchivedSession", id),
+        requestId: "r-purge",
+      })
+    }
+    expect(await runner.untaken("PurgeSession")).toEqual([])
+
+    // octocat, granted the Repo, may, though he didn't create it.
+    github.grant(repo, "octocat")
+    const octocatWeb = await openGitHubWeb(hub, octocat)
+    octocatWeb.send({ _tag: "PurgeArchivedSession", requestId: "r-purge", sessionId })
+    expect(await octocatWeb.take("ArchivedSessionPurged")).toMatchObject({ sessionId })
+    expect(await runner.take("PurgeSession")).toEqual({ _tag: "PurgeSession", sessionId })
   })
 
   test("creating a Session needs access to its Repo", async () => {

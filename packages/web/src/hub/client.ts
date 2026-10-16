@@ -7,6 +7,7 @@
 import {
   type AgentId,
   type AppPermissionsCheck,
+  type ArchivedSessionPurged,
   type AttachmentId,
   type BranchChoice,
   type BranchesListed,
@@ -392,6 +393,15 @@ export class HubClient {
   /** Brings an Archived Session back, Asleep: the next prompt wakes it. */
   restoreSession(sessionId: SessionId): boolean {
     return this.#send({ _tag: "RestoreSession", sessionId })
+  }
+
+  /**
+   * Purges an Archived Session now, to free its Runner's disk (#351): it can't be restored after.
+   * Anyone who can see it may. Resolves once the Hub has deleted it, saying whether its Runner was
+   * online to free the disk now, or does when it is back; rejects with the Hub's reason.
+   */
+  purgeSession(sessionId: SessionId): Promise<ArchivedSessionPurged> {
+    return this.#request({ _tag: "PurgeArchivedSession", sessionId }, "ArchivedSessionPurged")
   }
 
   /**
@@ -868,6 +878,7 @@ export class HubClient {
         this.#reject(socket, message.message)
         break
       case "SessionCreated":
+      case "ArchivedSessionPurged":
       case "EnvironmentState":
       case "EnvironmentDraftChecked":
       case "TestBuildStarted":

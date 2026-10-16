@@ -773,6 +773,8 @@ async function openApp(path: string, stepMs = 2) {
   }
   return {
     router,
+    hub,
+    client,
     page: view.container,
     sent: () => hub.received.map((message) => message._tag),
     find: (id: string) => client.getState().sessions?.find((session) => session.id === id),
@@ -869,6 +871,75 @@ test("a Repo's Archived screen lists who deleted each Session, and restores it",
   expect(sent()).toContain("RestoreSession")
   await eventually(() => expect(find("s-flaky")?.state).toBe("Asleep"))
   await eventually(() => expect(page.textContent).toContain("Nothing archived"))
+})
+
+/** The open dialog that asks to purge Sessions; another test's may linger in the document. */
+function purgeDialog(): HTMLElement | undefined {
+  const dialogs = document.querySelectorAll<HTMLElement>('[role="dialog"]:not([data-type])')
+  return [...dialogs].find((el) => el.textContent?.includes("This can't be undone."))
+}
+
+test("an Archived Session is purged now once it's confirmed, warning that it can't be undone (#351)", async () => {
+  const { page, sent, find } = await openApp("/repos/kddige/kndl/archived")
+  const archived = () => page.querySelector('ul[aria-label="Archived Sessions"]')?.textContent ?? ""
+  await eventually(() => expect(archived()).toContain("claude/flaky-login"))
+
+  await step(() => button("Purge claude/flaky-login", page).click())
+  await eventually(() => expect(purgeDialog()?.textContent).toContain("Purge claude/flaky-login?"))
+  const asked = purgeDialog()?.textContent ?? ""
+  expect(asked).toContain("1 Session")
+  expect(asked).toContain("work not pushed")
+  expect(asked).toContain("can't be undone")
+  // Nothing is sent until it's confirmed.
+  expect(sent()).not.toContain("PurgeArchivedSession")
+
+  await step(() => button("Purge", purgeDialog() as HTMLElement).click())
+  expect(sent()).toContain("PurgeArchivedSession")
+  await eventually(() => expect(find("s-flaky")).toBeUndefined())
+  await eventually(() => expect(page.textContent).toContain("Nothing archived"))
+  await eventually(() => expect(findToast("Purged claude/flaky-login")).toBeDefined())
+})
+
+test("several Archived Sessions are purged at once, and an offline Runner frees its disk when back", async () => {
+  const { page, hub, client, sent, find } = await openApp("/archive")
+  const archived = () =>
+    page.querySelector('ul[aria-label="Archived Sessions of kddige/kndl"]')?.textContent ?? ""
+  await eventually(() => expect(archived()).toContain("claude/flaky-login"))
+  await step(() => client.archiveSession("s-readme" as SessionId))
+  await eventually(() => expect(archived()).toContain("claude/readme-run"))
+  await step(() => hub.patchRunner("r-studio", { isOnline: false }))
+
+  const purgeSelected = () =>
+    [...page.querySelectorAll("button")].find((el) => el.textContent?.startsWith("Purge selected"))
+  expect(purgeSelected()?.disabled).toBe(true)
+  await step(() => select("claude/flaky-login"))
+  await step(() => select("claude/readme-run"))
+  await eventually(() => expect(purgeSelected()?.textContent).toBe("Purge selected (2)"))
+  await step(() => purgeSelected()?.click())
+  await eventually(() => expect(purgeDialog()?.textContent).toContain("Purge 2 Sessions?"))
+  const asked = purgeDialog()?.textContent ?? ""
+  expect(asked).toContain("claude/flaky-login")
+  expect(asked).toContain("claude/readme-run")
+  expect(asked).toContain("can't be undone")
+
+  await step(() => button("Purge 2 Sessions", purgeDialog() as HTMLElement).click())
+  expect(sent().filter((tag) => tag === "PurgeArchivedSession")).toHaveLength(2)
+  await eventually(() => expect(find("s-flaky")).toBeUndefined())
+  expect(find("s-readme")).toBeUndefined()
+  await eventually(() => expect(page.textContent).toContain("Nothing archived"))
+  await eventually(() =>
+    expect(findToast("Purged 2 Sessions")?.textContent).toContain(
+      "studio is offline: its disk frees when it reconnects.",
+    ),
+  )
+
+  /** Ticks the Archived Session's checkbox. */
+  function select(title: string): void {
+    const row = [...page.querySelectorAll("li")].find((li) => li.textContent?.includes(title))
+    const box = row?.querySelector('input[type="checkbox"]') as HTMLElement | null
+    if (!box) throw new Error(`no checkbox for ${title}`)
+    box.click()
+  }
 })
 
 test("an Archived Session can't take prompts or open its terminal, and offers a restore", async () => {

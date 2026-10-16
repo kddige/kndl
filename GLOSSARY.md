@@ -221,6 +221,10 @@ _Avoid_: orphaned, dead, offline
 A deleted Session that can still be restored for 30 days, after which it is purged.
 _Avoid_: deleted, trashed
 
+**Purge**:
+To delete an Archived Session for good: its history from the Hub, and its Workspace, with any work it never pushed, from its Runner. It happens when its 30 days are up, or sooner by the hand of anyone who can see it, to free its Runner's disk (ADR 0027). A purged Session can't be restored.
+_Avoid_: hard delete, destroy, empty trash
+
 **Move**:
 Transferring a Frozen Session, with its Sandbox and Workspace, to another Runner so it continues there. Not part of v1.
 _Avoid_: adopt, migrate, transfer

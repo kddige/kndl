@@ -84,6 +84,8 @@ A restored Session is Asleep, and the Creator's next prompt wakes it in a new Sa
 
 30 days after it was archived ([`HUB_ARCHIVE_RETENTION_MS`](/reference/configuration/#hub)), the Hub purges a Session: its history, its queue, and on its Runner, its Workspace and disks. Work the Session never pushed is gone with it.
 
+To free a Runner's disk sooner, anyone with access to the Repo can purge an Archived Session by hand, not just its Creator ([ADR 0027](/contributing/decisions/0027-anyone-who-sees-an-archived-session-can-purge-it/)). In **Archived Sessions**, press **Purge** on one, or tick several and press **Purge selected**, then confirm. A purged Session can't be restored. If its Runner is offline, the Session is gone from the Hub at once, and its Runner frees the disk when it reconnects.
+
 ## History
 
 Every start, sleep, wake, delete, restore and failure is in the Session's history, with who did it.

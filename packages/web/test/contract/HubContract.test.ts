@@ -548,6 +548,24 @@ for (const adapter of [fake, real]) {
       )
     })
 
+    test("only an Archived Session can be purged, and it's gone at once (#351)", async () => {
+      const scene = await adapter.scene()
+      const session = watch(scene.client, scene.sessionId)
+      await eventually(() => expect(session.summary()).toBeDefined())
+      await expect(scene.client.purgeSession(scene.sessionId)).rejects.toThrow(
+        "Only an Archived Session can be purged: delete it first.",
+      )
+      scene.client.archiveSession(scene.sessionId)
+      await eventually(() => expect(session.summary()?.state).toBe("Archived"))
+      expect(await scene.client.purgeSession(scene.sessionId)).toEqual({
+        _tag: "ArchivedSessionPurged",
+        requestId: expect.any(String),
+        sessionId: scene.sessionId,
+        runnerOnline: true,
+      })
+      await eventually(() => expect(session.summary()).toBeUndefined())
+    })
+
     test("a join gets the history, and a rejoin after a dropped connection what came since", async () => {
       const scene = await adapter.scene()
       const session = await turnRunning(scene, "one", "two")
