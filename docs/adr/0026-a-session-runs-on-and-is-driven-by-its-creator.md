@@ -44,3 +44,7 @@ So:
 - **A Session whose Creator is gone can't be driven.** It stays readable until it's purged. Fork (#332) is the way to carry it on.
 - **Participants can't help drive.** That was the point of pair-prompting. Prompt suggestions (#333) and API-key Sessions (#334) bring some of it back.
 - **Back with direct traffic:** fast mode and remote managed settings. Claude Code no longer needs undocumented variables to treat its account as a subscription, so a Claude Code upgrade no longer depends on them. A setup token only makes model requests, so `/status` still shows no usage.
+
+## Amendment: anyone who sees an Archived Session can purge it (ADR 0027)
+
+Purging an Archived Session to free its Runner's disk isn't driving it, so it's the one Session control the Creator doesn't hold alone. Any Member with Repo access can purge it, as soon as it is Archived.

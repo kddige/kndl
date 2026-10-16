@@ -114,6 +114,7 @@ const webToHub = [
   { _tag: "RestartSession", sessionId: "s-1" },
   { _tag: "ArchiveSession", sessionId: "s-1" },
   { _tag: "RestoreSession", sessionId: "s-1" },
+  { _tag: "PurgeArchivedSession", requestId: "q-0", sessionId: "s-1" },
   { _tag: "RenameSession", sessionId: "s-1", name: "Health check" },
   { _tag: "RenameSession", sessionId: "s-1", name: "" },
   { _tag: "OpenTerminal", sessionId: "s-1" },
@@ -467,6 +468,8 @@ const hubToWeb = [
     ],
   },
   { _tag: "SessionRemoved", sessionId: "s-1" },
+  { _tag: "ArchivedSessionPurged", requestId: "q-0", sessionId: "s-1", runnerOnline: true },
+  { _tag: "ArchivedSessionPurged", requestId: "q-0", sessionId: "s-1", runnerOnline: false },
   { _tag: "SessionCreated", requestId: "q-1", session: sessionSummary },
   {
     _tag: "SessionHistory",

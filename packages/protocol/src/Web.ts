@@ -372,6 +372,23 @@ export const RestoreSession = Schema.TaggedStruct("RestoreSession", {
 })
 export type RestoreSession = typeof RestoreSession.Type
 
+/**
+ * Purge an Archived Session now, rather than at the end of its retention, to free its Runner's
+ * disk (#351): the Hub deletes it, its log and queue, and its Runner deletes its Workspace and
+ * the rest, at once or when it is back. It can't be restored after. Any Member who can see it may,
+ * not just its Creator (ADR 0027). Refused for a Session that isn't Archived. Answered with an
+ * {@link ArchivedSessionPurged}; every client that could see it gets a SessionRemoved.
+ */
+export const PurgeArchivedSession = Schema.TaggedStruct("PurgeArchivedSession", {
+  requestId: RequestId,
+  sessionId: SessionId,
+})
+export type PurgeArchivedSession = typeof PurgeArchivedSession.Type
+
+/** What a web client asks of a Session's archive: deleting it, restoring it and purging it. */
+export const ArchiveCommand = Schema.Union([ArchiveSession, RestoreSession, PurgeArchivedSession])
+export type ArchiveCommand = typeof ArchiveCommand.Type
+
 /** Start receiving the Session's terminal frames, beginning with a snapshot. */
 export const OpenTerminal = Schema.TaggedStruct("OpenTerminal", {
   sessionId: SessionId,
@@ -561,8 +578,7 @@ export const WebToHub = Schema.Union([
   WakeSession,
   SetKeepAwake,
   RestartSession,
-  ArchiveSession,
-  RestoreSession,
+  ArchiveCommand,
   RenameSession,
   SetSessionModel,
   OpenTerminal,
@@ -629,13 +645,24 @@ export type SessionUpdated = typeof SessionUpdated.Type
 
 /**
  * The client can no longer see a Session, and drops its copy of it: it was purged, its archive
- * retention (30 days by default) after it was archived, or the person lost access to its Repo on
- * GitHub, which also took them out of it.
+ * retention (30 days by default) after it was archived or sooner by hand, or the person lost access
+ * to its Repo on GitHub, which also took them out of it.
  */
 export const SessionRemoved = Schema.TaggedStruct("SessionRemoved", {
   sessionId: SessionId,
 })
 export type SessionRemoved = typeof SessionRemoved.Type
+
+/**
+ * Answers a {@link PurgeArchivedSession}: the Session is gone from the Hub. Its Runner frees its
+ * disk now if `runnerOnline`, otherwise when it is back.
+ */
+export const ArchivedSessionPurged = Schema.TaggedStruct("ArchivedSessionPurged", {
+  requestId: RequestId,
+  sessionId: SessionId,
+  runnerOnline: Schema.Boolean,
+})
+export type ArchivedSessionPurged = typeof ArchivedSessionPurged.Type
 
 /** Answers a {@link CreateSession}. */
 export const SessionCreated = Schema.TaggedStruct("SessionCreated", {
@@ -887,6 +914,7 @@ export const HubToWeb = Schema.Union([
   SessionList,
   SessionUpdated,
   SessionRemoved,
+  ArchivedSessionPurged,
   SessionCreated,
   SessionHistory,
   SessionEventLogged,

@@ -60,6 +60,10 @@ A Session whose Runner is offline is Frozen. You can read it, and new prompts wa
 
 To restore it, press **Undo** in the toast, or **Restore** on it in **Archived Sessions**, in the sidebar. A restored Session starts Asleep. Your next prompt wakes it in a fresh Sandbox, without the old `node_modules` or Docker data.
 
+## Purge it to free disk
+
+A Runner running low on disk doesn't have to wait 30 days. In **Archived Sessions**, press **Purge** on an Archived Session, or tick several and press **Purge selected**. Anyone with access to the Repo can, not just the Session's Creator. The confirmation names each Session: once purged, it can't be restored, and its Workspace goes with any work it never pushed. A Runner that is offline frees the disk when it reconnects.
+
 ## Next steps
 
 <CardGrid>

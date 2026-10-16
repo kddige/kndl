@@ -17,7 +17,7 @@
 //   restore, rename, model and effort) or uses its terminal is refused anyone else, once Repo
 //   access lets them see it (`authorize`), as is their forward of it Asleep, which would wake it.
 //   They watch: they join it, read it, and forward its Open ports. Its terminal frames go to its
-//   Creator's connections alone.
+//   Creator's connections alone. Purging an Archived Session isn't driving it (ADR 0027).
 // - Steering (#195, ADR 0018): while a Turn runs, the Creator can hand a queued prompt to it
 //   (SteerPrompt), if the Session's mod said in its hello that it steers. The prompt keeps its
 //   place in the queue until the mod reports it joined the Turn (PromptSteered), and nothing else
@@ -62,7 +62,9 @@
 //   - Purge: `HubConfig.archiveRetention` after it was archived, a periodic sweep deletes the
 //     Session, its log and its queue, and sends the Runner PurgeSession to delete its directory,
 //     Claude Code's state and any volumes left. A Runner that is offline is sent it when it is
-//     back, again on every connection until it answers SessionPurged.
+//     back, again on every connection until it answers SessionPurged. Anyone who can see an
+//     Archived Session may purge it sooner (PurgeArchivedSession, #351), to free its Runner's
+//     disk: not just its Creator, since that isn't driving it (ADR 0027).
 // - Session names (#120): the Creator can rename a Session (RenameSession), in any state;
 //   every client that can see it gets the SessionUpdated. A Session without a name is shown by its
 //   Work branch.
@@ -179,6 +181,7 @@
 import {
   AgentMessaged,
   AgentStatusChanged,
+  ArchivedSessionPurged,
   BranchesListed,
   type BranchChoice,
   branchesFor,
@@ -432,7 +435,8 @@ interface AccessVerdict {
 
 /**
  * The web commands that drive a Session, which only its Creator may send (ADR 0026): everyone
- * else with Repo access watches it.
+ * else with Repo access watches it. PurgeArchivedSession isn't one: it frees a Runner's disk, and
+ * anyone who sees the Session may (ADR 0027).
  */
 const drivingCommands: ReadonlySet<WebToHub["_tag"]> = new Set<WebToHub["_tag"]>([
   "SendPrompt",
@@ -1921,23 +1925,36 @@ export class SessionRelay extends Context.Service<
         toWeb(yield* runnerList)
       })
 
+      /**
+       * Purges the Archived Session: it is deleted with its log and queue, every client that could
+       * see it drops it, and its Runner is asked to delete the rest, now or when it is back (see
+       * `pendingPurges`). Whether its Runner is online to be asked now.
+       */
+      const purge = Effect.fn("SessionRelay.purge")(function* (
+        session: SessionSummary,
+        why: string,
+      ) {
+        yield* Effect.logInfo(`Purging Session ${session.id}, ${why}`)
+        yield* sessions.purge(session, yield* Clock.currentTimeMillis)
+        live.ended(session.id, "Purged")
+        yield* outbox.clear(session.id)
+        for (const client of peers.webClients) {
+          client.joined.delete(session.id)
+          client.terminals.delete(session.id)
+        }
+        toWeb(
+          SessionRemoved.make({ sessionId: session.id }),
+          (client) => client.repos.get(session.repo) === true,
+        )
+        const runner = peers.runner(session.runnerId)
+        runner?.peer.send(PurgeSession.make({ sessionId: session.id }))
+        return runner !== undefined
+      })
+
       /** Purges every Archived Session past its retention. */
       const purgeDue = Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis
-        for (const session of yield* sessions.dueForPurge(now)) {
-          yield* Effect.logInfo(`Purging Session ${session.id}, archived past its retention`)
-          yield* sessions.purge(session, now)
-          live.ended(session.id, "Purged")
-          yield* outbox.clear(session.id)
-          for (const client of peers.webClients) {
-            client.joined.delete(session.id)
-            client.terminals.delete(session.id)
-          }
-          toWeb(
-            SessionRemoved.make({ sessionId: session.id }),
-            (client) => client.repos.get(session.repo) === true,
-          )
-          peers.runner(session.runnerId)?.peer.send(PurgeSession.make({ sessionId: session.id }))
+        for (const session of yield* sessions.dueForPurge(yield* Clock.currentTimeMillis)) {
+          yield* purge(session, "archived past its retention")
         }
       }).pipe(Effect.withSpan("SessionRelay.purgeDue"))
 
@@ -2549,6 +2566,24 @@ export class SessionRelay extends Context.Service<
                 })
               }
               return yield* restore(session.value, you)
+            }
+
+            case "PurgeArchivedSession": {
+              // Anyone who can see it may, not just its Creator: freeing a Runner's disk isn't
+              // driving the Session (ADR 0027).
+              const { requestId, sessionId } = message
+              const session = yield* sessions.get(sessionId)
+              if (Option.isNone(session)) {
+                return refuse(message, "There is no such Session.", { sessionId, requestId })
+              }
+              if (session.value.state !== "Archived") {
+                return refuse(message, "Only an Archived Session can be purged: delete it first.", {
+                  sessionId,
+                  requestId,
+                })
+              }
+              const runnerOnline = yield* purge(session.value, `purged by ${you.login}`)
+              return peer.send(ArchivedSessionPurged.make({ requestId, sessionId, runnerOnline }))
             }
 
             case "CancelPrompt": {

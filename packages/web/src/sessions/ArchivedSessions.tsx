@@ -1,15 +1,25 @@
-import { sameRepo, type SessionId, type SessionSummary, sessionTitle } from "@kndl/protocol"
+import {
+  type RunnerSummary,
+  sameRepo,
+  type SessionId,
+  type SessionSummary,
+  sessionTitle,
+} from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
+import { messageOf, useLastOpened } from "../mcp/shared.ts"
 import { useDrives } from "../session/drive.ts"
 import {
   Avatar,
   BranchIcon,
   Button,
+  Checkbox,
+  Dialog,
+  DialogClose,
   EmptyState,
   InboxIcon,
   PageHeader,
@@ -30,6 +40,13 @@ const styles = stylex.create({
     maxWidth: "56rem",
     marginInline: "auto",
     paddingBlock: space.s6,
+    paddingInline: space.s4,
+  },
+  toolbar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: space.s3,
     paddingInline: space.s4,
   },
   group: { display: "flex", flexDirection: "column", gap: space.s2 },
@@ -54,7 +71,7 @@ const styles = stylex.create({
   },
   row: {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
+    gridTemplateColumns: "auto minmax(0, 1fr) auto",
     alignItems: "center",
     columnGap: space.s4,
     paddingBlock: space.s3,
@@ -86,12 +103,33 @@ const styles = stylex.create({
     color: color.textMuted,
     fontSize: text.sm,
   },
+  actions: { display: "flex", alignItems: "center", gap: space.s2 },
+  // For screen readers only: the row's link names the Session to everyone else.
+  hidden: {
+    position: "absolute",
+    width: "1px",
+    height: "1px",
+    overflow: "hidden",
+    clipPath: "inset(50%)",
+    whiteSpace: "nowrap",
+  },
+  purging: {
+    display: "flex",
+    flexDirection: "column",
+    gap: space.s1,
+    margin: 0,
+    paddingInlineStart: space.s5,
+    fontSize: text.sm,
+  },
+  purgingTitle: { fontFamily: font.mono },
+  purgingRepo: { color: color.textMuted },
   loading: { display: "grid", placeItems: "center", paddingBlock: space.s16 },
 })
 
 /**
  * A Repo's Archived Sessions: who deleted each and when, and until when it can be restored.
- * Restoring brings a Session back Asleep.
+ * Restoring brings a Session back Asleep. Purging one or several, once confirmed, deletes them now,
+ * to free their Runners' disk (#351).
  */
 export function ArchivedSessions({ repo }: { repo: string }) {
   const sessions = useHubState((state) => state.sessions)
@@ -102,6 +140,7 @@ export function ArchivedSessions({ repo }: { repo: string }) {
         : newestArchived(sessions.filter((session) => sameRepo(session.repo, repo))),
     [sessions, repo],
   )
+  const purging = usePurging(archived ?? noSessions)
 
   return (
     <main {...stylex.props(styles.view)}>
@@ -121,10 +160,14 @@ export function ArchivedSessions({ repo }: { repo: string }) {
               description={`Sessions deleted from ${repo} show here until they're purged.`}
             />
           ) : (
-            <ArchivedList label="Archived Sessions" sessions={archived} />
+            <>
+              <PurgeToolbar purging={purging} />
+              <ArchivedList label="Archived Sessions" sessions={archived} purging={purging} />
+            </>
           )}
         </div>
       </div>
+      <PurgeDialog purging={purging} />
     </main>
   )
 }
@@ -142,6 +185,8 @@ export function AllArchivedSessions() {
           ),
     [sessions],
   )
+  const listed = useMemo(() => groups?.flatMap((group) => group.sessions) ?? noSessions, [groups])
+  const purging = usePurging(listed)
 
   return (
     <main {...stylex.props(styles.view)}>
@@ -161,26 +206,36 @@ export function AllArchivedSessions() {
               description="Deleted Sessions show here until they're purged."
             />
           ) : (
-            groups.map(({ repo, sessions: archived }) => (
-              <section key={repo} aria-label={repo} {...stylex.props(styles.group)}>
-                <h2 {...stylex.props(styles.repo)}>
-                  <Link
-                    to="/repos/$owner/$repo/archived"
-                    params={repoParams(repo)}
-                    {...stylex.props(styles.repoLink, focus.ring)}
-                  >
-                    {repo}
-                  </Link>
-                </h2>
-                <ArchivedList label={`Archived Sessions of ${repo}`} sessions={archived} />
-              </section>
-            ))
+            <>
+              <PurgeToolbar purging={purging} />
+              {groups.map(({ repo, sessions: archived }) => (
+                <section key={repo} aria-label={repo} {...stylex.props(styles.group)}>
+                  <h2 {...stylex.props(styles.repo)}>
+                    <Link
+                      to="/repos/$owner/$repo/archived"
+                      params={repoParams(repo)}
+                      {...stylex.props(styles.repoLink, focus.ring)}
+                    >
+                      {repo}
+                    </Link>
+                  </h2>
+                  <ArchivedList
+                    label={`Archived Sessions of ${repo}`}
+                    sessions={archived}
+                    purging={purging}
+                  />
+                </section>
+              ))}
+            </>
           )}
         </div>
       </div>
+      <PurgeDialog purging={purging} />
     </main>
   )
 }
+
+const noSessions: ReadonlyArray<SessionSummary> = []
 
 const lastDeletedFirst = (a: SessionSummary, b: SessionSummary) =>
   (b.archived?.at ?? 0) - (a.archived?.at ?? 0)
@@ -198,18 +253,92 @@ function Loading() {
   )
 }
 
+/** What is ticked to purge on an Archived screen, and what its confirmation asks about. */
+interface Purging {
+  /** The Archived Sessions listed, which the ticks pick from. */
+  readonly listed: ReadonlyArray<SessionSummary>
+  /** The ticked ones still listed, in the list's order. */
+  readonly selected: ReadonlyArray<SessionSummary>
+  readonly isSelected: (sessionId: SessionId) => boolean
+  readonly select: (sessionIds: ReadonlyArray<SessionId>, on: boolean) => void
+  /** The Sessions the confirmation asks to purge, or null while it is closed. */
+  readonly asking: ReadonlyArray<SessionSummary> | null
+  readonly ask: (sessions: ReadonlyArray<SessionSummary> | null) => void
+}
+
+function usePurging(listed: ReadonlyArray<SessionSummary>): Purging {
+  const [ticked, setTicked] = useState<ReadonlySet<SessionId>>(() => new Set())
+  const [asking, setAsking] = useState<ReadonlyArray<SessionSummary> | null>(null)
+  // One restored or purged meanwhile drops out of the selection with the list.
+  const selected = useMemo(
+    () => listed.filter((session) => ticked.has(session.id)),
+    [listed, ticked],
+  )
+  return {
+    listed,
+    selected,
+    isSelected: (sessionId) => ticked.has(sessionId),
+    select: (sessionIds, on) =>
+      setTicked((before) => {
+        const after = new Set(before)
+        for (const sessionId of sessionIds) {
+          if (on) after.add(sessionId)
+          else after.delete(sessionId)
+        }
+        return after
+      }),
+    asking,
+    ask: setAsking,
+  }
+}
+
+/** Ticks every Archived Session listed, and asks to purge the ticked ones. */
+function PurgeToolbar({ purging }: { purging: Purging }) {
+  const { listed, selected } = purging
+  return (
+    <div {...stylex.props(styles.toolbar)}>
+      <Checkbox
+        label="Select all"
+        checked={selected.length === listed.length}
+        onCheckedChange={(on) =>
+          purging.select(
+            listed.map((session) => session.id),
+            on,
+          )
+        }
+      />
+      <Button
+        size="sm"
+        intent="danger"
+        disabled={selected.length === 0}
+        onClick={() => purging.ask(selected)}
+      >
+        {selected.length === 0 ? "Purge selected" : `Purge selected (${selected.length})`}
+      </Button>
+    </div>
+  )
+}
+
 function ArchivedList({
   label,
   sessions,
+  purging,
 }: {
   label: string
   sessions: ReadonlyArray<SessionSummary>
+  purging: Purging
 }) {
   const hub = useHub()
   return (
     <ul aria-label={label} {...stylex.props(styles.list)}>
       {sessions.map((session, index) => (
-        <ArchivedRow key={session.id} session={session} first={index === 0} hub={hub} />
+        <ArchivedRow
+          key={session.id}
+          session={session}
+          first={index === 0}
+          hub={hub}
+          purging={purging}
+        />
       ))}
     </ul>
   )
@@ -219,17 +348,25 @@ function ArchivedRow({
   session,
   first,
   hub,
+  purging,
 }: {
   session: SessionSummary
   first: boolean
   hub: HubClient
+  purging: Purging
 }) {
   const archived = session.archived
-  // Restoring it is its Creator's alone (ADR 0026).
+  // Restoring it is its Creator's alone (ADR 0026); purging it, anyone's who sees it (ADR 0027).
   const drives = useDrives(session)
   if (archived === undefined) return null
+  const title = sessionTitle(session)
   return (
     <li {...stylex.props(styles.row, first && styles.firstRow)}>
+      <Checkbox
+        label={<span {...stylex.props(styles.hidden)}>Select {title}</span>}
+        checked={purging.isSelected(session.id)}
+        onCheckedChange={(on) => purging.select([session.id], on)}
+      />
       <div {...stylex.props(styles.main)}>
         <Link
           to="/sessions/$sessionId"
@@ -237,7 +374,7 @@ function ArchivedRow({
           {...stylex.props(styles.branch, focus.ring)}
         >
           <BranchIcon />
-          {sessionTitle(session)}
+          {title}
         </Link>
         <div {...stylex.props(styles.meta)}>
           <Avatar name={archived.by.name} src={archived.by.avatarUrl} size="sm" />
@@ -248,17 +385,127 @@ function ArchivedRow({
           <span title={day(archived.purgeAt)}>Purged {purgedIn(archived.purgeAt)}</span>
         </div>
       </div>
-      {drives && (
+      <div {...stylex.props(styles.actions)}>
+        {drives && (
+          <Button
+            size="sm"
+            aria-label={`Restore ${title}`}
+            onClick={() => restoreSession(hub, session.id)}
+          >
+            Restore
+          </Button>
+        )}
         <Button
           size="sm"
-          aria-label={`Restore ${sessionTitle(session)}`}
-          onClick={() => restoreSession(hub, session.id)}
+          intent="ghost"
+          aria-label={`Purge ${title}`}
+          onClick={() => purging.ask([session])}
         >
-          Restore
+          Purge
         </Button>
-      )}
+      </div>
     </li>
   )
+}
+
+/**
+ * Asks to purge the Sessions, naming each, and purges them once it's confirmed: they can't be
+ * restored, and their Workspaces go with any work not pushed.
+ */
+function PurgeDialog({ purging }: { purging: Purging }) {
+  const hub = useHub()
+  const runners = useHubState((state) => state.runners)
+  const shown = useLastOpened(purging.asking) ?? noSessions
+  const [busy, setBusy] = useState(false)
+  const count = shown.length
+  const only = count === 1 ? shown[0] : undefined
+  const named = only === undefined ? `${count} Sessions` : sessionTitle(only)
+  const close = () => {
+    setBusy(false)
+    purging.ask(null)
+  }
+  const purge = async () => {
+    setBusy(true)
+    await purgeSessions(hub, shown, runners ?? [])
+    purging.select(
+      shown.map((session) => session.id),
+      false,
+    )
+    close()
+  }
+
+  return (
+    <Dialog
+      size="sm"
+      open={purging.asking !== null}
+      onOpenChange={(open) => {
+        if (!open && !busy) close()
+      }}
+      title={`Purge ${named}?`}
+      description={
+        count === 1
+          ? "Deletes 1 Session now: its history, and its Workspace on its Runner with any work not pushed. This can't be undone."
+          : `Deletes ${count} Sessions now: their history, and their Workspaces on their Runners with any work not pushed. This can't be undone.`
+      }
+      footer={
+        <>
+          <DialogClose>Cancel</DialogClose>
+          <Button intent="danger" loading={busy} onClick={() => void purge()}>
+            {only === undefined ? `Purge ${named}` : "Purge"}
+          </Button>
+        </>
+      }
+    >
+      <ul aria-label="Sessions to purge" {...stylex.props(styles.purging)}>
+        {shown.map((session) => (
+          <li key={session.id}>
+            <span {...stylex.props(styles.purgingTitle)}>{sessionTitle(session)}</span>{" "}
+            <span {...stylex.props(styles.purgingRepo)}>{session.repo}</span>
+          </li>
+        ))}
+      </ul>
+    </Dialog>
+  )
+}
+
+/**
+ * Purges the Archived Sessions, and says which were, and that a Runner that is offline frees their
+ * disk when it reconnects; and which couldn't be, and why.
+ */
+async function purgeSessions(
+  hub: HubClient,
+  sessions: ReadonlyArray<SessionSummary>,
+  runners: ReadonlyArray<RunnerSummary>,
+): Promise<void> {
+  const results = await Promise.allSettled(sessions.map((session) => hub.purgeSession(session.id)))
+  const purged: Array<SessionSummary> = []
+  const offline = new Set<string>()
+  results.forEach((result, index) => {
+    const session = sessions[index]
+    if (session === undefined) return
+    if (result.status === "rejected") {
+      toast.show({
+        title: `Couldn't purge ${sessionTitle(session)}`,
+        description: messageOf(result.reason),
+        intent: "warning",
+      })
+      return
+    }
+    purged.push(session)
+    if (!result.value.runnerOnline) {
+      offline.add(runners.find((runner) => runner.id === session.runnerId)?.name ?? "Its Runner")
+    }
+  })
+  const [first] = purged
+  if (first === undefined) return
+  toast.show({
+    title: `Purged ${purged.length === 1 ? sessionTitle(first) : `${purged.length} Sessions`}`,
+    ...(offline.size > 0 && {
+      description: [...offline]
+        .map((name) => `${name} is offline: its disk frees when it reconnects.`)
+        .join(" "),
+    }),
+  })
 }
 
 /** Restores an Archived Session, saying so, or that the Hub isn't connected. */

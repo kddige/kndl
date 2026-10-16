@@ -1616,6 +1616,38 @@ export class FakeHub implements HubTransport {
         this.#toAll(this.#runnerList())
         break
       }
+      // As the Hub does: anyone who can see it may, not just its Creator (ADR 0027), once it is
+      // Archived. The disk frees at once if its Runner is online, otherwise when it is back.
+      case "PurgeArchivedSession": {
+        const { requestId, sessionId } = message
+        const session = this.sessions.get(sessionId)
+        const refused =
+          session === undefined
+            ? "There is no such Session."
+            : session.summary.state !== "Archived"
+              ? "Only an Archived Session can be purged: delete it first."
+              : undefined
+        if (session === undefined || refused !== undefined) {
+          socket.deliver({
+            _tag: "CommandFailed",
+            command: message._tag,
+            sessionId,
+            requestId,
+            message: refused ?? "",
+          })
+          break
+        }
+        this.sessions.delete(sessionId)
+        this.#toAll({ _tag: "SessionRemoved", sessionId })
+        const runner = this.runners.find((candidate) => candidate.id === session.summary.runnerId)
+        socket.deliver({
+          _tag: "ArchivedSessionPurged",
+          requestId,
+          sessionId,
+          runnerOnline: runner?.isOnline === true,
+        })
+        break
+      }
       // As the Hub does: its Creator may (ADR 0026), in any state; trimmed, empty clears it, too
       // long is refused.
       case "RenameSession": {
