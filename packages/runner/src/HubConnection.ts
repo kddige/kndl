@@ -178,6 +178,7 @@ const connectOnce = Effect.scoped(
         relaunches: true,
         forwardsPorts: true,
         relaysMcpServers: true,
+        measuresDisk: true,
       }),
     ).pipe(Effect.mapError((error) => lost(`could not send the hello: ${error.message}`)))
 

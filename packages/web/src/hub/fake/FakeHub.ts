@@ -310,6 +310,12 @@ type PeopleCommand =
 export class FakeHub implements HubTransport {
   readonly stepMs: number
   readonly sessions = new Map<string, FakeSession>()
+  /**
+   * What each Session takes of its Runner's disk, in bytes (#352): what the Hub is told when it
+   * asks, for an Archived Session whose Runner is online. A Session not here has no size, as one
+   * on a Runner that can't measure it. In the browser, `fakeHub.diskBytes.set("s-flaky", 2e9)`.
+   */
+  readonly diskBytes = new Map<string, number>([["s-flaky", Math.round(1.8 * 1024 ** 3)]])
   /** The paired Runners; their `openSessions` is counted afresh from `sessions` as they're sent. */
   runners: Array<RunnerSummaryWire>
   /** Pairing codes not yet redeemed or revoked; one may have expired. */
@@ -1614,6 +1620,24 @@ export class FakeHub implements HubTransport {
         session.summary = summary
         this.#setState(session, "Asleep", "Restored from the archive", this.#you)
         this.#toAll(this.#runnerList())
+        break
+      }
+      // As the Hub does: a size for an Archived Session whose Runner is online and has one,
+      // otherwise none, in the order asked.
+      case "GetSessionDiskUsage": {
+        const sizes = message.sessionIds.map((sessionId) => {
+          const session = this.sessions.get(sessionId)
+          const runner = this.runners.find(
+            (candidate) => candidate.id === session?.summary.runnerId,
+          )
+          const bytes = this.diskBytes.get(sessionId)
+          return session?.summary.state === "Archived" &&
+            runner?.isOnline === true &&
+            bytes !== undefined
+            ? { sessionId, bytes }
+            : { sessionId }
+        })
+        socket.deliver({ _tag: "SessionDiskUsage", requestId: message.requestId, sizes })
         break
       }
       // As the Hub does: anyone who can see it may, not just its Creator (ADR 0027), once it is

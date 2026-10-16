@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { HubToRunner, RunnerToHub } from "./Runner.ts"
+import { MaxDiskUsageSessions } from "./Sysinfo.ts"
 import {
   environmentRecipe,
   expectEveryTag,
@@ -109,6 +110,13 @@ const runnerToHub = [
     relaunches: true,
     forwardsPorts: true,
     relaysMcpServers: true,
+    measuresDisk: true,
+  },
+  // A size is absent for a Session the Runner couldn't measure (#352).
+  {
+    _tag: "SessionDisksMeasured",
+    requestId: "d-1",
+    sizes: [{ sessionId: "s-1", bytes: 1_572_864 }, { sessionId: "s-2" }],
   },
   { _tag: "TunnelFailed", tunnelId: "t-1", message: "Nothing listens on port 3000" },
   {
@@ -291,6 +299,8 @@ const hubToRunner = [
   },
   // A Runner kept s-1 running across its restart: a new mod token for it (#157).
   { _tag: "ModTokenReissued", sessionId: "s-1", modToken: "mod-4" },
+  { _tag: "MeasureSessionDisks", requestId: "d-1", sessionIds: ["s-1", "s-2"] },
+  { _tag: "MeasureSessionDisks", requestId: "d-2", sessionIds: [] },
 ]
 
 describe("RunnerToHub", () => {
@@ -342,6 +352,12 @@ describe("RunnerToHub", () => {
     expectRejected(RunnerToHub, { _tag: "SessionPorts", sessionId: "s-1", ports: [{ port: 80 }] })
     expectRejected(RunnerToHub, { _tag: "TunnelFailed", tunnelId: "", message: "refused" })
     expectRejected(RunnerToHub, { _tag: "RunnerSysinfo", diskFreeBytes: 1 })
+    expectRejected(RunnerToHub, {
+      _tag: "SessionDisksMeasured",
+      requestId: "d-1",
+      sizes: [{ sessionId: "s-1", bytes: -1 }],
+    })
+    expectRejected(RunnerToHub, { _tag: "SessionDisksMeasured", requestId: "", sizes: [] })
   })
 })
 
@@ -361,6 +377,11 @@ describe("HubToRunner", () => {
       address: "127.0.0.1",
     })
     expectRejected(HubToRunner, { _tag: "ModTokenReissued", sessionId: "s-1", modToken: "" })
+    expectRejected(HubToRunner, {
+      _tag: "MeasureSessionDisks",
+      requestId: "d-1",
+      sessionIds: Array.from({ length: MaxDiskUsageSessions + 1 }, (_, i) => `s-${i}`),
+    })
     expectRejected(HubToRunner, { ...hubToRunner[2], workBranch: "" })
     expectRejected(HubToRunner, { ...hubToRunner[2], modToken: undefined })
     expectRejected(HubToRunner, { _tag: "StopSession", sessionId: "s-1", reason: "Delete" })

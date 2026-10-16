@@ -7,7 +7,7 @@ import {
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
@@ -28,6 +28,7 @@ import {
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { type DiskSizes, freedBy, freedText, sizeText } from "./diskSizes.ts"
 import { groupByRepo } from "./groups.ts"
 
 const styles = stylex.create({
@@ -71,7 +72,7 @@ const styles = stylex.create({
   },
   row: {
     display: "grid",
-    gridTemplateColumns: "auto minmax(0, 1fr) auto",
+    gridTemplateColumns: "auto minmax(0, 1fr) auto auto",
     alignItems: "center",
     columnGap: space.s4,
     paddingBlock: space.s3,
@@ -104,6 +105,21 @@ const styles = stylex.create({
     fontSize: text.sm,
   },
   actions: { display: "flex", alignItems: "center", gap: space.s2 },
+  size: {
+    color: color.textMuted,
+    fontSize: text.sm,
+    fontVariantNumeric: "tabular-nums",
+    textAlign: "end",
+    whiteSpace: "nowrap",
+  },
+  toolbarEnd: { display: "flex", alignItems: "center", gap: space.s3 },
+  freed: { color: color.textMuted, fontSize: text.sm },
+  freedTotal: {
+    margin: 0,
+    marginBlockStart: space.s3,
+    fontSize: text.sm,
+    fontWeight: weight.semibold,
+  },
   // For screen readers only: the row's link names the Session to everyone else.
   hidden: {
     position: "absolute",
@@ -261,6 +277,8 @@ interface Purging {
   readonly selected: ReadonlyArray<SessionSummary>
   readonly isSelected: (sessionId: SessionId) => boolean
   readonly select: (sessionIds: ReadonlyArray<SessionId>, on: boolean) => void
+  /** The disk each listed Session takes on its Runner (#352), as far as the Hub has said. */
+  readonly sizes: DiskSizes
   /** The Sessions the confirmation asks to purge, or null while it is closed. */
   readonly asking: ReadonlyArray<SessionSummary> | null
   readonly ask: (sessions: ReadonlyArray<SessionSummary> | null) => void
@@ -274,9 +292,11 @@ function usePurging(listed: ReadonlyArray<SessionSummary>): Purging {
     () => listed.filter((session) => ticked.has(session.id)),
     [listed, ticked],
   )
+  const sizes = useDiskSizes(listed)
   return {
     listed,
     selected,
+    sizes,
     isSelected: (sessionId) => ticked.has(sessionId),
     select: (sessionIds, on) =>
       setTicked((before) => {
@@ -290,6 +310,56 @@ function usePurging(listed: ReadonlyArray<SessionSummary>): Purging {
     asking,
     ask: setAsking,
   }
+}
+
+/**
+ * The disk the Archived Sessions take on their Runners (#352), asked of the Hub when the list opens
+ * and again when it changes, or when a Runner of theirs goes offline or comes back, since an
+ * offline Runner can't say. The Hub keeps its Runners' answers for a minute. Sizes already known
+ * stay while it asks again; a Session the Hub can't say is `null`, and one not answered is absent.
+ */
+function useDiskSizes(listed: ReadonlyArray<SessionSummary>): DiskSizes {
+  const hub = useHub()
+  const runners = useHubState((state) => state.runners)
+  const [sizes, setSizes] = useState<DiskSizes>(() => new Map())
+  const ids = listed.map((session) => session.id)
+  const online = new Set(
+    runners?.filter((runner) => runner.isOnline).map((runner) => runner.id) ?? [],
+  )
+  // What the answer depends on: which Sessions, and which of their Runners are online.
+  const key = JSON.stringify([
+    ids,
+    [...new Set(listed.map((session) => session.runnerId))]
+      .filter((id) => online.has(id))
+      .toSorted(),
+  ])
+  useEffect(() => {
+    if (ids.length === 0) return
+    let current = true
+    hub.sessionDiskUsage(ids).then(
+      (answer) => {
+        if (!current) return
+        setSizes(
+          (before) =>
+            new Map([
+              ...before,
+              ...answer.map(({ sessionId, bytes }) => [sessionId, bytes ?? null] as const),
+            ]),
+        )
+      },
+      () => {
+        // Not connected, or the Hub refused: every size is unknown, and asked again on reconnecting.
+        if (current)
+          setSizes((before) => new Map([...before, ...ids.map((id) => [id, null] as const)]))
+      },
+    )
+    return () => {
+      current = false
+    }
+    // `key` stands for `ids` and the Runners online.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [hub, key])
+  return sizes
 }
 
 /** Ticks every Archived Session listed, and asks to purge the ticked ones. */
@@ -307,14 +377,26 @@ function PurgeToolbar({ purging }: { purging: Purging }) {
           )
         }
       />
-      <Button
-        size="sm"
-        intent="danger"
-        disabled={selected.length === 0}
-        onClick={() => purging.ask(selected)}
-      >
-        {selected.length === 0 ? "Purge selected" : `Purge selected (${selected.length})`}
-      </Button>
+      <div {...stylex.props(styles.toolbarEnd)}>
+        {selected.length > 0 && (
+          <span aria-live="polite" {...stylex.props(styles.freed)}>
+            {freedText(
+              freedBy(
+                selected.map((session) => session.id),
+                purging.sizes,
+              ),
+            )}
+          </span>
+        )}
+        <Button
+          size="sm"
+          intent="danger"
+          disabled={selected.length === 0}
+          onClick={() => purging.ask(selected)}
+        >
+          {selected.length === 0 ? "Purge selected" : `Purge selected (${selected.length})`}
+        </Button>
+      </div>
     </div>
   )
 }
@@ -385,6 +467,12 @@ function ArchivedRow({
           <span title={day(archived.purgeAt)}>Purged {purgedIn(archived.purgeAt)}</span>
         </div>
       </div>
+      <span
+        aria-label={`Disk used by ${title}: ${sizeText(purging.sizes.get(session.id))}`}
+        {...stylex.props(styles.size)}
+      >
+        {sizeText(purging.sizes.get(session.id))}
+      </span>
       <div {...stylex.props(styles.actions)}>
         {drives && (
           <Button
@@ -460,10 +548,20 @@ function PurgeDialog({ purging }: { purging: Purging }) {
         {shown.map((session) => (
           <li key={session.id}>
             <span {...stylex.props(styles.purgingTitle)}>{sessionTitle(session)}</span>{" "}
-            <span {...stylex.props(styles.purgingRepo)}>{session.repo}</span>
+            <span {...stylex.props(styles.purgingRepo)}>
+              {session.repo} · {sizeText(purging.sizes.get(session.id))}
+            </span>
           </li>
         ))}
       </ul>
+      <p {...stylex.props(styles.freedTotal)}>
+        {freedText(
+          freedBy(
+            shown.map((session) => session.id),
+            purging.sizes,
+          ),
+        )}
+      </p>
     </Dialog>
   )
 }

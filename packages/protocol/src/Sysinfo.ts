@@ -1,10 +1,15 @@
 import { Schema } from "effect"
+import { SessionId } from "./Ids.ts"
 
 // A Runner's host, sampled (#350): the Runner measures its disk, memory and CPU every
 // SysinfoIntervalMillis and sends the Hub a RunnerSysinfo, right after its hello too. The Hub keeps
 // the latest sample of each Runner in memory, on its RunnerSummary, and the disk-free numbers of
 // the last DiskHistoryRetentionMillis in its database, one point per DiskHistoryPointMillis, for
 // the Runners page to draw. All of it is for display: nothing in kndl is refused for a full disk.
+//
+// A Session's disk use (#352) is measured on demand, not sampled: the archive list asks the Hub,
+// the Hub asks the Runner (MeasureSessionDisks), and the Runner adds up what is allocated on its
+// disk. See SessionDiskSize.
 
 /** How often a Runner samples its host. */
 export const SysinfoIntervalMillis = 30_000
@@ -70,3 +75,18 @@ export const diskIsLow = (disk: Pick<Sysinfo, "diskFreeBytes" | "diskTotalBytes"
   disk.diskTotalBytes > 0 &&
   (disk.diskFreeBytes < LowDiskFreeBytes ||
     disk.diskFreeBytes < disk.diskTotalBytes * LowDiskFreeShare)
+
+/** How many Sessions one request for disk use may name. */
+export const MaxDiskUsageSessions = 500
+
+/**
+ * How much of a Runner's disk a Session takes (#352): what is actually allocated, as `du` counts
+ * it (a sparse file counts the blocks it has, not its length), of the Session's directory on the
+ * host with its Workspace, and of its microsandbox disk volumes, not the sizes their caps allow.
+ * `bytes` is absent when it isn't known: the Runner is offline or too old, or couldn't measure it.
+ */
+export const SessionDiskSize = Schema.Struct({
+  sessionId: SessionId,
+  bytes: Schema.optionalKey(Bytes),
+})
+export type SessionDiskSize = typeof SessionDiskSize.Type

@@ -241,6 +241,7 @@ import {
   TurnStarted,
   type TextDelta,
   SessionId,
+  SessionDiskUsage,
   SessionRemoved,
   type SessionRestart,
   SessionStartLogged,
@@ -358,6 +359,7 @@ import { Runners } from "./Runners.ts"
 import type { RunnerIdentity } from "./RunnerTokens.ts"
 import { RunnerUpdatePush } from "./RunnerUpdatePush.ts"
 import { makeRunnerUpdates } from "./RunnerUpdates.ts"
+import { makeSessionDiskUsage } from "./SessionDiskUsage.ts"
 import { creatorIdentity, SessionGit } from "./SessionGit.ts"
 import { SessionLog } from "./SessionLog.ts"
 import { type ModelSetting, Sessions } from "./Sessions.ts"
@@ -729,6 +731,9 @@ export class SessionRelay extends Context.Service<
         runnersChanged: Effect.map(runnerList, (list) => toWeb(list)),
         disconnect: (id, code, reason) => peers.runner(id)?.peer.close(code, reason),
       })
+
+      // The disk Archived Sessions take, asked of their Runners when the archive list wants it (#352).
+      const diskUsage = makeSessionDiskUsage()
 
       const memberRelay = yield* makeMemberRelay({
         toWeb: (message, to) => toWeb(message, to),
@@ -1936,6 +1941,7 @@ export class SessionRelay extends Context.Service<
       ) {
         yield* Effect.logInfo(`Purging Session ${session.id}, ${why}`)
         yield* sessions.purge(session, yield* Clock.currentTimeMillis)
+        diskUsage.forget(session.id)
         live.ended(session.id, "Purged")
         yield* outbox.clear(session.id)
         for (const client of peers.webClients) {
@@ -2088,6 +2094,7 @@ export class SessionRelay extends Context.Service<
               | "SetClaudeCredential"
               | "RemoveClaudeCredential"
               | "RevokeCliToken"
+              | "GetSessionDiskUsage"
           }
         | MemberCommand
         | McpServerCommand
@@ -2974,6 +2981,57 @@ export class SessionRelay extends Context.Service<
         })
 
         /**
+         * Says how much of their Runners' disk the Archived Sessions take (#352). Which Runner holds
+         * each, and whether it is online, is read under the lock; the wait for the Runners to
+         * measure is not, and is answered later, so the client's other commands aren't held up. A
+         * Session the person can't see, or that isn't Archived, is answered as unknown, as is one
+         * whose Runner can't say.
+         */
+        const getSessionDiskUsage = Effect.fn("SessionRelay.getSessionDiskUsage")(function* (
+          message: Extract<WebToHub, { readonly _tag: "GetSessionDiskUsage" }>,
+        ) {
+          const { requestId, sessionIds } = message
+          const byRunner = yield* serialized(
+            Effect.gen(function* () {
+              const groups = new Map<
+                RunnerId,
+                { readonly runner: OnlineRunner | undefined; readonly ids: Array<SessionId> }
+              >()
+              for (const sessionId of new Set(sessionIds)) {
+                const session = yield* sessions.get(sessionId)
+                if (Option.isNone(session)) continue
+                const { state, repo, runnerId } = session.value
+                if (state !== "Archived" || client.repos.get(repo) !== true) continue
+                const group = groups.get(runnerId) ?? { runner: peers.runner(runnerId), ids: [] }
+                group.ids.push(sessionId)
+                groups.set(runnerId, group)
+              }
+              return [...groups.values()]
+            }),
+          )
+          yield* Effect.gen(function* () {
+            const known = new Map<SessionId, number>()
+            yield* Effect.forEach(
+              byRunner,
+              ({ runner, ids }) =>
+                Effect.map(diskUsage.measure(runner, ids), (sizes) => {
+                  for (const [sessionId, bytes] of sizes) known.set(sessionId, bytes)
+                }),
+              { concurrency: "unbounded", discard: true },
+            )
+            peer.send(
+              SessionDiskUsage.make({
+                requestId,
+                sizes: sessionIds.map((sessionId) => {
+                  const bytes = known.get(sessionId)
+                  return bytes === undefined ? { sessionId } : { sessionId, bytes }
+                }),
+              }),
+            )
+          }).pipe(Effect.forkIn(layerScope), Effect.asVoid)
+        })
+
+        /**
          * Lists a Repo's branches and its default branch (ADR 0023), off the lock since it waits
          * on GitHub: to a person with access to the Repo, as for any command about it.
          */
@@ -3009,50 +3067,62 @@ export class SessionRelay extends Context.Service<
                   ? revokeCliToken(message)
                   : message._tag === "CheckAppPermissions"
                     ? checkAppPermissions(message.requestId)
-                    : message._tag === "ListRepos"
-                      ? listRepos(message)
-                      : message._tag === "ListBranches"
-                        ? listBranches(message)
-                        : message._tag === "CheckRepo"
-                          ? checkRepo(message).pipe(
-                              Effect.catchTag("SqlError", (error) =>
-                                Effect.logError("A Repo check failed", error).pipe(
-                                  Effect.andThen(
-                                    Effect.sync(() =>
-                                      refuse(message, "The Hub could not do that; try again."),
+                    : message._tag === "GetSessionDiskUsage"
+                      ? getSessionDiskUsage(message).pipe(
+                          Effect.catchTag("SqlError", (error) =>
+                            Effect.logError("A disk usage request failed", error).pipe(
+                              Effect.andThen(
+                                Effect.sync(() =>
+                                  refuse(message, "The Hub could not do that; try again."),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      : message._tag === "ListRepos"
+                        ? listRepos(message)
+                        : message._tag === "ListBranches"
+                          ? listBranches(message)
+                          : message._tag === "CheckRepo"
+                            ? checkRepo(message).pipe(
+                                Effect.catchTag("SqlError", (error) =>
+                                  Effect.logError("A Repo check failed", error).pipe(
+                                    Effect.andThen(
+                                      Effect.sync(() =>
+                                        refuse(message, "The Hub could not do that; try again."),
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            )
-                          : authorize(message).pipe(
-                              Effect.flatMap((verdict) =>
-                                Effect.gen(function* () {
-                                  const command =
-                                    verdict.refusal === undefined
-                                      ? yield* respelled(message)
-                                      : message
-                                  return yield* serialized(
-                                    Effect.gen(function* () {
-                                      const { learned, refusal } = verdict
-                                      if (learned !== undefined)
-                                        yield* accessKnown(you, learned.repo, learned.allowed)
-                                      if (refusal !== undefined) return refuse(message, refusal)
-                                      return yield* handle(command)
-                                    }),
-                                  )
-                                }),
-                              ),
-                              Effect.catchTag("SqlError", (error) =>
-                                Effect.logError("A web command failed", error).pipe(
-                                  Effect.andThen(
-                                    Effect.sync(() =>
-                                      refuse(message, "The Hub could not do that; try again."),
+                              )
+                            : authorize(message).pipe(
+                                Effect.flatMap((verdict) =>
+                                  Effect.gen(function* () {
+                                    const command =
+                                      verdict.refusal === undefined
+                                        ? yield* respelled(message)
+                                        : message
+                                    return yield* serialized(
+                                      Effect.gen(function* () {
+                                        const { learned, refusal } = verdict
+                                        if (learned !== undefined)
+                                          yield* accessKnown(you, learned.repo, learned.allowed)
+                                        if (refusal !== undefined) return refuse(message, refusal)
+                                        return yield* handle(command)
+                                      }),
+                                    )
+                                  }),
+                                ),
+                                Effect.catchTag("SqlError", (error) =>
+                                  Effect.logError("A web command failed", error).pipe(
+                                    Effect.andThen(
+                                      Effect.sync(() =>
+                                        refuse(message, "The Hub could not do that; try again."),
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            )
+                              )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
@@ -3132,6 +3202,9 @@ export class SessionRelay extends Context.Service<
 
         const handle = Effect.fn("SessionRelay.receiveRunner")(function* (message: RunnerToHub) {
           if (message._tag === "RunnerHello") return
+          if (message._tag === "SessionDisksMeasured") {
+            return diskUsage.receive(runner.id, message)
+          }
           if (message._tag === "RunnerSysinfo") {
             const { _tag, ...sysinfo } = message
             yield* runners.recordSysinfo(runner.id, sysinfo, yield* Clock.currentTimeMillis)
@@ -3376,6 +3449,7 @@ export class SessionRelay extends Context.Service<
             relaunches: hello.relaunches === true,
             forwardsPorts: hello.forwardsPorts === true,
             relaysMcpServers: hello.relaysMcpServers === true,
+            measuresDisk: hello.measuresDisk === true,
           }
           yield* serialized(
             Effect.gen(function* () {
@@ -3458,6 +3532,7 @@ export class SessionRelay extends Context.Service<
         options: { readonly replaced: boolean } = { replaced: false },
       ) {
         yield* tunnels.runnerGone(runner.id)
+        diskUsage.runnerGone(runner.id)
         yield* runnerUpdates.gone(runner.id)
         if (!options.replaced) yield* runners.recordSeen(runner.id, yield* Clock.currentTimeMillis)
         yield* environmentRelay.runnerGone(runner)

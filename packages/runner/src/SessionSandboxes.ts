@@ -806,6 +806,16 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
         ),
       )
 
+    const diskUsage = (sessionId: SessionId) =>
+      backend.volumeBytes(sessionId).pipe(
+        Effect.mapError(
+          (error) =>
+            new SandboxError({
+              message: `the volumes were not measured: ${errorMessage(error)}`,
+            }),
+        ),
+      )
+
     const testBuild = (request: RunTestBuild, log: BuildLog) =>
       Effect.gen(function* () {
         const snapshots = yield* snapshotsOrFail
@@ -897,6 +907,7 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
       hasTranscript,
       stop,
       purge,
+      diskUsage,
       reconcile,
       testBuild,
     })

@@ -315,6 +315,7 @@ describe("connecting", () => {
       forwardsPorts: true,
       // It gives Claude Code the MCP servers of its Session's Installations (#221).
       relaysMcpServers: true,
+      measuresDisk: true,
     })
   })
 
@@ -1054,6 +1055,51 @@ describe("Sessions", () => {
     h.hub.send({ _tag: "PurgeSession", sessionId: "s-1" })
     await eventually(() => h.hub.all("SessionPurged").length === 1)
     expect(h.workspaces.removed).toEqual([sessionId("s-1")])
+  })
+
+  test("measures the disk Sessions take: their directory and their Sandbox volumes (#352)", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.workspaces.usages.set(sessionId("s-1"), 1000)
+    h.sandboxes.diskUsages.set(sessionId("s-1"), 500)
+    h.workspaces.usages.set(sessionId("s-2"), 40)
+    // An Archived Session has no volumes but Claude Code's, and one purged long ago has nothing.
+
+    h.hub.send({ _tag: "MeasureSessionDisks", requestId: "d-1", sessionIds: ["s-1", "s-2", "s-3"] })
+    await eventually(() => h.hub.all("SessionDisksMeasured").length === 1)
+
+    expect(h.hub.all("SessionDisksMeasured")).toEqual([
+      {
+        _tag: "SessionDisksMeasured",
+        requestId: "d-1",
+        sizes: [
+          { sessionId: "s-1", bytes: 1500 },
+          { sessionId: "s-2", bytes: 40 },
+          { sessionId: "s-3", bytes: 0 },
+        ],
+      },
+    ])
+  })
+
+  test("leaves a size out when it can't measure a Session, or can't name its directory", async () => {
+    const h = startRunner()
+    await connected(h)
+    h.workspaces.usages.set(sessionId("s-1"), 1000)
+    h.sandboxes.diskUsageFails.add(sessionId("s-1"))
+    h.workspaces.usages.set(sessionId("s-2"), 7)
+
+    h.hub.send({
+      _tag: "MeasureSessionDisks",
+      requestId: "d-1",
+      sessionIds: ["s-1", "../etc", "s-2"],
+    })
+    await eventually(() => h.hub.all("SessionDisksMeasured").length === 1)
+
+    expect(h.hub.all("SessionDisksMeasured")[0]?.sizes).toEqual([
+      { sessionId: "s-1" },
+      { sessionId: "../etc" },
+      { sessionId: "s-2", bytes: 7 },
+    ])
   })
 
   test("ignores a purge of a Session id it can't name a directory after", async () => {

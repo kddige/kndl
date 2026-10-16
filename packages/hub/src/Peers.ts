@@ -74,6 +74,8 @@ export interface OnlineRunner {
   readonly forwardsPorts: boolean
   /** Whether it gives Claude Code the MCP servers of its Session's Installations (#221). */
   readonly relaysMcpServers: boolean
+  /** Whether it takes a MeasureSessionDisks (#352). */
+  readonly measuresDisk: boolean
 }
 
 /** Who was present in each Session before a change, to tell whether it changed. */

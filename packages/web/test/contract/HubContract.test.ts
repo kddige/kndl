@@ -566,6 +566,25 @@ for (const adapter of [fake, real]) {
       await eventually(() => expect(session.summary()).toBeUndefined())
     })
 
+    test("a size is only given for an Archived Session whose Runner can measure it, in the order asked (#352)", async () => {
+      const scene = await adapter.scene()
+      const session = watch(scene.client, scene.sessionId)
+      await eventually(() => expect(session.summary()).toBeDefined())
+      const other = "no-such-session" as SessionId
+      // Not Archived yet, and not a Session at all: no size.
+      expect(await scene.client.sessionDiskUsage([other, scene.sessionId])).toEqual([
+        { sessionId: other },
+        { sessionId: scene.sessionId },
+      ])
+      scene.client.archiveSession(scene.sessionId)
+      await eventually(() => expect(session.summary()?.state).toBe("Archived"))
+      // The test Runner doesn't measure disks, so it is still unknown.
+      expect(await scene.client.sessionDiskUsage([scene.sessionId])).toEqual([
+        { sessionId: scene.sessionId },
+      ])
+      expect(await scene.client.sessionDiskUsage([])).toEqual([])
+    })
+
     test("a join gets the history, and a rejoin after a dropped connection what came since", async () => {
       const scene = await adapter.scene()
       const session = await turnRunning(scene, "one", "two")

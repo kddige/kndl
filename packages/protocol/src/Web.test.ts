@@ -115,6 +115,7 @@ const webToHub = [
   { _tag: "ArchiveSession", sessionId: "s-1" },
   { _tag: "RestoreSession", sessionId: "s-1" },
   { _tag: "PurgeArchivedSession", requestId: "q-0", sessionId: "s-1" },
+  { _tag: "GetSessionDiskUsage", requestId: "q-0", sessionIds: ["s-1", "s-2"] },
   { _tag: "RenameSession", sessionId: "s-1", name: "Health check" },
   { _tag: "RenameSession", sessionId: "s-1", name: "" },
   { _tag: "OpenTerminal", sessionId: "s-1" },
@@ -470,6 +471,12 @@ const hubToWeb = [
   { _tag: "SessionRemoved", sessionId: "s-1" },
   { _tag: "ArchivedSessionPurged", requestId: "q-0", sessionId: "s-1", runnerOnline: true },
   { _tag: "ArchivedSessionPurged", requestId: "q-0", sessionId: "s-1", runnerOnline: false },
+  // A size is absent where it isn't known: its Runner is offline, say (#352).
+  {
+    _tag: "SessionDiskUsage",
+    requestId: "q-0",
+    sizes: [{ sessionId: "s-1", bytes: 1_572_864 }, { sessionId: "s-2" }],
+  },
   { _tag: "SessionCreated", requestId: "q-1", session: sessionSummary },
   {
     _tag: "SessionHistory",

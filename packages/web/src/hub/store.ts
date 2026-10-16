@@ -304,6 +304,9 @@ export function reduce(state: HubState, action: HubAction): HubState {
       const { [action.sessionId]: _, ...joined } = state.joined
       return { ...state, sessions, joined }
     }
+    case "SessionDiskUsage":
+      // Answers the Archived screen that asked, which keeps the sizes itself.
+      return state
     case "ArchivedSessionPurged":
       // The SessionRemoved sent with it drops the Session.
       return state

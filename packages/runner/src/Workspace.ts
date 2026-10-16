@@ -9,6 +9,7 @@ import {
   claudeProjectsDir,
   forgetDirectories,
 } from "./ClaudeConfig.ts"
+import { allocatedBytes } from "./DiskUsage.ts"
 import { cloneWorkspace, type GitAuth, GitError } from "./HostGit.ts"
 import { HubGit } from "./HubGit.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
@@ -38,6 +39,11 @@ export class Workspaces extends Context.Service<
      * Succeeds when nothing is left.
      */
     readonly remove: (sessionId: SessionId) => Effect.Effect<void, WorkspaceError>
+    /**
+     * The bytes of the host's disk the Session's directory takes (#352): its Workspace and the rest,
+     * as allocated. 0 when it has none.
+     */
+    readonly usage: (sessionId: SessionId) => Effect.Effect<number>
   }
 >()("@kndl/runner/Workspaces") {}
 
@@ -173,6 +179,10 @@ export const WorkspacesGitClone = Layer.effect(
           return directories
         }),
       remove: (sessionId) => removeSessionFiles(sessionDirectories(config.sessionsRoot, sessionId)),
+      usage: (sessionId) =>
+        Effect.promise(() =>
+          allocatedBytes(sessionDirectories(config.sessionsRoot, sessionId).session),
+        ),
     })
   }),
 )

@@ -172,6 +172,12 @@ test.skipIf(!enabled)(
       )
       expect((yield* sh("docker ps -a --format '{{.Names}}'")).stdout).toBe("keep\n")
 
+      // The volumes take what the guest wrote, not what their caps allow (#352).
+      yield* sh("head -c 20971520 /dev/urandom > /workspace/node_modules/blob && sync")
+      const used = yield* timed("volumeBytes", backend.volumeBytes(sessionId))
+      expect(used).toBeGreaterThanOrEqual(20 * 1024 * 1024)
+      expect(used).toBeLessThan(1024 * 1024 * 1024)
+
       // Reconciling with no Session known: only this Runner's Sandbox gets stopped.
       const report = yield* timed("reconcile", reconcileSandboxes([]))
       expect(report.unknown.map((u) => [u.sessionId, u.runner, u.state, u.stopped])).toEqual([

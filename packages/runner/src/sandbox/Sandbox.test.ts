@@ -155,6 +155,28 @@ describe("fake backend", () => {
       }),
     ))
 
+  test("measures the bytes a Session's volumes hold, not their sizes, and nothing once they're gone", () =>
+    run(
+      Effect.gen(function* () {
+        const backend = yield* SandboxBackend
+        yield* backend.create(layout(s1))
+        yield* backend.create(layout(s2))
+        expect(yield* backend.volumeBytes(s1)).toBe(0)
+        yield* backend.writeFile(s1, "/workspace/node_modules/dep.js", "12345")
+        yield* backend.writeFile(s1, "/var/lib/kndl/claude/state.json", "123")
+        yield* backend.writeFile(s2, "/workspace/node_modules/dep.js", "1".repeat(100))
+        // The Workspace is on the host: not a volume's.
+        yield* backend.writeFile(s1, "/workspace/README.md", "readme")
+        expect(yield* backend.volumeBytes(s1)).toBe(8)
+        expect(yield* backend.volumeBytes(s2)).toBe(100)
+
+        yield* backend.destroy(s1, { keepVolumes: ["claude"] })
+        expect(yield* backend.volumeBytes(s1)).toBe(3)
+        yield* backend.destroy(s1)
+        expect(yield* backend.volumeBytes(s1)).toBe(0)
+      }),
+    ))
+
   test("a destroy that keeps volumes lets a new Sandbox wake on them", () =>
     run(
       Effect.gen(function* () {
