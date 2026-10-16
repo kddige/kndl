@@ -239,7 +239,7 @@ export const RunnerSummary = Schema.Struct({
   /**
    * What its host looked like when it last sampled it (#350), kept after it disconnects, for the
    * page to show greyed out; absent from a Runner too old to sample, and before its first sample.
-   * Its disk-free history is asked for apart, with a GetRunnerDiskHistory.
+   * Its history is asked for apart, with a GetRunnerHistory.
    */
   sysinfo: Schema.optionalKey(SysinfoSample),
 })

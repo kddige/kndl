@@ -213,25 +213,51 @@ function fakeSysinfo(
   }
 }
 
+/** A point of a Runner's history (#356), as the Hub sends it. */
+type FakeHistoryPoint = {
+  at: number
+  diskFreeBytes: number
+  memoryAvailableBytes: number
+  load1: number
+}
+
 /**
- * A Runner's disk-free history as the Hub would keep it (#350): a point every 5 minutes for a
- * week, ending at its sample's, with the free space draining and a clean-up now and then.
+ * A Runner's history as the Hub would keep it (#350, #356): a point every 5 minutes for a week,
+ * ending at its sample's. The free disk drains, with a clean-up now and then; memory and load
+ * follow the working day, with a busy spell two days ago. Made up, but the same on every call.
  */
-export function fakeDiskHistory(
+export function fakeRunnerHistory(
   sysinfo: RunnerSummaryWire["sysinfo"],
   now = Date.now(),
-): Array<{ at: number; freeBytes: number }> {
+): Array<FakeHistoryPoint> {
   if (sysinfo === undefined) return []
   const step = 5 * 60_000
-  const points: Array<{ at: number; freeBytes: number }> = []
+  const points: Array<FakeHistoryPoint> = []
   const end = Math.min(now, sysinfo.at)
   const start = end - 7 * day
   for (let at = start; at <= end; at += step) {
     // Six GiB lost a day, except for a clean-up of old Sandboxes four days in, which freed 38.
     const days = (at - start) / day
     const freeGiB = days < 4 ? 6 * (4 - days) - 20 : 6 * (7 - days)
-    const freeBytes = sysinfo.diskFreeBytes + Math.round(freeGiB * GiB)
-    points.push({ at, freeBytes: Math.max(0, freeBytes) })
+    const diskFreeBytes = sysinfo.diskFreeBytes + Math.round(freeGiB * GiB)
+    // Days before the sample: every wave below is zero at it, so the last point is the sample.
+    const ago = (end - at) / day
+    const daily = Math.sin(2 * Math.PI * ago)
+    const jitter = Math.sin(9 * ago) * Math.sin(4 * ago) + 0.25 * Math.sin(29 * ago)
+    const busy = Math.exp(-(((ago - 2) / 0.18) ** 2))
+    const memory =
+      sysinfo.memoryAvailableBytes / GiB +
+      ((0.12 * sysinfo.memoryTotalBytes) / GiB) * (daily + 0.5 * jitter - 2.5 * busy)
+    const load =
+      sysinfo.loadAverage[0] + 0.35 * sysinfo.cpuCores * (0.25 * daily + 0.12 * jitter + 0.6 * busy)
+    points.push({
+      at,
+      diskFreeBytes: Math.max(0, diskFreeBytes),
+      memoryAvailableBytes: Math.round(
+        Math.min(sysinfo.memoryTotalBytes, Math.max(0.05 * sysinfo.memoryTotalBytes, memory * GiB)),
+      ),
+      load1: Math.round(Math.max(0.02, load) * 100) / 100,
+    })
   }
   return points
 }

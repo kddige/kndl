@@ -726,6 +726,17 @@ const migrations = SqliteMigrator.fromRecord({
     `
     yield* sql`CREATE INDEX runner_disk_history_at ON runner_disk_history (at)`
   }),
+  // A Runner's history keeps its available memory and 1-minute load too (#356), for the Monitor's
+  // charts, so the table is named for the Runner, not its disk. A point from before has neither.
+  "0038_runner_history": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`DROP INDEX runner_disk_history_at`
+    yield* sql`ALTER TABLE runner_disk_history RENAME TO runner_history`
+    yield* sql`ALTER TABLE runner_history RENAME COLUMN free_bytes TO disk_free_bytes`
+    yield* sql`ALTER TABLE runner_history ADD COLUMN memory_available_bytes INTEGER`
+    yield* sql`ALTER TABLE runner_history ADD COLUMN load_1 REAL`
+    yield* sql`CREATE INDEX runner_history_at ON runner_history (at)`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

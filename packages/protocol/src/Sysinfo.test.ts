@@ -2,7 +2,14 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { RunnerToHub } from "./Runner.ts"
 import { RunnerSummary } from "./Session.ts"
-import { diskIsLow, LowDiskFreeBytes, MaxDiskUsageSessions, Sysinfo } from "./Sysinfo.ts"
+import {
+  diskIsLow,
+  LowDiskFreeBytes,
+  lowDiskBelowBytes,
+  MaxDiskUsageSessions,
+  RunnerHistoryPoint,
+  Sysinfo,
+} from "./Sysinfo.ts"
 import { HubToWeb, WebToHub } from "./Web.ts"
 
 const GiB = 1024 ** 3
@@ -79,23 +86,50 @@ describe("the Runner's sysinfo", () => {
   })
 })
 
-describe("a Runner's disk-free history", () => {
-  test("is asked for by Runner and answered with points, oldest first", () => {
+describe("a Runner's history", () => {
+  test("is asked for by Runner and answered with points of disk, memory and load, oldest first", () => {
     expect(
       Schema.decodeUnknownSync(WebToHub)({
-        _tag: "GetRunnerDiskHistory",
+        _tag: "GetRunnerHistory",
         requestId: "q-1",
         runnerId: "runner-1",
       })._tag,
-    ).toBe("GetRunnerDiskHistory")
+    ).toBe("GetRunnerHistory")
+    const point = { at: 1, diskFreeBytes: 5, memoryAvailableBytes: 7, load1: 0.5 }
     expect(
       Schema.decodeUnknownSync(HubToWeb)({
-        _tag: "RunnerDiskHistory",
+        _tag: "RunnerHistory",
         requestId: "q-1",
         runnerId: "runner-1",
-        points: [{ at: 1, freeBytes: 5 }],
+        points: [point],
       }),
-    ).toMatchObject({ points: [{ at: 1, freeBytes: 5 }] })
+    ).toMatchObject({ points: [point] })
+  })
+
+  test("has points without memory or load, kept before the Hub kept them (#356)", () => {
+    expect(Schema.decodeUnknownSync(RunnerHistoryPoint)({ at: 1, diskFreeBytes: 5 })).toEqual({
+      at: 1,
+      diskFreeBytes: 5,
+    })
+    expect(() =>
+      Schema.decodeUnknownSync(RunnerHistoryPoint)({ at: 1, diskFreeBytes: 5, load1: -1 }),
+    ).toThrow()
+  })
+})
+
+describe("lowDiskBelowBytes", () => {
+  test("is 10 GiB on a disk of 100 GiB or less, and a tenth of a larger one", () => {
+    expect(lowDiskBelowBytes(50 * GiB)).toBe(LowDiskFreeBytes)
+    expect(lowDiskBelowBytes(100 * GiB)).toBe(LowDiskFreeBytes)
+    expect(lowDiskBelowBytes(500 * GiB)).toBe(50 * GiB)
+  })
+
+  test("is where diskIsLow turns", () => {
+    for (const total of [20 * GiB, 120 * GiB, 4096 * GiB]) {
+      const below = lowDiskBelowBytes(total)
+      expect(diskIsLow({ diskFreeBytes: below - 1, diskTotalBytes: total })).toBe(true)
+      expect(diskIsLow({ diskFreeBytes: below, diskTotalBytes: total })).toBe(false)
+    }
   })
 })
 

@@ -6,13 +6,16 @@ import {
   type RunnerSummary,
 } from "@kndl/protocol"
 import {
+  byteUnit,
   codeOutcome,
-  diskSparkline,
+  hasMonitor,
+  historySeries,
   manualUpdateText,
   shortCommit,
   sortRunners,
   sysinfoAge,
   timeLeft,
+  timeTicks,
   updateAction,
   updateNote,
   versionNote,
@@ -227,27 +230,61 @@ describe("a Runner's host", () => {
     expect(sysinfoAge(100_000, 99_000)).toBe("0s ago")
   })
 
-  test("draws free disk as a line from the oldest point to the newest, least free at the bottom", () => {
-    const GiB = 1024 ** 3
-    const points = [
-      { at: 0, freeBytes: 100 * GiB },
-      { at: 50, freeBytes: 50 * GiB },
-      { at: 100, freeBytes: 75 * GiB },
-    ]
-    // 100 wide and 20 high, with a pixel's room above and below for the stroke.
-    expect(diskSparkline(points, 100, 20)).toBe("0,1 50,19 100,10")
+  test("is up for the Monitor once it has been seen, sampled or not", () => {
+    expect(hasMonitor(runner("new", false))).toBe(false)
+    expect(hasMonitor(runner("up", true))).toBe(true)
+    expect(hasMonitor({ ...runner("gone", false), lastSeenAt: 5 })).toBe(true)
+  })
+})
+
+describe("a Runner's history charts", () => {
+  const GiB = 1024 ** 3
+  const points = [
+    { at: 1, diskFreeBytes: 9 * GiB },
+    { at: 2, diskFreeBytes: 8 * GiB, memoryAvailableBytes: 3 * GiB, load1: 0.5 },
+    { at: 3, diskFreeBytes: 7 * GiB, memoryAvailableBytes: 2 * GiB, load1: 0 },
+  ]
+
+  test("chart one measure, leaving out points kept before it was (#356)", () => {
+    expect(historySeries(points, "diskFreeBytes")).toEqual([
+      { at: 1, value: 9 * GiB },
+      { at: 2, value: 8 * GiB },
+      { at: 3, value: 7 * GiB },
+    ])
+    expect(historySeries(points, "memoryAvailableBytes")).toEqual([
+      { at: 2, value: 3 * GiB },
+      { at: 3, value: 2 * GiB },
+    ])
+    expect(historySeries(points, "load1").map((point) => point.value)).toEqual([0.5, 0])
   })
 
-  test("draws a disk that never changed as a flat line in the middle", () => {
-    const flat = [
-      { at: 0, freeBytes: 5 },
-      { at: 10, freeBytes: 5 },
-    ]
-    expect(diskSparkline(flat, 100, 20)).toBe("0,10 100,10")
+  test("count bytes in the unit that fits the largest value, for round ticks", () => {
+    expect(byteUnit(500 * 1024 ** 2)).toEqual({ name: "MiB", bytes: 1024 ** 2 })
+    expect(byteUnit(GiB)).toEqual({ name: "GiB", bytes: GiB })
+    expect(byteUnit(500 * GiB)).toEqual({ name: "GiB", bytes: GiB })
+    expect(byteUnit(4 * 1024 * GiB)).toEqual({ name: "TiB", bytes: 1024 * GiB })
+    expect(byteUnit(0)).toEqual({ name: "GiB", bytes: GiB })
   })
 
-  test("draws nothing for fewer than two points", () => {
-    expect(diskSparkline([], 100, 20)).toBeUndefined()
-    expect(diskSparkline([{ at: 0, freeBytes: 5 }], 100, 20)).toBeUndefined()
+  test("tick a week at each local midnight", () => {
+    const from = new Date(2026, 9, 9, 14, 30).getTime()
+    const to = new Date(2026, 9, 16, 14, 30).getTime()
+    const ticks = timeTicks(from, to)
+    expect(ticks.unit).toBe("day")
+    expect(ticks.values).toEqual(
+      [10, 11, 12, 13, 14, 15, 16].map((date) => new Date(2026, 9, date).getTime()),
+    )
+  })
+
+  test("tick a span under two days every few hours, at most eight times", () => {
+    const from = new Date(2026, 9, 16, 9, 10).getTime()
+    const to = new Date(2026, 9, 16, 14, 30).getTime()
+    expect(timeTicks(from, to)).toEqual({
+      unit: "hour",
+      values: [10, 11, 12, 13, 14].map((hour) => new Date(2026, 9, 16, hour).getTime()),
+    })
+    const day = timeTicks(from, from + 30 * 3_600_000)
+    expect(day.values.length).toBeLessThanOrEqual(8)
+    expect(day.values.every((at) => new Date(at).getHours() % 6 === 0)).toBe(true)
   })
 })

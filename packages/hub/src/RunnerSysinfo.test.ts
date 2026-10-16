@@ -1,14 +1,15 @@
-// A Runner's sysinfo (#350): the latest sample on its summary, and the disk-free history the
-// Runners page draws, over the web channel and in the Hub's database.
+// A Runner's sysinfo (#350): the latest sample on its summary, and the history of its disk, memory
+// and load (#356) the Runners page charts, over the web channel and in the Hub's database.
 
 import { afterEach, describe, expect, test } from "bun:test"
 import {
-  DiskHistoryPointMillis,
-  DiskHistoryRetentionMillis,
+  RunnerHistoryPointMillis,
+  RunnerHistoryRetentionMillis,
   type RunnerId,
   type Sysinfo,
 } from "@kndl/protocol"
 import { Effect } from "effect"
+import { SqlClient } from "effect/sql"
 import { Runners } from "./Runners.ts"
 import { issueRunnerToken, openRunner, openWeb, stopAll } from "./testChannels.ts"
 import { startHub, type TestHub } from "./testSupport.ts"
@@ -17,13 +18,16 @@ afterEach(stopAll)
 
 const GiB = 1024 ** 3
 
-const sysinfo = (diskFreeBytes: number): Sysinfo => ({
+const sysinfo = (
+  diskFreeBytes: number,
+  { memoryAvailableBytes = 9 * GiB, load1 = 0.5 } = {},
+): Sysinfo => ({
   diskFreeBytes,
   diskTotalBytes: 500 * GiB,
   memoryTotalBytes: 16 * GiB,
-  memoryAvailableBytes: 9 * GiB,
+  memoryAvailableBytes,
   cpuCores: 8,
-  loadAverage: [0.5, 0.75, 1.25],
+  loadAverage: [load1, 0.75, 1.25],
   os: "linux",
   arch: "arm64",
   uptimeSeconds: 86_400,
@@ -36,10 +40,18 @@ const hubWithRunner = async () => {
 }
 
 const history = (hub: TestHub, runnerId: RunnerId, now: number) =>
-  hub.run(Effect.flatMap(Runners, (runners) => runners.diskHistory(runnerId, now)))
+  hub.run(Effect.flatMap(Runners, (runners) => runners.history(runnerId, now)))
 
-const record = (hub: TestHub, runnerId: RunnerId, free: number, at: number) =>
-  hub.run(Effect.flatMap(Runners, (runners) => runners.recordSysinfo(runnerId, sysinfo(free), at)))
+const record = (
+  hub: TestHub,
+  runnerId: RunnerId,
+  free: number,
+  at: number,
+  more: Parameters<typeof sysinfo>[1] = {},
+) =>
+  hub.run(
+    Effect.flatMap(Runners, (runners) => runners.recordSysinfo(runnerId, sysinfo(free, more), at)),
+  )
 
 describe("a Runner's sysinfo", () => {
   test("is on its summary with when the Hub had it, for everyone, and kept after it disconnects", async () => {
@@ -88,36 +100,60 @@ describe("a Runner's sysinfo", () => {
   })
 })
 
-describe("a Runner's disk-free history", () => {
-  test("keeps the latest sample of each 5 minutes, oldest first", async () => {
+describe("a Runner's history", () => {
+  test("keeps the disk, memory and load of the latest sample of each 5 minutes, oldest first", async () => {
     const { hub, runnerId } = await hubWithRunner()
-    const start = 1_800_000_000_000 - (1_800_000_000_000 % DiskHistoryPointMillis)
+    const start = 1_800_000_000_000 - (1_800_000_000_000 % RunnerHistoryPointMillis)
 
-    await record(hub, runnerId, 100 * GiB, start + 1_000)
-    await record(hub, runnerId, 90 * GiB, start + 31_000)
-    await record(hub, runnerId, 80 * GiB, start + DiskHistoryPointMillis + 1_000)
+    await record(hub, runnerId, 100 * GiB, start + 1_000, { memoryAvailableBytes: 8 * GiB })
+    await record(hub, runnerId, 90 * GiB, start + 31_000, {
+      memoryAvailableBytes: 7 * GiB,
+      load1: 2.5,
+    })
+    await record(hub, runnerId, 80 * GiB, start + RunnerHistoryPointMillis + 1_000, {
+      memoryAvailableBytes: 6 * GiB,
+      load1: 0,
+    })
 
-    expect(await history(hub, runnerId, start + DiskHistoryPointMillis + 2_000)).toEqual([
-      { at: start + 31_000, freeBytes: 90 * GiB },
-      { at: start + DiskHistoryPointMillis + 1_000, freeBytes: 80 * GiB },
+    expect(await history(hub, runnerId, start + RunnerHistoryPointMillis + 2_000)).toEqual([
+      { at: start + 31_000, diskFreeBytes: 90 * GiB, memoryAvailableBytes: 7 * GiB, load1: 2.5 },
+      {
+        at: start + RunnerHistoryPointMillis + 1_000,
+        diskFreeBytes: 80 * GiB,
+        memoryAvailableBytes: 6 * GiB,
+        load1: 0,
+      },
     ])
+  })
+
+  test("has a point kept before memory and load were (#356) without them", async () => {
+    const { hub, runnerId } = await hubWithRunner()
+    const at = 1_800_000_000_000
+    await hub.run(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql`INSERT INTO runner_history (runner_id, bucket, at, disk_free_bytes)
+          VALUES (${runnerId}, 1, ${at}, ${70 * GiB})`,
+      ),
+    )
+    expect(await history(hub, runnerId, at)).toEqual([{ at, diskFreeBytes: 70 * GiB }])
   })
 
   test("forgets points older than 7 days, as later samples prune them", async () => {
     const { hub, runnerId } = await hubWithRunner()
     const start = 1_800_000_000_000
     await record(hub, runnerId, 100 * GiB, start)
-    await record(hub, runnerId, 90 * GiB, start + 1_000 * DiskHistoryPointMillis)
-    const now = start + DiskHistoryRetentionMillis + DiskHistoryPointMillis
+    await record(hub, runnerId, 90 * GiB, start + 1_000 * RunnerHistoryPointMillis)
+    const now = start + RunnerHistoryRetentionMillis + RunnerHistoryPointMillis
 
     await record(hub, runnerId, 80 * GiB, now)
 
-    expect((await history(hub, runnerId, now)).map((point) => point.freeBytes)).toEqual([
+    expect((await history(hub, runnerId, now)).map((point) => point.diskFreeBytes)).toEqual([
       90 * GiB,
       80 * GiB,
     ])
     const first = await history(hub, runnerId, start + 1)
-    expect(first.map((point) => point.freeBytes)).toEqual([90 * GiB, 80 * GiB])
+    expect(first.map((point) => point.diskFreeBytes)).toEqual([90 * GiB, 80 * GiB])
   })
 
   test("is asked for over the web channel, and refused for a Runner that isn't there", async () => {
@@ -127,15 +163,19 @@ describe("a Runner's disk-free history", () => {
     runner.send({ _tag: "RunnerSysinfo", ...sysinfo(120 * GiB) })
     await web.take("RunnerList", (m) => m.runners[0]?.sysinfo !== undefined)
 
-    web.send({ _tag: "GetRunnerDiskHistory", requestId: "q-1", runnerId })
-    const answer = await web.take("RunnerDiskHistory", (m) => m.requestId === "q-1")
+    web.send({ _tag: "GetRunnerHistory", requestId: "q-1", runnerId })
+    const answer = await web.take("RunnerHistory", (m) => m.requestId === "q-1")
     expect(answer.runnerId).toBe(runnerId)
     expect(answer.points).toHaveLength(1)
-    expect(answer.points[0]?.freeBytes).toBe(120 * GiB)
+    expect(answer.points[0]).toMatchObject({
+      diskFreeBytes: 120 * GiB,
+      memoryAvailableBytes: 9 * GiB,
+      load1: 0.5,
+    })
 
-    web.send({ _tag: "GetRunnerDiskHistory", requestId: "q-2", runnerId: "no-such-runner" })
+    web.send({ _tag: "GetRunnerHistory", requestId: "q-2", runnerId: "no-such-runner" })
     expect(await web.take("CommandFailed", (m) => m.requestId === "q-2")).toMatchObject({
-      command: "GetRunnerDiskHistory",
+      command: "GetRunnerHistory",
     })
   })
 })

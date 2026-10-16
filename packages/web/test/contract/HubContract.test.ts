@@ -26,8 +26,10 @@ import {
   Participant,
   type PromptId,
   ProtocolVersion,
+  type RunnerId,
   type SessionEvent,
   type SessionId,
+  type Sysinfo,
   type ToolCallId,
 } from "@kndl/protocol"
 import { Schema } from "effect"
@@ -44,6 +46,8 @@ interface Scene {
   readonly newClient: () => HubClient
   /** Drops every client's connection, as a network blip does: each reconnects. */
   readonly dropConnections: () => void
+  /** The Session's Runner samples its host, and the Hub keeps it (#350). */
+  readonly sampleHost: (sysinfo: Sysinfo) => void
 }
 
 interface SceneOptions {
@@ -141,6 +145,11 @@ const fake: Adapter = {
       sessionId,
       newClient: () => startClient(hub),
       dropConnections: () => hub.dropConnections(),
+      sampleHost: (sysinfo) => {
+        const runnerId = client.getState().sessions?.find((s) => s.id === sessionId)?.runnerId
+        if (runnerId === undefined) throw new Error("the Session has no Runner")
+        hub.patchRunner(runnerId, { sysinfo: { ...sysinfo, at: Date.now() } })
+      },
     }
   },
 }
@@ -363,6 +372,7 @@ const real: Adapter = {
       dropConnections: () => {
         for (const opened of transports) opened.drop()
       },
+      sampleHost: (sysinfo) => runner.send({ _tag: "RunnerSysinfo", ...sysinfo }),
     }
   },
 }
@@ -583,6 +593,40 @@ for (const adapter of [fake, real]) {
         { sessionId: scene.sessionId },
       ])
       expect(await scene.client.sessionDiskUsage([])).toEqual([])
+    })
+
+    test("a Runner's history ends at its latest sample's disk, memory and load, and an unknown Runner has none (#356)", async () => {
+      const scene = await adapter.scene()
+      const GiB = 1024 ** 3
+      const runnerIdOf = () =>
+        scene.client.getState().sessions?.find((s) => s.id === scene.sessionId)?.runnerId
+      await eventually(() => expect(runnerIdOf()).toBeDefined())
+      const runnerId = runnerIdOf() as RunnerId
+      scene.sampleHost({
+        diskFreeBytes: 120 * GiB,
+        diskTotalBytes: 500 * GiB,
+        memoryTotalBytes: 16 * GiB,
+        memoryAvailableBytes: 9 * GiB,
+        cpuCores: 8,
+        loadAverage: [0.5, 0.75, 1.25],
+        os: "linux",
+        arch: "arm64",
+        uptimeSeconds: 86_400,
+      })
+      // The Hub keeps the sample as it arrives, after the Runner sent it.
+      let latest = (await scene.client.runnerHistory(runnerId)).at(-1)
+      for (let tries = 0; latest?.diskFreeBytes !== 120 * GiB && tries < 100; tries++) {
+        await Bun.sleep(20)
+        latest = (await scene.client.runnerHistory(runnerId)).at(-1)
+      }
+      expect(latest).toMatchObject({
+        diskFreeBytes: 120 * GiB,
+        memoryAvailableBytes: 9 * GiB,
+        load1: 0.5,
+      })
+      await expect(scene.client.runnerHistory("no-such-runner" as RunnerId)).rejects.toThrow(
+        "There is no such Runner.",
+      )
     })
 
     test("a join gets the history, and a rejoin after a dropped connection what came since", async () => {

@@ -37,12 +37,25 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0037, a Runner's disk-free history (#350): the
+ * Takes the database back to before migration 0038, a Runner's memory and load history (#356): the
  * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
  * first.
  */
+const beforeRunnerHistory = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP INDEX runner_history_at`
+  yield* sql`ALTER TABLE runner_history DROP COLUMN load_1`
+  yield* sql`ALTER TABLE runner_history DROP COLUMN memory_available_bytes`
+  yield* sql`ALTER TABLE runner_history RENAME COLUMN disk_free_bytes TO free_bytes`
+  yield* sql`ALTER TABLE runner_history RENAME TO runner_disk_history`
+  yield* sql`CREATE INDEX runner_disk_history_at ON runner_disk_history (at)`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'runner_history'`
+})
+
+/** Takes the database back to before migration 0037, a Runner's disk-free history (#350), and 0038. */
 const beforeRunnerDiskHistory = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeRunnerHistory
   yield* sql`DROP TABLE runner_disk_history`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'runner_disk_history'`
 })
@@ -264,6 +277,43 @@ const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
 
+describe("migration 0038, a Runner's memory and load history", () => {
+  test("keeps each disk-free point, without memory or load", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeRunnerHistory
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at)
+          VALUES ('r-1', 'build-box', 'hash', 1)`
+        yield* sql`INSERT INTO runner_disk_history (runner_id, bucket, at, free_bytes)
+          VALUES ('r-1', 1, 300000, 5)`
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`INSERT INTO runner_history
+          (runner_id, bucket, at, disk_free_bytes, memory_available_bytes, load_1)
+          VALUES ('r-1', 2, 600000, 4, 7, 0.5)`
+        return yield* sql`
+          SELECT bucket, disk_free_bytes AS diskFreeBytes,
+            memory_available_bytes AS memoryAvailableBytes, load_1 AS load1
+          FROM runner_history ORDER BY bucket
+        `
+      }),
+    )
+    expect(after).toEqual([
+      { bucket: 1, diskFreeBytes: 5, memoryAvailableBytes: null, load1: null },
+      { bucket: 2, diskFreeBytes: 4, memoryAvailableBytes: 7, load1: 0.5 },
+    ])
+  })
+})
+
 describe("migration 0037, a Runner's disk-free history", () => {
   test("keeps every Runner, and drops a deleted Runner's points with it", async () => {
     const dir = testDatabaseDir("kndl-migration-")
@@ -283,12 +333,13 @@ describe("migration 0037, a Runner's disk-free history", () => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient
         yield* sql`PRAGMA foreign_keys = ON`
-        yield* sql`INSERT INTO runner_disk_history (runner_id, bucket, at, free_bytes)
+        // As migration 0038 renamed it.
+        yield* sql`INSERT INTO runner_history (runner_id, bucket, at, disk_free_bytes)
           VALUES ('r-1', 1, 300000, 5)`
         const kept =
-          yield* sql`SELECT runner_id AS runnerId, free_bytes AS freeBytes FROM runner_disk_history`
+          yield* sql`SELECT runner_id AS runnerId, disk_free_bytes AS freeBytes FROM runner_history`
         yield* sql`DELETE FROM runners WHERE id = 'r-1'`
-        return { kept, left: yield* sql`SELECT runner_id FROM runner_disk_history` }
+        return { kept, left: yield* sql`SELECT runner_id FROM runner_history` }
       }),
     )
     expect(after.kept).toEqual([{ runnerId: "r-1", freeBytes: 5 }])

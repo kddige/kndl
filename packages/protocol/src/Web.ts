@@ -60,7 +60,7 @@ import {
   StopAgent,
   StopTurn,
 } from "./Session.ts"
-import { DiskFreePoint, MaxDiskUsageSessions, SessionDiskSize } from "./Sysinfo.ts"
+import { MaxDiskUsageSessions, RunnerHistoryPoint, SessionDiskSize } from "./Sysinfo.ts"
 import { TerminalFrame, TerminalInput, TerminalResize } from "./Terminal.ts"
 import { TurnEvent } from "./Turn.ts"
 import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
@@ -526,15 +526,16 @@ export const UpdateRunner = Schema.TaggedStruct("UpdateRunner", {
 export type UpdateRunner = typeof UpdateRunner.Type
 
 /**
- * Ask for a Runner's disk-free history (#350), the points of the last 7 days, to draw a sparkline
- * from. Apart from the RunnerList because it is long and changes little. Answered with a
- * {@link RunnerDiskHistory}, or a CommandFailed for a Runner that isn't there.
+ * Ask for a Runner's history (#350, #356): its free disk, available memory and load over the last
+ * 7 days, for the Runners page's Monitor to chart. Apart from the RunnerList because it is long
+ * and changes little. Answered with a {@link RunnerHistory}, or a CommandFailed for a Runner that
+ * isn't there.
  */
-export const GetRunnerDiskHistory = Schema.TaggedStruct("GetRunnerDiskHistory", {
+export const GetRunnerHistory = Schema.TaggedStruct("GetRunnerHistory", {
   requestId: RequestId,
   runnerId: RunnerId,
 })
-export type GetRunnerDiskHistory = typeof GetRunnerDiskHistory.Type
+export type GetRunnerHistory = typeof GetRunnerHistory.Type
 
 // ── People (issue #209, ADR 0019) ──
 //
@@ -622,7 +623,7 @@ export const WebToHub = Schema.Union([
   RevokePairingCode,
   RemoveRunner,
   UpdateRunner,
-  GetRunnerDiskHistory,
+  GetRunnerHistory,
   RevokeCliToken,
   CreateInvite,
   ListInvites,
@@ -929,13 +930,13 @@ export const RunnerUpdateRequested = Schema.TaggedStruct("RunnerUpdateRequested"
 })
 export type RunnerUpdateRequested = typeof RunnerUpdateRequested.Type
 
-/** Answers a {@link GetRunnerDiskHistory}: the Runner's free disk over time, oldest first. */
-export const RunnerDiskHistory = Schema.TaggedStruct("RunnerDiskHistory", {
+/** Answers a {@link GetRunnerHistory}: the Runner's host over time, oldest point first. */
+export const RunnerHistory = Schema.TaggedStruct("RunnerHistory", {
   requestId: RequestId,
   runnerId: RunnerId,
-  points: Schema.Array(DiskFreePoint),
+  points: Schema.Array(RunnerHistoryPoint),
 })
-export type RunnerDiskHistory = typeof RunnerDiskHistory.Type
+export type RunnerHistory = typeof RunnerHistory.Type
 
 /** Every message the Hub sends a web client. */
 export const HubToWeb = Schema.Union([
@@ -979,7 +980,7 @@ export const HubToWeb = Schema.Union([
   PairingCodeRedeemed,
   RunnerRemoved,
   RunnerUpdateRequested,
-  RunnerDiskHistory,
+  RunnerHistory,
   CliTokenList,
   InviteCreated,
   InviteList,

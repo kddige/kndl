@@ -3,9 +3,10 @@ import { SessionId } from "./Ids.ts"
 
 // A Runner's host, sampled (#350): the Runner measures its disk, memory and CPU every
 // SysinfoIntervalMillis and sends the Hub a RunnerSysinfo, right after its hello too. The Hub keeps
-// the latest sample of each Runner in memory, on its RunnerSummary, and the disk-free numbers of
-// the last DiskHistoryRetentionMillis in its database, one point per DiskHistoryPointMillis, for
-// the Runners page to draw. All of it is for display: nothing in kndl is refused for a full disk.
+// the latest sample of each Runner in memory, on its RunnerSummary, and its free disk, available
+// memory and 1-minute load (#356) of the last RunnerHistoryRetentionMillis in its database, one
+// point per RunnerHistoryPointMillis, for the Runners page's Monitor to chart. All of it is for
+// display: nothing in kndl is refused for a full disk.
 //
 // A Session's disk use (#352) is measured on demand, not sampled: the archive list asks the Hub,
 // the Hub asks the Runner (MeasureSessionDisks), and the Runner adds up what is allocated on its
@@ -14,11 +15,11 @@ import { SessionId } from "./Ids.ts"
 /** How often a Runner samples its host. */
 export const SysinfoIntervalMillis = 30_000
 
-/** The Hub keeps one disk-free point for each span of this long, the latest sample in it. */
-export const DiskHistoryPointMillis = 5 * 60 * 1000
+/** The Hub keeps one history point for each span of this long, the latest sample in it. */
+export const RunnerHistoryPointMillis = 5 * 60 * 1000
 
-/** How long the Hub keeps a disk-free point: 7 days. */
-export const DiskHistoryRetentionMillis = 7 * 24 * 60 * 60 * 1000
+/** How long the Hub keeps a history point: 7 days. */
+export const RunnerHistoryRetentionMillis = 7 * 24 * 60 * 60 * 1000
 
 /** A count of bytes. */
 const Bytes = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
@@ -52,13 +53,19 @@ export const SysinfoSample = Schema.Struct({
 })
 export type SysinfoSample = typeof SysinfoSample.Type
 
-/** A Runner's free disk at one moment, one point of its history. */
-export const DiskFreePoint = Schema.Struct({
+/**
+ * A Runner's host at one moment, one point of its history: the latest sample of its 5 minutes.
+ * Memory and load are absent from a point the Hub kept before it kept them (#356).
+ */
+export const RunnerHistoryPoint = Schema.Struct({
   /** In epoch milliseconds. */
   at: Schema.Natural,
-  freeBytes: Bytes,
+  diskFreeBytes: Bytes,
+  memoryAvailableBytes: Schema.optionalKey(Bytes),
+  /** The load average over the last minute. */
+  load1: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
 })
-export type DiskFreePoint = typeof DiskFreePoint.Type
+export type RunnerHistoryPoint = typeof RunnerHistoryPoint.Type
 
 /** A disk with less than this free is low, whatever its size: 10 GiB. */
 export const LowDiskFreeBytes = 10 * 1024 ** 3
@@ -75,6 +82,13 @@ export const diskIsLow = (disk: Pick<Sysinfo, "diskFreeBytes" | "diskTotalBytes"
   disk.diskTotalBytes > 0 &&
   (disk.diskFreeBytes < LowDiskFreeBytes ||
     disk.diskFreeBytes < disk.diskTotalBytes * LowDiskFreeShare)
+
+/**
+ * The free space under which a disk of `diskTotalBytes` is low, as {@link diskIsLow} has it: the
+ * larger of {@link LowDiskFreeBytes} and {@link LowDiskFreeShare} of it. For drawing the line.
+ */
+export const lowDiskBelowBytes = (diskTotalBytes: number): number =>
+  Math.max(LowDiskFreeBytes, diskTotalBytes * LowDiskFreeShare)
 
 /** How many Sessions one request for disk use may name. */
 export const MaxDiskUsageSessions = 500

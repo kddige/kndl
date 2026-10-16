@@ -52,9 +52,6 @@ async function openRunners() {
     hub.dispose()
   }
   await eventually(() => expect(runners()?.querySelectorAll("li").length).toBe(2))
-  // The disk-free history each Runner asks for (#350) answers within this, not as an update React
-  // finds outside its act().
-  await settle()
   return { hub, page: view.container }
 }
 
@@ -80,41 +77,68 @@ test("lists each Runner with its version, last connection and Sessions, and no c
 })
 
 const studioBox = () => runners()?.querySelector('[aria-label="studio"]')?.textContent ?? ""
+const monitorOf = (name: string) =>
+  runners()?.querySelector<HTMLElement>(`section[aria-label="${name}'s monitor"]`) ?? null
+const historyAsked = (hub: InstanceType<typeof FakeHub>) =>
+  hub.received.filter((m) => m._tag === "GetRunnerHistory")
 
-test("shows a Runner's host: disk, memory, CPU and load, and how old the sample is (#350)", async () => {
-  await openRunners()
-  await eventually(() => expect(studioBox()).toContain("186 GiB free of 500 GiB"))
-  expect(studioBox()).toContain("19 GiB available of 32 GiB")
-  expect(studioBox()).toContain("10 cores")
-  expect(studioBox()).toContain("load 1.42 1.18 0.96")
-  expect(studioBox()).toContain("linux arm64")
-  expect(studioBox()).toContain("up 12d 5h")
-  expect(studioBox()).toMatch(/as of \d+s ago/)
-  expect(studioBox()).not.toContain("low disk")
-})
-
-test("draws the free disk of the last 7 days once the Hub has sent it", async () => {
-  const { hub } = await openRunners()
+/** Opens a Runner's Monitor, and waits for the history it asks for to be charted. */
+async function openMonitor(name: string) {
+  await step(() => button(`Monitor ${name}`).click())
   await eventually(() =>
     expect(
-      runners()
-        ?.querySelector('[aria-label="studio"] svg[role="img"] polyline')
-        ?.getAttribute("points"),
-    ).toMatch(/^0,[\d.]+ /),
+      monitorOf(name)?.querySelector('[aria-label^="Free disk over the last 7 days"]') ?? null,
+    ).not.toBeNull(),
   )
-  expect(hub.received.filter((m) => m._tag === "GetRunnerDiskHistory")[0]).toMatchObject({
-    runnerId: "r-studio",
-  })
+  return monitorOf(name) as HTMLElement
+}
+
+test("keeps a Runner's row to itself, its host behind a Monitor that is closed and asks nothing (#356)", async () => {
+  const { hub } = await openRunners()
+  expect(button("Monitor studio").getAttribute("aria-expanded")).toBe("false")
+  expect(monitorOf("studio")).toBeNull()
+  expect(studioBox()).not.toContain("free of")
+  expect(studioBox()).not.toContain("GiB")
+  await settle()
+  expect(historyAsked(hub)).toEqual([])
 })
 
-test("warns of a low disk, under 10 GiB free or a tenth of it, and greys the host of a Runner that is offline", async () => {
+test("opens a Runner's Monitor: its host as tiles, and charts of its last week, then closes it (#356)", async () => {
+  const { hub } = await openRunners()
+  const monitor = await openMonitor("studio")
+  expect(button("Monitor studio").getAttribute("aria-expanded")).toBe("true")
+  expect(button("Monitor studio").getAttribute("aria-controls")).toBe(monitor.id)
+  const host = monitor.textContent ?? ""
+  expect(host).toContain("Free disk186 GiBof 500 GiB (37%)")
+  expect(host).toContain("Available memory19 GiBof 32 GiB (59%)")
+  expect(host).toContain("Load, 1 minute1.42on 10 cores5 min 1.18 · 15 min 0.96")
+  expect(host).toContain("Up12d 5hlinux arm64")
+  expect(host).toMatch(/As of \d+s ago/)
+  expect(host).not.toContain("Low:")
+  expect(historyAsked(hub)).toMatchObject([{ runnerId: "r-studio" }])
+  // A chart each for disk, with the low-disk line, memory and load, named by what it shows.
+  for (const title of ["Free disk", "Available memory", "Load, 1 minute"]) {
+    expect(
+      monitor.querySelector(`[aria-label^="${title} over the last 7 days: from "]`),
+    ).not.toBeNull()
+  }
+  expect(host).toContain("Low disk, under 50 GiB")
+
+  await step(() => button("Monitor studio").click())
+  expect(monitorOf("studio")).toBeNull()
+  expect(button("Monitor studio").getAttribute("aria-expanded")).toBe("false")
+})
+
+test("warns of a low disk in the row, under 10 GiB free or a tenth of it, and greys the host of a Runner that is offline", async () => {
   const { hub } = await openRunners()
   // ci-box is offline, and was nearly full when last heard from.
-  expect(ciBox()).toContain("8.0 GiB free of 120 GiB")
   expect(ciBox()).toContain("low disk")
-  expect(ciBox()).toContain("as of 3h ago")
-  expect(runners()?.querySelector('[aria-label="ci-box"] [data-offline]')).not.toBeNull()
-  expect(runners()?.querySelector('[aria-label="studio"] [data-offline]')).toBeNull()
+  const monitor = await openMonitor("ci-box")
+  expect(monitor.textContent).toContain("Offline, as of 3h ago")
+  expect(monitor.textContent).toContain("8.0 GiBof 120 GiB (7%)")
+  expect(monitor.textContent).toContain("Low: under 12 GiB")
+  expect(monitor.querySelector("[data-offline]")).not.toBeNull()
+  expect(studioBox()).not.toContain("low disk")
 
   const GiB = 1024 ** 3
   const studio = hub.runners.find((runner) => runner.id === "r-studio")
@@ -131,16 +155,19 @@ test("warns of a low disk, under 10 GiB free or a tenth of it, and greys the hos
   await eventually(() => expect(studioBox()).not.toContain("low disk"))
 })
 
-test("lists a Runner that sent no sysinfo without a host line", async () => {
+test("opens the Monitor of a Runner that sent no sysinfo with a note in place of its tiles", async () => {
   const { hub } = await openRunners()
-  expect(ciBox()).toContain("free of")
   await step(() => {
     hub.runners = hub.runners.map(({ sysinfo: _sampled, ...runner }) => runner)
     hub.patchRunner("r-ci", { isOnline: true })
   })
   await eventually(() => expect(ciBox()).toContain("online"))
-  expect(ciBox()).not.toContain("free of")
-  expect(studioBox()).not.toContain("free of")
+  expect(ciBox()).not.toContain("low disk")
+  await step(() => button("Monitor ci-box").click())
+  await eventually(() =>
+    expect(monitorOf("ci-box")?.textContent).toContain("Not enough history yet"),
+  )
+  expect(monitorOf("ci-box")?.textContent).toContain("It hasn't sent a sample of its host")
 })
 
 test("shows a Runner on a Release by its Release, before its commit (ADR 0025)", async () => {

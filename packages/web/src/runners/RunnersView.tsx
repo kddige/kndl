@@ -5,15 +5,13 @@
 // and Sessions) or removes one, once its Sessions are all Archived. Codes still waiting are listed
 // so they can be revoked. A Runner behind the Hub that updates itself has Update (#87): it moves
 // to the Hub's commit once its Sessions sleep, and its row follows the update, or says why it
-// refused or failed. A row also shows the Runner's host as it last sampled it (#350): disk, memory
-// and CPU, the free disk of the last week, and a warning when the disk is low. Every confirmation
-// is a Dialog on the page.
+// refused or failed. A row warns when the Runner's disk is low (#350), and its Monitor (#356) opens
+// under it: the host as it last sampled it, and charts of its last week. Every confirmation is a
+// Dialog on the page.
 
 import {
   type BuildVersion,
   describeBuild,
-  type DiskFreePoint,
-  DiskHistoryPointMillis,
   diskIsLow,
   type PairingCodeCreated,
   pairingCommand,
@@ -22,12 +20,11 @@ import {
   runnerRemovalRefusal,
   type SessionSummary,
   sessionTitle,
-  type SysinfoSample,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
-import { useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useId, useState } from "react"
 import { copyCommand } from "../app/copy.ts"
-import { bytes, timeAgo, uptime } from "../app/format.ts"
+import { timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { keptAwakeText } from "../session/keepAwake.ts"
 import {
@@ -35,6 +32,7 @@ import {
   Banner,
   Button,
   CheckIcon,
+  ChevronDownIcon,
   CopyIcon,
   Dialog,
   DialogClose,
@@ -49,13 +47,12 @@ import {
   Tooltip,
   WarningIcon,
 } from "../ui/index.ts"
-import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, font, leading, motion, radius, space, text, weight } from "../ui/tokens.stylex.ts"
 import {
   codeOutcome,
-  diskSparkline,
+  hasMonitor,
   shortCommit,
   sortRunners,
-  sysinfoAge,
   timeLeft,
   updateAction,
   manualUpdateText,
@@ -63,6 +60,11 @@ import {
   versionNote,
   waitingCodes,
 } from "./runners.ts"
+
+// The charts are most of the Monitor's weight: it loads when a Monitor is first opened.
+const RunnerMonitor = lazy(async () => ({
+  default: (await import("./RunnerMonitor.tsx")).RunnerMonitor,
+}))
 
 const styles = stylex.create({
   view: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
@@ -108,6 +110,35 @@ const styles = stylex.create({
     borderTopColor: color.border,
   },
   firstRow: { borderTopWidth: 0 },
+  runner: {
+    display: "flex",
+    flexDirection: "column",
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: color.border,
+  },
+  runnerHead: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: space.s3,
+    paddingBlock: space.s3,
+    paddingInline: space.s4,
+  },
+  chevron: {
+    transitionProperty: "transform",
+    transitionDuration: motion.durationFast,
+    transitionTimingFunction: motion.easeStandard,
+  },
+  chevronOpen: { transform: "rotate(180deg)" },
+  monitorLoading: {
+    display: "grid",
+    placeItems: "center",
+    paddingBlock: space.s8,
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: color.border,
+  },
   main: { display: "flex", flexDirection: "column", gap: space.s1, flex: 1, minWidth: "14rem" },
   nameLine: { display: "flex", alignItems: "center", gap: space.s2, flexWrap: "wrap" },
   name: { fontSize: text.md, fontWeight: weight.semibold },
@@ -123,9 +154,6 @@ const styles = stylex.create({
   },
   fact: { display: "inline-flex", alignItems: "center", gap: space.s1_5, minWidth: 0 },
   mono: { fontFamily: font.mono },
-  hostOffline: { opacity: 0.55 },
-  lowDisk: { color: color.warningSubtleText },
-  sparkline: { flexShrink: 0, color: color.textMuted },
   keptAwakeList: {
     display: "flex",
     flexDirection: "column",
@@ -358,204 +386,148 @@ function RunnerRow({
   const you = useHubState((state) => state.you)
   // Paired, but it hasn't connected since.
   const neverSeen = !runner.isOnline && runner.lastSeenAt === null
+  const [monitoring, setMonitoring] = useState(false)
+  const monitorId = useId()
+  const lowDisk = runner.sysinfo !== undefined && diskIsLow(runner.sysinfo)
   return (
-    <li aria-label={runner.name} {...stylex.props(styles.row, first && styles.firstRow)}>
-      <div {...stylex.props(styles.main)}>
-        <div {...stylex.props(styles.nameLine)}>
-          <span
-            aria-hidden="true"
-            {...stylex.props(styles.dot, runner.isOnline ? styles.online : styles.offline)}
-          />
-          <span {...stylex.props(styles.name)}>{runner.name}</span>
-          {runner.isOnline ? <Badge intent="success">online</Badge> : <Badge>offline</Badge>}
-          {note && (
-            <Tooltip content={note.title}>
-              <span tabIndex={0}>
-                <Badge intent="warning">{note.label}</Badge>
-              </span>
-            </Tooltip>
-          )}
-          {update && <Badge intent={update.intent}>{update.label}</Badge>}
-        </div>
-        <p {...stylex.props(styles.facts)}>
-          <span {...stylex.props(styles.fact)}>
-            {runner.version === null ? (
-              neverSeen ? (
-                "Not connected yet"
-              ) : (
-                "Version unknown"
-              )
-            ) : (
-              <span title={runner.version.commit} {...stylex.props(styles.mono)}>
-                {describeBuild(runner.version)}
-              </span>
+    <li aria-label={runner.name} {...stylex.props(styles.runner, first && styles.firstRow)}>
+      <div {...stylex.props(styles.runnerHead)}>
+        <div {...stylex.props(styles.main)}>
+          <div {...stylex.props(styles.nameLine)}>
+            <span
+              aria-hidden="true"
+              {...stylex.props(styles.dot, runner.isOnline ? styles.online : styles.offline)}
+            />
+            <span {...stylex.props(styles.name)}>{runner.name}</span>
+            {runner.isOnline ? <Badge intent="success">online</Badge> : <Badge>offline</Badge>}
+            {note && (
+              <Tooltip content={note.title}>
+                <span tabIndex={0}>
+                  <Badge intent="warning">{note.label}</Badge>
+                </span>
+              </Tooltip>
             )}
-          </span>
-          {!runner.isOnline && !neverSeen && (
+            {update && <Badge intent={update.intent}>{update.label}</Badge>}
+            {lowDisk && (
+              <Tooltip content="Under 10 GiB, or a tenth of the disk, is free. Sessions can still start, until it runs out.">
+                <span tabIndex={0}>
+                  <Badge intent="warning">low disk</Badge>
+                </span>
+              </Tooltip>
+            )}
+          </div>
+          <p {...stylex.props(styles.facts)}>
             <span {...stylex.props(styles.fact)}>
-              {runner.lastSeenAt !== null && `Last seen ${timeAgo(runner.lastSeenAt, now)}`}
+              {runner.version === null ? (
+                neverSeen ? (
+                  "Not connected yet"
+                ) : (
+                  "Version unknown"
+                )
+              ) : (
+                <span title={runner.version.commit} {...stylex.props(styles.mono)}>
+                  {describeBuild(runner.version)}
+                </span>
+              )}
             </span>
-          )}
-          <span {...stylex.props(styles.fact)}>
-            {runner.openSessions === 0
-              ? "No Sessions"
-              : `${runner.openSessions} ${runner.openSessions === 1 ? "Session" : "Sessions"}`}
-          </span>
-          {keptAwake.length > 0 && (
-            // Which ones, and who keeps them awake (ADR 0016).
-            <Tooltip
-              content={
-                <ul {...stylex.props(styles.keptAwakeList)}>
-                  {keptAwake.map((session) => (
-                    <li key={session.id}>
-                      {sessionTitle(session)}
-                      {session.keepAwake && `: ${keptAwakeText(session.keepAwake, you?.id)}`}
-                    </li>
-                  ))}
-                </ul>
-              }
-            >
-              <span tabIndex={0} {...stylex.props(styles.fact)}>
-                <SunIcon />
-                {keptAwake.length} kept awake
+            {!runner.isOnline && !neverSeen && (
+              <span {...stylex.props(styles.fact)}>
+                {runner.lastSeenAt !== null && `Last seen ${timeAgo(runner.lastSeenAt, now)}`}
               </span>
-            </Tooltip>
-          )}
-        </p>
-        {runner.sysinfo && <RunnerHost runner={runner} sysinfo={runner.sysinfo} now={now} />}
-        {update && (
-          <p
-            aria-live="polite"
-            {...stylex.props(
-              styles.updateLine,
-              update.intent === "warning" && styles.updateWarning,
-              update.intent === "danger" && styles.updateDanger,
             )}
-          >
-            {update.busy && <Spinner size="sm" />}
-            <span {...stylex.props(styles.updateText)}>{update.detail}</span>
+            <span {...stylex.props(styles.fact)}>
+              {runner.openSessions === 0
+                ? "No Sessions"
+                : `${runner.openSessions} ${runner.openSessions === 1 ? "Session" : "Sessions"}`}
+            </span>
+            {keptAwake.length > 0 && (
+              // Which ones, and who keeps them awake (ADR 0016).
+              <Tooltip
+                content={
+                  <ul {...stylex.props(styles.keptAwakeList)}>
+                    {keptAwake.map((session) => (
+                      <li key={session.id}>
+                        {sessionTitle(session)}
+                        {session.keepAwake && `: ${keptAwakeText(session.keepAwake, you?.id)}`}
+                      </li>
+                    ))}
+                  </ul>
+                }
+              >
+                <span tabIndex={0} {...stylex.props(styles.fact)}>
+                  <SunIcon />
+                  {keptAwake.length} kept awake
+                </span>
+              </Tooltip>
+            )}
           </p>
-        )}
-        {manual && (
-          <p {...stylex.props(styles.updateLine)}>
-            <span {...stylex.props(styles.updateText)}>{manual}</span>
-          </p>
-        )}
-      </div>
-      <div {...stylex.props(styles.actions)}>
-        {action && (
-          <Button
-            size="sm"
-            intent="primary"
-            aria-label={`${action === "Update" ? "Update" : "Update now"} ${runner.name}`}
-            onClick={onUpdate}
-          >
-            {action === "Update" ? "Update" : "Update now"}
+          {update && (
+            <p
+              aria-live="polite"
+              {...stylex.props(
+                styles.updateLine,
+                update.intent === "warning" && styles.updateWarning,
+                update.intent === "danger" && styles.updateDanger,
+              )}
+            >
+              {update.busy && <Spinner size="sm" />}
+              <span {...stylex.props(styles.updateText)}>{update.detail}</span>
+            </p>
+          )}
+          {manual && (
+            <p {...stylex.props(styles.updateLine)}>
+              <span {...stylex.props(styles.updateText)}>{manual}</span>
+            </p>
+          )}
+        </div>
+        <div {...stylex.props(styles.actions)}>
+          {hasMonitor(runner) && (
+            <Button
+              size="sm"
+              intent="ghost"
+              icon={
+                <ChevronDownIcon
+                  {...stylex.props(styles.chevron, monitoring && styles.chevronOpen)}
+                />
+              }
+              aria-expanded={monitoring}
+              aria-controls={monitoring ? monitorId : undefined}
+              aria-label={`Monitor ${runner.name}`}
+              onClick={() => setMonitoring((open) => !open)}
+            >
+              Monitor
+            </Button>
+          )}
+          {action && (
+            <Button
+              size="sm"
+              intent="primary"
+              aria-label={`${action === "Update" ? "Update" : "Update now"} ${runner.name}`}
+              onClick={onUpdate}
+            >
+              {action === "Update" ? "Update" : "Update now"}
+            </Button>
+          )}
+          <Button size="sm" aria-label={`Re-pair ${runner.name}`} onClick={onRepair}>
+            Re-pair
           </Button>
-        )}
-        <Button size="sm" aria-label={`Re-pair ${runner.name}`} onClick={onRepair}>
-          Re-pair
-        </Button>
-        <Button size="sm" intent="ghost" aria-label={`Remove ${runner.name}`} onClick={onRemove}>
-          Remove
-        </Button>
+          <Button size="sm" intent="ghost" aria-label={`Remove ${runner.name}`} onClick={onRemove}>
+            Remove
+          </Button>
+        </div>
       </div>
-    </li>
-  )
-}
-
-/** How big the free-disk sparkline is drawn, in pixels. */
-const sparklineSize = { width: 120, height: 24 }
-
-/**
- * A Runner's host as it last sampled it (#350): disk, memory, CPU and load, and how old the sample
- * is. Greyed while the Runner is offline, since the numbers are as of when it went. A disk under
- * 10 GiB or a tenth free gets a warning badge, and nothing more: it stops no Session.
- */
-function RunnerHost({
-  runner,
-  sysinfo,
-  now,
-}: {
-  runner: RunnerSummary
-  sysinfo: SysinfoSample
-  now: number
-}) {
-  const low = diskIsLow(sysinfo)
-  const [load1, load5, load15] = sysinfo.loadAverage
-  return (
-    <p
-      data-offline={runner.isOnline ? undefined : ""}
-      {...stylex.props(styles.facts, !runner.isOnline && styles.hostOffline)}
-    >
-      <span {...stylex.props(styles.fact, low && styles.lowDisk)}>
-        Disk {bytes(sysinfo.diskFreeBytes)} free of {bytes(sysinfo.diskTotalBytes)}
-      </span>
-      {low && (
-        <Tooltip content="Under 10 GiB, or a tenth of the disk, is free. Sessions can still start, until it runs out.">
-          <span tabIndex={0}>
-            <Badge intent="warning">low disk</Badge>
-          </span>
-        </Tooltip>
+      {monitoring && (
+        <Suspense
+          fallback={
+            <div {...stylex.props(styles.monitorLoading)}>
+              <Spinner label={`Loading ${runner.name}'s monitor`} />
+            </div>
+          }
+        >
+          <RunnerMonitor id={monitorId} runner={runner} now={now} />
+        </Suspense>
       )}
-      <DiskSparkline runner={runner} low={low} now={now} />
-      <span {...stylex.props(styles.fact)}>
-        Memory {bytes(sysinfo.memoryAvailableBytes)} available of {bytes(sysinfo.memoryTotalBytes)}
-      </span>
-      <span {...stylex.props(styles.fact)}>
-        {sysinfo.cpuCores} {sysinfo.cpuCores === 1 ? "core" : "cores"}, load{" "}
-        {[load1, load5, load15].map((load) => load.toFixed(2)).join(" ")}
-      </span>
-      <span {...stylex.props(styles.fact)}>
-        {sysinfo.os} {sysinfo.arch}, up {uptime(sysinfo.uptimeSeconds)}
-      </span>
-      <span {...stylex.props(styles.fact)}>as of {sysinfoAge(sysinfo.at, now)}</span>
-    </p>
-  )
-}
-
-/**
- * A Runner's free disk over the last 7 days, asked of the Hub when it's shown and again each time
- * the Hub keeps another point (every 5 minutes), for an online Runner. Nothing is drawn until the
- * Hub answers with two points; one that fails to answer just has no sparkline.
- */
-function DiskSparkline({ runner, low, now }: { runner: RunnerSummary; low: boolean; now: number }) {
-  const hub = useHub()
-  const [points, setPoints] = useState<ReadonlyArray<DiskFreePoint>>([])
-  const bucket = runner.isOnline ? Math.floor(now / DiskHistoryPointMillis) : 0
-  useEffect(() => {
-    let current = true
-    hub
-      .runnerDiskHistory(runner.id)
-      .then((history) => {
-        if (current) setPoints(history)
-      })
-      .catch(() => {})
-    return () => {
-      current = false
-    }
-  }, [hub, runner.id, bucket])
-  const line = diskSparkline(points, sparklineSize.width, sparklineSize.height)
-  const first = points[0]
-  const last = points.at(-1)
-  if (line === undefined || first === undefined || last === undefined) return null
-  return (
-    <svg
-      role="img"
-      aria-label={`Free disk over the last 7 days, from ${bytes(first.freeBytes)} to ${bytes(last.freeBytes)}`}
-      width={sparklineSize.width}
-      height={sparklineSize.height}
-      viewBox={`0 0 ${sparklineSize.width} ${sparklineSize.height}`}
-      {...stylex.props(styles.sparkline, low && styles.lowDisk)}
-    >
-      <polyline
-        points={line}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinejoin="round"
-      />
-    </svg>
+    </li>
   )
 }
 

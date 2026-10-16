@@ -72,8 +72,9 @@ To script it from the Hub's machine, issue a token instead.
 
 The **Runners** page lists each Runner: online or offline, its version, and its Sessions. A Runner has no Claude credential of its own: each Session runs on its Creator's.
 
-![The Runners page, with studio online and ci-box offline and behind the Hub.](../../../assets/screenshots/runners.png)
+![The Runners page, with studio online and its Monitor open, showing tiles and charts of its disk, memory and load, and ci-box offline, behind the Hub and low on disk.](../../../assets/screenshots/runners.png)
 
+- **Monitor** opens the Runner's host under its row: free disk, available memory, load and uptime as it last sampled them, and charts of the last 7 days. A row says **low disk** when under 10 GiB, or a tenth of the disk, is free. Sessions still start; it's a warning.
 - **Re-pair** makes a code for that Runner. The machine that uses it takes the Runner's place, with its name and Sessions, and the old token stops working. Use it for a reinstalled machine or a lost token.
 - **Remove** disconnects the Runner and revokes its token. Archive its Sessions first.
 
