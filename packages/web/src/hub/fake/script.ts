@@ -8,8 +8,10 @@
 
 import type {
   AppPermissionsCheckWire,
+  BuildVersionWire,
   ClaudeCredentialInfoWire,
   CliTokenInfoWire,
+  HubUpdateStateWire,
   MemberWire,
   OpenPortWire,
   ParticipantWire,
@@ -109,6 +111,55 @@ export function seedCliTokens(): Array<CliTokenInfoWire> {
     },
     { id: "ct-devbox", machine: "devbox", createdAt: now - 40 * 86_400_000 },
   ]
+}
+
+/** The kndl a Hub on the stable Channel runs: the Release on `hubVersion`'s commit. */
+export const stableHubVersion: BuildVersionWire = {
+  commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1",
+  release: "2026.10.2",
+  channel: "stable",
+}
+
+/** A Release's notes, as `scripts/release.ts` writes them: its Highlights, then its changes by area. */
+const notes = (highlights: string, areas: string) =>
+  `## Highlights\n\n${highlights}\n\n${areas}\n\n**Changes since the Release before**`
+
+/**
+ * What the update check of a Hub on `stableHubVersion` found an hour ago (ADR 0028): two newer
+ * Releases, with notes as `scripts/release.ts` writes them, Highlights first.
+ */
+export function seedHubUpdate(): HubUpdateStateWire {
+  const now = Date.now()
+  return {
+    follows: { _tag: "Channel", channel: "stable" },
+    checked: {
+      at: now - 3_600_000,
+      found: {
+        _tag: "NewerRelease",
+        releases: [
+          {
+            version: "2026.10.4",
+            notes: notes(
+              "- **Archived Sessions show the disk they take.** The archive list says how much of each Runner's disk an Archived Session holds, so you know what purging frees.",
+              "## hub\n\n- hub, web: the archive list shows how much Runner disk each Archived Session takes (#352)\n\n## web\n\n- web: a Runner's Monitor opens under its row (#356)",
+            ),
+            url: "https://github.com/kddige/kndl/releases/tag/v2026.10.4",
+            publishedAt: now - 2 * 86_400_000,
+          },
+          {
+            version: "2026.10.3",
+            notes: notes(
+              "- **Anyone who sees an Archived Session can purge it.** Before, only its Creator could, and a Runner low on disk waited on them.",
+              "## hub\n\n- hub, web: anyone who sees an Archived Session can purge it (#351)",
+            ),
+            url: "https://github.com/kddige/kndl/releases/tag/v2026.10.3",
+            publishedAt: now - 5 * 86_400_000,
+          },
+        ],
+        compareUrl: "https://github.com/kddige/kndl/compare/v2026.10.2...v2026.10.4",
+      },
+    },
+  }
 }
 
 /** The Hub's Members (#209): Alice, its Owner, and Bob, whom she invited. */

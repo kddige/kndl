@@ -23,6 +23,7 @@ import {
   TestBuildStarted,
 } from "./Environment.ts"
 import { AppPermissionsCheck } from "./GitHubApp.ts"
+import { CheckHubUpdate, HubUpdateChecked, HubUpdateState } from "./HubUpdate.ts"
 import {
   AgentId,
   EventSeq,
@@ -618,6 +619,7 @@ export const WebToHub = Schema.Union([
   SetClaudeCredential,
   RemoveClaudeCredential,
   CheckAppPermissions,
+  CheckHubUpdate,
   RepoLookup,
   CreatePairingCode,
   RevokePairingCode,
@@ -644,6 +646,11 @@ export const WebWelcome = Schema.TaggedStruct("WebWelcome", {
   hub: Schema.optionalKey(BuildVersion),
   /** True when you are the Hub's Owner (#209), who alone may invite and remove people. */
   owner: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The Hub's update check (ADR 0028): for its Owner alone, on a Hub that checks for a newer kndl.
+   * Its absence tells the web there is no Hub page.
+   */
+  hubUpdate: Schema.optionalKey(HubUpdateState),
 })
 export type WebWelcome = typeof WebWelcome.Type
 
@@ -970,6 +977,7 @@ export const HubToWeb = Schema.Union([
   InstallationNeedsClient,
   ClaudeCredentialState,
   AppPermissionsChecked,
+  HubUpdateChecked,
   RepoChecked,
   ReposListed,
   BranchesListed,

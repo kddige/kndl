@@ -301,3 +301,13 @@ export function SunIcon(props: IconProps) {
     </Icon>
   )
 }
+
+/** The Hub page: the kndl the Hub runs, and whether a newer one is out (ADR 0028). */
+export function UpdateIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="5.75" />
+      <path d="M8 10.75v-5.5M5.5 7.5 8 5l2.5 2.5" />
+    </Icon>
+  )
+}

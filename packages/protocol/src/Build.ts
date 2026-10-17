@@ -89,18 +89,30 @@ export function describeBuild(version: BuildVersion): string {
 const parts = (version: string) => version.split(".").map(Number) as [number, number, number]
 
 /**
+ * Orders two Releases' versions by number, not as text: 2026.10.10 is after 2026.10.9. Negative
+ * when `a` is the older, positive when it is the newer, 0 when they're the same.
+ */
+export function compareReleases(a: ReleaseVersion, b: ReleaseVersion): number {
+  const [x, y] = [parts(a), parts(b)]
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]
+}
+
+/** A Release's version from its tag, `v2026.10.1`; `undefined` for a tag that is no Release's. */
+export function releaseOfTag(tag: string): ReleaseVersion | undefined {
+  const version = tag.startsWith("v") ? tag.slice(1) : ""
+  return ReleaseVersionPattern.test(version) ? version : undefined
+}
+
+/**
  * The Release among a commit's tags (ADR 0025), without the tag's `v`. A tag with a suffix, like
  * `-beta.1`, or zero-padding isn't a Release's. Of several, the newest.
  */
 export function releaseOf(tags: ReadonlyArray<string>): ReleaseVersion | undefined {
   return tags
     .flatMap((tag) => {
-      const version = tag.startsWith("v") ? tag.slice(1) : ""
-      return ReleaseVersionPattern.test(version) ? [version] : []
+      const version = releaseOfTag(tag)
+      return version === undefined ? [] : [version]
     })
-    .toSorted((a, b) => {
-      const [x, y] = [parts(a), parts(b)]
-      return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]
-    })
+    .toSorted(compareReleases)
     .at(-1)
 }

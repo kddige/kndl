@@ -45,6 +45,7 @@ import {
   Sidebar,
   Spinner,
   SunIcon,
+  UpdateIcon,
   WarningIcon,
 } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
@@ -123,9 +124,10 @@ function versionTag({ release, branch, channel, commit }: BuildVersion): string 
 /** The Hub-wide page the sidebar's general nav marks as current, from the path. */
 function sectionOf(
   pathname: string,
-): "runners" | "environments" | "variables" | "mcpServers" | "archive" | "people" | null {
+): "runners" | "environments" | "variables" | "mcpServers" | "archive" | "people" | "hub" | null {
   if (pathname === "/runners") return "runners"
   if (pathname === "/people") return "people"
+  if (pathname === "/hub") return "hub"
   if (pathname === "/environments" || /^\/repos\/[^/]+\/[^/]+\/environment$/.test(pathname))
     return "environments"
   if (pathname === "/variables") return "variables"
@@ -149,6 +151,8 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
   const runners = useHubState((state) => state.runners)
   const you = useHubState((state) => state.you)
   const owner = useHubState((state) => state.owner)
+  // Only a Hub that checks for a newer kndl sends its Owner the check, and has the Hub page.
+  const hubPage = useHubState((state) => state.owner && state.hubUpdate !== null)
   const hubVersion = useHubState((state) => state.hubVersion)
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const { sessionId } = useParams({ strict: false })
@@ -276,6 +280,11 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
             current={section === "people"}
           >
             People
+          </NavItem>
+        )}
+        {hubPage && (
+          <NavItem render={<Link to="/hub" />} icon={<UpdateIcon />} current={section === "hub"}>
+            Hub
           </NavItem>
         )}
       </NavSection>

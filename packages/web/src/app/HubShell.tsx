@@ -2,6 +2,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Outlet, useRouterState } from "@tanstack/react-router"
 import { type MouseEvent, useEffect, useState } from "react"
 import type { Connection } from "../hub/store.ts"
+import { HubUpdateBanner } from "../hubpage/HubUpdateBanner.tsx"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
 import {
   Banner,
@@ -159,6 +160,7 @@ export function HubShell() {
           </Banner>
         )}
         <AppPermissionsBanner sx={styles.banner} />
+        <HubUpdateBanner sx={styles.banner} />
         <div {...stylex.props(styles.body)}>
           <Outlet />
         </div>

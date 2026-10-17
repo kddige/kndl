@@ -737,6 +737,18 @@ const migrations = SqliteMigrator.fromRecord({
     yield* sql`ALTER TABLE runner_history ADD COLUMN load_1 REAL`
     yield* sql`CREATE INDEX runner_history_at ON runner_history (at)`
   }),
+  // What the Hub's last check for a newer kndl found (ADR 0028), as the HubUpdateState its Owner
+  // is sent, JSON: one row, for the commit the Hub ran then. A Hub on another commit drops it.
+  "0039_hub_update_check": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      CREATE TABLE hub_update_check (
+        hub_commit TEXT NOT NULL,
+        state TEXT NOT NULL,
+        saved_at INTEGER NOT NULL
+      )
+    `
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

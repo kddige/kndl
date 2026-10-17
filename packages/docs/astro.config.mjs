@@ -109,6 +109,7 @@ export default defineConfig({
             { slug: "self-hosting/let-people-in" },
             { slug: "self-hosting/add-a-runner" },
             { slug: "self-hosting/update" },
+            { slug: "self-hosting/check-for-updates" },
             { slug: "self-hosting/uninstall" },
           ],
         },

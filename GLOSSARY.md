@@ -59,7 +59,7 @@ A person the Hub let in: its Owner, or someone who used an Invite. Only a Member
 _Avoid_: user, account, Participant (for someone not in a Session)
 
 **Owner**:
-The one Member who decides who gets in: they make Invites, and list and remove Members. They alone manage global Installations. The Owner can't be removed, and has no other rights the other Members lack.
+The one Member who decides who gets in: they make Invites, and list and remove Members. They alone manage global Installations, see whether a newer Release or commit is out for the Hub, and update the Hub, its Channel and its Runners (ADR 0028). The Owner can't be removed, and has no other rights the other Members lack.
 _Avoid_: admin, operator, Creator
 
 **Setup link**:

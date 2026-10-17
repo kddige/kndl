@@ -5,7 +5,8 @@
 // permissions lack (issue #86); the Pairing codes waiting to be redeemed and the Hub's own commit,
 // for the Runners page (issue #85); and the signed-in person's Claude credential, write-only (ADR
 // 0015), and the CLI tokens they signed the CLI in with (issue #179); and, for the Hub's Owner alone,
-// its Members and pending Invites, for the People page (#209); and the MCP servers and their
+// its Members and pending Invites, for the People page (#209), and the Hub's update check, for
+// the Hub page (ADR 0028); and the MCP servers and their
 // Installations, and the MCP server change logs of the Repos the client asked about (#221). The
 // terminal's output itself goes straight to the view that draws it (HubClient.openTerminal), not
 // through here.
@@ -16,6 +17,7 @@
 import type {
   AppPermissionsCheck,
   BuildVersion,
+  HubUpdateState,
   ClaudeCredentialInfo,
   CliTokenInfo,
   Environment,
@@ -184,6 +186,11 @@ export interface HubState {
    */
   readonly invites: ReadonlyArray<PendingInvite> | null
   /**
+   * The Hub's check for a newer kndl (ADR 0028): sent to the Owner alone, by a Hub the kndl
+   * service runs from its install; null otherwise, and then there is no Hub page.
+   */
+  readonly hubUpdate: HubUpdateState | null
+  /**
    * The MCP servers and their Installations, each Installation with only the Repos the person has
    * access to (#221); null until the client first asks for them, then kept current.
    */
@@ -231,6 +238,7 @@ export const initialState: HubState = {
   owner: false,
   members: null,
   invites: null,
+  hubUpdate: null,
   mcpServers: null,
   mcpServerLogs: {},
 }
@@ -269,6 +277,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
         you: action.you,
         owner: action.owner === true,
         hubVersion: action.hub ?? null,
+        hubUpdate: action.hubUpdate ?? null,
         connection: { status: "online" },
       }
     case "HandshakeRejected":
@@ -439,6 +448,8 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return { ...state, invites: action.invites }
     case "MemberList":
       return { ...state, members: action.members }
+    case "HubUpdateChecked":
+      return { ...state, hubUpdate: action.update }
     case "McpServersState":
       return {
         ...state,

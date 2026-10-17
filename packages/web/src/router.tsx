@@ -23,6 +23,7 @@ import { CliLoginDonePage, CliLoginPage, readCliLoginSearch } from "./account/Cl
 import { HubShell } from "./app/HubShell.tsx"
 import { EnvironmentList } from "./environment/EnvironmentList.tsx"
 import { EnvironmentView } from "./environment/EnvironmentView.tsx"
+import { HubPage } from "./hubpage/HubPage.tsx"
 import { McpServersView } from "./mcp/McpServersView.tsx"
 import { AdmissionPage, InviteOnlyPage } from "./people/AdmissionPages.tsx"
 import { PeopleView } from "./people/PeopleView.tsx"
@@ -247,6 +248,13 @@ const peopleRoute = createRoute({
   component: PeopleView,
 })
 
+/** The kndl the Hub runs, and whether a newer one is out, for the Hub's Owner (ADR 0028). */
+const hubPageRoute = createRoute({
+  getParentRoute: () => hubRoute,
+  path: "/hub",
+  component: HubPage,
+})
+
 /**
  * Where a Setup link and an Invite land (issue #209): on their own, without the sidebar, since
  * whoever opens one isn't signed in yet. The secret is in the fragment, which the router leaves be.
@@ -318,6 +326,7 @@ const routeTree = rootRoute.addChildren([
     accountRoute,
     runnersRoute,
     peopleRoute,
+    hubPageRoute,
   ]),
   setupRoute,
   inviteRoute,

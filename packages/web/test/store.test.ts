@@ -513,6 +513,29 @@ test("the GitHub App's permission check is kept, the latest in place of the one 
   expect(fixed.appPermissions?.missing).toEqual([])
 })
 
+test("the Hub's update check comes in the Owner's welcome, then after each check (ADR 0028)", () => {
+  const follows = { _tag: "Channel", channel: "stable" } as const
+  expect(run(welcome()).hubUpdate).toBeNull()
+  const welcomed = run(
+    hub({
+      _tag: "WebWelcome",
+      protocolVersion: ProtocolVersion,
+      you: alice,
+      owner: true,
+      hubUpdate: { follows },
+    }),
+  )
+  expect(welcomed.hubUpdate).toEqual({ follows })
+  const checked = reduce(
+    welcomed,
+    hub({
+      _tag: "HubUpdateChecked",
+      update: { follows, checked: { at: 5, found: { _tag: "UpToDate" } } },
+    }),
+  )
+  expect(checked.hubUpdate?.checked).toEqual({ at: 5, found: { _tag: "UpToDate" } })
+})
+
 test("refused commands leave the state alone", () => {
   const state = run(listed, joined)
   expect(reduce(state, hub({ _tag: "CommandFailed", command: "SendPrompt", message: "no" }))).toBe(

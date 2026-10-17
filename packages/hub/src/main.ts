@@ -28,6 +28,7 @@ import { HubRoutes, HubServices, idleTimeoutSeconds, websocketOptions } from "./
 import { HubConfig } from "./HubConfig.ts"
 import { holdHubLock } from "./HubLock.ts"
 import { drainFirst } from "./HubShutdown.ts"
+import { HubUpdates } from "./HubUpdates.ts"
 import { announceHubVersion, HubVersion } from "./HubVersion.ts"
 import { McpServerIcons } from "./McpServerIcons.ts"
 import { McpServerSources } from "./McpServerSources.ts"
@@ -37,6 +38,7 @@ import {
   secretsResetDoneText,
   secretsResetPlanText,
 } from "./SecretsReset.ts"
+import { Upstream } from "./Upstream.ts"
 import { announceWebUi } from "./WebUi.ts"
 
 const ServerLive = Layer.unwrap(
@@ -98,6 +100,9 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(ServerLive),
   Layer.provide(GitHub.layer),
   Layer.provide(HubServices),
+  // Whether a newer kndl is out (ADR 0028), on a Hub the kndl service runs from its install.
+  Layer.provide(HubUpdates.layer),
+  Layer.provide(Upstream.layer),
   Layer.provide(McpServerSources.layer),
   Layer.provide(McpServerIcons.layer),
   Layer.provide(ClaudeCheck.layer),

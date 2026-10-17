@@ -32,6 +32,7 @@ import {
   type HubConfigInput,
 } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
+import { HubUpdates } from "./HubUpdates.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { McpServerIcons } from "./McpServerIcons.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
@@ -113,7 +114,11 @@ export const SessionsTest = Sessions.layer.pipe(
 )
 
 /** The Hub's stores and services, and its database, which tests can reach into. */
-export type Services = Layer.Success<typeof HubServices> | SqlClient.SqlClient | HubVersion
+export type Services =
+  | Layer.Success<typeof HubServices>
+  | SqlClient.SqlClient
+  | HubVersion
+  | HubUpdates
 
 export interface TestHub {
   /** The Hub's address, such as `http://127.0.0.1:54321`. */
@@ -162,6 +167,11 @@ export async function startHub(
     readonly database?: Layer.Layer<SqlClient.SqlClient, unknown>
     /** The Hub's own version; this checkout's by default. */
     readonly hubVersion?: Layer.Layer<HubVersion>
+    /**
+     * Whether the Hub checks for a newer kndl (ADR 0028); by default it doesn't, as a Hub run from a
+     * checkout. `HubUpdates.layerOn`, with an `Upstream.fixed`, turns it on.
+     */
+    readonly hubUpdates?: Layer.Layer<HubUpdates, unknown, HubVersion | SqlClient.SqlClient>
     /** How Claude credentials are checked; by default as ClaudeCheck.layerTest, asking no one. */
     readonly claudeCheck?: Layer.Layer<ClaudeCheck>
     /** The CLI binaries the Hub serves; by default ones it never builds. */
@@ -189,6 +199,7 @@ export async function startHub(
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
+    Layer.provideMerge(options.hubUpdates ?? HubUpdates.off),
     Layer.provideMerge(options.mcpServerSources ?? McpServerSources.layer),
     Layer.provideMerge(options.mcpServerIcons ?? McpServerIcons.none),
     Layer.provideMerge(options.claudeCheck ?? ClaudeCheck.layerTest),

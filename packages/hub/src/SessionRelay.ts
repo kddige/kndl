@@ -263,6 +263,9 @@ import {
   type WebToHub,
   cantStartText,
   AppPermissionsChecked,
+  HubUpdateChecked,
+  hubUpdatesOffMessage,
+  ownerOnlyMessage,
   SandboxNoted,
   MaxLastOutputLength,
   sessionNameFrom,
@@ -317,6 +320,7 @@ import { Environments } from "./Environments.ts"
 import { type Checked, Gateway } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
+import { HubUpdates } from "./HubUpdates.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { makeLiveSessions, type TextStream, type Why } from "./LiveSessions.ts"
 import { McpServerOAuth } from "./McpServerOAuth.ts"
@@ -672,6 +676,7 @@ export class SessionRelay extends Context.Service<
       const app = yield* GitHubApp
       const drift = yield* PermissionDrift
       const hubVersion = yield* HubVersion
+      const hubUpdates = yield* HubUpdates
       const updatePush = yield* RunnerUpdatePush
       const claudeCredentials = yield* ClaudeCredentials
       const members = yield* Members
@@ -2088,6 +2093,7 @@ export class SessionRelay extends Context.Service<
         | {
             readonly _tag:
               | "CheckAppPermissions"
+              | "CheckHubUpdate"
               | "CheckRepo"
               | "ListRepos"
               | "ListBranches"
@@ -2901,6 +2907,20 @@ export class SessionRelay extends Context.Service<
           )
 
         /**
+         * Checks for a newer kndl now (ADR 0028), off the lock since it waits on GitHub: the
+         * Owner's alone, on a Hub that checks. A check that fails answers too, with its error.
+         */
+        const checkHubUpdate = Effect.fn("SessionRelay.checkHubUpdate")(function* (
+          message: Extract<WebToHub, { readonly _tag: "CheckHubUpdate" }>,
+        ) {
+          const owner = yield* members.owner
+          if (!Option.contains(owner, you.id)) return refuse(message, ownerOnlyMessage)
+          const update = yield* hubUpdates.check
+          if (Option.isNone(update)) return refuse(message, hubUpdatesOffMessage)
+          peer.send(HubUpdateChecked.make({ requestId: message.requestId, update: update.value }))
+        })
+
+        /**
          * Checks a Repo as it is entered (#104), off the lock since it waits on GitHub: whether the
          * person has access, recorded as any check is, and if not, why.
          */
@@ -3067,10 +3087,10 @@ export class SessionRelay extends Context.Service<
                   ? revokeCliToken(message)
                   : message._tag === "CheckAppPermissions"
                     ? checkAppPermissions(message.requestId)
-                    : message._tag === "GetSessionDiskUsage"
-                      ? getSessionDiskUsage(message).pipe(
+                    : message._tag === "CheckHubUpdate"
+                      ? checkHubUpdate(message).pipe(
                           Effect.catchTag("SqlError", (error) =>
-                            Effect.logError("A disk usage request failed", error).pipe(
+                            Effect.logError("An update check failed", error).pipe(
                               Effect.andThen(
                                 Effect.sync(() =>
                                   refuse(message, "The Hub could not do that; try again."),
@@ -3079,50 +3099,62 @@ export class SessionRelay extends Context.Service<
                             ),
                           ),
                         )
-                      : message._tag === "ListRepos"
-                        ? listRepos(message)
-                        : message._tag === "ListBranches"
-                          ? listBranches(message)
-                          : message._tag === "CheckRepo"
-                            ? checkRepo(message).pipe(
-                                Effect.catchTag("SqlError", (error) =>
-                                  Effect.logError("A Repo check failed", error).pipe(
-                                    Effect.andThen(
-                                      Effect.sync(() =>
-                                        refuse(message, "The Hub could not do that; try again."),
+                      : message._tag === "GetSessionDiskUsage"
+                        ? getSessionDiskUsage(message).pipe(
+                            Effect.catchTag("SqlError", (error) =>
+                              Effect.logError("A disk usage request failed", error).pipe(
+                                Effect.andThen(
+                                  Effect.sync(() =>
+                                    refuse(message, "The Hub could not do that; try again."),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                        : message._tag === "ListRepos"
+                          ? listRepos(message)
+                          : message._tag === "ListBranches"
+                            ? listBranches(message)
+                            : message._tag === "CheckRepo"
+                              ? checkRepo(message).pipe(
+                                  Effect.catchTag("SqlError", (error) =>
+                                    Effect.logError("A Repo check failed", error).pipe(
+                                      Effect.andThen(
+                                        Effect.sync(() =>
+                                          refuse(message, "The Hub could not do that; try again."),
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              )
-                            : authorize(message).pipe(
-                                Effect.flatMap((verdict) =>
-                                  Effect.gen(function* () {
-                                    const command =
-                                      verdict.refusal === undefined
-                                        ? yield* respelled(message)
-                                        : message
-                                    return yield* serialized(
-                                      Effect.gen(function* () {
-                                        const { learned, refusal } = verdict
-                                        if (learned !== undefined)
-                                          yield* accessKnown(you, learned.repo, learned.allowed)
-                                        if (refusal !== undefined) return refuse(message, refusal)
-                                        return yield* handle(command)
-                                      }),
-                                    )
-                                  }),
-                                ),
-                                Effect.catchTag("SqlError", (error) =>
-                                  Effect.logError("A web command failed", error).pipe(
-                                    Effect.andThen(
-                                      Effect.sync(() =>
-                                        refuse(message, "The Hub could not do that; try again."),
+                                )
+                              : authorize(message).pipe(
+                                  Effect.flatMap((verdict) =>
+                                    Effect.gen(function* () {
+                                      const command =
+                                        verdict.refusal === undefined
+                                          ? yield* respelled(message)
+                                          : message
+                                      return yield* serialized(
+                                        Effect.gen(function* () {
+                                          const { learned, refusal } = verdict
+                                          if (learned !== undefined)
+                                            yield* accessKnown(you, learned.repo, learned.allowed)
+                                          if (refusal !== undefined) return refuse(message, refusal)
+                                          return yield* handle(command)
+                                        }),
+                                      )
+                                    }),
+                                  ),
+                                  Effect.catchTag("SqlError", (error) =>
+                                    Effect.logError("A web command failed", error).pipe(
+                                      Effect.andThen(
+                                        Effect.sync(() =>
+                                          refuse(message, "The Hub could not do that; try again."),
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              )
+                                )
       }
 
       const connectWeb = (you: Participant, peer: Peer<HubToWeb>) =>
@@ -3179,6 +3211,11 @@ export class SessionRelay extends Context.Service<
                 const checked = yield* drift.latest
                 if (Option.isSome(checked)) {
                   peer.send(AppPermissionsChecked.make({ check: checked.value }))
+                }
+                // Again after the welcome, in case a check ended while it waited on GitHub above.
+                const update = yield* hubUpdates.latest
+                if (Option.isSome(update) && Option.contains(yield* members.owner, you.id)) {
+                  peer.send(HubUpdateChecked.make({ update: update.value }))
                 }
               }),
             )
@@ -3925,6 +3962,23 @@ export class SessionRelay extends Context.Service<
       const driftChanges = yield* drift.changes
       yield* PubSub.take(driftChanges).pipe(
         Effect.map((check) => toWeb(AppPermissionsChecked.make({ check }))),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
+
+      // Each update check (ADR 0028), for the Owner's web clients alone.
+      const hubUpdateChanges = yield* hubUpdates.changes
+      yield* PubSub.take(hubUpdateChanges).pipe(
+        Effect.flatMap((update) =>
+          Effect.map(members.owner, (owner) =>
+            toWeb(HubUpdateChecked.make({ update }), (client) =>
+              Option.contains(owner, client.you.id),
+            ),
+          ),
+        ),
+        Effect.catchTag("SqlError", (error) =>
+          Effect.logError("Could not send the Owner the update check", error),
+        ),
         Effect.forever,
         Effect.forkIn(layerScope),
       )

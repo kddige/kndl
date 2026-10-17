@@ -30,3 +30,7 @@ Until now an install followed `main`, and kndl had no version: a Hub and its Run
 - **`main` should always be releasable.** Anything merged goes out in the next Release, so work that isn't finished stays behind a flag or on a branch.
 - **A Hub on `stable` can be months behind `main`,** and its Runners with it. So a bug report needs the version.
 - **Existing titles don't match.** The check only applies to new PRs. Release notes start at the first Release, so history before it is never grouped.
+
+## Amendment: the Hub says when it is behind (ADR 0028)
+
+A Hub the kndl service runs from its install checks GitHub for a newer kndl on its Channel, as it starts and every 6 hours, and its Owner sees what it found on the web UI's Hub page: on `stable`, the notes of every Release since the Hub's, Highlights first; on `dev`, the titles of `main`'s commits since the Hub's. A pinned Hub is offered nothing, and an install with no Channel recorded on `main` counts as `dev`. The Owner can update the Hub, and pick its Channel, from that page, which runs `kndl update`, with `--channel` for a new one. Nobody's Hub still changes what it runs without being asked: the check only reads, and the Owner is the one who asks.

@@ -1,0 +1,62 @@
+---
+title: Check for updates
+description: See on the Hub page whether a newer kndl is out on your Hub's Channel, and what changed since the version it runs.
+sidebar:
+  order: 8
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components"
+
+See from the web UI whether a newer kndl is out, and what it changes.
+
+The Hub checks kndl's repository on GitHub when it starts and every 6 hours. Its Owner sees what it found on the **Hub** page ([ADR 0028](/contributing/decisions/0028-the-owner-updates-the-hub-from-the-web/)).
+
+## What you need
+
+- To be the Hub's [Owner](/self-hosting/let-people-in/#become-the-owner). Members don't see the page or its banner.
+- A Hub [installed](/self-hosting/install/) and run as kndl's service. A Hub run from a checkout with `bun run hub` doesn't check, and has no **Hub** page.
+
+## Open the Hub page
+
+In the sidebar, under **People**, open **Hub**. It shows:
+
+- **Version:** the Release the Hub runs, or its commit on `dev`.
+- **Channel:** `stable`, `dev`, or **Pinned to** the ref `--ref` pinned.
+- **Last checked:** when the Hub last reached GitHub, and the error if its latest check failed.
+
+Press **Check now** to check at once, after a Release is cut.
+
+## Read what changed
+
+What counts as newer follows the Hub's [Channel](/self-hosting/update/#what-you-get):
+
+| Channel  | Offered                                  | The page shows                                           |
+| -------- | ---------------------------------------- | -------------------------------------------------------- |
+| `stable` | A Release newer than the Hub's           | The notes of each newer Release, newest first            |
+| `dev`    | `main`'s head, once it is past the Hub's | How many commits behind, and the titles of the newest 50 |
+| Pinned   | Nothing                                  | The ref the Hub is pinned to                             |
+
+**Compare on GitHub** opens the changes on GitHub, and **On GitHub** a Release's own page.
+
+A Hub on `stable` at a commit no Release has reached, as after switching from `dev`, is offered only a Release that includes its commit.
+
+## The banner
+
+While an update exists, a banner across the web UI says so, such as **kndl 2026.10.4 is out**. **See what's new** opens the **Hub** page.
+
+**Dismiss** hides it in this browser until the Hub finds another update: a newer Release on `stable`, or new commits on `main` on `dev`.
+
+## Next steps
+
+<CardGrid>
+  <LinkCard
+    title="Update kndl"
+    description="Move the Hub to the newer version, and its Runners with it."
+    href="/kndl/self-hosting/update/"
+  />
+  <LinkCard
+    title="Let people in"
+    description="Become the Hub's Owner, and invite your team."
+    href="/kndl/self-hosting/let-people-in/"
+  />
+</CardGrid>

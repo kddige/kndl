@@ -5,12 +5,14 @@ import type {
   AgentSummary,
   Attachment,
   AppPermissionsCheck,
+  BuildVersion,
   ClaudeCredentialInfo,
   CliTokenInfo,
   Environment,
   EnvironmentVersionInfo,
   HeaderValueSet,
   HubToWeb,
+  HubUpdateState,
   Installation,
   InstallationFailure,
   Member,
@@ -48,6 +50,8 @@ export type EnvironmentWire = (typeof Environment)["Encoded"]
 export type EnvironmentVersionInfoWire = (typeof EnvironmentVersionInfo)["Encoded"]
 export type SharedVariableWire = (typeof SharedVariable)["Encoded"]
 export type AppPermissionsCheckWire = (typeof AppPermissionsCheck)["Encoded"]
+export type BuildVersionWire = (typeof BuildVersion)["Encoded"]
+export type HubUpdateStateWire = (typeof HubUpdateState)["Encoded"]
 export type PendingPairingCodeWire = (typeof PendingPairingCode)["Encoded"]
 export type ClaudeCredentialInfoWire = (typeof ClaudeCredentialInfo)["Encoded"]
 export type CliTokenInfoWire = (typeof CliTokenInfo)["Encoded"]

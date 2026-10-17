@@ -4,8 +4,16 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Schema } from "effect"
-import { BuildVersion, CommitId, describeBuild, releaseOf, runnerVersionStatus } from "./Build.ts"
-import { checkoutHolds, readBuildVersion, thisCheckout } from "./Checkout.ts"
+import {
+  BuildVersion,
+  CommitId,
+  compareReleases,
+  describeBuild,
+  releaseOf,
+  releaseOfTag,
+  runnerVersionStatus,
+} from "./Build.ts"
+import { checkoutHolds, readBuildVersion, releaseInHistory, thisCheckout } from "./Checkout.ts"
 
 const hub = { commit: "a".repeat(40), branch: "main" }
 const older = { commit: "b".repeat(40) }
@@ -55,6 +63,16 @@ describe("a Release among a commit's tags", () => {
     ).toBeUndefined()
     expect(releaseOf([""])).toBeUndefined()
     expect(releaseOf([])).toBeUndefined()
+  })
+
+  test("orders by number, as the CLI's latestRelease does (ADR 0028)", () => {
+    expect(compareReleases("2026.10.10", "2026.10.9")).toBeGreaterThan(0)
+    expect(compareReleases("2026.9.12", "2026.10.1")).toBeLessThan(0)
+    expect(compareReleases("2025.12.3", "2026.1.1")).toBeLessThan(0)
+    expect(compareReleases("2026.10.1", "2026.10.1")).toBe(0)
+    expect(releaseOfTag("v2026.10.1")).toBe("2026.10.1")
+    expect(releaseOfTag("2026.10.1")).toBeUndefined()
+    expect(releaseOfTag("v2026.10.2-beta.1")).toBeUndefined()
   })
 
   test("decodes only as a Release's version", () => {
@@ -116,6 +134,33 @@ describe("the checkout's own version", () => {
         "2",
       )
       expect(readBuildVersion(dir)?.release).toBeUndefined()
+      // On the commit after it, the Release it came after (ADR 0028).
+      expect(releaseInHistory(dir)).toBe("2026.10.1")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("has no Release in its history before the first, or outside a checkout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kndl-history-"))
+    const git = (...args: Array<string>) =>
+      execFileSync("git", ["-C", dir, ...args], { stdio: "ignore" })
+    try {
+      expect(releaseInHistory(dir)).toBeUndefined()
+      git("init", "--quiet")
+      git(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "1",
+      )
+      git("tag", "v0.1.0")
+      expect(releaseInHistory(dir)).toBeUndefined()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

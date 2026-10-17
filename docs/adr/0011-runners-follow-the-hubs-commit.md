@@ -34,6 +34,12 @@ So a Session's Claude Code loads a copy of the mod, in the Session's directory, 
 
 Considered: one copy per mod version, shared by the Sessions started on it, makes fewer copies, but the Runner would track which Session runs which version to know when to delete one. The Hub ending a Turn whose Session's mod reloaded cleans up after the problem instead of preventing it, and can't tell whether Claude Code is still working.
 
+## Updating from the web (amended by ADR 0028)
+
+The Hub's Owner can update the Hub from the web UI's Hub page, which runs the same `kndl update` on the Hub's machine, outside the Hub's service. Its Runners follow the new commit as they do after an update from the CLI. A Runner's **Update** and **Update now** on the Runners page become the Owner's alone: the Hub refuses them from any other Member, who still sees whether a Runner is behind.
+
+Rolling back is `kndl update`'s too, for the Hub's own update: a step that fails after the checkout moves, or a Hub that isn't healthy within 30 seconds, sends the checkout back to the commit it ran, rebuilt and restarted. The push for Runners to follow is cleared then, so no Runner moves to the commit the Hub left.
+
 ## Considered options
 
 - **Each machine updates by hand.** No Hub reaching into Runners, but Runners drift behind the Hub, and a Runner missing a new tool fails in confusing ways.
