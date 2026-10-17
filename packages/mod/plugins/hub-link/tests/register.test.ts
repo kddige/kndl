@@ -79,7 +79,7 @@ describe("tools", () => {
   })
 })
 
-const welcome = { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 3 }) }
+const welcome = { status: 200, text: JSON.stringify({ _tag: "ModWelcome", protocolVersion: 4 }) }
 
 /**
  * A session a Runner started, linked to the Hub. Returns the requests, and the events posted.
@@ -195,9 +195,9 @@ describe("the Hub link", () => {
     expect(requests.map((request) => request.url)).toEqual([`${hubUrl}/mod/hello`])
     expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
       _tag: "ModHello",
-      protocolVersion: 3,
+      protocolVersion: 4,
       sessionId: "s1",
-      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",
       steers: true,
       attaches: true,
@@ -244,7 +244,7 @@ describe("the Hub link", () => {
         outcome: "Succeeded",
         output: "a.txt",
       },
-      { _tag: "TurnEnded", turnId: "t1", reason: "Answered", durationMs: 1200 },
+      { _tag: "TurnEnded", turnId: "t1", reason: "stop", durationMs: 1200 },
     ])
   })
 
@@ -279,7 +279,7 @@ describe("the Hub link", () => {
       "ToolCallStarted",
       "TurnEnded",
     ])
-    expect(posted().at(-1)).toMatchObject({ reason: "Stopped" })
+    expect(posted().at(-1)).toMatchObject({ reason: "aborted" })
   })
 })
 
@@ -537,7 +537,7 @@ describe("subagents (ADR 0014)", () => {
     await clock.advance(200)
 
     expect(posted()).toEqual([
-      { _tag: "TurnEnded", turnId: "r1", agentId: "a1", reason: "Stopped", durationMs: 1000 },
+      { _tag: "TurnEnded", turnId: "r1", agentId: "a1", reason: "aborted", durationMs: 1000 },
       { _tag: "AgentStatusChanged", agentId: "a1", status: "Stopped" },
     ])
   })

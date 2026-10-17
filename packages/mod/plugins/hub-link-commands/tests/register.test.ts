@@ -15,9 +15,9 @@ describe("the Hub link", () => {
     expect(requests[0]?.url).toBe(`${hubUrl}/mod/hello`)
     expect(JSON.parse(requests[0]?.body ?? "")).toEqual({
       _tag: "ModHello",
-      protocolVersion: 3,
+      protocolVersion: 4,
       sessionId: "s1",
-      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",
       steers: true,
       attaches: true,

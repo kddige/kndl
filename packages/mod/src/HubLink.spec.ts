@@ -82,7 +82,7 @@ const harness = (
     modToken: "secret",
     hello: {
       sessionId: "s1",
-      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-test",
     },
     fetch,

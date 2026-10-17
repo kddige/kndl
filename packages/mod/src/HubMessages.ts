@@ -47,7 +47,7 @@ export const clip = (text: string, max = MaxToolSummaryLength) => {
  */
 export const helloBody = (hello: {
   readonly sessionId: string
-  readonly claudeSessionId: string
+  readonly conversationId: string
   readonly model: string
 }) =>
   JSON.stringify(
@@ -98,23 +98,22 @@ export const readCommands = (text: string): ModCommands | undefined => {
   return Exit.isSuccess(commands) ? commands.value : undefined
 }
 
-/** Claude Code's `turn.complete` reason, as the protocol names it. */
+/** Claude Code's `turn.complete` reason, as pi-ai names a stop: a refusal is an error. */
 export const turnEndReason = (
   reason: "answer" | "aborted" | "refusal" | "error",
 ): TurnEndReason => {
   switch (reason) {
     case "answer":
-      return "Answered"
+      return "stop"
     case "aborted":
-      return "Stopped"
+      return "aborted"
     case "refusal":
-      return "Refused"
     case "error":
-      return "Failed"
+      return "error"
   }
 }
 
-/** Claude Code's turn usage, as the protocol names it. */
+/** Claude Code's turn usage, as pi-ai names it. Claude Code reports no cost. */
 export const turnUsage = (usage: {
   readonly model: string
   readonly input_tokens: number
@@ -123,10 +122,10 @@ export const turnUsage = (usage: {
   readonly cache_creation_input_tokens: number
 }): TurnUsage => ({
   model: usage.model,
-  inputTokens: usage.input_tokens,
-  outputTokens: usage.output_tokens,
-  cacheReadInputTokens: usage.cache_read_input_tokens,
-  cacheCreationInputTokens: usage.cache_creation_input_tokens,
+  input: usage.input_tokens,
+  output: usage.output_tokens,
+  cacheRead: usage.cache_read_input_tokens,
+  cacheWrite: usage.cache_creation_input_tokens,
 })
 
 /** The keys Claude Code adds to a tool call's input that the tool itself never sees. */

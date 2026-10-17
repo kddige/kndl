@@ -16,9 +16,9 @@ import {
   VariablesRefused,
 } from "./Environment.ts"
 import { GitIdentity, GitReply, GitRequest } from "./Git.ts"
-import { ClaudeSessionId, EnvironmentVersion, RequestId, RunnerId, SessionId } from "./Ids.ts"
+import { ConversationId, EnvironmentVersion, RequestId, RunnerId, SessionId } from "./Ids.ts"
 import { GatewayServer } from "./McpServer.ts"
-import { EffortLevel, ModelName, RunnerModels } from "./Model.ts"
+import { ThinkingLevel, ModelName, RunnerModels } from "./Model.ts"
 import { BranchName, OpenPort, RepoName } from "./Session.ts"
 import { MaxDiskUsageSessions, SessionDiskSize, Sysinfo } from "./Sysinfo.ts"
 import {
@@ -76,7 +76,7 @@ export const RunnerHello = Schema.TaggedStruct("RunnerHello", {
   /** Its last update, when that failed: kept until it next updates, so a restarted Hub hears it. */
   lastUpdate: Schema.optionalKey(UpdateFailure),
   /**
-   * The models and effort levels its Claude Code takes (#128). Absent from a Runner from before,
+   * The models and thinking levels its Claude Code takes (#128). Absent from a Runner from before,
    * or one that couldn't find out: its Sessions then run Claude Code's defaults only.
    */
   models: Schema.optionalKey(RunnerModels),
@@ -263,8 +263,8 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
   repo: RepoName,
   baseBranch: BranchName,
   workBranch: BranchName,
-  /** Claude Code's session id to resume, when waking an Asleep Session. */
-  resume: Schema.optionalKey(ClaudeSessionId),
+  /** The conversation to resume, when waking an Asleep Session. */
+  resume: Schema.optionalKey(ConversationId),
   /**
    * The token the Session's mod authenticates to the Hub with, scoped to this Session (issue #7).
    * Kept in the Runner's memory, for its mod relay to relay the mod's calls with; never passed
@@ -283,8 +283,8 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
   gitIdentity: Schema.optionalKey(GitIdentity),
   /** The model to start Claude Code on, its `--model` (#128); absent for Claude Code's default. */
   model: Schema.optionalKey(ModelName),
-  /** The effort level to start Claude Code at, its `--effort` (#128); absent for its default. */
-  effort: Schema.optionalKey(EffortLevel),
+  /** The thinking level to start Claude Code at, its `--effort` (#128); absent for its default. */
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /**
    * An MCP server for each Installation on for its Repo (ADR 0020); absent for none. Sent only to
    * a Runner whose hello says it `relaysMcpServers`.
@@ -294,7 +294,7 @@ export const StartSession = Schema.TaggedStruct("StartSession", {
 export type StartSession = typeof StartSession.Type
 
 /**
- * Start a running Session's Claude Code again with its model and effort as they are set now
+ * Start a running Session's Claude Code again with its model and thinking level as they are set now
  * (#128): Claude Code alone, resuming its conversation, with its Sandbox left running. The Hub
  * sends it only while no Turn runs, and only to a Runner whose hello says it `relaunches`.
  * Answered as a StartSession is, with SessionStarted, or SessionStartFailed when Claude Code
@@ -304,12 +304,12 @@ export const RelaunchSession = Schema.TaggedStruct("RelaunchSession", {
   sessionId: SessionId,
   repo: RepoName,
   workBranch: BranchName,
-  /** Claude Code's session id to resume, from its mod's last hello. */
-  resume: ClaudeSessionId,
+  /** The conversation to resume, from its mod's last hello. */
+  resume: ConversationId,
   /** A new mod token, in place of the old one, which the Hub revoked as it sent this. */
   modToken: Schema.NonEmptyString,
   model: Schema.optionalKey(ModelName),
-  effort: Schema.optionalKey(EffortLevel),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
   /** The Session's MCP servers, as its last start gave them: a relaunch changes none. */
   mcpServers: Schema.optionalKey(Schema.Array(GatewayServer)),
 })

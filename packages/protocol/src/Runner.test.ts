@@ -277,7 +277,7 @@ const hubToRunner = [
     workBranch: "claude/s-1",
     modToken: "mod-token",
     model: "sonnet",
-    effort: "xhigh",
+    thinkingLevel: "xhigh",
   },
   {
     _tag: "RelaunchSession",
@@ -295,7 +295,7 @@ const hubToRunner = [
     resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     modToken: "mod-3",
     model: "opus[1m]",
-    effort: "max",
+    thinkingLevel: "max",
   },
   // A Runner kept s-1 running across its restart: a new mod token for it (#157).
   { _tag: "ModTokenReissued", sessionId: "s-1", modToken: "mod-4" },
@@ -404,7 +404,7 @@ describe("HubToRunner", () => {
     expectRejected(HubToRunner, { _tag: "GitReply", requestId: "g-1", answer: { _tag: "Token" } })
     expectRejected(HubToRunner, { ...hubToRunner[2], model: "--dangerously-skip-permissions" })
     expectRejected(HubToRunner, { ...hubToRunner[2], model: "opus plan" })
-    expectRejected(HubToRunner, { ...hubToRunner[2], effort: "extra" })
+    expectRejected(HubToRunner, { ...hubToRunner[2], thinkingLevel: "extra" })
     expectRejected(HubToRunner, {
       _tag: "RelaunchSession",
       sessionId: "s-1",

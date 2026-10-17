@@ -37,7 +37,7 @@ const sessionEvents = [
     attachments: [{ id: "att-1", name: "shot.png", mediaType: "image/png", size: 12 }],
   },
   { _tag: "SandboxNoted", message: "Memory capped at 8192 MiB by the Runner" },
-  { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", effort: "high" },
+  { _tag: "ModelSwitched", by: alice, model: "sonnet", modelLabel: "Sonnet 5.5", thinkingLevel: "high" },
   { _tag: "ModelSwitched", by: bob, modelLabel: "Opus 5.5" },
   { _tag: "ModelSwitched", by: bob },
   {
@@ -186,9 +186,9 @@ const webToHub = [
     repo: "kddige/kndl",
     branch: { _tag: "Create", name: "feature/health-check", from: "main" },
     model: "opus[1m]",
-    effort: "low",
+    thinkingLevel: "low",
   },
-  { _tag: "SetSessionModel", sessionId: "s-1", model: "sonnet", effort: "xhigh" },
+  { _tag: "SetSessionModel", sessionId: "s-1", model: "sonnet", thinkingLevel: "xhigh" },
   { _tag: "SetSessionModel", sessionId: "s-1", model: "claude-sonnet-4-5" },
   {
     _tag: "SetClaudeCredential",
@@ -499,7 +499,7 @@ const hubToWeb = [
   },
   {
     _tag: "SessionUpdated",
-    session: { ...sessionSummary, model: "sonnet", effort: "high", modelPending: true },
+    session: { ...sessionSummary, model: "sonnet", thinkingLevel: "high", modelPending: true },
   },
   {
     _tag: "SessionUpdated",
@@ -1076,8 +1076,8 @@ describe("WebToHub", () => {
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "" })
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "-p" })
     expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", model: "x".repeat(201) })
-    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", effort: "extra" })
-    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", effort: "auto" })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", thinkingLevel: "extra" })
+    expectRejected(WebToHub, { _tag: "SetSessionModel", sessionId: "s-1", thinkingLevel: "auto" })
     expectRejected(WebToHub, { ...webToHub[1], model: "son net" })
     // An Invite's login is a GitHub login, or none at all.
     for (const login of ["", "-octocat", "octo--cat", "octo cat", "x".repeat(40)]) {

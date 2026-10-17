@@ -47,7 +47,7 @@ export interface HubLinkOptions {
   /** What the hello says. */
   readonly hello: {
     readonly sessionId: string
-    readonly claudeSessionId: string
+    readonly conversationId: string
     readonly model: string
   }
   readonly fetch: HubFetch

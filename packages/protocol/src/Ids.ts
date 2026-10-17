@@ -38,19 +38,16 @@ export type ToolCallId = typeof ToolCallId.Type
 export const AgentId = Schema.NonEmptyString.pipe(Schema.brand("AgentId"))
 export type AgentId = typeof AgentId.Type
 
-/** Claude Code's session id as it mints one: a UUID, lowercase. */
-export const ClaudeSessionIdPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-
 /**
- * Claude Code's own session id, which `claude --resume` takes to wake an Asleep Session. The mod
- * sends it from the Sandbox, and the Runner names files on the host after it, so only an id of
- * that form decodes: never `../` or a path.
+ * A Session's conversation as its Harness names it, which the Harness takes back to resume it
+ * when the Session wakes: Claude Code's session id. The mod sends it from the Sandbox, and the
+ * Runner names files on the host after it, so only a plain name decodes: never `../` or a path.
  */
-export const ClaudeSessionId = Schema.String.check(Schema.isPattern(ClaudeSessionIdPattern)).pipe(
-  Schema.brand("ClaudeSessionId"),
-)
-export type ClaudeSessionId = typeof ClaudeSessionId.Type
+export const ConversationId = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  Schema.isMaxLength(128),
+).pipe(Schema.brand("ConversationId"))
+export type ConversationId = typeof ConversationId.Type
 
 /** Chosen by a web client to match the Hub's answer to its request. */
 export const RequestId = Schema.NonEmptyString.pipe(Schema.brand("RequestId"))

@@ -44,7 +44,7 @@ import {
   McpServersState,
 } from "./McpServer.ts"
 import { GitHubLogin, InviteId, Member, PendingInvite } from "./Members.ts"
-import { EffortLevel, ModelName } from "./Model.ts"
+import { ThinkingLevel, ModelName } from "./Model.ts"
 import { PairingCodeId, PendingPairingCode } from "./Pairing.ts"
 import {
   BranchChoice,
@@ -128,8 +128,8 @@ export const SandboxNoted = Schema.TaggedStruct("SandboxNoted", {
 export type SandboxNoted = typeof SandboxNoted.Type
 
 /**
- * A Participant changed the Session's model or effort (#128): what it is set to now, which its
- * Claude Code runs from the next Turn on. An absent `model` or `effort` is Claude Code's default.
+ * A Participant changed the Session's model or thinking level (#128): what it is set to now, which its
+ * Claude Code runs from the next Turn on. An absent `model` or `thinkingLevel` is Claude Code's default.
  */
 export const ModelSwitched = Schema.TaggedStruct("ModelSwitched", {
   by: Participant,
@@ -139,7 +139,7 @@ export const ModelSwitched = Schema.TaggedStruct("ModelSwitched", {
    * the model it runs.
    */
   modelLabel: Schema.optionalKey(Schema.NonEmptyString),
-  effort: Schema.optionalKey(EffortLevel),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
 export type ModelSwitched = typeof ModelSwitched.Type
 
@@ -191,7 +191,7 @@ export type WebHello = typeof WebHello.Type
 /**
  * Start a new Session on a Repo, on a branch (ADR 0023): an existing one, directly or on a new
  * Work branch made from it, or a new one made from another. The Hub picks a Runner if none is named. A
- * `model` or `effort` the Runner's Claude Code doesn't take is refused; absent, Claude Code's own
+ * `model` or `thinkingLevel` the Runner's Claude Code doesn't take is refused; absent, Claude Code's own
  * default is used (#128).
  */
 export const CreateSession = Schema.TaggedStruct("CreateSession", {
@@ -200,7 +200,7 @@ export const CreateSession = Schema.TaggedStruct("CreateSession", {
   branch: BranchChoice,
   runnerId: Schema.optionalKey(RunnerId),
   model: Schema.optionalKey(ModelName),
-  effort: Schema.optionalKey(EffortLevel),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
 export type CreateSession = typeof CreateSession.Type
 
@@ -353,8 +353,8 @@ export const RenameSession = Schema.TaggedStruct("RenameSession", {
 export type RenameSession = typeof RenameSession.Type
 
 /**
- * Set the Session's model and effort (#128), both at once; an absent one is Claude Code's default.
- * Anyone with access to its Repo may, in any state but Archived. A model or effort the Runner's
+ * Set the Session's model and thinking level (#128), both at once; an absent one is Claude Code's default.
+ * Anyone with access to its Repo may, in any state but Archived. A model or thinking level the Runner's
  * Claude Code doesn't take is refused, a model as Claude Code refuses it (`Model 'x' not found`).
  * Every client that can see the Session gets a SessionUpdated, and its log a ModelSwitched. A
  * running Turn goes on as it is: Claude Code is restarted with the new setting once no Turn runs,
@@ -363,7 +363,7 @@ export type RenameSession = typeof RenameSession.Type
 export const SetSessionModel = Schema.TaggedStruct("SetSessionModel", {
   sessionId: SessionId,
   model: Schema.optionalKey(ModelName),
-  effort: Schema.optionalKey(EffortLevel),
+  thinkingLevel: Schema.optionalKey(ThinkingLevel),
 })
 export type SetSessionModel = typeof SetSessionModel.Type
 

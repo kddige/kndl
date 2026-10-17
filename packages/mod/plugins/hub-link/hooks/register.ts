@@ -130,7 +130,7 @@ const startLink = async ($: EngineInterface) => {
   state.link = new HubLink({
     hubUrl,
     modToken,
-    hello: { sessionId, claudeSessionId: conversation, model: await $.session.model() },
+    hello: { sessionId, conversationId: conversation, model: await $.session.model() },
     fetch: (url, init) => $.http.fetch(url, init),
     // Its own timers, so a Stop can't cut what it does short (#165).
     after: (ms, fn) => void $.clock.after(ms, fn),

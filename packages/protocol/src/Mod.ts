@@ -3,7 +3,7 @@ import { AttachmentMediaType, PromptAttachments, textOrAttachments } from "./Att
 import {
   AgentId,
   AttachmentId,
-  ClaudeSessionId,
+  ConversationId,
   ModCommandSeq,
   ParticipantId,
   PromptId,
@@ -44,8 +44,8 @@ import { CurrentProtocolVersion, HandshakeRejected } from "./Version.ts"
 export const ModHello = Schema.TaggedStruct("ModHello", {
   protocolVersion: CurrentProtocolVersion,
   sessionId: SessionId,
-  /** Claude Code's own session id, for `claude --resume` when the Session wakes. */
-  claudeSessionId: ClaudeSessionId,
+  /** Its Harness's conversation, to resume when the Session wakes: `claude --resume` takes it. */
+  conversationId: ConversationId,
   /** The model Claude Code runs, as it names it. */
   model: Schema.NonEmptyString,
   /**

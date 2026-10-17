@@ -31,6 +31,7 @@ import {
   terminalOutcome,
   toolArguments,
   turnEndReason,
+  turnUsage,
 } from "./HubMessages.ts"
 import type { ModEventEncoded } from "./HubMessages.ts"
 
@@ -75,17 +76,11 @@ const events: Array<Record<string, unknown>> = [
   {
     _tag: "TurnEnded",
     turnId: "t1",
-    reason: "Answered",
+    reason: "stop",
     durationMs: 1200,
-    usage: {
-      model: "claude-test",
-      inputTokens: 10,
-      outputTokens: 20,
-      cacheReadInputTokens: 0,
-      cacheCreationInputTokens: 0,
-    },
+    usage: { model: "claude-test", input: 10, output: 20, cacheRead: 0, cacheWrite: 0 },
   },
-  { _tag: "TurnEnded", turnId: "t1", agentId: "a1", reason: "Stopped", durationMs: 5 },
+  { _tag: "TurnEnded", turnId: "t1", agentId: "a1", reason: "aborted", durationMs: 5 },
   {
     _tag: "TurnStarted",
     turnId: "t3",
@@ -193,14 +188,14 @@ describe("checkEvent", () => {
 test("helloBody says hello in the protocol's shape: this mod steers (#195), and marks files (#278)", () => {
   const body = helloBody({
     sessionId: "s1",
-    claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     model: "claude-test",
   })
   expect(Schema.decodeUnknownSync(Schema.fromJsonString(ModHello))(body)).toEqual({
     _tag: "ModHello",
     protocolVersion: ProtocolVersion,
     sessionId: "s1",
-    claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+    conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
     model: "claude-test",
     steers: true,
     attaches: true,
@@ -330,13 +325,25 @@ test("backgroundedByStop is a command a Stop moved to the background, still runn
   expect(backgroundedByStop(null)).toBe(false)
 })
 
-test("turnEndReason names every way a Turn ends", () => {
+test("turnEndReason names every way a Turn ends as pi-ai's stop reasons: a refusal is an error", () => {
   expect(["answer", "aborted", "refusal", "error"].map((r) => turnEndReason(r as never))).toEqual([
-    "Answered",
-    "Stopped",
-    "Refused",
-    "Failed",
+    "stop",
+    "aborted",
+    "error",
+    "error",
   ])
+})
+
+test("turnUsage names Claude Code's usage as pi-ai does, without a cost Claude Code doesn't report", () => {
+  expect(
+    turnUsage({
+      model: "claude-sonnet-5-5",
+      input_tokens: 12,
+      output_tokens: 345,
+      cache_read_input_tokens: 6789,
+      cache_creation_input_tokens: 101,
+    }),
+  ).toEqual({ model: "claude-sonnet-5-5", input: 12, output: 345, cacheRead: 6789, cacheWrite: 101 })
 })
 
 test("a prompt from a Participant is led by their name", () => {
