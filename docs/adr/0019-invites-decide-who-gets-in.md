@@ -39,3 +39,7 @@ Invites are the simplest. They work with one public App, cover organization memb
 ## Amendment: a removed Member's Sessions sleep (ADR 0026)
 
 A removed Member's Sessions still belong to their Repos, and their setup token is still theirs. But the Hub won't hand that token to a Runner any more. It puts the removed Member's awake Sessions to sleep and says why. Those Sessions stay readable, and Fork (#332) is how someone else carries one on.
+
+## Amendment: the Owner updates the Hub (ADR 0028)
+
+"One Owner, no other roles" still holds, but the Owner now has rights beyond who gets in. They alone see whether a newer kndl is out, on the Hub page, and update the Hub, pick its Channel and update its Runners from the web UI: each changes what every Member's Sessions run on. The Hub refuses those from anyone else. Other Hub-wide actions stay open to every Member.

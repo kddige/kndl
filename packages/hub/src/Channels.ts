@@ -23,6 +23,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"
 import { authenticateParticipant, authenticateRunner, requireSameOrigin } from "./Auth.ts"
 import { HubShutdown } from "./HubShutdown.ts"
+import { HubUpdates } from "./HubUpdates.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { Members } from "./Members.ts"
 import { type Peer, type Receive, SessionRelay } from "./SessionRelay.ts"
@@ -162,6 +163,7 @@ export const ChannelRoutes = HttpRouter.use(
     const relay = yield* SessionRelay
     const members = yield* Members
     const hub = (yield* HubVersion).version
+    const hubUpdates = yield* HubUpdates
 
     // A Runner, by its Runner token. Its RunnerId comes from the token, not the hello.
     yield* router.add(
@@ -193,6 +195,8 @@ export const ChannelRoutes = HttpRouter.use(
         const you = yield* authenticateParticipant
         // Only for the web UI to show the People page or not: the relay checks each command.
         const owner = Option.contains(yield* Effect.orDie(members.owner), you.id)
+        // The update check (ADR 0028) is the Owner's alone, and their only way to the Hub page.
+        const update = owner ? Option.getOrUndefined(yield* hubUpdates.latest) : undefined
         return yield* serveChannel({
           hello: WebHello,
           incoming: WebToHub,
@@ -203,6 +207,7 @@ export const ChannelRoutes = HttpRouter.use(
               you,
               ...(owner && { owner }),
               ...(hub !== undefined && { hub }),
+              ...(update !== undefined && { hubUpdate: update }),
             }),
           connect: (_hello, peer) => relay.connectWeb(you, peer),
         })

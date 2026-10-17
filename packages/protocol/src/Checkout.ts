@@ -5,7 +5,13 @@
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { Schema } from "effect"
-import { type BuildVersion, Channel, CommitIdPattern, releaseOf } from "./Build.ts"
+import {
+  type BuildVersion,
+  Channel,
+  CommitIdPattern,
+  type ReleaseVersion,
+  releaseOf,
+} from "./Build.ts"
 
 /** The checkout this file is in: the one the Hub, Runner or CLI importing it runs from. */
 export const thisCheckout = fileURLToPath(new URL("../../..", import.meta.url))
@@ -40,6 +46,16 @@ export function readBuildVersion(dir: string = thisCheckout): BuildVersion | und
     ...(release !== undefined && { release }),
     ...(channel !== undefined && { channel }),
   }
+}
+
+/**
+ * The newest Release whose tag is in the history of HEAD, among the tags the checkout has fetched,
+ * or `undefined` when there is none or `dir` isn't a git checkout: on a commit that is no
+ * Release's, the Release it came after (ADR 0028).
+ */
+export function releaseInHistory(dir: string = thisCheckout): ReleaseVersion | undefined {
+  const tags = git(dir, ["tag", "--merged", "HEAD", "--list", "v*"])
+  return tags === undefined ? undefined : releaseOf(tags.split("\n"))
 }
 
 /**

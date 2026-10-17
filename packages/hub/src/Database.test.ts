@@ -37,12 +37,20 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0038, a Runner's memory and load history (#356): the
+ * Takes the database back to before migration 0039, the Hub's last update check (ADR 0028): the
  * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
  * first.
  */
+const beforeHubUpdateCheck = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`DROP TABLE hub_update_check`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'hub_update_check'`
+})
+
+/** Takes the database back to before migration 0038, a Runner's memory and load history (#356), and 0039. */
 const beforeRunnerHistory = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeHubUpdateCheck
   yield* sql`DROP INDEX runner_history_at`
   yield* sql`ALTER TABLE runner_history DROP COLUMN load_1`
   yield* sql`ALTER TABLE runner_history DROP COLUMN memory_available_bytes`

@@ -49,6 +49,7 @@ import {
   Popover,
   RestartIcon,
   ServerIcon,
+  UpdateIcon,
   SunIcon,
   Select,
   SessionStatus,
@@ -732,6 +733,7 @@ function Toggles() {
         <ArchiveIcon aria-label="Archive" />
         <ServerIcon aria-label="Server" />
         <PeopleIcon aria-label="People" />
+        <UpdateIcon aria-label="Update" />
         <CopyIcon aria-label="Copy" />
         <PlugIcon aria-label="Plug" />
         <SunIcon aria-label="Sun" />

@@ -24,6 +24,7 @@ import {
   type GitHubLogin,
   type HeaderValueInput,
   HubToWeb,
+  type HubUpdateState,
   type InstallationAuthorizing,
   type InstallationId,
   type InstallationNeedsClient,
@@ -491,6 +492,14 @@ export class HubClient {
   }
 
   /**
+   * Has the Hub check for a newer kndl now (ADR 0028), as its Owner alone may: where the check is
+   * after it, which the store then holds too. A check that fails says so in it.
+   */
+  async checkHubUpdate(): Promise<HubUpdateState> {
+    return (await this.#request({ _tag: "CheckHubUpdate" }, "HubUpdateChecked")).update
+  }
+
+  /**
    * Whether the signed-in person has access to `repo`, and if not, why (#104): asked as a Repo is
    * entered. With `fresh`, the Hub asks GitHub again rather than answering from its cache.
    */
@@ -910,6 +919,7 @@ export class HubClient {
       case "TestBuildStarted":
       case "SharedVariables":
       case "AppPermissionsChecked":
+      case "HubUpdateChecked":
       case "RepoChecked":
       case "ReposListed":
       case "ListingUnavailable":

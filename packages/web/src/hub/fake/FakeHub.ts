@@ -51,6 +51,7 @@ import {
   unsupportedAttachmentReason,
   messageAgentVerdict,
   modelNotFoundText,
+  hubUpdatesOffMessage,
   ownerOnlyMessage,
   PairingAlphabet,
   PairingCodeLength,
@@ -113,9 +114,11 @@ import type {
   AgentSummaryWire,
   AttachmentWire,
   AppPermissionsCheckWire,
+  BuildVersionWire,
   ClaudeCredentialInfoWire,
   CliTokenInfoWire,
   HubMessage,
+  HubUpdateStateWire,
   LogEntryWire,
   MemberWire,
   OpenPortWire,
@@ -164,6 +167,13 @@ export interface FakeHubOptions {
   cliTokens?: ReadonlyArray<CliTokenInfoWire>
   /** Whether the signed-in person is the Hub's Owner (#209), who has the People page. Default true. */
   owner?: boolean
+  /**
+   * The Hub's update check (ADR 0028), which only a Hub the kndl service runs from its install has,
+   * sent to its Owner alone; null for a Hub without it, as one run from a checkout. Default null.
+   */
+  hubUpdate?: HubUpdateStateWire | null
+  /** The kndl the Hub runs. Default `hubVersion`, a commit on main. */
+  hubVersion?: BuildVersionWire
   /** How Claude answers a prompt from the web, as a script. Default `replyTo`'s. */
   reply?: (text: string) => ReadonlyArray<ReplyStep>
 }
@@ -351,6 +361,8 @@ export class FakeHub implements HubTransport {
   #claudeCredential: ClaudeCredentialInfoWire | null
   #cliTokens: Array<CliTokenInfoWire>
   #owner: boolean
+  #hubUpdate: HubUpdateStateWire | null
+  readonly #hubVersion: BuildVersionWire
   readonly #reply: (text: string) => ReadonlyArray<ReplyStep>
   /** The Hub's Members (#209), the Owner first. */
   members: Array<MemberWire> = seedMembers()
@@ -390,6 +402,8 @@ export class FakeHub implements HubTransport {
     this.#you = options.you ?? defaultYou
     this.#cliTokens = [...(options.cliTokens ?? seedCliTokens())]
     this.#owner = options.owner ?? true
+    this.#hubUpdate = options.hubUpdate ?? null
+    this.#hubVersion = options.hubVersion ?? hubVersion
     this.#reply = options.reply ?? replyTo
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
@@ -744,6 +758,16 @@ export class FakeHub implements HubTransport {
   }
 
   /**
+   * Changes what the Hub's update check found (ADR 0028), as its next check would, and tells the
+   * Owner. In the browser, `fakeHub.setHubUpdate({ follows: { _tag: "Pinned", ref: "fix" } })` in
+   * the console.
+   */
+  setHubUpdate(update: HubUpdateStateWire): void {
+    this.#hubUpdate = update
+    if (this.#owner) this.#toAll({ _tag: "HubUpdateChecked", update })
+  }
+
+  /**
    * Takes the signed-in person's access to `repo` away, as the real Hub does when GitHub says so
    * at its next check: its Sessions and Environment are gone from them. In the browser,
    * `fakeHub.revokeRepo("kddige/kndl")` in the console.
@@ -920,8 +944,9 @@ export class FakeHub implements HubTransport {
           _tag: "WebWelcome",
           protocolVersion: ProtocolVersion,
           you: this.#you,
-          hub: hubVersion,
+          hub: this.#hubVersion,
           ...(this.#owner && { owner: true }),
+          ...(this.#owner && this.#hubUpdate !== null && { hubUpdate: this.#hubUpdate }),
         })
         socket.deliver(this.#runnerList())
         socket.deliver(this.#pairingCodeList())
@@ -1001,6 +1026,29 @@ export class FakeHub implements HubTransport {
           check: { ...this.#appPermissions, checkedAt: Date.now() },
         })
         break
+      // As the Hub does: the Owner's alone, on a Hub that checks. GitHub has nothing new since.
+      case "CheckHubUpdate": {
+        if (!this.#owner) {
+          this.#refuse(socket, message._tag, message.requestId, ownerOnlyMessage)
+          break
+        }
+        const update = this.#hubUpdate
+        if (update === null) {
+          this.#refuse(socket, message._tag, message.requestId, hubUpdatesOffMessage)
+          break
+        }
+        const checked: HubUpdateStateWire =
+          update.follows._tag === "Pinned"
+            ? update
+            : {
+                follows: update.follows,
+                checked: { at: Date.now(), found: update.checked?.found ?? { _tag: "UpToDate" } },
+              }
+        this.#hubUpdate = checked
+        socket.deliver({ _tag: "HubUpdateChecked", requestId: message.requestId, update: checked })
+        this.#toOthers(socket, { _tag: "HubUpdateChecked", update: checked })
+        break
+      }
       case "CheckRepo": {
         const status = this.#repoStatus(message.repo)
         socket.deliver({

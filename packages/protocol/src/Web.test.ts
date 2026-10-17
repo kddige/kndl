@@ -167,6 +167,7 @@ const webToHub = [
   },
   { _tag: "DeleteSharedVariable", requestId: "q-11", name: "REGISTRY" },
   { _tag: "CheckAppPermissions", requestId: "q-12" },
+  { _tag: "CheckHubUpdate", requestId: "q-12b" },
   { _tag: "CheckRepo", requestId: "q-13", repo: "kddige/kndl" },
   { _tag: "CheckRepo", requestId: "q-14", repo: "kddige/kndl", fresh: true },
   { _tag: "ListRepos", requestId: "q-14" },
@@ -312,6 +313,59 @@ const hubToWeb = [
     protocolVersion: ProtocolVersion,
     you: alice,
     hub: { commit: "a".repeat(40), branch: "main" },
+  },
+  {
+    _tag: "WebWelcome",
+    protocolVersion: ProtocolVersion,
+    you: alice,
+    owner: true,
+    hubUpdate: { follows: { _tag: "Pinned", ref: "fix-login" } },
+  },
+  {
+    _tag: "HubUpdateChecked",
+    requestId: "q-12b",
+    update: {
+      follows: { _tag: "Channel", channel: "stable" },
+      checked: {
+        at: 1,
+        found: {
+          _tag: "NewerRelease",
+          releases: [
+            {
+              version: "2026.10.4",
+              notes: "## Highlights",
+              url: "https://github.com/kddige/kndl/releases/tag/v2026.10.4",
+              publishedAt: 1,
+            },
+          ],
+          compareUrl: "https://github.com/kddige/kndl/compare/v2026.10.2...v2026.10.4",
+        },
+      },
+      failed: { at: 2, message: "GitHub answered 503" },
+    },
+  },
+  {
+    _tag: "HubUpdateChecked",
+    update: {
+      follows: { _tag: "Channel", channel: "dev" },
+      checked: {
+        at: 1,
+        found: {
+          _tag: "NewerCommits",
+          head: "f".repeat(40),
+          behindBy: 3,
+          commits: [{ commit: "f".repeat(40), title: "web: the Hub page (#361)" }],
+          compareUrl: "https://github.com/kddige/kndl/compare/a...f",
+        },
+      },
+    },
+  },
+  {
+    _tag: "HubUpdateChecked",
+    update: {
+      follows: { _tag: "Channel", channel: "stable" },
+      checked: { at: 1, found: { _tag: "UpToDate" } },
+    },
   },
   {
     _tag: "HandshakeRejected",

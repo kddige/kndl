@@ -38,7 +38,13 @@ export async function createHubClient(): Promise<HubClient> {
   if (mode === "off") return new HubClient(browserTransport())
   const { FakeHub } = await import("../hub/fake/FakeHub.ts")
   console.info(`Using the fake Hub (VITE_FAKE_HUB=${String(import.meta.env.VITE_FAKE_HUB)})`)
-  const fake = new FakeHub({ signedIn: mode === "signed-in" })
+  const { seedHubUpdate, stableHubVersion } = await import("../hub/fake/script.ts")
+  // A Hub on stable, behind two Releases, so its Owner has the Hub page (ADR 0028).
+  const fake = new FakeHub({
+    signedIn: mode === "signed-in",
+    hubVersion: stableHubVersion,
+    hubUpdate: seedHubUpdate(),
+  })
   // Its test controls, from the console: fakeHub.teammateApplies("kddige/kndl").
   Object.assign(globalThis, { fakeHub: fake })
   return new HubClient(fake, { retryDelay: () => 300 })
