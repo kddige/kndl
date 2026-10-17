@@ -749,6 +749,47 @@ const migrations = SqliteMigrator.fromRecord({
       )
     `
   }),
+  // pi-ai's vocabulary (ADR 0029): a Session's effort is its thinking level, its Claude session id
+  // the conversation id, and its history speaks pi-ai's names. A Turn's end reason becomes pi-ai's
+  // stop reason, a refusal being an error, and its usage takes pi-ai's keys, without a cost: none
+  // was counted then. A Runner's models are forgotten, its next hello says them again in the new
+  // names.
+  "0040_neutral_vocabulary": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`ALTER TABLE sessions RENAME COLUMN effort TO thinking_level`
+    yield* sql`ALTER TABLE sessions RENAME COLUMN claude_session_id TO conversation_id`
+    yield* sql`
+      UPDATE session_events
+      SET event = json_set(event, '$.reason', CASE json_extract(event, '$.reason')
+        WHEN 'Answered' THEN 'stop'
+        WHEN 'Stopped' THEN 'aborted'
+        ELSE 'error'
+      END)
+      WHERE json_extract(event, '$._tag') = 'TurnEnded'
+        AND json_extract(event, '$.reason') IN ('Answered', 'Stopped', 'Refused', 'Failed')
+    `
+    yield* sql`
+      UPDATE session_events
+      SET event = json_set(event, '$.usage', json_object(
+        'model', json_extract(event, '$.usage.model'),
+        'input', json_extract(event, '$.usage.inputTokens'),
+        'output', json_extract(event, '$.usage.outputTokens'),
+        'cacheRead', json_extract(event, '$.usage.cacheReadInputTokens'),
+        'cacheWrite', json_extract(event, '$.usage.cacheCreationInputTokens')
+      ))
+      WHERE json_extract(event, '$._tag') = 'TurnEnded'
+        AND json_type(event, '$.usage.inputTokens') IS NOT NULL
+    `
+    yield* sql`
+      UPDATE session_events
+      SET event = json_set(
+        json_remove(event, '$.effort'), '$.thinkingLevel', json_extract(event, '$.effort')
+      )
+      WHERE json_extract(event, '$._tag') = 'ModelSwitched'
+        AND json_type(event, '$.effort') IS NOT NULL
+    `
+    yield* sql`UPDATE runners SET models = NULL`
+  }),
 })
 
 // SQLite leaves foreign keys unenforced unless each connection turns them on.

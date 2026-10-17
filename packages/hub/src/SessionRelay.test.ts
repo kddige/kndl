@@ -80,7 +80,7 @@ class Mod {
       _tag: "ModHello",
       protocolVersion: ProtocolVersion,
       sessionId: this.sessionId,
-      claudeSessionId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
+      conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       model: "claude-opus",
       ...more,
     })
@@ -205,7 +205,7 @@ function defined<T>(value: T | undefined): T {
 const turnEnded = (turnId: string, agentId?: string): ModEvent => ({
   _tag: "TurnEnded",
   turnId,
-  reason: "Answered",
+  reason: "stop",
   durationMs: 10,
   ...(agentId === undefined ? {} : { agentId }),
 })
@@ -907,17 +907,17 @@ describe("the Session lifecycle", () => {
     await web.take("SessionUpdated", (m) => m.session.state === "Active")
   })
 
-  test("a stored Claude Code session id that isn't a UUID wakes the Session in a new conversation", async () => {
+  test("a stored conversation id that isn't a plain name wakes the Session in a new conversation", async () => {
     const scene = await sessionScene()
     const { hub, runner, web, sessionId } = scene
     joinSession(web, sessionId)
     await asleep(scene)
-    // As a mod could have said before only UUIDs decoded.
+    // As a mod could have said before only plain names decoded.
     await hub.run(
       Effect.flatMap(
         SqlClient.SqlClient,
         (sql) =>
-          sql`UPDATE sessions SET claude_session_id = ${"../../.claude/.credentials"} WHERE id = ${sessionId}`,
+          sql`UPDATE sessions SET conversation_id = ${"../../.claude/.credentials"} WHERE id = ${sessionId}`,
       ),
     )
 
@@ -1975,7 +1975,7 @@ const opus = {
   id: "claude-opus-5-5",
   label: "Opus 5.5",
   description: "Best for everyday, complex tasks",
-  effort: true,
+  reasoning: true,
 }
 const runnerModels = {
   default: { ...opus, alias: "default" },
@@ -1986,17 +1986,17 @@ const runnerModels = {
       id: "claude-sonnet-5-5",
       label: "Sonnet 5.5",
       description: "Efficient for routine tasks",
-      effort: true,
+      reasoning: true,
     },
     {
       alias: "haiku",
       id: "claude-haiku-4-5-20251001",
       label: "Haiku 4.5",
       description: "Fastest for quick answers",
-      effort: false,
+      reasoning: false,
     },
   ],
-  efforts: ["low", "medium", "high", "xhigh", "max"],
+  thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
 }
 /** A Runner as it says hello since #128: with its models, and taking RelaunchSession. */
 const modelRunner = { runnerHello: { models: runnerModels, relaunches: true } }
@@ -2016,31 +2016,31 @@ async function relaunched(scene: Scene) {
   return { relaunch, mod }
 }
 
-describe("model and effort (#128)", () => {
-  test("a Runner's models reach the web, and a new Session starts on the default or on a model and effort chosen", async () => {
+describe("model and thinking level (#128)", () => {
+  test("a Runner's models reach the web, and a new Session starts on the default or on a model and thinking level chosen", async () => {
     const plain = await sessionScene(undefined, modelRunner)
     expect((await openWeb(plain.hub, "bob")).runners.runners).toMatchObject([
       { name: "mac", models: runnerModels },
     ])
     // Claude Code's default, with no flags.
     expect(plain.start).not.toHaveProperty("model")
-    expect(plain.start).not.toHaveProperty("effort")
+    expect(plain.start).not.toHaveProperty("thinkingLevel")
     expect(plain.session).not.toHaveProperty("model")
-    expect(plain.session).not.toHaveProperty("effort")
+    expect(plain.session).not.toHaveProperty("thinkingLevel")
 
     const chosen = await sessionScene(undefined, {
       ...modelRunner,
-      create: { model: "sonnet", effort: "high" },
+      create: { model: "sonnet", thinkingLevel: "high" },
     })
-    expect(chosen.start).toMatchObject({ model: "sonnet", effort: "high" })
-    expect(chosen.session).toMatchObject({ model: "sonnet", effort: "high" })
+    expect(chosen.start).toMatchObject({ model: "sonnet", thinkingLevel: "high" })
+    expect(chosen.session).toMatchObject({ model: "sonnet", thinkingLevel: "high" })
     expect(chosen.session).not.toHaveProperty("modelPending")
   })
 
-  test("a model or effort the Runner's Claude Code doesn't have is refused, in its words", async () => {
+  test("a model or thinking level the Runner's Claude Code doesn't have is refused, in its words", async () => {
     const hub = await startHub({ config: { devLogin: true } })
     await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
-      models: { ...runnerModels, efforts: ["low", "medium", "high"] },
+      models: { ...runnerModels, thinkingLevels: ["low", "medium", "high"] },
       relaunches: true,
     })
     const web = await openWeb(hub, "alice")
@@ -2056,11 +2056,11 @@ describe("model and effort (#128)", () => {
 
     create({ model: "gpt-5" })
     expect((await web.take("CommandFailed")).message).toBe("Model 'gpt-5' not found")
-    create({ model: "haiku", effort: "low" })
-    expect((await web.take("CommandFailed")).message).toBe("Haiku 4.5 takes no effort level.")
-    create({ effort: "max" })
+    create({ model: "haiku", thinkingLevel: "low" })
+    expect((await web.take("CommandFailed")).message).toBe("Haiku 4.5 takes no thinking level.")
+    create({ thinkingLevel: "max" })
     expect((await web.take("CommandFailed")).message).toBe(
-      "Claude Code on mac has no effort level 'max'.",
+      "Claude Code on mac has no thinking level 'max'.",
     )
     expect(await web.untaken("SessionCreated")).toEqual([])
   })
@@ -2087,13 +2087,13 @@ describe("model and effort (#128)", () => {
     // Bob didn't create it, so he may not change it (ADR 0026).
     bobWeb.send({ _tag: "SetSessionModel", sessionId, model: "haiku" })
     expect(await bobWeb.take("CommandFailed")).toMatchObject({ command: "SetSessionModel" })
-    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet", effort: "high" })
+    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet", thinkingLevel: "high" })
     for (const client of [web, bobWeb]) {
       const changed = await client.take("SessionUpdated", (m) => m.session.model === "sonnet")
       expect(changed.session).toEqual({
         ...session,
         model: "sonnet",
-        effort: "high",
+        thinkingLevel: "high",
         modelPending: true,
       })
     }
@@ -2102,14 +2102,14 @@ describe("model and effort (#128)", () => {
       by: alice,
       model: "sonnet",
       modelLabel: "Sonnet 5.5",
-      effort: "high",
+      thinkingLevel: "high",
     })
     const later = await openWeb(hub, "carol")
-    expect(later.sessions.sessions[0]).toMatchObject({ model: "sonnet", effort: "high" })
+    expect(later.sessions.sessions[0]).toMatchObject({ model: "sonnet", thinkingLevel: "high" })
 
     // The same setting again changes nothing.
     await relaunched(scene)
-    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet", effort: "high" })
+    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet", thinkingLevel: "high" })
     expect(await web.untaken("CommandFailed")).toEqual([])
     expect((await web.untaken("SessionEventLogged")).filter(modelSwitched)).toEqual([])
 
@@ -2121,13 +2121,13 @@ describe("model and effort (#128)", () => {
       modelLabel: "Opus 5.5",
     })
     const reset = await web.take("SessionUpdated", (m) => m.session.model === undefined)
-    expect(reset.session).not.toHaveProperty("effort")
+    expect(reset.session).not.toHaveProperty("thinkingLevel")
   })
 
   test("an idle Session's Claude Code is started again with it, resuming its conversation", async () => {
     const scene = await sessionScene(undefined, modelRunner)
     const { web, sessionId, mod, start } = scene
-    web.send({ _tag: "SetSessionModel", sessionId, model: "opus", effort: "xhigh" })
+    web.send({ _tag: "SetSessionModel", sessionId, model: "opus", thinkingLevel: "xhigh" })
     const { relaunch, mod: newMod } = await relaunched(scene)
     expect(relaunch).toEqual({
       _tag: "RelaunchSession",
@@ -2137,7 +2137,7 @@ describe("model and effort (#128)", () => {
       resume: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
       modToken: relaunch.modToken,
       model: "opus",
-      effort: "xhigh",
+      thinkingLevel: "xhigh",
     })
     // The old mod's token is gone with it.
     expect(relaunch.modToken).not.toBe(start.modToken)
@@ -2191,14 +2191,14 @@ describe("model and effort (#128)", () => {
   test("a Runner from before RelaunchSession gets it when the Session next wakes", async () => {
     const scene = await sessionScene(undefined, { runnerHello: { models: runnerModels } })
     const { runner, web, sessionId } = scene
-    web.send({ _tag: "SetSessionModel", sessionId, effort: "low" })
+    web.send({ _tag: "SetSessionModel", sessionId, thinkingLevel: "low" })
     await web.take("SessionUpdated", (m) => m.session.modelPending === true)
     expect(await runner.untaken("RelaunchSession")).toEqual([])
 
     await asleep(scene)
     web.send({ _tag: "WakeSession", sessionId })
     const wake = await runner.take("StartSession")
-    expect(wake).toMatchObject({ effort: "low" })
+    expect(wake).toMatchObject({ thinkingLevel: "low" })
     expect(wake).not.toHaveProperty("model")
   })
 

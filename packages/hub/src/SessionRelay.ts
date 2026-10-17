@@ -14,8 +14,9 @@
 // - Driving (ADR 0026): a Session runs on its Creator's setup token, and only its Creator drives
 //   it. Every command that prompts it, steers or cancels its prompts, answers its questions,
 //   stops its Turns or subagents, controls it (sleep, wake, Keep awake, restart, archive,
-//   restore, rename, model and effort) or uses its terminal is refused anyone else, once Repo
-//   access lets them see it (`authorize`), as is their forward of it Asleep, which would wake it.
+//   restore, rename, model and thinking level) or uses its terminal is refused anyone else, once
+//   Repo access lets them see it (`authorize`), as is their forward of it Asleep, which would wake
+//   it.
 //   They watch: they join it, read it, and forward its Open ports. Its terminal frames go to its
 //   Creator's connections alone. Purging an Archived Session isn't driving it (ADR 0027).
 // - Steering (#195, ADR 0018): while a Turn runs, the Creator can hand a queued prompt to it
@@ -29,7 +30,7 @@
 //     for `HubConfig.sleepAfter` (or put to sleep by hand with SleepSession) is stopped: the Hub
 //     sends StopSession `Sleep`, and records it Asleep when the Runner reports SessionStopped.
 //   - Wake: a prompt to an Asleep Session (or WakeSession) wakes it. The Hub records it Active and
-//     sends StartSession with `resume`, the Claude Code session id from the mod's last hello. The
+//     sends StartSession with `resume`, the conversation id from the mod's last hello. The
 //     prompt waits in the queue until the new mod says hello.
 //   - Keep awake (SetKeepAwake, ADR 0016): the Creator can turn it on, and it stays on, recorded
 //     with who turned it on, until they turn it off or press Sleep, or the Session is archived. While it is on the Session is never idle, so never put to sleep
@@ -68,8 +69,8 @@
 // - Session names (#120): the Creator can rename a Session (RenameSession), in any state;
 //   every client that can see it gets the SessionUpdated. A Session without a name is shown by its
 //   Work branch.
-// - Model and effort (#128): a Session's setting, chosen with CreateSession or changed by its
-//   Creator (SetSessionModel) unless it is Archived, and checked against the models its
+// - Model and thinking level (#128): a Session's setting, chosen with CreateSession or changed by
+//   its Creator (SetSessionModel) unless it is Archived, and checked against the models its
 //   Runner's Claude Code said it has. Each change is logged as a ModelSwitched. Claude Code takes
 //   them as `--model` and `--effort` when it starts; a running one never switches mid-Turn: once
 //   no Turn runs, the Hub sends RelaunchSession, and the Runner starts Claude Code again,
@@ -550,10 +551,12 @@ const checkFailures = (
   }
 }
 
-/** StartSession's and RelaunchSession's `model` and `effort` (#128): the Session's setting. */
+/**
+ * StartSession's and RelaunchSession's `model` and `thinkingLevel` (#128): the Session's setting.
+ */
 const modelFlags = (setting: ModelSetting): ModelSetting => ({
   ...(setting.model !== undefined && { model: setting.model }),
-  ...(setting.effort !== undefined && { effort: setting.effort }),
+  ...(setting.thinkingLevel !== undefined && { thinkingLevel: setting.thinkingLevel }),
 })
 
 /** Whether a subagent of the Session is running (ADR 0014): it is working, Turn or not. */
@@ -1397,7 +1400,7 @@ export class SessionRelay extends Context.Service<
         if (session.value.state !== "Active" || session.value.currentTurn !== null) return
         // A Runner draining for its update takes no prompts: they wait for it to be back.
         if (runnerUpdates.holding(session.value.runnerId)) return
-        // A new model or effort first (#128): the prompt waits for the new mod's hello.
+        // A new model or thinking level first (#128): the prompt waits for the new mod's hello.
         if (session.value.modelPending === true && (yield* relaunch(session.value))) return
         const [head] = yield* prompts.list(sessionId)
         if (head === undefined) return
@@ -1615,16 +1618,17 @@ export class SessionRelay extends Context.Service<
         )
 
       /**
-       * Starts the Session's Claude Code again with its model and effort as set now (#128), once
-       * they changed while it ran: Claude Code alone, resuming its conversation, its Sandbox left
-       * running. Only between Turns: `deliverNext` asks, when the Session is Active and idle.
+       * Starts the Session's Claude Code again with its model and thinking level as set now
+       * (#128), once they changed while it ran: Claude Code alone, resuming its conversation, its
+       * Sandbox left running. Only between Turns: `deliverNext` asks, when the Session is Active
+       * and idle.
        * Whether it was sent; not to a Runner that doesn't take it, or before Claude Code's
        * conversation is known, when the setting waits for the Session's next wake instead.
        */
       const relaunch = Effect.fn("SessionRelay.relaunch")(function* (session: SessionSummary) {
         const runner = peers.runner(session.runnerId)
         if (runner === undefined || !runner.relaunches) return false
-        const resume = yield* sessions.claudeSessionId(session.id)
+        const resume = yield* sessions.conversationId(session.id)
         if (Option.isNone(resume)) return false
         // In place of the old one: the old mod has nothing more to say.
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
@@ -1669,7 +1673,7 @@ export class SessionRelay extends Context.Service<
         // Commands the mod didn't collect are stale: a new Claude Code starts with a new mod.
         yield* outbox.clear(session.id)
         if (session.currentTurn !== null) yield* sessions.setCurrentTurn(session.id, null)
-        // Its next start takes its model and effort as set then.
+        // Its next start takes its model and thinking level as set then.
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
         // No one can answer its question now: the next Claude Code doesn't ask it again.
         const cancelled = yield* cancelQuestion(session)
@@ -1733,12 +1737,12 @@ export class SessionRelay extends Context.Service<
           yield* sessionUpdated(session.id)
           return undefined
         }
-        const resume = yield* sessions.claudeSessionId(session.id)
+        const resume = yield* sessions.conversationId(session.id)
         const environment = yield* sessionEnvironment(session.repo)
         const modToken = yield* modTokens.issue({ sessionId: session.id, runnerId: runner.id })
         const installations = yield* startMcpServers(session.id, session.repo, runner)
         yield* startSent(session.id, environment)
-        // It starts with its model and effort as set now (#128).
+        // It starts with its model and thinking level as set now (#128).
         if (session.modelPending === true) yield* sessions.setModelPending(session.id, false)
         const woken = `Woken on ${runner.name}`
         yield* changeState(session, "Active", {
@@ -1987,11 +1991,14 @@ export class SessionRelay extends Context.Service<
         readonly why: Why
         /** Called once it is created and starting, before every client is sent it. */
         readonly created?: (session: SessionSummary) => void
-        /** Its model and effort (#128), checked with `checkModel`; Claude Code's default if absent. */
+        /**
+         * Its model and thinking level (#128), checked with `checkModel`; Claude Code's default if
+         * absent.
+         */
         readonly model?: ModelSetting
       }
 
-      /** A model and effort checked against what a Runner's Claude Code takes (#128). */
+      /** A model and thinking level checked against what a Runner's Claude Code takes (#128). */
       interface CheckedModel {
         readonly setting: ModelSetting
         /** What the Runner's Claude Code calls the model; for the default, the model it runs. */
@@ -1999,10 +2006,10 @@ export class SessionRelay extends Context.Service<
       }
 
       /**
-       * A model and effort as asked for (#128), checked against what the Runner's Claude Code
-       * takes, as it last said in its hello: the setting, or why it is refused. A model it doesn't
-       * list is refused with Claude Code's own words. With no list, as from a Runner whose Claude
-       * Code couldn't say, only Claude Code's default is taken.
+       * A model and thinking level as asked for (#128), checked against what the Runner's Claude
+       * Code takes, as it last said in its hello: the setting, or why it is refused. A model it
+       * doesn't list is refused with Claude Code's own words. With no list, as from a Runner whose
+       * Claude Code couldn't say, only Claude Code's default is taken.
        */
       const checkModel = Effect.fn("SessionRelay.checkModel")(function* (
         runnerId: RunnerId,
@@ -2011,24 +2018,24 @@ export class SessionRelay extends Context.Service<
         const known = Option.getOrUndefined(yield* runners.get(runnerId))
         const models = known?.models ?? null
         if (models === null) {
-          if (asked.model === undefined && asked.effort === undefined) {
+          if (asked.model === undefined && asked.thinkingLevel === undefined) {
             return { setting: {}, label: undefined }
           }
           return `${known?.name ?? "The Runner"} hasn't said which models its Claude Code has: only Claude Code's default model can be used there.`
         }
         const model = asked.model === undefined ? models.default : findModel(models, asked.model)
         if (model === undefined) return modelNotFoundText(asked.model ?? "")
-        if (asked.effort !== undefined) {
-          if (!model.effort) return `${model.label} takes no effort level.`
-          if (!models.efforts.includes(asked.effort)) {
-            return `Claude Code on ${known?.name ?? "the Runner"} has no effort level '${asked.effort}'.`
+        if (asked.thinkingLevel !== undefined) {
+          if (!model.reasoning) return `${model.label} takes no thinking level.`
+          if (!models.thinkingLevels.includes(asked.thinkingLevel)) {
+            return `Claude Code on ${known?.name ?? "the Runner"} has no thinking level '${asked.thinkingLevel}'.`
           }
         }
         return {
           setting: {
             // The `default` alias is no setting: Claude Code's default, whatever it is then.
             ...(model !== models.default && asked.model !== undefined && { model: asked.model }),
-            ...(asked.effort !== undefined && { effort: asked.effort }),
+            ...(asked.thinkingLevel !== undefined && { thinkingLevel: asked.thinkingLevel }),
           },
           label: model.label,
         }
@@ -2548,7 +2555,7 @@ export class SessionRelay extends Context.Service<
               const { setting } = checked
               if (
                 session.value.model === setting.model &&
-                session.value.effort === setting.effort
+                session.value.thinkingLevel === setting.thinkingLevel
               ) {
                 return
               }
@@ -3629,12 +3636,12 @@ export class SessionRelay extends Context.Service<
         if (Option.isNone(session)) return
         // The Session wakes into the conversation its mod last said hello as. One the Runner didn't
         // launch, a `claude` run inside it, would leave its own conversation behind (#321).
-        const was = yield* sessions.claudeSessionId(sessionId)
-        if (Option.isSome(was) && was.value !== hello.claudeSessionId)
+        const was = yield* sessions.conversationId(sessionId)
+        if (Option.isSome(was) && was.value !== hello.conversationId)
           yield* Effect.logWarning(
-            `Session ${sessionId}: its mod says hello as conversation ${hello.claudeSessionId}, not ${was.value}; the Session now resumes that one`,
+            `Session ${sessionId}: its mod says hello as conversation ${hello.conversationId}, not ${was.value}; the Session now resumes that one`,
           )
-        yield* sessions.setClaudeSessionId(sessionId, hello.claudeSessionId)
+        yield* sessions.setConversationId(sessionId, hello.conversationId)
         live.modHello(sessionId, {
           steers: hello.steers === true,
           attaches: hello.attaches === true,

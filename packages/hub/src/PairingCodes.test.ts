@@ -267,12 +267,12 @@ describe("Runners", () => {
           id: "claude-opus-5-5",
           label: "Opus 5.5",
           description: "Best for everyday, complex tasks",
-          effort: true,
+          reasoning: true,
         }
         const models = {
           default: { ...opus, alias: "default" },
           models: [opus],
-          efforts: ["low", "medium"] as const,
+          thinkingLevels: ["low", "medium"] as const,
         }
         yield* runners.recordHello(studio.runnerId, { version, updater, models }, 10)
         yield* runners.recordSeen(studio.runnerId, 20)

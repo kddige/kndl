@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { join } from "node:path"
-import { AgentId, AttachmentId, EnvironmentVersion, ParticipantId, SessionId } from "@kndl/protocol"
+import {
+  AgentId,
+  AttachmentId,
+  ConversationId,
+  EnvironmentVersion,
+  ParticipantId,
+  SessionId,
+} from "@kndl/protocol"
 import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { SqlClient } from "effect/sql"
 import { Attachments } from "./Attachments.ts"
@@ -37,12 +44,24 @@ const onDatabase = <A>(file: string, effect: Effect.Effect<A, unknown, SqlClient
   Effect.runPromise(Effect.provide(effect, databaseAt(file)))
 
 /**
- * Takes the database back to before migration 0039, the Hub's last update check (ADR 0028): the
- * migrator runs only the migrations after the last it ran, so a test of an earlier one undoes this
- * first.
+ * Takes the database back to before migration 0040, pi-ai's vocabulary (ADR 0029): the migrator
+ * runs only the migrations after the last it ran, so a test of an earlier one undoes this first.
+ * The JSON it rewrote is left as it is: a test inserts what it needs after this.
+ */
+const beforeNeutralVocabulary = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  yield* sql`ALTER TABLE sessions RENAME COLUMN thinking_level TO effort`
+  yield* sql`ALTER TABLE sessions RENAME COLUMN conversation_id TO claude_session_id`
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'neutral_vocabulary'`
+})
+
+/**
+ * Takes the database back to before migration 0039, the Hub's last update check (ADR 0028), and
+ * 0040.
  */
 const beforeHubUpdateCheck = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* beforeNeutralVocabulary
   yield* sql`DROP TABLE hub_update_check`
   yield* sql`DELETE FROM effect_sql_migrations WHERE name = 'hub_update_check'`
 })
@@ -284,6 +303,115 @@ const beforeAgents = Effect.gen(function* () {
 const membersLayer = Members.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(SignIns.layer, CliTokens.layer)),
 )
+
+describe("migration 0040, pi-ai's vocabulary", () => {
+  test("keeps each Session's history, thinking level and conversation, in pi-ai's names", async () => {
+    const dir = testDatabaseDir("kndl-migration-")
+    dirs.push(dir)
+    const file = join(dir, "hub.db")
+    const alice = { id: ParticipantId.make("p-1"), login: "alice", name: "Alice" }
+    const conversation = ConversationId.make("0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f")
+    await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        yield* beforeNeutralVocabulary
+        yield* sql`INSERT INTO participants (id, login, name, created_at, updated_at)
+          VALUES ('p-1', 'alice', 'Alice', 1, 1)`
+        // Its models as a Runner from before said them.
+        yield* sql`INSERT INTO runners (id, name, secret_hash, created_at, models)
+          VALUES ('r-1', 'build-box', 'hash', 1, ${JSON.stringify({
+            default: { alias: "default", id: "claude-opus-5-5", label: "Opus 5.5", effort: true },
+            models: [],
+            efforts: ["low", "high"],
+          })})`
+        yield* sql`
+          INSERT INTO sessions (
+            id, repo, base_branch, work_branch, state, runner_id, creator_id, created_at, model,
+            effort, claude_session_id
+          ) VALUES ('s-1', 'o/r', 'main', 'claude/s-1', 'Asleep', 'r-1', 'p-1', 1, 'sonnet',
+            'high', ${conversation})
+        `
+        // A Turn ended for each reason there was, the first with its usage, and two switches.
+        for (const [seq, event] of [
+          [
+            0,
+            {
+              _tag: "TurnEnded",
+              turnId: "t-0",
+              reason: "Answered",
+              durationMs: 5200,
+              usage: {
+                model: "claude-opus-5-5",
+                inputTokens: 1200,
+                outputTokens: 300,
+                cacheReadInputTokens: 40000,
+                cacheCreationInputTokens: 7,
+              },
+            },
+          ],
+          [1, { _tag: "TurnEnded", turnId: "t-1", reason: "Stopped", durationMs: 800 }],
+          [
+            2,
+            { _tag: "TurnEnded", turnId: "t-2", agentId: "a-1", reason: "Refused", durationMs: 1 },
+          ],
+          [3, { _tag: "TurnEnded", turnId: "t-3", reason: "Failed", durationMs: 2 }],
+          [4, { _tag: "ModelSwitched", by: alice, model: "sonnet", effort: "high" }],
+          [5, { _tag: "ModelSwitched", by: alice }],
+          [6, { _tag: "SandboxNoted", message: "Capped at 4 CPUs" }],
+        ] as const) {
+          yield* sql`
+            INSERT INTO session_events (session_id, seq, at, event)
+            VALUES ('s-1', ${seq}, 2, ${JSON.stringify(event)})
+          `
+        }
+      }),
+    )
+    const after = await onDatabase(
+      file,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const sessions = yield* Sessions
+        const log = yield* SessionLog
+        const id = SessionId.make("s-1")
+        const session = Option.getOrThrow(yield* sessions.get(id))
+        return {
+          history: (yield* log.history(id)).map((entry): unknown => entry.event),
+          setting: { model: session.model, thinkingLevel: session.thinkingLevel },
+          conversation: yield* sessions.conversationId(id),
+          runnerModels: yield* sql`SELECT models FROM runners`,
+        }
+      }).pipe(Effect.provide([SessionsTest, SessionLog.layer])),
+    )
+    expect(after).toEqual({
+      history: [
+        {
+          _tag: "TurnEnded",
+          turnId: "t-0",
+          reason: "stop",
+          durationMs: 5200,
+          usage: {
+            model: "claude-opus-5-5",
+            input: 1200,
+            output: 300,
+            cacheRead: 40000,
+            cacheWrite: 7,
+          },
+        },
+        { _tag: "TurnEnded", turnId: "t-1", reason: "aborted", durationMs: 800 },
+        { _tag: "TurnEnded", turnId: "t-2", agentId: "a-1", reason: "error", durationMs: 1 },
+        { _tag: "TurnEnded", turnId: "t-3", reason: "error", durationMs: 2 },
+        { _tag: "ModelSwitched", by: alice, model: "sonnet", thinkingLevel: "high" },
+        { _tag: "ModelSwitched", by: alice },
+        { _tag: "SandboxNoted", message: "Capped at 4 CPUs" },
+      ],
+      setting: { model: "sonnet", thinkingLevel: "high" },
+      conversation: Option.some(conversation),
+      // Its next hello says them again, in the new names.
+      runnerModels: [{ models: null }],
+    })
+  })
+})
 
 describe("migration 0038, a Runner's memory and load history", () => {
   test("keeps each disk-free point, without memory or load", async () => {
