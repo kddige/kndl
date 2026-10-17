@@ -48,3 +48,7 @@ So:
 ## Amendment: anyone who sees an Archived Session can purge it (ADR 0027)
 
 Purging an Archived Session to free its Runner's disk isn't driving it, so it's the one Session control the Creator doesn't hold alone. Any Member with Repo access can purge it, as soon as it is Archived.
+
+## Amendment: a Session runs on its Creator's Connected providers (ADR 0029)
+
+The setup token becomes one of a Creator's Connected providers: the one for Anthropic, which Claude Code still holds itself in the Sandbox. The others stay on the Hub, which uses them at the Gateway for that Creator's Sessions only. Only the Creator drives a Session, whatever its Model's Provider.

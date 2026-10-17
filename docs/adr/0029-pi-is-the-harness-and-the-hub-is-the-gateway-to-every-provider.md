@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 amends: 0014, 0024, 0026
 ---
 

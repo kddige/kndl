@@ -58,3 +58,7 @@ Attachments now go everywhere a Participant writes to Claude, each way through t
 - **Every way marks its files sent,** all or nothing, through `Attachments.markSent`, so none is swept a day later (#280). A file that isn't its sender's, or was swept, refuses the whole message.
 - **A mod from before.** A mod that marks these files says `attaches: true` in its `ModHello`, as `steers: true` says it steers (ADR 0018). The Hub won't send files these ways to a Session whose mod doesn't say so. It refuses the command, saying the files can go once the Session starts again on an updated Runner, since a mod from before would drop them, and a command of files alone wouldn't even decode.
 - **The transcript** shows a steered prompt's, a message's and a reply's files as it shows a Turn's, on replay too, and names their files when it redacts.
+
+## Amendment: in a pi Session, kndl's pi extension registers the tool (ADR 0029)
+
+The marker and the files stay as they are. In a pi Session, the tool that opens them is registered by kndl's pi extension, the mod for pi. Putting the files straight into the prompt, so no tool call is needed, can come later if pi allows it.
