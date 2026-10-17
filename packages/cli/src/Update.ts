@@ -274,24 +274,71 @@ export function stableNotice(stay: StableStay): string {
     : `On the stable Channel: the latest Release, ${stay.release}, doesn't include this checkout's commit, so update stays here until a Release does.`
 }
 
+/** A Step of `update`, with what its status says while it runs: "Installing dependencies". */
+export interface LabelledStep {
+  readonly label: string
+  readonly step: Step
+}
+
 /**
  * The Steps, in the checkout, after it moved: install its dependencies, then build what the
  * configured roles run, the mod for a Runner and the web UI for a Hub (both when none is set up).
  */
+export function buildPlan(
+  app: string,
+  bun: string,
+  roles: ReadonlyArray<Role>,
+): ReadonlyArray<LabelledStep> {
+  const all = roles.length === 0
+  return [
+    {
+      label: "Installing dependencies",
+      step: step(bun, ["install"], { cwd: app, why: "install dependencies" }),
+    },
+    ...(all || roles.includes("runner")
+      ? [
+          {
+            label: "Building the hub-link mod",
+            step: step(bun, ["run", "mod:build"], { cwd: app, why: "build the hub-link mod" }),
+          },
+        ]
+      : []),
+    ...(all || roles.includes("hub")
+      ? [
+          {
+            label: "Building the web UI",
+            step: step(bun, ["run", "web:build"], { cwd: app, why: "build the web UI" }),
+          },
+        ]
+      : []),
+  ]
+}
+
+/** {@link buildPlan}'s Steps. */
 export function buildSteps(
   app: string,
   bun: string,
   roles: ReadonlyArray<Role>,
 ): ReadonlyArray<Step> {
-  const all = roles.length === 0
+  return buildPlan(app, bun, roles).map((labelled) => labelled.step)
+}
+
+/**
+ * The Steps that put the checkout back where `update` found it (issue #360): at its commit, on
+ * the branch it was on, or detached, and following the Channel it followed. A branch is put back
+ * at the commit, and keeps the branch it tracks.
+ */
+export function rollbackSteps(app: string, checkout: Checkout): ReadonlyArray<Step> {
+  const back =
+    checkout.branch === undefined
+      ? ["--detach", "--end-of-options", checkout.commit]
+      : ["-C", checkout.branch, "--end-of-options", checkout.commit]
   return [
-    step(bun, ["install"], { cwd: app, why: "install dependencies" }),
-    ...(all || roles.includes("runner")
-      ? [step(bun, ["run", "mod:build"], { cwd: app, why: "build the hub-link mod" })]
-      : []),
-    ...(all || roles.includes("hub")
-      ? [step(bun, ["run", "web:build"], { cwd: app, why: "build the web UI" })]
-      : []),
+    step("git", ["switch", "--discard-changes", ...back], {
+      cwd: app,
+      why: `go back to ${checkout.commit.slice(0, 12)}`,
+    }),
+    channelStep(app, checkout.channel),
   ]
 }
 

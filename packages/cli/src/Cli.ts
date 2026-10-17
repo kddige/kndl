@@ -2,6 +2,7 @@
 // module that does the work; a command that ends badly sets the exit code.
 import { runnerTokenNotice, secretsKeyNotice, setupLinkNotice } from "@kndl/hub/src/Admin.ts"
 import { hasOwnerMessage } from "@kndl/hub/src/Members.ts"
+import { UpdateSource } from "@kndl/protocol"
 import { Console, Effect, Option } from "effect"
 import { Argument, Command, Flag } from "effect/cli"
 import {
@@ -230,10 +231,16 @@ const updateCommand = Command.make(
         "Runners updating stop their running Turns at once, rather than letting them end",
       ),
     ),
+    // The Hub passes `--source hub` when it starts the update (#359): it says so in the lock and
+    // the status, and changes nothing else.
+    source: Flag.Literals("source", UpdateSource.literals).pipe(
+      Flag.withDefault("cli" as const),
+      Flag.withHidden,
+    ),
   },
-  ({ ref, channel, noUpdateRunners, now }) =>
+  ({ ref, channel, noUpdateRunners, now, source }) =>
     Effect.flatMap(
-      update(layout(), { ref, channel, updateRunners: !noUpdateRunners, now }),
+      update(layout(), { ref, channel, updateRunners: !noUpdateRunners, now, source }),
       exitWith,
     ),
 ).pipe(

@@ -32,7 +32,7 @@ kndl ships as [Releases](https://github.com/kddige/kndl/releases): dated tags on
    kndl update
    ```
 
-   It fetches, moves the install along its Channel, rebuilds, restarts the services and runs `kndl doctor`.
+   It fetches, moves the install along its Channel, rebuilds, restarts the services, checks the Hub answers, and runs `kndl doctor`.
 
 3. Check that it's up:
 
@@ -43,6 +43,18 @@ kndl ships as [Releases](https://github.com/kddige/kndl/releases): dated tags on
 </Steps>
 
 Running the installer again does the same update.
+
+## If an update fails
+
+A step can fail after the install moved, such as a build. Or the Hub may not answer `/health` within 30 seconds of restarting. Either way, `kndl update` goes back: it checks out the commit and branch the install was on, builds it again, restarts the services it restarted, and exits 1.
+
+```
+The update failed, so the install went back to 824de4a1f0c3, on stable at v2026.10.1: …
+```
+
+The home's `update/` directory records the latest update: its steps and outcome in `status.json`, and their output in `update.log`. See [Files and paths](/reference/files-and-paths/#an-installed-home).
+
+Only one update runs at a time. Another one exits 1 with `An update is already running (pid …, started …).`
 
 ## Switch Channels
 

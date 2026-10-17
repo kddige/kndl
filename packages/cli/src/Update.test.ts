@@ -18,6 +18,7 @@ import {
   pinnedNotice,
   RefNotFound,
   releaseVersion,
+  rollbackSteps,
   runnersNotice,
   updateTarget,
 } from "./Update.ts"
@@ -165,6 +166,8 @@ describe("where update goes", () => {
 
 const gitCommands = (target: Parameters<typeof gitSteps>[1]) =>
   gitSteps("/h/app", target).map((s) => describeStep(s))
+const back = (checkout: Parameters<typeof rollbackSteps>[1]) =>
+  rollbackSteps("/h/app", checkout).map((s) => describeStep(s))
 const buildCommands = (roles: ReadonlyArray<"hub" | "runner">) =>
   buildSteps("/h/app", "bun", roles).map((s) => describeStep(s))
 
@@ -183,6 +186,17 @@ describe("the git Steps", () => {
     expect(gitCommands({ _tag: "Commit", sha: "abcdef1" })[1]).toBe(
       "git switch --discard-changes --detach --end-of-options abcdef1",
     )
+  })
+
+  test("going back puts a branch back at the commit, or detaches, and restores the Channel", () => {
+    expect(back(onMain)).toEqual([
+      "git switch --discard-changes -C main --end-of-options 1111111111111111",
+      "git config --unset kndl.channel",
+    ])
+    expect(back({ ...pinned, channel: "stable" })).toEqual([
+      "git switch --discard-changes --detach --end-of-options 3333333333333333",
+      "git config kndl.channel stable",
+    ])
   })
 
   test("run in the installed checkout", () => {

@@ -2,7 +2,8 @@
 // 0011): the commit it moved the Hub to, for Runners to follow. The CLI writes it into the Hub's
 // database before restarting the Hub; the Hub reads it once it runs, and tells the Runners it
 // covers to update as they connect. It applies only while the Hub runs that commit, and the next
-// `update` replaces it.
+// `update` replaces it. An update that rolls back (issue #360) puts back the push it replaced, so
+// the Hub, back on the old commit, sends no Runner forwards.
 
 import { RunnerId } from "@kndl/protocol"
 import { Context, Effect, Layer, Option } from "effect"
@@ -42,6 +43,10 @@ export class RunnerUpdatePush extends Context.Service<
     readonly request: (push: UpdatePush, at: number) => Effect.Effect<void, SqlError>
     /** The push for `commit`, the one the Hub runs, if the last update left one. */
     readonly forCommit: (commit: string) => Effect.Effect<Option.Option<UpdatePush>, SqlError>
+    /** The push the last update left, whatever its commit. */
+    readonly latest: Effect.Effect<Option.Option<UpdatePush>, SqlError>
+    /** Leaves no push. */
+    readonly clear: Effect.Effect<void, SqlError>
   }
 >()("@kndl/hub/RunnerUpdatePush") {
   static readonly layer = Layer.effect(
@@ -64,13 +69,8 @@ export class RunnerUpdatePush extends Context.Service<
           }),
         )
       })
-      const forCommit = Effect.fn("RunnerUpdatePush.forCommit")(function* (commit: string) {
-        const rows = yield* sql<PushRow>`
-          SELECT target_commit AS "commit", update_now AS now, all_runners AS allRunners,
-            local_runner_id AS localRunner
-          FROM runner_update_push WHERE target_commit = ${commit}
-        `
-        return Option.fromNullishOr(rows[0]).pipe(
+      const pushOf = (rows: ReadonlyArray<PushRow>) =>
+        Option.fromNullishOr(rows[0]).pipe(
           Option.map((row): UpdatePush => ({
             commit: row.commit,
             now: row.now === 1,
@@ -78,8 +78,25 @@ export class RunnerUpdatePush extends Context.Service<
             localRunner: row.localRunner === null ? undefined : RunnerId.make(row.localRunner),
           })),
         )
+      const forCommit = Effect.fn("RunnerUpdatePush.forCommit")(function* (commit: string) {
+        return pushOf(
+          yield* sql<PushRow>`
+            SELECT target_commit AS "commit", update_now AS now, all_runners AS allRunners,
+              local_runner_id AS localRunner
+            FROM runner_update_push WHERE target_commit = ${commit}
+          `,
+        )
       })
-      return RunnerUpdatePush.of({ request, forCommit })
+      const latest = Effect.map(
+        sql<PushRow>`
+          SELECT target_commit AS "commit", update_now AS now, all_runners AS allRunners,
+            local_runner_id AS localRunner
+          FROM runner_update_push ORDER BY requested_at DESC LIMIT 1
+        `,
+        pushOf,
+      )
+      const clear = Effect.asVoid(sql`DELETE FROM runner_update_push`)
+      return RunnerUpdatePush.of({ request, forCommit, latest, clear })
     }),
   )
 
@@ -89,6 +106,8 @@ export class RunnerUpdatePush extends Context.Service<
     RunnerUpdatePush.of({
       request: () => Effect.void,
       forCommit: () => Effect.succeed(Option.none()),
+      latest: Effect.succeed(Option.none()),
+      clear: Effect.void,
     }),
   )
 }
@@ -99,7 +118,14 @@ export interface PushRecorded {
   readonly localRunner:
     | { readonly id: RunnerId; readonly name: string; readonly updatesItself: boolean }
     | undefined
+  /** The push it replaced, if there was one, for {@link restoreRunnerUpdates}. */
+  readonly replaced: UpdatePush | undefined
 }
+
+/** The services the CLI opens the Hub's database with, for the push. */
+const PushServices = Layer.mergeAll(RunnerTokens.layer, Runners.layer, RunnerUpdatePush.layer).pipe(
+  Layer.provideMerge(DatabaseLive),
+)
 
 /**
  * Leaves a push for the Hub in its database at `DatabaseFile` (read from the configuration, as
@@ -127,7 +153,9 @@ export const requestRunnerUpdates = (options: {
           name: known.value.name,
           updatesItself: known.value.updater?.self === true,
         }
-    yield* (yield* RunnerUpdatePush).request(
+    const push = yield* RunnerUpdatePush
+    const replaced = Option.getOrUndefined(yield* push.latest)
+    yield* push.request(
       {
         commit: options.commit,
         now: options.now,
@@ -136,11 +164,14 @@ export const requestRunnerUpdates = (options: {
       },
       Date.now(),
     )
-    return { localRunner } satisfies PushRecorded
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(RunnerTokens.layer, Runners.layer, RunnerUpdatePush.layer).pipe(
-        Layer.provideMerge(DatabaseLive),
-      ),
-    ),
-  )
+    return { localRunner, replaced } satisfies PushRecorded
+  }).pipe(Effect.provide(PushServices))
+
+/**
+ * Puts back the push {@link requestRunnerUpdates} replaced, or leaves none, for `kndl update`
+ * rolling back: the Hub, back on the commit it ran, sends no Runner on to the one it left.
+ */
+export const restoreRunnerUpdates = (replaced: UpdatePush | undefined) =>
+  Effect.flatMap(RunnerUpdatePush, (push) =>
+    replaced === undefined ? push.clear : push.request(replaced, Date.now()),
+  ).pipe(Effect.provide(PushServices))

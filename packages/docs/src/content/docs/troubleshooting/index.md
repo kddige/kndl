@@ -49,6 +49,8 @@ Running kndl from a checkout? The logs are in the terminals running `bun run hub
 | `bun: command not found` while building | [Install](/troubleshooting/install/#build-the-web-ui-or-the-hub-link-mod-bun-command-not-found) |
 | `… is readable by others (mode 644); …` | [Install](/troubleshooting/install/#an-env-file-is-readable-by-others) |
 | `kndl update` stays where it is | [Install](/troubleshooting/install/#kndl-update-stays-where-it-is) |
+| `An update is already running (pid …, started …).` | [Install](/troubleshooting/install/#an-update-is-already-running) |
+| `The update failed, so the install went back to …` | [Install](/troubleshooting/install/#the-update-failed-and-went-back) |
 | `kndl uninstall` refuses the home | [Install](/troubleshooting/install/#kndl-uninstall-refuses-the-home) |
 | `Failed to start server. Is port 7777 in use?` | [Hub](/troubleshooting/hub/#failed-to-start-server-is-port-7777-in-use) |
 | `The Hub's web UI isn't built.` | [Hub](/troubleshooting/hub/#the-hubs-web-ui-isnt-built) |
