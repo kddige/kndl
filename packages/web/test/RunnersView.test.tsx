@@ -1,6 +1,6 @@
 // The Runners page against the fake Hub: the paired Runners, adding one with a Pairing code the
 // fake then redeems, Re-pairing after a confirmation, and removing, refused while a Runner has
-// Sessions that aren't Archived.
+// Sessions that aren't Archived. Updating a Runner is the Owner's alone (ADR 0028).
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
@@ -37,8 +37,8 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
 const runners = () => document.querySelector('[aria-label="Runners"]')
 const ciBox = () => runners()?.querySelector('[aria-label="ci-box"]')?.textContent ?? ""
 
-async function openRunners() {
-  const hub = new FakeHub({ stepMs: 2, autoplay: false })
+async function openRunners(options: { readonly owner?: boolean } = {}) {
+  const hub = new FakeHub({ stepMs: 2, autoplay: false, ...options })
   const client = new HubClient(hub, { retryDelay: () => 1 })
   const router = createAppRouter(createMemoryHistory({ initialEntries: ["/runners"] }))
   const view = await render(
@@ -267,6 +267,31 @@ test("updates a Runner behind the Hub, following the update to the Hub's commit"
   await eventually(() => expect(ciBox()).toContain("824de4a1f0c3 (main)"), 10_000)
   expect(ciBox()).not.toContain("behind the Hub")
   expect(ciBox()).not.toContain("updating")
+})
+
+test("offers a Member no Update, though it shows the Runner is behind (ADR 0028)", async () => {
+  const { hub } = await openRunners({ owner: false })
+  await step(() => hub.patchRunner("r-ci", { isOnline: true }))
+  await eventually(() => expect(ciBox()).toContain("online"))
+  expect(ciBox()).toContain("behind the Hub")
+  expect(document.querySelector('[aria-label="Update ci-box"]')).toBeNull()
+
+  // While it waits for its Turns, nor is there Update now.
+  const since = Date.now()
+  await step(() =>
+    hub.patchRunner("r-ci", {
+      update: {
+        _tag: "Draining",
+        target: { commit: "824de4a1f0c3b6e2d9a7c5b48e1f02a3c6d7e9b1", branch: "main" },
+        since,
+        deadline: since + 600_000,
+        now: false,
+        waitingFor: 1,
+      },
+    }),
+  )
+  await eventually(() => expect(ciBox()).toContain("Waiting for 1 Session's Turn to end"))
+  expect(document.querySelector('[aria-label="Update now ci-box"]')).toBeNull()
 })
 
 test("shows a refused or failed update, and offers nothing to a Runner updated by hand", async () => {

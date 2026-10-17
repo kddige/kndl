@@ -14,6 +14,7 @@ import {
   PlusIcon,
   Spinner,
   toast,
+  UpdateIcon,
   WarningIcon,
 } from "../ui/index.ts"
 import { chrome, color, space } from "../ui/tokens.stylex.ts"
@@ -78,6 +79,8 @@ export function HubShell() {
   const hub = useHub()
   const connection = useHubState((state) => state.connection)
   const you = useHubState((state) => state.you)
+  // An update of the Hub was running as the connection went: the Hub is restarting under it.
+  const updating = useHubState((state) => state.hubUpdateRun?.status.state === "Running")
   const wide = useMediaQuery(WIDE)
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   // The page the drawer was opened on: going anywhere else closes it.
@@ -149,16 +152,27 @@ export function HubShell() {
             />
           </header>
         )}
-        {connection.status === "reconnecting" && (
-          <Banner
-            intent="warning"
-            icon={<WarningIcon />}
-            title="Reconnecting to the Hub"
-            sx={styles.banner}
-          >
-            What happens meanwhile shows up once it's back.
-          </Banner>
-        )}
+        {connection.status === "reconnecting" &&
+          (updating ? (
+            // The Hub restarts under its own update (#362), and is back on the new version.
+            <Banner
+              intent="accent"
+              icon={<UpdateIcon />}
+              title="Updating… Hub restarting"
+              sx={styles.banner}
+            >
+              This page reconnects on its own once the Hub is back.
+            </Banner>
+          ) : (
+            <Banner
+              intent="warning"
+              icon={<WarningIcon />}
+              title="Reconnecting to the Hub"
+              sx={styles.banner}
+            >
+              What happens meanwhile shows up once it's back.
+            </Banner>
+          ))}
         <AppPermissionsBanner sx={styles.banner} />
         <HubUpdateBanner sx={styles.banner} />
         <div {...stylex.props(styles.body)}>

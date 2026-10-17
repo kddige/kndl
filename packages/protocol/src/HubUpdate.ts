@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import { type BuildVersion, Channel, CommitId, ReleaseVersion } from "./Build.ts"
 import { RequestId } from "./Ids.ts"
 import { EpochMillis } from "./Session.ts"
+import { UpdateStatus } from "./UpdateStatus.ts"
 
 // The Hub checks GitHub for a newer kndl, and its Owner sees what it found on the Hub page (ADR
 // 0028, #361). Only a Hub the kndl service runs from its install's own checkout, `<home>/app`,
@@ -17,7 +18,16 @@ import { EpochMillis } from "./Session.ts"
 //                               ◀──   HubUpdateChecked { requestId, update }
 //                               ◀──   HubUpdateChecked { update } after every check, its own too
 //
-// Updating the Hub from the page builds on this (#362).
+// The Owner updates the Hub from the page, and picks its Channel (#362). The Hub starts `kndl
+// update --source hub` outside its own service, and follows it in `<home>/update/` (UpdateStatus.ts):
+//
+//                               ◀──   WebWelcome { hubUpdateRun }, the latest update, ended or not
+//   UpdateHub { now, channel? } ──▶   launches `kndl update --source hub [--now] [--channel c]`
+//                               ◀──   HubUpdateStarted { requestId }
+//                               ◀──   HubUpdateRunChanged { run } as status.json changes: its step
+//   (the Hub restarts under it; the new Hub's welcome has how it ended, with the end of the log)
+//
+// An update started at a terminal shows the same way, from its status file.
 
 /** kndl's own repository on GitHub, which the Hub checks for a newer kndl. */
 export const KndlRepo = "kddige/kndl"
@@ -135,6 +145,28 @@ export function hubUpdateTarget(state: HubUpdateState | undefined): string | und
 export const hubUpdatesOffMessage =
   "This Hub doesn't check for updates: only one the kndl service runs from its install does."
 
+/** How much of the end of `update.log` the Hub sends its Owner with an update that ended. */
+export const MaxUpdateLogTailLines = 80
+export const MaxUpdateLogTailLength = 8_000
+
+/**
+ * The latest update of the Hub's install, as its Owner sees it: its status, from `status.json`,
+ * and once it ended, the end of `update.log`. One the Hub found Running with no update holding the
+ * lock any more, as when its process was killed, is shown Failed.
+ */
+export const HubUpdateRun = Schema.Struct({
+  status: UpdateStatus,
+  logTail: Schema.optionalKey(Schema.String),
+})
+export type HubUpdateRun = typeof HubUpdateRun.Type
+
+/** Why the Hub refuses an {@link UpdateHub} while the one it launched hasn't started yet. */
+export const hubUpdateStartingMessage = "An update is starting already."
+
+/** Why the Hub refuses an {@link UpdateHub} with no Channel while it is pinned. */
+export const hubPinnedMessage = (ref: string) =>
+  `This Hub is pinned to ${ref}: pick a Channel to follow one again.`
+
 // ── Web to Hub ─────────────────────────────────────────────────────────────
 
 /**
@@ -146,7 +178,40 @@ export const CheckHubUpdate = Schema.TaggedStruct("CheckHubUpdate", {
 })
 export type CheckHubUpdate = typeof CheckHubUpdate.Type
 
+/**
+ * Update the Hub: the Owner's alone, on a Hub that checks. It runs `kndl update --source hub`, with
+ * `--now` when `now` is set, so that its Runners stop their running Turns at once rather than
+ * letting them end, and with `--channel` when `channel` is set, which on a pinned Hub unpins it.
+ * Answered with a {@link HubUpdateStarted} once it is launched, or a CommandFailed: while an update
+ * runs, with `updateRunningText`.
+ */
+export const UpdateHub = Schema.TaggedStruct("UpdateHub", {
+  requestId: RequestId,
+  now: Schema.Boolean,
+  channel: Schema.optionalKey(Channel),
+})
+export type UpdateHub = typeof UpdateHub.Type
+
+/** What the Owner asks of the Hub's own updates. */
+export const HubUpdateCommand = Schema.Union([CheckHubUpdate, UpdateHub])
+export type HubUpdateCommand = typeof HubUpdateCommand.Type
+
 // ── Hub to web ─────────────────────────────────────────────────────────────
+
+/** The update an {@link UpdateHub} asked for is launched: its progress follows. */
+export const HubUpdateStarted = Schema.TaggedStruct("HubUpdateStarted", {
+  requestId: RequestId,
+})
+export type HubUpdateStarted = typeof HubUpdateStarted.Type
+
+/**
+ * The latest update, whenever its status changes: as it starts, at each step, and as it ends. Sent
+ * to the Owner's web clients alone, as the log is theirs alone.
+ */
+export const HubUpdateRunChanged = Schema.TaggedStruct("HubUpdateRunChanged", {
+  run: HubUpdateRun,
+})
+export type HubUpdateRunChanged = typeof HubUpdateRunChanged.Type
 
 /**
  * The Hub's update check, after a check: sent to the Owner's web clients alone, after every check,
@@ -158,3 +223,11 @@ export const HubUpdateChecked = Schema.TaggedStruct("HubUpdateChecked", {
   update: HubUpdateState,
 })
 export type HubUpdateChecked = typeof HubUpdateChecked.Type
+
+/** What the Hub tells its Owner of its own updates. */
+export const HubUpdateMessage = Schema.Union([
+  HubUpdateChecked,
+  HubUpdateStarted,
+  HubUpdateRunChanged,
+])
+export type HubUpdateMessage = typeof HubUpdateMessage.Type

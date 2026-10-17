@@ -1,10 +1,11 @@
 // The Hub page and its banner (ADR 0028) against the fake Hub: the Owner of a Hub behind a Release
 // sees the banner and the notes, dismisses the banner until a newer update, and checks now; a
-// Member, and a Hub that doesn't check, have neither.
+// Member, and a Hub that doesn't check, have neither. The Owner updates the Hub from it, follows
+// the update across the Hub's restart, and picks its Channel (#362).
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, render, settle, step } from "./render.ts"
+import { button, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -186,4 +187,178 @@ test("a Hub that doesn't check, as one run from a checkout, has no Hub page", as
   )
   expect(hubLink()).toBeUndefined()
   expect(banner()).toBeUndefined()
+})
+
+// ── Updating the Hub (#362) ────────────────────────────────────────────────
+
+const main = () => document.querySelector("main")?.textContent ?? ""
+const latest = () => document.querySelector('[aria-labelledby="latest-update"]')?.textContent ?? ""
+const restartingBanner = () =>
+  [...document.querySelectorAll('[role="status"]')].find((el) =>
+    el.textContent?.includes("Hub restarting"),
+  )
+
+test("the Owner updates the Hub: its steps, Hub restarting while it's down, then Updated to", async () => {
+  const { hub } = await open("/hub")
+  await eventually(() => expect(heading()).toBe("Hub"))
+  hub.hold()
+  await step(() => button("Update").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Update the Hub?"))
+  expect(dialog()?.textContent).toContain("It moves to kndl 2026.10.4")
+  // studio has a Session: Update now is there too, to stop its Turns at once.
+  expect(button("Update now", dialog() ?? document)).toBeTruthy()
+  await step(() => button("Update", dialog() ?? document).click())
+  expect(hub.received.find((m) => m._tag === "UpdateHub")).toMatchObject({ now: false })
+  await eventually(() => expect(latest()).toContain("Starting the update…"))
+
+  for (const label of ["Starting", "Fetching", "Checking out"]) {
+    await hub.step()
+    await eventually(() => expect(latest()).toContain(`Updating… ${label}`))
+  }
+  // While one runs, nothing offers another.
+  expect(
+    [...document.querySelectorAll("main button")].some((b) => b.textContent === "Update"),
+  ).toBe(false)
+  for (let i = 0; i < 3; i++) await hub.step()
+  await eventually(() => expect(latest()).toContain("Updating… Restarting the Hub"))
+
+  // The Hub goes down under it, and the page says why.
+  await hub.step()
+  await eventually(() => expect(latest()).toContain("Updating… Hub restarting"))
+  expect(restartingBanner()?.textContent).toContain("Updating… Hub restarting")
+
+  // Back on the new version, it says how it ended.
+  hub.resume()
+  await eventually(() => expect(latest()).toContain("Updated to 2026.10.4"))
+  expect(latest()).toContain("from this page")
+  expect(main()).toContain("2026.10.4 (777777777777)")
+  expect(main()).toContain("kndl is up to date")
+  expect(restartingBanner()).toBeUndefined()
+})
+
+test("an update that failed shows it rolled back, with its error and the end of its log", async () => {
+  await open("/hub", { hubUpdateOutcome: "RolledBack" })
+  await eventually(() => expect(heading()).toBe("Hub"))
+  await step(() => button("Update").click())
+  await eventually(() => expect(dialog()).not.toBeNull())
+  await step(() => button("Update", dialog() ?? document).click())
+  await eventually(() => expect(latest()).toContain("Update rolled back"), 10_000)
+  expect(latest()).toContain("The Hub went back to the commit it ran")
+  expect(document.querySelector('main [role="alert"]')?.textContent).toContain(
+    "Building the web UI failed",
+  )
+  const log = document.querySelector('[aria-label="The end of the update\'s log"]')
+  expect(log?.textContent).toContain("error: vite exited with 1")
+  // Still on the version it ran, with the update still offered.
+  expect(main()).toContain("2026.10.2 (824de4a1f0c3)")
+  expect(button("Update")).toBeTruthy()
+})
+
+test("an update started at a terminal shows too, and offers no second one while it runs", async () => {
+  await open("/hub", {
+    hubUpdateRun: {
+      status: {
+        id: "cli-1",
+        source: "cli",
+        startedAt: Date.now() - 30_000,
+        from: { commit: stableHubVersion.commit, version: "2026.10.2" },
+        target: { ref: "v2026.10.4" },
+        step: "Installing dependencies",
+        state: "Running",
+      },
+    },
+  })
+  await eventually(() => expect(latest()).toContain("Updating… Installing dependencies"))
+  expect(latest()).toContain("with kndl update on the Hub's machine")
+  expect(
+    [...document.querySelectorAll("main button")].some((b) => b.textContent === "Update"),
+  ).toBe(false)
+  expect(button("Switch to dev").disabled).toBe(true)
+})
+
+test("once the Hub moved, Update now stops the Turns its Runners wait for", async () => {
+  const { hub } = await open("/hub", {
+    hubUpdateRun: {
+      status: {
+        id: "u-1",
+        source: "hub",
+        startedAt: Date.now() - 60_000,
+        finishedAt: Date.now() - 10_000,
+        from: { commit: "a".repeat(40) },
+        target: { ref: "v2026.10.2", commit: stableHubVersion.commit },
+        step: "Checking the Hub's health",
+        state: "Succeeded",
+      },
+    },
+  })
+  await eventually(() => expect(latest()).toContain("Updated to 2026.10.2"))
+  const since = Date.now()
+  await step(() =>
+    hub.patchRunner("r-studio", {
+      versionStatus: "Behind",
+      update: {
+        _tag: "Draining",
+        target: stableHubVersion,
+        since,
+        deadline: since + 600_000,
+        now: false,
+        waitingFor: 1,
+      },
+    }),
+  )
+  await eventually(() => expect(latest()).toContain("studio waits for its running Turns to end"))
+  await step(() => button("Update now").click())
+  await eventually(() =>
+    expect(dialog()?.textContent).toContain("Stop the Runners' running Turns?"),
+  )
+  await step(() => button("Stop Turns and update").click())
+  await eventually(() =>
+    expect(hub.received.find((m) => m._tag === "UpdateRunner")).toMatchObject({
+      runnerId: "r-studio",
+      now: true,
+    }),
+  )
+})
+
+test("moving from dev to stable records the Channel, and the Hub stays on its commit", async () => {
+  const { hub } = await open("/hub", {
+    hubVersion: { commit: "a".repeat(40), branch: "main", channel: "dev" },
+    hubUpdate: {
+      follows: { _tag: "Channel", channel: "dev" },
+      checked: { at: Date.now(), found: { _tag: "UpToDate" } },
+    },
+  })
+  await eventually(() => expect(heading()).toBe("Hub"))
+  await step(() => button("Switch to stable").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Follow stable?"))
+  expect(dialog()?.textContent).toContain("stays on this commit until a newer Release is out")
+  await step(() => button("Follow stable").click())
+  expect(hub.received.find((m) => m._tag === "UpdateHub")).toMatchObject({
+    now: false,
+    channel: "stable",
+  })
+  await eventually(() =>
+    expect(main()).toContain("On stable. You'll move at the next Release newer than this commit."),
+  )
+  expect(latest()).toContain("Nothing to move to")
+  expect(button("Switch to dev")).toBeTruthy()
+})
+
+test("on a pinned Hub, picking a Channel unpins it, once that's confirmed", async () => {
+  const { hub } = await open("/hub", {
+    hubVersion: { commit: "a".repeat(40), branch: "fix-login" },
+    hubUpdate: { follows: { _tag: "Pinned", ref: "fix-login" } },
+  })
+  await eventually(() => expect(main()).toContain("Pinned to fix-login"))
+  await step(() => button("Follow dev").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Unpin the Hub, and follow dev?"))
+  expect(dialog()?.textContent).toContain("The Hub leaves fix-login")
+  await step(() => button("Cancel").click())
+  expect(hub.received.some((m) => m._tag === "UpdateHub")).toBe(false)
+
+  await settle()
+  await step(() => button("Follow dev").click())
+  await eventually(() => expect(dialog()).not.toBeNull())
+  await step(() => button("Unpin and follow dev").click())
+  expect(hub.received.find((m) => m._tag === "UpdateHub")).toMatchObject({ channel: "dev" })
 })

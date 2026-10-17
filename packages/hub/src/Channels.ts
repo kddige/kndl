@@ -23,6 +23,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { Socket } from "effect/socket"
 import { authenticateParticipant, authenticateRunner, requireSameOrigin } from "./Auth.ts"
 import { HubShutdown } from "./HubShutdown.ts"
+import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { Members } from "./Members.ts"
@@ -164,6 +165,7 @@ export const ChannelRoutes = HttpRouter.use(
     const members = yield* Members
     const hub = (yield* HubVersion).version
     const hubUpdates = yield* HubUpdates
+    const hubUpdateRuns = yield* HubUpdateRuns
 
     // A Runner, by its Runner token. Its RunnerId comes from the token, not the hello.
     yield* router.add(
@@ -197,6 +199,8 @@ export const ChannelRoutes = HttpRouter.use(
         const owner = Option.contains(yield* Effect.orDie(members.owner), you.id)
         // The update check (ADR 0028) is the Owner's alone, and their only way to the Hub page.
         const update = owner ? Option.getOrUndefined(yield* hubUpdates.latest) : undefined
+        // And the latest update of the Hub, with its log's end (#362).
+        const run = owner ? Option.getOrUndefined(yield* hubUpdateRuns.latest) : undefined
         return yield* serveChannel({
           hello: WebHello,
           incoming: WebToHub,
@@ -208,6 +212,7 @@ export const ChannelRoutes = HttpRouter.use(
               ...(owner && { owner }),
               ...(hub !== undefined && { hub }),
               ...(update !== undefined && { hubUpdate: update }),
+              ...(run !== undefined && { hubUpdateRun: run }),
             }),
           connect: (_hello, peer) => relay.connectWeb(you, peer),
         })

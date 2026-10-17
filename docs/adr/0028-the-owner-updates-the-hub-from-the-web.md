@@ -41,3 +41,15 @@ Until now, updating a Hub meant SSHing into its machine and running `kndl update
 - **A Hub reaches GitHub on its own,** every 6 hours, to read kddige/kndl. A Hub without internet access records the failure and goes on.
 - **Only installed Hubs get any of it.** Developers running a checkout still pull and restart by hand, as their Runners do.
 - **A rollback can't undo a migration.** The new Hub migrates its database as it starts. If it ran a migration before it failed its health check, the old code it rolls back to may not start on the migrated database, and the Hub stays down. The update then ends `Failed`, with both errors, and the Owner fixes it by hand on the Hub's machine, from the log.
+
+## Amendment: updating from the page, as built (#362)
+
+Building Update and the Channel picker settled what the above left open, and changed what Update now stops and which Channel picks are confirmed.
+
+- **What Update now stops.** `kndl update` doesn't wait for Turns on the Hub's machine: it restarts the Hub at once, and the Runners are the ones that wait, each up to about ten minutes, before they follow (ADR 0011). So **Update now** in the update's confirmation runs it with `--now`, and once the Hub is back, while its Runners still wait, the page's **Update now** stops their Turns: it asks each the way the Runners page's does (`UpdateRunner` with `now`). The Hub runs no second update for it.
+- **Every Channel pick is confirmed,** not only a pinned Hub's: any pick may update and restart the Hub, and the confirmation says which.
+- **How it launches.** The update runs the Bun that runs the Hub, on `<home>/app`'s CLI, in the home, with `KNDL_HOME` and the Hub's PATH, as the services run (the CLI's `Services.ts`). On Linux it is `systemd-run --user --unit kndl-update-<id> --collect --service-type=exec`, so a Bun that can't start fails the launch at once. On macOS it is a launchd job with `RunAtLoad` and no `KeepAlive`, its plist in `<home>/update/launchd.plist`: the last update's job is unloaded before the next is loaded, under one label. Its output goes to `<home>/logs/update.log`. The Hub refuses a second Update while the one it launched hasn't written its status, for up to a minute.
+- **How the Hub follows it.** The Hub reads `status.json` every second while an update runs or starts, and every 5 seconds otherwise, so an update started at a terminal shows too. An update it finds `Running` with no process holding the lock, as when it was killed, is shown `Failed`. The end of `update.log`, its last 80 lines, goes with an update that ended.
+- **A Channel recorded without a restart.** Moving from dev to stable with no Release past the Hub's commit records the Channel and leaves the Hub running where it is. So when an update ends, the Hub reads its Channel again, from the checkout, and checks again on the new one.
+
+One consequence the above didn't name: a Hub with dev login (`KNDL_DEV_LOGIN`) has no Owner, so nobody there updates a Runner from the web. A developer's Runner is updated by pulling and restarting it anyway (ADR 0011, amended in #87).

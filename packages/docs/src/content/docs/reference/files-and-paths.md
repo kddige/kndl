@@ -23,7 +23,9 @@ An install keeps everything in its home, `~/.kndl`, or `KNDL_HOME`. Back up `hub
 | `update/lock` | Held while `kndl update` runs: `{"pid":…,"startedAt":…,"source":"cli"}`. A lock whose process is gone is taken over by the next update. |
 | `update/status.json` | The latest `kndl update`: where it started, where it moves to, the step it's at, and its `state`, `Running`, `Succeeded`, `Failed` or `RolledBack`, with the `error`. |
 | `update/update.log` | What the latest `kndl update`'s steps ran and printed. Emptied as each update starts. |
+| `update/launchd.plist` | On macOS, the launchd job of the latest update the Hub started from the web. |
 | `logs/hub.log`, `logs/runner.log` | Each service's output. `kndl logs` prints it. |
+| `logs/update.log` | What the updates the Hub started from the web printed, appended. |
 | `cli/<commit>/kndl-<os>-<arch>` | The [`kndl` binaries the Hub serves](/reference/commands/#the-kndl-command-from-a-hub). |
 
 `kndl uninstall` removes `app/`, the command and the services, and keeps the rest. `--purge` removes the whole home.

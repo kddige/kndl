@@ -34,7 +34,7 @@ import {
   type ReleaseVersion,
   releaseOfTag,
 } from "@kndl/protocol"
-import { releaseInHistory, thisCheckout } from "@kndl/protocol/checkout"
+import { readBuildVersion, releaseInHistory, thisCheckout } from "@kndl/protocol/checkout"
 import { HomeConfig } from "@kndl/protocol/home"
 import {
   Clock,
@@ -178,6 +178,12 @@ export class HubUpdates extends Context.Service<
     readonly check: Effect.Effect<Option.Option<HubUpdateState>>
     /** Where the check is after each check, from now on. */
     readonly changes: Effect.Effect<PubSub.Subscription<HubUpdateState>, never, Scope.Scope>
+    /**
+     * Reads again what the install follows, and checks again when it changed: after an update
+     * ends. Moving from dev to stable records the Channel and leaves the Hub where it is, running,
+     * until a Release newer than its commit is out (#362).
+     */
+    readonly refollow: Effect.Effect<void>
   }
 >()("@kndl/hub/HubUpdates") {
   /** No check, where nothing could update the Hub from the web: a Hub that isn't installed. */
@@ -187,6 +193,7 @@ export class HubUpdates extends Context.Service<
     check: Effect.succeedNone,
     // Nothing is ever published to it.
     changes: Effect.flatMap(PubSub.unbounded<HubUpdateState>(), PubSub.subscribe),
+    refollow: Effect.void,
   })
 
   static readonly off = Layer.succeed(HubUpdates, HubUpdates.offService)
@@ -213,8 +220,13 @@ export class HubUpdates extends Context.Service<
   /**
    * Checks, from the Hub's version: GitHub through Upstream, and the database for what the last
    * check found. `before` is the newest Release in the Hub's history (`releaseInHistory`).
+   * `follows` reads what the install follows now, for `refollow`: by default from the checkout,
+   * unless it moved off the Hub's commit, when the Hub is about to restart anyway.
    */
-  static readonly layerOn = (install: { readonly before: ReleaseVersion | undefined }) =>
+  static readonly layerOn = (install: {
+    readonly before: ReleaseVersion | undefined
+    readonly follows?: () => HubFollows | undefined
+  }) =>
     Layer.effect(
       HubUpdates,
       Effect.gen(function* () {
@@ -224,7 +236,13 @@ export class HubUpdates extends Context.Service<
         const sql = yield* SqlClient.SqlClient
         const layerScope = yield* Effect.scope
         const published = yield* PubSub.unbounded<HubUpdateState>()
-        const follows: HubFollows = hubFollows(version)
+        let follows: HubFollows = hubFollows(version)
+        const followsNow =
+          install.follows ??
+          (() => {
+            const now = readBuildVersion(thisCheckout)
+            return now?.commit === version.commit ? hubFollows(now) : undefined
+          })
 
         // What the last check found, unless it was for another commit or Channel.
         const rows = yield* sql<{ readonly hubCommit: string; readonly state: string }>`
@@ -262,10 +280,13 @@ export class HubUpdates extends Context.Service<
 
         const checkNow = Effect.gen(function* () {
           if (follows._tag === "Pinned") return state
-          const found = yield* findUpdate(version, follows.channel, install.before).pipe(
+          const asked = follows
+          const found = yield* findUpdate(version, asked.channel, install.before).pipe(
             Effect.provideService(Upstream, upstream),
             Effect.result,
           )
+          // What it found is for a Channel the install no longer follows.
+          if (follows !== asked) return state
           const at = yield* Clock.currentTimeMillis
           const before = hubUpdateTarget(state)
           if (found._tag === "Success") {
@@ -310,24 +331,41 @@ export class HubUpdates extends Context.Service<
           )
         })
 
-        if (follows._tag === "Channel") {
-          // Forever: a failure is kept, and the next interval tries again.
-          yield* check.pipe(
-            Effect.andThen(Effect.sleep(checkInterval)),
-            Effect.forever,
-            Effect.forkIn(layerScope),
-          )
-        }
+        // Forever: a failure is kept, and the next interval tries again. A pinned Hub checks
+        // nothing, unless an update has it follow a Channel without restarting it.
+        yield* check.pipe(
+          Effect.andThen(Effect.sleep(checkInterval)),
+          Effect.forever,
+          Effect.forkIn(layerScope),
+        )
+
+        const refollow = Effect.gen(function* () {
+          const now = followsNow()
+          if (now === undefined || same(now, follows)) return
+          yield* Effect.logInfo(`The Hub follows ${followsLog(now)} now.`)
+          follows = now
+          state = { follows }
+          if (now._tag === "Pinned") {
+            yield* save(state, yield* Clock.currentTimeMillis)
+            yield* PubSub.publish(published, state)
+            return
+          }
+          yield* check
+        })
 
         return HubUpdates.of({
           on: true,
           latest: Effect.sync(() => Option.some(state)),
           check: Effect.map(check, Option.some),
           changes: PubSub.subscribe(published),
+          refollow,
         })
       }),
     )
 }
+
+const followsLog = (follows: HubFollows) =>
+  follows._tag === "Channel" ? `the ${follows.channel} Channel` : `${follows.ref}, pinned`
 
 function realpath(path: string): string | undefined {
   try {

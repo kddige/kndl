@@ -536,6 +536,44 @@ test("the Hub's update check comes in the Owner's welcome, then after each check
   expect(checked.hubUpdate?.checked).toEqual({ at: 5, found: { _tag: "UpToDate" } })
 })
 
+test("the Hub's latest update comes in the Owner's welcome, then as it changes (#362)", () => {
+  const status = {
+    id: "u-1",
+    source: "hub",
+    startedAt: 1,
+    from: { commit: "a".repeat(40) },
+    step: "Fetching",
+    state: "Running",
+  } as const
+  expect(run(welcome()).hubUpdateRun).toBeNull()
+  const welcomed = run(
+    hub({
+      _tag: "WebWelcome",
+      protocolVersion: ProtocolVersion,
+      you: alice,
+      owner: true,
+      hubUpdate: { follows: { _tag: "Channel", channel: "stable" } },
+      hubUpdateRun: { status },
+    }),
+  )
+  expect(welcomed.hubUpdateRun).toEqual({ status })
+  // Kept while the Hub restarts under it.
+  const down = reduce(welcomed, {
+    _tag: "ConnectionChanged",
+    connection: { status: "reconnecting", attempt: 1 },
+  })
+  expect(down.hubUpdateRun).toEqual({ status })
+  const ended = reduce(
+    down,
+    hub({
+      _tag: "HubUpdateRunChanged",
+      run: { status: { ...status, state: "RolledBack", error: "no" }, logTail: "== Rolling back" },
+    }),
+  )
+  expect(ended.hubUpdateRun?.status.state).toBe("RolledBack")
+  expect(ended.hubUpdateRun?.logTail).toBe("== Rolling back")
+})
+
 test("refused commands leave the state alone", () => {
   const state = run(listed, joined)
   expect(reduce(state, hub({ _tag: "CommandFailed", command: "SendPrompt", message: "no" }))).toBe(

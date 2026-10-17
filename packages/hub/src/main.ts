@@ -28,6 +28,8 @@ import { HubRoutes, HubServices, idleTimeoutSeconds, websocketOptions } from "./
 import { HubConfig } from "./HubConfig.ts"
 import { holdHubLock } from "./HubLock.ts"
 import { drainFirst } from "./HubShutdown.ts"
+import { HubUpdateLauncher } from "./HubUpdateLauncher.ts"
+import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
 import { announceHubVersion, HubVersion } from "./HubVersion.ts"
 import { McpServerIcons } from "./McpServerIcons.ts"
@@ -100,7 +102,10 @@ const HubLive = drainFirst(HttpRouter.serve(HubRoutes)).pipe(
   Layer.provide(ServerLive),
   Layer.provide(GitHub.layer),
   Layer.provide(HubServices),
-  // Whether a newer kndl is out (ADR 0028), on a Hub the kndl service runs from its install.
+  // Whether a newer kndl is out (ADR 0028), on a Hub the kndl service runs from its install, and
+  // the updates its Owner starts from the web (#362), outside the Hub's service.
+  Layer.provide(HubUpdateRuns.layer),
+  Layer.provide(HubUpdateLauncher.layer),
   Layer.provide(HubUpdates.layer),
   Layer.provide(Upstream.layer),
   Layer.provide(McpServerSources.layer),

@@ -4,7 +4,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { rmSync } from "node:fs"
 import { join } from "node:path"
-import { type ModCommandsEncoded, type ModEventsEncoded, ProtocolVersion } from "@kndl/protocol"
+import {
+  type ModCommandsEncoded,
+  type ModEventsEncoded,
+  ownerOnlyMessage,
+  ProtocolVersion,
+} from "@kndl/protocol"
 import { Effect } from "effect"
 import { databaseAt } from "./Database.ts"
 import { HubVersion } from "./HubVersion.ts"
@@ -17,7 +22,14 @@ import {
   stopAll,
   type ToRunner,
 } from "./testChannels.ts"
-import { bearer, seedEnvironment, startHub, type TestHub, testDatabaseDir } from "./testSupport.ts"
+import {
+  bearer,
+  makeOwner,
+  seedEnvironment,
+  startHub,
+  type TestHub,
+  testDatabaseDir,
+} from "./testSupport.ts"
 
 afterEach(stopAll)
 
@@ -140,13 +152,14 @@ async function listed(web: Web, where: (runner: Web["runners"]["runners"][number
 }
 
 /**
- * A Hub with alice on the web and a Runner that updates itself, connected on the Hub's commit to
- * start `sessions` Sessions, then back behind the Hub, as after the Hub was updated.
+ * A Hub with alice, its Owner, on the web and a Runner that updates itself, connected on the Hub's
+ * commit to start `sessions` Sessions, then back behind the Hub, as after the Hub was updated.
  */
 async function behindScene(sessions: number, more: Record<string, unknown> = selfUpdating) {
   const hub = await updatesHub()
   const token = (await issueRunnerToken(hub, "studio")).token
   const web = await openWeb(hub, "alice")
+  await makeOwner(hub, alice.id)
   await seedEnvironment(hub, repo, "dev:alice")
   const first = await openRunner(hub, token, [], hubCommit, true, more)
   const started = []
@@ -418,6 +431,21 @@ describe("updating a Runner", () => {
     const old = await behindScene(0, {})
     old.web.send({ _tag: "UpdateRunner", requestId: "u-2", runnerId: old.runnerId, now: false })
     expect((await old.web.take("CommandFailed")).message).toContain("too old to update itself")
+  })
+
+  test("is the Owner's alone: a Member's is refused, and the Runner left where it is", async () => {
+    const { hub, runner, runnerId } = await behindScene(0)
+    const bob = await openWeb(hub, "bob")
+    bob.send({ _tag: "UpdateRunner", requestId: "u-1", runnerId, now: true })
+    expect(await bob.take("CommandFailed")).toEqual({
+      _tag: "CommandFailed",
+      command: "UpdateRunner",
+      requestId: "u-1",
+      message: ownerOnlyMessage,
+    })
+    // A Member still sees that it is behind.
+    expect(bob.runners.runners[0]?.versionStatus).toBe("Behind")
+    expect(await runner.untaken("CheckUpdate")).toEqual([])
   })
 })
 
