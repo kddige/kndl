@@ -126,7 +126,9 @@ A Runner says in `RunnerHello` whether it updates itself: `updater` is `{"self":
 | 5 | `UpdateProgress { target, step }` | Runner to Hub: `Fetching`, `CheckingOut`, `Installing`, `Restarting`. Then it exits, and its service starts it on the new commit. |
 | 5′ | `UpdateFailed { failure }` | Runner to Hub instead, after rolling back without a restart. |
 
-`kndl update` on the Hub's machine leaves the Hub a note of the commit it moved to, in its database, before restarting it; the restarted Hub sends `CheckUpdate` to each Runner the note covers as it says hello, unless the Runner already runs the commit or last failed to update to it.
+`kndl update` on the Hub's machine leaves the Hub a note of the commit it moved to, in its database, before restarting it; the restarted Hub sends `CheckUpdate` to each Runner the note covers as it says hello, unless the Runner already runs the commit or last failed to update to it. An update that rolls back puts back the note it replaced.
+
+`kndl update` keeps its lock, status and log in the home's `update/` directory. `UpdateStatus.ts` defines their paths and shapes, `UpdateLock` and `UpdateStatus`, with their decoders, for the CLI that writes them and the Hub that reads them ([Files and paths](/reference/files-and-paths/#an-installed-home)).
 
 `StartSession` carries what the Runner needs to start or wake a Session: its Repo, base and Work branches (the same, for a Session working on its branch directly) and Environment, a fresh mod token, and `gitIdentity`, the Creator's name and address for commits in the Sandbox ([Git from Sessions](/concepts/git-from-sessions/#in-the-sandbox)).
 

@@ -5,7 +5,7 @@ import { ConfigProvider, Effect, Layer, Option } from "effect"
 import { issueRunnerToken } from "./Admin.ts"
 import { DatabaseLive } from "./Database.ts"
 import { Runners } from "./Runners.ts"
-import { requestRunnerUpdates, RunnerUpdatePush } from "./RunnerUpdatePush.ts"
+import { requestRunnerUpdates, restoreRunnerUpdates, RunnerUpdatePush } from "./RunnerUpdatePush.ts"
 import { testDatabaseDir } from "./testSupport.ts"
 
 /** Runs `effect` against a fresh database file, as the CLI opens the Hub's. */
@@ -32,6 +32,10 @@ const read = (commit: string) =>
   Effect.flatMap(RunnerUpdatePush, (push) => push.forCommit(commit)).pipe(
     Effect.provide(RunnerUpdatePush.layer.pipe(Layer.provideMerge(DatabaseLive))),
   )
+
+/** Leaves a push for every Runner, for `commit`. */
+const request = (commit: string) =>
+  requestRunnerUpdates({ commit, now: false, allRunners: true, localToken: undefined })
 
 describe("kndl update leaving the push", () => {
   test("records it for the commit, and finds the Runner here by its token", async () => {
@@ -93,5 +97,30 @@ describe("kndl update leaving the push", () => {
     expect(outcome.recorded.localRunner).toBeUndefined()
     expect(Option.isNone(outcome.old)).toBe(true)
     expect(Option.getOrUndefined(outcome.next)?.allRunners).toBe(true)
+  })
+
+  test("an update rolling back puts back the push it replaced, or leaves none", async () => {
+    const outcome = await withDatabase(
+      Effect.gen(function* () {
+        const first = yield* request("b".repeat(40))
+        yield* restoreRunnerUpdates(first.replaced)
+        const cleared = yield* read("b".repeat(40))
+        yield* request("b".repeat(40))
+        const second = yield* request("d".repeat(40))
+        yield* restoreRunnerUpdates(second.replaced)
+        return {
+          first,
+          cleared,
+          second,
+          back: yield* read("b".repeat(40)),
+          next: yield* read("d".repeat(40)),
+        }
+      }),
+    )
+    expect(outcome.first.replaced).toBeUndefined()
+    expect(Option.isNone(outcome.cleared)).toBe(true)
+    expect(outcome.second.replaced?.commit).toBe("b".repeat(40))
+    expect(Option.getOrUndefined(outcome.back)?.allRunners).toBe(true)
+    expect(Option.isNone(outcome.next)).toBe(true)
   })
 })

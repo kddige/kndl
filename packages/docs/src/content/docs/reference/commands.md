@@ -109,7 +109,7 @@ kndl doctor --fix
 kndl update [--channel stable|dev] [--ref <ref>] [--no-update-runners] [--now]
 ```
 
-Updates the install: fetches, moves it, runs `bun install`, rebuilds the web UI and the mod, restarts the services and runs `doctor`. `kndl upgrade` is the same command. The install's checkout belongs to the CLI: `update` discards changes made in it.
+Updates the install: fetches, moves it, runs `bun install`, rebuilds the web UI and the mod, restarts the services, waits for the Hub's `/health` and runs `doctor`. `kndl upgrade` is the same command. The install's checkout belongs to the CLI: `update` discards changes made in it.
 
 | Flag | Default | What it does |
 |---|---|---|
@@ -119,6 +119,10 @@ Updates the install: fetches, moves it, runs `bun install`, rebuilds the web UI 
 | `--now` | off | Runners updating stop their running Turns at once, rather than giving them up to ten minutes. |
 
 With neither flag, it moves along what the install follows: the latest Release on `stable`, the head of `main` on `dev`, or the head of the branch it follows. A pinned install stays where it is.
+
+It never asks anything, so it runs without a terminal. While it runs, it holds `update/lock` in the home: a second `update` exits 1 with `An update is already running (pid …, started …).` It records each step in `update/status.json`, and their output in `update/update.log`. See [Files and paths](/reference/files-and-paths/#an-installed-home).
+
+When a step fails after the install moved, or the Hub doesn't answer `/health` within 30 seconds of restarting, `update` goes back. It checks out the commit and branch the install was on, builds it, restarts the services it restarted, and exits 1. The Hub doesn't ask its Runners to follow the commit it left.
 
 On the Hub's machine, the restarted Hub asks each connected Runner to follow it to the new commit. See [Keep Runners on the Hub's commit](/self-hosting/add-a-runner/#keep-runners-on-the-hubs-commit).
 

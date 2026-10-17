@@ -20,6 +20,9 @@ An install keeps everything in its home, `~/.kndl`, or `KNDL_HOME`. Back up `hub
 | `sessions/` | The Runner's Sessions, one directory each. See [One Session's directory](#one-sessions-directory). |
 | `claude-code/` | Linux builds of Claude Code, mounted read-only into every Sandbox. |
 | `runner-update.json` | The Runner's update under way, or its last failed one, so it can go back. |
+| `update/lock` | Held while `kndl update` runs: `{"pid":…,"startedAt":…,"source":"cli"}`. A lock whose process is gone is taken over by the next update. |
+| `update/status.json` | The latest `kndl update`: where it started, where it moves to, the step it's at, and its `state`, `Running`, `Succeeded`, `Failed` or `RolledBack`, with the `error`. |
+| `update/update.log` | What the latest `kndl update`'s steps ran and printed. Emptied as each update starts. |
 | `logs/hub.log`, `logs/runner.log` | Each service's output. `kndl logs` prints it. |
 | `cli/<commit>/kndl-<os>-<arch>` | The [`kndl` binaries the Hub serves](/reference/commands/#the-kndl-command-from-a-hub). |
 

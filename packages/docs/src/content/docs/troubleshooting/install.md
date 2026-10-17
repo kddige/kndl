@@ -238,6 +238,44 @@ origin has no branch or tag named v2, and it isn't a commit id.
 
 **Fix.** Check the name. Push a commit to origin before you update to it.
 
+## An update is already running
+
+**What you see.**
+
+```
+An update is already running (pid 4242, started 2026-10-17T14:03:12.000Z).
+```
+
+**Why.** Another `kndl update` holds the home's `update/lock`. It may be one the Hub started.
+
+**Fix.** Wait for it to end, and follow it in the log:
+
+```sh
+tail -f ~/.kndl/update/update.log
+```
+
+A lock whose process is gone, or from before the machine booted, is taken over by the next update.
+
+## The update failed and went back
+
+**What you see.**
+
+```
+The update failed, so the install went back to 824de4a1f0c3, on stable at v2026.10.1: …
+```
+
+**Why.** A step failed after the install moved, such as a build, or the Hub didn't answer `/health` within 30 seconds of restarting. The install runs the commit it ran before, rebuilt and restarted.
+
+**Fix.** Read what failed in the error and the log, fix it, and update again:
+
+```sh
+cat ~/.kndl/update/update.log
+kndl logs hub
+kndl update
+```
+
+When going back fails too, the message ends with `failed too: …`, and `update/status.json` says `Failed`. Run `kndl doctor` to see where the install is, and `kndl doctor --fix` to rebuild it.
+
 ## `kndl uninstall` refuses the home
 
 **What you see.** `kndl uninstall` removes nothing and says one of:

@@ -11,6 +11,7 @@ import {
   requireInstall,
   requirePlatform,
   restartInstalledServices,
+  restoreRunnerUpdatePush,
   restrictEnvFile,
   RoleTitle,
   runSteps,
@@ -24,39 +25,26 @@ import { fail } from "./Failure.ts"
 import { entryRemoval, homeRemoval } from "./Guards.ts"
 import {
   bunPath,
-  configuredRoles,
   doctorFacts,
   homeFacts,
   isOurWrapper,
   moveAside,
   planMoveAside,
   platform,
-  readCheckout,
   serviceTarget,
   writeWrapper,
 } from "./Host.ts"
 import { type Layout, resolveLayout, Roles } from "./Layout.ts"
 import { machineEdges, moveFromFormerName, thisMachine } from "./Rename.ts"
 import { afterUninstallSteps, type Platform, serviceFilePath, uninstallSteps } from "./Services.ts"
-import { Shell, step } from "./Shell.ts"
+import { step } from "./Shell.ts"
 import { Ui } from "./Ui.ts"
 import {
-  buildSteps,
-  type Channel,
-  channelAfter,
-  channelStep,
-  containsCheckoutStep,
-  describeCheckout,
-  gitSteps,
-  localRunnerRestart,
-  needsRemote,
-  parseLsRemote,
-  pinnedNotice,
-  RefNotFound,
-  runnersNotice,
-  stableNotice,
-  updateTarget,
-} from "./Update.ts"
+  HubHealthSeconds,
+  type UpdateEdges,
+  type UpdateOptions,
+  updateInstall,
+} from "./UpdateRun.ts"
 
 /** Prints doctor's checks. Returns whether none failed. */
 const report = (checks: ReadonlyArray<Check>) =>
@@ -168,30 +156,25 @@ const applyFix = (
     }
   })
 
-/** What `update` is asked to do. */
-export interface UpdateOptions {
-  /** `--ref`/`--branch`: where to move the install. */
-  readonly ref: string | undefined
-  /** `--channel`: follow the latest Release, or main, from now on (ADR 0025). */
-  readonly channel: Channel | undefined
-  /** On the Hub's machine, ask the Runners on other machines to follow (not `--no-update-runners`). */
-  readonly updateRunners: boolean
-  /** `--now`: Runners stop their running Turns at once, rather than letting them end. */
-  readonly now: boolean
-}
+/** What `update` does to this machine beyond its checkout. */
+const machineUpdateEdges = (layout: Layout, on: Platform): UpdateEdges => ({
+  bun: bunPath(),
+  serviceInstalled: (role) => serviceInstalled(layout, role, on),
+  serviceFileChanged: (role) => serviceFileChanged(layout, role, on),
+  leavePush: (options) => leaveRunnerUpdatePush(layout, options),
+  restorePush: (replaced) => restoreRunnerUpdatePush(layout, replaced),
+  restartServices: (except) => restartInstalledServices(layout, on, except),
+  waitForHub: waitForHub(layout, HubHealthSeconds),
+})
 
 /**
- * Moves the install to `ref`, or along the branch it follows; then installs, builds, restarts the
- * installed services and runs doctor. On the Hub's machine, it leaves the Hub the commit for its
- * Runners to follow (issue #87); the Runner here, when it updates itself, is drained by the Hub
- * and restarts itself, rather than restarting under its Sessions.
+ * Updates the install (UpdateRun.ts), then runs doctor when it moved.
  *
  * An install made under kndl's former name is moved to kndl's names first (Rename.ts), and then
  * updated where it moved to.
  */
 export const update = (installed: Layout, options: UpdateOptions) =>
   Effect.gen(function* () {
-    const request = { ref: options.ref, channel: options.channel }
     const setting = thisMachine()
     let layout = installed
     if (setting !== undefined) {
@@ -205,81 +188,7 @@ export const update = (installed: Layout, options: UpdateOptions) =>
     }
     yield* requireInstall(layout)
     const on = yield* requirePlatform(platform())
-    const shell = yield* Shell
-    const before = yield* readCheckout(layout.app)
-    const remote = !needsRemote(before, request)
-      ? { branches: [], tags: [] }
-      : parseLsRemote(
-          (yield* shell
-            .capture(step("git", ["ls-remote", "--heads", "--tags", "origin"], { cwd: layout.app }))
-            .pipe(
-              Effect.mapError((error) =>
-                fail(`Could not ask origin for its refs: ${error.message}`),
-              ),
-            )).stdout,
-        )
-    const target = updateTarget(before, request, remote)
-    if (target instanceof RefNotFound) return yield* fail(target.message)
-    if (target._tag === "Pinned") {
-      yield* Console.log(pinnedNotice(target))
-      return true
-    }
-    const channel = channelAfter(before, request)
-    if (target._tag === "NoRelease") {
-      yield* runSteps([channelStep(layout.app, channel)])
-      yield* Console.log(stableNotice(target))
-      return true
-    }
-    if (target._tag === "Release") {
-      // Fetch first, so the Release's tag is here to compare with.
-      yield* runSteps(gitSteps(layout.app, target).slice(0, 1))
-      const contains = yield* shell.capture(containsCheckoutStep(layout.app, target.name))
-      if (contains.exitCode !== 0) {
-        yield* runSteps([channelStep(layout.app, channel)])
-        yield* Console.log(stableNotice({ _tag: "Older", release: target.name }))
-        return true
-      }
-    }
-    yield* Console.log(`Updating ${layout.app} (${describeCheckout(before)}):`)
-    const moves = gitSteps(layout.app, target)
-    yield* runSteps([
-      ...(target._tag === "Release" ? moves.slice(1) : moves),
-      channelStep(layout.app, channel),
-    ])
-    yield* runSteps(buildSteps(layout.app, bunPath(), configuredRoles(layout)))
-    const after = yield* readCheckout(layout.app)
-    yield* Console.log(`Now at ${describeCheckout(after)}.`)
-    const roles = configuredRoles(layout)
-    const hubRestarts = roles.includes("hub") && (yield* serviceInstalled(layout, "hub", on))
-    const pushed = hubRestarts
-      ? yield* leaveRunnerUpdatePush(layout, {
-          commit: after.commit,
-          now: options.now,
-          allRunners: options.updateRunners,
-        })
-      : undefined
-    const local = roles.includes("runner")
-      ? localRunnerRestart({
-          installed: yield* serviceInstalled(layout, "runner", on),
-          hubRestarts: pushed !== undefined,
-          serviceFileChanged: yield* serviceFileChanged(layout, "runner", on),
-          updatesItself: pushed?.localRunner?.updatesItself === true,
-        })
-      : "None"
-    if (pushed !== undefined) {
-      for (const line of runnersNotice({
-        commit: after.commit,
-        updateRunners: options.updateRunners,
-        now: options.now,
-        local,
-        localName: pushed.localRunner?.name,
-      })) {
-        yield* Console.log(line)
-      }
-    }
-    yield* restartInstalledServices(layout, on, local === "Hub" ? "runner" : undefined)
-    // The Hub runs its migrations as it starts: give it the time before checking on it.
-    if (configuredRoles(layout).includes("hub")) yield* waitForHub(layout)
+    if (!(yield* updateInstall(layout, options, machineUpdateEdges(layout, on)))) return true
     yield* Console.log("")
     return yield* doctor(layout, { fix: false, yes: false })
   })

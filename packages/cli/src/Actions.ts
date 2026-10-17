@@ -6,7 +6,11 @@ import { chmod, mkdir, readFile } from "node:fs/promises"
 import { homedir, userInfo } from "node:os"
 import { delimiter, dirname, join } from "node:path"
 import { issueRunnerToken, issueSetupLink } from "@kndl/hub/src/Admin.ts"
-import { requestRunnerUpdates } from "@kndl/hub/src/RunnerUpdatePush.ts"
+import {
+  requestRunnerUpdates,
+  restoreRunnerUpdates,
+  type UpdatePush,
+} from "@kndl/hub/src/RunnerUpdatePush.ts"
 import {
   resetSecrets,
   type SecretsResetPlan,
@@ -14,7 +18,7 @@ import {
   secretsResetPlanText,
 } from "@kndl/hub/src/SecretsReset.ts"
 import { FormerName, formerHomeDir } from "@kndl/protocol/former-name"
-import { Cause, ConfigProvider, Console, Effect, Option } from "effect"
+import { Cause, ConfigProvider, Console, Context, Effect, Option } from "effect"
 import { fail } from "./Failure.ts"
 import {
   bunPath,
@@ -78,18 +82,49 @@ export const requirePlatform = (on: Platform | undefined) =>
     : Effect.succeed(on)
 
 /**
+ * Where {@link runSteps} also writes what each Step runs and prints: `update`'s log (UpdateRun.ts).
+ * None, unless provided.
+ */
+export const StepLog = Context.Reference<((text: string) => Effect.Effect<void>) | undefined>(
+  "@kndl/cli/StepLog",
+  { defaultValue: () => undefined },
+)
+
+/**
  * Runs Steps in order. On a terminal they run under spinners, their output captured and shown only
  * when one fails: all under one spinner named `label`, or else each under its own, named by what
  * it is for. Without a terminal they run attached to the output, each line saying what it is for.
+ *
+ * Under a {@link StepLog}, every Step's output is captured, and written to the log too. Without a
+ * terminal it is printed once the Step ends, and the Step runs with its input closed.
  */
 export const runSteps = (steps: ReadonlyArray<Step>, label?: string) =>
   Effect.gen(function* () {
     const shell = yield* Shell
     const ui = yield* Ui
+    const log = yield* StepLog
+    const run = (s: Step) =>
+      log === undefined
+        ? shell.capture(s)
+        : Effect.gen(function* () {
+            yield* log(`$ ${describeStep(s)}\n`)
+            const result = yield* shell
+              .capture(s)
+              .pipe(Effect.tapError((error) => log(`${error.message}\n`)))
+            yield* log(`${result.stdout}${result.stderr}`)
+            return result
+          })
     if (!ui.spins) {
       for (const s of steps) {
         if (s.why !== undefined && !(shell.dryRun && s.system)) yield* ui.log("step", s.why)
-        yield* shell.attached(s)
+        if (log === undefined) {
+          yield* shell.attached(s)
+          continue
+        }
+        const output = yield* Effect.map(run(s), (result) =>
+          `${result.stdout}${result.stderr}`.trimEnd(),
+        )
+        if (output !== "") yield* Console.log(output)
       }
       return
     }
@@ -98,7 +133,6 @@ export const runSteps = (steps: ReadonlyArray<Step>, label?: string) =>
       yield* ui.log("info", "sudo may ask for your password.")
       yield* shell.attached(step("sudo", ["-v"], { system: true }))
     }
-    const run = (s: Step) => shell.capture(s)
     if (label !== undefined) {
       yield* ui.spin(label, (progress) =>
         Effect.forEach(steps, (s) => Effect.andThen(progress(s.why ?? s.command), run(s)), {
@@ -253,6 +287,26 @@ export const leaveRunnerUpdatePush = (
       ),
     )
   })
+
+/**
+ * Puts back, in this home's Hub database, the push {@link leaveRunnerUpdatePush} replaced, for
+ * `update` rolling back: the Hub, back on the commit it ran, sends no Runner on to the one `update`
+ * left. A database that can't be written is warned of, as there.
+ */
+export const restoreRunnerUpdatePush = (layout: Layout, replaced: UpdatePush | undefined) =>
+  restoreRunnerUpdates(replaced).pipe(
+    Effect.provide(
+      ConfigProvider.layer(ConfigProvider.fromEnv({ env: homeEnvironment(layout, "hub") })),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.flatMap(Ui, (ui) =>
+        ui.log(
+          "warn",
+          `Couldn't take back the Hub's request that its Runners follow the update: ${errorMessage(Cause.squash(cause))}.`,
+        ),
+      ),
+    ),
+  )
 
 /** Lets the user's services run while they're logged out (Linux), or says how. */
 export const enableLinger = Effect.gen(function* () {
