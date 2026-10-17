@@ -62,10 +62,12 @@ describe("the Runner's sysinfo", () => {
     ).toThrow()
   })
 
-  test("refuses a negative size or a fractional core count", () => {
+  test("refuses a negative size or load, or a fractional core count", () => {
     const decode = Schema.decodeUnknownSync(Sysinfo)
     expect(() => decode({ ...sample, diskFreeBytes: -1 })).toThrow()
     expect(() => decode({ ...sample, cpuCores: 1.5 })).toThrow()
+    // A history point can't hold a negative load, so a sample with one isn't taken either.
+    expect(() => decode({ ...sample, loadAverage: [-1, 0, 0] })).toThrow()
   })
 
   test("is on a Runner's summary, with when it was sampled, and a summary without it still reads", () => {

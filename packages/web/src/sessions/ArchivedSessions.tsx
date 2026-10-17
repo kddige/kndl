@@ -467,10 +467,9 @@ function ArchivedRow({
           <span title={day(archived.purgeAt)}>Purged {purgedIn(archived.purgeAt)}</span>
         </div>
       </div>
-      <span
-        aria-label={`Disk used by ${title}: ${sizeText(purging.sizes.get(session.id))}`}
-        {...stylex.props(styles.size)}
-      >
+      <span {...stylex.props(styles.size)}>
+        {/* A label on a plain span isn't read out, so the words are there, hidden from sight. */}
+        <span {...stylex.props(styles.hidden)}>Disk used by {title}: </span>
         {sizeText(purging.sizes.get(session.id))}
       </span>
       <div {...stylex.props(styles.actions)}>
