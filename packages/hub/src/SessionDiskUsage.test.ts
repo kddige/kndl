@@ -1,5 +1,6 @@
-// What the Hub asks its Runners of the disk their Sessions take (#352): the cache, the timeout, and
-// what a Runner that is offline or too old, or that goes away mid-ask, makes of the answer.
+// What the Hub asks its Runners of the disk their Sessions take (#352): the cache, asks already under
+// way, the timeout, and what a Runner that is offline or too old, or that goes away mid-ask, makes
+// of the answer.
 
 import { describe, expect, test } from "bun:test"
 import {
@@ -48,6 +49,9 @@ const answer = (
 
 const run = <A>(effect: Effect.Effect<A, never, never>) =>
   Effect.runPromise(effect.pipe(Effect.provide(TestClock.layer())))
+
+/** A Runner too old to measure: what the cache holds, without asking anyone. */
+const cached = runner({ measuresDisk: false }).online
 
 /** Lets a forked ask send what it will. */
 const settle = Effect.yieldNow
@@ -114,7 +118,7 @@ describe("the disk Sessions take", () => {
         usage.receive(studio, answer(r.ask(0), [{ sessionId: s1, bytes: 10 }]))
         yield* Fiber.join(first)
         usage.forget(s1)
-        expect(yield* usage.measure(undefined, [s1])).toEqual(new Map())
+        expect(yield* usage.measure(cached, [s1])).toEqual(new Map())
       }),
     ))
 
@@ -126,6 +130,74 @@ describe("the disk Sessions take", () => {
         expect(yield* usage.measure(undefined, [s1])).toEqual(new Map())
         expect(yield* usage.measure(old.online, [s1])).toEqual(new Map())
         expect(old.asked).toEqual([])
+      }),
+    ))
+
+  test("says nothing of a Session whose Runner went offline, even with its size cached", () =>
+    run(
+      Effect.gen(function* () {
+        const usage = makeSessionDiskUsage()
+        const r = runner()
+        const first = yield* Effect.forkChild(usage.measure(r.online, [s1]))
+        yield* settle
+        usage.receive(studio, answer(r.ask(0), [{ sessionId: s1, bytes: 10 }]))
+        yield* Fiber.join(first)
+        expect(yield* usage.measure(undefined, [s1])).toEqual(new Map())
+      }),
+    ))
+
+  test("waits on a Session already being measured rather than asking the Runner again", () =>
+    run(
+      Effect.gen(function* () {
+        const usage = makeSessionDiskUsage()
+        const r = runner()
+        const first = yield* Effect.forkChild(usage.measure(r.online, [s1, s2]))
+        yield* settle
+        // Another person opens the list while the Runner is still walking: s3 alone is asked.
+        const second = yield* Effect.forkChild(usage.measure(r.online, [s2, s3]))
+        yield* settle
+        expect(r.asked.map((ask) => ask.sessionIds)).toEqual([[s1, s2], [s3]])
+        usage.receive(
+          studio,
+          answer(r.ask(0), [
+            { sessionId: s1, bytes: 10 },
+            { sessionId: s2, bytes: 20 },
+          ]),
+        )
+        usage.receive(studio, answer(r.ask(1), [{ sessionId: s3, bytes: 30 }]))
+        expect(yield* Fiber.join(first)).toEqual(
+          new Map([
+            [s1, 10],
+            [s2, 20],
+          ]),
+        )
+        expect(yield* Fiber.join(second)).toEqual(
+          new Map([
+            [s2, 20],
+            [s3, 30],
+          ]),
+        )
+      }),
+    ))
+
+  test("lets go of whoever waits on an ask when the Runner doesn't answer it in time", () =>
+    run(
+      Effect.gen(function* () {
+        const usage = makeSessionDiskUsage()
+        const r = runner()
+        yield* Effect.forkChild(usage.measure(r.online, [s1]))
+        yield* settle
+        yield* TestClock.adjust(Duration.millis(SessionDiskAskTimeoutMillis / 2))
+        const waiting = yield* Effect.forkChild(usage.measure(r.online, [s1]))
+        yield* settle
+        expect(r.asked).toHaveLength(1)
+        yield* TestClock.adjust(Duration.millis(SessionDiskAskTimeoutMillis / 2))
+        expect(yield* Fiber.join(waiting)).toEqual(new Map())
+
+        // The next measure asks afresh.
+        yield* Effect.forkChild(usage.measure(r.online, [s1]))
+        yield* settle
+        expect(r.asked).toHaveLength(2)
       }),
     ))
 
@@ -146,7 +218,7 @@ describe("the disk Sessions take", () => {
 
         // A late answer to the ask it gave up on is ignored, not kept.
         usage.receive(studio, answer(r.ask(1), [{ sessionId: s2, bytes: 99 }]))
-        expect(yield* usage.measure(undefined, [s2])).toEqual(new Map())
+        expect(yield* usage.measure(cached, [s2])).toEqual(new Map())
       }),
     ))
 
@@ -180,7 +252,7 @@ describe("the disk Sessions take", () => {
           ]),
         )
         expect(yield* Fiber.join(fiber)).toEqual(new Map([[s1, 10]]))
-        expect(yield* usage.measure(undefined, [s3])).toEqual(new Map())
+        expect(yield* usage.measure(cached, [s3])).toEqual(new Map())
       }),
     ))
 })

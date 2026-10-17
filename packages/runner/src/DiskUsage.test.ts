@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import {
   chmodSync,
   linkSync,
@@ -9,9 +9,10 @@ import {
   truncateSync,
   writeFileSync,
 } from "node:fs"
+import * as fsPromises from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { allocatedBytes } from "./DiskUsage.ts"
+import { allocatedBytes, DiskUsageConcurrency } from "./DiskUsage.ts"
 
 const MiB = 1024 * 1024
 
@@ -83,6 +84,42 @@ describe("allocatedBytes", () => {
       expect(await allocatedBytes(root)).toBeGreaterThanOrEqual(MiB)
     } finally {
       chmodSync(join(root, "locked"), 0o700)
+    }
+  })
+
+  test("looks at only so many paths at once in the whole tree, however deep and wide", async () => {
+    // Wide and three deep: walked a directory's entries at a time at each level, it would look at
+    // hundreds at once.
+    for (let a = 0; a < 10; a++) {
+      for (let b = 0; b < 10; b++) {
+        mkdirSync(join(root, `a${a}`, `b${b}`), { recursive: true })
+        for (let c = 0; c < 10; c++) writeFileSync(join(root, `a${a}`, `b${b}`, `c${c}`), "x")
+      }
+    }
+    const { lstat } = fsPromises
+    let looking = 0
+    let most = 0
+    let looked = 0
+    const spy = spyOn(fsPromises, "lstat").mockImplementation((async (path: string) => {
+      looking++
+      looked++
+      most = Math.max(most, looking)
+      try {
+        // A slow disk, so the walk has the chance to pile up.
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        return await lstat(path)
+      } finally {
+        looking--
+      }
+    }) as typeof lstat)
+    try {
+      const bytes = await allocatedBytes(root)
+      // The root, 10 + 100 directories and 1000 files, each counted.
+      expect(looked).toBe(1 + 10 + 100 + 1000)
+      expect(bytes).toBeGreaterThan(0)
+      expect(most).toBeLessThanOrEqual(DiskUsageConcurrency)
+    } finally {
+      spy.mockRestore()
     }
   })
 })

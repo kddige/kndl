@@ -24,6 +24,9 @@ export const RunnerHistoryRetentionMillis = 7 * 24 * 60 * 60 * 1000
 /** A count of bytes. */
 const Bytes = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 
+/** A load average: never below zero, as a history point holds it too. */
+const Load = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))
+
 /** What a Runner measures of its host. */
 export const Sysinfo = Schema.Struct({
   /** Free space on the volume that holds the Runner's data (`RUNNER_SESSIONS_ROOT`). */
@@ -35,7 +38,7 @@ export const Sysinfo = Schema.Struct({
   memoryAvailableBytes: Bytes,
   cpuCores: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   /** The load average over the last 1, 5 and 15 minutes; zeros on a host that has none. */
-  loadAverage: Schema.Tuple([Schema.Number, Schema.Number, Schema.Number]),
+  loadAverage: Schema.Tuple([Load, Load, Load]),
   /** The operating system, as Node and Bun name it: `linux` or `darwin`. */
   os: Schema.NonEmptyString,
   /** The CPU architecture, as Node and Bun name it: `arm64` or `x64`. */
@@ -63,7 +66,7 @@ export const RunnerHistoryPoint = Schema.Struct({
   diskFreeBytes: Bytes,
   memoryAvailableBytes: Schema.optionalKey(Bytes),
   /** The load average over the last minute. */
-  load1: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  load1: Schema.optionalKey(Load),
 })
 export type RunnerHistoryPoint = typeof RunnerHistoryPoint.Type
 

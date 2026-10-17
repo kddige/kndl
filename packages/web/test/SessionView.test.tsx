@@ -948,6 +948,11 @@ test("the Archived screen shows the disk each Session takes, and what purging th
     [...page.querySelectorAll("li")].find((li) => li.textContent?.includes(title))
   const toolbar = () => page.textContent ?? ""
   await eventually(() => expect(row("claude/flaky-login")?.textContent).toContain("1.8 GiB"))
+  // A screen reader hears whose size it is, in text: a label on a plain span isn't read out.
+  expect(row("claude/flaky-login")?.textContent).toContain(
+    "Disk used by claude/flaky-login: 1.8 GiB",
+  )
+  expect(row("claude/flaky-login")?.querySelector('[aria-label^="Disk used"]')).toBeNull()
   hub.diskBytes.set("s-readme", 512 * 1024 ** 2)
   await step(() => client.archiveSession("s-readme" as SessionId))
   await eventually(() => expect(row("claude/readme-run")?.textContent).toContain("512 MiB"))
