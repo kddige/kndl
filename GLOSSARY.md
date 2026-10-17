@@ -1,6 +1,6 @@
 # kndl
 
-kndl (said "kindle", written lowercase): multiplayer agentic sessions. A self-hosted platform where a team runs Claude Code sessions in sandboxes and works in them together from the web: each Session's Creator drives it, and the team watches it live.
+kndl (said "kindle", written lowercase): multiplayer agentic sessions. A self-hosted platform where a team runs coding-agent sessions in sandboxes, on models from any Provider its members connect, and works in them together from the web: each Session's Creator drives it, and the team watches it live.
 
 ## Infrastructure
 
@@ -9,7 +9,7 @@ The central server that people sign in to. It knows every Session, Runner and Pa
 _Avoid_: server, backend, dashboard
 
 **Runner**:
-A host machine connected to the Hub that runs Sessions, each on its Creator's Claude credential.
+A host machine connected to the Hub that runs Sessions, each on its Creator's Connected providers.
 _Avoid_: worker, agent, node, host
 
 **Sysinfo**:
@@ -17,7 +17,7 @@ What a Runner reports of its host every 30 seconds: free and total disk of the v
 _Avoid_: health check, heartbeat, metrics
 
 **Claude credential**:
-A person's own Claude subscription token, made with `claude setup-token`, stored write-only and encrypted on the Hub. The Sessions they create run on it, on any Runner, and nobody else's prompts reach it.
+A person's own Claude subscription token, made with `claude setup-token`, stored write-only and encrypted on the Hub: their Connected provider for Anthropic. The Sessions they create run on it, on any Runner, and nobody else's prompts reach it.
 _Avoid_: login, Runner login, OAuth token, Claude key, API key
 
 **Pairing code**:
@@ -52,6 +52,24 @@ _Avoid_: version (alone), build, tag
 What an install of kndl follows: `stable`, the latest Release, or `dev`, the head of `main`. A Hub's Runners run what the Hub runs, whatever Channel each machine was installed with.
 _Avoid_: track, branch, ring
 
+## Models
+
+**Harness**:
+The program that runs a Session's agent in its Sandbox, with kndl's mod loaded into it: Claude Code, or pi (ADR 0029). Each Session has one.
+_Avoid_: driver, engine, agent, backend
+
+**Provider**:
+A company whose Models a Session can run on, such as Anthropic or OpenAI.
+_Avoid_: vendor, platform, backend
+
+**Connected provider**:
+A Member's own account at one Provider, connected on the Hub by signing in with a subscription or pasting an API key, and held write-only and encrypted there. Only the Sessions that Member creates use it.
+_Avoid_: integration, linked account, API key (alone), Installation
+
+**Model**:
+One Provider's model, among those of its Creator's Connected providers, that a Session's Turns run on. The Creator can switch it, to any Provider's, between Turns, and the conversation carries over.
+_Avoid_: engine, LLM, backend
+
 ## Who gets in
 
 **Member**:
@@ -73,11 +91,11 @@ _Avoid_: invitation code, Pairing code, join link
 ## Sessions
 
 **Session**:
-One ongoing Claude Code conversation working on one Repo, on a Work branch, driven by its Creator on their Claude credential. Who can see it is its Repo's to decide.
+One ongoing agent conversation working on one Repo, on a Work branch, run by its Harness and driven by its Creator on their Connected providers. Who can see it is its Repo's to decide.
 _Avoid_: chat, thread, agent, job
 
 **Subagent**:
-A Claude Code agent that a Session's Claude starts with the Agent tool. It runs in the Session's Sandbox, is shown under the Session, and the Session's Creator can message or stop it.
+An agent that a Session's agent starts to work alongside it, on any of the Creator's Models. It runs in the Session's Sandbox, is shown under the Session, and the Session's Creator can message or stop it.
 _Avoid_: Child Session, sub-session, worker
 
 **Session name**:
@@ -85,7 +103,7 @@ A Session's editable display name. It defaults to the Session's Work branch, or,
 _Avoid_: title, label
 
 **Creator**:
-The person who started a Session, whose Claude credential it runs on. Only they drive it: they prompt it, answer it, stop it, control it and use its terminal. The git identity in its Sandbox is theirs.
+The person who started a Session, whose Connected providers it runs on. Only they drive it: they prompt it, answer it, stop it, control it and use its terminal. The git identity in its Sandbox is theirs.
 _Avoid_: owner
 
 **Participant**:
@@ -93,7 +111,7 @@ Anyone currently in a Session, the Creator included. A Participant who isn't the
 _Avoid_: collaborator, viewer, guest
 
 **Turn**:
-One prompt and Claude's full response to it, including every tool call it made.
+One prompt and the agent's full response to it, including every tool call it made.
 _Avoid_: message, run, step
 
 **Prompt queue**:
@@ -101,7 +119,7 @@ The ordered prompts from the Creator waiting for the Session to finish its curre
 _Avoid_: backlog, inbox
 
 **Attachment**:
-A file a Participant attaches in the web UI, pasted, dropped or picked, to a prompt, a message to a subagent or a reply to an Open question: an image, such as a screenshot, or a PDF. The Hub keeps it for the life of its Session once it is sent, and deletes one nobody sent a day after upload; the prompt names it with a marker, `[Image #1: shot.png (attachment <id>)]` or `[PDF #1: spec.pdf (attachment <id>)]`, and Claude opens it with a tool the mod registers (ADR 0024).
+A file a Participant attaches in the web UI, pasted, dropped or picked, to a prompt, a message to a subagent or a reply to an Open question: an image, such as a screenshot, or a PDF. The Hub keeps it for the life of its Session once it is sent, and deletes one nobody sent a day after upload; the prompt names it with a marker, `[Image #1: shot.png (attachment <id>)]` or `[PDF #1: spec.pdf (attachment <id>)]`, and the agent opens it with a tool the mod registers (ADR 0024).
 _Avoid_: upload, paste, file (for what the prompt carries)
 
 **Steer**:
@@ -109,7 +127,7 @@ To take a queued prompt out of the Prompt queue and feed it into the running Tur
 _Avoid_: interrupt, inject, push
 
 **Open question**:
-A question Claude asked in a Turn, with AskUserQuestion, that no one has answered yet. The Creator answers it, from the web UI or at the terminal; the first answer is the one Claude reads. While it is open, the Session is waiting on its Creator and doesn't go to sleep.
+A question the agent asked in a Turn, with its question tool, that no one has answered yet. The Creator answers it, from the web UI or at the terminal; the first answer is the one the agent reads. While it is open, the Session is waiting on its Creator and doesn't go to sleep.
 _Avoid_: prompt, dialog, permission request
 
 **Workspace**:
@@ -177,8 +195,8 @@ _Avoid_: reference, import, binding
 ## MCP servers
 
 **MCP server**:
-A remote server, speaking MCP, that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. They are managed on the MCP page. kndl's own pieces that each Session's Claude Code loads are the mod, not MCP servers.
-_Avoid_: plugin (in kndl, only ever a Claude Code plugin), integration, extension, connector, mod
+A remote server, speaking MCP, that the Hub can add to Sessions: a package, identified by its package name, or one made on this Hub alone. They are managed on the MCP page. kndl's own pieces that each Session's Harness loads are the mod, not MCP servers.
+_Avoid_: plugin (in kndl, only ever a Claude Code plugin), integration, extension (in kndl, only ever a pi extension), connector, mod
 
 **MCP server icon**:
 The small picture beside an MCP server on the MCP page. The Hub finds it, from the package's manifest or the favicon of the MCP server's URL, keeps it and serves it; browsers never fetch it from the third party. An MCP server with none shows a letter.
@@ -197,8 +215,8 @@ A credential an MCP server declares it takes in an HTTP header, such as `Authori
 _Avoid_: API key setting, token field, header variable
 
 **Gateway**:
-The Hub's path from a Session to an Installation's MCP server, which adds the Installation's credentials on the way, so they never enter a Sandbox.
-_Avoid_: MCP proxy, credential proxy, mod relay
+The Hub's path from a Session to an Installation's MCP server, or to a Connected provider's Models, which adds the credentials on the way, so they never enter a Sandbox. A Claude credential is the exception: Claude Code holds it itself.
+_Avoid_: MCP proxy, credential proxy, mod relay, model gateway, LLM proxy
 
 ## Session lifecycle
 
