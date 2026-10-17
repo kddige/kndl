@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join, posix } from "node:path"
 import { BunServices, BunSocket } from "@effect/platform-bun"
 import {
-  ClaudeSessionId,
+  ConversationId,
   type GatewayServer,
   ProtocolVersion,
   SessionId,
@@ -46,9 +46,9 @@ const setupToken = "sk-ant-oat01-FAKE_TOKEN_FOR_TESTS_ONLY_9f3b"
 
 /** What the Runner's Claude Code takes, as it says in its hello (#128). */
 const models = {
-  default: { alias: "default", id: "claude-opus-5-5", label: "Opus 5.5", effort: true },
-  models: [{ alias: "sonnet", id: "claude-sonnet-5-5", label: "Sonnet 5.5", effort: true }],
-  efforts: ["low", "medium", "high"],
+  default: { alias: "default", id: "claude-opus-5-5", label: "Opus 5.5", reasoning: true },
+  models: [{ alias: "sonnet", id: "claude-sonnet-5-5", label: "Sonnet 5.5", reasoning: true }],
+  thinkingLevels: ["low", "medium", "high"],
 } as const
 
 /** A message the fake Hub received. */
@@ -683,7 +683,7 @@ describe("Sessions", () => {
       resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
       modToken: "chm_mod.second",
       model: "opus[1m]",
-      effort: "max",
+      thinkingLevel: "max",
     })
     await eventually(() => h.hub.all("SessionStarted").length === 2)
 
@@ -834,6 +834,26 @@ describe("Sessions", () => {
       "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
     ])
     // The Session's history still shows the conversation, so it says Claude Code forgot it (#191).
+    expect(h.hub.all("SandboxNote")).toEqual([
+      {
+        _tag: "SandboxNote",
+        sessionId: "s-1",
+        message: expect.stringContaining("couldn't resume its conversation"),
+      },
+    ])
+  })
+
+  test("starts a new conversation when the one to resume can't be Claude Code's", async () => {
+    const h = startRunner()
+    await connected(h)
+    writeTranscript(h, "pi-conversation-1")
+    h.hub.send(startSession("s-1", { resume: "pi-conversation-1" }))
+    await eventually(() => h.hub.all("SessionStarted").length === 1)
+
+    // Claude Code takes only a UUID of its own, so the conversation gets a new one.
+    const [flag, id] = h.tmux.launched[0]?.argv.slice(1, 3) ?? []
+    expect(flag).toBe("--session-id")
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
     expect(h.hub.all("SandboxNote")).toEqual([
       {
         _tag: "SandboxNote",
@@ -1136,14 +1156,14 @@ describe("Sessions", () => {
         modToken: "chm_woken.secret",
         resume: "3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f",
         model: "sonnet",
-        effort: "high",
+        thinkingLevel: "high",
       }),
     )
     await eventually(() => h.hub.all("SessionStarted").length === 2)
     expect(h.sandboxes.calls).toEqual(["start s-1", "stop s-1 Sleep", "start s-1"])
     expect(h.workspaces.prepared.map((start) => start.resume)).toEqual([
       undefined,
-      ClaudeSessionId.make("3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f"),
+      ConversationId.make("3c1f6f0e-8a2b-4c7d-9e1f-2a3b4c5d6e7f"),
     ])
     const woken = h.tmux.launched[1]
     expect(woken?.cwd).toBe("/workspace")

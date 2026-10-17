@@ -3,7 +3,7 @@
 // and talking to Anthropic directly (ADR 0026), with the mod loaded. Its banner shows a
 // subscription, `/status` opens, a Turn runs Bash in the Sandbox, a background subagent's run and
 // its task notification are where hub-link and the Hub expect them (ADR 0014), and the models and
-// effort levels it takes are those PinnedClaudeModels says. So it is skipped unless
+// thinking levels it takes are those PinnedClaudeModels says. So it is skipped unless
 // KNDL_SANDBOX_IT=1, and makes model calls (a few, on haiku) with your own setup token: the one
 // in `CLAUDE_CODE_OAUTH_TOKEN`, or else, on macOS, in the Keychain item `kndl-setup-token`. It
 // needs `msb` installed for the current user, and network access to Docker Hub and to npm the
@@ -216,7 +216,7 @@ test.skipIf(!enabled)(
       expect(yield* guestGrep("agent-48", run)).toContain("agent-48")
       yield* tmux.kill(sessionId)
 
-      // The models and effort levels the build takes are those PinnedClaudeModels says, which
+      // The models and thinking levels the build takes are those PinnedClaudeModels says, which
       // the Runner offers its Sessions. Asked in the Sandbox as a Session's Claude Code runs.
       const probe = (args: ReadonlyArray<string>) =>
         backend

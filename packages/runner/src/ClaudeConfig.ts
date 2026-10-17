@@ -12,12 +12,18 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { ClaudeSessionIdPattern } from "@kndl/protocol"
 import { Context, Data, Effect } from "effect"
 
 // What the Runner reads of Claude Code's state on its host, when there is any; none of it is
 // needed: what Claude Code kept of Sessions from before they ran in Sandboxes (ADR 0013), to
 // carry over or forget.
+
+/**
+ * Claude Code's session id as it mints one: a UUID, lowercase. A Session's conversation id is
+ * one, and the Runner names transcripts after it, so it takes no other.
+ */
+export const ClaudeSessionIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export class ClaudeConfigError extends Data.TaggedError("ClaudeConfigError")<{
   readonly message: string

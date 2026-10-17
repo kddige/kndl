@@ -1,11 +1,11 @@
 import { posix } from "node:path"
 import {
-  type ClaudeSessionId,
-  type EffortLevel,
+  type ConversationId,
   type GatewayServer,
   gatewayPath,
   type ModelName,
   type SessionId,
+  type ThinkingLevel,
 } from "@kndl/protocol"
 import { gatewayPlugin, modPlugins } from "./sandbox/SessionLayout.ts"
 
@@ -32,17 +32,23 @@ export interface ClaudeLaunchOptions {
   /** Start a new conversation with this id, or resume an existing one (waking an Asleep Session). */
   readonly conversation:
     | { readonly _tag: "New"; readonly id: string }
-    | { readonly _tag: "Resume"; readonly id: ClaudeSessionId }
+    | { readonly _tag: "Resume"; readonly id: ConversationId }
   /** The model, its `--model` (#128); Claude Code's default when absent. */
   readonly model?: ModelName
-  /** The effort level, its `--effort` (#128); Claude Code's default when absent. */
-  readonly effort?: EffortLevel
+  /**
+   * The thinking level, its `--effort` (#128); Claude Code's default when absent, or one it
+   * doesn't take.
+   */
+  readonly thinkingLevel?: ThinkingLevel
   /**
    * The MCP servers of the Installations it runs with (ADR 0020), in the mod's copy as the
    * {@link gatewayPlugin} plugin (SessionMod.ts); none when absent.
    */
   readonly mcpServers?: ReadonlyArray<GatewayServer>
 }
+
+/** The thinking levels Claude Code's `--effort` takes. */
+const claudeEfforts: ReadonlySet<ThinkingLevel> = new Set(["low", "medium", "high", "xhigh", "max"])
 
 export interface ClaudeLaunch {
   readonly argv: ReadonlyArray<string>
@@ -59,8 +65,10 @@ export interface ClaudeLaunch {
  * A new conversation gets `--session-id`, chosen by the Runner, so its id is known up front; waking
  * uses `--resume`, which restores the conversation and keeps the id (spike #4).
  *
- * The Session's model and effort go as `--model` and `--effort` (#128), which, unlike `/model`
- * and `/effort`, last only for the process and are never written to its settings.json.
+ * The Session's model and thinking level go as `--model` and `--effort` (#128), which, unlike
+ * `/model` and `/effort`, last only for the process and are never written to its settings.json.
+ * `--effort` takes `low` to `max`: `off` and `minimal`, which a Claude Code Runner never offers,
+ * go as no `--effort` at all.
  *
  * Its Installations' MCP servers come in a plugin of their own (ADR 0020), so Claude Code names
  * each `plugin:kndl:<server>`, never the name of one in the Repo's `.mcp.json`.
@@ -79,7 +87,9 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
       ),
       "--dangerously-skip-permissions",
       ...(options.model === undefined ? [] : ["--model", options.model]),
-      ...(options.effort === undefined ? [] : ["--effort", options.effort]),
+      ...(options.thinkingLevel !== undefined && claudeEfforts.has(options.thinkingLevel)
+        ? ["--effort", options.thinkingLevel]
+        : []),
     ],
     env: {
       // Auto memory stays off (#111): each Session would keep notes only for itself.

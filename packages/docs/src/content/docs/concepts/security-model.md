@@ -69,7 +69,7 @@ A Session's Repo decides who sees it, and its Creator is the only one who drives
 
 - **Access to a Repo** means the GitHub App is installed on it, and GitHub says you're a collaborator. A public Repo's other readers don't count.
 - **With access**, you watch every Session of the Repo: its transcript, live or Archived, and its Attachments. You can forward its ports. You can change the Repo's Environment.
-- **As a Session's Creator**, you also drive it: prompt it, steer and cancel its queued prompts, answer its questions, stop its Turns and subagents, and use its terminal. Sleep, wake, Keep awake, restart, the model and effort, rename, delete and restore are yours alone too.
+- **As a Session's Creator**, you also drive it: prompt it, steer and cancel its queued prompts, answer its questions, stop its Turns and subagents, and use its terminal. Sleep, wake, Keep awake, restart, the model and thinking level, rename, delete and restore are yours alone too.
 - **Without access**, a Session answers as if it didn't exist.
 - **Losing access on GitHub** takes you out of the Repo's Sessions within twice [`HUB_REPO_ACCESS_TTL_MS`](/reference/configuration/#hub), 10 minutes by default.
 - **Any Member** can pair and remove Runners, and manage Shared variables.

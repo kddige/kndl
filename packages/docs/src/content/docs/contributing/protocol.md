@@ -76,7 +76,7 @@ The Hub keeps each CLI token's machine, when it was made, and when it was last u
 
 ## Handshake
 
-Each channel opens with a hello carrying the peer's `protocolVersion`, `ProtocolVersion` in `packages/protocol/src/Version.ts` (`3`). The Hub answers with a welcome, or with `HandshakeRejected` and a message naming the side to update, then closes the connection. The peer checks the welcome's version the same way.
+Each channel opens with a hello carrying the peer's `protocolVersion`, `ProtocolVersion` in `packages/protocol/src/Version.ts` (`4`). The Hub answers with a welcome, or with `HandshakeRejected` and a message naming the side to update, then closes the connection. The peer checks the welcome's version the same way.
 
 `HandshakeRejected` has the same shape in every protocol version: `reason` (`ProtocolVersionMismatch` or `MalformedHandshake`), the rejecting side's `protocolVersion`, `message`, and, when the Hub turns a Runner away, `hubVersion`, the commit the Hub runs. A Runner that updates itself moves to that commit and restarts; one that doesn't logs what to do. Neither exits: it tries again every minute.
 
@@ -142,13 +142,13 @@ A Session's disk use isn't sampled: the Hub asks when the archive list wants it.
 
 A Runner that says `asksCloneAccess` in `RunnerHello` asks how to clone a Test build's Repo with `FetchCloneAccess`. The git reply is a `CloneToken`, a read-only installation token for that one Repo that the Runner hands to git for the clone and never stores; `HostCredentials` when the Hub has no GitHub App, to clone with the host's own; or `GitFailed` with why, such as the App not being installed on the Repo, which fails the Test build. A Hub with the GitHub App sends Test builds only to a Runner that says `asksCloneAccess`.
 
-### Models and effort
+### Models and thinking levels
 
-`RunnerHello` carries `models`, what the Runner's Claude Code takes: `default`, the model it runs when given none; `models`, the other aliases `--model` takes, most capable first; and `efforts`, the effort levels `--effort` takes, lowest first. Each model has its `alias` (`sonnet`), the `id` Claude Code resolves it to (`claude-sonnet-5-5`), its `label` (`Sonnet 5.5`), a one-line `description`, and `effort`, whether it takes an effort level. A Runner that sends no `models` runs its Sessions on Claude Code's defaults.
+`RunnerHello` carries `models`, what the Runner's Claude Code takes: `default`, the model it runs when given none; `models`, the other aliases `--model` takes, most capable first; and `thinkingLevels`, the thinking levels `--effort` takes, lowest first. The levels are pi-ai's, `off`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, of which Claude Code takes `low` to `max`. Each model has its `alias` (`sonnet`), the `id` Claude Code resolves it to (`claude-sonnet-5-5`), its `label` (`Sonnet 5.5`), a one-line `description`, and `reasoning`, whether it takes a thinking level. A Runner that sends no `models` runs its Sessions on Claude Code's defaults.
 
 The Runner sends the table of the pinned Claude Code version's models, `PinnedClaudeModels` in `packages/runner/src/ClaudeModels.ts` ([ADR 0013](/contributing/decisions/0013-claude-code-runs-in-the-sandbox/)), which `bun run --filter @kndl/runner probe-models` writes from the version's own `claude -p /model`. A Runner told to run another version (`RUNNER_SANDBOX_CLAUDE_VERSION`) sends no `models`.
 
-`StartSession` carries the Session's `model` and `effort` when they are set, which the Runner passes as `--model` and `--effort`. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which the Hub sends once the setting changed while Claude Code ran and no Turn runs: the Runner restarts Claude Code with `--resume` and the new flags, in the same Sandbox, with the fresh mod token the message carries. It answers as it does a `StartSession`, and the Hub delivers the next prompt once the new mod has said hello. On a Runner without `relaunches`, the setting takes effect when the Session next wakes.
+`StartSession` carries the Session's `model` and `thinkingLevel` when they are set, which the Runner passes as `--model` and `--effort`. Its `resume`, when it wakes a Session, is the `conversationId` the mod's last `ModHello` gave, Claude Code's own session id, which the Runner passes as `--resume`. A Runner that says `"relaunches": true` in `RunnerHello` also takes `RelaunchSession`, which the Hub sends once the setting changed while Claude Code ran and no Turn runs: the Runner restarts Claude Code with `--resume` and the new flags, in the same Sandbox, with the fresh mod token the message carries. It answers as it does a `StartSession`, and the Hub delivers the next prompt once the new mod has said hello. On a Runner without `relaunches`, the setting takes effect when the Session next wakes.
 
 ## Forwards
 
@@ -366,19 +366,19 @@ The Gateway answers:
 
 The request goes to the MCP server's URL as it is now, its body streaming on untouched. The Session's token, cookies, `Host`, `Origin`, forwarding and hop-by-hop headers stay at the Gateway, and the server's cookies don't come back. The Gateway adds each header secret as its `header`, its value the `template` with the value the Session started with in place of `{value}`, replacing a header of the same name from the Session, by any case. Each request is logged with its Session, Installation, method, status and time taken, never what it carries.
 
-### Model and effort
+### Model and thinking level
 
-Each Runner in `RunnerList` carries the `models` its hello said ([Models and effort](#models-and-effort)). `CreateSession` takes an optional `model` and `effort`, and `SetSessionModel { sessionId, model?, effort? }` sets both at once; an absent one is Claude Code's default, and the `default` alias is stored as no model. The Hub checks them against the Session's Runner and refuses with a `CommandFailed`:
+Each Runner in `RunnerList` carries the `models` its hello said ([Models and thinking levels](#models-and-thinking-levels)). `CreateSession` takes an optional `model` and `thinkingLevel`, and `SetSessionModel { sessionId, model?, thinkingLevel? }` sets both at once; an absent one is Claude Code's default, and the `default` alias is stored as no model. The Hub checks them against the Session's Runner and refuses with a `CommandFailed`:
 
 | Refused | Message |
 |---|---|
 | A model the Runner's Claude Code doesn't have | `Model '<model>' not found`, as Claude Code's `/model` says it |
-| An effort level for a model that takes none | `<model> takes no effort level.` |
-| A level the Runner's Claude Code doesn't have | `Claude Code on <runner> has no effort level '<level>'.` |
+| A thinking level for a model that takes none | `<model> takes no thinking level.` |
+| A level the Runner's Claude Code doesn't have | `Claude Code on <runner> has no thinking level '<level>'.` |
 | A model or level on a Runner that sent no `models` | `<runner> hasn't said which models its Claude Code has: only Claude Code's default model can be used there.` |
 | `SetSessionModel` on an Archived Session | `The Session is archived: restore it to change its model.` |
 
-Each Session carries its `model` and `effort` when set, and `modelPending: true` while its Claude Code still runs the setting from before a change. Each change is logged as `ModelSwitched { by, model?, modelLabel?, effort? }`, where `modelLabel` is the Runner's name for the model then, such as `Sonnet 5.5`, or for no model the default's. A Turn's `TurnEnded.usage.model` is the model it ran.
+Each Session carries its `model` and `thinkingLevel` when set, and `modelPending: true` while its Claude Code still runs the setting from before a change. Each change is logged as `ModelSwitched { by, model?, modelLabel?, thinkingLevel? }`, where `modelLabel` is the Runner's name for the model then, such as `Sonnet 5.5`, or for no model the default's. A Turn's `TurnEnded.usage.model` is the model it ran.
 
 ### Questions
 

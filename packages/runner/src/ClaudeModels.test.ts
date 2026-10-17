@@ -5,7 +5,7 @@ import {
   ClaudeModelsLive,
   type ModelProbe,
   PinnedClaudeModels,
-  parseEfforts,
+  parseThinkingLevels,
   parseModelProbe,
   probeModels,
   runnerModels,
@@ -46,11 +46,11 @@ const effortRun = [
 ].join("\n")
 
 describe("parseModelProbe", () => {
-  test("reads the model, its name, whether it takes an effort level, and the aliases", () => {
+  test("reads the model, its name, whether it takes a thinking level, and the aliases", () => {
     expect(parseModelProbe(modelRun("claude-opus-5-5", "Opus 5.5 (default)", true))).toEqual({
       id: "claude-opus-5-5",
       label: "Opus 5.5",
-      effort: true,
+      reasoning: true,
       aliases: [
         "sonnet",
         "opus",
@@ -66,9 +66,9 @@ describe("parseModelProbe", () => {
     })
     expect(
       parseModelProbe(modelRun("claude-haiku-4-5-20251001", "Haiku 4.5", false)),
-    ).toMatchObject({ id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", effort: false })
-    // Any model takes an effort level when Claude Code doesn't say.
-    expect(parseModelProbe(modelRun("claude-opus-5-5", "Opus 5.5"))?.effort).toBe(true)
+    ).toMatchObject({ id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", reasoning: false })
+    // Any model takes a thinking level when Claude Code doesn't say.
+    expect(parseModelProbe(modelRun("claude-opus-5-5", "Opus 5.5"))?.reasoning).toBe(true)
     // Lines that aren't events are read past.
     const run = `Warning: something\n${modelRun("claude-opus-5-5", "Opus 5.5", true)}`
     expect(parseModelProbe(run)?.id).toBe("claude-opus-5-5")
@@ -83,17 +83,17 @@ describe("parseModelProbe", () => {
   })
 })
 
-test("parseEfforts reads the levels /effort lists the Hub knows, without auto, which is no level", () => {
-  expect(parseEfforts(effortRun)).toEqual(["low", "medium", "high", "xhigh", "max"])
+test("parseThinkingLevels reads the levels /effort lists the Hub knows, without auto, which is no level", () => {
+  expect(parseThinkingLevels(effortRun)).toEqual(["low", "medium", "high", "xhigh", "max"])
   const fewer = effortRun.replace("low|medium|high|xhigh|max|auto", "low|medium|high|ultra")
-  expect(parseEfforts(fewer)).toEqual(["low", "medium", "high"])
-  expect(parseEfforts("")).toEqual([])
+  expect(parseThinkingLevels(fewer)).toEqual(["low", "medium", "high"])
+  expect(parseThinkingLevels("")).toEqual([])
 })
 
-const probe = (id: string, label: string, effort = true): ModelProbe => ({
+const probe = (id: string, label: string, reasoning = true): ModelProbe => ({
   id,
   label,
-  effort,
+  reasoning,
   aliases: [],
 })
 
@@ -133,20 +133,20 @@ describe("runnerModels", () => {
       id: "claude-opus-5-5",
       label: "Opus 5.5",
       description: "Best for everyday, complex tasks",
-      effort: true,
+      reasoning: true,
     })
     expect(models.models.find((model) => model.alias === "mythos")).not.toHaveProperty(
       "description",
     )
-    expect(models.models.find((model) => model.alias === "haiku")?.effort).toBe(false)
+    expect(models.models.find((model) => model.alias === "haiku")?.reasoning).toBe(false)
     expect(models.default).toEqual({
       alias: "default",
       id: "claude-opus-5-5",
       label: "Opus 5.5",
       description: "Best for everyday, complex tasks",
-      effort: true,
+      reasoning: true,
     })
-    expect(models.efforts).toEqual(["low", "max"])
+    expect(models.thinkingLevels).toEqual(["low", "max"])
     // An alias that is another's double is left out: best and fable[1m] are fable.
     expect(models.models.filter((model) => model.id === "claude-fable-5-1")).toHaveLength(1)
     // A 1M-context model is named as such when Claude Code doesn't.

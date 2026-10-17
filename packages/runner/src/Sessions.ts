@@ -25,6 +25,7 @@ import {
   Semaphore,
   Stream,
 } from "effect"
+import { ClaudeSessionIdPattern } from "./ClaudeConfig.ts"
 import { claudeEnvironment, ClaudeTokenVariable, KeptOutOfClaude } from "./ClaudeEnvironment.ts"
 import { claudeLaunch, ModEnvironment } from "./ClaudeLaunch.ts"
 import { HubClaudeCredential } from "./HubClaudeCredential.ts"
@@ -245,8 +246,9 @@ export const SessionsLive = Layer.effect(
      * The conversation to start Claude Code with: a new one, or the one the Hub asks to resume.
      * One Claude Code never wrote a transcript of, as when it exited before it got that far,
      * can't be resumed: it starts new instead, with the same id, so the Hub's id stays right
-     * (#105). The Session's history still shows the old conversation, so a note there says
-     * Claude Code doesn't remember it (#191).
+     * (#105). One that isn't a Claude Code session id, which Claude Code can't have had, starts
+     * new with an id of its own, which the mod's hello gives the Hub. The Session's history still
+     * shows the old conversation, so a note there says Claude Code doesn't remember it (#191).
      */
     const conversationFor = (
       request: StartSession | RelaunchSession,
@@ -257,11 +259,15 @@ export const SessionsLive = Layer.effect(
           return { _tag: "New", id: randomUUID() } as const
         }
         const id = request.resume
-        if (yield* sandboxes.hasTranscript(request.sessionId, directories, id))
+        const claudes = ClaudeSessionIdPattern.test(id)
+        if (claudes && (yield* sandboxes.hasTranscript(request.sessionId, directories, id)))
           return { _tag: "Resume", id } as const
         yield* Effect.logWarning(
-          `Session ${request.sessionId}: Claude Code has no transcript of conversation ${id}, ` +
-            "so it starts a new one with that id instead of resuming it",
+          claudes
+            ? `Session ${request.sessionId}: Claude Code has no transcript of conversation ${id}, ` +
+                "so it starts a new one with that id instead of resuming it"
+            : `Session ${request.sessionId}: conversation ${id} isn't Claude Code's, ` +
+                "so it starts a new one instead of resuming it",
         )
         yield* hub.send(
           RunnerToHub.cases.SandboxNote.make({
@@ -271,7 +277,7 @@ export const SessionsLive = Layer.effect(
               "started a new one: it doesn't remember what was said above.",
           }),
         )
-        return { _tag: "New", id } as const
+        return { _tag: "New", id: claudes ? id : randomUUID() } as const
       })
 
     /**
@@ -294,7 +300,7 @@ export const SessionsLive = Layer.effect(
           mod: yield* copySessionMod(config.modDir, directories, request.mcpServers),
           conversation: yield* conversationFor(request, directories),
           ...(request.model === undefined ? {} : { model: request.model }),
-          ...(request.effort === undefined ? {} : { effort: request.effort }),
+          ...(request.thinkingLevel === undefined ? {} : { thinkingLevel: request.thinkingLevel }),
           ...(request.mcpServers === undefined ? {} : { mcpServers: request.mcpServers }),
         })
         const sessionToken = yield* admit(sessionId, request.modToken)
@@ -367,7 +373,7 @@ export const SessionsLive = Layer.effect(
       )
 
     /**
-     * Starts a running Session's Claude Code again with the model and effort the Hub sends (#128),
+     * Starts a running Session's Claude Code again with the model and thinking level the Hub sends (#128),
      * resuming its conversation: Claude Code exits as on a stop and starts in a new tmux session,
      * while its Sandbox stays as it is, on its Creator's setup token fetched again. The Hub sends
      * it only while no Turn runs. A Claude Code that won't start again, as when the Hub refuses
@@ -405,7 +411,10 @@ export const SessionsLive = Layer.effect(
           )
 
           if (Exit.isSuccess(launched)) {
-            const model = [request.model ?? "default model", request.effort ?? "default effort"]
+            const model = [
+              request.model ?? "default model",
+              request.thinkingLevel ?? "default thinking level",
+            ]
             yield* Effect.logInfo(`Session ${sessionId} restarted on ${model.join(", ")}`)
             return yield* started(sessionId)
           }
