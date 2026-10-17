@@ -63,7 +63,8 @@ export const HubRoutes = Layer.mergeAll(
  * access, the GitHub App's permission check, the Pairing codes, the Session relay, the tunnels
  * waiting for their Runner and the shutdown signal the routes use, given a database, the GitHub App (GitHubApp.ts), the check of
  * Claude credentials (ClaudeCheck), where MCP server packages are read from (McpServerSources.ts),
- * the Hub's version (HubVersion.ts) and its check for a newer kndl (HubUpdates.ts).
+ * the Hub's version (HubVersion.ts), its check for a newer kndl (HubUpdates.ts) and the updates
+ * its Owner starts from the web (HubUpdateRuns.ts).
  */
 export const HubServices = SessionRelay.layer.pipe(
   // How a request reaches an Installation's MCP server (#254): for a Session's start, and the

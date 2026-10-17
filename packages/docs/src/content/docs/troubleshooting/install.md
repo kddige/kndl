@@ -256,6 +256,19 @@ tail -f ~/.kndl/update/update.log
 
 A lock whose process is gone, or from before the machine booted, is taken over by the next update.
 
+## The Hub page can't start an update
+
+**What you see.** On the **Hub** page, **Update** fails with `Couldn't start the update: …`, or the toast **The update didn't start**.
+
+**Why.** The Hub starts `kndl update` with `systemd-run --user` on Linux, or as a launchd job on macOS. That failed, or the update exited before it wrote its status, as when the CLI in `app/` doesn't run.
+
+**Fix.** Read what the update printed, then run it on the Hub's machine:
+
+```sh
+cat ~/.kndl/logs/update.log
+kndl update
+```
+
 ## The update failed and went back
 
 **What you see.**

@@ -15,7 +15,7 @@ import {
 } from "@kndl/protocol"
 import { Clock, Context, Duration, Effect, Exit, Layer, Option, Redacted, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/http"
-import type { SqlClient } from "effect/sql"
+import { SqlClient } from "effect/sql"
 import { signInCookie } from "./Auth.ts"
 import { ClaudeCheck, ClaudeCredentials } from "./ClaudeCredentials.ts"
 import { CliBuilds } from "./CliBuilds.ts"
@@ -32,6 +32,7 @@ import {
   type HubConfigInput,
 } from "./HubConfig.ts"
 import { drainFirst } from "./HubShutdown.ts"
+import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { McpServerIcons } from "./McpServerIcons.ts"
@@ -119,6 +120,7 @@ export type Services =
   | SqlClient.SqlClient
   | HubVersion
   | HubUpdates
+  | HubUpdateRuns
 
 export interface TestHub {
   /** The Hub's address, such as `http://127.0.0.1:54321`. */
@@ -172,6 +174,11 @@ export async function startHub(
      * checkout. `HubUpdates.layerOn`, with an `Upstream.fixed`, turns it on.
      */
     readonly hubUpdates?: Layer.Layer<HubUpdates, unknown, HubVersion | SqlClient.SqlClient>
+    /**
+     * The updates the Owner starts from the web (#362); by default none, as on a Hub that doesn't
+     * check. `HubUpdateRuns.layerOn`, with a `HubUpdateLauncher.fake`, turns them on.
+     */
+    readonly hubUpdateRuns?: Layer.Layer<HubUpdateRuns, unknown, HubUpdates>
     /** How Claude credentials are checked; by default as ClaudeCheck.layerTest, asking no one. */
     readonly claudeCheck?: Layer.Layer<ClaudeCheck>
     /** The CLI binaries the Hub serves; by default ones it never builds. */
@@ -199,6 +206,7 @@ export async function startHub(
     ),
     Layer.provideMerge(options.github ?? GitHub.layer),
     Layer.provideMerge(HubServices),
+    Layer.provideMerge(options.hubUpdateRuns ?? HubUpdateRuns.off),
     Layer.provideMerge(options.hubUpdates ?? HubUpdates.off),
     Layer.provideMerge(options.mcpServerSources ?? McpServerSources.layer),
     Layer.provideMerge(options.mcpServerIcons ?? McpServerIcons.none),
@@ -356,6 +364,18 @@ export async function githubSignIn(
 /** A new Setup link's secret for the Hub, as `kndl hub setup-link` makes. */
 export const setupSecret = (hub: TestHub) =>
   hub.run(Effect.flatMap(Members, (members) => members.newSetupLink))
+
+/**
+ * Makes `id`, signed in already, the Hub's Owner, as a Setup link would: for a dev login, whose
+ * people never are (#209).
+ */
+export const makeOwner = (hub: TestHub, id: string) =>
+  hub.run(
+    Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql`UPDATE participants SET owner = 1 WHERE id = ${id}`,
+    ).pipe(Effect.orDie),
+  )
 
 /** Signs in through the stand-in GitHub with a new Setup link, as the Hub's Owner. */
 export const ownerSignIn = async (

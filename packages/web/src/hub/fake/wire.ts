@@ -12,6 +12,7 @@ import type {
   EnvironmentVersionInfo,
   HeaderValueSet,
   HubToWeb,
+  HubUpdateRun,
   HubUpdateState,
   Installation,
   InstallationFailure,
@@ -52,6 +53,7 @@ export type SharedVariableWire = (typeof SharedVariable)["Encoded"]
 export type AppPermissionsCheckWire = (typeof AppPermissionsCheck)["Encoded"]
 export type BuildVersionWire = (typeof BuildVersion)["Encoded"]
 export type HubUpdateStateWire = (typeof HubUpdateState)["Encoded"]
+export type HubUpdateRunWire = (typeof HubUpdateRun)["Encoded"]
 export type PendingPairingCodeWire = (typeof PendingPairingCode)["Encoded"]
 export type ClaudeCredentialInfoWire = (typeof ClaudeCredentialInfo)["Encoded"]
 export type CliTokenInfoWire = (typeof CliTokenInfo)["Encoded"]

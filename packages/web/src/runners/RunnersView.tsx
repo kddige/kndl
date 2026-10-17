@@ -3,9 +3,9 @@
 // Claude credential of its own: each Session runs on its Creator's (ADR 0026).
 // Anyone signed in adds a Runner here with a Pairing code, Re-pairs one (a new token, same RunnerId
 // and Sessions) or removes one, once its Sessions are all Archived. Codes still waiting are listed
-// so they can be revoked. A Runner behind the Hub that updates itself has Update (#87): it moves
-// to the Hub's commit once its Sessions sleep, and its row follows the update, or says why it
-// refused or failed. A row warns when the Runner's disk is low (#350), and its Monitor (#356) opens
+// so they can be revoked. A Runner behind the Hub that updates itself has Update (#87), for the
+// Hub's Owner alone (ADR 0028): it moves to the Hub's commit once its Sessions sleep, and its row
+// follows the update, or says why it refused or failed. Every Member sees whether one is behind. A row warns when the Runner's disk is low (#350), and its Monitor (#356) opens
 // under it: the host as it last sampled it, and charts of its last week. Every confirmation is a
 // Dialog on the page.
 
@@ -381,9 +381,11 @@ function RunnerRow({
   const underWay = update?.busy === true
   // While it updates, the update says it all: being behind is why.
   const note = underWay ? undefined : versionNote(runner.versionStatus, runner.updater)
-  const action = updateAction(runner)
-  const manual = manualUpdateText(runner)
   const you = useHubState((state) => state.you)
+  // Moving the code its Sessions run on is the Owner's (ADR 0028).
+  const owner = useHubState((state) => state.owner)
+  const action = owner ? updateAction(runner) : undefined
+  const manual = manualUpdateText(runner)
   // Paired, but it hasn't connected since.
   const neverSeen = !runner.isOnline && runner.lastSeenAt === null
   const [monitoring, setMonitoring] = useState(false)

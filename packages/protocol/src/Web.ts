@@ -23,7 +23,7 @@ import {
   TestBuildStarted,
 } from "./Environment.ts"
 import { AppPermissionsCheck } from "./GitHubApp.ts"
-import { CheckHubUpdate, HubUpdateChecked, HubUpdateState } from "./HubUpdate.ts"
+import { HubUpdateCommand, HubUpdateMessage, HubUpdateRun, HubUpdateState } from "./HubUpdate.ts"
 import {
   AgentId,
   EventSeq,
@@ -619,7 +619,7 @@ export const WebToHub = Schema.Union([
   SetClaudeCredential,
   RemoveClaudeCredential,
   CheckAppPermissions,
-  CheckHubUpdate,
+  HubUpdateCommand,
   RepoLookup,
   CreatePairingCode,
   RevokePairingCode,
@@ -651,6 +651,8 @@ export const WebWelcome = Schema.TaggedStruct("WebWelcome", {
    * Its absence tells the web there is no Hub page.
    */
   hubUpdate: Schema.optionalKey(HubUpdateState),
+  /** The latest update of the Hub (#362), for its Owner alone, on a Hub that checks. */
+  hubUpdateRun: Schema.optionalKey(HubUpdateRun),
 })
 export type WebWelcome = typeof WebWelcome.Type
 
@@ -977,7 +979,7 @@ export const HubToWeb = Schema.Union([
   InstallationNeedsClient,
   ClaudeCredentialState,
   AppPermissionsChecked,
-  HubUpdateChecked,
+  HubUpdateMessage,
   RepoChecked,
   ReposListed,
   BranchesListed,

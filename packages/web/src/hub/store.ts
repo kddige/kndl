@@ -5,8 +5,8 @@
 // permissions lack (issue #86); the Pairing codes waiting to be redeemed and the Hub's own commit,
 // for the Runners page (issue #85); and the signed-in person's Claude credential, write-only (ADR
 // 0015), and the CLI tokens they signed the CLI in with (issue #179); and, for the Hub's Owner alone,
-// its Members and pending Invites, for the People page (#209), and the Hub's update check, for
-// the Hub page (ADR 0028); and the MCP servers and their
+// its Members and pending Invites, for the People page (#209), and the Hub's update check and its
+// latest update, for the Hub page (ADR 0028); and the MCP servers and their
 // Installations, and the MCP server change logs of the Repos the client asked about (#221). The
 // terminal's output itself goes straight to the view that draws it (HubClient.openTerminal), not
 // through here.
@@ -17,6 +17,7 @@
 import type {
   AppPermissionsCheck,
   BuildVersion,
+  HubUpdateRun,
   HubUpdateState,
   ClaudeCredentialInfo,
   CliTokenInfo,
@@ -191,6 +192,11 @@ export interface HubState {
    */
   readonly hubUpdate: HubUpdateState | null
   /**
+   * The Hub's latest update (#362), running or ended, from the web or the CLI: for the Owner
+   * alone, on a Hub that checks; null before any. Kept while the Hub restarts under it.
+   */
+  readonly hubUpdateRun: HubUpdateRun | null
+  /**
    * The MCP servers and their Installations, each Installation with only the Repos the person has
    * access to (#221); null until the client first asks for them, then kept current.
    */
@@ -239,6 +245,7 @@ export const initialState: HubState = {
   members: null,
   invites: null,
   hubUpdate: null,
+  hubUpdateRun: null,
   mcpServers: null,
   mcpServerLogs: {},
 }
@@ -278,6 +285,7 @@ export function reduce(state: HubState, action: HubAction): HubState {
         owner: action.owner === true,
         hubVersion: action.hub ?? null,
         hubUpdate: action.hubUpdate ?? null,
+        hubUpdateRun: action.hubUpdateRun ?? null,
         connection: { status: "online" },
       }
     case "HandshakeRejected":
@@ -450,6 +458,11 @@ export function reduce(state: HubState, action: HubAction): HubState {
       return { ...state, members: action.members }
     case "HubUpdateChecked":
       return { ...state, hubUpdate: action.update }
+    case "HubUpdateRunChanged":
+      return { ...state, hubUpdateRun: action.run }
+    case "HubUpdateStarted":
+      // Its progress follows, as HubUpdateRunChanged.
+      return state
     case "McpServersState":
       return {
         ...state,

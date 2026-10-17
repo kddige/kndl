@@ -24,6 +24,7 @@ import {
   type GitHubLogin,
   type HeaderValueInput,
   HubToWeb,
+  type Channel,
   type HubUpdateState,
   type InstallationAuthorizing,
   type InstallationId,
@@ -500,6 +501,15 @@ export class HubClient {
   }
 
   /**
+   * Has the Hub run `kndl update` on its machine (#362), as its Owner alone may: with `now`, its
+   * Runners stop their running Turns at once; with `channel`, it follows that Channel from now on.
+   * Resolves once the update is launched; its progress reaches the store as it goes.
+   */
+  async updateHub(request: { readonly now: boolean; readonly channel?: Channel }): Promise<void> {
+    await this.#request({ _tag: "UpdateHub", ...request }, "HubUpdateStarted")
+  }
+
+  /**
    * Whether the signed-in person has access to `repo`, and if not, why (#104): asked as a Repo is
    * entered. With `fresh`, the Hub asks GitHub again rather than answering from its cache.
    */
@@ -920,6 +930,7 @@ export class HubClient {
       case "SharedVariables":
       case "AppPermissionsChecked":
       case "HubUpdateChecked":
+      case "HubUpdateStarted":
       case "RepoChecked":
       case "ReposListed":
       case "ListingUnavailable":

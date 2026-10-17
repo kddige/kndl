@@ -264,6 +264,8 @@ import {
   cantStartText,
   AppPermissionsChecked,
   HubUpdateChecked,
+  HubUpdateRunChanged,
+  HubUpdateStarted,
   hubUpdatesOffMessage,
   ownerOnlyMessage,
   SandboxNoted,
@@ -320,6 +322,7 @@ import { Environments } from "./Environments.ts"
 import { type Checked, Gateway } from "./Gateway.ts"
 import { GitHubApp } from "./GitHubApp.ts"
 import { HubConfig } from "./HubConfig.ts"
+import { HubUpdateRuns } from "./HubUpdateRuns.ts"
 import { HubUpdates } from "./HubUpdates.ts"
 import { HubVersion } from "./HubVersion.ts"
 import { makeLiveSessions, type TextStream, type Why } from "./LiveSessions.ts"
@@ -677,6 +680,7 @@ export class SessionRelay extends Context.Service<
       const drift = yield* PermissionDrift
       const hubVersion = yield* HubVersion
       const hubUpdates = yield* HubUpdates
+      const hubUpdateRuns = yield* HubUpdateRuns
       const updatePush = yield* RunnerUpdatePush
       const claudeCredentials = yield* ClaudeCredentials
       const members = yield* Members
@@ -2094,6 +2098,7 @@ export class SessionRelay extends Context.Service<
             readonly _tag:
               | "CheckAppPermissions"
               | "CheckHubUpdate"
+              | "UpdateHub"
               | "CheckRepo"
               | "ListRepos"
               | "ListBranches"
@@ -2124,7 +2129,8 @@ export class SessionRelay extends Context.Service<
          * a Repo, creating a Session or about its Environment (#104), alike whether the Repo
          * exists or not. Leaving a Session or closing its terminal needs no access, nor do Runner
          * commands or shared variables, which are no Repo's: there are no roles (ADR 0009). A
-         * command that drives a Session is then refused anyone but its Creator (ADR 0026).
+         * command that drives a Session is then refused anyone but its Creator (ADR 0026), and a
+         * Runner's update anyone but the Hub's Owner (ADR 0028).
          */
         const authorize = Effect.fn("SessionRelay.authorize")(function* (
           message: RelayedCommand,
@@ -2140,8 +2146,12 @@ export class SessionRelay extends Context.Service<
             case "GetSharedVariables":
             case "SetSharedVariable":
             case "DeleteSharedVariable":
-            case "UpdateRunner":
               return {}
+            // Moving the code a Runner's Sessions run on is the Owner's (ADR 0028).
+            case "UpdateRunner":
+              return Option.contains(yield* members.owner, you.id)
+                ? {}
+                : { refusal: ownerOnlyMessage }
             case "StartTestBuild":
               return yield* authorizeTestBuild(message.repo)
             case "CreateSession":
@@ -2921,6 +2931,24 @@ export class SessionRelay extends Context.Service<
         })
 
         /**
+         * Updates the Hub (ADR 0028, #362), off the lock since it starts a process: the Owner's
+         * alone, on a Hub that checks, while no other update runs. Its progress follows as
+         * HubUpdateRunChanged.
+         */
+        const updateHub = Effect.fn("SessionRelay.updateHub")(function* (
+          message: Extract<WebToHub, { readonly _tag: "UpdateHub" }>,
+        ) {
+          const owner = yield* members.owner
+          if (!Option.contains(owner, you.id)) return refuse(message, ownerOnlyMessage)
+          const refused = yield* hubUpdateRuns.start({
+            now: message.now,
+            channel: message.channel,
+          })
+          if (refused !== undefined) return refuse(message, refused)
+          peer.send(HubUpdateStarted.make({ requestId: message.requestId }))
+        })
+
+        /**
          * Checks a Repo as it is entered (#104), off the lock since it waits on GitHub: whether the
          * person has access, recorded as any check is, and if not, why.
          */
@@ -3087,10 +3115,13 @@ export class SessionRelay extends Context.Service<
                   ? revokeCliToken(message)
                   : message._tag === "CheckAppPermissions"
                     ? checkAppPermissions(message.requestId)
-                    : message._tag === "CheckHubUpdate"
-                      ? checkHubUpdate(message).pipe(
+                    : message._tag === "CheckHubUpdate" || message._tag === "UpdateHub"
+                      ? (message._tag === "CheckHubUpdate"
+                          ? checkHubUpdate(message)
+                          : updateHub(message)
+                        ).pipe(
                           Effect.catchTag("SqlError", (error) =>
-                            Effect.logError("An update check failed", error).pipe(
+                            Effect.logError("A Hub update command failed", error).pipe(
                               Effect.andThen(
                                 Effect.sync(() =>
                                   refuse(message, "The Hub could not do that; try again."),
@@ -3216,6 +3247,8 @@ export class SessionRelay extends Context.Service<
                 const update = yield* hubUpdates.latest
                 if (Option.isSome(update) && Option.contains(yield* members.owner, you.id)) {
                   peer.send(HubUpdateChecked.make({ update: update.value }))
+                  const run = yield* hubUpdateRuns.latest
+                  if (Option.isSome(run)) peer.send(HubUpdateRunChanged.make({ run: run.value }))
                 }
               }),
             )
@@ -3978,6 +4011,24 @@ export class SessionRelay extends Context.Service<
         ),
         Effect.catchTag("SqlError", (error) =>
           Effect.logError("Could not send the Owner the update check", error),
+        ),
+        Effect.forever,
+        Effect.forkIn(layerScope),
+      )
+
+      // The latest update of the Hub as it goes (#362), for the Owner's web clients alone: its
+      // log is theirs alone.
+      const hubUpdateRunChanges = yield* hubUpdateRuns.changes
+      yield* PubSub.take(hubUpdateRunChanges).pipe(
+        Effect.flatMap((run) =>
+          Effect.map(members.owner, (owner) =>
+            toWeb(HubUpdateRunChanged.make({ run }), (client) =>
+              Option.contains(owner, client.you.id),
+            ),
+          ),
+        ),
+        Effect.catchTag("SqlError", (error) =>
+          Effect.logError("Could not send the Owner the Hub's update", error),
         ),
         Effect.forever,
         Effect.forkIn(layerScope),

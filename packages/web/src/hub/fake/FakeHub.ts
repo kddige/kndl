@@ -51,8 +51,10 @@ import {
   unsupportedAttachmentReason,
   messageAgentVerdict,
   modelNotFoundText,
+  hubPinnedMessage,
   hubUpdatesOffMessage,
   ownerOnlyMessage,
+  updateRunningText,
   PairingAlphabet,
   PairingCodeLength,
   PairingCodeLifetimeMs,
@@ -118,6 +120,7 @@ import type {
   ClaudeCredentialInfoWire,
   CliTokenInfoWire,
   HubMessage,
+  HubUpdateRunWire,
   HubUpdateStateWire,
   LogEntryWire,
   MemberWire,
@@ -174,6 +177,13 @@ export interface FakeHubOptions {
   hubUpdate?: HubUpdateStateWire | null
   /** The kndl the Hub runs. Default `hubVersion`, a commit on main. */
   hubVersion?: BuildVersionWire
+  /** The Hub's latest update (#362), sent to its Owner alone. Default none. */
+  hubUpdateRun?: HubUpdateRunWire | null
+  /**
+   * How the fake plays an update the Owner starts: it moves the Hub, which restarts on the new
+   * commit, or it rolls back, with an error and a log. Default `Succeeded`.
+   */
+  hubUpdateOutcome?: "Succeeded" | "RolledBack"
   /** How Claude answers a prompt from the web, as a script. Default `replyTo`'s. */
   reply?: (text: string) => ReadonlyArray<ReplyStep>
 }
@@ -362,7 +372,11 @@ export class FakeHub implements HubTransport {
   #cliTokens: Array<CliTokenInfoWire>
   #owner: boolean
   #hubUpdate: HubUpdateStateWire | null
-  readonly #hubVersion: BuildVersionWire
+  #hubVersion: BuildVersionWire
+  #hubUpdateRun: HubUpdateRunWire | null
+  readonly #hubUpdateOutcome: "Succeeded" | "RolledBack"
+  /** The Hub is down, restarting after an update: no connection opens. */
+  #down = false
   readonly #reply: (text: string) => ReadonlyArray<ReplyStep>
   /** The Hub's Members (#209), the Owner first. */
   members: Array<MemberWire> = seedMembers()
@@ -404,6 +418,8 @@ export class FakeHub implements HubTransport {
     this.#owner = options.owner ?? true
     this.#hubUpdate = options.hubUpdate ?? null
     this.#hubVersion = options.hubVersion ?? hubVersion
+    this.#hubUpdateRun = options.hubUpdateRun ?? null
+    this.#hubUpdateOutcome = options.hubUpdateOutcome ?? "Succeeded"
     this.#reply = options.reply ?? replyTo
     this.runners = seedRunners()
     for (const seed of seedSessions()) {
@@ -438,7 +454,7 @@ export class FakeHub implements HubTransport {
 
   open(handlers: SocketHandlers): HubSocket {
     const socket = new FakeSocket(this, handlers)
-    if (!this.#signedIn) {
+    if (!this.#signedIn || this.#down) {
       // The real Hub refuses the upgrade without a sign-in cookie: the socket never opens.
       socket.closed = true
       setTimeout(() => handlers.onClose(), 0)
@@ -947,6 +963,9 @@ export class FakeHub implements HubTransport {
           hub: this.#hubVersion,
           ...(this.#owner && { owner: true }),
           ...(this.#owner && this.#hubUpdate !== null && { hubUpdate: this.#hubUpdate }),
+          ...(this.#owner &&
+            this.#hubUpdate !== null &&
+            this.#hubUpdateRun !== null && { hubUpdateRun: this.#hubUpdateRun }),
         })
         socket.deliver(this.#runnerList())
         socket.deliver(this.#pairingCodeList())
@@ -1049,6 +1068,9 @@ export class FakeHub implements HubTransport {
         this.#toOthers(socket, { _tag: "HubUpdateChecked", update: checked })
         break
       }
+      case "UpdateHub":
+        this.#updateHub(socket, message)
+        break
       case "CheckRepo": {
         const status = this.#repoStatus(message.repo)
         socket.deliver({
@@ -1619,8 +1641,9 @@ export class FakeHub implements HubTransport {
       }
       case "UpdateRunner": {
         const runner = this.runners.find((candidate) => candidate.id === message.runnerId)
-        const refused =
-          runner === undefined
+        const refused = !this.#owner
+          ? ownerOnlyMessage
+          : runner === undefined
             ? "There is no such Runner."
             : !runner.isOnline
               ? `${runner.name} is offline: it can update once it is back.`
@@ -2960,7 +2983,7 @@ export class FakeHub implements HubTransport {
       })
       this.#toAll(this.#runnerList())
     }
-    const target = hubVersion
+    const target = this.#hubVersion
     const since = Date.now()
     const plan: Array<() => void> = [
       () => set({ _tag: "Checking", target, since }),
@@ -2986,6 +3009,149 @@ export class FakeHub implements HubTransport {
         }),
     ]
     plan.forEach((step, index) => this.#after(index * 6, step))
+  }
+
+  /**
+   * Plays an update of the Hub (#362), as `kndl update --source hub` runs and the Hub reports it:
+   * its steps, then the Hub goes down to restart, and comes back on the new commit with how it
+   * ended, its self-updating Runners draining to follow. Moving from dev to stable with nothing
+   * newer records the Channel, and the Hub stays up where it is. Refused as on the Hub.
+   */
+  #updateHub(socket: FakeSocket, message: Extract<WebToHub, { _tag: "UpdateHub" }>): void {
+    const update = this.#hubUpdate
+    const refuse = (why: string) => this.#refuse(socket, message._tag, message.requestId, why)
+    if (!this.#owner) return refuse(ownerOnlyMessage)
+    if (update === null) return refuse(hubUpdatesOffMessage)
+    const { follows } = update
+    if (follows._tag === "Pinned" && message.channel === undefined) {
+      return refuse(hubPinnedMessage(follows.ref))
+    }
+    const latest = this.#hubUpdateRun
+    if (latest?.status.state === "Running") {
+      return refuse(
+        updateRunningText({ pid: 4242, startedAt: latest.status.startedAt, source: "hub" }),
+      )
+    }
+    socket.deliver({ _tag: "HubUpdateStarted", requestId: message.requestId })
+
+    const channel = message.channel ?? (follows._tag === "Channel" ? follows.channel : "stable")
+    const found = update.checked?.found
+    const from = this.#hubVersion
+    const target: BuildVersionWire | undefined =
+      channel === "dev"
+        ? {
+            commit: found?._tag === "NewerCommits" ? found.head : "f".repeat(40),
+            branch: "main",
+            channel: "dev",
+          }
+        : found?._tag === "NewerRelease" && message.channel === undefined
+          ? { commit: "7".repeat(40), release: found.releases[0].version, channel: "stable" }
+          : undefined
+    const startedAt = Date.now()
+    const begun = {
+      id: `fake-${startedAt.toString(36)}`,
+      source: "hub" as const,
+      startedAt,
+      from: { commit: from.commit, ...(from.release !== undefined && { version: from.release }) },
+      ...(target !== undefined && {
+        target: {
+          ref: target.release === undefined ? "main" : `v${target.release}`,
+          commit: target.commit,
+        },
+      }),
+    }
+    const set = (run: HubUpdateRunWire) => {
+      this.#hubUpdateRun = run
+      if (this.#owner) this.#toAll({ _tag: "HubUpdateRunChanged", run })
+    }
+    const step = (label: string) => () =>
+      set({ status: { ...begun, step: label, state: "Running" } })
+    const ended = (state: "Succeeded" | "RolledBack", label: string) => {
+      const log = [
+        "== Fetching",
+        "$ git fetch --tags --force origin",
+        "== Building the web UI",
+        "$ bun run web:build",
+        ...(state === "RolledBack"
+          ? ["error: vite exited with 1", "== Rolling back", "$ git checkout --force -B main"]
+          : ["✓ built in 4.2s"]),
+      ].join("\n")
+      return {
+        status: {
+          ...begun,
+          step: label,
+          state,
+          finishedAt: Date.now(),
+          ...(state === "RolledBack" && {
+            error: "Building the web UI failed: `bun run web:build` exited with 1.",
+          }),
+        },
+        logTail: log,
+      } satisfies HubUpdateRunWire
+    }
+
+    if (target === undefined) {
+      // dev → stable with no newer Release, or stable with nothing newer: nothing moves.
+      const plan = [
+        step("Starting"),
+        step("Asking origin for its branches and tags"),
+        step("Recording the Channel"),
+        () => {
+          set(ended("Succeeded", "Recording the Channel"))
+          this.setHubUpdate({
+            follows: { _tag: "Channel", channel },
+            checked: { at: Date.now(), found: { _tag: "UpToDate" } },
+          })
+        },
+      ]
+      plan.forEach((run, index) => this.#after(index * 2, run))
+      return
+    }
+    const outcome = this.#hubUpdateOutcome
+    const plan = [
+      step("Starting"),
+      step("Fetching"),
+      step("Checking out"),
+      step("Installing dependencies"),
+      step("Building the web UI"),
+      ...(outcome === "Succeeded" ? [step("Restarting the Hub")] : [step("Rolling back")]),
+      () => {
+        this.#down = true
+        this.#closeAll()
+      },
+    ]
+    plan.forEach((run, index) => this.#after(index * 2, run))
+    this.#after(plan.length * 2 + 4, () => {
+      if (outcome === "Succeeded") {
+        this.#hubVersion = target
+        this.#hubUpdate = {
+          follows: { _tag: "Channel", channel },
+          checked: { at: Date.now(), found: { _tag: "UpToDate" } },
+        }
+        this.#hubUpdateRun = ended("Succeeded", "Checking the Hub's health")
+        // Its Runners follow the new commit, each once its running Turns end.
+        const since = Date.now()
+        this.runners = this.runners.map((runner) =>
+          runner.isOnline && runner.updater?.self === true
+            ? {
+                ...runner,
+                versionStatus: "Behind",
+                update: {
+                  _tag: "Draining",
+                  target,
+                  since,
+                  deadline: since + UpdateDrainMillis,
+                  now: message.now,
+                  waitingFor: runner.openSessions,
+                },
+              }
+            : runner,
+        )
+      } else {
+        this.#hubUpdateRun = ended("RolledBack", "Rolling back")
+      }
+      this.#down = false
+    })
   }
 
   #pairingCodeList(): Extract<HubMessage, { _tag: "PairingCodeList" }> {
