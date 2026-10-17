@@ -49,7 +49,7 @@ Run 9 failed with `OpenAI API error (400): No tool call found for function call 
 ## Other findings
 
 - **pi's model catalogue isn't what an account can use.** pi lists models from a static catalogue. Through "Sign in with ChatGPT", `gpt-5.5`, `gpt-5.4`, `gpt-5.x-codex` and `gpt-5.4-mini` were refused ("not supported when using Codex with a ChatGPT account"), and only `gpt-5.6-{luna,sol,terra}` worked. This confirms ADR 0029's choice that the Hub asks each Provider for its models under the Creator's account.
-- **Cost is notional for subscriptions.** pi-ai prices GPT turns at API list prices, even through a ChatGPT subscription, and Claude turns through the bridge cost 0. A Turn's "cost" must say whether it was really billed.
+- **Cost is at list price, even on subscriptions.** pi-ai prices GPT turns at API list prices, even through a ChatGPT subscription. That's wanted: a Turn's cost shows what it would have cost, and someone on a subscription knows they weren't billed. Claude turns through the bridge cost 0, so our bridge must price them from the catalogue too.
 - **Claude Code as root needs `IS_SANDBOX=1`** for `bypassPermissions`, as kndl already sets. Without it, every Claude turn fails at once.
 - **pi loads `AGENTS.md` and `CLAUDE.md` natively** (`--no-context-files` turns off both). Repo context needs no adapting.
 - **The bridge keeps its own Claude Code session** in `CLAUDE_CONFIG_DIR`, a mirror of pi's history. It rebuilds it from pi's history (`cc-session-io`) when the two diverge, which is the partial cache rewrite seen after a switch or an abort. In kndl that directory belongs on the Session's `claude` volume, so it survives sleep.
