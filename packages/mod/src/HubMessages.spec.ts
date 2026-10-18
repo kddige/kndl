@@ -186,7 +186,7 @@ describe("checkEvent", () => {
   })
 })
 
-test("helloBody says hello in the protocol's shape: this mod steers (#195), and marks files (#278)", () => {
+test("helloBody says hello in the protocol's shape: this mod steers (#195), marks files (#278), and takes handoffs (ADR 0030)", () => {
   const body = helloBody({
     sessionId: "s1",
     conversationId: "0b6d6c1e-2f4a-4c3b-9d8e-7a6b5c4d3e2f",
@@ -200,6 +200,7 @@ test("helloBody says hello in the protocol's shape: this mod steers (#195), and 
     model: "claude-test",
     steers: true,
     attaches: true,
+    takesHandoffs: true,
   } as never)
 })
 
@@ -219,6 +220,7 @@ test("helloBody says a mod that switches models so (ADR 0029): a pi Session's", 
     steers: true,
     attaches: true,
     switchesModels: true,
+    takesHandoffs: true,
   } as never)
 })
 

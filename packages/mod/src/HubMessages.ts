@@ -51,8 +51,9 @@ export interface HelloFields {
 }
 
 /**
- * The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195), and marks the
- * files of a steered prompt, a message to a subagent and a reply (#278).
+ * The body of `POST /mod/hello`: this mod steers prompts into a running Turn (#195), marks the
+ * files of a steered prompt, a message to a subagent and a reply (#278), and takes a context
+ * handoff, serving its agent the Session's earlier Turns (ADR 0030).
  */
 export const helloBody = ({ switchesModels, ...hello }: HelloFields) =>
   JSON.stringify(
@@ -63,6 +64,7 @@ export const helloBody = ({ switchesModels, ...hello }: HelloFields) =>
         ...hello,
         steers: true,
         attaches: true,
+        takesHandoffs: true,
         ...(switchesModels === true && { switchesModels }),
       }),
     ),

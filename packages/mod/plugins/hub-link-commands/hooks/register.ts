@@ -12,7 +12,8 @@
 //   the Participants watching (ADR 0026).
 // - Claude: a tool that opens the files the Creator attaches to prompts (#276, ADR 0024), which the
 //   plugin API's prompts can't carry: it fetches each from the Hub, and answers with the image or
-//   PDF (#277).
+//   PDF (#277). After the Session switched to Claude Code from another Harness, a context handoff
+//   of what happened meanwhile, and a tool that reads further back in its history (ADR 0030).
 //
 // The rest of the plugin, with Effect and the protocol, is bundled from the mod package's src/
 // into hooks/hub-link-lib.js (`bun run build`).
@@ -30,6 +31,12 @@ import {
   attachmentToolName,
   attachmentToolSpec,
   deliveredPrompt,
+  handoffNote,
+  historyAnswer,
+  historyPath,
+  historyRequest,
+  historyToolName,
+  historyToolSpec,
   HubLink,
   maxAttachmentParts,
   steeredPrompt,
@@ -64,6 +71,18 @@ const state = {
    * answer, and says whether it came first.
    */
   asking: new Map<string, (answer: QuestionAnswer, sender: Participant) => boolean>(),
+  /**
+   * A context handoff Claude Code wouldn't append as a note (ADR 0030): it goes, out of sight,
+   * with the next prompt instead.
+   */
+  handoff: undefined as string | undefined,
+}
+
+/** The handoff waiting for the next prompt, if one is: taken, so it goes once. */
+const takeHandoff = () => {
+  const note = state.handoff
+  state.handoff = undefined
+  return note
 }
 
 const report = (event: Record<string, unknown>) => state.link?.report(event)
@@ -138,14 +157,19 @@ const deliverPrompt = async ($: EngineInterface, command: Command<"DeliverPrompt
   }
   const attachments = command.attachments ?? []
   const text = deliveredPrompt(command.sender, command.text, attachments)
+  const context = [
+    takeHandoff(),
+    attachments.length > 0 ? attachmentContext(attachments) : undefined,
+  ].filter((part) => part !== undefined)
   try {
     // Said before it is submitted, so hub-link reads it when the Turn starts, and adds what Claude
-    // is told of its files: a plugin's own hooks don't see the prompt it submits.
+    // is told of its files, and a handoff that waits: a plugin's own hooks don't see the prompt it
+    // submits.
     await $.state.set(delivered, {
       promptId: command.promptId,
       sender: command.sender,
       text,
-      ...(attachments.length > 0 && { context: attachmentContext(attachments) }),
+      ...(context.length > 0 && { context: context.join("\n\n") }),
     })
     const entered = await $.prompt.submit({ text, asUser: true })
     if (entered.drop !== undefined) failed(`a hook dropped the prompt: ${entered.drop}`)
@@ -185,6 +209,31 @@ const deliverIntoTurn = async ($: EngineInterface, command: Command<"DeliverInto
     failed(String(error))
   } finally {
     await $.state.set(steering, null).catch(() => undefined)
+  }
+}
+
+/**
+ * What happened in the Session while another Harness ran it (ADR 0030), as a note in the
+ * conversation, appended as a steered prompt is: Claude reads it with the next prompt, ahead of it,
+ * and no Turn starts with it (spike #195; in a new conversation too, checked against Claude Code
+ * 2.1.296 with a stub API). It comes once Claude Code has started, before the next
+ * prompt, so while Claude is idle; if it comes during a Turn, Claude reads it at the Turn's next
+ * step. One Claude Code won't append goes with the next prompt instead.
+ */
+const deliverHandoff = async ($: EngineInterface, command: Command<"DeliverHandoff">) => {
+  const note = handoffNote(command, historyToolName)
+  if (note === undefined) return
+  const held = (why: string) => {
+    $.ui.log(`hub-link-commands: the handoff waits for the next prompt: ${why}`, { to: "debug" })
+    state.handoff = note
+  }
+  try {
+    const appended = await $.session.append({
+      message: { type: "user", content: [{ type: "text", text: note }] },
+    })
+    if (appended.deny !== undefined) held(appended.deny)
+  } catch (error) {
+    held(String(error))
   }
 }
 
@@ -244,6 +293,10 @@ const runCommand = async ($: EngineInterface, command: ModCommand) => {
     // Appended at once, so one steered prompt is told from the next.
     case "DeliverIntoTurn":
       await deliverIntoTurn($, command)
+      return
+    // Appended before the prompt that follows it is submitted.
+    case "DeliverHandoff":
+      await deliverHandoff($, command)
       return
     case "StopAgent":
       await stopAgent($, command)
@@ -315,12 +368,40 @@ export function register(on: On) {
       $.ui.log(`hub-link-commands: ${error}`, { to: "debug" })
       return false
     })
-    // In the tool list from the first request on, beside the Hub link it fetches through.
+    // In the tool list from the first request on, beside the Hub link they fetch through.
     if (linked)
-      await $.tool
-        .register(attachmentToolSpec)
-        .catch((error) => $.ui.log(`hub-link-commands: ${error}`, { to: "debug" }))
+      for (const tool of [attachmentToolSpec, historyToolSpec])
+        await $.tool
+          .register(tool)
+          .catch((error) => $.ui.log(`hub-link-commands: ${error}`, { to: "debug" }))
     return started
+  })
+
+  // A handoff that waits goes with a prompt typed at the terminal, if that comes first, out of
+  // sight. This plugin's own prompts don't pass here: they carry it themselves.
+  on("prompt.submit", async ($, e, next) => {
+    const note = takeHandoff()
+    return next(note === undefined ? e : { ...e, context: [...(e.context ?? []), note] })
+  })
+
+  // The Session's earlier Turns (ADR 0030), as the handoff or the tool's last answer says where
+  // they start: fetched from the Hub, through the Runner's relay, and handed Claude as text.
+  on("tool.call", { tool: historyToolName }, async ($, e) => {
+    const hub = state.hub
+    if (hub === undefined) return { deny: "This session is not linked to a kndl Hub." }
+    const request = historyRequest(e)
+    if ("error" in request) return { deny: request.error }
+    try {
+      const response = await $.http.fetch(`${hub.url}${historyPath(request)}`, {
+        headers: { authorization: `Bearer ${hub.modToken}` },
+      })
+      const answer = historyAnswer(response.status, response.text, request, historyToolName)
+      return "error" in answer
+        ? { deny: answer.error }
+        : { result: [{ type: "text" as const, text: answer.text }] }
+    } catch (error) {
+      return { deny: `Could not read the session's history: ${String(error)}` }
+    }
   })
 
   // A file the Creator attached (#276, ADR 0024), by the id its marker gives: fetched from the

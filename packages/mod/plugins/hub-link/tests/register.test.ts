@@ -201,6 +201,7 @@ describe("the Hub link", () => {
       model: "claude-test",
       steers: true,
       attaches: true,
+      takesHandoffs: true,
     })
   })
 

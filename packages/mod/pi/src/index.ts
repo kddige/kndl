@@ -8,10 +8,11 @@
 //   Session's MCP servers, at the Gateway too, and the Repo's Claude Code skills (RepoSetup.ts).
 // - The Hub: says hello once pi's session is known, reports each pi run as a Turn (Turns.ts), and
 //   runs the Hub's commands: prompts, steering, stopping, switching the model (ModelSwitch.ts),
-//   presence.
+//   presence, and a context handoff after the Session switched to pi (History.ts).
 // - The model: the system prompt says the Session is shared, and a tool opens attachments; others
-//   ask the people questions (Questions.ts), and start, message and stop subagents, which run in
-//   the background, kept on disk, and whose results start Turns of their own (Subagents.ts).
+//   ask the people questions (Questions.ts), start, message and stop subagents, which run in the
+//   background, kept on disk, and whose results start Turns of their own (Subagents.ts), and read
+//   the Session's earlier Turns (History.ts).
 // - The person at the terminal: a line above the editor shows the link and who watches.
 //
 // pi loads this bundle with its own copies of its packages (`@earendil-works/*` stay external);
@@ -41,6 +42,7 @@ import {
 } from "../../src/HubMessages.ts"
 import { attachmentTool, openAttachment } from "./Attachments.ts"
 import { registerClaude } from "./claude/Claude.ts"
+import { registerHistory } from "./History.ts"
 import { switchModel as switchToModel, throughKndl } from "./ModelSwitch.ts"
 import { presenceLine, watching } from "./Presence.ts"
 import { fetchProviders, gatewayProviders } from "./Providers.ts"
@@ -460,6 +462,9 @@ export default async function kndl(pi: ExtensionAPI) {
       case "DeliverAnswer":
         questions.answer(command)
         return
+      case "DeliverHandoff":
+        history.deliver(command)
+        return
     }
   }
 
@@ -502,6 +507,15 @@ export default async function kndl(pi: ExtensionAPI) {
       }),
       details: undefined,
     }),
+  })
+
+  // The history tool, and how a handoff is drawn (ADR 0030).
+  const history = registerHistory(pi, {
+    fetchHistory: (path) =>
+      fetchHub(`${env.hubUrl}${path}`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${env.modToken}` },
+      }),
   })
 
   // The question and agent tools (ADR 0029).

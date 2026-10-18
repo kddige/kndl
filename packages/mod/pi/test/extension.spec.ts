@@ -183,7 +183,7 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     return `stderr: ${running.stderr()}\nkndl.log: ${existsSync(log) ? readFileSync(log, "utf8") : "(none)"}`
   }
 
-  test("says hello once pi's session is known: its conversation, its model, and that it steers, attaches and switches models", async () => {
+  test("says hello once pi's session is known: its conversation, its model, and that it steers, attaches, switches models and takes handoffs", async () => {
     const hello = await hub
       .until(() => hub.hellos[0])
       .catch((error) => {
@@ -196,6 +196,7 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
       steers: true,
       attaches: true,
       switchesModels: true,
+      takesHandoffs: true,
     })
     expect(String(hello.conversationId)).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
   }, 30_000)
@@ -752,6 +753,87 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     const tags = events.map((event) => event._tag)
     expect(tags.indexOf("TurnEnded")).toBeLessThan(tags.lastIndexOf("TurnStarted"))
   }, 30_000)
+
+  test("a context handoff reaches the model with the next prompt, ahead of it, and starts no Turn of its own (ADR 0030)", async () => {
+    hub.scripts.push(textReply("Picking up from there.", { input: 10, output: 3 }))
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    const handoff =
+      "Turn #12, prompted by Ada Lovelace\nPrompt: Add a health check.\nAnswer: Added GET /health."
+    hub.send({
+      _tag: "DeliverHandoff",
+      sessionId,
+      from: "ClaudeCode",
+      text: handoff,
+      earlierBefore: 12,
+    })
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId,
+      promptId: "q-handoff",
+      text: "test it",
+      sender: ada,
+    })
+
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    expect(events[0]).toMatchObject({
+      _tag: "TurnStarted",
+      text: "[Ada Lovelace] test it",
+      promptId: "q-handoff",
+    })
+    expect(events.filter((event) => event._tag === "TurnStarted")).toHaveLength(1)
+    expect(hub.gatewayRequests).toHaveLength(requests + 1)
+    const body = JSON.stringify(hub.gatewayRequests[requests]?.body)
+    const note = body.indexOf("<context-handoff>")
+    expect(note).toBeGreaterThan(-1)
+    expect(body).toContain("Added GET /health.")
+    expect(body).toContain("call session_history with before=12")
+    expect(body.indexOf("[Ada Lovelace] test it")).toBeGreaterThan(note)
+  })
+
+  test("the history tool reads the Session's earlier Turns from the Hub (ADR 0030)", async () => {
+    hub.history["before=12&limit=2"] = {
+      turns: [
+        {
+          seq: 10,
+          by: "Ada Lovelace",
+          prompt: "Add a server.",
+          tools: ["write: src/server.ts"],
+          answer: "Added the server on port 8080.",
+          model: "claude-opus-4-6",
+        },
+        { seq: 11, by: "terminal", prompt: "run it", tools: [], answer: "It's up." },
+      ],
+      earlierBefore: 10,
+    }
+    hub.scripts.push(
+      toolCallReply("session_history", { before: 12, limit: 2 }, { input: 10, output: 2 }),
+      textReply("Port 8080.", { input: 20, output: 2 }),
+    )
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    hub.send({
+      _tag: "DeliverPrompt",
+      sessionId,
+      promptId: "q-history",
+      text: "which port?",
+      sender: ada,
+    })
+
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    expect(hub.historyRequests).toEqual(["before=12&limit=2"])
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        _tag: "ToolCallEnded",
+        tool: "session_history",
+        outcome: "Succeeded",
+      }),
+    )
+    const body = JSON.stringify(hub.gatewayRequests[requests + 1]?.body)
+    expect(body).toContain("Turn #10, prompted by Ada Lovelace, on claude-opus-4-6")
+    expect(body).toContain("Added the server on port 8080.")
+    expect(body).toContain("call session_history with before=10")
+  })
 
   test("leaves pi when its session ends", async () => {
     pi.stdin.end()

@@ -21,6 +21,7 @@ describe("the Hub link", () => {
       model: "claude-test",
       steers: true,
       attaches: true,
+      takesHandoffs: true,
     })
     expect(requests[1]?.url).toBe(`${hubUrl}/mod/commands?after=0&waitMs=25000`)
   })
@@ -316,7 +317,9 @@ describe("attachments (#276)", () => {
 
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
 
-    expect(registered).toEqual([expect.objectContaining({ name: "attachment", isDeferred: false })])
+    expect(registered).toContainEqual(
+      expect.objectContaining({ name: "attachment", isDeferred: false }),
+    )
   })
 
   test("a prompt with attachments marks each, and says what Claude is to be told of them", async ($, on) => {

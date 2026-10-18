@@ -1,9 +1,9 @@
 // A Hub for the pi extension's end-to-end test: it plays the mod endpoints (hello, events,
-// commands, providers, attachments) and the Gateway, where it answers pi-ai's OpenAI Responses
+// commands, providers, attachments, history) and the Gateway, where it answers pi-ai's OpenAI Responses
 // requests with scripted streams, and serves each Installation's MCP server: one tool, `echo`.
 
 import { ProtocolVersion } from "@kndl/protocol"
-import type { ModAttachmentEncoded, ModProviders } from "@kndl/protocol"
+import type { ModAttachmentEncoded, ModHistory, ModProviders } from "@kndl/protocol"
 
 export interface GatewayRequest {
   readonly path: string
@@ -195,6 +195,10 @@ export class FakeHub {
   providers: ModProviders
   /** What the Gateway answers next, in order. */
   readonly scripts: Array<Script> = []
+  /** What `/mod/history` answers (ADR 0030), by the query asked; 404 for any other. */
+  readonly history: Record<string, ModHistory> = {}
+  /** The queries `/mod/history` was asked, in order. */
+  readonly historyRequests: Array<string> = []
   private readonly commands: Array<{ seq: number; message: unknown }> = []
   private wake: Array<() => void> = []
   private watchers: Array<() => void> = []
@@ -305,6 +309,14 @@ export class FakeHub {
           setTimeout(resolve, 500)
         })
       return Response.json({ messages: pending() })
+    }
+    if (url.pathname === "/mod/history") {
+      const query = url.search.slice(1)
+      this.historyRequests.push(query)
+      const turns = this.history[query]
+      return turns === undefined
+        ? Response.json({ error: "No such Turns." }, { status: 404 })
+        : Response.json(turns)
     }
     const attachment = /^\/mod\/attachments\/([^/]+)$/.exec(url.pathname)
     if (attachment?.[1] !== undefined) {
