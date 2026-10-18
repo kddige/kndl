@@ -57,3 +57,9 @@ If it fails, Claude Code and pi are peer Harnesses instead, chosen when a Sessio
 - **kndl tracks pi.** pi ships every few days and breaks extensions. kndl pins it and upgrades it on purpose, as it does Claude Code.
 - **The bridge is ours to keep working** across Claude Code releases, and it depends on how Anthropic bills Claude Code's headless use.
 - **The Claude Code mod goes**, with its spike-found tricks (ADR 0018), once the last Claude Code Session is purged.
+
+## Amendment: the Gateway forwards each Provider's own API (2026-10-18)
+
+The `kndl` provider was to send pi-ai's context to the Hub, which would call pi-ai. Instead, kndl's pi extension re-points pi's own providers, `openai` and `xai`, at the Gateway. pi still speaks each Provider's API itself, using the Session token as its key, and the Gateway sends each request on with the Creator's credential in its place, refreshing a sign-in's when needed. It keeps what the decision was for: nothing lost on the way, no translation for each Provider, and no credential in the Sandbox. It also takes less code than streaming pi-ai's events through the Hub, and pi's own message conversion, caching and usage accounting stay as they are. `docs/design/pi-harness.md` has the details.
+
+The first Providers are OpenAI (Sign in with ChatGPT, or an API key) and xAI (Sign in with SuperGrok or X Premium, or an API key).
