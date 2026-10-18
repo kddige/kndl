@@ -1,6 +1,6 @@
 # Docs style
 
-How the docs site (`packages/docs`, published at <https://kddige.github.io/kndl/>) is written. Follow it in every PR that changes the site, and change this file when a convention changes.
+How the docs site (`packages/docs`, published at <https://kddige.github.io/kndl/>) is written, and the web UI's copy too: its Voice and Glossary terms sections, and [UI copy](#ui-copy), govern both. Follow it in every PR that changes the site or the UI's words, and change this file when a convention changes.
 
 The bar is [Bun's docs](https://bun.sh/docs) and [Astro's](https://docs.astro.build): short pages, code first, one path through each task, and a clear next step. A reader should be able to skim a page's headings and commands and get the job done without reading a paragraph.
 
@@ -74,6 +74,19 @@ Reference pages are tables with the same columns throughout the page, examples o
 - Link a term to its glossary entry or its page on first use in a page, when the reader may not know it.
 - Don't stack terms. "The Runner boots the Session's Sandbox from the Repo's Environment's Build" is four definitions in one sentence. Introduce one at a time, or say it plainly first and name it after.
 - Don't invent synonyms: a Sandbox is never a "VM" or "container" in prose that means the Sandbox.
+
+## UI copy
+
+The web UI follows the Voice and Glossary terms above, and these:
+
+- **Buttons and menu items** are a verb and its object: "Delete Session", "Copy link". A lone verb is fine where the object is plain from the surroundings.
+- **Errors** say what failed, then the next step. Titles are "Couldn't {verb} {object}", or "{action} not sent" when the Hub isn't reachable.
+- **Toast titles** are the object and a past participle: "Link copied", "Invite revoked". Add a description only when there's a next step.
+- **Page descriptions** are one sentence of under 15 words, saying what the page holds.
+- **States** use one word, the same everywhere: the glossary's Active, Asleep, Frozen and Archived, and "Working" and "Waiting on you".
+- **The agent** is "the agent", unless the Harness is known. A Session may run on pi or Claude Code.
+- **Plurals and lists** come from the helpers in `packages/web/src/app/format.ts` (`plural`, `counted`, `andList`), never `n === 1 ?`.
+- **Shared strings** live in `packages/web/src/app/copy.ts`.
 
 ## Components
 

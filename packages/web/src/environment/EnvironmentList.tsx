@@ -2,7 +2,7 @@ import { sameRepo } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useMemo } from "react"
-import { repoParams } from "../app/format.ts"
+import { plural, repoParams } from "../app/format.ts"
 import { useHubState } from "../app/hub.tsx"
 import { isListed } from "../hub/store.ts"
 import { knownRepos } from "../sessions/groups.ts"
@@ -111,7 +111,8 @@ export function EnvironmentList() {
                     <span {...stylex.props(styles.main)}>
                       <span {...stylex.props(styles.repo)}>{repo}</span>
                       <span {...stylex.props(styles.count)}>
-                        {listed === 0 ? "No" : listed} {listed === 1 ? "Session" : "Sessions"}
+                        {listed === 0 ? "No" : listed}{" "}
+                        {plural(listed, { one: "Session", other: "Sessions" })}
                       </span>
                     </span>
                     <ChevronRightIcon {...stylex.props(styles.chevron)} />

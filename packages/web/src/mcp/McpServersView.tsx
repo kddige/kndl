@@ -45,7 +45,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { Redacted } from "effect"
 import { type FormEvent, useEffect, useState } from "react"
-import { andList, repoParams, timeAgo } from "../app/format.ts"
+import { andList, counted, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { repoPattern } from "../app/repoAccess.tsx"
 import {
@@ -582,8 +582,8 @@ function InstallationRow({
             {hidden && (
               <span>
                 {installation.repos.length > 0 && "and "}
-                {installation.otherRepos} {installation.otherRepos === 1 ? "Repo" : "Repos"} you
-                have no access to
+                {counted(installation.otherRepos, { one: "Repo", other: "Repos" })} you have no
+                access to
               </span>
             )}
           </div>
@@ -839,7 +839,7 @@ function McpServerDialog({
       description={
         saved === null
           ? "A remote MCP server, over Streamable HTTP. Only the Hub reaches it: Sessions reach it through the Hub."
-          : "The Hub sends its Sessions' requests to the new URL, with the header secrets as declared, at once; they show a new name from their next wake or Restart."
+          : "The Hub sends its Sessions' requests to the new URL, with the header secrets as declared, at once; they show a new name from their next wake or restart."
       }
       footer={
         <>
@@ -1154,7 +1154,7 @@ function InstallationDialog({
           ? `Add an Installation of ${shown?.mcpServer.name ?? ""}`
           : `Edit ${saved.name}`
       }
-      description={`Claude Code in each listed Repo's Sessions gets its tools from their next wake or Restart. A Repo has at most one Installation of each MCP server, and you need access to every Repo listed.${owner ? " A global one is on in every Repo but those with their own Installation of the MCP server, or that turned it off." : ""}${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}${shown?.mcpServer.auth._tag === "OAuth" ? " Once added, connect it to the account its Sessions act as." : ""}`}
+      description={`Each listed Repo's Sessions get its tools from their next wake or restart. A Repo has at most one Installation of each MCP server, and you need access to every Repo listed.${owner ? " A global one is on in every Repo but those with their own Installation of the MCP server, or that turned it off." : ""}${declared.length > 0 ? " Header secret values are write-only: once saved, no one sees them again." : ""}${shown?.mcpServer.auth._tag === "OAuth" ? " Once added, connect it to the account its Sessions act as." : ""}`}
       footer={
         <>
           <DialogClose>Cancel</DialogClose>

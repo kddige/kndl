@@ -278,7 +278,7 @@ function ClientDialog({
 async function copyCallback(url: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(url)
-    toast.show({ title: "Copied the callback URL" })
+    toast.show({ title: "Callback URL copied" })
   } catch {
     toast.show({
       title: "Couldn't copy",

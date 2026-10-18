@@ -348,7 +348,7 @@ function CredentialForm({
       const answer = await hub.setClaudeCredential(secret.trim())
       setSecret("")
       toast.show({
-        title: "Saved your Claude credential",
+        title: "Claude credential saved",
         ...(answer.warning !== undefined && { intent: "warning" as const }),
       })
       onSaved(answer.warning)
@@ -430,7 +430,7 @@ function RemoveDialog({
     setError(null)
     try {
       await hub.removeClaudeCredential()
-      toast.show({ title: "Removed your Claude credential" })
+      toast.show({ title: "Claude credential removed" })
       onRemoved()
       onClose()
     } catch (cause) {

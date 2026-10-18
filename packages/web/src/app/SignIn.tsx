@@ -2,6 +2,7 @@ import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, type ReactNode, useState } from "react"
 import { githubSignInUrl, type SignInOptions } from "../hub/config.ts"
 import { Button, Field, Input, useDocumentTitle } from "../ui/index.ts"
+import { focus, textLink } from "../ui/shared.ts"
 import {
   color,
   leading,
@@ -131,9 +132,21 @@ export function SignIn({
     <AuthCard
       title="Sign in to kndl"
       lede={
-        options.github || options.dev
-          ? (lede ?? "Sign in to see the Sessions on the Repos you can access.")
-          : "This Hub has no way to sign in turned on. Set up GitHub sign-in, or start it on loopback with KNDL_DEV_LOGIN=1."
+        options.github || options.dev ? (
+          (lede ?? "Sign in to see the Sessions on the Repos you can access.")
+        ) : (
+          <>
+            No sign-in method is set up on this Hub.{" "}
+            <a
+              href="https://kddige.github.io/kndl/self-hosting/set-up-the-github-app/"
+              target="_blank"
+              rel="noreferrer noopener"
+              {...stylex.props(textLink.underline, focus.ring)}
+            >
+              Set up GitHub sign-in
+            </a>
+          </>
+        )
       }
     >
       {options.github && (
@@ -149,7 +162,7 @@ export function SignIn({
       )}
       {options.github && (
         <p {...stylex.props(styles.note)}>
-          This Hub is invite-only. New here? Open the invite its Owner sent you.
+          This Hub is invite-only. New here? Open the Invite its Owner sent you.
         </p>
       )}
       {options.github && options.dev && <div {...stylex.props(styles.divider)}>or</div>}

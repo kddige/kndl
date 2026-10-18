@@ -404,7 +404,7 @@ function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void })
 async function copyLink(link: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(link)
-    toast.show({ title: "Copied the link" })
+    toast.show({ title: "Link copied" })
   } catch {
     toast.show({
       title: "Couldn't copy",

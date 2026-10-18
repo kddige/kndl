@@ -24,7 +24,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { lazy, Suspense, useEffect, useId, useState } from "react"
 import { copyCommand } from "../app/copy.ts"
-import { timeAgo } from "../app/format.ts"
+import { counted, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import { keptAwakeText } from "../session/keepAwake.ts"
 import {
@@ -459,7 +459,7 @@ function RunnerRow({
             <span {...stylex.props(styles.fact)}>
               {runner.openSessions === 0
                 ? "No Sessions"
-                : `${runner.openSessions} ${runner.openSessions === 1 ? "Session" : "Sessions"}`}
+                : counted(runner.openSessions, { one: "Session", other: "Sessions" })}
             </span>
             {keptAwake.length > 0 && (
               // Which ones, and who keeps them awake (ADR 0016).

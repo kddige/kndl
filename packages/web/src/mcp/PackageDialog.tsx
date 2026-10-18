@@ -284,7 +284,7 @@ export function PackageDialog({
         await hub.upgradeMcpServer(answer.upgrades, answer.readId)
         toast.show({
           title: `Upgraded ${answer.read.name} to ${packageVersion(answer.read.package)}`,
-          description: "Its Sessions pick it up on their next wake or Restart.",
+          description: "Its Sessions pick it up on their next wake or restart.",
         })
       }
       onClose()

@@ -486,7 +486,7 @@ function EnvironmentEditor({
       }
       toast.show({
         title: `Applied version ${version}`,
-        description: "New Sessions start on it. Active ones show a Restart.",
+        description: "New Sessions start on it. Active ones show a Restart button.",
       })
     } catch (error) {
       setApplyError(messageOf(error))
@@ -877,7 +877,7 @@ function EnvironmentEditor({
         <div {...stylex.props(styles.applyBar)}>
           <p {...stylex.props(styles.applyNote)}>
             {environment
-              ? "New Sessions start on the applied version; Active ones offer a Restart."
+              ? "New Sessions start on the applied version; Active ones offer a Restart button."
               : "Applying makes version 1."}
           </p>
           {!unchanged && environment && (
@@ -911,7 +911,7 @@ function EnvironmentEditor({
         note={
           <>
             The Installations on for this Repo: Claude Code in its Sessions gets their tools from
-            their next wake or Restart. A change creates no Environment version.{" "}
+            their next wake or restart. A change creates no Environment version.{" "}
             <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
               Manage MCP servers
             </Link>

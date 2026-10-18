@@ -371,7 +371,7 @@ function Fields() {
             rows={1}
             value={prompt}
             onValueChange={setPrompt}
-            placeholder="Ask Claude…"
+            placeholder="Send a prompt"
             sx={styles.composer}
           />
         </Field>
@@ -602,7 +602,7 @@ function Overlays() {
         <Popover
           trigger={<Button icon={<InfoIcon />}>Participants</Button>}
           title="4 Participants"
-          description="Everyone here can prompt, stop and delete this Session."
+          description="Only Alice can prompt it. Everyone here watches."
         >
           <ul {...stylex.props(styles.popoverList)}>
             {PEOPLE.slice(0, 4).map((person) => (
@@ -618,7 +618,7 @@ function Overlays() {
         <Dialog
           trigger={<Button>New Session</Button>}
           title="New Session"
-          description="Claude starts on its own Work branch, created from the base branch."
+          description="The agent starts on its own Work branch, created from the base branch."
           footer={
             <>
               <DialogClose>Cancel</DialogClose>
@@ -634,14 +634,14 @@ function Overlays() {
           </Field>
         </Dialog>
         <Button intent="danger" onClick={() => setConfirmOpen(true)}>
-          Delete Session…
+          Purge Session…
         </Button>
         <Dialog
           open={confirmOpen}
           onOpenChange={setConfirmOpen}
           size="sm"
-          title="Delete this Session?"
-          description="It is Archived for 30 days and can be restored until then."
+          title="Purge Fix flaky login test?"
+          description="Deletes 1 Session now: its history, and its Workspace on its Runner with any work not pushed. This can't be undone."
           footer={
             <>
               <DialogClose>Cancel</DialogClose>
@@ -649,14 +649,10 @@ function Overlays() {
                 intent="danger"
                 onClick={() => {
                   setConfirmOpen(false)
-                  toast.show({
-                    title: "Session archived",
-                    description: "Fix flaky login test",
-                    action: { label: "Undo", onAction: () => toast.show({ title: "Restored" }) },
-                  })
+                  toast.show({ title: "Purged Fix flaky login test" })
                 }}
               >
-                Delete
+                Purge Session
               </Button>
             </>
           }
@@ -709,8 +705,9 @@ function Toasts() {
         <Button
           onClick={() =>
             toast.show({
-              title: "Session archived",
-              description: "Restore it within 30 days.",
+              title: "Session deleted",
+              description:
+                "Fix flaky login test is archived. Restore it from kddige/kndl's Archived Sessions.",
               action: { label: "Undo", onAction: () => toast.show({ title: "Session restored" }) },
             })
           }
@@ -1080,13 +1077,8 @@ function Disclosures() {
 function Banners() {
   return (
     <Section title="Banner" note="A strip across a view saying what state it's in.">
-      <Banner
-        intent="frozen"
-        icon={<InfoIcon />}
-        title="This Session is Frozen"
-        action={<Button size="sm">Unfreeze</Button>}
-      >
-        Its Sandbox is stopped, so it can't run. Unfreeze it to carry on.
+      <Banner intent="frozen" icon={<InfoIcon />} title="This Session is Frozen">
+        Its Runner is offline. Prompts sent now wait in the queue until the Runner is back.
       </Banner>
       <Banner intent="asleep" icon={<InfoIcon />} title="This Session is Asleep">
         Sending a prompt wakes it.
@@ -1107,7 +1099,7 @@ function Banners() {
           </Disclosure>
         }
       >
-        Building the Environment, then running its start script.
+        Building the Environment, then running its Start script.
       </Banner>
       <Banner intent="accent" icon={<BranchIcon />} title="On claude/fix-flaky-search" />
       <Banner title="Neutral, with nothing else" />
@@ -1231,7 +1223,7 @@ export function KitPage() {
               The conversation, Turn by Turn.
             </TabPanel>
             <TabPanel value="terminal" sx={styles.panel}>
-              Claude Code's terminal, live, to watch and type into.
+              The Session's terminal, live, to watch and type into.
             </TabPanel>
             <TabPanel value="previews" sx={styles.panel}>
               Ports served from the Sandbox.
@@ -1246,7 +1238,7 @@ export function KitPage() {
         <SidebarKit />
         <PageHeaders />
 
-        <Section title="Markdown" note="Claude's answers. A small, safe subset: no raw HTML.">
+        <Section title="Markdown" note="The agent's answers. A small, safe subset: no raw HTML.">
           <div {...stylex.props(styles.panel)}>
             <Markdown text={MARKDOWN} />
           </div>

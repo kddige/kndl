@@ -48,7 +48,7 @@ export function AppPermissionsBanner() {
       }
     } catch (error) {
       toast.show({
-        title: "Could not check the GitHub App",
+        title: "Couldn't check the GitHub App",
         description: error instanceof Error ? error.message : String(error),
         intent: "danger",
       })

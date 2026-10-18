@@ -9,7 +9,7 @@ import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { notSent } from "../app/copy.ts"
-import { day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
+import { counted, day, purgedIn, repoParams, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { HubClient } from "../hub/client.ts"
 import { messageOf, useLastOpened } from "../mcp/shared.ts"
@@ -598,7 +598,7 @@ async function purgeSessions(
   const [first] = purged
   if (first === undefined) return
   toast.show({
-    title: `Purged ${purged.length === 1 ? sessionTitle(first) : `${purged.length} Sessions`}`,
+    title: `Purged ${purged.length === 1 ? sessionTitle(first) : counted(purged.length, { one: "Session", other: "Sessions" })}`,
     ...(offline.size > 0 && {
       description: [...offline]
         .map((name) => `${name} is offline: its disk frees when it reconnects.`)

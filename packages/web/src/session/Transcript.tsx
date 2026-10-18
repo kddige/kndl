@@ -9,7 +9,7 @@ import {
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
 import { createContext, memo, type ReactNode, useContext, useState } from "react"
-import { clock, count, dollars, duration, statusOf } from "../app/format.ts"
+import { clock, count, counted, dollars, duration, statusOf } from "../app/format.ts"
 import type {
   AgentView,
   Block,
@@ -558,7 +558,7 @@ export function AgentSummaryRow({ agent }: { agent: AgentView }) {
         </span>
       )}
       <span {...stylex.props(styles.agentCount)}>
-        {tools} {tools === 1 ? "tool call" : "tool calls"}
+        {counted(tools, { one: "tool call", other: "tool calls" })}
       </span>
     </>
   )

@@ -51,7 +51,7 @@ import {
 import { focus } from "../ui/shared.ts"
 import { color, font, radius, space, text } from "../ui/tokens.stylex.ts"
 import { Brand } from "./Brand.tsx"
-import { environmentChanged, mcpServersChanged, statusOf } from "./format.ts"
+import { counted, environmentChanged, mcpServersChanged, statusOf } from "./format.ts"
 import { useHub, useHubState } from "./hub.tsx"
 
 // Hover styles only where a pointer can hover: on touch, :hover sticks after a tap.
@@ -190,7 +190,7 @@ export function AppSidebar({ onClose }: { onClose?: () => void }) {
         <>
           {runners && (
             <p {...stylex.props(styles.runners)}>
-              {online} of {runners.length} {runners.length === 1 ? "Runner" : "Runners"} online
+              {online} of {counted(runners.length, { one: "Runner", other: "Runners" })} online
             </p>
           )}
           {you && (
@@ -443,7 +443,7 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
           : session.agents?.some((agent) => agent.status === "Running") === true
             ? "Agents working"
             : null
-  // Claude asked a question (#193): it waits on its Creator to answer rather than working.
+  // The agent asked a question (#193): it waits on its Creator to answer rather than working.
   const waiting = session.openQuestion !== undefined
   const waitingOn = session.creator.id === you?.id ? "you" : session.creator.name
   // What a restart would apply: a newer Environment, or its Repo's Installations (ADR 0020).
@@ -474,7 +474,7 @@ function SessionIndicators({ session }: { session: SessionSummary }) {
           <span
             role="img"
             aria-label={`Waiting on ${waitingOn}`}
-            title={`Waiting on ${waitingOn}: Claude asked a question`}
+            title={`Waiting on ${waitingOn}: the agent asked a question`}
             {...stylex.props(styles.waiting)}
           >
             <WaitingDot />

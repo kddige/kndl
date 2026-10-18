@@ -847,7 +847,7 @@ function StartingBanner({
           ? pi
             ? "Starting a fresh Sandbox. "
             : "Starting Claude Code in a fresh Sandbox. "
-          : `Starting the Sandbox on version ${version} of ${summary.repo}'s Environment: building it if its Runner hasn't yet, which can take a few minutes, then running its start script. `}
+          : `Starting the Sandbox on version ${version} of ${summary.repo}'s Environment: building it if its Runner hasn't yet, which can take a few minutes, then running its Start script. `}
       {drives && `Prompts sent now wait in the queue until ${pi ? "it's" : "Claude Code is"} up.`}
     </Banner>
   )

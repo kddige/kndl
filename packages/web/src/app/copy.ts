@@ -24,7 +24,7 @@ export const commandText: Partial<Record<string, string>> = {
 export async function copyCommand(command: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(command)
-    toast.show({ title: "Copied the command" })
+    toast.show({ title: "Command copied" })
   } catch {
     toast.show({
       title: "Couldn't copy",

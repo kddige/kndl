@@ -11,7 +11,7 @@
 import type { ConnectableProvider, ConnectedProvider, ProviderId, SignInStep } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
-import { day, timeAgo } from "../app/format.ts"
+import { counted, day, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import type { SignInProgress } from "../hub/store.ts"
 import { messageOf } from "../mcp/shared.ts"
@@ -545,7 +545,7 @@ function Connection({
         <Fact term="Kind">{connected.kind === "SignIn" ? "Subscription" : "API key"}</Fact>
         <Fact term="Connected">{day(connected.connectedAt)}</Fact>
       </dl>
-      <Disclosure summary={`${count === 1 ? "1 Model" : `${count} Models`} · ${checked}`}>
+      <Disclosure summary={`${counted(count, { one: "Model", other: "Models" })} · ${checked}`}>
         {count === 0 ? (
           <p {...stylex.props(styles.note, styles.models)}>{name} listed none that kndl can run.</p>
         ) : (
@@ -900,7 +900,7 @@ function PasteForm({
 async function copyCode(code: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(code)
-    toast.show({ title: "Copied the code" })
+    toast.show({ title: "Code copied" })
   } catch {
     toast.show({
       title: "Couldn't copy",

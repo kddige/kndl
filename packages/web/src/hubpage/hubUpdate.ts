@@ -15,6 +15,7 @@ import {
   type RunnerSummary,
 } from "@kndl/protocol"
 import { useSyncExternalStore } from "react"
+import { counted } from "../app/format.ts"
 
 const storageKey = "kndl:hub-update-dismissed"
 
@@ -163,13 +164,13 @@ export function bannerText(
       return {
         title: `kndl ${newest.version} is out`,
         ...(version?.release !== undefined && {
-          description: `This Hub runs ${version.release}, ${behind === 1 ? "one Release" : `${behind} Releases`} behind.`,
+          description: `This Hub runs ${version.release}, ${behind === 1 ? "one Release" : counted(behind, { one: "Release", other: "Releases" })} behind.`,
         }),
       }
     }
     case "NewerCommits":
       return {
-        title: `main is ${found.behindBy === 1 ? "1 commit" : `${found.behindBy} commits`} ahead of this Hub`,
+        title: `main is ${counted(found.behindBy, { one: "commit", other: "commits" })} ahead of this Hub`,
       }
     case "UpToDate":
     case undefined:

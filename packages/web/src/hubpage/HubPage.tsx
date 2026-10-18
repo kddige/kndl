@@ -22,7 +22,7 @@ import type {
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { type ReactNode, useEffect, useState } from "react"
-import { day, timeAgo } from "../app/format.ts"
+import { counted, day, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
 import {
   Badge,
@@ -770,7 +770,7 @@ function Found({
       return (
         <>
           <Headline
-            title={`main is ${found.behindBy === 1 ? "1 commit" : `${found.behindBy} commits`} ahead`}
+            title={`main is ${counted(found.behindBy, { one: "commit", other: "commits" })} ahead`}
             note={
               found.behindBy > found.commits.length
                 ? `The newest ${found.commits.length}, newest first.`

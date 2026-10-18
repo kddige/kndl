@@ -1,7 +1,7 @@
 import type { SessionInstallation, SessionSummary } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
 import { Link } from "@tanstack/react-router"
-import { mcpServersChanged } from "../app/format.ts"
+import { counted, mcpServersChanged } from "../app/format.ts"
 import { Button, McpIcon, Popover, useMediaQuery, WIDE } from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -41,7 +41,7 @@ export const serverName = (installation: SessionInstallation) =>
   `plugin:kndl:${installation.server}`
 
 const installationsText = (count: number) =>
-  count === 1 ? "1 Installation" : `${count} Installations`
+  counted(count, { one: "Installation", other: "Installations" })
 
 /**
  * The Installations a Session runs with (ADR 0020): a button in its header while it runs with any,
@@ -87,7 +87,7 @@ export function SessionMcpServers({ summary }: { summary: SessionSummary }) {
       )}
       <p {...stylex.props(styles.note)}>
         {changed
-          ? `${summary.repo}'s Installations changed since it started: a Restart applies the change. `
+          ? `${summary.repo}'s Installations changed since it started: a restart applies the change. `
           : ""}
         <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
           Manage MCP servers

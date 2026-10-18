@@ -128,7 +128,7 @@ export function RepoMcpServers({ repo }: { repo: string }) {
       await hub.turnGlobalInstallation(installation.id, repo, on)
       toast.show({
         title: `Turned ${installation.name} ${on ? "back on" : "off"} for ${repo}`,
-        description: "Its Sessions pick it up on their next wake or Restart.",
+        description: "Its Sessions pick it up on their next wake or restart.",
       })
     } catch (error) {
       toast.show({

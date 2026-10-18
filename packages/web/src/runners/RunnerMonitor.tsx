@@ -18,7 +18,7 @@ import { Chart } from "@tanstack/charts/react"
 import { scaleLinear } from "@tanstack/charts/scales/linear"
 import { tooltip } from "@tanstack/charts/tooltip"
 import { type ReactNode, useEffect, useMemo, useState } from "react"
-import { bytes, uptime } from "../app/format.ts"
+import { bytes, counted, uptime } from "../app/format.ts"
 import { useHub } from "../app/hub.tsx"
 import { Spinner, WarningIcon } from "../ui/index.ts"
 import { color, font, leading, radius, space, text, weight } from "../ui/tokens.stylex.ts"
@@ -253,7 +253,7 @@ function HostTiles({ sysinfo, offline }: { sysinfo: SysinfoSample; offline: bool
       </Tile>
       <Tile label="Load, 1 minute" value={load1.toFixed(2)}>
         <span {...stylex.props(styles.tileNote)}>
-          on {sysinfo.cpuCores} {sysinfo.cpuCores === 1 ? "core" : "cores"}
+          on {counted(sysinfo.cpuCores, { one: "core", other: "cores" })}
         </span>
         <span {...stylex.props(styles.tileNote)}>
           5 min {load5.toFixed(2)} · 15 min {load15.toFixed(2)}
