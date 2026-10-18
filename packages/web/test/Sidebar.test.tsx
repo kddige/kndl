@@ -250,7 +250,7 @@ test("a Session is renamed in place from its header, and New Session doesn't ask
   expect(labels.map((label) => label.textContent).join(" ")).not.toMatch(/name/i)
 })
 
-test("each page beside the sidebar opens with the one PageHeader, holding its only h1", async () => {
+test("each page beside the sidebar opens with its one header, holding its only h1", async () => {
   const { page, router } = await open("/")
   const pages = [
     ["/sessions/s-readme", "claude/readme-run"],
@@ -262,9 +262,7 @@ test("each page beside the sidebar opens with the one PageHeader, holding its on
   ] as const
   for (const [path, title] of pages) {
     await step(() => router.history.push(path))
-    await eventually(() =>
-      expect(page.querySelector("main > header:first-child h1")?.textContent).toBe(title),
-    )
+    await eventually(() => expect(page.querySelector("main header h1")?.textContent).toBe(title))
     expect(page.querySelectorAll("h1").length).toBe(1)
   }
 })

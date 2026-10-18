@@ -3,7 +3,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, dialog, render, sessionMenuItem, sessionOffers, settle, step } from "./render.ts"
+import { button, dialog, menuItem, render, sessionMenuItem, sessionOffers, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -202,9 +202,11 @@ test("shared variables: linked ones show who links them, and can't be deleted", 
   const row = page.querySelector('li[aria-label="GH_READ_TOKEN"]')
   expect(row?.textContent).toContain("Linked by")
   expect(row?.textContent).toContain("kddige/kndl as GITHUB_TOKEN")
-  expect(row?.textContent).toContain("set")
+  // Its kind, in no colour, and nothing said of a value that's there.
+  expect(row?.textContent).toContain("Sensitive")
+  expect(row?.textContent).not.toContain("needs a value")
 
-  await step(() => button("Delete GH_READ_TOKEN").click())
+  await menuItem("Actions for GH_READ_TOKEN", "Delete GH_READ_TOKEN")
   await eventually(() => expect(button("Delete").disabled).toBe(false))
   await step(() => button("Delete").click())
   await eventually(() =>
@@ -252,7 +254,7 @@ test("after a secrets-reset, a shared variable asks for its value, and entering 
   const row = () => page.querySelector('li[aria-label="GH_READ_TOKEN"]')
   expect(needsValueBadges(row() as Element)).toHaveLength(1)
 
-  await step(() => button("Edit GH_READ_TOKEN").click())
+  await step(() => button("Enter value for GH_READ_TOKEN").click())
   await eventually(() => expect(dialog()).not.toBeNull())
   const editor = dialog() as HTMLElement
   const value = editor.querySelector('input[type="password"]') as HTMLInputElement
@@ -262,8 +264,8 @@ test("after a secrets-reset, a shared variable asks for its value, and entering 
   expect(editor.textContent).toContain("under 4 characters")
   await step(() => typeInto(value, "made-up-new-gh-token"))
   await step(() => button("Save", editor).click())
-  await eventually(() => expect(row()?.textContent).toContain("set"))
-  expect(needsValueBadges(row() as Element)).toHaveLength(0)
+  await eventually(() => expect(needsValueBadges(row() as Element)).toHaveLength(0))
+  expect(() => button("Enter value for GH_READ_TOKEN")).toThrow()
   expect(page.textContent).not.toContain("GH_READ_TOKEN needs a value")
 })
 
