@@ -219,7 +219,7 @@ const expectedPlan: SecretsResetPlan = {
   sessionValues: 1,
   connections: ["Team Linear"],
   // Named as the Account page names them.
-  connectedProviders: ["alice: MiniMax", "alice: OpenAI"],
+  connectedProviders: ["alice: minimax", "alice: openai"],
 }
 
 /** Every row of every table in the database, as text. */
@@ -304,7 +304,7 @@ describe("secrets-reset", () => {
     )
     expect(done).toContain("Connect each OAuth Installation again on the MCP page;")
     expect(plan).toContain("It disconnects 2 Connected providers")
-    expect(plan).toContain("alice: OpenAI")
+    expect(plan).toContain("alice: openai")
     expect(done).toContain("Disconnected 2 Connected providers")
     for (const secret of secrets) expect(plan + done).not.toContain(secret)
     // Run again, there is nothing left to reset.
