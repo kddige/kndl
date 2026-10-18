@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex"
 import { type FormEvent, type ReactNode, useState } from "react"
 import { githubSignInUrl, type SignInOptions } from "../hub/config.ts"
-import { Button, Field, Input } from "../ui/index.ts"
+import { Button, Field, Input, useDocumentTitle } from "../ui/index.ts"
 import {
   color,
   leading,
@@ -37,6 +37,7 @@ const styles = stylex.create({
   wide: { width: "min(26rem, 100%)" },
   heading: { display: "flex", flexDirection: "column", gap: space.s1 },
   title: {
+    outline: "none",
     margin: 0,
     fontSize: text.lg,
     fontWeight: weight.semibold,
@@ -63,21 +64,27 @@ const styles = stylex.create({
 /** A card alone in the middle of the page: signing in, and approving the CLI. */
 export function AuthCard({
   title,
+  pageTitle,
   lede,
   wide = false,
   children,
 }: {
   title: ReactNode
+  /** The browser tab's name, where `title` isn't plain text. */
+  pageTitle?: string
   lede?: ReactNode
   /** A little wider, for a card with a code or a warning in it. */
   wide?: boolean
   children?: ReactNode
 }) {
+  useDocumentTitle(`${pageTitle ?? (typeof title === "string" ? title : "")} · kndl`)
   return (
     <main {...stylex.props(styles.page)}>
       <div {...stylex.props(styles.card, wide && styles.wide)}>
         <div {...stylex.props(styles.heading)}>
-          <h1 {...stylex.props(styles.title)}>{title}</h1>
+          <h1 tabIndex={-1} {...stylex.props(styles.title)}>
+            {title}
+          </h1>
           {lede !== undefined && <p {...stylex.props(styles.lede)}>{lede}</p>}
         </div>
         {children}

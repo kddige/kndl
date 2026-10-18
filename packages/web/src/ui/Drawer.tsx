@@ -10,6 +10,8 @@ export interface DrawerProps {
   children: ReactNode
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Where focus goes as it closes, if not back to the button that opened it. */
+  finalFocus?: () => HTMLElement | true
 }
 
 const MOTION_OK = "@media (prefers-reduced-motion: no-preference)"
@@ -75,12 +77,16 @@ const styles = stylex.create({
  * a modal dialog: focus is trapped inside, Escape and the backdrop close it, and focus returns to
  * the button that opened it.
  */
-export function Drawer({ label, children, open, onOpenChange }: DrawerProps) {
+export function Drawer({ label, children, open, onOpenChange, finalFocus }: DrawerProps) {
   return (
     <BaseDialog.Root open={open} onOpenChange={(next: boolean) => onOpenChange(next)}>
       <BaseDialog.Portal>
         <BaseDialog.Backdrop {...stylex.props(styles.backdrop)} />
-        <BaseDialog.Popup aria-label={label} {...stylex.props(styles.popup)}>
+        <BaseDialog.Popup
+          aria-label={label}
+          {...(finalFocus && { finalFocus })}
+          {...stylex.props(styles.popup)}
+        >
           {children}
         </BaseDialog.Popup>
       </BaseDialog.Portal>

@@ -162,6 +162,7 @@ export function ArchivedSessions({ repo }: { repo: string }) {
     <main {...stylex.props(styles.view)}>
       <PageHeader
         title="Archived Sessions"
+        pageTitle={`Archived Sessions · ${repo}`}
         description={`${repo}: deleted Sessions can be restored until they're purged.`}
       />
       <div {...stylex.props(styles.scroll)}>

@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex"
-import { Outlet, useRouterState } from "@tanstack/react-router"
-import { type MouseEvent, useEffect, useState } from "react"
+import { Outlet, useRouter, useRouterState } from "@tanstack/react-router"
+import { type MouseEvent, useEffect, useRef, useState } from "react"
 import type { Connection } from "../hub/store.ts"
 import { HubUpdateBanner } from "../hubpage/HubUpdateBanner.tsx"
 import { CreateSessionDialog } from "../sessions/CreateSessionDialog.tsx"
@@ -15,10 +15,11 @@ import {
   Spinner,
   toast,
   UpdateIcon,
+  useDocumentTitle,
   WarningIcon,
 } from "../ui/index.ts"
-import { srOnly } from "../ui/shared.ts"
-import { chrome, color, space } from "../ui/tokens.stylex.ts"
+import { focus, srOnly } from "../ui/shared.ts"
+import { chrome, color, layer, radius, space } from "../ui/tokens.stylex.ts"
 import { useMediaQuery, WIDE } from "../ui/useMediaQuery.ts"
 import { AppPermissionsBanner } from "./AppPermissionsBanner.tsx"
 import { AppSidebar } from "./AppSidebar.tsx"
@@ -74,6 +75,19 @@ const styles = stylex.create({
     flexDirection: "column",
     flex: 1,
     minHeight: 0,
+    // The skip link's target: focus lands here, with no ring, to start reading from.
+    outline: "none",
+  },
+  // Off-screen until a keyboard reaches it, first thing on every page.
+  skip: {
+    position: "absolute",
+    zIndex: layer.toast,
+    top: space.s2,
+    insetInlineStart: { default: "-999px", ":focus": space.s2 },
+    padding: space.s2,
+    borderRadius: radius.md,
+    backgroundColor: color.surface,
+    color: color.text,
   },
   center: {
     display: "grid",
@@ -97,6 +111,21 @@ export function HubShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   // The page the drawer was opened on: going anywhere else closes it.
   const [drawerOn, setDrawerOn] = useState<string | null>(null)
+  // The drawer closed because a link in it was followed: focus goes to the new page, not back to
+  // the menu button.
+  const followedLink = useRef(false)
+
+  // A new page takes focus at its h1 once it has rendered, so a screen reader hears where it is;
+  // not on first load, where focus starts at the top anyway, and not for a search change such as
+  // ?tab=terminal.
+  const router = useRouter()
+  useEffect(
+    () =>
+      router.subscribe("onRendered", (event) => {
+        if (event.fromLocation !== undefined && event.pathChanged) focusPageHeading()
+      }),
+    [router],
+  )
 
   useEffect(() => hub.start(), [hub])
   // Refusals with no request to answer, such as putting a busy Session to sleep.
@@ -120,29 +149,23 @@ export function HubShell() {
   )
 
   if (connection.status === "signedOut") return <SignIn options={connection.options} />
-  if (connection.status === "rejected") {
-    return (
-      <main {...stylex.props(styles.center)}>
-        <EmptyState
-          size="page"
-          icon={<WarningIcon />}
-          title="This Hub can't talk to this page"
-          description={connection.message}
-          action={<Button onClick={() => window.location.reload()}>Reload</Button>}
-        />
-      </main>
-    )
-  }
+  if (connection.status === "rejected") return <Rejected message={connection.message} />
   if (you === null) return <Connecting connection={connection} />
 
   // Following a link in the drawer closes it, even one to the page already shown.
   const closeOnLink = (event: MouseEvent) => {
     const link = event.target instanceof Element ? event.target.closest("a[href]") : null
-    if (link && link.getAttribute("target") !== "_blank") setDrawerOn(null)
+    if (link && link.getAttribute("target") !== "_blank") {
+      followedLink.current = true
+      setDrawerOn(null)
+    }
   }
 
   return (
     <div {...stylex.props(styles.shell)}>
+      <a href="#content" {...stylex.props(styles.skip, focus.ring)}>
+        Skip to content
+      </a>
       {wide && (
         <div {...stylex.props(styles.sidebar)}>
           <AppSidebar />
@@ -187,7 +210,7 @@ export function HubShell() {
           <AppPermissionsBanner />
           <HubUpdateBanner />
         </div>
-        <div {...stylex.props(styles.body)}>
+        <div id="content" tabIndex={-1} {...stylex.props(styles.body)}>
           <Outlet />
         </div>
       </div>
@@ -195,7 +218,11 @@ export function HubShell() {
         <Drawer
           label="Navigation"
           open={drawerOn === pathname}
-          onOpenChange={(open) => setDrawerOn(open ? pathname : null)}
+          onOpenChange={(open) => {
+            if (open) followedLink.current = false
+            setDrawerOn(open ? pathname : null)
+          }}
+          finalFocus={() => (followedLink.current && pageHeading()) || true}
         >
           {/* Only hears the clicks of the links inside, which handle the keyboard themselves. */}
           <div onClick={closeOnLink} {...stylex.props(styles.drawer)}>
@@ -207,8 +234,45 @@ export function HubShell() {
   )
 }
 
+/** The page's h1, where focus lands when a page opens. */
+function pageHeading(): HTMLElement | null {
+  return document.querySelector<HTMLElement>("#content h1, main h1")
+}
+
+/**
+ * Moves focus to the new page's h1. A page still loading has none yet, so it waits for one for up
+ * to a second, unless focus has moved on meanwhile.
+ */
+function focusPageHeading(): void {
+  const from = document.activeElement
+  const until = performance.now() + 1000
+  const attempt = () => {
+    if (document.activeElement !== from) return
+    const heading = pageHeading()
+    if (heading) heading.focus({ preventScroll: true })
+    else if (performance.now() < until) requestAnimationFrame(attempt)
+  }
+  attempt()
+}
+
+function Rejected({ message }: { message: string }) {
+  useDocumentTitle("This Hub can't talk to this page · kndl")
+  return (
+    <main {...stylex.props(styles.center)}>
+      <EmptyState
+        size="page"
+        icon={<WarningIcon />}
+        title="This Hub can't talk to this page"
+        description={message}
+        action={<Button onClick={() => window.location.reload()}>Reload</Button>}
+      />
+    </main>
+  )
+}
+
 function Connecting({ connection }: { connection: Connection }) {
   const struggling = connection.status === "reconnecting" && connection.attempt >= 3
+  useDocumentTitle(`${struggling ? "Can't reach the Hub" : "Connecting to the Hub"} · kndl`)
   return (
     <main {...stylex.props(styles.center)}>
       <EmptyState

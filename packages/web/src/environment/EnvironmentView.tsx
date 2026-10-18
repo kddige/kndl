@@ -247,6 +247,7 @@ export function EnvironmentView({
     <main {...stylex.props(styles.view)}>
       <PageHeader
         title={repo}
+        pageTitle={`Environment of ${repo}`}
         badge={
           saved &&
           (environment ? (

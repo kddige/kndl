@@ -2,12 +2,15 @@ import * as stylex from "@stylexjs/stylex"
 import type { ReactNode } from "react"
 import { chrome, color, leading, space, text } from "./tokens.stylex.ts"
 import { textRole } from "./type.ts"
+import { useDocumentTitle } from "./useDocumentTitle.ts"
 
 export interface PageHeaderProps {
   /** The page's name, as its h1: a work branch, a Repo, "Shared variables". Shown whole. */
   title: ReactNode
   /** Beside the title: a SessionStatus or Badge saying what state the page's thing is in. */
   badge?: ReactNode
+  /** The page's name in the browser tab, where `title` isn't plain text or needs context. */
+  pageTitle?: string
   /** One sentence, under 15 words: what the page holds. */
   description?: ReactNode
   /** After the title: small Buttons and IconButtons, an AvatarStack. They wrap under it when narrow. */
@@ -48,7 +51,8 @@ const styles = stylex.create({
     gap: space.s2,
     minWidth: 0,
   },
-  title: { minWidth: 0, overflowWrap: "anywhere" },
+  // Focus lands on it when the page opens; it isn't a control, so it shows no ring.
+  title: { minWidth: 0, overflowWrap: "anywhere", outline: "none" },
   badge: { display: "inline-flex", flexShrink: 0 },
   actions: {
     display: "flex",
@@ -72,12 +76,15 @@ const styles = stylex.create({
  * At least as tall as the Sidebar's header, with the same gutter, so the title sits level with the
  * brand. The title shows whole, wrapping if it must.
  */
-export function PageHeader({ title, badge, description, actions, sx }: PageHeaderProps) {
+export function PageHeader({ title, pageTitle, badge, description, actions, sx }: PageHeaderProps) {
+  useDocumentTitle(`${pageTitle ?? (typeof title === "string" ? title : "")} · kndl`)
   return (
     <header {...stylex.props(styles.header, sx)}>
       <div {...stylex.props(styles.heading)}>
         <div {...stylex.props(styles.titleLine)}>
-          <h1 {...stylex.props(textRole.title, styles.title)}>{title}</h1>
+          <h1 tabIndex={-1} {...stylex.props(textRole.title, styles.title)}>
+            {title}
+          </h1>
           {badge && <span {...stylex.props(styles.badge)}>{badge}</span>}
         </div>
         {description && <p {...stylex.props(styles.description)}>{description}</p>}

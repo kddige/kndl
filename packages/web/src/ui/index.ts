@@ -59,4 +59,5 @@ export { toast, type ToastAction, type ToastIntent, type ToastOptions } from "./
 export { Tooltip } from "./Tooltip.tsx"
 export { UIProvider } from "./UIProvider.tsx"
 export { textRole } from "./type.ts"
+export { useDocumentTitle } from "./useDocumentTitle.ts"
 export { useMediaQuery, WIDE } from "./useMediaQuery.ts"
