@@ -270,7 +270,7 @@ async function openSession(
   const page = view.container
   /** The state banner's text, or "" without one. */
   const banner = () =>
-    [...page.querySelectorAll('[data-banner]')]
+    [...page.querySelectorAll("[data-banner]")]
       .map((el) => el.textContent ?? "")
       .find((content) => content.startsWith(bannerStart)) ?? ""
   await eventually(() => expect(banner()).not.toBe(""))
@@ -528,7 +528,7 @@ test("a restart for a changed Environment shows its progress until the Session i
   const { hub, page, banner, sent } = await openSession(demoSessionId, "Environment changed")
   expect(banner()).toContain("version 2 is the latest")
   const statuses = () =>
-    [...page.querySelectorAll('[data-banner]')].map((el) => el.textContent ?? "").join("\n")
+    [...page.querySelectorAll("[data-banner]")].map((el) => el.textContent ?? "").join("\n")
   // Each step of the restart waits for the test, so a slow machine can't skip past one (#315).
   hub.hold()
 
@@ -599,7 +599,7 @@ test("a change to its Repo's Installations shows that a Restart applies it, and 
   await step(() => client.createInstallation(linear.id, "Linear", ["kddige/kndl"], key))
 
   const changed = () =>
-    [...page.querySelectorAll('[data-banner]')]
+    [...page.querySelectorAll("[data-banner]")]
       .map((el) => el.textContent ?? "")
       .find((content) => content.startsWith("MCP servers changed")) ?? ""
   await eventually(() => expect(changed()).toContain("A Restart applies the change"))
@@ -1015,7 +1015,7 @@ test("a Session whose Runner is offline has an unknown size, which the total say
 test("an Archived Session can't take prompts or open its terminal, and offers a restore", async () => {
   const { page, sent, find } = await openApp("/sessions/s-flaky?tab=terminal")
   const banner = () =>
-    [...page.querySelectorAll('[data-banner]')]
+    [...page.querySelectorAll("[data-banner]")]
       .map((el) => el.textContent ?? "")
       .find((content) => content.startsWith("This Session is")) ?? ""
   await eventually(() => expect(banner()).toContain("This Session is Archived"))
@@ -1069,7 +1069,7 @@ test("someone watching a Session reads it, but can't drive it or see its termina
   const { router, page, sent } = await openApp(`/sessions/${bobsSessionId}?tab=terminal`)
   const header = () => page.querySelector("h1")?.closest("header")?.textContent ?? ""
   const banner = () =>
-    [...page.querySelectorAll('[data-banner]')]
+    [...page.querySelectorAll("[data-banner]")]
       .map((el) => el.textContent ?? "")
       .find((content) => content.startsWith("This Session is")) ?? ""
   await eventually(() => expect(banner()).toContain("This Session is Asleep"))
@@ -1164,7 +1164,7 @@ test("the Creator's Session can't wake without their setup token, and leads to t
   }
   const page = view.container
   const banner = () =>
-    [...page.querySelectorAll('[data-banner]')]
+    [...page.querySelectorAll("[data-banner]")]
       .map((el) => el.textContent ?? "")
       .find((content) => content.startsWith("This Session can't wake")) ?? ""
   await eventually(() => expect(banner()).toContain("you have none on this Hub"))

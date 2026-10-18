@@ -55,7 +55,7 @@ async function open(appPermissions: Check | null) {
   // Once the app is in, with its sidebar.
   await eventually(() => expect(page.textContent).toContain("New Session"))
   const banner = () =>
-    [...page.querySelectorAll('[data-banner]')].find((el) =>
+    [...page.querySelectorAll("[data-banner]")].find((el) =>
       el.textContent?.includes("missing permissions"),
     )
   return { hub, page, banner }

@@ -41,7 +41,7 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
 const hubLink = () =>
   [...document.querySelectorAll("a")].find((a) => a.textContent?.trim() === "Hub")
 const banner = () =>
-  [...document.querySelectorAll('[data-banner]')].find((el) => el.textContent?.includes("is out"))
+  [...document.querySelectorAll("[data-banner]")].find((el) => el.textContent?.includes("is out"))
 const heading = () => document.querySelector("h1")?.textContent
 
 async function open(at: string, options: Options = {}) {
@@ -194,7 +194,7 @@ test("a Hub that doesn't check, as one run from a checkout, has no Hub page", as
 const main = () => document.querySelector("main")?.textContent ?? ""
 const latest = () => document.querySelector('[aria-labelledby="latest-update"]')?.textContent ?? ""
 const restartingBanner = () =>
-  [...document.querySelectorAll('[data-banner]')].find((el) =>
+  [...document.querySelectorAll("[data-banner]")].find((el) =>
     el.textContent?.includes("Updating the Hub"),
   )
 

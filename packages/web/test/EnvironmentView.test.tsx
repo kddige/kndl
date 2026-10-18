@@ -227,7 +227,7 @@ test("after a secrets-reset, the Environment asks for the cleared values again",
   expect(section("Variables").textContent).toContain(
     "GITHUB_TOKEN (the shared variable GH_READ_TOKEN) needs a value: set it on the Shared variables screen.",
   )
-  const banner = [...page.querySelectorAll('[data-banner]')].find((shown) =>
+  const banner = [...page.querySelectorAll("[data-banner]")].find((shown) =>
     shown.textContent?.includes("Sessions can't start"),
   )
   expect(banner?.querySelector('a[href="/variables"]')?.textContent).toBe("Shared variables")
