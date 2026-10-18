@@ -244,6 +244,50 @@ test("a Claude Code Session on a Runner that runs pi switches to a pi Model, aft
   expect(page.querySelector("textarea")?.getAttribute("placeholder")).toBe("Send a prompt")
 })
 
+/** A reply whose Turn runs until it is stopped. */
+const working = () => [{ kind: "pause", steps: 1e6 }] as const
+
+test("a switch of Harness waiting for the Turn to end names the model it switches to", async () => {
+  const { hub, page, picker } = await open(`/sessions/${piSessionId}`, false, { reply: working })
+  await eventually(() => expect(picker()?.textContent).toBe("GPT-6-Sol"))
+  hub.creatorPrompts(piSessionId, "Keep going")
+  await eventually(() => expect(hub.sessions.get(piSessionId)?.summary.currentTurn).not.toBeNull())
+
+  await step(() => picker()?.click())
+  await settle()
+  await step(() => option("Default · Opus 5.5").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Switch to Claude Code?"))
+  await step(() => button("Switch", dialog() ?? document).click())
+  expect(switches(hub)).toEqual([{ model: undefined, thinkingLevel: "high" }])
+
+  // pi runs the Turn on, but the Session is set to Claude Code's default, by its own name.
+  await eventually(() => expect(hub.sessions.get(piSessionId)?.summary.modelPending).toBe(true))
+  expect(hub.sessions.get(piSessionId)?.summary.harness).toBe("Pi")
+  await settle(100)
+  expect(picker()?.textContent).toBe("Opus 5.5")
+  expect(page.textContent).toContain("Opus 5.5 takes over when this Turn ends.")
+})
+
+test("a switch to pi waiting for Claude Code's Turn to end names the Model it switches to", async () => {
+  const { hub, page, picker } = await open("/sessions/s-readme", false, { reply: working })
+  hub.patchRunner("r-studio", { harnesses: ["ClaudeCode", "Pi"] })
+  await eventually(() => expect(picker()?.textContent).toBe("Opus 5.5"))
+  hub.creatorPrompts("s-readme", "Keep going")
+  await eventually(() => expect(hub.sessions.get("s-readme")?.summary.currentTurn).not.toBeNull())
+
+  await step(() => picker()?.click())
+  await settle()
+  await step(() => option("GPT-6-Sol").click())
+  await eventually(() => expect(dialog()?.textContent).toContain("Switch to pi?"))
+  await step(() => button("Switch", dialog() ?? document).click())
+
+  await eventually(() => expect(hub.sessions.get("s-readme")?.summary.modelPending).toBe(true))
+  expect(hub.sessions.get("s-readme")?.summary.harness).toBe("ClaudeCode")
+  await settle(100)
+  expect(picker()?.textContent).toBe("GPT-6-Sol")
+  expect(page.textContent).toContain("GPT-6-Sol takes over when this Turn ends.")
+})
+
 test("a pi Session switches to Claude Code's model, keeping a level it takes, after saying so", async () => {
   const { hub, conversation, picker } = await open(`/sessions/${piSessionId}`)
   await eventually(() => expect(picker()?.textContent).toBe("GPT-6-Sol"))

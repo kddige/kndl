@@ -350,15 +350,21 @@ const decodeWebToHub = Schema.decodeUnknownSync(WebToHub)
 const noCredentialText =
   "Add your Claude setup token on your Account page first: a Session runs on its Creator's own."
 
-/** Why a pi Session can't be created without a Model to run on (ADR 0029). */
 /** What runs a fake Session's agent, as the Hub names it in what it says of its start. */
 const harnessName = (session: { readonly summary: { readonly harness?: string } }) =>
   session.summary.harness === "Pi" ? "pi" : "Claude Code"
+
+/**
+ * Whether a model switch from a Session running on `now` to a model of `to` stops its agent, as
+ * the Hub's relaunch does, interrupting its agents: all but pi's, which switches in place.
+ */
+const relaunches = (now: Harness, to: Harness) => now !== "Pi" || to !== "Pi"
 
 /** Why a pi Session can't wake for its Creator, as the Hub words it (Harnesses.ts). */
 const noModelsToWakeText =
   "You have no Models to run a pi Session on: connect a Provider on the Account page."
 
+/** Why a pi Session can't be created without a Model to run on (ADR 0029). */
 const noModelsText =
   "Connect a Provider on your Account page first: a Session runs on its Creator's own Models."
 
@@ -1254,7 +1260,8 @@ export class FakeHub implements HubTransport {
       // As the Hub does (#128): its Creator may (ADR 0026), but not in an Archived Session; the
       // Runner's Claude Code must have the model and level. A running Turn finishes on the old
       // model. The model says its Harness (ADR 0030): one of the other Harness's, that the
-      // Session's Runner runs, switches the Session to it, which ModelSwitched says.
+      // Session's Runner runs, switches the Session to it once no Turn runs, which ModelSwitched
+      // says when the setting was the other Harness's.
       case "SetSessionModel": {
         const session = this.#drivenFor(socket, message)
         if (!session) break
@@ -1263,13 +1270,9 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, refusal, message.sessionId)
           break
         }
+        const was = harnessOfModel(session.summary.model)
         const harness = harnessOfModel(message.model)
-        const crossing = harness !== (session.summary.harness ?? "ClaudeCode")
-        const refusal = crossing ? this.#harnessRefusal(session, harness) : undefined
-        if (refusal !== undefined) {
-          this.#fail(socket, message._tag, refusal, message.sessionId)
-          break
-        }
+        const now = session.summary.harness ?? "ClaudeCode"
         const checked =
           harness === "Pi"
             ? this.#checkProviderModel(message)
@@ -1278,20 +1281,25 @@ export class FakeHub implements HubTransport {
           this.#fail(socket, message._tag, checked, message.sessionId)
           break
         }
+        const refusal = harness !== now ? this.#harnessRefusal(session, harness) : undefined
+        if (refusal !== undefined) {
+          this.#fail(socket, message._tag, refusal, message.sessionId)
+          break
+        }
         const { model: _, thinkingLevel: __, modelPending: ___, ...rest } = session.summary
         if (
-          !crossing &&
           session.summary.model === checked.model &&
           session.summary.thinkingLevel === checked.thinkingLevel
         )
           break
-        // The Hub restarts Claude Code with it once no Turn runs, which interrupts its agents; a
-        // switch of Harness relaunches the agent, in the same Sandbox.
+        // Once no Turn runs, pi switches in place; Claude Code restarts with it, and a switch of
+        // Harness relaunches the agent in the same Sandbox, both interrupting its agents. Until
+        // then, the Session runs on the Harness it ran on.
         const pending = session.summary.currentTurn !== null
-        if (!pending) this.#interruptAgents(session)
+        if (!pending && relaunches(now, harness)) this.#interruptAgents(session)
         session.summary = {
           ...rest,
-          harness,
+          harness: pending ? now : harness,
           ...(checked.model !== undefined && { model: checked.model }),
           ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
           ...(pending && { modelPending: true }),
@@ -1302,7 +1310,7 @@ export class FakeHub implements HubTransport {
           ...(checked.model !== undefined && { model: checked.model }),
           ...(checked.label !== undefined && { modelLabel: checked.label }),
           ...(checked.thinkingLevel !== undefined && { thinkingLevel: checked.thinkingLevel }),
-          ...(crossing && { harness }),
+          ...(harness !== was && { harness }),
         })
         this.#summaryChanged(session)
         break
@@ -2459,10 +2467,19 @@ export class FakeHub implements HubTransport {
         }),
       })
       session.stopTurn = null
-      // A model switched while it ran takes over now, as the Hub restarts Claude Code with it.
-      if (session.summary.modelPending) this.#interruptAgents(session)
+      // A model switched while it ran takes over now: pi switches to it in place, and the Hub
+      // restarts Claude Code with it, or relaunches the Session on the other Harness.
+      const switched = session.summary.modelPending
+        ? harnessOfModel(session.summary.model)
+        : undefined
+      if (switched !== undefined && relaunches(session.summary.harness ?? "ClaudeCode", switched))
+        this.#interruptAgents(session)
       const { modelPending: _, ...summary } = session.summary
-      session.summary = { ...summary, currentTurn: null }
+      session.summary = {
+        ...summary,
+        ...(switched !== undefined && { harness: switched }),
+        currentTurn: null,
+      }
       this.#summaryChanged(session)
       this.#after(2, () => this.#next(session))
     }

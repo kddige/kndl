@@ -62,7 +62,6 @@ import { InstallationsFailedBanner } from "./InstallationsFailed.tsx"
 import { keptAwakeText } from "./keepAwake.ts"
 import { ModelPicker, ModelSettingLabel } from "./ModelPicker.tsx"
 import {
-  fitProviderSetting,
   harnessNames,
   isClaudeModel,
   knownModelLabel,
@@ -266,9 +265,12 @@ function LoadedSession({
   // Its model and thinking level (#128): Claude Code's from what its Runner said its Claude Code
   // has; pi's from its Creator's Models (ADR 0029), which only they are sent, so anyone else knows
   // a pi Session's Model by the name the transcript last gave it. Its Creator may pick any Model its
-  // Runner can run, on either Harness (ADR 0030).
-  const pi = summary.harness === "Pi"
+  // Runner can run, on either Harness (ADR 0030). While a switch of Harness waits for a Turn to end,
+  // the Session still runs on its Harness, but its model is the other's already: the model is named
+  // and found by the Harness it names.
   const harness = summary.harness ?? "ClaudeCode"
+  const pi = harness === "Pi"
+  const modelOnPi = harnessOfModel(summary.model) === "Pi"
   const runner = useHubState((hubState) =>
     hubState.runners?.find((candidate) => candidate.id === summary.runnerId),
   )
@@ -280,9 +282,9 @@ function LoadedSession({
   // Claude Code runs on its Creator's setup token (ADR 0026): without one, it isn't offered.
   const hasClaudeCredential = useHubState((hubState) => hubState.claudeCredential !== null)
   const knownLabel = useHubState((hubState) =>
-    pi ? knownModelLabel(hubState.joined[summary.id]?.log ?? [], summary.model) : undefined,
+    modelOnPi ? knownModelLabel(hubState.joined[summary.id]?.log ?? [], summary.model) : undefined,
   )
-  const harnessModels = pi
+  const harnessModels = modelOnPi
     ? ({ harness: "Pi", models: providerModels } as const)
     : ({ harness: "ClaudeCode", models } as const)
   const offered = {
@@ -301,13 +303,7 @@ function LoadedSession({
   // A switch shows in the picker from the pick, while it is asked about and then sent, until the
   // Hub says the Session's setting: a cancel, or a refusal, shows the setting again.
   const [picked, setPicked] = useState<PickedSetting | null>(null)
-  const shownSetting =
-    picked !== null && picked.from === setting
-      ? picked.to
-      : // The picker reads no model as Claude Code's default: a pi Session's is its Hub's pick.
-        pi && setting.model === undefined
-        ? fitProviderSetting(providerModels, setting)
-        : setting
+  const shownSetting = picked !== null && picked.from === setting ? picked.to : setting
   useEffect(() => {
     if (!picked?.sent) return
     const timer = setTimeout(() => setPicked(null), switchSentMs)
@@ -340,26 +336,26 @@ function LoadedSession({
   // of Harness too: by its Runner's name for it, or its Creator's Model's.
   const nameTurnModel = useCallback(
     (model: string) =>
-      pi
+      modelOnPi
         ? otherProviderTurnModel(providerModels, setting, model)
         : otherTurnModel(models, setting, model, providerModels),
-    [pi, models, providerModels, setting],
+    [modelOnPi, models, providerModels, setting],
   )
-  const settingName = pi
+  const settingName = modelOnPi
     ? providerModelLabel(providerModels, setting, knownLabel)
     : modelName(models, setting)
   // Who answers: Claude, on Claude Code, unless a Turn from before a switch ran another Provider's
   // Model; on pi, the Model a Turn ran, by name, or the Session's.
   const nameReplier = useCallback(
     (turnModel: string | undefined) =>
-      !pi
+      !modelOnPi
         ? turnModel === undefined || isClaudeModel(turnModel)
           ? "Claude"
           : (otherTurnModel(models, setting, turnModel, providerModels) ?? "Claude")
         : turnModel === undefined
           ? settingName
           : (otherProviderTurnModel(providerModels, setting, turnModel) ?? settingName),
-    [pi, models, providerModels, setting, settingName],
+    [modelOnPi, models, providerModels, setting, settingName],
   )
 
   const you = useHubState((hubState) => hubState.you)
