@@ -803,7 +803,8 @@ export class SessionRelay extends Context.Service<
                 lastSeenAt: isOnline ? now : runner.lastSeenAt,
                 ...(updater !== null && { updater }),
                 ...(models !== null && { models }),
-                ...(runs !== null && { harnesses: runs }),
+                // Absent for one that runs Claude Code alone.
+                ...(runs?.includes("Pi") === true && { harnesses: runs }),
                 ...(sysinfo !== null && { sysinfo }),
                 ...(update !== undefined && { update }),
               }
@@ -2142,8 +2143,11 @@ export class SessionRelay extends Context.Service<
       > {
         const { model, thinkingLevel } = message
         const level = thinkingLevel === undefined ? {} : { thinkingLevel }
+        // As its hello said: it is online.
+        const known = yield* runners.get(runner.id)
+        const runsPi = Option.exists(known, ({ harnesses: runs }) => runs?.includes("Pi") === true)
         const on = (asked: Harness | undefined, setting: ModelSetting) => {
-          const harness = harnesses.forNew(asked, runner)
+          const harness = harnesses.forNew(asked, { name: runner.name, runsPi })
           return typeof harness === "string" ? harness : { harness, asked: setting }
         }
         if (model !== undefined) {
@@ -2153,7 +2157,7 @@ export class SessionRelay extends Context.Service<
           }
           return on(of, { model, ...level })
         }
-        if (message.harness !== undefined || !runner.runsPi) return on(message.harness, level)
+        if (message.harness !== undefined || !runsPi) return on(message.harness, level)
         const first = defaultProviderModel(yield* modelCatalog.modelsFor(creator.id))
         if (
           first?.provider === "anthropic" &&
@@ -3721,7 +3725,6 @@ export class SessionRelay extends Context.Service<
             forwardsPorts: hello.forwardsPorts === true,
             relaysMcpServers: hello.relaysMcpServers === true,
             measuresDisk: hello.measuresDisk === true,
-            runsPi: hello.harnesses?.includes("Pi") === true,
           }
           yield* serialized(
             Effect.gen(function* () {

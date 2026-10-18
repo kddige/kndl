@@ -35,8 +35,9 @@ export interface KnownRunner {
   /** Its last sysinfo sample (#350), kept in memory only: null before its first since the Hub started. */
   readonly sysinfo: SysinfoSample | null
   /**
-   * The Harnesses it runs Sessions on (ADR 0029), as its last hello since the Hub started said,
-   * kept in memory only; null before then, or from a Runner that runs Claude Code alone.
+   * The Harnesses it runs Sessions on (ADR 0029), as its last hello since the Hub started said:
+   * Claude Code alone from one that doesn't say. Kept in memory only: null before its first hello
+   * since the Hub started, when what it runs isn't known.
    */
   readonly harnesses: ReadonlyArray<Harness> | null
 }
@@ -97,7 +98,7 @@ export class Runners extends Context.Service<
     /**
      * A Runner said hello: what it said, and that it is connected as of `at`. Its models are kept
      * from before when it doesn't say, as when its Claude Code couldn't tell it this time. Its
-     * Harnesses (ADR 0029) are kept in memory only.
+     * Harnesses (ADR 0029) are kept in memory only: Claude Code alone, when it doesn't say.
      */
     readonly recordHello: (
       id: RunnerId,
@@ -138,7 +139,10 @@ export class Runners extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
 
-      /** Each Runner's Harnesses, as its last hello said (ADR 0029). */
+      /**
+       * Each Runner's Harnesses, as its last hello since the Hub started said (ADR 0029): the one
+       * record of what it runs. A removed Runner's goes as the Runners are listed.
+       */
       const harnesses = new Map<string, ReadonlyArray<Harness>>()
 
       const recordHello = Effect.fn("Runners.recordHello")(function* (
@@ -151,8 +155,8 @@ export class Runners extends Context.Service<
         },
         at: number,
       ) {
-        if (hello.harnesses === undefined) harnesses.delete(id)
-        else harnesses.set(id, hello.harnesses)
+        // A Runner from before pi doesn't say: it runs Claude Code alone.
+        harnesses.set(id, hello.harnesses ?? ["ClaudeCode"])
         yield* sql`
           UPDATE runners SET version_commit = ${hello.version?.commit ?? null},
             version_branch = ${hello.version?.branch ?? null},
@@ -223,9 +227,12 @@ export class Runners extends Context.Service<
       `
 
       const list = select(sql``).pipe(
-        Effect.map((rows) =>
-          rows.map((row) => fromRow(row, latest.get(row.id), harnesses.get(row.id))),
-        ),
+        Effect.map((rows) => {
+          // What a removed Runner said goes with it.
+          const listed = new Set(rows.map((row) => row.id))
+          for (const id of harnesses.keys()) if (!listed.has(id)) harnesses.delete(id)
+          return rows.map((row) => fromRow(row, latest.get(row.id), harnesses.get(row.id)))
+        }),
         Effect.withSpan("Runners.list"),
       )
 

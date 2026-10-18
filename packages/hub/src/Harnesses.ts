@@ -12,7 +12,8 @@
 // - What it runs on, and why it can't: Claude Code on its Creator's setup token (ADR 0026), pi on
 //   their Models, of a Connected provider or Claude's (ADR 0029). Whether its Creator is still a
 //   Member is the relay's: it holds for every Harness.
-// - Whether a Session can switch to it (ADR 0030): its Runner must run both.
+// - Whether a Session can switch to it (ADR 0030): to Claude Code on any Runner, which every one
+//   runs; to pi on one whose hello since the Hub started said it runs pi.
 
 import {
   defaultProviderModel,
@@ -79,13 +80,13 @@ export interface SessionHarness {
 export interface HarnessDependencies {
   /**
    * A Runner the Hub knows: its name, the models its Claude Code last said it has, and the
-   * Harnesses it said it runs, if it has said since the Hub started.
+   * Harnesses it runs, as its last hello since the Hub started said; null before then.
    */
   readonly runner: (id: RunnerId) => Effect.Effect<
     | {
         readonly name: string
         readonly models: RunnerModels | null
-        readonly harnesses?: ReadonlyArray<Harness> | null
+        readonly harnesses: ReadonlyArray<Harness> | null
       }
     | undefined,
     SqlError
@@ -109,7 +110,7 @@ export interface Harnesses {
   ) => SessionHarness | string
   /**
    * Why a Session on the Runner can't switch to the Harness (ADR 0030), or undefined when it can:
-   * the Runner must run both.
+   * every Runner runs Claude Code, and pi one that said so since the Hub started.
    */
   readonly switchRefusal: (
     to: Harness,
@@ -219,10 +220,16 @@ export const makeHarnesses = (hub: HarnessDependencies): Harnesses => {
       return harness === "Pi" ? pi : claudeCode
     },
     switchRefusal: Effect.fn("Harnesses.switchRefusal")(function* (to, runnerId) {
+      // Every Runner runs Claude Code: one whose pi couldn't be readied too.
+      if (to === "ClaudeCode") return undefined
       const known = yield* hub.runner(runnerId)
-      const runs = known?.harnesses ?? []
-      if (runs.includes("ClaudeCode") && runs.includes("Pi")) return undefined
-      return `${known?.name ?? "The Runner"} doesn't run both Claude Code and pi: update it to switch this Session to ${to === "Pi" ? pi.name : claudeCode.name}.`
+      const name = known?.name ?? "The Runner"
+      const runs = known?.harnesses ?? null
+      if (runs === null) {
+        return `${name} hasn't connected since the Hub started, so it isn't known to run pi: switch this Session to pi once it is back.`
+      }
+      if (runs.includes("Pi")) return undefined
+      return `${name} doesn't run both Claude Code and pi: update it to switch this Session to ${pi.name}.`
     }),
   }
 }

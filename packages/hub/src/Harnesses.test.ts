@@ -17,6 +17,7 @@ const alice: Participant = { id: ParticipantId.make("p-alice"), login: "alice", 
 const bob: Participant = { id: ParticipantId.make("p-bob"), login: "bob", name: "Bob" }
 const mac = RunnerId.make("r-mac")
 const old = RunnerId.make("r-old")
+const away = RunnerId.make("r-away")
 
 const opus = { alias: "opus", id: "claude-opus-5-5", label: "Opus 5.5", reasoning: true }
 const runnerModels: RunnerModels = {
@@ -39,7 +40,10 @@ const claude: ProviderModel = {
   thinkingLevels: ["low", "max"],
 }
 
-/** A Hub where mac said its models and old didn't, alice has `models`, and bob a Claude credential. */
+/**
+ * A Hub where mac said its models and that it runs pi, old said neither, away hasn't said hello
+ * since the Hub started, alice has `models`, and bob a Claude credential.
+ */
 const hub = (models: ReadonlyArray<ProviderModel>) =>
   makeHarnesses({
     runner: (id) =>
@@ -47,8 +51,10 @@ const hub = (models: ReadonlyArray<ProviderModel>) =>
         id === mac
           ? { name: "mac", models: runnerModels, harnesses: ["ClaudeCode", "Pi"] as const }
           : id === old
-            ? { name: "old", models: null }
-            : undefined,
+            ? { name: "old", models: null, harnesses: ["ClaudeCode"] as const }
+            : id === away
+              ? { name: "away", models: null, harnesses: null }
+              : undefined,
       ),
     modelsFor: (creator) => Effect.succeed(creator === alice.id ? models : []),
     hasClaudeCredential: (creator) => creator === bob.id,
@@ -88,7 +94,7 @@ describe("which Harness", () => {
 })
 
 describe("switching a Session's Harness (ADR 0030)", () => {
-  test("needs a Runner that runs both", async () => {
+  test("to pi needs a Runner that runs it; to Claude Code, any", async () => {
     const harnesses = hub([])
     const refusal = (to: "ClaudeCode" | "Pi", runnerId: RunnerId) =>
       Effect.runPromise(harnesses.switchRefusal(to, runnerId))
@@ -97,9 +103,13 @@ describe("switching a Session's Harness (ADR 0030)", () => {
     expect(await refusal("Pi", old)).toBe(
       "old doesn't run both Claude Code and pi: update it to switch this Session to pi.",
     )
-    expect(await refusal("ClaudeCode", old)).toBe(
-      "old doesn't run both Claude Code and pi: update it to switch this Session to Claude Code.",
+    // As a Runner whose pi couldn't be readied: its pi Sessions can still switch to Claude Code.
+    expect(await refusal("ClaudeCode", old)).toBeUndefined()
+    // One not heard from since the Hub started isn't told to update.
+    expect(await refusal("Pi", away)).toBe(
+      "away hasn't connected since the Hub started, so it isn't known to run pi: switch this Session to pi once it is back.",
     )
+    expect(await refusal("ClaudeCode", away)).toBeUndefined()
   })
 })
 

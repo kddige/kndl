@@ -76,8 +76,6 @@ export interface OnlineRunner {
   readonly relaysMcpServers: boolean
   /** Whether it takes a MeasureSessionDisks (#352). */
   readonly measuresDisk: boolean
-  /** Whether it runs pi Sessions (ADR 0029), as its hello's `harnesses` said. */
-  readonly runsPi: boolean
 }
 
 /** Who was present in each Session before a change, to tell whether it changed. */

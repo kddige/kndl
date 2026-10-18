@@ -2993,6 +2993,28 @@ describe("switching Harness (ADR 0030)", () => {
     expect((await pi.web.untaken("SessionEventLogged")).filter(modelSwitched)).toEqual([])
   })
 
+  test("to Claude Code takes any Runner, as one whose pi couldn't be readied", async () => {
+    const { hub } = await piHub([gpt, claudeOpus])
+    const scene = await sessionScene(hub, piSession)
+    const { web, sessionId, runnerToken } = scene
+    await asleep(scene)
+    // Back without pi: its bundle failed.
+    await scene.runner.close()
+    await web.take("SessionUpdated", (m) => m.session.state === "Frozen")
+    await openRunner(hub, runnerToken, [], undefined, true, modelRunner.runnerHello)
+    await web.take("SessionUpdated", (m) => m.session.state === "Asleep")
+
+    web.send({ _tag: "SetSessionModel", sessionId, model: "sonnet" })
+    const changed = await web.take("SessionUpdated", (m) => m.session.model === "sonnet")
+    expect(changed.session).not.toHaveProperty("harness")
+    expect(await web.untaken("CommandFailed")).toEqual([])
+    // And back to pi isn't, there.
+    web.send({ _tag: "SetSessionModel", sessionId, model: "openai/gpt-6-sol" })
+    expect((await web.take("CommandFailed")).message).toBe(
+      "mac doesn't run both Claude Code and pi: update it to switch this Session to pi.",
+    )
+  })
+
   test("a new Session without a model runs Claude's Models on the Harness its Creator chose, and a model says its own", async () => {
     const { hub } = await piHub([claudeOpus, gpt])
     const runner = await openRunner(hub, (await issueRunnerToken(hub)).token, [], undefined, true, {
