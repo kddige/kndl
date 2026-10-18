@@ -2429,6 +2429,42 @@ describe("pi Sessions (ADR 0029)", () => {
     ).toBeUndefined()
   })
 
+  test("a failed switch keeps the thinking level, and takes only a model of the Creator's as the one it runs", async () => {
+    const { hub } = await piHub([gpt, claudeOpus])
+    const { web, sessionId, mod } = await sessionScene(hub, piRunner)
+    expect((await mod.hello({ switchesModels: true })).status).toBe(200)
+    joinSession(web, sessionId)
+    await web.take("SessionHistory")
+    web.send({
+      _tag: "SetSessionModel",
+      sessionId,
+      model: "openai/gpt-6-sol",
+      thinkingLevel: "low",
+    })
+    await web.take("SessionUpdated", (m) => m.session.thinkingLevel === "low")
+    await mod.post({
+      _tag: "ModelSwitchFailed",
+      asked: "openai/gpt-6-sol",
+      model: "anthropic/claude-opus-5-5",
+      message: "no such model",
+    })
+    // Back on the model it ran on, at the level set, after the switch.
+    await web.take(
+      "SessionUpdated",
+      (m) => m.session.model === "anthropic/claude-opus-5-5" && m.session.thinkingLevel === "low",
+    )
+
+    await mod.post({
+      _tag: "ModelSwitchFailed",
+      asked: "openai/gpt-6-sol",
+      model: "openai/not-the-creators",
+      message: "no such model",
+    })
+    await web.take("SessionEventLogged", (m) => m.entry.event._tag === "SandboxNoted")
+    const summaries = await web.untaken("SessionUpdated")
+    expect(summaries.some((m) => m.session.model === "openai/not-the-creators")).toBe(false)
+  })
+
   test("its Harness is started again with it, for a mod that doesn't switch models", async () => {
     const { hub } = await piHub([gpt, claudeOpus])
     const scene = await sessionScene(hub, piRunner)

@@ -350,6 +350,10 @@ const noCredentialText =
 const harnessName = (session: { readonly summary: { readonly harness?: string } }) =>
   session.summary.harness === "Pi" ? "pi" : "Claude Code"
 
+/** Why a pi Session can't wake for its Creator, as the Hub words it (Harnesses.ts). */
+const noModelsToWakeText =
+  "You have no Models to run a pi Session on: connect a Provider on the Account page."
+
 const noModelsText =
   "Connect a Provider on your Account page first: a Session runs on its Creator's own Models."
 
@@ -2180,6 +2184,16 @@ export class FakeHub implements HubTransport {
    * delivered once it has started.
    */
   #wake(session: FakeSession, message: string, by?: ParticipantWire): void {
+    // As on the Hub, a pi Session stays Asleep while its Creator has no Models (ADR 0029).
+    if (session.summary.harness === "Pi" && this.#providersState().models.length === 0) {
+      this.#append(session, {
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        message: `pi could not start: ${noModelsToWakeText}`,
+      })
+      this.#summaryChanged(session)
+      return
+    }
     // As on the Hub, it stays Asleep while its Creator has no setup token (ADR 0026).
     if (!this.#hasCredential(session)) {
       this.#append(session, {

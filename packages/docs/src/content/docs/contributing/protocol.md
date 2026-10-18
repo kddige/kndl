@@ -243,7 +243,7 @@ Every Session and Environment command is checked against the person's access to 
 
 ### Who drives
 
-Only a Session's `creator` drives it ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)). On top of Repo access, the Hub refuses anyone else with a `CommandFailed` from `driveRefusal` in `packages/protocol/src/SessionRules.ts`: `Only <name>, who started this Session, can drive it: it runs on their Claude credential.` That covers:
+Only a Session's `creator` drives it ([ADR 0026](/contributing/decisions/0026-a-session-runs-on-and-is-driven-by-its-creator/)). On top of Repo access, the Hub refuses anyone else with a `CommandFailed` from `driveRefusal` in `packages/protocol/src/SessionRules.ts`: `Only <name>, who started this Session, can drive it: it runs on their Connected providers.` for a pi Session, and `… it runs on their Claude credential.` for a Claude Code one That covers:
 
 - `SendPrompt`, `CancelPrompt`, `SteerPrompt`, `StopTurn`, `MessageAgent`, `StopAgent`, `AnswerQuestion` and `PickAnswer`;
 - `SleepSession`, `WakeSession`, `SetKeepAwake`, `RestartSession`, `ArchiveSession`, `RestoreSession`, `RenameSession` and `SetSessionModel`;

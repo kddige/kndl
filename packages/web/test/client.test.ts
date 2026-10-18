@@ -719,6 +719,26 @@ describe("who drives a Session (ADR 0026)", () => {
     expect(findSession(client.getState(), readme)?.state).toBe("Asleep")
   })
 
+  test("without Models, a pi Session can't be woken, as on the Hub", async () => {
+    const { hub, client } = setUp({ claudeCredential: null, autoplay: false })
+    hub.providers.connected.length = 0
+    client.start()
+    await eventually(() => expect(client.getState().connection.status).toBe("online"))
+    const pi = SessionId.make("s-pi")
+    client.join(pi)
+    await eventually(() => expect(client.getState().joined[pi]?.historyLoaded).toBe(true))
+    client.wakeSession(pi)
+    const log = () => client.getState().joined[pi]?.log.map((entry) => entry.event) ?? []
+    await eventually(() =>
+      expect(log().at(-1)).toMatchObject({
+        _tag: "SessionStateChanged",
+        state: "Asleep",
+        message:
+          "pi could not start: You have no Models to run a pi Session on: connect a Provider on the Account page.",
+      }),
+    )
+  })
+
   test("removing or replacing your setup token puts your awake Sessions to sleep, saying why", async () => {
     const { client } = setUp({ autoplay: false })
     client.start()

@@ -144,7 +144,7 @@ Put to sleep: it runs on the Models of alice, who started it, and they have none
 
 ## A Turn fails on a Provider's Model
 
-**What you see.** In a pi Session, a Turn's footer says **Failed**. The **Terminal** tab shows why, such as:
+**What you see.** In a pi Session, a Turn's footer says **Failed**, with the reason under it, such as:
 
 ```
 The Session's Creator hasn't connected OpenAI: they connect it on the Account page.
@@ -177,8 +177,10 @@ Fix what it names, such as no route to the npm registry or `nodejs.org`, then re
 **What you see.** The prompt box is off, there's no **Terminal** tab, and a command is refused with:
 
 ```
-Only Alice Lee, who started this Session, can drive it: it runs on their Claude credential.
+Only Alice Lee, who started this Session, can drive it: it runs on their Connected providers.
 ```
+
+A Claude Code Session's says `it runs on their Claude credential.`
 
 **Why.** Only a Session's Creator prompts it, answers it, stops it, controls it and uses its terminal. Everyone else watches.
 

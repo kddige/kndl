@@ -23,7 +23,7 @@ A Session without a name shows its Work branch. Clear the name to go back to it.
 
 ## Choose the model and thinking level
 
-Two buttons under the prompt box show the Session's Model and [Thinking level](/reference/glossary/#thinking-level), such as **GPT-5.5** and **High**. The thinking button says **Thinking** while no level is set, and the Harness picks one. It's one setting for the Session.
+Two buttons under the prompt box show the Session's Model and [Thinking level](/reference/glossary/#thinking-level), such as **GPT-5.5** and **High**. The thinking button says **Thinking** while no level is set, and the Model uses its usual level. It's one setting for the Session.
 
 <Steps>
 
@@ -36,6 +36,8 @@ Two buttons under the prompt box show the Session's Model and [Thinking level](/
 A Model that takes no thinking level has no thinking button. Picking a Model that doesn't take the level set drops the level.
 
 The change applies from the next Turn, and the transcript says who switched to what. Switch whenever you like, to any Provider's Model: the conversation carries over, tool calls and all. Others in the Session see the Model's name, not your list.
+
+In a pi Session, the switch happens between Turns, with nothing restarted, so the web UI doesn't ask first. If pi can't run the Model, as when its Provider stopped working, the Session stays on the Model it ran on, and the transcript says why.
 
 In a Claude Code Session, the Runner restarts Claude Code in the same conversation, and the next prompt waits until it's back. Restarting interrupts running subagents, so the web UI asks first while any run.
 

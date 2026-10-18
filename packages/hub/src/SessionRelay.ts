@@ -227,6 +227,7 @@ import {
   type ParticipantId,
   type McpServerCommand,
   type ProviderCommand,
+  findProviderModel,
   PresenceChanged,
   type PresentParticipant,
   PromptCancelled,
@@ -3817,9 +3818,21 @@ export class SessionRelay extends Context.Service<
         }
 
         if (event._tag === "ModelSwitchFailed") {
-          // The Session runs on what it ran on (ADR 0029): its setting says so again, and its
-          // history why.
-          yield* sessions.setModel(sessionId, { model: event.model }, false)
+          // The Session runs on what it ran on (ADR 0029): its setting says so again, at the
+          // thinking level set, which pi kept, and its history why. Only a Model of its Creator's
+          // is taken as the one it runs on: the Sandbox says it.
+          const session = yield* sessions.get(sessionId)
+          if (Option.isSome(session)) {
+            const creatorModels = yield* modelCatalog.modelsFor(session.value.creator.id)
+            if (findProviderModel(creatorModels, event.model) !== undefined) {
+              const { thinkingLevel } = session.value
+              yield* sessions.setModel(
+                sessionId,
+                { model: event.model, ...(thinkingLevel !== undefined && { thinkingLevel }) },
+                false,
+              )
+            }
+          }
           yield* logEvent(
             sessionId,
             SandboxNoted.make({

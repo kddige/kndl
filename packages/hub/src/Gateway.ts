@@ -142,8 +142,9 @@ const discard = (response: Response) =>
  * How much of the Hub the Gateway's model calls (ADR 0029) may take at once, so a Sandbox can't
  * take it all:
  *
- * - `perSession`: the calls one Session runs at once, from its request to its answer's end. pi
- *   makes one at a time for a Session, and one for each Subagent running; past these, `429`.
+ * - `perSession`: the calls one Session runs at once, from its request to its answer's end, its
+ *   Subagents' among them: pi makes one at a time for itself and one for each Subagent running,
+ *   all within this one limit; past it, `429`.
  * - `requestBytes`: the most of one call's body, said or streamed; past it, `413`. pi sends the
  *   whole conversation each Turn, images in base64 and all: 32 MiB is the size of the largest
  *   request Anthropic's Messages API takes (Google's takes 20 MB of inline data), which more than

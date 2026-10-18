@@ -10,7 +10,7 @@ Pinned versions: pi and pi-ai **1.3.0** (`@earendil-works/pi-coding-agent`, `@ea
 web ──ProviderCommand──▶ Hub ──OAuth / API keys──▶ Providers (OpenAI, xAI, GitHub Copilot, …)
                           │  keeps Connected providers, refreshes tokens, lists Models
                           │
-Sandbox: pi (TUI in tmux) + kndl extension (/opt/kndl/mod/pi/kndl.js)
+Sandbox: pi (TUI in tmux) + kndl extension (/opt/kndl/mod/<copy>/pi/kndl.js)
    │  /mod/*                  hello, Turn events, commands (as hub-link does)
    │  /mod/providers          the Creator's Models, at start
    │  /gateway/models/<p>/…   a Provider's own API, with the Session token as its key

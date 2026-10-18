@@ -71,7 +71,7 @@ One Provider's model, among those of its Creator's Connected providers, that a S
 _Avoid_: engine, LLM, backend
 
 **Thinking level**:
-How hard a Session's Model thinks before it answers, from Off to Max, set with its Model. With none set, the Harness picks.
+How hard a Session's Model thinks before it answers, from Off to Max, set with its Model. With none set, the Model uses its usual level.
 _Avoid_: effort, reasoning effort
 
 ## Who gets in
