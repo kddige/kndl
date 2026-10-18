@@ -1,0 +1,9 @@
+{
+  "name": "@kndl/runner-pi",
+  "private": true,
+  "license": "MIT",
+  "description": "The pi every Session's Sandbox runs, installed by the Runner on its host (src/sandbox/SandboxPi.ts).",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.3.0"
+  }
+}

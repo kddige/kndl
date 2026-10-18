@@ -353,18 +353,23 @@ export function hostTmuxBackend(options: {
 
 /**
  * Builds a stand-in for the Runner's mod into `modDir`, as `bun run mod:build` would, each plugin
- * with a hook that says `build`.
+ * with a hook that says `build`, and the pi extension saying it too.
  */
 export function writeFakeMod(modDir: string, build = "built") {
   for (const plugin of modPlugins) {
     mkdirSync(join(modDir, "plugins", plugin, "hooks"), { recursive: true })
     writeFileSync(join(modDir, "plugins", plugin, "hooks", "hook.js"), `// ${build}\n`)
   }
+  mkdirSync(join(modDir, "pi", "dist"), { recursive: true })
+  writeFileSync(join(modDir, "pi", "dist", "kndl.js"), `// pi ${build}\n`)
   return modDir
 }
 
 /** The Claude Code {@link FakeSandboxes} says each Sandbox runs. */
 export const fakeSandboxClaudePath = "/opt/claude-code/claude"
+
+/** The Node.js {@link FakeSandboxes} says each Sandbox runs pi on. */
+export const fakeSandboxNodePath = "/opt/pi/node"
 
 /** Sandboxes that only record calls. */
 export class FakeSandboxes {
@@ -379,6 +384,8 @@ export class FakeSandboxes {
   readonly running = new Set<SessionId>()
   /** What each Sandbox says Claude Code runs with, as from its Variables. */
   claudeEnv: Readonly<Record<string, string>> = { CLAUDE_CONFIG_DIR: "/claude" }
+  /** What each Sandbox says pi runs with: Claude Code's, but for its state. */
+  piEnv: Readonly<Record<string, string>> = { LANG: "C.UTF-8" }
   /** The bytes each Session's volumes take, for `diskUsage`; 0 for one not set. */
   readonly diskUsages = new Map<SessionId, number>()
   /** The Sessions whose `diskUsage` fails. */
@@ -399,13 +406,17 @@ export class FakeSandboxes {
               ? {}
               : { environmentVersion: target.environment.version }),
             claude: { path: this.claudePath, env: this.claudeEnv },
+            pi: { node: fakeSandboxNodePath, env: this.piEnv },
           }
         }),
       running: Effect.sync(() => [...this.running]),
       keep: (id) =>
         Effect.sync(() => {
           this.calls.push(`keep ${id}`)
-          return { claude: { path: this.claudePath, env: this.claudeEnv } }
+          return {
+            claude: { path: this.claudePath, env: this.claudeEnv },
+            pi: { node: fakeSandboxNodePath, env: this.piEnv },
+          }
         }),
       hasTranscript: (_id, _directories, conversation) =>
         Effect.sync(() => this.transcripts.has(conversation)),

@@ -11,8 +11,8 @@ import { ModEnvironment } from "./ClaudeLaunch.ts"
 /** Where Claude Code reads a setup token from. */
 export const ClaudeTokenVariable = "CLAUDE_CODE_OAUTH_TOKEN"
 
-/** For every Session in a Sandbox: no updates, and no traffic but what it needs. */
-const quiet = {
+/** For every Claude Code in a Sandbox: no updates, and no traffic but what it needs. */
+export const QuietClaude = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   DISABLE_AUTOUPDATER: "1",
 } as const
@@ -53,7 +53,7 @@ export function claudeEnvironment(options: {
     ...env,
     [ModEnvironment.hubUrl]: options.relayUrl,
     [ModEnvironment.modToken]: Redacted.value(options.sessionToken),
-    ...quiet,
+    ...QuietClaude,
     [ClaudeTokenVariable]: Redacted.value(options.credential.token),
   }
 }

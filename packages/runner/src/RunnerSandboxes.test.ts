@@ -11,6 +11,7 @@ import { Effect, Layer, Redacted, References } from "effect"
 import { NoHubClaudeCredential } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
+import { StaticPiBundle } from "./PiBundle.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes } from "./Sandbox.ts"
 import { FakeSandboxBackend, makeFakeWorld } from "./sandbox/FakeSandboxBackend.ts"
@@ -102,6 +103,7 @@ const runProcess = <A>(
       new FakeOpenPorts().layer,
       HubGitLive,
       NoHubClaudeCredential,
+      StaticPiBundle(undefined),
     ]),
     Layer.provide([hub, config, variables]),
   )

@@ -1,6 +1,7 @@
 import type {
   EnvironmentVersion,
   GitIdentity,
+  Harness,
   RepoName,
   RunTestBuild,
   SessionEnvironment,
@@ -21,6 +22,8 @@ export interface SandboxTarget {
   readonly environment?: SessionEnvironment
   /** Who commits in the Sandbox are by, unless the Environment sets its own (#110). */
   readonly gitIdentity?: GitIdentity
+  /** What the Session runs (ADR 0029): a pi Session's Sandbox is readied for pi too. */
+  readonly harness?: Harness
 }
 
 /** How to run Claude Code in a started Sandbox (ADR 0013). */
@@ -35,11 +38,23 @@ export interface SandboxClaude {
   readonly env: Readonly<Record<string, string>>
 }
 
+/** How to run pi in a started Sandbox (ADR 0029). */
+export interface SandboxPi {
+  /** Node.js's executable, in the Sandbox, for its image's libc. pi's CLI is the bundle's. */
+  readonly node: string
+  /**
+   * Its environment over the Sandbox's: Claude Code's, but for Claude Code's state, which pi gets
+   * only with a Claude credential for its Claude bridge.
+   */
+  readonly env: Readonly<Record<string, string>>
+}
+
 /** A started Sandbox. */
 export interface SandboxStarted {
   /** The Environment version the Sandbox runs, if any. */
   readonly environmentVersion?: EnvironmentVersion
   readonly claude: SandboxClaude
+  readonly pi: SandboxPi
 }
 
 /**
@@ -54,8 +69,8 @@ export class Sandboxes extends Context.Service<
   {
     /**
      * Creates the Session's Sandbox, or reuses its stopped one, and starts it. A Sandbox of
-     * another Environment version, or one without the mounts Claude Code runs from, is recreated,
-     * keeping its volumes.
+     * another Environment version, or one without the mounts Claude Code and pi run from, is
+     * recreated, keeping its volumes.
      */
     readonly start: (
       sessionId: SessionId,

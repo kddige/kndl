@@ -11,15 +11,27 @@
 // Beside the mod's plugins, the copy holds one the Runner writes for a Session with Installations
 // (ADR 0020), `kndl`: their MCP servers, all at the Hub's Gateway. Its Installations too change
 // only as its Claude Code starts again.
+//
+// The copy holds the mod's pi extension too, `pi/kndl.js` (ADR 0029), which a pi Session's pi
+// loads with `-e`, so a pi Session takes a new mod as a Claude Code Session does. A mod built
+// without it still copies, for Claude Code Sessions; the Runner then runs no pi Sessions
+// (PiBundle.ts).
 
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
 import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises"
-import { join, posix } from "node:path"
+import { dirname, join, posix } from "node:path"
 import type { GatewayServer } from "@kndl/protocol"
 import { Data, Effect } from "effect"
 import { gatewayMcpServers } from "./ClaudeLaunch.ts"
-import { gatewayPlugin, modGuestPath, modPlugins } from "./sandbox/SessionLayout.ts"
+import { gatewayPlugin, modGuestPath, modPlugins, piExtension } from "./sandbox/SessionLayout.ts"
 import type { SessionDirectories } from "./SessionNames.ts"
+
+/** Where `bun run mod:build` writes the mod's pi extension, in the mod package. */
+export const piExtensionBuild = "pi/dist/kndl.js"
+
+/** Whether the mod under `modDir` has its pi extension built. */
+export const hasPiExtension = (modDir: string) => existsSync(join(modDir, piExtensionBuild))
 
 export class SessionModError extends Data.TaggedError("SessionModError")<{
   readonly message: string
@@ -28,7 +40,8 @@ export class SessionModError extends Data.TaggedError("SessionModError")<{
 /**
  * Copies the Runner's mod, its plugins under `modDir`, into the Session's `mod/`, in place of the
  * copy there, with the {@link gatewayPlugin} plugin for the MCP servers of its Installations, if
- * any, and returns where the Sandbox sees the new copy. Run only while the Session's Claude Code is
+ * any, and the {@link piExtension}, when it is built, and returns where the Sandbox sees the new
+ * copy. Run only while the Session's Claude Code is
  * stopped.
  *
  * Each copy has a new name: the Sandbox may still hold the last one's paths, and a directory
@@ -50,6 +63,11 @@ export const copySessionMod = (
         await cp(join(modDir, "plugins", plugin), join(directories.mod, name, plugin), {
           recursive: true,
         })
+      }
+      if (hasPiExtension(modDir)) {
+        const extension = join(directories.mod, name, piExtension)
+        await mkdir(dirname(extension), { recursive: true })
+        await cp(join(modDir, piExtensionBuild), extension)
       }
       if (mcpServers.length > 0) {
         const plugin = join(directories.mod, name, gatewayPlugin)

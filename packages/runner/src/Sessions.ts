@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type {
   ClaudeCredential,
+  Harness,
   HubToRunner,
   MeasureSessionDisks,
   RelaunchSession,
@@ -33,6 +34,14 @@ import { HubGit } from "./HubGit.ts"
 import { HubLink } from "./HubLink.ts"
 import { HubVariables } from "./HubVariables.ts"
 import { OpenPorts } from "./OpenPorts.ts"
+import { PiBundle, type PiReady } from "./PiBundle.ts"
+import {
+  HarnessVariable,
+  keptOutOfPi,
+  piEnvironment,
+  piLaunch,
+  PiSessionIdPattern,
+} from "./PiLaunch.ts"
 import { ModRelay } from "./relay/ModRelay.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { Sandboxes, type SandboxStarted } from "./Sandbox.ts"
@@ -49,8 +58,8 @@ export const InitialTerminalSize: TerminalSize = { cols: 120, rows: 40 }
 export const StopGracePeriod = Duration.seconds(10)
 
 /**
- * The Sessions running on this Runner: each one Claude Code in a tmux session in its Sandbox
- * (ADR 0013), whose terminal is streamed to the Hub.
+ * The Sessions running on this Runner: each one its Harness, Claude Code or pi, in a tmux session
+ * in its Sandbox (ADR 0013, ADR 0029), whose terminal is streamed to the Hub.
  */
 export class Sessions extends Context.Service<
   Sessions,
@@ -112,6 +121,7 @@ export const SessionsLive = Layer.effect(
     const hubClaudeCredential = yield* HubClaudeCredential
     const relay = yield* ModRelay
     const ports = yield* OpenPorts
+    const piBundle = yield* PiBundle
     const layerScope = yield* Effect.scope
 
     const running = new Map<SessionId, Running>()
@@ -122,6 +132,8 @@ export const SessionsLive = Layer.effect(
     const launchSecrets = new Map<SessionId, ReadonlyArray<string>>()
     /** What each started Session's Sandbox runs: its Environment version and Claude Code. */
     const sandboxStarts = new Map<SessionId, SandboxStarted>()
+    /** What each started Session runs (ADR 0029), for a relaunch to start it again. */
+    const harnesses = new Map<SessionId, Harness>()
     /** Sessions kept running across a restart, whose Session token waits for a mod token. */
     const held = new Set<SessionId>()
     const locks = new Map<SessionId, Semaphore.Semaphore>()
@@ -283,6 +295,111 @@ export const SessionsLive = Layer.effect(
       })
 
     /**
+     * The conversation to start pi with: a new one, or the one the Hub asks to resume. Either goes
+     * to pi's `--session-id`, which resumes pi's session of that id, kept on the Session's volume,
+     * or starts one with that id when pi has none, so there is nothing to check first. One pi
+     * would refuse as a session id, which it can't have had, starts new with an id of its own, and
+     * a note in the Session says pi doesn't remember it.
+     */
+    const piConversationFor = (request: StartSession | RelaunchSession) =>
+      Effect.gen(function* () {
+        if (request.resume === undefined) return randomUUID()
+        if (PiSessionIdPattern.test(request.resume)) return request.resume
+        yield* Effect.logWarning(
+          `Session ${request.sessionId}: conversation ${request.resume} isn't pi's, so it starts a new one instead of resuming it`,
+        )
+        yield* hub.send(
+          RunnerToHub.cases.SandboxNote.make({
+            sessionId: request.sessionId,
+            message:
+              "pi couldn't resume a conversation it didn't have, so it started a new one: it " +
+              "doesn't remember what was said above.",
+          }),
+        )
+        return randomUUID()
+      })
+
+    /**
+     * Starts the Session's pi in a new tmux session in its running Sandbox, as Claude Code starts
+     * (ADR 0029), and watches it. It holds a new Session token, and its Creator's setup token when
+     * the Hub gave it, for its Claude bridge, both given to it alone (PiLaunch.ts), and loads the
+     * mod's pi extension from a new copy of the Runner's mod.
+     */
+    const launchPi = (
+      request: StartSession | RelaunchSession,
+      directories: SessionDirectories,
+      sandbox: SandboxStarted,
+      pi: PiReady,
+      credential: ClaudeCredential | undefined,
+    ) =>
+      Effect.gen(function* () {
+        const { sessionId } = request
+        const launch = piLaunch({
+          nodePath: sandbox.pi.node,
+          cliPath: pi.cli,
+          sessionId,
+          mod: yield* copySessionMod(config.modDir, directories, request.mcpServers),
+          conversationId: yield* piConversationFor(request),
+          ...(request.model === undefined ? {} : { model: request.model }),
+          ...(request.thinkingLevel === undefined ? {} : { thinkingLevel: request.thinkingLevel }),
+          ...(credential === undefined ? {} : { claudePath: sandbox.claude.path }),
+        })
+        const sessionToken = yield* admit(sessionId, request.modToken)
+        launchSecrets.set(sessionId, [
+          Redacted.value(sessionToken),
+          ...(credential === undefined ? [] : [Redacted.value(credential.token)]),
+        ])
+        yield* tmux.launch({
+          sessionId,
+          cwd: workspaceGuestPath,
+          argv: launch.argv,
+          env: piEnvironment({
+            base: { ...sandbox.pi.env, ...launch.env },
+            relayUrl: relay.guestUrl,
+            sessionToken,
+            ...(credential === undefined ? {} : { credential }),
+          }),
+          unset: keptOutOfPi(credential),
+          size: InitialTerminalSize,
+        })
+        yield* watch(sessionId)
+      })
+
+    /**
+     * Readies the Session's Harness to start, before its Sandbox does, and gives what starts it
+     * there. Claude Code needs its Creator's setup token (ADR 0026): a refusal fails the start.
+     * pi needs the Runner's pi bundle, and takes the setup token if the Hub gives it: without it,
+     * Claude's Models aren't there, but pi runs.
+     */
+    const readyHarness = (request: StartSession | RelaunchSession, harness: Harness) =>
+      Effect.gen(function* () {
+        const { sessionId } = request
+        if (harness === "ClaudeCode") {
+          const credential = yield* hubClaudeCredential.fetch(sessionId)
+          return (directories: SessionDirectories, sandbox: SandboxStarted) =>
+            launchClaude(request, directories, sandbox, credential)
+        }
+        const pi = yield* piBundle.ready
+        if (pi === undefined)
+          return yield* Effect.fail(
+            new Error("This Runner doesn't run pi Sessions: its log says why."),
+          )
+        const credential = yield* hubClaudeCredential.fetch(sessionId).pipe(
+          Effect.map((given): ClaudeCredential | undefined => given),
+          Effect.catch((error) =>
+            Effect.as(
+              Effect.logInfo(
+                `Session ${sessionId}: pi runs without Claude's Models, as the Hub gave no Claude credential: ${error.message}`,
+              ),
+              undefined,
+            ),
+          ),
+        )
+        return (directories: SessionDirectories, sandbox: SandboxStarted) =>
+          launchPi(request, directories, sandbox, pi, credential)
+      })
+
+    /**
      * Starts the Session's Claude Code in a new tmux session in its running Sandbox, and watches
      * it. It holds its Creator's setup token and a new Session token, given to it alone, never set
      * on the Sandbox (ClaudeEnvironment.ts), and loads a new copy of the Runner's mod, which
@@ -344,20 +461,23 @@ export const SessionsLive = Layer.effect(
           if (running.has(sessionId)) return yield* started(sessionId)
           // Whatever is left of an earlier run, such as a tmux session whose process exited.
           yield* tmux.kill(sessionId)
+          const harness = request.harness ?? "ClaudeCode"
+          harnesses.set(sessionId, harness)
           const launched = yield* Effect.gen(function* () {
-            // Its Creator's setup token first (ADR 0026): without it, the Session can't run, and
-            // its Sandbox isn't started for nothing.
-            const credential = yield* hubClaudeCredential.fetch(sessionId)
+            // Its Creator's setup token first (ADR 0026), and pi's bundle for a pi Session:
+            // without them, the Session can't run, and its Sandbox isn't started for nothing.
+            const launch = yield* readyHarness(request, harness)
             const directories = yield* workspaces.prepare(request)
-            // The Sandbox (#9) is created and started around the Workspace before Claude Code,
+            // The Sandbox (#9) is created and started around the Workspace before the Harness,
             // from the Repo's Environment if it has one (ADR 0009).
             const sandbox = yield* sandboxes.start(sessionId, directories, {
               repo: request.repo,
               ...(request.environment === undefined ? {} : { environment: request.environment }),
               ...(request.gitIdentity === undefined ? {} : { gitIdentity: request.gitIdentity }),
+              ...(harness === "Pi" ? { harness } : {}),
             })
             sandboxStarts.set(sessionId, sandbox)
-            yield* launchClaude(request, directories, sandbox, credential)
+            yield* launch(directories, sandbox)
           }).pipe(Effect.exit)
 
           if (Exit.isSuccess(launched)) {
@@ -380,6 +500,9 @@ export const SessionsLive = Layer.effect(
      * session, while its Sandbox stays as it is, on its Creator's setup token fetched again. The
      * Hub sends it only while no Turn runs. A Claude Code that won't start again, as when the Hub
      * refuses the setup token, leaves the Session as a failed start does, asleep.
+     *
+     * A pi Session's pi starts again the same way, as the Harness it started as (ADR 0029). The Hub
+     * switches a pi Session's model in pi itself, while it runs, but a relaunch still works.
      */
     const relaunch = (request: RelaunchSession) =>
       serialized(request.sessionId)(
@@ -387,11 +510,12 @@ export const SessionsLive = Layer.effect(
           const { sessionId } = request
           const session = running.get(sessionId)
           const sandbox = sandboxStarts.get(sessionId)
+          const harness = harnesses.get(sessionId) ?? "ClaudeCode"
           if (session === undefined || sandbox === undefined) {
             return yield* hub.send(
               RunnerToHub.cases.SessionStartFailed.make({
                 sessionId,
-                message: "Claude Code was not running to restart with the new model",
+                message: `${harness === "Pi" ? "pi" : "Claude Code"} was not running to restart with the new model`,
               }),
             )
           }
@@ -400,14 +524,9 @@ export const SessionsLive = Layer.effect(
           yield* Deferred.await(session.exited).pipe(Effect.timeoutOption(StopGracePeriod))
           yield* tmux.kill(sessionId)
           yield* forget(sessionId)
-          const launched = yield* hubClaudeCredential.fetch(sessionId).pipe(
-            Effect.flatMap((credential) =>
-              launchClaude(
-                request,
-                sessionDirectories(config.sessionsRoot, sessionId),
-                sandbox,
-                credential,
-              ),
+          const launched = yield* readyHarness(request, harness).pipe(
+            Effect.flatMap((launch) =>
+              launch(sessionDirectories(config.sessionsRoot, sessionId), sandbox),
             ),
             Effect.exit,
           )
@@ -519,14 +638,20 @@ export const SessionsLive = Layer.effect(
         Effect.catchCause((cause) =>
           Effect.logWarning(`Session ${sessionId} was not purged: ${message(cause)}`),
         ),
-        Effect.ensuring(Effect.sync(() => locks.delete(sessionId))),
+        Effect.ensuring(
+          Effect.sync(() => {
+            locks.delete(sessionId)
+            harnesses.delete(sessionId)
+          }),
+        ),
       )
 
     // Its Session token is read back from Claude Code's environment, where the launch put it for
     // the mod (ModEnvironment.modToken). It lets only this Session in, so a guest that changed it
     // gains nothing. Anything missing, and the Session sleeps, as its Sandbox is stopped. Claude
     // Code runs on with the setup token it was started with, read back too only to keep it out
-    // of what it prints as it exits.
+    // of what it prints as it exits. Which Harness runs is read back the same way: pi's launch
+    // says so (HarnessVariable), and Claude Code's, older than pi, doesn't.
     const adopt = Effect.gen(function* () {
       yield* tmux.retireHostServer
       const kept: Array<SessionId> = []
@@ -535,12 +660,15 @@ export const SessionsLive = Layer.effect(
         const token = yield* tmux.variable(sessionId, ModEnvironment.modToken)
         if (token === undefined || !(yield* relay.hold(sessionId, token))) {
           yield* Effect.logInfo(
-            `Session ${sessionId}: Claude Code is no longer running, so it sleeps`,
+            `Session ${sessionId}: its Harness is no longer running, so it sleeps`,
           )
           continue
         }
         const setupToken = yield* tmux.variable(sessionId, ClaudeTokenVariable)
         launchSecrets.set(sessionId, setupToken === undefined ? [token] : [token, setupToken])
+        const harness: Harness =
+          (yield* tmux.variable(sessionId, HarnessVariable)) === "Pi" ? "Pi" : "ClaudeCode"
+        harnesses.set(sessionId, harness)
         held.add(sessionId)
         const watched = yield* watch(sessionId).pipe(Effect.exit)
         if (Exit.isFailure(watched)) {
@@ -551,7 +679,9 @@ export const SessionsLive = Layer.effect(
           continue
         }
         kept.push(sessionId)
-        yield* Effect.logInfo(`Session ${sessionId}: Claude Code kept running across the restart`)
+        yield* Effect.logInfo(
+          `Session ${sessionId}: ${harness === "Pi" ? "pi" : "Claude Code"} kept running across the restart`,
+        )
       }
       yield* sandboxes.reconcile(kept)
     })

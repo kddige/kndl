@@ -5,7 +5,7 @@ import { join, posix } from "node:path"
 import { InstallationId } from "@kndl/protocol"
 import { Effect } from "effect"
 import { gatewayMcpServers } from "./ClaudeLaunch.ts"
-import { gatewayPlugin, modGuestPath, modPlugins } from "./sandbox/SessionLayout.ts"
+import { gatewayPlugin, modGuestPath, modPlugins, piExtension } from "./sandbox/SessionLayout.ts"
 import { copySessionMod } from "./SessionMod.ts"
 import { sessionDirectories } from "./SessionNames.ts"
 import { sessionId } from "./testSupport.ts"
@@ -51,4 +51,23 @@ test("copies the mod's plugins, with a kndl plugin of each Installation's MCP se
   const next = await Effect.runPromise(copySessionMod(modDir, directories))
   expect(readdirSync(directories.mod)).toEqual([posix.basename(next)])
   expect(readdirSync(onHost(directories.mod, next)).toSorted()).toEqual([...modPlugins])
+})
+
+test("copies the mod's pi extension beside its plugins, where pi's -e finds it (ADR 0029)", async () => {
+  const { modDir, directories } = scene()
+  mkdirSync(join(modDir, "pi", "dist"), { recursive: true })
+  writeFileSync(join(modDir, "pi", "dist", "kndl.js"), "// the pi extension\n")
+  const guest = await Effect.runPromise(copySessionMod(modDir, directories))
+
+  expect(readFileSync(join(onHost(directories.mod, guest), piExtension), "utf8")).toBe(
+    "// the pi extension\n",
+  )
+  // Only the bundle: its sources and the rest of the mod package stay out.
+  expect(readdirSync(join(onHost(directories.mod, guest), "pi"))).toEqual(["kndl.js"])
+})
+
+test("copies a mod without a built pi extension all the same: only pi Sessions need it", async () => {
+  const { modDir, directories } = scene()
+  const guest = await Effect.runPromise(copySessionMod(modDir, directories))
+  expect(readdirSync(onHost(directories.mod, guest)).toSorted()).toEqual([...modPlugins])
 })

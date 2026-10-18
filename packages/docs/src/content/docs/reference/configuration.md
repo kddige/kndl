@@ -50,6 +50,7 @@ The Hub and Runners read environment variables. Where you set them:
 | `RUNNER_SANDBOX_IMAGE` | `docker:dind` | The image of a Session whose Repo has no Environment. |
 | `RUNNER_SANDBOX_CLAUDE_VERSION` | the version this kndl is tested with | The Claude Code version Sandboxes run. Another may not work with the mod. |
 | `RUNNER_SANDBOX_CLAUDE_CACHE` | `<home>/claude-code` | Where the Runner keeps Linux builds of Claude Code. |
+| `RUNNER_SANDBOX_PI_CACHE` | `<home>/pi` | Where the Runner keeps the Node.js and pi that pi Sessions run. If getting them fails, the Runner logs why and runs Claude Code Sessions only. |
 | `RUNNER_SANDBOX_MAX_CPUS` | the host's CPU count | The most CPUs a Sandbox gets, whatever its Environment asks for. |
 | `RUNNER_SANDBOX_MAX_MEMORY_MIB` | half the host's memory | The most memory, in MiB, a Sandbox gets. |
 | `RUNNER_SANDBOX_KEEP_BUILDS` | `3` | How many Builds of each Repo's Environment the Runner keeps. |
@@ -67,6 +68,7 @@ An install keeps its state in its home, `~/.kndl`. A checkout uses the dev home,
 |---|---|---|
 | `RUNNER_SESSIONS_ROOT` | `~/.kndl/sessions` | `~/.kndl-dev/sessions` |
 | `RUNNER_SANDBOX_CLAUDE_CACHE` | `~/.kndl/claude-code` | `~/.kndl-dev/claude-code` |
+| `RUNNER_SANDBOX_PI_CACHE` | `~/.kndl/pi` | `~/.kndl-dev/pi` |
 | `RUNNER_TMUX_SOCKET` | `kndl` | `kndl-dev` |
 | `RUNNER_RELAY_PORT` | `7778` | `7779` |
 | `HUB_DATABASE` | `~/.kndl/hub.db` | `packages/hub/hub.db` |

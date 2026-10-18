@@ -27,6 +27,7 @@ import { HubClaudeCredentialLive } from "./HubClaudeCredential.ts"
 import { HubGitLive } from "./HubGit.ts"
 import { HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
+import { StaticPiBundle } from "./PiBundle.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { workspaceGuestPath } from "./sandbox/SessionLayout.ts"
@@ -186,6 +187,7 @@ async function startRunner(hub: TestHub) {
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(StaticClaudeModels(undefined)),
+    Layer.provideMerge(StaticPiBundle(undefined)),
     Layer.provide([
       Layer.succeed(Tmux, Tmux.of({ ...makeTmux(guestTmux), retireHostServer: Effect.void })),
       new FakeWorkspaces(sessionsRoot).layer,

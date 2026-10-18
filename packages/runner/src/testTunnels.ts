@@ -38,6 +38,7 @@ import { HubGitLive } from "./HubGit.ts"
 import { HubLink, HubLinkLive } from "./HubLink.ts"
 import { HubVariablesLive } from "./HubVariables.ts"
 import { OpenPorts } from "./OpenPorts.ts"
+import { StaticPiBundle } from "./PiBundle.ts"
 import { runRunner } from "./Runner.ts"
 import { RunnerConfig } from "./RunnerConfig.ts"
 import { connectHostTcp, makeFake } from "./sandbox/FakeSandboxBackend.ts"
@@ -259,6 +260,7 @@ export async function tunnelScene(options: {
     Layer.provideMerge(HubClaudeCredentialLive),
     Layer.provideMerge(HubLinkLive),
     Layer.provideMerge(StaticClaudeModels(undefined)),
+    Layer.provideMerge(StaticPiBundle(undefined)),
     Layer.provide([
       Layer.succeed(
         Tmux,
