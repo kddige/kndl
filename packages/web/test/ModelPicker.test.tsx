@@ -390,8 +390,7 @@ test("a pi Session's picker says so when its Creator has no Models", async () =>
 test("someone watching a pi Session sees its Model's label as it is known", async () => {
   const known = await render(
     <ModelSettingLabel
-      harness="Pi"
-      models={undefined}
+      pi={{ models: undefined }}
       knownLabel="GPT-6-Sol"
       value={{ model: "openai/gpt-6-sol", thinkingLevel: "high" }}
     />,
@@ -401,7 +400,7 @@ test("someone watching a pi Session sees its Model's label as it is known", asyn
   await cleanup?.()
 
   const unknown = await render(
-    <ModelSettingLabel harness="Pi" models={undefined} value={{ model: "openai/gpt-6-sol" }} />,
+    <ModelSettingLabel pi={{ models: undefined }} value={{ model: "openai/gpt-6-sol" }} />,
   )
   cleanup = unknown.unmount
   expect(unknown.container.textContent).toBe("gpt-6-sol")

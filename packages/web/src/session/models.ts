@@ -17,6 +17,7 @@ import {
   providerModelName,
   type RunnerModels,
   sameModel,
+  takesThinkingLevel,
   type SessionLogEntry,
   type ThinkingLevel,
   ThinkingLevels,
@@ -210,7 +211,7 @@ export function providerModelOf(
 ): ProviderModel | undefined {
   if (models === undefined) return undefined
   if (setting.model === undefined) return defaultProviderModel(models)
-  return models.find((model) => providerModelName(model) === setting.model)
+  return findProviderModel(models, setting.model)
 }
 
 /**
@@ -254,10 +255,9 @@ export function fitProviderSetting(
 ): ModelSetting {
   const model = providerModelOf(models, setting) ?? (models && defaultProviderModel(models))
   if (model === undefined) return {}
-  const thinkingLevel =
-    setting.thinkingLevel !== undefined && model.thinkingLevels.includes(setting.thinkingLevel)
-      ? setting.thinkingLevel
-      : undefined
+  const thinkingLevel = takesThinkingLevel(model, setting.thinkingLevel)
+    ? setting.thinkingLevel
+    : undefined
   return {
     model: providerModelName(model),
     ...(thinkingLevel !== undefined && { thinkingLevel }),

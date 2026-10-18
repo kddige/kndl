@@ -1,10 +1,12 @@
 import {
   type ConnectableProvider,
   findModel,
+  findProviderModel,
   harnessOfModel,
   type ProviderModel,
   providerModelName,
   type RunnerModels,
+  takesThinkingLevel,
   type ThinkingLevel,
 } from "@kndl/protocol"
 import * as stylex from "@stylexjs/stylex"
@@ -91,20 +93,6 @@ const look = (appearance: Appearance) =>
   appearance === "bar"
     ? ({ size: "sm", intent: "ghost" } as const)
     : ({ size: "md", intent: "secondary" } as const)
-
-/** What a Session's model can be set to, by its Harness (ADR 0029). */
-export type HarnessModels =
-  | {
-      /** Claude Code, as a Session from before pi says by saying nothing. */
-      readonly harness?: "ClaudeCode"
-      /** What the Session's Runner said its Claude Code has; undefined before it has said. */
-      readonly models: RunnerModels | undefined
-    }
-  | {
-      readonly harness: "Pi"
-      /** Its Creator's Models, from their ProvidersState; undefined before the Hub sent it. */
-      readonly models: ReadonlyArray<ProviderModel> | undefined
-    }
 
 export interface ModelPickerProps {
   /**
@@ -206,8 +194,8 @@ export function ModelPicker({
     const level = value.thinkingLevel
     let takesLevel: boolean
     if (row !== defaultRow && harnessOfModel(row) === "Pi") {
-      const model = providerModels?.find((each) => providerModelName(each) === row)
-      takesLevel = level !== undefined && model?.thinkingLevels.includes(level) === true
+      const model = providerModels && findProviderModel(providerModels, row)
+      takesLevel = level !== undefined && model !== undefined && takesThinkingLevel(model, level)
     } else {
       const model =
         row === defaultRow ? runnerModels?.default : runnerModels && findModel(runnerModels, row)
@@ -270,27 +258,29 @@ export function ModelPicker({
 }
 
 /**
- * The model a Session runs and its thinking level, named as the picker names them, for someone
- * who can't change them: watching a Session they didn't start (ADR 0026). For a pi Session, whose
- * Creator's Models only they are sent, `knownLabel` is its Model's name as the transcript last gave
- * it.
+ * The model a Session runs and its thinking level, named as the picker names them, from the same
+ * models, for someone who can't change them: watching a Session they didn't start (ADR 0026). For a
+ * pi Model, whose Creator's Models only they are sent, `knownLabel` is its name as the transcript
+ * last gave it.
  */
-export function ModelSettingLabel(
-  props: HarnessModels & { value: ModelSetting; knownLabel?: string | undefined },
-) {
-  const { value } = props
+export function ModelSettingLabel({
+  claudeCode,
+  pi,
+  value,
+  knownLabel,
+}: Pick<ModelPickerProps, "claudeCode" | "pi" | "value"> & { knownLabel?: string | undefined }) {
   let name: string
   let takesLevel: boolean
-  if (props.harness === "Pi") {
-    const current = providerModelOf(props.models, value)
-    name = providerModelLabel(props.models, value, props.knownLabel)
+  if (harnessOfModel(value.model) === "Pi") {
+    const current = providerModelOf(pi?.models, value)
+    name = providerModelLabel(pi?.models, value, knownLabel)
     // A Model not known here is shown with the level set: the Hub checked it.
     takesLevel = current === undefined || current.thinkingLevels.length > 0
   } else {
-    name = modelName(props.models, value)
+    const models = claudeCode?.models
+    name = modelName(models, value)
     // As the picker: a level only for a model that takes one.
-    takesLevel =
-      modelOf(props.models, value)?.reasoning === true && thinkingLevelsOf(props.models).length > 0
+    takesLevel = modelOf(models, value)?.reasoning === true && thinkingLevelsOf(models).length > 0
   }
   const level =
     takesLevel && value.thinkingLevel !== undefined
@@ -312,8 +302,9 @@ export function ModelSettingLabel(
 /**
  * The thinking button and its slider. The slider shows where it is dragged or stepped to, and sets
  * the level where it is let go or clicked, on Enter, or when it closes other than by Escape on a
- * level other than the one set; Escape takes it back. A change between Turns restarts Claude Code, and while agents run asks first, so
- * stepping through the levels doesn't set each.
+ * level other than the one set; Escape takes it back. Each change goes to the Hub, and between
+ * Turns pi switches to it and Claude Code restarts, which asks first while agents run, so stepping
+ * through the levels doesn't set each.
  */
 function ThinkingPicker({
   levels,

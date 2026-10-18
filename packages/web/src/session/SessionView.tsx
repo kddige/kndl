@@ -284,12 +284,12 @@ function LoadedSession({
   )
   // Claude Code runs on its Creator's setup token (ADR 0026): without one, it isn't offered.
   const hasClaudeCredential = useHubState((hubState) => hubState.claudeCredential !== null)
-  const knownLabel = useHubState((hubState) =>
-    modelOnPi ? knownModelLabel(hubState.joined[summary.id]?.log ?? [], summary.model) : undefined,
+  // Looked for only when the log or the model changes, not on every change the Hub sends.
+  const log = useHubState((hubState) => hubState.joined[summary.id]?.log)
+  const knownLabel = useMemo(
+    () => (modelOnPi ? knownModelLabel(log ?? [], summary.model) : undefined),
+    [modelOnPi, log, summary.model],
   )
-  const harnessModels = modelOnPi
-    ? ({ harness: "Pi", models: providerModels } as const)
-    : ({ harness: "ClaudeCode", models } as const)
   const offered = {
     ...(((runnerHarnesses.includes("ClaudeCode") && hasClaudeCredential) || !pi) && {
       claudeCode: { models },
@@ -688,7 +688,8 @@ function LoadedSession({
                     ) : (
                       // Someone watching sees what it runs on, but can't change it (ADR 0026).
                       <ModelSettingLabel
-                        {...harnessModels}
+                        claudeCode={{ models }}
+                        pi={{ models: providerModels }}
                         value={setting}
                         knownLabel={knownLabel}
                       />
