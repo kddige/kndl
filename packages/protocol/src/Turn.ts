@@ -212,15 +212,20 @@ export const AgentStatusChanged = Schema.TaggedStruct("AgentStatusChanged", {
 export type AgentStatusChanged = typeof AgentStatusChanged.Type
 
 /**
- * Claude asked a question with AskUserQuestion on the main loop (#193): the Session's Open
- * question until a QuestionClosed for the same call. Claude Code shows its dialog at the terminal
- * meanwhile, and the first answer, there or from the web UI, is the one Claude reads. A subagent's
- * questions are answered at the terminal only, and not reported.
+ * The agent asked a question with its question tool on the main loop (#193): the Session's Open
+ * question until a QuestionClosed for the same call. In pi the person at its terminal gets a
+ * dialog meanwhile, and the first answer, there or from the web UI, is the one the agent reads; in
+ * Claude Code the web UI answers alone. A subagent's questions are not reported.
+ *
+ * An `async` question doesn't hold the agent up: its call returned at once, and it works on. Its
+ * Turn may end before anyone answers, which doesn't close the question; the answer is given to the
+ * agent as a message, into the Turn if it still runs, else as a Turn of its own.
  */
 export const QuestionAsked = Schema.TaggedStruct("QuestionAsked", {
   turnId: TurnId,
   toolCallId: ToolCallId,
   questions: Schema.Array(Question),
+  async: Schema.optionalKey(Schema.Boolean),
 })
 export type QuestionAsked = typeof QuestionAsked.Type
 

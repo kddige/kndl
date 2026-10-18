@@ -396,17 +396,17 @@ A model names its Harness (`harnessOfModel` in `Model.ts`, [ADR 0030](/contribut
 
 ### Questions
 
-When Claude asks with `AskUserQuestion` on the main loop, the mod reports `QuestionAsked { turnId, toolCallId, questions }`, each question with its `question`, `header`, `options` (`label`, `description?`) and `multiSelect`. Until it closes, the Session carries it as `openQuestion: { turnId, toolCallId, questions, askedAt }`, and it doesn't go to sleep. A subagent's questions aren't reported: they are answered at the terminal.
+When the agent asks with the question tool on the main loop (`ask_user_question`, which in Claude Code replaces `AskUserQuestion`), the mod reports `QuestionAsked { turnId, toolCallId, questions, async? }`, each question with its `question`, `header`, `options` (`label`, `description?`) and `multiSelect`. Until it closes, the Session carries it as `openQuestion: { turnId, toolCallId, questions, askedAt, async? }`, and it doesn't go to sleep. A subagent can't ask.
 
-Claude Code shows its dialog at the terminal meanwhile, and the mod's `tool.call` hook waits for an answer from the web UI. The dialog is the tool's permission prompt, so the mod, which allows every other tool without asking, leaves `AskUserQuestion`'s permission check to Claude Code. The first answer to reach the mod, from either, is the one Claude reads, and the mod reports `QuestionClosed { turnId, toolCallId, outcome, by? }`. `by` is the Participant who answered from the web UI, absent for the terminal. Esc at the terminal is `Dismissed`. A Stop is `Cancelled`, and so is a dialog that Claude Code closed by itself with no answer, after timing out with nobody at the keyboard (`askUserQuestionTimeout`, off unless set). The Hub closes the question as `Cancelled` itself when its Turn or its Claude Code ends with it open.
+In pi, the person at its terminal gets a dialog meanwhile, and the first answer to reach the mod, from either, is the one the agent reads. Claude Code's own dialog can't be opened while the Runner has its `AskUserQuestion` turned off (`--disallowedTools`), so its questions are answered from the web UI alone. The mod reports `QuestionClosed { turnId, toolCallId, outcome, by? }`. `by` is the Participant who answered from the web UI, absent for pi's terminal. A Stop is `Cancelled`. The Hub closes the question as `Cancelled` itself when its Turn or its agent's process ends with it open.
 
 `AnswerQuestion { sessionId, toolCallId, answer }` answers the Open question, with one of these, and the Hub sends the mod `DeliverAnswer { sessionId, toolCallId, answer, sender }`:
 
-| `answer` | What Claude reads, as from Claude Code's dialog |
+| `answer` | What the agent reads |
 |---|---|
-| `Answered { answers }` | `answers`, keyed by question text. A multi-select question's labels are joined with `", "`; a label holding `", "` or `"` is written as a JSON string. A question left out was skipped. |
-| `Replied { text }` | No answers: the question is declined with `text`, the person's own words, as Claude Code declines a tool call the user answers with a message. What the prompt box sends while a question is open. |
-| `Dismissed {}` | The tool call rejected, as Esc at the terminal does. |
+| `Answered { answers }` | `answers`, keyed by question text, as lines of text. A multi-select question's labels are joined with `", "`; a label holding `", "` or `"` is written as a JSON string. A question left out was skipped. |
+| `Replied { text }` | No answers: `text`, the person's own words, with their name, in place of a pick. What the prompt box sends while a question is open. |
+| `Dismissed {}` | Dismissed: the agent is told to stop and wait for the person to say how to proceed (a waited question), or to carry on without (an `async` one). |
 
 An `AnswerQuestion` for a question that isn't the Session's Open question is refused with a `CommandFailed` that says how it closed, such as `Bob Lee answered first: Luxon.` So is an answer that reaches the mod after another: the mod reports `AnswerFailed { toolCallId, senderId, message }`, and the Hub tells the sender.
 

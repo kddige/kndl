@@ -624,6 +624,8 @@ describe("Sessions", () => {
       "--plugin-dir",
       expect.stringMatching(new RegExp(`^${modGuestPath}/[0-9a-z]+/hub-link-commands$`)),
       "--dangerously-skip-permissions",
+      "--disallowedTools",
+      "AskUserQuestion",
     ])
     const sessionToken = spec?.env["KNDL_MOD_TOKEN"] ?? ""
     expect(sessionToken).toStartWith("chp_")

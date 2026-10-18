@@ -73,6 +73,10 @@ export function claudeLaunch(options: ClaudeLaunchOptions): ClaudeLaunch {
         (plugin) => ["--plugin-dir", posix.join(options.mod, plugin)],
       ),
       "--dangerously-skip-permissions",
+      // The mod's question tool replaces it (#193): it takes the same questions, and may be asked
+      // `async`, which this one can't be.
+      "--disallowedTools",
+      "AskUserQuestion",
       ...(options.model === undefined ? [] : ["--model", options.model]),
       ...(options.thinkingLevel !== undefined && ClaudeEfforts.includes(options.thinkingLevel)
         ? ["--effort", options.thinkingLevel]

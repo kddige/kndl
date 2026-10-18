@@ -309,6 +309,10 @@ function AnsweredQuestion({
   const question = questions[index]
   const draft = (question && drafts[question.question]) ?? emptyDraft
   const last = index === questions.length - 1
+  const waitsFor =
+    open.async === true
+      ? "The agent works on meanwhile, and reads your answer when it comes."
+      : "It waits for an answer here or at the terminal."
 
   // Everyone sees what the others have picked so far, a moment after they pick it.
   const shared = useRef<Record<string, string>>({})
@@ -550,8 +554,8 @@ function AnsweredQuestion({
           {sent
             ? "Sending your answer…"
             : question.multiSelect
-              ? "Pick any number, then confirm. It waits for an answer here or at the terminal."
-              : "Pick one, or press its number. It waits for an answer here or at the terminal."}
+              ? `Pick any number, then confirm. ${waitsFor}`
+              : `Pick one, or press its number. ${waitsFor}`}
         </span>
         {question.multiSelect && (
           <Button
@@ -656,9 +660,11 @@ function WatchedQuestion({
       </ol>
       <div {...stylex.props(styles.footer)}>
         <span {...stylex.props(styles.keys)}>
-          {answerer === undefined
-            ? "Waiting on an answer, here or at the terminal."
-            : `Waiting on ${answerer} to answer, here or at the terminal.`}
+          {open.async === true
+            ? `${answerer === undefined ? "An answer" : `${answerer}'s answer`} reaches the agent when it comes: it works on meanwhile.`
+            : answerer === undefined
+              ? "Waiting on an answer, here or at the terminal."
+              : `Waiting on ${answerer} to answer, here or at the terminal.`}
         </span>
       </div>
     </div>

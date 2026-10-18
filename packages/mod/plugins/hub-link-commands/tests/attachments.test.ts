@@ -2,7 +2,15 @@
 // prompt, a message to a subagent and a reply to a question carry (#278), marked for Claude.
 
 import { describe, expect, mock, test } from "claude-code/testing"
-import { ada, askedSession, linkedSession, shot, steeringWrites } from "./support.ts"
+import {
+  ada,
+  answeredSession,
+  linkedSession,
+  questionId,
+  questionTool,
+  shot,
+  steeringWrites,
+} from "./support.ts"
 
 describe("attachments beyond prompts (#278)", () => {
   test("a steered prompt's are marked in the row it adds, and said to hub-link", async ($, on) => {
@@ -80,26 +88,23 @@ describe("attachments beyond prompts (#278)", () => {
 
   test("a reply marks each for Claude, and closes the question with them", async ($, on) => {
     const reply = { _tag: "Replied", text: "Like this one", attachments: [shot] }
-    const { dialog, posted } = askedSession(on, reply)
+    const { posted, release } = answeredSession(on, [reply])
     const clock = mock.clock(on)
 
     await $.session.start({ cwd: "/tmp/session", surface: null, isInteractive: true })
     await clock.advance(0)
     await $.turn.start({ turnId: "t1", text: "Pick a date library." } as never)
-    const call = $.tool.call({ tool: "AskUserQuestion", questions } as never)
+    const call = $.tool.call({ tool: questionTool, tool_use_id: questionId, questions } as never)
+    release()
     await clock.advance(200)
 
-    expect(await call).toEqual(
-      expect.objectContaining({
-        deny: expect.stringContaining(
-          "[Ada Lovelace] Like this one\n[Image #1: shot.png (attachment att-1)]",
-        ),
-      }),
+    expect(JSON.stringify((await call).result)).toContain(
+      "[Ada Lovelace] Like this one\\n[Image #1: shot.png (attachment att-1)]",
     )
     expect(posted().at(-1)).toEqual({
       _tag: "QuestionClosed",
       turnId: "t1",
-      toolCallId: dialog.id,
+      toolCallId: questionId,
       outcome: reply,
       by: ada,
     })

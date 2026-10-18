@@ -1,6 +1,10 @@
 // What a pi Session's main loop is given from outside it: the Hub's prompts (DeliverPrompt), the
 // prompts the Creator steers into the running Turn (DeliverIntoTurn, ADR 0018), and the results
-// of the subagents it didn't wait for, each of which starts a Turn from its agent (ADR 0014).
+// of the subagents it didn't wait for, each of which starts a Turn from its agent (ADR 0014), and
+// the answers to the questions the model asked `async`, which it went on without.
+//
+// An answer goes into the running Turn, before pi's next request, as a steered prompt does; with no
+// Turn running, it waits for pi to be idle like a result, and starts a Turn from whoever answered.
 //
 // A prompt or a result goes only while pi is idle, one run each, results first, oldest first:
 // never into a run, and not into pi's own follow-up queue, which its terminal empties when the
@@ -19,7 +23,7 @@
 
 import { deliveredPrompt, steeredPrompt } from "../../src/HubMessages.ts"
 import type { Command } from "../../src/HubMessages.ts"
-import type { AgentResultMessage, NextRun, Turns } from "./Turns.ts"
+import type { AgentResultMessage, AnswerMessage, NextRun, Turns } from "./Turns.ts"
 
 /** pi's main loop, as it is given things. */
 export interface MainLoop {
@@ -31,6 +35,11 @@ export interface MainLoop {
   readonly prompt: (text: string) => void
   /** Gives pi an agent's result, as a message of the extension's own, which starts a run. */
   readonly result: (result: AgentResultMessage) => void
+  /**
+   * Gives pi an answer, as a message of the extension's own: into the run going, before its next
+   * request, or, with none, starting a run.
+   */
+  readonly answer: (answer: AnswerMessage) => void
   /** Puts a steered prompt into the running Turn, before its next request. */
   readonly steer: (promptId: string, text: string) => void
   /** Records, in pi's session, that the prompt was given to pi, or wasn't after all (#323). */
@@ -63,6 +72,7 @@ export const idleLooksBeforeGivingUp = 4
 type Given =
   | { readonly kind: "prompt"; readonly promptId: string; idleLooks: number }
   | { readonly kind: "result"; readonly result: AgentResultMessage; idleLooks: number }
+  | { readonly kind: "answer"; readonly answer: AnswerMessage; idleLooks: number }
 
 export class MainLoopDelivery {
   private loop: MainLoop | undefined
@@ -72,6 +82,8 @@ export class MainLoopDelivery {
   private waiting: Command<"DeliverPrompt"> | undefined
   /** Agents' results waiting for the main loop to be idle, oldest first. */
   private readonly results: Array<AgentResultMessage> = []
+  /** Answers waiting for the main loop to be idle, oldest first. */
+  private readonly answers: Array<AnswerMessage> = []
   /** What was given to pi last, until its Turn starts. */
   private given: Given | undefined
   private stopLooking: (() => void) | undefined
@@ -101,6 +113,7 @@ export class MainLoopDelivery {
     this.submitted.clear()
     this.waiting = undefined
     this.results.length = 0
+    this.answers.length = 0
     this.given = undefined
     this.look()
   }
@@ -126,6 +139,25 @@ export class MainLoopDelivery {
    */
   result(result: AgentResultMessage) {
     this.results.push(result)
+    this.options.soon(() => this.next())
+    this.look()
+  }
+
+  /**
+   * The answer to a question the model asked `async`: put into the running Turn at once, if one
+   * runs, and else given to the main loop once it is idle, after the results before it.
+   */
+  answer(answer: AnswerMessage) {
+    const loop = this.loop
+    if (loop === undefined) return this.options.log("kndl: an answer came with no pi session")
+    if (this.options.turns.turnId !== undefined && !loop.isIdle()) {
+      try {
+        return loop.answer(answer)
+      } catch (error) {
+        this.options.log(`kndl: couldn't give pi an answer: ${String(error)}`)
+      }
+    }
+    this.answers.push(answer)
     this.options.soon(() => this.next())
     this.look()
   }
@@ -157,7 +189,9 @@ export class MainLoopDelivery {
       given !== undefined &&
       (given.kind === "prompt"
         ? run?.from?.promptId === given.promptId
-        : result?.agentId === given.result.agentId && result.text === given.result.text)
+        : given.kind === "answer"
+          ? run?.answer !== undefined && run.answer.text === given.answer.text
+          : result?.agentId === given.result.agentId && result.text === given.result.text)
     )
       this.given = undefined
   }
@@ -179,7 +213,9 @@ export class MainLoopDelivery {
     const loop = this.loop
     if (loop !== undefined && this.given === undefined && !this.busy(loop)) {
       const result = this.results.shift()
+      const answer = result === undefined ? this.answers.shift() : undefined
       if (result !== undefined) this.giveResult(loop, result)
+      else if (answer !== undefined) this.giveAnswer(loop, answer)
       else if (this.waiting !== undefined) {
         const command = this.waiting
         this.waiting = undefined
@@ -193,7 +229,10 @@ export class MainLoopDelivery {
   private look() {
     const needed =
       this.loop !== undefined &&
-      (this.given !== undefined || this.waiting !== undefined || this.results.length > 0)
+      (this.given !== undefined ||
+        this.waiting !== undefined ||
+        this.results.length > 0 ||
+        this.answers.length > 0)
     if (!needed) {
       this.stopLooking?.()
       this.stopLooking = undefined
@@ -214,6 +253,8 @@ export class MainLoopDelivery {
   private givenUp(given: Given) {
     this.given = undefined
     if (given.kind === "prompt") return this.failed(given.promptId, "pi didn't run it")
+    if (given.kind === "answer")
+      return this.options.log("kndl: pi didn't run the answer to the model's question")
     this.options.log(
       `kndl: pi didn't run agent ${given.result.agentId}'s result; it is given again when pi starts again`,
     )
@@ -243,6 +284,16 @@ export class MainLoopDelivery {
     } catch (error) {
       this.given = undefined
       this.options.log(`kndl: couldn't give pi agent ${result.agentId}'s result: ${String(error)}`)
+    }
+  }
+
+  private giveAnswer(loop: MainLoop, answer: AnswerMessage) {
+    this.given = { kind: "answer", answer, idleLooks: 0 }
+    try {
+      loop.answer(answer)
+    } catch (error) {
+      this.given = undefined
+      this.options.log(`kndl: couldn't give pi an answer: ${String(error)}`)
     }
   }
 

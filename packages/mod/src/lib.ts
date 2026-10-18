@@ -13,11 +13,17 @@ export {
   historyToolSpec,
 } from "./Handoff.ts"
 export { HubLink } from "./HubLink.ts"
+export {
+  askedAsyncText,
+  questionResultText,
+  questionToolName,
+  questionToolSpec,
+  stillOpenText,
+} from "./Questions.ts"
 export type { LinkStatus } from "./HubLink.ts"
-export type { AnswerResult, Command } from "./HubMessages.ts"
+export type { Command } from "./HubMessages.ts"
 export {
   agentWorktree,
-  answerResult,
   askedQuestions,
   attachmentContext,
   attachmentToolName,
@@ -31,7 +37,6 @@ export {
   startsDelivered,
   steeredPrompt,
   taskNotificationAgent,
-  terminalOutcome,
   toolArguments,
   turnEndReason,
   turnUsage,

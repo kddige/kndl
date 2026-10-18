@@ -4416,6 +4416,39 @@ describe("Open questions (#193)", () => {
     })
   })
 
+  test("one asked async stays open when its Turn ends, and the mod is sent its answer after", async () => {
+    const { web, sessionId, mod } = await questionScene()
+    await mod.post({ ...questionAsked("t-1", "toolu_async"), async: true } as ModEvent)
+    const asked = await web.take("SessionUpdated", (m) => m.session.openQuestion?.async === true)
+    expect(asked.session.openQuestion).toMatchObject({ toolCallId: "toolu_async", async: true })
+
+    await mod.post(turnEnded("t-1"))
+    // Its Turn ended, and the question is still open.
+    const ended = await web.take(
+      "SessionUpdated",
+      (m) => m.session.currentTurn === null && m.session.openQuestion?.async === true,
+    )
+    expect(ended.session.openQuestion).toMatchObject({ toolCallId: "toolu_async", async: true })
+    const logged = (await web.untaken("SessionEventLogged")).filter(closed)
+    expect(logged.map((m) => m.entry.event)).toEqual([
+      expect.objectContaining({ toolCallId: "toolu_ask", outcome: { _tag: "Cancelled" } }),
+    ])
+
+    const answer = { _tag: "Answered", answers: { [library]: "Temporal" } } as const
+    web.send({ _tag: "AnswerQuestion", sessionId, toolCallId: "toolu_async", answer })
+    expect(await mod.poll(500)).toEqual([
+      { _tag: "DeliverAnswer", sessionId, toolCallId: "toolu_async", answer, sender: alice },
+    ])
+    await mod.post({
+      _tag: "QuestionClosed",
+      turnId: "t-1",
+      toolCallId: "toolu_async",
+      outcome: answer,
+      by: alice,
+    })
+    await web.take("SessionUpdated", noQuestion)
+  })
+
   test("a new question closes one left open, and an archived Session has none", async () => {
     const { web, sessionId, mod } = await questionScene()
     await mod.post(questionAsked("t-1", "toolu_next"))

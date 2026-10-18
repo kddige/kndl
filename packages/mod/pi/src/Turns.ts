@@ -38,6 +38,17 @@ export interface AgentResultMessage {
   readonly text: string
 }
 
+/**
+ * The answer to an `async` question (Questions.ts), as the main loop is given it: a message of its
+ * own, which, with no run going, starts a Turn from whoever answered.
+ */
+export interface AnswerMessage {
+  /** What the model reads. */
+  readonly text: string
+  /** Who answered from the web UI; absent when it was at pi's terminal. */
+  readonly sender?: Sender | undefined
+}
+
 /** What pi-ai says of a finished assistant message: its stop reason, model and usage. */
 export interface AssistantEnd {
   readonly provider: string
@@ -183,6 +194,7 @@ export interface NextRun {
   readonly text: string
   readonly from?: DeliveredPrompt | undefined
   readonly agentResult?: AgentResultMessage | undefined
+  readonly answer?: AnswerMessage | undefined
 }
 
 interface RunningTurn {
@@ -245,19 +257,22 @@ export class Turns {
 
   /**
    * A run is starting (`before_agent_start`) with this prompt, or with a message of an
-   * extension's own (undefined): maybe an agent's result. Returns the prompt from the Hub it
-   * starts with, if it is one.
+   * extension's own (undefined): maybe an agent's result, or the answer to an `async` question.
+   * Returns the prompt from the Hub it starts with, if it is one.
    */
   beforeAgentStart(
     prompt: string | undefined,
     agentResult?: AgentResultMessage,
+    answer?: AnswerMessage,
   ): DeliveredPrompt | undefined {
     const from = prompt === undefined ? undefined : this.claimed
     this.claimed = undefined
     this.next =
-      agentResult === undefined
-        ? { text: prompt ?? "", from }
-        : { text: agentResult.text, agentResult }
+      agentResult !== undefined
+        ? { text: agentResult.text, agentResult }
+        : answer !== undefined
+          ? { text: answer.text, answer }
+          : { text: prompt ?? "", from }
     return from
   }
 
@@ -270,7 +285,7 @@ export class Turns {
     const next = this.next ?? { text: "" }
     this.next = undefined
     const turnId = this.options.newId()
-    const { from, agentResult } = next
+    const { from, agentResult, answer } = next
     this.turn = { turnId, startedAt: this.options.now(), requests: [] }
     if (this.options.agentId !== undefined) return next
     this.options.report({
@@ -280,9 +295,11 @@ export class Turns {
       sender:
         agentResult !== undefined
           ? { _tag: "FromAgent", agentId: agentResult.agentId }
-          : from === undefined
-            ? { _tag: "FromTerminal" }
-            : { _tag: "FromParticipant", participant: from.sender },
+          : answer?.sender !== undefined
+            ? { _tag: "FromParticipant", participant: answer.sender }
+            : from === undefined
+              ? { _tag: "FromTerminal" }
+              : { _tag: "FromParticipant", participant: from.sender },
       ...(from === undefined ? {} : { promptId: from.promptId }),
     })
     return next

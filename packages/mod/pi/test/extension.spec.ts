@@ -608,6 +608,114 @@ describe.skipIf(cannotRun !== undefined)("kndl's pi extension, in pi", () => {
     )
   }, 30_000)
 
+  const asyncAsked = [
+    {
+      question: "Which date library?",
+      header: "Library",
+      options: [{ label: "date-fns" }, { label: "Luxon" }],
+      multiSelect: false,
+    },
+  ]
+
+  test("an async question returns at once, the Turn ends without it, and the answer starts a Turn from whoever gave it", async () => {
+    hub.scripts.push(
+      toolCallReply(
+        "ask_user_question",
+        { questions: asyncAsked, async: true },
+        { input: 10, output: 2 },
+      ),
+      textReply("Asked. I'll carry on once they answer.", { input: 20, output: 4 }),
+      textReply("Going with date-fns.", { input: 30, output: 4 }),
+    )
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q20", text: "pick one", sender: ada })
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    const asked = events.find((event) => event._tag === "QuestionAsked")
+    expect(asked).toEqual({
+      _tag: "QuestionAsked",
+      turnId: events[0]?.turnId,
+      toolCallId: expect.any(String),
+      questions: asyncAsked,
+      async: true,
+    })
+    // The question is not closed by its Turn ending: the Hub keeps it open.
+    expect(events.some((event) => event._tag === "QuestionClosed")).toBe(false)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        _tag: "ToolCallEnded",
+        tool: "ask_user_question",
+        outcome: "Succeeded",
+      }),
+    )
+    expect(JSON.stringify(hub.gatewayRequests[requests + 1]?.body)).toContain("Don't wait or poll")
+
+    const answered = hub.events.length
+    hub.send({
+      _tag: "DeliverAnswer",
+      sessionId,
+      toolCallId: asked?.toolCallId,
+      answer: { _tag: "Answered", answers: { "Which date library?": "date-fns" } },
+      sender: ada,
+    })
+    const next = await hub.eventsUntil(answered, (event) => event._tag === "TurnEnded")
+    expect(next.map((event) => event._tag).slice(0, 2)).toEqual(["QuestionClosed", "TurnStarted"])
+    expect(next[0]).toEqual({
+      _tag: "QuestionClosed",
+      turnId: events[0]?.turnId,
+      toolCallId: asked?.toolCallId,
+      outcome: { _tag: "Answered", answers: { "Which date library?": "date-fns" } },
+      by: ada,
+    })
+    expect(next[1]).toMatchObject({
+      _tag: "TurnStarted",
+      sender: { _tag: "FromParticipant", participant: ada },
+      text: expect.stringContaining("Ada Lovelace answered the questions you asked earlier"),
+    })
+    expect(JSON.stringify(hub.gatewayRequests[requests + 2]?.body)).toContain(
+      'Ada Lovelace answered the questions you asked earlier:\\n- \\"Which date library?\\": date-fns',
+    )
+  }, 30_000)
+
+  test("an async question answered while the Turn runs is read in that Turn, after a tool call", async () => {
+    hub.scripts.push(
+      toolCallReply(
+        "ask_user_question",
+        { questions: asyncAsked, async: true },
+        { input: 10, output: 2 },
+      ),
+      toolCallReply("bash", { command: "sleep 4" }, { input: 20, output: 2 }),
+      textReply("Used date-fns, as they said.", { input: 30, output: 4 }),
+    )
+    const requests = hub.gatewayRequests.length
+    const from = hub.events.length
+    hub.send({ _tag: "DeliverPrompt", sessionId, promptId: "q21", text: "pick one", sender: ada })
+    const asked = await hub.until(() =>
+      hub.events.slice(from).find((event) => event._tag === "QuestionAsked"),
+    )
+    // The model went on to its next tool call without the answer.
+    await hub.until(() =>
+      hub.events
+        .slice(from)
+        .find((event) => event._tag === "ToolCallStarted" && event.tool === "bash"),
+    )
+    hub.send({
+      _tag: "DeliverAnswer",
+      sessionId,
+      toolCallId: asked.toolCallId,
+      answer: { _tag: "Answered", answers: { "Which date library?": "Luxon" } },
+      sender: ada,
+    })
+    const events = await hub.eventsUntil(from, (event) => event._tag === "TurnEnded")
+    expect(events.filter((event) => event._tag === "TurnStarted")).toHaveLength(1)
+    expect(events).toContainEqual(
+      expect.objectContaining({ _tag: "QuestionClosed", toolCallId: asked.toolCallId, by: ada }),
+    )
+    expect(JSON.stringify(hub.gatewayRequests[requests + 2]?.body)).toContain(
+      "Ada Lovelace answered the questions you asked earlier",
+    )
+  }, 30_000)
+
   /** The agent the tests below start, and then resume. */
   let agentId = ""
 
