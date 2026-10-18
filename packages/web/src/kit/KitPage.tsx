@@ -198,8 +198,11 @@ const SWATCHES = [
   ["surface", color.surface],
   ["surfaceMuted", color.surfaceMuted],
   ["border", color.border],
+  ["borderControl", color.borderControl],
   ["text", color.text],
   ["textSecondary", color.textSecondary],
+  ["textTertiary", color.textTertiary],
+  ["neutral", color.neutral],
   ["accent", color.accent],
   ["danger", color.danger],
   ["warning", color.warning],
@@ -749,6 +752,8 @@ Test build passed in 41s`
 function Toggles() {
   const [atBuild, setAtBuild] = useState(true)
   const [docker, setDocker] = useState(false)
+  const [cache, setCache] = useState(false)
+  const [autoStop, setAutoStop] = useState(true)
   const [lines, setLines] = useState(2)
   const [harness, setHarness] = useState<"ClaudeCode" | "Pi">("ClaudeCode")
   const log = BUILD_LOG.split("\n").slice(0, lines).join("\n")
@@ -780,6 +785,7 @@ function Toggles() {
       </Row>
       <div {...stylex.props(styles.grid)}>
         <Checkbox label="At build" checked={atBuild} onCheckedChange={setAtBuild} />
+        <Checkbox label="Keep the build cache" checked={cache} onCheckedChange={setCache} />
         <Checkbox label="Disabled, ticked" checked disabled />
         <Switch
           label="Docker in every Sandbox"
@@ -787,6 +793,7 @@ function Toggles() {
           checked={docker}
           onCheckedChange={setDocker}
         />
+        <Switch label="Stop idle Sessions" checked={autoStop} onCheckedChange={setAutoStop} />
         <Switch label="Disabled, off" checked={false} disabled />
       </div>
       <LogView label="Test build log" placeholder="Waiting for the Runner…">

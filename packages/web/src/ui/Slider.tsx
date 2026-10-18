@@ -63,7 +63,10 @@ const styles = stylex.create({
     width: "100%",
     height: thumb,
     borderRadius: radius.full,
-    backgroundColor: color.borderControl,
+    backgroundColor: color.surfaceActive,
+    // An edge, not a fill, shows where it runs, so the stop dots still read on it. Inset, so the
+    // thumb keeps the track's height.
+    boxShadow: `inset 0 0 0 1px ${color.borderControl}`,
     // The focused element is Base UI's visually hidden range input inside the thumb, so the
     // shared focus.ring, which rings the focused element itself, can't show: the ring goes on
     // the track, around the input, for keyboard focus only.

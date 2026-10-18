@@ -9,13 +9,16 @@
 import * as stylex from "@stylexjs/stylex"
 
 const DARK = "@media (prefers-color-scheme: dark)"
+const MORE = "@media (prefers-contrast: more)"
+const DARK_MORE = "@media (prefers-color-scheme: dark) and (prefers-contrast: more)"
 const REDUCED_MOTION = "@media (prefers-reduced-motion: reduce)"
 
 // Values two roles share because they mean the same thing, declared once so they can't drift apart:
-// a Session that's Active is green like success, an Archived one is muted like the chrome, and the
-// light labels on solid fills are one colour.
+// a Session that's Active is green like success, an Archived one is muted like the chrome, the
+// light labels on solid fills are one colour, and a Switch's thumb is a surface or the text.
 const light = {
   surface: "oklch(99.5% 0.004 85)",
+  text: "oklch(24% 0.018 47)",
   surfaceMuted: "oklch(96.3% 0.01 82)",
   textSecondary: "oklch(47% 0.024 55)",
   textTertiary: "oklch(53.5% 0.022 60)",
@@ -36,10 +39,10 @@ const lightColor = {
   overlay: "oklch(22% 0.02 45 / 0.32)",
 
   // Text
-  text: "oklch(24% 0.018 47)",
+  text: light.text,
   textSecondary: light.textSecondary,
   textTertiary: light.textTertiary,
-  textDisabled: light.textTertiary,
+  textDisabled: "oklch(53.5% 0.022 60)",
   textInverse: "oklch(97.5% 0.012 85)",
 
   // Lines: `border` edges cards and panels, `separator` is a divider line drawn as a fill, and
@@ -48,29 +51,29 @@ const lightColor = {
   border: "oklch(89.2% 0.015 80)",
   separator: "oklch(89.2% 0.015 80)",
   borderStrong: "oklch(83.5% 0.021 78)",
-  borderControl: "oklch(83.5% 0.021 78)",
-  borderControlHover: light.textTertiary,
-  focus: "oklch(60% 0.125 85)",
+  borderControl: "oklch(62% 0.021 78)",
+  borderControlHover: "oklch(53.5% 0.022 70)",
+  focus: "oklch(60% 0.122 85)",
 
   // Controls: a solid neutral dot, marker or indicator, and a Switch's thumb on its off track
-  neutral: light.textTertiary,
-  controlThumb: light.onFill,
+  neutral: "oklch(53.5% 0.022 60)",
+  controlThumb: light.surface,
 
   // Intents: `{intent}` is the solid, then `{intent}Hover`, `on{Intent}` for text on the solid,
   // `{intent}Tint` for a tinted background, and `{intent}Text`, valid on the tint, `surface` and `bg`
   accent: "oklch(41% 0.07 50)",
   accentHover: "oklch(36% 0.062 48)",
   onAccent: light.onFill,
-  accentTint: "oklch(92.6% 0.03 72)",
-  accentText: "oklch(38% 0.065 45)",
+  accentTint: "oklch(92.6% 0.03 52)",
+  accentText: "oklch(38% 0.065 50)",
 
   danger: "oklch(56.5% 0.175 30)",
   dangerHover: "oklch(51% 0.17 29)",
   onDanger: light.onFill,
-  dangerTint: "oklch(95.2% 0.028 15)",
+  dangerTint: "oklch(95.2% 0.023 15)",
   dangerText: "oklch(52% 0.17 34)",
 
-  warning: "oklch(72.5% 0.15 68)",
+  warning: "oklch(67% 0.14 68)",
   warningTint: "oklch(95.8% 0.048 92)",
   warningText: "oklch(45% 0.095 65)",
 
@@ -87,8 +90,8 @@ const lightColor = {
   sessionAsleepText: "oklch(44% 0.065 295)",
   sessionFrozen: "oklch(65% 0.11 225)",
   sessionFrozenTint: "oklch(95.8% 0.022 225)",
-  sessionFrozenText: "oklch(43% 0.09 230)",
-  sessionArchived: "oklch(68% 0.014 70)",
+  sessionFrozenText: "oklch(43% 0.085 230)",
+  sessionArchived: "oklch(66.5% 0.014 70)",
   sessionArchivedTint: light.surfaceMuted,
   sessionArchivedText: light.textSecondary,
 
@@ -104,10 +107,11 @@ const lightColor = {
 }
 
 const dark: typeof light = {
-  surface: "oklch(20.8% 0.016 300)",
-  surfaceMuted: "oklch(23.4% 0.017 300)",
-  textSecondary: "oklch(74% 0.018 305)",
-  textTertiary: "oklch(63.5% 0.02 305)",
+  surface: "oklch(20.8% 0.016 78)",
+  text: "oklch(93% 0.016 80)",
+  surfaceMuted: "oklch(23.4% 0.017 78)",
+  textSecondary: "oklch(77% 0.018 78)",
+  textTertiary: "oklch(63.5% 0.02 78)",
   onFill: "oklch(98.5% 0.012 85)",
   success: "oklch(74% 0.15 150)",
   successTint: "oklch(29.5% 0.045 155)",
@@ -115,38 +119,38 @@ const dark: typeof light = {
 }
 
 const darkColor: typeof lightColor = {
-  bg: "oklch(18% 0.014 298)",
+  bg: "oklch(18% 0.014 78)",
   surface: dark.surface,
   surfaceMuted: dark.surfaceMuted,
-  surfaceHover: "oklch(26% 0.018 302)",
-  surfaceActive: "oklch(29.5% 0.02 302)",
+  surfaceHover: "oklch(26% 0.018 78)",
+  surfaceActive: "oklch(29.5% 0.02 78)",
   surfaceInverse: "oklch(93% 0.014 80)",
-  overlay: "oklch(8% 0.02 300 / 0.6)",
+  overlay: "oklch(8% 0.016 78 / 0.6)",
 
-  text: "oklch(93% 0.016 80)",
+  text: dark.text,
   textSecondary: dark.textSecondary,
   textTertiary: dark.textTertiary,
-  textDisabled: dark.textTertiary,
-  textInverse: "oklch(21% 0.02 298)",
+  textDisabled: "oklch(63.5% 0.02 78)",
+  textInverse: "oklch(21% 0.02 78)",
 
-  border: "oklch(30.5% 0.018 302)",
-  separator: "oklch(30.5% 0.018 302)",
-  borderStrong: "oklch(36.5% 0.022 303)",
-  borderControl: "oklch(36.5% 0.022 303)",
-  borderControlHover: dark.textTertiary,
+  border: "oklch(34% 0.018 78)",
+  separator: "oklch(34% 0.018 78)",
+  borderStrong: "oklch(40% 0.022 78)",
+  borderControl: "oklch(54% 0.022 78)",
+  borderControlHover: "oklch(63.5% 0.02 78)",
   focus: "oklch(85% 0.15 92)",
 
-  neutral: dark.textTertiary,
-  controlThumb: "oklch(20% 0.02 298)",
+  neutral: "oklch(63.5% 0.02 78)",
+  controlThumb: dark.text,
 
-  accent: "oklch(64% 0.09 52)",
-  accentHover: "oklch(69% 0.088 55)",
-  onAccent: "oklch(20% 0.02 298)",
+  accent: "oklch(55% 0.085 52)",
+  accentHover: "oklch(51% 0.08 50)",
+  onAccent: dark.onFill,
   accentTint: "oklch(33% 0.04 56)",
-  accentText: "oklch(86% 0.06 68)",
+  accentText: "oklch(86% 0.06 55)",
 
-  danger: "oklch(54% 0.2 28)",
-  dangerHover: "oklch(50% 0.195 27)",
+  danger: "oklch(54% 0.17 28)",
+  dangerHover: "oklch(50% 0.165 27)",
   onDanger: dark.onFill,
   dangerTint: "oklch(29.5% 0.075 18)",
   dangerText: "oklch(79% 0.11 20)",
@@ -168,7 +172,7 @@ const darkColor: typeof lightColor = {
   sessionFrozen: "oklch(75% 0.1 225)",
   sessionFrozenTint: "oklch(29.5% 0.04 230)",
   sessionFrozenText: "oklch(85% 0.07 225)",
-  sessionArchived: "oklch(56% 0.014 300)",
+  sessionArchived: "oklch(56% 0.014 78)",
   sessionArchivedTint: dark.surfaceMuted,
   sessionArchivedText: dark.textSecondary,
 
@@ -178,6 +182,30 @@ const darkColor: typeof lightColor = {
   avatarBgChroma: "0.05",
   avatarFgLightness: "88%",
   avatarFgChroma: "0.06",
+}
+
+// Under `prefers-contrast: more`, edges and the lesser text tiers stand at least 0.15 L further
+// from the surface. The dark Switch thumb turns dark, to stay 3:1 on the lighter off track.
+const lightMore = {
+  textSecondary: "oklch(32% 0.024 55)",
+  textTertiary: "oklch(38% 0.022 60)",
+  border: "oklch(74% 0.015 80)",
+  separator: "oklch(74% 0.015 80)",
+  borderStrong: "oklch(68% 0.021 78)",
+  borderControl: "oklch(47% 0.021 78)",
+  borderControlHover: "oklch(38% 0.022 70)",
+  controlThumb: light.surface,
+}
+
+const darkMore: typeof lightMore = {
+  textSecondary: "oklch(92% 0.016 78)",
+  textTertiary: "oklch(78.5% 0.018 78)",
+  border: "oklch(49% 0.018 78)",
+  separator: "oklch(49% 0.018 78)",
+  borderStrong: "oklch(55% 0.022 78)",
+  borderControl: "oklch(69% 0.022 78)",
+  borderControlHover: "oklch(80% 0.02 78)",
+  controlThumb: dark.surface,
 }
 
 export const color = stylex.defineVars({
@@ -190,23 +218,60 @@ export const color = stylex.defineVars({
   overlay: { default: lightColor.overlay, [DARK]: darkColor.overlay },
 
   text: { default: lightColor.text, [DARK]: darkColor.text },
-  textSecondary: { default: lightColor.textSecondary, [DARK]: darkColor.textSecondary },
-  textTertiary: { default: lightColor.textTertiary, [DARK]: darkColor.textTertiary },
+  textSecondary: {
+    default: lightColor.textSecondary,
+    [DARK]: darkColor.textSecondary,
+    [MORE]: lightMore.textSecondary,
+    [DARK_MORE]: darkMore.textSecondary,
+  },
+  textTertiary: {
+    default: lightColor.textTertiary,
+    [DARK]: darkColor.textTertiary,
+    [MORE]: lightMore.textTertiary,
+    [DARK_MORE]: darkMore.textTertiary,
+  },
   textDisabled: { default: lightColor.textDisabled, [DARK]: darkColor.textDisabled },
   textInverse: { default: lightColor.textInverse, [DARK]: darkColor.textInverse },
 
-  border: { default: lightColor.border, [DARK]: darkColor.border },
-  separator: { default: lightColor.separator, [DARK]: darkColor.separator },
-  borderStrong: { default: lightColor.borderStrong, [DARK]: darkColor.borderStrong },
-  borderControl: { default: lightColor.borderControl, [DARK]: darkColor.borderControl },
+  border: {
+    default: lightColor.border,
+    [DARK]: darkColor.border,
+    [MORE]: lightMore.border,
+    [DARK_MORE]: darkMore.border,
+  },
+  separator: {
+    default: lightColor.separator,
+    [DARK]: darkColor.separator,
+    [MORE]: lightMore.separator,
+    [DARK_MORE]: darkMore.separator,
+  },
+  borderStrong: {
+    default: lightColor.borderStrong,
+    [DARK]: darkColor.borderStrong,
+    [MORE]: lightMore.borderStrong,
+    [DARK_MORE]: darkMore.borderStrong,
+  },
+  borderControl: {
+    default: lightColor.borderControl,
+    [DARK]: darkColor.borderControl,
+    [MORE]: lightMore.borderControl,
+    [DARK_MORE]: darkMore.borderControl,
+  },
   borderControlHover: {
     default: lightColor.borderControlHover,
     [DARK]: darkColor.borderControlHover,
+    [MORE]: lightMore.borderControlHover,
+    [DARK_MORE]: darkMore.borderControlHover,
   },
   focus: { default: lightColor.focus, [DARK]: darkColor.focus },
 
   neutral: { default: lightColor.neutral, [DARK]: darkColor.neutral },
-  controlThumb: { default: lightColor.controlThumb, [DARK]: darkColor.controlThumb },
+  controlThumb: {
+    default: lightColor.controlThumb,
+    [DARK]: darkColor.controlThumb,
+    [MORE]: lightMore.controlThumb,
+    [DARK_MORE]: darkMore.controlThumb,
+  },
 
   accent: { default: lightColor.accent, [DARK]: darkColor.accent },
   accentHover: { default: lightColor.accentHover, [DARK]: darkColor.accentHover },
@@ -292,9 +357,9 @@ const lightShadow = {
 }
 
 const darkShadow: typeof lightShadow = {
-  sm: "0 1px 2px oklch(5% 0.015 300 / 0.3)",
-  md: "0 4px 12px -2px oklch(5% 0.015 300 / 0.45), 0 0 0 1px oklch(95% 0.02 80 / 0.04)",
-  lg: "0 16px 40px -8px oklch(5% 0.015 300 / 0.6), 0 0 0 1px oklch(95% 0.02 80 / 0.05)",
+  sm: "0 1px 2px oklch(5% 0.01 78 / 0.3)",
+  md: "0 4px 12px -2px oklch(5% 0.01 78 / 0.45), 0 0 0 1px oklch(95% 0.02 80 / 0.04)",
+  lg: "0 16px 40px -8px oklch(5% 0.01 78 / 0.6), 0 0 0 1px oklch(95% 0.02 80 / 0.05)",
 }
 
 export const shadow = stylex.defineVars({
@@ -304,10 +369,36 @@ export const shadow = stylex.defineVars({
 })
 
 /** Forces the light palette on a subtree, whatever the OS prefers. */
-export const lightColorTheme = stylex.createTheme(color, lightColor)
+export const lightColorTheme = stylex.createTheme(color, {
+  ...lightColor,
+  textSecondary: { default: lightColor.textSecondary, [MORE]: lightMore.textSecondary },
+  textTertiary: { default: lightColor.textTertiary, [MORE]: lightMore.textTertiary },
+  border: { default: lightColor.border, [MORE]: lightMore.border },
+  separator: { default: lightColor.separator, [MORE]: lightMore.separator },
+  borderStrong: { default: lightColor.borderStrong, [MORE]: lightMore.borderStrong },
+  borderControl: { default: lightColor.borderControl, [MORE]: lightMore.borderControl },
+  borderControlHover: {
+    default: lightColor.borderControlHover,
+    [MORE]: lightMore.borderControlHover,
+  },
+  controlThumb: { default: lightColor.controlThumb, [MORE]: lightMore.controlThumb },
+})
 export const lightShadowTheme = stylex.createTheme(shadow, lightShadow)
 /** Forces the dark palette on a subtree, whatever the OS prefers. */
-export const darkColorTheme = stylex.createTheme(color, darkColor)
+export const darkColorTheme = stylex.createTheme(color, {
+  ...darkColor,
+  textSecondary: { default: darkColor.textSecondary, [MORE]: darkMore.textSecondary },
+  textTertiary: { default: darkColor.textTertiary, [MORE]: darkMore.textTertiary },
+  border: { default: darkColor.border, [MORE]: darkMore.border },
+  separator: { default: darkColor.separator, [MORE]: darkMore.separator },
+  borderStrong: { default: darkColor.borderStrong, [MORE]: darkMore.borderStrong },
+  borderControl: { default: darkColor.borderControl, [MORE]: darkMore.borderControl },
+  borderControlHover: {
+    default: darkColor.borderControlHover,
+    [MORE]: darkMore.borderControlHover,
+  },
+  controlThumb: { default: darkColor.controlThumb, [MORE]: darkMore.controlThumb },
+})
 export const darkShadowTheme = stylex.createTheme(shadow, darkShadow)
 
 // The terminal mirror's palette: its ground and text match the surface it sits on, and the 16
@@ -337,11 +428,11 @@ const lightTerminal = {
 }
 
 const darkTerminal: typeof lightTerminal = {
-  background: "#19161e",
+  background: "#1c170f",
   foreground: "#eee7dc",
   cursor: "#b87c58",
   selection: "#573927",
-  black: "#514d59",
+  black: "#564e43",
   red: "#ff7b72",
   green: "#3fb950",
   yellow: "#d29922",
@@ -349,7 +440,7 @@ const darkTerminal: typeof lightTerminal = {
   magenta: "#bc8cff",
   cyan: "#39c5cf",
   white: "#c2bdb4",
-  brightBlack: "#7c7885",
+  brightBlack: "#81796d",
   brightRed: "#ffa198",
   brightGreen: "#56d364",
   brightYellow: "#e3b341",
