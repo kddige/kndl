@@ -13,7 +13,7 @@ Rename a Session, choose its model, control when it sleeps, and delete or restor
 
 <Steps>
 
-1. Press the pencil beside the title in the Session's header, or on its row in the sidebar.
+1. Choose **Rename** from the **⋯** menu by the Session's title, or press the pencil on its row in the sidebar.
 
 2. Type the name, up to 80 characters, and press Enter. Esc cancels.
 
@@ -59,12 +59,12 @@ The transcript names the Harness, such as "Alice switched to GPT-5.5 on pi".
 
 A Session goes to sleep after 15 minutes, by default, when nothing is happening: no Turn or subagent running, no prompt queued, no open question, and nobody in it. Sleeping stops the agent and the Sandbox. The Workspace, the conversation and the Sandbox's disks are kept.
 
-- **Sleep now**, in the header, puts it to sleep at once.
+- **Sleep now**, in the **⋯** menu by its title, puts it to sleep at once.
 - **Your next prompt** wakes it, as does **Wake now** on its banner. The agent resumes the same conversation, with `node_modules`, caches and Docker's data as they were.
 
 ## Keep it awake
 
-To keep a Session running while nobody is in it, such as for a dev server or a long command, turn on **Keep awake** in its header. The sidebar marks the Session with a sun for everyone.
+To keep a Session running while nobody is in it, such as for a dev server or a long command, press **Keep awake**, the sun in the prompt box's bar, or choose it from the **⋯** menu. The sidebar marks the Session with a sun for everyone.
 
 Turn **Keep awake** off, or press **Sleep now**, to let it sleep again.
 
@@ -74,7 +74,7 @@ A Session whose Runner is offline is Frozen. You can read it, and new prompts wa
 
 ## Delete and restore it
 
-**Delete Session**, the bin in the header, archives the Session. Its Sandbox is destroyed. Its Workspace and conversation are kept for 30 days by default, then deleted.
+**Delete Session**, in the **⋯** menu by the Session's title, archives the Session. Its Sandbox is destroyed. Its Workspace and conversation are kept for 30 days by default, then deleted.
 
 To restore it, press **Undo** in the toast, or **Restore** on it in **Archived Sessions**, in the sidebar. A restored Session starts Asleep. Your next prompt wakes it in a fresh Sandbox, without the old `node_modules` or Docker data.
 

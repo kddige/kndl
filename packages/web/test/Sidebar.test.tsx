@@ -4,7 +4,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { SessionId } from "@kndl/protocol"
 import { installDom } from "./dom.ts"
-import { button, dialog, render, settle, step } from "./render.ts"
+import { button, chooseSessionAction, dialog, render, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -222,7 +222,7 @@ test("a Session is renamed in place from its header, and New Session doesn't ask
   await eventually(() => expect(title()).toBe("claude/readme-run"))
   expect(description()).not.toContain("claude/readme-run")
 
-  await step(() => button("Rename Session", page).click())
+  await chooseSessionAction("Rename", page)
   const field = nameField(page.querySelector("main > header") ?? page)
   expect(field?.value).toBe("claude/readme-run")
   await step(() => field && typeInto(field, "README: how to run it"))

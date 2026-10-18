@@ -3,7 +3,7 @@
 
 import { afterEach, expect, test } from "bun:test"
 import { installDom } from "./dom.ts"
-import { button, dialog, render, settle, step } from "./render.ts"
+import { button, dialog, render, sessionMenuItem, sessionOffers, settle, step } from "./render.ts"
 
 let cleanup: (() => Promise<void>) | undefined
 installDom(() => cleanup?.())
@@ -175,7 +175,12 @@ test("a Repo without an Environment is set up before its first Session", async (
   await eventually(() => expect(page.textContent).toContain("Starting…"))
   expect(page.textContent).toContain("Starting the Sandbox on version 1 of acme/new's Environment")
   expect(page.textContent).not.toContain("Environment changed")
-  expect(button("Sleep now").disabled).toBe(true)
+  // Read together, as opening the menu takes a moment in which it may finish starting.
+  const sleepNow = await sessionMenuItem("Sleep now", page)
+  if (page.textContent?.includes("Starting…")) {
+    expect(sleepNow?.hasAttribute("data-disabled")).toBe(true)
+  }
+  await step(() => button("Session actions", page).click())
   await step(() => button("Show log").click())
   const log = () => page.querySelector('[aria-label="Start log"]')?.textContent ?? ""
   await eventually(() => expect(log()).toContain("Building version 1 of acme/new's Environment"))
@@ -185,7 +190,7 @@ test("a Repo without an Environment is set up before its first Session", async (
   // Started, it shows neither.
   await eventually(() => expect(page.textContent).not.toContain("Starting…"))
   expect(page.textContent).not.toContain("Environment changed")
-  expect(button("Sleep now").disabled).toBe(false)
+  expect(await sessionOffers("Sleep now", page)).toBe(true)
 })
 
 test("shared variables: linked ones show who links them, and can't be deleted", async () => {

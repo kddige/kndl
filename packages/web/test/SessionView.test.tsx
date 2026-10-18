@@ -34,6 +34,53 @@ async function eventually(check: () => void, timeoutMs = 5_000): Promise<void> {
   }
 }
 
+/** Like `eventually`, for a check that has to open a menu first. */
+async function eventuallyAsync(check: () => Promise<void>, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      await check()
+      return
+    } catch (error) {
+      if (Date.now() > deadline) throw error
+      await settle(10)
+    }
+  }
+}
+
+/** The Session's ⋯ menu's item named `name`, opening the menu; undefined if it has none. */
+async function menuItem(page: ParentNode, name: string): Promise<HTMLElement | undefined> {
+  if (!document.querySelector('[role="menu"]')) {
+    await step(() => button("Session actions", page).click())
+    await settle(20)
+  }
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (item) => item.textContent?.trim() === name,
+  )
+}
+
+async function closeMenu(page: ParentNode): Promise<void> {
+  if (!document.querySelector('[role="menu"]')) return
+  await step(() => button("Session actions", page).click())
+  await settle(50)
+}
+
+/** Whether the Session's ⋯ menu offers `name`, enabled. */
+async function offers(page: ParentNode, name: string): Promise<boolean> {
+  const item = await menuItem(page, name)
+  const enabled = item !== undefined && !item.hasAttribute("data-disabled")
+  await closeMenu(page)
+  return enabled
+}
+
+/** Chooses `name` from the Session's ⋯ menu. */
+async function choose(page: ParentNode, name: string): Promise<void> {
+  const item = await menuItem(page, name)
+  if (!item) throw new Error(`no "${name}" in the Session's menu`)
+  await step(() => item.click())
+  await settle(50)
+}
+
 function typeInto(field: HTMLTextAreaElement, value: string): void {
   // React tracks the value it last saw; the prototype's setter goes around that, as typing does.
   const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set
@@ -295,44 +342,50 @@ test("an Asleep Session wakes from its banner, and an idle Active one sleeps on 
   expect(banner()).toBe("")
   // Woken, it is started first: it can't be put to sleep until that is done (#70).
   expect(page.textContent).toContain("Starting…")
-  expect(button("Sleep now", page).disabled).toBe(true)
-  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+  // Read together, as opening the menu takes a moment in which it may finish starting.
+  const sleepNow = await menuItem(page, "Sleep now")
+  if (page.textContent?.includes("Starting…")) {
+    expect(sleepNow?.hasAttribute("data-disabled")).toBe(true)
+  }
+  await closeMenu(page)
+  await eventuallyAsync(async () => expect(await offers(page, "Sleep now")).toBe(true))
   expect(page.textContent).not.toContain("Starting…")
 
-  await step(() => button("Sleep now", page).click())
+  await choose(page, "Sleep now")
   expect(sent()).toContain("SleepSession")
   await eventually(() => expect(banner()).toContain("Put to sleep."))
-  expect([...page.querySelectorAll("button")].some((b) => b.textContent === "Sleep now")).toBe(
-    false,
-  )
+  // Asleep, it has nothing to put to sleep.
+  expect(await menuItem(page, "Sleep now")).toBeUndefined()
+  await closeMenu(page)
 })
 
 test("Keep awake wakes an Asleep Session, says who keeps it awake, and Sleep now turns it off", async () => {
   const { hub, page, banner, header, sent } = await openSession("s-readme")
+  // Its toggle is at the Composer, where its Creator already is.
   const keepAwake = () => {
-    const toggle = page.querySelector<HTMLElement>("header [role=switch]")
-    if (!toggle) throw new Error("no Keep awake switch")
+    const toggle = page.querySelector<HTMLElement>("form button[aria-pressed][aria-label*='awake']")
+    if (!toggle) throw new Error("no Keep awake toggle")
     return toggle
   }
-  expect(header()).toContain("Keep awake")
+  expect(keepAwake().getAttribute("aria-label")).toBe("Keep awake")
   expect(header()).not.toContain("Kept awake by")
-  expect(keepAwake().getAttribute("aria-checked")).toBe("false")
+  expect(keepAwake().getAttribute("aria-pressed")).toBe("false")
 
   // On, it says who, and the Asleep Session wakes.
   await step(() => keepAwake().click())
   expect(sent()).toContain("SetKeepAwake")
   await eventually(() => expect(header()).toContain("Kept awake by you"))
-  expect(keepAwake().getAttribute("aria-checked")).toBe("true")
+  expect(keepAwake().getAttribute("aria-pressed")).toBe("true")
   await eventually(() => expect(banner()).toBe(""))
 
   // Sleep now turns it off.
-  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
-  await step(() => button("Sleep now", page).click())
+  await eventuallyAsync(async () => expect(await offers(page, "Sleep now")).toBe(true))
+  await choose(page, "Sleep now")
   await eventually(() => expect(banner()).toContain("Put to sleep."))
   expect(header()).not.toContain("Kept awake by")
-  expect(keepAwake().getAttribute("aria-checked")).toBe("false")
+  expect(keepAwake().getAttribute("aria-pressed")).toBe("false")
 
-  // And off by the switch, it stays Asleep.
+  // And off by the toggle, it stays Asleep.
   await step(() => keepAwake().click())
   await eventually(() => expect(header()).toContain("Kept awake by you"))
   await step(() => keepAwake().click())
@@ -344,7 +397,7 @@ test("Keep awake wakes an Asleep Session, says who keeps it awake, and Sleep now
 test("a Session whose Claude Code exited on its own shows what it printed, folded (#105)", async () => {
   const { hub, page, banner, header } = await openSession("s-readme")
   await step(() => button("Wake now", page).click())
-  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+  await eventuallyAsync(async () => expect(await offers(page, "Sleep now")).toBe(true))
 
   const output = "error: The current working directory was deleted, so that command didn't work."
   await step(() => hub.claudeExits("s-readme", 1, output))
@@ -357,8 +410,8 @@ test("a Session whose Claude Code exited on its own shows what it printed, folde
 
   // Started again, it is gone.
   await step(() => button("Wake now", page).click())
-  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
-  await step(() => button("Sleep now", page).click())
+  await eventuallyAsync(async () => expect(await offers(page, "Sleep now")).toBe(true))
+  await choose(page, "Sleep now")
   await eventually(() => expect(banner()).toContain("Put to sleep."))
   expect([...page.querySelectorAll("button")].map((b) => b.textContent)).not.toContain(
     "Show Claude Code's last output",
@@ -501,7 +554,7 @@ test("Fix opens the Installation that keeps a Session from starting (#216)", asy
 test("an Installation that fails mid-Session shows as an error in it, which runs on (#216)", async () => {
   const { hub, page, header } = await openSession(releaseSessionId)
   await step(() => button("Wake now", page).click())
-  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+  await eventuallyAsync(async () => expect(await offers(page, "Sleep now")).toBe(true))
 
   await step(() => hub.installationFails(releaseSessionId, "Sentry", 401))
   const notes = () =>
@@ -538,7 +591,7 @@ test("a restart for a changed Environment shows its progress until the Session i
   await eventually(() => expect(statuses()).toContain("Restarting…"))
   expect(statuses()).toContain("You asked for a restart.")
   expect(banner()).toBe("")
-  expect(button("Sleep now", page).disabled).toBe(true)
+  expect(await offers(page, "Sleep now")).toBe(false)
   // ...then, once its Runner has stopped it, starting it on the latest version, with its log.
   await act(() => hub.step())
   await act(() => hub.step())
@@ -556,7 +609,7 @@ test("a restart for a changed Environment shows its progress until the Session i
   hub.resume()
   await eventually(() => expect(statuses()).not.toContain("Restarting…"))
   expect(banner()).toBe("")
-  expect(button("Sleep now", page).disabled).toBe(false)
+  expect(await offers(page, "Sleep now")).toBe(true)
 })
 
 /** The MCP servers button in `page`'s header, if it shows. */
@@ -587,7 +640,7 @@ test("a Session shows the Installations it runs with, as Claude Code names their
 test("a change to its Repo's Installations shows that a Restart applies it, and the Restart does", async () => {
   const { client, page, banner } = await openSession(releaseSessionId)
   await step(() => button("Wake now", page).click())
-  await eventually(() => expect(button("Sleep now", page).disabled).toBe(false))
+  await eventuallyAsync(async () => expect(await offers(page, "Sleep now")).toBe(true))
   await eventually(() =>
     expect(mcpServersButton(page)?.getAttribute("aria-label")).toBe("MCP servers: 2 Installations"),
   )
@@ -714,10 +767,13 @@ test("the Terminal tab mirrors the Session's terminal, and takes keystrokes", as
   }
   const page = view.container
   const screen = () => page.querySelector(".xterm-rows")?.textContent ?? ""
+  // The Composer's Terminal button opens it, as a sheet under the conversation.
   const terminalTab = () =>
-    [...page.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "Terminal")
+    [...page.querySelectorAll("form button[aria-pressed]")].find(
+      (toggle) => toggle.textContent === "Terminal",
+    )
 
-  // The terminal opens only once its tab is shown, and the URL says so.
+  // The terminal opens only once its sheet is shown, and the URL says so.
   await eventually(() => expect(terminalTab() === undefined).toBe(false))
   expect(hub.received.map((message) => message._tag)).not.toContain("OpenTerminal")
   await step(() => (terminalTab() as HTMLElement).click())
@@ -785,7 +841,7 @@ test("deleting a Session archives it, hides it from the sidebar, and Undo restor
   const { page, router, sent, find } = await openApp("/sessions/s-readme")
   await eventually(() => expect(page.querySelector("h1")?.textContent).toBe("claude/readme-run"))
 
-  await step(() => button("Delete Session", page).click())
+  await choose(page, "Delete Session")
   expect(sent()).toContain("ArchiveSession")
   await eventually(() => expect(find("s-readme")?.state).toBe("Archived"))
   // Back on the start page; the sidebar no longer lists it.
@@ -1022,15 +1078,12 @@ test("an Archived Session can't take prompts or open its terminal, and offers a 
   expect(banner()).toContain("Alice Kim deleted it.")
   const prompt = page.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')
   expect(prompt?.disabled).toBe(true)
+  // No menu to delete it from, and no Keep awake (ADR 0016).
   const labels = [...page.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))
-  expect(labels).not.toContain("Delete Session")
-  // Nor can it be kept awake (ADR 0016).
-  expect(page.querySelector("header [role=switch]")).toBeNull()
-  // Even asked for in the URL, the terminal stays shut: its tab is disabled.
-  const terminalTab = [...page.querySelectorAll('[role="tab"]')].find(
-    (tab) => tab.textContent === "Terminal",
-  )
-  expect(terminalTab?.hasAttribute("data-disabled")).toBe(true)
+  expect(labels).not.toContain("Session actions")
+  expect(page.querySelector("form button[aria-pressed]")).toBeNull()
+  // Even asked for in the URL, the terminal stays shut: there's no sheet and no button for it.
+  expect(page.querySelector('section[aria-label="Terminal"]')).toBeNull()
   expect(sent()).not.toContain("OpenTerminal")
 
   await step(() => button("Restore", page).click())

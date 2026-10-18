@@ -28,7 +28,7 @@ kndl doctor --fix
 | `kndl logs hub`, `kndl logs runner` | Why a service won't start, refused connections, sign-in failures, what happened to Sandboxes. Add `-f` to follow. |
 | A Session's transcript | A line each time its state changes, with why: `The Session is Asleep: …`. |
 | **Show log** on a Session's **Starting…** banner | The output of its Build, Bootstrap script and Start script. |
-| A Session's **Terminal** tab | The agent's own screen: pi's or Claude Code's. |
+| A Session's **Terminal** | The agent's own screen: pi's or Claude Code's. |
 | `https://<your Hub>/health` | `{"status":"ok"}` when the Hub is up. |
 
 Running kndl from a checkout? The logs are in the terminals running `bun run hub` and `bun run runner`, and the Hub's settings in `packages/hub/.env.local`. See [Develop kndl](/contributing/develop-kndl/).

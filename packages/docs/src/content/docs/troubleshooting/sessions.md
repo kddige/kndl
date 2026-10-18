@@ -212,7 +212,7 @@ Fix what it names, such as no route to the npm registry or `nodejs.org`, then re
 
 ## Only someone else can drive this Session
 
-**What you see.** The prompt box is off, there's no **Terminal** tab, and a command is refused with:
+**What you see.** The prompt box is off, there's no **Terminal**, and a command is refused with:
 
 ```
 Only Alice Lee, who started this Session, can drive it: it runs on their Connected providers.
@@ -249,7 +249,7 @@ A Claude Code Session's says `it runs on their Claude credential.`
 
 **What you see.** A Session nobody uses stays Active long after 15 minutes.
 
-**Why.** Something keeps it busy: a Turn or subagent running, a prompt queued, someone with the Session open, or **Keep awake**, which the header shows as "Kept awake by …". See [Going to sleep](/concepts/session-lifecycle/#going-to-sleep).
+**Why.** Something keeps it busy: a Turn or subagent running, a prompt queued, someone with the Session open, or **Keep awake**, which the line under the Session's title shows as "Kept awake by …". See [Going to sleep](/concepts/session-lifecycle/#going-to-sleep).
 
 **Fix.** Turn **Keep awake** off, or press **Sleep now**.
 

@@ -65,3 +65,37 @@ export function button(name: string, within: ParentNode = document): HTMLButtonE
     throw new Error(`expected one "${name}" button, found ${matches.length}`)
   return matches[0] as HTMLButtonElement
 }
+
+/** The Session view's ⋯ menu's item named `name`, opening the menu; undefined if it has none. */
+export async function sessionMenuItem(
+  name: string,
+  within: ParentNode = document,
+): Promise<HTMLElement | undefined> {
+  if (!document.querySelector('[role="menu"]')) {
+    await step(() => button("Session actions", within).click())
+    await settle(20)
+  }
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (item) => item.textContent?.trim() === name,
+  )
+}
+
+/** Whether the Session view's ⋯ menu offers `name`, enabled; closes the menu again. */
+export async function sessionOffers(name: string, within: ParentNode = document): Promise<boolean> {
+  const item = await sessionMenuItem(name, within)
+  const enabled = item !== undefined && !item.hasAttribute("data-disabled")
+  await step(() => button("Session actions", within).click())
+  await settle(50)
+  return enabled
+}
+
+/** Chooses `name` from the Session view's ⋯ menu. */
+export async function chooseSessionAction(
+  name: string,
+  within: ParentNode = document,
+): Promise<void> {
+  const item = await sessionMenuItem(name, within)
+  if (!item) throw new Error(`no "${name}" in the Session's menu`)
+  await step(() => item.click())
+  await settle(50)
+}

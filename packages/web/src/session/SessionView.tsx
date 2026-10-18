@@ -20,7 +20,6 @@ import {
   mcpServersChanged,
   purgedIn,
   repoParams,
-  statusOf,
   terminalText,
 } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
@@ -29,7 +28,6 @@ import type { UploadOptions } from "../hub/transport.ts"
 import { restoreSession } from "../sessions/ArchivedSessions.tsx"
 import { renameSession } from "../sessions/rename.ts"
 import {
-  Badge,
   Banner,
   Button,
   Dialog,
@@ -37,26 +35,17 @@ import {
   Disclosure,
   EmptyState,
   fieldText,
-  IconButton,
   InfoIcon,
   InlineEdit,
   LogView,
-  PageHeader,
-  PencilIcon,
   RestartIcon,
-  SessionStatus,
   Spinner,
   SunIcon,
-  Switch,
-  Tab,
-  TabList,
-  TabPanel,
-  Tabs,
   toast,
-  Tooltip,
-  TrashIcon,
+  useMediaQuery,
+  WIDE,
 } from "../ui/index.ts"
-import { color, space } from "../ui/tokens.stylex.ts"
+import { space } from "../ui/tokens.stylex.ts"
 import { AgentPanel } from "./AgentPanel.tsx"
 import { Composer } from "./Composer.tsx"
 import { useDriveRefusal } from "./drive.ts"
@@ -73,12 +62,15 @@ import {
   otherTurnModel,
   providerModelLabel,
 } from "./models.ts"
-import { OpenPorts } from "./OpenPorts.tsx"
-import { Presence } from "./Presence.tsx"
 import { PromptQueue } from "./PromptQueue.tsx"
 import { QuestionDock } from "./QuestionCard.tsx"
-import { WaitingDot } from "./QuestionChip.tsx"
-import { SessionMcpServers } from "./SessionMcpServers.tsx"
+import {
+  AgentChips,
+  ComposerTools,
+  type SessionActions,
+  TerminalSheet,
+  TitleStrip,
+} from "./SessionChrome.tsx"
 import { useStickToBottom } from "./stickToBottom.ts"
 import { Transcript } from "./Transcript.tsx"
 
@@ -115,31 +107,18 @@ const styles = stylex.create({
     paddingTop: space.s2,
   },
   centered: { display: "grid", placeItems: "center", flex: 1, padding: space.s4 },
-  tabs: { display: "flex", flexDirection: "column", flex: 1, minHeight: 0 },
   // The name being edited, as wide as a long name needs.
   nameField: {
     width: "24rem",
     maxWidth: "100%",
   },
-  badges: { display: "inline-flex", alignItems: "center", gap: space.s1 },
-  // Who keeps it awake, in the description line: the sun lines up with the text.
+  // Who keeps it awake, on the meta line: the sun lines up with the text.
   keptAwake: { whiteSpace: "nowrap" },
   sun: {
     width: "0.875rem",
     height: "0.875rem",
     marginRight: space.s1,
     verticalAlign: "-0.125em",
-  },
-  keepAwake: { alignItems: "center" },
-  tabList: {
-    paddingInline: space.s4,
-    backgroundColor: color.surface,
-  },
-  tabPanel: {
-    display: { default: "flex", ":is([hidden])": "none" },
-    flexDirection: "column",
-    flex: 1,
-    minHeight: 0,
   },
 })
 
@@ -424,6 +403,7 @@ function LoadedSession({
   // shows its conversation only.
   const archived = state === "Archived"
   const view: SessionTab = archived || !drives ? "chat" : tab
+  const canTerminal = !archived && drives
   // The terminal mounts when first shown and stays, so its scrollback survives switching tabs.
   const [shownTerminal, setShownTerminal] = useState(view === "terminal")
   if (view === "terminal" && !shownTerminal) setShownTerminal(true)
@@ -441,10 +421,34 @@ function LoadedSession({
   const agent = agentId === undefined ? undefined : transcript.agents.get(agentId)
   const closeAgent = () => onAgentChange?.(undefined)
 
+  const keptAwake =
+    summary.keepAwake === undefined ? undefined : keptAwakeText(summary.keepAwake, you?.id)
+  const terminalOpen = view === "terminal"
+  const showTerminal = (open: boolean) => onTabChange?.(open ? "terminal" : "chat")
+  const actions: SessionActions = {
+    rename: () => setRenaming(true),
+    setKeepAwake: (on) => command("Keep awake", hub.setKeepAwake(summary.id, on)),
+    // The Hub only puts a Session to sleep once started, with nothing running or waiting.
+    sleep:
+      busy || running || queue.length > 0
+        ? undefined
+        : () =>
+            interrupting({
+              title: "Put the Session to sleep?",
+              action: "Sleep now",
+              go: () => command("Sleep", hub.sleepSession(summary.id)),
+            }),
+    restart: state === "Active" && !busy ? restart.ask : undefined,
+    remove,
+  }
+  // On a phone the terminal takes the view, so the conversation steps aside while it's open.
+  const wide = useMediaQuery(WIDE)
+  const conversationShown = wide || !terminalOpen
+
   return (
     <main {...stylex.props(styles.view)}>
-      <PageHeader
-        pageTitle={`${title} · ${summary.repo}`}
+      <TitleStrip
+        summary={summary}
         // Its name, edited in place: its Creator may rename it, whatever its state.
         title={
           renaming ? (
@@ -466,24 +470,8 @@ function LoadedSession({
             title
           )
         }
-        badge={
-          <span {...stylex.props(styles.badges)}>
-            {drives && !renaming && (
-              <IconButton label="Rename Session" size="sm" onClick={() => setRenaming(true)}>
-                <PencilIcon />
-              </IconButton>
-            )}
-            <SessionStatus state={statusOf(state)} />
-            {summary.openQuestion && (
-              <Badge intent="warning" icon={<WaitingDot />}>
-                Waiting on {drives ? "you" : summary.creator.name}
-              </Badge>
-            )}
-          </span>
-        }
-        description={
+        meta={
           <>
-            {summary.repo} <span aria-hidden="true">·</span>{" "}
             {summary.workBranch === summary.baseBranch ? (
               `on ${summary.baseBranch}`
             ) : (
@@ -506,50 +494,9 @@ function LoadedSession({
             )}
           </>
         }
-        actions={
-          <>
-            <OpenPorts summary={summary} />
-            <SessionMcpServers summary={summary} />
-            {drives && state !== "Archived" && (
-              // Its Creator turns it on or off (ADR 0016, ADR 0026); Sleep now turns it off.
-              <Tooltip content="While it's on, the Session doesn't go to sleep when idle. Sleep now turns it off.">
-                <span>
-                  <Switch
-                    label="Keep awake"
-                    checked={summary.keepAwake !== undefined}
-                    onCheckedChange={(on) =>
-                      command("Keep awake", hub.setKeepAwake(summary.id, on))
-                    }
-                    sx={styles.keepAwake}
-                  />
-                </span>
-              </Tooltip>
-            )}
-            {drives && state === "Active" && (
-              <Button
-                size="sm"
-                intent="secondary"
-                // The Hub only puts a Session to sleep once started, with nothing running or waiting.
-                disabled={busy || running || queue.length > 0}
-                onClick={() =>
-                  interrupting({
-                    title: "Put the Session to sleep?",
-                    action: "Sleep now",
-                    go: () => command("Sleep", hub.sleepSession(summary.id)),
-                  })
-                }
-              >
-                Sleep now
-              </Button>
-            )}
-            {drives && state !== "Archived" && (
-              <IconButton label="Delete Session" size="sm" onClick={remove}>
-                <TrashIcon />
-              </IconButton>
-            )}
-            <Presence presence={presence} />
-          </>
-        }
+        drives={drives}
+        presence={presence}
+        actions={actions}
       />
 
       <Dialog
@@ -582,144 +529,138 @@ function LoadedSession({
         }
       />
 
-      <Tabs
-        value={view}
-        onValueChange={(next) => onTabChange?.(next === "terminal" ? "terminal" : "chat")}
-        sx={styles.tabs}
-      >
-        {/* Someone watching has no terminal (ADR 0026), so no other tab to switch to. */}
-        {drives && (
-          <div {...stylex.props(styles.tabList)}>
-            <TabList label="Session views">
-              <Tab value="chat">Chat</Tab>
-              <Tab value="terminal" disabled={archived}>
-                Terminal
-              </Tab>
-            </TabList>
-          </div>
-        )}
-        <TabPanel value="chat" keepMounted sx={styles.tabPanel}>
-          {agentId !== undefined ? (
-            <AgentPanel session={summary} agentId={agentId} agent={agent} onClose={closeAgent} />
-          ) : (
-            <>
-              <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
-                <div {...stylex.props(styles.column, styles.transcript)}>
-                  <StateBanner
-                    summary={summary}
-                    change={transcript.stateChange}
-                    running={running}
-                    startLog={startLog}
-                    drives={drives}
-                    restart={restart}
-                    onWake={() => command("Wake", hub.wakeSession(summary.id))}
-                    onRestore={() => restoreSession(hub, summary.id)}
-                    onEnterValues={() =>
-                      void navigate({
-                        to: "/repos/$owner/$repo/environment",
-                        params: repoParams(summary.repo),
-                      })
+      {conversationShown &&
+        (agentId !== undefined ? (
+          <AgentPanel session={summary} agentId={agentId} agent={agent} onClose={closeAgent} />
+        ) : (
+          <>
+            <div ref={scroller.ref} onScroll={scroller.onScroll} {...stylex.props(styles.scroll)}>
+              <div {...stylex.props(styles.column, styles.transcript)}>
+                <StateBanner
+                  summary={summary}
+                  change={transcript.stateChange}
+                  running={running}
+                  startLog={startLog}
+                  drives={drives}
+                  restart={restart}
+                  onWake={() => command("Wake", hub.wakeSession(summary.id))}
+                  onRestore={() => restoreSession(hub, summary.id)}
+                  onEnterValues={() =>
+                    void navigate({
+                      to: "/repos/$owner/$repo/environment",
+                      params: repoParams(summary.repo),
+                    })
+                  }
+                />
+                {items.length === 0 ? (
+                  <EmptyState
+                    title="Nothing here yet"
+                    description={
+                      drives
+                        ? `Send the first prompt. Everyone in the Session sees ${pi ? "the" : "Claude's"} answer as it streams.`
+                        : `Once ${summary.creator.name} sends the first prompt, you see ${pi ? "the" : "Claude's"} answer here as it streams.`
                     }
                   />
-                  {items.length === 0 ? (
-                    <EmptyState
-                      title="Nothing here yet"
-                      description={
-                        drives
-                          ? `Send the first prompt. Everyone in the Session sees ${pi ? "the" : "Claude's"} answer as it streams.`
-                          : `Once ${summary.creator.name} sends the first prompt, you see ${pi ? "the" : "Claude's"} answer here as it streams.`
+                ) : (
+                  <Transcript
+                    sessionId={summary.id}
+                    items={items}
+                    nameTurnModel={nameTurnModel}
+                    nameReplier={nameReplier}
+                  />
+                )}
+              </div>
+            </div>
+
+            <AgentChips agents={summary.agents ?? []} onOpen={(id) => onAgentChange?.(id)} />
+            <div {...stylex.props(styles.column, styles.dock)}>
+              <QuestionDock
+                summary={summary}
+                questions={transcript.questions}
+                picks={questionPicks}
+                drives={drives}
+              />
+              <PromptQueue
+                queue={queue}
+                onCancel={
+                  drives
+                    ? (prompt) => {
+                        if (!hub.cancelPrompt(summary.id, prompt.id)) {
+                          notSent("Cancel")
+                        }
                       }
+                    : undefined
+                }
+                onSteer={
+                  drives && steerable
+                    ? (prompt) => {
+                        if (command("Steer", hub.steerPrompt(summary.id, prompt.id)))
+                          setSteering((ids) => new Set(ids).add(prompt.id))
+                      }
+                    : undefined
+                }
+                steering={steering}
+              />
+              <Composer
+                onSend={send}
+                onStop={drives ? () => hub.stopTurn(summary.id) : undefined}
+                running={running}
+                disabledReason={disabledReason}
+                hint={
+                  drives && asking
+                    ? `${nameReplier(undefined)} is waiting on an answer: a reply here declines its question.`
+                    : hint
+                }
+                attach={drives ? attach : undefined}
+                {...(pi && { placeholder: "Send a prompt" })}
+                {...(drives && asking && { copy: replyCopy, needsText: true })}
+                tools={
+                  drives && !archived ? (
+                    <ComposerTools
+                      keptAwake={keptAwake}
+                      setKeepAwake={(on) => command("Keep awake", hub.setKeepAwake(summary.id, on))}
+                      terminal={{ open: terminalOpen, toggle: () => showTerminal(!terminalOpen) }}
+                    />
+                  ) : undefined
+                }
+                picker={
+                  drives ? (
+                    <ModelPicker
+                      {...offered}
+                      value={shownSetting}
+                      onChange={pick}
+                      disabled={archived}
+                      side="top"
                     />
                   ) : (
-                    <Transcript
-                      sessionId={summary.id}
-                      items={items}
-                      nameTurnModel={nameTurnModel}
-                      nameReplier={nameReplier}
+                    // Someone watching sees what it runs on, but can't change it (ADR 0026).
+                    <ModelSettingLabel
+                      claudeCode={{ models }}
+                      pi={{ models: providerModels }}
+                      value={setting}
+                      knownLabel={knownLabel}
                     />
-                  )}
-                </div>
-              </div>
+                  )
+                }
+              />
+            </div>
+          </>
+        ))}
 
-              <div {...stylex.props(styles.column, styles.dock)}>
-                <QuestionDock
-                  summary={summary}
-                  questions={transcript.questions}
-                  picks={questionPicks}
-                  drives={drives}
-                />
-                <PromptQueue
-                  queue={queue}
-                  onCancel={
-                    drives
-                      ? (prompt) => {
-                          if (!hub.cancelPrompt(summary.id, prompt.id)) {
-                            notSent("Cancel")
-                          }
-                        }
-                      : undefined
-                  }
-                  onSteer={
-                    drives && steerable
-                      ? (prompt) => {
-                          if (command("Steer", hub.steerPrompt(summary.id, prompt.id)))
-                            setSteering((ids) => new Set(ids).add(prompt.id))
-                        }
-                      : undefined
-                  }
-                  steering={steering}
-                />
-                <Composer
-                  onSend={send}
-                  onStop={drives ? () => hub.stopTurn(summary.id) : undefined}
-                  running={running}
-                  disabledReason={disabledReason}
-                  hint={
-                    drives && asking
-                      ? `${nameReplier(undefined)} is waiting on an answer: a reply here declines its question.`
-                      : hint
-                  }
-                  attach={drives ? attach : undefined}
-                  {...(pi && { placeholder: "Send a prompt" })}
-                  {...(drives && asking && { copy: replyCopy, needsText: true })}
-                  picker={
-                    drives ? (
-                      <ModelPicker
-                        {...offered}
-                        value={shownSetting}
-                        onChange={pick}
-                        disabled={archived}
-                        side="top"
-                      />
-                    ) : (
-                      // Someone watching sees what it runs on, but can't change it (ADR 0026).
-                      <ModelSettingLabel
-                        claudeCode={{ models }}
-                        pi={{ models: providerModels }}
-                        value={setting}
-                        knownLabel={knownLabel}
-                      />
-                    )
-                  }
-                />
+      {/* Mounted once opened, and kept while hidden, so its scrollback survives. */}
+      {shownTerminal && canTerminal && (
+        <TerminalSheet open={terminalOpen} onClose={() => showTerminal(false)}>
+          <Suspense
+            fallback={
+              <div {...stylex.props(styles.centered)}>
+                <Spinner label="Loading the terminal" />
               </div>
-            </>
-          )}
-        </TabPanel>
-        <TabPanel value="terminal" keepMounted sx={styles.tabPanel}>
-          {shownTerminal && !archived && drives && (
-            <Suspense
-              fallback={
-                <div {...stylex.props(styles.centered)}>
-                  <Spinner label="Loading the terminal" />
-                </div>
-              }
-            >
-              <TerminalPanel session={summary} />
-            </Suspense>
-          )}
-        </TabPanel>
-      </Tabs>
+            }
+          >
+            <TerminalPanel session={summary} />
+          </Suspense>
+        </TerminalSheet>
+      )}
     </main>
   )
 }

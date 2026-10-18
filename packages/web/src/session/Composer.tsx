@@ -17,6 +17,9 @@ import { pickerAccepts } from "./attachments.ts"
 import { type Attach, AttachmentChips, useAttachments } from "./Attachments.tsx"
 import { PastedTextChips, usePastedTexts } from "./PastedTexts.tsx"
 
+// The Composer's own width, not the viewport's: it sits in columns of different widths.
+const NARROW = "@container (width < 36rem)"
+
 const styles = stylex.create({
   form: {
     position: "relative",
@@ -40,12 +43,27 @@ const styles = stylex.create({
     // The form's border shows focus instead.
     outlineStyle: "none",
   },
+  // Wraps by the Composer's own width: with no room beside the controls, the hint takes a line of
+  // its own under them rather than a column a word wide.
   bar: {
     display: "flex",
+    flexWrap: "wrap",
     alignItems: "center",
-    gap: space.s2,
+    columnGap: space.s2,
+    rowGap: space.s1,
+    containerType: "inline-size",
   },
-  hint: { flex: 1, minWidth: 0, color: color.textTertiary, fontSize: text.xs },
+  hint: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    color: color.textTertiary,
+    fontSize: text.xs,
+    order: { default: 0, [NARROW]: 1 },
+    flexBasis: { default: "10rem", [NARROW]: "100%" },
+  },
+  // The send and stop buttons stay at the end of the controls' line.
+  send: { display: "flex", alignItems: "center", gap: space.s2, marginInlineStart: "auto" },
   dropTarget: {
     position: "absolute",
     inset: 0,
@@ -93,6 +111,8 @@ export interface ComposerProps {
   hint?: string | undefined
   /** The model picker, at the start of the bar under the prompt (#128). */
   picker?: ReactNode
+  /** More controls after the picker, such as the Session's Keep awake and terminal (#397). */
+  tools?: ReactNode
   /** What is written, for one that isn't a prompt: a message to an agent (ADR 0014). */
   copy?: ComposerCopy
   /** The empty prompt box's words: `Ask Claude` unless said. */
@@ -137,6 +157,7 @@ export function Composer({
   disabledReason,
   hint,
   picker: modelPicker,
+  tools,
   placeholder,
   copy = promptCopy(running, placeholder),
   attach,
@@ -282,6 +303,7 @@ export function Composer({
           </>
         )}
         {modelPicker}
+        {tools}
         <span {...stylex.props(styles.hint)}>
           {hint ??
             (disabled
@@ -290,14 +312,16 @@ export function Composer({
                 ? "Prompts wait in the queue until the Turn ends."
                 : "Enter to send, Shift+Enter for a new line.")}
         </span>
-        {running && onStop && (
-          <Button size="sm" intent="secondary" icon={<StopIcon />} onClick={onStop}>
-            {copy.stop}
-          </Button>
-        )}
-        <IconButton type="submit" size="sm" intent="primary" label={copy.send} disabled={waiting}>
-          <ArrowUpIcon />
-        </IconButton>
+        <span {...stylex.props(styles.send)}>
+          {running && onStop && (
+            <Button size="sm" intent="secondary" icon={<StopIcon />} onClick={onStop}>
+              {copy.stop}
+            </Button>
+          )}
+          <IconButton type="submit" size="sm" intent="primary" label={copy.send} disabled={waiting}>
+            <ArrowUpIcon />
+          </IconButton>
+        </span>
       </div>
     </form>
   )
