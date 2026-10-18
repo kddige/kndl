@@ -127,6 +127,11 @@ type Answer = Extract<HubToWeb, { readonly requestId?: RequestId }>
 type AnswerTag = Exclude<Answer["_tag"], "CommandFailed">
 
 interface PendingRequest {
+  /**
+   * The command it sent: only a refusal of that one fails it, not one of a command sent with its
+   * id, as an answer to a sign-in is.
+   */
+  readonly command: Request["_tag"]
   /** The answers it takes. */
   readonly answer: ReadonlyArray<AnswerTag>
   resolve(message: Answer): void
@@ -937,6 +942,7 @@ export class HubClient {
         return
       }
       this.#requests.set(requestId, {
+        command: command._tag,
         answer: typeof answer === "string" ? [answer] : answer,
         resolve: (message) => resolve(message as Extract<Answer, { readonly _tag: Tag }>),
         reject,
@@ -1059,7 +1065,7 @@ export class HubClient {
       case "CommandFailed": {
         const request =
           message.requestId === undefined ? undefined : this.#requests.get(message.requestId)
-        if (request && message.requestId !== undefined) {
+        if (request?.command === message.command && message.requestId !== undefined) {
           this.#requests.delete(message.requestId)
           request.reject(new CommandError(message.message))
         } else {

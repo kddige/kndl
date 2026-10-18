@@ -1229,6 +1229,21 @@ describe("Connected providers (ADR 0029)", () => {
     expect(client.getState().signIn?.ended?.message).toContain("no code")
   })
 
+  test("a refused answer leaves the sign-in running, as on the Hub, to end as the Hub says", async () => {
+    const { client } = await online()
+    const refused: Array<string> = []
+    cleanups.push(client.onCommandFailed((failure) => refused.push(failure.command)))
+    const ended = client.startSignIn("openai")
+    await eventually(() => expect(steps(client)).toContain("Paste"))
+    client.answerSignIn("http://localhost:1455/auth/callback?code=made-up&state=x")
+    // Sent before the Hub took the first: it isn't waiting for another.
+    client.answerSignIn("http://localhost:1455/auth/callback?code=again&state=x")
+
+    expect((await ended).outcome).toBe("Connected")
+    expect(client.getState().signIn?.ended).toEqual({ outcome: "Connected" })
+    expect(refused).toEqual(["AnswerSignIn"])
+  })
+
   test("refreshing asks for the Models again; disconnecting forgets the Provider", async () => {
     const { client } = await online()
     await eventually(() => expect(connected(client)).toHaveLength(1))

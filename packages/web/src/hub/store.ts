@@ -442,10 +442,13 @@ export function reduce(state: HubState, action: HubAction): HubState {
       }
     }
     case "CommandFailed":
-      // A refused sign-in, or answer to one, is over; other refusals are the client's to report.
+      // A refused sign-in is over. A refused answer to one, or cancel of it, which carries its
+      // requestId, isn't: the Hub's flow goes on, and says how it ended. Other refusals are the
+      // client's to report.
       if (
         state.signIn !== null &&
         state.signIn.ended === null &&
+        action.command === "StartSignIn" &&
         action.requestId === state.signIn.requestId
       )
         return { ...state, signIn: endSignIn(state.signIn, action.message) }

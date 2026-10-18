@@ -885,4 +885,21 @@ describe("Connected providers (ADR 0029)", () => {
     const done = run(started, ended("Cancelled"))
     expect(reduce(done, lost).signIn).toBe(done.signIn)
   })
+
+  test("a refused answer to the sign-in, or cancel of it, leaves it running, as the Hub does", () => {
+    for (const command of ["AnswerSignIn", "CancelSignIn"]) {
+      const refused = run(
+        started,
+        stepped(openUrl),
+        hub({
+          _tag: "CommandFailed",
+          command,
+          requestId: "q-sign",
+          message: "This sign-in isn't waiting for an answer.",
+        }),
+      )
+      expect(refused.signIn?.ended).toBeNull()
+      expect(refused.signIn?.steps).toHaveLength(1)
+    }
+  })
 })
