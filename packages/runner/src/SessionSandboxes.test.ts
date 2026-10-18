@@ -548,8 +548,9 @@ describe("SessionSandboxes with pi (ADR 0029)", () => {
             yield* backend.readFile(s1, "/tmp/kndl-pi-needs.sh"),
           )
           expect(script).toContain(`'${sandboxNodePath("musl")}' --version`)
-          // musl's Node.js links libgcc, which the default image lacks.
-          expect(script).toContain("apk add --no-cache -q libgcc")
+          // musl's Node.js links libgcc, and its x64 build libstdc++ too, which the default image
+          // lacks.
+          expect(script).toContain("apk add --no-cache -q libgcc libstdc++")
           expect(script).toContain(`mkdir -p '${piStateGuestPath}'`)
           expect(
             world.execCalls.some((call) => call.request.args?.at(-1) === "/tmp/kndl-pi-needs.sh"),

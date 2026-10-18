@@ -109,15 +109,16 @@ export const sandboxPiCliPath = (appDir: string) =>
   posix.join(sandboxPiGuestDir, appDir, piCliInInstall)
 
 /**
- * Readies a Sandbox to run pi: Node.js runs there, with musl's images given the one library its
- * build links (`libgcc`, which the default `docker:dind` lacks), and pi's state directory exists.
- * Prints nothing when both are so.
+ * Readies a Sandbox to run pi: Node.js runs there, with musl's images given the libraries its
+ * builds link, which the default `docker:dind` lacks: `libgcc`, and for the x64 build `libstdc++`
+ * (`readelf -d` of 24.22.0's: x64 needs both, arm64 only `libgcc_s`). And pi's state directory
+ * exists. Prints nothing when both are so.
  */
 export const piNeedsScript = (node: string, stateDir: string) => `set -e
 if ! '${node}' --version >/dev/null 2>&1; then
   if command -v apk >/dev/null 2>&1; then
     echo "Installing libgcc for pi..."
-    apk add --no-cache -q libgcc
+    apk add --no-cache -q libgcc libstdc++
   fi
   '${node}' --version >/dev/null || { echo "pi's Node.js doesn't run in this image." >&2; exit 1; }
 fi

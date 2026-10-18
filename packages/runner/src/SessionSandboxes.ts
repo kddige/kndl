@@ -641,8 +641,8 @@ export const makeSessionSandboxes = (options: SessionSandboxesOptions) =>
 
     /**
      * Readies the running Sandbox for a Harness, once tmux runs there: Claude Code's state seeded,
-     * which pi's Claude bridge runs on too, and, for pi, its `node` running, with libgcc installed
-     * on musl if it doesn't, and pi's state directory made.
+     * which pi's Claude bridge runs on too, and, for pi, its `node` running, with libgcc and
+     * libstdc++ installed on musl if it doesn't, and pi's state directory made.
      */
     const readyHarness = (sessionId: SessionId, node: string, harness: Harness) =>
       Effect.gen(function* () {
