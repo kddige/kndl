@@ -1,10 +1,11 @@
-// A Repo's MCP servers, on its Repo page (ADR 0020): the Installations for it, whose MCP servers
+// A Repo's MCP servers, on its Environment page (ADR 0020): the Installations for it, whose MCP servers
 // Claude Code in its Sessions gets, each saying which of its header secrets need a value, and
 // where it comes from (#219): listed for this Repo, or global, on in every Repo but where a
 // Repo-scoped one of its MCP server takes its place or the Repo turned it off. Anyone with access
-// to the Repo turns a global one off for it, or back on. And its MCP server change log: who
-// created, edited, added or removed an Installation here, or set or cleared its header secret
-// values (by title, never the values), and when; a global one's changes show in every Repo's.
+// to the Repo turns a global one off for it, or back on. And, under the page's History, its MCP
+// server change log: who created, edited, added or removed an Installation here, or set or
+// cleared its header secret values (by title, never the values), and when; a global one's changes
+// show in every Repo's.
 
 import {
   type Installation,
@@ -18,31 +19,25 @@ import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { andList, timeAgo } from "../app/format.ts"
 import { useHub, useHubState } from "../app/hub.tsx"
-import { Avatar, Badge, type BadgeIntent, Button, Spinner, toast, textRole } from "../ui/index.ts"
+import {
+  Avatar,
+  Badge,
+  type BadgeIntent,
+  Button,
+  SettingsEmpty,
+  SettingsList,
+  SettingsLoading,
+  SettingsRow,
+  toast,
+} from "../ui/index.ts"
 import { focus } from "../ui/shared.ts"
-import { color, radius, space, text, weight } from "../ui/tokens.stylex.ts"
+import { color, radius, weight } from "../ui/tokens.stylex.ts"
 import { neededText, valuesNeeded } from "./headerSecrets.ts"
 
 const styles = stylex.create({
-  part: { display: "flex", flexDirection: "column", gap: space.s2 },
-  heading: { margin: 0 },
-  list: { display: "flex", flexDirection: "column", margin: 0, padding: 0, listStyle: "none" },
-  row: {
-    display: "flex",
-    alignItems: "center",
-    gap: space.s2,
-    flexWrap: "wrap",
-    paddingBlock: space.s2,
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: color.border,
-    fontSize: text.sm,
-  },
-  first: { borderTopWidth: 0 },
-  name: { fontWeight: weight.semibold },
   notOn: { opacity: 0.7 },
-  muted: { color: color.textSecondary, fontSize: text.sm },
-  grow: { flex: 1, minWidth: 0 },
+  by: { fontWeight: weight.medium },
+  change: { fontWeight: weight.normal },
   link: {
     color: color.accentText,
     textDecoration: { default: "none", ":hover": "underline" },
@@ -106,20 +101,18 @@ const sourceBadges: Record<InstallationSource, { label: string; intent: BadgeInt
   Off: { label: "Off", intent: "neutral" },
 }
 
-/** The Installations for `repo`, and its MCP server change log, both kept fresh by the Hub. */
+/** The Installations for `repo`, kept fresh by the Hub. */
 export function RepoMcpServers({ repo }: { repo: string }) {
   const hub = useHub()
   const online = useHubState((state) => state.connection.status === "online")
   const mcpServers = useHubState((state) => state.mcpServers)
-  const log = useHubState((state) => state.mcpServerLogs[repoKey(repo)])
   const [busy, setBusy] = useState<string | null>(null)
 
   useEffect(() => {
     if (!online) return
     // Shown as empty for now: the Hub refuses only a Repo the person lost access to.
     hub.getMcpServers().catch(() => undefined)
-    hub.getMcpServerLog(repo).catch(() => undefined)
-  }, [hub, repo, online])
+  }, [hub, online])
 
   /** Turns a global Installation off for this Repo, or back on (#219). */
   const turn = async (installation: Installation, on: boolean) => {
@@ -150,84 +143,96 @@ export function RepoMcpServers({ repo }: { repo: string }) {
       (other) =>
         other.source === "Repo" && other.installation.mcpServerId === installation.mcpServerId,
     )?.installation.name
+  if (on === null) return <SettingsLoading label="Loading the Installations" rows={2} />
+  if (on.length === 0) {
+    return (
+      <SettingsEmpty
+        title="No Installation is on for this Repo"
+        description={
+          <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
+            Install an MCP server
+          </Link>
+        }
+      />
+    )
+  }
   return (
-    <>
-      <div {...stylex.props(styles.part)}>
-        {on === null ? (
-          <Spinner label="Loading the Installations" />
-        ) : on.length === 0 ? (
-          <p {...stylex.props(styles.muted)}>
-            No Installation is on for this Repo.{" "}
-            <Link to="/mcp" {...stylex.props(styles.link, focus.ring)}>
-              Install a McpServer
-            </Link>
-          </p>
-        ) : (
-          <ul aria-label="Installations for this Repo" {...stylex.props(styles.list)}>
-            {on.map(({ installation, source }, index) => {
-              const mcpServer = mcpServerOf(installation.mcpServerId)
-              const needed = mcpServer === undefined ? [] : valuesNeeded(mcpServer, installation)
-              const badge = sourceBadges[source]
-              const isOn = source === "Repo" || source === "Global"
-              return (
-                <li
-                  key={installation.id}
-                  aria-label={installation.name}
-                  {...stylex.props(styles.row, index === 0 && styles.first)}
-                >
-                  <span {...stylex.props(styles.name, !isOn && styles.notOn)}>
-                    {installation.name}
-                  </span>
-                  <span {...stylex.props(styles.muted, styles.grow)}>
-                    {mcpServer?.name ?? installation.mcpServerId}
-                    {source === "Overridden" &&
-                      `: ${overriddenBy(installation) ?? "a Repo-scoped Installation"} takes its place here`}
-                    {source === "Off" && ", turned off for this Repo"}
-                  </span>
+    <SettingsList label="Installations for this Repo">
+      {on.map(({ installation, source }) => {
+        const mcpServer = mcpServerOf(installation.mcpServerId)
+        const needed = mcpServer === undefined ? [] : valuesNeeded(mcpServer, installation)
+        const badge = sourceBadges[source]
+        const isOn = source === "Repo" || source === "Global"
+        return (
+          <SettingsRow
+            key={installation.id}
+            label={installation.name}
+            name={<span {...stylex.props(!isOn && styles.notOn)}>{installation.name}</span>}
+            meta={
+              <span>
+                {mcpServer?.name ?? installation.mcpServerId}
+                {source === "Overridden" &&
+                  `: ${overriddenBy(installation) ?? "a Repo-scoped Installation"} takes its place here`}
+                {source === "Off" && ", turned off for this Repo"}
+              </span>
+            }
+            badges={
+              (badge !== null || (isOn && needed.length > 0)) && (
+                <>
                   {badge !== null && <Badge intent={badge.intent}>{badge.label}</Badge>}
                   {isOn && needed.length > 0 && <Badge intent="danger">{neededText(needed)}</Badge>}
-                  {(source === "Global" || source === "Off") && (
-                    <Button
-                      size="sm"
-                      intent="ghost"
-                      loading={busy === installation.id}
-                      onClick={() => void turn(installation, source === "Off")}
-                    >
-                      {source === "Off" ? "Turn back on" : "Turn off for this Repo"}
-                    </Button>
-                  )}
-                </li>
+                </>
               )
-            })}
-          </ul>
-        )}
-      </div>
-      <div {...stylex.props(styles.part)}>
-        <h3 {...stylex.props(textRole.subheading, styles.heading)}>Change log</h3>
-        {log === undefined ? (
-          <Spinner label="Loading the MCP server change log" />
-        ) : log.length === 0 ? (
-          <p {...stylex.props(styles.muted)}>No Installation was ever on for this Repo.</p>
-        ) : (
-          <ol aria-label="MCP server change log" {...stylex.props(styles.list)}>
-            {log.map((entry, index) => (
-              <li
-                key={`${log.length - index}:${entry.installationId}:${entry.change}`}
-                {...stylex.props(styles.row, index === 0 && styles.first)}
-              >
-                <Avatar name={entry.by.name} src={entry.by.avatarUrl} size="sm" />
-                <span {...stylex.props(styles.grow)}>
-                  <span {...stylex.props(styles.name)}>{entry.by.name}</span>{" "}
-                  {mcpServerChangeText(entry)}
-                </span>
-                <span {...stylex.props(styles.muted)} title={new Date(entry.at).toLocaleString()}>
-                  {timeAgo(entry.at)}
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
-    </>
+            }
+            action={
+              (source === "Global" || source === "Off") && (
+                <Button
+                  size="sm"
+                  loading={busy === installation.id}
+                  onClick={() => void turn(installation, source === "Off")}
+                >
+                  {source === "Off" ? "Turn back on" : "Turn off for this Repo"}
+                </Button>
+              )
+            }
+          />
+        )
+      })}
+    </SettingsList>
+  )
+}
+
+/** The Repo's MCP server change log, newest first, kept fresh by the Hub. */
+export function McpServerChangeLog({ repo }: { repo: string }) {
+  const hub = useHub()
+  const online = useHubState((state) => state.connection.status === "online")
+  const log = useHubState((state) => state.mcpServerLogs[repoKey(repo)])
+
+  useEffect(() => {
+    if (!online) return
+    hub.getMcpServerLog(repo).catch(() => undefined)
+  }, [hub, repo, online])
+
+  if (log === undefined) return <SettingsLoading label="Loading the MCP server change log" />
+  if (log.length === 0) {
+    return <SettingsEmpty title="No Installation was ever on for this Repo" />
+  }
+  return (
+    <SettingsList label="MCP server change log">
+      {log.map((entry, index) => (
+        <SettingsRow
+          key={`${log.length - index}:${entry.installationId}:${entry.change}`}
+          label={`${entry.by.name} ${mcpServerChangeText(entry)}`}
+          icon={<Avatar name={entry.by.name} src={entry.by.avatarUrl} size="sm" />}
+          name={
+            <>
+              <span {...stylex.props(styles.by)}>{entry.by.name}</span>{" "}
+              <span {...stylex.props(styles.change)}>{mcpServerChangeText(entry)}</span>
+            </>
+          }
+          meta={<span title={new Date(entry.at).toLocaleString()}>{timeAgo(entry.at)}</span>}
+        />
+      ))}
+    </SettingsList>
   )
 }
